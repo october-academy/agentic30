@@ -44,6 +44,11 @@ const EXTERNAL_PACKAGES = [
 const SIDECAR_CLI_PACKAGES = [
   "@tobilu/qmd",
 ];
+const REQUIRED_BUNDLE_PACKAGES = [
+  "@modelcontextprotocol/sdk",
+  "ws",
+  "zod",
+];
 
 // Platform suffixes to strip from any copied package that bundles
 // multi-platform native binaries under vendor/<arch>-<os>/.
@@ -150,6 +155,18 @@ async function readPackageJson(packageRoot) {
 
 function packagePath(nodeModulesRoot, pkg) {
   return path.join(nodeModulesRoot, ...pkg.split("/"));
+}
+
+async function ensureDependencies() {
+  const missing = [...REQUIRED_BUNDLE_PACKAGES, ...EXTERNAL_PACKAGES, ...SIDECAR_CLI_PACKAGES]
+    .filter((pkg) => !existsSync(packagePath(SOURCE_NODE_MODULES, pkg)));
+  if (missing.length === 0) return;
+
+  const npmArgs = existsSync(path.join(PACKAGE_ROOT, "package-lock.json"))
+    ? ["ci", "--include=optional"]
+    : ["install"];
+  console.log(`[build-sidecar] installing missing dependencies: ${missing.join(", ")}`);
+  await run("npm", npmArgs, PACKAGE_ROOT);
 }
 
 async function computeBuildFingerprint() {
@@ -281,6 +298,7 @@ async function main() {
     return;
   }
 
+  await ensureDependencies();
   console.log("[build-sidecar] cleaning dist...");
   await clean();
   console.log("[build-sidecar] bundling entry points with bun...");
