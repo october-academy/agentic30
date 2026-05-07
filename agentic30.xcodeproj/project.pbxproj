@@ -1,0 +1,671 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		596660B12F86A4920021885C /* sidecar in Copy Sidecar Resources */ = {isa = PBXBuildFile; fileRef = 596660B02F86A4920021885C /* sidecar */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		596660602F86A4910021885C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 596660482F86A4900021885C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5966604F2F86A4900021885C;
+			remoteInfo = agentic30;
+		};
+		5966606A2F86A4910021885C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 596660482F86A4900021885C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5966604F2F86A4900021885C;
+			remoteInfo = agentic30;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		596660B22F86A4920021885C /* Copy Sidecar Resources */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 7;
+			files = (
+				596660B12F86A4920021885C /* sidecar in Copy Sidecar Resources */,
+			);
+			name = "Copy Sidecar Resources";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		596660502F86A4900021885C /* agentic30.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = agentic30.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5966605F2F86A4910021885C /* agentic30Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = agentic30Tests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		596660692F86A4910021885C /* agentic30UITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = agentic30UITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		596660B02F86A4920021885C /* sidecar */ = {isa = PBXFileReference; lastKnownFileType = folder; name = sidecar; path = "sidecar-build/sidecar"; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		596660BA2F86A4920021885C /* Exceptions for "agentic30" folder in "agentic30" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 5966604F2F86A4900021885C /* agentic30 */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		596660522F86A4900021885C /* agentic30 */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				596660BA2F86A4920021885C /* Exceptions for "agentic30" folder in "agentic30" target */,
+			);
+			path = agentic30;
+			sourceTree = "<group>";
+		};
+		596660622F86A4910021885C /* agentic30Tests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = agentic30Tests;
+			sourceTree = "<group>";
+		};
+		5966606C2F86A4910021885C /* agentic30UITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = agentic30UITests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		5966604D2F86A4900021885C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5966605C2F86A4910021885C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		596660662F86A4910021885C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		596660472F86A4900021885C = {
+			isa = PBXGroup;
+			children = (
+				596660522F86A4900021885C /* agentic30 */,
+				596660622F86A4910021885C /* agentic30Tests */,
+				5966606C2F86A4910021885C /* agentic30UITests */,
+				596660B02F86A4920021885C /* sidecar */,
+				596660512F86A4900021885C /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		596660512F86A4900021885C /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				596660502F86A4900021885C /* agentic30.app */,
+				5966605F2F86A4910021885C /* agentic30Tests.xctest */,
+				596660692F86A4910021885C /* agentic30UITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		5966604F2F86A4900021885C /* agentic30 */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 596660732F86A4910021885C /* Build configuration list for PBXNativeTarget "agentic30" */;
+			buildPhases = (
+				596660B32F86A4920021885C /* Build Sidecar Bundle */,
+				5966604C2F86A4900021885C /* Sources */,
+				5966604D2F86A4900021885C /* Frameworks */,
+				5966604E2F86A4900021885C /* Resources */,
+				596660B22F86A4920021885C /* Copy Sidecar Resources */,
+				596660B42F86A4920021885C /* Sign Sidecar Native Binaries */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				596660522F86A4900021885C /* agentic30 */,
+			);
+			name = agentic30;
+			packageProductDependencies = (
+			);
+			productName = agentic30;
+			productReference = 596660502F86A4900021885C /* agentic30.app */;
+			productType = "com.apple.product-type.application";
+		};
+		5966605E2F86A4910021885C /* agentic30Tests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 596660762F86A4910021885C /* Build configuration list for PBXNativeTarget "agentic30Tests" */;
+			buildPhases = (
+				5966605B2F86A4910021885C /* Sources */,
+				5966605C2F86A4910021885C /* Frameworks */,
+				5966605D2F86A4910021885C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				596660612F86A4910021885C /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				596660622F86A4910021885C /* agentic30Tests */,
+			);
+			name = agentic30Tests;
+			packageProductDependencies = (
+			);
+			productName = agentic30Tests;
+			productReference = 5966605F2F86A4910021885C /* agentic30Tests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		596660682F86A4910021885C /* agentic30UITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 596660792F86A4910021885C /* Build configuration list for PBXNativeTarget "agentic30UITests" */;
+			buildPhases = (
+				596660652F86A4910021885C /* Sources */,
+				596660662F86A4910021885C /* Frameworks */,
+				596660672F86A4910021885C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5966606B2F86A4910021885C /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				5966606C2F86A4910021885C /* agentic30UITests */,
+			);
+			name = agentic30UITests;
+			packageProductDependencies = (
+			);
+			productName = agentic30UITests;
+			productReference = 596660692F86A4910021885C /* agentic30UITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		596660482F86A4900021885C /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2640;
+				LastUpgradeCheck = 2640;
+				TargetAttributes = {
+					5966604F2F86A4900021885C = {
+						CreatedOnToolsVersion = 26.4;
+					};
+					5966605E2F86A4910021885C = {
+						CreatedOnToolsVersion = 26.4;
+						TestTargetID = 5966604F2F86A4900021885C;
+					};
+					596660682F86A4910021885C = {
+						CreatedOnToolsVersion = 26.4;
+						TestTargetID = 5966604F2F86A4900021885C;
+					};
+				};
+			};
+			buildConfigurationList = 5966604B2F86A4900021885C /* Build configuration list for PBXProject "agentic30" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 596660472F86A4900021885C;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 596660512F86A4900021885C /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				5966604F2F86A4900021885C /* agentic30 */,
+				5966605E2F86A4910021885C /* agentic30Tests */,
+				596660682F86A4910021885C /* agentic30UITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		5966604E2F86A4900021885C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5966605D2F86A4910021885C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		596660672F86A4910021885C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		596660B32F86A4920021885C /* Build Sidecar Bundle */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/package.json",
+				"$(SRCROOT)/package-lock.json",
+				"$(SRCROOT)/scripts/build-sidecar.mjs",
+				"$(SRCROOT)/sidecar/acp-adapter.mjs",
+				"$(SRCROOT)/sidecar/acp-utils.mjs",
+				"$(SRCROOT)/sidecar/ad-strategy-prompt.mjs",
+				"$(SRCROOT)/sidecar/auth-context.mjs",
+				"$(SRCROOT)/sidecar/bip-coach-state.mjs",
+				"$(SRCROOT)/sidecar/bip-prompt.mjs",
+				"$(SRCROOT)/sidecar/bip-readiness.mjs",
+				"$(SRCROOT)/sidecar/diagnostics.mjs",
+				"$(SRCROOT)/sidecar/gws-client.mjs",
+				"$(SRCROOT)/sidecar/gws-memory.mjs",
+				"$(SRCROOT)/sidecar/index.mjs",
+				"$(SRCROOT)/sidecar/mcp-server.mjs",
+				"$(SRCROOT)/sidecar/meta-ads.mjs",
+				"$(SRCROOT)/sidecar/notion-oauth.mjs",
+				"$(SRCROOT)/sidecar/office-hours-docs-prompt.mjs",
+				"$(SRCROOT)/sidecar/preflight-cli.mjs",
+				"$(SRCROOT)/sidecar/preflight.mjs",
+				"$(SRCROOT)/sidecar/provider-runner.mjs",
+				"$(SRCROOT)/sidecar/qmd-support.mjs",
+				"$(SRCROOT)/sidecar/session-store.mjs",
+				"$(SRCROOT)/sidecar/telemetry.mjs",
+				"$(SRCROOT)/sidecar/user-input.mjs",
+			);
+			name = "Build Sidecar Bundle";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/sidecar-build/.build-stamp.json",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -euo pipefail\nexport PATH=\"$HOME/.local/share/mise/shims:$HOME/.asdf/shims:$HOME/.volta/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"\ncd \"$SRCROOT\"\nNODE_BIN=\"${NODE_BINARY:-$(command -v node || true)}\"\nif [ -z \"$NODE_BIN\" ]; then\n  for c in \"$HOME/.local/share/mise/shims/node\" \"$HOME/.asdf/shims/node\" \"$HOME/.volta/bin/node\" \"/opt/homebrew/bin/node\" \"/usr/local/bin/node\"; do\n    if [ -x \"$c\" ]; then NODE_BIN=\"$c\"; break; fi\n  done\nfi\nif [ -z \"$NODE_BIN\" ]; then\n  echo \"error: node not found in PATH; install Node.js 20+ or set NODE_BINARY to build the sidecar bundle\" >&2\n  exit 1\nfi\n\"$NODE_BIN\" scripts/build-sidecar.mjs\n";
+		};
+		596660B42F86A4920021885C /* Sign Sidecar Native Binaries */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(CODESIGNING_FOLDER_PATH)/Contents/Resources/sidecar",
+			);
+			name = "Sign Sidecar Native Binaries";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_TEMP_DIR)/sidecar-native-binaries-signed.stamp",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -euo pipefail\nsidecar_root=\"$CODESIGNING_FOLDER_PATH/Contents/Resources/sidecar\"\nif [ ! -d \"$sidecar_root\" ]; then\n  echo \"warning: sidecar resources not found at $sidecar_root\" >&2\n  exit 0\nfi\nidentity=\"${EXPANDED_CODE_SIGN_IDENTITY:--}\"\nif [ -z \"$identity\" ] || [ \"$identity\" = \"Sign to Run Locally\" ]; then\n  identity=\"-\"\nfi\nif [ \"$identity\" = \"-\" ]; then\n  ts_arg=(--timestamp=none)\nelse\n  ts_arg=(--timestamp)\nfi\nsigned=0\nwhile IFS= read -r -d '' binary; do\n  if file -b \"$binary\" | grep -q 'Mach-O'; then\n    codesign --force --sign \"$identity\" \"${ts_arg[@]}\" --options runtime \"$binary\"\n    signed=$((signed + 1))\n  fi\ndone < <(find \"$sidecar_root\" -type f \\( -perm -111 -o -name '*.node' -o -name '*.dylib' -o -name '*.so' \\) -print0)\nif [ \"${SCRIPT_OUTPUT_FILE_COUNT:-0}\" -gt 0 ]; then\n  mkdir -p \"$(dirname \"$SCRIPT_OUTPUT_FILE_0\")\"\n  printf 'signed=%s\\n' \"$signed\" > \"$SCRIPT_OUTPUT_FILE_0\"\nfi\necho \"[sign-sidecar] signed $signed native binaries\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		5966604C2F86A4900021885C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5966605B2F86A4910021885C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		596660652F86A4910021885C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		596660612F86A4910021885C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5966604F2F86A4900021885C /* agentic30 */;
+			targetProxy = 596660602F86A4910021885C /* PBXContainerItemProxy */;
+		};
+		5966606B2F86A4910021885C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5966604F2F86A4900021885C /* agentic30 */;
+			targetProxy = 5966606A2F86A4910021885C /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		596660712F86A4910021885C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.4;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		596660722F86A4910021885C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.4;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		596660742F86A4910021885C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = agentic30/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "october-academy.agentic30";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		596660752F86A4910021885C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = agentic30/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "october-academy.agentic30";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		596660772F86A4910021885C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.4;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "october-academy.agentic30Tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/agentic30.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/agentic30";
+			};
+			name = Debug;
+		};
+		596660782F86A4910021885C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.4;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "october-academy.agentic30Tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/agentic30.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/agentic30";
+			};
+			name = Release;
+		};
+		5966607A2F86A4910021885C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "october-academy.agentic30UITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = agentic30;
+			};
+			name = Debug;
+		};
+		5966607B2F86A4910021885C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "october-academy.agentic30UITests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = agentic30;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		5966604B2F86A4900021885C /* Build configuration list for PBXProject "agentic30" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				596660712F86A4910021885C /* Debug */,
+				596660722F86A4910021885C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		596660732F86A4910021885C /* Build configuration list for PBXNativeTarget "agentic30" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				596660742F86A4910021885C /* Debug */,
+				596660752F86A4910021885C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		596660762F86A4910021885C /* Build configuration list for PBXNativeTarget "agentic30Tests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				596660772F86A4910021885C /* Debug */,
+				596660782F86A4910021885C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		596660792F86A4910021885C /* Build configuration list for PBXNativeTarget "agentic30UITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5966607A2F86A4910021885C /* Debug */,
+				5966607B2F86A4910021885C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 596660482F86A4900021885C /* Project object */;
+}

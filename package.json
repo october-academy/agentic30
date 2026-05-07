@@ -1,0 +1,23 @@
+{
+  "name": "agentic30-sidecar",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sidecar": "node sidecar/index.mjs",
+    "mcp": "node sidecar/mcp-server.mjs",
+    "acp": "node sidecar/acp-adapter.mjs",
+    "preflight:release": "node sidecar/preflight-cli.mjs",
+    "preflight:bundle": "node scripts/preflight-bundle.mjs",
+    "build:sidecar": "node scripts/build-sidecar.mjs",
+    "report:timings": "node scripts/report-response-timings.mjs",
+    "test:sidecar": "node --test sidecar-tests/**/*.test.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.2.87",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@openai/codex-sdk": "0.125.0",
+    "@tobilu/qmd": "2.1.0",
+    "ws": "8.18.3",
+    "zod": "4.1.12"
+  }
+}

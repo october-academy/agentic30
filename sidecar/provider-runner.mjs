@@ -1,0 +1,1283 @@
+import fsSync from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import { fileURLToPath } from "node:url";
+import { query, listSessions } from "@anthropic-ai/claude-agent-sdk";
+import { Codex } from "@openai/codex-sdk";
+import { buildAuthEnv } from "./auth-context.mjs";
+import { buildQmdGuidance, buildQmdMcpConfig } from "./qmd-support.mjs";
+import {
+  createUserInputRequest,
+  deleteUserInputArtifacts,
+  waitForUserInputResponse,
+} from "./user-input.mjs";
+import { createPetHooks } from "./pet-hooks.mjs";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const sidecarRoot = path.resolve(__dirname);
+process.env.AGENTIC30_SIDECAR_ROOT ??= sidecarRoot;
+const DEFAULT_CODEX_MODEL = "gpt-5.5";
+const CODEX_REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
+const appSupportPath = process.env.AGENTIC30_APP_SUPPORT_PATH
+  ? path.resolve(process.env.AGENTIC30_APP_SUPPORT_PATH)
+  : path.join(
+      os.homedir(),
+      "Library",
+      "Application Support",
+      "agentic30",
+    );
+const codexHomePath = path.join(appSupportPath, "codex-home");
+const internalMcpServerName = "agentic30_sidecar";
+const notionConfigPath = path.join(appSupportPath, "notion-config.json");
+
+export async function runProviderStream({
+  provider,
+  sessionRuntime = {},
+  prompt,
+  model = "",
+  workspaceRoot,
+  abortController,
+  sessionIdForMcp,
+  executionMode = "agentic",
+  systemPromptOverride = "",
+  onTextDelta,
+  onTextReplace,
+  onToolEvent,
+  onRuntimeUpdate,
+  onRunEvent,
+  onPetHookEvent,
+}) {
+  onRunEvent?.({ phase: "provider.entry", provider, executionMode });
+  if (process.env.AGENTIC30_TEST_STUB_PROVIDER === "1") {
+    const stubText = buildStubResponse(prompt);
+    onTextReplace?.(stubText);
+    onRunEvent?.({ phase: "provider.stub_response", provider });
+    return { runtime: sessionRuntime };
+  }
+
+  if (executionMode === "isolated_read_only") {
+    await runTextOnlyProvider({
+      provider,
+      prompt,
+      model,
+      abortController,
+      onTextReplace,
+    });
+    return { runtime: sessionRuntime };
+  }
+
+  if (executionMode === "agentic") {
+    await ensureNotionToken();
+  }
+
+  if (provider === "claude") {
+    return runClaudeProvider({
+      sessionRuntime,
+      prompt,
+      model,
+      workspaceRoot,
+      abortController,
+      sessionIdForMcp,
+      executionMode,
+      systemPromptOverride,
+      onTextDelta,
+      onTextReplace,
+      onToolEvent,
+      onRuntimeUpdate,
+      onRunEvent,
+      onPetHookEvent,
+    });
+  }
+
+  return runCodexProvider({
+    sessionRuntime,
+    prompt,
+    model,
+    workspaceRoot,
+    abortController,
+    sessionIdForMcp,
+    executionMode,
+    systemPromptOverride,
+    onTextDelta,
+    onTextReplace,
+    onToolEvent,
+    onRuntimeUpdate,
+    onRunEvent,
+  });
+}
+
+export function getProviderAuthState(provider) {
+  if (process.env.AGENTIC30_TEST_STUB_PROVIDER === "1") {
+    return {
+      available: true,
+      source: "test-stub",
+      message: "Test stub provider",
+    };
+  }
+
+  if (provider === "claude" && hasClaudeLocalSession()) {
+    return {
+      available: true,
+      source: "local-session",
+      message: "Local Claude login session",
+    };
+  }
+
+  const apiKey = readApiKey(provider);
+  if (apiKey) {
+    return {
+      available: true,
+      source: "api-key",
+      message:
+        provider === "claude"
+          ? "API key from ANTHROPIC_API_KEY"
+          : "API key from CODEX_API_KEY / OPENAI_API_KEY",
+    };
+  }
+
+  if (provider === "codex" && hasCodexLocalSession()) {
+    return {
+      available: true,
+      source: "local-session",
+      message: "Local Codex login session",
+    };
+  }
+
+  return {
+    available: false,
+    source: "missing",
+    message:
+      provider === "claude"
+        ? "Sign in with Claude Code or set ANTHROPIC_API_KEY"
+        : "Sign in with Codex or set CODEX_API_KEY / OPENAI_API_KEY",
+  };
+}
+
+async function runClaudeProvider({
+  sessionRuntime,
+  prompt,
+  model,
+  workspaceRoot,
+  abortController,
+  sessionIdForMcp,
+  executionMode,
+  systemPromptOverride,
+  onTextDelta,
+  onTextReplace,
+  onToolEvent,
+  onRuntimeUpdate,
+  onRunEvent,
+  onPetHookEvent,
+}) {
+  let runtime = { ...sessionRuntime };
+  let sawPartialText = false;
+  onRunEvent?.({ phase: "provider.claude.prepare_start" });
+  const systemPromptText = buildSystemPromptText({
+    provider: "claude",
+    workspaceRoot,
+    executionMode,
+    systemPromptOverride,
+  });
+  const packagePath = resolveInstalledPackageRoot("@anthropic-ai", "claude-agent-sdk");
+  const cliPath = path.join(packagePath, "cli.js");
+  const mcpServers = {
+    ...(usesInternalMcp(executionMode) && sessionIdForMcp
+      ? {
+          [internalMcpServerName]: buildMcpConfig(sessionIdForMcp, workspaceRoot),
+        }
+      : {}),
+    ...(executionMode === "agentic" ? buildNotionMcpConfig() : {}),
+    ...(usesQmdMcp(executionMode) ? buildQmdMcpConfig({ sidecarRoot }) : {}),
+  };
+  const apiKey = readApiKey("claude");
+  const env = {
+    ...process.env,
+  };
+  if (hasClaudeLocalSession()) {
+    delete env.ANTHROPIC_API_KEY;
+  } else if (apiKey) {
+    env.ANTHROPIC_API_KEY = apiKey;
+  }
+
+  const options = {
+    model: model || undefined,
+    pathToClaudeCodeExecutable: cliPath,
+    executable: process.execPath,
+    env,
+    cwd: workspaceRoot,
+    mcpServers,
+    maxTurns: 24,
+    includePartialMessages: true,
+    canUseTool: buildClaudeCanUseTool({
+      sessionId: sessionIdForMcp,
+      onRunEvent,
+    }),
+    toolConfig: {
+      askUserQuestion: { previewFormat: "markdown" },
+    },
+    systemPrompt: {
+      type: "preset",
+      preset: "claude_code",
+      append: systemPromptText,
+    },
+    abortController,
+  };
+  const petHooks = buildClaudePetHooks(onPetHookEvent, sessionIdForMcp);
+  if (petHooks) {
+    options.hooks = petHooks;
+  }
+
+  if (allowsToolExecution(executionMode)) {
+    options.allowDangerouslySkipPermissions = true;
+    options.permissionMode = "bypassPermissions";
+  }
+
+  if (executionMode === "fast_chat" && sessionRuntime?.claudeSessionId) {
+    options.resume = sessionRuntime.claudeSessionId;
+  } else if (executionMode !== "fast_chat") {
+    const knownSessions = await listSessions().catch(() => []);
+    const matchingSession = knownSessions.find(
+      (item) => item.sessionId === sessionRuntime?.claudeSessionId,
+    );
+    if (matchingSession) {
+      options.resume = sessionRuntime.claudeSessionId;
+      options.cwd = matchingSession.cwd;
+    }
+  }
+
+  const stream = query({
+    prompt,
+    options,
+  });
+  onRunEvent?.({ phase: "provider.claude.stream_created" });
+
+  for await (const event of stream) {
+    onRunEvent?.({ phase: "provider.claude.first_event", once: true, eventType: event.type });
+    if (event.type === "system" && event.subtype === "init") {
+      runtime = {
+        ...runtime,
+        claudeSessionId: event.session_id,
+      };
+      onRuntimeUpdate?.(runtime);
+      continue;
+    }
+
+    if (event.type === "stream_event") {
+      const partialText = extractClaudePartialText(event.event);
+      if (partialText) {
+        sawPartialText = true;
+        onRunEvent?.({ phase: "provider.claude.first_text", once: true });
+        onTextDelta?.(partialText);
+      }
+      const toolProgress = extractClaudePartialToolEvent(event.event);
+      if (toolProgress) {
+        onToolEvent?.(toolProgress);
+      }
+      continue;
+    }
+
+    if (event.type === "assistant" && event.message?.content) {
+      for (const content of event.message.content) {
+        if (content.type === "text" && content.text) {
+          onRunEvent?.({ phase: "provider.claude.first_text", once: true });
+          if (!sawPartialText) {
+            onTextDelta?.(content.text);
+          }
+        } else if (content.type === "tool_use") {
+          onToolEvent?.({
+            phase: "use",
+            toolName: content.name,
+            toolCallKey: content.id ?? content.name,
+            payload: content.input ?? {},
+          });
+        } else if (content.type === "thinking") {
+          onToolEvent?.({
+            phase: "thinking",
+            toolName: "reasoning",
+            payload: { text: content.thinking },
+          });
+        }
+      }
+    }
+
+    if (event.type === "result") {
+      runtime = {
+        ...runtime,
+        claudeSessionId: event.session_id || runtime.claudeSessionId,
+      };
+      onRuntimeUpdate?.(runtime);
+      onRunEvent?.({
+        phase: "provider.claude.result",
+        subtype: event.subtype,
+        durationMs: event.duration_ms,
+        apiDurationMs: event.duration_api_ms,
+        turns: event.num_turns,
+        costUsd: event.total_cost_usd,
+      });
+      if (event.subtype === "success") {
+        onTextReplace?.(event.result ?? "");
+      } else {
+        throw new Error((event.errors ?? []).join("; ") || event.stop_reason || "Claude Agent SDK run failed.");
+      }
+      continue;
+    }
+
+    if (event.type === "user" && event.message?.content && typeof event.message.content !== "string") {
+      for (const content of event.message.content) {
+        if (content.type === "tool_result") {
+          onToolEvent?.({
+            phase: "result",
+            toolName: content.tool_use_id,
+            toolCallKey: content.tool_use_id,
+            payload: content.content,
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    runtime,
+  };
+}
+
+function buildClaudeCanUseTool({ sessionId, onRunEvent }) {
+  return async (toolName, input, context = {}) => {
+    if (toolName !== "AskUserQuestion") {
+      return { behavior: "allow", updatedInput: input };
+    }
+    if (!sessionId) {
+      return {
+        behavior: "deny",
+        message: "Host app session is not available for AskUserQuestion.",
+      };
+    }
+
+    const questions = normalizeClaudeQuestions(input?.questions);
+    if (questions.length === 0) {
+      return {
+        behavior: "deny",
+        message: "AskUserQuestion did not include valid questions.",
+      };
+    }
+
+    const request = await createUserInputRequest(appSupportPath, {
+      sessionId,
+      toolName,
+      title: context.title || input?.title || "Claude needs input",
+      questions,
+    });
+    onRunEvent?.({
+      phase: "provider.claude.awaiting_user_input",
+      toolName,
+      requestId: request.requestId,
+      questionCount: questions.length,
+    });
+
+    try {
+      const response = await waitForUserInputResponse(appSupportPath, {
+        sessionId,
+        requestId: request.requestId,
+        signal: context.signal,
+      });
+      onRunEvent?.({
+        phase: "provider.claude.user_input_received",
+        toolName,
+        requestId: request.requestId,
+      });
+      return {
+        behavior: "allow",
+        updatedInput: {
+          questions,
+          answers: response.answers ?? {},
+          annotations: response.annotations ?? {},
+        },
+      };
+    } finally {
+      await deleteUserInputArtifacts(appSupportPath, sessionId, request.requestId);
+    }
+  };
+}
+
+export function buildClaudePetHooks(onPetHookEvent, sessionIdForMcp) {
+  if (!onPetHookEvent) return undefined;
+  return createPetHooks(onPetHookEvent, { sessionId: sessionIdForMcp ?? null });
+}
+
+function normalizeClaudeQuestions(questions) {
+  if (!Array.isArray(questions)) return [];
+  return questions
+    .map((question) => ({
+      question: String(question?.question || "").trim(),
+      header: String(question?.header || "Question").trim().slice(0, 12) || "Question",
+      options: Array.isArray(question?.options)
+        ? question.options
+            .map((option) => ({
+              label: String(option?.label || "").trim(),
+              description: String(option?.description || "").trim(),
+              ...(option?.preview ? { preview: String(option.preview) } : {}),
+            }))
+            .filter((option) => option.label && option.description)
+            .slice(0, 4)
+        : [],
+      multiSelect: Boolean(question?.multiSelect),
+    }))
+    .filter((question) => question.question && question.options.length >= 2)
+    .slice(0, 4);
+}
+
+export function extractClaudePartialText(event) {
+  if (event?.type !== "content_block_delta") return "";
+  const delta = event.delta ?? {};
+  if (delta.type === "text_delta" && typeof delta.text === "string") {
+    return delta.text;
+  }
+  return "";
+}
+
+function extractClaudePartialToolEvent(event) {
+  if (event?.type === "content_block_start" && event.content_block?.type === "tool_use") {
+    const block = event.content_block;
+    return {
+      phase: "use",
+      toolName: block.name,
+      toolCallKey: block.id ?? block.name,
+      payload: block.input ?? {},
+    };
+  }
+  if (event?.type === "content_block_delta" && event.delta?.type === "thinking_delta") {
+    return {
+      phase: "thinking",
+      toolName: "reasoning",
+      payload: { text: event.delta.thinking },
+    };
+  }
+  if (event?.type === "content_block_delta" && event.delta?.type === "input_json_delta") {
+    return {
+      phase: "input_delta",
+      toolName: "tool_input",
+      toolCallKey: String(event.index ?? "tool_input"),
+      payload: { partialJson: event.delta.partial_json },
+    };
+  }
+  return null;
+}
+
+async function runCodexProvider(args) {
+  const MAX_ATTEMPTS = 2;
+  let attempt = 0;
+  let runtime = { ...(args.sessionRuntime ?? {}) };
+
+  while (true) {
+    attempt += 1;
+    try {
+      return await runCodexAttempt({ ...args, sessionRuntime: runtime });
+    } catch (error) {
+      if (args.abortController?.signal?.aborted || error?.name === "AbortError") {
+        throw error;
+      }
+      const hadResumedThread = Boolean(runtime.codexThreadId);
+      const shouldResetAndRetry =
+        attempt < MAX_ATTEMPTS
+        && hadResumedThread
+        && isCodexRecoverableThreadResumeError(error);
+      if (!shouldResetAndRetry) {
+        throw error;
+      }
+      runtime = { ...runtime, codexThreadId: null };
+      args.onRuntimeUpdate?.(runtime);
+      args.onTextReplace?.(
+        "이전 Codex 스레드를 이어갈 수 없어 새 스레드로 다시 시도합니다…",
+      );
+    }
+  }
+}
+
+export function isCodexRecoverableThreadResumeError(error) {
+  const message = String(error?.message ?? error ?? "").toLowerCase();
+  return (
+    isCodexContextOverflowError(error)
+    || message.includes("thread/resume failed: no rollout found")
+    || message.includes("no rollout found for thread id")
+  );
+}
+
+export function isCodexContextOverflowError(error) {
+  const message = String(error?.message ?? error ?? "").toLowerCase();
+  if (!message) return false;
+  return (
+    message.includes("ran out of room")
+    || message.includes("context window")
+    || message.includes("context_length_exceeded")
+  );
+}
+
+async function runCodexAttempt({
+  sessionRuntime,
+  prompt,
+  model,
+  workspaceRoot,
+  abortController,
+  sessionIdForMcp,
+  executionMode,
+  systemPromptOverride,
+  onTextDelta,
+  onTextReplace,
+  onToolEvent,
+  onRuntimeUpdate,
+  onRunEvent,
+}) {
+  let runtime = { ...sessionRuntime };
+  onRunEvent?.({ phase: "provider.codex.prepare_start" });
+  const systemPromptText = buildSystemPromptText({
+    provider: "codex",
+    workspaceRoot,
+    executionMode,
+    systemPromptOverride,
+  });
+  const apiKey = readApiKey("codex");
+  const codexOptions = {
+    codexPathOverride: resolveCodexBinaryPath(),
+    env: buildCodexEnv(),
+    config: buildCodexConfig({
+      systemPromptText,
+      executionMode,
+      sessionIdForMcp,
+      workspaceRoot,
+    }),
+  };
+  onRunEvent?.({ phase: "provider.codex.config_built" });
+  if (apiKey) {
+    codexOptions.apiKey = apiKey;
+  }
+  const codex = new Codex(codexOptions);
+  const resolvedModel = resolveCodexModel(model);
+  onRunEvent?.({ phase: "provider.codex.client_created", model: resolvedModel });
+
+  const threadOptions = {
+    model: resolvedModel,
+    skipGitRepoCheck: true,
+    workingDirectory: workspaceRoot,
+    webSearchEnabled: executionMode === "agentic",
+    sandboxMode: executionMode === "agentic" ? "danger-full-access" : "read-only",
+    approvalPolicy: "never",
+    modelReasoningEffort: resolveCodexReasoningEffort({ executionMode, prompt }),
+  };
+
+  const resumableThreadId = shouldResumeCodexThread(sessionRuntime, workspaceRoot, executionMode)
+    ? sessionRuntime.codexThreadId
+    : null;
+  const thread = resumableThreadId
+    ? codex.resumeThread(resumableThreadId, threadOptions)
+    : codex.startThread(threadOptions);
+  onRunEvent?.({
+    phase: "provider.codex.thread_ready",
+    resumed: Boolean(resumableThreadId),
+    executionMode,
+    reasoningEffort: threadOptions.modelReasoningEffort,
+  });
+
+  onRunEvent?.({ phase: "provider.codex.run_streamed_call_start" });
+  const { events } = await thread.runStreamed(prompt, {
+    signal: abortController.signal,
+  });
+  onRunEvent?.({ phase: "provider.codex.stream_opened", promptChars: String(prompt || "").length });
+
+  for await (const event of events) {
+    onRunEvent?.({ phase: "provider.codex.first_event", once: true, eventType: event.type });
+    if (event.type === "thread.started") {
+      onRunEvent?.({ phase: "provider.codex.event.thread_started" });
+      runtime = {
+        ...runtime,
+        codexThreadId: event.thread_id,
+        codexThreadMeta: {
+          codexHome: codexHomePath,
+          workspaceRoot,
+          model: resolvedModel,
+          executionMode,
+          createdAt: runtime.codexThreadMeta?.createdAt || new Date().toISOString(),
+          lastValidatedAt: new Date().toISOString(),
+        },
+      };
+      onRuntimeUpdate?.(runtime);
+      continue;
+    }
+
+    if (event.type === "turn.started") {
+      onRunEvent?.({ phase: "provider.codex.event.turn_started" });
+      onRunEvent?.({ phase: "provider.codex.turn_started" });
+      continue;
+    }
+
+    if (event.type === "item.started" && event.item?.type === "agent_message" && event.item.text) {
+      onRunEvent?.({
+        phase: "provider.codex.event.item_started_agent_message",
+        textLength: event.item.text.length,
+      });
+      onRunEvent?.({ phase: "provider.codex.first_text", once: true });
+      onTextReplace?.(event.item.text);
+      continue;
+    }
+
+    if (event.type === "item.started") {
+      onRunEvent?.({
+        phase: "provider.codex.event.item_started",
+        itemType: event.item?.type || "unknown",
+      });
+      const toolEvent = mapCodexItemToToolEvent(event.item, "started");
+      if (toolEvent) {
+        onToolEvent?.(toolEvent);
+      }
+      continue;
+    }
+
+    if (event.type === "item.updated") {
+      const item = event.item;
+      if (item?.type === "agent_message") {
+        onRunEvent?.({
+          phase: "provider.codex.event.item_updated_agent_message",
+          textLength: String(item.text || "").length,
+        });
+        onRunEvent?.({ phase: "provider.codex.first_text", once: true });
+        onTextReplace?.(item.text ?? "");
+      } else {
+        onRunEvent?.({
+          phase: "provider.codex.event.item_updated",
+          itemType: item?.type || "unknown",
+        });
+        const toolEvent = mapCodexItemToToolEvent(item, "updated");
+        if (toolEvent) {
+          onToolEvent?.(toolEvent);
+        }
+      }
+      continue;
+    }
+
+    if (event.type === "item.completed") {
+      const item = event.item;
+      if (item.type === "agent_message") {
+        onRunEvent?.({
+          phase: "provider.codex.event.item_completed_agent_message",
+          textLength: String(item.text || "").length,
+        });
+        onRunEvent?.({ phase: "provider.codex.final_message" });
+        onTextReplace?.(item.text ?? "");
+      } else {
+        onRunEvent?.({
+          phase: "provider.codex.event.item_completed",
+          itemType: item?.type || "unknown",
+        });
+        const toolEvent = mapCodexItemToToolEvent(item, "completed");
+        if (toolEvent) {
+          onToolEvent?.(toolEvent);
+        }
+      }
+      continue;
+    }
+
+    if (event.type === "turn.completed") {
+      onRunEvent?.({ phase: "provider.codex.event.turn_completed" });
+      onRunEvent?.({
+        phase: "provider.codex.turn_completed",
+        usage: event.usage,
+      });
+      onToolEvent?.({
+        phase: "usage",
+        toolName: "codex",
+        payload: event.usage,
+      });
+      continue;
+    }
+
+    if (event.type === "turn.failed") {
+      throw new Error(event.error?.message || "Codex SDK turn failed.");
+    }
+
+    if (event.type === "error") {
+      throw new Error(event.message);
+    }
+  }
+
+  return {
+    runtime,
+  };
+}
+
+export function shouldResumeCodexThread(sessionRuntime = {}, workspaceRoot = "", executionMode = "") {
+  if (!sessionRuntime?.codexThreadId) return false;
+  const meta = sessionRuntime.codexThreadMeta || {};
+  return meta.codexHome === codexHomePath
+    && meta.workspaceRoot === workspaceRoot
+    && (!executionMode || meta.executionMode === executionMode);
+}
+
+export function mapCodexItemToToolEvent(item, lifecycle) {
+  if (!item) return null;
+  if (item.type === "reasoning") {
+    return {
+      phase: "thinking",
+      toolName: "reasoning",
+      toolCallKey: item.id ?? "reasoning",
+      payload: { text: item.text },
+    };
+  }
+  if (item.type === "mcp_tool_call") {
+    const terminalPhase = item.status === "failed" ? "error" : "result";
+    return {
+      phase: lifecycle === "completed" ? terminalPhase : "use",
+      toolName: item.tool,
+      toolCallKey: item.id ?? item.tool,
+      payload: lifecycle === "completed"
+        ? item.status === "failed"
+          ? item.error?.message
+          : item.result?.content ?? item.result
+        : item.arguments ?? {},
+    };
+  }
+  if (item.type === "command_execution") {
+    const terminalPhase = item.status === "failed" ? "error" : "result";
+    return {
+      phase: lifecycle === "completed" ? terminalPhase : "use",
+      toolName: "Bash",
+      toolCallKey: item.id ?? "bash",
+      payload: lifecycle === "completed"
+        ? {
+            command: item.command,
+            output: item.aggregated_output,
+            exitCode: item.exit_code,
+          }
+        : {
+            command: item.command,
+            output: item.aggregated_output,
+          },
+    };
+  }
+  if (item.type === "web_search") {
+    return {
+      phase: lifecycle === "completed" ? "result" : "use",
+      toolName: "WebSearch",
+      toolCallKey: item.id ?? "web_search",
+      payload: { query: item.query },
+    };
+  }
+  if (item.type === "file_change") {
+    return {
+      phase: item.status === "failed" ? "error" : lifecycle === "completed" ? "result" : "use",
+      toolName: "FileChange",
+      toolCallKey: item.id ?? "file_change",
+      payload: {
+        status: item.status,
+        changes: item.changes ?? [],
+      },
+    };
+  }
+  if (item.type === "todo_list") {
+    return {
+      phase: lifecycle === "completed" ? "result" : "progress",
+      toolName: "TodoList",
+      toolCallKey: item.id ?? "todo_list",
+      payload: { items: item.items ?? [] },
+    };
+  }
+  if (item.type === "error") {
+    return {
+      phase: "error",
+      toolName: "codex",
+      toolCallKey: item.id ?? "error",
+      payload: item.message,
+    };
+  }
+  return null;
+}
+
+export function buildCodexConfig({
+  systemPromptText,
+  executionMode,
+  sessionIdForMcp,
+  workspaceRoot,
+}) {
+  return {
+    developer_instructions: systemPromptText,
+    notify: [],
+    features: {
+      computer_use: false,
+    },
+    mcp_servers: {
+      ...(usesInternalMcp(executionMode) && sessionIdForMcp
+        ? {
+            [internalMcpServerName]: buildMcpConfig(sessionIdForMcp, workspaceRoot),
+          }
+        : {}),
+      ...(executionMode === "agentic" ? buildNotionMcpConfig() : {}),
+      ...(usesQmdMcp(executionMode) ? buildQmdMcpConfig({ sidecarRoot }) : {}),
+    },
+  };
+}
+
+export function buildCodexEnv(baseEnv = process.env) {
+  ensureIsolatedCodexHome();
+  const env = {
+    PATH: baseEnv.PATH || "/usr/bin:/bin:/usr/sbin:/sbin",
+    HOME: baseEnv.HOME || os.homedir(),
+    TMPDIR: baseEnv.TMPDIR || os.tmpdir(),
+    LANG: baseEnv.LANG || "en_US.UTF-8",
+    LC_ALL: baseEnv.LC_ALL,
+    SHELL: baseEnv.SHELL,
+    TERM: baseEnv.TERM,
+    CODEX_HOME: codexHomePath,
+    AGENTIC30_SIDECAR_ROOT: sidecarRoot,
+    AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+    AGENTIC30_CODEX_MODEL: baseEnv.AGENTIC30_CODEX_MODEL,
+    CODEX_MODEL: baseEnv.CODEX_MODEL,
+    OPENAI_MODEL: baseEnv.OPENAI_MODEL,
+    AGENTIC30_CODEX_REASONING_EFFORT: baseEnv.AGENTIC30_CODEX_REASONING_EFFORT,
+    CODEX_REASONING_EFFORT: baseEnv.CODEX_REASONING_EFFORT,
+    MODEL_REASONING_EFFORT: baseEnv.MODEL_REASONING_EFFORT,
+  };
+  if (baseEnv.CODEX_API_KEY) env.CODEX_API_KEY = baseEnv.CODEX_API_KEY;
+  if (baseEnv.OPENAI_API_KEY) env.OPENAI_API_KEY = baseEnv.OPENAI_API_KEY;
+  for (const key of Object.keys(env)) {
+    if (env[key] === undefined || env[key] === "") {
+      delete env[key];
+    }
+  }
+  return env;
+}
+
+function ensureIsolatedCodexHome() {
+  try {
+    fsSync.mkdirSync(codexHomePath, { recursive: true });
+    const configPath = path.join(codexHomePath, "config.toml");
+    if (!fsSync.existsSync(configPath)) {
+      fsSync.writeFileSync(
+        configPath,
+        [
+          "# Managed by agentic30. Do not read ~/.codex/config.toml from sidecar runs.",
+          "notify = []",
+          "",
+          "[features]",
+          "computer_use = false",
+          "",
+          "[mcp_servers]",
+          "",
+        ].join("\n"),
+      );
+    }
+    syncCodexAuthIntoIsolatedHome();
+  } catch {
+    // Codex can still run with SDK-provided API keys if local auth mirroring fails.
+  }
+}
+
+function syncCodexAuthIntoIsolatedHome() {
+  const source = path.join(os.homedir(), ".codex", "auth.json");
+  const target = path.join(codexHomePath, "auth.json");
+  if (!fsSync.existsSync(source)) {
+    return;
+  }
+  try {
+    const sourceStat = fsSync.statSync(source);
+    const targetStat = fsSync.existsSync(target) ? fsSync.statSync(target) : null;
+    if (targetStat && targetStat.mtimeMs >= sourceStat.mtimeMs && targetStat.size === sourceStat.size) {
+      return;
+    }
+    fsSync.copyFileSync(source, target);
+    fsSync.chmodSync(target, 0o600);
+  } catch {
+    // Local Codex auth is optional when API keys are configured.
+  }
+}
+
+export function resolveCodexModel(model = "") {
+  return String(
+    model
+      || process.env.AGENTIC30_CODEX_MODEL
+      || process.env.CODEX_MODEL
+      || process.env.OPENAI_MODEL
+      || DEFAULT_CODEX_MODEL,
+  ).trim();
+}
+
+export function resolveCodexReasoningEffort({ executionMode = "", prompt = "" } = {}) {
+  const configured = String(
+    process.env.AGENTIC30_CODEX_REASONING_EFFORT
+      || process.env.CODEX_REASONING_EFFORT
+      || process.env.MODEL_REASONING_EFFORT
+      || "",
+  ).trim();
+  if (CODEX_REASONING_EFFORTS.has(configured)) {
+    return configured;
+  }
+  const text = String(prompt || "").toLowerCase();
+  const hasDeepWorkSignal = /debug|diagnos|root cause|investigate|analy[sz]e|implement|refactor|architecture|security|test|failure|failing|broken|복잡|분석|구현|리팩터|테스트|장애|오류|보안/.test(text);
+  const hasLightWorkSignal = /quick|brief|summari[sz]e|간단|짧게|요약/.test(text);
+
+  if (executionMode === "fast_chat") {
+    return hasDeepWorkSignal ? "medium" : "low";
+  }
+  if (executionMode === "isolated_read_only") {
+    return hasDeepWorkSignal ? "medium" : "low";
+  }
+  if (executionMode === "memory_chat") {
+    return hasDeepWorkSignal ? "high" : "medium";
+  }
+  if (executionMode === "bip_coach_read_only") {
+    return hasLightWorkSignal ? "high" : "xhigh";
+  }
+  if (executionMode === "agentic") {
+    return hasLightWorkSignal && !hasDeepWorkSignal ? "medium" : "high";
+  }
+  return hasDeepWorkSignal ? "high" : "medium";
+}
+
+function buildStubResponse(prompt) {
+  const contexts = extractStubContextFiles(prompt);
+  const value = String(prompt || "");
+  if (/ICP\.md 문서 어디에 있어\?/i.test(value) && value.includes("ICP doc: docs/ICP.md")) {
+    return "`ICP.md`는 현재 BIP 설정 기준으로 `docs/ICP.md`에 있습니다.";
+  }
+  if ((value.includes("### ICP: docs/ICP.md") || value.includes("DAY1_ICP_TURN")) && /Day\s*1|Day 1|1일차/i.test(value)) {
+    return [
+      "ICP.md 확인: 전업 1인 개발자, 수익 0원, macOS, 고객 인터뷰 의향이 있는 사용자로 가정했습니다.",
+      "Day 1 응답: builder-state 진단을 먼저 하고, 기존 자산이 있으면 blank-slate discovery 대신 fast path로 SPEC.md v0 proof baseline과 다음 proof target을 정합니다.",
+    ].join("\n");
+  }
+
+  if (!contexts.length) {
+    const preview = value.trim().slice(0, 120) || "테스트 프롬프트";
+    return `테스트 응답: ${preview} 확인했습니다.`;
+  }
+
+  const primary = contexts[0];
+  return JSON.stringify({
+    message: `Stub edit prepared for ${primary.displayName}`,
+    edits: [
+      {
+        fileId: primary.fileId,
+        content: `${primary.content}\n\n<!-- Stub ACP edit -->\n`,
+      },
+    ],
+  });
+}
+
+function extractStubContextFiles(prompt) {
+  const results = [];
+  const matcher = /<<FILE_ID:(.+?)>>\nDisplay name: (.+?)\n([\s\S]*?)\n<<END_FILE>>/g;
+  let match = matcher.exec(prompt);
+  while (match) {
+    results.push({
+      fileId: match[1].trim(),
+      displayName: match[2].trim(),
+      content: match[3],
+    });
+    match = matcher.exec(prompt);
+  }
+  return results;
+}
+
+async function runTextOnlyProvider({
+  provider,
+  prompt,
+  model,
+  abortController,
+  onTextReplace,
+}) {
+  if (provider === "claude") {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      throw new Error("ACP Claude mode requires ANTHROPIC_API_KEY.");
+    }
+
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: model || process.env.ANTHROPIC_MODEL || "claude-3-7-sonnet-latest",
+        max_tokens: 4000,
+        messages: [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+      }),
+      signal: abortController.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Anthropic API request failed with ${response.status}.`);
+    }
+
+    const payload = await response.json();
+    const text = Array.isArray(payload?.content)
+      ? payload.content
+          .filter((item) => item?.type === "text" && typeof item.text === "string")
+          .map((item) => item.text)
+          .join("")
+      : "";
+
+    onTextReplace?.(text);
+    return;
+  }
+
+  const apiKey = process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error("ACP Codex mode requires CODEX_API_KEY or OPENAI_API_KEY.");
+  }
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: model || process.env.OPENAI_MODEL || DEFAULT_CODEX_MODEL,
+      input: prompt,
+    }),
+    signal: abortController.signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(`OpenAI API request failed with ${response.status}.`);
+  }
+
+  const payload = await response.json();
+  const text =
+    payload?.output_text ||
+    payload?.output
+      ?.flatMap((entry) => entry?.content || [])
+      ?.filter((item) => item?.type === "output_text" && typeof item.text === "string")
+      ?.map((item) => item.text)
+      ?.join("") ||
+    "";
+
+  onTextReplace?.(text);
+}
+
+export function resolveCodexBinaryPath() {
+  const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
+  const platform =
+    process.platform === "darwin"
+      ? "apple-darwin"
+      : process.platform === "win32"
+        ? "pc-windows-msvc"
+        : "unknown-linux-musl";
+  const binary = process.platform === "win32" ? "codex.exe" : "codex";
+  const targetTriple = `${arch}-${platform}`;
+  const platformPackage = resolveCodexPlatformPackageName(targetTriple);
+  const packageRoots = [
+    platformPackage ? resolveInstalledPackageRoot("@openai", platformPackage) : null,
+    resolveInstalledPackageRoot("@openai", "codex"),
+    resolveInstalledPackageRoot("@openai", "codex-sdk"),
+  ].filter(Boolean);
+
+  for (const packageRoot of packageRoots) {
+    const candidate = path.join(packageRoot, "vendor", targetTriple, "codex", binary);
+    if (fsSync.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return path.join(packageRoots[0], "vendor", targetTriple, "codex", binary);
+}
+
+function resolveCodexPlatformPackageName(targetTriple) {
+  switch (targetTriple) {
+    case "aarch64-apple-darwin":
+      return "codex-darwin-arm64";
+    case "x86_64-apple-darwin":
+      return "codex-darwin-x64";
+    case "aarch64-unknown-linux-musl":
+      return "codex-linux-arm64";
+    case "x86_64-unknown-linux-musl":
+      return "codex-linux-x64";
+    case "aarch64-pc-windows-msvc":
+      return "codex-win32-arm64";
+    case "x86_64-pc-windows-msvc":
+      return "codex-win32-x64";
+    default:
+      return null;
+  }
+}
+
+function resolveInstalledPackageRoot(...segments) {
+  const bundledPath = path.resolve(sidecarRoot, "node_modules", ...segments);
+  if (fsSync.existsSync(bundledPath)) {
+    return bundledPath;
+  }
+  return path.resolve(sidecarRoot, "..", "node_modules", ...segments);
+}
+
+function buildMcpConfig(sessionId, workspaceRoot) {
+  return {
+    command: process.execPath,
+    args: [path.join(sidecarRoot, "mcp-server.mjs"), "--session", sessionId, "--workspace", workspaceRoot],
+    env: {
+      ...buildAuthEnv(),
+      AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+    },
+  };
+}
+
+function readApiKey(provider) {
+  if (provider === "claude") {
+    return process.env.ANTHROPIC_API_KEY || "";
+  }
+  return process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY || "";
+}
+
+function hasClaudeLocalSession() {
+  const payload = readJsonFile(path.join(os.homedir(), ".claude.json"));
+  return Boolean(payload?.oauthAccount);
+}
+
+function hasCodexLocalSession() {
+  const payload = readJsonFile(path.join(os.homedir(), ".codex", "auth.json"));
+  return Boolean(payload?.tokens || payload?.auth_mode || payload?.OPENAI_API_KEY);
+}
+
+function readJsonFile(filePath) {
+  try {
+    if (!fsSync.existsSync(filePath)) {
+      return null;
+    }
+    return JSON.parse(fsSync.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+async function ensureNotionToken() {
+  return readJsonFile(notionConfigPath)?.oauth?.accessToken ?? null;
+}
+
+function buildNotionMcpConfig() {
+  const config = readJsonFile(notionConfigPath);
+  if (!config?.enabled || !config?.oauth?.accessToken) return {};
+  return {
+    notion: {
+      type: "http",
+      url: "https://mcp.notion.com/mcp",
+      headers: {
+        Authorization: `Bearer ${config.oauth.accessToken}`,
+      },
+    },
+  };
+}
+
+function baseSystemPrompt(provider, workspaceRoot, executionMode) {
+  if (executionMode === "fast_chat") {
+    return [
+      "You are the sidecar chat engine for agentic30.",
+      "Reply in concise conversational prose.",
+      "Default to Korean (한국어) unless the user explicitly asks for another language.",
+      `Current workspace: ${workspaceRoot}`,
+      `Provider mode: ${provider}`,
+      "This is a fast chat lane. Do not use tools, workspace inspection, web search, QMD, Notion, or BIP document retrieval.",
+    ].join("\n");
+  }
+
+  const lines = [
+    "You are the sidecar reasoning engine for agentic30.",
+    "Reply in concise conversational prose suitable for the host client surface.",
+    "Default to Korean (한국어) for all assistant prose unless the user explicitly asks for another language.",
+    `Current workspace: ${workspaceRoot}`,
+    `Provider mode: ${provider}`,
+    "Use the agentic30 MCP server when you need app context or safe workspace inspection.",
+    provider === "claude"
+      ? "When you need the user's decision or missing information, use the built-in AskUserQuestion tool instead of asking in plain text."
+      : "When you need the user's decision or missing information, call the request_user_input MCP tool instead of asking in plain text.",
+    "Prefer a single focused question with 2-3 options. Enable free text only when choices are not enough.",
+    "If the task genuinely needs multiple independent questions, keep it to at most 4.",
+    "",
+    buildOctoberAdvisorGuidance(),
+  ];
+
+  if (executionMode === "isolated_read_only") {
+    lines.push("Do not use shell tools, filesystem tools, or web search. Work only from the prompt content you were given.");
+  } else if (executionMode === "bip_coach_read_only") {
+    lines.push("Use only read-only tools needed for the BIP Coach mission: agentic30_sidecar gws_sheets_read/gws_docs_read first, or read-only gws CLI as a fallback.");
+    lines.push("Do not write files, edit Google Docs/Sheets, send messages, or browse the web in BIP Coach mode.");
+  }
+
+  const bipConfig = readJsonFile(path.join(appSupportPath, "bip-config.json"));
+  if (bipConfig?.workspace?.root) {
+    lines.push("");
+    lines.push("## BIP (Build In Public) Context");
+    lines.push(`Project workspace: ${bipConfig.workspace.root}`);
+    if (bipConfig.workspace.icp) lines.push(`ICP doc: ${bipConfig.workspace.icp}`);
+    if (bipConfig.workspace.spec) lines.push(`SPEC doc: ${bipConfig.workspace.spec}`);
+    if (bipConfig.workspace.values) lines.push(`VALUES doc: ${bipConfig.workspace.values}`);
+    if (bipConfig.workspace.designSystem) lines.push(`Design System docs: ${bipConfig.workspace.designSystem}`);
+    if (bipConfig.workspace.adr) lines.push(`ADR docs: ${bipConfig.workspace.adr}`);
+    if (bipConfig.workspace.goal) lines.push(`Goal doc: ${bipConfig.workspace.goal}`);
+    lines.push("Use QMD retrieval or BIP MCP tools to refresh or inspect project documents when needed.");
+  }
+
+  const notionConfig = readJsonFile(notionConfigPath);
+  if (executionMode === "agentic" && notionConfig?.enabled) {
+    lines.push("");
+    lines.push("## Notion Integration");
+    lines.push("The official Notion MCP server is connected.");
+  }
+
+  const qmdGuidance = buildQmdGuidance(workspaceRoot, { appSupportPath, sidecarRoot });
+  if (qmdGuidance) {
+    lines.push("");
+    lines.push(qmdGuidance);
+  }
+
+  return lines.join("\n");
+}
+
+function buildSystemPromptText({
+  provider,
+  workspaceRoot,
+  executionMode,
+  systemPromptOverride = "",
+}) {
+  const base = baseSystemPrompt(provider, workspaceRoot, executionMode);
+  return systemPromptOverride ? [base, systemPromptOverride].join("\n\n") : base;
+}
+
+function allowsToolExecution(executionMode = "") {
+  return executionMode === "agentic" || executionMode === "memory_chat" || executionMode === "bip_coach_read_only";
+}
+
+function usesInternalMcp(executionMode = "") {
+  return executionMode === "agentic" || executionMode === "memory_chat" || executionMode === "bip_coach_read_only";
+}
+
+function usesQmdMcp(executionMode = "") {
+  return executionMode === "agentic" || executionMode === "memory_chat";
+}
+
+function buildOctoberAdvisorGuidance() {
+  return [
+    "## October-Style Advisor Identity",
+    "The assistant should reflect October's mentoring identity and values, learned from Agentic30 strategy docs and meeting transcripts, without pretending to be October as a human.",
+    "Default stance: pragmatic, direct, warm enough to keep momentum, and grounded in the user's actual work history.",
+    "Core beliefs to apply:",
+    "- Constraint is skill: reduce scope before extending deadlines.",
+    "- Customer and evidence first: do not let building substitute for demand validation.",
+    "- Ship before polish: public feedback beats private perfection.",
+    "- Decide with numbers and concrete behavior, not compliments or vague encouragement.",
+    "- Solo does not mean isolated: push the user toward logs, mentor review, community feedback, and repeated practice.",
+    "- Avoid over-engineering early; choose the smallest deployment, process, or study plan that delivers value now.",
+    "- Build durable rhythm: daily notes, small commits, interview/mocking loops, and reviewable artifacts matter because they make progress visible.",
+    "Advice style:",
+    "- Start from a diagnosis of the user's current bottleneck.",
+    "- Give 1-3 next actions that can be done today or this week.",
+    "- Name one thing to stop doing or defer.",
+    "- If context is missing, ask one targeted question instead of giving generic advice.",
+    "- For career/interview coaching, ask for concrete past cases, pressure-test tradeoffs, and practice the back-and-forth rather than only listing theory.",
+    "- For product/startup coaching, force the user back to ICP, real customer conversations, landing/proof surfaces, acquisition, and paid signal.",
+    "- When the user wants to define a project, create strategy docs, or says they are unsure what to build, run an Office Hours-style interview before drafting. Do not invent a persona, market, values, or goals from thin air.",
+    "- For document creation, prefer the `/office-hours-docs` flow: interview first, then write `docs/ICP.md`, `docs/GOAL.md`, `docs/VALUES.md`, and `docs/SPEC.md`.",
+  ].join("\n");
+}
