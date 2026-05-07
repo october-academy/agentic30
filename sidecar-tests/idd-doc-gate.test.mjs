@@ -123,7 +123,8 @@ test("IDD prompt pins provider-specific structured input tool and one-document s
   const codexPrompt = buildIddDocumentPrompt(doc, { provider: "codex", workspaceRoot: "/workspace" });
   const claudePrompt = buildIddDocumentPrompt(doc, { provider: "claude", workspaceRoot: "/workspace" });
 
-  assert.match(codexPrompt, /request_user_input/);
+  assert.match(codexPrompt, /agentic30_request_user_input/);
+  assert.doesNotMatch(codexPrompt, /(^|[^A-Za-z0-9_])request_user_input([^A-Za-z0-9_]|$)/);
   assert.doesNotMatch(codexPrompt, /AskUserQuestionTool\(AskUserQuestion\)/);
   assert.match(claudePrompt, /AskUserQuestionTool\(AskUserQuestion\)/);
   assert.match(codexPrompt, /이 세션에서는 이 문서 하나만/);
@@ -136,9 +137,10 @@ test("IDD prompt routes choice-based interview questions through plan-style stru
 
   assert.match(prompt, /\/plan/);
   assert.match(prompt, /UI에서 클릭\/입력/);
-  assert.match(prompt, /일반 prose나 번호 목록으로 쓰지 말고 반드시 request_user_input/);
-  assert.match(prompt, /structured input tool unavailable/);
-  assert.match(prompt, /사용자에게 모드나 환경 전환을 요구하지 말고/);
+  assert.match(prompt, /일반 prose나 번호 목록으로 쓰지 말고 반드시 agentic30_request_user_input/);
+  assert.doesNotMatch(prompt, /(^|[^A-Za-z0-9_])request_user_input([^A-Za-z0-9_]|$)/);
+  assert.doesNotMatch(prompt, /structured input unavailable/);
+  assert.match(prompt, /같은 질문을 prose\/번호 목록으로 대신 출력하지 말고 중단/);
   assert.match(prompt, /이번 주에 가장 먼저 만나서 확인해볼 사람은 누구인가요/);
   assert.match(prompt, /이미 불편하게 해결하는 사람/);
   assert.match(prompt, /이미 돈이나 시간을 쓰는 사람/);
@@ -190,7 +192,7 @@ test("IDD adaptive interview rules apply to ICP, VALUES, GOAL, ADR, and DESIGN p
   }
 });
 
-test("Codex ICP IDD initial input is host-side request_user_input with clickable choices", () => {
+test("Codex ICP IDD initial input is host-side agentic30_request_user_input with clickable choices", () => {
   const doc = BIP_REQUIRED_LOCAL_DOCS.find((item) => item.type === "icp");
   const input = initialIddStructuredInputForDoc(doc, {
     provider: "codex",
@@ -204,7 +206,7 @@ test("Codex ICP IDD initial input is host-side request_user_input with clickable
     },
   });
 
-  assert.equal(input.toolName, "request_user_input");
+  assert.equal(input.toolName, "agentic30_request_user_input");
   assert.equal(input.title, "첫 사용자 확인");
   assert.equal(input.questions.length, 1);
   assert.equal(input.questions[0].allowFreeText, true);
@@ -218,6 +220,48 @@ test("Codex ICP IDD initial input is host-side request_user_input with clickable
   );
   assert.equal(input.questions[0].options.at(-1).nextIntent, "unknown_find_candidates");
   assert.equal(initialIddStructuredInputForDoc(doc, { provider: "claude" }), null);
+});
+
+test("Codex non-ICP IDD initial input is host-side to avoid provider tool fallback", () => {
+  const doc = BIP_REQUIRED_LOCAL_DOCS.find((item) => item.type === "sheet");
+  const input = initialIddStructuredInputForDoc(doc, { provider: "codex" });
+
+  assert.equal(input.toolName, "agentic30_request_user_input");
+  assert.equal(input.title, "공개 기록 기준 정하기");
+  assert.equal(input.questions.length, 1);
+  assert.equal(input.questions[0].allowFreeText, true);
+  assert.equal(input.questions[0].textMode, "short");
+  assert.equal(input.questions[0].header, "지금 막힌 지점을 먼저 봅니다");
+  assert.match(input.questions[0].helperText, /docs\/SHEET\.md/);
+  assert.match(input.questions[0].helperText, /공개 글의 기록 열/);
+  assert.match(input.questions[0].helperText, /답은 docs\/SHEET\.md에 저장/);
+  assert.match(input.questions[0].question, /공개 기록 기준에서 가장 먼저 해결해야 할 문제/);
+  assert.doesNotMatch(`${input.title}\n${input.questions[0].helperText}\n${input.questions[0].question}`, /IDD|BIP/);
+  assert.deepEqual(
+    input.questions[0].options.map((option) => option.nextIntent),
+    [
+      "document_current_workflow",
+      "document_nearest_action",
+      "document_failure_modes",
+      "document_unknown",
+    ],
+  );
+});
+
+test("Codex design-system initial input shows concrete visual examples", () => {
+  const doc = BIP_REQUIRED_LOCAL_DOCS.find((item) => item.type === "designSystem");
+  const input = initialIddStructuredInputForDoc(doc, { provider: "codex" });
+  const question = input.questions[0];
+  const descriptions = question.options.map((option) => option.description).join("\n");
+  const prompt = buildIddDocumentPrompt(doc, { provider: "codex", workspaceRoot: "/workspace" });
+
+  assert.equal(input.title, "화면 원칙 정하기");
+  assert.match(question.question, /화면 원칙에서 가장 먼저 해결해야 할 문제/);
+  assert.match(descriptions, /\[상단: 오늘 할 일\] -> \[본문: 질문\] -> \[하단: 다음 행동\]/);
+  assert.match(descriptions, /\[질문\]  \[선택 A\] \[선택 B\] \[직접 입력\]/);
+  assert.match(descriptions, /A: 업무형  B: 카드형  C: 대화형/);
+  assert.match(prompt, /design-shotgun/);
+  assert.match(prompt, /ASCII ART 와이어프레임/);
 });
 
 test("Codex ICP IDD initial input has a low-confidence fallback that does not require expertise", () => {
@@ -279,8 +323,9 @@ test("IDD continuation prompt carries structured response and prevents repeating
   assert.match(prompt, /어떤 근거가 있는지/);
   assert.match(prompt, /어떤 문서 실패가 생기는지/);
   assert.match(prompt, /대상 문서의 섹션, 결정, Open Risks, 다음 BIP 공개 글감/);
-  assert.match(prompt, /request_user_input 도구/);
-  assert.match(prompt, /structured input tool unavailable/);
+  assert.match(prompt, /agentic30_request_user_input MCP 도구/);
+  assert.doesNotMatch(prompt, /(^|[^A-Za-z0-9_])request_user_input([^A-Za-z0-9_]|$)/);
+  assert.doesNotMatch(prompt, /structured input unavailable/);
 });
 
 test("IDD document prompt embeds gstack pushback patterns, anti-sycophancy, and 5-point closing review", () => {

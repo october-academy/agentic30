@@ -16,6 +16,9 @@ import {
 import { fetchAuthenticatedAppContext } from "./auth-context.mjs";
 import { persistGwsReadToMemory } from "./gws-memory.mjs";
 import { requiredDocByType } from "./idd-doc-gate.mjs";
+import {
+  CODEX_STRUCTURED_INPUT_TOOL,
+} from "./structured-input-tools.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sidecarRoot = path.resolve(__dirname);
@@ -30,6 +33,7 @@ const appSupportPath = process.env.AGENTIC30_APP_SUPPORT_PATH
       "Application Support",
       "agentic30",
     );
+const approvedToolExecution = process.env.AGENTIC30_APPROVED_TOOL_EXECUTION === "1";
 
 const server = new McpServer({
   name: "agentic30",
@@ -94,8 +98,7 @@ server.tool(
                 "get_social_context",
                 ...(GWS_BIN
                   ? [
-                      "gws_exec",
-                      "gws_gmail_send",
+                      ...(approvedToolExecution ? ["gws_exec", "gws_gmail_send"] : []),
                       "gws_gmail_list",
                       "gws_gmail_read",
                       "gws_drive_list",
@@ -116,8 +119,8 @@ server.tool(
 );
 
 registerUserInputTool(
-  "request_user_input",
-  "Ask the host app for structured user input before continuing.",
+  CODEX_STRUCTURED_INPUT_TOOL,
+  "Ask the host app for structured user input before continuing. Use this tool from Codex sidecar sessions.",
 );
 registerUserInputTool(
   "AskUserQuestion",
@@ -453,6 +456,7 @@ if (GWS_BIN) {
 }
 
 function registerGwsTools() {
+if (approvedToolExecution) {
 server.tool(
   "gws_exec",
   "Run any Google Workspace CLI command. Pass the full argument list (e.g. ['gmail', '+send', '--to', 'user@example.com', '--subject', 'Hi', '--body', 'Hello']). Returns JSON output.",
@@ -487,6 +491,7 @@ server.tool(
     };
   },
 );
+}
 
 server.tool(
   "gws_gmail_list",

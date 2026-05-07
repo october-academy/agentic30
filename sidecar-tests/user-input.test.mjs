@@ -19,7 +19,7 @@ test("user input request lifecycle round-trips through request and response file
 
   const request = await createUserInputRequest(appSupportPath, {
     sessionId: "session-1",
-    toolName: "request_user_input",
+    toolName: "agentic30_request_user_input",
     title: "assistant needs a choice",
     questions: [
       {
@@ -39,6 +39,7 @@ test("user input request lifecycle round-trips through request and response file
   const requests = await listUserInputRequests(appSupportPath);
   assert.equal(requests.length, 1);
   assert.equal(requests[0].requestId, request.requestId);
+  assert.equal(requests[0].toolName, "agentic30_request_user_input");
 
   const waitPromise = waitForUserInputResponse(appSupportPath, {
     sessionId: "session-1",

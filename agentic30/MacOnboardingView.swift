@@ -5,15 +5,12 @@ struct MacOnboardingView: View {
     @ObservedObject var viewModel: AgenticViewModel
 
     @State private var sceneIndex = 0
-    @State private var acceptedTerms = false
     @State private var selectedWorkspaceURL: URL?
 
     private let scenes = MacOnboardingScene.all
 
     var body: some View {
-        if !(viewModel.macAuthSession?.isUsable ?? false) {
-            onboardingStage
-        } else if viewModel.needsProjectWorkspace {
+        if viewModel.needsProjectWorkspace {
             workspacePickerStage
         } else if viewModel.needsOnboardingContext {
             MacOnboardingContextView(viewModel: viewModel)
@@ -43,10 +40,6 @@ struct MacOnboardingView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                if currentScene.isSignIn {
-                    signInControls
-                }
-
                 Spacer(minLength: 0)
 
                 footerControls
@@ -64,7 +57,6 @@ struct MacOnboardingView: View {
                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.88), value: sceneIndex)
-        .animation(.easeInOut(duration: 0.18), value: viewModel.macOnboardingStatus)
     }
 
     private var workspacePickerStage: some View {
@@ -210,15 +202,6 @@ struct MacOnboardingView: View {
             case .integrations:
                 IntegrationIconRow()
                     .padding(.top, 12)
-            case .signIn:
-                ZStack(alignment: .bottomTrailing) {
-                    AssistantMark()
-                        .frame(width: 168, height: 136)
-                    Image(systemName: "sparkle")
-                        .font(.system(size: 34, weight: .bold))
-                        .foregroundStyle(Color(red: 1.0, green: 0.82, blue: 0.22))
-                        .offset(x: 42, y: 16)
-                }
             }
         }
         .clipped()
@@ -233,53 +216,6 @@ struct MacOnboardingView: View {
             }
         }
         .accessibilityLabel("Step \(sceneIndex + 1) of \(scenes.count)")
-    }
-
-    private var signInControls: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .top, spacing: 10) {
-                Button {
-                    acceptedTerms.toggle()
-                } label: {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .fill(acceptedTerms ? Color.white.opacity(0.9) : Color.white.opacity(0.08))
-                            .frame(width: 22, height: 22)
-                        if acceptedTerms {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(Color.black.opacity(0.86))
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("macOnboarding.termsCheckbox")
-                .accessibilityLabel(acceptedTerms ? "Terms accepted" : "Accept Terms and Privacy Policy")
-
-                HStack(spacing: 4) {
-                    Text("I agree to the")
-                    Button("Terms of Service") {
-                        openWebPath("terms")
-                    }
-                    .buttonStyle(.link)
-                    Text("and")
-                    Button("Privacy Policy") {
-                        openWebPath("privacy")
-                    }
-                    .buttonStyle(.link)
-                    Text(".")
-                }
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.72))
-            }
-
-            if case .failed(let message) = viewModel.macOnboardingStatus {
-                Text(message)
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(Color(red: 1.0, green: 0.38, blue: 0.38))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
     }
 
     private var footerControls: some View {
@@ -303,79 +239,40 @@ struct MacOnboardingView: View {
             Button {
                 primaryAction()
             } label: {
-                HStack(spacing: 10) {
-                    if isBusy {
-                        ProgressView()
-                            .controlSize(.small)
-                            .tint(.black.opacity(0.74))
-                    } else if currentScene.isSignIn {
-                        Text("G")
-                            .font(.system(size: 17, weight: .black, design: .rounded))
-                            .foregroundStyle(Color(red: 0.24, green: 0.49, blue: 0.96))
-                    }
-                    Text(primaryButtonTitle)
-                }
+                Text("Next")
                 .font(.system(size: 16, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.black.opacity(primaryButtonEnabled ? 0.86 : 0.36))
+                .foregroundStyle(Color.black.opacity(0.86))
                 .padding(.horizontal, 28)
                 .padding(.vertical, 14)
                 .background(
                     Capsule()
-                        .fill(Color.white.opacity(primaryButtonEnabled ? 0.96 : 0.34))
+                        .fill(Color.white.opacity(0.96))
                 )
             }
             .buttonStyle(.plain)
-            .disabled(!primaryButtonEnabled)
             .accessibilityIdentifier("macOnboarding.primaryButton")
-            .accessibilityLabel(primaryButtonTitle)
+            .accessibilityLabel("Next")
         }
-    }
-
-    private var isBusy: Bool {
-        switch viewModel.macOnboardingStatus {
-        case .signingIn, .exchanging, .refreshing:
-            return true
-        case .idle, .failed:
-            return false
-        }
-    }
-
-    private var primaryButtonEnabled: Bool {
-        if isBusy { return false }
-        if currentScene.isSignIn { return acceptedTerms }
-        return true
-    }
-
-    private var primaryButtonTitle: String {
-        if currentScene.isSignIn {
-            switch viewModel.macOnboardingStatus {
-            case .signingIn:
-                return "Opening Google"
-            case .exchanging:
-                return "Completing sign in"
-            case .refreshing:
-                return "Refreshing"
-            case .idle, .failed:
-                return "Sign in with Google"
-            }
-        }
-        return "Next"
     }
 
     private func primaryAction() {
-        if currentScene.isSignIn {
-            viewModel.startMacGoogleSignIn()
-            return
-        }
         sceneIndex = min(scenes.count - 1, sceneIndex + 1)
     }
 
-    private func openWebPath(_ path: String) {
-        let url = MacOnboardingConstants.appBaseURL.appending(path: path)
-        NSWorkspace.shared.open(url)
-    }
-
     private func chooseWorkspace() {
+        #if DEBUG
+        if let url = uiTestingWorkspacePickerURL() {
+            try? FileManager.default.createDirectory(
+                at: url,
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+            selectedWorkspaceURL = url
+            viewModel.setProjectWorkspace(url)
+            return
+        }
+        #endif
+
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -385,6 +282,18 @@ struct MacOnboardingView: View {
             selectedWorkspaceURL = url
         }
     }
+
+    #if DEBUG
+    private func uiTestingWorkspacePickerURL() -> URL? {
+        let prefix = "--ui-testing-picker-path="
+        guard let argument = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix(prefix) }) else {
+            return nil
+        }
+        let path = String(argument.dropFirst(prefix.count))
+        guard !path.isEmpty else { return nil }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+    #endif
 }
 
 private struct MacOnboardingScene: Hashable {
@@ -393,16 +302,11 @@ private struct MacOnboardingScene: Hashable {
     let visual: Visual
     let visualColors: [Color]
 
-    var isSignIn: Bool {
-        visual == .signIn
-    }
-
     enum Visual: Hashable {
         case mark
         case briefing
         case launch
         case integrations
-        case signIn
     }
 
     static let all: [MacOnboardingScene] = [
@@ -444,16 +348,6 @@ private struct MacOnboardingScene: Hashable {
                 Color(red: 0.07, green: 0.075, blue: 0.08),
                 Color(red: 0.08, green: 0.08, blue: 0.09),
                 Color(red: 0.13, green: 0.13, blue: 0.14),
-            ]
-        ),
-        MacOnboardingScene(
-            title: "Sign in to get started",
-            subtitle: "Connect the same Google account you use on the web app. We’ll use it to keep your macOS assistant and workspace context in sync.",
-            visual: .signIn,
-            visualColors: [
-                Color(red: 0.06, green: 0.07, blue: 0.07),
-                Color(red: 0.11, green: 0.22, blue: 0.16),
-                Color(red: 0.40, green: 0.74, blue: 0.33).opacity(0.75),
             ]
         ),
     ]

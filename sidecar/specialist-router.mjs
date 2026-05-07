@@ -1,4 +1,6 @@
 import { getSpecialist, listSpecialists } from "./specialists/index.mjs";
+import { specialistVendorPath } from "./vendor-skill-loader.mjs";
+import { INLINE_DECISION_CONTRACT } from "./inline-decision.mjs";
 
 export const PLANNING_DOC_TYPES = Object.freeze(["icp", "goal", "values", "spec"]);
 export const PHASES = Object.freeze({ PLANNING: "planning", BUILD: "build" });
@@ -107,6 +109,10 @@ export function selectSpecialist({
   const entry = getSpecialist(id) || getSpecialist("office-hours");
   const promptBody = entry.build({ doc, observations, lastAnswer });
   const reason = buildSelectionReason({ phase, decisionKind, doc, entry });
+  const vendor = {
+    claude: specialistVendorPath(entry.id, { provider: "claude" }),
+    codex: specialistVendorPath(entry.id, { provider: "codex" }),
+  };
   return {
     id: entry.id,
     name: entry.name,
@@ -115,11 +121,18 @@ export function selectSpecialist({
     reason,
     promptText: promptBody,
     summary: entry.summary,
+    vendor,
   };
 }
 
 export function buildSpecialistInjection(selection) {
-  if (!selection) return "";
+  // INLINE_DECISION_CONTRACT is always injected so LLMs emit inline_decision
+  // payloads instead of plain-text numbered lists, regardless of whether the
+  // specialist routing is sourced from vendor markdown or the fallback prompt.
+  if (!selection) return INLINE_DECISION_CONTRACT;
+  if (selection.vendor?.claude?.exists && selection.vendor?.codex?.exists) {
+    return INLINE_DECISION_CONTRACT;
+  }
   const header = [
     "",
     `## Auto-routed specialist: ${selection.name} (${selection.id})`,
@@ -129,8 +142,10 @@ export function buildSpecialistInjection(selection) {
     "사용자에게 specialist 이름을 알리지 마세요. 그 specialist의 사고 방식 그대로 다음 한 질문만 만드세요.",
     "",
   ].join("\n");
-  return `${header}${selection.promptText || ""}`;
+  return `${INLINE_DECISION_CONTRACT}\n\n${header}${selection.promptText || ""}`;
 }
+
+export { INLINE_DECISION_CONTRACT };
 
 function buildSelectionReason({ phase, decisionKind, doc, entry }) {
   const parts = [];

@@ -5,6 +5,48 @@ import AuthenticationServices
 import UserNotifications
 import AppKit
 
+typealias WebAuthenticationSessionCompletion = (URL?, Error?) -> Void
+typealias WebAuthenticationSessionFactory = (
+    URL,
+    String,
+    ASWebAuthenticationPresentationContextProviding,
+    Bool,
+    @escaping WebAuthenticationSessionCompletion
+) -> WebAuthenticationSessionHandle
+
+protocol WebAuthenticationSessionHandle: AnyObject {
+    func start() -> Bool
+    func cancel()
+}
+
+final class SystemWebAuthenticationSessionHandle: WebAuthenticationSessionHandle {
+    private let session: ASWebAuthenticationSession
+
+    init(
+        url: URL,
+        callbackURLScheme: String,
+        presentationContextProvider: ASWebAuthenticationPresentationContextProviding,
+        prefersEphemeral: Bool,
+        completion: @escaping WebAuthenticationSessionCompletion
+    ) {
+        session = ASWebAuthenticationSession(
+            url: url,
+            callbackURLScheme: callbackURLScheme,
+            completionHandler: completion
+        )
+        session.presentationContextProvider = presentationContextProvider
+        session.prefersEphemeralWebBrowserSession = prefersEphemeral
+    }
+
+    func start() -> Bool {
+        session.start()
+    }
+
+    func cancel() {
+        session.cancel()
+    }
+}
+
 enum BipNotificationIntent: String, Hashable, Sendable {
     case morning
     case evening
@@ -73,6 +115,130 @@ struct BipNotificationOpenRequest: Identifiable, Equatable, Sendable {
     }
 }
 
+/// Routing classification for chat input. All three branches funnel into the
+/// same `send_prompt` sidecar message — Sub-AC 2's contract is that the
+/// chat is a *single* AI interaction surface, so daily-task, sub-workflow,
+/// and free-chat must share one stream rather than fork the transport.
+///
+/// The classifier inspects the draft prefix and the selected session's
+/// conversation state; consumers tag telemetry, drive provider validation,
+/// and attach `mode` + `foundationDay` metadata so the sidecar runner can
+/// dispatch to the correct sub-workflow prompt without a second channel.
+enum ChatMessageRoute: Equatable {
+    /// First user response in a Foundation Day 0-7 session — the AI-driven
+    /// daily first prompt has been answered. Carries the 1-based foundation
+    /// day so the sidecar can pick the matching `daily-task-{day}` prompt.
+    case dailyTask(foundationDay: Int)
+
+    /// Slash-command sub-workflow (`/office-hours-docs`, `/analyze-ads`,
+    /// `/bip-draft`, `/monetization-ask`, `/foundation-summary`).
+    case subWorkflow(SubWorkflow)
+
+    /// Default conversational chat — no special routing.
+    case freeChat
+
+    enum SubWorkflow: String, Equatable {
+        case analyzeAds = "analyze_ads"
+        case bipDraft = "bip_draft"
+        case officeHoursDocs = "office_hours_docs"
+        case monetizationAsk = "monetization_ask"
+        case foundationSummary = "foundation_summary"
+
+        /// Slash-command prefix used in chat input. Lowercased, single token.
+        var commandPrefix: String {
+            switch self {
+            case .analyzeAds: return "/analyze-ads"
+            case .bipDraft: return "/bip-draft"
+            case .officeHoursDocs: return "/office-hours-docs"
+            case .monetizationAsk: return "/monetization-ask"
+            case .foundationSummary: return "/foundation-summary"
+            }
+        }
+
+        /// Does this sub-workflow require the Claude provider? `/analyze-ads`
+        /// and `/foundation-summary` both lean on Claude Agent SDK
+        /// (Read/Glob/Grep tooling) for evidence-grounded outputs; the
+        /// others run on whichever provider the session is using.
+        var requiresClaudeProvider: Bool {
+            switch self {
+            case .analyzeAds, .foundationSummary: return true
+            case .bipDraft, .officeHoursDocs, .monetizationAsk: return false
+            }
+        }
+    }
+
+    /// Telemetry-friendly mode tag. Stable strings so PostHog dashboards
+    /// don't break when new sub-workflows are added.
+    var modeTag: String {
+        switch self {
+        case .dailyTask: return "daily_task"
+        case .subWorkflow: return "sub_workflow"
+        case .freeChat: return "free_chat"
+        }
+    }
+
+    /// Backwards-compatible `command_kind` used by the existing
+    /// `mac_prompt_send_requested` event. `dailyTask` reports as the literal
+    /// `daily_task`; sub-workflows keep their snake-case identifier; free
+    /// chat stays as `chat` so historical filters keep working.
+    var commandKind: String {
+        switch self {
+        case .dailyTask: return "daily_task"
+        case .subWorkflow(let workflow): return workflow.rawValue
+        case .freeChat: return "chat"
+        }
+    }
+
+    /// Sub-workflow name, when applicable. Used by the sidecar payload to
+    /// dispatch to the right `*-prompt.mjs` module.
+    var subWorkflowName: String? {
+        if case .subWorkflow(let workflow) = self { return workflow.rawValue }
+        return nil
+    }
+
+    /// 1-based Foundation day, when applicable. Lets the sidecar pick the
+    /// matching daily first-prompt template.
+    var foundationDay: Int? {
+        if case .dailyTask(let day) = self { return day }
+        return nil
+    }
+}
+
+struct StartupQueuedAction: Identifiable {
+    enum Kind {
+        case prompt(String)
+        case mission(compact: Bool, curriculumDay: [String: Any]?)
+    }
+
+    enum State: Equatable {
+        case waiting
+        case sending
+        case failed(String)
+    }
+
+    let id = UUID()
+    let kind: Kind
+    var state: State = .waiting
+
+    var title: String {
+        switch kind {
+        case .prompt:
+            return "첫 메시지 대기 중"
+        case .mission:
+            return "오늘 실행 생성 대기 중"
+        }
+    }
+
+    var summary: String {
+        switch kind {
+        case .prompt(let prompt):
+            return prompt
+        case .mission:
+            return "세션이 연결되면 Day 1 기준으로 오늘 실행 후보를 만듭니다."
+        }
+    }
+}
+
 @MainActor
 final class AgenticViewModel: ObservableObject {
     /// Fanout for the desktop pet (and any future state-driven UI). Fires
@@ -119,13 +285,23 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var sidecarOutputLogs: [String: [String]] = [:]
     @Published private(set) var workspaceSettingsOpenRequest = 0
     @Published private(set) var bipNotificationOpenRequest: BipNotificationOpenRequest?
+    @Published private(set) var startupQueuedAction: StartupQueuedAction?
+    /// First-launch wall-clock timestamp that anchors the Foundation phase
+    /// Day N/30 counter. Persisted in `UserDefaults` so the counter survives
+    /// app restarts. Set lazily on the first successful `start()` (after the
+    /// macOnboarding gate clears) so we don't pre-arm Day 1 before the user
+    /// is actually set up. The agnt navigator engine uses the same anchor:
+    /// `D = floor((now - started_at) / 86400000) + 1`.
+    @Published private(set) var foundationStartedAt: Date?
 
     // Notion OAuth
     @Published private(set) var notionConnected = false
     @Published private(set) var notionOAuthInProgress = false
     @Published var notionOAuthError: String?
-    private var authSession: ASWebAuthenticationSession?
+    private var authSession: WebAuthenticationSessionHandle?
     private let authPresentationContext = AuthPresentationContext()
+    private let authSessionFactory: WebAuthenticationSessionFactory
+    private let activateAppForAuth: @MainActor () -> Void
 
     struct WorkspaceScanResult: Equatable {
         let icp: String?
@@ -157,23 +333,105 @@ final class AgenticViewModel: ObservableObject {
     private var requestedWarmSessionIDs = Set<String>()
     private var requestedInitialBipGate = false
     private var requestedInitialBipMission = false
+    /// Idempotency guard for the AI-driven Foundation Day 0-7 first prompt.
+    /// Keyed by `"<sessionId>:day-<day>"` so the same opener is never injected
+    /// twice for the same (session, day) pair, even if the sidecar replays
+    /// `foundation_first_prompt` after a reconnect or queued send.
+    /// Distinct from the message-id collision check inside the session because
+    /// callers may legitimately re-request the prompt for a different day in
+    /// the same session (e.g. UI navigation across Foundation days).
+    private var injectedFoundationFirstPromptKeys = Set<String>()
+    /// Tracks in-flight `foundation_first_prompt` requests so retries from the
+    /// same surface (e.g. a tap on "오늘 과제" twice) do not flood the sidecar.
+    /// Keys mirror `injectedFoundationFirstPromptKeys` so the request side and
+    /// the inject side share a single naming convention.
+    private var pendingFoundationFirstPromptKeys = Set<String>()
 
     private enum BipRequestedAction: Hashable {
         case refreshEvidence
         case generateMission(compact: Bool)
     }
 
-    init() {
+    /// `UserDefaults` key for the Foundation phase Day-1 anchor. Stored as a
+    /// `Date` so callers don't have to round-trip through ISO-8601 strings.
+    private static let kFoundationStartedAtKey = "agentic30.foundation.startedAt"
+
+    /// Lazy initializer for the Foundation phase counter. Idempotent — once
+    /// the user has crossed the onboarding gate the timestamp is locked, so
+    /// the counter monotonically advances and survives reboots.
+    func ensureFoundationStarted(now: Date = Date()) {
+        guard foundationStartedAt == nil else { return }
+        foundationStartedAt = now
+        UserDefaults.standard.set(now, forKey: Self.kFoundationStartedAtKey)
+        PostHogTelemetry.capture(
+            "mac_foundation_phase_started",
+            properties: ["started_at": ISO8601DateFormatter().string(from: now)],
+            authSession: macAuthSession
+        )
+    }
+
+    /// 1-based Day index for the Foundation phase counter (`Day N/30`).
+    /// `nil` when the user has not yet reached the onboarding gate. Floors
+    /// to whole 24-hour spans relative to `foundationStartedAt`, mirroring
+    /// the agnt navigator engine: `D = floor((now - started_at)/86400000)+1`.
+    /// Capped at 30 for display so the badge stops counting past the
+    /// program length, while the underlying anchor remains untouched.
+    var foundationDayNumber: Int? {
+        guard let startedAt = foundationStartedAt else { return nil }
+        let elapsed = Date().timeIntervalSince(startedAt)
+        let day = Int(floor(elapsed / 86_400)) + 1
+        return max(1, min(day, 30))
+    }
+
+    /// 0…1 progress for the sidebar bar. Falls back to 0 before the anchor
+    /// is set so the UI shows an empty rail rather than collapsing.
+    var foundationProgress: Double {
+        guard let day = foundationDayNumber else { return 0 }
+        return min(1.0, Double(day) / 30.0)
+    }
+
+    /// User-facing label. Uses an em-dash placeholder when the anchor is
+    /// missing so the slot is reserved without claiming a Day yet.
+    var foundationDayLabel: String {
+        if let day = foundationDayNumber {
+            return "Day \(day)/30"
+        }
+        return "Day —/30"
+    }
+
+    init(
+        authSessionFactory: WebAuthenticationSessionFactory? = nil,
+        onboardingContextOverride: OnboardingContext? = nil,
+        activateAppForAuth: @escaping @MainActor () -> Void = {
+            NSApplication.shared.activate(ignoringOtherApps: true)
+        }
+    ) {
+        self.authSessionFactory = authSessionFactory ?? { url, callbackURLScheme, presentationContextProvider, prefersEphemeral, completion in
+            Self.makeSystemAuthSession(
+                url: url,
+                callbackURLScheme: callbackURLScheme,
+                presentationContextProvider: presentationContextProvider,
+                prefersEphemeral: prefersEphemeral,
+                completion: completion
+            )
+        }
+        self.activateAppForAuth = activateAppForAuth
+
         let arguments = CommandLine.arguments
 
         #if DEBUG
         if Self.isUITesting(arguments: arguments) {
             if arguments.contains("--ui-testing-reset-onboarding") {
+                KeychainHelper.deleteMacAuthSession()
+                KeychainHelper.deleteOnboardingContext()
                 WorkspaceSettings.clear()
             }
             Self.applyUITestingWorkspaceSeeds(arguments: arguments)
             macAuthSession = Self.makeUITestingMacAuthSession(arguments: arguments)
             onboardingContext = Self.makeUITestingOnboardingContext(arguments: arguments)
+            if let seededDraft = Self.uiTestingArgumentValue("--ui-testing-seed-draft", arguments: arguments) {
+                draft = seededDraft
+            }
         } else if Self.isXCTestHost(arguments: arguments) {
             macAuthSession = nil
             onboardingContext = nil
@@ -198,6 +456,18 @@ final class AgenticViewModel: ObservableObject {
 
         if let session = macAuthSession, session.shouldRefreshSoon {
             macOnboardingStatus = .refreshing
+        }
+        if let onboardingContextOverride {
+            onboardingContext = onboardingContextOverride
+        }
+
+        // Restore the Foundation phase Day-1 anchor early so the sidebar
+        // counter renders correctly on the first frame; `start()` will fall
+        // back to lazy-initializing it when the user crosses the onboarding
+        // gate for the first time.
+        if !Self.isXCTestHost(arguments: arguments),
+           let storedStart = UserDefaults.standard.object(forKey: Self.kFoundationStartedAtKey) as? Date {
+            foundationStartedAt = storedStart
         }
     }
 
@@ -226,6 +496,25 @@ final class AgenticViewModel: ObservableObject {
         return message.nonEmpty
     }
 
+    static func isRawNullDayError(_ message: String) -> Bool {
+        let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.contains("cannot read properties of null")
+            && normalized.contains("day")
+    }
+
+    static func userFacingMissionErrorMessage(_ message: String?) -> String {
+        guard let message = message?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty else {
+            return "다시 시도하면 미션 후보를 새로 만들게요."
+        }
+        if isRawNullDayError(message) {
+            return "다시 시도하면 미션 후보를 새로 만들게요."
+        }
+        if message.localizedCaseInsensitiveContains("sidecar") {
+            return "Codex 연결을 다시 시작하면 오늘 실행을 새로 불러옵니다."
+        }
+        return message
+    }
+
     func requestWorkspaceSettingsOpen() {
         workspaceSettingsOpenRequest += 1
     }
@@ -243,7 +532,81 @@ final class AgenticViewModel: ObservableObject {
             bipNotificationOpenRequest = nil
             return
         }
+        if let sessionId = bipCoach?.sessionId,
+           sessions.contains(where: { $0.id == sessionId }) {
+            selectedSessionID = sessionId
+        }
         bipNotificationOpenRequest = BipNotificationOpenRequest(intent: intent)
+    }
+
+    func recordBipNotificationPrimaryAction(intent: BipNotificationIntent, action: String) {
+        PostHogTelemetry.capture("mac_bip_notification_primary_action_clicked", properties: [
+            "intent": intent.rawValue,
+            "action": action,
+        ], authSession: macAuthSession)
+    }
+
+    func sendTestBipNotification(intent: BipNotificationIntent) async -> String {
+        let center = UNUserNotificationCenter.current()
+        let settings = await withCheckedContinuation { continuation in
+            center.getNotificationSettings { settings in
+                continuation.resume(returning: settings)
+            }
+        }
+
+        var authorized = settings.authorizationStatus == .authorized
+            || settings.authorizationStatus == .provisional
+        if settings.authorizationStatus == .notDetermined {
+            authorized = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+        }
+        guard authorized else {
+            return "macOS 알림 권한이 꺼져 있어요. 시스템 설정에서 알림을 허용해 주세요."
+        }
+
+        let content = UNMutableNotificationContent()
+        content.title = bipTestNotificationTitle(intent)
+        content.body = bipTestNotificationBody(intent)
+        content.sound = .default
+        content.userInfo = [
+            BipNotificationIntent.userInfoKey: intent.rawValue,
+        ]
+
+        let request = UNNotificationRequest(
+            identifier: "\(intent.notificationIdentifier).test.\(UUID().uuidString)",
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        )
+        let error = await withCheckedContinuation { continuation in
+            center.add(request) { error in
+                continuation.resume(returning: error)
+            }
+        }
+        if let error {
+            return "테스트 알림 예약 실패: \(error.localizedDescription)"
+        }
+
+        PostHogTelemetry.capture("mac_bip_test_notification_scheduled", properties: [
+            "intent": intent.rawValue,
+        ], authSession: macAuthSession)
+        return "1초 뒤 테스트 알림을 보냅니다. 배너를 누르면 알림 진입 화면으로 이동해요."
+    }
+
+    private func bipTestNotificationTitle(_ intent: BipNotificationIntent) -> String {
+        switch intent {
+        case .morning:
+            return "10시 오늘 실행"
+        case .evening:
+            return "21시 마감 체크"
+        }
+    }
+
+    private func bipTestNotificationBody(_ intent: BipNotificationIntent) -> String {
+        switch intent {
+        case .morning:
+            return "작게 하나 공개할 미션을 정하세요."
+        case .evening:
+            return "게시 기록을 남기면 오늘 루프가 닫힙니다."
+        }
     }
 
     func sentPromptPreview(for sessionID: String) -> String? {
@@ -276,18 +639,16 @@ final class AgenticViewModel: ObservableObject {
         if usesInlineUITestStubResponses {
             return false
         }
-        return !(macAuthSession?.isUsable ?? false)
-            || !WorkspaceSettings.hasExplicitWorkspace
+        return !WorkspaceSettings.hasExplicitWorkspace
             || onboardingContext == nil
     }
 
     var needsProjectWorkspace: Bool {
-        (macAuthSession?.isUsable ?? false) && !WorkspaceSettings.hasExplicitWorkspace
+        !WorkspaceSettings.hasExplicitWorkspace
     }
 
     var needsOnboardingContext: Bool {
-        (macAuthSession?.isUsable ?? false)
-            && WorkspaceSettings.hasExplicitWorkspace
+        WorkspaceSettings.hasExplicitWorkspace
             && onboardingContext == nil
     }
 
@@ -304,7 +665,12 @@ final class AgenticViewModel: ObservableObject {
     }
 
     var canSend: Bool {
-        selectedSession != nil && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        (selectedSession != nil || canQueueStartupAction)
+            && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var canQueueStartupAction: Bool {
+        !requiresMacOnboarding && selectedSession == nil
     }
 
     var isAnalyzeAdsCommand: Bool {
@@ -322,12 +688,18 @@ final class AgenticViewModel: ObservableObject {
     func start() {
         guard !started else { return }
         guard !requiresMacOnboarding else {
-            connectionLabel = needsProjectWorkspace ? "Choose a project workspace" : "Sign in to continue"
+            connectionLabel = needsProjectWorkspace ? "Choose a project workspace" : "Complete local setup"
             isConnected = false
             return
         }
         started = true
         PostHogTelemetry.capture("mac_view_model_started", authSession: macAuthSession)
+
+        // First successful start past the onboarding gate anchors Day 1 of
+        // the Foundation phase. Subsequent calls are no-ops, keeping the
+        // counter monotonic across reconnects, sidecar restarts, and app
+        // relaunches.
+        ensureFoundationStarted()
 
         if CommandLine.arguments.contains("--ui-testing-sidecar-failure") {
             workspaceRoot = WorkspaceSettings.resolvedURL().path
@@ -440,10 +812,65 @@ final class AgenticViewModel: ObservableObject {
         ])
     }
 
+    /// Classify a draft prompt into one of the three routing modes. Pure
+    /// function — exposed for tests, UI affordances (e.g., the chip that
+    /// shows *"오늘 과제"* vs. *"sub-workflow"*), and to keep `sendPrompt`
+    /// declarative. The order of checks is significant:
+    ///   1. Slash-commands always win (sub-workflow tag).
+    ///   2. The first user message inside a Foundation Day 0-7 session is
+    ///      the daily-task response.
+    ///   3. Everything else is free-chat.
+    ///
+    /// `foundationDayOverride` lets unit tests pin a specific day without
+    /// rewinding `foundationStartedAt`.
+    func classifyMessageRoute(
+        prompt: String,
+        in session: ChatSession,
+        foundationDayOverride: Int? = nil
+    ) -> ChatMessageRoute {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = trimmed.lowercased()
+
+        for workflow in [
+            ChatMessageRoute.SubWorkflow.analyzeAds,
+            .bipDraft,
+            .officeHoursDocs,
+            .monetizationAsk,
+            .foundationSummary,
+        ] {
+            if lower.hasPrefix(workflow.commandPrefix) {
+                return .subWorkflow(workflow)
+            }
+        }
+
+        let day = foundationDayOverride ?? foundationDayNumber
+        let userMessageCount = session.messages.filter { $0.role == .user }.count
+        if userMessageCount == 0,
+           let day,
+           (0...7).contains(day) {
+            return .dailyTask(foundationDay: day)
+        }
+
+        return .freeChat
+    }
+
+    /// Live route classification for the current draft against the selected
+    /// session. Returns `nil` when there is no draft or no session — UI
+    /// chips can use this to hide themselves cleanly.
+    var currentMessageRoute: ChatMessageRoute? {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let session = selectedSession else { return nil }
+        return classifyMessageRoute(prompt: trimmed, in: session)
+    }
+
     func sendPrompt() {
-        guard let session = selectedSession else { return }
         let prompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return }
+        guard let session = selectedSession else {
+            queueStartupAction(.prompt(prompt))
+            draft = ""
+            return
+        }
         if let pendingUserInput = session.pendingUserInput {
             let responses = pendingUserInput.questions.map { question in
                 StructuredPromptSubmission(
@@ -457,28 +884,35 @@ final class AgenticViewModel: ObservableObject {
             return
         }
 
-        // Validate /analyze-ads requires Claude provider
-        if prompt.lowercased().hasPrefix("/analyze-ads") && session.provider != .claude {
-            lastError = "/analyze-ads requires a Claude session"
+        // Sub-AC 2: classify once, then route. Daily-task, sub-workflow, and
+        // free-chat all share the same `send_prompt` transport — only the
+        // metadata differs, so the chat surface stays a single message
+        // stream with no fork.
+        let route = classifyMessageRoute(prompt: prompt, in: session)
+
+        // Provider validation. Sub-workflows that require Claude (currently
+        // /analyze-ads and /foundation-summary) fail-closed before we hit
+        // the sidecar — no half-routed sends, no stale telemetry.
+        if case .subWorkflow(let workflow) = route,
+           workflow.requiresClaudeProvider,
+           session.provider != .claude {
+            lastError = "\(workflow.commandPrefix) requires a Claude session"
             PostHogTelemetry.capture("mac_prompt_validation_failed", properties: [
                 "session_id": session.id,
                 "provider": session.provider.rawValue,
-                "reason": "analyze_ads_requires_claude",
+                "reason": "\(workflow.rawValue)_requires_claude",
+                "mode": route.modeTag,
             ], authSession: macAuthSession)
             return
         }
 
-        let commandKind: String = {
-            let lower = prompt.lowercased()
-            if lower.hasPrefix("/analyze-ads") { return "analyze_ads" }
-            if lower.hasPrefix("/bip-draft") { return "bip_draft" }
-            if lower.hasPrefix("/office-hours-docs") { return "office_hours_docs" }
-            return "chat"
-        }()
         PostHogTelemetry.capture("mac_prompt_send_requested", properties: [
             "session_id": session.id,
             "provider": session.provider.rawValue,
-            "command_kind": commandKind,
+            "command_kind": route.commandKind,
+            "mode": route.modeTag,
+            "sub_workflow": route.subWorkflowName ?? "",
+            "foundation_day": route.foundationDay ?? -1,
             "prompt_length": prompt.count,
         ], authSession: macAuthSession)
         appendSentPromptPreview(sessionID: session.id, prompt: prompt)
@@ -488,11 +922,183 @@ final class AgenticViewModel: ObservableObject {
             appendInlineUITestStubResponse(prompt: prompt, sessionID: session.id)
             return
         }
-        sidecar.send(payload: [
+
+        // Single transport, three modes. Sidecar inspects `mode` to decide
+        // whether to load the matching sub-workflow prompt module
+        // (`*-prompt.mjs`) or fall through to the default chat loop.
+        var payload: [String: Any] = [
             "type": "send_prompt",
             "sessionId": session.id,
             "prompt": prompt,
-        ])
+            "mode": route.modeTag,
+        ]
+        if let subWorkflowName = route.subWorkflowName {
+            payload["subWorkflow"] = subWorkflowName
+        }
+        if let foundationDay = route.foundationDay {
+            payload["foundationDay"] = foundationDay
+        }
+        sidecar.send(payload: payload)
+    }
+
+    /// Stable key used by both the request side and the inject side so the
+    /// idempotency invariant ("one first-prompt per session-day pair") is
+    /// expressed in one place. Pure function, exposed `internal` for tests.
+    static func foundationFirstPromptKey(sessionId: String, day: Int) -> String {
+        "\(sessionId):day-\(day)"
+    }
+
+    /// Deterministic chat message ID used when injecting the AI-driven
+    /// Foundation first prompt into the chat surface. Encodes the day so the
+    /// merge logic in `mergeSessionSnapshot` can recognise client-only seeded
+    /// messages and preserve them across `session_updated` snapshots from the
+    /// sidecar (which would otherwise wipe the seed because the sidecar does
+    /// not persist the first prompt itself — it is regenerated on demand by
+    /// `buildFirstPromptForDay`).
+    static func foundationFirstPromptMessageId(sessionId: String, day: Int) -> String {
+        "foundation-first-prompt-day-\(day)-\(sessionId)"
+    }
+
+    /// Prefix that flags a chat message as a host-side Foundation first
+    /// prompt seed. `mergeSessionSnapshot` keys off this prefix to preserve
+    /// the seed when the sidecar pushes a session snapshot that does not
+    /// include it (the sidecar only persists user/assistant turns produced by
+    /// the provider stream, not the deterministic opener).
+    static let foundationFirstPromptMessageIdPrefix = "foundation-first-prompt-"
+
+    /// Sub-AC 2.4 — request the AI-driven Foundation Day 0-7 first prompt
+    /// from the sidecar and inject it into the chat surface as the seeded
+    /// assistant opener. The unified single AI interaction surface contract:
+    /// one channel, day-aware, no second transport.
+    ///
+    /// Idempotency is two-layered:
+    ///   1. `pendingFoundationFirstPromptKeys` short-circuits duplicate sends
+    ///      while the sidecar is still computing (covers double-taps).
+    ///   2. `injectedFoundationFirstPromptKeys` short-circuits re-injection
+    ///      after the sidecar has already replied (covers reconnect replays).
+    ///
+    /// The sidecar's response is dispatched in `handle(_:)` via
+    /// `case "foundation_first_prompt"` → `handleFoundationFirstPromptEvent`.
+    func requestFoundationFirstPrompt(
+        day: Int,
+        sessionId: String? = nil,
+        dynamicVariables: [String: Any]? = nil
+    ) {
+        let resolvedSessionId = sessionId ?? selectedSessionID
+        guard let resolvedSessionId, !resolvedSessionId.isEmpty else { return }
+        guard (0...7).contains(day) else {
+            PostHogTelemetry.capture(
+                "mac_foundation_first_prompt_request_rejected",
+                properties: [
+                    "session_id": resolvedSessionId,
+                    "day": day,
+                    "reason": "day_out_of_range",
+                ],
+                authSession: macAuthSession
+            )
+            return
+        }
+
+        let key = Self.foundationFirstPromptKey(sessionId: resolvedSessionId, day: day)
+        if injectedFoundationFirstPromptKeys.contains(key) { return }
+        if pendingFoundationFirstPromptKeys.contains(key) { return }
+
+        pendingFoundationFirstPromptKeys.insert(key)
+
+        var payload: [String: Any] = [
+            "type": "foundation_first_prompt",
+            "sessionId": resolvedSessionId,
+            "day": day,
+        ]
+        if let dynamicVariables, !dynamicVariables.isEmpty {
+            payload["dynamicVariables"] = dynamicVariables
+        }
+
+        PostHogTelemetry.capture(
+            "mac_foundation_first_prompt_requested",
+            properties: [
+                "session_id": resolvedSessionId,
+                "day": day,
+                "has_dynamic_variables": (dynamicVariables?.isEmpty == false),
+            ],
+            authSession: macAuthSession
+        )
+
+        sidecar.send(payload: payload)
+    }
+
+    /// Sub-AC 2.4 — handler for `foundation_first_prompt` sidecar events.
+    /// Injects the rendered 3-section minimal opener into the target session
+    /// as a seeded assistant message with a deterministic ID so subsequent
+    /// `session_updated` merges keep it intact (see
+    /// `mergeSessionSnapshot`'s preservation rule for the
+    /// `foundation-first-prompt-` prefix).
+    ///
+    /// Visibility: `internal` so unit tests can exercise the inject path
+    /// without spinning up a real sidecar bridge.
+    func handleFoundationFirstPromptEvent(_ event: SidecarEvent) {
+        guard let sessionId = event.sessionId, !sessionId.isEmpty else { return }
+        guard let day = event.day, (0...7).contains(day) else { return }
+        guard let firstPrompt = event.firstPrompt else { return }
+
+        let key = Self.foundationFirstPromptKey(sessionId: sessionId, day: day)
+        pendingFoundationFirstPromptKeys.remove(key)
+
+        guard let sessionIndex = sessions.firstIndex(where: { $0.id == sessionId }) else {
+            // Session not yet present in the local snapshot — drop, the next
+            // `session_created` / `sessions_snapshot` will retrigger the
+            // request flow from the surface that owns it.
+            return
+        }
+
+        let messageId = Self.foundationFirstPromptMessageId(sessionId: sessionId, day: day)
+        if sessions[sessionIndex].messages.contains(where: { $0.id == messageId }) {
+            // Already injected (e.g. re-entry after reconnect). Lock the
+            // idempotency guard and bail without emitting telemetry noise.
+            injectedFoundationFirstPromptKeys.insert(key)
+            return
+        }
+
+        let displayText = firstPrompt.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !displayText.isEmpty else { return }
+
+        let provider = sessions[sessionIndex].provider
+        let now = Date()
+        let seededMessage = ChatMessage(
+            id: messageId,
+            role: .assistant,
+            provider: provider,
+            content: displayText,
+            state: .final,
+            createdAt: now,
+            error: nil,
+            bipMissionChoices: nil,
+            providerAuthActions: nil
+        )
+
+        // Insert at the head of the conversation so the opener anchors the
+        // chat surface — Foundation Day 0-7 contract: the AI speaks first.
+        // If user/assistant messages already exist (e.g. session was selected
+        // mid-conversation), still seed at index 0 to preserve the opener as
+        // the conversation root.
+        sessions[sessionIndex].messages.insert(seededMessage, at: 0)
+        sessions[sessionIndex].updatedAt = now
+        injectedFoundationFirstPromptKeys.insert(key)
+
+        PostHogTelemetry.capture(
+            "mac_foundation_first_prompt_injected",
+            properties: [
+                "session_id": sessionId,
+                "day": day,
+                "spec_version": firstPrompt.specVersion ?? "",
+                "sub_workflow": firstPrompt.subWorkflow ?? "",
+                "artifact_count": firstPrompt.artifacts.count,
+                "text_length": displayText.count,
+            ],
+            authSession: macAuthSession
+        )
+
+        refreshPresentationState()
     }
 
     func submitStructuredPrompt(
@@ -673,13 +1279,15 @@ final class AgenticViewModel: ObservableObject {
     }
 
     func generateBipMission(compact: Bool = false, curriculumDay: [String: Any]? = nil) {
-        guard isConnected else { return }
-        guard let sessionID = currentBipCoachSessionID() else { return }
+        guard isConnected, let sessionID = currentBipCoachSessionID() else {
+            queueStartupAction(.mission(compact: compact, curriculumDay: curriculumDay))
+            return
+        }
         isBipCoachGenerating = true
         lastBipRequestedAction = .generateMission(compact: compact)
         lastError = nil
         let provider = selectedSession?.provider ?? visibleBipCoach?.config.provider ?? selectedProvider
-        bipMissionProgress = BipMissionProgress(stage: "reading_sheet", detail: "Google Sheet와 업무일지 Doc을 확인하는 중", provider: provider.rawValue, sheetRowsRead: nil, docCharsRead: nil, elapsedMs: nil)
+        bipMissionProgress = BipMissionProgress(stage: "reading_sheet", detail: "프로젝트 기준과 오늘 커리큘럼을 확인하는 중", provider: provider.rawValue, sheetRowsRead: nil, docCharsRead: nil, elapsedMs: nil)
         PostHogTelemetry.capture("mac_bip_coach_generation_requested", properties: [
             "session_id": sessionID,
             "provider": provider.rawValue,
@@ -842,6 +1450,7 @@ final class AgenticViewModel: ObservableObject {
     }
 
     func setProjectWorkspace(_ url: URL) {
+        clearStartupQueuedAction()
         WorkspaceSettings.store(url)
         workspaceRoot = url.path
         PostHogTelemetry.capture("mac_project_workspace_selected", properties: [
@@ -895,10 +1504,28 @@ final class AgenticViewModel: ObservableObject {
         case macOnboarding
     }
 
-    private func presentAuthSession(url: URL, flow: AuthFlow = .notion) {
-        let session = ASWebAuthenticationSession(
+    private static func makeSystemAuthSession(
+        url: URL,
+        callbackURLScheme: String,
+        presentationContextProvider: ASWebAuthenticationPresentationContextProviding,
+        prefersEphemeral: Bool,
+        completion: @escaping WebAuthenticationSessionCompletion
+    ) -> WebAuthenticationSessionHandle {
+        SystemWebAuthenticationSessionHandle(
             url: url,
-            callbackURLScheme: "agentic30"
+            callbackURLScheme: callbackURLScheme,
+            presentationContextProvider: presentationContextProvider,
+            prefersEphemeral: prefersEphemeral,
+            completion: completion
+        )
+    }
+
+    private func presentAuthSession(url: URL, flow: AuthFlow = .notion) {
+        let session = authSessionFactory(
+            url,
+            "agentic30",
+            authPresentationContext,
+            true
         ) { [weak self] callbackURL, error in
             Task { @MainActor in
                 guard let self else { return }
@@ -935,10 +1562,12 @@ final class AgenticViewModel: ObservableObject {
                 }
             }
         }
-        session.presentationContextProvider = authPresentationContext
-        session.prefersEphemeralWebBrowserSession = true
         authSession = session
-        session.start()
+        activateAppForAuth()
+        if !session.start() {
+            authSession = nil
+            handleAuthSessionError("Could not open Google sign-in. Open the workspace window and try again.", flow: flow)
+        }
     }
 
     private func handleAuthSessionError(_ error: String, flow: AuthFlow) {
@@ -1090,13 +1719,13 @@ final class AgenticViewModel: ObservableObject {
             scheduleBipNotification(
                 intent: .morning,
                 hour: morningHour,
-                title: "오늘의 BIP 미션",
+                title: "오늘 실행",
                 body: "Threads 글감과 3개 초안을 만들 시간입니다."
             )
             scheduleBipNotification(
                 intent: .evening,
                 hour: eveningHour,
-                title: "BIP 마감 체크",
+                title: "공개 실행 마감 체크",
                 body: "Threads URL과 Google Sheet 행을 남겼는지 확인하세요."
             )
         }
@@ -1204,6 +1833,7 @@ final class AgenticViewModel: ObservableObject {
             requestCodexWarmupIfNeeded()
             requestBipReadinessCheck()
             requestInitialBipGateIfNeeded()
+            flushStartupQueuedActionIfPossible()
             if let root = pendingWorkspaceScanRoot {
                 pendingWorkspaceScanRoot = nil
                 sendWorkspaceScan(root: root)
@@ -1226,6 +1856,7 @@ final class AgenticViewModel: ObservableObject {
                 refreshPresentationState()
                 requestCodexWarmupIfNeeded()
                 requestInitialBipGateIfNeeded()
+                flushStartupQueuedActionIfPossible()
             }
         case "session_updated":
             if let session = event.session {
@@ -1233,10 +1864,17 @@ final class AgenticViewModel: ObservableObject {
                 pruneSentPromptPreviews(for: session)
                 refreshPresentationState()
                 requestCodexWarmupIfNeeded()
+                flushStartupQueuedActionIfPossible()
             }
         case "session_deleted":
             guard let sessionID = event.sessionId else { return }
             sessions.removeAll(where: { $0.id == sessionID })
+            // Drop Foundation first-prompt idempotency markers tied to the
+            // deleted session so a future re-create with the same id (or any
+            // id at all) does not silently suppress re-injection.
+            let prefix = "\(sessionID):day-"
+            injectedFoundationFirstPromptKeys = injectedFoundationFirstPromptKeys.filter { !$0.hasPrefix(prefix) }
+            pendingFoundationFirstPromptKeys = pendingFoundationFirstPromptKeys.filter { !$0.hasPrefix(prefix) }
             if selectedSessionID == sessionID {
                 selectedSessionID = sessions.first?.id
             }
@@ -1262,6 +1900,11 @@ final class AgenticViewModel: ObservableObject {
                 message.state = .final
             }
             refreshPresentationState()
+        case "foundation_first_prompt":
+            // Sub-AC 2.4: AI-driven Foundation Day 0-7 first prompt arrives
+            // here; inject as the seeded assistant opener for the matching
+            // session. Idempotent + persistence-safe via deterministic ID.
+            handleFoundationFirstPromptEvent(event)
         case "tool_event":
             guard let sessionID = event.sessionId else { return }
             appendSidecarOutput(sessionID: sessionID, event: event)
@@ -1364,7 +2007,7 @@ final class AgenticViewModel: ObservableObject {
             isBipCoachGenerating = false
             bipMissionProgress = nil
             activeSurface = .assistantBubble
-            lastError = event.bipSetupGateMessage ?? "BIP 미션 전에 IDD 문서 세팅이 필요해요."
+            lastError = event.bipSetupGateMessage ?? "오늘 미션은 바로 만들 수 있고, 부족한 기준은 추천 정확도를 높이는 데 사용됩니다."
         case "bip_idd_session_ready":
             updateBipSetupGate(from: event)
             if let sessionId = event.sessionId {
@@ -1518,6 +2161,7 @@ final class AgenticViewModel: ObservableObject {
             if event.sessionId == nil {
                 connectionLabel = event.message ?? connectionLabel
                 isConnected = false
+                markStartupQueuedActionFailed(event.message ?? "Sidecar 연결이 끊겼습니다.")
             }
             PostHogTelemetry.captureException(
                 NSError(domain: "SidecarEvent", code: -1, userInfo: [NSLocalizedDescriptionKey: event.message ?? "Unknown sidecar error"]),
@@ -1583,6 +2227,44 @@ final class AgenticViewModel: ObservableObject {
         }
 
         let now = Date()
+        if CommandLine.arguments.contains("--ui-testing-seed-running-idd-session") {
+            let session = ChatSession(
+                id: UUID().uuidString,
+                title: "기준 정리: 누구를 위한 제품인지",
+                provider: selectedProvider,
+                model: preferredModel(for: selectedProvider),
+                status: .running,
+                createdAt: now,
+                updatedAt: now,
+                error: nil,
+                messages: [
+                    ChatMessage(
+                        id: UUID().uuidString,
+                        role: .user,
+                        provider: selectedProvider,
+                        content: "지금 하는 방식부터 정리",
+                        state: .final,
+                        createdAt: now,
+                        error: nil,
+                        bipMissionChoices: nil,
+                        providerAuthActions: nil
+                    )
+                ],
+                pendingUserInput: nil,
+                runtime: ChatSessionRuntime(
+                    codexThreadId: nil,
+                    codexThreadMeta: nil,
+                    codexWarm: nil,
+                    iddDocumentType: "icp"
+                )
+            )
+            sessions = [session]
+            selectedSessionID = session.id
+            seedInlineUITestBipCoachIfNeeded()
+            refreshPresentationState()
+            return
+        }
+
         let pendingUserInput = Self.makeUITestingIcpStructuredPromptIfNeeded(sessionID: UUID().uuidString, createdAt: now)
         let session = ChatSession(
             id: pendingUserInput?.sessionId ?? UUID().uuidString,
@@ -1593,7 +2275,7 @@ final class AgenticViewModel: ObservableObject {
             createdAt: now,
             updatedAt: now,
             error: nil,
-            messages: [
+            messages: pendingUserInput == nil ? [
                 ChatMessage(
                     id: UUID().uuidString,
                     role: .assistant,
@@ -1605,7 +2287,7 @@ final class AgenticViewModel: ObservableObject {
                     bipMissionChoices: nil,
                     providerAuthActions: nil
                 )
-            ],
+            ] : [],
             pendingUserInput: pendingUserInput,
             runtime: nil
         )
@@ -1674,23 +2356,29 @@ final class AgenticViewModel: ObservableObject {
 
     private func seedInlineUITestBipCoachIfNeeded() {
         #if DEBUG
-        guard CommandLine.arguments.contains("--ui-testing-seed-bip-current-mission"),
+        let seedCurrentMission = CommandLine.arguments.contains("--ui-testing-seed-bip-current-mission")
+        let seedLocalMissionChoices = CommandLine.arguments.contains("--ui-testing-seed-bip-local-mission-choices")
+        guard (seedCurrentMission || seedLocalMissionChoices),
               let sessionID = selectedSessionID else {
             return
         }
 
-        var readiness = BipReadinessState.loading
-        for rowID in BipReadinessRowId.bipCoachSetupCases {
-            readiness.rows[rowID] = BipReadinessRow(
-                id: rowID,
-                status: .done,
-                detail: nil,
-                log: nil,
-                error: nil
-            )
+        if seedCurrentMission {
+            var readiness = BipReadinessState.loading
+            for rowID in BipReadinessRowId.bipCoachSetupCases {
+                readiness.rows[rowID] = BipReadinessRow(
+                    id: rowID,
+                    status: .done,
+                    detail: nil,
+                    log: nil,
+                    error: nil
+                )
+            }
+            bipReadiness = readiness
         }
-        bipReadiness = readiness
-        bipCoach = Self.makeUITestingBipCoachState(sessionID: sessionID)
+        bipCoach = seedLocalMissionChoices
+            ? Self.makeUITestingLocalBipCoachState(sessionID: sessionID)
+            : Self.makeUITestingBipCoachState(sessionID: sessionID)
         #endif
     }
 
@@ -1730,6 +2418,51 @@ final class AgenticViewModel: ObservableObject {
                 sheetRowNote: nil
             ),
             streak: BipCoachStreak(current: 1, longest: 2, lastCompletedDate: nil),
+            lastError: nil
+        )
+    }
+
+    private static func makeUITestingLocalBipCoachState(sessionID: String) -> BipCoachState {
+        let now = Date()
+        let choices = [
+            BipCoachMission(
+                id: "ui-test-local-mission-1",
+                date: "2026-04-30",
+                provider: .codex,
+                status: "drafted",
+                compact: true,
+                title: "첫 고객 후보 3명 정하기",
+                angle: "Google 설정 전에도 프로젝트 기준으로 오늘 실행을 시작하기",
+                mission: "현재 프로젝트를 가장 자주 겪을 사람 3명을 적고 첫 질문 하나를 보냅니다.",
+                drafts: [],
+                eveningChecklist: ["후보 3명 적기", "첫 질문 1개 보내기"],
+                evidenceRefs: [],
+                generatedAt: now,
+                completedAt: nil,
+                threadsUrl: nil,
+                sheetRowNote: nil
+            )
+        ]
+
+        return BipCoachState(
+            schemaVersion: 1,
+            updatedAt: now,
+            sessionId: sessionID,
+            config: BipCoachConfig(
+                provider: .codex,
+                threadsHandle: nil,
+                sheetUrl: nil,
+                sheetId: nil,
+                sheetTabName: nil,
+                docUrl: nil,
+                docId: nil,
+                morningHour: 10,
+                eveningHour: 21
+            ),
+            evidence: nil,
+            missionChoices: choices,
+            currentMission: nil,
+            streak: BipCoachStreak(current: 0, longest: 0, lastCompletedDate: nil),
             lastError: nil
         )
     }
@@ -1850,12 +2583,27 @@ final class AgenticViewModel: ObservableObject {
     private func mergeSessionSnapshot(_ incoming: ChatSession, into current: ChatSession) -> ChatSession {
         var merged = incoming
         let currentMessagesByID = Dictionary(uniqueKeysWithValues: current.messages.map { ($0.id, $0) })
-        merged.messages = incoming.messages.map { incomingMessage in
+        let incomingMessageIDs = Set(incoming.messages.map { $0.id })
+        // Preserve client-only seeded messages (currently the Foundation
+        // Day 0-7 first prompt opener — see Sub-AC 2.4) when the sidecar
+        // pushes a `session_updated` snapshot that does not include them.
+        // The sidecar deliberately does NOT persist the AI-driven first
+        // prompt because `buildFirstPromptForDay` is deterministic; without
+        // this preservation rule the seeded opener would vanish the moment
+        // the user sends their first reply (because the sidecar then emits
+        // a session snapshot containing only the user/assistant turns).
+        let preservedSeeds = current.messages.filter { message in
+            message.id.hasPrefix(Self.foundationFirstPromptMessageIdPrefix)
+                && !incomingMessageIDs.contains(message.id)
+        }
+        let mappedIncoming = incoming.messages.map { incomingMessage in
             guard let currentMessage = currentMessagesByID[incomingMessage.id] else {
                 return incomingMessage
             }
             return mergeMessageSnapshot(incomingMessage, into: currentMessage, sessionStatus: incoming.status)
         }
+        // Seeded openers always anchor the conversation root.
+        merged.messages = preservedSeeds + mappedIncoming
         return merged
     }
 
@@ -2035,6 +2783,68 @@ final class AgenticViewModel: ObservableObject {
         })
     }
 
+    func clearStartupQueuedAction() {
+        startupQueuedAction = nil
+    }
+
+    func retryStartupQueuedAction() {
+        guard var action = startupQueuedAction else { return }
+        action.state = .waiting
+        startupQueuedAction = action
+        flushStartupQueuedActionIfPossible()
+    }
+
+    private func queueStartupAction(_ kind: StartupQueuedAction.Kind) {
+        guard canQueueStartupAction else { return }
+        startupQueuedAction = StartupQueuedAction(kind: kind)
+        PostHogTelemetry.capture("mac_startup_action_queued", properties: [
+            "kind": startupQueuedActionKindName(kind),
+        ], authSession: macAuthSession)
+    }
+
+    private func flushStartupQueuedActionIfPossible() {
+        guard var action = startupQueuedAction,
+              isConnected,
+              selectedSession != nil else {
+            return
+        }
+
+        switch action.state {
+        case .sending:
+            return
+        case .failed, .waiting:
+            break
+        }
+
+        action.state = .sending
+        startupQueuedAction = action
+
+        switch action.kind {
+        case .prompt(let prompt):
+            draft = prompt
+            startupQueuedAction = nil
+            sendPrompt()
+        case .mission(let compact, let curriculumDay):
+            startupQueuedAction = nil
+            generateBipMission(compact: compact, curriculumDay: curriculumDay)
+        }
+    }
+
+    private func markStartupQueuedActionFailed(_ message: String) {
+        guard var action = startupQueuedAction else { return }
+        action.state = .failed(message)
+        startupQueuedAction = action
+    }
+
+    private func startupQueuedActionKindName(_ kind: StartupQueuedAction.Kind) -> String {
+        switch kind {
+        case .prompt:
+            return "prompt"
+        case .mission:
+            return "mission"
+        }
+    }
+
     private func currentBipCoachSessionID() -> String? {
         if let selectedSessionID {
             return selectedSessionID
@@ -2119,6 +2929,121 @@ private class AuthPresentationContext: NSObject, ASWebAuthenticationPresentation
     }
 }
 
+/// Decoded shape of the AI-driven Foundation Day 0-7 first prompt that the
+/// sidecar emits in response to a `foundation_first_prompt` request. Mirrors
+/// the JS-side `buildFirstPromptForDay()` return value documented in
+/// `packages/mac/agentic30/sidecar/foundation-chat.mjs` (3-section minimal:
+/// Yesterday 1줄 / Today 1줄 / Q 1줄). The persona is fixed to YC 파트너 /
+/// 시니어 메이커 (직설+압박, 반말 ~어/야); the host trusts that contract and
+/// only displays the rendered text.
+///
+/// Field names use Swift camelCase; CodingKeys remap snake_case JSON keys
+/// (`core_question`, `spec_version`, `sub_workflow`) to match the ontology
+/// concept names from `Agentic30FoundationPhase` while keeping Swift
+/// idiomatic.
+struct FoundationFirstPrompt: Decodable, Hashable {
+    let day: Int
+    let persona: String
+    let template: String
+    let yesterday: String
+    let today: String
+    let question: String
+    let coreQuestion: String?
+    let specVersion: String?
+    let subWorkflow: String?
+    let artifacts: [String]
+    /// Pre-formatted display text from the sidecar
+    /// (`어제: ...\n오늘: ...\nQ: ...`). The host renders this verbatim so
+    /// the YC-partner tone and line layout stay locked at the producer.
+    let text: String
+
+    private enum CodingKeys: String, CodingKey {
+        case day
+        case persona
+        case template
+        case yesterday
+        case today
+        case question
+        case coreQuestion = "core_question"
+        case specVersion = "spec_version"
+        case subWorkflow = "sub_workflow"
+        case artifacts
+        case text
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        day = try container.decode(Int.self, forKey: .day)
+        persona = (try? container.decode(String.self, forKey: .persona)) ?? ""
+        template = (try? container.decode(String.self, forKey: .template)) ?? ""
+        yesterday = (try? container.decode(String.self, forKey: .yesterday)) ?? ""
+        today = (try? container.decode(String.self, forKey: .today)) ?? ""
+        question = (try? container.decode(String.self, forKey: .question)) ?? ""
+        coreQuestion = try? container.decode(String.self, forKey: .coreQuestion)
+        specVersion = try? container.decode(String.self, forKey: .specVersion)
+        subWorkflow = try? container.decode(String.self, forKey: .subWorkflow)
+        artifacts = (try? container.decode([String].self, forKey: .artifacts)) ?? []
+        let suppliedText = (try? container.decode(String.self, forKey: .text))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let suppliedText, !suppliedText.isEmpty {
+            text = suppliedText
+        } else {
+            text = Self.formatFallbackText(yesterday: yesterday, today: today, question: question)
+        }
+    }
+
+    /// Memberwise initializer for tests + locally-constructed previews.
+    init(
+        day: Int,
+        persona: String = "YC 파트너 / 시니어 메이커 (직설+압박, 반말)",
+        template: String = "3-section minimal",
+        yesterday: String,
+        today: String,
+        question: String,
+        coreQuestion: String? = nil,
+        specVersion: String? = nil,
+        subWorkflow: String? = nil,
+        artifacts: [String] = [],
+        text: String? = nil
+    ) {
+        self.day = day
+        self.persona = persona
+        self.template = template
+        self.yesterday = yesterday
+        self.today = today
+        self.question = question
+        self.coreQuestion = coreQuestion
+        self.specVersion = specVersion
+        self.subWorkflow = subWorkflow
+        self.artifacts = artifacts
+        let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmed, !trimmed.isEmpty {
+            self.text = trimmed
+        } else {
+            self.text = Self.formatFallbackText(yesterday: yesterday, today: today, question: question)
+        }
+    }
+
+    /// Mirror `formatFirstPromptText()` from foundation-chat.mjs: stable
+    /// layout — Yesterday / Today / Q on three separate lines, no fluff,
+    /// no emoji. Used as the deterministic display fallback when the sidecar
+    /// omits or empties `firstPrompt.text`.
+    static func formatFallbackText(
+        yesterday: String,
+        today: String,
+        question: String
+    ) -> String {
+        var lines: [String] = []
+        let trimmedYesterday = yesterday.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedToday = today.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedQuestion = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedYesterday.isEmpty { lines.append("어제: \(trimmedYesterday)") }
+        if !trimmedToday.isEmpty { lines.append("오늘: \(trimmedToday)") }
+        if !trimmedQuestion.isEmpty { lines.append("Q: \(trimmedQuestion)") }
+        return lines.joined(separator: "\n")
+    }
+}
+
 struct SidecarEvent: Decodable {
     let type: String
     let message: String?
@@ -2133,6 +3058,12 @@ struct SidecarEvent: Decodable {
     let diagnostics: SidecarDiagnostics?
     let bipCoach: BipCoachState?
     let bipSetupReady: Bool?
+    /// Foundation Day index (0-7). Carried by `foundation_first_prompt`
+    /// responses so the host knows which day's opener was rendered.
+    let day: Int?
+    /// AI-driven daily first prompt payload. Non-nil only on
+    /// `foundation_first_prompt` events.
+    let firstPrompt: FoundationFirstPrompt?
     let missingLocalDocs: [String]?
     let missingExternalRequirements: [String]?
     let nextIddDocumentType: String?
@@ -2294,6 +3225,8 @@ extension SidecarEvent {
         case diagnostics
         case bipCoach
         case bipSetupReady
+        case day
+        case firstPrompt
         case missingLocalDocs
         case missingExternalRequirements
         case nextIddDocumentType
@@ -2351,6 +3284,8 @@ extension SidecarEvent {
         diagnostics = Self.decodeIfPresent(SidecarDiagnostics.self, from: container, forKey: .diagnostics)
         bipCoach = Self.decodeIfPresent(BipCoachState.self, from: container, forKey: .bipCoach)
         bipSetupReady = Self.decodeIfPresent(Bool.self, from: container, forKey: .bipSetupReady)
+        day = Self.decodeIfPresent(Int.self, from: container, forKey: .day)
+        firstPrompt = Self.decodeIfPresent(FoundationFirstPrompt.self, from: container, forKey: .firstPrompt)
         missingLocalDocs = Self.decodeIfPresent([String].self, from: container, forKey: .missingLocalDocs)
         missingExternalRequirements = Self.decodeIfPresent([String].self, from: container, forKey: .missingExternalRequirements)
         nextIddDocumentType = Self.decodeIfPresent(String.self, from: container, forKey: .nextIddDocumentType)

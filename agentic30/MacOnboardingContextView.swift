@@ -102,7 +102,7 @@ struct MacOnboardingContextView: View {
                 }
         case 1:
             HStack(spacing: 12) {
-                Image(systemName: "rocket.fill")
+                Image(systemName: "sparkles")
                     .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(Color(red: 0.96, green: 0.90, blue: 0.66))
                 Text("Project stage")

@@ -239,6 +239,8 @@ final class SidecarBridge {
             diagnostics: nil,
             bipCoach: nil,
             bipSetupReady: nil,
+            day: nil,
+            firstPrompt: nil,
             missingLocalDocs: nil,
             missingExternalRequirements: nil,
             nextIddDocumentType: nil,

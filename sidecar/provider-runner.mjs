@@ -12,12 +12,18 @@ import {
   waitForUserInputResponse,
 } from "./user-input.mjs";
 import { createPetHooks } from "./pet-hooks.mjs";
+import {
+  CODEX_STRUCTURED_INPUT_TOOL,
+} from "./structured-input-tools.mjs";
+import { INLINE_DECISION_CONTRACT } from "./inline-decision.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sidecarRoot = path.resolve(__dirname);
 process.env.AGENTIC30_SIDECAR_ROOT ??= sidecarRoot;
 const DEFAULT_CODEX_MODEL = "gpt-5.5";
 const CODEX_REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
+const RESPONSE_LANGUAGE_INSTRUCTION =
+  "Reply in Korean (ko, 한국어) for all assistant-facing prose unless the user's prompt explicitly requests another language or an exact machine-readable output schema requires fixed tokens.";
 const appSupportPath = process.env.AGENTIC30_APP_SUPPORT_PATH
   ? path.resolve(process.env.AGENTIC30_APP_SUPPORT_PATH)
   : path.join(
@@ -40,6 +46,8 @@ export async function runProviderStream({
   sessionIdForMcp,
   executionMode = "agentic",
   systemPromptOverride = "",
+  specialist = null,
+  approvedToolExecution = false,
   onTextDelta,
   onTextReplace,
   onToolEvent,
@@ -47,7 +55,12 @@ export async function runProviderStream({
   onRunEvent,
   onPetHookEvent,
 }) {
-  onRunEvent?.({ phase: "provider.entry", provider, executionMode });
+  onRunEvent?.({
+    phase: "provider.entry",
+    provider,
+    executionMode,
+    approvedToolExecution: Boolean(approvedToolExecution),
+  });
   if (process.env.AGENTIC30_TEST_STUB_PROVIDER === "1") {
     const stubText = buildStubResponse(prompt);
     onTextReplace?.(stubText);
@@ -66,7 +79,7 @@ export async function runProviderStream({
     return { runtime: sessionRuntime };
   }
 
-  if (executionMode === "agentic") {
+  if (allowsProviderPermissionBypass({ executionMode, approvedToolExecution })) {
     await ensureNotionToken();
   }
 
@@ -80,6 +93,8 @@ export async function runProviderStream({
       sessionIdForMcp,
       executionMode,
       systemPromptOverride,
+      specialist,
+      approvedToolExecution,
       onTextDelta,
       onTextReplace,
       onToolEvent,
@@ -98,6 +113,8 @@ export async function runProviderStream({
     sessionIdForMcp,
     executionMode,
     systemPromptOverride,
+    specialist,
+    approvedToolExecution,
     onTextDelta,
     onTextReplace,
     onToolEvent,
@@ -162,6 +179,8 @@ async function runClaudeProvider({
   sessionIdForMcp,
   executionMode,
   systemPromptOverride,
+  specialist,
+  approvedToolExecution = false,
   onTextDelta,
   onTextReplace,
   onToolEvent,
@@ -183,15 +202,20 @@ async function runClaudeProvider({
   const mcpServers = {
     ...(usesInternalMcp(executionMode) && sessionIdForMcp
       ? {
-          [internalMcpServerName]: buildMcpConfig(sessionIdForMcp, workspaceRoot),
+          [internalMcpServerName]: buildMcpConfig(sessionIdForMcp, workspaceRoot, {
+            executionMode,
+            approvedToolExecution,
+          }),
         }
       : {}),
-    ...(executionMode === "agentic" ? buildNotionMcpConfig() : {}),
+    ...(allowsProviderPermissionBypass({ executionMode, approvedToolExecution }) ? buildNotionMcpConfig() : {}),
     ...(usesQmdMcp(executionMode) ? buildQmdMcpConfig({ sidecarRoot }) : {}),
   };
   const apiKey = readApiKey("claude");
   const env = {
     ...process.env,
+    SPAWNED_SESSION: "true",
+    MODEL_OVERLAY: "claude",
   };
   if (hasClaudeLocalSession()) {
     delete env.ANTHROPIC_API_KEY;
@@ -199,6 +223,7 @@ async function runClaudeProvider({
     env.ANTHROPIC_API_KEY = apiKey;
   }
 
+  const claudeVendor = specialist?.vendor?.claude;
   const options = {
     model: model || undefined,
     pathToClaudeCodeExecutable: cliPath,
@@ -211,6 +236,7 @@ async function runClaudeProvider({
     canUseTool: buildClaudeCanUseTool({
       sessionId: sessionIdForMcp,
       onRunEvent,
+      approvedToolExecution,
     }),
     toolConfig: {
       askUserQuestion: { previewFormat: "markdown" },
@@ -221,13 +247,27 @@ async function runClaudeProvider({
       append: systemPromptText,
     },
     abortController,
+    ...(claudeVendor?.exists
+      ? {
+          plugins: [{ type: "local", path: claudeVendor.pluginRoot }],
+          skills: [claudeVendor.skillName],
+          settingSources: ["skills"],
+        }
+      : {}),
   };
+  if (claudeVendor?.exists) {
+    onRunEvent?.({
+      phase: "provider.claude.specialist_loaded",
+      specialistId: claudeVendor.skillName,
+      pluginRoot: claudeVendor.pluginRoot,
+    });
+  }
   const petHooks = buildClaudePetHooks(onPetHookEvent, sessionIdForMcp);
   if (petHooks) {
     options.hooks = petHooks;
   }
 
-  if (allowsToolExecution(executionMode)) {
+  if (allowsProviderPermissionBypass({ executionMode, approvedToolExecution })) {
     options.allowDangerouslySkipPermissions = true;
     options.permissionMode = "bypassPermissions";
   }
@@ -341,8 +381,22 @@ async function runClaudeProvider({
   };
 }
 
-function buildClaudeCanUseTool({ sessionId, onRunEvent }) {
+function buildClaudeCanUseTool({
+  sessionId,
+  onRunEvent,
+  approvedToolExecution = false,
+} = {}) {
   return async (toolName, input, context = {}) => {
+    if (!approvedToolExecution && isClaudeMutatingTool(toolName)) {
+      onRunEvent?.({
+        phase: "provider.claude.tool_denied_read_only",
+        toolName,
+      });
+      return {
+        behavior: "deny",
+        message: "This Agentic30 chat lane is read-only. Use an approved Apply/Run action before modifying files, running shell commands, or sending external messages.",
+      };
+    }
     if (toolName !== "AskUserQuestion") {
       return { behavior: "allow", updatedInput: input };
     }
@@ -402,6 +456,23 @@ function buildClaudeCanUseTool({ sessionId, onRunEvent }) {
 export function buildClaudePetHooks(onPetHookEvent, sessionIdForMcp) {
   if (!onPetHookEvent) return undefined;
   return createPetHooks(onPetHookEvent, { sessionId: sessionIdForMcp ?? null });
+}
+
+export function isClaudeMutatingTool(toolName = "") {
+  const normalized = String(toolName || "").toLowerCase();
+  if (!normalized) return false;
+  return [
+    "bash",
+    "edit",
+    "multiedit",
+    "write",
+    "notebookedit",
+    "task",
+    "webfetch",
+    "websearch",
+  ].some((name) => normalized === name.toLowerCase())
+    || normalized.includes("gws_exec")
+    || normalized.includes("gws_gmail_send");
 }
 
 function normalizeClaudeQuestions(questions) {
@@ -521,6 +592,8 @@ async function runCodexAttempt({
   sessionIdForMcp,
   executionMode,
   systemPromptOverride,
+  specialist,
+  approvedToolExecution = false,
   onTextDelta,
   onTextReplace,
   onToolEvent,
@@ -544,8 +617,17 @@ async function runCodexAttempt({
       executionMode,
       sessionIdForMcp,
       workspaceRoot,
+      specialist,
+      approvedToolExecution,
     }),
   };
+  if (specialist?.vendor?.codex?.exists) {
+    onRunEvent?.({
+      phase: "provider.codex.specialist_loaded",
+      specialistId: specialist.vendor.codex.skillName,
+      skillDir: specialist.vendor.codex.skillDir,
+    });
+  }
   onRunEvent?.({ phase: "provider.codex.config_built" });
   if (apiKey) {
     codexOptions.apiKey = apiKey;
@@ -558,8 +640,8 @@ async function runCodexAttempt({
     model: resolvedModel,
     skipGitRepoCheck: true,
     workingDirectory: workspaceRoot,
-    webSearchEnabled: executionMode === "agentic",
-    sandboxMode: executionMode === "agentic" ? "danger-full-access" : "read-only",
+    webSearchEnabled: allowsProviderPermissionBypass({ executionMode, approvedToolExecution }),
+    sandboxMode: codexSandboxForExecution({ executionMode, approvedToolExecution }),
     approvalPolicy: "never",
     modelReasoningEffort: resolveCodexReasoningEffort({ executionMode, prompt }),
   };
@@ -623,6 +705,7 @@ async function runCodexAttempt({
       onRunEvent?.({
         phase: "provider.codex.event.item_started",
         itemType: event.item?.type || "unknown",
+        ...codexItemDiagnostics(event.item),
       });
       const toolEvent = mapCodexItemToToolEvent(event.item, "started");
       if (toolEvent) {
@@ -644,6 +727,7 @@ async function runCodexAttempt({
         onRunEvent?.({
           phase: "provider.codex.event.item_updated",
           itemType: item?.type || "unknown",
+          ...codexItemDiagnostics(item),
         });
         const toolEvent = mapCodexItemToToolEvent(item, "updated");
         if (toolEvent) {
@@ -666,6 +750,7 @@ async function runCodexAttempt({
         onRunEvent?.({
           phase: "provider.codex.event.item_completed",
           itemType: item?.type || "unknown",
+          ...codexItemDiagnostics(item),
         });
         const toolEvent = mapCodexItemToToolEvent(item, "completed");
         if (toolEvent) {
@@ -713,6 +798,21 @@ export function shouldResumeCodexThread(sessionRuntime = {}, workspaceRoot = "",
 
 export function mapCodexItemToToolEvent(item, lifecycle) {
   if (!item) return null;
+  if (item.type === "function_call" || item.type === "function_call_output") {
+    const requestedToolName = item.name ?? item.call_name ?? item.tool ?? "function_call";
+    return {
+      phase: lifecycle === "completed" ? (item.status === "failed" ? "error" : "result") : "use",
+      toolName: requestedToolName,
+      toolCallKey: item.call_id ?? item.id ?? requestedToolName,
+      payload: {
+        requestedToolName,
+        eventItemType: item.type,
+        providerMode: "codex",
+        arguments: item.arguments ?? item.input ?? null,
+        output: item.output ?? item.result ?? null,
+      },
+    };
+  }
   if (item.type === "reasoning") {
     return {
       phase: "thinking",
@@ -790,12 +890,27 @@ export function mapCodexItemToToolEvent(item, lifecycle) {
   return null;
 }
 
+function codexItemDiagnostics(item) {
+  if (!item || (item.type !== "function_call" && item.type !== "function_call_output")) {
+    return {};
+  }
+  const requestedToolName = item.name ?? item.call_name ?? item.tool ?? "function_call";
+  return {
+    requestedToolName,
+    eventItemType: item.type,
+    providerMode: "codex",
+  };
+}
+
 export function buildCodexConfig({
   systemPromptText,
   executionMode,
   sessionIdForMcp,
   workspaceRoot,
+  specialist = null,
+  approvedToolExecution = false,
 }) {
+  const codexVendor = specialist?.vendor?.codex;
   return {
     developer_instructions: systemPromptText,
     notify: [],
@@ -805,12 +920,24 @@ export function buildCodexConfig({
     mcp_servers: {
       ...(usesInternalMcp(executionMode) && sessionIdForMcp
         ? {
-            [internalMcpServerName]: buildMcpConfig(sessionIdForMcp, workspaceRoot),
+            [internalMcpServerName]: buildMcpConfig(sessionIdForMcp, workspaceRoot, {
+              executionMode,
+              approvedToolExecution,
+            }),
           }
         : {}),
-      ...(executionMode === "agentic" ? buildNotionMcpConfig() : {}),
+      ...(allowsProviderPermissionBypass({ executionMode, approvedToolExecution }) ? buildNotionMcpConfig() : {}),
       ...(usesQmdMcp(executionMode) ? buildQmdMcpConfig({ sidecarRoot }) : {}),
     },
+    ...(codexVendor?.exists
+      ? {
+          skills: {
+            include_instructions: true,
+            bundled: { enabled: false },
+            config: [{ path: codexVendor.skillDir, enabled: true }],
+          },
+        }
+      : {}),
   };
 }
 
@@ -825,6 +952,8 @@ export function buildCodexEnv(baseEnv = process.env) {
     SHELL: baseEnv.SHELL,
     TERM: baseEnv.TERM,
     CODEX_HOME: codexHomePath,
+    SPAWNED_SESSION: "true",
+    MODEL_OVERLAY: "codex",
     AGENTIC30_SIDECAR_ROOT: sidecarRoot,
     AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
     AGENTIC30_CODEX_MODEL: baseEnv.AGENTIC30_CODEX_MODEL,
@@ -918,6 +1047,9 @@ export function resolveCodexReasoningEffort({ executionMode = "", prompt = "" } 
   if (executionMode === "isolated_read_only") {
     return hasDeepWorkSignal ? "medium" : "low";
   }
+  if (executionMode === "judge_read_only") {
+    return hasDeepWorkSignal ? "high" : "medium";
+  }
   if (executionMode === "memory_chat") {
     return hasDeepWorkSignal ? "high" : "medium";
   }
@@ -938,8 +1070,11 @@ function buildStubResponse(prompt) {
   }
   if ((value.includes("### ICP: docs/ICP.md") || value.includes("DAY1_ICP_TURN")) && /Day\s*1|Day 1|1일차/i.test(value)) {
     return [
-      "ICP.md 확인: 전업 1인 개발자, 수익 0원, macOS, 고객 인터뷰 의향이 있는 사용자로 가정했습니다.",
+      "ICP.md 확인: 전업 1인 개발자, 수익 0원, macOS, 고객 인터뷰 의향이 있으면 ICP 조건부 합격입니다.",
       "Day 1 응답: builder-state 진단을 먼저 하고, 기존 자산이 있으면 blank-slate discovery 대신 fast path로 SPEC.md v0 proof baseline과 다음 proof target을 정합니다.",
+      "Day 7 readiness: 이번 주 안에 첫 사용자/수익 경로를 좁힐 기준 숫자 1개를 정하고, 반응이 없으면 질문을 바꿉니다.",
+      "다음 액션: 오늘 고객 1명에게 반복 문제를 묻고 답변 원문을 SPEC.md에 붙입니다.",
+      "증거 목표: 응답 1개를 확보한 뒤 그 응답 원문을 담은 Threads BIP 공개 proof URL 1개를 남깁니다.",
     ].join("\n");
   }
 
@@ -998,6 +1133,7 @@ async function runTextOnlyProvider({
       body: JSON.stringify({
         model: model || process.env.ANTHROPIC_MODEL || "claude-3-7-sonnet-latest",
         max_tokens: 4000,
+        system: RESPONSE_LANGUAGE_INSTRUCTION,
         messages: [
           {
             role: "user",
@@ -1037,6 +1173,7 @@ async function runTextOnlyProvider({
     },
     body: JSON.stringify({
       model: model || process.env.OPENAI_MODEL || DEFAULT_CODEX_MODEL,
+      instructions: RESPONSE_LANGUAGE_INSTRUCTION,
       input: prompt,
     }),
     signal: abortController.signal,
@@ -1113,13 +1250,22 @@ function resolveInstalledPackageRoot(...segments) {
   return path.resolve(sidecarRoot, "..", "node_modules", ...segments);
 }
 
-function buildMcpConfig(sessionId, workspaceRoot) {
+function buildMcpConfig(
+  sessionId,
+  workspaceRoot,
+  {
+    executionMode = "",
+    approvedToolExecution = false,
+  } = {},
+) {
   return {
     command: process.execPath,
     args: [path.join(sidecarRoot, "mcp-server.mjs"), "--session", sessionId, "--workspace", workspaceRoot],
     env: {
       ...buildAuthEnv(),
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_EXECUTION_MODE: executionMode,
+      AGENTIC30_APPROVED_TOOL_EXECUTION: approvedToolExecution ? "1" : "0",
     },
   };
 }
@@ -1171,28 +1317,44 @@ function buildNotionMcpConfig() {
 }
 
 function baseSystemPrompt(provider, workspaceRoot, executionMode) {
+  if (executionMode === "judge_read_only") {
+    return [
+      "You are the sidecar read-only evaluation judge for agentic30.",
+      RESPONSE_LANGUAGE_INSTRUCTION,
+      "Return only the exact output format requested by the user prompt.",
+      "Do not use tools, workspace inspection, shell commands, web search, QMD, Notion, BIP document retrieval, or file writes.",
+      "Judge only from the prompt content you were given.",
+      `Current workspace: ${workspaceRoot}`,
+      `Provider mode: ${provider}`,
+    ].join("\n");
+  }
+
   if (executionMode === "fast_chat") {
     return [
       "You are the sidecar chat engine for agentic30.",
       "Reply in concise conversational prose.",
-      "Default to Korean (한국어) unless the user explicitly asks for another language.",
+      RESPONSE_LANGUAGE_INSTRUCTION,
       `Current workspace: ${workspaceRoot}`,
       `Provider mode: ${provider}`,
       "This is a fast chat lane. Do not use tools, workspace inspection, web search, QMD, Notion, or BIP document retrieval.",
+      "",
+      INLINE_DECISION_CONTRACT,
     ].join("\n");
   }
 
   const lines = [
     "You are the sidecar reasoning engine for agentic30.",
     "Reply in concise conversational prose suitable for the host client surface.",
-    "Default to Korean (한국어) for all assistant prose unless the user explicitly asks for another language.",
+    RESPONSE_LANGUAGE_INSTRUCTION,
     `Current workspace: ${workspaceRoot}`,
     `Provider mode: ${provider}`,
     "Use the agentic30 MCP server when you need app context or safe workspace inspection.",
     provider === "claude"
       ? "When you need the user's decision or missing information, use the built-in AskUserQuestion tool instead of asking in plain text."
-      : "When you need the user's decision or missing information, call the request_user_input MCP tool instead of asking in plain text.",
+      : `When you need the user's decision or missing information, call the ${CODEX_STRUCTURED_INPUT_TOOL} MCP tool instead of asking in plain text.`,
     "Prefer a single focused question with 2-3 options. Enable free text only when choices are not enough.",
+    "When asking a decision question in chat, render the options through the inline_decision contract below, not as prose examples or markdown bullets.",
+    INLINE_DECISION_CONTRACT,
     "If the task genuinely needs multiple independent questions, keep it to at most 4.",
     "",
     buildOctoberAdvisorGuidance(),
@@ -1201,8 +1363,8 @@ function baseSystemPrompt(provider, workspaceRoot, executionMode) {
   if (executionMode === "isolated_read_only") {
     lines.push("Do not use shell tools, filesystem tools, or web search. Work only from the prompt content you were given.");
   } else if (executionMode === "bip_coach_read_only") {
-    lines.push("Use only read-only tools needed for the BIP Coach mission: agentic30_sidecar gws_sheets_read/gws_docs_read first, or read-only gws CLI as a fallback.");
-    lines.push("Do not write files, edit Google Docs/Sheets, send messages, or browse the web in BIP Coach mode.");
+    lines.push("Use only read-only tools needed for the public execution mission: agentic30_sidecar gws_sheets_read/gws_docs_read first, or read-only gws CLI as a fallback.");
+    lines.push("Do not write files, edit Google Docs/Sheets, send messages, or browse the web in public execution mode.");
   }
 
   const bipConfig = readJsonFile(path.join(appSupportPath, "bip-config.json"));
@@ -1235,7 +1397,7 @@ function baseSystemPrompt(provider, workspaceRoot, executionMode) {
   return lines.join("\n");
 }
 
-function buildSystemPromptText({
+export function buildSystemPromptText({
   provider,
   workspaceRoot,
   executionMode,
@@ -1245,8 +1407,20 @@ function buildSystemPromptText({
   return systemPromptOverride ? [base, systemPromptOverride].join("\n\n") : base;
 }
 
-function allowsToolExecution(executionMode = "") {
-  return executionMode === "agentic" || executionMode === "memory_chat" || executionMode === "bip_coach_read_only";
+export function allowsProviderPermissionBypass({
+  executionMode = "",
+  approvedToolExecution = false,
+} = {}) {
+  return executionMode === "agentic" && approvedToolExecution === true;
+}
+
+export function codexSandboxForExecution({
+  executionMode = "",
+  approvedToolExecution = false,
+} = {}) {
+  return allowsProviderPermissionBypass({ executionMode, approvedToolExecution })
+    ? "danger-full-access"
+    : "read-only";
 }
 
 function usesInternalMcp(executionMode = "") {

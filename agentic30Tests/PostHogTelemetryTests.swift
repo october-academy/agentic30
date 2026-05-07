@@ -19,13 +19,13 @@ final class PostHogTelemetryTests: XCTestCase {
 
     func testSanitizerMasksSensitiveFieldsAndLocalPaths() {
         let sanitized = PostHogTelemetrySanitizer.sanitize([
-            "payment_key": "dummy-payment-token-abcdef",
+            "payment_key": "payment-fixture-1234567890",
             "workspace_root": "/Users/october/prj/agentic30",
             "doc_path": "docs/ICP.md",
             "auth_email": "founder@example.com",
         ])
 
-        XCTAssertEqual(sanitized["payment_key_suffix"] as? String, "abcdef")
+        XCTAssertEqual(sanitized["payment_key_suffix"] as? String, "567890")
         XCTAssertEqual(sanitized["workspace_basename"] as? String, "agentic30")
         XCTAssertEqual(sanitized["doc_path"] as? String, "docs/ICP.md")
         XCTAssertEqual(sanitized["auth_email_domain"] as? String, "example.com")

@@ -62,7 +62,7 @@ test("summarizes Korean BIP sheet rows", () => {
   assert.equal(summary.recentRows.length, 2);
   assert.equal(summary.recentRows[0].posts.length, 2);
   assert.equal(summary.recentRows[1].posts[0], "단일 글");
-  assert.match(summary.summary, /전체 2개 BIP 기록/);
+  assert.match(summary.summary, /전체 2개 공개 기록/);
   assert.match(summary.summary, /팔로어 변화: 100 -> 104/);
   assert.match(summary.summary, /문제 정의가 반응 좋음/);
 });
@@ -80,7 +80,7 @@ test("keeps all Sheet rows while exposing recent rows for quick UI context", () 
   assert.equal(summary.allRows.length, 50);
   assert.equal(summary.recentRows.length, 7);
   assert.equal(summary.recentRows.at(-1).date, "2026-04-50");
-  assert.match(summary.summary, /전체 50개 BIP 기록을 읽었습니다/);
+  assert.match(summary.summary, /전체 50개 공개 기록을 읽었습니다/);
 });
 
 test("extracts plain text from Google Docs document payload", () => {
@@ -267,6 +267,12 @@ test("mission prompt can use sidecar-read evidence without delegating Google rea
   assert.match(prompt, /최신 글/);
   assert.match(prompt, /전체 업무일지 본문/);
   assert.match(prompt, /Daily Mission loop/);
+  assert.match(prompt, /personalization/);
+  assert.match(prompt, /evidenceNeeds/);
+  assert.match(prompt, /nextQuestions/);
+  assert.match(prompt, /layerChecks/);
+  assert.match(prompt, /curriculumDay\.personalization\.evidenceGaps/);
+  assert.match(prompt, /Founder \/ October Academy \/ Agentic30/);
   assert.match(prompt, /"missions"/);
 });
 
@@ -312,7 +318,7 @@ test("builds fallback mission choices from sidecar-read evidence and curriculum"
       evidence: {
         fullRead: true,
         source: "sidecar_gws",
-        summary: "전체 2개 BIP 기록을 읽었습니다.",
+        summary: "전체 2개 공개 기록을 읽었습니다.",
         allRows: [
           { rowNumber: 2, date: "2026-04-24", followers: "100", posts: ["첫 글"], insights: "문제 정의가 반응 좋음" },
           { rowNumber: 3, date: "2026-04-25", followers: "104", posts: ["둘째 글"], insights: "온보딩 막힘이 반복됨" },
@@ -330,7 +336,13 @@ test("builds fallback mission choices from sidecar-read evidence and curriculum"
 
   assert.equal(choices.length, 3);
   assert.equal(choices[0].provider, "local");
-  assert.match(choices[0].mission, /반복 문제 후보를 3개 적기/);
+  assert.match(choices[0].mission, /L2 인터뷰 transcript/);
+  assert.match(choices[0].mission, /evidence gap/);
+  assert.match(choices[0].eveningChecklist.join("\n"), /\/office-hours/);
+  assert.match(choices[0].eveningChecklist.join("\n"), /\/plan-ceo-review/);
+  assert.match(choices[0].eveningChecklist.join("\n"), /Founder/);
+  assert.match(choices[0].eveningChecklist.join("\n"), /Company|October Academy/);
+  assert.match(choices[0].eveningChecklist.join("\n"), /Product|Agentic30/);
   assert.match(choices[1].drafts.join("\n"), /문제 지도/);
   assert.match(choices[2].evidenceRefs.join("\n"), /오늘은 ICP/);
 });
@@ -478,7 +490,7 @@ test("formats GWS auth failures as reconnect instructions", () => {
   const message = formatBipCoachGwsError(error);
 
   assert.match(message, /Google 연결이 만료됐어요/);
-  assert.match(message, /BIP Coach 카드/);
+  assert.match(message, /오늘 실행 카드/);
   assert.match(message, /원래 작업/);
   assert.doesNotMatch(message, /터미널/);
   assert.doesNotMatch(message, /invalid_grant/);
@@ -489,7 +501,7 @@ test("formats missing GWS CLI as setup instructions", () => {
   const message = formatBipCoachGwsError(new Error("`gws` CLI not found on PATH."));
 
   assert.match(message, /`gws` CLI를 찾지 못했어요/);
-  assert.match(message, /BIP Coach 설정 카드/);
+  assert.match(message, /오늘 실행 설정 카드/);
 });
 
 test("formats OAuth test-user denial as consent-screen instructions", () => {
@@ -550,7 +562,7 @@ test("parses mission JSON and completes streaks", () => {
   assert.equal(completed.streak.longest, 5);
 });
 
-test("persists normalized BIP Coach state", async () => {
+test("persists normalized public execution coach state", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-bip-coach-"));
   const filePath = path.join(dir, "bip-coach-state.json");
 

@@ -40,6 +40,13 @@ struct ContentView: View {
     @State private var hoveredWorkspaceNavTitle: String?
     @State private var hoveredWorkspaceDay: Int?
     @State private var hoveredWorkspaceFooterItem: WorkspaceFooterItem?
+    @State private var hoveredWorkspaceHistorySessionID: String?
+    // Foundation phase Sub-AC 3: 사이드바 하단 통합 설정 메뉴(프로필/알림/계정/로그아웃/
+    // 전체 설정)를 popover로 노출하기 위한 토글 + hover 상태. 기존 gear 아이콘을 직접
+    // 풀페이지 Settings로 라우팅하는 대신 popover 안의 항목을 통해 SettingsView의
+    // 해당 섹션이나 signOutMacAuth() 같은 액션으로 분기시킨다.
+    @State private var showsSidebarSettingsMenu = false
+    @State private var hoveredSidebarSettingsMenuItem: SidebarSettingsMenuItem?
 
     @MainActor
     init(
@@ -89,6 +96,11 @@ struct ContentView: View {
             }
             .onChange(of: viewModel.visibleBipCoach?.currentMission?.id) { _, _ in
                 applyBipNotificationIntentToCurrentState()
+            }
+            .onChange(of: viewModel.visibleBipCoach?.currentMission?.status) { _, status in
+                if status == "completed" {
+                    showsBipCompletionFields = false
+                }
             }
 
         if isWorkspaceWindow {
@@ -270,49 +282,7 @@ struct ContentView: View {
 
                 Spacer(minLength: 0)
 
-                if selectedWorkspaceSection != .settings {
-                    Button {
-                        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-                            showsInlineBipReadinessSetup = true
-                            showsBipReadinessPreview = true
-                            showsBipReadinessAdvanced = true
-                        }
-                        viewModel.generateBipMission(compact: true, curriculumDay: curriculumPayload(for: day))
-                    } label: {
-                        HStack(spacing: 7) {
-                            if viewModel.isBipCoachGenerating {
-                                ProgressView()
-                                    .controlSize(.mini)
-                                    .frame(width: 12, height: 12)
-                                Text("생성 중...")
-                            } else {
-                                Image(systemName: "sparkles")
-                                    .font(.system(size: 12, weight: .bold))
-                                Text("미션 생성")
-                            }
-                        }
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .frame(minWidth: 78)
-                        .foregroundStyle(.white.opacity(workspaceMissionButtonForegroundOpacity))
-                        .padding(.horizontal, 13)
-                        .frame(height: 32)
-                        .background(Capsule().fill(Color.white.opacity(workspaceMissionButtonFillOpacity)))
-                        .overlay(
-                            Capsule()
-                                .stroke(Color.white.opacity(isWorkspaceMissionButtonHovered ? 0.13 : 0.0), lineWidth: 1)
-                        )
-                        .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(viewModel.isBipCoachGenerating)
-                    .onHover { hovering in
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            isWorkspaceMissionButtonHovered = hovering
-                        }
-                    }
-                    .accessibilityIdentifier("workspace.generateBipMission")
-                    .accessibilityLabel("BIP 미션 생성")
-                }
+                workspaceMissionFirstToolbarStatus()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 
@@ -320,6 +290,19 @@ struct ContentView: View {
                 .padding(.leading, isWorkspaceWindow ? 0 : 42)
                 .padding(.top, 52)
                 .zIndex(100)
+        }
+    }
+
+    @ViewBuilder
+    private func workspaceMissionFirstToolbarStatus() -> some View {
+        if selectedWorkspaceSection != .settings {
+            Text(viewModel.isBipCoachGenerating ? "오늘 실행 준비 중" : "Mission-first")
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.42))
+                .padding(.horizontal, 10)
+                .frame(height: 28)
+                .background(Capsule().fill(Color.white.opacity(0.055)))
+                .accessibilityIdentifier("workspace.missionFirst.toolbarStatus")
         }
     }
 
@@ -479,6 +462,14 @@ struct ContentView: View {
             workspaceSidebarBrand()
                 .padding(.horizontal, 14)
                 .padding(.top, 16)
+                .padding(.bottom, 10)
+
+            // Foundation phase Day N/30 counter — sits between the brand
+            // and the section navigation so the user sees their position in
+            // the 30-day program before any other workspace chrome. Always
+            // visible (curriculum + settings) to anchor the timeline.
+            workspaceSidebarFoundationCounter()
+                .padding(.horizontal, 14)
                 .padding(.bottom, 14)
 
             if selectedWorkspaceSection == .settings {
@@ -499,21 +490,19 @@ struct ContentView: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 12)
 
-                Text("단계")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.36))
-                    .textCase(.uppercase)
-                    .padding(.horizontal, 18)
-                    .padding(.bottom, 7)
-
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 11) {
-                        ForEach(AgenticCurriculumPhase.allCases) { phase in
-                            workspaceSidebarPhaseSection(phase)
-                        }
+                    VStack(alignment: .leading, spacing: 0) {
+                        workspaceCurriculumPathSection()
+                            .padding(.horizontal, 10)
+                            .padding(.bottom, 12)
+
+                        // Foundation phase Sub-AC 2: 사이드바 중단에 누적
+                        // 기록(과거 채팅 세션 / 일자별 요약)을 노출한다.
+                        // AgenticViewModel.sessions에서 history를 로드해 일자별로
+                        // 그룹화하고, 클릭하면 해당 세션을 활성화한다. 빈 상태에서는
+                        // EmptyView로 접혀 사이드바 레이아웃이 흐트러지지 않는다.
+                        workspaceSidebarHistorySection()
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 12)
                 }
                 .accessibilityIdentifier("workspace.curriculumSidebar")
 
@@ -664,6 +653,53 @@ struct ContentView: View {
         }
     }
 
+    /// Day N/30 counter rendered at the top of the workspace sidebar. The
+    /// label is driven by `viewModel.foundationStartedAt` (an em-dash slot
+    /// is shown until the anchor is set), and the rail tracks
+    /// `viewModel.foundationProgress` (0…1). The Foundation phase only
+    /// covers Day 0–7, but we display the full 30-day denominator so the
+    /// user sees the program shape from day one — Foundation is the first
+    /// segment of a longer arc, not a standalone milestone.
+    @ViewBuilder
+    private func workspaceSidebarFoundationCounter() -> some View {
+        let dayLabel = viewModel.foundationDayLabel
+        let progress = viewModel.foundationProgress
+        let percentLabel = "\(Int(round(progress * 100)))%"
+
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(dayLabel)
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .accessibilityIdentifier("workspace.sidebar.dayCounter.label")
+
+                Spacer(minLength: 0)
+
+                Text("Foundation")
+                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                    .tracking(0.6)
+                    .textCase(.uppercase)
+                    .foregroundStyle(.white.opacity(0.46))
+            }
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.08))
+                    Capsule()
+                        .fill(Color.white.opacity(0.78))
+                        .frame(width: max(2, proxy.size.width * progress))
+                        .animation(.easeOut(duration: 0.18), value: progress)
+                }
+            }
+            .frame(height: 4)
+            .accessibilityIdentifier("workspace.sidebar.dayCounter.progress")
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("workspace.sidebar.dayCounter")
+        .accessibilityLabel("\(dayLabel), Foundation 진행률 \(percentLabel)")
+    }
+
     private func workspaceSidebarNavRow(
         title: String,
         subtitle: String,
@@ -709,33 +745,48 @@ struct ContentView: View {
         )
     }
 
-    private func workspaceSidebarPhaseSection(_ phase: AgenticCurriculumPhase) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(workspaceAccentColor(for: phase).opacity(0.72))
-                    .frame(width: 6, height: 6)
-
-                Text(phase.title)
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.42))
-                    .textCase(.uppercase)
-
-                Spacer(minLength: 0)
+    private func workspaceCurriculumPathSection() -> some View {
+        LazyVStack(alignment: .leading, spacing: 5) {
+            ForEach(AgenticCurriculumDay.days.prefix(7)) { day in
+                workspaceSidebarRow(day, state: workspaceSidebarState(for: day))
             }
-            .padding(.horizontal, 8)
 
-            ForEach(AgenticCurriculumDay.days.filter { $0.phase == phase }) { day in
-                workspaceSidebarRow(day)
-            }
+            workspaceSidebarFutureModule()
+                .padding(.top, 7)
         }
     }
 
-    private func workspaceSidebarRow(_ day: AgenticCurriculumDay) -> some View {
+    private enum WorkspaceSidebarDayState: Equatable {
+        case active
+        case available
+        case locked(requiredDay: Int)
+    }
+
+    private func workspaceSidebarState(for day: AgenticCurriculumDay) -> WorkspaceSidebarDayState {
+        if selectedWorkspaceDay == day.day {
+            return .active
+        }
+        if day.day == 1 {
+            return .available
+        }
+        if day.day == 2, viewModel.visibleBipCoach?.currentMission?.status == "completed" {
+            return .available
+        }
+        return .locked(requiredDay: day.day - 1)
+    }
+
+    private func workspaceSidebarRow(_ day: AgenticCurriculumDay, state: WorkspaceSidebarDayState) -> some View {
         let selected = selectedWorkspaceDay == day.day
         let isHovered = hoveredWorkspaceDay == day.day
+        let isLocked: Bool = {
+            if case .locked = state {
+                return true
+            }
+            return false
+        }()
 
         return Button {
+            guard !isLocked else { return }
             withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
                 selectedWorkspaceDay = day.day
                 selectedWorkspaceSection = .curriculum
@@ -745,41 +796,173 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Day \(day.day)")
                         .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(selected || isHovered ? 0.96 : 0.68))
+                        .foregroundStyle(workspaceSidebarDayTextColor(state: state, isHovered: isHovered))
                     Text(day.shortTitle)
                         .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(selected || isHovered ? 0.70 : 0.42))
+                        .foregroundStyle(workspaceSidebarDaySubtitleColor(state: state, isHovered: isHovered))
                         .lineLimit(1)
                 }
 
                 Spacer(minLength: 0)
+
+                if isLocked {
+                    if isHovered, let lockedHelp = workspaceSidebarLockedHelp(for: state) {
+                        workspaceSidebarLockedHoverTooltip(lockedHelp)
+                            .transition(.opacity)
+                            .padding(.trailing, 7)
+                    }
+
+                    Text("잠김")
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(isHovered ? 0.42 : 0.28))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.white.opacity(isHovered ? 0.055 : 0.035)))
+                }
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.white.opacity(workspaceSidebarRowFillOpacity(isSelected: selected, isHovered: isHovered)))
+                    .fill(Color.white.opacity(workspaceSidebarRowFillOpacity(
+                        isSelected: selected,
+                        isHovered: isHovered,
+                        isLocked: isLocked
+                    )))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(workspaceAccentColor(for: day.phase).opacity(selected ? 0.20 : (isHovered ? 0.16 : 0.0)), lineWidth: 1)
+                    .stroke(workspaceSidebarDayBorderColor(day: day, state: state, isHovered: isHovered), lineWidth: 1)
             )
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
+        .workspaceSidebarLockedTooltip(workspaceSidebarLockedHelp(for: state))
         .onHover { hovering in
             hoveredWorkspaceDay = hovering ? day.day : nil
         }
         .animation(
-            .easeOut(duration: 0.12),
+            .easeInOut(duration: 0.16),
             value: isHovered
         )
         .accessibilityIdentifier("workspace.day.\(day.day)")
-        .accessibilityLabel("Day \(day.day), \(day.title)")
+        .accessibilityLabel(workspaceSidebarAccessibilityLabel(day: day, state: state))
     }
 
-    private func workspaceSidebarRowFillOpacity(isSelected: Bool, isHovered: Bool) -> Double {
+    private func workspaceSidebarLockedHoverTooltip(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .foregroundStyle(.white.opacity(0.88))
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                Capsule()
+                    .fill(Color(red: 0.06, green: 0.07, blue: 0.08).opacity(0.94))
+            )
+            .overlay(
+                Capsule()
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.24), radius: 8, y: 3)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
+    private func workspaceSidebarLockedHelp(for state: WorkspaceSidebarDayState) -> String? {
+        if case .locked(let requiredDay) = state {
+            return "Day \(requiredDay)을 마쳐야 접근할 수 있어요."
+        }
+        return nil
+    }
+
+    private func workspaceSidebarAccessibilityLabel(day: AgenticCurriculumDay, state: WorkspaceSidebarDayState) -> String {
+        if let lockedHelp = workspaceSidebarLockedHelp(for: state) {
+            return "Day \(day.day), \(day.title), 잠김, \(lockedHelp)"
+        }
+        return "Day \(day.day), \(day.title)"
+    }
+
+    private func workspaceSidebarDayTextColor(state: WorkspaceSidebarDayState, isHovered: Bool) -> Color {
+        switch state {
+        case .active:
+            return .white.opacity(0.96)
+        case .available:
+            return .white.opacity(isHovered ? 0.90 : 0.68)
+        case .locked:
+            return .white.opacity(isHovered ? 0.46 : 0.30)
+        }
+    }
+
+    private func workspaceSidebarDaySubtitleColor(state: WorkspaceSidebarDayState, isHovered: Bool) -> Color {
+        switch state {
+        case .active:
+            return .white.opacity(0.70)
+        case .available:
+            return .white.opacity(isHovered ? 0.62 : 0.42)
+        case .locked:
+            return .white.opacity(isHovered ? 0.34 : 0.24)
+        }
+    }
+
+    private func workspaceSidebarDayBorderColor(day: AgenticCurriculumDay, state: WorkspaceSidebarDayState, isHovered: Bool) -> Color {
+        switch state {
+        case .active:
+            return workspaceAccentColor(for: day.phase).opacity(0.20)
+        case .available:
+            return workspaceAccentColor(for: day.phase).opacity(isHovered ? 0.16 : 0.0)
+        case .locked:
+            return Color.white.opacity(isHovered ? 0.07 : 0.0)
+        }
+    }
+
+    private func workspaceSidebarFutureModule() -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("이어지는 빌드 여정")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.72))
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+
+                Text("Pro")
+                    .font(.system(size: 9, weight: .heavy, design: .rounded))
+                    .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.82))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.white.opacity(0.055)))
+                    .overlay(
+                        Capsule()
+                            .stroke(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.15), lineWidth: 1)
+                    )
+            }
+
+            Text("Day 7을 마치면 Day 8부터 이어집니다")
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.36))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 11)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(0.035))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.075), lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("workspace.curriculumFutureModule")
+        .accessibilityLabel("이어지는 빌드 여정, Pro, Day 7을 마치면 Day 8부터 이어집니다")
+    }
+
+    private func workspaceSidebarRowFillOpacity(isSelected: Bool, isHovered: Bool, isLocked: Bool = false) -> Double {
+        if isLocked {
+            return isHovered ? 0.04 : 0.0
+        }
         if isSelected {
             return isHovered ? 0.145 : 0.105
         }
@@ -787,13 +970,265 @@ struct ContentView: View {
         return isHovered ? 0.075 : 0.0
     }
 
+    /// Foundation phase Sub-AC 2: 사이드바 중단(curriculum 스크롤 하단)에 누적
+    /// 채팅 기록을 일자별로 묶어 노출한다. `AgenticViewModel.sessions`는 이미
+    /// `updatedAt` desc로 정렬되어 publish되므로 별도 정렬을 추가하지 않는다.
+    /// 빈 상태에서는 `EmptyView()`로 접혀 사이드바가 의미 없는 헤더를 들고 있지
+    /// 않게 한다(Foundation Day 0 직후 첫 프레임은 sessions가 비어 있을 수 있다).
+    @ViewBuilder
+    private func workspaceSidebarHistorySection() -> some View {
+        let sessions = viewModel.sessions
+        if sessions.isEmpty {
+            EmptyView()
+        } else {
+            let groups = workspaceSidebarHistoryGroups(from: sessions)
+            VStack(alignment: .leading, spacing: 10) {
+                workspaceSidebarHistoryHeader(count: sessions.count)
+
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(groups) { group in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(group.label)
+                                .font(.system(size: 10, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.34))
+                                .padding(.horizontal, 4)
+                                .accessibilityIdentifier("workspace.sidebar.historyGroup.\(group.id).label")
+
+                            ForEach(group.sessions) { session in
+                                workspaceSidebarHistoryRow(session)
+                            }
+                        }
+                        .accessibilityIdentifier("workspace.sidebar.historyGroup.\(group.id)")
+                    }
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 14)
+            .padding(.bottom, 12)
+            .accessibilityIdentifier("workspace.sidebar.historySection")
+        }
+    }
+
+    private func workspaceSidebarHistoryHeader(count: Int) -> some View {
+        HStack(spacing: 8) {
+            Text("최근 대화")
+                .font(.system(size: 11, weight: .heavy, design: .rounded))
+                .tracking(0.5)
+                .textCase(.uppercase)
+                .foregroundStyle(.white.opacity(0.52))
+                .lineLimit(1)
+                .accessibilityIdentifier("workspace.sidebar.historyTitle")
+
+            Spacer(minLength: 0)
+
+            Text("\(count)")
+                .font(.system(size: 9, weight: .heavy, design: .rounded))
+                .foregroundStyle(.white.opacity(0.46))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(Color.white.opacity(0.06)))
+                .accessibilityIdentifier("workspace.sidebar.historyCount")
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private func workspaceSidebarHistoryRow(_ session: ChatSession) -> some View {
+        let isSelected = session.id == viewModel.selectedSessionID
+        let isHovered = hoveredWorkspaceHistorySessionID == session.id
+        let title = workspaceSidebarHistoryTitle(for: session)
+        let preview = workspaceSidebarHistoryPreview(for: session)
+        let timeLabel = workspaceSidebarHistoryTimeLabel(for: session)
+
+        return Button {
+            // Sub-AC 2 contract: 클릭 시 해당 세션을 활성화한다. 이미 settings 섹션에
+            // 진입한 상태일 수도 있으므로 .curriculum으로 되돌리고, 이력 진입을
+            // PostHog에 기록해 KR4.1 측정 인프라가 클릭률을 추적할 수 있게 한다.
+            viewModel.selectSession(session.id)
+            withAnimation(.spring(response: 0.22, dampingFraction: 0.92)) {
+                selectedWorkspaceSection = .curriculum
+            }
+            PostHogTelemetry.capture(
+                "mac_history_session_opened",
+                properties: [
+                    "session_id": session.id,
+                    "provider": session.provider.rawValue,
+                    "source": "workspace_sidebar_history",
+                ],
+                authSession: viewModel.macAuthSession
+            )
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Circle()
+                    .fill(workspaceSidebarHistoryStatusColor(for: session))
+                    .frame(width: 6, height: 6)
+                    .padding(.top, 7)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(title)
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(isSelected || isHovered ? 0.94 : 0.72))
+                            .lineLimit(1)
+
+                        Spacer(minLength: 0)
+
+                        Text(timeLabel)
+                            .font(.system(size: 9, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(isSelected || isHovered ? 0.52 : 0.36))
+                            .lineLimit(1)
+                    }
+
+                    if let preview {
+                        Text(preview)
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(isSelected || isHovered ? 0.62 : 0.42))
+                            .lineLimit(1)
+                    }
+                }
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.white.opacity(workspaceSidebarRowFillOpacity(
+                        isSelected: isSelected,
+                        isHovered: isHovered
+                    )))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.white.opacity(isHovered ? 0.10 : 0.0), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            hoveredWorkspaceHistorySessionID = hovering ? session.id : nil
+        }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .accessibilityIdentifier("workspace.sidebar.historyRow.\(session.id)")
+        .accessibilityLabel("\(title), \(timeLabel), \(preview ?? "기록 없음")")
+    }
+
+    private func workspaceSidebarHistoryTitle(for session: ChatSession) -> String {
+        if let trimmed = session.title.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty {
+            return trimmed
+        }
+        return "새 대화"
+    }
+
+    private func workspaceSidebarHistoryPreview(for session: ChatSession) -> String? {
+        // 마지막 메시지가 의미있는 텍스트일 때만 미리보기를 보여 준다. session-store가
+        // 시작 시 streaming 메시지를 final로 클램핑하므로 여기서는 단순 trim만 한다.
+        let preview = session.lastMessagePreview
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return preview.nonEmpty
+    }
+
+    private func workspaceSidebarHistoryTimeLabel(for session: ChatSession) -> String {
+        let calendar = Calendar.current
+        let now = Date()
+        let updatedAt = session.updatedAt
+        if calendar.isDateInToday(updatedAt) {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "ko_KR")
+            formatter.dateFormat = "a h:mm"
+            return formatter.string(from: updatedAt)
+        }
+        if calendar.isDateInYesterday(updatedAt) {
+            return "어제"
+        }
+        let components = calendar.dateComponents([.day], from: updatedAt, to: now)
+        if let days = components.day, days < 7 {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "ko_KR")
+            formatter.dateFormat = "EEE"
+            return formatter.string(from: updatedAt)
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.dateFormat = "M/d"
+        return formatter.string(from: updatedAt)
+    }
+
+    private func workspaceSidebarHistoryStatusColor(for session: ChatSession) -> Color {
+        switch session.status {
+        case .running:
+            return Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.85)
+        case .awaitingInput:
+            return Color(red: 1.0, green: 0.78, blue: 0.36).opacity(0.85)
+        case .error:
+            return Color(red: 1.0, green: 0.45, blue: 0.42).opacity(0.85)
+        case .idle:
+            return Color.white.opacity(0.30)
+        }
+    }
+
+    private func workspaceSidebarHistoryGroups(
+        from sessions: [ChatSession]
+    ) -> [WorkspaceSidebarHistoryGroup] {
+        let calendar = Calendar.current
+        let now = Date()
+        let today = calendar.startOfDay(for: now)
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: today) ?? today
+
+        var ordered: [(label: String, sessions: [ChatSession])] = []
+        var indexByLabel: [String: Int] = [:]
+
+        for session in sessions {
+            let day = calendar.startOfDay(for: session.updatedAt)
+            let label: String
+            if day == today {
+                label = "오늘"
+            } else if day == yesterday {
+                label = "어제"
+            } else {
+                let formatter = DateFormatter()
+                formatter.locale = Locale(identifier: "ko_KR")
+                let components = calendar.dateComponents([.day], from: day, to: today)
+                if let days = components.day, days < 7 {
+                    formatter.dateFormat = "EEEE"
+                } else if calendar.component(.year, from: day) == calendar.component(.year, from: now) {
+                    formatter.dateFormat = "M월 d일 (E)"
+                } else {
+                    formatter.dateFormat = "y년 M월 d일"
+                }
+                label = formatter.string(from: day)
+            }
+
+            if let idx = indexByLabel[label] {
+                ordered[idx].sessions.append(session)
+            } else {
+                indexByLabel[label] = ordered.count
+                ordered.append((label: label, sessions: [session]))
+            }
+        }
+
+        return ordered.map {
+            WorkspaceSidebarHistoryGroup(label: $0.label, sessions: $0.sessions)
+        }
+    }
+
     private func workspaceSidebarFooter() -> some View {
         ZStack(alignment: .topTrailing) {
             HStack(spacing: 8) {
                 workspaceProjectFolderButton()
 
+                // Foundation phase Sub-AC 3: gear 아이콘은 더 이상 풀페이지 설정으로
+                // 직접 진입하지 않고, 프로필/알림/계정/로그아웃/전체 설정을 한 곳에 모은
+                // 통합 메뉴 popover를 토글한다. popover 내부 항목이 각자 적절한
+                // SettingsSection으로 라우팅하거나(전체 설정 보기) 즉시 액션을
+                // 실행한다(로그아웃).
                 workspaceFooterIconButton(item: .settings, systemName: "gearshape.fill") {
-                    openWorkspaceSettings()
+                    showsSidebarSettingsMenu.toggle()
+                }
+                .popover(
+                    isPresented: $showsSidebarSettingsMenu,
+                    arrowEdge: .top
+                ) {
+                    sidebarSettingsMenu()
+                        .accessibilityIdentifier("workspace.sidebarSettingsMenu")
                 }
 
                 workspaceFooterIconButton(item: .help, systemName: "questionmark.circle.fill") {
@@ -967,11 +1402,20 @@ struct ContentView: View {
 
         withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
             selectedWorkspaceSection = .curriculum
-            showsInlineBipReadinessSetup = true
-            showsBipReadinessPreview = true
-            showsBipReadinessAdvanced = true
+            showsInlineBipReadinessSetup = false
+            showsBipReadinessPreview = false
+            showsBipReadinessAdvanced = false
         }
         applyBipNotificationIntentToCurrentState()
+        NSAccessibility.post(
+            element: NSApp.mainWindow as Any,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: request.intent == .morning
+                    ? "10시 오늘 실행 화면으로 이동했습니다"
+                    : "21시 마감 체크 화면으로 이동했습니다",
+            ]
+        )
     }
 
     private func applyBipNotificationIntentToCurrentState() {
@@ -990,6 +1434,177 @@ struct ContentView: View {
     private func openWorkspaceSettings() {
         withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
             selectedWorkspaceSection = .settings
+        }
+    }
+
+    /// Foundation phase Sub-AC 3: 사이드바 하단 통합 설정 메뉴.
+    ///
+    /// 가장 자주 쓰는 정체성 관련 액션(프로필 / 알림 / 계정 / 로그아웃)을
+    /// 한 popover에 모으고, 마지막에 SettingsView 풀페이지로 진입할 수 있는
+    /// "설정 전체 보기" shortcut을 둔다. 각 항목은 popover를 닫은 뒤
+    /// `routeSidebarSettingsMenu(_:)`로 라우팅되며, 해당 함수가 SettingsView의
+    /// 어떤 SettingsSection을 선택할지 / 즉시 액션(signOut)을 실행할지
+    /// 결정한다.
+    @ViewBuilder
+    private func sidebarSettingsMenu() -> some View {
+        let isSignedIn = viewModel.macAuthSession?.isUsable == true
+        let primaryEmail: String? = viewModel.macAuthSession?.email?.nonEmpty
+        let identityLabel: String = primaryEmail
+            ?? (isSignedIn ? "계정 연결됨" : "로그인 필요")
+        let identitySubtitle: String? = sidebarSettingsMenuIdentitySubtitle()
+
+        VStack(alignment: .leading, spacing: 0) {
+            // Identity header — popover 최상단에서 현재 누가 로그인되어 있는지 즉시
+            // 보이도록 이메일 + 온보딩 컨텍스트(역할/단계)를 한 줄로 요약한다.
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: isSignedIn ? "person.crop.circle.fill" : "person.crop.circle.badge.questionmark")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white.opacity(isSignedIn ? 0.92 : 0.55))
+                    .frame(width: 28, height: 28)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(identityLabel)
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .lineLimit(1)
+
+                    if let identitySubtitle {
+                        Text(identitySubtitle)
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.55))
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .accessibilityIdentifier("workspace.sidebarSettingsMenu.header")
+
+            Divider()
+                .background(Color.white.opacity(0.08))
+                .padding(.horizontal, 4)
+
+            // Identity-related quick links — Settings 풀페이지의 적절한 섹션으로 라우팅.
+            VStack(alignment: .leading, spacing: 2) {
+                sidebarSettingsMenuRow(.profile)
+                sidebarSettingsMenuRow(.notifications)
+                sidebarSettingsMenuRow(.account)
+            }
+            .padding(.vertical, 4)
+
+            Divider()
+                .background(Color.white.opacity(0.08))
+                .padding(.horizontal, 4)
+
+            // Destructive action — 로그아웃은 별도 그룹으로 분리해서 실수 클릭을 줄인다.
+            VStack(alignment: .leading, spacing: 2) {
+                sidebarSettingsMenuRow(.logout, isEnabled: isSignedIn)
+            }
+            .padding(.vertical, 4)
+
+            Divider()
+                .background(Color.white.opacity(0.08))
+                .padding(.horizontal, 4)
+
+            // Footer escape hatch — 통합 메뉴에 없는 옵션을 찾는 사용자를 위한
+            // 풀페이지 SettingsView 진입점.
+            VStack(alignment: .leading, spacing: 2) {
+                sidebarSettingsMenuRow(.fullSettings)
+            }
+            .padding(.vertical, 4)
+        }
+        .frame(width: 248)
+        .padding(.vertical, 6)
+        .background(Color(red: 0.13, green: 0.14, blue: 0.16))
+    }
+
+    /// popover 내부 단일 행. 비활성(예: 로그인되지 않은 상태에서 "로그아웃") 시
+    /// 클릭이 차단되고 톤다운된다.
+    private func sidebarSettingsMenuRow(
+        _ item: SidebarSettingsMenuItem,
+        isEnabled: Bool = true
+    ) -> some View {
+        let isHovered = hoveredSidebarSettingsMenuItem == item && isEnabled
+        let baseOpacity: Double = isEnabled ? 0.86 : 0.32
+        let foreground: Color = item.isDestructive
+            ? Color(red: 1.0, green: 0.46, blue: 0.42).opacity(isEnabled ? (isHovered ? 1.0 : 0.86) : 0.4)
+            : Color.white.opacity(isHovered ? 1.0 : baseOpacity)
+
+        return Button {
+            showsSidebarSettingsMenu = false
+            routeSidebarSettingsMenu(item)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: item.systemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 18, alignment: .center)
+                Text(item.title)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(foreground)
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.white.opacity(isHovered ? 0.085 : 0.0))
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .onHover { hovering in
+            if hovering, isEnabled {
+                hoveredSidebarSettingsMenuItem = item
+            } else if hoveredSidebarSettingsMenuItem == item {
+                hoveredSidebarSettingsMenuItem = nil
+            }
+        }
+        .padding(.horizontal, 6)
+        .accessibilityIdentifier(item.accessibilityIdentifier)
+    }
+
+    /// 항목 → 라우팅 규칙. 알림은 BIP 데일리 알림 환경설정이 모여 있는
+    /// `buildInPublic` 섹션으로, 프로필/계정은 일반 계정 섹션으로 보낸다.
+    private func routeSidebarSettingsMenu(_ item: SidebarSettingsMenuItem) {
+        switch item {
+        case .profile:
+            selectedSettingsSection = .account
+            openWorkspaceSettings()
+        case .notifications:
+            selectedSettingsSection = .buildInPublic
+            openWorkspaceSettings()
+        case .account:
+            selectedSettingsSection = .account
+            openWorkspaceSettings()
+        case .logout:
+            viewModel.signOutMacAuth()
+        case .fullSettings:
+            openWorkspaceSettings()
+        }
+    }
+
+    /// 헤더에 표시할 보조 라인. 온보딩 컨텍스트(역할/단계)가 있으면 우선 노출,
+    /// 없으면 macAuthSession 만료/리프레시 상태를 안내한다.
+    private func sidebarSettingsMenuIdentitySubtitle() -> String? {
+        if let context = viewModel.onboardingContext {
+            return "\(context.role.rawValue) · \(context.projectStage.rawValue)"
+        }
+        switch viewModel.macOnboardingStatus {
+        case .signingIn:
+            return "로그인 진행 중"
+        case .exchanging:
+            return "토큰 교환 중"
+        case .refreshing:
+            return "세션 갱신 중"
+        case .failed(let message):
+            return message
+        case .idle:
+            return viewModel.macAuthSession == nil ? "Google로 로그인" : nil
         }
     }
 
@@ -1013,8 +1628,9 @@ struct ContentView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
-                            workspaceHeroCard(day, session: session)
-                            workspaceChatThread(session, day: day)
+                            workspaceMissionFirstSurface(day: day, session: session)
+                            workspaceBipNotificationTaskSurface()
+                            workspaceMissionSupportThread(session)
                         }
                         .frame(maxWidth: 1180, alignment: .leading)
                         .padding(.horizontal, 34)
@@ -1043,10 +1659,293 @@ struct ContentView: View {
         guard pendingBipNotificationScrollRequestID != nil else { return }
         DispatchQueue.main.async {
             withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
-                proxy.scrollTo("workspace.bipMissionCard.scrollTarget", anchor: .center)
+                proxy.scrollTo("workspace.bipNotificationTaskSurface.scrollTarget", anchor: .center)
             }
             pendingBipNotificationScrollRequestID = nil
         }
+    }
+
+    @ViewBuilder
+    private func workspaceBipNotificationTaskSurface() -> some View {
+        if let intent = bipNotificationHintIntent {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: intent == .morning ? "sun.max.fill" : "moon.stars.fill")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.92))
+                        .frame(width: 28, height: 28)
+                        .background(Circle().fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.12)))
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(bipNotificationTaskTitle(intent))
+                            .font(.system(size: 18, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.96))
+                            .accessibilityIdentifier("workspace.bipNotificationTaskTitle")
+                        Text(bipNotificationTaskSubtitle(intent))
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.60))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 12)
+
+                    bipNotificationPrimaryAction(intent)
+                }
+
+                bipNotificationStateContent(intent)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.white.opacity(0.075))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.16), lineWidth: 1)
+                    )
+            )
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("workspace.bipNotificationTaskSurface")
+            .accessibilityLabel(bipNotificationTaskTitle(intent))
+            .id("workspace.bipNotificationTaskSurface.scrollTarget")
+        }
+    }
+
+    private func bipNotificationTaskTitle(_ intent: BipNotificationIntent) -> String {
+        switch intent {
+        case .morning:
+            return "10시 오늘 실행"
+        case .evening:
+            return "21시 마감 체크"
+        }
+    }
+
+    private func bipNotificationTaskSubtitle(_ intent: BipNotificationIntent) -> String {
+        switch intent {
+        case .morning:
+            return "작게 하나 공개할 미션을 정하세요."
+        case .evening:
+            return "게시 기록을 남기면 오늘 루프가 닫힙니다."
+        }
+    }
+
+    @ViewBuilder
+    private func bipNotificationPrimaryAction(_ intent: BipNotificationIntent) -> some View {
+        if let action = bipNotificationPrimaryActionModel(intent) {
+            Button {
+                viewModel.recordBipNotificationPrimaryAction(intent: intent, action: action.telemetryName)
+                action.perform()
+            } label: {
+                HStack(spacing: 7) {
+                    if action.showsProgress {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .frame(width: 12, height: 12)
+                    }
+                    Text(action.title)
+                        .font(.system(size: 12, weight: .heavy, design: .rounded))
+                }
+                .foregroundStyle(Color.black.opacity(action.isDisabled ? 0.40 : 0.78))
+                .padding(.horizontal, 14)
+                .frame(height: 34)
+                .background(Capsule().fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(action.isDisabled ? 0.34 : 0.92)))
+            }
+            .buttonStyle(.plain)
+            .disabled(action.isDisabled)
+            .accessibilityIdentifier("workspace.bipNotificationPrimaryAction")
+            .accessibilityLabel(action.title)
+        }
+    }
+
+    private struct BipNotificationPrimaryAction {
+        let title: String
+        let telemetryName: String
+        let showsProgress: Bool
+        let isDisabled: Bool
+        let perform: () -> Void
+    }
+
+    private func bipNotificationPrimaryActionModel(_ intent: BipNotificationIntent) -> BipNotificationPrimaryAction? {
+        if viewModel.sidecarFailureMessage != nil {
+            return BipNotificationPrimaryAction(
+                title: "연결 문제 해결",
+                telemetryName: "reconnect_sidecar",
+                showsProgress: false,
+                isDisabled: false,
+                perform: { viewModel.reconnectSidecar() }
+            )
+        }
+        if viewModel.bipTokenExpired != nil {
+            return BipNotificationPrimaryAction(
+                title: "연결 문제 해결",
+                telemetryName: "open_settings_token_expired",
+                showsProgress: false,
+                isDisabled: false,
+                perform: { openWorkspaceSettings() }
+            )
+        }
+        if viewModel.isBipCoachGenerating {
+            return BipNotificationPrimaryAction(
+                title: "오늘 실행 상태 확인 중",
+                telemetryName: "generation_in_progress",
+                showsProgress: true,
+                isDisabled: true,
+                perform: {}
+            )
+        }
+
+        let coach = viewModel.visibleBipCoach
+        if let mission = coach?.currentMission, mission.status == "completed" {
+            return BipNotificationPrimaryAction(
+                title: "오늘 완료됨",
+                telemetryName: "completed",
+                showsProgress: false,
+                isDisabled: true,
+                perform: {}
+            )
+        }
+
+        switch intent {
+        case .morning:
+            if let mission = coach?.currentMission {
+                return BipNotificationPrimaryAction(
+                    title: "이어서 초안 작성",
+                    telemetryName: "continue_draft",
+                    showsProgress: false,
+                    isDisabled: false,
+                    perform: { beginBipMission(mission) }
+                )
+            }
+            if let firstChoice = coach?.pendingMissionChoices.first {
+                return BipNotificationPrimaryAction(
+                    title: "이 미션으로 시작",
+                    telemetryName: "select_first_choice",
+                    showsProgress: false,
+                    isDisabled: false,
+                    perform: { viewModel.selectBipMission(firstChoice) }
+                )
+            }
+            return BipNotificationPrimaryAction(
+                title: "오늘 미션 만들기",
+                telemetryName: "generate_mission",
+                showsProgress: false,
+                isDisabled: viewModel.isBipCoachGenerating,
+                perform: { viewModel.generateBipMission(compact: true, curriculumDay: curriculumPayload(for: workspaceSelectedDay)) }
+            )
+        case .evening:
+            if coach?.currentMission != nil {
+                return BipNotificationPrimaryAction(
+                    title: "기록 완료",
+                    telemetryName: "complete_mission",
+                    showsProgress: viewModel.isBipCoachCompleting,
+                    isDisabled: bipCompletionSubmitDisabled,
+                    perform: { submitBipCompletion() }
+                )
+            }
+            return BipNotificationPrimaryAction(
+                title: "오늘 미션 먼저 만들기",
+                telemetryName: "generate_mission_from_evening_empty",
+                showsProgress: false,
+                isDisabled: viewModel.isBipCoachGenerating,
+                perform: { viewModel.generateBipMission(compact: true, curriculumDay: curriculumPayload(for: workspaceSelectedDay)) }
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func bipNotificationStateContent(_ intent: BipNotificationIntent) -> some View {
+        if let message = viewModel.sidecarFailureMessage ?? viewModel.bipTokenExpired {
+            bipNotificationBlockingRow(message)
+        } else if viewModel.isBipCoachGenerating || viewModel.bipMissionProgress != nil {
+            bipNotificationStatusRow("오늘 실행 상태 확인 중")
+        } else if let coach = viewModel.visibleBipCoach {
+            if let mission = coach.currentMission {
+                if mission.status == "completed" {
+                    bipNotificationCompletionSummary(mission)
+                } else if intent == .evening {
+                    bipCompletionFields()
+                } else {
+                    bipNotificationMissionSummary(mission)
+                }
+            } else if let firstChoice = coach.pendingMissionChoices.first {
+                bipNotificationMissionSummary(firstChoice)
+            } else if intent == .evening {
+                if showsBipCompletionFields {
+                    bipCompletionFields()
+                } else {
+                    Text("아직 오늘 미션이 없습니다. 지금 하나 만들거나, 오늘은 기록만 남길 수 있어요.")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.58))
+                        .fixedSize(horizontal: false, vertical: true)
+                    bipCoachButton("오늘은 기록만 남기기") {
+                        showsBipCompletionFields = true
+                    }
+                }
+            } else {
+                Text("아직 오늘 미션이 없습니다. Docs와 Sheet 기록을 보고 15분짜리 공개 실행을 하나로 좁힙니다.")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.58))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else {
+            bipNotificationStatusRow("오늘 실행 상태 확인 중")
+        }
+    }
+
+    private func bipNotificationStatusRow(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.mini)
+            Text(text)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.62))
+        }
+        .accessibilityIdentifier("workspace.bipNotificationStatus")
+    }
+
+    private func bipNotificationBlockingRow(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color(red: 1.0, green: 0.67, blue: 0.42).opacity(0.92))
+            Text(message)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.62))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(red: 1.0, green: 0.67, blue: 0.42).opacity(0.08))
+        )
+        .accessibilityIdentifier("workspace.bipNotificationBlockingRow")
+    }
+
+    private func bipNotificationMissionSummary(_ mission: BipCoachMission) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(mission.title?.nonEmpty ?? "오늘 미션")
+                .font(.system(size: 14, weight: .heavy, design: .rounded))
+                .foregroundStyle(.white.opacity(0.92))
+            Text(mission.mission?.nonEmpty ?? mission.angle?.nonEmpty ?? "오늘 공개 실행을 하나로 좁혀 진행합니다.")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.60))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityIdentifier("workspace.bipNotificationMissionSummary")
+    }
+
+    private func bipNotificationCompletionSummary(_ mission: BipCoachMission) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("오늘 공개 실행 완료")
+                .font(.system(size: 14, weight: .heavy, design: .rounded))
+                .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.94))
+            Text([mission.threadsUrl?.nonEmpty, mission.sheetRowNote?.nonEmpty].compactMap { $0 }.joined(separator: " · ").nonEmpty ?? "기록이 저장됐습니다.")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.58))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityIdentifier("workspace.bipNotificationCompletionSummary")
     }
 
     private func workspaceChatThread(_ session: ChatSession, day: AgenticCurriculumDay) -> some View {
@@ -1080,7 +1979,12 @@ struct ContentView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 workspaceChatAssistantMarker(day: day)
-                if session.pendingUserInput == nil {
+                // Sub-AC 1: 오늘 과제 / sub-workflow / 자유 대화 모두를 단일
+                // 채팅 surface 안에서 렌더한다. 오늘 과제는 항상 chat의 첫 어시
+                // 스턴트 카드로 등장해 컨텍스트를 고정하고, 그 다음에 sub-workflow
+                // (BIP mission), 자유 대화 (visible messages) 순으로 이어진다.
+                workspaceTodayTasksAssistantCard(day: day)
+                if workspaceShouldShowPublicExecutionCard(for: session) {
                     workspaceBipMissionAssistantCard()
                 }
 
@@ -1123,6 +2027,93 @@ struct ContentView: View {
             .accessibilityLabel("Chat Assistant")
     }
 
+    private func workspaceShouldShowPublicExecutionCard(for session: ChatSession) -> Bool {
+        guard session.pendingUserInput == nil else { return false }
+        if workspaceIsBasisSession(session) && session.status == .running {
+            return false
+        }
+        return true
+    }
+
+    private func workspaceIsBasisSession(_ session: ChatSession) -> Bool {
+        if session.runtime?.iddDocumentType?.nonEmpty != nil {
+            return true
+        }
+        return session.title.hasPrefix("기준 정리:")
+    }
+
+    private func workspaceTodayTasksAssistantCard(day: AgenticCurriculumDay) -> some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Assistant")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.42))
+
+                VStack(alignment: .leading, spacing: 10) {
+                    workspaceTodayTasksAssistantMarker()
+
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("오늘 과제")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.78))
+                            .textCase(.uppercase)
+
+                        Text("Day \(day.day)")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.42))
+
+                        Spacer(minLength: 0)
+                    }
+
+                    Text(day.title)
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text(day.summary)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.62))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(day.tasks.enumerated()), id: \.offset) { index, task in
+                            workspaceTaskRow(index: index + 1, task: task)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("오늘 산출물")
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.42))
+                            .textCase(.uppercase)
+
+                        Text(day.output)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.72))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(12)
+                .background(workspaceBubbleBackground(isUser: false, isError: false))
+                .accessibilityElement(children: .contain)
+            }
+            .frame(maxWidth: 860, alignment: .leading)
+
+            Spacer(minLength: 90)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .id("workspace.todayTasksCard.scrollTarget")
+    }
+
+    private func workspaceTodayTasksAssistantMarker() -> some View {
+        Text("today tasks card")
+            .font(.system(size: 1))
+            .foregroundStyle(.clear)
+            .frame(width: 1, height: 1)
+            .accessibilityIdentifier("workspace.chat.todayTasksCard")
+            .accessibilityLabel("오늘 과제 카드")
+    }
+
     private func workspaceBipMissionAssistantCard() -> some View {
         HStack(alignment: .bottom, spacing: 10) {
             VStack(alignment: .leading, spacing: 5) {
@@ -1132,16 +2123,6 @@ struct ContentView: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     workspaceBipMissionCardMarker()
-
-                    if let hint = workspaceBipNotificationHintText {
-                        Text(hint)
-                            .font(.system(size: 11, weight: .bold, design: .rounded))
-                            .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.94))
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 6)
-                            .background(Capsule().fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.13)))
-                            .accessibilityIdentifier("workspace.bipNotificationHint")
-                    }
 
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(workspaceBipMissionAssistantTitle)
@@ -1168,35 +2149,27 @@ struct ContentView: View {
 
     private var workspaceBipMissionAssistantTitle: String {
         guard let coach = viewModel.visibleBipCoach else {
-            return "BIP 미션 준비"
+            return "오늘 실행"
         }
 
         let readiness = viewModel.bipReadiness ?? BipReadinessState.loading
-        if viewModel.sidecarFailureMessage != nil || !coach.isConfigured || readiness.hasBlockingBipCoachSetupIssue {
-            return "BIP 미션 준비"
+        if viewModel.sidecarFailureMessage != nil {
+            return "오늘 실행"
+        }
+        if fullCoachReady(coach: coach, readiness: readiness) {
+            return "근거 기반 오늘 실행"
         }
 
-        return "오늘 BIP 미션"
-    }
-
-    private var workspaceBipNotificationHintText: String? {
-        switch bipNotificationHintIntent {
-        case .morning:
-            return "10시 알림에서 열었어요. 오늘 미션을 만들거나 하나 선택하세요."
-        case .evening:
-            return "21시 마감 체크에서 열었어요. 게시 URL과 Sheet 기록을 남기면 오늘 미션이 끝나요."
-        case .none:
-            return nil
-        }
+        return "오늘 실행"
     }
 
     private func workspaceBipMissionCardMarker() -> some View {
-        Text("BIP mission card")
+        Text("public execution card")
             .font(.system(size: 1))
             .foregroundStyle(.clear)
             .frame(width: 1, height: 1)
             .accessibilityIdentifier("workspace.chat.bipMissionCard")
-            .accessibilityLabel("BIP mission card")
+            .accessibilityLabel("오늘 실행 카드")
     }
 
     private func workspaceVisibleMessages(for session: ChatSession) -> [ChatMessage] {
@@ -1286,6 +2259,19 @@ struct ContentView: View {
                         choices: choices,
                         authActions: message.providerAuthActions ?? []
                     )
+                } else if !isUser, let decision = message.inlineDecision {
+                    // The card is "active" only while no later user message
+                    // has been sent. After the user answers, this card stays
+                    // in history as the rationale (D3=C) but its rows become
+                    // non-interactive so stale prompts can't be re-submitted
+                    // and so keyboard shortcuts on older cards don't collide
+                    // with the latest active card (codex P1 #6 + #8).
+                    let messageIndex = session.messages.firstIndex { $0.id == message.id }
+                    let isCardActive = messageIndex.map { idx in
+                        idx + 1 >= session.messages.count
+                            || !session.messages[(idx + 1)...].contains { $0.role == .user }
+                    } ?? true
+                    workspaceInlineDecisionCard(decision, text: text, isActive: isCardActive)
                 } else {
                     Text(text)
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
@@ -1304,7 +2290,12 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
-        .accessibilityElement(children: .combine)
+        // Use `.contain` instead of `.combine` so interactive elements inside
+        // the bubble (decision card buttons, provider auth buttons, BIP
+        // mission choice cards) remain individually reachable by VoiceOver.
+        // `.combine` flattens children into a single element labeled by the
+        // outer text, which would hide the buttons entirely.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(isUser ? "workspace.chat.user" : "workspace.chat.assistant")
         .accessibilityLabel(text)
     }
@@ -1347,7 +2338,7 @@ struct ContentView: View {
                 Image(systemName: "arrow.down.forward.circle.fill")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.80))
-                Text("오늘 BIP 미션 카드에서 후보를 선택하세요.")
+                Text("오늘 실행 카드에서 후보를 선택하세요.")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.86))
             }
@@ -1377,6 +2368,159 @@ struct ContentView: View {
         .padding(.vertical, 10)
         .background(workspaceBubbleBackground(isUser: false, isError: false))
         .accessibilityIdentifier("workspace.chat.bipMissionChoices")
+    }
+
+    // MARK: - Inline Decision Card (Decision Card Stack variant)
+    //
+    // Renders an assistant message whose `inlineDecision` payload is non-nil as
+    // a separate sage-accented card stack beneath the bubble. The data model
+    // is `StructuredPromptQuestion` (same shape as the form-style intake), but
+    // the presentation is a single inline card rather than a multi-question
+    // form. Mutual exclusion with `ChatSession.pendingUserInput` is enforced
+    // at the producer (sidecar): when a form intake is active, the LLM does
+    // not emit an inline_decision payload.
+    //
+    // Selection behavior: clicking an option pipes the option's label into
+    // the chat draft and submits as a normal user turn, so the assistant
+    // card stays in history as the rationale for the user's reply (D3=C —
+    // history preserves the question, You bubble shows the answer).
+
+    @ViewBuilder
+    private func workspaceInlineDecisionCard(
+        _ decision: StructuredPromptQuestion,
+        text: String,
+        isActive: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !text.isEmpty {
+                Text(text)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.90))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 10)
+                    .background(workspaceBubbleBackground(isUser: false, isError: false))
+            }
+
+            VStack(alignment: .leading, spacing: 0) {
+                if let options = decision.options, !options.isEmpty {
+                    ForEach(Array(options.enumerated()), id: \.element.label) { pair in
+                        let index = pair.offset
+                        let option = pair.element
+                        inlineDecisionRow(
+                            index: index,
+                            option: option,
+                            decision: decision,
+                            isActive: isActive
+                        )
+                        if index < options.count - 1 {
+                            Rectangle()
+                                .fill(Color.white.opacity(0.05))
+                                .frame(height: 1)
+                        }
+                    }
+                }
+
+                if decision.allowFreeText == true {
+                    inlineDecisionFreeTextHint(for: decision)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                }
+            }
+            .frame(maxWidth: 560, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color(red: 0.039, green: 0.039, blue: 0.043))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    )
+            )
+            .shadow(color: Color.black.opacity(0.35), radius: 18, x: 0, y: 4)
+            // Dim the entire card once it's no longer the active decision so
+            // the user reads it as historical context, not a live action.
+            .opacity(isActive ? 1.0 : 0.55)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("workspace.chat.inlineDecision")
+    }
+
+    @ViewBuilder
+    private func inlineDecisionRow(
+        index: Int,
+        option: StructuredPromptOption,
+        decision: StructuredPromptQuestion,
+        isActive: Bool
+    ) -> some View {
+        let multi = decision.multiSelect ?? false
+        let baseRow = Button {
+            // Single-select: pipe the label into the draft and submit as a
+            // normal user turn. The assistant card stays in history so the
+            // user can see what they were answering (D3=C).
+            viewModel.draft = option.label
+            viewModel.sendPrompt()
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Circle()
+                    .stroke(Color.white.opacity(0.40), lineWidth: 1.5)
+                    .frame(width: 10, height: 10)
+                    .padding(.top, 5)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(option.label)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.92))
+                    if !option.description.isEmpty {
+                        Text(option.description)
+                            .font(.system(size: 12, weight: .regular))
+                            .foregroundStyle(.white.opacity(0.58))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isActive)
+        .accessibilityIdentifier("workspace.chat.inlineDecisionRow.\(index + 1).\(option.label)")
+        .accessibilityLabel(option.label)
+        .accessibilityHint(option.description)
+        .accessibilityAddTraits(.isButton)
+
+        // D4=C: 1/2/3 keyboard shortcut for single-select rows up to 9
+        // options. Codex P1 #8: only the latest active card binds shortcuts
+        // so old cards can't capture keystrokes after the user has answered.
+        // Multi-select skips the shortcut to avoid ambiguous "select but
+        // don't submit" semantics. Q2=A: chat draft TextField focus captures
+        // keystrokes via SwiftUI focus precedence so the shortcut doesn't
+        // fire while the user is typing free text.
+        if isActive && !multi && index < 9 {
+            baseRow.keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: [])
+        } else {
+            baseRow
+        }
+    }
+
+    @ViewBuilder
+    private func inlineDecisionFreeTextHint(for decision: StructuredPromptQuestion) -> some View {
+        // D2=B: only rendered when `allowFreeText == true`. The actual text
+        // input lives on the existing chat draft TextField — clicking this hint
+        // is informational; the user types into the chat input bar as usual.
+        HStack(spacing: 6) {
+            Text("또는")
+                .font(.system(size: 11, weight: .regular))
+                .foregroundStyle(.white.opacity(0.42))
+            Text(decision.freeTextPlaceholder?.nonEmpty ?? "직접 입력하기")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.55))
+                .underline(true, color: Color.white.opacity(0.30))
+        }
+        .accessibilityIdentifier("workspace.chat.inlineDecisionFreeText")
     }
 
     private func workspaceProviderAuthBubble(text: String, actions: [ProviderAuthAction]) -> some View {
@@ -1458,7 +2602,7 @@ struct ContentView: View {
                         .font(.system(size: 13, weight: .heavy, design: .rounded))
                         .foregroundStyle(.white.opacity(0.94))
                         .lineLimit(2)
-                    Text(mission.angle?.nonEmpty ?? mission.mission?.nonEmpty ?? "BIP 기록과 오늘 커리큘럼을 반영한 실행 미션")
+                    Text(mission.angle?.nonEmpty ?? mission.mission?.nonEmpty ?? "공개 기록과 오늘 커리큘럼을 반영한 실행")
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.62))
                         .lineLimit(2)
@@ -1490,7 +2634,7 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("workspace.chat.bipMissionChoice.\(index + 1)")
-        .accessibilityLabel(mission.title?.nonEmpty ?? "BIP 미션 \(index + 1)")
+        .accessibilityLabel(mission.title?.nonEmpty ?? "오늘 실행 \(index + 1)")
     }
 
     private func missionChoiceAccent(_ index: Int) -> Color {
@@ -1576,26 +2720,449 @@ struct ContentView: View {
                 }
             )
                 .accessibilityIdentifier("workspace.settingsPage")
-	        } else {
-	            ScrollView {
-	                VStack(alignment: .leading, spacing: 16) {
-	                    workspacePreparingHeroCard(day)
-	                    workspacePreparingChatAssistant()
-	                }
-	                .frame(maxWidth: 1180, alignment: .leading)
-	                .padding(.horizontal, 34)
-                .padding(.vertical, 28)
+        } else {
+            VStack(alignment: .leading, spacing: 16) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        workspaceMissionFirstSurface(day: day, session: nil)
+                    }
+                    .frame(maxWidth: 1180, alignment: .leading)
+                    .padding(.horizontal, 34)
+                    .padding(.vertical, 28)
+                }
+
+                VStack(spacing: 8) {
+                    workspaceStartupQueueStatus()
+                    promptComposer()
+                }
+                .frame(maxWidth: 1180)
+                .padding(.horizontal, 34)
+                .padding(.bottom, 18)
             }
             .accessibilityIdentifier("workspace.dayDetail")
         }
     }
 
-    private var shouldShowWorkspaceCurriculumFocus: Bool {
-        guard let coach = viewModel.visibleBipCoach else {
-            return false
+    private func basicMissionAvailable(coach: BipCoachState?) -> Bool {
+        viewModel.selectedSession != nil || coach?.sessionId?.nonEmpty != nil
+    }
+
+    private func fullCoachReady(coach: BipCoachState, readiness: BipReadinessState) -> Bool {
+        coach.isConfigured && readiness.bipCoachSetupComplete && !readiness.hasBlockingBipCoachSetupIssue
+    }
+
+    private func workspaceMissionFirstSurface(day: AgenticCurriculumDay, session: ChatSession?) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 13) {
+                Image(systemName: workspaceMissionFirstIcon(session: session))
+                    .font(.system(size: 17, weight: .heavy))
+                    .foregroundStyle(Color.black.opacity(0.76))
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(workspaceMissionFirstAccent.opacity(0.94)))
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(workspaceMissionFirstKicker(day: day))
+                        .font(.system(size: 11, weight: .heavy, design: .rounded))
+                        .foregroundStyle(workspaceMissionFirstAccent.opacity(0.94))
+                        .textCase(.uppercase)
+
+                    Text(workspaceMissionFirstTitle(day: day, session: session))
+                        .font(.system(size: 25, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.97))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("workspace.missionFirst.title")
+
+                    Text(workspaceMissionFirstSubtitle(day: day, session: session))
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.62))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("workspace.missionFirst.dayContext")
+                }
+
+                Spacer(minLength: 16)
+
+                workspaceMissionFirstStatusLine(session: session)
+            }
+
+            workspaceBipCoachInlineMarker()
+            workspaceMissionFirstBody(day: day, session: session)
         }
-        let readiness = viewModel.bipReadiness ?? .loading
-        return coach.isConfigured && !readiness.hasBlockingBipCoachSetupIssue
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color.white.opacity(0.075))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(workspaceMissionFirstAccent.opacity(0.18), lineWidth: 1)
+                )
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("workspace.missionFirstSurface")
+    }
+
+    private var workspaceMissionFirstAccent: Color {
+        Color(red: 0.55, green: 0.90, blue: 0.66)
+    }
+
+    private func workspaceMissionFirstIcon(session: ChatSession?) -> String {
+        if workspaceMissionFirstErrorMessage(session: session) != nil {
+            return "exclamationmark.triangle.fill"
+        }
+        if session == nil || viewModel.isBipCoachGenerating || viewModel.bipMissionProgress != nil {
+            return "sparkles"
+        }
+        if viewModel.visibleBipCoach?.currentMission != nil {
+            return "paperplane.fill"
+        }
+        if viewModel.visibleBipCoach?.pendingMissionChoices.isEmpty == false {
+            return "list.bullet.clipboard.fill"
+        }
+        return "target"
+    }
+
+    private func workspaceMissionFirstKicker(day: AgenticCurriculumDay) -> String {
+        "Day \(day.day) · \(day.phase.title)"
+    }
+
+    private func workspaceMissionFirstTitle(day: AgenticCurriculumDay, session: ChatSession?) -> String {
+        if workspaceMissionFirstErrorMessage(session: session) != nil {
+            return "오늘 실행을 불러오지 못했어요"
+        }
+        if session == nil {
+            return "Day \(day.day) · \(day.title)"
+        }
+        if viewModel.isBipCoachGenerating || viewModel.bipMissionProgress != nil {
+            return "오늘 실행 후보를 만드는 중"
+        }
+        if let coach = viewModel.visibleBipCoach {
+            if coach.currentMission != nil {
+                return "오늘 실행"
+            }
+            if !coach.pendingMissionChoices.isEmpty {
+                return "오늘 실행 \(min(coach.pendingMissionChoices.count, 3))개 중 하나를 고르세요"
+            }
+        }
+        return "Day \(day.day) · 오늘 할 일"
+    }
+
+    private func workspaceMissionFirstSubtitle(day: AgenticCurriculumDay, session: ChatSession?) -> String {
+        if workspaceMissionFirstErrorMessage(session: session) != nil {
+            return "다시 시도하면 미션 후보를 새로 만들게요."
+        }
+        if session == nil {
+            return "오늘 실행을 준비하고 있어요."
+        }
+        if viewModel.isBipCoachGenerating || viewModel.bipMissionProgress != nil {
+            return "프로젝트 기준과 Day \(day.day) 맥락을 보고 실행 하나로 좁히는 중입니다."
+        }
+        if let coach = viewModel.visibleBipCoach {
+            if let mission = coach.currentMission {
+                return mission.mission?.nonEmpty ?? mission.angle?.nonEmpty ?? "15분 안에 끝낼 공개 실행을 진행합니다."
+            }
+            if !coach.pendingMissionChoices.isEmpty {
+                return "팔릴 문제를 찾기 위한 실행 미션 하나만 선택하세요."
+            }
+        }
+        return "팔릴 문제를 찾기 위한 실행 미션을 하나 고르세요."
+    }
+
+    private func workspaceMissionFirstStatusLine(session: ChatSession?) -> some View {
+        HStack(spacing: 7) {
+            if workspaceMissionFirstShowsSpinner(session: session) {
+                ProgressView()
+                    .controlSize(.mini)
+                    .frame(width: 12, height: 12)
+            } else {
+                Image(systemName: workspaceMissionFirstStatusIcon(session: session))
+                    .font(.system(size: 11, weight: .bold))
+            }
+
+            Text(workspaceMissionFirstStatusText(session: session))
+                .font(.system(size: 11, weight: .heavy, design: .rounded))
+                .lineLimit(1)
+        }
+        .foregroundStyle(.white.opacity(0.68))
+        .padding(.horizontal, 10)
+        .frame(height: 28)
+        .background(Capsule().fill(Color.white.opacity(0.07)))
+        .accessibilityIdentifier("workspace.missionFirst.statusLine")
+        .accessibilityLabel(workspaceMissionFirstStatusText(session: session))
+    }
+
+    private func workspaceMissionFirstShowsSpinner(session: ChatSession?) -> Bool {
+        workspaceMissionFirstErrorMessage(session: session) == nil
+            && (session == nil || viewModel.isBipCoachGenerating || viewModel.bipMissionProgress != nil)
+    }
+
+    private func workspaceMissionFirstStatusIcon(session: ChatSession?) -> String {
+        if workspaceMissionFirstErrorMessage(session: session) != nil {
+            return "arrow.clockwise"
+        }
+        if viewModel.visibleBipCoach?.currentMission != nil {
+            return "checkmark.circle.fill"
+        }
+        return "circle.fill"
+    }
+
+    private func workspaceMissionFirstStatusText(session: ChatSession?) -> String {
+        if workspaceMissionFirstErrorMessage(session: session) != nil {
+            return "다시 시도 필요"
+        }
+        if session == nil {
+            return "Codex 연결 중"
+        }
+        if viewModel.isBipCoachGenerating || viewModel.bipMissionProgress != nil {
+            return "미션 생성 중"
+        }
+        if viewModel.visibleBipCoach?.currentMission != nil {
+            return "실행 모드"
+        }
+        if viewModel.visibleBipCoach?.pendingMissionChoices.isEmpty == false {
+            return "선택 대기"
+        }
+        return "준비 완료"
+    }
+
+    @ViewBuilder
+    private func workspaceMissionFirstBody(day: AgenticCurriculumDay, session: ChatSession?) -> some View {
+        if let errorMessage = workspaceMissionFirstErrorMessage(session: session) {
+            workspaceMissionFirstErrorBody(errorMessage, day: day)
+        } else if session == nil {
+            workspaceMissionFirstPreparingBody()
+        } else if viewModel.isBipCoachGenerating || viewModel.bipMissionProgress != nil {
+            workspaceMissionFirstGeneratingBody()
+        } else if let coach = viewModel.visibleBipCoach, let mission = coach.currentMission {
+            workspaceMissionFirstSelectedMission(mission, coach: coach)
+        } else if let coach = viewModel.visibleBipCoach, !coach.pendingMissionChoices.isEmpty {
+            workspaceMissionFirstChoices(coach.pendingMissionChoices)
+        } else {
+            workspaceMissionFirstReadyBody(day: day)
+        }
+    }
+
+    private func workspaceMissionFirstPreparingBody() -> some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Codex 연결 중")
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.72))
+        }
+        .accessibilityIdentifier("workspace.missionFirst.preparing")
+    }
+
+    private func workspaceMissionFirstGeneratingBody() -> some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text(viewModel.bipMissionProgress?.detail?.nonEmpty ?? "오늘 실행 후보를 좁히고 있어요.")
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.72))
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityIdentifier("workspace.missionFirst.generating")
+    }
+
+    private func workspaceMissionFirstReadyBody(day: AgenticCurriculumDay) -> some View {
+        workspaceMissionPrimaryButton(
+            title: "오늘 실행 생성",
+            systemImage: "sparkles",
+            accessibilityIdentifier: "workspace.generateBipMission"
+        ) {
+            viewModel.generateBipMission(compact: true, curriculumDay: curriculumPayload(for: day))
+        }
+        .disabled(viewModel.isBipCoachGenerating)
+    }
+
+    private func workspaceMissionFirstErrorBody(_ message: String, day: AgenticCurriculumDay) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(message)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.70))
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("workspace.missionFirst.errorMessage")
+
+            workspaceMissionPrimaryButton(
+                title: "다시 시도",
+                systemImage: "arrow.clockwise",
+                accessibilityIdentifier: "workspace.missionFirst.retry"
+            ) {
+                if viewModel.sidecarFailureMessage != nil {
+                    viewModel.reconnectSidecar()
+                } else {
+                    viewModel.generateBipMission(compact: true, curriculumDay: curriculumPayload(for: day))
+                }
+            }
+        }
+    }
+
+    private func workspaceMissionFirstChoices(_ choices: [BipCoachMission]) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            ForEach(Array(choices.prefix(3).enumerated()), id: \.element.id) { index, mission in
+                bipCoachMissionChoiceCard(mission, index: index)
+            }
+        }
+        .accessibilityIdentifier("workspace.missionFirst.choices")
+    }
+
+    private func workspaceMissionFirstSelectedMission(_ mission: BipCoachMission, coach: BipCoachState) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let title = mission.title?.nonEmpty {
+                Text(title)
+                    .font(.system(size: 17, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.96))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 8) {
+                workspaceMissionPrimaryButton(
+                    title: mission.status == "completed" ? "완료됨" : "완료 기록하기",
+                    systemImage: mission.status == "completed" ? "checkmark.circle.fill" : "square.and.pencil",
+                    accessibilityIdentifier: "workspace.missionFirst.completeMission"
+                ) {
+                    withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
+                        showsBipCompletionFields.toggle()
+                    }
+                }
+                .disabled(mission.status == "completed" || viewModel.isBipCoachCompleting)
+
+                workspaceMissionSecondaryButton(
+                    title: "도움 요청",
+                    systemImage: "questionmark.bubble.fill",
+                    accessibilityIdentifier: "workspace.missionFirst.askForHelp"
+                ) {
+                    beginBipMission(mission)
+                }
+
+                Spacer(minLength: 0)
+
+                Text("연속 \(coach.streak.current)일")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(workspaceMissionFirstAccent.opacity(0.88))
+                    .padding(.horizontal, 8)
+                    .frame(height: 26)
+                    .background(Capsule().fill(workspaceMissionFirstAccent.opacity(0.10)))
+            }
+
+            if showsBipCompletionFields && mission.status != "completed" {
+                bipCompletionFields()
+            }
+        }
+        .accessibilityIdentifier("workspace.missionFirst.selectedMission")
+    }
+
+    private func workspaceMissionPrimaryButton(
+        title: String,
+        systemImage: String,
+        accessibilityIdentifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12, weight: .heavy))
+                Text(title)
+                    .font(.system(size: 13, weight: .heavy, design: .rounded))
+            }
+            .foregroundStyle(Color.black.opacity(0.78))
+            .padding(.horizontal, 15)
+            .frame(height: 36)
+            .background(Capsule().fill(workspaceMissionFirstAccent.opacity(0.94)))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(accessibilityIdentifier)
+        .accessibilityLabel(title)
+    }
+
+    private func workspaceMissionSecondaryButton(
+        title: String,
+        systemImage: String,
+        accessibilityIdentifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12, weight: .bold))
+                Text(title)
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+            }
+            .foregroundStyle(.white.opacity(0.82))
+            .padding(.horizontal, 13)
+            .frame(height: 36)
+            .background(Capsule().fill(Color.white.opacity(0.09)))
+            .overlay(Capsule().stroke(Color.white.opacity(0.09), lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(accessibilityIdentifier)
+        .accessibilityLabel(title)
+    }
+
+    private func workspaceMissionFirstErrorMessage(session: ChatSession?) -> String? {
+        if viewModel.sidecarFailureMessage != nil {
+            return AgenticViewModel.userFacingMissionErrorMessage(viewModel.sidecarFailureMessage)
+        }
+        if let error = viewModel.visibleBipCoach?.lastError?.nonEmpty {
+            return AgenticViewModel.userFacingMissionErrorMessage(error)
+        }
+        if let error = viewModel.lastError?.nonEmpty,
+           AgenticViewModel.isRawNullDayError(error) {
+            return AgenticViewModel.userFacingMissionErrorMessage(error)
+        }
+        return nil
+    }
+
+    @ViewBuilder
+    private func workspaceMissionSupportThread(_ session: ChatSession) -> some View {
+        let visibleMessages = workspaceVisibleMessages(for: session)
+        let pendingPrompts = workspacePendingPrompts(for: session)
+        let supportMessages = workspaceMissionSupportMessages(
+            visibleMessages,
+            session: session,
+            pendingPrompts: pendingPrompts
+        )
+        let showsRunningBubble = session.status == .running && workspaceNeedsRunningBubble(messages: visibleMessages)
+
+        if !supportMessages.isEmpty || session.pendingUserInput != nil || !pendingPrompts.isEmpty || showsRunningBubble {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(supportMessages) { message in
+                    workspaceChatBubble(message, session: session)
+                }
+
+                if let pendingPrompt = session.pendingUserInput {
+                    workspaceStructuredPrompt(pendingPrompt)
+                }
+
+                ForEach(pendingPrompts) { pendingPrompt in
+                    workspacePendingUserBubble(pendingPrompt.content)
+                }
+
+                if showsRunningBubble {
+                    workspaceAssistantProgressBubble(session)
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(workspacePaneBackground(cornerRadius: 18))
+            .accessibilityIdentifier("workspace.supportThread")
+        }
+    }
+
+    private func workspaceMissionSupportMessages(
+        _ messages: [ChatMessage],
+        session: ChatSession,
+        pendingPrompts: [AgenticViewModel.PendingPromptPreview]
+    ) -> [ChatMessage] {
+        let hasUserTurn = messages.contains { $0.role == .user }
+        let hasActiveSupport = session.pendingUserInput != nil
+            || !pendingPrompts.isEmpty
+            || session.status == .running
+        return (hasUserTurn || hasActiveSupport) ? messages : []
     }
 
     private func workspaceHeroCard(_ day: AgenticCurriculumDay, session: ChatSession) -> some View {
@@ -1637,17 +3204,83 @@ struct ContentView: View {
                 }
             }
 
-            HStack(spacing: 8) {
-                ProgressView()
-                    .controlSize(.small)
-                Text("새 세션을 준비하는 중입니다.")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.54))
-            }
+            workspaceStartupStatusRail()
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(workspacePaneBackground(cornerRadius: 20))
+    }
+
+    private func workspaceStartupStatusRail() -> some View {
+        let hasFailure = viewModel.sidecarFailureMessage != nil
+        return HStack(spacing: 8) {
+            workspaceStartupStatusStep(
+                title: "Launching sidecar",
+                systemImage: hasFailure ? "exclamationmark.triangle.fill" : "bolt.horizontal.circle.fill",
+                isCurrent: !viewModel.isConnected && !hasFailure,
+                isComplete: viewModel.isConnected,
+                isFailed: hasFailure
+            )
+            workspaceStartupStatusStep(
+                title: "Creating session",
+                systemImage: "bubble.left.and.bubble.right.fill",
+                isCurrent: viewModel.isConnected && viewModel.selectedSession == nil,
+                isComplete: viewModel.selectedSession != nil,
+                isFailed: false
+            )
+            workspaceStartupStatusStep(
+                title: "Ready",
+                systemImage: "checkmark.circle.fill",
+                isCurrent: false,
+                isComplete: viewModel.selectedSession != nil,
+                isFailed: false
+            )
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("workspace.startupStatusRail")
+    }
+
+    private func workspaceStartupStatusStep(
+        title: String,
+        systemImage: String,
+        isCurrent: Bool,
+        isComplete: Bool,
+        isFailed: Bool
+    ) -> some View {
+        HStack(spacing: 6) {
+            if isCurrent {
+                ProgressView()
+                    .controlSize(.mini)
+                    .frame(width: 12, height: 12)
+            } else {
+                Image(systemName: systemImage)
+                    .font(.system(size: 11, weight: .bold))
+            }
+            Text(title)
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .lineLimit(1)
+        }
+        .foregroundStyle(workspaceStartupStatusColor(isComplete: isComplete, isCurrent: isCurrent, isFailed: isFailed))
+        .padding(.horizontal, 9)
+        .frame(height: 26)
+        .background(Capsule().fill(workspaceStartupStatusColor(isComplete: isComplete, isCurrent: isCurrent, isFailed: isFailed).opacity(0.12)))
+        .overlay(
+            Capsule()
+                .stroke(workspaceStartupStatusColor(isComplete: isComplete, isCurrent: isCurrent, isFailed: isFailed).opacity(0.16), lineWidth: 1)
+        )
+    }
+
+    private func workspaceStartupStatusColor(isComplete: Bool, isCurrent: Bool, isFailed: Bool) -> Color {
+        if isFailed {
+            return Color(red: 1.0, green: 0.45, blue: 0.38).opacity(0.86)
+        }
+        if isComplete {
+            return Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.84)
+        }
+        if isCurrent {
+            return Color.white.opacity(0.70)
+        }
+        return Color.white.opacity(0.38)
     }
 
     private func workspaceDayHeader(_ day: AgenticCurriculumDay) -> some View {
@@ -1806,7 +3439,10 @@ struct ContentView: View {
             bipCoachSidecarFailurePanel()
         } else if let coach = viewModel.visibleBipCoach {
             let readiness = viewModel.bipReadiness ?? BipReadinessState.loading
-            if coach.isConfigured && readiness.bipCoachSetupComplete {
+            if viewModel.bipMissionProgress != nil || coach.currentMission != nil || !coach.pendingMissionChoices.isEmpty {
+                workspaceBipCoachInlineMarker()
+                bipCoachPanel()
+            } else if fullCoachReady(coach: coach, readiness: readiness) {
                 workspaceBipCoachInlineMarker()
                 bipCoachPanel()
             } else if showsInlineBipReadinessSetup {
@@ -1818,10 +3454,10 @@ struct ContentView: View {
         } else {
             workspaceBipCoachInlineMarker()
             VStack(alignment: .leading, spacing: 10) {
-                Text("오늘 BIP 미션 준비 상태가 여기에 표시됩니다.")
+                Text("오늘 미션은 바로 만들 수 있어요.")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.78))
-                Text("Google Doc 업무일지와 Google Sheet 게시글 일지를 연결하면 오늘 미션과 근거를 Chat Assistant에서 확인할 수 있어요.")
+                Text("프로젝트 기준과 기록 장소를 연결하면 추천 정확도와 근거 품질이 올라갑니다.")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.50))
                     .fixedSize(horizontal: false, vertical: true)
@@ -1830,12 +3466,12 @@ struct ContentView: View {
     }
 
     private func workspaceBipCoachInlineMarker() -> some View {
-        Text("BIP Coach inline module")
+        Text("public execution coach inline module")
             .font(.system(size: 1))
             .foregroundStyle(.clear)
             .frame(width: 1, height: 1)
             .accessibilityIdentifier("workspace.bipCoach.inlineModule")
-            .accessibilityLabel("BIP Coach inline module")
+            .accessibilityLabel("공개 실행 코치 inline module")
     }
 
     @ViewBuilder
@@ -1843,14 +3479,33 @@ struct ContentView: View {
         if viewModel.sidecarFailureMessage != nil {
             bipCoachSidecarFailurePanel()
         } else {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("세션을 준비하고 있습니다.")
+            VStack(alignment: .leading, spacing: 12) {
+                Text("오늘 실행을 미리 준비할 수 있어요.")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.78))
-                Text("Sidecar가 연결되면 오늘 미션과 근거를 이 영역에서 확인할 수 있습니다.")
+                Text("첫 메시지를 아래에 적어두거나, Day 1 기준으로 미션 생성을 예약하세요. 세션이 연결되면 자동으로 이어집니다.")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.50))
                     .fixedSize(horizontal: false, vertical: true)
+
+                Button {
+                    viewModel.generateBipMission(compact: true, curriculumDay: curriculumPayload(for: workspaceSelectedDay))
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 12, weight: .bold))
+                        Text("오늘 실행 생성 예약")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                    }
+                    .foregroundStyle(.white.opacity(0.88))
+                    .padding(.horizontal, 12)
+                    .frame(height: 30)
+                    .background(Capsule().fill(Color.white.opacity(0.10)))
+                    .overlay(Capsule().stroke(Color.white.opacity(0.10), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.startupQueuedAction != nil)
+                .accessibilityIdentifier("workspace.queueBipMission")
             }
         }
     }
@@ -1882,7 +3537,7 @@ struct ContentView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         workspaceBipMissionCardMarker()
 
-                        Text("BIP 미션 준비")
+                        Text("오늘 실행")
                             .font(.system(size: 12, weight: .bold, design: .rounded))
                             .foregroundStyle(.white.opacity(0.78))
                             .textCase(.uppercase)
@@ -1907,10 +3562,97 @@ struct ContentView: View {
     }
 
     @ViewBuilder
+    private func workspaceStartupQueueStatus() -> some View {
+        if let action = viewModel.startupQueuedAction {
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: workspaceStartupQueueIcon(for: action))
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(workspaceStartupQueueTint(for: action))
+                    .frame(width: 18)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(workspaceStartupQueueTitle(for: action))
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.82))
+                    Text(action.summary)
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.48))
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+
+                if case .failed = action.state {
+                    Button("다시 시도") {
+                        viewModel.retryStartupQueuedAction()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.92))
+                    .accessibilityIdentifier("workspace.startupQueue.retry")
+                }
+
+                Button("취소") {
+                    viewModel.clearStartupQueuedAction()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.48))
+                .accessibilityIdentifier("workspace.startupQueue.cancel")
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 42)
+            .background(
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .fill(Color.black.opacity(0.18))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .stroke(workspaceStartupQueueTint(for: action).opacity(0.16), lineWidth: 1)
+                    )
+            )
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("workspace.startupQueue")
+        }
+    }
+
+    private func workspaceStartupQueueTitle(for action: StartupQueuedAction) -> String {
+        switch action.state {
+        case .waiting:
+            return "\(action.title) · 세션 연결 후 자동 실행"
+        case .sending:
+            return "\(action.title) · 보내는 중"
+        case .failed:
+            return "\(action.title) · 다시 시도 필요"
+        }
+    }
+
+    private func workspaceStartupQueueIcon(for action: StartupQueuedAction) -> String {
+        switch action.state {
+        case .failed:
+            return "exclamationmark.triangle.fill"
+        case .sending:
+            return "paperplane.circle.fill"
+        case .waiting:
+            return "clock.fill"
+        }
+    }
+
+    private func workspaceStartupQueueTint(for action: StartupQueuedAction) -> Color {
+        switch action.state {
+        case .failed:
+            return Color(red: 1.0, green: 0.45, blue: 0.38)
+        case .sending:
+            return Color(red: 0.54, green: 0.78, blue: 0.96)
+        case .waiting:
+            return Color(red: 0.55, green: 0.90, blue: 0.66)
+        }
+    }
+
+    @ViewBuilder
     private func workspaceBipReadinessCompactCard() -> some View {
         if let coach = viewModel.visibleBipCoach {
             let readiness = viewModel.bipReadiness ?? BipReadinessState.loading
-            if !coach.isConfigured || !readiness.bipCoachSetupComplete || readiness.hasBlockingBipCoachSetupIssue {
+            if !fullCoachReady(coach: coach, readiness: readiness) {
                 let visibleIds = bipReadinessPrimaryRowIds
                 let completedIds = visibleIds.filter { readiness.row($0).status == .done }
                 let currentId = visibleIds.first { readiness.row($0).status != .done }
@@ -1919,7 +3661,7 @@ struct ContentView: View {
                     workspaceBipCoachInlineMarker()
 
                     HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Text("오늘 미션을 만들기 위해 gws 연결을 확인합니다.")
+                        Text(basicMissionAvailable(coach: coach) ? "오늘 미션은 바로 만들 수 있어요." : "세션이 연결되면 오늘 미션을 만들 수 있어요.")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                             .foregroundStyle(.white.opacity(0.78))
                             .fixedSize(horizontal: false, vertical: true)
@@ -1955,7 +3697,7 @@ struct ContentView: View {
                             }
                         } label: {
                             HStack(spacing: 5) {
-                                Text("전체 설정")
+                                Text("추천 정확도 높이기")
                                 Image(systemName: "arrow.right")
                                     .font(.system(size: 9, weight: .bold))
                             }
@@ -1965,6 +3707,11 @@ struct ContentView: View {
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("workspace.bipReadinessOpenFullSetup")
                     }
+
+                    Text("부족한 기준은 오늘 실행을 막지 않고, 다음 추천을 더 정확하게 만드는 보조 단계입니다.")
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.46))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .accessibilityIdentifier("workspace.bipReadinessCompact")
             }
@@ -2035,21 +3782,21 @@ struct ContentView: View {
     @ViewBuilder
     private func workspaceBipEvidenceGroup() -> some View {
         if let coach = viewModel.visibleBipCoach {
-            workspaceEvidenceGroup(title: "BIP Coach") {
+            workspaceEvidenceGroup(title: "공개 실행 코치") {
                 if let mission = coach.currentMission {
-                    workspaceEvidenceLine(mission.title?.nonEmpty ?? "오늘의 BIP 미션")
+                    workspaceEvidenceLine(mission.title?.nonEmpty ?? "오늘 실행")
                     ForEach(Array(evidenceLines(for: mission, coach: coach).prefix(5).enumerated()), id: \.offset) { _, line in
                         workspaceEvidenceLine(line)
                     }
                 } else if let evidence = coach.evidence {
                     workspaceEvidenceLine(evidenceReceiptSummary(evidence))
                 } else {
-                    workspaceEvidenceLine("BIP Coach가 아직 오늘 근거를 읽지 않았습니다.")
+                    workspaceEvidenceLine("공개 실행 코치가 아직 오늘 근거를 읽지 않았습니다.")
                 }
             }
         } else {
-            workspaceEvidenceGroup(title: "BIP Coach") {
-                workspaceEvidenceLine("BIP 미션 설정과 오늘 미션 근거가 준비되면 여기에 연결됩니다.")
+            workspaceEvidenceGroup(title: "공개 실행 코치") {
+                workspaceEvidenceLine("공개 실행 설정과 오늘 근거가 준비되면 여기에 연결됩니다.")
             }
         }
     }
@@ -2179,7 +3926,7 @@ struct ContentView: View {
         let latestAssistantIsBipMission = lastAssistant?.bipMissionChoices?.isEmpty == false
         let answerMaxHeight: CGFloat = visibleCoach == nil ? (showsComposer ? 324 : 430) : 180
         let width: CGFloat = 620
-        let height: CGFloat = isAwaitingInlineInput ? 538 : 576
+        let fixedHeight: CGFloat? = isAwaitingInlineInput ? nil : 576
 
         return VStack(alignment: .leading, spacing: 14) {
             if isAwaitingInlineInput {
@@ -2199,7 +3946,7 @@ struct ContentView: View {
                 inlineStructuredPrompt(pendingPrompt)
                     .transition(.opacity)
             } else if visibleCoach != nil && latestAssistantIsBipMission {
-                Text("오늘 BIP 미션")
+                Text("오늘 실행")
                     .font(.system(size: 13, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.56))
                     .transition(.opacity)
@@ -2277,7 +4024,7 @@ struct ContentView: View {
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 18)
-        .frame(width: width, height: height, alignment: .topLeading)
+        .frame(width: width, height: fixedHeight, alignment: .topLeading)
         .background(bubbleBackground(isCompact: false))
     }
 
@@ -2381,7 +4128,10 @@ struct ContentView: View {
             let readiness = viewModel.bipReadiness ?? BipReadinessState.loading
             if viewModel.sidecarFailureMessage != nil {
                 bipCoachSidecarFailurePanel()
-            } else if coach.isConfigured && !readiness.hasBlockingBipCoachSetupIssue {
+            } else if viewModel.bipMissionProgress != nil
+                        || coach.currentMission != nil
+                        || !coach.pendingMissionChoices.isEmpty
+                        || fullCoachReady(coach: coach, readiness: readiness) {
                 VStack(alignment: .leading, spacing: 10) {
                     if let expiredMsg = viewModel.bipTokenExpired {
                         tokenExpiredBanner(message: expiredMsg)
@@ -2418,7 +4168,7 @@ struct ContentView: View {
     // Dead code — kept for one PR, delete in follow-up
     private func unconfiguredBipCoachPanel() -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("오늘의 BIP 미션을 시작하려면 Google Doc 업무일지와 Google Sheet 게시글 일지를 연결하세요.")
+            Text("오늘 공개 실행을 시작하려면 Google Doc 업무일지와 Google Sheet 게시글 일지를 연결하세요.")
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.86))
                 .fixedSize(horizontal: false, vertical: true)
@@ -2443,16 +4193,14 @@ struct ContentView: View {
         let visibleIds = bipReadinessPrimaryRowIds
         let completedIds = visibleIds.filter { state.row($0).status == .done }
         let currentId = visibleIds.first { state.row($0).status != .done }
-        let upcomingIds = currentId.map { current in
-            visibleIds.filter { $0 != current && state.row($0).status != .done }
-        } ?? []
+        let readinessGroups = bipReadinessGroups
 
         return VStack(alignment: .leading, spacing: 10) {
-            Text("BIP 미션 준비")
+            Text("추천 정확도 높이기")
                 .font(.system(size: 13, weight: .bold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.86))
 
-            Text("IDD 문서 7종과 Google Docs/Sheets 연결이 모두 준비되어야 BIP 미션을 만들 수 있어요.")
+            Text("오늘 미션은 바로 만들 수 있어요. 아래 기준을 저장하면 문서와 기록을 근거로 더 정확한 후보를 만들 수 있습니다.")
                 .font(.system(size: 11, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(0.52))
                 .fixedSize(horizontal: false, vertical: true)
@@ -2474,13 +4222,11 @@ struct ContentView: View {
                 bipReadinessCompletedSummary(completedIds)
             }
 
-            if !upcomingIds.isEmpty {
-                bipReadinessPreviewToggle(upcomingIds, state: state)
-            }
+            bipReadinessGroupSummary(readinessGroups, state: state)
 
             bipReadinessAdvancedToggle(state)
 
-            Text("준비가 끝나면 오늘 BIP 미션 카드가 여기 표시됩니다.")
+            Text("전체 준비가 끝나면 Google Doc/Sheet 기록까지 읽는 근거 기반 추천으로 전환됩니다.")
                 .font(.system(size: 11, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(0.44))
                 .fixedSize(horizontal: false, vertical: true)
@@ -2498,12 +4244,12 @@ struct ContentView: View {
 
     private func bipReadinessProgressCopy(completedCount: Int, totalCount: Int) -> String {
         if completedCount == totalCount {
-            return "\(totalCount)/\(totalCount) 완료 · 준비가 끝났어요"
+            return "\(totalCount)/\(totalCount) 완료 · 근거 기반 추천 준비 완료"
         }
         if completedCount == totalCount - 1 {
-            return "\(completedCount)/\(totalCount) 완료 · 마지막 한 가지만 하면 돼요"
+            return "\(completedCount)/\(totalCount) 완료 · 마지막 한 가지가 추천 정확도를 높여요"
         }
-        return "\(completedCount)/\(totalCount) 완료 · 다음 한 가지만 하면 돼요"
+        return "\(completedCount)/\(totalCount) 완료 · 다음 한 가지를 저장하면 추천이 더 좋아져요"
     }
 
     private func bipReadinessCompleteView() -> some View {
@@ -2517,7 +4263,7 @@ struct ContentView: View {
                 Text("준비 완료")
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.90))
-                Text("이제 BIP Coach가 문서와 Google Doc/Sheet를 읽고 매일 미션을 만들 수 있어요.")
+                Text("이제 공개 실행 코치가 문서와 Google Doc/Sheet를 읽고 근거 기반 실행 후보를 만들 수 있어요.")
                     .font(.system(size: 11, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.54))
                     .fixedSize(horizontal: false, vertical: true)
@@ -2613,21 +4359,21 @@ struct ContentView: View {
     private func bipReadinessDefaultDetail(for id: BipReadinessRowId) -> String {
         switch id {
         case .localIcp:
-            return "docs/ICP.md를 IDD 인터뷰로 고정해 이상 고객과 반-ICP를 명확히 해요."
+            return "오늘 미션의 첫 사용자를 더 정확히 고릅니다. 저장 위치: docs/ICP.md"
         case .localSpec:
-            return "docs/SPEC.md를 IDD 인터뷰로 고정해 문제, 가치, MVP, 성공 기준을 정해요."
+            return "오늘 산출물이 어떤 문제를 검증하는지 고정합니다. 저장 위치: docs/SPEC.md"
         case .localDesignSystem:
-            return "docs/DESIGN_SYSTEM.md를 IDD 인터뷰로 고정해 UI/UX 원칙과 컴포넌트를 정해요."
+            return "Mac 작업 화면의 신뢰감과 접근성 기준을 남깁니다. 저장 위치: docs/DESIGN_SYSTEM.md"
         case .localAdr:
-            return "docs/ADR.md를 IDD 인터뷰로 고정해 주요 기술 결정과 트레이드오프를 남겨요."
+            return "중요한 보류/선택 이유를 남겨 같은 논쟁을 줄입니다. 저장 위치: docs/ADR.md"
         case .localGoal:
-            return "docs/GOAL.md를 IDD 인터뷰로 고정해 목표, 지표, 운영 리듬을 정해요."
+            return "오늘 미션이 어떤 주간 목표에 기여하는지 연결합니다. 저장 위치: docs/GOAL.md"
         case .localDocs:
-            return "docs/DOCS.md를 IDD 인터뷰로 고정해 문서 지도와 유지 규칙을 정해요."
+            return "Agentic30이 어떤 문서를 근거로 읽을지 알려줍니다. 저장 위치: docs/DOCS.md"
         case .localSheet:
-            return "docs/SHEET.md를 IDD 인터뷰로 고정해 게시글 기록 Sheet 스키마를 정해요."
+            return "Threads 반응과 배운 점을 다음 추천에 재사용할 표 기준입니다. 저장 위치: docs/SHEET.md"
         case .googleSignIn:
-            return "앱 계정 상태예요. BIP 설정에서는 gws 로그인 흐름을 사용해요."
+            return "앱 계정 상태예요. Google 문서 연결은 별도 인증으로 확인해요."
         case .workspace:
             return "미션과 설정을 저장할 프로젝트 폴더를 정해요."
         case .gwsInstall:
@@ -2683,7 +4429,7 @@ struct ContentView: View {
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.82))
             }
-            Text("내 Google Drive · BIP Coach에 연결됨")
+            Text("내 Google Drive · 공개 실행 코치에 연결됨")
                 .font(.system(size: 10, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(0.48))
             HStack(spacing: 8) {
@@ -2712,6 +4458,43 @@ struct ContentView: View {
                 .fill(Color.white.opacity(0.045))
                 .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.white.opacity(0.07), lineWidth: 1))
         )
+    }
+
+    private var bipReadinessGroups: [BipReadinessGroup] {
+        [
+            BipReadinessGroup(
+                title: "프로젝트 기준",
+                ids: [.localIcp, .localSpec, .localGoal, .localAdr]
+            ),
+            BipReadinessGroup(
+                title: "실행 기록",
+                ids: [.localDocs, .localSheet, .docUrl, .sheetUrl]
+            ),
+            BipReadinessGroup(
+                title: "신뢰도 강화",
+                ids: [.localDesignSystem, .gwsInstall, .gwsAuth]
+            ),
+        ]
+    }
+
+    private func bipReadinessGroupSummary(_ groups: [BipReadinessGroup], state: BipReadinessState) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(groups) { group in
+                let done = group.ids.filter { state.row($0).status == .done }.count
+                HStack(spacing: 7) {
+                    Image(systemName: done == group.ids.count ? "checkmark.circle.fill" : "circle.dotted")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(done == group.ids.count ? Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.80) : .white.opacity(0.34))
+                    Text(group.title)
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.54))
+                    Text("\(done)/\(group.ids.count)")
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.36))
+                }
+            }
+        }
+        .accessibilityIdentifier("bip.readiness.groupSummary")
     }
 
     private func bipReadinessPreviewToggle(_ rowIds: [BipReadinessRowId], state: BipReadinessState) -> some View {
@@ -2864,7 +4647,7 @@ struct ContentView: View {
     private func bipReadinessActionButton(row: BipReadinessRow) -> some View {
         switch row.id {
         case .localIcp, .localSpec, .localDesignSystem, .localAdr, .localGoal, .localDocs, .localSheet:
-            bipCoachButton("IDD 인터뷰 시작") {
+            bipCoachButton("오늘 미션에 필요한 기준 정하기") {
                 viewModel.sendBipReadinessAction(
                     rowId: row.id,
                     action: "start_idd",
@@ -2911,13 +4694,13 @@ struct ContentView: View {
 
     private func bipReadinessRowTitle(_ id: BipReadinessRowId) -> String {
         switch id {
-        case .localIcp: return "ICP 문서"
-        case .localSpec: return "SPEC 문서"
-        case .localDesignSystem: return "Design System 문서"
-        case .localAdr: return "ADR 문서"
-        case .localGoal: return "GOAL 문서"
-        case .localDocs: return "Docs 문서"
-        case .localSheet: return "Sheet 문서"
+        case .localIcp: return "누구를 위한 제품인지"
+        case .localSpec: return "이번 주 무엇을 만들지"
+        case .localDesignSystem: return "화면 원칙"
+        case .localAdr: return "기술 결정"
+        case .localGoal: return "목표와 지표"
+        case .localDocs: return "문서 지도"
+        case .localSheet: return "공개 기록 표"
         case .googleSignIn: return "앱 로그인"
         case .workspace: return "프로젝트 폴더"
         case .gwsInstall: return "gws CLI 확인"
@@ -3164,7 +4947,7 @@ struct ContentView: View {
                         .font(.system(size: 13, weight: .heavy, design: .rounded))
                         .foregroundStyle(.white.opacity(0.94))
                         .lineLimit(1)
-                    Text(mission.angle?.nonEmpty ?? "BIP 기록과 오늘 커리큘럼을 반영한 실행 미션")
+                    Text(mission.angle?.nonEmpty ?? "공개 기록과 오늘 커리큘럼을 반영한 실행")
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.62))
                         .lineLimit(1)
@@ -3198,7 +4981,7 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("workspace.bipCoach.missionChoice.\(index + 1)")
-        .accessibilityLabel("\(mission.title?.nonEmpty ?? "BIP 미션 \(index + 1)") 선택")
+        .accessibilityLabel("\(mission.title?.nonEmpty ?? "오늘 실행 \(index + 1)") 선택")
     }
 
     private func bipMissionChoicesEvidenceSummary(_ coach: BipCoachState) -> String {
@@ -3339,7 +5122,7 @@ struct ContentView: View {
                     .background(Capsule().fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.12)))
             }
 
-            Text(mission.title?.nonEmpty ?? "오늘의 BIP 미션")
+            Text(mission.title?.nonEmpty ?? "오늘 실행")
                 .font(.system(size: 16, weight: .bold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.96))
                 .lineLimit(2)
@@ -3435,43 +5218,32 @@ struct ContentView: View {
                 .font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.72))
 
-            HStack(spacing: 8) {
-                TextField("Threads URL", text: $bipThreadsURL)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.92))
-                    .padding(.horizontal, 11)
-                    .frame(height: 36)
-                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.black.opacity(0.16)))
-                    .accessibilityIdentifier("assistant.bipThreadsURL")
-
-                TextField("Sheet 행 메모", text: $bipSheetRowNote)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.92))
-                    .padding(.horizontal, 11)
-                    .frame(height: 36)
-                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.black.opacity(0.16)))
-                    .accessibilityIdentifier("assistant.bipSheetRowNote")
-
-                Button {
-                    viewModel.completeBipMission(threadsUrl: bipThreadsURL, sheetRowNote: bipSheetRowNote)
-                    withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
-                        showsBipCompletionFields = false
-                    }
-                    bipThreadsURL = ""
-                    bipSheetRowNote = ""
-                } label: {
-                    Text("기록 완료")
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.9))
-                        .padding(.horizontal, 12)
-                        .frame(height: 36)
-                        .background(Capsule().fill(Color.white.opacity(0.14)))
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .bottom, spacing: 8) {
+                    bipCompletionThreadsField()
+                    bipCompletionSheetNoteField()
+                    bipCompletionSubmitButton()
                 }
-                .buttonStyle(.plain)
-                .disabled(bipThreadsURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || bipSheetRowNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.isBipCoachCompleting)
-                .accessibilityIdentifier("assistant.completeBipMission")
+
+                VStack(alignment: .leading, spacing: 8) {
+                    bipCompletionThreadsField()
+                    bipCompletionSheetNoteField()
+                    bipCompletionSubmitButton()
+                }
+            }
+
+            if let validation = bipCompletionValidationMessage {
+                Text(validation)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Color(red: 1.0, green: 0.67, blue: 0.42).opacity(0.90))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("assistant.bipCompletionValidation")
+            } else if let error = viewModel.visibleBipCoach?.lastError?.nonEmpty {
+                Text(error)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Color(red: 1.0, green: 0.67, blue: 0.42).opacity(0.90))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("assistant.bipCompletionError")
             }
         }
         .padding(10)
@@ -3479,6 +5251,88 @@ struct ContentView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color.black.opacity(0.12))
         )
+    }
+
+    private func bipCompletionThreadsField() -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Threads URL")
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.48))
+            TextField("https://www.threads.net/...", text: $bipThreadsURL)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.92))
+                .padding(.horizontal, 11)
+                .frame(height: 36)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.black.opacity(0.16)))
+                .accessibilityIdentifier("assistant.bipThreadsURL")
+                .accessibilityLabel("Threads URL")
+        }
+        .frame(minWidth: 220, maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func bipCompletionSheetNoteField() -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Sheet 행 메모")
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.48))
+            TextField("예: 5월 1일 행에 URL과 반응 기록", text: $bipSheetRowNote)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.92))
+                .padding(.horizontal, 11)
+                .frame(height: 36)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.black.opacity(0.16)))
+                .accessibilityIdentifier("assistant.bipSheetRowNote")
+                .accessibilityLabel("Sheet 행 메모")
+        }
+        .frame(minWidth: 180, maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func bipCompletionSubmitButton() -> some View {
+        Button {
+            submitBipCompletion()
+        } label: {
+            HStack(spacing: 6) {
+                if viewModel.isBipCoachCompleting {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .frame(width: 12, height: 12)
+                }
+                Text(viewModel.isBipCoachCompleting ? "저장 중..." : "기록 완료")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+            }
+            .foregroundStyle(.white.opacity(bipCompletionSubmitDisabled ? 0.44 : 0.9))
+            .padding(.horizontal, 12)
+            .frame(height: 36)
+            .background(Capsule().fill(Color.white.opacity(bipCompletionSubmitDisabled ? 0.07 : 0.14)))
+        }
+        .buttonStyle(.plain)
+        .disabled(bipCompletionSubmitDisabled)
+        .accessibilityIdentifier("assistant.completeBipMission")
+        .accessibilityLabel("기록 완료")
+    }
+
+    private var bipCompletionSubmitDisabled: Bool {
+        bipThreadsURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || bipSheetRowNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || viewModel.isBipCoachCompleting
+    }
+
+    private var bipCompletionValidationMessage: String? {
+        let hasThreadsURL = bipThreadsURL.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty != nil
+        let hasSheetNote = bipSheetRowNote.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty != nil
+        if hasThreadsURL && !hasSheetNote {
+            return "Sheet 행 메모도 남기면 오늘 미션을 닫을 수 있어요."
+        }
+        if !hasThreadsURL && hasSheetNote {
+            return "Threads URL도 붙여주세요."
+        }
+        return nil
+    }
+
+    private func submitBipCompletion() {
+        viewModel.completeBipMission(threadsUrl: bipThreadsURL, sheetRowNote: bipSheetRowNote)
     }
 
     private func missionEvidenceDetails(_ mission: BipCoachMission, coach: BipCoachState) -> some View {
@@ -3499,7 +5353,7 @@ struct ContentView: View {
         if let refs = mission.evidenceRefs, !refs.isEmpty {
             return "근거: \(refs.prefix(3).joined(separator: " · "))"
         }
-        return "근거: Threads 반응 · 팔로워 변화 · BIP 기록"
+        return "근거: Threads 반응 · 팔로워 변화 · 공개 기록"
     }
 
     private func evidenceReceiptSummary(_ evidence: BipCoachEvidence) -> String {
@@ -3556,7 +5410,7 @@ struct ContentView: View {
     }
 
     private func beginBipMission(_ mission: BipCoachMission) {
-        let title = mission.title?.nonEmpty ?? "오늘의 BIP 미션"
+        let title = mission.title?.nonEmpty ?? "오늘 실행"
         viewModel.draft = "/bip-draft \(title)"
     }
 
@@ -3594,15 +5448,12 @@ struct ContentView: View {
                 .foregroundStyle(.white.opacity(0.9))
                 .accessibilityIdentifier("assistant.structuredPromptTitle")
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(prompt.questions) { question in
-                        questionCard(question)
-                    }
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(prompt.questions) { question in
+                    questionCard(question)
                 }
-                .padding(.vertical, 2)
             }
-            .frame(maxHeight: 372)
+            .padding(.vertical, 2)
 
             HStack(spacing: 12) {
                 Spacer(minLength: 0)
@@ -3642,7 +5493,7 @@ struct ContentView: View {
         return VStack(alignment: .leading, spacing: 12) {
             if let helperText = question.helperText?.trimmingCharacters(in: .whitespacesAndNewlines), !helperText.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("프로젝트를 훑어봤어요")
+                    Text(question.header)
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundStyle(Color(red: 0.82, green: 0.89, blue: 1.0).opacity(0.92))
                     Text(helperText)
@@ -3695,10 +5546,20 @@ struct ContentView: View {
         )
     }
 
+    /// Default accent for the form-style structured prompt (office-hours intake).
+    /// Inline decision cards override this with `inlineDecisionAccent`.
+    private static let structuredChoiceAccent = Color(red: 0.82, green: 0.89, blue: 1.0)
+    /// Sage-cyan accent for inline decision cards (Decision Card Stack variant).
+    /// Stays off-token from the rest of the chat surface so the card reads as a
+    /// distinct decision moment without competing with provider-auth or BIP
+    /// mission cards. Source: design-shotgun approved.json (#7BA890).
+    static let inlineDecisionAccent = Color(red: 0.482, green: 0.659, blue: 0.565)
+
     private func choiceRow(
         _ option: StructuredPromptOption,
         question: StructuredPromptQuestion,
-        selected: Bool
+        selected: Bool,
+        accent: Color = ContentView.structuredChoiceAccent
     ) -> some View {
         Button {
             toggleOption(option.label, for: question)
@@ -3706,10 +5567,10 @@ struct ContentView: View {
             HStack(alignment: .top, spacing: 12) {
                 ZStack {
                     Circle()
-                        .stroke(selected ? Color(red: 0.82, green: 0.89, blue: 1.0) : Color.white.opacity(0.30), lineWidth: 1.4)
+                        .stroke(selected ? accent : Color.white.opacity(0.30), lineWidth: 1.4)
                     if selected {
                         Circle()
-                            .fill(Color(red: 0.82, green: 0.89, blue: 1.0))
+                            .fill(accent)
                             .frame(width: 8, height: 8)
                     }
                 }
@@ -3735,7 +5596,7 @@ struct ContentView: View {
                     .fill(selected ? Color.white.opacity(0.18) : Color.black.opacity(0.16))
                     .overlay(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(selected ? Color(red: 0.82, green: 0.89, blue: 1.0).opacity(0.72) : Color.white.opacity(0.0), lineWidth: 1)
+                            .stroke(selected ? accent.opacity(0.72) : Color.white.opacity(0.0), lineWidth: 1)
                     )
             )
             .contentShape(Rectangle())
@@ -3893,14 +5754,14 @@ struct ContentView: View {
     private func promptComposer() -> some View {
         HStack(spacing: 10) {
             TextField(
-                "메시지 보내기",
+                viewModel.selectedSession == nil ? "첫 메시지 미리 적기" : "메시지 보내기",
                 text: $viewModel.draft
             )
             .textFieldStyle(.plain)
             .font(.system(size: 13, weight: .semibold, design: .rounded))
             .foregroundStyle(.white.opacity(0.94))
             .accessibilityIdentifier("assistant.promptComposer")
-            .accessibilityLabel("메시지 보내기")
+            .accessibilityLabel(viewModel.selectedSession == nil ? "첫 메시지 미리 적기" : "메시지 보내기")
             .onSubmit {
                 if viewModel.canSend {
                     viewModel.sendPrompt()
@@ -4172,13 +6033,13 @@ private struct AgenticCurriculumDay: Identifiable, Hashable {
     var id: Int { day }
 
     static let days: [AgenticCurriculumDay] = [
-        .init(day: 1, phase: .foundation, title: "문제 지도를 만든다", shortTitle: "문제 지도", summary: "내가 풀고 싶은 문제가 아니라, 실제 사람이 반복해서 겪는 문제를 모읍니다.", tasks: ["최근 인터뷰/메모에서 반복 문제 10개를 뽑기", "각 문제마다 과거 행동 증거를 붙이기", "가장 절박한 문제 3개만 남기기"], output: "고객 문제 후보 3개와 증거 문장"),
-        .init(day: 2, phase: .foundation, title: "Mom Test 인터뷰를 준비한다", shortTitle: "Mom Test", summary: "아이디어 칭찬을 피하고 과거 행동을 묻는 질문지로 바꿉니다.", tasks: ["문제 후보별 과거 행동 질문 작성", "인터뷰 대상 5명 리스트업", "오늘 보낼 DM 초안 작성"], output: "검증 질문지와 인터뷰 요청 DM"),
-        .init(day: 3, phase: .foundation, title: "ICP를 좁힌다", shortTitle: "ICP 좁히기", summary: "넓은 시장 대신 30일 안에 만날 수 있는 구체 고객으로 줄입니다.", tasks: ["응답한 사람의 공통 조건 찾기", "Anti-ICP를 명시하기", "첫 고객 한 문장으로 쓰기"], output: "1문장 ICP와 제외 기준"),
-        .init(day: 4, phase: .foundation, title: "Pain Evidence를 정리한다", shortTitle: "Pain Evidence", summary: "느낌이 아니라 실제 발화와 행동으로 고통 강도를 판단합니다.", tasks: ["인터뷰 발화에서 고통 표현 표시", "대체재와 지불 행동 확인", "강한 증거/약한 증거 분리"], output: "문제별 증거 점수표"),
-        .init(day: 5, phase: .foundation, title: "지불 의향을 확인한다", shortTitle: "지불 의향", summary: "좋다는 말이 아니라 돈, 시간, 전환 의지를 확인합니다.", tasks: ["가격/대체재 질문 준비", "2명에게 구체 제안 보내기", "거절 사유를 그대로 기록"], output: "지불 신호와 거절 사유"),
-        .init(day: 6, phase: .foundation, title: "포지셔닝을 쓴다", shortTitle: "포지셔닝", summary: "누구에게 무엇을 약속하는지 한 화면에서 이해되게 만듭니다.", tasks: ["타깃/문제/결과를 한 문장으로 압축", "경쟁 대안 3개와 다른 점 쓰기", "랜딩 첫 문단 초안 작성"], output: "랜딩 첫 화면 메시지"),
-        .init(day: 7, phase: .foundation, title: "Go / No-Go를 결정한다", shortTitle: "Go / No-Go", summary: "7일간 모은 숫자와 발화로 계속할지 바꿀지 정합니다.", tasks: ["가장 강한 증거 5개 고르기", "가장 위험한 반증 3개 고르기", "계속/전환/중단 결정 쓰기"], output: "Foundation 결정 메모"),
+        .init(day: 1, phase: .foundation, title: "팔릴 문제부터 찾는다", shortTitle: "Revenue Audit", summary: "감이 아니라 인터뷰와 진단 결과로 Track A/B/C, 첫 고객, 첫 CTA를 정합니다.", tasks: ["Revenue Readiness Audit로 현재 프로젝트 진단", "Track A/B/C에 맞는 첫 액션 선택", "이번 주 확인할 고객 1명과 CTA 1개 확정"], output: "Track 판정, ICP v0, 첫 CTA, journey brief"),
+        .init(day: 2, phase: .foundation, title: "고객 앞에 나타난다", shortTitle: "Profile CTA", summary: "고객이 나를 신뢰하고 클릭할 수 있도록 프로필, 링크, 첫 고정 게시물을 정리합니다.", tasks: ["Threads 또는 X 채널 1개 선택", "프로필 한 줄과 링크 구조 정리", "Pinned post와 글감 10개 작성"], output: "프로필 CTA, pinned post, BIP 운영 원칙"),
+        .init(day: 3, phase: .foundation, title: "검색될 수 있게 만든다", shortTitle: "SEO 기반", summary: "검색엔진과 공유 링크가 읽을 수 있는 제품 블로그, 키워드, OG 기본 구조를 만듭니다.", tasks: ["블로그/robots/sitemap/OG 기본 구조 점검", "문제/제품/비교/질문형 키워드 정리", "블로그 아티클 3건 초안 작성"], output: "검색 키워드, 블로그 초안 3건, 색인 체크리스트"),
+        .init(day: 4, phase: .foundation, title: "팔 수 있는 운영 기준을 정한다", shortTitle: "사업 준비", summary: "사업자 등록과 운영 분리가 지금 필요한지 판단하고 결제 가능한 상태의 리스크를 기록합니다.", tasks: ["사업자 등록 필요 시점 판단", "개인 상황 영향과 우회 검증 경로 점검", "연락처/주소/이메일 운영 분리 기준 정리"], output: "사업자 등록 판단 메모와 운영 체크리스트"),
+        .init(day: 5, phase: .foundation, title: "첫 결제 구조를 세운다", shortTitle: "Paywall", summary: "무료 유저 100명보다 유료 결제 1건을 검증하기 위한 페이월과 가격 제안을 만듭니다.", tasks: ["유료화할 가치 1개 선택", "무료/유료 경계와 노출 트리거 정의", "페이월 카피와 가격안 작성"], output: "페이월 카피, 무료/유료 경계, 가격안"),
+        .init(day: 6, phase: .foundation, title: "데이터로 볼 준비를 한다", shortTitle: "Analytics", summary: "출시 전에 클릭, 가입, 결제, 활성화 흐름을 볼 수 있게 이벤트와 데모 자산을 준비합니다.", tasks: ["핵심 이벤트와 출시 전 지표 정의", "PostHog/Meta Pixel 연결 계획 점검", "30-90초 데모 시나리오 작성"], output: "이벤트 목록, 분석 체크리스트, 데모 시나리오"),
+        .init(day: 7, phase: .foundation, title: "세상에 꺼낸다", shortTitle: "Launch", summary: "3개 핵심 채널에 집중 런칭하고 조회수보다 댓글, 클릭, 가입, 문의를 기록합니다.", tasks: ["런칭 기본 원고 작성", "채널별 맞춤 카피와 UTM 링크 준비", "게시 후 반응을 Sheet에 기록"], output: "런칭 카피, 채널별 게시 기록, 반응 기록표"),
         .init(day: 8, phase: .build, title: "MVP 범위를 3개 기능으로 자른다", shortTitle: "MVP 3기능", summary: "첫 사용자가 결과를 보는 데 필요한 기능만 남깁니다.", tasks: ["핵심 결과까지의 사용자 흐름 그리기", "필수 기능 3개만 선택", "나머지는 의도적으로 미루기"], output: "MVP 기능 3개와 제외 목록"),
         .init(day: 9, phase: .build, title: "데이터 흐름을 고정한다", shortTitle: "데이터 흐름", summary: "사용자의 입력, AI 처리, 결과 저장 흐름을 한 번에 이해되게 만듭니다.", tasks: ["입력 데이터와 저장 위치 정하기", "실패 시 복구 흐름 쓰기", "첫 번째 테스트 케이스 만들기"], output: "데이터 흐름 다이어그램"),
         .init(day: 10, phase: .build, title: "핵심 플로우를 프로토타입한다", shortTitle: "핵심 플로우", summary: "완성도가 아니라 끝까지 한 번 지나가는 흐름을 만듭니다.", tasks: ["가짜 데이터로 happy path 연결", "첫 결과 화면 만들기", "막히는 지점 기록"], output: "End-to-end prototype"),
@@ -4190,7 +6051,7 @@ private struct AgenticCurriculumDay: Identifiable, Hashable {
         .init(day: 16, phase: .build, title: "Private DMG를 만든다", shortTitle: "Private DMG", summary: "완벽한 공개가 아니라 실제 설치 파일을 가까운 사용자에게 보냅니다.", tasks: ["DMG 빌드", "설치 안내 5줄 작성", "첫 테스터 3명에게 공유"], output: "Private build 공유 기록"),
         .init(day: 17, phase: .build, title: "Build phase를 회고한다", shortTitle: "Build 회고", summary: "기능이 아니라 사용자가 결과를 봤는지 기준으로 판단합니다.", tasks: ["완성/미완성 기능 분리", "사용자 가치까지 연결된 흐름 표시", "Launch 전에 자를 것 결정"], output: "Build retro와 Launch 준비 목록"),
         .init(day: 18, phase: .launch, title: "Launch story를 쓴다", shortTitle: "Launch story", summary: "무엇을 만들었는지가 아니라 왜 지금 써야 하는지를 씁니다.", tasks: ["ICP의 기존 고통으로 시작하기", "결과 화면 한 장 고르기", "첫 공개 글 초안 작성"], output: "Launch post 초안"),
-        .init(day: 19, phase: .launch, title: "BIP 포스트를 공개한다", shortTitle: "BIP 공개", summary: "불완전한 현재 상태를 숨기지 않고 진행 증거로 공개합니다.", tasks: ["오늘 배운 점 1개 쓰기", "스크린샷/숫자 1개 붙이기", "Threads에 게시 후 반응 기록"], output: "게시 URL과 반응 기록"),
+        .init(day: 19, phase: .launch, title: "진행 포스트를 공개한다", shortTitle: "진행 공개", summary: "불완전한 현재 상태를 숨기지 않고 진행 증거로 공개합니다.", tasks: ["오늘 배운 점 1개 쓰기", "스크린샷/숫자 1개 붙이기", "Threads에 게시 후 반응 기록"], output: "게시 URL과 반응 기록"),
         .init(day: 20, phase: .launch, title: "Warm outreach를 보낸다", shortTitle: "Warm outreach", summary: "아는 사람부터 작은 약속을 받아냅니다.", tasks: ["관심 가능성이 높은 20명 리스트", "개인화 DM 10개 발송", "응답/무응답을 Sheet에 기록"], output: "Outreach tracker"),
         .init(day: 21, phase: .launch, title: "첫 피드백을 받는다", shortTitle: "첫 피드백", summary: "사용자가 실제로 어디서 이해하고 어디서 멈추는지 봅니다.", tasks: ["설치/첫 실행 관찰 2회", "말이 막힌 문구 표시", "수정 3개만 반영"], output: "피드백 기반 수정 목록"),
         .init(day: 22, phase: .launch, title: "데모를 녹화한다", shortTitle: "데모", summary: "설명 글보다 60초 데모가 더 빨리 이해시킵니다.", tasks: ["핵심 결과만 보이는 흐름 선택", "60초 이하 녹화", "게시글에 붙일 캡션 작성"], output: "60초 demo asset"),
@@ -4208,6 +6069,23 @@ private struct AgenticCurriculumDay: Identifiable, Hashable {
 private struct StructuredAnswerDraft: Hashable {
     var selectedOptions: Set<String> = []
     var freeText = ""
+}
+
+/// Foundation phase Sub-AC 2: 사이드바 누적 기록을 일자별로 묶어 노출하기 위한
+/// 뷰 모델. 그룹은 `label`(예: "오늘", "어제", "5월 1일 (목)")로 식별되며 동일
+/// 라벨에 묶인 세션들은 `AgenticViewModel.sessions`의 정렬 순서를 그대로 보존한다.
+private struct WorkspaceSidebarHistoryGroup: Identifiable {
+    let label: String
+    let sessions: [ChatSession]
+
+    var id: String { label }
+}
+
+private struct BipReadinessGroup: Identifiable, Hashable {
+    let title: String
+    let ids: [BipReadinessRowId]
+
+    var id: String { title }
 }
 
 private enum DisplayMode {
@@ -4298,8 +6176,82 @@ private enum WorkspaceFooterItem {
     }
 }
 
+/// Foundation phase Sub-AC 3: 사이드바 하단 통합 설정 메뉴 항목 정의.
+///
+/// 각 항목은 (1) popover 내부에서 hover 강조용 키, (2) 시스템 아이콘,
+/// (3) 표시 라벨, (4) accessibilityIdentifier를 제공한다. 항목별 라우팅
+/// 규칙(예: 알림 → buildInPublic, 프로필 → account)은 호출 측에서 결정한다.
+private enum SidebarSettingsMenuItem: Hashable {
+    case profile
+    case notifications
+    case account
+    case logout
+    case fullSettings
+
+    var systemImage: String {
+        switch self {
+        case .profile:
+            return "person.crop.circle"
+        case .notifications:
+            return "bell.fill"
+        case .account:
+            return "key.fill"
+        case .logout:
+            return "rectangle.portrait.and.arrow.right"
+        case .fullSettings:
+            return "gearshape.2.fill"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .profile:
+            return "프로필"
+        case .notifications:
+            return "알림"
+        case .account:
+            return "계정"
+        case .logout:
+            return "로그아웃"
+        case .fullSettings:
+            return "설정 전체 보기"
+        }
+    }
+
+    var accessibilityIdentifier: String {
+        switch self {
+        case .profile:
+            return "workspace.sidebarSettingsMenu.profile"
+        case .notifications:
+            return "workspace.sidebarSettingsMenu.notifications"
+        case .account:
+            return "workspace.sidebarSettingsMenu.account"
+        case .logout:
+            return "workspace.sidebarSettingsMenu.logout"
+        case .fullSettings:
+            return "workspace.sidebarSettingsMenu.fullSettings"
+        }
+    }
+
+    /// 항목이 destructive(로그아웃)인지 표시. 색상 강조에 사용된다.
+    var isDestructive: Bool {
+        self == .logout
+    }
+}
+
 #Preview {
     ContentView(viewModel: AgenticViewModel())
+}
+
+private extension View {
+    @ViewBuilder
+    func workspaceSidebarLockedTooltip(_ tooltip: String?) -> some View {
+        if let tooltip {
+            self.help(tooltip)
+        } else {
+            self
+        }
+    }
 }
 
 private struct WindowChrome: NSViewRepresentable {

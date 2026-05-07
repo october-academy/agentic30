@@ -2,6 +2,7 @@ import fsSync from "node:fs";
 import path from "node:path";
 import { isBipCoachConfigured } from "./bip-coach-state.mjs";
 import { normalizeWorkspaceOnboardingHypothesis } from "./onboarding-hypothesis.mjs";
+import { CODEX_STRUCTURED_INPUT_TOOL } from "./structured-input-tools.mjs";
 
 export const BIP_REQUIRED_LOCAL_DOCS = [
   {
@@ -63,7 +64,7 @@ export const BIP_REQUIRED_LOCAL_DOCS = [
 ];
 
 export const ICP_IDD_INITIAL_INPUT = {
-  toolName: "request_user_input",
+  toolName: CODEX_STRUCTURED_INPUT_TOOL,
   title: "첫 사용자 확인",
   questions: [
     {
@@ -108,8 +109,11 @@ export function initialIddStructuredInputForDoc(
     onboardingContext = null,
   } = {},
 ) {
-  if (provider !== "codex" || doc?.type !== "icp") return null;
-  return buildAdaptiveIcpInitialInput({ onboardingHypothesis, onboardingContext });
+  if (provider !== "codex" || !doc?.type) return null;
+  if (doc.type === "icp") {
+    return buildAdaptiveIcpInitialInput({ onboardingHypothesis, onboardingContext });
+  }
+  return buildGenericIddInitialInput(doc);
 }
 
 export function buildAdaptiveIcpInitialInput({
@@ -123,7 +127,7 @@ export function buildAdaptiveIcpInitialInput({
   const question = buildAdaptiveQuestion(hypothesis, primaryUser, projectKind);
   const personalizedOptions = buildAdaptiveOptions({ primaryUser, onboardingContext });
   return {
-    toolName: "request_user_input",
+    toolName: CODEX_STRUCTURED_INPUT_TOOL,
     title: "첫 사용자 확인",
     questions: [
       {
@@ -138,6 +142,157 @@ export function buildAdaptiveIcpInitialInput({
       },
     ],
   };
+}
+
+export function buildGenericIddInitialInput(doc) {
+  const canonicalPath = String(doc?.canonicalPath || "docs/README.md").trim();
+  const title = genericIddUserFacingTitle(doc);
+  const focus = genericIddUserFacingFocus(doc);
+  const purpose = genericIddPurposeFor(doc, canonicalPath, focus);
+  const risk = genericIddRiskFor(doc, canonicalPath);
+  const options = genericIddInitialOptionsFor(doc, { focus });
+  return {
+    toolName: CODEX_STRUCTURED_INPUT_TOOL,
+    title: `${title} 정하기`,
+    questions: [
+      {
+        header: "지금 막힌 지점을 먼저 봅니다",
+        helperText: `지금은 문서를 채우는 일이 목표처럼 보이지만, 실제 목적은 ${purpose}입니다. ${risk} 답은 ${canonicalPath}에 저장됩니다.`,
+        question: `이번 주에 ${title}에서 가장 먼저 해결해야 할 문제는 무엇인가요?`,
+        options,
+        multiSelect: false,
+        allowFreeText: true,
+        freeTextPlaceholder: `예: ${canonicalPath}에 꼭 남겨야 할 실제 기준`,
+        textMode: "short",
+      },
+    ],
+  };
+}
+
+function genericIddInitialOptionsFor(doc, { focus = "" } = {}) {
+  if (doc?.type === "designSystem") {
+    return [
+      {
+        label: "현재 화면부터 정리",
+        description: "지금 보이는 화면을 기준으로 정보 계층을 고정합니다.\n[상단: 오늘 할 일] -> [본문: 질문] -> [하단: 다음 행동]",
+        nextIntent: "document_current_workflow",
+      },
+      {
+        label: "선택지 모양부터 정리",
+        description: "복잡한 질문을 한눈에 고르는 작은 카드로 바꿉니다.\n[질문]  [선택 A] [선택 B] [직접 입력]",
+        nextIntent: "document_nearest_action",
+      },
+      {
+        label: "시안 비교가 필요한 곳 표시",
+        description: "말로 부족한 화면은 실제 시안이나 ASCII 예시로 비교할 후보를 남깁니다.\nA: 업무형  B: 카드형  C: 대화형",
+        nextIntent: "document_visual_examples",
+      },
+      {
+        label: "아직 모르겠어요",
+        description: "먼저 사용자가 멈추는 장면만 그림으로 남깁니다.\n사용자 선택 -> 응답 대기 -> 다음 질문",
+        nextIntent: "document_unknown",
+      },
+    ];
+  }
+
+  return [
+    {
+      label: "지금 하는 방식부터 정리",
+      description: `이미 하는 방식과 기록 흐름을 기준으로 ${focus}를 정리해, 지금의 실제 상태를 고정합니다.`,
+      nextIntent: "document_current_workflow",
+    },
+    {
+      label: "이번 주 실행 기준부터 정리",
+      description: "오늘 바로 쓸 수 있는 최소 규칙과 완료 조건을 정해, 다음 행동이 멈추지 않게 합니다.",
+      nextIntent: "document_nearest_action",
+    },
+    {
+      label: "나중에 깨질 지점부터 막기",
+      description: "기준이 비어 있거나 잘못 쓰였을 때 실제로 깨지는 지점을 먼저 막습니다.",
+      nextIntent: "document_failure_modes",
+    },
+    {
+      label: "아직 모르겠어요",
+      description: "확정 대신 후보와 질문을 남기고 다음 인터뷰에서 좁힙니다.",
+      nextIntent: "document_unknown",
+    },
+  ];
+}
+
+export function genericIddUserFacingTitle(doc) {
+  switch (doc?.type) {
+    case "spec":
+      return "이번 주 만들 것";
+    case "values":
+      return "결정 원칙";
+    case "designSystem":
+      return "화면 원칙";
+    case "adr":
+      return "기술 결정";
+    case "goal":
+      return "목표와 지표";
+    case "docs":
+      return "문서 지도";
+    case "sheet":
+      return "공개 기록 기준";
+    default:
+      return "프로젝트 기준";
+  }
+}
+
+function genericIddUserFacingFocus(doc) {
+  switch (doc?.type) {
+    case "spec":
+      return "문제, 가치, 만들 범위, 사용자 흐름, 성공 기준";
+    case "values":
+      return "결정 원칙, 하지 않을 일, 판단 예시";
+    case "designSystem":
+      return "화면 원칙, 컴포넌트, 상호작용, 접근성 기준";
+    case "adr":
+      return "기술 선택, 버린 대안, 결과와 책임";
+    case "goal":
+      return "목표, 지표, 주간 마일스톤, 운영 리듬";
+    case "docs":
+      return "문서 목록, 진짜 기준 문서, 새 사람이 읽는 순서, 유지 규칙";
+    case "sheet":
+      return "공개 글 기록 열, 증거 기록 흐름, 품질 체크 기준";
+    default:
+      return "문서의 목적, 독자, 완료 기준";
+  }
+}
+
+function genericIddPurposeFor(doc, canonicalPath, focus) {
+  switch (doc?.type) {
+    case "spec":
+      return "문제, 가치, MVP 범위, 성공 기준을 한곳에 묶어 이번 주에 무엇을 만들지 흐리지 않게 하는 것";
+    case "values":
+      return "결정 원칙과 하지 않을 일을 정해서 매번 취향이나 기분으로 방향이 바뀌지 않게 하는 것";
+    case "designSystem":
+      return "화면 원칙, 컴포넌트, 접근성 기준을 정해 구현자가 임의로 UI를 만들지 않게 하는 것";
+    case "adr":
+      return "기술 결정을 왜 했는지와 버린 대안을 남겨 같은 논쟁을 반복하지 않게 하는 것";
+    case "goal":
+      return "목표, 지표, 주간 리듬을 정해 오늘 일이 실제 진척인지 확인할 수 있게 하는 것";
+    case "docs":
+      return "어떤 문서를 어디서 읽고 고치는지 정해 프로젝트 지식이 흩어지지 않게 하는 것";
+    case "sheet":
+      return "공개 글의 기록 열, 증거 기록 흐름, 품질 체크 기준을 정해 공개 실행을 추적할 수 있게 하는 것";
+    default:
+      return `${canonicalPath}에 ${focus}를 적어 다음 실행 기준으로 쓰게 하는 것`;
+  }
+}
+
+function genericIddRiskFor(doc, canonicalPath) {
+  switch (doc?.type) {
+    case "sheet":
+      return "이 기준이 없으면 글을 올려도 무엇을 배웠는지, 어떤 증거가 쌓였는지, 다음에 무엇을 고쳐야 하는지 놓칩니다.";
+    case "spec":
+      return "이 기준이 없으면 기능은 늘어나도 사용자가 겪는 실제 문제가 해결됐는지 알기 어렵습니다.";
+    case "designSystem":
+      return "이 기준이 없으면 화면마다 판단이 달라져 사용자가 같은 제품이라고 느끼기 어렵습니다.";
+    default:
+      return `이 기준이 없으면 ${canonicalPath}가 문서 저장소의 파일 하나로 남고, 실제 문제 해결에는 연결되지 않습니다.`;
+  }
 }
 
 function buildAdaptiveQuestion(hypothesis, primaryUser, projectKind) {
@@ -263,7 +418,7 @@ export function buildIddContinuationPrompt({
     iddPrompt,
     "",
     "## 이미 받은 첫 구조화 답변",
-    "사용자가 host UI의 request_user_input 카드에서 첫 ICP 신호 질문에 답했습니다.",
+    "사용자가 host UI의 구조화 입력 카드에서 첫 ICP 신호 질문에 답했습니다.",
     answer || "(응답 텍스트 없음)",
     "",
     "이 답변을 첫 인터뷰 입력으로 사용하세요. 같은 첫 고객 신호 질문을 반복하지 마세요.",
@@ -278,8 +433,8 @@ export function buildIddContinuationPrompt({
     "- gstack 정렬 축을 매 질문에 적용하세요: 톤은 직접적이고 증거 중심, 단위는 한 질문=한 결정, 기준은 수요/범위/UX/DX/리스크, 사용 위치는 BIP 문서 완성 직전의 게이트, 실패 방지는 범용 문서/빈 결정/조용한 누락 차단입니다.",
     "- 대안/리스크/증거/실패 모드가 보이지 않는 질문은 좋은 IDD 질문이 아닙니다. 더 좁혀서 무엇을 선택해야 하는지, 어떤 근거가 있는지, 잘못 고르면 어떤 문서 실패가 생기는지 드러내세요.",
     "- 답변은 반드시 대상 문서의 섹션, 결정, Open Risks, 다음 BIP 공개 글감 중 하나로 연결하세요.",
-    "- 추가 결정이나 누락 정보가 필요하면 반드시 request_user_input 도구로 한 질문씩 이어가세요.",
-    "- 도구 호출 자체가 실패하면 사용자에게 모드나 환경 전환을 요구하지 말고 \"structured input tool unavailable\"만 짧게 보고하고 멈추세요.",
+    `- 추가 결정이나 누락 정보가 필요하면 반드시 ${CODEX_STRUCTURED_INPUT_TOOL} MCP 도구로 한 질문씩 이어가세요.`,
+    "- 도구 호출 자체가 실패하면 같은 질문을 prose/번호 목록으로 대신 출력하지 말고 중단하세요.",
     "- Pushback 즉시 적용: 사용자의 답이 \"개발자/창업자/엔터프라이즈\" 같은 집합명사이면 다음 question을 회사명·직함·주당 시간으로 좁히고, \"다들 좋다고 한다/웨이팅리스트\" 류 사회적 증거이면 결제·문의·고장 시 분노로 받고, \"풀 플랫폼이 필요하다\" 류 광범위 비전이면 이번 주 결제 가능한 한 가지로 좁히세요. 사랑은 수요가 아닙니다.",
     "- Anti-Sycophancy: \"흥미로운 접근이에요\", \"여러 방법이 있어요\" 같은 칭찬 표현은 금지. 정중체는 유지하되 \"이 가정은 미확인이에요\" / \"근거가 부족해요\" 같은 사실 진술로 받으세요.",
   ].join("\n");
@@ -377,14 +532,14 @@ export function getBipSetupGateStatus({ workspaceRoot, bipCoachState, bipConfig 
     missingExternalRequirements.push({
       id: "googleDoc",
       title: "Google Doc 업무일지",
-      detail: "BIP 업무일지 Google Doc URL/ID가 연결되어야 해요.",
+      detail: "매일 작업과 배운 점을 읽을 Google Doc URL/ID가 연결되어야 해요.",
     });
   }
   if (!config.sheetId) {
     missingExternalRequirements.push({
       id: "googleSheet",
       title: "Google Sheet 게시글 일지",
-      detail: "BIP 게시글 기록 Google Sheet URL/ID가 연결되어야 해요.",
+      detail: "공개 글과 반응을 기록할 Google Sheet URL/ID가 연결되어야 해요.",
     });
   }
 
@@ -398,14 +553,14 @@ export function getBipSetupGateStatus({ workspaceRoot, bipCoachState, bipConfig 
 }
 
 export function summarizeBipSetupGate(status) {
-  const missingLocal = (status?.missingLocalDocs ?? []).map((doc) => doc.title).join(", ");
+  const missingLocal = (status?.missingLocalDocs ?? []).map((doc) => genericIddUserFacingTitle(doc)).join(", ");
   const missingExternal = (status?.missingExternalRequirements ?? []).map((item) => item.title).join(", ");
   const parts = [];
   if (missingLocal) parts.push(`로컬 문서: ${missingLocal}`);
   if (missingExternal) parts.push(`외부 연결: ${missingExternal}`);
   return parts.length
-    ? `BIP 미션 전에 IDD 세팅이 필요합니다. ${parts.join(" / ")}`
-    : "BIP 미션 세팅이 완료되었습니다.";
+    ? `오늘 미션은 바로 만들 수 있습니다. 더 정확한 추천을 위해 ${parts.join(" / ")} 기준을 채우면 좋아요.`
+    : "오늘 공개 실행 준비가 완료되었습니다.";
 }
 
 export function buildIddDocumentPrompt(doc, {
@@ -416,10 +571,10 @@ export function buildIddDocumentPrompt(doc, {
 } = {}) {
   const toolInstruction = provider === "claude"
     ? "사용자의 결정이나 누락 정보가 필요하면 반드시 AskUserQuestionTool(AskUserQuestion)을 사용하세요."
-    : "사용자의 결정이나 누락 정보가 필요하면 반드시 request_user_input 도구를 사용하세요.";
+    : `사용자의 결정이나 누락 정보가 필요하면 반드시 ${CODEX_STRUCTURED_INPUT_TOOL} MCP 도구를 사용하세요.`;
   const structuredToolName = provider === "claude"
     ? "AskUserQuestionTool(AskUserQuestion)"
-    : "request_user_input";
+    : CODEX_STRUCTURED_INPUT_TOOL;
   const queueLine = queue.length
     ? `현재 IDD 큐: ${queue.map((item) => item.title).join(" → ")}`
     : `현재 IDD 문서: ${doc.title}`;
@@ -444,7 +599,7 @@ export function buildIddDocumentPrompt(doc, {
     `- ${toolInstruction}`,
     "- 이 IDD 세션은 `/plan` 모드처럼 진행합니다. 인터뷰 질문은 사용자가 UI에서 클릭/입력할 수 있는 구조화 입력으로 받아야 합니다.",
     `- 선택지가 있는 질문, 우선순위 질문, 예/아니오 질문, 짧은 자유 입력이 붙은 질문은 일반 prose나 번호 목록으로 쓰지 말고 반드시 ${structuredToolName} 호출로만 물으세요.`,
-    `- ${structuredToolName} 호출이 필요한 상황에서 같은 내용을 prose/번호 목록으로 대신 묻지 마세요. 도구 호출 자체가 실패하면 사용자에게 모드나 환경 전환을 요구하지 말고 "structured input tool unavailable"만 짧게 보고하고 멈추세요.`,
+    `- ${structuredToolName} 호출이 필요한 상황에서 같은 내용을 prose/번호 목록으로 대신 묻지 마세요. 도구 호출 자체가 실패하면 같은 질문을 prose/번호 목록으로 대신 출력하지 말고 중단하세요.`,
     "- 도구 질문은 question/options/allowFreeText/freeTextPlaceholder/textMode를 채워 1개 질문 단위로 만드세요. 선택지는 2-4개로 제한하고, 추가 맥락 한 줄이 필요하면 allowFreeText=true로 둡니다.",
     "- 금지 예: \"1. 반복 사용 2. 도입 준비 3. 먼저 요청함\" 같은 번호 목록을 assistant 메시지로 출력하는 것.",
     "- 첫 고객 질문 예: title=\"첫 사용자 확인\", helperText=\"근거: README... 오늘은 정답이 아니라 이번 주 확인할 사람 1명을 고릅니다.\", question=\"제가 보기엔 이 프로젝트는 AI 코딩 도구를 쓰는 개발자가 겪는 문제를 풀려는 macOS 앱 같아요. 이번 주에 가장 먼저 만나서 확인해볼 사람은 누구인가요?\", options=[추론된 사용자, 이미 불편하게 해결하는 사람, 이미 돈이나 시간을 쓰는 사람, 아직 모르겠어요], allowFreeText=true, freeTextPlaceholder=\"예: 실제로 불편을 말한 사람\", textMode=\"short\".",
@@ -478,6 +633,12 @@ export function buildIddDocumentPrompt(doc, {
     "- 사용자가 모를 수 있는 내부 용어(ICP, ADR, BIP, MVP 등)는 질문 본문에서 먼저 쓰지 말고 쉬운 말로 풀어 쓰세요. 필요한 경우 괄호로만 짧게 보충하세요.",
     "- 답이 넓으면 더 좁히고, 답이 추상적이면 실제 사용자/상황/증거를 요구하고, 답이 모순되면 트레이드오프를 드러내는 질문으로 이어가세요.",
     "- 어떤 프로젝트에도 그대로 붙일 수 있는 범용 질문, 체크리스트식 질문, 템플릿 문구를 금지합니다.",
+    ...(doc?.type === "designSystem"
+      ? [
+        "- 디자인 예시를 설명해야 하면 말로만 설명하지 마세요. gstack design-shotgun을 쓸 수 있는 환경이면 실제 시안 비교로, 그렇지 않으면 ASCII ART 와이어프레임으로 보여주세요.",
+        "- ASCII ART는 장식이 아니라 의사결정 도구입니다. 화면 영역, 우선순위, 클릭 대상, 응답 대기 상태를 3-6줄 안에 보여주세요.",
+      ]
+      : []),
     "",
     "Review-grade 질문 규칙:",
     ...(specialistInjection

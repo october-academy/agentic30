@@ -17,11 +17,11 @@ enum BipReadinessRowId: String, Codable, CaseIterable {
     case docUrl = "docUrl"
     case sheetUrl = "sheetUrl"
 
-    /// User-facing BIP Coach setup steps.
+    /// User-facing public execution setup steps.
     ///
     /// `googleSignIn` and `workspace` are still accepted from the sidecar as
     /// internal diagnostics, but the app login and project folder are owned by
-    /// the welcome/onboarding flow and should not appear in the BIP setup card.
+    /// the welcome/onboarding flow and should not appear in the setup card.
     static let bipCoachSetupCases: [BipReadinessRowId] = [
         .localIcp,
         .localSpec,

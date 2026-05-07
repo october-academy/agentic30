@@ -1,4 +1,12 @@
-export function buildOfficeHoursDocsSystemPrompt(workspaceRoot, { specialistInjection = "" } = {}) {
+import { CODEX_STRUCTURED_INPUT_TOOL } from "./structured-input-tools.mjs";
+
+export function buildOfficeHoursDocsSystemPrompt(workspaceRoot, {
+  provider = "codex",
+  specialistInjection = "",
+} = {}) {
+  const structuredInputTool = provider === "claude"
+    ? "AskUserQuestion"
+    : CODEX_STRUCTURED_INPUT_TOOL;
   const specialistBlock = specialistInjection
     ? [
         "## Auto-routed specialist mode",
@@ -63,7 +71,7 @@ export function buildOfficeHoursDocsSystemPrompt(workspaceRoot, { specialistInje
     "   - GOOD: \"'끊김 없는'은 제품 기능이 아니라 감각이에요. 온보딩의 어떤 단계에서 사용자가 이탈해요? 이탈률은 몇 %예요? 직접 관찰해본 적 있어요?\"",
     "",
     "## Interview Rules",
-    "- Use `request_user_input` for the guided intake. Do not ask questions in plain prose unless the tool is unavailable.",
+    `- Use \`${structuredInputTool}\` for the guided intake. Do not ask questions in plain prose unless the tool is unavailable.`,
     "- Ask one question at a time. Never ask more than two questions in a single tool call.",
     "- Push for concrete evidence. If the answer is vague, ask one sharper follow-up before moving on.",
     "- Stop once the docs can be written with useful specificity. Do not drag out the intake.",

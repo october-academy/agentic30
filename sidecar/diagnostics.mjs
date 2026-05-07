@@ -6,6 +6,7 @@ export function buildDiagnosticsSnapshot({
   sessions = [],
   activeRuns,
   sessionStoreSchemaVersion,
+  sessionStoreWarnings = [],
   now = () => new Date(),
   processInfo = process,
 } = {}) {
@@ -27,6 +28,7 @@ export function buildDiagnosticsSnapshot({
     },
     storage: {
       sessionsSchemaVersion: sessionStoreSchemaVersion,
+      sessionStoreWarnings: sanitizeValue(sessionStoreWarnings),
     },
     sessions: {
       total: sessions.length,

@@ -137,9 +137,16 @@ struct ChatMessage: Identifiable, Codable, Hashable {
     var content: String
     var state: MessageState
     let createdAt: Date
-    var error: String?
-    var bipMissionChoices: [BipCoachMission]?
-    var providerAuthActions: [ProviderAuthAction]?
+    var error: String? = nil
+    var bipMissionChoices: [BipCoachMission]? = nil
+    var providerAuthActions: [ProviderAuthAction]? = nil
+    /// Single inline decision card for assistant messages. When non-nil and the
+    /// message is from the assistant, ContentView renders a Decision Card Stack
+    /// (sage accent) instead of plain text in the bubble. Channel is mutually
+    /// exclusive with `ChatSession.pendingUserInput` (form intake) at the
+    /// producer (sidecar). Backward compatible: messages without this field
+    /// decode with `inlineDecision: nil`.
+    var inlineDecision: StructuredPromptQuestion? = nil
 }
 
 struct ProviderAuthAction: Identifiable, Codable, Hashable {
@@ -167,6 +174,7 @@ struct ChatSessionRuntime: Codable, Hashable {
     var codexThreadId: String?
     var codexThreadMeta: CodexThreadMeta?
     var codexWarm: CodexWarmState?
+    var iddDocumentType: String?
 }
 
 struct CodexThreadMeta: Codable, Hashable {
@@ -285,6 +293,14 @@ struct SidecarRuntimeDiagnostics: Codable, Hashable {
 
 struct SidecarStorageDiagnostics: Codable, Hashable {
     let sessionsSchemaVersion: Int?
+    let sessionStoreWarnings: [SidecarStorageWarning]?
+}
+
+struct SidecarStorageWarning: Codable, Hashable {
+    let type: String?
+    let message: String?
+    let quarantinePath: String?
+    let occurredAt: Date?
 }
 
 struct SidecarSessionDiagnostics: Codable, Hashable {
@@ -471,11 +487,24 @@ extension SidecarDiagnostics {
             "",
             "Storage",
             "- Sessions schema: \(storage.sessionsSchemaVersion.map(String.init) ?? "unknown")",
+        ]
+
+        if let warnings = storage.sessionStoreWarnings, !warnings.isEmpty {
+            lines.append("- Session store warnings: \(warnings.count)")
+            for warning in warnings {
+                lines.append("  - \(warning.type ?? "warning"): \(warning.message ?? "")")
+                if let quarantinePath = warning.quarantinePath {
+                    lines.append("    Quarantine: \(quarantinePath)")
+                }
+            }
+        }
+
+        lines.append(contentsOf: [
             "",
             "Sessions",
             "- Total: \(sessions.total)",
             "- Active runs: \(sessions.activeRuns)",
-        ]
+        ])
 
         for key in sessions.statuses.keys.sorted() {
             lines.append("- \(key): \(sessions.statuses[key] ?? 0)")

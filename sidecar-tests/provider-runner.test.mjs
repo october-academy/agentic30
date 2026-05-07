@@ -4,13 +4,17 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  allowsProviderPermissionBypass,
   buildClaudePetHooks,
   buildCodexConfig,
   buildCodexEnv,
+  buildSystemPromptText,
+  codexSandboxForExecution,
   extractClaudePartialText,
   getProviderAuthState,
   isCodexContextOverflowError,
   isCodexRecoverableThreadResumeError,
+  isClaudeMutatingTool,
   mapCodexItemToToolEvent,
   resolveCodexBinaryPath,
   resolveCodexModel,
@@ -163,6 +167,49 @@ test("buildCodexConfig gives memory_chat both QMD and internal BIP MCP access", 
 
   assert.ok(config.mcp_servers.agentic30_sidecar);
   assert.match(config.mcp_servers.agentic30_sidecar.args.join(" "), /mcp-server\.mjs/);
+  assert.equal(config.mcp_servers.agentic30_sidecar.env.AGENTIC30_APPROVED_TOOL_EXECUTION, "0");
+});
+
+test("provider permission bypass requires an approved agentic action", () => {
+  assert.equal(
+    allowsProviderPermissionBypass({ executionMode: "agentic", approvedToolExecution: true }),
+    true,
+  );
+  assert.equal(
+    allowsProviderPermissionBypass({ executionMode: "agentic", approvedToolExecution: false }),
+    false,
+  );
+  assert.equal(
+    allowsProviderPermissionBypass({ executionMode: "memory_chat", approvedToolExecution: true }),
+    false,
+  );
+  assert.equal(
+    codexSandboxForExecution({ executionMode: "agentic", approvedToolExecution: true }),
+    "danger-full-access",
+  );
+  assert.equal(
+    codexSandboxForExecution({ executionMode: "agentic", approvedToolExecution: false }),
+    "read-only",
+  );
+});
+
+test("Claude read-only gate treats shell, write, web, and mutating GWS tools as unsafe", () => {
+  assert.equal(isClaudeMutatingTool("Bash"), true);
+  assert.equal(isClaudeMutatingTool("Write"), true);
+  assert.equal(isClaudeMutatingTool("mcp__agentic30_sidecar__gws_gmail_send"), true);
+  assert.equal(isClaudeMutatingTool("mcp__agentic30_sidecar__gws_sheets_read"), false);
+  assert.equal(isClaudeMutatingTool("Read"), false);
+});
+
+test("buildCodexConfig keeps judge_read_only isolated from MCP tools", () => {
+  const config = buildCodexConfig({
+    systemPromptText: "system",
+    executionMode: "judge_read_only",
+    sessionIdForMcp: "session",
+    workspaceRoot: "/tmp/workspace",
+  });
+
+  assert.deepEqual(config.mcp_servers, {});
 });
 
 test("buildCodexEnv points Codex CLI at an isolated app config home", () => {
@@ -195,6 +242,10 @@ test("resolveCodexReasoningEffort adapts to mode and prompt intent", () => {
     assert.equal(
       resolveCodexReasoningEffort({ executionMode: "bip_coach_read_only", prompt: "analyze the sheet" }),
       "xhigh",
+    );
+    assert.equal(
+      resolveCodexReasoningEffort({ executionMode: "judge_read_only", prompt: "quick score" }),
+      "medium",
     );
     process.env.AGENTIC30_CODEX_REASONING_EFFORT = "medium";
     assert.equal(
@@ -297,6 +348,27 @@ test("mapCodexItemToToolEvent normalizes streamed Codex item lifecycle events", 
       payload: { items: [{ text: "read docs", completed: false }] },
     },
   );
+  assert.deepEqual(
+    mapCodexItemToToolEvent({
+      id: "fn-1",
+      type: "function_call",
+      name: "custom_function",
+      call_id: "call-1",
+      arguments: { questions: [] },
+    }, "completed"),
+    {
+      phase: "result",
+      toolName: "custom_function",
+      toolCallKey: "call-1",
+      payload: {
+        requestedToolName: "custom_function",
+        eventItemType: "function_call",
+        providerMode: "codex",
+        arguments: { questions: [] },
+        output: null,
+      },
+    },
+  );
 });
 
 function restoreEnv(name, value) {
@@ -306,3 +378,82 @@ function restoreEnv(name, value) {
     process.env[name] = value;
   }
 }
+
+test("buildCodexConfig adds skills.config when specialist vendor is available", () => {
+  const config = buildCodexConfig({
+    systemPromptText: "system prompt",
+    executionMode: "agentic",
+    sessionIdForMcp: null,
+    workspaceRoot: "/tmp/ws",
+    specialist: {
+      id: "office-hours",
+      vendor: {
+        codex: {
+          exists: true,
+          skillName: "office-hours",
+          skillDir: "/abs/path/to/office-hours",
+        },
+      },
+    },
+  });
+  assert.ok(config.skills);
+  assert.equal(config.skills.include_instructions, true);
+  assert.deepEqual(config.skills.bundled, { enabled: false });
+  assert.equal(config.skills.config.length, 1);
+  assert.equal(config.skills.config[0].path, "/abs/path/to/office-hours");
+  assert.equal(config.skills.config[0].enabled, true);
+});
+
+test("buildCodexConfig omits skills block when vendor unavailable", () => {
+  const config = buildCodexConfig({
+    systemPromptText: "system prompt",
+    executionMode: "agentic",
+    sessionIdForMcp: null,
+    workspaceRoot: "/tmp/ws",
+    specialist: { id: "office-hours", vendor: { codex: { exists: false } } },
+  });
+  assert.equal(config.skills, undefined);
+  assert.equal(config.developer_instructions, "system prompt");
+});
+
+test("buildCodexConfig omits skills block when no specialist passed (backward compat)", () => {
+  const config = buildCodexConfig({
+    systemPromptText: "system prompt",
+    executionMode: "agentic",
+    sessionIdForMcp: null,
+    workspaceRoot: "/tmp/ws",
+  });
+  assert.equal(config.skills, undefined);
+});
+
+test("buildCodexEnv injects SPAWNED_SESSION=true and MODEL_OVERLAY=codex", () => {
+  const env = buildCodexEnv({
+    PATH: "/usr/bin",
+    HOME: "/tmp/home",
+    LANG: "C.UTF-8",
+  });
+  assert.equal(env.SPAWNED_SESSION, "true");
+  assert.equal(env.MODEL_OVERLAY, "codex");
+});
+
+test("buildSystemPromptText sets Korean response language for Claude and Codex SDK runs", () => {
+  for (const provider of ["claude", "codex"]) {
+    const prompt = buildSystemPromptText({
+      provider,
+      workspaceRoot: "/tmp/workspace",
+      executionMode: "agentic",
+    });
+    assert.match(prompt, /Reply in Korean \(ko, 한국어\)/);
+    assert.match(prompt, new RegExp(`Provider mode: ${provider}`));
+  }
+});
+
+test("buildSystemPromptText keeps Korean response language in judge lane", () => {
+  const prompt = buildSystemPromptText({
+    provider: "codex",
+    workspaceRoot: "/tmp/workspace",
+    executionMode: "judge_read_only",
+  });
+  assert.match(prompt, /Reply in Korean \(ko, 한국어\)/);
+  assert.match(prompt, /Return only the exact output format requested/);
+});

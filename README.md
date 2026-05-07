@@ -1,46 +1,20 @@
 # agentic30 Mac
 
-Native macOS menu bar assistant shell for agentic30, the October Academy learning platform. The app owns the macOS surface area (floating panel, settings, Keychain, OAuth presentation) and launches a local Node sidecar for provider execution, MCP/ACP adapters, workspace access, and session persistence.
+Native macOS menu bar assistant shell for agentic30. The app owns the macOS surface area (floating panel, settings, Keychain, OAuth presentation) and launches a local Node sidecar for provider execution, MCP/ACP adapters, workspace access, and session persistence.
 
-## Prerequisites
+Product context: agentic30 helps solo developers reach 100 users and first revenue in 30 days by turning a selected project path, work logs, customer interviews, and Build in Public records into a personalized adaptive curriculum.
 
-- macOS with a current Xcode installation that can build the project's macOS target.
-- Node.js 20 or newer.
-- npm, using the committed `package-lock.json`.
-- At least one local provider login or API key for real provider runs:
-  - Claude: local Claude Code login or `ANTHROPIC_API_KEY`
-  - Codex: local Codex login or `CODEX_API_KEY` / `OPENAI_API_KEY`
-
-## Development
+## Run locally in 5 minutes
 
 ```bash
 npm install
-npm run test:sidecar
-xcodebuild test -project agentic30.xcodeproj -scheme agentic30 -destination 'platform=macOS'
 ```
 
-## Building
-
-Install dependencies before opening or building the Xcode project:
-
-```bash
-npm install
-npm run build:sidecar
-xcodebuild build -project agentic30.xcodeproj -scheme agentic30 -destination 'platform=macOS'
-```
-
-For release-oriented checks, run:
-
-```bash
-npm run preflight:release
-npm run preflight:bundle
-```
-
-## Bundle ID and Signing
-
-The official Bundle ID is `october-academy.agentic30`. Forks and local redistributions should use their own Bundle ID, such as `your.team.agentic30`, to avoid Keychain and Launch Services collisions with the official app. In Xcode, change this under **Targets -> agentic30 -> General -> Bundle Identifier**.
-
-The project is configured for local development signing. Set **Signing & Capabilities -> Team** to your Apple developer team or personal Apple ID before running from Xcode.
+1. Open `agentic30.xcodeproj` in Xcode and run the `agentic30` scheme.
+2. Confirm at least one provider is available in Settings: Claude Code login / `ANTHROPIC_API_KEY`, or Codex login / `CODEX_API_KEY` / `OPENAI_API_KEY`.
+3. Select the project folder you want Agentic30 to coach.
+4. Answer the three onboarding questions so the app can infer your project stage, likely users, and first proof target.
+5. Open the assistant panel and confirm that Today Mission appears. Google Docs/Sheets setup is proof capture setup; it should not block the first local mission.
 
 ## Runtime Requirements
 
@@ -66,6 +40,13 @@ Live canaries are opt-in:
 - `AGENTIC30_RUN_LIVE_PROVIDER_E2E=1` enables the real provider chat canary.
 - `AGENTIC30_GOOGLE_E2E_EMAIL`, `AGENTIC30_GOOGLE_E2E_PASSWORD`, and `AGENTIC30_GOOGLE_E2E_TOTP_SECRET` enable credentialed Google login E2E.
 - `AGENTIC30_MAC_AUTH_BASE_URL` can point Mac auth tests at staging; otherwise `https://agentic30.app` is used.
+
+## Contributor Checks
+
+```bash
+npm run test:sidecar
+xcodebuild test -project agentic30.xcodeproj -scheme agentic30 -destination 'platform=macOS'
+```
 
 ## Assistant Commands
 

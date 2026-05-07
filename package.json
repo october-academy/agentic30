@@ -9,7 +9,13 @@
     "preflight:release": "node sidecar/preflight-cli.mjs",
     "preflight:bundle": "node scripts/preflight-bundle.mjs",
     "build:sidecar": "node scripts/build-sidecar.mjs",
+    "eval:dogfood": "node sidecar-evals/dogfood-simulation.mjs",
+    "eval:dogfood:gate": "node sidecar-evals/dogfood-simulation.mjs --gate",
+    "eval:dogfood:live": "AGENTIC30_RUN_LIVE_PROVIDER_EVAL=1 node sidecar-evals/dogfood-simulation.mjs",
+    "eval:dogfood:summary": "node sidecar-evals/dogfood-summary.mjs",
+    "eval:dogfood:compare": "node sidecar-evals/dogfood-compare.mjs",
     "report:timings": "node scripts/report-response-timings.mjs",
+    "sync:gstack": "node scripts/sync-gstack.mjs",
     "test:sidecar": "node --test sidecar-tests/**/*.test.mjs"
   },
   "dependencies": {

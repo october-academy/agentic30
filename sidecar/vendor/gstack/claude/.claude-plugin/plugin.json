@@ -1,0 +1,7 @@
+{
+  "name": "agentic30-gstack",
+  "version": "675717e3200d",
+  "description": "Vendored gstack skills for Agentic30 Mac IDD interview flow.",
+  "source": "garrytan/gstack",
+  "commit": "675717e3200d8f54b7e179a3425a21bdae33414b"
+}

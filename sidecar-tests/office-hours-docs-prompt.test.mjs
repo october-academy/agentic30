@@ -12,7 +12,8 @@ test("office-hours docs system prompt targets strategy docs and structured intak
   assert.match(prompt, /docs\/GOAL\.md/);
   assert.match(prompt, /docs\/VALUES\.md/);
   assert.match(prompt, /docs\/SPEC\.md/);
-  assert.match(prompt, /request_user_input/);
+  assert.match(prompt, /agentic30_request_user_input/);
+  assert.doesNotMatch(prompt, /(^|[^A-Za-z0-9_])request_user_input([^A-Za-z0-9_]|$)/);
   assert.match(prompt, /Demand reality/);
   assert.match(prompt, /Status quo/);
   assert.match(prompt, /Narrowest wedge/);

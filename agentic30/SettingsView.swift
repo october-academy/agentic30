@@ -6,6 +6,7 @@ enum SettingsSection: CaseIterable, Identifiable {
     case adAnalytics
     case buildInPublic
     case notion
+    case developerTools
     case diagnostics
 
     var id: Self { self }
@@ -16,6 +17,7 @@ enum SettingsSection: CaseIterable, Identifiable {
         case .adAnalytics: "Ad Analytics"
         case .buildInPublic: "Build In Public"
         case .notion: "Notion"
+        case .developerTools: "Developer"
         case .diagnostics: "Diagnostics"
         }
     }
@@ -26,6 +28,7 @@ enum SettingsSection: CaseIterable, Identifiable {
         case .adAnalytics: "광고 분석"
         case .buildInPublic: "Build In Public"
         case .notion: "Notion"
+        case .developerTools: "개발자 도구"
         case .diagnostics: "진단"
         }
     }
@@ -36,7 +39,19 @@ enum SettingsSection: CaseIterable, Identifiable {
         case .adAnalytics: "chart.bar.xaxis"
         case .buildInPublic: "hammer.fill"
         case .notion: "doc.text.fill"
+        case .developerTools: "wrench.and.screwdriver.fill"
         case .diagnostics: "stethoscope"
+        }
+    }
+
+    var accessibilityIdentifier: String {
+        switch self {
+        case .account: "account"
+        case .adAnalytics: "adAnalytics"
+        case .buildInPublic: "buildInPublic"
+        case .notion: "notion"
+        case .developerTools: "developerTools"
+        case .diagnostics: "diagnostics"
         }
     }
 }
@@ -82,6 +97,7 @@ struct SettingsView: View {
     @State private var bipSaveMessage = ""
     @State private var scanMessage = ""
     @State private var diagnosticsMessage = ""
+    @State private var developerToolsMessage = ""
     @State private var localSelectedSection: SettingsSection = .account
     @State private var isBackButtonHovered = false
 
@@ -97,11 +113,38 @@ struct SettingsView: View {
         self.showsWorkspaceSettingsSidebar = showsWorkspaceSettingsSidebar
         self.returnToWorkspace = returnToWorkspace
         self.selectedSectionOverride = selectedSection
+        #if DEBUG
+        if selectedSection == nil, let initialSection = Self.uiTestingInitialSection() {
+            _localSelectedSection = State(initialValue: initialSection)
+        }
+        #endif
     }
 
     private var selectedSection: Binding<SettingsSection> {
         selectedSectionOverride ?? $localSelectedSection
     }
+
+    #if DEBUG
+    private static func uiTestingInitialSection() -> SettingsSection? {
+        guard let rawSection = uiTestingArgumentValue("--ui-testing-open-settings-section") else {
+            return nil
+        }
+        return SettingsSection.allCases.first { section in
+            section.accessibilityIdentifier == rawSection
+        }
+    }
+
+    private static func uiTestingArgumentValue(_ name: String) -> String? {
+        let arguments = CommandLine.arguments
+        if let index = arguments.firstIndex(of: name), arguments.indices.contains(index + 1) {
+            return arguments[index + 1]
+        }
+        let prefix = "\(name)="
+        return arguments.first(where: { $0.hasPrefix(prefix) })?
+            .dropFirst(prefix.count)
+            .description
+    }
+    #endif
 
     var body: some View {
         settingsContent
@@ -235,6 +278,7 @@ struct SettingsView: View {
             .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("settings.section.\(section.accessibilityIdentifier)")
     }
 
     private var settingsBackground: Color {
@@ -260,6 +304,7 @@ struct SettingsView: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("settings.section.\(section.accessibilityIdentifier)")
             }
         }
         .padding(.horizontal, 16)
@@ -279,6 +324,8 @@ struct SettingsView: View {
             bipTab
         case .notion:
             notionTab
+        case .developerTools:
+            developerToolsTab
         case .diagnostics:
             diagnosticsTab
         }
@@ -289,7 +336,7 @@ struct SettingsView: View {
     private var accountTab: some View {
         settingsTabScaffold(
             title: "Account",
-            subtitle: "Manage the Google session used by the macOS app and sidecar context."
+            subtitle: "The macOS app runs in local mode. No web account is required."
         ) {
             accountConnectionSection
             agentModelsSection
@@ -299,36 +346,33 @@ struct SettingsView: View {
     private var accountConnectionSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             sectionHeader(
-                title: "Google Sign-in",
-                configured: viewModel.signedInEmail != nil
+                title: "Local Mode",
+                configured: true
             )
 
             if let email = viewModel.signedInEmail {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(email)
+                    Text("Signed in: \(email)")
                         .font(.system(size: 16, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.9))
-                    Text("This session is stored in Keychain and injected into the sidecar at launch.")
+                    Text("Sign-in is no longer required. You can clear this stored session and keep using the app locally.")
                         .font(.system(size: 12, weight: .medium, design: .rounded))
                         .foregroundStyle(.white.opacity(0.45))
                 }
 
                 HStack(spacing: 10) {
-                    accountButton("Reconnect") {
-                        viewModel.startMacGoogleSignIn()
-                    }
                     accountButton("Sign out", destructive: true) {
                         viewModel.signOutMacAuth()
                     }
                 }
             } else {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Not signed in")
-                        .font(.system(size: 14, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.5))
-                    accountButton("Show onboarding") {
-                        viewModel.resetMacOnboarding()
-                    }
+                    Text("Using local mode")
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.9))
+                    Text("Choose a project folder and continue without Google sign-in. Workspace integrations remain separate.")
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.45))
                 }
             }
         }
@@ -477,7 +521,7 @@ struct SettingsView: View {
     private var bipTab: some View {
         settingsTabScaffold(
             title: "Build In Public",
-            subtitle: "Configure project docs, Google Docs/Sheets evidence, and Threads for /bip-draft and the daily BIP mission."
+            subtitle: "Configure project docs, Google Docs/Sheets evidence, and Threads for daily public execution."
         ) {
             workspaceSection
             externalDocsSection
@@ -601,6 +645,79 @@ struct SettingsView: View {
         }
         .padding(20)
         .background(cardBackground)
+    }
+
+    // MARK: - Developer Tools Tab
+
+    private var developerToolsTab: some View {
+        settingsTabScaffold(
+            title: "Developer Tools",
+            subtitle: "Trigger local app flows without waiting for scheduled automation."
+        ) {
+            notificationTestSection
+        }
+    }
+
+    private var notificationTestSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            sectionHeader(title: "BIP Notifications", configured: true)
+
+            Text("테스트 알림은 실제 macOS 알림 센터 경로를 사용합니다. 배너를 누르면 Agentic30 Workspace가 열리고 BIP 알림 task surface로 이동합니다.")
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.50))
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 12) {
+                developerToolButton(
+                    title: "10시 알림 보내기",
+                    systemImage: "sun.max.fill",
+                    identifier: "settings.developerTools.sendMorningBipNotification"
+                ) {
+                    sendTestBipNotification(.morning)
+                }
+
+                developerToolButton(
+                    title: "21시 알림 보내기",
+                    systemImage: "moon.fill",
+                    identifier: "settings.developerTools.sendEveningBipNotification"
+                ) {
+                    sendTestBipNotification(.evening)
+                }
+            }
+
+            if !developerToolsMessage.isEmpty {
+                Text(developerToolsMessage)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.green.opacity(0.82))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.opacity)
+                    .accessibilityIdentifier("settings.developerTools.message")
+            }
+        }
+        .padding(20)
+        .background(cardBackground)
+    }
+
+    private func developerToolButton(
+        title: String,
+        systemImage: String,
+        identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+            }
+            .foregroundStyle(.white.opacity(0.9))
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
+            .background(Capsule().fill(Color.white.opacity(0.16)))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier)
     }
 
     // MARK: - Diagnostics Tab
@@ -938,7 +1055,7 @@ struct SettingsView: View {
                 configured: !bipGdocsUrls.isEmpty || !bipGsheetsUrls.isEmpty || !bipNotionUrls.isEmpty
             )
 
-            Text("처음 설정은 Chat Assistant 안의 오늘 BIP 미션 카드에서 진행하세요. 이 영역은 고급 사용자용 수동 연결입니다.")
+            Text("처음 설정은 Chat Assistant 안의 오늘 실행 카드에서 진행하세요. 이 영역은 고급 사용자용 수동 연결입니다.")
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.58))
                 .fixedSize(horizontal: false, vertical: true)
@@ -947,7 +1064,7 @@ struct SettingsView: View {
             settingsField(label: "Google Sheets 수동 연결 URL", placeholder: "https://docs.google.com/spreadsheets/... (comma-separated)", text: $bipGsheetsUrls)
             settingsField(label: "Notion Pages", placeholder: "https://notion.so/... (comma-separated)", text: $bipNotionUrls)
 
-            Text("Chat Assistant 안의 오늘 BIP 미션 카드가 업무일지 Doc과 게시글 Sheet 템플릿을 내 Drive에 복사하고 자동 연결합니다. 수동 URL은 복구나 이전 연결 유지가 필요할 때만 사용하세요.")
+            Text("Chat Assistant 안의 오늘 실행 카드가 업무일지 Doc과 게시글 Sheet 템플릿을 내 Drive에 복사하고 자동 연결합니다. 수동 URL은 복구나 이전 연결 유지가 필요할 때만 사용하세요.")
                 .font(.system(size: 12, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(0.42))
         }
@@ -1364,6 +1481,13 @@ struct SettingsView: View {
         pasteboard.clearContents()
         pasteboard.setString(viewModel.diagnosticsReport, forType: .string)
         showMessage($diagnosticsMessage, text: "Copied")
+    }
+
+    private func sendTestBipNotification(_ intent: BipNotificationIntent) {
+        Task {
+            let message = await viewModel.sendTestBipNotification(intent: intent)
+            showMessage($developerToolsMessage, text: message)
+        }
     }
 
     private func applyDocCreated(type: String, path: String) {

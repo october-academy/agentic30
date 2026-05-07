@@ -40,6 +40,13 @@ import { initiateNotionOAuth, exchangeOAuthCode, refreshAccessToken } from "./no
 import { buildPreflightReport } from "./preflight.mjs";
 import { getProviderAuthState, runProviderStream } from "./provider-runner.mjs";
 import {
+  extractInlineDecision,
+  inferInlineDecisionFromPlainText,
+  INLINE_DECISION_SENTINEL_END,
+  INLINE_DECISION_SENTINEL_START,
+  validateInlineDecision,
+} from "./inline-decision.mjs";
+import {
   loadSessionsFromFile,
   persistSessionsToFile,
   SESSION_STORE_SCHEMA_VERSION,
@@ -89,10 +96,14 @@ import {
   deriveLocalDocReadinessRows,
   docTypeFromLocalRowId,
   getBipSetupGateStatus,
+  genericIddUserFacingTitle,
   initialIddStructuredInputForDoc,
   requiredDocByType,
   summarizeBipSetupGate,
 } from "./idd-doc-gate.mjs";
+import {
+  CODEX_STRUCTURED_INPUT_TOOL,
+} from "./structured-input-tools.mjs";
 import {
   clearUserInputArtifacts,
   createUserInputRequest,
@@ -105,6 +116,35 @@ import {
   buildSpecialistInjection,
   selectSpecialist,
 } from "./specialist-router.mjs";
+import { describeVendor as describeGstackVendor } from "./vendor-skill-loader.mjs";
+import {
+  buildFirstPromptForDay,
+  buildFoundationSystemContext,
+  composeUnifiedFoundationPrompt,
+  computeFoundationDayFromStartedAt,
+  FOUNDATION_DAY_MS,
+  FOUNDATION_MAX_DAY_INDEX,
+  FOUNDATION_TOTAL_DAYS,
+  formatFirstPromptText,
+  FOUNDATION_DAYS,
+  getFoundationDay,
+  persistEvidenceRefsSidecar,
+  resolveFoundationContext,
+  resolveFoundationDayFromPayload,
+} from "./foundation-chat.mjs";
+import {
+  applyMonetizationAskOutcome,
+  attachMonetizationAskState,
+  buildMonetizationAskContextBlock,
+  loadMonetizationAskState,
+  shouldRunMonetizationAsk,
+} from "./monetization-ask-integration.mjs";
+import {
+  applyFoundationSummaryOutcome,
+  attachFoundationSummaryState,
+  buildFoundationSummaryCompletedEvent,
+  shouldRunFoundationSummary,
+} from "./foundation-summary-integration.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -142,12 +182,20 @@ const state = {
   promptQueues: new Map(),
   clients: new Set(),
   resolvedUserInputIds: new Set(),
+  sessionStoreWarnings: [],
   bipCoach: null,
   bipCoachRunning: false,
   providerAuthRuns: new Map(),
   workspaceOnboardingHypothesis: null,
 };
 const chatBipExternalContextCache = new Map();
+
+// Foundation Phase day-derivation utilities live in `foundation-chat.mjs`
+// (FOUNDATION_DAY_MS, FOUNDATION_TOTAL_DAYS, FOUNDATION_MAX_DAY_INDEX,
+// computeFoundationDayFromStartedAt, resolveFoundationDayFromPayload) —
+// imported above. Co-locating with FOUNDATION_DAYS keeps the day index
+// contract single-sourced and lets `sidecar-tests/foundation-day.test.mjs`
+// exercise the boundary cases without dragging in `index.mjs` side effects.
 
 function currentBipConfig() {
   return readJsonFile(path.join(appSupportPath, "bip-config.json"));
@@ -241,7 +289,9 @@ wss.on("listening", () => {
   process.stdout.write(
     `${JSON.stringify({ type: "sidecar-ready", port, pid: process.pid })}\n`,
   );
-  setTimeout(bootstrapQmdMemoryCollections, 0);
+  if (process.env.AGENTIC30_DISABLE_QMD_BOOTSTRAP !== "1") {
+    setTimeout(bootstrapQmdMemoryCollections, 0);
+  }
 });
 
 process.on("SIGINT", shutdown);
@@ -392,12 +442,183 @@ async function handleClientMessage(socket, payload) {
         });
         return;
       }
+      // Sub-AC 2.3 IPC reconciliation: when the Swift host classifies a
+      // message as Foundation Day daily-task (`mode: "daily_task"`), funnel
+      // it through the unified Foundation chat handler so the single chat
+      // surface contract (AC 3) holds even though the wire-level type tag
+      // is still "send_prompt". This keeps backward compat with older host
+      // builds while letting newer hosts emit `foundation_chat` directly.
+      const declaredMode = typeof payload.mode === "string" ? payload.mode.trim() : "";
+      const isDailyTask = declaredMode === "daily_task";
+      if (isDailyTask) {
+        const resolvedDay = resolveFoundationDayFromPayload({
+          ...payload,
+          day: payload.foundationDay ?? payload.day,
+        });
+        const dayDescriptor = resolvedDay !== null ? getFoundationDay(resolvedDay) : null;
+        if (!dayDescriptor) {
+          telemetry.captureEvent("mac_sidecar_foundation_chat_rejected", {
+            session_id: session.id,
+            provider: session.provider,
+            reason: "invalid_day",
+            transport: "send_prompt_bridge",
+            day: payload.foundationDay ?? payload.day ?? null,
+            started_at: payload.foundationStartedAt || payload.startedAt || null,
+          });
+          emitFoundationChatEvent({
+            sessionId: session.id,
+            day: null,
+            phase: "rejected",
+            reason: "invalid_day",
+            transport: "send_prompt_bridge",
+          });
+          send(socket, {
+            type: "error",
+            sessionId: session.id,
+            message: "Foundation day must be in range 0-7.",
+          });
+          return;
+        }
+        if (state.activeRuns.has(session.id)) {
+          await enqueuePrompt(session, prompt, {
+            executionIntent: "foundation_chat",
+          });
+          return;
+        }
+        cancelWarmSession(session.id);
+        await runUnifiedFoundationChat(session, prompt, {
+          day: dayDescriptor.day,
+          dynamicVariables: payload.dynamicVariables,
+          evidenceRefs: payload.evidenceRefs,
+          workspace: payload.workspace,
+          transport: "send_prompt_bridge",
+        });
+        return;
+      }
       if (state.activeRuns.has(session.id)) {
-        await enqueuePrompt(session, prompt);
+        await enqueuePrompt(session, prompt, {
+          executionIntent: payload.executionIntent,
+        });
         return;
       }
       cancelWarmSession(session.id);
-      await runPrompt(session, prompt);
+      await runPrompt(session, prompt, {
+        executionIntent: payload.executionIntent,
+      });
+      return;
+    }
+    case "foundation_first_prompt": {
+      // AI-driven daily first prompt generator (Foundation Day 0-7).
+      // Returns the 3-section minimal opener (yesterday / today / question)
+      // for the requested day, with dynamic variables substituted.
+      // No session mutation, no provider call — pure read.
+      const dayDescriptor = getFoundationDay(payload.day);
+      if (!dayDescriptor) {
+        telemetry.captureEvent("mac_sidecar_foundation_first_prompt_rejected", {
+          reason: "invalid_day",
+          day: payload.day ?? null,
+          session_id: payload.sessionId || "",
+        });
+        send(socket, {
+          type: "error",
+          sessionId: payload.sessionId,
+          message: "Foundation day must be in range 0-7.",
+        });
+        return;
+      }
+      const firstPrompt = buildFirstPromptForDay({
+        day: dayDescriptor.day,
+        dynamicVariables: payload.dynamicVariables,
+      });
+      telemetry.captureEvent("mac_sidecar_foundation_first_prompt_built", {
+        session_id: payload.sessionId || "",
+        day: dayDescriptor.day,
+        sub_workflow: dayDescriptor.sub_workflow || "",
+        spec_version: dayDescriptor.spec_version || "",
+      });
+      send(socket, {
+        type: "foundation_first_prompt",
+        sessionId: payload.sessionId,
+        day: dayDescriptor.day,
+        firstPrompt,
+      });
+      return;
+    }
+    case "foundation_chat": {
+      // Unified Foundation Phase Day 0-7 chat endpoint.
+      // No mode-based branching is exposed to the caller — the same single
+      // AI interaction channel handles every Day and every sub-workflow.
+      // Sub-workflow selection happens internally via Foundation context.
+      const session = getSession(payload.sessionId);
+      if (session.pendingUserInput) {
+        throw new Error("This session is waiting for structured input.");
+      }
+      const prompt = String(payload.prompt || "").trim();
+      if (!prompt) {
+        telemetry.captureEvent("mac_sidecar_foundation_chat_rejected", {
+          session_id: session.id,
+          provider: session.provider,
+          reason: "empty_prompt",
+          transport: "foundation_chat",
+        });
+        emitFoundationChatEvent({
+          sessionId: session.id,
+          day: null,
+          phase: "rejected",
+          reason: "empty_prompt",
+          transport: "foundation_chat",
+        });
+        send(socket, {
+          type: "error",
+          sessionId: session.id,
+          message: "Prompt is empty.",
+        });
+        return;
+      }
+      // Resolve the Foundation day with the wall-clock anchor as fallback.
+      // The host normally sends an explicit `day`, but sidecar-driven
+      // re-entry (queued prompts, warmstart) may carry only the
+      // `foundationStartedAt` ISO. `resolveFoundationDayFromPayload` keeps
+      // both paths in sync and clamps clock-skew to Day 0.
+      const resolvedDay = resolveFoundationDayFromPayload(payload);
+      const dayDescriptor = resolvedDay !== null ? getFoundationDay(resolvedDay) : null;
+      if (!dayDescriptor) {
+        telemetry.captureEvent("mac_sidecar_foundation_chat_rejected", {
+          session_id: session.id,
+          provider: session.provider,
+          reason: "invalid_day",
+          transport: "foundation_chat",
+          day: payload.day ?? null,
+          started_at: payload.foundationStartedAt || payload.startedAt || null,
+        });
+        emitFoundationChatEvent({
+          sessionId: session.id,
+          day: null,
+          phase: "rejected",
+          reason: "invalid_day",
+          transport: "foundation_chat",
+        });
+        send(socket, {
+          type: "error",
+          sessionId: session.id,
+          message: "Foundation day must be in range 0-7.",
+        });
+        return;
+      }
+      if (state.activeRuns.has(session.id)) {
+        await enqueuePrompt(session, prompt, {
+          executionIntent: "foundation_chat",
+        });
+        return;
+      }
+      cancelWarmSession(session.id);
+      await runUnifiedFoundationChat(session, prompt, {
+        day: dayDescriptor.day,
+        dynamicVariables: payload.dynamicVariables,
+        evidenceRefs: payload.evidenceRefs,
+        workspace: payload.workspace,
+        transport: "foundation_chat",
+      });
       return;
     }
     case "submit_user_input": {
@@ -445,13 +666,22 @@ async function handleClientMessage(socket, payload) {
         response_count: Array.isArray(payload.responses) ? payload.responses.length : 0,
       });
       broadcast({ type: "session_updated", session });
+      const hasSelectedStructuredOption = response.responses?.some((entry) => entry.selectedOptions?.length);
+      if (!hasActiveRun && !iddContinuationPrompt && hasSelectedStructuredOption) {
+        await appendVisibleAssistantMessage(
+          session.id,
+          buildStructuredInputConfirmation(response),
+        );
+        return;
+      }
       if (!hasActiveRun && (userResponseText || iddContinuationPrompt)) {
         let continuationSpecialistInjection = "";
+        let continuationSelection = null;
         if (iddContinuationPrompt) {
           const continuationDoc = iddContinuationDocType
             ? requiredDocByType(iddContinuationDocType)
             : null;
-          const continuationSelection = selectSpecialist({
+          continuationSelection = selectSpecialist({
             bipSetupGate: currentBipSetupGate(),
             doc: continuationDoc,
             lastAnswer: userResponseText,
@@ -464,6 +694,10 @@ async function handleClientMessage(socket, payload) {
             phase: continuationSelection.phase,
             decision_kind: continuationSelection.decisionKind,
             doc_type: iddContinuationDocType || "",
+            vendor_used: Boolean(
+              continuationSelection?.vendor?.claude?.exists
+                && continuationSelection?.vendor?.codex?.exists,
+            ),
           });
         }
         await runPrompt(
@@ -475,7 +709,11 @@ async function handleClientMessage(socket, payload) {
                 specialistInjection: continuationSpecialistInjection,
               })
             : userResponseText,
-          { displayUserMessage: false, defaultTitle: session.title },
+          {
+            displayUserMessage: false,
+            defaultTitle: session.title,
+            specialist: continuationSelection,
+          },
         );
       }
       return;
@@ -494,7 +732,10 @@ async function handleClientMessage(socket, payload) {
         scanRoot: root,
         progressText: "Starting workspace scan...",
       });
-      runWorkspaceScan(root);
+      runWorkspaceScan(root, {
+        sessionId: payload.sessionId,
+        prompt: payload.prompt,
+      });
       return;
     }
     case "create_doc": {
@@ -538,10 +779,12 @@ async function handleClientMessage(socket, payload) {
       const gate = currentBipSetupGate();
       broadcastBipSetupGateState(gate);
       if (payload.autoStart === true && !gate.ready) {
-        await startIddDocumentQueue({
+        await generateBasicBipCoachMission({
           gate,
           sessionId: payload.sessionId,
           provider: payload.provider,
+          compact: true,
+          curriculumDay: payload.curriculumDay,
         });
       }
       return;
@@ -632,6 +875,8 @@ async function runPrompt(
   {
     displayUserMessage = true,
     defaultTitle = null,
+    specialist = null,
+    executionIntent = "chat",
   } = {},
 ) {
   if (state.activeRuns.has(session.id)) {
@@ -742,7 +987,7 @@ async function runPrompt(
       abortController.abort();
     };
 
-    const route = classifyChatExecutionRoute(prompt);
+    const route = classifyChatExecutionRoute(prompt, { executionIntent });
     recordMessageTiming(session, assistantMessage, runStartedAt, "route.classified", route);
     emitChatRunPhase(session, assistantMessage.id, `route=${route.executionMode} reason=${route.reason}`);
     if (route.executionMode === "instant_chat") {
@@ -804,6 +1049,8 @@ async function runPrompt(
       abortController,
       sessionIdForMcp: session.id,
       executionMode: route.executionMode,
+      approvedToolExecution: route.approvedToolExecution === true,
+      specialist,
       onTextDelta: (chunk) => {
         emitAgentEvent(session, assistantMessage.id, {
           eventType: "message.delta",
@@ -865,6 +1112,7 @@ async function runPrompt(
     });
 
     session.runtime = runtime;
+    setAssistantText(session, assistantMessage.id, assistantMessage.content);
     recordMessageTiming(session, assistantMessage, runStartedAt, "provider.call_finished");
 
     assistantMessage.state = "final";
@@ -923,6 +1171,614 @@ async function runPrompt(
       telemetry.captureEvent("mac_sidecar_prompt_completed", {
         session_id: session.id,
         provider: session.provider,
+        message_count: session.messages.length,
+      });
+    }
+    state.activeRuns.delete(session.id);
+    touch(session);
+    await persistSessions();
+    broadcast({ type: "session_updated", session });
+    scheduleQueuedPromptRun(session);
+  }
+}
+
+/**
+ * Unified Foundation Phase Day 0-7 chat handler.
+ *
+ * Single AI interaction channel — every Day, every sub-workflow, every prompt
+ * flows through THIS function. There is no mode-based branching:
+ *  - No `/bip-draft`, `/office-hours-docs`, `/analyze-ads` command parsing.
+ *  - No instant_chat / agentic / memory_chat / fast_chat split.
+ *  - Sub-workflow selection lives inside the Foundation context object and
+ *    is rendered as system context only — the caller never sees it.
+ *
+ * The function:
+ *  1. Resolves Foundation Day context (core_question, sub_workflow hint,
+ *     dynamic_variables, evidence_refs, missing_inputs).
+ *  2. Composes the unified prompt by gluing Foundation system context with
+ *     the user's raw message and any cached BIP context.
+ *  3. Streams the response through the SAME `runProviderStream()` call used
+ *     elsewhere in the sidecar — same provider, same streaming events, same
+ *     assistant message lifecycle.
+ *  4. Persists evidence_refs as a JSON sidecar so KR4.1/4.2 can audit
+ *     the trace later.
+ */
+async function runUnifiedFoundationChat(
+  session,
+  prompt,
+  {
+    day,
+    dynamicVariables = {},
+    evidenceRefs = [],
+    workspace = {},
+    transport = "foundation_chat",
+  } = {},
+) {
+  if (state.activeRuns.has(session.id)) {
+    throw new Error("This session is already running.");
+  }
+
+  const dayDescriptor = getFoundationDay(day);
+  if (!dayDescriptor) {
+    throw new Error("Foundation day must be in range 0-7.");
+  }
+
+  telemetry.captureEvent("mac_sidecar_foundation_chat_started", {
+    session_id: session.id,
+    provider: session.provider,
+    day: dayDescriptor.day,
+    sub_workflow: dayDescriptor.sub_workflow || "",
+    spec_version: dayDescriptor.spec_version || "",
+    prompt_length: prompt.length,
+    transport,
+  });
+
+  emitFoundationChatEvent({
+    sessionId: session.id,
+    day: dayDescriptor.day,
+    phase: "started",
+    subWorkflow: dayDescriptor.sub_workflow || null,
+    specVersion: dayDescriptor.spec_version || null,
+    transport,
+  });
+
+  const runStartedAt = performance.now();
+  const seenRunPhases = new Set();
+
+  const authState = getProviderAuthState(session.provider);
+  if (!authState.available) {
+    throw new Error(authState.message);
+  }
+
+  const foundationContext = resolveFoundationContext({
+    day: dayDescriptor.day,
+    prompt,
+    workspace: { root: workspaceRoot, ...(workspace || {}) },
+    dynamicVariables,
+    evidenceRefs,
+  });
+
+  const assistantMessage = makeMessage({
+    role: "assistant",
+    provider: session.provider,
+    content: "",
+    state: "streaming",
+  });
+  // Tag the message with Foundation metadata so the UI can render Day badges
+  // and evidence chips without needing to know about sub-workflows.
+  assistantMessage.foundation = {
+    day: foundationContext.day,
+    core_question: foundationContext.core_question,
+    spec_version: foundationContext.spec_version,
+    sub_workflow: foundationContext.sub_workflow,
+    overall_confidence: foundationContext.overall_confidence,
+    artifacts: foundationContext.artifacts,
+    persona: foundationContext.persona,
+  };
+
+  recordMessageTiming(session, assistantMessage, runStartedAt, "foundation.prompt_accepted", {
+    provider: session.provider,
+    model: session.model || "",
+    day: foundationContext.day,
+    sub_workflow: foundationContext.sub_workflow || "",
+    promptLength: prompt.length,
+  });
+
+  const userMessage = makeMessage({
+    role: "user",
+    provider: session.provider,
+    content: prompt,
+    state: "final",
+  });
+  userMessage.foundation = {
+    day: foundationContext.day,
+    core_question: foundationContext.core_question,
+  };
+  session.messages.push(userMessage);
+
+  if (!session.title || session.title === "New Session") {
+    session.title = `Day ${foundationContext.day} — ${foundationContext.core_question?.slice(0, 32) || "Foundation"}`;
+  }
+
+  session.messages.push(assistantMessage);
+  session.status = "running";
+  session.error = null;
+  session.pendingUserInput = null;
+  session.runtime = {
+    ...(session.runtime || {}),
+    foundation: {
+      day: foundationContext.day,
+      sub_workflow: foundationContext.sub_workflow,
+      spec_version: foundationContext.spec_version,
+      lastFoundationChatAt: new Date().toISOString(),
+    },
+  };
+  touch(session);
+  await persistSessions();
+  recordMessageTiming(session, assistantMessage, runStartedAt, "foundation.session_persisted", {
+    messageCount: session.messages.length,
+  });
+  broadcast({ type: "session_updated", session });
+
+  const abortController = new AbortController();
+  state.activeRuns.set(session.id, {
+    abortController,
+    stop: async () => abortController.abort(),
+  });
+
+  try {
+    emitChatRunPhase(
+      session,
+      assistantMessage.id,
+      `foundation_day=${foundationContext.day} sub_workflow=${foundationContext.sub_workflow || "none"}`,
+    );
+
+    // Pull cached BIP context exactly the same way the existing flow does.
+    // Single channel — no instant_chat / fast_chat split.
+    const bipContextBlock = await buildChatBipContext().catch((error) => {
+      telemetry.captureException(error, {
+        operation: "buildChatBipContext.foundation",
+        session_id: session.id,
+      });
+      return "";
+    });
+    const bipManifest = buildChatBipManifest();
+
+    // Day 6 monetization-ask sub-workflow: hide turn-specific systemBlock
+    // inside bipContextBlock so the provider sees it as system context (no
+    // routing flag, single AI surface preserved). State is pulled from
+    // session.runtime.foundation.monetizationAsk; the outcome path below
+    // closes the loop by writing result.md + emitting an evidence_ref.
+    const isMonetizationAskRun = shouldRunMonetizationAsk({
+      day: foundationContext.day,
+      subWorkflow: foundationContext.sub_workflow,
+    });
+    let monetizationAskStateBefore = null;
+    let monetizationAskContextBlock = "";
+    if (isMonetizationAskRun) {
+      monetizationAskStateBefore = loadMonetizationAskState(session.runtime);
+      monetizationAskContextBlock = buildMonetizationAskContextBlock(
+        monetizationAskStateBefore,
+      );
+    }
+    const composedBipContextBlock = [bipContextBlock, monetizationAskContextBlock]
+      .filter((block) => typeof block === "string" && block.length > 0)
+      .join("\n\n");
+
+    const promptForProvider = composeUnifiedFoundationPrompt({
+      context: foundationContext,
+      bipContextBlock: composedBipContextBlock,
+      workspaceManifest: bipManifest,
+    });
+    recordMessageTiming(session, assistantMessage, runStartedAt, "foundation.context_built", {
+      promptChars: promptForProvider.length,
+      originalPromptChars: prompt.length,
+      contextAddedChars: Math.max(0, promptForProvider.length - prompt.length),
+      evidenceRefCount: foundationContext.evidence_refs.length,
+      missingInputCount: foundationContext.missing_inputs.length,
+    });
+
+    emitFoundationChatEvent({
+      sessionId: session.id,
+      messageId: assistantMessage.id,
+      day: foundationContext.day,
+      phase: "context_built",
+      subWorkflow: foundationContext.sub_workflow || null,
+      specVersion: foundationContext.spec_version || null,
+      evidenceRefCount: foundationContext.evidence_refs.length,
+      missingInputCount: foundationContext.missing_inputs.length,
+      overallConfidence: foundationContext.overall_confidence ?? null,
+      transport,
+    });
+
+    emitChatRunPhase(
+      session,
+      assistantMessage.id,
+      `provider=${session.provider} model=${session.model || "default"} channel=foundation_unified`,
+    );
+    recordMessageTiming(session, assistantMessage, runStartedAt, "foundation.provider_call_start", {
+      provider: session.provider,
+    });
+
+    emitAgentEvent(session, assistantMessage.id, {
+      eventType: "run.started",
+      provider: session.provider,
+      executionMode: "foundation_unified",
+      day: foundationContext.day,
+    });
+
+    emitFoundationChatEvent({
+      sessionId: session.id,
+      messageId: assistantMessage.id,
+      day: foundationContext.day,
+      phase: "streaming",
+      subWorkflow: foundationContext.sub_workflow || null,
+      specVersion: foundationContext.spec_version || null,
+      transport,
+    });
+
+    const { runtime } = await runProviderStream({
+      provider: session.provider,
+      sessionRuntime: session.runtime,
+      prompt: promptForProvider,
+      model: session.model,
+      workspaceRoot,
+      abortController,
+      sessionIdForMcp: session.id,
+      // The provider always sees the same execution mode. Internal sub-workflow
+      // hints stay in the Foundation system context block, never as a flag.
+      executionMode: "foundation_unified",
+      approvedToolExecution: false,
+      specialist: null,
+      onTextDelta: (chunk) => {
+        emitAgentEvent(session, assistantMessage.id, {
+          eventType: "message.delta",
+          textLength: chunk.length,
+        });
+        appendAssistantText(session, assistantMessage.id, chunk);
+      },
+      onTextReplace: (content) => {
+        emitAgentEvent(session, assistantMessage.id, {
+          eventType: "message.replace",
+          textLength: content.length,
+        });
+        setAssistantText(session, assistantMessage.id, content);
+      },
+      onToolEvent: (event) => {
+        const { phase, toolName, payload, toolCallKey } = event;
+        emitAgentEvent(session, assistantMessage.id, canonicalToolEvent(event));
+        broadcast({
+          type: "tool_event",
+          sessionId: session.id,
+          messageId: assistantMessage.id,
+          phase,
+          toolName,
+          toolCallKey,
+          payload,
+          summary: formatChatToolEvent(event),
+        });
+      },
+      onRuntimeUpdate: async (nextRuntime) => {
+        session.runtime = {
+          ...nextRuntime,
+          foundation: session.runtime?.foundation ?? null,
+        };
+        recordMessageTiming(
+          session,
+          assistantMessage,
+          runStartedAt,
+          "foundation.runtime_updated",
+          {
+            hasCodexThread: Boolean(nextRuntime?.codexThreadId),
+            hasClaudeSession: Boolean(nextRuntime?.claudeSessionId),
+          },
+          { once: true, seen: seenRunPhases },
+        );
+        touch(session);
+        await persistSessions();
+        broadcast({ type: "session_updated", session });
+      },
+      onRunEvent: (event) => {
+        emitAgentEvent(session, assistantMessage.id, {
+          eventType: "run.timing",
+          phase: event.phase,
+          details: Object.fromEntries(
+            Object.entries(event).filter(([key]) => key !== "phase" && key !== "once"),
+          ),
+        });
+        recordMessageTiming(
+          session,
+          assistantMessage,
+          runStartedAt,
+          event.phase,
+          Object.fromEntries(
+            Object.entries(event).filter(([key]) => key !== "phase" && key !== "once"),
+          ),
+          event.once ? { once: true, seen: seenRunPhases } : {},
+        );
+      },
+      onPetHookEvent: session.provider === "claude" ? broadcast : undefined,
+    });
+
+    session.runtime = {
+      ...runtime,
+      foundation: session.runtime?.foundation ?? null,
+    };
+    setAssistantText(session, assistantMessage.id, assistantMessage.content);
+    recordMessageTiming(session, assistantMessage, runStartedAt, "foundation.provider_call_finished");
+
+    // Sub-AC 4: monetization-ask sub-workflow outcome.
+    // Apply the user's response to the 4-turn state machine; on terminal turn
+    // close, write monetization-ask-result.md to the workspace and append an
+    // evidence_ref so persistEvidenceRefsSidecar() carries the artifact lineage.
+    if (isMonetizationAskRun) {
+      try {
+        const outcome = await applyMonetizationAskOutcome({
+          state: monetizationAskStateBefore,
+          userResponse: prompt,
+          captures: {},
+          workspaceRoot,
+        });
+        session.runtime = attachMonetizationAskState(
+          session.runtime,
+          outcome.stateAfter,
+        );
+        if (outcome.evidenceRef) {
+          // Mutate foundationContext.evidence_refs in-place so the sidecar
+          // persistence below sees the new artifact pointer (the context
+          // object is the source of truth for the JSON sidecar).
+          foundationContext.evidence_refs = [
+            ...(foundationContext.evidence_refs || []),
+            outcome.evidenceRef,
+          ];
+        }
+        const monetizationMeta = {
+          turn_before: monetizationAskStateBefore?.turn ?? null,
+          turn_after: outcome.stateAfter?.turn ?? null,
+          advanced: outcome.advanced,
+          is_terminal: outcome.isTerminal,
+          reason: outcome.reason,
+          pushback: outcome.pushback,
+          result_path: outcome.resultArtifact?.path ?? null,
+          classification:
+            outcome.stateAfter?.capturesAggregate?.response_classification ?? null,
+        };
+        assistantMessage.foundation.monetization_ask = monetizationMeta;
+        recordMessageTiming(
+          session,
+          assistantMessage,
+          runStartedAt,
+          "foundation.monetization_ask_evaluated",
+          monetizationMeta,
+        );
+        telemetry.captureEvent("mac_sidecar_monetization_ask_evaluated", {
+          session_id: session.id,
+          day: foundationContext.day,
+          advanced: outcome.advanced,
+          is_terminal: outcome.isTerminal,
+          reason: outcome.reason || "",
+          turn_after: outcome.stateAfter?.turn || "",
+          has_result_path: Boolean(outcome.resultArtifact?.path),
+        });
+        if (outcome.isTerminal && outcome.resultArtifact?.path) {
+          broadcast({
+            type: "monetization_ask_completed",
+            sessionId: session.id,
+            messageId: assistantMessage.id,
+            resultPath: outcome.resultArtifact.path,
+            classification:
+              outcome.stateAfter?.capturesAggregate?.response_classification ?? null,
+          });
+        }
+        if (outcome.resultArtifact?.error) {
+          telemetry.captureException(outcome.resultArtifact.error, {
+            operation: "writeMonetizationAskResult",
+            session_id: session.id,
+          });
+        }
+      } catch (error) {
+        telemetry.captureException(error, {
+          operation: "applyMonetizationAskOutcome",
+          session_id: session.id,
+        });
+      }
+    }
+
+    // Sub-AC 5: foundation-summary sub-workflow outcome (Day 7).
+    // Parse the assistant text into draft.v2 sections (SPEC v3 / go-no-go /
+    // foundation-summary), persist them under workspace/.agentic30/foundation/,
+    // emit evidence_refs pointing at each artifact (so the JSON sidecar below
+    // carries the lineage), and broadcast `foundation_summary_completed` for
+    // the chat surface to render the Day 7 wrap banner.
+    //
+    // Single-channel guarantee: this runs AFTER the provider stream finished
+    // — the user already saw the AI response. The outcome path is a pure
+    // post-processor that closes the Foundation loop deterministically.
+    const isFoundationSummaryRun = shouldRunFoundationSummary({
+      day: foundationContext.day,
+      subWorkflow: foundationContext.sub_workflow,
+    });
+    if (isFoundationSummaryRun) {
+      try {
+        const outcome = await applyFoundationSummaryOutcome({
+          assistantText: assistantMessage.content || "",
+          workspaceRoot,
+          // Day 7 retrospective rating may arrive in dynamic_variables
+          // (Sub-AC 1 of AC 14) — forward it so the rule-check's KR4.1
+          // axis sees the latest value when the audit JSON is built.
+          userFeedback:
+            foundationContext.dynamic_variables?.user_feedback ?? null,
+          reviewLoop: null, // Sub-AC 4 review-loop not yet wired into hot path
+        });
+        session.runtime = attachFoundationSummaryState(
+          session.runtime,
+          outcome.stateAfter,
+        );
+        // Mutate foundationContext.evidence_refs in-place so the sidecar
+        // persistence below sees the new artifact pointers (the context
+        // object is the source of truth for the JSON sidecar).
+        if (Array.isArray(outcome.evidenceRefs) && outcome.evidenceRefs.length) {
+          foundationContext.evidence_refs = [
+            ...(foundationContext.evidence_refs || []),
+            ...outcome.evidenceRefs,
+          ];
+        }
+        const summaryMeta = {
+          status: outcome.summary?.status ?? null,
+          reason: outcome.summary?.reason ?? null,
+          sections_present: outcome.summary?.sections_present ?? [],
+          sections_skipped: outcome.summary?.sections_skipped ?? [],
+          artifacts: outcome.summary?.artifacts ?? {},
+          monetization_yes_count: outcome.summary?.monetization_yes_count ?? 0,
+          go_no_go_recommendation: outcome.summary?.go_no_go_recommendation ?? null,
+          verdict_pass: outcome.summary?.verdict_pass ?? null,
+          verdict_score: outcome.summary?.verdict_score ?? null,
+        };
+        assistantMessage.foundation.foundation_summary = summaryMeta;
+        recordMessageTiming(
+          session,
+          assistantMessage,
+          runStartedAt,
+          "foundation.foundation_summary_evaluated",
+          summaryMeta,
+        );
+        telemetry.captureEvent("mac_sidecar_foundation_summary_evaluated", {
+          session_id: session.id,
+          day: foundationContext.day,
+          status: summaryMeta.status || "",
+          sections_present_count: summaryMeta.sections_present.length,
+          sections_skipped_count: summaryMeta.sections_skipped.length,
+          monetization_yes_count: summaryMeta.monetization_yes_count,
+          go_no_go_recommendation: summaryMeta.go_no_go_recommendation || "",
+          verdict_pass: summaryMeta.verdict_pass === null ? "" : String(summaryMeta.verdict_pass),
+          has_error: Boolean(outcome.error),
+        });
+        if (outcome.isTerminal) {
+          const event = buildFoundationSummaryCompletedEvent({
+            sessionId: session.id,
+            messageId: assistantMessage.id,
+            outcome,
+          });
+          if (event) broadcast(event);
+        }
+        if (outcome.error) {
+          telemetry.captureException(outcome.error, {
+            operation: "writeFoundationSummaryDraftV2",
+            session_id: session.id,
+          });
+        }
+      } catch (error) {
+        telemetry.captureException(error, {
+          operation: "applyFoundationSummaryOutcome",
+          session_id: session.id,
+        });
+      }
+    }
+
+    // Persist evidence_refs JSON sidecar (KR4.1/4.2 measurement infra).
+    try {
+      const sidecarPath = await persistEvidenceRefsSidecar({
+        workspaceRoot,
+        sessionId: session.id,
+        messageId: assistantMessage.id,
+        day: foundationContext.day,
+        context: foundationContext,
+      });
+      if (sidecarPath) {
+        assistantMessage.foundation.evidence_sidecar = sidecarPath;
+      }
+    } catch (error) {
+      telemetry.captureException(error, {
+        operation: "persistEvidenceRefsSidecar",
+        session_id: session.id,
+      });
+    }
+
+    assistantMessage.state = "final";
+    session.status = "idle";
+    session.error = null;
+    emitAgentEvent(session, assistantMessage.id, {
+      eventType: "run.completed",
+      provider: session.provider,
+      executionMode: "foundation_unified",
+      day: foundationContext.day,
+    });
+    emitFoundationChatEvent({
+      sessionId: session.id,
+      messageId: assistantMessage.id,
+      day: foundationContext.day,
+      phase: "completed",
+      subWorkflow: foundationContext.sub_workflow || null,
+      specVersion: foundationContext.spec_version || null,
+      evidenceRefCount: foundationContext.evidence_refs.length,
+      missingInputCount: foundationContext.missing_inputs.length,
+      overallConfidence: foundationContext.overall_confidence ?? null,
+      evidenceSidecarPath: assistantMessage.foundation?.evidence_sidecar ?? null,
+      elapsedMs: Math.round(performance.now() - runStartedAt),
+      transport,
+    });
+  } catch (error) {
+    if (abortController.signal.aborted || error?.name === "AbortError") {
+      telemetry.captureEvent("mac_sidecar_foundation_chat_aborted", {
+        session_id: session.id,
+        provider: session.provider,
+        day: foundationContext.day,
+      });
+      assistantMessage.state = "final";
+      session.status = "idle";
+      session.error = null;
+      emitFoundationChatEvent({
+        sessionId: session.id,
+        messageId: assistantMessage.id,
+        day: foundationContext.day,
+        phase: "aborted",
+        subWorkflow: foundationContext.sub_workflow || null,
+        specVersion: foundationContext.spec_version || null,
+        elapsedMs: Math.round(performance.now() - runStartedAt),
+        transport,
+      });
+    } else {
+      telemetry.captureException(error, {
+        operation: "runUnifiedFoundationChat",
+        session_id: session.id,
+        provider: session.provider,
+        day: foundationContext.day,
+      });
+      assistantMessage.state = "error";
+      assistantMessage.error = formatError(error);
+      const authActions = buildProviderAuthActionsForError(session.provider, assistantMessage.error);
+      if (authActions.length) {
+        assistantMessage.providerAuthActions = authActions;
+      }
+      recordMessageTiming(session, assistantMessage, runStartedAt, "foundation.prompt_error", {
+        message: assistantMessage.error,
+      });
+      if (!assistantMessage.content) {
+        assistantMessage.content = assistantMessage.error;
+      }
+      session.status = "error";
+      session.error = assistantMessage.error;
+      emitAgentEvent(session, assistantMessage.id, {
+        eventType: "run.failed",
+        error: assistantMessage.error,
+        recoverable: false,
+      });
+      broadcast({
+        type: "error",
+        sessionId: session.id,
+        message: assistantMessage.error,
+      });
+    }
+  } finally {
+    if (session.status === "idle" && assistantMessage.state === "final") {
+      recordMessageTiming(session, assistantMessage, runStartedAt, "foundation.prompt_completed", {
+        totalMs: Math.round(performance.now() - runStartedAt),
+      });
+      telemetry.captureEvent("mac_sidecar_foundation_chat_completed", {
+        session_id: session.id,
+        provider: session.provider,
+        day: foundationContext.day,
+        sub_workflow: foundationContext.sub_workflow || "",
         message_count: session.messages.length,
       });
     }
@@ -1095,7 +1951,7 @@ function setCodexWarmRuntime(session, warm) {
   };
 }
 
-async function enqueuePrompt(session, prompt) {
+async function enqueuePrompt(session, prompt, { executionIntent = "chat" } = {}) {
   const userMessage = makeMessage({
     role: "user",
     provider: session.provider,
@@ -1111,6 +1967,7 @@ async function enqueuePrompt(session, prompt) {
   queue.push({
     prompt,
     queuedAt: new Date().toISOString(),
+    executionIntent,
   });
   state.promptQueues.set(session.id, queue);
 
@@ -1147,7 +2004,10 @@ async function runNextQueuedPrompt(sessionId) {
   } else {
     state.promptQueues.delete(sessionId);
   }
-  await runPrompt(session, next.prompt, { displayUserMessage: false });
+  await runPrompt(session, next.prompt, {
+    displayUserMessage: false,
+    executionIntent: next.executionIntent || "chat",
+  });
 }
 
 function scheduleQueuedPromptRun(session) {
@@ -1195,6 +2055,23 @@ async function runOfficeHoursDocs(session, topic, originalPrompt) {
 
   try {
     const userPrompt = buildOfficeHoursDocsPrompt(topic);
+    const officeHoursSelection = selectSpecialist({
+      bipSetupGate: currentBipSetupGate(),
+      doc: null,
+      lastAnswer: topic || "",
+    });
+    telemetry.captureEvent("mac_sidecar_specialist_routed", {
+      session_id: session.id,
+      stage: "office_hours_docs",
+      specialist_id: officeHoursSelection.id,
+      phase: officeHoursSelection.phase,
+      decision_kind: officeHoursSelection.decisionKind,
+      vendor_used: Boolean(
+        officeHoursSelection?.vendor?.claude?.exists
+          && officeHoursSelection?.vendor?.codex?.exists,
+      ),
+    });
+    const officeHoursSpecialistInjection = buildSpecialistInjection(officeHoursSelection);
     const result = await runProviderStream({
       provider: session.provider,
       sessionRuntime: session.runtime,
@@ -1203,6 +2080,8 @@ async function runOfficeHoursDocs(session, topic, originalPrompt) {
       abortController,
       sessionIdForMcp: session.id,
       executionMode: "agentic",
+      approvedToolExecution: true,
+      specialist: officeHoursSelection,
       onTextDelta: (text) => appendAssistantText(session, assistantMessage.id, text),
       onTextReplace: (text) => setAssistantText(session, assistantMessage.id, text),
       onToolEvent: (toolEvent) => {
@@ -1224,21 +2103,8 @@ async function runOfficeHoursDocs(session, topic, originalPrompt) {
       },
       onPetHookEvent: session.provider === "claude" ? broadcast : undefined,
       systemPromptOverride: buildOfficeHoursDocsSystemPrompt(workspaceRoot, {
-        specialistInjection: (() => {
-          const officeHoursSelection = selectSpecialist({
-            bipSetupGate: currentBipSetupGate(),
-            doc: null,
-            lastAnswer: topic || "",
-          });
-          telemetry.captureEvent("mac_sidecar_specialist_routed", {
-            session_id: session.id,
-            stage: "office_hours_docs",
-            specialist_id: officeHoursSelection.id,
-            phase: officeHoursSelection.phase,
-            decision_kind: officeHoursSelection.decisionKind,
-          });
-          return buildSpecialistInjection(officeHoursSelection);
-        })(),
+        provider: session.provider,
+        specialistInjection: officeHoursSpecialistInjection,
       }),
     });
 
@@ -1431,7 +2297,10 @@ async function runAnalyzeAds(session, targetUrl, originalPrompt) {
 
     // 2. Build MCP servers config (internal + optional PostHog + optional Notion)
     const mcpServers = {
-      [internalMcpServerName]: buildMcpConfig(session.id),
+      [internalMcpServerName]: buildMcpConfig(session.id, {
+        executionMode: "agentic",
+        approvedToolExecution: true,
+      }),
       ...buildNotionMcpConfig(),
       ...buildQmdMcpConfig({ sidecarRoot }),
     };
@@ -1581,9 +2450,10 @@ async function buildPromptWithBipContext(prompt, route = classifyChatExecutionRo
   ].filter(Boolean).join("\n\n");
 }
 
-function classifyChatExecutionRoute(prompt) {
+function classifyChatExecutionRoute(prompt, options = {}) {
   return classifyChatExecutionRouteWithState(prompt, {
     qmdAvailable: getQmdState({ sidecarRoot }).available,
+    executionIntent: options.executionIntent || "chat",
   });
 }
 
@@ -1592,28 +2462,170 @@ async function buildInstantChatResponse(prompt) {
     appSupportPath,
     workspaceRoot,
   });
-  const lower = String(prompt || "").toLowerCase();
-  const hasIcp = /icp|고객|유저|user|customer/i.test(context.text);
-  const hasSpec = /spec|proof|baseline|target|목표|검증/i.test(context.text);
-  const lines = [
-    "짧게 보면, 이건 Agent 실행보다 Day 1 코칭 fast path로 처리할 수 있습니다.",
-  ];
-  if (hasIcp) {
-    lines.push("ICP 기준으로는 먼저 “실제로 반복해서 겪는 문제”와 “오늘 확인할 응답”을 좁히는 게 맞습니다.");
+  const configuredDocAnswer = buildConfiguredDocPathAnswer(prompt);
+  if (configuredDocAnswer) {
+    return {
+      text: configuredDocAnswer,
+      contextChars: context.text.length,
+      cacheHit: context.cacheHit,
+      files: context.files,
+    };
   }
-  if (hasSpec || lower.includes("spec") || lower.includes("proof")) {
-    lines.push("SPEC에는 현재 proof baseline, 다음 proof target, 오늘 확인할 사용자 반응을 한 줄씩 남기세요.");
-  }
-  if (lower.includes("fast path") || lower.includes("blank")) {
-    lines.push("이미 랜딩/프로토타입이 있다면 blank-slate가 아니라 fast path입니다. 새 아이디어 발굴보다 기존 가정 검증이 먼저입니다.");
-  }
-  lines.push("다음 액션: 오늘 한 명에게 보여줄 질문 1개를 정하고, 답변이 오면 그 문장 그대로 SPEC에 붙이세요.");
+  const plan = buildStageAwareActionPlan({
+    prompt,
+    context,
+  });
   return {
-    text: lines.join("\n"),
+    text: plan.visible_message,
     contextChars: context.text.length,
     cacheHit: context.cacheHit,
     files: context.files,
   };
+}
+
+function buildConfiguredDocPathAnswer(prompt) {
+  const value = String(prompt || "");
+  if (!isWorkspacePathLookupPrompt(value)) return "";
+  const workspace = currentBipConfig()?.workspace || {};
+  const mappings = [
+    ["ICP.md", workspace.icp],
+    ["SPEC.md", workspace.spec],
+    ["VALUES.md", workspace.values],
+    ["GOAL.md", workspace.goal],
+    ["ADR.md", workspace.adr],
+  ];
+  const match = mappings.find(([label, docPath]) =>
+    docPath && new RegExp(`\\b${label.replace(".", "\\.")}\\b`, "i").test(value)
+  );
+  if (!match) return "";
+  const [label, docPath] = match;
+  return [
+    `\`${label}\`는 현재 BIP 설정 기준으로 \`${docPath}\`에 있습니다.`,
+    "ICP 기준 요약: 전업 1인 개발자, 수익 0원, macOS에서 Codex를 쓰고 고객 인터뷰 의향이 있으면 Agentic30 조건에 맞습니다.",
+    "Day 1 판단 기준: 이 ICP와 SPEC proof target을 기준으로 오늘 고객 행동 1개를 정합니다.",
+    "다음 액션: 이 문서를 기준으로 Day 1 판단을 이어가면 됩니다.",
+  ].join("\n");
+}
+
+function buildStageAwareActionPlan({ prompt = "", context = {}, selectedOption = "", forcedIntentMode = "" } = {}) {
+  const config = currentBipConfig() || {};
+  const stageState = readWorkspaceStageState(config);
+  const repoStage = inferRepoStage({ prompt, config, context, stageState });
+  const intentMode = forcedIntentMode || inferIntentMode({ prompt, selectedOption, stageState });
+  const docs = configuredDocsPresence(config);
+  const proofRefs = normalizeStringList(stageState.proofs);
+  const evidenceRefs = [
+    docs.icp ? "docs/ICP.md" : "",
+    docs.goal ? "docs/GOAL.md" : "",
+    docs.spec ? "docs/SPEC.md" : "",
+    proofRefs[0] ? `prior proof: ${proofRefs[0]}` : "",
+  ].filter(Boolean);
+  const selected = String(selectedOption || "").trim();
+  const isBuilder = intentMode === "builder";
+  const isComplete = repoStage === "complete";
+
+  let verdict;
+  let nextAction;
+  let proofTarget;
+  let domainLine;
+  let stageLine;
+
+  if (isBuilder && isComplete) {
+    verdict = "keep";
+    domainLine = "Builder retro: 끝난 demo loop는 회고로 닫고, 가장 선명한 artifact를 다음 공개 증거로 이어갑니다.";
+    stageLine = `근거: ${proofRefs.length ? proofRefs.join(", ") : "완료된 demo loop와 현재 BIP 기록"}`;
+    nextAction = "오늘 demo에서 가장 선명했던 화면 1개를 골라 retro와 함께 Threads에 올리세요.";
+    proofTarget = "retro Threads URL 1개, 다음 artifact proof target 1개, demo를 이해한 사람 1명/막힌 지점 1개를 Sheet 오늘 행에 기록합니다.";
+  } else if (isComplete) {
+    verdict = proofRefs.length >= 2 ? "change" : "inconclusive";
+    domainLine = `Startup verdict: ${verdict}. 이번 루프는 감이 아니라 공개 proof와 고객 반응 숫자로 다음 방향을 정합니다.`;
+    stageLine = `근거: ${proofRefs.length ? proofRefs.join(", ") : "완료 상태지만 충분한 proof 숫자는 아직 부족함"}`;
+    nextAction = "가장 반응이 있었던 proof 1개를 골라 같은 고객군 1명에게 후속 질문을 보내고 답변 원문을 저장하세요.";
+    proofTarget = "Threads retro URL 1개, 같은 고객군의 답변 원문 1개, 계속/전환/중단 기준 숫자 1개를 Sheet 오늘 행에 기록합니다.";
+  } else if (isBuilder) {
+    verdict = repoStage === "empty" ? "builder-first-demo" : "builder-proof-loop";
+    domainLine = "Builder verdict: 오늘은 전략 문서보다 공유 산출물/artifact 1개와 5분 demo/wow moment를 먼저 만들고 BIP 공개 증거로 남깁니다.";
+    stageLine = "ICP 확인: 전업 1인 개발자, 수익 0원, macOS/Codex 사용, 인터뷰 의향이 있으면 Agentic30 조건에 맞습니다.";
+    nextAction = selected
+      ? `${selected}에서 사용자가 처음 보는 화면 1개를 녹화하거나 캡처해 Threads에 공개하세요.`
+      : "demo에서 사용자가 처음 보는 화면 1개를 녹화하거나 캡처해 Threads에 공개하세요.";
+    proofTarget = "BIP Threads URL 1개와 'demo를 보고 이해한 사람 1명/막힌 지점 1개'를 Sheet 오늘 행에 기록합니다.";
+  } else {
+    verdict = repoStage === "empty" ? "conditional-icp-fit" : "day1-start";
+    domainLine = "진단: Startup verdict는 조건부 ICP fit입니다. 전업 1인 개발자, 수익 0원, macOS에서 Codex를 쓰고 고객 인터뷰를 오늘 실행할 수 있으면 시작해도 됩니다.";
+    stageLine = repoStage === "running"
+      ? "Evidence: docs/ICP.md와 이전 proof를 기준으로 다음 고객증거 loop, 기준 숫자, proof target을 오늘 갱신합니다."
+      : (docs.icp
+        ? "Evidence: docs/ICP.md는 대상 사용자, docs/GOAL.md는 Day 1/Day 7, docs/SPEC.md는 proof baseline과 다음 proof target 기준입니다."
+        : "Evidence: 아직 전략 문서가 비어 있어도 시작 조건은 고객 대화 1개와 공개 proof 1개입니다.");
+    nextAction = "오늘 한 명에게 '지금 Codex로 제품을 만들 때 가장 돈/시간을 잃는 순간이 어디인지'를 묻고 답변 원문을 저장하세요.";
+    proofTarget = "응답 1개를 확보한 뒤 그 응답 원문을 담은 Threads BIP 공개 proof URL 1개를 남깁니다.";
+  }
+
+  const message = [
+    "짧게 보면, 이건 Agent 실행보다 Day 1 코칭 fast path로 처리할 수 있습니다.",
+    `Repo stage: ${repoStage}. Intent mode: ${intentMode}.`,
+    `Verdict: ${verdict}.`,
+    domainLine,
+    stageLine,
+    "Customer/status quo: 혼자 코딩하며 만든 뒤 유저가 오지 않는 전업 1인 개발자가 현재 대안입니다.",
+    "Narrow wedge: macOS에서 Codex/Claude Code로 만들지만 아직 첫 매출이 없는 사람 1명.",
+    "Numeric threshold: 오늘 고객 답변 원문 1개와 공개 proof URL 1개. 반응이 없으면 질문을 바꿉니다.",
+    `다음 액션: ${nextAction}`,
+    `증거 목표: ${proofTarget}`,
+  ];
+
+  return {
+    verdict,
+    evidence_refs: evidenceRefs,
+    next_action: nextAction,
+    proof_target: proofTarget,
+    visible_message: message.join("\n"),
+    confidence: evidenceRefs.length >= 2 ? "medium" : "low",
+  };
+}
+
+function readWorkspaceStageState(config = {}) {
+  const root = String(config?.workspace?.root || workspaceRoot || "").trim();
+  if (!root) return {};
+  const parsed = readJsonFile(path.join(path.resolve(root), "agentic30", "stage-state.json"));
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+}
+
+function configuredDocsPresence(config = {}) {
+  const workspace = config?.workspace || {};
+  return {
+    icp: Boolean(workspace.icp),
+    values: Boolean(workspace.values),
+    goal: Boolean(workspace.goal),
+    spec: Boolean(workspace.spec),
+  };
+}
+
+function inferRepoStage({ prompt = "", config = {}, context = {}, stageState = {} } = {}) {
+  const explicit = String(stageState.repo_stage || "").trim();
+  if (["empty", "strategy_seeded", "partial_setup", "running", "complete"].includes(explicit)) {
+    return explicit;
+  }
+  const text = `${prompt}\n${context?.text || ""}`.toLowerCase();
+  if (/complete|완료|retro|회고|계속|전환|중단/.test(text)) return "complete";
+  if (/running|proof|bip|실행 중|공개 기록/.test(text)) return "running";
+  const docs = configuredDocsPresence(config);
+  const docCount = Object.values(docs).filter(Boolean).length;
+  if (docCount >= 4) return "strategy_seeded";
+  if (docCount > 0) return "partial_setup";
+  return "empty";
+}
+
+function inferIntentMode({ prompt = "", selectedOption = "", stageState = {} } = {}) {
+  const explicit = String(stageState.intent_mode || "").trim();
+  if (["startup", "builder"].includes(explicit)) {
+    return explicit;
+  }
+  const text = `${prompt}\n${selectedOption}`.toLowerCase();
+  return /builder|demo|artifact|빌더|산출물|공유 가능한|프로젝트 전략 문서/.test(text)
+    ? "builder"
+    : "startup";
 }
 
 function shouldInlineBipContext(prompt) {
@@ -2043,7 +3055,10 @@ async function runBipDraft(session, topic, originalPrompt) {
     ].filter(Boolean).join("\n\n");
 
     const mcpServers = {
-      [internalMcpServerName]: buildMcpConfig(session.id),
+      [internalMcpServerName]: buildMcpConfig(session.id, {
+        executionMode: "agentic",
+        approvedToolExecution: true,
+      }),
       ...buildNotionMcpConfig(),
       ...buildQmdMcpConfig({ sidecarRoot }),
     };
@@ -2175,12 +3190,12 @@ async function configureBipCoach(payload) {
 
 async function refreshBipCoachEvidence() {
   if (state.bipCoachRunning) {
-    await setBipCoachError("BIP Coach is already working.", "mac_sidecar_bip_coach_busy");
+    await setBipCoachError("공개 실행 코치가 이미 작업 중입니다.", "mac_sidecar_bip_coach_busy");
     return;
   }
   if (!isBipCoachConfigured(state.bipCoach)) {
     await setBipCoachError(
-      "BIP Coach needs one Google Docs URL and one Google Sheets URL in Settings > Build In Public.",
+      "공개 실행 코치에는 Google Docs 업무일지 1개와 Google Sheets 공개 기록 표 1개가 필요합니다.",
       "mac_sidecar_bip_coach_not_configured",
     );
     return;
@@ -2314,19 +3329,19 @@ async function readBipCoachEvidenceBundle({ onProgress } = {}) {
 
 async function generateBipCoachMission({ sessionId, provider, compact = false, curriculumDay = null } = {}) {
   if (state.bipCoachRunning) {
-    await setBipCoachError("BIP Coach is already working.", "mac_sidecar_bip_coach_busy");
+    await setBipCoachError("공개 실행 코치가 이미 작업 중입니다.", "mac_sidecar_bip_coach_busy");
     return;
   }
 
   const gate = currentBipSetupGate();
   if (!gate.ready) {
-    await startIddDocumentQueue({ gate, sessionId, provider });
+    await generateBasicBipCoachMission({ gate, sessionId, provider, compact, curriculumDay });
     return;
   }
 
   if (!isBipCoachConfigured(state.bipCoach)) {
     await setBipCoachError(
-      "BIP Coach needs one Google Docs URL and one Google Sheets URL in Settings > Build In Public.",
+      "공개 실행 코치에는 Google Docs 업무일지 1개와 Google Sheets 공개 기록 표 1개가 필요합니다.",
       "mac_sidecar_bip_coach_not_configured",
     );
     return;
@@ -2381,7 +3396,7 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
       }
 
       try {
-        emitMissionProgress("generating", "확인한 BIP 근거로 미션 후보를 생성하는 중", {
+        emitMissionProgress("generating", "확인한 공개 기록 근거로 실행 후보를 생성하는 중", {
           provider: candidate,
         });
         const missionChoices = await generateBipMissionChoicesFromEvidence({
@@ -2420,7 +3435,10 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
           coachSession.messages.push(makeMessage({
             role: "assistant",
             provider: candidate,
-            content: "BIP 데이터와 선택한 Day 커리큘럼을 기준으로 오늘 수행할 미션 후보 3개를 만들었어요. 하나를 고르면 바로 실행 코치 모드로 이어갈게요.",
+            content: buildMissionChoicesVisibleMessage(
+              missionChoices,
+              "공개 기록과 선택한 Day 커리큘럼을 기준으로 오늘 수행할 실행 후보 3개를 만들었어요.",
+            ),
             state: "final",
             bipMissionChoices: missionChoices,
           }));
@@ -2475,7 +3493,10 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
         coachSession.messages.push(makeMessage({
           role: "assistant",
           provider: coachSession.provider,
-          content: "Codex/Claude 생성 연결이 불안정해서, 방금 읽은 BIP 데이터와 선택한 Day 커리큘럼만으로 바로 실행 가능한 미션 후보 3개를 만들었어요. 하나를 고르면 실행 코치 모드로 이어갈게요.",
+          content: buildMissionChoicesVisibleMessage(
+            missionChoices,
+            "Codex/Claude 생성 연결이 불안정해서, 방금 읽은 공개 기록과 선택한 Day 커리큘럼만으로 바로 실행 가능한 후보 3개를 만들었어요.",
+          ),
           state: "final",
           bipMissionChoices: missionChoices,
           providerAuthActions: buildProviderAuthActionsForFailures(failures),
@@ -2505,6 +3526,119 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
       lastError: formatError(error),
     });
     await persistAndBroadcastBipCoach("mac_sidecar_bip_coach_generation_failed", {
+      error: formatError(error),
+    });
+    broadcast({
+      type: "bip_coach_error",
+      message: state.bipCoach.lastError,
+      bipCoach: state.bipCoach,
+    });
+  } finally {
+    state.bipCoachRunning = false;
+  }
+}
+
+async function generateBasicBipCoachMission({
+  gate = null,
+  sessionId = "",
+  provider = "",
+  compact = false,
+  curriculumDay = null,
+} = {}) {
+  state.bipCoachRunning = true;
+  broadcastBipSetupGateState(gate);
+  broadcast({ type: "bip_coach_generation_started", bipCoach: state.bipCoach });
+  const startedAt = Date.now();
+  const today = todayKey();
+
+  function emitMissionProgress(stage, detail, extra = {}) {
+    broadcast({
+      type: "bip_coach_generation_progress",
+      stage,
+      detail,
+      elapsedMs: Date.now() - startedAt,
+      ...extra,
+    });
+  }
+
+  try {
+    const coachSession = resolveBipCoachSession(sessionId);
+    await clearInitialIntakeIfNeeded(coachSession);
+    emitMissionProgress(
+      "generating",
+      "프로젝트 기준이 아직 비어 있어도 오늘 커리큘럼만으로 실행 후보를 먼저 만드는 중",
+      { provider: "local" },
+    );
+
+    const missingLocalDocs = (gate?.missingLocalDocs || []).map((doc) => doc.title || doc.type).filter(Boolean);
+    const missingExternal = (gate?.missingExternalRequirements || []).map((item) => item.title || item.id).filter(Boolean);
+    const missionChoices = buildFallbackBipMissionChoices({
+      state: state.bipCoach,
+      compact,
+      curriculumDay,
+      today,
+      provider: "local",
+    });
+    const now = new Date();
+    state.bipCoach = normalizeBipCoachState({
+      ...state.bipCoach,
+      updatedAt: now.toISOString(),
+      evidence: {
+        fullRead: true,
+        source: "partial_workspace",
+        provider: "local",
+        fallbackUsed: true,
+        summary: "프로젝트 문서나 Google 기록이 아직 준비되지 않아 선택한 Day 커리큘럼만으로 오늘 실행 후보를 만들었습니다.",
+        sheetTitle: "",
+        sheetTabName: "",
+        allRows: [],
+        recentRows: [],
+        sheetRowsRead: 0,
+        docTitle: "",
+        docText: "",
+        docExcerpt: "",
+        missingLocalDocs,
+        missingExternalRequirements: missingExternal,
+        elapsedMs: Date.now() - startedAt,
+        curriculumDay,
+      },
+      missionChoices,
+      currentMission: null,
+      lastError: null,
+    });
+
+    if (coachSession) {
+      coachSession.messages.push(makeMessage({
+        role: "assistant",
+        provider: provider === "claude" || provider === "codex" ? provider : coachSession.provider,
+        content: buildMissionChoicesVisibleMessage(
+          missionChoices,
+          "문서 준비가 아직 끝나지 않아도 오늘 실행은 바로 시작할 수 있어요. 선택한 Day 커리큘럼만으로 15분 안에 끝낼 후보 3개를 먼저 만들었어요.",
+        ),
+        state: "final",
+        bipMissionChoices: missionChoices,
+      }));
+      coachSession.status = "idle";
+      coachSession.error = null;
+      touch(coachSession);
+      await persistSessions();
+      broadcast({ type: "session_updated", session: coachSession });
+    }
+
+    await persistAndBroadcastBipCoach("mac_sidecar_bip_coach_basic_mission_generated", {
+      compact,
+      missing_local_docs: missingLocalDocs.length,
+      missing_external_requirements: missingExternal.length,
+      duration_ms: Date.now() - startedAt,
+    });
+    broadcast({ type: "bip_coach_generation_completed", bipCoach: state.bipCoach });
+  } catch (error) {
+    state.bipCoach = normalizeBipCoachState({
+      ...state.bipCoach,
+      updatedAt: new Date().toISOString(),
+      lastError: formatError(error),
+    });
+    await persistAndBroadcastBipCoach("mac_sidecar_bip_coach_basic_mission_failed", {
       error: formatError(error),
     });
     broadcast({
@@ -2645,6 +3779,42 @@ function buildSelectedMissionCoachMessage(mission, coachState) {
   return lines.join("\n");
 }
 
+function buildMissionChoicesVisibleMessage(missionChoices = [], prefix = "오늘 수행할 실행 후보 3개를 만들었어요.") {
+  const choices = Array.isArray(missionChoices) ? missionChoices : [];
+  const recommended = choices[0];
+  const lines = [
+    prefix,
+    "",
+    "추천 1개:",
+    recommended
+      ? `- ${recommended.title || "오늘 미션"}: ${recommended.mission || recommended.angle || "오늘 공개 실행을 15분 안에 끝냅니다."}`
+      : "- 오늘 공개 실행 후보를 하나 고르세요.",
+    recommended?.proofTarget ? `증거 목표: ${recommended.proofTarget}` : "",
+    "",
+    "후보 3개:",
+    ...choices.slice(0, 3).map((choice, index) =>
+      `${index + 1}. ${choice.title || "오늘 미션"} - proof target: ${choice.proofTarget || "Threads URL과 Sheet 오늘 행 기록"}`,
+    ),
+    "",
+    "다음 액션: 추천 1개를 선택하고 Threads URL + Sheet 기록으로 완료 처리하세요.",
+  ];
+  return lines.filter((line) => line !== "").join("\n");
+}
+
+function buildMissionCompletionVisibleMessage(coachState = {}) {
+  const mission = coachState.currentMission || {};
+  const nextProofTarget = mission.proofTarget
+    || "다음 공개 실행도 Threads URL과 Sheet 오늘 행 기록으로 증거를 남긴다.";
+  return [
+    `완료 확인: ${mission.title || "오늘 공개 실행"}을 완료 처리했습니다.`,
+    mission.threadsUrl ? `Threads: ${mission.threadsUrl}` : "",
+    mission.sheetRowNote ? `Sheet note: ${mission.sheetRowNote}` : "",
+    `현재 streak: ${coachState.streak?.current || 1}일`,
+    `다음 증거 목표: ${nextProofTarget}`,
+    "다음 액션: 오늘 반응 1개를 Sheet에 추가하고 내일 미션 후보를 다시 생성하세요.",
+  ].filter(Boolean).join("\n");
+}
+
 function normalizeListForChat(value) {
   return Array.isArray(value)
     ? value.map((item) => String(item || "").trim()).filter(Boolean)
@@ -2730,7 +3900,7 @@ async function runBipCoachProvider(provider, prompt, coachSession = null, {
 
 function buildBipCoachProviderSystemPrompt({ requireGwsToolRead }) {
   const lines = [
-    "You are generating structured missions for the Agentic30 BIP Coach card.",
+    "You are generating structured missions for the Agentic30 public execution card.",
     "Return only the requested JSON object in Korean.",
   ];
   if (requireGwsToolRead) {
@@ -2904,6 +4074,10 @@ async function completeCurrentBipCoachMission(payload) {
       streak_current: state.bipCoach.streak.current,
       streak_longest: state.bipCoach.streak.longest,
     });
+    await appendVisibleAssistantMessage(
+      payload.sessionId,
+      buildMissionCompletionVisibleMessage(state.bipCoach),
+    );
     broadcast({ type: "bip_coach_completion_completed", bipCoach: state.bipCoach });
   } catch (error) {
     await setBipCoachError(formatError(error), "mac_sidecar_bip_coach_completion_failed");
@@ -2983,6 +4157,59 @@ function resolveBipCoachSession(sessionId = "") {
     return state.sessions.get(currentSessionId);
   }
   return serializeSessions()[0] ?? null;
+}
+
+async function appendVisibleAssistantMessage(sessionId, content, extra = {}) {
+  const session = String(sessionId || "").trim()
+    ? state.sessions.get(String(sessionId).trim())
+    : null;
+  if (!session || !String(content || "").trim()) {
+    return null;
+  }
+  session.messages.push(makeMessage({
+    role: "assistant",
+    provider: session.provider,
+    content,
+    state: "final",
+    ...extra,
+  }));
+  session.status = "idle";
+  session.error = null;
+  touch(session);
+  await persistSessions();
+  broadcast({ type: "session_updated", session });
+  return session;
+}
+
+function buildStructuredInputConfirmation(response = {}) {
+  const selected = (response.responses || [])
+    .flatMap((entry) => entry.selectedOptions || [])
+    .map((item) => String(item || "").trim())
+    .find(Boolean)
+    || "선택한 항목";
+  const plan = buildStageAwareActionPlan({
+    prompt: selected,
+    selectedOption: selected,
+    forcedIntentMode: "builder",
+  });
+  const evidence = plan.evidence_refs.length
+    ? plan.evidence_refs.map(formatStructuredEvidenceRef).join(", ")
+    : "선택 내용과 현재 BIP 설정";
+  return [
+    `선택 확인: ${selected}`,
+    `Verdict: ${plan.verdict}.`,
+    `Evidence: ${evidence}`,
+    `다음 액션: ${plan.next_action}`,
+    `증거 목표: ${plan.proof_target}`,
+  ].join("\n");
+}
+
+function formatStructuredEvidenceRef(ref) {
+  const value = String(ref || "").trim();
+  if (/^docs\/ICP\.md$/i.test(value)) return "ICP 기준 문서";
+  if (/^docs\/GOAL\.md$/i.test(value)) return "GOAL 기준 문서";
+  if (/^docs\/SPEC\.md$/i.test(value)) return "SPEC 기준 문서";
+  return value;
 }
 
 function syncBipCoachSessionState({ preferredSessionId = "" } = {}) {
@@ -3072,7 +4299,7 @@ function resolveIddSessionSeed({ sessionId = "", provider = "" } = {}) {
 function findExistingIddSession(docType) {
   const marker = `[IDD:${docType}]`;
   return [...state.sessions.values()].find((session) =>
-    session.title?.includes(marker)
+    (session.runtime?.iddDocumentType === docType || session.title?.includes(marker))
     && (session.status === "running" || session.status === "awaiting_input" || session.status === "idle")
   ) || null;
 }
@@ -3131,15 +4358,16 @@ async function startIddDocumentQueue({
 
   const existing = findExistingIddSession(nextDoc.type);
   if (existing) {
+    const userFacingTitle = genericIddUserFacingTitle(nextDoc);
     broadcast({
       type: "bip_idd_session_ready",
       sessionId: existing.id,
       iddDocumentType: nextDoc.type,
-      iddDocumentTitle: nextDoc.title,
+      iddDocumentTitle: userFacingTitle,
       ...serializeBipSetupGate(resolvedGate),
     });
     await setBipCoachError(
-      `${message} 이미 열린 ${nextDoc.title} IDD 세션에서 먼저 문서를 완성해주세요.`,
+      `${message} 이미 열린 ${userFacingTitle} 정리 세션에서 먼저 기준을 완성해주세요.`,
       "mac_sidecar_bip_coach_idd_required",
     );
     return existing;
@@ -3147,7 +4375,12 @@ async function startIddDocumentQueue({
 
   const seed = resolveIddSessionSeed({ sessionId, provider });
   const session = createSession(seed);
-  session.title = `IDD: ${nextDoc.title} [IDD:${nextDoc.type}]`;
+  const userFacingTitle = genericIddUserFacingTitle(nextDoc);
+  session.title = `기준 정리: ${userFacingTitle}`;
+  session.runtime = {
+    ...(session.runtime || {}),
+    iddDocumentType: nextDoc.type,
+  };
   state.sessions.set(session.id, session);
   await persistSessions();
   await syncAndBroadcastBipCoachSessionState({ preferredSessionId: session.id });
@@ -3156,12 +4389,12 @@ async function startIddDocumentQueue({
     type: "bip_idd_session_ready",
     sessionId: session.id,
     iddDocumentType: nextDoc.type,
-    iddDocumentTitle: nextDoc.title,
+    iddDocumentTitle: userFacingTitle,
     ...serializeBipSetupGate(resolvedGate),
   });
 
   await setBipCoachError(
-    `${message} ${nextDoc.title} 문서부터 별도 IDD 세션을 시작했어요.`,
+    `${message} ${userFacingTitle}부터 별도 기준 정리 세션을 시작했어요.`,
     "mac_sidecar_bip_coach_idd_required",
   );
 
@@ -3177,6 +4410,10 @@ async function startIddDocumentQueue({
     phase: initialSelection.phase,
     decision_kind: initialSelection.decisionKind,
     doc_type: nextDoc.type,
+    vendor_used: Boolean(
+      initialSelection?.vendor?.claude?.exists
+        && initialSelection?.vendor?.codex?.exists,
+    ),
   });
   const prompt = buildIddDocumentPrompt(nextDoc, {
     provider: seed.provider,
@@ -3216,6 +4453,7 @@ async function startIddDocumentQueue({
       await runPrompt(session, prompt, {
         displayUserMessage: false,
         defaultTitle: session.title,
+        specialist: initialSelection,
       });
       const nextGate = currentBipSetupGate();
       broadcastBipSetupGateState(nextGate);
@@ -3240,14 +4478,46 @@ async function startIddDocumentQueue({
   return session;
 }
 
-async function runWorkspaceScan(scanRoot) {
+async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) {
   try {
     broadcastWorkspaceScanProgress(scanRoot, "Checking common doc filenames locally...");
     const localResult = await findWorkspaceDocsLocally(scanRoot);
+    await appendWorkspaceScanVisibleAnswer({
+      sessionId,
+      prompt,
+      scanRoot,
+      result: localResult,
+    });
     const localOnboardingHypothesis = await deriveWorkspaceOnboardingHypothesisLocally(scanRoot, {
       docPaths: localResult,
     });
     const localFoundCount = countWorkspaceScanResults(localResult);
+    if (isWorkspacePathLookupPrompt(prompt) && localFoundCount > 0) {
+      state.workspaceOnboardingHypothesis = localOnboardingHypothesis;
+      telemetry.captureEvent("mac_sidecar_workspace_scan_completed", {
+        scan_root: scanRoot,
+        found_count: localFoundCount,
+        onboarding_hypothesis_confidence: localOnboardingHypothesis.confidence,
+        claude_model: WORKSPACE_SCAN_CLAUDE_MODEL,
+        codex_model: WORKSPACE_SCAN_CODEX_MODEL,
+        agent_result_count: 0,
+        provider_verification_skipped: true,
+      });
+      broadcast({
+        type: "workspace_scan_result",
+        scanRoot,
+        icp: localResult.icp || null,
+        spec: localResult.spec || null,
+        values: localResult.values || null,
+        designSystem: localResult.designSystem || null,
+        adr: localResult.adr || null,
+        goal: localResult.goal || null,
+        docs: localResult.docs || null,
+        sheet: localResult.sheet || null,
+        onboardingHypothesis: localOnboardingHypothesis,
+      });
+      return;
+    }
     broadcastWorkspaceScanProgress(
       scanRoot,
       localFoundCount > 0
@@ -3309,6 +4579,39 @@ async function runWorkspaceScan(scanRoot) {
       error: formatError(error),
     });
   }
+}
+
+function isWorkspacePathLookupPrompt(prompt) {
+  const value = String(prompt || "");
+  const asksPath = /(어디|위치|경로|path|where|location|file|문서)/i.test(value);
+  const asksDeepScan = /(전체|모든|스캔|scan|search|inspect|검증|분석|review)/i.test(value);
+  return asksPath && !asksDeepScan;
+}
+
+async function appendWorkspaceScanVisibleAnswer({ sessionId = "", prompt = "", scanRoot = "", result = {} } = {}) {
+  if (!sessionId) return;
+  const wantsPath = /(어디|위치|경로|path|where|location|file|문서)/i.test(String(prompt || ""));
+  const found = [
+    ["ICP.md", result.icp],
+    ["VALUES.md", result.values],
+    ["GOAL.md", result.goal],
+    ["SPEC.md", result.spec],
+  ].filter(([, docPath]) => docPath);
+  if (!wantsPath && found.length === 0) return;
+
+  const lines = found.length
+    ? [
+        "로컬 workspace에서 바로 찾은 문서 경로입니다.",
+        ...found.map(([label, docPath]) => `- ${label}: ${docPath}`),
+        "ICP 기준 요약: 전업 1인 개발자, 수익 0원, macOS에서 Codex를 쓰고 고객 인터뷰 의향이 있으면 Agentic30 조건에 맞습니다.",
+        "Day 1 판단 기준: 이 ICP와 SPEC proof target을 기준으로 오늘 고객 행동 1개를 정합니다.",
+        "다음 액션: 이 경로들을 BIP 설정에 반영하고 Day 1 판단은 이 문서 기준으로 이어가면 됩니다.",
+      ]
+    : [
+        "로컬 workspace에서 ICP/VALUES/GOAL/SPEC 문서를 아직 찾지 못했습니다.",
+        "다음 액션: `docs/ICP.md` 하나부터 만들고 Day 1 판단 기준을 적으세요.",
+      ];
+  await appendVisibleAssistantMessage(sessionId, lines.join("\n"));
 }
 
 async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
@@ -3900,11 +5203,22 @@ function resolveInstalledPackageRoot(...segments) {
   return path.resolve(sidecarRoot, "..", "node_modules", ...segments);
 }
 
-function buildMcpConfig(sessionId) {
+function buildMcpConfig(
+  sessionId,
+  {
+    executionMode = "",
+    approvedToolExecution = false,
+  } = {},
+) {
   return {
     command: process.execPath,
     args: [path.join(sidecarRoot, "mcp-server.mjs"), "--session", sessionId, "--workspace", workspaceRoot],
-    env: buildAuthEnv(),
+    env: {
+      ...buildAuthEnv(),
+      AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_EXECUTION_MODE: executionMode,
+      AGENTIC30_APPROVED_TOOL_EXECUTION: approvedToolExecution ? "1" : "0",
+    },
   };
 }
 
@@ -4076,7 +5390,7 @@ function buildSidecarDiagnostics(
   environment = getEnvironmentSummary(),
   preflight = buildSidecarPreflight(environment),
 ) {
-  return buildDiagnosticsSnapshot({
+  const snapshot = buildDiagnosticsSnapshot({
     appSupportPath,
     workspaceRoot,
     environment,
@@ -4084,7 +5398,10 @@ function buildSidecarDiagnostics(
     sessions: serializeSessions(),
     activeRuns: state.activeRuns,
     sessionStoreSchemaVersion: SESSION_STORE_SCHEMA_VERSION,
+    sessionStoreWarnings: state.sessionStoreWarnings,
   });
+  snapshot.gstackVendor = describeGstackVendor();
+  return snapshot;
 }
 
 function getAcpAdapterState() {
@@ -4126,7 +5443,9 @@ function baseSystemPrompt(provider) {
     `Current workspace: ${workspaceRoot}`,
     `Provider mode: ${provider}`,
     "Use the agentic30 MCP server when you need app context or safe workspace inspection.",
-    "When you need the user's input, call the request_user_input MCP tool instead of asking in plain text.",
+    provider === "codex"
+      ? `When you need the user's input, call the ${CODEX_STRUCTURED_INPUT_TOOL} MCP tool instead of asking in plain text.`
+      : "When you need the user's input, call the AskUserQuestion tool instead of asking in plain text.",
     "Use 1-2 focused questions at a time, keep choices concrete, and enable free text only when necessary.",
   ];
 
@@ -4197,14 +5516,73 @@ function setAssistantText(session, messageId, content) {
   if (!message) {
     return;
   }
-  message.content = content;
+
+  // Wire-level inline_decision extraction. Provider SDKs (Anthropic agent,
+  // OpenAI codex) do not expose a metadata side-channel for arbitrary JSON,
+  // so we ride the text channel: LLMs follow INLINE_DECISION_CONTRACT and
+  // emit a sentinel block somewhere in their response. We strip it here so
+  // the user only sees the visible body, and attach the parsed payload to
+  // `message.inlineDecision` so the SwiftUI client renders a Decision Card
+  // Stack inline below the bubble.
+  //
+  // We only attempt extraction when BOTH delimiters are present in the
+  // current text snapshot. While streaming, the start delimiter may arrive
+  // before the end; in that interim window the user briefly sees the raw
+  // start tag, then the next chunk closes the block and we collapse it.
+  // Once extraction succeeds the result is cached on `message.inlineDecision`
+  // and won't be reparsed on subsequent setAssistantText calls.
+  let resolvedContent = content;
+  let extractedDecision = null;
+  if (
+    typeof content === "string"
+    && content.includes(INLINE_DECISION_SENTINEL_START)
+    && content.includes(INLINE_DECISION_SENTINEL_END)
+    && !message.inlineDecision
+  ) {
+    const extracted = extractInlineDecision(content);
+    if (extracted.decision) {
+      resolvedContent = extracted.text;
+      // Mutual exclusion (P1 from codex review): if a form-style intake is
+      // active on this session, drop the inline decision but keep the text
+      // cleaned of the sentinel so the user doesn't see raw delimiters.
+      if (session.pendingUserInput) {
+        console.warn(
+          "[inline-decision] dropped at finalize: session.pendingUserInput is active",
+        );
+      } else {
+        extractedDecision = extracted.decision;
+      }
+    }
+  }
+  if (
+    typeof resolvedContent === "string"
+    && !extractedDecision
+    && !message.inlineDecision
+    && !session.pendingUserInput
+  ) {
+    const inferred = inferInlineDecisionFromPlainText(resolvedContent);
+    if (inferred.decision) {
+      resolvedContent = inferred.text;
+      extractedDecision = inferred.decision;
+    }
+  }
+
+  message.content = resolvedContent;
+  if (extractedDecision) {
+    message.inlineDecision = extractedDecision;
+  }
   touch(session);
   broadcast({
     type: "message_replaced",
     sessionId: session.id,
     messageId,
-    content,
+    content: resolvedContent,
   });
+  // message_replaced only carries content; the SwiftUI client needs a full
+  // session refresh to pick up the new `inlineDecision` field on the message.
+  if (extractedDecision) {
+    broadcast({ type: "session_updated", session });
+  }
 }
 
 async function stopSession(sessionId) {
@@ -4239,14 +5617,6 @@ function createSession(payload) {
 
 async function attachBootstrapIntake(session) {
   session.title = session.provider === "claude" ? "Claude Assistant" : "Codex Assistant";
-  session.messages.push(
-    makeMessage({
-      role: "assistant",
-      provider: session.provider,
-      content: "무엇부터 시작할까요? 아래에서 고르거나 직접 입력하세요.",
-      state: "final",
-    }),
-  );
   session.pendingUserInput = await createUserInputRequest(appSupportPath, {
     sessionId: session.id,
     toolName: "initial_intake",
@@ -4274,9 +5644,9 @@ function buildBootstrapQuestions() {
             "핵심 가정과 진입 전략을 공격적으로 점검해 방향을 좁힙니다.",
         },
         {
-          label: "BIP 초안 작성하기",
+          label: "공개 글 초안 작성하기",
           description:
-            "Build In Public 맥락을 불러와 게시글이나 개발 로그 초안을 다듬습니다.",
+            "공개 실행 맥락을 불러와 게시글이나 개발 로그 초안을 다듬습니다.",
         },
         {
           label: "워크스페이스 살펴보기",
@@ -4297,12 +5667,46 @@ function makeMessage({
   state,
   bipMissionChoices = null,
   providerAuthActions = null,
+  inlineDecision = null,
+  session = null,
 }) {
+  // Auto-extract inline_decision sentinel from text content. LLMs emit the
+  // payload via the wire contract defined in inline-decision.mjs. Explicit
+  // `inlineDecision` arg takes precedence (system messages bypass the wire
+  // and pass the structured payload directly, e.g. bootstrap intake).
+  let resolvedContent = content;
+  let resolvedDecision = inlineDecision;
+  if (resolvedDecision == null && typeof resolvedContent === "string") {
+    const extracted = extractInlineDecision(resolvedContent);
+    if (extracted.decision) {
+      resolvedDecision = extracted.decision;
+      resolvedContent = extracted.text;
+    } else {
+      const inferred = inferInlineDecisionFromPlainText(resolvedContent);
+      if (inferred.decision) {
+        resolvedDecision = inferred.decision;
+        resolvedContent = inferred.text;
+      }
+    }
+  }
+
+  // Mutual exclusion enforcement (P1 from plan-eng-review codex pass).
+  // When a form-style intake is active on the session, drop any inline
+  // decision payload to keep the two channels disjoint. The user only
+  // sees one decision UI per turn. Sentinel block already stripped above
+  // so the user never sees the raw JSON either way.
+  if (session?.pendingUserInput && resolvedDecision != null) {
+    console.warn(
+      "[inline-decision] dropped: session.pendingUserInput is active",
+    );
+    resolvedDecision = null;
+  }
+
   const message = {
     id: randomUUID(),
     role,
     provider,
-    content,
+    content: resolvedContent,
     state,
     createdAt: new Date().toISOString(),
     error: null,
@@ -4313,6 +5717,10 @@ function makeMessage({
   }
   if (Array.isArray(providerAuthActions) && providerAuthActions.length) {
     message.providerAuthActions = providerAuthActions;
+  }
+  const validatedDecision = validateInlineDecision(resolvedDecision);
+  if (validatedDecision) {
+    message.inlineDecision = validatedDecision;
   }
   return message;
 }
@@ -4520,7 +5928,17 @@ async function loadSessions() {
     return;
   }
 
-  const sessions = await loadSessionsFromFile(sessionsFilePath);
+  const sessions = await loadSessionsFromFile(sessionsFilePath, {
+    onRecoverableError: (warning) => {
+      state.sessionStoreWarnings.push({
+        ...warning,
+        occurredAt: new Date().toISOString(),
+      });
+      if (state.sessionStoreWarnings.length > 5) {
+        state.sessionStoreWarnings = state.sessionStoreWarnings.slice(-5);
+      }
+    },
+  });
   for (const session of sessions) {
     state.sessions.set(session.id, session);
   }
@@ -4563,6 +5981,62 @@ function broadcast(payload) {
       client.send(message);
     }
   }
+}
+
+/**
+ * Sub-AC 2.3 IPC down-channel: typed Foundation Phase chat lifecycle event.
+ *
+ * Single message envelope shared across the Day 0-7 unified channel — the
+ * Swift host decodes this into a `SidecarEvent.foundation` payload to drive
+ * Day badges, evidence chips, and KR4.1/4.2 telemetry without re-parsing
+ * untyped `agent_event` blobs.
+ *
+ * Emitted phases (stable enum):
+ *   - "started"        : runUnifiedFoundationChat accepted the prompt
+ *   - "context_built"  : foundation system context composed (post resolveFoundationContext)
+ *   - "streaming"      : provider call begun, deltas about to flow
+ *   - "completed"      : final assistant message + evidence sidecar written
+ *   - "aborted"        : user/abort-controller cancelled mid-stream
+ *   - "rejected"       : pre-flight gate failed (empty prompt / invalid day)
+ *   - "error"          : provider/run failure (`error` field carries reason)
+ *
+ * All numeric fields default to `null` when not yet known so the Swift
+ * decoder stays total.
+ */
+function emitFoundationChatEvent({
+  sessionId = null,
+  messageId = null,
+  day = null,
+  phase,
+  subWorkflow = null,
+  specVersion = null,
+  evidenceRefCount = null,
+  missingInputCount = null,
+  overallConfidence = null,
+  evidenceSidecarPath = null,
+  elapsedMs = null,
+  reason = null,
+  transport = "foundation_chat",
+  error = null,
+} = {}) {
+  if (!phase) return;
+  broadcast({
+    type: "foundation_chat_event",
+    sessionId,
+    messageId,
+    day,
+    phase,
+    subWorkflow,
+    specVersion,
+    evidenceRefCount,
+    missingInputCount,
+    overallConfidence,
+    evidenceSidecarPath,
+    elapsedMs,
+    reason,
+    transport,
+    error,
+  });
 }
 
 function formatError(error) {
@@ -5069,7 +6543,7 @@ async function handleBipReadinessAction(request) {
       emitRow(
         rowId,
         "done",
-        `${result.name || title} 복사 완료 · 내 Google Drive · BIP Coach에 연결됨`,
+        `${result.name || title} 복사 완료 · 내 Google Drive · 공개 실행 코치에 연결됨`,
         undefined,
         {
           resourceName: result.name || title,

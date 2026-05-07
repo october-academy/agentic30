@@ -19,6 +19,7 @@ test("bootstrap free-text submission starts a provider stream", async () => {
     env: {
       ...process.env,
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_TEST_STUB_PROVIDER: "1",
       AGENTIC30_CODEX_MODEL: "gpt-5.4-mini",
     },
@@ -28,16 +29,19 @@ test("bootstrap free-text submission starts a provider stream", async () => {
   child.stderr.on("data", (chunk) => {
     stderr += String(chunk);
   });
+  let ws;
 
   try {
     const ready = await readSidecarReady(child);
-    const ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
+    ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
     const events = [];
     ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
     await onceOpen(ws);
 
     ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.4-mini" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
+    assert.equal(created.session.messages.length, 0);
+    assert.equal(created.session.pendingUserInput?.title, "시작하기");
     const sessionId = created.session.id;
     ws.send(JSON.stringify({
       type: "submit_user_input",
@@ -76,9 +80,11 @@ test("bootstrap free-text submission starts a provider stream", async () => {
       event.type === "agent_event"
       && event.event?.eventType === "run.completed"
     ));
-    ws.close();
+    await closeWebSocket(ws);
+    ws = null;
   } finally {
-    child.kill("SIGTERM");
+    await closeWebSocket(ws);
+    await terminateChild(child);
     await fs.rm(root, { recursive: true, force: true });
     await fs.rm(appSupportPath, { recursive: true, force: true });
   }
@@ -96,6 +102,7 @@ test("Day 1 cached ICP coaching uses instant_chat and completes under 1s without
     env: {
       ...process.env,
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_CODEX_MODEL: "gpt-5.4-mini",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -104,10 +111,11 @@ test("Day 1 cached ICP coaching uses instant_chat and completes under 1s without
   child.stderr.on("data", (chunk) => {
     stderr += String(chunk);
   });
+  let ws;
 
   try {
     const ready = await readSidecarReady(child);
-    const ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
+    ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
     const events = [];
     ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
     await onceOpen(ws);
@@ -148,9 +156,11 @@ test("Day 1 cached ICP coaching uses instant_chat and completes under 1s without
       false,
       "instant_chat must not start the SDK provider path",
     );
-    ws.close();
+    await closeWebSocket(ws);
+    ws = null;
   } finally {
-    child.kill("SIGTERM");
+    await closeWebSocket(ws);
+    await terminateChild(child);
     await fs.rm(root, { recursive: true, force: true });
     await fs.rm(appSupportPath, { recursive: true, force: true });
   }
@@ -158,7 +168,7 @@ test("Day 1 cached ICP coaching uses instant_chat and completes under 1s without
   assert.equal(stderr.trim(), "");
 });
 
-test("memory chat answers configured ICP location from BIP manifest", async () => {
+test("configured doc path questions answer immediately from BIP manifest", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-memory-icp-workspace-"));
   const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-memory-icp-app-"));
   await writeDay1Fixture(root, appSupportPath);
@@ -168,6 +178,7 @@ test("memory chat answers configured ICP location from BIP manifest", async () =
     env: {
       ...process.env,
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_TEST_STUB_PROVIDER: "1",
       AGENTIC30_CODEX_MODEL: "gpt-5.4-mini",
     },
@@ -177,10 +188,11 @@ test("memory chat answers configured ICP location from BIP manifest", async () =
   child.stderr.on("data", (chunk) => {
     stderr += String(chunk);
   });
+  let ws;
 
   try {
     const ready = await readSidecarReady(child);
-    const ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
+    ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
     const events = [];
     ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
     await onceOpen(ws);
@@ -220,15 +232,17 @@ test("memory chat answers configured ICP location from BIP manifest", async () =
     assert.match(answer.content, /docs\/ICP\.md/);
     assert.ok(answer.performance?.marks?.some((mark) =>
       mark.phase === "route.classified"
-      && mark.details?.executionMode === "memory_chat"
+      && mark.details?.executionMode === "instant_chat"
+      && mark.details?.reason === "configured_doc_path_lookup"
     ));
     assert.ok(answer.performance?.marks?.some((mark) =>
-      mark.phase === "context.built"
-      && mark.details?.contextAddedChars > 0
+      mark.phase === "instant.response_ready"
     ));
-    ws.close();
+    await closeWebSocket(ws);
+    ws = null;
   } finally {
-    child.kill("SIGTERM");
+    await closeWebSocket(ws);
+    await terminateChild(child);
     await fs.rm(root, { recursive: true, force: true });
     await fs.rm(appSupportPath, { recursive: true, force: true });
   }
@@ -246,6 +260,7 @@ test("structured IDD continuation prompt uses agentic route for Codex MCP tools"
     env: {
       ...process.env,
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_TEST_STUB_PROVIDER: "1",
       AGENTIC30_CODEX_MODEL: "gpt-5.4-mini",
     },
@@ -255,10 +270,11 @@ test("structured IDD continuation prompt uses agentic route for Codex MCP tools"
   child.stderr.on("data", (chunk) => {
     stderr += String(chunk);
   });
+  let ws;
 
   try {
     const ready = await readSidecarReady(child);
-    const ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
+    ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
     const events = [];
     ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
     await onceOpen(ws);
@@ -268,8 +284,8 @@ test("structured IDD continuation prompt uses agentic route for Codex MCP tools"
     const sessionId = created.session.id;
     const structuredPrompt = [
       "IDD 문서 인터뷰를 시작합니다: ICP",
-      "사용자가 host UI의 request_user_input 카드에서 첫 ICP 신호 질문에 답했습니다.",
-      "추가 결정이나 누락 정보가 필요하면 반드시 request_user_input 도구로 한 질문씩 이어가세요.",
+      "사용자가 host UI의 구조화 입력 카드에서 첫 ICP 신호 질문에 답했습니다.",
+      "추가 결정이나 누락 정보가 필요하면 반드시 agentic30_request_user_input MCP 도구로 한 질문씩 이어가세요.",
     ].join("\n");
 
     ws.send(JSON.stringify({
@@ -302,9 +318,168 @@ test("structured IDD continuation prompt uses agentic route for Codex MCP tools"
       mark.phase === "provider.entry"
       && mark.details?.executionMode === "agentic"
     ));
-    ws.close();
+    await closeWebSocket(ws);
+    ws = null;
   } finally {
-    child.kill("SIGTERM");
+    await closeWebSocket(ws);
+    await terminateChild(child);
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
+
+  assert.equal(stderr.trim(), "");
+});
+
+test("Codex IDD queue starts non-ICP docs with host-side structured input and no provider fallback", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-sheet-idd-host-input-workspace-"));
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-sheet-idd-host-input-app-"));
+  await writeDay1Fixture(root, appSupportPath);
+
+  const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", root], {
+    cwd: packageRoot,
+    env: {
+      ...process.env,
+      AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
+      AGENTIC30_TEST_STUB_PROVIDER: "1",
+      AGENTIC30_CODEX_MODEL: "gpt-5.4-mini",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  let ws;
+
+  try {
+    const ready = await readSidecarReady(child);
+    ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
+    const events = [];
+    ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
+    await onceOpen(ws);
+
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.4-mini" }));
+    const created = await waitForEvent(events, (event) => event.type === "session_created");
+
+    ws.send(JSON.stringify({
+      type: "bip_idd_start_queue",
+      sessionId: created.session.id,
+      provider: "codex",
+      docType: "sheet",
+    }));
+
+    const iddCreated = await waitForEvent(events, (event) =>
+      event.type === "session_created"
+      && event.session?.title === "기준 정리: 공개 기록 기준"
+    );
+    const iddReady = await waitForEvent(events, (event) =>
+      event.type === "session_updated"
+      && event.session?.id === iddCreated.session.id
+      && event.session?.status === "awaiting_input"
+      && event.session?.pendingUserInput?.toolName === "agentic30_request_user_input"
+    );
+
+    assert.equal(iddReady.session.status, "awaiting_input");
+    assert.equal(iddReady.session.pendingUserInput?.toolName, "agentic30_request_user_input");
+    assert.equal(iddReady.session.pendingUserInput?.title, "공개 기록 기준 정하기");
+    assert.equal(iddReady.session.runtime?.iddDocumentType, "sheet");
+    assert.equal(iddReady.session.messages.length, 0);
+    assert.ok(iddReady.session.runtime?.pendingIddContinuation?.prompt);
+    assert.doesNotMatch(
+      JSON.stringify(iddReady.session),
+      /structured input unavailable/,
+    );
+    assert.equal(
+      events.some((event) =>
+        event.type === "tool_event"
+        && event.payload?.phase === "provider.stub_response"
+      ),
+      false,
+    );
+    await closeWebSocket(ws);
+    ws = null;
+  } finally {
+    await closeWebSocket(ws);
+    await terminateChild(child);
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
+
+  assert.equal(stderr.trim(), "");
+});
+
+test("BIP setup auto-start returns local mission choices before docs are fully ready", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-basic-mission-workspace-"));
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-basic-mission-app-"));
+  await writeDay1Fixture(root, appSupportPath);
+
+  const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", root], {
+    cwd: packageRoot,
+    env: {
+      ...process.env,
+      AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
+      AGENTIC30_TEST_STUB_PROVIDER: "1",
+      AGENTIC30_CODEX_MODEL: "gpt-5.4-mini",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  let ws;
+
+  try {
+    const ready = await readSidecarReady(child);
+    ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
+    const events = [];
+    ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
+    await onceOpen(ws);
+
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.4-mini" }));
+    const created = await waitForEvent(events, (event) => event.type === "session_created");
+
+    ws.send(JSON.stringify({
+      type: "bip_setup_gate_check",
+      sessionId: created.session.id,
+      provider: "codex",
+      autoStart: true,
+      curriculumDay: {
+        day: 1,
+        title: "팔릴 문제부터 찾는다",
+        tasks: ["Revenue Readiness Audit로 현재 프로젝트 진단"],
+        output: "Track 판정, ICP v0, 첫 CTA, journey brief",
+      },
+    }));
+
+    const completed = await waitForEvent(events, (event) =>
+      event.type === "bip_coach_generation_completed"
+      && event.bipCoach?.missionChoices?.length === 3
+      && event.bipCoach?.evidence?.source === "partial_workspace"
+    );
+
+    assert.equal(completed.bipCoach.missionChoices.length, 3);
+    assert.equal(completed.bipCoach.evidence.source, "partial_workspace");
+    assert.match(completed.bipCoach.evidence.summary, /오늘 실행 후보/);
+    assert.equal(events.some((event) => event.type === "bip_idd_session_ready"), false);
+    assert.equal(events.some((event) =>
+      event.type === "session_created"
+      && event.session?.title?.startsWith("기준 정리:")
+    ), false);
+
+    const updated = await waitForEvent(events, (event) =>
+      event.type === "session_updated"
+      && event.session?.id === created.session.id
+      && event.session?.messages?.some((message) => message.bipMissionChoices?.length === 3)
+    );
+    assert.match(latestAssistantMessage(updated.session).content, /문서 준비가 아직 끝나지 않아도 오늘 실행/);
+    await closeWebSocket(ws);
+    ws = null;
+  } finally {
+    await closeWebSocket(ws);
+    await terminateChild(child);
     await fs.rm(root, { recursive: true, force: true });
     await fs.rm(appSupportPath, { recursive: true, force: true });
   }
@@ -351,6 +526,7 @@ test("Day 1 ICP sidecar timing instrumentation records a five-turn local convers
     env: {
       ...process.env,
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_TEST_STUB_PROVIDER: "1",
       AGENTIC30_CODEX_MODEL: "gpt-5.4-mini",
     },
@@ -360,10 +536,11 @@ test("Day 1 ICP sidecar timing instrumentation records a five-turn local convers
   child.stderr.on("data", (chunk) => {
     stderr += String(chunk);
   });
+  let ws;
 
   try {
     const ready = await readSidecarReady(child);
-    const ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
+    ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
     const events = [];
     ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
     await onceOpen(ws);
@@ -423,9 +600,11 @@ test("Day 1 ICP sidecar timing instrumentation records a five-turn local convers
 
     assert.equal(timings.length, 5);
     assert.ok(timings.every((elapsed) => elapsed < 10_000), `Expected all stub turns under 10s, got ${timings.join(", ")}`);
-    ws.close();
+    await closeWebSocket(ws);
+    ws = null;
   } finally {
-    child.kill("SIGTERM");
+    await closeWebSocket(ws);
+    await terminateChild(child);
     await fs.rm(root, { recursive: true, force: true });
     await fs.rm(appSupportPath, { recursive: true, force: true });
   }
@@ -448,6 +627,7 @@ test("Day 1 ICP user completes a five-turn live Codex SDK conversation", {
     env: {
       ...process.env,
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_CODEX_MODEL: process.env.AGENTIC30_CODEX_MODEL || "gpt-5.4-mini",
       AGENTIC30_CODEX_REASONING_EFFORT: process.env.AGENTIC30_CODEX_REASONING_EFFORT || "low",
     },
@@ -457,10 +637,11 @@ test("Day 1 ICP user completes a five-turn live Codex SDK conversation", {
   child.stderr.on("data", (chunk) => {
     stderr += String(chunk);
   });
+  let ws;
 
   try {
     const ready = await readSidecarReady(child);
-    const ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
+    ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
     const events = [];
     ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
     await onceOpen(ws);
@@ -514,9 +695,11 @@ test("Day 1 ICP user completes a five-turn live Codex SDK conversation", {
 
     console.log(JSON.stringify({ type: "live_day1_icp_timings", timings }, null, 2));
     assert.equal(timings.length, 5);
-    ws.close();
+    await closeWebSocket(ws);
+    ws = null;
   } finally {
-    child.kill("SIGTERM");
+    await closeWebSocket(ws);
+    await terminateChild(child);
     await fs.rm(root, { recursive: true, force: true });
     await fs.rm(appSupportPath, { recursive: true, force: true });
   }
@@ -602,7 +785,49 @@ function onceOpen(ws) {
   });
 }
 
-async function waitForEvent(events, predicate, timeoutMs = 60_000) {
+async function closeWebSocket(ws) {
+  if (!ws || ws.readyState === WebSocket.CLOSED) {
+    return;
+  }
+  if (ws.readyState === WebSocket.CONNECTING) {
+    ws.terminate();
+    return;
+  }
+  await new Promise((resolve) => {
+    const timeout = setTimeout(resolve, 1_000);
+    ws.once("close", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    ws.close();
+  });
+}
+
+async function terminateChild(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+  await new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {}
+      resolve();
+    }, 2_000);
+    child.once("exit", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      clearTimeout(timeout);
+      resolve();
+    }
+  });
+}
+
+async function waitForEvent(events, predicate, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const match = events.find(predicate);

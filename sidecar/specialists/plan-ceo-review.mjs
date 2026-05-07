@@ -23,7 +23,7 @@ export function buildPrompt({ doc = null, observations = "", lastAnswer = "" } =
     "3. Scope — 지금 범위는 너무 작거나 너무 크다. 어느 쪽이고 왜 그런가?",
     "4. Narrowest useful version — 이번 주에 한 명이 실제로 쓰면 가치가 나는 가장 작은 버전은?",
     "",
-    "AskUserQuestion/request_user_input 작성 규칙:",
+    "구조화 입력 도구 작성 규칙:",
     "- options는 반드시 [최소안, 이상안, 다른 관점]을 모두 포함하고 추천안 하나를 (recommended)로 표시한다.",
     "- 각 option description은 ① 실행 모습, ② 잘못 골랐을 때 깨지는 것, ③ 측정 가능한 결과 중 하나를 한 줄로 보여준다.",
     "- 의견을 단호하게 적되 사용자가 반대할 여지를 남긴다.",

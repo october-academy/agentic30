@@ -66,6 +66,12 @@ test("normalizes legacy session payloads on startup", () => {
             error: "replaceAssistantText is not defined",
             content: "Starting Office Hours doc interview...\n\n",
           },
+          {
+            id: "message-6",
+            role: "assistant",
+            state: "final",
+            content: "structured input unavailable",
+          },
         ],
       },
     ],
@@ -209,4 +215,33 @@ test("persists sessions with a schema version and timestamp", async () => {
 
   const loaded = await loadSessionsFromFile(filePath);
   assert.equal(loaded[0].id, "session-1");
+
+  const mode = (await fs.stat(filePath)).mode & 0o777;
+  assert.equal(mode, 0o600);
+});
+
+test("missing session store is the only silent empty state", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-sessions-missing-"));
+  const loaded = await loadSessionsFromFile(path.join(dir, "sessions.json"));
+
+  assert.deepEqual(loaded, []);
+});
+
+test("corrupt session store is quarantined and reported", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-sessions-corrupt-"));
+  const filePath = path.join(dir, "sessions.json");
+  await fs.writeFile(filePath, "{not json", { mode: 0o600 });
+  const warnings = [];
+
+  const loaded = await loadSessionsFromFile(filePath, {
+    now: () => new Date("2026-04-30T01:02:03.000Z"),
+    onRecoverableError: (warning) => warnings.push(warning),
+  });
+
+  assert.deepEqual(loaded, []);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].type, "session_store_corrupt");
+  assert.match(warnings[0].quarantinePath, /sessions\.json\.corrupt-2026-04-30T01-02-03-000Z$/);
+  await assert.rejects(() => fs.stat(filePath), /ENOENT/);
+  assert.equal(await fs.readFile(warnings[0].quarantinePath, "utf8"), "{not json");
 });

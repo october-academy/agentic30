@@ -437,7 +437,13 @@ enum KeychainHelper {
     // MARK: - Config File Sync
 
     private static var appSupportURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
+        if let override = ProcessInfo.processInfo.environment["AGENTIC30_APP_SUPPORT_PATH"] {
+            let trimmed = override.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return URL(fileURLWithPath: trimmed, isDirectory: true)
+            }
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/agentic30")
     }
 

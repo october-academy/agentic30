@@ -184,12 +184,14 @@ test("selectSpecialistId in build phase falls back to design-review without othe
   );
 });
 
-test("buildSpecialistInjection embeds id, phase, decision and prompt body", () => {
+const NO_VENDOR = { claude: { exists: false }, codex: { exists: false } };
+
+test("buildSpecialistInjection embeds id, phase, decision and prompt body (fallback path)", () => {
   const selection = selectSpecialist({
     bipSetupGate: planningGate,
     doc: { type: "icp", title: "ICP" },
   });
-  const injection = buildSpecialistInjection(selection);
+  const injection = buildSpecialistInjection({ ...selection, vendor: NO_VENDOR });
   assert.match(injection, /Auto-routed specialist: Office Hours \(YC\) \(office-hours\)/);
   assert.match(injection, /Phase: planning/);
   assert.match(injection, /Decision: customer/);
@@ -197,8 +199,41 @@ test("buildSpecialistInjection embeds id, phase, decision and prompt body", () =
   assert.match(injection, /사용자에게 specialist 이름을 알리지 마세요/);
 });
 
-test("buildSpecialistInjection returns empty string for null selection", () => {
-  assert.equal(buildSpecialistInjection(null), "");
+test("buildSpecialistInjection always includes inline decision contract", () => {
+  const selection = selectSpecialist({
+    bipSetupGate: planningGate,
+    doc: { type: "icp", title: "ICP" },
+  });
+  const injection = buildSpecialistInjection(selection);
+  // INLINE_DECISION_CONTRACT is always injected so LLMs emit inline_decision
+  // payloads instead of plain-text numbered lists.
+  assert.match(injection, /Inline decision contract/);
+  // Vendor-aware specialist routing block is only injected on the fallback path.
+  if (selection.vendor.claude.exists && selection.vendor.codex.exists) {
+    assert.doesNotMatch(injection, /Auto-routed specialist/);
+  } else {
+    assert.match(injection, /Auto-routed specialist/);
+  }
+});
+
+test("selectSpecialist returns selection with vendor field for both providers", () => {
+  const selection = selectSpecialist({
+    bipSetupGate: planningGate,
+    doc: { type: "icp", title: "ICP" },
+  });
+  assert.ok(selection.vendor);
+  assert.ok(typeof selection.vendor.claude === "object");
+  assert.ok(typeof selection.vendor.codex === "object");
+  assert.equal(typeof selection.vendor.claude.exists, "boolean");
+  assert.equal(typeof selection.vendor.codex.exists, "boolean");
+});
+
+test("buildSpecialistInjection returns the inline decision contract for null selection", () => {
+  // Even without a routed specialist, the inline_decision contract is still
+  // injected so LLMs never fall back to plain-text numbered lists.
+  const result = buildSpecialistInjection(null);
+  assert.match(result, /Inline decision contract/);
+  assert.doesNotMatch(result, /Auto-routed specialist/);
 });
 
 test("listSpecialistsByPhase only returns matching specialists", () => {
@@ -244,7 +279,7 @@ test("buildIddDocumentPrompt without specialistInjection keeps legacy gstack ben
   assert.doesNotMatch(prompt, /Auto-routed specialist 모드/);
 });
 
-test("buildIddDocumentPrompt with specialistInjection swaps in the routed specialist block", () => {
+test("buildIddDocumentPrompt with specialistInjection swaps in the routed specialist block (fallback path)", () => {
   const selection = selectSpecialist({
     bipSetupGate: planningGate,
     doc: { type: "icp", title: "ICP" },
@@ -254,7 +289,7 @@ test("buildIddDocumentPrompt with specialistInjection swaps in the routed specia
     {
       provider: "claude",
       workspaceRoot: "/tmp",
-      specialistInjection: buildSpecialistInjection(selection),
+      specialistInjection: buildSpecialistInjection({ ...selection, vendor: NO_VENDOR }),
     },
   );
   assert.match(prompt, /Auto-routed specialist: Office Hours \(YC\)/);
@@ -262,7 +297,7 @@ test("buildIddDocumentPrompt with specialistInjection swaps in the routed specia
   assert.doesNotMatch(prompt, /gstack office-hours 벤치마크/);
 });
 
-test("buildIddContinuationPrompt with specialistInjection replaces the four inline gstack tactic lines", () => {
+test("buildIddContinuationPrompt with specialistInjection replaces the four inline gstack tactic lines (fallback path)", () => {
   const selection = selectSpecialist({
     bipSetupGate: buildGate,
     doc: { type: "designSystem", title: "Design System" },
@@ -270,7 +305,7 @@ test("buildIddContinuationPrompt with specialistInjection replaces the four inli
   const prompt = buildIddContinuationPrompt({
     iddPrompt: "ORIGINAL_IDD_PROMPT",
     structuredResponseText: "사용자 답변",
-    specialistInjection: buildSpecialistInjection(selection),
+    specialistInjection: buildSpecialistInjection({ ...selection, vendor: NO_VENDOR }),
   });
   assert.match(prompt, /ORIGINAL_IDD_PROMPT/);
   assert.match(prompt, /사용자 답변/);
@@ -279,13 +314,13 @@ test("buildIddContinuationPrompt with specialistInjection replaces the four inli
   assert.doesNotMatch(prompt, /devex-review 방식/);
 });
 
-test("buildOfficeHoursDocsSystemPrompt accepts and embeds specialistInjection", () => {
+test("buildOfficeHoursDocsSystemPrompt accepts and embeds specialistInjection (fallback path)", () => {
   const selection = selectSpecialist({
     bipSetupGate: planningGate,
     doc: { type: "icp", title: "ICP" },
   });
   const sys = buildOfficeHoursDocsSystemPrompt("/tmp/workspace", {
-    specialistInjection: buildSpecialistInjection(selection),
+    specialistInjection: buildSpecialistInjection({ ...selection, vendor: NO_VENDOR }),
   });
   assert.match(sys, /Auto-routed specialist mode/);
   assert.match(sys, /Office Hours \(YC\)/);

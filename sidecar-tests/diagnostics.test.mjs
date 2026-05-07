@@ -31,6 +31,13 @@ test("buildDiagnosticsSnapshot redacts credential-shaped fields", () => {
     ],
     activeRuns: new Map([["session-3", {}]]),
     sessionStoreSchemaVersion: 1,
+    sessionStoreWarnings: [
+      {
+        type: "session_store_corrupt",
+        message: "Unexpected token",
+        quarantinePath: "/tmp/sessions.json.corrupt",
+      },
+    ],
     now: () => new Date("2026-04-15T01:02:03.000Z"),
     processInfo: {
       pid: 123,
@@ -47,4 +54,5 @@ test("buildDiagnosticsSnapshot redacts credential-shaped fields", () => {
   assert.equal(snapshot.sessions.statuses.error, 1);
   assert.equal(snapshot.environment.claude.apiKey, "[redacted]");
   assert.equal(snapshot.preflight.checks[0].token, "[redacted]");
+  assert.equal(snapshot.storage.sessionStoreWarnings[0].type, "session_store_corrupt");
 });

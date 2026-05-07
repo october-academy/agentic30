@@ -14,7 +14,7 @@ struct agentic30App: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        WindowGroup("Agentic30 Workspace", id: "workspace") {
+        Window("Agentic30 Workspace", id: "workspace") {
             ContentView(
                 viewModel: appDelegate.viewModel,
                 surfaceOverride: .workspace
@@ -50,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let petStateMachine = WolfStateMachine()
     let petWindowController = PetWindowController()
 
+    private let workspaceWindowTitle = "Agentic30 Workspace"
     private var openWorkspaceHandler: (() -> Void)?
     private var pendingWorkspaceOpen = false
 
@@ -73,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 self?.petWindowController.hide()
             }
         }
@@ -82,9 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
-                self?.openWorkspaceWindow()
-            }
+            self?.openWorkspaceWindow()
         }
 
         #if DEBUG
@@ -92,6 +91,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async { [weak self] in
                 self?.openBipNotification(intent: intent, source: "ui_test_launch_argument")
             }
+        }
+        if CommandLine.arguments.contains("--ui-testing-open-settings") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                self?.closeWorkspaceWindows()
+                NSApp.activate(ignoringOtherApps: true)
+                if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
+                    NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+                }
+            }
+        } else if CommandLine.arguments.contains("--ui-testing-open-workspace-settings") {
+            scheduleUITestingWorkspaceOpen(openSettings: true)
+        } else if CommandLine.arguments.contains("--ui-testing-open-workspace") {
+            scheduleUITestingWorkspaceOpen(openSettings: false)
         }
         #endif
     }
@@ -110,8 +122,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func openWorkspaceWindow() {
+        if makeWorkspaceWindowKey() {
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
         if let openWorkspaceHandler {
             openWorkspaceHandler()
+            focusWorkspaceWindow()
         } else {
             pendingWorkspaceOpen = true
             PostHogTelemetry.capture("mac_workspace_open_handler_missing", authSession: viewModel.macAuthSession)
@@ -123,12 +141,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard pendingWorkspaceOpen else { return }
         pendingWorkspaceOpen = false
         handler()
+        focusWorkspaceWindow()
     }
 
     private func openBipNotification(intent: BipNotificationIntent, source: String) {
         openWorkspaceWindow()
         viewModel.requestBipNotificationOpen(intent: intent, source: source)
     }
+
+    private func focusWorkspaceWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        _ = makeWorkspaceWindowKey()
+
+        // `openWindow(id:)` creates/restores the SwiftUI window asynchronously.
+        // Retry after the current run loop so pet clicks and notification opens
+        // focus a newly-created workspace instead of only requesting it.
+        DispatchQueue.main.async { [weak self] in
+            _ = self?.makeWorkspaceWindowKey()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            _ = self?.makeWorkspaceWindowKey()
+        }
+    }
+
+    @discardableResult
+    private func makeWorkspaceWindowKey() -> Bool {
+        guard let window = NSApp.windows.first(where: { window in
+            window.title == workspaceWindowTitle && !window.isMiniaturized
+        }) else {
+            return false
+        }
+        window.makeKeyAndOrderFront(nil)
+        return true
+    }
+
+    private func closeWorkspaceWindows() {
+        for window in NSApp.windows where window.title == workspaceWindowTitle {
+            window.close()
+        }
+    }
+
+    #if DEBUG
+    private func scheduleUITestingWorkspaceOpen(openSettings: Bool) {
+        for delay in [0.0, 0.2, 0.6, 1.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                if openSettings {
+                    self?.viewModel.requestWorkspaceSettingsOpen()
+                }
+                self?.openWorkspaceWindow()
+            }
+        }
+    }
+    #endif
 }
 
 extension AppDelegate: UNUserNotificationCenterDelegate {

@@ -1,0 +1,24 @@
+{
+  "gstackCommit": "675717e3200d8f54b7e179a3425a21bdae33414b",
+  "gstackTag": null,
+  "fetchedAt": "2026-04-29T00:46:48.339Z",
+  "skills": [
+    "office-hours",
+    "plan-ceo-review",
+    "design-shotgun",
+    "design-html",
+    "plan-devex-review",
+    "devex-review",
+    "design-review",
+    "plan-design-review",
+    "design-consultation"
+  ],
+  "patches": [
+    "header-comment-strip",
+    "preamble-replace-lean",
+    "interactive-section-strip",
+    "frontmatter-augment",
+    "websearch-allowed-tools-strip",
+    "tool-rename:codex (AskUserQuestion -> agentic30_request_user_input)"
+  ]
+}

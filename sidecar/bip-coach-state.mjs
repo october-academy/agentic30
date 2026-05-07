@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { adaptCurriculumDay } from "./adaptive-curriculum.mjs";
 
 export const BIP_COACH_SCHEMA_VERSION = 1;
 
@@ -128,11 +129,11 @@ export function formatBipCoachGwsError(error) {
   const lower = message.toLowerCase();
 
   if (lower.includes("invalid_grant") || lower.includes("failed to get token") || lower.includes("authentication failed")) {
-    return "Google 연결이 만료됐어요. BIP Coach 카드에서 재인증하면 원래 작업을 이어서 실행합니다.";
+    return "Google 연결이 만료됐어요. 오늘 실행 카드에서 재인증하면 원래 작업을 이어서 실행합니다.";
   }
 
   if (lower.includes("`gws` cli not found") || lower.includes("gws cli not found")) {
-    return "`gws` CLI를 찾지 못했어요. BIP Coach 설정 카드에서 gws 확인/설치를 다시 시도하세요.";
+    return "`gws` CLI를 찾지 못했어요. 오늘 실행 설정 카드에서 gws 확인/설치를 다시 시도하세요.";
   }
 
   if (
@@ -207,7 +208,7 @@ export function summarizeSheetValues(payload, { maxRecentRows = 7 } = {}) {
     return {
       allRows: [],
       recentRows: [],
-      summary: "Sheet에 기록된 최근 BIP 행이 아직 없습니다.",
+      summary: "Sheet에 기록된 최근 공개 기록 행이 아직 없습니다.",
     };
   }
 
@@ -222,7 +223,7 @@ export function summarizeSheetValues(payload, { maxRecentRows = 7 } = {}) {
     return {
       allRows: [],
       recentRows: [],
-      summary: "Sheet에 기록된 최근 BIP 행이 아직 없습니다.",
+      summary: "Sheet에 기록된 최근 공개 기록 행이 아직 없습니다.",
     };
   }
 
@@ -239,7 +240,7 @@ export function summarizeSheetValues(payload, { maxRecentRows = 7 } = {}) {
     allRows: readableRows,
     recentRows: readableRows.slice(-maxRecentRows),
     summary: [
-      `전체 ${rows.length}개 BIP 기록을 읽었습니다.`,
+      `전체 ${rows.length}개 공개 기록을 읽었습니다.`,
       recentRows.length ? `최근 ${recentRows.length}개 기록을 미션 후보에 우선 반영합니다.` : "",
       firstFollowers && lastFollowers ? `팔로어 변화: ${firstFollowers} -> ${lastFollowers}.` : "",
       latest?.date ? `마지막 기록일: ${latest.date}.` : "",
@@ -299,6 +300,7 @@ export function buildBipCoachMissionPrompt({
 }) {
   const normalized = normalizeBipCoachState(state);
   const config = normalized.config;
+  const adaptiveCurriculumDay = adaptCurriculumDay({ curriculumDay, state: normalized });
   const contextJson = JSON.stringify(
     {
       googleTools: {
@@ -322,7 +324,7 @@ export function buildBipCoachMissionPrompt({
       threadsHandle: config.threadsHandle,
       streak: normalized.streak,
       currentMission: normalized.currentMission,
-      curriculumDay: normalizeCurriculumDay(curriculumDay),
+      curriculumDay: normalizeCurriculumDay(adaptiveCurriculumDay),
     },
     null,
     2,
@@ -349,7 +351,7 @@ export function buildBipCoachMissionPrompt({
     "- 최신 상태는 반드시 전체 Sheet 행의 마지막 비어 있지 않은 기록에서 판단한다.",
     "- 팔로워 수, 게시 횟수, 배움, 특이사항, 업무일지의 목표/막힘/반복 패턴을 글 각도에 반영한다.",
     "- Read Target JSON의 curriculumDay가 있으면 해당 Day의 title, tasks, output을 반드시 미션 수행 결과와 연결한다.",
-    "- 3개 후보는 서로 달라야 한다. 예: 고객증거/제품진척/학습공개 중 하나씩 나누되, 오늘 커리큘럼과 BIP 데이터에 맞춰 조정한다.",
+    "- 3개 후보는 서로 달라야 한다. 예: 고객증거/제품진척/학습공개 중 하나씩 나누되, 오늘 커리큘럼과 공개 기록에 맞춰 조정한다.",
     "- 매일 미션에는 사용자가 의식적으로 훈련할 전략 질문 2개를 반드시 포함한다.",
     "- 첫 질문은 `/office-hours` 훈련이다. Demand reality, status quo, desperate specificity, narrowest wedge, observation, future-fit 중 오늘 기록에 가장 필요한 질문 하나를 골라 구체적으로 묻는다.",
     "- 둘째 질문은 `/plan-ceo-review` 훈련이다. 10-star product, premise challenge, scope expansion/reduction, narrowest useful version 중 오늘 계획을 더 날카롭게 만드는 질문 하나를 골라 구체적으로 묻는다.",
@@ -388,6 +390,7 @@ export function buildBipCoachMissionPromptFromEvidence({
   const config = normalized.config;
   const evidence = normalized.evidence || {};
   const laneInstruction = normalizeMissionLane(lane);
+  const adaptiveCurriculumDay = adaptCurriculumDay({ curriculumDay, state: normalized });
   const contextJson = JSON.stringify(
     {
       sheet: {
@@ -405,7 +408,7 @@ export function buildBipCoachMissionPromptFromEvidence({
       threadsHandle: config.threadsHandle,
       streak: normalized.streak,
       currentMission: normalized.currentMission,
-      curriculumDay: normalizeCurriculumDay(curriculumDay),
+      curriculumDay: normalizeCurriculumDay(adaptiveCurriculumDay),
       lane: laneInstruction,
     },
     null,
@@ -430,7 +433,10 @@ export function buildBipCoachMissionPromptFromEvidence({
     "- Evidence JSON의 sheet.allRows와 doc.text를 모두 근거로 삼는다.",
     "- 최신 상태는 Sheet 행의 마지막 비어 있지 않은 기록에서 판단한다.",
     "- 팔로워 수, 게시 횟수, 배움, 특이사항, 업무일지의 목표/막힘/반복 패턴을 글 각도에 반영한다.",
-    "- Evidence JSON의 curriculumDay가 있으면 해당 Day의 title, tasks, output을 반드시 미션 수행 결과와 연결한다.",
+    "- Evidence JSON의 curriculumDay가 있으면 해당 Day의 title, tasks, output, personalization, evidenceNeeds, nextQuestions, layerChecks를 반드시 미션 수행 결과와 연결한다.",
+    "- layerChecks는 Founder / October Academy / Agentic30 세 계층을 혼동하지 않기 위한 검문이다. 미션은 최소 한 계층의 증거를 명시적으로 남겨야 한다.",
+    "- curriculumDay.personalization.evidenceGaps가 있으면 기능 추가보다 그 공백을 메우는 행동으로 미션을 진화시킨다.",
+    "- curriculumDay.nextQuestions는 `/office-hours`와 `/plan-ceo-review` 훈련 질문이다. 후보 미션의 eveningChecklist에 같은 취지의 질문을 포함한다.",
     "- 매일 미션에는 사용자가 의식적으로 훈련할 전략 질문 2개를 반드시 포함한다.",
     "- 첫 질문은 `/office-hours` 훈련이다. Demand reality, status quo, desperate specificity, narrowest wedge, observation, future-fit 중 오늘 기록에 가장 필요한 질문 하나를 골라 구체적으로 묻는다.",
     "- 둘째 질문은 `/plan-ceo-review` 훈련이다. 10-star product, premise challenge, scope expansion/reduction, narrowest useful version 중 오늘 계획을 더 날카롭게 만드는 질문 하나를 골라 구체적으로 묻는다.",
@@ -505,7 +511,7 @@ export function parseMissionChoicesResponse(text, {
   }
   return padMissionChoices([
     buildMission({
-      title: compact ? "15분 관찰글 미션" : "오늘의 BIP 미션",
+      title: compact ? "15분 관찰글 실행" : "오늘 실행",
       angle: "AI 응답을 구조화하지 못했습니다. 원문을 확인하고 가장 작은 실행으로 줄입니다.",
       mission: String(text || "").trim().slice(0, 2000),
       drafts: [],
@@ -532,13 +538,29 @@ export function buildFallbackBipMissionChoices({
   const latest = [...recentRows].reverse().find((row) => row?.date || row?.posts?.length || row?.insights || row?.notes) || {};
   const previous = recentRows.length > 1 ? recentRows[recentRows.length - 2] : null;
   const docText = String(evidence.docText || evidence.docExcerpt || "").replace(/\s+/g, " ").trim();
-  const curriculum = normalizeCurriculumDay(curriculumDay);
+  const curriculum = normalizeCurriculumDay(adaptCurriculumDay({ curriculumDay, state: normalized }));
   const dayLabel = curriculum.day ? `Day ${curriculum.day}` : "오늘 커리큘럼";
   const dayTitle = curriculum.title || "오늘 커리큘럼";
   const dayOutput = curriculum.output || "오늘 산출물";
   const primaryTask = Array.isArray(curriculum.tasks) && curriculum.tasks.length
     ? curriculum.tasks[0]
     : dayOutput;
+  const adaptiveQuestionLines = Array.isArray(curriculum.nextQuestions) && curriculum.nextQuestions.length
+    ? curriculum.nextQuestions
+    : [
+        `/office-hours: 이 미션이 실제 수요를 더 선명하게 보여주는 증거는 무엇인가?`,
+        `/plan-ceo-review: 오늘 산출물의 narrowest useful version은 무엇인가?`,
+      ];
+  const evidenceGapLine = Array.isArray(curriculum.personalization?.evidenceGaps) && curriculum.personalization.evidenceGaps.length
+    ? `현재 evidence gap: ${curriculum.personalization.evidenceGaps.join(", ")}`
+    : "";
+  const layerCheckLines = Array.isArray(curriculum.layerChecks) && curriculum.layerChecks.length
+    ? curriculum.layerChecks.slice(0, 3)
+    : [
+        "Founder: 오늘 카드가 내 실제 행동을 바꿨나?",
+        "Company: 이 실행이 지혜/판단 훈련 자산으로 남나?",
+        "Product: 30일/100명/첫 매출 가설을 강화하나?",
+      ];
   const latestInsight = latest.insights || latest.notes || docText.slice(0, 90) || "최근 기록에서 아직 선명한 배움이 부족합니다.";
   const followerLine = [previous?.followers, latest.followers].filter(Boolean).length === 2
     ? `팔로어 ${previous.followers} -> ${latest.followers}`
@@ -551,14 +573,14 @@ export function buildFallbackBipMissionChoices({
   const baseChecklist = [
     "Threads URL을 복사했다",
     "Sheet 오늘 행에 URL, 반응, 배운 점을 기록했다",
-    `/office-hours: ${compact ? "가장 작은 관찰 증거는 무엇인가?" : "이 미션이 실제 수요를 더 선명하게 보여주는 증거는 무엇인가?"}`,
-    `/plan-ceo-review: ${compact ? "15분 안에 끝나는 가장 작은 버전은 무엇인가?" : "오늘 산출물의 narrowest useful version은 무엇인가?"}`,
+    ...adaptiveQuestionLines.slice(0, 2),
+    ...layerCheckLines.slice(0, 3),
   ];
   const missions = [
     {
       title: compact ? "15분 고객증거 관찰글" : "고객증거를 한 줄로 공개하기",
       angle: `${dayLabel} ${dayTitle}를 실제 문제 증거와 연결한다.`,
-      mission: `${primaryTask}를 하면서 발견한 실제 막힘이나 반복 문제 하나를 Threads에 쓴다. 글 끝에는 “이 문제가 반복되는지 확인 중”이라고 남기고, 게시 후 Sheet 오늘 행에 URL과 반응을 기록한다.`,
+      mission: `${primaryTask}를 하면서 발견한 실제 막힘이나 반복 문제 하나를 Threads에 쓴다. ${evidenceGapLine ? `${evidenceGapLine}. ` : ""}글 끝에는 “이 문제가 반복되는지 확인 중”이라고 남기고, 게시 후 Sheet 오늘 행에 URL과 반응을 기록한다.`,
       drafts: [
         `오늘 ${dayTitle}를 하면서 다시 확인한 문제: ${latestInsight} 그래서 오늘은 기능 설명보다 이 문제가 실제로 반복되는지 확인하려고 한다.`,
         `${followerLine}. 최근 기록을 보니 ${latestInsight} 오늘은 ${primaryTask}를 고객 문제 증거 하나로 좁혀 공개한다.`,
@@ -584,7 +606,7 @@ export function buildFallbackBipMissionChoices({
       evidenceRefs: [
         `커리큘럼 산출물: ${dayOutput}`,
         latestPost,
-        evidence.summary || "BIP Sheet 전체 기록",
+        evidence.summary || "공개 기록 Sheet 전체 기록",
       ],
     },
     {
@@ -755,9 +777,10 @@ function buildMission(mission = {}, {
     provider: mission.provider === "claude" ? "claude" : provider,
     status: stringOrDefault(mission.status, "drafted"),
     compact: typeof mission.compact === "boolean" ? mission.compact : Boolean(compact),
-    title: stringOrDefault(mission.title, compact ? `15분 관찰글 미션 ${index + 1}` : `오늘의 BIP 미션 ${index + 1}`),
+    title: stringOrDefault(mission.title, compact ? `15분 관찰글 실행 ${index + 1}` : `오늘 실행 ${index + 1}`),
     angle: stringOrDefault(mission.angle, ""),
     mission: stringOrDefault(mission.mission, ""),
+    proofTarget: stringOrDefault(mission.proofTarget, buildDefaultProofTarget(mission, compact)),
     drafts: normalizeStringArray(mission.drafts).slice(0, 3),
     eveningChecklist: normalizeStringArray(mission.eveningChecklist),
     evidenceRefs: normalizeStringArray(mission.evidenceRefs),
@@ -766,6 +789,11 @@ function buildMission(mission = {}, {
     threadsUrl: stringOrDefault(mission.threadsUrl, ""),
     sheetRowNote: stringOrDefault(mission.sheetRowNote, ""),
   };
+}
+
+function buildDefaultProofTarget(mission = {}, compact = false) {
+  const title = stringOrDefault(mission.title, compact ? "15분 공개 실행" : "오늘 공개 실행");
+  return `${title}을 Threads에 올리고, Sheet 오늘 행에 URL과 확인할 반응 1개를 기록한다.`;
 }
 
 function padMissionChoices(choices, {
@@ -777,18 +805,18 @@ function padMissionChoices(choices, {
   const next = [...choices];
   const templates = [
     {
-      title: compact ? "15분 고객 관찰글" : "고객 증거 공개 미션",
+      title: compact ? "15분 고객 관찰글" : "고객 증거 공개 실행",
       angle: "오늘 기록에서 가장 구체적인 고객 문제 하나를 공개한다",
-      mission: "BIP 기록과 오늘 커리큘럼에서 고객/문제 증거 하나를 골라 Threads에 짧게 쓰고, URL과 반응을 Sheet에 남긴다.",
+      mission: "공개 기록과 오늘 커리큘럼에서 고객/문제 증거 하나를 골라 Threads에 짧게 쓰고, URL과 반응을 Sheet에 남긴다.",
     },
     {
-      title: compact ? "15분 제품 진행글" : "제품 진행 공개 미션",
+      title: compact ? "15분 제품 진행글" : "제품 진행 공개 실행",
       angle: "오늘 만든 산출물을 다음 사용자 행동과 연결한다",
       mission: "사이드바 Day 산출물과 연결되는 제품 진행 하나를 골라 현재 상태, 막힌 점, 다음 확인 질문을 Threads에 올린다.",
     },
     {
-      title: compact ? "15분 학습 회고글" : "학습 공개 미션",
-      angle: "최근 BIP 데이터에서 배운 점 하나를 다음 실험으로 바꾼다",
+      title: compact ? "15분 학습 회고글" : "학습 공개 실행",
+      angle: "최근 공개 기록에서 배운 점 하나를 다음 실험으로 바꾼다",
       mission: "최근 Sheet/Doc 기록에서 반복되는 배움 하나를 골라 무엇을 바꿀지 공개하고, 오늘 완료 기준을 Sheet에 기록한다.",
     },
   ];
@@ -798,7 +826,7 @@ function padMissionChoices(choices, {
       ...template,
       drafts: [],
       eveningChecklist: ["Threads URL을 기록했다", "Sheet 오늘 행을 채웠다"],
-      evidenceRefs: ["BIP 데이터와 오늘 커리큘럼을 함께 반영하도록 보정된 후보"],
+      evidenceRefs: ["공개 기록과 오늘 커리큘럼을 함께 반영하도록 보정된 후보"],
     }, {
       provider,
       compact,
@@ -824,6 +852,14 @@ function normalizeCurriculumDay(value) {
     summary: stringOrDefault(day.summary, ""),
     tasks: normalizeStringArray(day.tasks),
     output: stringOrDefault(day.output, ""),
+    personalization: objectOrEmpty(day.personalization),
+    evidenceNeeds: normalizeStringArray(day.evidenceNeeds),
+    nextQuestions: normalizeStringArray(day.nextQuestions),
+    layerFocus: normalizeStringArray(day.layerFocus),
+    layerChecks: normalizeStringArray(day.layerChecks),
+    evolutionRule: stringOrDefault(day.evolutionRule, ""),
+    stopOrPivotCheck: stringOrDefault(day.stopOrPivotCheck, ""),
+    staticDay: objectOrEmpty(day.staticDay),
   };
 }
 
