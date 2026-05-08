@@ -56,17 +56,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
+        // Snapshot before capture(), which lazy-generates the distinct id.
+        let isFirstLaunchEver = !PostHogTelemetry.hasPreviouslyGeneratedDistinctID
         PostHogTelemetry.capture("mac_app_launched")
-        PostHogTelemetry.captureOnce(
-            "dmg_install_completed",
-            onceKey: "dmg_install_completed.v1",
-            properties: [
-                "event_schema_version": 1,
-                "distribution_channel": "github_dmg",
-                "source": "mac_first_launch",
-            ],
-            authSession: viewModel.macAuthSession
-        )
+        if isFirstLaunchEver {
+            PostHogTelemetry.captureOnce(
+                "dmg_install_completed",
+                onceKey: "dmg_install_completed.v1",
+                properties: [
+                    "event_schema_version": 1,
+                    "distribution_channel": "github_dmg",
+                    "source": "mac_first_launch",
+                ],
+                authSession: viewModel.macAuthSession
+            )
+        }
 
         // Wire sidecar events into the desktop-pet state machine.
         viewModel.onSidecarEvent = { [weak self] event, sessions in

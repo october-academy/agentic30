@@ -175,6 +175,17 @@ enum PostHogTelemetry {
 
     static var captureSink: ((PostHogTelemetryCapture) -> Void)?
 
+    /// True if any prior launch that ran `capture(...)` already persisted the
+    /// anonymous distinct ID. Used by the app delegate to suppress
+    /// `dmg_install_completed` for users upgrading from a prior build.
+    /// Edge case: users who only ran prior builds with telemetry fully
+    /// disabled (no distinct ID generated) will register as first-install
+    /// here. That subset is small, and if telemetry stays disabled the gated
+    /// `captureOnce` is a no-op anyway.
+    static var hasPreviouslyGeneratedDistinctID: Bool {
+        UserDefaults.standard.string(forKey: distinctIDDefaultsKey) != nil
+    }
+
     @discardableResult
     static func capture(
         _ event: String,
@@ -311,14 +322,18 @@ enum PostHogTelemetry {
         let settings = KeychainHelper.loadSettings()
         let resolvedProjectKey = settings.posthogProjectAPIKey.nonEmpty
             ?? (settings.posthogApiKey.hasPrefix("phc_") ? settings.posthogApiKey : nil)
-            ?? ProcessInfo.processInfo.environment["POSTHOG_PROJECT_TOKEN"]?.nonEmpty
+            ?? ProcessInfo.processInfo.environment["POSTHOG_PROJECT_TOKEN"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .nonEmpty
 
         guard let projectAPIKey = resolvedProjectKey, !projectAPIKey.isEmpty else {
             return nil
         }
 
         let host = settings.posthogHost.nonEmpty
-            ?? ProcessInfo.processInfo.environment["POSTHOG_HOST"]?.nonEmpty
+            ?? ProcessInfo.processInfo.environment["POSTHOG_HOST"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .nonEmpty
             ?? "https://us.posthog.com"
         return PostHogTelemetryConfig(projectAPIKey: projectAPIKey, host: host)
     }

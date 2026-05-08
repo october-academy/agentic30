@@ -88,3 +88,13 @@ test("buildPostHogPayload keeps event distinct id and schema properties", () => 
   assert.equal(payload.properties.event_schema_version, 1);
   assert.ok(payload.timestamp);
 });
+
+test("buildPostHogPayload sets $insert_id from distinct_id for ingest-side dedup", () => {
+  const payload = buildPostHogPayload("phc_test", {
+    event: "dmg_downloaded",
+    distinct_id: "github-release-asset-1001-download-7",
+    properties: { event_schema_version: 1 },
+  });
+
+  assert.equal(payload.properties.$insert_id, "github-release-asset-1001-download-7");
+});

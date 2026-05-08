@@ -101,7 +101,19 @@ async function loadState(statePath) {
 
 async function saveState(statePath, state) {
   await fs.mkdir(path.dirname(statePath), { recursive: true });
-  await fs.writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  // Write to a temp sibling and atomic-rename so a crashed/concurrent run
+  // never leaves a partial JSON file on disk. fs.rename is POSIX-atomic on
+  // the same filesystem.
+  const tempPath = `${statePath}.tmp-${process.pid}-${Date.now()}`;
+  await fs.writeFile(tempPath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  await fs.rename(tempPath, statePath);
+}
+
+function trimmedEnv(name) {
+  const raw = process.env[name];
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function selectedAssets(release, assetName = "") {
@@ -185,11 +197,15 @@ export function normalizePostHogHost(rawHost = DEFAULT_HOST) {
 }
 
 export function buildPostHogPayload(projectToken, event) {
+  // $insert_id is PostHog's ingest-side dedup key. Without it, retries after a
+  // partial-failure run replay the same distinct_id/index pair as fresh events
+  // and inflate the funnel. Tying it to distinct_id (which already encodes
+  // asset_id + download_index) makes replays idempotent.
   return {
     api_key: projectToken,
     event: event.event,
     distinct_id: event.distinct_id,
-    properties: event.properties,
+    properties: { ...event.properties, $insert_id: event.distinct_id },
     timestamp: new Date().toISOString(),
   };
 }
@@ -245,18 +261,41 @@ async function main() {
     dry_run: args.dryRun,
   }, null, 2));
 
-  if (!args.dryRun && events.length > 0) {
-    const projectToken = process.env.POSTHOG_PROJECT_TOKEN || process.env.POSTHOG_API_KEY;
-    if (!projectToken) {
-      throw new Error("POSTHOG_PROJECT_TOKEN or POSTHOG_API_KEY is required unless --dry-run is used");
-    }
-    const host = process.env.POSTHOG_HOST || DEFAULT_HOST;
-    for (const event of events) {
-      await sendPostHogEvent({ host, projectToken, event });
-    }
+  if (args.dryRun) {
+    return;
   }
 
-  if (!args.dryRun) {
+  if (events.length === 0) {
+    await saveState(args.state, nextState);
+    return;
+  }
+
+  const projectToken = trimmedEnv("POSTHOG_PROJECT_TOKEN") || trimmedEnv("POSTHOG_API_KEY");
+  if (!projectToken) {
+    throw new Error("POSTHOG_PROJECT_TOKEN or POSTHOG_API_KEY is required unless --dry-run is used");
+  }
+  const host = trimmedEnv("POSTHOG_HOST") || DEFAULT_HOST;
+
+  // Track per-asset high water marks so a partial failure persists exactly the
+  // events we successfully sent, not the totalCount computeDownloadEvents
+  // optimistically wrote into nextState. Resume from the cursor next run.
+  const sentHighWater = {};
+  for (const stateKey of Object.keys(nextState)) {
+    sentHighWater[stateKey] = Number(previousState[stateKey]?.download_count ?? 0);
+  }
+
+  try {
+    for (const event of events) {
+      await sendPostHogEvent({ host, projectToken, event });
+      const stateKey = String(event.properties.asset_id);
+      sentHighWater[stateKey] = event.properties.download_index;
+    }
+  } finally {
+    for (const [stateKey, highWater] of Object.entries(sentHighWater)) {
+      if (nextState[stateKey]) {
+        nextState[stateKey].download_count = highWater;
+      }
+    }
     await saveState(args.state, nextState);
   }
 }
