@@ -187,7 +187,22 @@ final class agentic30UITests: XCTestCase {
             contextApp.terminate()
         }
 
-        XCTAssertTrue(contextApp.staticTexts["어떤 일을 하고 계신가요?"].waitForExistence(timeout: 10))
+        XCTAssertTrue(contextApp.staticTexts["지금 어떤 상황에서 만들고 있나요?"].waitForExistence(timeout: 10))
+        let fullTimeOption = button(in: contextApp, matching: [
+            "onboardingContext.option.full_time_solo",
+            "전업 1인 개발자, 퇴사했고 혼자 제품을 만들고 있습니다",
+            "전업 1인 개발자",
+        ])
+        XCTAssertTrue(fullTimeOption.exists)
+        attachScreenshot(from: contextApp, named: "02 Context Work Mode")
+
+        let contextPrimary = button(in: contextApp, matching: [
+            "onboardingContext.primaryButton",
+            "Next",
+        ])
+        clickCenter(of: contextPrimary)
+
+        XCTAssertTrue(contextApp.staticTexts["어떤 일을 하고 계신가요?"].waitForExistence(timeout: 5))
         let developerOption = button(in: contextApp, matching: [
             "onboardingContext.option.developer",
             "개발자, 앱·웹·제품을 직접 구현합니다",
@@ -202,25 +217,21 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(designerOption.exists)
         let developerFrameBefore = developerOption.frame
         let designerFrameBefore = designerOption.frame
-        attachScreenshot(from: contextApp, named: "02 Context Role")
+        attachScreenshot(from: contextApp, named: "03 Context Role")
 
         designerOption.click()
         XCTAssertEqual(developerOption.frame.height, developerFrameBefore.height, accuracy: 0.5)
         XCTAssertEqual(designerOption.frame.height, designerFrameBefore.height, accuracy: 0.5)
         XCTAssertEqual(designerOption.frame.minY, designerFrameBefore.minY, accuracy: 0.5)
-        attachScreenshot(from: contextApp, named: "03 Context Role Changed")
-
-        let contextPrimary = button(in: contextApp, matching: [
-            "onboardingContext.primaryButton",
-            "Next",
-        ])
-        clickCenter(of: contextPrimary)
-        XCTAssertTrue(contextApp.staticTexts["지금 프로젝트는 어느 단계에 있나요?"].waitForExistence(timeout: 5))
-        attachScreenshot(from: contextApp, named: "04 Context Stage")
+        attachScreenshot(from: contextApp, named: "04 Context Role Changed")
 
         clickCenter(of: contextPrimary)
-        XCTAssertTrue(contextApp.staticTexts["피드백은 어디서 받으시나요?"].waitForExistence(timeout: 5))
-        attachScreenshot(from: contextApp, named: "05 Context Feedback")
+        XCTAssertTrue(contextApp.staticTexts["현재 가장 큰 막힘은 무엇인가요?"].waitForExistence(timeout: 5))
+        attachScreenshot(from: contextApp, named: "05 Context Blocker")
+
+        clickCenter(of: contextPrimary)
+        XCTAssertTrue(contextApp.staticTexts["어떤 기록을 연결할 수 있나요?"].waitForExistence(timeout: 5))
+        attachScreenshot(from: contextApp, named: "06 Context Evidence")
     }
 
     @MainActor

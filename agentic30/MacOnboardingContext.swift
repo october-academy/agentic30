@@ -1,5 +1,30 @@
 import Foundation
 
+enum OnboardingWorkMode: String, Codable, CaseIterable, Hashable {
+    case fullTimeSolo = "full_time_solo"
+    case sideProject = "side_project"
+    case teamStartup = "team_startup"
+    case exploring
+
+    var displayTitle: String {
+        switch self {
+        case .fullTimeSolo: return "전업 1인 개발자"
+        case .sideProject: return "일·학업과 병행"
+        case .teamStartup: return "팀과 함께 만드는 중"
+        case .exploring: return "아직 탐색 중"
+        }
+    }
+
+    var displayDescription: String {
+        switch self {
+        case .fullTimeSolo: return "퇴사했고 혼자 제품을 만들고 있습니다"
+        case .sideProject: return "직장이나 학업을 하면서 틈틈이 만들고 있습니다"
+        case .teamStartup: return "함께 정하는 사람이 있거나 작은 팀이 있습니다"
+        case .exploring: return "아이디어와 방향을 아직 고르는 중입니다"
+        }
+    }
+}
+
 enum OnboardingRole: String, Codable, CaseIterable, Hashable {
     case developer
     case designer
@@ -34,21 +59,21 @@ enum OnboardingProjectStage: String, Codable, CaseIterable, Hashable {
 
     var displayTitle: String {
         switch self {
-        case .ideaOnly: return "아이디어만"
-        case .building: return "개발 중"
-        case .firstUsers: return "첫 유저 5+"
-        case .preRevenue: return "매출 직전"
-        case .postRevenue: return "첫 매출 후"
+        case .ideaOnly: return "무엇을 만들어야 할지 모르겠다"
+        case .building: return "제품은 있는데 사용자가 오지 않는다"
+        case .firstUsers: return "쓰는 사람은 있는데 돈을 못 받고 있다"
+        case .preRevenue: return "가격이나 결제 제안이 막혀 있다"
+        case .postRevenue: return "이미 매출이 있고 더 키우고 싶다"
         }
     }
 
     var displayDescription: String {
         switch self {
-        case .ideaOnly: return "아직 코드 한 줄 없음"
-        case .building: return "MVP 만드는 중, 아직 유저 없음"
-        case .firstUsers: return "사람들이 써보는 중, 결제는 아직"
-        case .preRevenue: return "결제 준비 중, 첫 매출 전"
-        case .postRevenue: return "1원이라도 벌었음"
+        case .ideaOnly: return "누구의 어떤 문제를 풀지부터 좁혀야 합니다"
+        case .building: return "처음 써보는 사람을 찾거나 붙잡는 일이 막혀 있습니다"
+        case .firstUsers: return "사용은 있지만 가격을 물어보거나 결제까지 가지 못했습니다"
+        case .preRevenue: return "얼마를 받을지, 누구에게 어떻게 제안할지 정해야 합니다"
+        case .postRevenue: return "다시 쓰게 만들고 더 많은 사람에게 알리는 일이 중요합니다"
         }
     }
 }
@@ -61,42 +86,69 @@ enum OnboardingIsolationLevel: String, Codable, CaseIterable, Hashable {
 
     var displayTitle: String {
         switch self {
-        case .soloAll: return "다 혼자 한다"
-        case .occasional: return "가끔 친구에게 물어본다"
-        case .weeklyLoop: return "주간 피드백 루프가 있다"
-        case .community: return "커뮤니티·팀에서 활동 중"
+        case .soloAll: return "프로젝트 폴더 + 업무 일지"
+        case .occasional: return "고객 대화 기록"
+        case .weeklyLoop: return "공개 기록·Threads·블로그"
+        case .community: return "아직 기록은 없다"
         }
     }
 
     var displayDescription: String {
         switch self {
-        case .soloAll: return "물어볼 사람이 없고 모든 판단을 혼자 내림"
-        case .occasional: return "비공식적으로 단발성 대화 · 정규 루프 없음"
-        case .weeklyLoop: return "멘토 · 스탠드업 · 정기 체크인 중 하나 이상"
-        case .community: return "Discord · Slack · 파트너와 상시 대화"
+        case .soloAll: return "오늘 만든 것, 막힌 것, 배운 것을 읽을 수 있습니다"
+        case .occasional: return "고객이 말한 내용이나 인터뷰 파일이 있습니다"
+        case .weeklyLoop: return "공개 실행, 반응, 배움을 기록한 채널이 있습니다"
+        case .community: return "오늘부터 문제 메모와 실행 기록을 만들 수 있습니다"
         }
     }
 }
 
 struct OnboardingContext: Codable, Hashable {
+    var workMode: OnboardingWorkMode
     var role: OnboardingRole
     var projectStage: OnboardingProjectStage
     var isolationLevel: OnboardingIsolationLevel
     var completedAt: String
 
     private enum CodingKeys: String, CodingKey {
+        case workMode = "work_mode"
         case role
         case projectStage = "project_stage"
         case isolationLevel = "isolation_level"
         case completedAt = "completed_at"
     }
 
+    init(
+        workMode: OnboardingWorkMode,
+        role: OnboardingRole,
+        projectStage: OnboardingProjectStage,
+        isolationLevel: OnboardingIsolationLevel,
+        completedAt: String
+    ) {
+        self.workMode = workMode
+        self.role = role
+        self.projectStage = projectStage
+        self.isolationLevel = isolationLevel
+        self.completedAt = completedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        workMode = try container.decodeIfPresent(OnboardingWorkMode.self, forKey: .workMode) ?? .fullTimeSolo
+        role = try container.decode(OnboardingRole.self, forKey: .role)
+        projectStage = try container.decode(OnboardingProjectStage.self, forKey: .projectStage)
+        isolationLevel = try container.decode(OnboardingIsolationLevel.self, forKey: .isolationLevel)
+        completedAt = try container.decode(String.self, forKey: .completedAt)
+    }
+
     static func make(
+        workMode: OnboardingWorkMode = .fullTimeSolo,
         role: OnboardingRole,
         projectStage: OnboardingProjectStage,
         isolationLevel: OnboardingIsolationLevel
     ) -> OnboardingContext {
         OnboardingContext(
+            workMode: workMode,
             role: role,
             projectStage: projectStage,
             isolationLevel: isolationLevel,
@@ -109,8 +161,19 @@ struct OnboardingContext: Codable, Hashable {
     var assistantSystemPromptFragment: String {
         var lines: [String] = []
         lines.append(
-            "유저 컨텍스트: \(role.rawValue) · \(projectStage.rawValue) · \(isolationLevel.rawValue)."
+            "유저 컨텍스트: \(workMode.rawValue) · \(role.rawValue) · \(projectStage.rawValue) · \(isolationLevel.rawValue)."
         )
+
+        switch workMode {
+        case .fullTimeSolo:
+            lines.append("[R0] 전업 1인 개발자 기준으로 실행 강도를 높이고, 30일 안에 증거를 남기는 방향으로 답하세요.")
+        case .sideProject:
+            lines.append("[R0] 사이드프로젝트 제약을 고려하되, 전업자 기준의 우선순위와 trade-off를 명확히 알려주세요.")
+        case .teamStartup:
+            lines.append("[R0] 팀 매칭이나 공동창업 조언보다, 1인 실행 시스템과 기록 기반 검증 관점으로 답하세요.")
+        case .exploring:
+            lines.append("[R0] 아이디어 탐색을 빠르게 좁히고, 오늘 만들 기록/인터뷰 입력을 먼저 만들도록 안내하세요.")
+        }
 
         switch projectStage {
         case .firstUsers, .preRevenue, .postRevenue:
@@ -123,10 +186,15 @@ struct OnboardingContext: Codable, Hashable {
             )
         }
 
-        if isolationLevel == .soloAll {
-            lines.append(
-                "[R2] 첫 답변에 고립감 해소 멘트 한 줄을 포함하세요. 예: \"혼자 푸는 건 3배 오래 걸립니다. 동료 한 명만 만들어도 속도가 달라집니다.\""
-            )
+        switch isolationLevel {
+        case .soloAll:
+            lines.append("[R2] 프로젝트 폴더와 업무 일지를 근거로 오늘의 실행 과제를 구체화하세요.")
+        case .occasional:
+            lines.append("[R2] 고객 인터뷰 원문에서 과거 행동, 현재 대안, 비용 신호를 우선 추출하세요.")
+        case .weeklyLoop:
+            lines.append("[R2] BIP (Build In Public) 반응과 공개 실행 기록을 다음 proof 목표로 연결하세요.")
+        case .community:
+            lines.append("[R2] 기록이 없다는 전제로, 오늘 만들 첫 problem memo 또는 인터뷰 입력부터 요구하세요.")
         }
 
         if role != .developer {

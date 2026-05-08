@@ -4,6 +4,7 @@ import {
   buildAuthEnv,
   clearAuthContext,
   fetchAuthenticatedAppContext,
+  getAuthContextSummary,
   redactSensitiveValues,
   setAuthContext,
 } from "../sidecar/auth-context.mjs";
@@ -27,6 +28,28 @@ test("auth context exposes tokens only through child process env", () => {
     AGENTIC30_SUPABASE_ACCESS_TOKEN: "access-secret",
     AGENTIC30_AUTH_USER_ID: "user-1",
     AGENTIC30_AUTH_EMAIL: "founder@example.com",
+  });
+});
+
+test("auth context normalizes onboarding context from snake_case payload", () => {
+  clearAuthContext();
+  setAuthContext({
+    accessToken: "access-secret",
+    onboardingContext: {
+      work_mode: "side_project",
+      role: "designer",
+      project_stage: "pre_revenue",
+      isolation_level: "weekly_loop",
+      completed_at: "2026-05-08T00:00:00Z",
+    },
+  });
+
+  assert.deepEqual(getAuthContextSummary().onboardingContext, {
+    workMode: "side_project",
+    role: "designer",
+    projectStage: "pre_revenue",
+    isolationLevel: "weekly_loop",
+    completedAt: "2026-05-08T00:00:00Z",
   });
 });
 

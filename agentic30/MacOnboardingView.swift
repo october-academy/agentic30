@@ -326,7 +326,7 @@ private struct MacOnboardingScene: Hashable {
     static let all: [MacOnboardingScene] = [
         MacOnboardingScene(
             title: "Welcome to agentic30",
-            subtitle: "Your AI Cofounder for Indie Hacking.\nGet clear briefings on your product progress, ad performance, and customer issues.",
+            subtitle: "혼자 제품을 만들 때 오늘 무엇을 해야 할지 함께 정리해주는 Mac assistant입니다.",
             visual: .mark,
             visualColors: [
                 Color(red: 0.06, green: 0.07, blue: 0.07),
@@ -336,7 +336,7 @@ private struct MacOnboardingScene: Hashable {
         ),
         MacOnboardingScene(
             title: "We’re always by your side",
-            subtitle: "When you’re unsure what to do next, we use your logs and memory to suggest—and help you execute—what truly matters today.",
+            subtitle: "막히면 프로젝트와 기록을 보고, 오늘 가장 중요한 한 가지 행동을 제안합니다.",
             visual: .briefing,
             visualColors: [
                 Color(red: 0.08, green: 0.10, blue: 0.09),
@@ -346,7 +346,7 @@ private struct MacOnboardingScene: Hashable {
         ),
         MacOnboardingScene(
             title: "Build, launch, earn in 30 days",
-            subtitle: "We help you go from idea to product, 100 users, and your first revenue—fast.",
+            subtitle: "아이디어를 실제 사용자 반응과 첫 결제 가능성까지 빠르게 검증하도록 돕습니다.",
             visual: .launch,
             visualColors: [
                 Color(red: 0.08, green: 0.10, blue: 0.09),
@@ -356,7 +356,7 @@ private struct MacOnboardingScene: Hashable {
         ),
         MacOnboardingScene(
             title: "Ship faster, learn faster",
-            subtitle: "Get clear summaries, user insights, and next steps—right after you build.",
+            subtitle: "만든 것, 배운 것, 고객 반응을 모아 다음 행동을 더 또렷하게 정합니다.",
             visual: .integrations,
             visualColors: [
                 Color(red: 0.07, green: 0.075, blue: 0.08),

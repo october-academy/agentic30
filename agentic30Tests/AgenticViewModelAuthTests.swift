@@ -20,6 +20,44 @@ private final class FakeWebAuthenticationSessionHandle: WebAuthenticationSession
 }
 
 struct AgenticViewModelAuthTests {
+    @Test @MainActor func onboardingContextDecodesLegacyPayloadWithoutWorkMode() throws {
+        let payload = """
+        {
+          "role": "developer",
+          "project_stage": "building",
+          "isolation_level": "solo_all",
+          "completed_at": "2026-05-08T00:00:00Z"
+        }
+        """.data(using: .utf8)!
+
+        let context = try JSONDecoder().decode(OnboardingContext.self, from: payload)
+
+        #expect(context.workMode == .fullTimeSolo)
+        #expect(context.role == .developer)
+        #expect(context.projectStage == .building)
+        #expect(context.isolationLevel == .soloAll)
+        #expect(context.completedAt == "2026-05-08T00:00:00Z")
+    }
+
+    @Test @MainActor func onboardingContextEncodesWorkModeForSidecarContract() throws {
+        let context = OnboardingContext(
+            workMode: .sideProject,
+            role: .designer,
+            projectStage: .preRevenue,
+            isolationLevel: .weeklyLoop,
+            completedAt: "2026-05-08T00:00:00Z"
+        )
+
+        let data = try JSONEncoder().encode(context)
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: String]
+
+        #expect(object?["work_mode"] == "side_project")
+        #expect(object?["role"] == "designer")
+        #expect(object?["project_stage"] == "pre_revenue")
+        #expect(object?["isolation_level"] == "weekly_loop")
+        #expect(object?["completed_at"] == "2026-05-08T00:00:00Z")
+    }
+
     @Test @MainActor func missingGoogleAuthDoesNotBlockLocalWorkspaceSelection() {
         WorkspaceSettings.clear()
         defer { WorkspaceSettings.clear() }

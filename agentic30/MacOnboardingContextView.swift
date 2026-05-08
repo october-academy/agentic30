@@ -4,11 +4,12 @@ struct MacOnboardingContextView: View {
     @ObservedObject var viewModel: AgenticViewModel
 
     @State private var sceneIndex = 0
+    @State private var selectedWorkMode: OnboardingWorkMode? = .fullTimeSolo
     @State private var selectedRole: OnboardingRole? = .developer
     @State private var selectedProjectStage: OnboardingProjectStage? = .ideaOnly
     @State private var selectedIsolationLevel: OnboardingIsolationLevel? = .soloAll
 
-    private var totalScenes: Int { 3 }
+    private var totalScenes: Int { 4 }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -82,6 +83,22 @@ struct MacOnboardingContextView: View {
     private var currentVisualBadge: some View {
         switch sceneIndex {
         case 0:
+            HStack(spacing: 12) {
+                Image(systemName: "hammer.fill")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(Color(red: 0.96, green: 0.90, blue: 0.66))
+                Text("Making")
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.92))
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+            .background(
+                Capsule()
+                    .fill(Color.black.opacity(0.32))
+                    .overlay(Capsule().stroke(Color.white.opacity(0.11), lineWidth: 1))
+            )
+        case 1:
             RoundedRectangle(cornerRadius: 30, style: .continuous)
                 .fill(
                     LinearGradient(
@@ -100,12 +117,12 @@ struct MacOnboardingContextView: View {
                         Capsule().fill(Color.white.opacity(0.95)).frame(width: 20, height: 40)
                     }
                 }
-        case 1:
+        case 2:
             HStack(spacing: 12) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(Color(red: 0.96, green: 0.90, blue: 0.66))
-                Text("Project stage")
+                Text("Stuck point")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.92))
             }
@@ -116,12 +133,12 @@ struct MacOnboardingContextView: View {
                     .fill(Color.black.opacity(0.32))
                     .overlay(Capsule().stroke(Color.white.opacity(0.11), lineWidth: 1))
             )
-        case 2:
+        case 3:
             HStack(spacing: 12) {
-                Image(systemName: "person.2.fill")
+                Image(systemName: "doc.text.fill")
                     .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(.white.opacity(0.92))
-                Text("Feedback loop")
+                Text("Records")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.92))
             }
@@ -139,19 +156,19 @@ struct MacOnboardingContextView: View {
 
     private var currentVisualColors: [Color] {
         switch sceneIndex {
-        case 0:
+        case 0, 1:
             return [
                 Color(red: 0.06, green: 0.07, blue: 0.07),
                 Color(red: 0.11, green: 0.22, blue: 0.16),
                 Color(red: 0.40, green: 0.74, blue: 0.33).opacity(0.75),
             ]
-        case 1:
+        case 2:
             return [
                 Color(red: 0.06, green: 0.07, blue: 0.05),
                 Color(red: 0.24, green: 0.26, blue: 0.16),
                 Color(red: 0.70, green: 0.64, blue: 0.44),
             ]
-        case 2:
+        case 3:
             return [
                 Color(red: 0.05, green: 0.06, blue: 0.07),
                 Color(red: 0.16, green: 0.20, blue: 0.24),
@@ -166,18 +183,20 @@ struct MacOnboardingContextView: View {
 
     private var currentTitle: String {
         switch sceneIndex {
-        case 0: return "어떤 일을 하고 계신가요?"
-        case 1: return "지금 프로젝트는 어느 단계에 있나요?"
-        case 2: return "피드백은 어디서 받으시나요?"
+        case 0: return "지금 어떤 상황에서 만들고 있나요?"
+        case 1: return "어떤 일을 하고 계신가요?"
+        case 2: return "현재 가장 큰 막힘은 무엇인가요?"
+        case 3: return "어떤 기록을 연결할 수 있나요?"
         default: return ""
         }
     }
 
     private var currentSubtitle: String {
         switch sceneIndex {
-        case 0: return "Assistant가 당신의 워크플로우에 맞춰 답변 스타일과 추천을 조정합니다."
-        case 1: return "현재 상태에 맞춰 Assistant가 조언 비중을 조정합니다."
-        case 2: return "고립 수준에 맞춰 코파운더 역할 비중을 조정합니다."
+        case 0: return "쓸 수 있는 시간과 책임 범위에 맞춰 오늘 할 일을 정합니다."
+        case 1: return "익숙한 일하는 방식에 맞춰 설명과 제안을 조정합니다."
+        case 2: return "막힌 지점에 맞춰 먼저 볼 문제를 정합니다."
+        case 3: return "프로젝트와 실행 기록을 읽어 오늘의 과제를 개인화합니다."
         default: return ""
         }
     }
@@ -202,6 +221,20 @@ struct MacOnboardingContextView: View {
         switch sceneIndex {
         case 0:
             VStack(spacing: 6) {
+                ForEach(OnboardingWorkMode.allCases, id: \.self) { mode in
+                    optionRow(
+                        title: mode.displayTitle,
+                        description: mode.displayDescription,
+                        selected: selectedWorkMode == mode,
+                        accent: workModeAccent,
+                        identifier: "onboardingContext.option.\(mode.rawValue)"
+                    ) {
+                        selectedWorkMode = mode
+                    }
+                }
+            }
+        case 1:
+            VStack(spacing: 6) {
                 ForEach(OnboardingRole.allCases, id: \.self) { role in
                     optionRow(
                         title: role.displayTitle,
@@ -214,7 +247,7 @@ struct MacOnboardingContextView: View {
                     }
                 }
             }
-        case 1:
+        case 2:
             VStack(spacing: 5) {
                 ForEach(OnboardingProjectStage.allCases, id: \.self) { stage in
                     optionRow(
@@ -228,7 +261,7 @@ struct MacOnboardingContextView: View {
                     }
                 }
             }
-        case 2:
+        case 3:
             VStack(spacing: 5) {
                 ForEach(OnboardingIsolationLevel.allCases, id: \.self) { level in
                     optionRow(
@@ -247,6 +280,7 @@ struct MacOnboardingContextView: View {
         }
     }
 
+    private var workModeAccent: Color { Color(red: 0.82, green: 0.99, blue: 0.69) }
     private var roleAccent: Color { Color(red: 0.82, green: 0.99, blue: 0.69) }
     private var stageAccent: Color { Color(red: 0.82, green: 0.99, blue: 0.69) }
     private var isolationAccent: Color { Color(red: 0.66, green: 0.78, blue: 0.91) }
@@ -368,9 +402,10 @@ struct MacOnboardingContextView: View {
 
     private var primaryButtonEnabled: Bool {
         switch sceneIndex {
-        case 0: return selectedRole != nil
-        case 1: return selectedProjectStage != nil
-        case 2: return selectedIsolationLevel != nil
+        case 0: return selectedWorkMode != nil
+        case 1: return selectedRole != nil
+        case 2: return selectedProjectStage != nil
+        case 3: return selectedIsolationLevel != nil
         default: return false
         }
     }
@@ -387,6 +422,7 @@ struct MacOnboardingContextView: View {
             PostHogTelemetry.capture("mac_onboarding_context_scene_advanced", properties: [
                 "from_step": sceneIndex,
                 "to_step": nextIndex,
+                "selected_work_mode": selectedWorkMode?.rawValue ?? "none",
                 "selected_role": selectedRole?.rawValue ?? "none",
                 "selected_project_stage": selectedProjectStage?.rawValue ?? "none",
             ])
@@ -395,12 +431,14 @@ struct MacOnboardingContextView: View {
         }
 
         guard
+            let workMode = selectedWorkMode,
             let role = selectedRole,
             let stage = selectedProjectStage,
             let level = selectedIsolationLevel
         else { return }
 
         let context = OnboardingContext.make(
+            workMode: workMode,
             role: role,
             projectStage: stage,
             isolationLevel: level

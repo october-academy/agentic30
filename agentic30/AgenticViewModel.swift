@@ -1592,6 +1592,7 @@ final class AgenticViewModel: ObservableObject {
             onboardingContext = context
             onboardingContextStatus = .idle
             PostHogTelemetry.capture("mac_onboarding_context_submitted", properties: [
+                "work_mode": context.workMode.rawValue,
                 "role": context.role.rawValue,
                 "project_stage": context.projectStage.rawValue,
                 "isolation_level": context.isolationLevel.rawValue,
@@ -1796,6 +1797,7 @@ final class AgenticViewModel: ObservableObject {
         }
         if let onboardingContext {
             payload["onboardingContext"] = [
+                "work_mode": onboardingContext.workMode.rawValue,
                 "role": onboardingContext.role.rawValue,
                 "project_stage": onboardingContext.projectStage.rawValue,
                 "isolation_level": onboardingContext.isolationLevel.rawValue,
@@ -2533,7 +2535,7 @@ final class AgenticViewModel: ObservableObject {
                             nextIntent: "agent_built_mvp_no_customers"
                         ),
                         StructuredPromptOption(
-                            label: "인터뷰/BIP 기록 의향 있음",
+                            label: "인터뷰/BIP (Build In Public) 기록 의향 있음",
                             description: "프로젝트 path, 업무 일지, 고객 인터뷰, 공개 기록을 매일 입력할 수 있습니다.",
                             preview: nil,
                             nextIntent: "records_ready_builder"
