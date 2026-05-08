@@ -272,6 +272,7 @@
 /* Begin PBXShellScriptBuildPhase section */
 		596660B32F86A4920021885C /* Build Sidecar Bundle */ = {
 			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
@@ -312,7 +313,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "set -euo pipefail\nexport PATH=\"$HOME/.local/share/mise/shims:$HOME/.asdf/shims:$HOME/.volta/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"\ncd \"$SRCROOT\"\nNODE_BIN=\"${NODE_BINARY:-$(command -v node || true)}\"\nif [ -z \"$NODE_BIN\" ]; then\n  for c in \"$HOME/.local/share/mise/shims/node\" \"$HOME/.asdf/shims/node\" \"$HOME/.volta/bin/node\" \"/opt/homebrew/bin/node\" \"/usr/local/bin/node\"; do\n    if [ -x \"$c\" ]; then NODE_BIN=\"$c\"; break; fi\n  done\nfi\nif [ -z \"$NODE_BIN\" ]; then\n  if [ -n \"${CI_WORKSPACE:-}\" ] || [ -n \"${CI:-}\" ]; then\n    BREW=\"\"\n    for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do\n      if [ -x \"$b\" ]; then BREW=\"$b\"; break; fi\n    done\n    if [ -n \"$BREW\" ]; then\n      echo \"[build-sidecar] installing node via $BREW (CI fallback)\" >&2\n      \"$BREW\" install node || true\n      for c in /opt/homebrew/bin/node /usr/local/bin/node; do\n        if [ -x \"$c\" ]; then NODE_BIN=\"$c\"; break; fi\n      done\n    fi\n  fi\nfi\nif [ -z \"$NODE_BIN\" ]; then\n  echo \"error: node not found in PATH; install Node.js 20+ or set NODE_BINARY to build the sidecar bundle\" >&2\n  exit 1\nfi\n\"$NODE_BIN\" scripts/build-sidecar.mjs\n";
+			shellScript = "set -euo pipefail\nexport PATH=\"$HOME/.local/share/mise/shims:$HOME/.asdf/shims:$HOME/.volta/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"\ncd \"$SRCROOT\"\nNODE_BIN=\"${NODE_BINARY:-$(command -v node || true)}\"\nif [ -z \"$NODE_BIN\" ]; then\n  for c in \"$HOME/.local/share/mise/shims/node\" \"$HOME/.asdf/shims/node\" \"$HOME/.volta/bin/node\" \"/opt/homebrew/bin/node\" \"/usr/local/bin/node\"; do\n    if [ -x \"$c\" ]; then NODE_BIN=\"$c\"; break; fi\n  done\nfi\nif [ -z \"$NODE_BIN\" ]; then\n  if [ -n \"${CI_WORKSPACE:-}\" ] || [ -n \"${CI:-}\" ]; then\n    BREW=\"\"\n    for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do\n      if [ -x \"$b\" ]; then BREW=\"$b\"; break; fi\n    done\n    if [ -n \"$BREW\" ]; then\n      echo \"[build-sidecar] installing node + bun via $BREW (CI fallback)\" >&2\n      \"$BREW\" install node || true\n      \"$BREW\" install bun || true\n      for c in /opt/homebrew/bin/node /usr/local/bin/node; do\n        if [ -x \"$c\" ]; then NODE_BIN=\"$c\"; break; fi\n      done\n    fi\n  fi\nfi\nif [ -z \"$NODE_BIN\" ]; then\n  echo \"error: node not found in PATH; install Node.js 20+ or set NODE_BINARY to build the sidecar bundle\" >&2\n  exit 1\nfi\n\"$NODE_BIN\" scripts/build-sidecar.mjs\n";
 		};
 		596660B42F86A4920021885C /* Sign Sidecar Native Binaries */ = {
 			isa = PBXShellScriptBuildPhase;
