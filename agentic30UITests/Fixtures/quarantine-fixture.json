@@ -1,0 +1,35 @@
+{
+  "type": "rubric_quarantine_list",
+  "items": [
+    {
+      "file": {
+        "path": "/tmp/agentic30-ui-quar/.agentic30/rubric-assessments.json.invalid-2026-05-08T01-00-00-000Z.json",
+        "name": "rubric-assessments.json.invalid-2026-05-08T01-00-00-000Z.json",
+        "size": 320,
+        "mtimeMs": 1746662400000
+      },
+      "dump": {
+        "sourceFile": "/tmp/agentic30-ui-quar/.agentic30/rubric-assessments.json",
+        "quarantinedAt": "2026-05-08T01:00:00.000Z",
+        "mtimeMs": 1746662400000,
+        "records": [
+          {
+            "index": 0,
+            "issues": [
+              {
+                "path": ["axes", "clout", "evidence_refs"],
+                "message": "Day 30 requires evidence_refs or no_evidence_reason for axis \"clout\""
+              }
+            ],
+            "proposal": {
+              "kind": "missing_no_evidence_reason",
+              "axis": "clout",
+              "suggestion": "Day 30 마감인데 clout 축에 근거가 없습니다."
+            },
+            "originalSummary": "fixture-session · Day 30"
+          }
+        ]
+      }
+    }
+  ]
+}

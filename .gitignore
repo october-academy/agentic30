@@ -18,3 +18,14 @@ secrets/
 
 # Local build artifacts (xcodebuild archive, DMG, logs). Sidecar already ignored above.
 build/
+
+# Private strategy/alignment inputs. Do not commit raw Founder/company planning data.
+docs/private/
+docs/_private/
+docs/mandal-art*.md
+docs/mandalart*.md
+docs/*mandal*.md
+docs/october-academy/
+
+# Local/generated assistant memory bootstrap.
+docs/SOUL.md

@@ -4,56 +4,56 @@ export const IDD_CURRICULUM_SCHEMA_VERSION = 1;
 
 export const AGENTIC30_THREE_LAYERS = Object.freeze({
   founder: Object.freeze({
-    name: "Founder",
-    subject: "나, Founder/CEO/첫 사용자",
+    name: "Builder",
+    subject: "사용자/첫 운영자",
     question: "오늘 카드가 내 실제 행동을 바꿨나?",
     successSignal: "daily dogfood, interviews, journal, BIP, DM/ask execution",
   }),
   company: Object.freeze({
-    name: "October Academy",
-    subject: "교육회사",
-    question: "이 실행이 지혜/판단 훈련 자산으로 남나?",
-    successSignal: "repeatable education asset, scalable revenue engine, Agentic Engineer rubric evidence",
+    name: "Program",
+    subject: "반복 가능한 교육/코칭 시스템",
+    question: "이 실행이 반복 가능한 훈련 자산으로 남나?",
+    successSignal: "repeatable education asset, rubric evidence, reusable coaching loop",
   }),
   product: Object.freeze({
     name: "Agentic30",
     subject: "제품",
-    question: "30일/100명/첫 매출 가설을 강화하나?",
-    successSignal: "IDD loop, adaptive curriculum, 100 users, first revenue",
+    question: "30일 PMF 검증 판단을 강화하나?",
+    successSignal: "IDD loop, adaptive curriculum, evidence-backed continue/pivot/stop decision",
   }),
 });
 
 export const IDD_BASE_CURRICULUM = Object.freeze([
-  day(1, "foundation", "Vault와 첫 인터뷰 증거를 연결한다", "Vault", "Obsidian/로컬 폴더를 연결하고 L2 인터뷰 1건을 IDD Engine의 첫 입력으로 만든다.", ["vault path 지정", "interviews/journal/bip 폴더 규약 확인", "첫 L2 transcript 또는 인터뷰 후보 1명 기록"], "vault 연결 로그, 첫 L2 evidence"),
-  day(2, "foundation", "고객의 과거 행동을 한 문장으로 압축한다", "Pain", "첫 L2 발화에서 실제 과거 행동과 status quo를 분리한다.", ["L2 인용 1개 고르기", "현재 대안/status quo 적기", "Mom Test 후속 질문 3개 작성"], "pain quote, status quo, 질문 3개"),
-  day(3, "foundation", "반증 가능한 가설을 만든다", "Hypothesis", "통증을 제품 아이디어가 아니라 검증 가능한 가설로 바꾼다.", ["가설 ID 1개 만들기", "강화 증거와 반증 증거 기준 쓰기", "다음 인터뷰 대상 1명 정하기"], "검증 가설 v0"),
-  day(4, "foundation", "두 번째 L2 증거를 확보한다", "Second L2", "한 명의 발화를 일반화하지 않도록 두 번째 고객 증거를 모은다.", ["후속 인터뷰 또는 DM 보내기", "새 인용을 첫 인용과 비교", "반복 표현 표시"], "L2 quote comparison"),
-  day(5, "foundation", "가장 작은 유료/사용 가능 wedge를 정한다", "Wedge", "풀 비전 대신 이번 주 한 사람이 쓸 수 있는 가장 작은 버전을 고른다.", ["narrowest wedge 1개 선택", "제외할 범위 3개 쓰기", "첫 CTA 문장 작성"], "wedge, non-goals, CTA"),
-  day(6, "foundation", "돈/시간 ask를 한다", "Ask", "칭찬이 아니라 시간, 돈, 다음 일정 약속을 요청한다.", ["ask 대상 1명 선택", "가격 또는 시간 약속 문장 작성", "yes/no/no-reply 기록"], "monetization/time ask result"),
+  day(1, "foundation", "고객의 어제 행동에서 통증 1개를 압축한다", "Pain", "4종 인풋에서 가장 압축된 고객 통증 1개를 뽑고 SPEC.md v0의 기준으로 둔다.", ["고객 발화 또는 문제 메모에서 과거 행동 1개 고르기", "status quo와 비용/시간/실수 단위로 적기", "SPEC.md v0에 통증 1개와 근거 1개 기록"], "SPEC.md v0, pain quote, status quo"),
+  day(2, "foundation", "돈이 흐르는 기준 시장을 고른다", "Market", "어제 통증과 가까운 iOS/Android/Web/Mac 앱·도구 시장에서 이미 지불 행동이 있는지 확인한다.", ["카테고리 1-2개 고르기", "작은 팀/개인이 만든 유료 앱·광고 앱 5개 찾기", "가격·리뷰·ASO·광고/콘텐츠 흔적을 day-2-evidence-log.md에 기록"], "day-2-evidence-log.md"),
+  day(3, "foundation", "Mom Test 인터뷰 질문을 만든다", "Mom Test", "약한 가설을 검증/반증할 5문장 인터뷰 질문을 만들고 미래 의향 질문을 제거한다.", ["과거 행동 질문 3개 이상 쓰기", "미래 의향/칭찬 유도 질문 제거", "다음 인터뷰 대상 1명과 질문 5개 확정"], "day-3-interview-script.md"),
+  day(4, "foundation", "10배 wedge로 약한 섹션을 다시 쓴다", "10x Wedge", "경쟁 앱을 베끼지 않고 더 좁은 페르소나나 더 빠른 결과로 SPEC.md의 약한 섹션을 다시 쓴다.", ["원조/대체재의 핵심 흐름 1개 고르기", "가격·속도·UX·페르소나 중 10배 wedge 1개 선택", "SPEC.md 같은 파일에서 약한 섹션 다시 쓰기"], "day-4-rewrite-decision.md"),
+  day(5, "foundation", "수요 시그널을 숫자로 평가한다", "Demand Signal", "경쟁앱/광고/노출/스토어/랜딩/DM 데이터를 진짜 수요 신호와 허수로 분리한다.", ["impressions/clicks/signups/replies/CPI/store conversion 중 있는 숫자 정리", "waitlist/CTR이 아닌 돈 낼 후보 1명 고르기", "SPEC.md v2에 demand signal 판단 기록"], "SPEC.md v2, day-5-demand-signal.md"),
+  day(6, "foundation", "돈/시간 ask를 실행한다", "Ask", "칭찬이 아니라 특정 1명에게 가격, 받을 약속, 응답 기한이 있는 ask를 보낸다.", ["ask 대상 1명 선택", "가격·받을 약속·응답 기한이 있는 문장 작성", "yes/no/no-reply를 원문으로 기록"], "monetization-ask-result.md"),
   day(7, "foundation", "Foundation Go/No-Go를 결정한다", "Go/No-Go", "7일 기록으로 계속/재시작/피벗 중 하나를 고른다.", ["인터뷰/일지/BIP 수량 세기", "가장 강한 증거와 반증 쓰기", "다음 7일 결론 선택"], "go-no-go.md, foundation-summary"),
-  day(8, "build", "MVP를 IDD loop 하나로 자른다", "MVP Cut", "기능 목록이 아니라 매일 카드 loop를 완성 대상으로 고정한다.", ["P0 loop 경로 그리기", "부차 기능 deferred 표시", "첫 happy path 테스트 작성"], "P0 loop spec"),
-  day(9, "build", "폴더 watch와 색인 상태를 보이게 만든다", "Ingest", "복붙 마찰 0이라는 차별화의 못을 구현한다.", ["watch 대상 폴더 확인", "md/txt 변경 감지 로그 남기기", "qmd 색인 성공/실패 상태 표시"], "ingest status"),
-  day(10, "build", "아침 카드 JSON을 고정한다", "Card JSON", "인사이트/질문/행동의 출력 스키마를 안정화한다.", ["card JSON schema 작성", "L2 인용 필수 rule 추가", "0건 폴백 rule 추가"], "morning card schema"),
-  day(11, "build", "어제 응답을 오늘 카드에 반영한다", "Memory", "완료/스킵/다시 묻기가 다음 날 prompt에 들어가게 한다.", ["응답 저장 위치 정하기", "다음 카드 context에 주입", "스킵 시 축소 미션 생성"], "response memory loop"),
-  day(12, "build", "첫 end-to-end dogfood를 돈다", "E2E", "실제 vault에서 색인부터 카드까지 한 번 지나간다.", ["실제 인터뷰 파일 넣기", "카드 생성 실행", "추천 행동 수행 여부 기록"], "dogfood E2E log"),
-  day(13, "build", "온보딩 마찰을 줄인다", "Onboarding", "qmd/권한/폴더 규약에서 멈추는 지점을 제거한다.", ["첫 실행을 새 환경에서 반복", "qmd 다운로드/실패 문구 확인", "필수 설명 5줄 이하로 줄이기"], "time-to-first-card note"),
-  day(14, "build", "출처 UI와 신뢰도를 붙인다", "Evidence UI", "왜 이 행동을 추천하는지 사용자가 확인할 수 있게 한다.", ["인용 출처 표시", "최근 날짜/빈도 표시", "근거 부족 badge 추가"], "evidence card UI"),
-  day(15, "build", "품질 회귀 테스트를 만든다", "Quality", "일반론 카드와 무근거 조언을 테스트로 막는다.", ["fixture transcript 작성", "카드 rule-check 추가", "인용 없는 insight 실패 처리"], "card quality tests"),
-  day(16, "build", "실패 복구 흐름을 닫는다", "Recovery", "qmd/provider/권한 실패가 침묵으로 끝나지 않게 한다.", ["qmd unavailable fallback", "provider failure message", "다음 행동 fallback 카드"], "recovery matrix"),
-  day(17, "build", "Build phase를 줄일지 결정한다", "Build Retro", "기능 추가가 아니라 daily use 기준으로 남길 것을 고른다.", ["7일 사용 로그 확인", "가장 자주 열린 화면 확인", "삭제/유지/다음 phase 결정"], "build decision memo"),
-  day(18, "launch", "고객 언어로 launch story를 쓴다", "Story", "제품 설명보다 반복된 L2 표현으로 공개한다.", ["반복 인용 3개 선택", "launch hook 3개 작성", "가장 강한 status quo로 시작"], "launch story draft"),
-  day(19, "launch", "첫 공개 proof를 만든다", "Public Proof", "불완전한 앱 상태보다 배운 고객 증거를 공개한다.", ["아침 카드 스크린샷/요약 선택", "실행 결과 1개 쓰기", "Threads/BIP 게시"], "public proof post"),
-  day(20, "launch", "warm outreach를 보낸다", "Outreach", "가장 절박한 사람에게 직접 확인한다.", ["20명 후보 목록", "개인화 DM 10개", "응답/무응답 Sheet 기록"], "outreach tracker"),
-  day(21, "launch", "첫 설치/사용 관찰을 한다", "Observe", "시연이 아니라 옆에서 사용자가 막히는 장면을 본다.", ["테스터 1명 설치 관찰", "막힌 단계 기록", "수정 3개 이하 선택"], "observation note"),
-  day(22, "launch", "60초 demo를 만든다", "Demo", "아침 카드 가치가 60초 안에 보이게 한다.", ["한 transcript에서 카드까지 녹화", "인용/질문/행동이 보이게 자르기", "caption 작성"], "60s demo"),
-  day(23, "launch", "반대 이유를 분류한다", "Objections", "설치/신뢰/가치/가격 중 어디서 막히는지 나눈다.", ["거절 이유 수집", "상위 blocker 1개 선택", "다음 실험으로 변환"], "objection map"),
-  day(24, "launch", "Launch 결정을 숫자로 한다", "Launch Decision", "조회수가 아니라 DM/설치/사용/ask 결과로 다음 7일을 고른다.", ["유입/설치/카드 생성/ask 숫자 정리", "가장 강한 채널 선택", "다음 실험 1개 결정"], "launch decision"),
-  day(25, "grow", "activation을 정의한다", "Activation", "가입이 아니라 첫 가치 경험을 측정한다.", ["첫 가치 행동 정의", "도달/이탈 수 계산", "가장 큰 이탈 지점 선택"], "activation baseline"),
-  day(26, "grow", "retention 신호를 본다", "Retention", "다시 돌아와 기록을 넣는 사람이 있는지 확인한다.", ["재방문 기준 정하기", "반복 사용 발화 찾기", "돌아온 이유 한 문장 작성"], "retention note"),
-  day(27, "grow", "가격 ask를 반복한다", "Pricing", "첫 매출은 큰 금액보다 지불 행동 증명이다.", ["유료 제안 1개 작성", "관심 사용자에게 제안", "가격 반응 기록"], "pricing ask result"),
-  day(28, "grow", "support loop를 만든다", "Support", "질문과 실패를 제품 개선 입력으로 돌린다.", ["반복 질문 5개 수집", "앱/문서/온보딩 중 처리 위치 선택", "하나 바로 수정"], "support insight log"),
-  day(29, "grow", "PMF evidence memo를 쓴다", "PMF Memo", "100명/첫 매출과 반증을 같은 문서에 둔다.", ["100명 진행률", "첫 매출 진행률", "가장 강한 신호와 반증 작성"], "PMF evidence memo"),
-  day(30, "grow", "계속/전환/중단을 결정한다", "Final Decision", "완주가 아니라 다음 선택을 공개한다.", ["30일 숫자 요약", "가장 큰 배움 3개", "continue/pivot/stop 결정"], "Day 30 public retro"),
+  day(8, "build", "MVP를 핵심 기능 1개로 자른다", "Core Action", "기능 목록이 아니라 사용자가 30초 안에 첫 가치를 보는 핵심 행동 1개를 완성 대상으로 고정한다.", ["핵심 행동 1개와 성공 화면 정의", "로그인/동기화/자동화/설정 확장은 deferred 표시", "첫 happy path 테스트 작성"], "core action spec + deferred list"),
+  day(9, "build", "입력→처리→출력 흐름을 고정한다", "Input Flow", "사용자가 바로 써볼 수 있게 입력, 처리, 결과 화면을 한 번에 지나가게 만든다.", ["첫 입력 포맷 1개만 선택", "처리 실패와 빈 입력 폴백 작성", "결과 화면까지 30초 이내인지 재기"], "input-process-output flow"),
+  day(10, "build", "핵심 결과의 10배 품질을 만든다", "10x Result", "기능 수가 아니라 같은 문제를 더 빠르게, 적은 클릭으로, 더 좁은 페르소나에 맞게 해결한다.", ["경쟁/대체재 대비 10배 기준 1개 선택", "핵심 결과 화면에만 품질 투자", "부차 기능 추가 요청은 다음 폴더로 이동"], "10x core result note"),
+  day(11, "build", "마찰 없는 첫 사용을 만든다", "No Login", "검증 전 로그인, 계정, 복잡한 온보딩으로 이탈을 만들지 않는다.", ["설치 후 첫 가치까지 클릭 수 세기", "필수 설명 5줄 이하로 줄이기", "로그인/회원가입 없이 가능한 경로 확인"], "time-to-first-value note"),
+  day(12, "build", "첫 end-to-end dogfood를 돈다", "E2E", "실제 입력에서 핵심 기능 1개와 결과 기록까지 한 번 지나간다.", ["실제 인터뷰/일지 파일 넣기", "핵심 결과 생성 실행", "추천 행동 수행 여부 기록"], "dogfood E2E log"),
+  day(13, "build", "스토어/랜딩 약속을 미리 쓴다", "Promise", "제품 설명을 나중에 붙이지 말고 iOS/Android/Web/Mac 어디서 팔든 통하는 약속 한 문장으로 범위를 제한한다.", ["타겟 페르소나 한 줄 작성", "결과 약속 한 문장 작성", "스크린샷/데모/스토어 첫 화면에 보여야 할 장면 1개 선택"], "store or landing promise draft"),
+  day(14, "build", "측정을 심는다", "Measurement", "설치보다 첫 가치 경험과 이탈 지점을 알 수 있게 이벤트를 남긴다.", ["first_value 이벤트 정의", "개인정보 없는 payload 확인", "activation baseline 기록 위치 만들기"], "event list + activation check"),
+  day(15, "build", "수익모델 dry run을 한다", "Revenue Dry Run", "광고든 구독이든 결제를 나중 문제로 밀지 말고 가격, 노출 위치, 받을 약속의 막힘을 확인한다.", ["광고/구독/일회성 결제 중 현재 실험 모델 1개 선택", "페이월/결제 mock 또는 광고 노출 sandbox 경로 확인", "waitlist와 무료 가입은 proof가 아님을 기록"], "revenue dry-run note"),
+  day(16, "build", "출시 체크리스트를 닫는다", "Release Gate", "출시를 미루는 플랫폼 계정, 권한, 세금/정산, 빌드 리스크를 확인 목록으로 줄인다.", ["App Store/Google Play/Web/Mac 중 현재 채널 계정 상태 확인", "정산·세금·회사 사규 리스크 체크", "첫 테스터에게 보낼 설치/접속 안내 5줄 작성"], "release readiness checklist"),
+  day(17, "build", "Build phase를 줄일지 결정한다", "Build Retro", "기능 추가가 아니라 첫 가치 경험과 유료 ask 가능 여부로 남길 것을 고른다.", ["7일 사용 로그 확인", "첫 가치까지 막힌 단계 확인", "삭제/유지/다음 phase 결정"], "build decision memo"),
+  day(18, "launch", "고객 언어로 launch story를 쓴다", "Story", "제품 설명보다 반복된 L2 표현과 10배 wedge로 공개한다.", ["반복 인용 3개 선택", "hook-demo-CTA 구조로 launch hook 3개 작성", "가장 강한 status quo로 시작"], "launch story draft"),
+  day(19, "launch", "첫 공개 proof를 만든다", "Public Proof", "불완전한 앱 상태보다 배운 고객 증거와 핵심 결과 장면을 공개한다.", ["핵심 결과 스크린샷/요약 선택", "실행 결과 1개 쓰기", "Threads/BIP 게시"], "public proof post"),
+  day(20, "launch", "warm outreach를 보낸다", "Outreach", "가장 절박한 사람에게 직접 확인하고 응답/무응답을 숫자로 남긴다.", ["20명 후보 목록", "개인화 DM 10개", "응답/무응답 Sheet 기록"], "outreach tracker"),
+  day(21, "launch", "첫 설치/사용 관찰을 한다", "Observe", "시연이 아니라 사용자가 iOS/Android/Web/Mac 실제 환경에서 막히는 장면과 첫 가치 도달 시간을 본다.", ["테스터 1명 설치/접속 관찰", "막힌 단계와 first_value 도달 여부 기록", "수정 3개 이하 선택"], "observation note"),
+  day(22, "launch", "60초 demo를 만든다", "Demo", "핵심 기능 1개와 10배 결과가 60초 안에 보이게 한다.", ["한 입력에서 결과까지 녹화", "hook-demo-CTA 캡션 작성", "BIP/랜딩/광고 소재로 재사용"], "60s demo asset"),
+  day(23, "launch", "paid learning 실험을 설계한다", "Paid Learning", "광고비를 성장 욕심이 아니라 iOS/Android/Web/Mac 시장/메시지 학습 비용으로 작게 쓴다.", ["테스트 예산과 중단 기준 정하기", "소재 hook 3개와 타겟 1개 선택", "CPI/CTR/store conversion/first_value 측정 준비"], "paid learning plan"),
+  day(24, "launch", "Launch 결정을 숫자로 한다", "Launch Decision", "조회수가 아니라 DM/설치/first_value/ask 결과로 다음 7일을 고른다.", ["유입/설치/첫 가치/ask 숫자 정리", "가장 강한 채널 선택", "다음 실험 1개 결정"], "launch decision"),
+  day(25, "grow", "activation을 정의한다", "Activation", "가입이 아니라 설치 후 30초 이내 첫 가치 경험에 도달했는지를 측정한다.", ["첫 가치 행동 정의", "도달/이탈 수 계산", "가장 큰 이탈 지점 선택"], "activation baseline"),
+  day(26, "grow", "retention 신호를 본다", "Retention", "다시 돌아와 핵심 기능을 반복하는 사람이 있는지 확인한다.", ["재방문 기준 정하기", "반복 사용 발화 찾기", "돌아온 이유 한 문장 작성"], "retention note"),
+  day(27, "grow", "가격 ask와 페이월을 반복한다", "Pricing", "첫 매출은 큰 금액보다 지불 행동 또는 명시적 가격 거절의 증명이다.", ["유료 제안 1개 작성", "관심 사용자에게 가격·약속·기한 포함 제안", "가격 반응과 결제/거절 원문 기록"], "pricing ask result"),
+  day(28, "grow", "ASO/소재 loop를 만든다", "Acquisition Loop", "앱스토어 검색 키워드, 상세 페이지, 랜딩, 광고 소재를 감이 아니라 전환 데이터로 고친다.", ["App Store/Google Play/랜딩의 hook 점검", "키워드·스크린샷·소재 1개 수정", "CPI/설치/store conversion/first_value 변화 기록"], "acquisition loop log"),
+  day(29, "grow", "PMF evidence memo를 쓴다", "PMF Memo", "실제 사용자 증거, 유입 지표, ask 결과, 반증을 같은 문서에 둔다.", ["사용자 증거와 ask 결과 정리", "CPI/activation/retention/가격 반응 요약", "계속/전환/중단 판단 기준 쓰기"], "PMF evidence memo"),
+  day(30, "grow", "계속/전환/중단을 결정한다", "Final Decision", "완주가 아니라 첫 가치, 유입, 지불 행동 근거로 다음 선택을 공개한다.", ["30일 숫자 요약", "가장 큰 배움 3개", "continue/pivot/stop 결정"], "Day 30 public retro"),
 ]);
 
 export function buildAdaptiveCurriculum({
@@ -68,11 +68,11 @@ export function buildAdaptiveCurriculum({
   return {
     schemaVersion: IDD_CURRICULUM_SCHEMA_VERSION,
     generatedAt: toIso(now),
-    source: "docs/MAC_APP_DIRECTION.md",
+    source: "docs/AGENTIC30-DIRECTION.md",
     strategy: {
       northStar: "IDD Engine dogfood loop",
       p0: "folder watch + qmd index + 09:00 card + response memory + Day 7 Go/No-Go",
-      antiValidation: "Creator product reaches 100 users and first revenue by Day 30",
+      antiValidation: "Day 30 decision has no real-user evidence or explicit ask outcome",
       layers: AGENTIC30_THREE_LAYERS,
     },
     signals,
@@ -119,9 +119,9 @@ export function deriveCurriculumSignals(state = {}, { now = new Date() } = {}) {
     /l2/g,
   ]);
   const bipCount = rows.length;
-  const hasRevenueSignal = /(매출|결제|paid|payment|price|가격|돈\s*내|구매|revenue)/i.test(haystack);
+  const hasRevenueSignal = /(매출|결제|paid|payment|price|가격|돈\s*내|구매|revenue|구독|subscription|paywall|페이월|in[-_\s]?app|iap|인앱결제|admob|eCPM|광고\s*수익)/i.test(haystack);
   const hasNoReply = /(no[-_\s]?reply|무응답|답\s*못|응답\s*없)/i.test(haystack);
-  const hasUserCountSignal = /(100명|가입|사용자|active user|download|설치)/i.test(haystack);
+  const hasUserCountSignal = /(100명|가입|사용자|active user|download|설치|store conversion|cpi|ctr|activation|first[_\s-]?value|첫\s*가치)/i.test(haystack);
   const currentMissionCompleted = normalized.currentMission?.status === "completed";
   const latestInsight = String(latest.insights || latest.notes || "").trim();
   const inputHealth = [
@@ -224,18 +224,18 @@ function personalizeDay(base, signals) {
 
 function buildLayerChecks(base, signals) {
   const checks = [
-    `Founder: ${AGENTIC30_THREE_LAYERS.founder.question}`,
-    `Company: ${AGENTIC30_THREE_LAYERS.company.question}`,
+    `Builder: ${AGENTIC30_THREE_LAYERS.founder.question}`,
+    `Program: ${AGENTIC30_THREE_LAYERS.company.question}`,
     `Product/Agentic30: ${AGENTIC30_THREE_LAYERS.product.question}`,
   ];
   if (signals.currentMissionCompleted) {
-    checks[0] = "Founder: 어제 완료한 미션이 오늘의 첫 근거로 들어갔나?";
+    checks[0] = "Builder: 어제 완료한 미션이 오늘의 첫 근거로 들어갔나?";
   }
   if (base.phase === "launch") {
-    checks[1] = "Company: 이 공개 기록이 October Academy의 교육/커뮤니티 flywheel 증거로 남나?";
+    checks[1] = "Program: 이 공개 기록이 반복 가능한 코칭/커리큘럼 자산으로 남나?";
   }
   if (base.phase === "grow") {
-    checks[2] = "Product/Agentic30: 100명/첫 매출 기준에서 계속/전환/중단 판단이 가능해졌나?";
+    checks[2] = "Product/Agentic30: 실제 사용자 증거와 ask 결과로 계속/전환/중단 판단이 가능해졌나?";
   }
   return checks;
 }
@@ -278,13 +278,13 @@ function officeHoursQuestionFor(base, signals) {
 function ceoQuestionFor(base, signals) {
   if (signals.evidenceGaps.length >= 3) return "지금 범위가 너무 큰가, 아니면 증거 수집이 너무 작은가? 오늘 깨질 전제 하나만 골라.";
   if (base.phase === "build") return "10점짜리 경험은 기능 수가 아니라 어떤 아침 행동 변화로 드러나?";
-  if (base.phase === "grow") return "100명/첫 매출 기준에서 오늘 가장 비싼 전제는 무엇이고 왜 아직 믿어?";
+  if (base.phase === "grow") return "PMF 판단에서 오늘 가장 비싼 전제는 무엇이고 왜 아직 믿어?";
   return "이번 주 한 명에게 유용한 가장 작은 버전은 뭐야?";
 }
 
 function stopOrPivotCheckFor(base) {
   if (base.day === 7) return "5-7건 인터뷰, 7건 일지, 2-3건 BIP가 없으면 Go가 아니라 재시작 후보로 본다.";
-  if (base.day === 30) return "Creator 제품 100명 미달 또는 첫 매출 0원이면 IDD Engine hard stop.";
+  if (base.day === 30) return "실제 사용자 증거 또는 명시적 ask 결과가 없으면 IDD Engine hard stop.";
   return "L2 인용 없이 조언이 나오면 다음 날은 기능 추가가 아니라 입력 확보로 되돌린다.";
 }
 

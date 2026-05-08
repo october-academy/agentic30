@@ -2,6 +2,7 @@ export const ID = "design-review";
 export const NAME = "Design Review (visual QA)";
 export const PHASES = ["build"];
 export const DECISIONS = ["visual-qa", "ui-polish", "ai-slop"];
+export const RUBRIC = ["definition", "command"];
 export const SUMMARY =
   "관찰 기반(I notice / I wonder / What if / I think because)으로 시각·정보 위계를 점검합니다.";
 

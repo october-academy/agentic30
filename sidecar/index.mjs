@@ -67,11 +67,20 @@ import {
   parseGoogleDocUrl,
   parseGoogleSheetUrl,
   parseMissionChoicesResponse,
+  acknowledgePendingRitual,
+  applyCurriculumDayUpdate,
   persistBipCoachState,
   pickSheetTab,
   summarizeSheetValues,
   todayKey,
 } from "./bip-coach-state.mjs";
+import { buildRitualPrompt } from "./weekly-ritual.mjs";
+import {
+  listQuarantinedFiles,
+  proposeFixForEntry,
+  readQuarantineDump,
+  restoreQuarantinedRecord,
+} from "./quarantine-recovery.mjs";
 import {
   readGoogleDoc,
   readSheetMetadata,
@@ -174,6 +183,12 @@ const CHAT_BIP_EXTERNAL_DOC_MAX_CHARS = 12000;
 const CHAT_BIP_SHEET_MAX_ROWS = 25;
 const CHAT_BIP_EXTERNAL_CACHE_TTL_MS = 5 * 60 * 1000;
 const INSTANT_CHAT_COMPLETE_SLO_MS = 1_000;
+const REQUEST_EMIT_SCHEMA_VERSION = 1;
+const ALLOWED_REQUEST_EMIT_EVENTS = new Set([
+  "workspace_setup_started",
+  "workspace_setup_failed",
+  "workspace_setup_completed",
+]);
 
 const state = {
   sessions: new Map(),
@@ -220,6 +235,174 @@ state.bipCoach = mergeBipConfigIntoCoachState(
 state.bipCoach = syncBipCoachSessionState();
 await persistBipCoachState(bipCoachFilePath, state.bipCoach);
 const telemetry = createTelemetryClient({ appSupportPath, workspaceRoot });
+// Replay pending ritual after telemetry client exists. broadcast() may run
+// even before any client connects — that's fine, the persisted pendingRitual
+// stays until ack so reconnects also see it.
+queueMicrotask(() => {
+  try { replayPendingRitualOnBoot(); } catch { /* boot best-effort */ }
+});
+
+// R4 quarantine recovery — Mac client surface. Both helpers translate the
+// pure domain in `quarantine-recovery.mjs` into WebSocket events. The Mac
+// app receives them in AgenticViewModel.handleSidecarEvent().
+async function broadcastQuarantineList(socket) {
+  try {
+    const files = await listQuarantinedFiles({ workspaceRoot });
+    const items = [];
+    for (const file of files) {
+      const dump = await readQuarantineDump({ workspaceRoot, quarantinePath: file.path });
+      items.push({
+        file,
+        dump: {
+          ...dump,
+          // The Mac client only needs a label per record, not the raw original
+          // payload. Keep arbitrary user-shape JSON out of the wire.
+          records: dump.records.map((entry) => ({
+            index: entry.index,
+            issues: entry.issues,
+            proposal: entry.proposal,
+            originalSummary: summarizeOriginalRecord(entry.original),
+          })),
+        },
+      });
+    }
+    send(socket, { type: "rubric_quarantine_list", items });
+  } catch (err) {
+    send(socket, {
+      type: "rubric_quarantine_error",
+      stage: "list",
+      message: err?.message || String(err),
+    });
+  }
+}
+
+// Round 6 / CCG-UX: Mac client passes only `honestModeReason` and the entry
+// pointer; sidecar reads the quarantine dump, builds a fixedRecord that
+// preserves original axis scores, and re-uses the existing restore path.
+// This stops the Mac side from owning schema-shape decisions.
+async function handleWeeklyRitualAck(payload) {
+  const day = typeof payload?.day === "number" ? payload.day : undefined;
+  state.bipCoach = acknowledgePendingRitual(state.bipCoach, { day });
+  await persistBipCoachState(bipCoachFilePath, state.bipCoach);
+}
+
+async function handleQuarantineRestoreWithReason(socket, payload) {
+  try {
+    const dump = await readQuarantineDump({
+      workspaceRoot,
+      quarantinePath: payload?.quarantinePath,
+    });
+    const entry = dump.records.find((r) => r.index === payload?.recordIndex);
+    if (!entry) throw new Error("recordIndex not found in quarantine dump");
+    // The sanitized entry from MCP/Mac path drops `original` for privacy. We
+    // need the raw original to preserve scores — read directly here.
+    const rawDump = JSON.parse(
+      await (await import("node:fs/promises")).readFile(payload.quarantinePath, "utf8"),
+    );
+    const rawEntry = rawDump.records?.[payload.recordIndex];
+    if (!rawEntry) throw new Error("raw quarantine entry missing");
+    const fixedRecord = proposeFixForEntry(
+      { ...entry, original: rawEntry.original },
+      payload?.honestModeReason ?? "",
+    );
+    const result = await restoreQuarantinedRecord({
+      workspaceRoot,
+      quarantinePath: payload?.quarantinePath,
+      recordIndex: payload?.recordIndex,
+      fixedRecord,
+      expectedMtimeMs: payload?.expectedMtimeMs,
+    });
+    telemetry.captureEvent("mac_sidecar_rubric_quarantine_restored_with_reason", {
+      remaining: result.remainingInvalidCount,
+      duplicateAvoided: result.duplicateAvoided ?? false,
+    });
+    send(socket, { type: "rubric_quarantine_restored", result });
+    await broadcastQuarantineList(socket);
+  } catch (err) {
+    send(socket, {
+      type: "rubric_quarantine_error",
+      stage: "restore_with_reason",
+      message: err?.message || String(err),
+    });
+  }
+}
+
+async function handleQuarantineRestore(socket, payload) {
+  try {
+    const result = await restoreQuarantinedRecord({
+      workspaceRoot,
+      quarantinePath: payload?.quarantinePath,
+      recordIndex: payload?.recordIndex,
+      fixedRecord: payload?.fixedRecord,
+      expectedMtimeMs: payload?.expectedMtimeMs,
+    });
+    telemetry.captureEvent("mac_sidecar_rubric_quarantine_restored", {
+      remaining: result.remainingInvalidCount,
+    });
+    send(socket, { type: "rubric_quarantine_restored", result });
+    // Re-broadcast list so the Mac UI refreshes without a separate roundtrip.
+    await broadcastQuarantineList(socket);
+  } catch (err) {
+    send(socket, {
+      type: "rubric_quarantine_error",
+      stage: "restore",
+      message: err?.message || String(err),
+    });
+  }
+}
+
+function summarizeOriginalRecord(original) {
+  if (!original || typeof original !== "object") return null;
+  const sessionId = typeof original.sessionId === "string" ? original.sessionId : null;
+  const day = typeof original.day === "number" ? original.day : null;
+  if (sessionId && day != null) return `${sessionId} · Day ${day}`;
+  if (sessionId) return sessionId;
+  if (day != null) return `Day ${day}`;
+  return null;
+}
+
+// Weekly ritual fold-in: applyCurriculumDayUpdate atomically updates
+// `lastRitualDayObserved` so multi-session races on the same day cannot fire
+// a ritual twice (Codex MEDIUM, see weekly-ritual.test.mjs). Telemetry emits
+// once per crossed boundary; the user-facing prompt surface is wired in a
+// follow-up PR — for now the boundary is observable via telemetry + state.
+async function maybeFireWeeklyRitual(curriculumDay) {
+  if (typeof curriculumDay !== "number" || !Number.isFinite(curriculumDay)) return;
+  const next = applyCurriculumDayUpdate(state.bipCoach, { curriculumDay });
+  if (!next.pendingRitual) return;
+  const { pendingRitual, ...persistable } = next;
+  state.bipCoach = persistable;
+  await persistBipCoachState(bipCoachFilePath, state.bipCoach);
+  telemetry.captureEvent("mac_sidecar_weekly_ritual_triggered", {
+    day: pendingRitual.day,
+  });
+  // Round 6 / CCG-Codex: state persisted with pendingRitualKey, so a failed
+  // broadcast leaves the prompt recoverable on next boot. Persist FIRST,
+  // broadcast SECOND.
+  broadcastPendingRitual(pendingRitual.day);
+}
+
+// Broadcasts a weekly_ritual_prompt event to every connected client. Idempotent
+// — if no client is connected the prompt remains in `pendingRitualKey` and
+// is replayed by `replayPendingRitualOnBoot()` (and any future re-connect).
+function broadcastPendingRitual(day) {
+  const prompt = buildRitualPrompt(day);
+  if (!prompt) return;
+  broadcast({
+    type: "weekly_ritual_prompt",
+    day,
+    prompt,
+  });
+}
+
+// On sidecar boot, if state has a pending ritual that was never acknowledged,
+// re-broadcast it. Codex flagged that the original "persist before emit"
+// ordering meant a crash between persist and emit lost the prompt forever.
+function replayPendingRitualOnBoot() {
+  const day = state.bipCoach?.pendingRitualDay;
+  if (typeof day !== "number" || !state.bipCoach?.pendingRitualKey) return;
+  broadcastPendingRitual(day);
+}
 telemetry.captureEvent("mac_sidecar_booted", {
   session_count: state.sessions.size,
 });
@@ -767,6 +950,7 @@ async function handleClientMessage(socket, payload) {
       return;
     }
     case "bip_coach_generate_mission": {
+      await maybeFireWeeklyRitual(payload.curriculumDay);
       await generateBipCoachMission({
         sessionId: payload.sessionId,
         provider: payload.provider,
@@ -779,6 +963,7 @@ async function handleClientMessage(socket, payload) {
       const gate = currentBipSetupGate();
       broadcastBipSetupGateState(gate);
       if (payload.autoStart === true && !gate.ready) {
+        await maybeFireWeeklyRitual(payload.curriculumDay);
         await generateBasicBipCoachMission({
           gate,
           sessionId: payload.sessionId,
@@ -858,6 +1043,22 @@ async function handleClientMessage(socket, payload) {
         type: "diagnostics_snapshot",
         diagnostics: buildSidecarDiagnostics(environment, preflight),
       });
+      return;
+    }
+    case "rubric_quarantine_list_request": {
+      await broadcastQuarantineList(socket);
+      return;
+    }
+    case "rubric_quarantine_restore": {
+      await handleQuarantineRestore(socket, payload);
+      return;
+    }
+    case "rubric_quarantine_restore_with_reason": {
+      await handleQuarantineRestoreWithReason(socket, payload);
+      return;
+    }
+    case "weekly_ritual_acknowledged": {
+      await handleWeeklyRitualAck(payload);
       return;
     }
     default:
@@ -5981,6 +6182,139 @@ function broadcast(payload) {
       client.send(message);
     }
   }
+}
+
+function buildRequestEmitEnvelope(event, properties = {}) {
+  if (!ALLOWED_REQUEST_EMIT_EVENTS.has(event)) {
+    throw new Error(`Unsupported request_emit event: ${event}`);
+  }
+  return {
+    type: "request_emit",
+    event,
+    event_schema_version: REQUEST_EMIT_SCHEMA_VERSION,
+    properties: sanitizeRequestEmitProperties(properties),
+  };
+}
+
+function requestHostTelemetry(event, properties = {}) {
+  broadcast(buildRequestEmitEnvelope(event, properties));
+}
+
+function sanitizeRequestEmitProperties(value) {
+  if (value == null) return {};
+  if (Array.isArray(value)) return {};
+  if (typeof value !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, entry]) => entry !== undefined)
+      .map(([key, entry]) => [key, sanitizeRequestEmitValue(entry)]),
+  );
+}
+
+function sanitizeRequestEmitValue(value) {
+  if (value == null) return null;
+  if (typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (Array.isArray(value)) return value.map((entry) => sanitizeRequestEmitValue(entry));
+  if (typeof value === "object") return sanitizeRequestEmitProperties(value);
+  return String(value);
+}
+
+function resetWorkspaceSetupTelemetry(root) {
+  state.workspaceSetupTelemetry = {
+    root: path.resolve(String(root || workspaceRoot)),
+    started: false,
+    failed: false,
+    scanSucceeded: false,
+    firstInput: state.workspaceSetupTelemetry.firstInput,
+    firstInputSource: state.workspaceSetupTelemetry.firstInputSource,
+    completed: false,
+    startedAtMs: 0,
+    foundCount: 0,
+  };
+}
+
+function workspaceSetupBaseProperties(root) {
+  const resolvedRoot = path.resolve(String(root || workspaceRoot));
+  return {
+    workspace_basename: path.basename(resolvedRoot),
+    has_explicit_workspace: hasExplicitWorkspace,
+  };
+}
+
+function markWorkspaceSetupStarted(root) {
+  const resolvedRoot = path.resolve(String(root || workspaceRoot));
+  const telemetryState = state.workspaceSetupTelemetry;
+  if (
+    telemetryState.root !== resolvedRoot
+    || telemetryState.failed
+    || telemetryState.completed
+  ) {
+    resetWorkspaceSetupTelemetry(resolvedRoot);
+  }
+  if (state.workspaceSetupTelemetry.started) return;
+
+  state.workspaceSetupTelemetry.started = true;
+  state.workspaceSetupTelemetry.startedAtMs = Date.now();
+  requestHostTelemetry("workspace_setup_started", workspaceSetupBaseProperties(resolvedRoot));
+}
+
+function markWorkspaceSetupScanSucceeded(root, properties = {}) {
+  const resolvedRoot = path.resolve(String(root || workspaceRoot));
+  if (state.workspaceSetupTelemetry.root !== resolvedRoot) {
+    resetWorkspaceSetupTelemetry(resolvedRoot);
+  }
+  state.workspaceSetupTelemetry.scanSucceeded = true;
+  state.workspaceSetupTelemetry.foundCount = Number.isFinite(properties.found_count)
+    ? properties.found_count
+    : 0;
+  maybeEmitWorkspaceSetupCompleted(properties);
+}
+
+function markWorkspaceSetupFailed(root, error) {
+  const resolvedRoot = path.resolve(String(root || workspaceRoot));
+  if (state.workspaceSetupTelemetry.root !== resolvedRoot) {
+    resetWorkspaceSetupTelemetry(resolvedRoot);
+  }
+  if (state.workspaceSetupTelemetry.failed) return;
+
+  state.workspaceSetupTelemetry.failed = true;
+  requestHostTelemetry("workspace_setup_failed", {
+    ...workspaceSetupBaseProperties(resolvedRoot),
+    error_name: error?.code || error?.name || "Error",
+  });
+}
+
+function markWorkspaceSetupFirstInput(source) {
+  if (!state.workspaceSetupTelemetry.firstInput) {
+    state.workspaceSetupTelemetry.firstInput = true;
+    state.workspaceSetupTelemetry.firstInputSource = source;
+  }
+  maybeEmitWorkspaceSetupCompleted({ input_source: state.workspaceSetupTelemetry.firstInputSource });
+}
+
+function maybeEmitWorkspaceSetupCompleted(extra = {}) {
+  const telemetryState = state.workspaceSetupTelemetry;
+  if (
+    telemetryState.completed
+    || !telemetryState.started
+    || !telemetryState.scanSucceeded
+    || !telemetryState.firstInput
+  ) {
+    return;
+  }
+
+  telemetryState.completed = true;
+  const elapsedMs = telemetryState.startedAtMs > 0
+    ? Math.max(0, Date.now() - telemetryState.startedAtMs)
+    : 0;
+  requestHostTelemetry("workspace_setup_completed", {
+    ...workspaceSetupBaseProperties(telemetryState.root),
+    found_count: telemetryState.foundCount,
+    elapsed_ms: elapsedMs,
+    input_source: telemetryState.firstInputSource,
+    ...extra,
+  });
 }
 
 /**

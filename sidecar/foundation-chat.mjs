@@ -49,15 +49,15 @@ export const FOUNDATION_DAYS = Object.freeze({
   },
   2: {
     day: 2,
-    core_question: "어제 가설을 강화/약화할 데이터가 어디서 나왔어?",
+    core_question: "어제 가설을 강화/약화할 시장·고객 데이터가 어디서 나왔어?",
     input_sources: ["work_log", "interview", "bip"],
     sub_workflow: null,
     spec_version: null,
     artifacts: ["day-2-evidence-log.md"],
     first_prompt: Object.freeze({
       yesterday: "어제 SPEC v0 썼어. 가설 ID {weak_hypothesis_id} 가장 약해.",
-      today: "오늘 24시간 안에 그 가설 강화/약화할 데이터 어디서 끌어올 거야? 인터뷰/일지/BIP 중 명시.",
-      question: "강화 1개 + 반증 1개 — 둘 다 못 찾으면 가설 다시 짜. 어느 쪽 먼저?",
+      today: "오늘 24시간 안에 그 가설 강화/약화할 데이터 어디서 끌어올 거야? 인터뷰/일지/BIP와 iOS·Android·Web·Mac 경쟁 시장 중 명시.",
+      question: "이미 돈이 흐르는 앱·도구 5개와 반증 1개 — 둘 다 못 찾으면 가설 다시 짜. 어느 쪽 먼저?",
     }),
   },
   3: {
@@ -75,28 +75,28 @@ export const FOUNDATION_DAYS = Object.freeze({
   },
   4: {
     day: 4,
-    core_question: "지난 24시간 신호로 어떤 섹션을 다시 쓸 거야?",
+    core_question: "지난 24시간 신호로 어떤 10배 wedge 섹션을 다시 쓸 거야?",
     input_sources: ["work_log", "interview"],
     sub_workflow: null,
     spec_version: null,
     artifacts: ["day-4-rewrite-decision.md"],
     first_prompt: Object.freeze({
       yesterday: "어제 인터뷰 {n_quotes}건 끝났어. 약한 섹션은 {weak_section}, 이유는 {reason}.",
-      today: "그 섹션 지금 다시 써. SPEC.md 같은 파일에서 덮어쓰기 — 새 파일 만들지 마.",
-      question: "다시 쓴 뒤, 어느 부분이 가설 약화시키는 데이터로 바뀌었어? 1줄로 답해.",
+      today: "그 섹션 지금 다시 써. 더 좁은 페르소나, 더 빠른 결과, 더 적은 클릭, 더 낮은 가격 중 10배 wedge 하나만 골라.",
+      question: "다시 쓴 뒤, iOS/Android/Web/Mac 대체재 대비 무엇이 10배 좋아졌어? 1줄로 답해.",
     }),
   },
   5: {
     day: 5,
-    core_question: "광고/노출 데이터에서 진짜 수요 시그널은 뭐야?",
+    core_question: "광고/노출/스토어 데이터에서 진짜 수요 시그널은 뭐야?",
     input_sources: ["path", "work_log"],
     sub_workflow: "analyze-ads",
     spec_version: "v2",
     artifacts: ["SPEC.md", "day-5-demand-signal.md"],
     first_prompt: Object.freeze({
       yesterday: "어제 약한 섹션 {weak_section} 다시 썼어.",
-      today: "광고 데이터 — impressions {impressions}, clicks {clicks}, signups {signups} — 진짜 수요 시그널 {signal_strength} 평가해서 SPEC.md v2 박아.",
-      question: "waitlist도 CTR도 매출 아니야. 진짜 돈 낼 1명 후보 누구야?",
+      today: "광고/스토어 데이터 — impressions {impressions}, clicks {clicks}, signups {signups} — 진짜 수요 시그널 {signal_strength} 평가해서 SPEC.md v2 박아.",
+      question: "waitlist도 CTR도 매출 아니야. CPI, store conversion, reply 중 무엇이 돈 낼 1명 후보로 이어졌어?",
     }),
   },
   6: {
@@ -108,7 +108,7 @@ export const FOUNDATION_DAYS = Object.freeze({
     artifacts: ["monetization-ask-result.md"],
     first_prompt: Object.freeze({
       yesterday: "어제 광고 시그널 {signal_strength} 잡았어. 이제 가설은 데이터로 받쳐졌어.",
-      today: "오늘 누구한테 돈 내달라고 명시적으로 물어볼 거야 — 1명 이름 + 오퍼 가격 + ask 문장 적어.",
+      today: "오늘 누구한테 돈 내달라고 명시적으로 물어볼 거야 — 1명 이름 + 가격 + 받을 약속 + 응답 기한 적어.",
       question: "결과는 yes 받아 / no 받아 / 답 못 받아 셋 중 하나야. 끝나면 어느 쪽으로 보고할 건데?",
     }),
   },

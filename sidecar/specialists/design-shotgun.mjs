@@ -2,6 +2,7 @@ export const ID = "design-shotgun";
 export const NAME = "Design Shotgun";
 export const PHASES = ["planning", "build"];
 export const DECISIONS = ["design-direction", "landing", "aesthetic-pick"];
+export const RUBRIC = ["adaptability"];
 export const SUMMARY =
   "여러 디자인 방향을 한 번에 펼쳐서 비교 보드로 빠르게 좁히는 진단 모드입니다.";
 

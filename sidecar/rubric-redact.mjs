@@ -1,0 +1,52 @@
+// Round 6 / CCG-Codex Privacy 권고: get_rubric_status가 raw evidence/notes/
+// anchor_text/no_evidence_reason을 그대로 응답으로 흘려보내면 결과가 caller
+// (Claude/Codex provider)의 context로 들어간다. docs/RUBRIC.md Privacy 약속
+// ("scores·anchor·evidence·notes는 local-only")과 정면 충돌하므로 redact form만
+// 반환한다. raw record는 사용자가 직접 `<workspace>/.agentic30/rubric-assessments.json`
+// 에서 읽도록 안내.
+//
+// 도메인 함수는 mcp-server.mjs(stdio transport top-level await)와 분리해서
+// unit test가 hang 없이 import할 수 있도록 본 모듈에 둔다.
+
+function redactRubricRecord(record) {
+  if (!record || typeof record !== "object") return null;
+  const axes = record.axes && typeof record.axes === "object" ? record.axes : {};
+  const axisScores = {};
+  for (const [axis, entry] of Object.entries(axes)) {
+    if (entry && typeof entry === "object" && typeof entry.score === "number") {
+      axisScores[axis] = entry.score;
+    }
+  }
+  return {
+    sessionId: typeof record.sessionId === "string" ? record.sessionId : null,
+    day: typeof record.day === "number" ? record.day : null,
+    recordedAt: typeof record.recordedAt === "string" ? record.recordedAt : null,
+    axisCount: Object.keys(axisScores).length,
+    axisScores,
+  };
+}
+
+export function redactRubricStatus(status) {
+  if (!status || typeof status !== "object") {
+    return { dayZero: null, dayThirty: null, delta: null, recordCount: 0 };
+  }
+  return {
+    dayZero: redactRubricRecord(status.dayZero),
+    dayThirty: redactRubricRecord(status.dayThirty),
+    // delta는 axis별 숫자 차이 (이미 evidence/notes 없는 형태) — 그대로 통과.
+    delta: Array.isArray(status.delta) ? status.delta : null,
+    recordCount: typeof status.recordCount === "number" ? status.recordCount : 0,
+  };
+}
+
+// list_quarantined_records 응답에 들어가는 originalSummary 생성기.
+// raw original payload는 노출하지 않고 식별자 한 줄만.
+export function summarizeOriginalForMcp(original) {
+  if (!original || typeof original !== "object") return null;
+  const sessionId = typeof original.sessionId === "string" ? original.sessionId : null;
+  const day = typeof original.day === "number" ? original.day : null;
+  if (sessionId && day != null) return `${sessionId} · Day ${day}`;
+  if (sessionId) return sessionId;
+  if (day != null) return `Day ${day}`;
+  return null;
+}

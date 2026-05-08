@@ -109,6 +109,140 @@ struct SidecarEventDecodingTests {
         #expect(event.sessions == nil)
     }
 
+    @MainActor @Test func decodesRubricQuarantineListPayload() throws {
+        // R6 / CCG-Codex: protocol drift safety net for the quarantine list
+        // wire shape. If sidecar emit shape changes, this test catches the
+        // Swift-side decoder gap before runtime regression.
+        let payload = """
+        {
+          "type": "rubric_quarantine_list",
+          "items": [
+            {
+              "file": {
+                "path": "/tmp/.agentic30/rubric-assessments.json.invalid-2026-05-08T01-00.json",
+                "name": "rubric-assessments.json.invalid-2026-05-08T01-00.json",
+                "size": 256,
+                "mtimeMs": 1746662400000
+              },
+              "dump": {
+                "sourceFile": "/tmp/.agentic30/rubric-assessments.json",
+                "quarantinedAt": "2026-05-08T01:00:00.000Z",
+                "mtimeMs": 1746662400000,
+                "records": [
+                  {
+                    "index": 0,
+                    "issues": [
+                      {
+                        "path": ["axes", "clout", "evidence_refs"],
+                        "message": "Day 30 requires evidence_refs or no_evidence_reason for axis \\"clout\\""
+                      }
+                    ],
+                    "proposal": {
+                      "kind": "missing_no_evidence_reason",
+                      "axis": "clout",
+                      "suggestion": "Day 30 마감인데 clout 축에 근거가 없습니다."
+                    },
+                    "originalSummary": "session-1 · Day 30"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "rubric_quarantine_list")
+        #expect(event.items?.count == 1)
+        #expect(event.items?.first?.file.name.hasPrefix("rubric-assessments") == true)
+        #expect(event.items?.first?.dump.records.count == 1)
+        #expect(event.items?.first?.dump.records.first?.proposal?.kind == "missing_no_evidence_reason")
+        #expect(event.items?.first?.dump.records.first?.proposal?.axis == "clout")
+        #expect(event.items?.first?.dump.records.first?.originalSummary == "session-1 · Day 30")
+        #expect(event.items?.first?.dump.records.first?.issues.first?.displayPath == "axes.clout.evidence_refs")
+    }
+
+    @MainActor @Test func decodesWeeklyRitualPromptPayload() throws {
+        // R6: weekly ritual broadcast surface. Verifies the Mac decoder picks
+        // up `prompt` (mapped via CodingKey to weeklyRitualPrompt).
+        let payload = """
+        {
+          "type": "weekly_ritual_prompt",
+          "day": 7,
+          "prompt": {
+            "ritualKey": "weekly_ritual_day_7",
+            "title": "Day 7 — 한 줄 점검",
+            "body": "지난 7일 동안 잠재 고객 1명에게라도 한 가지 고통을 제대로 들었는가?",
+            "axes": ["definition", "command"]
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "weekly_ritual_prompt")
+        #expect(event.day == 7)
+        #expect(event.weeklyRitualPrompt?.ritualKey == "weekly_ritual_day_7")
+        #expect(event.weeklyRitualPrompt?.title.contains("Day 7") == true)
+        #expect(event.weeklyRitualPrompt?.axes.contains("definition") == true)
+    }
+
+    @MainActor @Test func decodesValidRequestEmitPayload() throws {
+        let payload = """
+        {
+          "type": "request_emit",
+          "event": "workspace_setup_started",
+          "event_schema_version": 1,
+          "properties": {
+            "workspace_basename": "agentic30-public",
+            "has_explicit_workspace": true,
+            "found_count": 3
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "request_emit")
+        #expect(event.requestEmit?.event == .workspaceSetupStarted)
+        #expect(event.requestEmit?.eventSchemaVersion == 1)
+        #expect(event.requestEmit?.telemetryProperties["workspace_basename"] as? String == "agentic30-public")
+        #expect(event.requestEmit?.telemetryProperties["has_explicit_workspace"] as? Bool == true)
+        #expect(event.requestEmit?.telemetryProperties["found_count"] as? Int == 3)
+        #expect(event.requestEmit?.telemetryProperties["event_schema_version"] as? Int == 1)
+    }
+
+    @MainActor @Test func rejectsUnsupportedRequestEmitEvent() {
+        let payload = """
+        {
+          "type": "request_emit",
+          "event": "mac_sidecar_booted",
+          "event_schema_version": 1,
+          "properties": {}
+        }
+        """
+
+        #expect(throws: Error.self) {
+            try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        }
+    }
+
+    @MainActor @Test func rejectsUnsupportedRequestEmitSchemaVersion() {
+        let payload = """
+        {
+          "type": "request_emit",
+          "event": "workspace_setup_completed",
+          "event_schema_version": 2,
+          "properties": {}
+        }
+        """
+
+        #expect(throws: Error.self) {
+            try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        }
+    }
+
     @MainActor @Test func decodesIcpIddStructuredPromptPayload() throws {
         let payload = """
         {
