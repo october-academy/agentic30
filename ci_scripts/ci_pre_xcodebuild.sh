@@ -1,16 +1,12 @@
 #!/bin/sh
 # Xcode Cloud pre-xcodebuild hook.
 #
-# pbxproj uses `CODE_SIGN_STYLE = Automatic` but does not commit a
-# `DEVELOPMENT_TEAM` (kept out of the public repo). Xcode Cloud cannot
-# choose a signing identity without it and surfaces the result as a GitHub
-# `action_required` check. Patch the team id into the project file at build
-# time — the committed pbxproj remains team-id-free, and the value comes
-# from the workflow's confidential environment variable.
-#
-# Setup (one-time, in App Store Connect → Xcode Cloud → Workflow):
-#   - Add environment variable `DEVELOPMENT_TEAM` (Value type: Confidential),
-#     value = your 10-char Apple Developer Team ID.
+# Apple already injects `DEVELOPMENT_TEAM` as an `xcodebuild` flag based on
+# the workflow's selected team, so committed pbxproj does not need to carry
+# the team id. This script is a no-op in the Apple-managed flow and only
+# does anything when an operator has set `DEVELOPMENT_TEAM` as an env var
+# AND the project still lacks the setting (defense-in-depth, e.g. a forked
+# workflow that bypasses Apple's auto-flag).
 set -euo pipefail
 
 if [ -z "${CI_WORKSPACE:-}" ]; then
@@ -19,17 +15,14 @@ if [ -z "${CI_WORKSPACE:-}" ]; then
 fi
 
 if [ -z "${DEVELOPMENT_TEAM:-}" ]; then
-  echo "ci_pre_xcodebuild: DEVELOPMENT_TEAM env var not set." >&2
-  echo "  Set it in App Store Connect → Xcode Cloud → Workflow → Environment" >&2
-  echo "  as Confidential. Without it Automatic signing has no team to use" >&2
-  echo "  and Xcode Cloud reports the build as action_required." >&2
-  exit 1
+  echo "ci_pre_xcodebuild: DEVELOPMENT_TEAM env var not set — relying on xcodebuild flag from Apple's workflow."
+  exit 0
 fi
 
 PROJECT_PATH="$CI_WORKSPACE/agentic30.xcodeproj/project.pbxproj"
 if [ ! -f "$PROJECT_PATH" ]; then
   echo "ci_pre_xcodebuild: project.pbxproj not found at $PROJECT_PATH" >&2
-  exit 1
+  exit 0
 fi
 
 if grep -q "DEVELOPMENT_TEAM = " "$PROJECT_PATH"; then
