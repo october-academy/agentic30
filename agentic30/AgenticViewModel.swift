@@ -895,6 +895,7 @@ final class AgenticViewModel: ObservableObject {
         let prompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return }
         guard let session = selectedSession else {
+            markWorkspaceSetupFirstRealInput()
             queueStartupAction(.prompt(prompt))
             draft = ""
             return
@@ -1178,6 +1179,7 @@ final class AgenticViewModel: ObservableObject {
         PostHogTelemetry.capture("mac_workspace_scan_requested", properties: [
             "workspace_basename": (root as NSString).lastPathComponent,
         ], authSession: macAuthSession)
+        markWorkspaceSetupStarted(root: root)
         guard isConnected else {
             pendingWorkspaceScanRoot = root
             return
@@ -1242,6 +1244,21 @@ final class AgenticViewModel: ObservableObject {
         captureWorkspaceSetupTelemetry(
             workspaceSetupTelemetryGate.requestsToCapture(afterReceiving: request)
         )
+    }
+
+    private func markWorkspaceSetupStarted(root: String) {
+        let request = try? SidecarRequestEmit(
+            event: .workspaceSetupStarted,
+            properties: [
+                "workspace_basename": .string((root as NSString).lastPathComponent),
+                "has_explicit_workspace": .bool(WorkspaceSettings.hasExplicitWorkspace),
+            ]
+        )
+        if let request {
+            captureWorkspaceSetupTelemetry(
+                workspaceSetupTelemetryGate.requestsToCapture(afterReceiving: request)
+            )
+        }
     }
 
     private func markWorkspaceSetupScanSucceeded() {
@@ -3441,6 +3458,7 @@ enum SidecarRequestEmitJSONValue: Decodable, Hashable {
 }
 
 struct WorkspaceSetupTelemetryGate {
+    private var capturedStartedRequests = Set<SidecarRequestEmit>()
     private var didScanSucceed = false
     private var didReceiveFirstRealInput = false
     private var didEmitCompleted = false
@@ -3448,7 +3466,10 @@ struct WorkspaceSetupTelemetryGate {
 
     mutating func requestsToCapture(afterReceiving request: SidecarRequestEmit) -> [SidecarRequestEmit] {
         switch request.event {
-        case .workspaceSetupStarted, .workspaceSetupFailed:
+        case .workspaceSetupStarted:
+            guard capturedStartedRequests.insert(request).inserted else { return [] }
+            return [request]
+        case .workspaceSetupFailed:
             return [request]
         case .workspaceSetupCompleted:
             guard !didEmitCompleted else { return [] }

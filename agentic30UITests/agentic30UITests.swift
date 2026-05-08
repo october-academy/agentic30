@@ -832,6 +832,9 @@ final class agentic30UITests: XCTestCase {
             "assistant.sendPromptButton",
             "Send prompt",
         ])
+        if !element(promptComposer, contains: marker) || !sendButton.isEnabled {
+            enterPrompt(marker, in: chatApp, promptComposer: promptComposer)
+        }
         XCTAssertTrue(waitUntilEnabled(sendButton, timeout: 10))
         sendButton.click()
         let latestPromptUpdated = waitForLatestPrompt(in: chatApp, containing: marker, timeout: 30)
@@ -1069,6 +1072,7 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["10시 오늘 실행"].exists)
         XCTAssertTrue(app.staticTexts["작게 하나 공개할 미션을 정하세요."].exists)
         let primaryActions = app.descendants(matching: .any).matching(identifier: "workspace.bipNotificationPrimaryAction")
+        XCTAssertTrue(primaryActions.firstMatch.waitForExistence(timeout: 3))
         XCTAssertEqual(primaryActions.count, 1)
         XCTAssertTrue(primaryActions.firstMatch.label.contains("이 미션으로 시작"))
         XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "첫 고객 후보 3명 정하기")).firstMatch.exists)
@@ -1877,6 +1881,15 @@ final class agentic30UITests: XCTestCase {
             structuredChoices: structuredChoices,
             timeout: 120
         ) == .structuredPrompt else {
+            let sendButton = button(in: app, matching: [
+                "assistant.sendPromptButton",
+                "Send prompt",
+            ])
+            answerWorkspaceBootstrapPromptIfNeeded(
+                in: app,
+                promptComposer: promptComposer,
+                sendButton: sendButton
+            )
             return
         }
 
