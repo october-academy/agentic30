@@ -15,6 +15,7 @@
     "eval:dogfood:summary": "node sidecar-evals/dogfood-summary.mjs",
     "eval:dogfood:compare": "node sidecar-evals/dogfood-compare.mjs",
     "report:timings": "node scripts/report-response-timings.mjs",
+    "track:release-funnel": "node scripts/posthog-release-funnel.mjs",
     "sync:gstack": "node scripts/sync-gstack.mjs",
     "test:sidecar": "node --test sidecar-tests/**/*.test.mjs"
   },

@@ -56,7 +56,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
+        // Snapshot before capture(), which lazy-generates the distinct id.
+        // Pending captures from a prior failed first-launch still flush; this
+        // gate only suppresses NEW captureOnce attempts for upgraders.
+        let isFirstLaunchEver = !PostHogTelemetry.hasPreviouslyGeneratedDistinctID
         PostHogTelemetry.capture("mac_app_launched")
+        PostHogTelemetry.flushPendingOnceCaptures()
+        if isFirstLaunchEver {
+            PostHogTelemetry.captureOnce(
+                "dmg_install_completed",
+                onceKey: "dmg_install_completed.v1",
+                properties: [
+                    "event_schema_version": 1,
+                    "distribution_channel": "github_dmg",
+                    "source": "mac_first_launch",
+                ],
+                authSession: viewModel.macAuthSession
+            )
+        }
 
         // Wire sidecar events into the desktop-pet state machine.
         viewModel.onSidecarEvent = { [weak self] event, sessions in
@@ -316,7 +333,13 @@ private struct StatusMenuContent: View {
 
             Toggle("Show Wolf Pet", isOn: Binding(
                 get: { appDelegate.petWindowController.isEnabled },
-                set: { appDelegate.petWindowController.isEnabled = $0 }
+                set: { newValue in
+                    appDelegate.petWindowController.isEnabled = newValue
+                    PostHogTelemetry.capture(
+                        newValue ? "mac_pet_shown" : "mac_pet_hidden",
+                        authSession: viewModel.macAuthSession
+                    )
+                }
             ))
 
             Button {
