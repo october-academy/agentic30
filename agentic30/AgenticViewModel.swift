@@ -279,6 +279,14 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var missingBipExternalRequirements: [String] = []
     @Published private(set) var bipTokenExpired: String?
     @Published private(set) var bipMissionProgress: BipMissionProgress?
+    // R4 — Day 30 schema-invalid records that the sidecar quarantined. Empty
+    // until `requestQuarantineList()` resolves; refreshed on each restore.
+    @Published private(set) var quarantineFiles: [QuarantineFileWithDump] = []
+    @Published private(set) var quarantineRefreshError: String?
+    // R6 / CCG-Codex weekly ritual broadcast. The Mac surface for the actual
+    // banner/modal is wired in a follow-up round; for now we receive the
+    // prompt and expose it as @Published state so SwiftUI views can opt in.
+    @Published private(set) var pendingWeeklyRitual: WeeklyRitualPrompt?
     @Published private(set) var providerAuthInProgress: AgentProvider?
     @Published private(set) var providerAuthMessage: String?
     @Published private(set) var sentPromptPreviews: [String: [PendingPromptPreview]] = [:]
@@ -431,6 +439,19 @@ final class AgenticViewModel: ObservableObject {
             onboardingContext = Self.makeUITestingOnboardingContext(arguments: arguments)
             if let seededDraft = Self.uiTestingArgumentValue("--ui-testing-seed-draft", arguments: arguments) {
                 draft = seededDraft
+            }
+            // R6-P3F: load quarantine fixture during init so the surface is
+            // ready before SwiftUI subscribes — start() may not run when the
+            // hermetic test only opens the Settings scene (MenuBarExtra
+            // onAppear fires lazily on user interaction).
+            let fixtureResult = Self.applyUITestingQuarantineFixture(arguments: arguments)
+            switch fixtureResult {
+            case .loaded(let items):
+                quarantineFiles = items
+            case .failed(let reason):
+                quarantineRefreshError = reason
+            case .notRequested:
+                break
             }
         } else if Self.isXCTestHost(arguments: arguments) {
             macAuthSession = nil
@@ -721,6 +742,12 @@ final class AgenticViewModel: ObservableObject {
                 connectionLabel = "Sidecar disabled for UI tests"
                 isConnected = false
             }
+            // R6-P3F: optional quarantine fixture for hermetic restore-flow
+            // tests. The flag points to a JSON file matching the
+            // `rubric_quarantine_list` event payload — when present we hydrate
+            // `quarantineFiles` directly so SwiftUI can render the surface
+            // without the sidecar bridge.
+            loadQuarantineFixtureIfRequested()
             PostHogTelemetry.capture("mac_sidecar_disabled_for_ui_tests", authSession: macAuthSession)
             return
         }
@@ -1232,6 +1259,37 @@ final class AgenticViewModel: ObservableObject {
     func requestDiagnostics() {
         PostHogTelemetry.capture("mac_diagnostics_requested", authSession: macAuthSession)
         sidecar.send(payload: ["type": "get_diagnostics"])
+    }
+
+    // R4 — quarantine surface. Both methods are no-ops when offline; the
+    // sidecar replies asynchronously with `rubric_quarantine_list` /
+    // `rubric_quarantine_restored` events that the event router below maps
+    // back into `quarantineFiles`.
+    func requestQuarantineList() {
+        guard isConnected else { return }
+        sidecar.send(payload: ["type": "rubric_quarantine_list_request"])
+    }
+
+    func restoreQuarantinedRecord(
+        bundle: QuarantineFileWithDump,
+        entry: QuarantineEntry,
+        honestModeReason: String
+    ) async {
+        guard isConnected else { return }
+        // Round 6 / CCG-UX: send only the user's one-line reason. The sidecar
+        // reads the raw quarantine entry, preserves original axis scores via
+        // `proposeFixForEntry`, and re-validates the resulting record. The Mac
+        // client no longer owns schema-shape decisions (Round 4 composeFixedRecord
+        // built fresh score=1 stubs that overwrote user progress).
+        let trimmedReason = String(honestModeReason.prefix(500))
+        let payload: [String: Any] = [
+            "type": "rubric_quarantine_restore_with_reason",
+            "quarantinePath": bundle.file.path,
+            "recordIndex": entry.index,
+            "expectedMtimeMs": bundle.dump.mtimeMs,
+            "honestModeReason": trimmedReason,
+        ]
+        sidecar.send(payload: payload)
     }
 
     func configureBipCoach(
@@ -1805,6 +1863,10 @@ final class AgenticViewModel: ObservableObject {
             PostHogTelemetry.capture("mac_sidecar_status", properties: [
                 "message": event.message ?? "",
             ], authSession: macAuthSession)
+        case "request_emit":
+            if let request = event.requestEmit {
+                handleRequestEmit(request)
+            }
         case "ready":
             if let sessions = event.sessions {
                 self.sessions = sessions.sorted(by: { $0.updatedAt > $1.updatedAt })
@@ -2113,6 +2175,19 @@ final class AgenticViewModel: ObservableObject {
             if let diagnostics = event.diagnostics {
                 sidecarDiagnostics = diagnostics
             }
+        case "rubric_quarantine_list":
+            quarantineFiles = event.items ?? []
+            quarantineRefreshError = nil
+        case "rubric_quarantine_restored":
+            // Sidecar will emit a fresh list immediately after, so we just
+            // clear any pending error here. Toast/UX state lives in the view.
+            quarantineRefreshError = nil
+        case "rubric_quarantine_error":
+            quarantineRefreshError = event.message ?? "Quarantine \(event.stage ?? "operation") failed."
+        case "weekly_ritual_prompt":
+            if let prompt = event.weeklyRitualPrompt {
+                pendingWeeklyRitual = prompt
+            }
         case "bip_readiness_event":
             guard let rawRowId = event.rowId,
                   let rowId = BipReadinessRowId(rawValue: rawRowId),
@@ -2217,6 +2292,80 @@ final class AgenticViewModel: ObservableObject {
 
     private var usesInlineUITestStubResponses: Bool {
         ProcessInfo.processInfo.environment["AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES"] == "1"
+    }
+
+    #if DEBUG
+    enum UITestingFixtureResult {
+        case notRequested
+        case failed(String)
+        case loaded([QuarantineFileWithDump])
+    }
+
+    private static func applyUITestingQuarantineFixture(
+        arguments: [String]
+    ) -> UITestingFixtureResult {
+        let key = "--ui-testing-stub-quarantine-fixture"
+        var path: String? = nil
+        for (idx, arg) in arguments.enumerated() {
+            if arg == key, idx + 1 < arguments.count {
+                path = arguments[idx + 1]; break
+            }
+            if arg.hasPrefix(key + "=") {
+                path = String(arg.dropFirst(key.count + 1)); break
+            }
+        }
+        guard let resolvedPath = path else {
+            return .notRequested
+        }
+        do {
+            let data = try Data(contentsOf: URL(fileURLWithPath: resolvedPath))
+            let event = try JSONDecoder().decode(SidecarEvent.self, from: data)
+            if let items = event.items {
+                return .loaded(items)
+            }
+            return .failed("fixture decoded but items=nil")
+        } catch {
+            return .failed("fixture load failed at \(resolvedPath): \(error)")
+        }
+    }
+    #endif
+
+    private func loadQuarantineFixtureIfRequested() {
+        // R6-P3F: read a SidecarEvent-shaped fixture (rubric_quarantine_list)
+        // from disk and hydrate `quarantineFiles` directly. Used by hermetic
+        // UI tests to drive the restore-flow surface without a live sidecar.
+        let arguments = CommandLine.arguments
+        // Manual scan covers both `--flag=value` and `--flag value` forms,
+        // sidestepping any ambiguity in the helper-resolution path between
+        // the two `uiTestingArgumentValue` definitions in this file.
+        var path: String? = nil
+        let key = "--ui-testing-stub-quarantine-fixture"
+        for (idx, arg) in arguments.enumerated() {
+            if arg == key, idx + 1 < arguments.count {
+                path = arguments[idx + 1]
+                break
+            }
+            if arg.hasPrefix(key + "=") {
+                path = String(arg.dropFirst(key.count + 1))
+                break
+            }
+        }
+        guard let resolvedPath = path else {
+            return
+        }
+        let url = URL(fileURLWithPath: resolvedPath)
+        do {
+            let data = try Data(contentsOf: url)
+            let event = try JSONDecoder().decode(SidecarEvent.self, from: data)
+            if let items = event.items {
+                quarantineFiles = items
+                quarantineRefreshError = nil
+            } else {
+                quarantineRefreshError = "fixture decoded but items=nil"
+            }
+        } catch {
+            quarantineRefreshError = "fixture load failed: \(error)"
+        }
     }
 
     private func ensureInlineUITestStubSession() {
@@ -3114,6 +3263,15 @@ struct SidecarEvent: Decodable {
     let toolName: String?
     let summary: String?
 
+    // R4 quarantine recovery payloads. `stage` (already declared above for
+    // bip_coach_generation_progress) is reused by quarantine error events
+    // ("list" | "restore"); the quarantine result/items are new.
+    let items: [QuarantineFileWithDump]?
+    let result: QuarantineRestoreResult?
+    // R6 weekly ritual prompt payload (`weekly_ritual_prompt` event).
+    let weeklyRitualPrompt: WeeklyRitualPrompt?
+    let requestEmit: SidecarRequestEmit?
+
     var bipMissionProgress: BipMissionProgress? {
         guard type == "bip_coach_generation_progress",
               let stage else { return nil }
@@ -3126,6 +3284,178 @@ struct SidecarEvent: Decodable {
             elapsedMs: elapsedMs
         )
     }
+}
+
+enum SidecarRequestEmitEvent: String, Codable, CaseIterable {
+    case workspaceSetupStarted = "workspace_setup_started"
+    case workspaceSetupFailed = "workspace_setup_failed"
+    case workspaceSetupCompleted = "workspace_setup_completed"
+}
+
+struct SidecarRequestEmit: Decodable, Hashable {
+    static let supportedSchemaVersion = 1
+
+    let event: SidecarRequestEmitEvent
+    let eventSchemaVersion: Int
+    let properties: [String: SidecarRequestEmitJSONValue]
+
+    init(
+        event: SidecarRequestEmitEvent,
+        eventSchemaVersion: Int = Self.supportedSchemaVersion,
+        properties: [String: SidecarRequestEmitJSONValue] = [:]
+    ) throws {
+        guard eventSchemaVersion == Self.supportedSchemaVersion else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: [],
+                    debugDescription: "Unsupported request_emit event_schema_version: \(eventSchemaVersion)"
+                )
+            )
+        }
+        self.event = event
+        self.eventSchemaVersion = eventSchemaVersion
+        self.properties = properties
+    }
+
+    var telemetryProperties: [String: Any] {
+        var output = properties.mapValues { $0.anyValue }
+        output["event_schema_version"] = eventSchemaVersion
+        return output
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case event
+        case eventSchemaVersion = "event_schema_version"
+        case properties
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        event = try container.decode(SidecarRequestEmitEvent.self, forKey: .event)
+        eventSchemaVersion = try container.decode(Int.self, forKey: .eventSchemaVersion)
+        guard eventSchemaVersion == Self.supportedSchemaVersion else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .eventSchemaVersion,
+                in: container,
+                debugDescription: "Unsupported request_emit event_schema_version: \(eventSchemaVersion)"
+            )
+        }
+        properties = try container.decodeIfPresent(
+            [String: SidecarRequestEmitJSONValue].self,
+            forKey: .properties
+        ) ?? [:]
+    }
+}
+
+enum SidecarRequestEmitJSONValue: Decodable, Hashable {
+    case string(String)
+    case int(Int)
+    case double(Double)
+    case bool(Bool)
+    case object([String: SidecarRequestEmitJSONValue])
+    case array([SidecarRequestEmitJSONValue])
+    case null
+
+    var anyValue: Any {
+        switch self {
+        case .string(let value):
+            return value
+        case .int(let value):
+            return value
+        case .double(let value):
+            return value
+        case .bool(let value):
+            return value
+        case .object(let value):
+            return value.mapValues { $0.anyValue }
+        case .array(let value):
+            return value.map { $0.anyValue }
+        case .null:
+            return NSNull()
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Int.self) {
+            self = .int(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .double(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([String: SidecarRequestEmitJSONValue].self) {
+            self = .object(value)
+        } else if let value = try? container.decode([SidecarRequestEmitJSONValue].self) {
+            self = .array(value)
+        } else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unsupported request_emit property value"
+            )
+        }
+    }
+}
+
+struct WorkspaceSetupTelemetryGate {
+    private var didScanSucceed = false
+    private var didReceiveFirstRealInput = false
+    private var didEmitCompleted = false
+    private var pendingCompleted: SidecarRequestEmit?
+
+    mutating func requestsToCapture(afterReceiving request: SidecarRequestEmit) -> [SidecarRequestEmit] {
+        switch request.event {
+        case .workspaceSetupStarted, .workspaceSetupFailed:
+            return [request]
+        case .workspaceSetupCompleted:
+            guard !didEmitCompleted else { return [] }
+            guard didScanSucceed && didReceiveFirstRealInput else {
+                pendingCompleted = request
+                return []
+            }
+            didEmitCompleted = true
+            pendingCompleted = nil
+            return [request]
+        }
+    }
+
+    mutating func requestsToCaptureAfterWorkspaceScanSuccess() -> [SidecarRequestEmit] {
+        didScanSucceed = true
+        return flushCompletedIfReady()
+    }
+
+    mutating func requestsToCaptureAfterFirstRealInput() -> [SidecarRequestEmit] {
+        didReceiveFirstRealInput = true
+        return flushCompletedIfReady()
+    }
+
+    private mutating func flushCompletedIfReady() -> [SidecarRequestEmit] {
+        guard !didEmitCompleted,
+              didScanSucceed,
+              didReceiveFirstRealInput,
+              let request = pendingCompleted
+        else { return [] }
+        didEmitCompleted = true
+        pendingCompleted = nil
+        return [request]
+    }
+}
+
+struct QuarantineRestoreResult: Decodable, Hashable {
+    let restoredSessionId: String?
+    let remainingInvalidCount: Int?
+    let quarantinePath: String?
+}
+
+struct WeeklyRitualPrompt: Codable, Hashable {
+    // R6 / CCG: surface payload for Day 7/14/21 ritual.
+    let ritualKey: String
+    let title: String
+    let body: String
+    let axes: [String]
 }
 
 struct BipMissionProgress: Hashable {
@@ -3266,6 +3596,11 @@ extension SidecarEvent {
         case phase
         case toolName
         case summary
+        // R4 quarantine recovery
+        case items
+        case result
+        // R6 weekly ritual broadcast
+        case weeklyRitualPrompt = "prompt"
     }
 
     init(from decoder: Decoder) throws {
@@ -3329,6 +3664,10 @@ extension SidecarEvent {
         phase = Self.decodeIfPresent(String.self, from: container, forKey: .phase)
         toolName = Self.decodeIfPresent(String.self, from: container, forKey: .toolName)
         summary = Self.decodeIfPresent(String.self, from: container, forKey: .summary)
+        items = Self.decodeIfPresent([QuarantineFileWithDump].self, from: container, forKey: .items)
+        result = Self.decodeIfPresent(QuarantineRestoreResult.self, from: container, forKey: .result)
+        weeklyRitualPrompt = Self.decodeIfPresent(WeeklyRitualPrompt.self, from: container, forKey: .weeklyRitualPrompt)
+        requestEmit = type == "request_emit" ? try SidecarRequestEmit(from: decoder) : nil
     }
 
     private static func decodeIfPresent<T: Decodable>(

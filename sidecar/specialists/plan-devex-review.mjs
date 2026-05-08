@@ -2,6 +2,7 @@ export const ID = "plan-devex-review";
 export const NAME = "Plan DevEx Review";
 export const PHASES = ["build"];
 export const DECISIONS = ["devex-plan", "onboarding-flow", "developer-friction"];
+export const RUBRIC = ["adaptability", "clout"];
 export const SUMMARY =
   "개발자 경험을 측정 가능한 기준(TTHW, 단계 수, 에러 메시지 품질)으로 미리 점검합니다.";
 

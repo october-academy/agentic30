@@ -2,6 +2,7 @@ export const ID = "office-hours";
 export const NAME = "Office Hours (YC)";
 export const PHASES = ["planning"];
 export const DECISIONS = ["customer", "demand", "wedge", "evidence"];
+export const RUBRIC = ["clout"];
 export const SUMMARY =
   "Garry Tan식 6대 강제질문으로 실제 수요와 가장 좁은 wedge를 좁힙니다.";
 

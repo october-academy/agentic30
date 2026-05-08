@@ -8,6 +8,7 @@ enum SettingsSection: CaseIterable, Identifiable {
     case notion
     case developerTools
     case diagnostics
+    case quarantineRecovery
 
     var id: Self { self }
 
@@ -19,6 +20,7 @@ enum SettingsSection: CaseIterable, Identifiable {
         case .notion: "Notion"
         case .developerTools: "Developer"
         case .diagnostics: "Diagnostics"
+        case .quarantineRecovery: "Quarantine Recovery"
         }
     }
 
@@ -30,6 +32,7 @@ enum SettingsSection: CaseIterable, Identifiable {
         case .notion: "Notion"
         case .developerTools: "개발자 도구"
         case .diagnostics: "진단"
+        case .quarantineRecovery: "정직 모드 복구"
         }
     }
 
@@ -41,6 +44,7 @@ enum SettingsSection: CaseIterable, Identifiable {
         case .notion: "doc.text.fill"
         case .developerTools: "wrench.and.screwdriver.fill"
         case .diagnostics: "stethoscope"
+        case .quarantineRecovery: "tray.and.arrow.up"
         }
     }
 
@@ -52,6 +56,7 @@ enum SettingsSection: CaseIterable, Identifiable {
         case .notion: "notion"
         case .developerTools: "developerTools"
         case .diagnostics: "diagnostics"
+        case .quarantineRecovery: "quarantineRecovery"
         }
     }
 }
@@ -328,6 +333,8 @@ struct SettingsView: View {
             developerToolsTab
         case .diagnostics:
             diagnosticsTab
+        case .quarantineRecovery:
+            RubricQuarantineView(viewModel: viewModel)
         }
     }
 

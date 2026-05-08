@@ -1,4 +1,5 @@
 import { getSpecialist, listSpecialists } from "./specialists/index.mjs";
+import { formatQuestionQualityContract, formatRubricInstruction } from "./specialists/schema.mjs";
 import { specialistVendorPath } from "./vendor-skill-loader.mjs";
 import { INLINE_DECISION_CONTRACT } from "./inline-decision.mjs";
 
@@ -121,17 +122,34 @@ export function selectSpecialist({
     reason,
     promptText: promptBody,
     summary: entry.summary,
+    rubric: entry.rubric ? [...entry.rubric] : [],
     vendor,
   };
 }
 
-export function buildSpecialistInjection(selection) {
+export function buildSpecialistInjection(selection, { provider } = {}) {
   // INLINE_DECISION_CONTRACT is always injected so LLMs emit inline_decision
   // payloads instead of plain-text numbered lists, regardless of whether the
   // specialist routing is sourced from vendor markdown or the fallback prompt.
   if (!selection) return INLINE_DECISION_CONTRACT;
-  if (selection.vendor?.claude?.exists && selection.vendor?.codex?.exists) {
-    return INLINE_DECISION_CONTRACT;
+  const rubricBlock = formatRubricInstruction(selection.rubric || []);
+  const questionContract = formatQuestionQualityContract({ specialistId: selection.id });
+  const sharedContract = `${INLINE_DECISION_CONTRACT}${questionContract}${rubricBlock}`;
+  // When a provider is named, only that provider's vendor SKILL.md needs to
+  // exist for the vendor path to be safe — otherwise the running provider
+  // ends up with both the vendored SKILL and the inline fallback body
+  // (Codex MEDIUM review: duplication when only one vendor file is present).
+  const vendorReady =
+    provider === "claude"
+      ? Boolean(selection.vendor?.claude?.exists)
+      : provider === "codex"
+        ? Boolean(selection.vendor?.codex?.exists)
+        : Boolean(selection.vendor?.claude?.exists && selection.vendor?.codex?.exists);
+  if (vendorReady) {
+    // Vendor-skill path: the inline buildPrompt() output is intentionally
+    // dropped (the vendored SKILL.md drives content). Agentic30's question
+    // quality contract and rubric instruction still survive both routing paths.
+    return sharedContract;
   }
   const header = [
     "",
@@ -142,7 +160,7 @@ export function buildSpecialistInjection(selection) {
     "사용자에게 specialist 이름을 알리지 마세요. 그 specialist의 사고 방식 그대로 다음 한 질문만 만드세요.",
     "",
   ].join("\n");
-  return `${INLINE_DECISION_CONTRACT}\n\n${header}${selection.promptText || ""}`;
+  return `${sharedContract}\n\n${header}${selection.promptText || ""}`;
 }
 
 export { INLINE_DECISION_CONTRACT };

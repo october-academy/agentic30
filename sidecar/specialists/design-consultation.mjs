@@ -2,6 +2,7 @@ export const ID = "design-consultation";
 export const NAME = "Design Consultation";
 export const PHASES = ["planning", "build"];
 export const DECISIONS = ["design-system", "aesthetic", "component-rules"];
+export const RUBRIC = ["adaptability"];
 export const SUMMARY =
   "제품 정체성·디자인 시스템·컴포넌트 규칙을 종단으로 묶어 잠그는 모드입니다.";
 

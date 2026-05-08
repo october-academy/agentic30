@@ -2,6 +2,7 @@ export const ID = "design-html";
 export const NAME = "Design HTML Finalization";
 export const PHASES = ["build"];
 export const DECISIONS = ["html-finalize", "landing-build", "ship-design"];
+export const RUBRIC = ["definition", "command"];
 export const SUMMARY =
   "승인된 디자인 방향을 production HTML/CSS로 굳히는 단계의 결정만 묻습니다.";
 

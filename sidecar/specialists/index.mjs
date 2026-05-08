@@ -7,6 +7,7 @@ import * as devexReview from "./devex-review.mjs";
 import * as designReview from "./design-review.mjs";
 import * as planDesignReview from "./plan-design-review.mjs";
 import * as designConsultation from "./design-consultation.mjs";
+import { assertValidSpecialistModule } from "./schema.mjs";
 
 const MODULES = [
   officeHours,
@@ -27,12 +28,14 @@ function toEntry(mod) {
     phases: Array.isArray(mod.PHASES) ? mod.PHASES.slice() : [],
     decisions: Array.isArray(mod.DECISIONS) ? mod.DECISIONS.slice() : [],
     summary: mod.SUMMARY || "",
+    rubric: Object.freeze([...mod.RUBRIC]),
     build: mod.buildPrompt,
   };
 }
 
 export const SPECIALIST_CATALOG = Object.freeze(
   MODULES.reduce((acc, mod) => {
+    assertValidSpecialistModule(mod);
     acc[mod.ID] = Object.freeze(toEntry(mod));
     return acc;
   }, {}),

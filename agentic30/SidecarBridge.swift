@@ -279,7 +279,11 @@ final class SidecarBridge {
             elapsedMs: nil,
             phase: nil,
             toolName: nil,
-            summary: nil
+            summary: nil,
+            items: nil,
+            result: nil,
+            weeklyRitualPrompt: nil,
+            requestEmit: nil
         )
         onEvent?(event)
     }

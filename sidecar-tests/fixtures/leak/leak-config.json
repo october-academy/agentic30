@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "keywords": [
+    { "literal": "unit-test-secret-marker", "class": "test-fixture" },
+    { "pattern": "INVENTED_FIXTURE_PATTERN_[0-9]+", "class": "test-fixture-regex" }
+  ]
+}

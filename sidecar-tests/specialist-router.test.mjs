@@ -10,12 +10,14 @@ import {
   selectSpecialist,
   selectSpecialistId,
 } from "../sidecar/specialist-router.mjs";
+import { buildDay30NoGoPrompt } from "../sidecar/specialists/plan-ceo-review.mjs";
 import {
   SPECIALIST_IDS,
   buildSpecialistPrompt,
   getSpecialist,
   listSpecialistsByPhase,
 } from "../sidecar/specialists/index.mjs";
+import { RUBRIC_AXES } from "../sidecar/specialists/schema.mjs";
 import {
   buildIddContinuationPrompt,
   buildIddDocumentPrompt,
@@ -57,6 +59,11 @@ test("9 specialists are registered with required fields", () => {
     assert.ok(entry.summary, `missing summary for ${id}`);
     assert.ok(Array.isArray(entry.phases) && entry.phases.length > 0, `missing phases for ${id}`);
     assert.equal(typeof entry.build, "function");
+    assert.ok(Array.isArray(entry.rubric), `missing rubric for ${id}`);
+    assert.ok(entry.rubric.length >= 1 && entry.rubric.length <= 3, `rubric size out of range for ${id}`);
+    for (const axis of entry.rubric) {
+      assert.ok(RUBRIC_AXES.includes(axis), `unknown axis "${axis}" in ${id} rubric`);
+    }
   }
   for (const expected of [
     "office-hours",
@@ -234,6 +241,57 @@ test("buildSpecialistInjection returns the inline decision contract for null sel
   const result = buildSpecialistInjection(null);
   assert.match(result, /Inline decision contract/);
   assert.doesNotMatch(result, /Auto-routed specialist/);
+  assert.doesNotMatch(result, /rubric_focus/);
+});
+
+const VENDOR_BOTH = { claude: { exists: true }, codex: { exists: true } };
+
+test("buildSpecialistInjection injects rubric_focus on the vendor-skill path", () => {
+  // Even when the vendor SKILL.md drives content (and selection.promptText is
+  // intentionally dropped), Agentic30's local question-quality contract and
+  // alignment rubric instruction must survive so the response carries a sharp
+  // decision card plus rubric_focus axis selection back.
+  const selection = selectSpecialist({
+    bipSetupGate: planningGate,
+    doc: { type: "icp", title: "ICP" },
+  });
+  const injection = buildSpecialistInjection({ ...selection, vendor: VENDOR_BOTH });
+  assert.match(injection, /Agentic30 question quality contract/);
+  assert.match(injection, /One question = one decision/);
+  assert.match(injection, /AskUserQuestion/);
+  assert.match(injection, /request_user_input/);
+  assert.match(injection, /2-4개 후보/);
+  assert.match(injection, /제품 이름, 대상 유저, 해결 문제, 제품 목적/);
+  assert.match(injection, /실제 이름, 역할, 상황/);
+  assert.match(injection, /수요 증거, 현재 대안, 실제 사람, 가장 작은 wedge/);
+  assert.match(injection, /rubric_focus/, "vendor path missing rubric_focus");
+  assert.match(injection, /clout/, "office-hours rubric clout axis missing");
+  assert.match(injection, /Alignment rubric/);
+  // Regression guard: vendor path must NOT echo the inline buildPrompt body.
+  assert.doesNotMatch(injection, /Demand reality/);
+  assert.doesNotMatch(injection, /Auto-routed specialist/);
+});
+
+test("buildSpecialistInjection injects rubric_focus on the fallback path", () => {
+  const selection = selectSpecialist({
+    bipSetupGate: planningGate,
+    doc: { type: "icp", title: "ICP" },
+  });
+  const injection = buildSpecialistInjection({ ...selection, vendor: NO_VENDOR });
+  assert.match(injection, /Agentic30 question quality contract/);
+  assert.match(injection, /rubric_focus/);
+  assert.match(injection, /clout/);
+  // Fallback path keeps both the auto-routed header and the rubric block.
+  assert.match(injection, /Auto-routed specialist/);
+});
+
+test("selectSpecialist exposes the rubric axes from the catalog entry", () => {
+  const selection = selectSpecialist({
+    bipSetupGate: planningGate,
+    doc: { type: "icp", title: "ICP" },
+  });
+  assert.ok(Array.isArray(selection.rubric));
+  assert.deepEqual(selection.rubric, ["clout"]);
 });
 
 test("listSpecialistsByPhase only returns matching specialists", () => {
@@ -331,4 +389,133 @@ test("buildOfficeHoursDocsSystemPrompt without injection stays backward-compatib
   const sys = buildOfficeHoursDocsSystemPrompt("/tmp/workspace");
   assert.doesNotMatch(sys, /Auto-routed specialist mode/);
   assert.match(sys, /Office Hours document strategist/);
+});
+
+const VENDOR_CLAUDE_ONLY = { claude: { exists: true }, codex: { exists: false } };
+const VENDOR_CODEX_ONLY = { claude: { exists: false }, codex: { exists: true } };
+
+test("buildSpecialistInjection({provider:'claude'}) takes vendor path when only claude vendor exists", () => {
+  // Codex MEDIUM review: when only the running provider's SKILL.md exists, the
+  // vendor path must still kick in so the running prompt is not duplicated by
+  // both the vendored SKILL and the inline fallback body.
+  const selection = selectSpecialist({
+    bipSetupGate: planningGate,
+    doc: { type: "icp", title: "ICP" },
+  });
+  const injection = buildSpecialistInjection(
+    { ...selection, vendor: VENDOR_CLAUDE_ONLY },
+    { provider: "claude" },
+  );
+  assert.doesNotMatch(injection, /Auto-routed specialist/);
+  assert.doesNotMatch(injection, /Demand reality/);
+  assert.match(injection, /rubric_focus/);
+});
+
+test("buildSpecialistInjection({provider:'codex'}) takes vendor path when only codex vendor exists", () => {
+  const selection = selectSpecialist({
+    bipSetupGate: planningGate,
+    doc: { type: "icp", title: "ICP" },
+  });
+  const injection = buildSpecialistInjection(
+    { ...selection, vendor: VENDOR_CODEX_ONLY },
+    { provider: "codex" },
+  );
+  assert.doesNotMatch(injection, /Auto-routed specialist/);
+  assert.doesNotMatch(injection, /Demand reality/);
+  assert.match(injection, /rubric_focus/);
+});
+
+test("buildSpecialistInjection({provider:'claude'}) falls back when only codex vendor exists", () => {
+  const selection = selectSpecialist({
+    bipSetupGate: planningGate,
+    doc: { type: "icp", title: "ICP" },
+  });
+  const injection = buildSpecialistInjection(
+    { ...selection, vendor: VENDOR_CODEX_ONLY },
+    { provider: "claude" },
+  );
+  assert.match(injection, /Auto-routed specialist/);
+  assert.match(injection, /Demand reality/);
+});
+
+test("buildDay30NoGoPrompt uses 지속/전환/중단 (Korean coaching tone), not Go/Kill/Pivot", () => {
+  // Gemini UX: "Go/Kill/Pivot"은 한국어 사용자에게 공격적. RUBRIC.md Command 5점
+  // anchor와 일치시키되 톤은 코칭으로 바꾼다.
+  const prompt = buildDay30NoGoPrompt({
+    rubricStatus: {
+      dayZero: null,
+      dayThirty: {
+        day: 30,
+        axes: {
+          definition: { score: 4, anchor_level: 3, anchor_text: "..." },
+          command: { score: 3, anchor_level: 3, anchor_text: "..." },
+          clout: {
+            score: 2,
+            anchor_level: 1,
+            anchor_text: "...",
+            no_evidence_reason: "BIP 게시 0편",
+          },
+          responsibility: { score: 3, anchor_level: 3, anchor_text: "..." },
+          adaptability: { score: 2, anchor_level: 1, anchor_text: "..." },
+        },
+      },
+      delta: null,
+    },
+  });
+  assert.ok(prompt, "Day 30 prompt must not be null when dayThirty exists");
+  assert.equal(prompt.promptKey, "day30_no_go_decision");
+  assert.equal(prompt.options.length, 3);
+  const labels = prompt.options.map((o) => o.label).join(" ");
+  assert.match(labels, /지속/);
+  assert.match(labels, /전환/);
+  assert.match(labels, /중단/);
+  // Regression guard against the old aggressive phrasing.
+  assert.doesNotMatch(prompt.body + labels, /Go *\/ *Kill *\/ *Pivot/i);
+});
+
+test("buildDay30NoGoPrompt asks each option for a one-line nextAction (post-decision blank guard)", () => {
+  // Gemini: 결정 직후의 '공백' 차단. 각 option이 다음 한 줄 행동을 받아 다음
+  // cycle의 시작점이 되도록.
+  const prompt = buildDay30NoGoPrompt({
+    rubricStatus: {
+      dayZero: null,
+      dayThirty: {
+        day: 30,
+        axes: {
+          definition: { score: 1, anchor_level: 1, anchor_text: "..." },
+          command: { score: 1, anchor_level: 1, anchor_text: "..." },
+          clout: { score: 1, anchor_level: 1, anchor_text: "..." },
+          responsibility: { score: 1, anchor_level: 1, anchor_text: "..." },
+          adaptability: { score: 1, anchor_level: 1, anchor_text: "..." },
+        },
+      },
+      delta: null,
+    },
+  });
+  for (const option of prompt.options) {
+    assert.ok(
+      typeof option.nextActionPlaceholder === "string"
+        && option.nextActionPlaceholder.length > 0,
+      `option ${option.key} missing nextActionPlaceholder`,
+    );
+  }
+});
+
+test("buildDay30NoGoPrompt returns null gracefully when dayThirty is missing", () => {
+  // 사용자가 Day 30 record를 아직 쌓지 않았을 때 prompt를 강제로 surface하지
+  // 않는다. 호출처는 null을 받으면 prompt를 띄우지 않는다.
+  assert.equal(buildDay30NoGoPrompt({ rubricStatus: null }), null);
+  assert.equal(buildDay30NoGoPrompt({ rubricStatus: { dayThirty: null } }), null);
+  assert.equal(buildDay30NoGoPrompt({}), null);
+});
+
+test("buildSpecialistInjection without provider keeps both-vendor requirement (back-compat)", () => {
+  const selection = selectSpecialist({
+    bipSetupGate: planningGate,
+    doc: { type: "icp", title: "ICP" },
+  });
+  const onlyClaude = buildSpecialistInjection({ ...selection, vendor: VENDOR_CLAUDE_ONLY });
+  // Without provider hint, the conservative rule (both vendors must exist) is
+  // preserved so existing call sites in sidecar/index.mjs keep their behavior.
+  assert.match(onlyClaude, /Auto-routed specialist/);
 });

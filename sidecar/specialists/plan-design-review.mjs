@@ -2,6 +2,7 @@ export const ID = "plan-design-review";
 export const NAME = "Plan Design Review";
 export const PHASES = ["build"];
 export const DECISIONS = ["design-plan", "design-dimension-score", "design-system-gap"];
+export const RUBRIC = ["definition", "command"];
 export const SUMMARY =
   "디자인 차원을 0~10으로 매기고 한 단계 올리는 가장 작은 수정을 묻습니다.";
 

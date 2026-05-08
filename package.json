@@ -17,6 +17,8 @@
     "report:timings": "node scripts/report-response-timings.mjs",
     "track:release-funnel": "node scripts/posthog-release-funnel.mjs",
     "sync:gstack": "node scripts/sync-gstack.mjs",
+    "sync:alignment": "node scripts/sync-alignment-sources.mjs",
+    "check:alignment-leak": "node scripts/check-alignment-leak.mjs",
     "test:sidecar": "node --test sidecar-tests/**/*.test.mjs"
   },
   "dependencies": {

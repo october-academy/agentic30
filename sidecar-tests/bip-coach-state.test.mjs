@@ -272,7 +272,7 @@ test("mission prompt can use sidecar-read evidence without delegating Google rea
   assert.match(prompt, /nextQuestions/);
   assert.match(prompt, /layerChecks/);
   assert.match(prompt, /curriculumDay\.personalization\.evidenceGaps/);
-  assert.match(prompt, /Founder \/ October Academy \/ Agentic30/);
+  assert.match(prompt, /Builder \/ Program \/ Agentic30/);
   assert.match(prompt, /"missions"/);
 });
 
@@ -340,8 +340,8 @@ test("builds fallback mission choices from sidecar-read evidence and curriculum"
   assert.match(choices[0].mission, /evidence gap/);
   assert.match(choices[0].eveningChecklist.join("\n"), /\/office-hours/);
   assert.match(choices[0].eveningChecklist.join("\n"), /\/plan-ceo-review/);
-  assert.match(choices[0].eveningChecklist.join("\n"), /Founder/);
-  assert.match(choices[0].eveningChecklist.join("\n"), /Company|October Academy/);
+  assert.match(choices[0].eveningChecklist.join("\n"), /Builder/);
+  assert.match(choices[0].eveningChecklist.join("\n"), /Program/);
   assert.match(choices[0].eveningChecklist.join("\n"), /Product|Agentic30/);
   assert.match(choices[1].drafts.join("\n"), /문제 지도/);
   assert.match(choices[2].evidenceRefs.join("\n"), /오늘은 ICP/);

@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import { adaptCurriculumDay } from "./adaptive-curriculum.mjs";
+import { detectRitualBoundary } from "./weekly-ritual.mjs";
 
 export const BIP_COACH_SCHEMA_VERSION = 1;
 
@@ -27,6 +28,16 @@ export function makeDefaultBipCoachState(now = new Date()) {
       longest: 0,
       lastCompletedDate: null,
     },
+    // Highest weekly_ritual day already surfaced to the user. Used by
+    // `applyCurriculumDayUpdate` to ensure each ritual fires at most once
+    // per workspace, even across multiple sessions opened on the same day.
+    lastRitualDayObserved: 0,
+    // Round 6 / CCG-Codex: pending ritual that has been persisted but not yet
+    // acknowledged by a Mac client. Survives restarts so a broadcast that
+    // failed (or arrived before any client connected) is replayed on next
+    // boot. Cleared by `weekly_ritual_acknowledged` from the client.
+    pendingRitualKey: null,
+    pendingRitualDay: null,
     lastError: null,
   };
 }
@@ -63,7 +74,65 @@ export function normalizeBipCoachState(payload = {}) {
       ...base.streak,
       ...(payload.streak ?? {}),
     },
+    lastRitualDayObserved:
+      typeof payload.lastRitualDayObserved === "number"
+      && Number.isFinite(payload.lastRitualDayObserved)
+        ? payload.lastRitualDayObserved
+        : 0,
+    pendingRitualKey:
+      typeof payload.pendingRitualKey === "string" && payload.pendingRitualKey.length > 0
+        ? payload.pendingRitualKey
+        : null,
+    pendingRitualDay:
+      typeof payload.pendingRitualDay === "number"
+      && Number.isFinite(payload.pendingRitualDay)
+        ? payload.pendingRitualDay
+        : null,
     lastError: payload.lastError ?? null,
+  };
+}
+
+// Pure transition. Folds a fresh curriculumDay into the bip-coach state,
+// detecting any weekly-ritual boundary that just got crossed and updating
+// `lastRitualDayObserved` BEFORE the caller emits the prompt — so two
+// sessions racing through the same boundary will not both fire the ritual
+// (Codex MEDIUM review).
+//
+// Round 6 / CCG-Codex addendum: a fresh ritual also lands in
+// `pendingRitualKey`/`pendingRitualDay`. The caller persists state, broadcasts
+// to clients, and only clears the pending fields after the client
+// acknowledges. Boot replay reads the persisted pending fields to recover
+// from crashes between persist and broadcast.
+export function applyCurriculumDayUpdate(state, { curriculumDay } = {}) {
+  const normalized = normalizeBipCoachState(state ?? {});
+  const ritual = detectRitualBoundary({
+    curriculumDay,
+    lastRitualDayObserved: normalized.lastRitualDayObserved ?? 0,
+  });
+  if (!ritual) {
+    return { ...normalized, pendingRitual: null };
+  }
+  return {
+    ...normalized,
+    lastRitualDayObserved: ritual.day,
+    pendingRitualKey: ritual.ritualKey,
+    pendingRitualDay: ritual.day,
+    pendingRitual: ritual,
+  };
+}
+
+// Clear the pending ritual after a client acknowledges. Pure.
+export function acknowledgePendingRitual(state, { day } = {}) {
+  const normalized = normalizeBipCoachState(state ?? {});
+  if (typeof day === "number" && normalized.pendingRitualDay !== day) {
+    // Acknowledging a different day than the one pending — leave pending
+    // intact so a stale ack does not silently swallow a fresh ritual.
+    return normalized;
+  }
+  return {
+    ...normalized,
+    pendingRitualKey: null,
+    pendingRitualDay: null,
   };
 }
 
@@ -434,7 +503,7 @@ export function buildBipCoachMissionPromptFromEvidence({
     "- 최신 상태는 Sheet 행의 마지막 비어 있지 않은 기록에서 판단한다.",
     "- 팔로워 수, 게시 횟수, 배움, 특이사항, 업무일지의 목표/막힘/반복 패턴을 글 각도에 반영한다.",
     "- Evidence JSON의 curriculumDay가 있으면 해당 Day의 title, tasks, output, personalization, evidenceNeeds, nextQuestions, layerChecks를 반드시 미션 수행 결과와 연결한다.",
-    "- layerChecks는 Founder / October Academy / Agentic30 세 계층을 혼동하지 않기 위한 검문이다. 미션은 최소 한 계층의 증거를 명시적으로 남겨야 한다.",
+    "- layerChecks는 Builder / Program / Agentic30 세 계층을 혼동하지 않기 위한 검문이다. 미션은 최소 한 계층의 증거를 명시적으로 남겨야 한다.",
     "- curriculumDay.personalization.evidenceGaps가 있으면 기능 추가보다 그 공백을 메우는 행동으로 미션을 진화시킨다.",
     "- curriculumDay.nextQuestions는 `/office-hours`와 `/plan-ceo-review` 훈련 질문이다. 후보 미션의 eveningChecklist에 같은 취지의 질문을 포함한다.",
     "- 매일 미션에는 사용자가 의식적으로 훈련할 전략 질문 2개를 반드시 포함한다.",
@@ -557,8 +626,8 @@ export function buildFallbackBipMissionChoices({
   const layerCheckLines = Array.isArray(curriculum.layerChecks) && curriculum.layerChecks.length
     ? curriculum.layerChecks.slice(0, 3)
     : [
-        "Founder: 오늘 카드가 내 실제 행동을 바꿨나?",
-        "Company: 이 실행이 지혜/판단 훈련 자산으로 남나?",
+        "Builder: 오늘 카드가 내 실제 행동을 바꿨나?",
+        "Program: 이 실행이 반복 가능한 훈련 자산으로 남나?",
         "Product: 30일/100명/첫 매출 가설을 강화하나?",
       ];
   const latestInsight = latest.insights || latest.notes || docText.slice(0, 90) || "최근 기록에서 아직 선명한 배움이 부족합니다.";

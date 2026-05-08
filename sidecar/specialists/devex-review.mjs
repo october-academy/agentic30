@@ -2,6 +2,7 @@ export const ID = "devex-review";
 export const NAME = "DevEx Review (live audit)";
 export const PHASES = ["build"];
 export const DECISIONS = ["devex-audit", "docs-quality", "first-run"];
+export const RUBRIC = ["adaptability", "clout"];
 export const SUMMARY =
   "실제로 시도해 본 결과를 기반으로 개발자 경험을 점수 매기고 마찰을 잡습니다.";
 

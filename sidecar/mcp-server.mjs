@@ -19,6 +19,20 @@ import { requiredDocByType } from "./idd-doc-gate.mjs";
 import {
   CODEX_STRUCTURED_INPUT_TOOL,
 } from "./structured-input-tools.mjs";
+import {
+  recordFlatRubricAssessment,
+  getRubricStatus,
+} from "./rubric-assessment-host.mjs";
+import { buildDay30NoGoPrompt } from "./specialists/plan-ceo-review.mjs";
+import {
+  listQuarantinedFiles,
+  readQuarantineDump,
+  restoreQuarantinedRecord,
+} from "./quarantine-recovery.mjs";
+import {
+  redactRubricStatus,
+  summarizeOriginalForMcp,
+} from "./rubric-redact.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sidecarRoot = path.resolve(__dirname);
@@ -658,6 +672,218 @@ async function persistGwsOutput({ kind, id, range = "", output }) {
     // MEMORY persistence is best-effort. Never fail the user's live GWS read.
   }
 }
+
+// MARK: - Alignment Rubric Tools (5-axis Day 0/30 self-assessment)
+
+const rubricEvidenceRefSchema = z.object({
+  type: z.enum(["session_message", "doc_path", "external_link"]),
+  ref: z.string().min(1),
+  quote_excerpt: z.string().max(2000).optional(),
+});
+
+server.tool(
+  "record_rubric_assessment",
+  [
+    "Record a Day 0 or Day 30 5-axis (Definition/Command/Clout/Responsibility/Adaptability) self-assessment for the current workspace. Hydrates anchor_text from docs/RUBRIC.md and persists.",
+    "",
+    "Workflow:",
+    "1. Ask the user each axis score 1-5 with the anchor text from docs/RUBRIC.md.",
+    "2. For any axis with score >= 3, scan recent session messages, project doc changes, and BIP entries for 1-3 candidate evidence_refs and surface them to the user as \"이 내용을 근거로 활용할까요?\" rather than asking them to type evidence from scratch.",
+    "3. For Day 30, every axis needs either evidence_refs or a no_evidence_reason explaining why the user can't cite evidence (Day 0 baseline is allowed loose).",
+    "4. Persist via this tool.",
+    "5. If day === 30, immediately follow up with the Day 30 결산 prompt: 지속(Continue) / 전환(Pivot) / 중단(Stop). Each option also asks for a one-line nextAction so the decision lands as the start of the next cycle, not as a blank. See `buildDay30NoGoPrompt` in sidecar/specialists/plan-ceo-review.mjs.",
+  ].join("\n"),
+  {
+    sessionId: z.string().min(1),
+    day: z.union([z.literal(0), z.literal(30)]),
+    axes: z.object({
+      definition: z.number().int().min(1).max(5),
+      command: z.number().int().min(1).max(5),
+      clout: z.number().int().min(1).max(5),
+      responsibility: z.number().int().min(1).max(5),
+      adaptability: z.number().int().min(1).max(5),
+    }),
+    evidence: z
+      .object({
+        definition: z.array(rubricEvidenceRefSchema).optional(),
+        command: z.array(rubricEvidenceRefSchema).optional(),
+        clout: z.array(rubricEvidenceRefSchema).optional(),
+        responsibility: z.array(rubricEvidenceRefSchema).optional(),
+        adaptability: z.array(rubricEvidenceRefSchema).optional(),
+      })
+      .optional(),
+    no_evidence_reasons: z
+      .object({
+        definition: z.string().min(1).max(500).optional(),
+        command: z.string().min(1).max(500).optional(),
+        clout: z.string().min(1).max(500).optional(),
+        responsibility: z.string().min(1).max(500).optional(),
+        adaptability: z.string().min(1).max(500).optional(),
+      })
+      .optional(),
+    notes: z.string().max(4000).optional(),
+  },
+  async ({ sessionId, day, axes, evidence, no_evidence_reasons, notes }) => {
+    try {
+      const result = await recordFlatRubricAssessment({
+        workspaceRoot,
+        sessionId,
+        day,
+        axes,
+        evidence: evidence || {},
+        noEvidenceReasons: no_evidence_reasons || {},
+        notes,
+      });
+      // Round 6 / CCG-Gemini "보상 없는 엔딩" 차단: Day 30 record가 저장되면
+      // 즉시 결산 prompt(지속/전환/중단 + nextAction)를 응답에 동봉. 이는
+      // buildDay30NoGoPrompt가 dead helper에서 실 사용 surface로 이동한 것.
+      // raw evidence/notes는 prompt body에 절대 들어가지 않음 — helper가 이미
+      // delta(숫자) + axis별 no_evidence_reason 한 줄만 사용.
+      let day30NoGoPrompt = null;
+      if (result.record.day === 30) {
+        try {
+          const status = await getRubricStatus(workspaceRoot);
+          day30NoGoPrompt = buildDay30NoGoPrompt({ rubricStatus: status });
+        } catch {
+          // Prompt failure must never block persistence success.
+        }
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                ok: true,
+                filePath: result.filePath,
+                day: result.record.day,
+                sessionId: result.record.sessionId,
+                recordedAt: result.record.recordedAt,
+                ...(day30NoGoPrompt ? { day30NoGoPrompt } : {}),
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              { ok: false, error: err?.message || String(err) },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    }
+  },
+);
+
+server.tool(
+  "get_rubric_status",
+  "Return a redacted summary of the latest Day 0 / Day 30 records: only `sessionId`, `day`, `recordedAt`, axis scores, and the within-person delta. Raw evidence_refs, anchor_text, no_evidence_reason, and notes stay LOCAL — read them directly from `<workspace>/.agentic30/rubric-assessments.json` if needed.",
+  {},
+  async () => {
+    try {
+      const status = await getRubricStatus(workspaceRoot);
+      return {
+        content: [
+          { type: "text", text: JSON.stringify(redactRubricStatus(status), null, 2) },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              { ok: false, error: err?.message || String(err) },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    }
+  },
+);
+
+server.tool(
+  "list_quarantined_records",
+  "List Day-30 schema-invalid rubric records currently held in `<workspace>/.agentic30/*.invalid-*.json`. Each entry includes the original record, the schema issues that rejected it, an `mtimeMs` ETag, and an optional auto-suggest proposal. Use this before `restore_quarantined_record`.",
+  {},
+  async () => {
+    try {
+      const files = await listQuarantinedFiles({ workspaceRoot });
+      const out = [];
+      for (const file of files) {
+        const dump = await readQuarantineDump({ workspaceRoot, quarantinePath: file.path });
+        // Privacy: original payload 자체가 사용자 임의 JSON(notes 포함). MCP 응답
+        // 에는 originalSummary(sessionId · Day N)만 노출. raw original은 sidecar
+        // 내부 또는 Mac WebSocket bridge로만 흐름.
+        out.push({
+          file,
+          dump: {
+            sourceFile: dump.sourceFile,
+            quarantinedAt: dump.quarantinedAt,
+            mtimeMs: dump.mtimeMs,
+            records: dump.records.map((entry) => ({
+              index: entry.index,
+              issues: entry.issues,
+              proposal: entry.proposal,
+              originalSummary: summarizeOriginalForMcp(entry.original),
+            })),
+          },
+        });
+      }
+      return {
+        content: [{ type: "text", text: JSON.stringify({ ok: true, items: out }, null, 2) }],
+      };
+    } catch (err) {
+      return {
+        content: [
+          { type: "text", text: JSON.stringify({ ok: false, error: err?.message || String(err) }, null, 2) },
+        ],
+      };
+    }
+  },
+);
+
+server.tool(
+  "restore_quarantined_record",
+  "Re-import a fixed quarantined rubric record into the canonical store. `fixedRecord` must satisfy RubricAssessmentSchema. Pass `expectedMtimeMs` from the latest `list_quarantined_records` to detect stale views — the call rejects if the quarantine file changed in the meantime. On success the entry is removed from the quarantine file (consume semantics).",
+  {
+    quarantinePath: z.string().min(1),
+    recordIndex: z.number().int().min(0),
+    fixedRecord: z.unknown(),
+    expectedMtimeMs: z.number().optional(),
+  },
+  async ({ quarantinePath, recordIndex, fixedRecord, expectedMtimeMs }) => {
+    try {
+      const result = await restoreQuarantinedRecord({
+        workspaceRoot,
+        quarantinePath,
+        recordIndex,
+        fixedRecord,
+        expectedMtimeMs,
+      });
+      return {
+        content: [{ type: "text", text: JSON.stringify({ ok: true, ...result }, null, 2) }],
+      };
+    } catch (err) {
+      return {
+        content: [
+          { type: "text", text: JSON.stringify({ ok: false, error: err?.message || String(err) }, null, 2) },
+        ],
+      };
+    }
+  },
+);
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
