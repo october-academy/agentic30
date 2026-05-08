@@ -29,7 +29,7 @@ npm install
 Hermetic UI tests use `--ui-testing-opaque-window` and `AGENTIC30_TEST_STUB_PROVIDER=1` so screenshots are stable and provider auth is not required:
 
 ```bash
-xcodebuild test -project agentic30.xcodeproj -scheme agentic30 -destination 'platform=macOS' \
+xcodebuild test -project agentic30.xcodeproj -scheme agentic30UITests -destination 'platform=macOS' \
   -only-testing:agentic30UITests/agentic30UITests/testNativeProjectPickerSelectsDirectory \
   -only-testing:agentic30UITests/agentic30UITests/testSettingsModelPickersSelectClaudeAndCodexModels \
   -only-testing:agentic30UITests/agentic30UITests/testSidecarChatFlowHermetic

@@ -10,14 +10,28 @@
          <BuildActionEntry
             buildForTesting = "YES"
             buildForRunning = "YES"
-            buildForProfiling = "YES"
-            buildForArchiving = "YES"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "5966604F2F86A4900021885C"
                BuildableName = "agentic30.app"
                BlueprintName = "agentic30"
+               ReferencedContainer = "container:agentic30.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "596660682F86A4910021885C"
+               BuildableName = "agentic30UITests.xctest"
+               BlueprintName = "agentic30UITests"
                ReferencedContainer = "container:agentic30.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -29,29 +43,9 @@
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES"
       shouldAutocreateTestPlan = "NO">
-      <MacroExpansion>
-         <BuildableReference
-            BuildableIdentifier = "primary"
-            BlueprintIdentifier = "5966604F2F86A4900021885C"
-            BuildableName = "agentic30.app"
-            BlueprintName = "agentic30"
-            ReferencedContainer = "container:agentic30.xcodeproj">
-         </BuildableReference>
-      </MacroExpansion>
       <Testables>
          <TestableReference
             skipped = "NO"
-            parallelizable = "NO">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "5966605E2F86A4910021885C"
-               BuildableName = "agentic30Tests.xctest"
-               BlueprintName = "agentic30Tests"
-               ReferencedContainer = "container:agentic30.xcodeproj">
-            </BuildableReference>
-         </TestableReference>
-         <TestableReference
-            skipped = "YES"
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
@@ -83,18 +77,6 @@
             ReferencedContainer = "container:agentic30.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
-      <EnvironmentVariables>
-         <EnvironmentVariable
-            key = "POSTHOG_PROJECT_TOKEN"
-            value = "$(POSTHOG_PROJECT_TOKEN)"
-            isEnabled = "YES">
-         </EnvironmentVariable>
-         <EnvironmentVariable
-            key = "POSTHOG_HOST"
-            value = "$(POSTHOG_HOST)"
-            isEnabled = "YES">
-         </EnvironmentVariable>
-      </EnvironmentVariables>
    </LaunchAction>
    <ProfileAction
       buildConfiguration = "Release"
