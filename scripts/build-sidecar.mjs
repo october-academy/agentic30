@@ -168,6 +168,7 @@ function packagePath(nodeModulesRoot, pkg) {
 async function ensureDependencies() {
   const missing = [...REQUIRED_BUNDLE_PACKAGES, ...EXTERNAL_PACKAGES, ...SIDECAR_CLI_PACKAGES]
     .filter((pkg) => !existsSync(packagePath(SOURCE_NODE_MODULES, pkg)));
+  if (!existsSync(LOCAL_BUN_BIN)) missing.push("bun");
   if (missing.length === 0) return;
 
   const npmArgs = existsSync(path.join(PACKAGE_ROOT, "package-lock.json"))
