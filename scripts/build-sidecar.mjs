@@ -64,6 +64,16 @@ const NON_DARWIN_PLATFORMS = [
   "x64-linux",
 ];
 
+const NATIVE_BUILD_ARTIFACT_DIRS = new Set([
+  ".deps",
+  "obj.target",
+]);
+
+const NATIVE_BUILD_ARTIFACT_EXTENSIONS = new Set([
+  ".a",
+  ".o",
+]);
+
 function run(cmd, args, cwd) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { cwd, stdio: "inherit" });
@@ -187,6 +197,8 @@ async function computeBuildFingerprint() {
       externalPackages: EXTERNAL_PACKAGES,
       sidecarCliPackages: SIDECAR_CLI_PACKAGES,
       nonDarwinPlatforms: NON_DARWIN_PLATFORMS,
+      nativeBuildArtifactDirs: [...NATIVE_BUILD_ARTIFACT_DIRS],
+      nativeBuildArtifactExtensions: [...NATIVE_BUILD_ARTIFACT_EXTENSIONS],
     })
   );
 
@@ -275,6 +287,32 @@ async function stripNonDarwinBinaries(root) {
   }
 }
 
+async function stripNativeBuildArtifacts(root) {
+  const stack = [root];
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (NATIVE_BUILD_ARTIFACT_DIRS.has(entry.name)) {
+          await rm(full, { recursive: true, force: true });
+          continue;
+        }
+        stack.push(full);
+      } else if (entry.isFile() && NATIVE_BUILD_ARTIFACT_EXTENSIONS.has(path.extname(entry.name))) {
+        await rm(full, { force: true });
+      }
+    }
+  }
+}
+
 async function directorySize(dir) {
   let total = 0;
   const stack = [dir];
@@ -316,6 +354,8 @@ async function main() {
   await copyExternals();
   console.log("[build-sidecar] stripping non-darwin native binaries...");
   await stripNonDarwinBinaries(DIST_NODE_MODULES);
+  console.log("[build-sidecar] stripping native build artifacts...");
+  await stripNativeBuildArtifacts(DIST_NODE_MODULES);
   const size = await directorySize(DIST_DIR);
   await writeBuildStamp(fingerprint, size);
   console.log(`[build-sidecar] done. dist size: ${(size / 1024 / 1024).toFixed(1)} MB`);
