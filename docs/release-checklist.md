@@ -21,6 +21,13 @@ This checklist is for local dogfood releases of the macOS menu bar app. Public D
 5. Confirm a local Today Mission card appears within 2-5 minutes.
 6. Configure Google Docs/Sheets and verify proof capture setup separately.
 
+## Launch Funnel Telemetry
+
+- Use a `go.agentic30.app` short URL for the Threads launch link so PostHog receives `short_link_click` from the URL shortener.
+- After uploading the DMG to GitHub Releases, run `npm run track:release-funnel -- --repo october-academy/agentic30-private --tag <release-tag>` on a short interval during launch day. The script polls `gh api` release asset `download_count` and emits one `dmg_downloaded` event per new DMG download.
+- Confirm the signed app emits `dmg_install_completed` once on first launch, then `workspace_setup_started`, `workspace_setup_failed`, and `workspace_setup_completed` through the host-routed sidecar telemetry envelope.
+- The A4 funnel is: `short_link_click` → `dmg_downloaded` → `dmg_install_completed` → `workspace_setup_completed`.
+
 ## Public Distribution Blockers
 
 - Developer ID signing and Hardened Runtime.

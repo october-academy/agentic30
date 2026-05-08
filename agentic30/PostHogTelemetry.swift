@@ -5,6 +5,13 @@ struct PostHogTelemetryConfig {
     let host: String
 }
 
+struct PostHogTelemetryCapture {
+    let event: String
+    let properties: [String: Any]
+    let timestamp: Date
+    let isException: Bool
+}
+
 enum PostHogTelemetrySanitizer {
     nonisolated private static let suffixOnlyKeys: Set<String> = [
         "payment_key",
@@ -161,33 +168,78 @@ enum PostHogHostResolver {
 
 enum PostHogTelemetry {
     private static let distinctIDDefaultsKey = "agentic30.posthog.distinctId"
+    private static let captureOnceDefaultsPrefix = "agentic30.posthog.once."
+    private static let captureFileEnvironmentKey = "AGENTIC30_TELEMETRY_CAPTURE_FILE"
+    private static let captureFileLock = NSLock()
+    private static let captureOnceLock = NSLock()
 
+    static var captureSink: ((PostHogTelemetryCapture) -> Void)?
+
+    @discardableResult
     static func capture(
         _ event: String,
         properties: [String: Any] = [:],
         authSession: MacAuthSession? = nil
-    ) {
+    ) -> Bool {
+        let extra = properties.merging([
+            "$lib": "mac",
+            "$lib_version": appVersionDescription(),
+            "platform": "macos",
+        ]) { _, new in new }
+
+        if emitToConfiguredSink(
+            event: event,
+            extra: extra,
+            authSession: authSession,
+            isException: false
+        ) {
+            return true
+        }
+
         guard let config = loadConfig(),
               let ingestBaseURL = PostHogHostResolver.ingestBaseURL(for: config.host),
               let url = URL(string: "capture/", relativeTo: ingestBaseURL)
-        else { return }
+        else { return false }
 
         let payload: [String: Any] = [
             "api_key": config.projectAPIKey,
             "event": event,
             "distinct_id": distinctID(for: authSession),
             "properties": baseProperties(
-                extra: properties.merging([
-                    "$lib": "mac",
-                    "$lib_version": appVersionDescription(),
-                    "platform": "macos",
-                ]) { _, new in new },
+                extra: extra,
                 authSession: authSession
             ),
             "timestamp": ISO8601DateFormatter().string(from: Date()),
         ]
 
         send(url: url, payload: payload)
+        return true
+    }
+
+    @discardableResult
+    static func captureOnce(
+        _ event: String,
+        onceKey: String,
+        properties: [String: Any] = [:],
+        authSession: MacAuthSession? = nil
+    ) -> Bool {
+        let defaultsKey = captureOnceDefaultsPrefix + onceKey
+
+        captureOnceLock.lock()
+        if UserDefaults.standard.bool(forKey: defaultsKey) {
+            captureOnceLock.unlock()
+            return false
+        }
+        UserDefaults.standard.set(true, forKey: defaultsKey)
+        captureOnceLock.unlock()
+
+        let didCapture = capture(event, properties: properties, authSession: authSession)
+        if !didCapture {
+            captureOnceLock.lock()
+            UserDefaults.standard.removeObject(forKey: defaultsKey)
+            captureOnceLock.unlock()
+        }
+        return didCapture
     }
 
     static func captureException(
@@ -196,11 +248,6 @@ enum PostHogTelemetry {
         handled: Bool = true,
         authSession: MacAuthSession? = nil
     ) {
-        guard let config = loadConfig(),
-              let ingestBaseURL = PostHogHostResolver.ingestBaseURL(for: config.host),
-              let url = URL(string: "i/v0/e/", relativeTo: ingestBaseURL)
-        else { return }
-
         let exceptionType = String(describing: type(of: error))
         let exceptionValue: String
         if let err = error as? Error {
@@ -222,18 +269,34 @@ enum PostHogTelemetry {
             ],
         ]
 
+        let extra = properties.merging([
+            "$exception_list": [exceptionPayload],
+            "$exception_level": "error",
+            "$lib": "mac",
+            "$lib_version": appVersionDescription(),
+            "platform": "macos",
+            "handled": handled,
+        ]) { _, new in new }
+
+        if emitToConfiguredSink(
+            event: "$exception",
+            extra: extra,
+            authSession: authSession,
+            isException: true
+        ) {
+            return
+        }
+
+        guard let config = loadConfig(),
+              let ingestBaseURL = PostHogHostResolver.ingestBaseURL(for: config.host),
+              let url = URL(string: "i/v0/e/", relativeTo: ingestBaseURL)
+        else { return }
+
         let payload: [String: Any] = [
             "token": config.projectAPIKey,
             "event": "$exception",
             "properties": baseProperties(
-                extra: properties.merging([
-                    "$exception_list": [exceptionPayload],
-                    "$exception_level": "error",
-                    "$lib": "mac",
-                    "$lib_version": appVersionDescription(),
-                    "platform": "macos",
-                    "handled": handled,
-                ]) { _, new in new },
+                extra: extra,
                 authSession: authSession
             ),
             "timestamp": ISO8601DateFormatter().string(from: Date()),
@@ -248,12 +311,15 @@ enum PostHogTelemetry {
         let settings = KeychainHelper.loadSettings()
         let resolvedProjectKey = settings.posthogProjectAPIKey.nonEmpty
             ?? (settings.posthogApiKey.hasPrefix("phc_") ? settings.posthogApiKey : nil)
+            ?? ProcessInfo.processInfo.environment["POSTHOG_PROJECT_TOKEN"]?.nonEmpty
 
         guard let projectAPIKey = resolvedProjectKey, !projectAPIKey.isEmpty else {
             return nil
         }
 
-        let host = settings.posthogHost.nonEmpty ?? "https://us.posthog.com"
+        let host = settings.posthogHost.nonEmpty
+            ?? ProcessInfo.processInfo.environment["POSTHOG_HOST"]?.nonEmpty
+            ?? "https://us.posthog.com"
         return PostHogTelemetryConfig(projectAPIKey: projectAPIKey, host: host)
     }
 
@@ -275,6 +341,63 @@ enum PostHogTelemetry {
         request.httpBody = body
 
         URLSession.shared.dataTask(with: request).resume()
+    }
+
+    private static func emitToConfiguredSink(
+        event: String,
+        extra: [String: Any],
+        authSession: MacAuthSession?,
+        isException: Bool
+    ) -> Bool {
+        let capture = PostHogTelemetryCapture(
+            event: event,
+            properties: baseProperties(extra: extra, authSession: authSession),
+            timestamp: Date(),
+            isException: isException
+        )
+
+        var handled = false
+        if let captureSink {
+            captureSink(capture)
+            handled = true
+        }
+        if let path = ProcessInfo.processInfo.environment[captureFileEnvironmentKey]?.nonEmpty {
+            appendCapture(capture, to: path)
+            handled = true
+        }
+        return handled
+    }
+
+    private static func appendCapture(_ capture: PostHogTelemetryCapture, to path: String) {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let record: [String: Any] = [
+            "event": capture.event,
+            "properties": capture.properties,
+            "timestamp": formatter.string(from: capture.timestamp),
+            "is_exception": capture.isException,
+        ]
+        guard JSONSerialization.isValidJSONObject(record),
+              let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]),
+              let newline = "\n".data(using: .utf8)
+        else { return }
+
+        let url = URL(fileURLWithPath: path)
+        captureFileLock.lock()
+        defer { captureFileLock.unlock() }
+
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        if !FileManager.default.fileExists(atPath: url.path) {
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+        }
+        guard let handle = try? FileHandle(forWritingTo: url) else { return }
+        handle.seekToEndOfFile()
+        handle.write(data)
+        handle.write(newline)
+        try? handle.close()
     }
 
     private static func baseProperties(
