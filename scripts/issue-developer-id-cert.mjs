@@ -249,7 +249,7 @@ function parseArgs(argv) {
 }
 
 function requireFlags(out, keys) {
-  const missing = keys.filter((k) => !out[k]);
+  const missing = keys.filter((k) => typeof out[k] !== "string" || out[k].trim() === "");
   if (missing.length) {
     console.error(
       `[issue-developer-id-cert] missing flags: ${missing.map((k) => "--" + k).join(", ")}`
