@@ -286,6 +286,19 @@ enum PostHogTelemetry {
             return didCapture
         }
 
+        // No sink and no PostHog config: refuse to persist any tracking
+        // state. Without this guard, users who never configured a key would
+        // get a distinct id and a serialized pending payload written to
+        // their prefs plist (via pendingOnceCaptureData -> baseProperties),
+        // sitting orphaned until they later configure a key — at which
+        // point the queued event would fire with a stale install-time
+        // timestamp. capture() already gates on loadConfig(); captureOnce
+        // must do the same.
+        guard loadConfig() != nil else {
+            captureOnceLock.unlock()
+            return false
+        }
+
         guard let pendingData = pendingOnceCaptureData(
             event: event,
             onceKey: onceKey,

@@ -144,6 +144,38 @@ final class PostHogTelemetryTests: XCTestCase {
         XCTAssertNil(UserDefaults.standard.data(forKey: pendingKey))
     }
 
+    func testCaptureOnceDoesNotPersistWhenNoSinkAndNoConfig() {
+        let onceKey = "test.capture.once.no-config.\(UUID().uuidString)"
+        let defaultsKey = "agentic30.posthog.once.\(onceKey)"
+        let pendingKey = "agentic30.posthog.once.pending.\(onceKey)"
+        let distinctIDKey = "agentic30.posthog.distinctId"
+        Self.clearCaptureOnceState(defaultsKey: defaultsKey, pendingKey: pendingKey)
+
+        // Capture distinct id BEFORE the call so we can assert no new id
+        // gets generated for an unconfigured user.
+        let distinctIDBefore = UserDefaults.standard.string(forKey: distinctIDKey)
+
+        // No sink, configurationProvider returns nil — simulates the
+        // common case of a user who never configured a PostHog key.
+        PostHogTelemetry.captureSink = nil
+        PostHogTelemetry.configurationProvider = { nil }
+        defer {
+            PostHogTelemetry.resetTestingHooks()
+            Self.clearCaptureOnceState(defaultsKey: defaultsKey, pendingKey: pendingKey)
+        }
+
+        XCTAssertFalse(PostHogTelemetry.captureOnce(
+            "dmg_install_completed",
+            onceKey: onceKey,
+            properties: ["event_schema_version": 1]
+        ))
+
+        XCTAssertFalse(UserDefaults.standard.bool(forKey: defaultsKey))
+        XCTAssertNil(UserDefaults.standard.data(forKey: pendingKey))
+        // No new distinct id minted for the unconfigured user.
+        XCTAssertEqual(UserDefaults.standard.string(forKey: distinctIDKey), distinctIDBefore)
+    }
+
     private static func clearCaptureOnceState(defaultsKey: String, pendingKey: String) {
         UserDefaults.standard.removeObject(forKey: defaultsKey)
         UserDefaults.standard.removeObject(forKey: pendingKey)
