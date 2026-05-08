@@ -61,4 +61,91 @@ final class PostHogTelemetryTests: XCTestCase {
         XCTAssertEqual(captures.first?.properties["event_schema_version"] as? Int, 1)
     }
 
+    func testCaptureOnceKeepsPendingUntilSendSucceeds() {
+        let onceKey = "test.capture.once.pending.\(UUID().uuidString)"
+        let defaultsKey = "agentic30.posthog.once.\(onceKey)"
+        let pendingKey = "agentic30.posthog.once.pending.\(onceKey)"
+        Self.clearCaptureOnceState(defaultsKey: defaultsKey, pendingKey: pendingKey)
+
+        var sentPayloads: [[String: Any]] = []
+        PostHogTelemetry.configurationProvider = {
+            PostHogTelemetryConfig(projectAPIKey: "phc_test", host: "https://us.posthog.com")
+        }
+        PostHogTelemetry.sender = { url, payload, completion in
+            XCTAssertEqual(url.absoluteString, "https://us.i.posthog.com/i/v0/e/")
+            sentPayloads.append(payload)
+            completion(false)
+        }
+        defer {
+            PostHogTelemetry.resetTestingHooks()
+            Self.clearCaptureOnceState(defaultsKey: defaultsKey, pendingKey: pendingKey)
+        }
+
+        XCTAssertTrue(PostHogTelemetry.captureOnce(
+            "dmg_install_completed",
+            onceKey: onceKey,
+            properties: ["event_schema_version": 1]
+        ))
+
+        XCTAssertFalse(UserDefaults.standard.bool(forKey: defaultsKey))
+        XCTAssertNotNil(UserDefaults.standard.data(forKey: pendingKey))
+
+        PostHogTelemetry.sender = { _, payload, completion in
+            sentPayloads.append(payload)
+            completion(true)
+        }
+        PostHogTelemetry.flushPendingOnceCaptures()
+
+        XCTAssertTrue(UserDefaults.standard.bool(forKey: defaultsKey))
+        XCTAssertNil(UserDefaults.standard.data(forKey: pendingKey))
+        XCTAssertEqual(sentPayloads.count, 2)
+        XCTAssertEqual(sentPayloads[0]["uuid"] as? String, sentPayloads[1]["uuid"] as? String)
+        XCTAssertEqual(sentPayloads[0]["timestamp"] as? String, sentPayloads[1]["timestamp"] as? String)
+    }
+
+    func testCaptureOnceDoesNotCompleteBeforeAsyncSenderCallback() {
+        let onceKey = "test.capture.once.async.\(UUID().uuidString)"
+        let defaultsKey = "agentic30.posthog.once.\(onceKey)"
+        let pendingKey = "agentic30.posthog.once.pending.\(onceKey)"
+        Self.clearCaptureOnceState(defaultsKey: defaultsKey, pendingKey: pendingKey)
+
+        var sendCompletions: [(Bool) -> Void] = []
+        var sentPayloads: [[String: Any]] = []
+        PostHogTelemetry.configurationProvider = {
+            PostHogTelemetryConfig(projectAPIKey: "phc_test", host: "https://us.posthog.com")
+        }
+        PostHogTelemetry.sender = { _, payload, completion in
+            sentPayloads.append(payload)
+            sendCompletions.append(completion)
+        }
+        defer {
+            PostHogTelemetry.resetTestingHooks()
+            Self.clearCaptureOnceState(defaultsKey: defaultsKey, pendingKey: pendingKey)
+        }
+
+        XCTAssertTrue(PostHogTelemetry.captureOnce(
+            "dmg_install_completed",
+            onceKey: onceKey,
+            properties: ["event_schema_version": 1]
+        ))
+        XCTAssertFalse(UserDefaults.standard.bool(forKey: defaultsKey))
+        XCTAssertNotNil(UserDefaults.standard.data(forKey: pendingKey))
+
+        XCTAssertFalse(PostHogTelemetry.captureOnce(
+            "dmg_install_completed",
+            onceKey: onceKey,
+            properties: ["event_schema_version": 1]
+        ))
+        XCTAssertEqual(sentPayloads.count, 1)
+
+        sendCompletions.first?(true)
+
+        XCTAssertTrue(UserDefaults.standard.bool(forKey: defaultsKey))
+        XCTAssertNil(UserDefaults.standard.data(forKey: pendingKey))
+    }
+
+    private static func clearCaptureOnceState(defaultsKey: String, pendingKey: String) {
+        UserDefaults.standard.removeObject(forKey: defaultsKey)
+        UserDefaults.standard.removeObject(forKey: pendingKey)
+    }
 }

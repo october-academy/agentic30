@@ -43,6 +43,14 @@ test("computeDownloadEvents emits one dmg_downloaded event per new GitHub asset 
       "github-release-asset-1001-download-3",
     ],
   );
+  assert.deepEqual(
+    events.map((event) => event.properties.idempotency_key),
+    [
+      "github-release-asset-1001-download-2",
+      "github-release-asset-1001-download-3",
+    ],
+  );
+  assert.match(events[0].uuid, /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   assert.equal(events[0].event, "dmg_downloaded");
   assert.equal(events[0].properties.event_schema_version, 1);
   assert.equal(events[0].properties.source, "github_release_asset");
@@ -50,6 +58,25 @@ test("computeDownloadEvents emits one dmg_downloaded event per new GitHub asset 
   assert.equal(events[0].properties.asset_name, "agentic30.dmg");
   assert.equal(events[0].properties.download_count_delta, 2);
   assert.equal(nextState[1001].download_count, 3);
+});
+
+test("computeDownloadEvents reuses deterministic event uuids across retries", () => {
+  const release = { id: 42, tag_name: "v20260512" };
+  const assets = [{ id: 1001, name: "agentic30.dmg", download_count: 2 }];
+  const input = {
+    release,
+    assets,
+    previousState: {},
+    repo: "october-academy/agentic30-private",
+  };
+
+  const firstRun = computeDownloadEvents(input);
+  const retryRun = computeDownloadEvents(input);
+
+  assert.deepEqual(
+    retryRun.events.map((event) => event.uuid),
+    firstRun.events.map((event) => event.uuid),
+  );
 });
 
 test("computeDownloadEvents respects maxEvents but still advances state", () => {
@@ -79,22 +106,18 @@ test("buildPostHogPayload keeps event distinct id and schema properties", () => 
   const payload = buildPostHogPayload("phc_test", {
     event: "dmg_downloaded",
     distinct_id: "download-1",
-    properties: { event_schema_version: 1 },
+    uuid: "018f2c7a-0000-7000-8000-000000000001",
+    properties: {
+      idempotency_key: "download-1",
+      event_schema_version: 1,
+    },
   });
 
   assert.equal(payload.api_key, "phc_test");
   assert.equal(payload.event, "dmg_downloaded");
   assert.equal(payload.distinct_id, "download-1");
+  assert.equal(payload.uuid, "018f2c7a-0000-7000-8000-000000000001");
+  assert.equal(payload.properties.idempotency_key, "download-1");
   assert.equal(payload.properties.event_schema_version, 1);
   assert.ok(payload.timestamp);
-});
-
-test("buildPostHogPayload sets $insert_id from distinct_id for ingest-side dedup", () => {
-  const payload = buildPostHogPayload("phc_test", {
-    event: "dmg_downloaded",
-    distinct_id: "github-release-asset-1001-download-7",
-    properties: { event_schema_version: 1 },
-  });
-
-  assert.equal(payload.properties.$insert_id, "github-release-asset-1001-download-7");
 });

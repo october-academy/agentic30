@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_STATE_PATH = ".omx/posthog-release-funnel-state.json";
@@ -101,9 +102,8 @@ async function loadState(statePath) {
 
 async function saveState(statePath, state) {
   await fs.mkdir(path.dirname(statePath), { recursive: true });
-  // Write to a temp sibling and atomic-rename so a crashed/concurrent run
-  // never leaves a partial JSON file on disk. fs.rename is POSIX-atomic on
-  // the same filesystem.
+  // Atomic write: temp sibling + rename so a crashed/concurrent run never
+  // leaves a partial JSON file. fs.rename is POSIX-atomic on the same FS.
   const tempPath = `${statePath}.tmp-${process.pid}-${Date.now()}`;
   await fs.writeFile(tempPath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
   await fs.rename(tempPath, statePath);
@@ -126,6 +126,21 @@ function selectedAssets(release, assetName = "") {
 
 function stateKeyForAsset(asset) {
   return String(asset.id ?? asset.name);
+}
+
+function downloadInsertID(stateKey, downloadIndex) {
+  return `github-release-asset-${stateKey}-download-${downloadIndex}`;
+}
+
+function deterministicUUID(value) {
+  const hex = crypto.createHash("sha256").update(value).digest("hex").slice(0, 32);
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    `5${hex.slice(13, 16)}`,
+    ((Number.parseInt(hex.slice(16, 18), 16) & 0x3f) | 0x80).toString(16).padStart(2, "0") + hex.slice(18, 20),
+    hex.slice(20, 32),
+  ].join("-");
 }
 
 export function computeDownloadEvents({
@@ -151,13 +166,17 @@ export function computeDownloadEvents({
 
     for (let offset = 1; offset <= emitCount; offset += 1) {
       const downloadIndex = previousCount + offset;
+      const insertID = downloadInsertID(stateKey, downloadIndex);
+      const eventUUID = deterministicUUID(insertID);
       events.push({
         event,
-        distinct_id: `github-release-asset-${stateKey}-download-${downloadIndex}`,
+        distinct_id: insertID,
+        uuid: eventUUID,
         properties: {
           event_schema_version: 1,
           source,
           repo,
+          idempotency_key: insertID,
           release_id: release.id,
           release_tag: release.tag_name,
           release_name: release.name || "",
@@ -197,22 +216,19 @@ export function normalizePostHogHost(rawHost = DEFAULT_HOST) {
 }
 
 export function buildPostHogPayload(projectToken, event) {
-  // $insert_id is PostHog's ingest-side dedup key. Without it, retries after a
-  // partial-failure run replay the same distinct_id/index pair as fresh events
-  // and inflate the funnel. Tying it to distinct_id (which already encodes
-  // asset_id + download_index) makes replays idempotent.
   return {
     api_key: projectToken,
     event: event.event,
     distinct_id: event.distinct_id,
-    properties: { ...event.properties, $insert_id: event.distinct_id },
+    uuid: event.uuid,
+    properties: event.properties,
     timestamp: new Date().toISOString(),
   };
 }
 
 async function sendPostHogEvent({ host, projectToken, event }) {
   const base = normalizePostHogHost(host);
-  const response = await fetch(new URL("capture/", `${base}/`), {
+  const response = await fetch(new URL("i/v0/e/", `${base}/`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(buildPostHogPayload(projectToken, event)),
@@ -276,9 +292,11 @@ async function main() {
   }
   const host = trimmedEnv("POSTHOG_HOST") || DEFAULT_HOST;
 
-  // Track per-asset high water marks so a partial failure persists exactly the
-  // events we successfully sent, not the totalCount computeDownloadEvents
+  // Track per-asset high water marks so a partial failure persists exactly
+  // the events we successfully sent, not the totalCount computeDownloadEvents
   // optimistically wrote into nextState. Resume from the cursor next run.
+  // Deterministic uuid per event (PostHog ingest dedupes on it) makes any
+  // residual replay idempotent.
   const sentHighWater = {};
   for (const stateKey of Object.keys(nextState)) {
     sentHighWater[stateKey] = Number(previousState[stateKey]?.download_count ?? 0);
