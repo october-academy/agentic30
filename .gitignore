@@ -12,3 +12,9 @@ sidecar-evals/.artifacts/
 .env.*.local
 xcuserdata/
 *.xcuserstate
+
+# Local secrets (Apple Developer credentials, build env)
+secrets/
+
+# Local build artifacts (xcodebuild archive, DMG, logs). Sidecar already ignored above.
+build/
