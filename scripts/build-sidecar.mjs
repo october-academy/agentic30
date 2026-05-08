@@ -17,6 +17,7 @@ const DIST_DIR = path.join(BUILD_DIR, "sidecar");
 const BUILD_STAMP = path.join(BUILD_DIR, ".build-stamp.json");
 const SOURCE_NODE_MODULES = path.join(PACKAGE_ROOT, "node_modules");
 const DIST_NODE_MODULES = path.join(DIST_DIR, "node_modules");
+const LOCAL_BUN_BIN = path.join(PACKAGE_ROOT, "node_modules", ".bin", "bun");
 
 const ENTRY_POINTS = [
   "index.mjs",
@@ -73,6 +74,13 @@ function run(cmd, args, cwd) {
   });
 }
 
+function resolveBunBinary() {
+  const explicit = process.env.BUN_BINARY;
+  if (explicit && existsSync(explicit)) return explicit;
+  if (existsSync(LOCAL_BUN_BIN)) return LOCAL_BUN_BIN;
+  return "bun";
+}
+
 async function clean() {
   if (existsSync(BUILD_DIR)) {
     const staleDir = path.join(
@@ -97,7 +105,7 @@ async function bundle() {
     DIST_DIR,
     ...externals,
   ];
-  await run("bun", args, PACKAGE_ROOT);
+  await run(resolveBunBinary(), args, PACKAGE_ROOT);
   // Bun emits .js; SidecarBridge looks for .mjs, so normalize extensions.
   for (const entry of ENTRY_POINTS) {
     const base = entry.replace(/\.mjs$/, "");
