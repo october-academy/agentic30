@@ -2,6 +2,7 @@ export const CODEX_STRUCTURED_INPUT_TOOL = "agentic30_request_user_input";
 
 export const STRUCTURED_INPUT_TOOL_ALIASES = [
   CODEX_STRUCTURED_INPUT_TOOL,
+  "request_user_input",
   "ask_user_question",
   "AskUserQuestion",
   "AskUserQuestionTool",

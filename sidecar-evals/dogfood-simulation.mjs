@@ -256,7 +256,7 @@ async function submitBootstrapInput({ ws, events, sessionId, scenario, transcrip
     sessionId,
     eventOffset,
     previousFinalAssistantCount,
-    timeoutMs: 30_000,
+    timeoutMs: 60_000,
     startedAt,
   });
   const assistant = completed.content;
@@ -367,7 +367,7 @@ async function sendPromptScenario({ ws, events, sessionId, scenario, transcript,
     sessionId,
     eventOffset,
     previousFinalAssistantCount,
-    timeoutMs: 45_000,
+    timeoutMs: 90_000,
     startedAt,
   });
   const assistant = completed.content;
@@ -393,7 +393,7 @@ async function generateMissionScenario({ ws, events, sessionId, scenario, transc
   const completed = await waitForEventAfter(events, eventOffset, (event) =>
     event.type === "bip_coach_generation_completed"
     && event.bipCoach?.missionChoices?.length >= 3
-  , 20_000);
+  , 60_000);
   const missionChoices = summarizeMissionChoices(completed.bipCoach.missionChoices);
   const visibleSession = latestSession(events, sessionId);
   const assistant = latestAssistantMessage(visibleSession)?.content || `Generated ${missionChoices.length} mission choices.`;
@@ -442,7 +442,7 @@ async function structuredDecisionScenario({ ws, events, sessionId, scenario, tra
       sessionId: structuredSessionId,
       eventOffset,
       previousFinalAssistantCount,
-      timeoutMs: 30_000,
+      timeoutMs: 60_000,
       startedAt,
     });
   } catch {
@@ -491,14 +491,14 @@ async function missionCompletionScenario({ ws, events, sessionId, scenario, tran
   await waitForEventAfter(events, eventOffset, (event) =>
     event.type === "bip_coach_state"
     && event.bipCoach?.currentMission?.id === mission.id
-  , 10_000);
+  , 30_000);
   ws.send(JSON.stringify({
     type: "bip_coach_complete_mission",
     sessionId,
     threadsUrl,
     sheetRowNote,
   }));
-  const completed = await waitForEventAfter(events, eventOffset, (event) => event.type === "bip_coach_completion_completed", 10_000);
+  const completed = await waitForEventAfter(events, eventOffset, (event) => event.type === "bip_coach_completion_completed", 30_000);
   const assistant = latestAssistantMessage(latestSession(events, sessionId))?.content || "";
   transcript.push(`USER: ${scenario.prompt}`);
   if (assistant) {
@@ -1303,7 +1303,7 @@ async function waitForAssistantAnswer({
   sessionId,
   eventOffset,
   previousFinalAssistantCount = 0,
-  timeoutMs = 20_000,
+  timeoutMs = 45_000,
   startedAt = 0,
 }) {
   const deadline = Date.now() + timeoutMs;

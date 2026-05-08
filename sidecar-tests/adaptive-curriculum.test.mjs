@@ -123,6 +123,23 @@ test("deriveCurriculumSignals detects L2, BIP, journal, and revenue evidence", (
   assert.ok(!signals.evidenceGaps.includes("interview_transcript"));
 });
 
+test("deriveCurriculumSignals treats app-store and ad metrics as platform evidence", () => {
+  const signals = deriveCurriculumSignals({
+    evidence: {
+      docText: "iOS 구독 paywall 가격 테스트와 Android AdMob eCPM, CPI, store conversion 기록.",
+      allRows: [
+        { date: "2026-05-03", posts: ["ASO 테스트"], insights: "first_value activation 개선" },
+      ],
+    },
+  }, {
+    now: new Date("2026-05-07T00:00:00.000Z"),
+  });
+
+  assert.equal(signals.hasRevenueSignal, true);
+  assert.equal(signals.hasUserCountSignal, true);
+  assert.ok(!signals.evidenceGaps.includes("revenue_or_time_ask"));
+});
+
 test("adaptCurriculumDay evolves missing-interview foundation days into evidence capture", () => {
   const day = adaptCurriculumDay({
     curriculumDay: {

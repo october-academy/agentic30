@@ -65,37 +65,37 @@ export const BIP_REQUIRED_LOCAL_DOCS = [
 
 export const ICP_IDD_INITIAL_INPUT = {
   toolName: CODEX_STRUCTURED_INPUT_TOOL,
-  title: "첫 사용자 확인",
+  title: "첫 ICP 구체화",
   questions: [
     {
-      header: "프로젝트 이해",
-      helperText: "아직 단정할 근거가 부족해요. 오늘은 정답이 아니라 이번 주 확인할 사람 1명을 고릅니다.",
-      question: "이걸 만들게 된 계기가 된 사람이나 상황이 있었나요?\n이번 주에 확인해볼 사람을 하나 골라주세요.",
+      header: "ICP 좁히기",
+      helperText: "제품명, 대상 유저, 해결 문제, 제품 목적을 먼저 확인한 뒤 첫 고객 범주를 더 좁힙니다.",
+      question: "첫 고객을 넓은 범주로 두지 않겠습니다.\n이번 주에 검증할 가장 좁은 ICP는 누구인가요?",
       options: [
         {
-          label: "나 또는 우리 팀",
-          description: "내가 직접 겪는 문제라 바로 관찰하고 다시 써볼 수 있습니다.",
-          nextIntent: "self_or_team_pain",
+          label: "가장 절박한 사람",
+          description: "문제가 이번 주 일정, 돈, 평판 중 하나를 이미 압박합니다.",
+          nextIntent: "urgent_icp",
         },
         {
-          label: "이미 불편하게 해결하는 사람",
+          label: "이미 우회 중인 사람",
           description: "스프레드시트, 수작업, 다른 툴로 이미 시간을 쓰고 있습니다.",
           nextIntent: "existing_alternative",
         },
         {
-          label: "이미 돈이나 시간을 쓰는 사람",
+          label: "이미 돈/시간 쓰는 사람",
           description: "예산, 일정, 팀 논의가 걸려 있어 검증 신호가 강합니다.",
           nextIntent: "budget_or_time_committed",
         },
         {
-          label: "아직 모르겠어요",
-          description: "괜찮아요. 오늘은 고객을 확정하지 않고 확인할 후보 3명을 찾습니다.",
-          nextIntent: "unknown_find_candidates",
+          label: "다른 하위 ICP",
+          description: "자유입력에 역할, 상황, 현재 대안, 연락 가능성을 함께 적습니다.",
+          nextIntent: "other_specific_icp",
         },
       ],
       multiSelect: false,
       allowFreeText: true,
-      freeTextPlaceholder: "예: 채용 담당자, 1인 개발자, 우리 CS팀",
+      freeTextPlaceholder: "예: 퇴사 후 수익 0원인 macOS 1인 개발자, 현재 Claude Code로 MVP를 만들었지만 유료 고객이 없음",
       textMode: "short",
     },
   ],
@@ -125,19 +125,19 @@ export function buildAdaptiveIcpInitialInput({
   const projectKind = projectKindLabel(hypothesis.projectKind);
   const helperText = buildAdaptiveHelperText(hypothesis);
   const question = buildAdaptiveQuestion(hypothesis, primaryUser, projectKind);
-  const personalizedOptions = buildAdaptiveOptions({ primaryUser, onboardingContext });
+  const personalizedOptions = buildAdaptiveOptions({ hypothesis, primaryUser, onboardingContext });
   return {
     toolName: CODEX_STRUCTURED_INPUT_TOOL,
-    title: "첫 사용자 확인",
+    title: "첫 ICP 구체화",
     questions: [
       {
-        header: "프로젝트 이해",
+        header: "ICP 좁히기",
         helperText,
         question,
         options: personalizedOptions,
         multiSelect: false,
         allowFreeText: true,
-        freeTextPlaceholder: freeTextPlaceholderFor(primaryUser),
+        freeTextPlaceholder: freeTextPlaceholderFor(primaryUser, hypothesis),
         textMode: "short",
       },
     ],
@@ -296,60 +296,105 @@ function genericIddRiskFor(doc, canonicalPath) {
 }
 
 function buildAdaptiveQuestion(hypothesis, primaryUser, projectKind) {
-  if (hypothesis.confidence === "high" && primaryUser) {
-    return `제가 보기엔 이 프로젝트는 ${primaryUser}가 겪는 문제를 풀려는 ${projectKind} 같아요.\n이번 주에 가장 먼저 만나서 확인해볼 사람은 누구인가요?`;
+  const productName = sentenceField(hypothesis.productName) || "이 제품";
+  const currentIcp = sentenceField(hypothesis.targetUser || primaryUser);
+  const problem = sentenceField(hypothesis.problem);
+  if (hypothesis.confidence === "high" && currentIcp) {
+    const diagnosis = problem
+      ? `${productName}은 ${currentIcp} 중 ${problem} 문제를 가장 절박하게 겪는 고객을 찾아야 합니다.`
+      : `${productName}의 현재 고객 정의는 "${currentIcp}"까지 확인됐습니다.`;
+    return `${diagnosis}\n첫 ICP를 이 범주 전체로 두면 너무 넓습니다. 이번 주에 검증할 가장 좁은 하위 ICP는 누구인가요?`;
   }
   if (hypothesis.confidence === "medium") {
     const lead = naturalEvidenceLead(hypothesis.evidence);
-    const problemGuess = primaryUser
-      ? `${primaryUser} 쪽 문제가 먼저 보여요.`
-      : "아직 첫 사용자를 단정하긴 어려워요.";
-    return `${lead} ${problemGuess}\n이번 주에 만나서 "이게 진짜 문제인지" 확인해볼 사람은 누구인가요?`;
+    const current = currentIcp ? `현재 고객 범주는 "${currentIcp}"입니다.` : "현재 고객 범주가 아직 넓습니다.";
+    return `${lead} ${current}\n이번 주에 검증할 가장 좁은 ICP는 누구인가요? 절박함, 현재 대안, 연락 가능성을 기준으로 하나만 고르세요.`;
   }
-  return "이걸 만들게 된 계기가 된 사람이나 상황이 있었나요?\n이번 주에 확인해볼 사람을 하나 골라주세요.";
+  return "첫 고객을 넓은 범주로 두지 않겠습니다.\n이번 주에 검증할 가장 좁은 ICP는 누구인가요?";
 }
 
 function buildAdaptiveHelperText(hypothesis) {
   const evidence = (hypothesis.evidence || []).slice(0, 2);
-  if (evidence.length > 0) {
-    return `근거: ${evidence.join(" · ")}. 오늘은 정답이 아니라 이번 주 확인할 사람 1명을 고릅니다.`;
+  const productName = sentenceField(hypothesis.productName);
+  const targetUser = sentenceField(hypothesis.targetUser);
+  const problemText = sentenceField(hypothesis.problem);
+  const purposeText = sentenceField(hypothesis.purpose);
+  const product = productName ? `제품: ${productName}` : "";
+  const target = targetUser ? `대상: ${targetUser}` : "";
+  const problem = problemText ? `문제: ${problemText}` : "";
+  const purpose = purposeText ? `목적: ${shortenSentence(purposeText, 130)}` : "";
+  const diagnosis = [product, target, problem, purpose].filter(Boolean).join(" / ");
+  if (diagnosis) {
+    return `진단: ${diagnosis}. 오늘은 이 범주를 더 좁혀 첫 ICP 후보 하나를 고릅니다.`;
   }
-  return "아직 단정할 근거가 부족해요. 오늘은 정답이 아니라 이번 주 확인할 사람 1명을 고릅니다.";
+  if (evidence.length > 0) {
+    return `근거: ${evidence.join(" · ")}. 제품명, 대상 유저, 문제, 목적을 더 확인해야 하지만 첫 질문은 ICP를 좁히는 데 둡니다.`;
+  }
+  return "제품명, 대상 유저, 해결 문제, 제품 목적을 아직 단정할 근거가 부족합니다. 첫 질문은 가장 좁은 ICP를 정하는 데 둡니다.";
 }
 
-function buildAdaptiveOptions({ primaryUser, onboardingContext }) {
-  const options = [];
-  if (primaryUser) {
-    options.push({
-      label: shortenLabel(primaryUser),
-      description: "이 가설이 맞다면 오늘 이 사람부터 만나 문제를 확인합니다.",
-      nextIntent: "confirm_likely_user",
-    });
-  } else {
-    options.push({
-      label: defaultSelfOptionLabel(onboardingContext),
-      description: "내가 직접 겪는 문제라 바로 관찰하고 다시 써볼 수 있습니다.",
-      nextIntent: "self_or_team_pain",
-    });
+function buildAdaptiveOptions({ hypothesis, primaryUser, onboardingContext }) {
+  if (isAgentic30IcpContext(hypothesis, primaryUser)) {
+    return [
+      {
+        label: "퇴사 후 수익 0원 1인 개발자",
+        description: "저축 소진 압박이 있어 30일 안에 사용자 증거와 첫 매출 신호를 원합니다.",
+        nextIntent: "full_time_zero_revenue_indie",
+      },
+      {
+        label: "에이전트로 MVP 만든 개발자",
+        description: "Claude/Codex로 만들 수 있지만 무엇을 팔지, 누구에게 물을지 막혀 있습니다.",
+        nextIntent: "agent_built_mvp_no_customers",
+      },
+      {
+        label: "인터뷰/BIP 기록 의향 있음",
+        description: "프로젝트 path, 업무 일지, 고객 인터뷰, 공개 기록을 매일 입력할 수 있습니다.",
+        nextIntent: "records_ready_builder",
+      },
+      {
+        label: "다른 하위 ICP",
+        description: "자유입력에 역할, 상황, 현재 대안, 연락 가능성을 함께 적습니다.",
+        nextIntent: "other_specific_icp",
+      },
+    ];
   }
-  options.push(
+
+  const currentIcp = hypothesis?.targetUser || primaryUser || defaultSelfOptionLabel(onboardingContext);
+  return [
     {
-      label: "이미 불편하게 해결하는 사람",
+      label: "가장 절박한 하위 ICP",
+      description: `${shortenLabel(currentIcp)} 중 문제가 이번 주 일정, 돈, 평판 중 하나를 이미 압박하는 사람입니다.`,
+      nextIntent: "urgent_icp",
+    },
+    {
+      label: "이미 우회 중인 사람",
       description: "스프레드시트, 수작업, 다른 툴로 이미 시간을 쓰고 있습니다.",
       nextIntent: "existing_alternative",
     },
     {
-      label: "이미 돈이나 시간을 쓰는 사람",
+      label: "이미 돈/시간 쓰는 사람",
       description: "예산, 일정, 팀 논의가 걸려 있어 검증 신호가 강합니다.",
       nextIntent: "budget_or_time_committed",
     },
     {
-      label: "아직 모르겠어요",
-      description: "괜찮아요. 오늘은 고객을 확정하지 않고 확인할 후보 3명을 찾습니다.",
-      nextIntent: "unknown_find_candidates",
+      label: "다른 하위 ICP",
+      description: "자유입력에 역할, 상황, 현재 대안, 연락 가능성을 함께 적습니다.",
+      nextIntent: "other_specific_icp",
     },
-  );
-  return options;
+  ];
+}
+
+function isAgentic30IcpContext(hypothesis, primaryUser) {
+  const text = [
+    hypothesis?.productName,
+    hypothesis?.targetUser,
+    hypothesis?.problem,
+    hypothesis?.purpose,
+    primaryUser,
+  ].join(" ").toLowerCase();
+  return text.includes("agentic30")
+    || /전업\s*1인\s*개발자/.test(text)
+    || (/수익\s*0원/.test(text) && /macos|mac\s*os|mac/.test(text));
 }
 
 function defaultSelfOptionLabel(onboardingContext) {
@@ -360,11 +405,35 @@ function defaultSelfOptionLabel(onboardingContext) {
   return "나 또는 우리 팀";
 }
 
-function freeTextPlaceholderFor(primaryUser) {
-  if (primaryUser) {
-    return `예: ${shortenLabel(primaryUser)}, 같은 팀 동료, 실제로 불편을 말한 사람`;
+function freeTextPlaceholderFor(primaryUser, hypothesis = null) {
+  if (isAgentic30IcpContext(hypothesis, primaryUser)) {
+    return "예: 현재 Claude Code로 MVP는 만들었지만 유료 고객이 없는 macOS 1인 개발자";
   }
-  return "예: 우리 팀, 채용 담당자, 매일 Codex를 쓰는 개발자";
+  if (primaryUser) {
+    return `예: ${shortenLabel(primaryUser)} 중 이번 주 바로 연락 가능한 하위 ICP, 현재 대안, 절박한 이유`;
+  }
+  return "예: 퇴사 후 수익 0원인 macOS 1인 개발자, 현재 대안은 YouTube/블로그/혼자 삽질";
+}
+
+function sentenceField(value) {
+  return stripTrailingPunctuation(stripInlineMarkdown(value));
+}
+
+function stripInlineMarkdown(value) {
+  return String(value || "")
+    .replace(/[`*_]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function stripTrailingPunctuation(value) {
+  return String(value || "").replace(/[.。．]+$/u, "").trim();
+}
+
+function shortenSentence(value, maxLength) {
+  const text = String(value || "").trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1).trim()}…`;
 }
 
 function naturalEvidenceLead(evidence = []) {
@@ -424,7 +493,7 @@ export function buildIddContinuationPrompt({
     "이 답변을 첫 인터뷰 입력으로 사용하세요. 같은 첫 고객 신호 질문을 반복하지 마세요.",
     "다음 질문부터는 반드시 현재 프로젝트의 실제 맥락에 맞춰 Adaptive/Personalized 인터뷰로 진행하세요.",
     "- 먼저 README, docs, package/config, 주요 소스, 최근 git 변경에서 관찰한 사실을 조합해 제품/사용자/제약 가설을 세우세요.",
-    "- 질문은 그 가설의 가장 약한 부분을 검증하는 한 가지로 좁히고, question/options/freeTextPlaceholder에 관찰한 프로젝트 맥락을 반영하세요.",
+    "- 질문은 제품 이름, 대상 유저, 해결 문제, 제품 목적을 확인한 뒤 그 진단의 가장 약한 부분을 검증하는 한 가지로 좁히고, question/options/freeTextPlaceholder에 관찰한 프로젝트 맥락을 반영하세요.",
     "- 어떤 프로젝트에도 붙일 수 있는 범용 질문이나 템플릿 질문을 반복하지 마세요.",
     "- 좋은 질문은 gstack review flow처럼 decision brief여야 합니다. 사용자가 무엇을 결정해야 하는지, 잘못 고르면 무엇이 깨지는지, 추천 선택지는 무엇인지 한 번에 보이게 만드세요.",
     "",
@@ -433,7 +502,7 @@ export function buildIddContinuationPrompt({
     "- gstack 정렬 축을 매 질문에 적용하세요: 톤은 직접적이고 증거 중심, 단위는 한 질문=한 결정, 기준은 수요/범위/UX/DX/리스크, 사용 위치는 BIP 문서 완성 직전의 게이트, 실패 방지는 범용 문서/빈 결정/조용한 누락 차단입니다.",
     "- 대안/리스크/증거/실패 모드가 보이지 않는 질문은 좋은 IDD 질문이 아닙니다. 더 좁혀서 무엇을 선택해야 하는지, 어떤 근거가 있는지, 잘못 고르면 어떤 문서 실패가 생기는지 드러내세요.",
     "- 답변은 반드시 대상 문서의 섹션, 결정, Open Risks, 다음 BIP 공개 글감 중 하나로 연결하세요.",
-    `- 추가 결정이나 누락 정보가 필요하면 반드시 ${CODEX_STRUCTURED_INPUT_TOOL} MCP 도구로 한 질문씩 이어가세요.`,
+    `- 추가 결정이나 누락 정보가 필요하면 반드시 ${CODEX_STRUCTURED_INPUT_TOOL} MCP 도구로 한 질문 + 2-4개 후보 options를 담아 이어가세요. 이 구조화 입력은 host UI에서 request_user_input 카드로 표시됩니다.`,
     "- 도구 호출 자체가 실패하면 같은 질문을 prose/번호 목록으로 대신 출력하지 말고 중단하세요.",
     "- Pushback 즉시 적용: 사용자의 답이 \"개발자/창업자/엔터프라이즈\" 같은 집합명사이면 다음 question을 회사명·직함·주당 시간으로 좁히고, \"다들 좋다고 한다/웨이팅리스트\" 류 사회적 증거이면 결제·문의·고장 시 분노로 받고, \"풀 플랫폼이 필요하다\" 류 광범위 비전이면 이번 주 결제 가능한 한 가지로 좁히세요. 사랑은 수요가 아닙니다.",
     "- Anti-Sycophancy: \"흥미로운 접근이에요\", \"여러 방법이 있어요\" 같은 칭찬 표현은 금지. 정중체는 유지하되 \"이 가정은 미확인이에요\" / \"근거가 부족해요\" 같은 사실 진술로 받으세요.",
@@ -571,7 +640,7 @@ export function buildIddDocumentPrompt(doc, {
 } = {}) {
   const toolInstruction = provider === "claude"
     ? "사용자의 결정이나 누락 정보가 필요하면 반드시 AskUserQuestionTool(AskUserQuestion)을 사용하세요."
-    : `사용자의 결정이나 누락 정보가 필요하면 반드시 ${CODEX_STRUCTURED_INPUT_TOOL} MCP 도구를 사용하세요.`;
+    : `사용자의 결정이나 누락 정보가 필요하면 반드시 ${CODEX_STRUCTURED_INPUT_TOOL} MCP 도구를 사용하세요. 이 구조화 입력은 host UI에서 request_user_input 카드로 표시됩니다.`;
   const structuredToolName = provider === "claude"
     ? "AskUserQuestionTool(AskUserQuestion)"
     : CODEX_STRUCTURED_INPUT_TOOL;
@@ -600,9 +669,9 @@ export function buildIddDocumentPrompt(doc, {
     "- 이 IDD 세션은 `/plan` 모드처럼 진행합니다. 인터뷰 질문은 사용자가 UI에서 클릭/입력할 수 있는 구조화 입력으로 받아야 합니다.",
     `- 선택지가 있는 질문, 우선순위 질문, 예/아니오 질문, 짧은 자유 입력이 붙은 질문은 일반 prose나 번호 목록으로 쓰지 말고 반드시 ${structuredToolName} 호출로만 물으세요.`,
     `- ${structuredToolName} 호출이 필요한 상황에서 같은 내용을 prose/번호 목록으로 대신 묻지 마세요. 도구 호출 자체가 실패하면 같은 질문을 prose/번호 목록으로 대신 출력하지 말고 중단하세요.`,
-    "- 도구 질문은 question/options/allowFreeText/freeTextPlaceholder/textMode를 채워 1개 질문 단위로 만드세요. 선택지는 2-4개로 제한하고, 추가 맥락 한 줄이 필요하면 allowFreeText=true로 둡니다.",
+    "- 도구 질문은 question/options/allowFreeText/freeTextPlaceholder/textMode를 채워 1개 질문 단위로 만드세요. 후보 options는 2-4개로 제한하고, 추가 맥락 한 줄이 필요하면 allowFreeText=true로 둡니다. 후보군 없이 자유입력만 묻지 마세요.",
     "- 금지 예: \"1. 반복 사용 2. 도입 준비 3. 먼저 요청함\" 같은 번호 목록을 assistant 메시지로 출력하는 것.",
-    "- 첫 고객 질문 예: title=\"첫 사용자 확인\", helperText=\"근거: README... 오늘은 정답이 아니라 이번 주 확인할 사람 1명을 고릅니다.\", question=\"제가 보기엔 이 프로젝트는 AI 코딩 도구를 쓰는 개발자가 겪는 문제를 풀려는 macOS 앱 같아요. 이번 주에 가장 먼저 만나서 확인해볼 사람은 누구인가요?\", options=[추론된 사용자, 이미 불편하게 해결하는 사람, 이미 돈이나 시간을 쓰는 사람, 아직 모르겠어요], allowFreeText=true, freeTextPlaceholder=\"예: 실제로 불편을 말한 사람\", textMode=\"short\".",
+    "- 첫 ICP 질문 예: title=\"첫 ICP 구체화\", helperText=\"진단: 제품 Agentic30 / 대상 전업 1인 개발자 / 문제 무엇을 만들어야 팔리는지 모름 / 목적 30일 안에 PMF 검증 방향을 좁힘\", question=\"첫 ICP를 전업 1인 개발자 전체로 두면 너무 넓습니다. 이번 주에 검증할 가장 좁은 하위 ICP는 누구인가요?\", options=[퇴사 후 수익 0원 1인 개발자, 에이전트로 MVP 만든 개발자, 인터뷰/BIP 기록 의향 있음, 다른 하위 ICP], allowFreeText=true, freeTextPlaceholder=\"예: 현재 Claude Code로 MVP는 만들었지만 유료 고객이 없는 macOS 1인 개발자\", textMode=\"short\".",
     "- 이 세션에서는 이 문서 하나만 다룹니다. 다른 문서 인터뷰를 섞지 마세요.",
     "- 질문은 한 번에 하나의 고레버리지 질문으로 하세요.",
     "- 뻔한 질문 대신 문제 정의, 핵심 가치, 타겟 사용자, 사용자 여정, 비즈니스 모델, 경쟁 환경, 기술 제약, MVP 우선순위, 우려 사항, 트레이드오프를 깊게 파고드세요.",

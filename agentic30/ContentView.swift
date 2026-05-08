@@ -119,6 +119,27 @@ struct ContentView: View {
         surfaceOverride ?? viewModel.activeSurface
     }
 
+    private enum WorkspaceMissionFirstPhase: Equatable {
+        case sidecarStarting
+        case creatingSession
+        case generatingMission
+        case ready
+        case failed
+    }
+
+    private func workspaceMissionFirstPhase(session: ChatSession?) -> WorkspaceMissionFirstPhase {
+        if workspaceMissionFirstErrorMessage(session: session) != nil {
+            return .failed
+        }
+        if session == nil {
+            return viewModel.isConnected ? .creatingSession : .sidecarStarting
+        }
+        if viewModel.isBipCoachGenerating || viewModel.bipMissionProgress != nil {
+            return .generatingMission
+        }
+        return .ready
+    }
+
     private var rootContent: some View {
         ZStack {
             Color.clear.ignoresSafeArea()
@@ -348,18 +369,14 @@ struct ContentView: View {
     }
 
     private func workspacePreparingStatusPill() -> some View {
-        let hasFailure = viewModel.sidecarFailureMessage != nil
+        let phase = workspaceMissionFirstPhase(session: nil)
+        let hasFailure = phase == .failed
 
         return HStack(spacing: 7) {
-            if hasFailure {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11, weight: .semibold))
-            } else {
-                ProgressView()
-                    .controlSize(.mini)
-                    .frame(width: 14, height: 14)
-            }
-            Text(hasFailure ? "연결 필요" : "세션 준비 중")
+            Image(systemName: workspacePreparingStatusIcon(phase))
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 14, height: 14)
+            Text(workspacePreparingStatusText(phase))
                 .font(.system(size: 12, weight: .bold, design: .rounded))
         }
         .foregroundStyle(.white.opacity(hasFailure ? 0.72 : 0.52))
@@ -370,6 +387,36 @@ struct ContentView: View {
             Capsule()
                 .stroke(Color.white.opacity(hasFailure ? 0.10 : 0.0), lineWidth: 1)
         )
+    }
+
+    private func workspacePreparingStatusIcon(_ phase: WorkspaceMissionFirstPhase) -> String {
+        switch phase {
+        case .failed:
+            return "exclamationmark.triangle.fill"
+        case .sidecarStarting:
+            return "bolt.horizontal.circle.fill"
+        case .creatingSession:
+            return "bubble.left.and.bubble.right.fill"
+        case .generatingMission:
+            return "sparkles"
+        case .ready:
+            return "checkmark.circle.fill"
+        }
+    }
+
+    private func workspacePreparingStatusText(_ phase: WorkspaceMissionFirstPhase) -> String {
+        switch phase {
+        case .failed:
+            return "연결 필요"
+        case .sidecarStarting:
+            return "실행 환경 준비 중"
+        case .creatingSession:
+            return "세션 준비 중"
+        case .generatingMission:
+            return "오늘 실행 준비 중"
+        case .ready:
+            return "준비 완료"
+        }
     }
 
     private func workspaceSidebarToggleButton() -> some View {
@@ -2869,14 +2916,9 @@ struct ContentView: View {
 
     private func workspaceMissionFirstStatusLine(session: ChatSession?) -> some View {
         HStack(spacing: 7) {
-            if workspaceMissionFirstShowsSpinner(session: session) {
-                ProgressView()
-                    .controlSize(.mini)
-                    .frame(width: 12, height: 12)
-            } else {
-                Image(systemName: workspaceMissionFirstStatusIcon(session: session))
-                    .font(.system(size: 11, weight: .bold))
-            }
+            Image(systemName: workspaceMissionFirstStatusIcon(session: session))
+                .font(.system(size: 11, weight: .bold))
+                .frame(width: 12, height: 12)
 
             Text(workspaceMissionFirstStatusText(session: session))
                 .font(.system(size: 11, weight: .heavy, design: .rounded))
@@ -2890,14 +2932,18 @@ struct ContentView: View {
         .accessibilityLabel(workspaceMissionFirstStatusText(session: session))
     }
 
-    private func workspaceMissionFirstShowsSpinner(session: ChatSession?) -> Bool {
-        workspaceMissionFirstErrorMessage(session: session) == nil
-            && (session == nil || viewModel.isBipCoachGenerating || viewModel.bipMissionProgress != nil)
-    }
-
     private func workspaceMissionFirstStatusIcon(session: ChatSession?) -> String {
-        if workspaceMissionFirstErrorMessage(session: session) != nil {
+        switch workspaceMissionFirstPhase(session: session) {
+        case .failed:
             return "arrow.clockwise"
+        case .sidecarStarting:
+            return "bolt.horizontal.circle.fill"
+        case .creatingSession:
+            return "bubble.left.and.bubble.right.fill"
+        case .generatingMission:
+            return "sparkles"
+        case .ready:
+            break
         }
         if viewModel.visibleBipCoach?.currentMission != nil {
             return "checkmark.circle.fill"
@@ -2906,14 +2952,17 @@ struct ContentView: View {
     }
 
     private func workspaceMissionFirstStatusText(session: ChatSession?) -> String {
-        if workspaceMissionFirstErrorMessage(session: session) != nil {
+        switch workspaceMissionFirstPhase(session: session) {
+        case .failed:
             return "다시 시도 필요"
-        }
-        if session == nil {
-            return "Codex 연결 중"
-        }
-        if viewModel.isBipCoachGenerating || viewModel.bipMissionProgress != nil {
+        case .sidecarStarting:
+            return "실행 환경 확인"
+        case .creatingSession:
+            return "세션 열기"
+        case .generatingMission:
             return "미션 생성 중"
+        case .ready:
+            break
         }
         if viewModel.visibleBipCoach?.currentMission != nil {
             return "실행 모드"
@@ -2929,7 +2978,7 @@ struct ContentView: View {
         if let errorMessage = workspaceMissionFirstErrorMessage(session: session) {
             workspaceMissionFirstErrorBody(errorMessage, day: day)
         } else if session == nil {
-            workspaceMissionFirstPreparingBody()
+            workspaceMissionFirstPreparingBody(session: session)
         } else if viewModel.isBipCoachGenerating || viewModel.bipMissionProgress != nil {
             workspaceMissionFirstGeneratingBody()
         } else if let coach = viewModel.visibleBipCoach, let mission = coach.currentMission {
@@ -2941,15 +2990,26 @@ struct ContentView: View {
         }
     }
 
-    private func workspaceMissionFirstPreparingBody() -> some View {
+    private func workspaceMissionFirstPreparingBody(session: ChatSession?) -> some View {
         HStack(spacing: 8) {
             ProgressView()
                 .controlSize(.small)
-            Text("Codex 연결 중")
+            Text(workspaceMissionFirstPreparingText(session: session))
                 .font(.system(size: 13, weight: .bold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.72))
         }
         .accessibilityIdentifier("workspace.missionFirst.preparing")
+    }
+
+    private func workspaceMissionFirstPreparingText(session: ChatSession?) -> String {
+        switch workspaceMissionFirstPhase(session: session) {
+        case .sidecarStarting:
+            return "로컬 실행 환경을 여는 중"
+        case .creatingSession:
+            return "Codex 세션을 여는 중"
+        default:
+            return "오늘 실행을 준비하고 있어요."
+        }
     }
 
     private func workspaceMissionFirstGeneratingBody() -> some View {
@@ -3248,14 +3308,9 @@ struct ContentView: View {
         isFailed: Bool
     ) -> some View {
         HStack(spacing: 6) {
-            if isCurrent {
-                ProgressView()
-                    .controlSize(.mini)
-                    .frame(width: 12, height: 12)
-            } else {
-                Image(systemName: systemImage)
-                    .font(.system(size: 11, weight: .bold))
-            }
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .bold))
+                .frame(width: 12, height: 12)
             Text(title)
                 .font(.system(size: 11, weight: .bold, design: .rounded))
                 .lineLimit(1)
@@ -6033,36 +6088,36 @@ private struct AgenticCurriculumDay: Identifiable, Hashable {
     var id: Int { day }
 
     static let days: [AgenticCurriculumDay] = [
-        .init(day: 1, phase: .foundation, title: "팔릴 문제부터 찾는다", shortTitle: "Revenue Audit", summary: "감이 아니라 인터뷰와 진단 결과로 Track A/B/C, 첫 고객, 첫 CTA를 정합니다.", tasks: ["Revenue Readiness Audit로 현재 프로젝트 진단", "Track A/B/C에 맞는 첫 액션 선택", "이번 주 확인할 고객 1명과 CTA 1개 확정"], output: "Track 판정, ICP v0, 첫 CTA, journey brief"),
-        .init(day: 2, phase: .foundation, title: "고객 앞에 나타난다", shortTitle: "Profile CTA", summary: "고객이 나를 신뢰하고 클릭할 수 있도록 프로필, 링크, 첫 고정 게시물을 정리합니다.", tasks: ["Threads 또는 X 채널 1개 선택", "프로필 한 줄과 링크 구조 정리", "Pinned post와 글감 10개 작성"], output: "프로필 CTA, pinned post, BIP 운영 원칙"),
-        .init(day: 3, phase: .foundation, title: "검색될 수 있게 만든다", shortTitle: "SEO 기반", summary: "검색엔진과 공유 링크가 읽을 수 있는 제품 블로그, 키워드, OG 기본 구조를 만듭니다.", tasks: ["블로그/robots/sitemap/OG 기본 구조 점검", "문제/제품/비교/질문형 키워드 정리", "블로그 아티클 3건 초안 작성"], output: "검색 키워드, 블로그 초안 3건, 색인 체크리스트"),
-        .init(day: 4, phase: .foundation, title: "팔 수 있는 운영 기준을 정한다", shortTitle: "사업 준비", summary: "사업자 등록과 운영 분리가 지금 필요한지 판단하고 결제 가능한 상태의 리스크를 기록합니다.", tasks: ["사업자 등록 필요 시점 판단", "개인 상황 영향과 우회 검증 경로 점검", "연락처/주소/이메일 운영 분리 기준 정리"], output: "사업자 등록 판단 메모와 운영 체크리스트"),
-        .init(day: 5, phase: .foundation, title: "첫 결제 구조를 세운다", shortTitle: "Paywall", summary: "무료 유저 100명보다 유료 결제 1건을 검증하기 위한 페이월과 가격 제안을 만듭니다.", tasks: ["유료화할 가치 1개 선택", "무료/유료 경계와 노출 트리거 정의", "페이월 카피와 가격안 작성"], output: "페이월 카피, 무료/유료 경계, 가격안"),
-        .init(day: 6, phase: .foundation, title: "데이터로 볼 준비를 한다", shortTitle: "Analytics", summary: "출시 전에 클릭, 가입, 결제, 활성화 흐름을 볼 수 있게 이벤트와 데모 자산을 준비합니다.", tasks: ["핵심 이벤트와 출시 전 지표 정의", "PostHog/Meta Pixel 연결 계획 점검", "30-90초 데모 시나리오 작성"], output: "이벤트 목록, 분석 체크리스트, 데모 시나리오"),
-        .init(day: 7, phase: .foundation, title: "세상에 꺼낸다", shortTitle: "Launch", summary: "3개 핵심 채널에 집중 런칭하고 조회수보다 댓글, 클릭, 가입, 문의를 기록합니다.", tasks: ["런칭 기본 원고 작성", "채널별 맞춤 카피와 UTM 링크 준비", "게시 후 반응을 Sheet에 기록"], output: "런칭 카피, 채널별 게시 기록, 반응 기록표"),
-        .init(day: 8, phase: .build, title: "MVP 범위를 3개 기능으로 자른다", shortTitle: "MVP 3기능", summary: "첫 사용자가 결과를 보는 데 필요한 기능만 남깁니다.", tasks: ["핵심 결과까지의 사용자 흐름 그리기", "필수 기능 3개만 선택", "나머지는 의도적으로 미루기"], output: "MVP 기능 3개와 제외 목록"),
-        .init(day: 9, phase: .build, title: "데이터 흐름을 고정한다", shortTitle: "데이터 흐름", summary: "사용자의 입력, AI 처리, 결과 저장 흐름을 한 번에 이해되게 만듭니다.", tasks: ["입력 데이터와 저장 위치 정하기", "실패 시 복구 흐름 쓰기", "첫 번째 테스트 케이스 만들기"], output: "데이터 흐름 다이어그램"),
-        .init(day: 10, phase: .build, title: "핵심 플로우를 프로토타입한다", shortTitle: "핵심 플로우", summary: "완성도가 아니라 끝까지 한 번 지나가는 흐름을 만듭니다.", tasks: ["가짜 데이터로 happy path 연결", "첫 결과 화면 만들기", "막히는 지점 기록"], output: "End-to-end prototype"),
-        .init(day: 11, phase: .build, title: "Transcript ingest를 붙인다", shortTitle: "Transcript", summary: "고객 목소리가 앱 안으로 들어오는 첫 관문을 안정화합니다.", tasks: ["txt/md/vtt/srt 입력 케이스 확인", "빈 파일/긴 파일 오류 처리", "분석 요청까지 연결"], output: "Transcript 입력 QA 기록"),
-        .init(day: 12, phase: .build, title: "Daily Mission loop를 만든다", shortTitle: "Daily Mission", summary: "오늘 할 일을 앱이 개인화해서 제안하고 다시 기록하게 만듭니다.", tasks: ["Day context를 prompt에 넣기", "미션 카드 출력 확인", "완료 기록 저장 흐름 연결"], output: "오늘 미션 생성/완료 흐름"),
-        .init(day: 13, phase: .build, title: "온보딩을 드라이런한다", shortTitle: "온보딩", summary: "처음 설치한 사람이 첫 미션까지 도달하는지 확인합니다.", tasks: ["새 workspace로 첫 실행", "막히는 문구/권한 기록", "불필요한 설명 삭제"], output: "Time-to-first-mission 메모"),
-        .init(day: 14, phase: .build, title: "측정을 심는다", shortTitle: "측정", summary: "사용자가 어디서 멈추는지 알 수 있게 이벤트를 남깁니다.", tasks: ["핵심 이벤트 5개 정의", "개인정보 없는 payload 확인", "dogfood 대시보드 메모 작성"], output: "이벤트 목록과 확인 로그"),
-        .init(day: 15, phase: .build, title: "릴리즈 체크리스트를 닫는다", shortTitle: "체크리스트", summary: "빌드, 권한, 실패 메시지를 출시 전 한 번에 점검합니다.", tasks: ["Xcode build와 테스트 실행", "권한/Keychain 실패 케이스 확인", "릴리즈 노트 초안 작성"], output: "릴리즈 준비 체크리스트"),
-        .init(day: 16, phase: .build, title: "Private DMG를 만든다", shortTitle: "Private DMG", summary: "완벽한 공개가 아니라 실제 설치 파일을 가까운 사용자에게 보냅니다.", tasks: ["DMG 빌드", "설치 안내 5줄 작성", "첫 테스터 3명에게 공유"], output: "Private build 공유 기록"),
-        .init(day: 17, phase: .build, title: "Build phase를 회고한다", shortTitle: "Build 회고", summary: "기능이 아니라 사용자가 결과를 봤는지 기준으로 판단합니다.", tasks: ["완성/미완성 기능 분리", "사용자 가치까지 연결된 흐름 표시", "Launch 전에 자를 것 결정"], output: "Build retro와 Launch 준비 목록"),
-        .init(day: 18, phase: .launch, title: "Launch story를 쓴다", shortTitle: "Launch story", summary: "무엇을 만들었는지가 아니라 왜 지금 써야 하는지를 씁니다.", tasks: ["ICP의 기존 고통으로 시작하기", "결과 화면 한 장 고르기", "첫 공개 글 초안 작성"], output: "Launch post 초안"),
-        .init(day: 19, phase: .launch, title: "진행 포스트를 공개한다", shortTitle: "진행 공개", summary: "불완전한 현재 상태를 숨기지 않고 진행 증거로 공개합니다.", tasks: ["오늘 배운 점 1개 쓰기", "스크린샷/숫자 1개 붙이기", "Threads에 게시 후 반응 기록"], output: "게시 URL과 반응 기록"),
-        .init(day: 20, phase: .launch, title: "Warm outreach를 보낸다", shortTitle: "Warm outreach", summary: "아는 사람부터 작은 약속을 받아냅니다.", tasks: ["관심 가능성이 높은 20명 리스트", "개인화 DM 10개 발송", "응답/무응답을 Sheet에 기록"], output: "Outreach tracker"),
-        .init(day: 21, phase: .launch, title: "첫 피드백을 받는다", shortTitle: "첫 피드백", summary: "사용자가 실제로 어디서 이해하고 어디서 멈추는지 봅니다.", tasks: ["설치/첫 실행 관찰 2회", "말이 막힌 문구 표시", "수정 3개만 반영"], output: "피드백 기반 수정 목록"),
-        .init(day: 22, phase: .launch, title: "데모를 녹화한다", shortTitle: "데모", summary: "설명 글보다 60초 데모가 더 빨리 이해시킵니다.", tasks: ["핵심 결과만 보이는 흐름 선택", "60초 이하 녹화", "게시글에 붙일 캡션 작성"], output: "60초 demo asset"),
-        .init(day: 23, phase: .launch, title: "반대 의견을 정리한다", shortTitle: "Objections", summary: "안 쓴 이유가 다음 개선의 우선순위입니다.", tasks: ["거절/무응답 사유 분류", "가격/신뢰/설치/가치 문제 분리", "가장 큰 blocker 하나 선택"], output: "Objection map"),
-        .init(day: 24, phase: .launch, title: "Launch 결정을 내린다", shortTitle: "Launch 결정", summary: "더 공개할지, 좁힐지, 메시지를 바꿀지 숫자로 정합니다.", tasks: ["방문/설치/응답 숫자 정리", "가장 강한 유입 채널 선택", "다음 7일 실험 하나 정하기"], output: "Launch decision memo"),
-        .init(day: 25, phase: .grow, title: "Activation 숫자를 본다", shortTitle: "Activation", summary: "가입보다 첫 가치 경험에 도달했는지를 봅니다.", tasks: ["첫 가치 행동 정의", "도달/이탈 숫자 계산", "가장 큰 이탈 지점 하나 고르기"], output: "Activation baseline"),
-        .init(day: 26, phase: .grow, title: "Retention 신호를 확인한다", shortTitle: "Retention", summary: "다시 돌아오는 사람이 있는지 확인합니다.", tasks: ["재방문/재실행 기준 정하기", "돌아온 사용자 발화 확인", "반복 사용 이유 한 문장으로 쓰기"], output: "Retention note"),
-        .init(day: 27, phase: .grow, title: "가격 실험을 한다", shortTitle: "가격", summary: "첫 매출은 큰 금액보다 지불 행동 증명이 중요합니다.", tasks: ["가장 작은 유료 제안 작성", "관심 사용자에게 제안", "가격 반응과 질문 기록"], output: "가격 제안 결과"),
-        .init(day: 28, phase: .grow, title: "Support loop를 만든다", shortTitle: "Support", summary: "사용자 질문이 제품 개선으로 돌아오게 만듭니다.", tasks: ["반복 질문 5개 모으기", "앱/문서/온보딩 중 어디서 풀지 결정", "한 가지를 바로 고치기"], output: "Support insight log"),
-        .init(day: 29, phase: .grow, title: "PMF memo를 쓴다", shortTitle: "PMF memo", summary: "성공/실패를 감이 아니라 근거로 기록합니다.", tasks: ["유저 100명/첫 매출 진행률 쓰기", "가장 강한 PMF 신호와 반증 쓰기", "다음 분기 선택지 작성"], output: "PMF evidence memo"),
-        .init(day: 30, phase: .grow, title: "30일 회고와 다음 결정을 한다", shortTitle: "Final retro", summary: "완주 자체보다 다음에 무엇을 계속할지 결정하는 날입니다.", tasks: ["30일 숫자 요약", "가장 큰 배움 3개 쓰기", "계속/전환/중단 결정 공개"], output: "Day 30 public retro")
+        .init(day: 1, phase: .foundation, title: "고객의 어제 행동에서 통증 1개를 압축한다", shortTitle: "Pain", summary: "4종 인풋에서 가장 압축된 고객 통증 1개를 뽑고 SPEC.md v0의 기준으로 둡니다.", tasks: ["고객 발화 또는 문제 메모에서 과거 행동 1개 고르기", "status quo와 비용/시간/실수 단위로 적기", "SPEC.md v0에 통증 1개와 근거 1개 기록"], output: "SPEC.md v0, pain quote, status quo"),
+        .init(day: 2, phase: .foundation, title: "돈이 흐르는 기준 시장을 고른다", shortTitle: "Market", summary: "어제 통증과 가까운 iOS/Android/Web/Mac 앱·도구 시장에서 이미 지불 행동이 있는지 확인합니다.", tasks: ["카테고리 1-2개 고르기", "작은 팀/개인이 만든 유료 앱·광고 앱 5개 찾기", "가격·리뷰·ASO·광고/콘텐츠 흔적을 day-2-evidence-log.md에 기록"], output: "day-2-evidence-log.md"),
+        .init(day: 3, phase: .foundation, title: "Mom Test 인터뷰 질문을 만든다", shortTitle: "Mom Test", summary: "약한 가설을 검증/반증할 5문장 인터뷰 질문을 만들고 미래 의향 질문을 제거합니다.", tasks: ["과거 행동 질문 3개 이상 쓰기", "미래 의향/칭찬 유도 질문 제거", "다음 인터뷰 대상 1명과 질문 5개 확정"], output: "day-3-interview-script.md"),
+        .init(day: 4, phase: .foundation, title: "10배 wedge로 약한 섹션을 다시 쓴다", shortTitle: "10x Wedge", summary: "경쟁 앱을 베끼지 않고 더 좁은 페르소나나 더 빠른 결과로 SPEC.md의 약한 섹션을 다시 씁니다.", tasks: ["원조/대체재의 핵심 흐름 1개 고르기", "가격·속도·UX·페르소나 중 10배 wedge 1개 선택", "SPEC.md 같은 파일에서 약한 섹션 다시 쓰기"], output: "day-4-rewrite-decision.md"),
+        .init(day: 5, phase: .foundation, title: "수요 시그널을 숫자로 평가한다", shortTitle: "Demand Signal", summary: "경쟁앱/광고/노출/스토어/랜딩/DM 데이터를 진짜 수요 신호와 허수로 분리합니다.", tasks: ["impressions/clicks/signups/replies/CPI/store conversion 중 있는 숫자 정리", "waitlist/CTR이 아닌 돈 낼 후보 1명 고르기", "SPEC.md v2에 demand signal 판단 기록"], output: "SPEC.md v2, day-5-demand-signal.md"),
+        .init(day: 6, phase: .foundation, title: "돈/시간 ask를 실행한다", shortTitle: "Ask", summary: "칭찬이 아니라 특정 1명에게 가격, 받을 약속, 응답 기한이 있는 ask를 보냅니다.", tasks: ["ask 대상 1명 선택", "가격·받을 약속·응답 기한이 있는 문장 작성", "yes/no/no-reply를 원문으로 기록"], output: "monetization-ask-result.md"),
+        .init(day: 7, phase: .foundation, title: "Foundation Go/No-Go를 결정한다", shortTitle: "Go/No-Go", summary: "7일 기록으로 계속/재시작/피벗 중 하나를 고릅니다.", tasks: ["인터뷰/일지/BIP 수량 세기", "가장 강한 증거와 반증 쓰기", "다음 7일 결론 선택"], output: "go-no-go.md, foundation-summary"),
+        .init(day: 8, phase: .build, title: "MVP를 핵심 기능 1개로 자른다", shortTitle: "Core Action", summary: "기능 목록이 아니라 사용자가 30초 안에 첫 가치를 보는 핵심 행동 1개를 완성 대상으로 고정합니다.", tasks: ["핵심 행동 1개와 성공 화면 정의", "로그인/동기화/자동화/설정 확장은 deferred 표시", "첫 happy path 테스트 작성"], output: "core action spec + deferred list"),
+        .init(day: 9, phase: .build, title: "입력→처리→출력 흐름을 고정한다", shortTitle: "Input Flow", summary: "사용자가 바로 써볼 수 있게 입력, 처리, 결과 화면을 한 번에 지나가게 만듭니다.", tasks: ["첫 입력 포맷 1개만 선택", "처리 실패와 빈 입력 폴백 작성", "결과 화면까지 30초 이내인지 재기"], output: "input-process-output flow"),
+        .init(day: 10, phase: .build, title: "핵심 결과의 10배 품질을 만든다", shortTitle: "10x Result", summary: "기능 수가 아니라 같은 문제를 더 빠르게, 적은 클릭으로, 더 좁은 페르소나에 맞게 해결합니다.", tasks: ["경쟁/대체재 대비 10배 기준 1개 선택", "핵심 결과 화면에만 품질 투자", "부차 기능 추가 요청은 다음 폴더로 이동"], output: "10x core result note"),
+        .init(day: 11, phase: .build, title: "마찰 없는 첫 사용을 만든다", shortTitle: "No Login", summary: "검증 전 로그인, 계정, 복잡한 온보딩으로 이탈을 만들지 않습니다.", tasks: ["설치 후 첫 가치까지 클릭 수 세기", "필수 설명 5줄 이하로 줄이기", "로그인/회원가입 없이 가능한 경로 확인"], output: "time-to-first-value note"),
+        .init(day: 12, phase: .build, title: "첫 end-to-end dogfood를 돈다", shortTitle: "E2E", summary: "실제 입력에서 핵심 기능 1개와 결과 기록까지 한 번 지나갑니다.", tasks: ["실제 인터뷰/일지 파일 넣기", "핵심 결과 생성 실행", "추천 행동 수행 여부 기록"], output: "dogfood E2E log"),
+        .init(day: 13, phase: .build, title: "스토어/랜딩 약속을 미리 쓴다", shortTitle: "Promise", summary: "제품 설명을 나중에 붙이지 말고 iOS/Android/Web/Mac 어디서 팔든 통하는 약속 한 문장으로 범위를 제한합니다.", tasks: ["타겟 페르소나 한 줄 작성", "결과 약속 한 문장 작성", "스크린샷/데모/스토어 첫 화면에 보여야 할 장면 1개 선택"], output: "store or landing promise draft"),
+        .init(day: 14, phase: .build, title: "측정을 심는다", shortTitle: "Measurement", summary: "설치보다 첫 가치 경험과 이탈 지점을 알 수 있게 이벤트를 남깁니다.", tasks: ["first_value 이벤트 정의", "개인정보 없는 payload 확인", "activation baseline 기록 위치 만들기"], output: "event list + activation check"),
+        .init(day: 15, phase: .build, title: "수익모델 dry run을 한다", shortTitle: "Revenue Dry Run", summary: "광고든 구독이든 결제를 나중 문제로 밀지 말고 가격, 노출 위치, 받을 약속의 막힘을 확인합니다.", tasks: ["광고/구독/일회성 결제 중 현재 실험 모델 1개 선택", "페이월/결제 mock 또는 광고 노출 sandbox 경로 확인", "waitlist와 무료 가입은 proof가 아님을 기록"], output: "revenue dry-run note"),
+        .init(day: 16, phase: .build, title: "출시 체크리스트를 닫는다", shortTitle: "Release Gate", summary: "출시를 미루는 플랫폼 계정, 권한, 세금/정산, 빌드 리스크를 확인 목록으로 줄입니다.", tasks: ["App Store/Google Play/Web/Mac 중 현재 채널 계정 상태 확인", "정산·세금·회사 사규 리스크 체크", "첫 테스터에게 보낼 설치/접속 안내 5줄 작성"], output: "release readiness checklist"),
+        .init(day: 17, phase: .build, title: "Build phase를 줄일지 결정한다", shortTitle: "Build Retro", summary: "기능 추가가 아니라 첫 가치 경험과 유료 ask 가능 여부로 남길 것을 고릅니다.", tasks: ["7일 사용 로그 확인", "첫 가치까지 막힌 단계 확인", "삭제/유지/다음 phase 결정"], output: "build decision memo"),
+        .init(day: 18, phase: .launch, title: "고객 언어로 launch story를 쓴다", shortTitle: "Story", summary: "제품 설명보다 반복된 L2 표현과 10배 wedge로 공개합니다.", tasks: ["반복 인용 3개 선택", "hook-demo-CTA 구조로 launch hook 3개 작성", "가장 강한 status quo로 시작"], output: "launch story draft"),
+        .init(day: 19, phase: .launch, title: "첫 공개 proof를 만든다", shortTitle: "Public Proof", summary: "불완전한 앱 상태보다 배운 고객 증거와 핵심 결과 장면을 공개합니다.", tasks: ["핵심 결과 스크린샷/요약 선택", "실행 결과 1개 쓰기", "Threads/BIP 게시"], output: "public proof post"),
+        .init(day: 20, phase: .launch, title: "Warm outreach를 보낸다", shortTitle: "Warm outreach", summary: "가장 절박한 사람에게 직접 확인하고 응답/무응답을 숫자로 남깁니다.", tasks: ["20명 후보 목록", "개인화 DM 10개", "응답/무응답 Sheet 기록"], output: "outreach tracker"),
+        .init(day: 21, phase: .launch, title: "첫 설치/사용 관찰을 한다", shortTitle: "Observe", summary: "시연이 아니라 사용자가 iOS/Android/Web/Mac 실제 환경에서 막히는 장면과 첫 가치 도달 시간을 봅니다.", tasks: ["테스터 1명 설치/접속 관찰", "막힌 단계와 first_value 도달 여부 기록", "수정 3개 이하 선택"], output: "observation note"),
+        .init(day: 22, phase: .launch, title: "60초 demo를 만든다", shortTitle: "Demo", summary: "핵심 기능 1개와 10배 결과가 60초 안에 보이게 합니다.", tasks: ["한 입력에서 결과까지 녹화", "hook-demo-CTA 캡션 작성", "BIP/랜딩/광고 소재로 재사용"], output: "60s demo asset"),
+        .init(day: 23, phase: .launch, title: "paid learning 실험을 설계한다", shortTitle: "Paid Learning", summary: "광고비를 성장 욕심이 아니라 iOS/Android/Web/Mac 시장/메시지 학습 비용으로 작게 씁니다.", tasks: ["테스트 예산과 중단 기준 정하기", "소재 hook 3개와 타겟 1개 선택", "CPI/CTR/store conversion/first_value 측정 준비"], output: "paid learning plan"),
+        .init(day: 24, phase: .launch, title: "Launch 결정을 숫자로 한다", shortTitle: "Launch Decision", summary: "조회수가 아니라 DM/설치/first_value/ask 결과로 다음 7일을 고릅니다.", tasks: ["유입/설치/첫 가치/ask 숫자 정리", "가장 강한 채널 선택", "다음 실험 1개 결정"], output: "launch decision"),
+        .init(day: 25, phase: .grow, title: "Activation을 정의한다", shortTitle: "Activation", summary: "가입이 아니라 설치 후 30초 이내 첫 가치 경험에 도달했는지를 측정합니다.", tasks: ["첫 가치 행동 정의", "도달/이탈 수 계산", "가장 큰 이탈 지점 선택"], output: "activation baseline"),
+        .init(day: 26, phase: .grow, title: "Retention 신호를 본다", shortTitle: "Retention", summary: "다시 돌아와 핵심 기능을 반복하는 사람이 있는지 확인합니다.", tasks: ["재방문 기준 정하기", "반복 사용 발화 찾기", "돌아온 이유 한 문장 작성"], output: "retention note"),
+        .init(day: 27, phase: .grow, title: "가격 ask와 페이월을 반복한다", shortTitle: "Pricing", summary: "첫 매출은 큰 금액보다 지불 행동 또는 명시적 가격 거절의 증명입니다.", tasks: ["유료 제안 1개 작성", "관심 사용자에게 가격·약속·기한 포함 제안", "가격 반응과 결제/거절 원문 기록"], output: "pricing ask result"),
+        .init(day: 28, phase: .grow, title: "ASO/소재 loop를 만든다", shortTitle: "Acquisition Loop", summary: "앱스토어 검색 키워드, 상세 페이지, 랜딩, 광고 소재를 감이 아니라 전환 데이터로 고칩니다.", tasks: ["App Store/Google Play/랜딩의 hook 점검", "키워드·스크린샷·소재 1개 수정", "CPI/설치/store conversion/first_value 변화 기록"], output: "acquisition loop log"),
+        .init(day: 29, phase: .grow, title: "PMF evidence memo를 쓴다", shortTitle: "PMF Memo", summary: "실제 사용자 증거, 유입 지표, ask 결과, 반증을 같은 문서에 둡니다.", tasks: ["사용자 증거와 ask 결과 정리", "CPI/activation/retention/가격 반응 요약", "계속/전환/중단 판단 기준 쓰기"], output: "PMF evidence memo"),
+        .init(day: 30, phase: .grow, title: "계속/전환/중단을 결정한다", shortTitle: "Final Decision", summary: "완주가 아니라 첫 가치, 유입, 지불 행동 근거로 다음 선택을 공개합니다.", tasks: ["30일 숫자 요약", "가장 큰 배움 3개", "continue/pivot/stop 결정"], output: "Day 30 public retro")
     ]
 }
 

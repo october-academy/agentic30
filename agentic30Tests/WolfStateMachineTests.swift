@@ -489,7 +489,11 @@ private extension SidecarEvent {
             elapsedMs: nil,
             phase: phase,
             toolName: toolName,
-            summary: nil
+            summary: nil,
+            items: nil,
+            result: nil,
+            weeklyRitualPrompt: nil,
+            requestEmit: nil
         )
     }
 }

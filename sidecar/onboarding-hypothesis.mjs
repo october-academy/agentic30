@@ -58,19 +58,28 @@ export async function deriveWorkspaceOnboardingHypothesisLocally(scanRoot, { doc
 
   const context = contextParts.join("\n\n").slice(0, MAX_CONTEXT_CHARS);
   const projectKind = inferProjectKind({ root, packageJson, context, recentFiles });
+  const productName = inferProductName({ rootReadme, packageJson, root });
+  const productBrief = inferProductBrief({ context, productName });
   const likelyUsers = inferLikelyUsers(context, packageJson);
   const stage = inferProjectStage({ context, docPaths, recentFiles, packageJson });
   const compactEvidence = uniqueCompact(evidence).slice(0, MAX_EVIDENCE);
   const confidence = inferConfidence({ likelyUsers, evidence: compactEvidence, stage, projectKind });
   const hypothesis = {
+    productName,
     projectKind,
+    targetUser: productBrief.targetUser,
+    problem: productBrief.problem,
+    purpose: productBrief.purpose,
     likelyUsers: likelyUsers.slice(0, MAX_USERS),
     stage,
     evidence: compactEvidence,
     confidence,
     suggestedFirstQuestion: suggestedFirstQuestion({
       confidence,
+      productName,
       projectKind,
+      targetUser: productBrief.targetUser,
+      problem: productBrief.problem,
       likelyUsers,
       evidence: compactEvidence,
     }),
@@ -90,15 +99,23 @@ export function normalizeWorkspaceOnboardingHypothesis(value) {
     ? evidenceSource.map(cleanText).filter(Boolean)
     : [];
   const confidence = normalizeConfidence(value.confidence);
+  const productName = cleanText(value.productName || value.product_name);
   const projectKind = cleanToken(value.projectKind || value.project_kind) || "unknown";
+  const targetUser = cleanText(value.targetUser || value.target_user);
+  const problem = cleanText(value.problem);
+  const purpose = cleanText(value.purpose);
   const stage = cleanToken(value.stage) || "unknown";
   const normalized = {
+    productName,
     projectKind,
+    targetUser,
+    problem,
+    purpose,
     likelyUsers: uniqueCompact(likelyUsers).slice(0, MAX_USERS),
     stage,
     evidence: uniqueCompact(evidence).slice(0, MAX_EVIDENCE),
     confidence,
-    suggestedFirstQuestion: cleanText(value.suggestedFirstQuestion || value.suggested_first_question),
+    suggestedFirstQuestion: cleanSuggestedFirstQuestion(value.suggestedFirstQuestion || value.suggested_first_question),
   };
   if (!normalized.suggestedFirstQuestion) {
     normalized.suggestedFirstQuestion = suggestedFirstQuestion(normalized);
@@ -118,45 +135,62 @@ export function mergeWorkspaceOnboardingHypotheses(...hypotheses) {
   const likelyUsers = uniqueCompact(normalized.flatMap((item) => item.likelyUsers)).slice(0, MAX_USERS);
   const evidence = uniqueCompact(normalized.flatMap((item) => item.evidence)).slice(0, MAX_EVIDENCE);
   const confidence = normalizeConfidence(best.confidence);
+  const productName = best.productName || normalized.find((item) => item.productName)?.productName || "";
   const projectKind = best.projectKind !== "unknown"
     ? best.projectKind
     : normalized.find((item) => item.projectKind !== "unknown")?.projectKind || "unknown";
+  const targetUser = best.targetUser || normalized.find((item) => item.targetUser)?.targetUser || "";
+  const problem = best.problem || normalized.find((item) => item.problem)?.problem || "";
+  const purpose = best.purpose || normalized.find((item) => item.purpose)?.purpose || "";
   const stage = best.stage !== "unknown"
     ? best.stage
     : normalized.find((item) => item.stage !== "unknown")?.stage || "unknown";
 
   return normalizeWorkspaceOnboardingHypothesis({
+    productName,
     projectKind,
+    targetUser,
+    problem,
+    purpose,
     likelyUsers,
     stage,
     evidence,
     confidence: adjustMergedConfidence({ confidence, likelyUsers, evidence }),
-    suggestedFirstQuestion: best.suggestedFirstQuestion,
+    suggestedFirstQuestion: "",
   });
 }
 
 function fallbackHypothesis() {
   return {
+    productName: "",
     projectKind: "unknown",
+    targetUser: "",
+    problem: "",
+    purpose: "",
     likelyUsers: [],
     stage: "unknown",
     evidence: [],
     confidence: "low",
-    suggestedFirstQuestion: "이걸 만들게 된 계기가 된 사람이나 상황이 있었나요? 이번 주에 확인해볼 사람을 하나 골라주세요.",
+    suggestedFirstQuestion: "첫 고객을 넓은 범주로 두지 않겠습니다. 이번 주에 검증할 가장 좁은 ICP는 누구인가요?",
   };
 }
 
-function suggestedFirstQuestion({ confidence, projectKind, likelyUsers, evidence }) {
-  const user = likelyUsers?.[0];
-  const kind = projectKindLabel(projectKind);
-  if (confidence === "high" && user) {
-    return `제가 보기엔 이 프로젝트는 ${user}가 겪는 문제를 풀려는 ${kind} 같아요. 이번 주에 가장 먼저 만나서 확인해볼 사람은 누구인가요?`;
+function suggestedFirstQuestion({ confidence, productName, targetUser, problem, likelyUsers, evidence }) {
+  const user = cleanSentenceFragment(likelyUsers?.[0]);
+  const currentIcp = cleanSentenceFragment(targetUser || user);
+  if (confidence === "high" && currentIcp) {
+    const product = cleanSentenceFragment(productName);
+    const pain = cleanSentenceFragment(problem);
+    const diagnosis = product && pain
+      ? `${product}은 ${pain} 문제를 다룹니다`
+      : [product, pain].filter(Boolean).join(": ");
+    return `${diagnosis ? `진단: ${diagnosis}. ` : ""}현재 ICP가 "${currentIcp}"까지는 보입니다. 이번 주에 검증할 더 좁은 하위 ICP는 누구인가요? 절박함, 현재 대안, 연락 가능성을 기준으로 하나만 고르세요.`;
   }
   if (confidence === "medium") {
     const lead = naturalEvidenceLead(evidence);
-    return `${lead} 아직 첫 사용자를 단정하긴 어려워요. 이번 주에 만나서 "이게 진짜 문제인지" 확인해볼 사람은 누구인가요?`;
+    return `${lead} 첫 고객 정의가 아직 넓습니다. 이번 주에 검증할 더 좁은 ICP는 누구인가요? 절박함, 현재 대안, 연락 가능성을 기준으로 하나만 고르세요.`;
   }
-  return "이걸 만들게 된 계기가 된 사람이나 상황이 있었나요? 이번 주에 확인해볼 사람을 하나 골라주세요.";
+  return "첫 고객을 넓은 범주로 두지 않겠습니다. 이번 주에 검증할 가장 좁은 ICP는 누구인가요?";
 }
 
 function inferProjectKind({ root, packageJson, context, recentFiles }) {
@@ -195,6 +229,65 @@ function inferLikelyUsers(context, packageJson) {
   add(/developer|cli|agent/.test(description), "개발자 도구 파워 유저");
 
   return uniqueCompact(users);
+}
+
+function inferProductName({ rootReadme, packageJson, root }) {
+  const heading = firstMarkdownHeading(rootReadme?.content || "");
+  if (heading) return cleanText(heading);
+  const packageName = stringValue(packageJson?.name);
+  if (packageName) return cleanText(packageName.replace(/[-_](sidecar|app|web|api)$/i, ""));
+  return cleanText(path.basename(root || ""));
+}
+
+function inferProductBrief({ context, productName = "" }) {
+  const targetUser = firstMatch(context, [
+    /\*\*(?:타깃 유저|타겟 사용자|target user)\s*:\*\*\s*([^\n]+)/i,
+    /요약하면\s*([^\n.]+?)(?:\.|\n)/,
+    /##\s+Our ICP:\s*([^\n]+)/i,
+    /###\s+Primary[^\n]*\n+\s*[-*]?\s*\*\*프로필:\*\*\s*([^\n]+)/i,
+  ]);
+  const problem = firstMatch(context, [
+    /핵심 가설:\s*이 유저는\s*"([^"]+)"/,
+    /\*\*핵심 고민:\*\*\s*"([^"]+)"/,
+    /\*\*설명\*\*\s*\|\s*([^|\n]*?모른다[^|\n]*)/,
+    /(?:problem|pain)\s*[:\-]\s*([^\n]+)/i,
+  ]);
+  const purpose = firstMatch(context, [
+    /^>\s*([^\n]*?돕는[^\n]*?(?:assistant|어시스턴트|앱|도구)[^\n]*)/mi,
+    /\*\*미션:\*\*\s*([^\n]+)/,
+    /##\s+프로젝트 미션\s*\n+\s*([^\n]+)/,
+    /\*\*핵심 가치:\*\*\s*([^\n]+)/,
+  ]);
+  return {
+    targetUser: cleanText(targetUser || ""),
+    problem: cleanText(problem || ""),
+    purpose: cleanText(purpose || productPurposeFallback({ productName, targetUser, problem })),
+  };
+}
+
+function productPurposeFallback({ productName, targetUser, problem }) {
+  if (targetUser && problem) {
+    return `${targetUser}가 ${problem} 문제를 더 빨리 검증하도록 돕는다.`;
+  }
+  if (productName) return `${productName}의 제품 목적을 README/docs 근거로 더 확인해야 한다.`;
+  return "";
+}
+
+function firstMatch(text, patterns) {
+  const source = String(text || "");
+  for (const pattern of patterns) {
+    const match = source.match(pattern);
+    if (match?.[1]) return match[1].trim();
+  }
+  return "";
+}
+
+function cleanSuggestedFirstQuestion(value) {
+  const question = cleanLongText(value);
+  if (!question) return "";
+  if (/(제가 보기엔|같아요|가설이 맞|맞나요|confirm|correct)/i.test(question)) return "";
+  if (!/(ICP|고객|사용자|user|customer|하위|세그먼트|segment)/i.test(question)) return "";
+  return question;
 }
 
 function inferProjectStage({ context, docPaths, recentFiles, packageJson }) {
@@ -377,7 +470,19 @@ function normalizeConfidence(value) {
 }
 
 function cleanText(value) {
-  return String(value || "").replace(/\s+/g, " ").trim().slice(0, 160);
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, 220);
+}
+
+function cleanSentenceFragment(value) {
+  return String(value || "")
+    .replace(/[`*_]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[.。．]+$/u, "");
+}
+
+function cleanLongText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim().slice(0, 520);
 }
 
 function cleanToken(value) {
