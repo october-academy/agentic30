@@ -235,7 +235,11 @@ enum StructuredPromptTextMode: String, Codable {
 }
 
 struct WorkspaceOnboardingHypothesis: Codable, Hashable {
+    let productName: String?
     let projectKind: String?
+    let targetUser: String?
+    let problem: String?
+    let purpose: String?
     let likelyUsers: [String]?
     let stage: String?
     let evidence: [String]?
@@ -258,6 +262,16 @@ struct SidecarProviderEnvironment: Codable, Hashable {
     let available: Bool
     let source: String
     let message: String
+    let sdk: SidecarProviderSDKEnvironment?
+}
+
+struct SidecarProviderSDKEnvironment: Codable, Hashable {
+    let available: Bool
+    let packageName: String?
+    let version: String?
+    let packageRoot: String?
+    let entrypointPath: String?
+    let message: String?
 }
 
 struct SidecarACPEnvironment: Codable, Hashable {
@@ -448,12 +462,14 @@ extension SidecarEnvironment {
         claude: SidecarProviderEnvironment(
             available: false,
             source: "unknown",
-            message: "Checking Claude auth..."
+            message: "Checking Claude auth...",
+            sdk: nil
         ),
         codex: SidecarProviderEnvironment(
             available: false,
             source: "unknown",
-            message: "Checking Codex auth..."
+            message: "Checking Codex auth...",
+            sdk: nil
         ),
         acp: SidecarACPEnvironment(
             available: false,
@@ -514,7 +530,13 @@ extension SidecarDiagnostics {
             lines.append("")
             lines.append("Environment")
             lines.append("- Claude: \(environment.claude.available ? "available" : "unavailable") (\(environment.claude.source)) - \(environment.claude.message)")
+            if let sdk = environment.claude.sdk {
+                lines.append("  SDK: \(sdk.available ? "available" : "unavailable") \(sdk.packageName ?? "Claude Agent SDK") \(sdk.version ?? "") - \(sdk.entrypointPath ?? "unknown")")
+            }
             lines.append("- Codex: \(environment.codex.available ? "available" : "unavailable") (\(environment.codex.source)) - \(environment.codex.message)")
+            if let sdk = environment.codex.sdk {
+                lines.append("  SDK: \(sdk.available ? "available" : "unavailable") \(sdk.packageName ?? "Codex SDK") \(sdk.version ?? "") - \(sdk.entrypointPath ?? "unknown")")
+            }
             if let acp = environment.acp {
                 lines.append("- ACP: \(acp.available ? "available" : "unavailable") - \(acp.message)")
                 if let command = acp.command {

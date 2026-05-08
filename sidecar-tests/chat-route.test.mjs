@@ -34,14 +34,14 @@ test("plan-style structured interview prompt routes to agentic", () => {
   assert.equal(route.approvedToolExecution, false);
 });
 
-test("old Codex structured input name no longer routes to agentic", () => {
+test("request_user_input guided intake routes to agentic", () => {
   const route = classifyChatExecutionRoute(
     "IDD guided intake: 반드시 request_user_input 도구를 사용하세요.",
     { qmdAvailable: false },
   );
 
-  assert.notEqual(route.executionMode, "agentic");
-  assert.notEqual(route.reason, "structured_input_tool_required");
+  assert.equal(route.executionMode, "agentic");
+  assert.equal(route.reason, "structured_input_tool_required");
 });
 
 test("Claude structured input aliases are detected only with interview hints", () => {

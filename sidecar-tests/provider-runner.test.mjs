@@ -12,6 +12,7 @@ import {
   codexSandboxForExecution,
   extractClaudePartialText,
   getProviderAuthState,
+  getProviderConnectionState,
   isCodexContextOverflowError,
   isCodexRecoverableThreadResumeError,
   isClaudeMutatingTool,
@@ -36,6 +37,21 @@ test("test stub provider bypasses local provider auth checks", () => {
       process.env.AGENTIC30_TEST_STUB_PROVIDER = previous;
     }
   }
+});
+
+test("provider connection state reports SDK and CLI entrypoint health", () => {
+  const claude = getProviderConnectionState("claude");
+  const codex = getProviderConnectionState("codex");
+
+  assert.equal(claude.sdk.packageName, "@anthropic-ai/claude-agent-sdk");
+  assert.equal(claude.sdk.available, true);
+  assert.match(claude.sdk.entrypointPath, /@anthropic-ai\/claude-agent-sdk\/cli\.js$/);
+  assert.match(claude.sdk.version, /^\d+\.\d+\.\d+/);
+
+  assert.equal(codex.sdk.packageName, "@openai/codex-sdk");
+  assert.equal(codex.sdk.available, true);
+  assert.match(codex.sdk.entrypointPath, /\/codex\/codex(?:\.exe)?$/);
+  assert.match(codex.sdk.version, /^\d+\.\d+\.\d+/);
 });
 
 test("Claude local login session takes precedence over ANTHROPIC_API_KEY", async () => {

@@ -338,6 +338,7 @@ final class AgenticViewModel: ObservableObject {
     private var lastBipRequestedAction: BipRequestedAction?
     private var pendingBipAuthRetry: BipRequestedAction?
     private var pendingWorkspaceScanRoot: String?
+    private var workspaceSetupTelemetryGate = WorkspaceSetupTelemetryGate()
     private var requestedWarmSessionIDs = Set<String>()
     private var requestedInitialBipGate = false
     private var requestedInitialBipMission = false
@@ -933,6 +934,7 @@ final class AgenticViewModel: ObservableObject {
             return
         }
 
+        markWorkspaceSetupFirstRealInput()
         PostHogTelemetry.capture("mac_prompt_send_requested", properties: [
             "session_id": session.id,
             "provider": session.provider.rawValue,
@@ -1133,6 +1135,12 @@ final class AgenticViewModel: ObservableObject {
         responses: [StructuredPromptSubmission]
     ) {
         guard let session = selectedSession else { return }
+        if responses.contains(where: { response in
+            !response.selectedOptions.isEmpty
+                || response.freeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }) {
+            markWorkspaceSetupFirstRealInput()
+        }
         PostHogTelemetry.capture("mac_structured_input_submitted", properties: [
             "session_id": session.id,
             "request_id": requestId,
@@ -1227,6 +1235,34 @@ final class AgenticViewModel: ObservableObject {
         }
         if scanProgressLogs.count > 24 {
             scanProgressLogs = Array(scanProgressLogs.suffix(24))
+        }
+    }
+
+    private func handleRequestEmit(_ request: SidecarRequestEmit) {
+        captureWorkspaceSetupTelemetry(
+            workspaceSetupTelemetryGate.requestsToCapture(afterReceiving: request)
+        )
+    }
+
+    private func markWorkspaceSetupScanSucceeded() {
+        captureWorkspaceSetupTelemetry(
+            workspaceSetupTelemetryGate.requestsToCaptureAfterWorkspaceScanSuccess()
+        )
+    }
+
+    private func markWorkspaceSetupFirstRealInput() {
+        captureWorkspaceSetupTelemetry(
+            workspaceSetupTelemetryGate.requestsToCaptureAfterFirstRealInput()
+        )
+    }
+
+    private func captureWorkspaceSetupTelemetry(_ requests: [SidecarRequestEmit]) {
+        for request in requests {
+            PostHogTelemetry.capture(
+                request.event.rawValue,
+                properties: request.telemetryProperties,
+                authSession: macAuthSession
+            )
         }
     }
 
@@ -2009,6 +2045,7 @@ final class AgenticViewModel: ObservableObject {
                     authSession: macAuthSession
                 )
             } else {
+                markWorkspaceSetupScanSucceeded()
                 PostHogTelemetry.capture("mac_workspace_scan_completed", properties: [
                     "scan_root": event.scanRoot ?? "",
                     "found_icp": event.icp != nil,
@@ -2458,42 +2495,42 @@ final class AgenticViewModel: ObservableObject {
             requestId: "ui-test-icp-request",
             sessionId: requestedSessionID,
             toolName: "request_user_input",
-            title: "첫 사용자 확인",
+            title: "첫 ICP 구체화",
             createdAt: createdAt,
             questions: [
                 StructuredPromptQuestion(
-                    header: "프로젝트 이해",
-                    question: "이걸 만들게 된 계기가 된 사람이나 상황이 있었나요?\n이번 주에 확인해볼 사람을 하나 골라주세요.",
-                    helperText: "아직 단정할 근거가 부족해요. 오늘은 정답이 아니라 이번 주 확인할 사람 1명을 고릅니다.",
+                    header: "ICP 좁히기",
+                    question: "첫 ICP를 전업 1인 개발자 전체로 두면 너무 넓습니다.\n이번 주에 실제로 검증할 가장 좁은 하위 ICP는 누구인가요?",
+                    helperText: "진단: Agentic30은 전업 1인 개발자가 무엇을 만들어야 팔리는지 모르는 문제를 30일 실행 기록 기반 커리큘럼으로 좁히는 macOS assistant입니다.",
                     options: [
                         StructuredPromptOption(
-                            label: "나 또는 우리 팀",
-                            description: "내가 직접 겪는 문제라 바로 관찰하고 다시 써볼 수 있습니다.",
+                            label: "퇴사 후 수익 0원 1인 개발자",
+                            description: "저축 소진 압박이 있어 30일 안에 사용자 증거와 첫 매출 신호를 원합니다.",
                             preview: nil,
-                            nextIntent: "self_or_team_pain"
+                            nextIntent: "full_time_zero_revenue_indie"
                         ),
                         StructuredPromptOption(
-                            label: "이미 불편하게 해결하는 사람",
-                            description: "스프레드시트, 수작업, 다른 툴로 이미 시간을 쓰고 있습니다.",
+                            label: "에이전트로 MVP 만든 개발자",
+                            description: "Claude/Codex로 만들 수 있지만 무엇을 팔지, 누구에게 물을지 막혀 있습니다.",
                             preview: nil,
-                            nextIntent: "existing_alternative"
+                            nextIntent: "agent_built_mvp_no_customers"
                         ),
                         StructuredPromptOption(
-                            label: "이미 돈이나 시간을 쓰는 사람",
-                            description: "예산, 일정, 팀 논의가 걸려 있어 검증 신호가 강합니다.",
+                            label: "인터뷰/BIP 기록 의향 있음",
+                            description: "프로젝트 path, 업무 일지, 고객 인터뷰, 공개 기록을 매일 입력할 수 있습니다.",
                             preview: nil,
-                            nextIntent: "budget_or_time_committed"
+                            nextIntent: "records_ready_builder"
                         ),
                         StructuredPromptOption(
-                            label: "아직 모르겠어요",
-                            description: "괜찮아요. 오늘은 고객을 확정하지 않고 확인할 후보 3명을 찾습니다.",
+                            label: "다른 하위 ICP",
+                            description: "역할, 상황, 현재 대안, 연락 가능성을 함께 적습니다.",
                             preview: nil,
-                            nextIntent: "unknown_find_candidates"
+                            nextIntent: "other_specific_icp"
                         )
                     ],
                     multiSelect: false,
                     allowFreeText: true,
-                    freeTextPlaceholder: "예: 우리 팀, 채용 담당자, 매일 Codex를 쓰는 개발자",
+                    freeTextPlaceholder: "예: 현재 Claude Code로 MVP는 만들었지만 유료 고객이 없는 macOS 1인 개발자",
                     textMode: .short
                 )
             ]
@@ -3001,14 +3038,17 @@ final class AgenticViewModel: ObservableObject {
         return bipCoach?.sessionId ?? sessions.first?.id
     }
 
-    #if DEBUG
-    private static func isUITesting(arguments: [String]) -> Bool {
-        arguments.contains(where: { $0.hasPrefix("--ui-testing-") })
-    }
-
+    // Test-host detection is referenced from non-DEBUG init paths (line ~489),
+    // so it must compile in Release. The function body is harmless in Release
+    // (returns false when no XCTest env / .xctest argv is present).
     private static func isXCTestHost(arguments: [String]) -> Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
             || arguments.contains(where: { $0.contains(".xctest") })
+    }
+
+    #if DEBUG
+    private static func isUITesting(arguments: [String]) -> Bool {
+        arguments.contains(where: { $0.hasPrefix("--ui-testing-") })
     }
 
     private static func makeUITestingMacAuthSession(arguments: [String]) -> MacAuthSession? {

@@ -11,6 +11,22 @@ test("buildDiagnosticsSnapshot redacts credential-shaped fields", () => {
         available: true,
         source: "api-key",
         apiKey: "secret",
+        sdk: {
+          available: true,
+          packageName: "@anthropic-ai/claude-agent-sdk",
+          version: "0.2.87",
+          entrypointPath: "/repo/node_modules/@anthropic-ai/claude-agent-sdk/cli.js",
+        },
+      },
+      codex: {
+        available: true,
+        source: "local-session",
+        sdk: {
+          available: true,
+          packageName: "@openai/codex-sdk",
+          version: "0.125.0",
+          entrypointPath: "/repo/node_modules/@openai/codex/vendor/codex",
+        },
       },
     },
     preflight: {
@@ -53,6 +69,9 @@ test("buildDiagnosticsSnapshot redacts credential-shaped fields", () => {
   assert.equal(snapshot.sessions.statuses.idle, 1);
   assert.equal(snapshot.sessions.statuses.error, 1);
   assert.equal(snapshot.environment.claude.apiKey, "[redacted]");
+  assert.equal(snapshot.environment.claude.sdk.available, true);
+  assert.equal(snapshot.environment.claude.sdk.packageName, "@anthropic-ai/claude-agent-sdk");
+  assert.equal(snapshot.environment.codex.sdk.packageName, "@openai/codex-sdk");
   assert.equal(snapshot.preflight.checks[0].token, "[redacted]");
   assert.equal(snapshot.storage.sessionStoreWarnings[0].type, "session_store_corrupt");
 });

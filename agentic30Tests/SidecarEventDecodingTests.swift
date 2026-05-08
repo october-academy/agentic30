@@ -63,12 +63,28 @@ struct SidecarEventDecodingTests {
             "claude": {
               "available": true,
               "source": "local-session",
-              "message": "Local Claude login session"
+              "message": "Local Claude login session",
+              "sdk": {
+                "available": true,
+                "packageName": "@anthropic-ai/claude-agent-sdk",
+                "version": "0.2.87",
+                "packageRoot": "/repo/node_modules/@anthropic-ai/claude-agent-sdk",
+                "entrypointPath": "/repo/node_modules/@anthropic-ai/claude-agent-sdk/cli.js",
+                "message": "Claude Agent SDK CLI is installed"
+              }
             },
             "codex": {
               "available": true,
               "source": "local-session",
-              "message": "Local Codex login session"
+              "message": "Local Codex login session",
+              "sdk": {
+                "available": true,
+                "packageName": "@openai/codex-sdk",
+                "version": "0.125.0",
+                "packageRoot": "/repo/node_modules/@openai/codex-sdk",
+                "entrypointPath": "/repo/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex/codex",
+                "message": "Codex SDK and CLI binary are installed"
+              }
             },
             "acp": {
               "available": true,
@@ -86,7 +102,9 @@ struct SidecarEventDecodingTests {
         #expect(event.type == "ready")
         #expect(event.workspaceRoot == "/Users/october/prj/mac/agentic30")
         #expect(event.environment?.claude.available == true)
+        #expect(event.environment?.claude.sdk?.packageName == "@anthropic-ai/claude-agent-sdk")
         #expect(event.environment?.codex.source == "local-session")
+        #expect(event.environment?.codex.sdk?.available == true)
         #expect(event.environment?.acp?.available == true)
         #expect(event.sessions?.count == 1)
         #expect(event.sessions?.first?.messages.first?.content == "OK")
@@ -261,38 +279,38 @@ struct SidecarEventDecodingTests {
               "requestId": "request-icp-1",
               "sessionId": "idd-session-1",
               "toolName": "request_user_input",
-              "title": "첫 사용자 확인",
+              "title": "첫 ICP 구체화",
               "createdAt": "2026-04-27T01:00:01.000Z",
               "questions": [
                 {
-                  "header": "프로젝트 이해",
-                  "helperText": "근거: README: Agentic30. 오늘은 정답이 아니라 이번 주 확인할 사람 1명을 고릅니다.",
-                  "question": "제가 보기엔 이 프로젝트는 AI 코딩 도구를 쓰는 개발자가 겪는 문제를 풀려는 macOS 앱 같아요.\\n이번 주에 가장 먼저 만나서 확인해볼 사람은 누구인가요?",
+                  "header": "ICP 좁히기",
+                  "helperText": "진단: 제품: Agentic30 / 대상: 전업 1인 개발자, 수익 0원, macOS 사용자 / 문제: 만들 줄은 있지만 무엇을 만들어야 팔리는지 모른다 / 목적: 30일 안에 PMF 검증 방향을 좁힌다. 오늘은 이 범주를 더 좁혀 첫 ICP 후보 하나를 고릅니다.",
+                  "question": "Agentic30은 전업 1인 개발자, 수익 0원, macOS 사용자의 만들 줄은 있지만 무엇을 만들어야 팔리는지 모른다 문제를 다룹니다.\\n첫 ICP를 이 범주 전체로 두면 너무 넓습니다. 이번 주에 검증할 가장 좁은 하위 ICP는 누구인가요?",
                   "options": [
                     {
-                      "label": "AI 코딩 도구를 쓰는 개발자",
-                      "description": "이 가설이 맞다면 오늘 이 사람부터 만나 문제를 확인합니다.",
-                      "nextIntent": "confirm_likely_user"
+                      "label": "퇴사 후 수익 0원 1인 개발자",
+                      "description": "저축 소진 압박이 있어 30일 안에 사용자 증거와 첫 매출 신호를 원합니다.",
+                      "nextIntent": "full_time_zero_revenue_indie"
                     },
                     {
-                      "label": "이미 불편하게 해결하는 사람",
-                      "description": "스프레드시트, 수작업, 다른 툴로 이미 시간을 쓰고 있습니다.",
-                      "nextIntent": "existing_alternative"
+                      "label": "에이전트로 MVP 만든 개발자",
+                      "description": "Claude/Codex로 만들 수 있지만 무엇을 팔지, 누구에게 물을지 막혀 있습니다.",
+                      "nextIntent": "agent_built_mvp_no_customers"
                     },
                     {
-                      "label": "이미 돈이나 시간을 쓰는 사람",
-                      "description": "예산, 일정, 팀 논의가 걸려 있어 검증 신호가 강합니다.",
-                      "nextIntent": "budget_or_time_committed"
+                      "label": "인터뷰/BIP 기록 의향 있음",
+                      "description": "프로젝트 path, 업무 일지, 고객 인터뷰, 공개 기록을 매일 입력할 수 있습니다.",
+                      "nextIntent": "records_ready_builder"
                     },
                     {
-                      "label": "아직 모르겠어요",
-                      "description": "괜찮아요. 오늘은 고객을 확정하지 않고 확인할 후보 3명을 찾습니다.",
-                      "nextIntent": "unknown_find_candidates"
+                      "label": "다른 하위 ICP",
+                      "description": "자유입력에 역할, 상황, 현재 대안, 연락 가능성을 함께 적습니다.",
+                      "nextIntent": "other_specific_icp"
                     }
                   ],
                   "multiSelect": false,
                   "allowFreeText": true,
-                  "freeTextPlaceholder": "예: AI 코딩 도구를 쓰는 개발자, 같은 팀 동료, 실제로 불편을 말한 사람",
+                  "freeTextPlaceholder": "예: 현재 Claude Code로 MVP는 만들었지만 유료 고객이 없는 macOS 1인 개발자",
                   "textMode": "short"
                 }
               ]
@@ -313,12 +331,12 @@ struct SidecarEventDecodingTests {
         #expect(event.type == "session_updated")
         #expect(event.session?.status == .awaitingInput)
         #expect(event.session?.pendingUserInput?.toolName == "request_user_input")
-        #expect(event.session?.pendingUserInput?.title == "첫 사용자 확인")
-        #expect(event.session?.pendingUserInput?.questions.first?.helperText?.contains("README: Agentic30") == true)
-        #expect(event.session?.pendingUserInput?.questions.first?.question.contains("이번 주에 가장 먼저 만나서 확인해볼 사람") == true)
-        #expect(event.session?.pendingUserInput?.questions.first?.options?.map(\.label) == ["AI 코딩 도구를 쓰는 개발자", "이미 불편하게 해결하는 사람", "이미 돈이나 시간을 쓰는 사람", "아직 모르겠어요"])
-        #expect(event.session?.pendingUserInput?.questions.first?.options?.last?.nextIntent == "unknown_find_candidates")
-        #expect(event.session?.pendingUserInput?.questions.first?.freeTextPlaceholder?.contains("AI 코딩 도구") == true)
+        #expect(event.session?.pendingUserInput?.title == "첫 ICP 구체화")
+        #expect(event.session?.pendingUserInput?.questions.first?.helperText?.contains("Agentic30") == true)
+        #expect(event.session?.pendingUserInput?.questions.first?.question.contains("가장 좁은 하위 ICP") == true)
+        #expect(event.session?.pendingUserInput?.questions.first?.options?.map(\.label) == ["퇴사 후 수익 0원 1인 개발자", "에이전트로 MVP 만든 개발자", "인터뷰/BIP 기록 의향 있음", "다른 하위 ICP"])
+        #expect(event.session?.pendingUserInput?.questions.first?.options?.last?.nextIntent == "other_specific_icp")
+        #expect(event.session?.pendingUserInput?.questions.first?.freeTextPlaceholder?.contains("유료 고객") == true)
     }
 
     @MainActor @Test func decodesBipCoachStateWithOwningSession() throws {
@@ -367,12 +385,16 @@ struct SidecarEventDecodingTests {
           "adr": "docs/adr",
           "goal": "docs/GOAL.md",
           "onboardingHypothesis": {
+            "productName": "Agentic30",
             "projectKind": "mac_app",
+            "targetUser": "전업 1인 개발자, 수익 0원, macOS 사용자",
+            "problem": "만들 줄은 있지만 무엇을 만들어야 팔리는지 모른다",
+            "purpose": "30일 안에 PMF 검증 방향을 좁힌다",
             "likelyUsers": ["AI 코딩 도구를 쓰는 개발자"],
             "stage": "prototype",
             "evidence": ["README: Agentic30"],
             "confidence": "high",
-            "suggestedFirstQuestion": "제가 보기엔 이 프로젝트는 AI 코딩 도구를 쓰는 개발자가 겪는 문제를 풀려는 macOS 앱 같아요. 이번 주에 가장 먼저 만나서 확인해볼 사람은 누구인가요?"
+            "suggestedFirstQuestion": "현재 ICP가 전업 1인 개발자까지는 보입니다. 이번 주에 검증할 더 좁은 하위 ICP는 누구인가요?"
           }
         }
         """
@@ -388,6 +410,8 @@ struct SidecarEventDecodingTests {
         #expect(event.adr == "docs/adr")
         #expect(event.goal == "docs/GOAL.md")
         #expect(event.onboardingHypothesis?.confidence == "high")
+        #expect(event.onboardingHypothesis?.productName == "Agentic30")
+        #expect(event.onboardingHypothesis?.targetUser?.contains("전업 1인 개발자") == true)
         #expect(event.onboardingHypothesis?.likelyUsers?.first == "AI 코딩 도구를 쓰는 개발자")
         #expect(event.error == nil)
     }
@@ -487,12 +511,24 @@ struct SidecarEventDecodingTests {
               "claude": {
                 "available": true,
                 "source": "local-session",
-                "message": "Local Claude login session"
+                "message": "Local Claude login session",
+                "sdk": {
+                  "available": true,
+                  "packageName": "@anthropic-ai/claude-agent-sdk",
+                  "version": "0.2.87",
+                  "entrypointPath": "/repo/node_modules/@anthropic-ai/claude-agent-sdk/cli.js"
+                }
               },
               "codex": {
                 "available": false,
                 "source": "missing",
-                "message": "Sign in with Codex"
+                "message": "Sign in with Codex",
+                "sdk": {
+                  "available": true,
+                  "packageName": "@openai/codex-sdk",
+                  "version": "0.125.0",
+                  "entrypointPath": "/repo/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex/codex"
+                }
               },
               "acp": {
                 "available": true,
@@ -523,6 +559,8 @@ struct SidecarEventDecodingTests {
         #expect(event.diagnostics?.storage.sessionsSchemaVersion == 1)
         #expect(event.diagnostics?.sessions.statuses["idle"] == 1)
         #expect(event.diagnostics?.environment?.claude.available == true)
+        #expect(event.diagnostics?.environment?.claude.sdk?.entrypointPath?.hasSuffix("cli.js") == true)
+        #expect(event.diagnostics?.environment?.codex.sdk?.packageName == "@openai/codex-sdk")
         #expect(event.diagnostics?.preflight?.status == "warning")
         #expect(event.diagnostics?.preflight?.checks.first?.id == "provider-auth")
     }

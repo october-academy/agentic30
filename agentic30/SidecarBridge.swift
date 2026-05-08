@@ -32,9 +32,15 @@ final class SidecarBridge {
     private var didConnect = false
     private var cachedNodeURL: URL?
     private let nodeResolver: NodeExecutableResolver
+    private let sidecarScriptURLOverride: URL?
+    private var emittedBootFailureReasons = Set<String>()
 
-    init(nodeResolver: NodeExecutableResolver = .live()) {
+    init(
+        nodeResolver: NodeExecutableResolver = .live(),
+        sidecarScriptURL: URL? = nil
+    ) {
         self.nodeResolver = nodeResolver
+        self.sidecarScriptURLOverride = sidecarScriptURL
     }
 
     func start() {
@@ -44,6 +50,9 @@ final class SidecarBridge {
         PostHogTelemetry.capture("mac_sidecar_start_requested")
 
         guard FileManager.default.fileExists(atPath: sidecarScriptURL.path) else {
+            captureBootFailure(reason: "missing_script", properties: [
+                "sidecar_script_basename": sidecarScriptURL.lastPathComponent,
+            ])
             PostHogTelemetry.captureException(
                 NSError(domain: "SidecarBridge", code: 404, userInfo: [
                     NSLocalizedDescriptionKey: "Sidecar script not found at \(sidecarScriptURL.path)"
@@ -102,6 +111,11 @@ final class SidecarBridge {
             emit(type: "sidecar_status", message: "Launching sidecar...")
         } catch {
             clearProcessIO()
+            if (error as NSError).domain == "NodeExecutableResolver" {
+                captureBootFailure(reason: "missing_node", properties: [
+                    "sidecar_script_basename": sidecarScriptURL.lastPathComponent,
+                ])
+            }
             PostHogTelemetry.captureException(error, properties: [
                 "component": "sidecar_bridge",
                 "operation": "start",
@@ -312,6 +326,10 @@ final class SidecarBridge {
         }
 
         let reason = terminatedProcess.terminationReason == .uncaughtSignal ? "signal" : "exit"
+        captureBootFailure(reason: "early_process_exit", properties: [
+            "termination_reason": reason,
+            "termination_status": Int(terminatedProcess.terminationStatus),
+        ])
         PostHogTelemetry.captureException(
             NSError(domain: "SidecarBridge", code: Int(terminatedProcess.terminationStatus), userInfo: [
                 NSLocalizedDescriptionKey: "Sidecar failed to start (\(reason) \(terminatedProcess.terminationStatus))."
@@ -326,6 +344,16 @@ final class SidecarBridge {
         emit(
             type: "error",
             message: "Sidecar failed to start (\(reason) \(terminatedProcess.terminationStatus)). Check Node.js availability."
+        )
+    }
+
+    private func captureBootFailure(reason: String, properties: [String: Any] = [:]) {
+        guard emittedBootFailureReasons.insert(reason).inserted else { return }
+        PostHogTelemetry.capture(
+            "sidecar_boot_failed",
+            properties: properties.merging([
+                "reason": reason,
+            ]) { _, new in new }
         )
     }
 
@@ -379,6 +407,9 @@ final class SidecarBridge {
     }
 
     private var sidecarScriptURL: URL {
+        if let sidecarScriptURLOverride {
+            return sidecarScriptURLOverride
+        }
         if let bundled = Bundle.main.url(
             forResource: "index",
             withExtension: "mjs",

@@ -23,6 +23,11 @@ struct MacOnboardingView: View {
         VStack(spacing: 0) {
             visualStage
                 .frame(height: 318)
+                .onAppear {
+                    if sceneIndex == 0 {
+                        PostHogTelemetry.capture("mac_onboarding_intro_started")
+                    }
+                }
 
             VStack(alignment: .leading, spacing: 22) {
                 progressDots
@@ -256,7 +261,15 @@ struct MacOnboardingView: View {
     }
 
     private func primaryAction() {
-        sceneIndex = min(scenes.count - 1, sceneIndex + 1)
+        let nextIndex = min(scenes.count - 1, sceneIndex + 1)
+        if nextIndex != sceneIndex {
+            PostHogTelemetry.capture("mac_onboarding_intro_scene_advanced", properties: [
+                "from_scene": sceneIndex,
+                "to_scene": nextIndex,
+                "total_scenes": scenes.count,
+            ])
+        }
+        sceneIndex = nextIndex
     }
 
     private func chooseWorkspace() {
@@ -273,6 +286,7 @@ struct MacOnboardingView: View {
         }
         #endif
 
+        PostHogTelemetry.capture("mac_onboarding_workspace_picker_opened")
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false

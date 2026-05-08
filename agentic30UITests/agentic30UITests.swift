@@ -75,6 +75,69 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    func testWorkspaceSetupTelemetryCompletesOnlyAfterFolderSelectionAndFirstInput() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-setup-telemetry-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-setup-telemetry-app-support-\(runID)"
+        let telemetryPath = "/tmp/agentic30-ui-setup-telemetry-\(runID).jsonl"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+        try? FileManager.default.removeItem(atPath: telemetryPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-picker-path=\(workspacePath)",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TELEMETRY_CAPTURE_FILE": telemetryPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            "AGENTIC30_CODEX_MODEL": "gpt-5.4-mini",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+            try? FileManager.default.removeItem(atPath: telemetryPath)
+        }
+
+        let selectDirectory = button(in: app, matching: [
+            "workspace.selectDirectoryButton",
+            "Select project directory",
+        ])
+        XCTAssertTrue(selectDirectory.waitForExistence(timeout: 10))
+        selectDirectory.click()
+
+        XCTAssertNotNil(
+            waitForTelemetryEvent(named: "workspace_setup_started", at: telemetryPath, timeout: 120),
+            "Expected folder selection to start workspace setup telemetry."
+        )
+        XCTAssertFalse(
+            telemetryEvents(at: telemetryPath).contains(where: { $0["event"] as? String == "workspace_setup_completed" }),
+            "Workspace setup must not complete from folder selection and scan alone."
+        )
+
+        answerBootstrapPromptIfNeeded(in: app)
+
+        let completed = waitForTelemetryEvent(
+            named: "workspace_setup_completed",
+            at: telemetryPath,
+            timeout: 60
+        )
+        if completed == nil {
+            attachText(telemetryEvents(at: telemetryPath).description, named: "Workspace Setup Telemetry Events")
+            attachText(app.debugDescription, named: "Workspace Setup Activation Tree")
+        }
+        XCTAssertNotNil(completed)
+        app.terminate()
+    }
+
+    @MainActor
     func testCredentialedGoogleLoginCompletesMacAuth() throws {
         throw XCTSkip("Google sign-in UI is disabled while the macOS app runs in loginless local mode.")
     }
@@ -222,7 +285,6 @@ final class agentic30UITests: XCTestCase {
                 "--ui-testing-seed-onboarding-context",
                 "--ui-testing-disable-sidecar",
                 "--ui-testing-open-settings",
-                "--ui-testing-open-settings-section=developerTools",
                 "--ui-testing-opaque-window",
             ],
             environment: [
@@ -279,6 +341,52 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    func testRubricQuarantineSettingsSectionIsAvailable() throws {
+        // R5-1: Settings → Quarantine Recovery 탭이 빈 상태로 등장하는지
+        // 검증. fixture 주입까지는 가지 않고 surface 존재 + 빈 상태 copy만 확인
+        // (sidecar는 disable-sidecar로 막혀 있으므로 list가 비어 있다).
+        let workspacePath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-ui-quarantine-workspace-\(UUID().uuidString)", isDirectory: true)
+            .path
+        let appSupportPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-ui-quarantine-support-\(UUID().uuidString)", isDirectory: true)
+            .path
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(
+            arguments: [
+                "--ui-testing-reset-onboarding",
+                "--ui-testing-seed-auth",
+                "--ui-testing-seed-workspace=\(workspacePath)",
+                "--ui-testing-seed-onboarding-context",
+                "--ui-testing-disable-sidecar",
+                "--ui-testing-open-settings",
+                "--ui-testing-open-settings-section=quarantineRecovery",
+                "--ui-testing-opaque-window",
+            ],
+            environment: [
+                "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            ]
+        )
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(openSettingsWindow(in: app))
+        // 빈 상태 copy. RubricQuarantineView의 emptyState text와 정확히 일치해야 한다.
+        XCTAssertTrue(
+            app.staticTexts["복구할 record가 없습니다."].waitForExistence(timeout: 5),
+            "Quarantine Recovery 탭의 빈 상태 메시지가 보이지 않음"
+        )
+    }
+
+    @MainActor
     func testSettingsDeveloperToolsExposeBipNotificationTestButtons() throws {
         let workspacePath = FileManager.default.temporaryDirectory
             .appendingPathComponent("agentic30-ui-devtools-workspace-\(UUID().uuidString)", isDirectory: true)
@@ -297,6 +405,7 @@ final class agentic30UITests: XCTestCase {
                 "--ui-testing-seed-onboarding-context",
                 "--ui-testing-disable-sidecar",
                 "--ui-testing-open-settings",
+                "--ui-testing-open-settings-section=developerTools",
                 "--ui-testing-opaque-window",
             ],
             environment: [
@@ -363,11 +472,11 @@ final class agentic30UITests: XCTestCase {
         }
         XCTAssertTrue(promptVisible)
         XCTAssertTrue(structuredPromptTitle.waitForExistence(timeout: 2))
-        XCTAssertTrue(app.staticTexts["프로젝트 이해"].waitForExistence(timeout: 2))
-        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "아직 모르겠어요")).firstMatch.waitForExistence(timeout: 2))
+        XCTAssertTrue(app.staticTexts["ICP 좁히기"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "다른 하위 ICP")).firstMatch.waitForExistence(timeout: 2))
 
         let unknownChoice = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == %@", "아직 모르겠어요"))
+            .matching(NSPredicate(format: "label == %@", "다른 하위 ICP"))
             .firstMatch
         clickCenter(of: unknownChoice)
 
@@ -814,15 +923,15 @@ final class agentic30UITests: XCTestCase {
             self.removeDirectory(at: workspacePath)
         }
 
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.dayDetail"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["팔릴 문제부터 찾는다"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirstSurface"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Day 1 · 고객의 어제 행동에서 통증 1개를 압축한다"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["workspace.day.1"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["workspace.day.2"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["workspace.day.8"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["workspace.curriculumFutureModule"].exists)
         XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Day 1을 마쳐야 접근할 수 있어요")).firstMatch.exists)
         app.descendants(matching: .any)["workspace.day.2"].click()
-        XCTAssertTrue(app.staticTexts["팔릴 문제부터 찾는다"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.staticTexts["Day 1 · 고객의 어제 행동에서 통증 1개를 압축한다"].waitForExistence(timeout: 2))
         XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirstSurface"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["workspace.startupStatusRail"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["workspace.startupQueueHint"].exists)
@@ -844,8 +953,8 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(waitUntilEnabled(sendButton, timeout: 5))
         clickCenter(of: sendButton)
 
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.startupQueue"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "로딩 중 첫 액션")).firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.startupQueue.cancel"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["로딩 중 첫 액션을 미리 적는다"].waitForExistence(timeout: 5))
     }
 
     @MainActor
@@ -1107,7 +1216,11 @@ final class agentic30UITests: XCTestCase {
 
     @MainActor
     private func settingsWindowVisible(in app: XCUIApplication) -> Bool {
-        app.staticTexts["Agent Models"].exists || app.staticTexts["Developer Tools"].exists
+        app.staticTexts["Agent Models"].exists
+            || app.staticTexts["Developer Tools"].exists
+            // Sidebar identifiers — pick whichever section the launch flag opened to.
+            || app.buttons["quarantineRecovery"].exists
+            || app.staticTexts["정직 모드 복구"].exists
     }
 
     @MainActor
@@ -2006,6 +2119,33 @@ final class agentic30UITests: XCTestCase {
         } while Date() < deadline
 
         return nil
+    }
+
+    private func waitForTelemetryEvent(
+        named eventName: String,
+        at path: String,
+        timeout: TimeInterval
+    ) -> [String: Any]? {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if let event = telemetryEvents(at: path).first(where: { $0["event"] as? String == eventName }) {
+                return event
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < deadline
+        return telemetryEvents(at: path).first(where: { $0["event"] as? String == eventName })
+    }
+
+    private func telemetryEvents(at path: String) -> [[String: Any]] {
+        guard let raw = try? String(contentsOfFile: path, encoding: .utf8) else {
+            return []
+        }
+        return raw
+            .split(separator: "\n")
+            .compactMap { line in
+                guard let data = String(line).data(using: .utf8) else { return nil }
+                return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            }
     }
 
     @MainActor

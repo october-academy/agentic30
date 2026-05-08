@@ -170,6 +170,47 @@ export function getProviderAuthState(provider) {
   };
 }
 
+export function getProviderConnectionState(provider) {
+  return {
+    ...getProviderAuthState(provider),
+    sdk: getProviderSdkState(provider),
+  };
+}
+
+function getProviderSdkState(provider) {
+  if (provider === "claude") {
+    const packageName = "@anthropic-ai/claude-agent-sdk";
+    const packageRoot = resolveInstalledPackageRoot("@anthropic-ai", "claude-agent-sdk");
+    const cliPath = path.join(packageRoot, "cli.js");
+    const packageJson = readPackageJson(packageRoot);
+    return {
+      available: fsSync.existsSync(cliPath),
+      packageName,
+      version: packageJson?.version ?? null,
+      packageRoot,
+      entrypointPath: cliPath,
+      message: fsSync.existsSync(cliPath)
+        ? "Claude Agent SDK CLI is installed"
+        : "Claude Agent SDK CLI is missing",
+    };
+  }
+
+  const packageName = "@openai/codex-sdk";
+  const packageRoot = resolveInstalledPackageRoot("@openai", "codex-sdk");
+  const binaryPath = resolveCodexBinaryPath();
+  const packageJson = readPackageJson(packageRoot);
+  return {
+    available: fsSync.existsSync(binaryPath),
+    packageName,
+    version: packageJson?.version ?? null,
+    packageRoot,
+    entrypointPath: binaryPath,
+    message: fsSync.existsSync(binaryPath)
+      ? "Codex SDK and CLI binary are installed"
+      : "Codex CLI binary is missing",
+  };
+}
+
 async function runClaudeProvider({
   sessionRuntime,
   prompt,
@@ -1296,6 +1337,10 @@ function readJsonFile(filePath) {
   } catch {
     return null;
   }
+}
+
+function readPackageJson(packageRoot) {
+  return readJsonFile(path.join(packageRoot, "package.json"));
 }
 
 async function ensureNotionToken() {

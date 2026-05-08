@@ -124,7 +124,7 @@ test("IDD prompt pins provider-specific structured input tool and one-document s
   const claudePrompt = buildIddDocumentPrompt(doc, { provider: "claude", workspaceRoot: "/workspace" });
 
   assert.match(codexPrompt, /agentic30_request_user_input/);
-  assert.doesNotMatch(codexPrompt, /(^|[^A-Za-z0-9_])request_user_input([^A-Za-z0-9_]|$)/);
+  assert.match(codexPrompt, /request_user_input 카드/);
   assert.doesNotMatch(codexPrompt, /AskUserQuestionTool\(AskUserQuestion\)/);
   assert.match(claudePrompt, /AskUserQuestionTool\(AskUserQuestion\)/);
   assert.match(codexPrompt, /이 세션에서는 이 문서 하나만/);
@@ -138,14 +138,14 @@ test("IDD prompt routes choice-based interview questions through plan-style stru
   assert.match(prompt, /\/plan/);
   assert.match(prompt, /UI에서 클릭\/입력/);
   assert.match(prompt, /일반 prose나 번호 목록으로 쓰지 말고 반드시 agentic30_request_user_input/);
-  assert.doesNotMatch(prompt, /(^|[^A-Za-z0-9_])request_user_input([^A-Za-z0-9_]|$)/);
+  assert.match(prompt, /request_user_input 카드/);
   assert.doesNotMatch(prompt, /structured input unavailable/);
   assert.match(prompt, /같은 질문을 prose\/번호 목록으로 대신 출력하지 말고 중단/);
-  assert.match(prompt, /이번 주에 가장 먼저 만나서 확인해볼 사람은 누구인가요/);
-  assert.match(prompt, /이미 불편하게 해결하는 사람/);
-  assert.match(prompt, /이미 돈이나 시간을 쓰는 사람/);
-  assert.match(prompt, /아직 모르겠어요/);
-  assert.match(prompt, /오늘은 정답이 아니라 이번 주 확인할 사람 1명/);
+  assert.match(prompt, /후보군 없이 자유입력만 묻지 마세요/);
+  assert.match(prompt, /첫 ICP 질문 예/);
+  assert.match(prompt, /제품 Agentic30/);
+  assert.match(prompt, /퇴사 후 수익 0원 1인 개발자/);
+  assert.match(prompt, /에이전트로 MVP 만든 개발자/);
   assert.match(prompt, /Adaptive\/Personalized 인터뷰 규칙/);
   assert.match(prompt, /README, docs, package\/config, 주요 소스, 최근 git 변경/);
   assert.match(prompt, /실제 기능명, 화면, 사용자 흐름/);
@@ -197,7 +197,11 @@ test("Codex ICP IDD initial input is host-side agentic30_request_user_input with
   const input = initialIddStructuredInputForDoc(doc, {
     provider: "codex",
     onboardingHypothesis: {
+      productName: "Agentic30",
       projectKind: "mac_app",
+      targetUser: "전업 1인 개발자, 수익 0원, macOS 사용자",
+      problem: "만들 줄은 있지만 무엇을 만들어야 팔리는지 모른다",
+      purpose: "30일 안에 PMF 검증 방향을 좁힌다",
       likelyUsers: ["AI 코딩 도구를 쓰는 개발자"],
       stage: "prototype",
       evidence: ["README: Agentic30"],
@@ -207,18 +211,24 @@ test("Codex ICP IDD initial input is host-side agentic30_request_user_input with
   });
 
   assert.equal(input.toolName, "agentic30_request_user_input");
-  assert.equal(input.title, "첫 사용자 확인");
+  assert.equal(input.title, "첫 ICP 구체화");
   assert.equal(input.questions.length, 1);
   assert.equal(input.questions[0].allowFreeText, true);
   assert.equal(input.questions[0].textMode, "short");
-  assert.match(input.questions[0].helperText, /README: Agentic30/);
-  assert.match(input.questions[0].question, /AI 코딩 도구를 쓰는 개발자/);
-  assert.match(input.questions[0].question, /이번 주에 가장 먼저 만나서 확인해볼 사람/);
+  assert.match(input.questions[0].helperText, /제품: Agentic30/);
+  assert.match(input.questions[0].helperText, /대상: 전업 1인 개발자/);
+  assert.match(input.questions[0].helperText, /문제: 만들 줄은 있지만/);
+  assert.match(input.questions[0].helperText, /목적: 30일 안에 PMF/);
+  assert.match(input.questions[0].question, /Agentic30/);
+  assert.match(input.questions[0].question, /전업 1인 개발자/);
+  assert.match(input.questions[0].question, /너무 넓/);
+  assert.match(input.questions[0].question, /하위 ICP/);
   assert.deepEqual(
     input.questions[0].options.map((option) => option.label),
-    ["AI 코딩 도구를 쓰는 개발자", "이미 불편하게 해결하는 사람", "이미 돈이나 시간을 쓰는 사람", "아직 모르겠어요"],
+    ["퇴사 후 수익 0원 1인 개발자", "에이전트로 MVP 만든 개발자", "인터뷰/BIP 기록 의향 있음", "다른 하위 ICP"],
   );
-  assert.equal(input.questions[0].options.at(-1).nextIntent, "unknown_find_candidates");
+  assert.match(input.questions[0].options[0].description, /30일 안에 사용자 증거/);
+  assert.equal(input.questions[0].options.at(-1).nextIntent, "other_specific_icp");
   assert.equal(initialIddStructuredInputForDoc(doc, { provider: "claude" }), null);
 });
 
@@ -268,12 +278,12 @@ test("Codex ICP IDD initial input has a low-confidence fallback that does not re
   const doc = BIP_REQUIRED_LOCAL_DOCS.find((item) => item.type === "icp");
   const input = initialIddStructuredInputForDoc(doc, { provider: "codex" });
 
-  assert.match(input.questions[0].question, /만들게 된 계기/);
-  assert.match(input.questions[0].question, /이번 주에 확인해볼 사람/);
-  assert.match(input.questions[0].helperText, /단정할 근거가 부족/);
+  assert.match(input.questions[0].question, /첫 고객을 넓은 범주/);
+  assert.match(input.questions[0].question, /가장 좁은 ICP/);
+  assert.match(input.questions[0].helperText, /제품명, 대상 유저, 해결 문제, 제품 목적/);
   assert.deepEqual(
     input.questions[0].options.map((option) => option.label),
-    ["나 또는 우리 팀", "이미 불편하게 해결하는 사람", "이미 돈이나 시간을 쓰는 사람", "아직 모르겠어요"],
+    ["가장 절박한 하위 ICP", "이미 우회 중인 사람", "이미 돈/시간 쓰는 사람", "다른 하위 ICP"],
   );
 });
 
@@ -291,7 +301,7 @@ test("Codex ICP IDD initial input uses natural medium-confidence Korean", () => 
   });
 
   assert.match(input.questions[0].question, /README를 보면/);
-  assert.match(input.questions[0].question, /이게 진짜 문제인지/);
+  assert.match(input.questions[0].question, /가장 좁은 ICP/);
   assert.doesNotMatch(input.questions[0].question, /단서가 보여요/);
 });
 
@@ -308,6 +318,7 @@ test("IDD continuation prompt carries structured response and prevents repeating
   assert.match(prompt, /README, docs, package\/config, 주요 소스, 최근 git 변경/);
   assert.match(prompt, /범용 질문이나 템플릿 질문/);
   assert.match(prompt, /decision brief/);
+  assert.match(prompt, /제품 이름, 대상 유저, 해결 문제, 제품 목적/);
   assert.match(prompt, /office-hours 방식/);
   assert.match(prompt, /plan-ceo-review 방식/);
   assert.match(prompt, /design-review 방식/);
@@ -324,7 +335,8 @@ test("IDD continuation prompt carries structured response and prevents repeating
   assert.match(prompt, /어떤 문서 실패가 생기는지/);
   assert.match(prompt, /대상 문서의 섹션, 결정, Open Risks, 다음 BIP 공개 글감/);
   assert.match(prompt, /agentic30_request_user_input MCP 도구/);
-  assert.doesNotMatch(prompt, /(^|[^A-Za-z0-9_])request_user_input([^A-Za-z0-9_]|$)/);
+  assert.match(prompt, /request_user_input 카드/);
+  assert.match(prompt, /2-4개 후보 options/);
   assert.doesNotMatch(prompt, /structured input unavailable/);
 });
 

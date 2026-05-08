@@ -38,7 +38,7 @@ import {
 } from "./auth-context.mjs";
 import { initiateNotionOAuth, exchangeOAuthCode, refreshAccessToken } from "./notion-oauth.mjs";
 import { buildPreflightReport } from "./preflight.mjs";
-import { getProviderAuthState, runProviderStream } from "./provider-runner.mjs";
+import { getProviderAuthState, getProviderConnectionState, runProviderStream } from "./provider-runner.mjs";
 import {
   extractInlineDecision,
   inferInlineDecisionFromPlainText,
@@ -202,6 +202,17 @@ const state = {
   bipCoachRunning: false,
   providerAuthRuns: new Map(),
   workspaceOnboardingHypothesis: null,
+  workspaceSetupTelemetry: {
+    root: "",
+    started: false,
+    failed: false,
+    scanSucceeded: false,
+    firstInput: false,
+    firstInputSource: "",
+    completed: false,
+    startedAtMs: 0,
+    foundCount: 0,
+  },
 };
 const chatBipExternalContextCache = new Map();
 
@@ -625,6 +636,7 @@ async function handleClientMessage(socket, payload) {
         });
         return;
       }
+      markWorkspaceSetupFirstInput("prompt");
       // Sub-AC 2.3 IPC reconciliation: when the Swift host classifies a
       // message as Foundation Day daily-task (`mode: "daily_task"`), funnel
       // it through the unified Foundation chat handler so the single chat
@@ -818,6 +830,9 @@ async function handleClientMessage(socket, payload) {
       const response = normalizeUserInputResponse(session.pendingUserInput, payload);
       const userResponseText = formatStructuredPromptResponse(response);
       if (userResponseText) {
+        markWorkspaceSetupFirstInput("structured_input");
+      }
+      if (userResponseText) {
         session.messages.push(
           makeMessage({
             role: "user",
@@ -869,7 +884,9 @@ async function handleClientMessage(socket, payload) {
             doc: continuationDoc,
             lastAnswer: userResponseText,
           });
-          continuationSpecialistInjection = buildSpecialistInjection(continuationSelection);
+          continuationSpecialistInjection = buildSpecialistInjection(continuationSelection, {
+            provider: session.provider,
+          });
           telemetry.captureEvent("mac_sidecar_specialist_routed", {
             session_id: session.id,
             stage: "idd_continuation",
@@ -908,6 +925,23 @@ async function handleClientMessage(socket, payload) {
           reason: "missing_root",
         });
         send(socket, { type: "error", message: "Workspace root is required for scan." });
+        return;
+      }
+      markWorkspaceSetupStarted(root);
+      const rootStat = await fs.stat(root).catch(() => null);
+      if (!rootStat?.isDirectory()) {
+        const error = Object.assign(new Error("Workspace root is not a directory."), {
+          code: "invalid_workspace_root",
+        });
+        telemetry.captureEvent("mac_sidecar_workspace_scan_rejected", {
+          reason: "invalid_root",
+        });
+        markWorkspaceSetupFailed(root, error);
+        broadcast({
+          type: "workspace_scan_result",
+          scanRoot: root,
+          error: error.message,
+        });
         return;
       }
       broadcast({
@@ -2272,7 +2306,9 @@ async function runOfficeHoursDocs(session, topic, originalPrompt) {
           && officeHoursSelection?.vendor?.codex?.exists,
       ),
     });
-    const officeHoursSpecialistInjection = buildSpecialistInjection(officeHoursSelection);
+    const officeHoursSpecialistInjection = buildSpecialistInjection(officeHoursSelection, {
+      provider: session.provider,
+    });
     const result = await runProviderStream({
       provider: session.provider,
       sessionRuntime: session.runtime,
@@ -4603,7 +4639,9 @@ async function startIddDocumentQueue({
     bipSetupGate: resolvedGate,
     doc: nextDoc,
   });
-  const initialSpecialistInjection = buildSpecialistInjection(initialSelection);
+  const initialSpecialistInjection = buildSpecialistInjection(initialSelection, {
+    provider: seed.provider,
+  });
   telemetry.captureEvent("mac_sidecar_specialist_routed", {
     session_id: session.id,
     stage: "idd_document_start",
@@ -4704,6 +4742,12 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
         agent_result_count: 0,
         provider_verification_skipped: true,
       });
+      markWorkspaceSetupScanSucceeded(scanRoot, {
+        found_count: localFoundCount,
+        onboarding_hypothesis_confidence: localOnboardingHypothesis.confidence,
+        agent_result_count: 0,
+        provider_verification_skipped: true,
+      });
       broadcast({
         type: "workspace_scan_result",
         scanRoot,
@@ -4756,6 +4800,11 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
       codex_model: WORKSPACE_SCAN_CODEX_MODEL,
       agent_result_count: parsedAgentResults.length,
     });
+    markWorkspaceSetupScanSucceeded(scanRoot, {
+      found_count: foundCount,
+      onboarding_hypothesis_confidence: onboardingHypothesis.confidence,
+      agent_result_count: parsedAgentResults.length,
+    });
     broadcast({
       type: "workspace_scan_result",
       scanRoot,
@@ -4774,6 +4823,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
       operation: "runWorkspaceScan",
       scan_root: scanRoot,
     });
+    markWorkspaceSetupFailed(scanRoot, error);
     broadcast({
       type: "workspace_scan_result",
       scanRoot,
@@ -4844,16 +4894,20 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
     "- sheet: SHEET.md, SHEETS.md, or BIP_SHEET.md",
     "",
     "Also infer an onboardingHypothesis for the first user-facing question:",
+    "- productName: exact product/project name visible in README/docs/package",
     "- projectKind: short snake_case product type such as mac_app, web_app, developer_tool, node_app, strategy_docs, or unknown",
+    "- targetUser: the current customer/ICP definition visible from docs, in Korean when possible",
+    "- problem: the concrete user pain/problem the product claims to solve; do not infer from tech stack alone",
+    "- purpose: the product's stated purpose/outcome; prefer README/docs mission/spec wording",
     "- likelyUsers: 1-4 concrete Korean user segments visible from repository evidence",
     "- stage: idea, prototype, first_users, pre_revenue, post_revenue, or unknown",
     "- evidence: 1-5 short facts from README/docs/package/config/recent files",
     "- confidence: low, medium, or high",
-    "- suggestedFirstQuestion: one Korean question that asks the user to confirm or correct the hypothesis",
+    "- suggestedFirstQuestion: one Korean question that diagnoses the current ICP and asks the user to narrow it into a more specific customer segment; do not ask whether your guess is right",
     "",
     "Prefer exact filenames under docs/. If exact files are absent, use the closest matching project document.",
     "Return paths relative to the workspace root. Use null when not found.",
-    '{"icp": null, "spec": null, "values": null, "designSystem": null, "adr": null, "goal": null, "docs": null, "sheet": null, "onboardingHypothesis": {"projectKind": "unknown", "likelyUsers": [], "stage": "unknown", "evidence": [], "confidence": "low", "suggestedFirstQuestion": ""}}',
+    '{"icp": null, "spec": null, "values": null, "designSystem": null, "adr": null, "goal": null, "docs": null, "sheet": null, "onboardingHypothesis": {"productName": "", "projectKind": "unknown", "targetUser": "", "problem": "", "purpose": "", "likelyUsers": [], "stage": "unknown", "evidence": [], "confidence": "low", "suggestedFirstQuestion": ""}}',
   ].join("\n");
   const systemPromptOverride = [
     "You are a fast read-only workspace document scanner.",
@@ -5548,8 +5602,8 @@ function disconnectNotion() {
 
 function getEnvironmentSummary() {
   return {
-    claude: getProviderAuthState("claude"),
-    codex: getProviderAuthState("codex"),
+    claude: getProviderConnectionState("claude"),
+    codex: getProviderConnectionState("codex"),
     acp: getAcpAdapterState(),
     qmd: getQmdState({ sidecarRoot }),
   };

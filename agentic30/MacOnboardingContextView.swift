@@ -383,7 +383,14 @@ struct MacOnboardingContextView: View {
 
     private func primaryAction() {
         if sceneIndex < totalScenes - 1 {
-            sceneIndex = min(totalScenes - 1, sceneIndex + 1)
+            let nextIndex = min(totalScenes - 1, sceneIndex + 1)
+            PostHogTelemetry.capture("mac_onboarding_context_scene_advanced", properties: [
+                "from_step": sceneIndex,
+                "to_step": nextIndex,
+                "selected_role": selectedRole?.rawValue ?? "none",
+                "selected_project_stage": selectedProjectStage?.rawValue ?? "none",
+            ])
+            sceneIndex = nextIndex
             return
         }
 
