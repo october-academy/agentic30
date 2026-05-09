@@ -16,12 +16,25 @@ const BLOCKED_PATH_PATTERNS = [
 ];
 
 const SECRET_PATTERNS = [
-  { id: "test-sentinel", pattern: /unit-test-public-safety-token/ },
-  { id: "private-key", pattern: /-----BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----/ },
+  { id: "test-sentinel", pattern: new RegExp("unit-test" + "-public-safety-token") },
+  {
+    id: "private-key",
+    pattern: new RegExp("-----BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE " + "KEY-----"),
+  },
   { id: "aws-access-key", pattern: /\bAKIA[0-9A-Z]{16}\b/ },
   { id: "github-token", pattern: /\bgh[pousr]_[A-Za-z0-9_]{36,}\b/ },
   { id: "slack-token", pattern: /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/ },
   { id: "openai-token", pattern: /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/ },
+  { id: "anthropic-key", pattern: /\bsk-ant-[A-Za-z0-9_-]{16,}\b/ },
+  { id: "azure-secret", pattern: /\bAZURE_[A-Z0-9_]*(?:KEY|SECRET|TOKEN)\b\s*[:=]\s*["']?[^"'\s]{16,}/i },
+  {
+    id: "gcp-service-account",
+    pattern: new RegExp('"private_key"\\s*:\\s*"-----BEGIN PRIVATE ' + 'KEY-----', "i"),
+  },
+  {
+    id: "api-key",
+    pattern: /\b(?:api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token)\b\s*[:=]\s*["']?[A-Za-z0-9][A-Za-z0-9_-]{31,}/i,
+  },
   {
     id: "client-secret",
     pattern: /\bclient_secret\b\s*[:=]\s*["'][^"']{12,}["']/i,

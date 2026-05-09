@@ -93,16 +93,18 @@ test("MCP GWS tools do not expose gws_exec and require approval for Gmail send",
     const send = harness.client.callTool({
       name: "gws_gmail_send",
       arguments: {
-        to: "user@example.com",
-        cc: "copy@example.com",
-        subject: "Approved",
+        to: "user@example.com\r\nBcc: injected@example.com",
+        cc: "copy@example.com\r\nTo: injected@example.com",
+        subject: "Approved\r\nTo: injected@example.com",
         body: "Send after approval.",
       },
     });
     const request = await waitForUserInputRequest(harness.appSupportPath);
     assert.equal(request.toolName, "gws_gmail_send");
     assert.match(request.questions[0].question, /user@example\.com/);
-    assert.match(request.questions[0].question, /Approved/);
+    assert.match(request.questions[0].question, /Approved To: injected@example\.com/);
+    assert.doesNotMatch(request.questions[0].question, /\nBcc: injected@example\.com/);
+    assert.doesNotMatch(request.questions[0].question, /\nTo: injected@example\.com/);
     await writeUserInputResponse(harness.appSupportPath, {
       sessionId: request.sessionId,
       requestId: request.requestId,
@@ -124,13 +126,13 @@ test("MCP GWS tools do not expose gws_exec and require approval for Gmail send",
       "gmail",
       "+send",
       "--to",
-      "user@example.com",
+      "user@example.com Bcc: injected@example.com",
       "--subject",
-      "Approved",
+      "Approved To: injected@example.com",
       "--body",
       "Send after approval.",
       "--cc",
-      "copy@example.com",
+      "copy@example.com To: injected@example.com",
     ]);
   } finally {
     await harness.close();

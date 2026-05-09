@@ -480,12 +480,13 @@ if (GWS_BIN) {
 }
 
 async function requestGwsGmailSendApproval({ to, subject, body, cc, bcc }) {
+  const safe = sanitizeGwsGmailHeaders({ to, subject, cc, bcc });
   const question = [
     "Send Gmail message?",
-    `To: ${to}`,
-    cc ? `Cc: ${cc}` : null,
-    bcc ? `Bcc: ${bcc}` : null,
-    `Subject: ${subject}`,
+    `To: ${safe.to}`,
+    safe.cc ? `Cc: ${safe.cc}` : null,
+    safe.bcc ? `Bcc: ${safe.bcc}` : null,
+    `Subject: ${safe.subject}`,
     `Body: ${truncateForPreview(body, 180)}`,
   ].filter(Boolean).join("\n").slice(0, 400);
   const request = await createUserInputRequest(appSupportPath, {
@@ -532,6 +533,28 @@ async function requestGwsGmailSendApproval({ to, subject, body, cc, bcc }) {
   }
 }
 
+function sanitizeGwsGmailHeaders({ to, subject, cc, bcc }) {
+  const safe = {
+    to: sanitizeGwsHeaderValue(to, 500),
+    subject: sanitizeGwsHeaderValue(subject, 200),
+    cc: sanitizeGwsHeaderValue(cc, 500),
+    bcc: sanitizeGwsHeaderValue(bcc, 500),
+  };
+  if (!safe.to || !safe.subject) {
+    throw new Error("gws_gmail_send requires non-empty to and subject after sanitization");
+  }
+  return safe;
+}
+
+function sanitizeGwsHeaderValue(value, max) {
+  const text = String(value || "")
+    .replace(/[\r\n]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (text.length <= max) return text;
+  return text.slice(0, max);
+}
+
 function userInputApprovedSend(response) {
   const selected = [
     ...Object.values(response?.answers || {}),
@@ -559,7 +582,8 @@ server.tool(
     bcc: z.string().optional(),
   },
   async ({ to, subject, body, cc, bcc }) => {
-    const approval = await requestGwsGmailSendApproval({ to, subject, body, cc, bcc });
+    const safeHeaders = sanitizeGwsGmailHeaders({ to, subject, cc, bcc });
+    const approval = await requestGwsGmailSendApproval({ ...safeHeaders, body });
     if (!approval.approved) {
       return {
         content: [
@@ -574,9 +598,9 @@ server.tool(
         ],
       };
     }
-    const args = ["gmail", "+send", "--to", to, "--subject", subject, "--body", body];
-    if (cc) args.push("--cc", cc);
-    if (bcc) args.push("--bcc", bcc);
+    const args = ["gmail", "+send", "--to", safeHeaders.to, "--subject", safeHeaders.subject, "--body", body];
+    if (safeHeaders.cc) args.push("--cc", safeHeaders.cc);
+    if (safeHeaders.bcc) args.push("--bcc", safeHeaders.bcc);
     const output = await gwsExec(args);
     return {
       content: [{ type: "text", text: output || "Email sent." }],

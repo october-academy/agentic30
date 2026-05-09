@@ -166,7 +166,15 @@ export async function restoreQuarantinedRecord({
   if (!workspaceRoot || !quarantinePath) {
     throw new Error("restoreQuarantinedRecord requires workspaceRoot and quarantinePath");
   }
-  const safeQuarantinePath = await resolveInsideWorkspaceRealpath(workspaceRoot, quarantinePath);
+  let safeQuarantinePath;
+  try {
+    safeQuarantinePath = await resolveInsideWorkspaceRealpath(workspaceRoot, quarantinePath);
+  } catch (err) {
+    if (err?.code === "ENOENT") {
+      throw new Error("quarantine file no longer exists; refresh and retry");
+    }
+    throw err;
+  }
   // Pre-flight schema check before acquiring locks.
   const valid = RubricAssessmentSchema.safeParse(fixedRecord);
   if (!valid.success) {

@@ -319,7 +319,7 @@ async function handleQuarantineRestoreWithReason(socket, payload) {
     );
     const result = await restoreQuarantinedRecord({
       workspaceRoot,
-      quarantinePath: payload?.quarantinePath,
+      quarantinePath: dump.quarantinePath,
       recordIndex: payload?.recordIndex,
       fixedRecord,
       expectedMtimeMs: payload?.expectedMtimeMs,
