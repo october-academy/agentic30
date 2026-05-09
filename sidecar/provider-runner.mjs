@@ -512,7 +512,6 @@ export function isClaudeMutatingTool(toolName = "") {
     "webfetch",
     "websearch",
   ].some((name) => normalized === name.toLowerCase())
-    || normalized.includes("gws_exec")
     || normalized.includes("gws_gmail_send");
 }
 

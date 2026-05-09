@@ -213,6 +213,7 @@ test("Claude read-only gate treats shell, write, web, and mutating GWS tools as 
   assert.equal(isClaudeMutatingTool("Bash"), true);
   assert.equal(isClaudeMutatingTool("Write"), true);
   assert.equal(isClaudeMutatingTool("mcp__agentic30_sidecar__gws_gmail_send"), true);
+  assert.equal(isClaudeMutatingTool("mcp__agentic30_sidecar__gws_exec"), false);
   assert.equal(isClaudeMutatingTool("mcp__agentic30_sidecar__gws_sheets_read"), false);
   assert.equal(isClaudeMutatingTool("Read"), false);
 });

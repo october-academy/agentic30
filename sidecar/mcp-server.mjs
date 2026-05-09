@@ -38,6 +38,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sidecarRoot = path.resolve(__dirname);
 process.env.AGENTIC30_SIDECAR_ROOT ??= sidecarRoot;
 const workspaceRoot = path.resolve(readArg("--workspace") ?? process.cwd());
+const workspaceRootRealpath = await fs.realpath(workspaceRoot);
 const sessionId = readArg("--session") ?? "unknown";
 const appSupportPath = process.env.AGENTIC30_APP_SUPPORT_PATH
   ? path.resolve(process.env.AGENTIC30_APP_SUPPORT_PATH)
@@ -48,6 +49,10 @@ const appSupportPath = process.env.AGENTIC30_APP_SUPPORT_PATH
       "agentic30",
     );
 const approvedToolExecution = process.env.AGENTIC30_APPROVED_TOOL_EXECUTION === "1";
+const gwsWriteApprovalTimeoutMs = Number.parseInt(
+  process.env.AGENTIC30_GWS_WRITE_APPROVAL_TIMEOUT_MS || "",
+  10,
+) || 5 * 60 * 1000;
 
 const server = new McpServer({
   name: "agentic30",
@@ -112,7 +117,7 @@ server.tool(
                 "get_social_context",
                 ...(GWS_BIN
                   ? [
-                      ...(approvedToolExecution ? ["gws_exec", "gws_gmail_send"] : []),
+                      ...(approvedToolExecution ? ["gws_gmail_send"] : []),
                       "gws_gmail_list",
                       "gws_gmail_read",
                       "gws_drive_list",
@@ -153,7 +158,7 @@ server.tool(
     limit: z.number().int().min(1).max(200).optional(),
   },
   async ({ relativePath = ".", limit = 80 }) => {
-    const targetPath = resolveWorkspacePath(relativePath);
+    const targetPath = await resolveWorkspacePath(relativePath);
     const entries = await fs.readdir(targetPath, { withFileTypes: true });
     const visible = entries
       .filter((entry) => !entry.name.startsWith(".git"))
@@ -189,7 +194,7 @@ server.tool(
     maxChars: z.number().int().min(200).max(20000).optional(),
   },
   async ({ relativePath, maxChars = 8000 }) => {
-    const filePath = resolveWorkspacePath(relativePath);
+    const filePath = await resolveWorkspacePath(relativePath);
     const content = await fs.readFile(filePath, "utf8");
     return {
       content: [
@@ -215,7 +220,7 @@ server.tool(
     if (glob) {
       args.push("-g", glob);
     }
-    args.push(workspaceRoot);
+    args.push(workspaceRootRealpath);
 
     const output = await execCapture("rg", args);
     const lines = output
@@ -285,25 +290,30 @@ server.tool(
       };
     }
 
-    const bipRoot = bipConfig?.workspace?.root || workspaceRoot;
-    const docPath = path.resolve(bipRoot, relativeDocPath);
-
-    // Safety: must stay inside workspace root
+    const bipRoot = path.resolve(bipConfig?.workspace?.root || workspaceRoot);
+    const docPath = path.resolve(bipRoot, relativeDocPath || ".");
     assertInside(bipRoot, docPath, "Path must stay inside the BIP workspace root.");
 
     try {
-      const stat = await fs.stat(docPath);
+      const bipRootRealpath = await fs.realpath(bipRoot);
+      const safeDocPath = await resolveInsideRealpath(
+        bipRootRealpath,
+        docPath,
+        "Path must stay inside the BIP workspace root.",
+      );
+      const stat = await fs.stat(safeDocPath);
 
       if (stat.isDirectory()) {
         if (filename) {
-          const filePath = path.resolve(docPath, filename);
-          assertInside(docPath, filePath, "Path traversal blocked.");
-          const content = await fs.readFile(filePath, "utf8");
+          const filePath = path.resolve(safeDocPath, filename);
+          assertInside(safeDocPath, filePath, "Path traversal blocked.");
+          const safeFilePath = await resolveInsideRealpath(safeDocPath, filePath, "Path traversal blocked.");
+          const content = await fs.readFile(safeFilePath, "utf8");
           return {
             content: [{ type: "text", text: content.slice(0, maxChars) }],
           };
         }
-        const entries = await fs.readdir(docPath);
+        const entries = await fs.readdir(safeDocPath);
         return {
           content: [
             {
@@ -318,7 +328,7 @@ server.tool(
         };
       }
 
-      const content = await fs.readFile(docPath, "utf8");
+      const content = await fs.readFile(safeDocPath, "utf8");
       return {
         content: [{ type: "text", text: content.slice(0, maxChars) }],
       };
@@ -469,25 +479,78 @@ if (GWS_BIN) {
   registerGwsTools();
 }
 
+async function requestGwsGmailSendApproval({ to, subject, body, cc, bcc }) {
+  const question = [
+    "Send Gmail message?",
+    `To: ${to}`,
+    cc ? `Cc: ${cc}` : null,
+    bcc ? `Bcc: ${bcc}` : null,
+    `Subject: ${subject}`,
+    `Body: ${truncateForPreview(body, 180)}`,
+  ].filter(Boolean).join("\n").slice(0, 400);
+  const request = await createUserInputRequest(appSupportPath, {
+    sessionId,
+    toolName: "gws_gmail_send",
+    title: "Approve Gmail send",
+    questions: [
+      {
+        header: "Gmail",
+        question,
+        options: [
+          {
+            label: "Approve send",
+            description: "Send this Gmail message with the shown recipients and body preview.",
+          },
+          {
+            label: "Deny",
+            description: "Do not send this Gmail message.",
+          },
+        ],
+        multiSelect: false,
+        allowFreeText: false,
+      },
+    ],
+  });
+
+  try {
+    const response = await waitForUserInputResponse(appSupportPath, {
+      sessionId,
+      requestId: request.requestId,
+      signal: AbortSignal.timeout(gwsWriteApprovalTimeoutMs),
+    });
+    return {
+      approved: userInputApprovedSend(response),
+      reason: userInputApprovedSend(response) ? "approved" : "denied",
+    };
+  } catch (err) {
+    return {
+      approved: false,
+      reason: err?.name === "AbortError" ? "approval_timeout" : "approval_failed",
+    };
+  } finally {
+    await deleteUserInputArtifacts(appSupportPath, sessionId, request.requestId);
+  }
+}
+
+function userInputApprovedSend(response) {
+  const selected = [
+    ...Object.values(response?.answers || {}),
+    ...(response?.responses || []).flatMap((entry) => entry?.selectedOptions || []),
+  ].map((value) => String(value).trim().toLowerCase());
+  return selected.includes("approve send");
+}
+
+function truncateForPreview(value, max) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(0, max - 3))}...`;
+}
+
 function registerGwsTools() {
 if (approvedToolExecution) {
 server.tool(
-  "gws_exec",
-  "Run any Google Workspace CLI command. Pass the full argument list (e.g. ['gmail', '+send', '--to', 'user@example.com', '--subject', 'Hi', '--body', 'Hello']). Returns JSON output.",
-  {
-    args: z.array(z.string()).min(1),
-  },
-  async ({ args }) => {
-    const output = await gwsExec([...args, "--format", "json"]);
-    return {
-      content: [{ type: "text", text: output || "Command completed with no output." }],
-    };
-  },
-);
-
-server.tool(
   "gws_gmail_send",
-  "Send an email via Gmail.",
+  "Send an email via Gmail after explicit host-app approval.",
   {
     to: z.string().min(1),
     subject: z.string().min(1),
@@ -496,6 +559,21 @@ server.tool(
     bcc: z.string().optional(),
   },
   async ({ to, subject, body, cc, bcc }) => {
+    const approval = await requestGwsGmailSendApproval({ to, subject, body, cc, bcc });
+    if (!approval.approved) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              ok: false,
+              cancelled: true,
+              reason: approval.reason,
+            }, null, 2),
+          },
+        ],
+      };
+    }
     const args = ["gmail", "+send", "--to", to, "--subject", subject, "--body", body];
     if (cc) args.push("--cc", cc);
     if (bcc) args.push("--bcc", bcc);
@@ -900,10 +978,20 @@ function assertInside(parent, resolved, message) {
   }
 }
 
-function resolveWorkspacePath(relativePath) {
+async function resolveWorkspacePath(relativePath) {
   const resolved = path.resolve(workspaceRoot, relativePath);
   assertInside(workspaceRoot, resolved, "Path must stay inside the workspace root.");
-  return resolved;
+  return resolveInsideRealpath(
+    workspaceRootRealpath,
+    resolved,
+    "Path must stay inside the workspace root.",
+  );
+}
+
+async function resolveInsideRealpath(parentRealpath, candidate, message) {
+  const real = await fs.realpath(candidate);
+  assertInside(parentRealpath, real, message);
+  return real;
 }
 
 function readJsonFile(filePath) {

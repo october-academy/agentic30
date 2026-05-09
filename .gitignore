@@ -33,6 +33,7 @@ docs/SOUL.md
 # Daily execution roadmap (private — contains founder time budget and Q3 strategy)
 PLAN.md
 .gstack/
+.agents/
 
 # Local Claude Code agent skills cache (e.g. PostHog wizard scaffold).
 # Reference EXAMPLE.md ships a sample phc_ token; never commit this folder.

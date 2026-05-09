@@ -17,7 +17,7 @@ test("workspace setup request_emit envelopes are host-routed and completion wait
     await fs.writeFile(path.join(harness.workspacePath, "docs", "ICP.md"), "# ICP\n");
     await fs.writeFile(path.join(harness.workspacePath, "docs", "SPEC.md"), "# SPEC\n");
 
-    ws = await connectAndCollect(harness.port);
+    ws = await connectAndCollect(harness);
 
     ws.send(JSON.stringify({
       type: "scan_workspace",
@@ -74,7 +74,7 @@ test("workspace setup failures use the same request_emit envelope shape", async 
   const harness = await spawnSidecar();
   let ws;
   try {
-    ws = await connectAndCollect(harness.port);
+    ws = await connectAndCollect(harness);
     const missingRoot = path.join(harness.workspacePath, "missing");
 
     ws.send(JSON.stringify({
@@ -91,6 +91,42 @@ test("workspace setup failures use the same request_emit envelope shape", async 
     assert.ok(failed.properties.error_name);
   } finally {
     ws?.close();
+    await harness.close();
+  }
+});
+
+test("sidecar rejects unauthenticated websocket clients before ready payload", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    ws = new WebSocket(`ws://127.0.0.1:${harness.port}`);
+    const events = [];
+    ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
+    await onceOpen(ws);
+    ws.send(JSON.stringify({ type: "list_sessions" }));
+    const close = await onceClose(ws);
+    assert.equal(close.code, 1008);
+    assert.equal(events.some((event) => event.type === "ready"), false);
+  } finally {
+    ws?.terminate();
+    await harness.close();
+  }
+});
+
+test("sidecar rejects websocket clients with an invalid auth token", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    ws = new WebSocket(`ws://127.0.0.1:${harness.port}`);
+    const events = [];
+    ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
+    await onceOpen(ws);
+    ws.send(JSON.stringify({ type: "authenticate", authToken: "wrong-token" }));
+    const close = await onceClose(ws);
+    assert.equal(close.code, 1008);
+    assert.equal(events.some((event) => event.type === "ready"), false);
+  } finally {
+    ws?.terminate();
     await harness.close();
   }
 });
@@ -127,7 +163,7 @@ async function spawnSidecar() {
     stderr += String(chunk);
   });
 
-  const port = await new Promise((resolve, reject) => {
+  const ready = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error(`Timed out waiting for sidecar-ready. stderr:\n${stderr}`));
     }, 10_000);
@@ -142,9 +178,9 @@ async function spawnSidecar() {
       for (const line of lines) {
         try {
           const parsed = JSON.parse(line);
-          if (parsed.type === "sidecar-ready" && parsed.port) {
+          if (parsed.type === "sidecar-ready" && parsed.port && parsed.authToken) {
             clearTimeout(timer);
-            resolve(parsed.port);
+            resolve(parsed);
           }
         } catch {
           // Ignore non-ready stdout.
@@ -154,7 +190,8 @@ async function spawnSidecar() {
   });
 
   return {
-    port,
+    port: ready.port,
+    authToken: ready.authToken,
     workspacePath,
     async close() {
       child.kill("SIGTERM");
@@ -167,18 +204,29 @@ async function spawnSidecar() {
   };
 }
 
-async function connectAndCollect(port) {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+async function connectAndCollect(harness) {
+  const ws = new WebSocket(`ws://127.0.0.1:${harness.port}`);
   ws.events = [];
   ws.on("message", (raw) => {
     ws.events.push(JSON.parse(String(raw)));
   });
-  await new Promise((resolve, reject) => {
+  await onceOpen(ws);
+  ws.send(JSON.stringify({ type: "authenticate", authToken: harness.authToken }));
+  await waitForEvent(ws.events, (event) => event.type === "ready");
+  return ws;
+}
+
+function onceOpen(ws) {
+  return new Promise((resolve, reject) => {
     ws.once("open", resolve);
     ws.once("error", reject);
   });
-  await waitForEvent(ws.events, (event) => event.type === "ready");
-  return ws;
+}
+
+function onceClose(ws) {
+  return new Promise((resolve) => {
+    ws.once("close", (code, reason) => resolve({ code, reason: String(reason || "") }));
+  });
 }
 
 async function waitForEvent(events, predicate, timeoutMs = 10_000) {
