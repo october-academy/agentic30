@@ -1,6 +1,6 @@
 # Agentic30 Mac Release Checklist
 
-This checklist is for local dogfood releases of the macOS menu bar app. Public DMG distribution needs additional signing, notarization, updater, and support checks.
+This checklist is for local dogfood releases of the macOS menu bar app. Public Developer ID distribution needs signing, notarization, updater, and support checks for the PKG primary installer plus the DMG fallback/update archive.
 
 ## Dogfood Gate
 
@@ -24,15 +24,17 @@ This checklist is for local dogfood releases of the macOS menu bar app. Public D
 ## Launch Funnel Telemetry
 
 - Use a `go.agentic30.app` short URL for the Threads launch link so PostHog receives `short_link_click` from the URL shortener.
-- After uploading the DMG to GitHub Releases, run `npm run track:release-funnel -- --repo october-academy/agentic30-private --tag <release-tag>` on a short interval during launch day. The script polls `gh api` release asset `download_count` and emits one `dmg_downloaded` event per new DMG download.
-- Confirm the signed app emits `dmg_install_completed` once on first launch, gated on a fresh `agentic30.posthog.distinctId` so existing users who upgrade to this build do not fire the install event.
-- The A4 funnel landed in this slice: `short_link_click` → `dmg_downloaded` → `dmg_install_completed`.
+- After uploading the PKG and DMG to GitHub Releases, run `npm run track:release-funnel -- --repo october-academy/agentic30-private --tag <release-tag>` on a short interval during launch day. The script polls `gh api` release asset `download_count` and emits one `installer_downloaded` event per new PKG/DMG download.
+- Confirm the signed app emits `mac_install_completed` once on first launch, gated on a fresh `agentic30.posthog.distinctId` so existing users who upgrade to this build do not fire the install event. The legacy `dmg_install_completed` event is still emitted for old dashboards.
+- The A4 funnel landed in this slice: `short_link_click` → `installer_downloaded` → `mac_install_completed`.
 - Follow-up (not in this slice): host-routed sidecar telemetry for `workspace_setup_started` / `workspace_setup_failed` / `workspace_setup_completed` to extend the funnel terminator. Track the wiring before defining the workspace-setup step in PostHog so the terminator does not sit at 0%.
 
 ## Public Distribution Blockers
 
 - Developer ID signing and Hardened Runtime.
-- Notarized DMG.
+- Notarized PKG and DMG.
 - Update channel and rollback path.
 - Supportable diagnostics export.
 - Clear privacy copy for local project access, provider calls, and Google proof reads.
+- Fresh macOS user smoke with no local Node.js installed: install PKG, launch, confirm sidecar starts from the bundled runtime and no Gatekeeper “Open Anyway” path is required.
+- Sparkle smoke from an older notarized build installed in `/Applications` to a newer notarized DMG referenced by `https://agentic30.app/appcast.xml`.

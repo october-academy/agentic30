@@ -19,7 +19,7 @@ npm install
 ## Runtime Requirements
 
 - macOS 26.4 SDK target in the current Xcode project.
-- Node.js 20 or newer discoverable through `NODE_BINARY`, common install locations, mise/asdf/Volta shims, or login shell `PATH`.
+- Release builds bundle Node.js for the local sidecar. Local development builds still need Node.js 20 or newer to build the sidecar bundle.
 - At least one authenticated provider:
   - Claude: local Claude Code login or `ANTHROPIC_API_KEY`
   - Codex: local Codex login or `CODEX_API_KEY` / `OPENAI_API_KEY`
@@ -56,7 +56,7 @@ xcodebuild test -project agentic30.xcodeproj -scheme agentic30 -destination 'pla
 
 ## Distribution Posture
 
-The v1 distribution target is direct DMG, not Mac App Store. App Sandbox remains disabled for this track because the app launches a Node child process and needs user-selected workspace access. Hardened Runtime, Developer ID signing, notarization, and updater validation are release blockers before public distribution.
+The v1 distribution target is direct Developer ID distribution, not Mac App Store. The primary public installer is a signed and notarized PKG, with a signed and notarized DMG as the manual-install fallback and Sparkle update archive. App Sandbox remains disabled for this track because the app launches a bundled Node child process and needs user-selected workspace access. Hardened Runtime, Developer ID signing, notarization, and Sparkle updater validation are release blockers before public distribution.
 
 See:
 

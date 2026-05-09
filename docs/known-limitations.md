@@ -4,16 +4,16 @@
 
 | Limitation | Details |
 |---|---|
-| Direct DMG only | The current release plan targets Developer ID signed and notarized DMG distribution. Mac App Store distribution is not supported yet. |
+| Direct Developer ID only | The current release plan targets Developer ID signed and notarized PKG distribution with a DMG fallback. Mac App Store distribution is not supported yet. |
 | App Sandbox disabled | The app launches a Node child process and accesses user-selected workspaces. Full App Sandbox support requires a sidecar architecture redesign. |
-| No automatic updater yet | Sparkle is the selected direct-DMG updater strategy, but it is not wired into the app yet. |
-| Notarization not automated | The release checklist defines the required gates, but there is not yet a scripted archive/notarize/staple pipeline. |
+| Sparkle feed is self-hosted | Sparkle is wired to `https://agentic30.app/appcast.xml`; release operations must publish the generated appcast and update archives there. |
+| Notarization requires Apple credentials | The release script automates archive/notarize/staple checks, but it still requires local Developer ID and App Store Connect credentials. |
 
 ## Runtime
 
 | Limitation | Details |
 |---|---|
-| Node.js required | The app depends on a local Node.js runtime for the sidecar. Preflight fails when Node.js is older than 20 or missing. |
+| Bundled Node.js runtime | Release builds carry Node.js for the sidecar. Development builds still require local Node.js 20+ to build and run from source. |
 | Child process sidecar | The Swift app directly launches `sidecar/index.mjs`. XPC isolation is a future hardening path, not current behavior. |
 | Provider auth is external | Claude and Codex availability depends on local CLI login state or environment API keys. |
 | Diagnostics are manual | Users must copy diagnostics from Settings. Native crash reporting is not implemented yet. |

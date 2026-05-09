@@ -7,7 +7,12 @@
 
 import SwiftUI
 import AppKit
+import Sparkle
 import UserNotifications
+
+extension Notification.Name {
+    static let agenticCheckForUpdatesRequested = Notification.Name("agenticCheckForUpdatesRequested")
+}
 
 @main
 struct agentic30App: App {
@@ -53,9 +58,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let workspaceWindowTitle = "Agentic30 Workspace"
     private var openWorkspaceHandler: (() -> Void)?
     private var pendingWorkspaceOpen = false
+    private lazy var updaterController: SPUStandardUpdaterController? = Self.makeUpdaterController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
+        _ = updaterController
         // Snapshot before capture(), which lazy-generates the distinct id.
         // Pending captures from a prior failed first-launch still flush; this
         // gate only suppresses NEW captureOnce attempts for upgraders.
@@ -64,11 +71,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PostHogTelemetry.flushPendingOnceCaptures()
         if isFirstLaunchEver {
             PostHogTelemetry.captureOnce(
+                "mac_install_completed",
+                onceKey: "mac_install_completed.v1",
+                properties: [
+                    "event_schema_version": 1,
+                    "distribution_channel": "github_pkg",
+                    "source": "mac_first_launch",
+                ],
+                authSession: viewModel.macAuthSession
+            )
+            PostHogTelemetry.captureOnce(
                 "dmg_install_completed",
                 onceKey: "dmg_install_completed.v1",
                 properties: [
                     "event_schema_version": 1,
-                    "distribution_channel": "github_dmg",
+                    "distribution_channel": "github_pkg_or_dmg",
                     "source": "mac_first_launch",
                 ],
                 authSession: viewModel.macAuthSession
@@ -102,6 +119,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             self?.openWorkspaceWindow()
         }
+        NotificationCenter.default.addObserver(
+            forName: .agenticCheckForUpdatesRequested,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.checkForUpdates(nil)
+            }
+        }
 
         #if DEBUG
         if let intent = BipNotificationIntent.uiTestingOpenArgument(in: CommandLine.arguments) {
@@ -128,6 +154,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         PostHogTelemetry.capture("mac_app_terminating")
         viewModel.stop()
+    }
+
+    @objc func checkForUpdates(_ sender: Any?) {
+        guard let updaterController else {
+            let alert = NSAlert()
+            alert.messageText = "Updates are not configured for this build."
+            alert.informativeText = "Release builds must include a Sparkle public EdDSA key."
+            alert.alertStyle = .informational
+            alert.runModal()
+            return
+        }
+        updaterController.checkForUpdates(sender)
     }
 
     func applicationShouldSaveApplicationState(_ sender: NSApplication) -> Bool {
@@ -196,6 +234,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for window in NSApp.windows where window.title == workspaceWindowTitle {
             window.close()
         }
+    }
+
+    private static func makeUpdaterController() -> SPUStandardUpdaterController? {
+        guard let publicKey = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String else {
+            return nil
+        }
+        let trimmedPublicKey = publicKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPublicKey.isEmpty, !trimmedPublicKey.contains("$(") else {
+            return nil
+        }
+        return SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
     }
 
     #if DEBUG

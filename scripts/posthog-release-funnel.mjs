@@ -15,9 +15,9 @@ function parseArgs(argv) {
   const args = {
     repo: process.env.GITHUB_REPOSITORY || DEFAULT_REPO,
     tag: process.env.AGENTIC30_RELEASE_TAG || "",
-    asset: process.env.AGENTIC30_DMG_ASSET_NAME || "",
+    asset: process.env.AGENTIC30_INSTALLER_ASSET_NAME || process.env.AGENTIC30_DMG_ASSET_NAME || "",
     state: process.env.AGENTIC30_RELEASE_FUNNEL_STATE || DEFAULT_STATE_PATH,
-    event: "dmg_downloaded",
+    event: "installer_downloaded",
     source: "github_release_asset",
     dryRun: false,
     maxEvents: 1000,
@@ -58,13 +58,13 @@ function parseArgs(argv) {
 function usage() {
   return `Usage: node scripts/posthog-release-funnel.mjs [options]
 
-Poll GitHub release asset download_count via gh CLI and emit new DMG downloads
-to PostHog as dmg_downloaded events.
+Poll GitHub release asset download_count via gh CLI and emit new installer downloads
+to PostHog as installer_downloaded events.
 
 Options:
   --repo <owner/name>     GitHub repo to inspect (default: ${DEFAULT_REPO})
   --tag <tag>             Release tag. Omit to use latest release.
-  --asset <name>          Exact asset name. Omit to track all .dmg assets.
+  --asset <name>          Exact asset name. Omit to track .pkg and .dmg assets.
   --state <path>          Local state file (default: ${DEFAULT_STATE_PATH})
   --dry-run               Print planned events without sending PostHog captures.
   --max-events <n>        Safety cap per run (default: 1000)
@@ -121,7 +121,10 @@ function selectedAssets(release, assetName = "") {
   if (assetName) {
     return assets.filter((asset) => asset.name === assetName);
   }
-  return assets.filter((asset) => String(asset.name || "").toLowerCase().endsWith(".dmg"));
+  return assets.filter((asset) => {
+    const name = String(asset.name || "").toLowerCase();
+    return name.endsWith(".pkg") || name.endsWith(".dmg");
+  });
 }
 
 function stateKeyForAsset(asset) {
@@ -148,7 +151,7 @@ export function computeDownloadEvents({
   assets,
   previousState = {},
   repo,
-  event = "dmg_downloaded",
+  event = "installer_downloaded",
   source = "github_release_asset",
   maxEvents = 1000,
 }) {
