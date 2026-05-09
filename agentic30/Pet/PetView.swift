@@ -22,7 +22,7 @@ struct PetView: View {
                     NotificationCenter.default.post(name: .agenticPetOpenWorkspaceRequested, object: nil)
                 }
                 Divider()
-                Button("Quit agentic30") {
+                Button("Quit Agentic30") {
                     NSApp.terminate(nil)
                 }
             }

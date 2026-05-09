@@ -34,6 +34,13 @@ struct agentic30App: App {
         }
         .defaultSize(width: 1180, height: 760)
         .windowResizability(.contentMinSize)
+        .commands {
+            CommandGroup(after: .appSettings) {
+                Button("Check for Updates...") {
+                    appDelegate.checkForUpdates(nil)
+                }
+            }
+        }
 
         Settings {
             SettingsView(viewModel: appDelegate.viewModel)
@@ -299,7 +306,7 @@ private struct StatusMenuContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("agentic30")
+            Text("Agentic30")
                 .font(.headline)
 
             Label(

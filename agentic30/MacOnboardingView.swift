@@ -10,10 +10,10 @@ struct MacOnboardingView: View {
     private let scenes = MacOnboardingScene.all
 
     var body: some View {
-        if viewModel.needsProjectWorkspace {
-            workspacePickerStage
-        } else if viewModel.needsOnboardingContext {
+        if viewModel.needsOnboardingContext {
             MacOnboardingContextView(viewModel: viewModel)
+        } else if viewModel.needsProjectWorkspace {
+            workspacePickerStage
         } else {
             onboardingStage
         }
@@ -90,7 +90,7 @@ struct MacOnboardingView: View {
                         .font(.system(size: 34, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.94))
 
-                    Text("agentic30 reads docs, runs agents, and writes strategy files inside this workspace. Pick the repo or project directory you want the assistant to work on.")
+                    Text("Agentic30 reads docs, runs agents, and writes strategy files inside this workspace. Pick the repo or project directory you want the assistant to work on.")
                         .font(.system(size: 17, weight: .medium, design: .rounded))
                         .foregroundStyle(.white.opacity(0.58))
                         .lineSpacing(4)
@@ -325,7 +325,7 @@ private struct MacOnboardingScene: Hashable {
 
     static let all: [MacOnboardingScene] = [
         MacOnboardingScene(
-            title: "Welcome to agentic30",
+            title: "Welcome to Agentic30",
             subtitle: "혼자 제품을 만들 때 오늘 무엇을 해야 할지 함께 정리해주는 Mac assistant입니다.",
             visual: .mark,
             visualColors: [
