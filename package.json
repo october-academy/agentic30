@@ -20,6 +20,9 @@
     "sync:alignment": "node scripts/sync-alignment-sources.mjs",
     "check:public-safety": "node scripts/check-public-safety.mjs",
     "check:alignment-leak": "node scripts/check-alignment-leak.mjs",
+    "scan:secrets:gh": "bash scripts/scan-secrets-gh.sh",
+    "hooks:install": "git config core.hooksPath scripts/git-hooks",
+    "hooks:uninstall": "git config --unset core.hooksPath",
     "test:sidecar": "node --test sidecar-tests/**/*.test.mjs"
   },
   "dependencies": {

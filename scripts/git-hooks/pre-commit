@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+npm run check:public-safety
+
+if ! command -v trufflehog >/dev/null 2>&1; then
+  echo "ERROR: trufflehog is required by the agentic30 pre-commit hook." >&2
+  echo "Install it with 'brew install trufflehog', or disable the opt-in hook with:" >&2
+  echo "  git config --unset core.hooksPath" >&2
+  exit 2
+fi
+
+staged_paths_file="$(mktemp)"
+trap 'rm -f "$staged_paths_file"' EXIT
+
+git diff --cached --name-only --diff-filter=ACMR -z -- \
+  ':(exclude)package-lock.json' > "$staged_paths_file"
+
+if [ ! -s "$staged_paths_file" ]; then
+  exit 0
+fi
+
+xargs -0 trufflehog filesystem \
+  --results=verified,unknown \
+  --fail \
+  --fail-on-scan-errors \
+  --no-update < "$staged_paths_file"
