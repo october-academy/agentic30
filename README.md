@@ -44,9 +44,21 @@ Live canaries are opt-in:
 ## Contributor Checks
 
 ```bash
+npm run check:public-safety
 npm run test:sidecar
 xcodebuild test -project agentic30.xcodeproj -scheme agentic30 -destination 'platform=macOS'
 ```
+
+Optional local secret scanning:
+
+```bash
+brew install trufflehog gh
+gh auth login
+npm run scan:secrets:gh
+npm run hooks:install
+```
+
+`scan:secrets:gh` uses GitHub CLI to resolve the repository default branch and runs TruffleHog against the local git diff from that branch. `hooks:install` opts this checkout into the versioned pre-commit hook under `scripts/git-hooks/`; it is not enabled automatically because git hooks are local developer environment state.
 
 ## Assistant Commands
 
