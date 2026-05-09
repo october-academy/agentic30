@@ -20,6 +20,7 @@ if [ ! -s "$staged_paths_file" ]; then
   exit 0
 fi
 
+trufflehog --version
 xargs -0 trufflehog filesystem \
   --results=verified,unknown \
   --fail \
