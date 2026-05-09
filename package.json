@@ -18,6 +18,7 @@
     "track:release-funnel": "node scripts/posthog-release-funnel.mjs",
     "sync:gstack": "node scripts/sync-gstack.mjs",
     "sync:alignment": "node scripts/sync-alignment-sources.mjs",
+    "check:public-safety": "node scripts/check-public-safety.mjs",
     "check:alignment-leak": "node scripts/check-alignment-leak.mjs",
     "test:sidecar": "node --test sidecar-tests/**/*.test.mjs"
   },

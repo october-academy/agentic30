@@ -33,10 +33,8 @@ test("bootstrap free-text submission starts a provider stream", async () => {
 
   try {
     const ready = await readSidecarReady(child);
-    ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
     const events = [];
-    ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
-    await onceOpen(ws);
+    ws = await connectAuthenticated(ready, events);
 
     ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.4-mini" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
@@ -115,10 +113,8 @@ test("Day 1 cached ICP coaching uses instant_chat and completes under 1s without
 
   try {
     const ready = await readSidecarReady(child);
-    ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
     const events = [];
-    ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
-    await onceOpen(ws);
+    ws = await connectAuthenticated(ready, events);
 
     ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.4-mini" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
@@ -192,10 +188,8 @@ test("configured doc path questions answer immediately from BIP manifest", async
 
   try {
     const ready = await readSidecarReady(child);
-    ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
     const events = [];
-    ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
-    await onceOpen(ws);
+    ws = await connectAuthenticated(ready, events);
 
     ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.4-mini" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
@@ -274,10 +268,8 @@ test("structured IDD continuation prompt uses agentic route for Codex MCP tools"
 
   try {
     const ready = await readSidecarReady(child);
-    ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
     const events = [];
-    ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
-    await onceOpen(ws);
+    ws = await connectAuthenticated(ready, events);
 
     ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.4-mini" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
@@ -354,10 +346,8 @@ test("Codex IDD queue starts non-ICP docs with host-side structured input and no
 
   try {
     const ready = await readSidecarReady(child);
-    ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
     const events = [];
-    ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
-    await onceOpen(ws);
+    ws = await connectAuthenticated(ready, events);
 
     ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.4-mini" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
@@ -433,10 +423,8 @@ test("BIP setup auto-start returns local mission choices before docs are fully r
 
   try {
     const ready = await readSidecarReady(child);
-    ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
     const events = [];
-    ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
-    await onceOpen(ws);
+    ws = await connectAuthenticated(ready, events);
 
     ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.4-mini" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
@@ -540,10 +528,8 @@ test("Day 1 ICP sidecar timing instrumentation records a five-turn local convers
 
   try {
     const ready = await readSidecarReady(child);
-    ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
     const events = [];
-    ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
-    await onceOpen(ws);
+    ws = await connectAuthenticated(ready, events);
 
     ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.4-mini" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
@@ -641,10 +627,8 @@ test("Day 1 ICP user completes a five-turn live Codex SDK conversation", {
 
   try {
     const ready = await readSidecarReady(child);
-    ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
     const events = [];
-    ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
-    await onceOpen(ws);
+    ws = await connectAuthenticated(ready, events);
 
     ws.send(JSON.stringify({
       type: "create_session",
@@ -765,7 +749,12 @@ function readSidecarReady(child) {
       for (const line of buffer.split("\n")) {
         if (!line.trim()) continue;
         const parsed = JSON.parse(line);
-        if (parsed.type === "sidecar-ready") {
+        if (
+          parsed.type === "sidecar-ready"
+          && Number.isFinite(parsed.port)
+          && typeof parsed.authToken === "string"
+          && parsed.authToken.length > 0
+        ) {
           clearTimeout(timer);
           resolve(parsed);
         }
@@ -783,6 +772,15 @@ function onceOpen(ws) {
     ws.once("open", resolve);
     ws.once("error", reject);
   });
+}
+
+async function connectAuthenticated(ready, events) {
+  const ws = new WebSocket(`ws://127.0.0.1:${ready.port}`);
+  ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
+  await onceOpen(ws);
+  ws.send(JSON.stringify({ type: "authenticate", authToken: ready.authToken }));
+  await waitForEvent(events, (event) => event.type === "ready");
+  return ws;
 }
 
 async function closeWebSocket(ws) {

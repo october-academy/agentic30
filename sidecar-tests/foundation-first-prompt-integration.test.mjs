@@ -124,7 +124,7 @@ test("Sub-AC 4 :: every Day 0..7 round-trips a valid foundation_first_prompt env
   const harness = await spawnSidecar();
   let ws;
   try {
-    ws = await connectAndAwaitReady(harness.port);
+    ws = await connectAndAwaitReady(harness);
     const events = [];
     ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
 
@@ -251,7 +251,7 @@ test("Sub-AC 4 :: out-of-range days fail closed with an error envelope (no first
   const harness = await spawnSidecar();
   let ws;
   try {
-    ws = await connectAndAwaitReady(harness.port);
+    ws = await connectAndAwaitReady(harness);
     const events = [];
     ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
 
@@ -296,7 +296,7 @@ test("Sub-AC 4 :: dynamicVariables flow through transport (Day 1 substitution + 
   const harness = await spawnSidecar();
   let ws;
   try {
-    ws = await connectAndAwaitReady(harness.port);
+    ws = await connectAndAwaitReady(harness);
     const events = [];
     ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
 
@@ -438,9 +438,9 @@ async function spawnSidecar() {
     stderr += String(chunk);
   });
 
-  let port;
+  let ready;
   try {
-    port = await readSidecarPort(child);
+    ready = await readSidecarReady(child);
   } catch (error) {
     await terminateChild(child);
     await fs.rm(workspaceRoot, { recursive: true, force: true });
@@ -451,7 +451,8 @@ async function spawnSidecar() {
   }
 
   return {
-    port,
+    port: ready.port,
+    authToken: ready.authToken,
     child,
     async dispose() {
       await terminateChild(child);
@@ -461,7 +462,7 @@ async function spawnSidecar() {
   };
 }
 
-function readSidecarPort(child) {
+function readSidecarReady(child) {
   return new Promise((resolve, reject) => {
     let buffer = "";
     const timer = setTimeout(
@@ -481,10 +482,15 @@ function readSidecarPort(child) {
         } catch {
           continue;
         }
-        if (parsed?.type === "sidecar-ready" && Number.isFinite(parsed.port)) {
+        if (
+          parsed?.type === "sidecar-ready"
+          && Number.isFinite(parsed.port)
+          && typeof parsed.authToken === "string"
+          && parsed.authToken.length > 0
+        ) {
           clearTimeout(timer);
           child.stdout.off("data", onData);
-          resolve(parsed.port);
+          resolve(parsed);
           return;
         }
       }
@@ -497,12 +503,13 @@ function readSidecarPort(child) {
   });
 }
 
-async function connectAndAwaitReady(port) {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+async function connectAndAwaitReady(harness) {
+  const ws = new WebSocket(`ws://127.0.0.1:${harness.port}`);
   await new Promise((resolve, reject) => {
     ws.once("open", resolve);
     ws.once("error", reject);
   });
+  ws.send(JSON.stringify({ type: "authenticate", authToken: harness.authToken }));
   // Drain the initial `ready` envelope the sidecar emits on connection so
   // it does not pollute the event log we walk through below.
   await new Promise((resolve, reject) => {

@@ -3,7 +3,7 @@ import fsSync from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { query } from "@anthropic-ai/claude-agent-sdk";
@@ -173,6 +173,7 @@ const appSupportPath = process.env.AGENTIC30_APP_SUPPORT_PATH
 const sessionsFilePath = path.join(appSupportPath, "sessions.json");
 const bipCoachFilePath = path.join(appSupportPath, "bip-coach-state.json");
 const internalMcpServerName = "agentic30_sidecar";
+const sidecarAuthToken = randomBytes(32).toString("base64url");
 const BIP_TEMPLATE_DOC_ID = process.env.AGENTIC30_BIP_TEMPLATE_DOC_ID || "1EoQIaByJd5Aq8ENbgEfxHKKJsZsup7d5gJxcT7uqNeA";
 const BIP_TEMPLATE_SHEET_ID = process.env.AGENTIC30_BIP_TEMPLATE_SHEET_ID || "16NkGIe8K9NZiLy4O81zyXKVeQ72nvBGSZ0YBQaBr0sA";
 const WORKSPACE_SCAN_CLAUDE_MODEL = "claude-haiku-4-5";
@@ -308,7 +309,7 @@ async function handleQuarantineRestoreWithReason(socket, payload) {
     // The sanitized entry from MCP/Mac path drops `original` for privacy. We
     // need the raw original to preserve scores — read directly here.
     const rawDump = JSON.parse(
-      await (await import("node:fs/promises")).readFile(payload.quarantinePath, "utf8"),
+      await (await import("node:fs/promises")).readFile(dump.quarantinePath, "utf8"),
     );
     const rawEntry = rawDump.records?.[payload.recordIndex];
     if (!rawEntry) throw new Error("raw quarantine entry missing");
@@ -318,7 +319,7 @@ async function handleQuarantineRestoreWithReason(socket, payload) {
     );
     const result = await restoreQuarantinedRecord({
       workspaceRoot,
-      quarantinePath: payload?.quarantinePath,
+      quarantinePath: dump.quarantinePath,
       recordIndex: payload?.recordIndex,
       fixedRecord,
       expectedMtimeMs: payload?.expectedMtimeMs,
@@ -427,7 +428,49 @@ let shutdownStarted = false;
 let clientDisconnectTimer = null;
 const parentProcessPoll = startParentProcessPoll();
 
-wss.on("connection", (socket) => {
+wss.on("connection", (socket, request) => {
+  if (!isAllowedWebSocketOrigin(request?.headers?.origin)) {
+    socket.close(1008, "Origin not allowed.");
+    return;
+  }
+
+  let authenticated = false;
+  const authTimer = setTimeout(() => {
+    if (!authenticated) {
+      socket.close(1008, "Authentication required.");
+    }
+  }, 5_000);
+  authTimer.unref?.();
+
+  socket.once("message", async (raw) => {
+    let payload;
+    try {
+      payload = JSON.parse(String(raw));
+    } catch {
+      socket.close(1008, "Invalid authentication payload.");
+      return;
+    }
+
+    if (payload?.type !== "authenticate" || payload?.authToken !== sidecarAuthToken) {
+      socket.close(1008, "Authentication failed.");
+      return;
+    }
+
+    authenticated = true;
+    clearTimeout(authTimer);
+    registerAuthenticatedClient(socket);
+  });
+
+  socket.on("close", () => {
+    clearTimeout(authTimer);
+    if (authenticated) {
+      state.clients.delete(socket);
+      scheduleShutdownWhenClientless();
+    }
+  });
+});
+
+function registerAuthenticatedClient(socket) {
   clearClientDisconnectTimer();
   state.clients.add(socket);
   const environment = getEnvironmentSummary();
@@ -470,18 +513,13 @@ wss.on("connection", (socket) => {
       });
     }
   });
-
-  socket.on("close", () => {
-    state.clients.delete(socket);
-    scheduleShutdownWhenClientless();
-  });
-});
+}
 
 wss.on("listening", () => {
   const address = wss.address();
   const port = typeof address === "object" && address ? address.port : 0;
   process.stdout.write(
-    `${JSON.stringify({ type: "sidecar-ready", port, pid: process.pid })}\n`,
+    `${JSON.stringify({ type: "sidecar-ready", port, pid: process.pid, authToken: sidecarAuthToken })}\n`,
   );
   if (process.env.AGENTIC30_DISABLE_QMD_BOOTSTRAP !== "1") {
     setTimeout(bootstrapQmdMemoryCollections, 0);
@@ -549,6 +587,17 @@ function clearClientDisconnectTimer() {
   }
   clearTimeout(clientDisconnectTimer);
   clientDisconnectTimer = null;
+}
+
+function isAllowedWebSocketOrigin(origin) {
+  if (!origin) return true;
+  try {
+    const parsed = new URL(String(origin));
+    return (parsed.protocol === "http:" || parsed.protocol === "https:")
+      && ["127.0.0.1", "localhost", "::1", "[::1]"].includes(parsed.hostname);
+  } catch {
+    return false;
+  }
 }
 
 async function handleClientMessage(socket, payload) {
@@ -4213,47 +4262,6 @@ function observeBipCoachToolEvent(event, {
     }
   }
 
-  if (normalizedName.includes("gws_exec")) {
-    if (event?.phase === "use") {
-      if (payloadLooksLikeSheetValuesRead(payload)) {
-        toolUsage.sheetValuesRequested = true;
-        onEvidenceProgress?.("reading_sheet", "Agent가 gws CLI로 SNS 기록 Sheet 전체 범위를 읽는 중", {
-          provider,
-        });
-      }
-      if (payloadLooksLikeDocRead(payload)) {
-        toolUsage.docRequested = true;
-        onEvidenceProgress?.("reading_doc", "Agent가 gws CLI로 업무일지 Doc 전체 payload를 읽는 중", {
-          provider,
-        });
-      }
-      return;
-    }
-    if (event?.phase === "result") {
-      if (toolUsage.sheetValuesRequested || payloadText.includes("\"values\"")) {
-        toolUsage.sheetValuesRead = true;
-      }
-      if (toolUsage.docRequested || payloadText.includes("\"body\"")) {
-        toolUsage.docRead = true;
-      }
-    }
-  }
-}
-
-function payloadLooksLikeSheetValuesRead(payload) {
-  const text = typeof payload === "string" ? payload : JSON.stringify(payload ?? {});
-  return text.includes("sheets")
-    && text.includes("spreadsheets")
-    && text.includes("values")
-    && text.includes("get")
-    && payloadHasFullSheetRange(payload);
-}
-
-function payloadLooksLikeDocRead(payload) {
-  const text = typeof payload === "string" ? payload : JSON.stringify(payload ?? {});
-  return text.includes("docs")
-    && text.includes("documents")
-    && text.includes("get");
 }
 
 function payloadHasSheetRange(payload) {

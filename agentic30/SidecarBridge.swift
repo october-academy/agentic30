@@ -178,13 +178,18 @@ final class SidecarBridge {
                   let type = ready["type"] as? String
             else { continue }
 
-            if type == "sidecar-ready", let port = ready["port"] as? Int {
-                connect(to: port)
+            if type == "sidecar-ready",
+               let port = ready["port"] as? Int,
+               let authToken = ready["authToken"] as? String,
+               !authToken.isEmpty {
+                connect(to: port, authToken: authToken)
+            } else if type == "sidecar-ready" {
+                emit(type: "error", message: "Sidecar did not provide an authentication token.")
             }
         }
     }
 
-    private func connect(to port: Int) {
+    private func connect(to port: Int, authToken: String) {
         guard webSocket == nil else { return }
         didConnect = true
         PostHogTelemetry.capture("mac_sidecar_socket_connecting", properties: [
@@ -194,8 +199,29 @@ final class SidecarBridge {
         let task = URLSession.shared.webSocketTask(with: url)
         task.resume()
         webSocket = task
+        authenticate(task: task, authToken: authToken)
         receiveTask = Task { [weak self] in
             await self?.receiveLoop()
+        }
+    }
+
+    private func authenticate(task: URLSessionWebSocketTask, authToken: String) {
+        let payload: [String: Any] = [
+            "type": "authenticate",
+            "authToken": authToken,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
+              let text = String(data: data, encoding: .utf8)
+        else { return }
+
+        task.send(.string(text)) { [weak self] error in
+            if let error {
+                PostHogTelemetry.captureException(error, properties: [
+                    "component": "sidecar_bridge",
+                    "operation": "authenticate",
+                ])
+                self?.emit(type: "error", message: "Sidecar authentication failed: \(error.localizedDescription)")
+            }
         }
     }
 

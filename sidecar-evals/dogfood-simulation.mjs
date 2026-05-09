@@ -120,6 +120,8 @@ async function runScenarioInIsolatedSidecar({
       events.push(event);
     });
     await onceOpen(ws);
+    ws.send(JSON.stringify({ type: "authenticate", authToken: ready.authToken }));
+    await waitForEvent(events, (event) => event.type === "ready", 30_000);
 
     ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.4-mini" }));
     const created = await waitForEvent(events, (event) => event.type === "session_created", 30_000);
@@ -1366,7 +1368,12 @@ function readSidecarReady(child) {
       for (const line of lines) {
         if (!line.trim()) continue;
         const parsed = JSON.parse(line);
-        if (parsed.type === "sidecar-ready") {
+        if (
+          parsed.type === "sidecar-ready"
+          && Number.isFinite(parsed.port)
+          && typeof parsed.authToken === "string"
+          && parsed.authToken.length > 0
+        ) {
           clearTimeout(timer);
           resolve(parsed);
         }

@@ -104,6 +104,24 @@ test("restoreQuarantinedRecord rejects fixedRecord that still fails schema", asy
   );
 });
 
+test("restoreQuarantinedRecord maps missing quarantine realpath to retryable error", async () => {
+  const { root, agentic } = await tempWorkspace();
+  const fixed = { ...legacyDay30Record(), axes: { ...legacyDay30Record().axes } };
+  for (const axis of Object.keys(fixed.axes)) {
+    fixed.axes[axis] = { ...fixed.axes[axis], no_evidence_reason: "still baseline" };
+  }
+
+  await assert.rejects(
+    restoreQuarantinedRecord({
+      workspaceRoot: root,
+      quarantinePath: path.join(agentic, "missing.invalid.json"),
+      recordIndex: 0,
+      fixedRecord: fixed,
+    }),
+    /quarantine file no longer exists; refresh and retry/,
+  );
+});
+
 test("restoreQuarantinedRecord enforces optimistic concurrency via expectedMtimeMs", async () => {
   const { root, agentic } = await tempWorkspace();
   const sourceFile = path.join(agentic, "rubric-assessments.json");

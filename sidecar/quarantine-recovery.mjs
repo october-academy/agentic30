@@ -33,6 +33,19 @@ export function assertInsideWorkspace(workspaceRoot, candidate) {
   }
 }
 
+export async function resolveInsideWorkspaceRealpath(workspaceRoot, candidate) {
+  assertInsideWorkspace(workspaceRoot, candidate);
+  const [rootRealpath, targetRealpath] = await Promise.all([
+    fs.realpath(workspaceRoot),
+    fs.realpath(candidate),
+  ]);
+  const rel = path.relative(rootRealpath, targetRealpath);
+  if (rel === "" || rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel)) {
+    throw new Error(`quarantine path must stay inside the workspace (${candidate})`);
+  }
+  return targetRealpath;
+}
+
 export async function listQuarantinedFiles({
   workspaceRoot,
   agenticDir = AGENTIC_DIR,
@@ -122,14 +135,15 @@ export async function readQuarantineDump({ workspaceRoot, quarantinePath } = {})
   if (!workspaceRoot || !quarantinePath) {
     throw new Error("readQuarantineDump requires workspaceRoot and quarantinePath");
   }
-  assertInsideWorkspace(workspaceRoot, quarantinePath);
-  const raw = await fs.readFile(quarantinePath, "utf8");
+  const safeQuarantinePath = await resolveInsideWorkspaceRealpath(workspaceRoot, quarantinePath);
+  const raw = await fs.readFile(safeQuarantinePath, "utf8");
   const parsed = JSON.parse(raw);
   if (!Array.isArray(parsed?.records)) {
     throw new Error("quarantine dump missing records array");
   }
-  const stat = await fs.stat(quarantinePath);
+  const stat = await fs.stat(safeQuarantinePath);
   return {
+    quarantinePath: safeQuarantinePath,
     sourceFile: typeof parsed.sourceFile === "string" ? parsed.sourceFile : null,
     quarantinedAt: typeof parsed.quarantinedAt === "string" ? parsed.quarantinedAt : null,
     mtimeMs: stat.mtimeMs,
@@ -152,7 +166,15 @@ export async function restoreQuarantinedRecord({
   if (!workspaceRoot || !quarantinePath) {
     throw new Error("restoreQuarantinedRecord requires workspaceRoot and quarantinePath");
   }
-  assertInsideWorkspace(workspaceRoot, quarantinePath);
+  let safeQuarantinePath;
+  try {
+    safeQuarantinePath = await resolveInsideWorkspaceRealpath(workspaceRoot, quarantinePath);
+  } catch (err) {
+    if (err?.code === "ENOENT") {
+      throw new Error("quarantine file no longer exists; refresh and retry");
+    }
+    throw err;
+  }
   // Pre-flight schema check before acquiring locks.
   const valid = RubricAssessmentSchema.safeParse(fixedRecord);
   if (!valid.success) {
@@ -161,10 +183,10 @@ export async function restoreQuarantinedRecord({
       .join("; ");
     throw new Error(`fixedRecord still invalid: ${issues}`);
   }
-  return withFileLock(quarantinePath, async () => {
+  return withFileLock(safeQuarantinePath, async () => {
     let stat;
     try {
-      stat = await fs.stat(quarantinePath);
+      stat = await fs.stat(safeQuarantinePath);
     } catch (err) {
       if (err.code === "ENOENT") {
         throw new Error("quarantine file no longer exists; refresh and retry");
@@ -175,7 +197,7 @@ export async function restoreQuarantinedRecord({
     if (typeof expectedMtimeMs === "number" && stat.mtimeMs !== expectedMtimeMs) {
       throw new Error("quarantine file changed since list; refresh and retry");
     }
-    const dump = JSON.parse(await fs.readFile(quarantinePath, "utf8"));
+    const dump = JSON.parse(await fs.readFile(safeQuarantinePath, "utf8"));
     const records = Array.isArray(dump.records) ? dump.records : [];
     if (!Number.isInteger(recordIndex) || recordIndex < 0 || recordIndex >= records.length) {
       throw new Error("recordIndex out of range");
@@ -206,14 +228,14 @@ export async function restoreQuarantinedRecord({
     // in the store). Now consume the quarantine entry.
     const remaining = records.filter((_, i) => i !== recordIndex);
     if (remaining.length === 0) {
-      await fs.unlink(quarantinePath);
+      await fs.unlink(safeQuarantinePath);
     } else {
-      await atomicWriteJson(quarantinePath, { ...dump, records: remaining });
+      await atomicWriteJson(safeQuarantinePath, { ...dump, records: remaining });
     }
     return {
       restoredSessionId: valid.data.sessionId,
       remainingInvalidCount: remaining.length,
-      quarantinePath,
+      quarantinePath: safeQuarantinePath,
       duplicateAvoided: canonicalDuplicateAvoided,
     };
   });
