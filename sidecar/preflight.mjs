@@ -62,7 +62,7 @@ function checkNodeVersion(version) {
     title: "Node.js runtime is supported",
     status: "failed",
     message: version ? `Unsupported Node.js ${version}` : "Node.js version is unknown",
-    recovery: "Install Node.js 20 or newer and restart agentic30.",
+    recovery: "Reinstall agentic30 or rebuild the Mac package so the bundled Node.js runtime is present.",
   };
 }
 

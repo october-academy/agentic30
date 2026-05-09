@@ -3,6 +3,45 @@ import Testing
 @testable import agentic30
 
 struct NodeExecutableResolverTests {
+    @Test func prefersBundledNodeRuntime() throws {
+        let resolver = NodeExecutableResolver(
+            environment: [
+                "NODE_BINARY": "/custom/node",
+                "PATH": "/usr/bin:/bin",
+            ],
+            homeDirectory: "/Users/tester",
+            shellLookup: { "/shell/node" },
+            isExecutable: { $0 == "/app/Contents/Resources/sidecar/runtime/node-darwin-arm64/bin/node" },
+            directoryContentsProvider: { _ in [] },
+            bundledNodeCandidates: {
+                ["/app/Contents/Resources/sidecar/runtime/node-darwin-arm64/bin/node"]
+            }
+        )
+
+        let nodeURL = try resolver.resolve()
+        let environment = resolver.makeEnvironment(nodeURL: nodeURL)
+
+        #expect(nodeURL.path == "/app/Contents/Resources/sidecar/runtime/node-darwin-arm64/bin/node")
+        #expect(environment["PATH"] == "/app/Contents/Resources/sidecar/runtime/node-darwin-arm64/bin:/usr/bin:/bin")
+    }
+
+    @Test func fallsBackWhenBundledNodeRuntimeIsMissing() throws {
+        let resolver = NodeExecutableResolver(
+            environment: ["NODE_BINARY": "/custom/node"],
+            homeDirectory: "/Users/tester",
+            shellLookup: { nil },
+            isExecutable: { $0 == "/custom/node" },
+            directoryContentsProvider: { _ in [] },
+            bundledNodeCandidates: {
+                ["/app/Contents/Resources/sidecar/runtime/node-darwin-arm64/bin/node"]
+            }
+        )
+
+        let nodeURL = try resolver.resolve()
+
+        #expect(nodeURL.path == "/custom/node")
+    }
+
     @Test func prefersExplicitNodeBinaryAndPrependsPath() throws {
         let resolver = NodeExecutableResolver(
             environment: [

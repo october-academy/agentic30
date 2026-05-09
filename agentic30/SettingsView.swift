@@ -346,6 +346,7 @@ struct SettingsView: View {
             subtitle: "The macOS app runs in local mode. No web account is required."
         ) {
             accountConnectionSection
+            appUpdatesSection
             agentModelsSection
         }
     }
@@ -402,6 +403,35 @@ struct SettingsView: View {
                 .background(Capsule().fill(color.opacity(destructive ? 0.10 : 0.14)))
         }
         .buttonStyle(.plain)
+    }
+
+    private var appUpdatesSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            sectionHeader(title: "Updates", configured: true)
+
+            Text("Agentic30 checks the signed update feed in the background. You can also check manually.")
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.48))
+
+            Button {
+                NotificationCenter.default.post(name: .agenticCheckForUpdatesRequested, object: nil)
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("Check for Updates...")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                }
+                .foregroundStyle(.white.opacity(0.9))
+                .padding(.horizontal, 18)
+                .padding(.vertical, 10)
+                .background(Capsule().fill(Color.white.opacity(0.16)))
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("settings.updates.checkForUpdates")
+        }
+        .padding(20)
+        .background(cardBackground)
     }
 
     private var agentModelsSection: some View {

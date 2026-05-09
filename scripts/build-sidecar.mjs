@@ -5,7 +5,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { cp, mkdir, readFile, rm, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, readFile, rm, readdir, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -18,6 +18,21 @@ const BUILD_STAMP = path.join(BUILD_DIR, ".build-stamp.json");
 const SOURCE_NODE_MODULES = path.join(PACKAGE_ROOT, "node_modules");
 const DIST_NODE_MODULES = path.join(DIST_DIR, "node_modules");
 const LOCAL_BUN_BIN = path.join(PACKAGE_ROOT, "node_modules", ".bin", "bun");
+const NODE_RUNTIME_CACHE_DIR = path.join(PACKAGE_ROOT, ".omx", "node-runtime");
+const NODE_RUNTIME_VERSION = "24.15.0";
+
+const NODE_RUNTIME_ARCHIVES = [
+  {
+    arch: "arm64",
+    archive: `node-v${NODE_RUNTIME_VERSION}-darwin-arm64.tar.gz`,
+    sha256: "372331b969779ab5d15b949884fc6eaf88d5afe87bde8ba881d6400b9100ffc4",
+  },
+  {
+    arch: "x64",
+    archive: `node-v${NODE_RUNTIME_VERSION}-darwin-x64.tar.gz`,
+    sha256: "ffd5ee293467927f3ee731a553eb88fd1f48cf74eebc2d74a6babe4af228673b",
+  },
+];
 
 const ENTRY_POINTS = [
   "index.mjs",
@@ -163,6 +178,69 @@ async function copyPackage(pkg, src) {
   await cp(src, dest, { recursive: true, dereference: false });
 }
 
+async function ensureBundledNodeRuntime() {
+  const runtimeRoot = path.join(DIST_DIR, "runtime");
+  await mkdir(runtimeRoot, { recursive: true });
+
+  for (const runtime of NODE_RUNTIME_ARCHIVES) {
+    const archivePath = await cachedNodeRuntimeArchive(runtime);
+    const extractRoot = path.join(BUILD_DIR, `node-runtime-${runtime.arch}`);
+    const extractedDir = path.join(
+      extractRoot,
+      runtime.archive.replace(/\.tar\.gz$/, "")
+    );
+    const sourceNode = path.join(extractedDir, "bin", "node");
+    const destinationNode = path.join(
+      runtimeRoot,
+      `node-darwin-${runtime.arch}`,
+      "bin",
+      "node"
+    );
+
+    await rm(extractRoot, { recursive: true, force: true });
+    await mkdir(extractRoot, { recursive: true });
+    await run("/usr/bin/tar", ["-xzf", archivePath, "-C", extractRoot], PACKAGE_ROOT);
+    await mkdir(path.dirname(destinationNode), { recursive: true });
+    await cp(sourceNode, destinationNode, { dereference: true });
+    await chmod(destinationNode, 0o755);
+  }
+}
+
+async function cachedNodeRuntimeArchive(runtime) {
+  const cacheDir = path.join(NODE_RUNTIME_CACHE_DIR, `v${NODE_RUNTIME_VERSION}`);
+  const archivePath = path.join(cacheDir, runtime.archive);
+  await mkdir(cacheDir, { recursive: true });
+
+  if (existsSync(archivePath) && await fileMatchesSha256(archivePath, runtime.sha256)) {
+    return archivePath;
+  }
+
+  const url = `https://nodejs.org/dist/v${NODE_RUNTIME_VERSION}/${runtime.archive}`;
+  console.log(`[build-sidecar] downloading ${runtime.archive}`);
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`download failed for ${url}: ${response.status} ${response.statusText}`);
+  }
+  await writeFile(archivePath, Buffer.from(await response.arrayBuffer()));
+
+  if (!await fileMatchesSha256(archivePath, runtime.sha256)) {
+    await rm(archivePath, { force: true });
+    throw new Error(`checksum mismatch for ${runtime.archive}`);
+  }
+
+  return archivePath;
+}
+
+async function fileMatchesSha256(file, expected) {
+  try {
+    const hash = createHash("sha256");
+    hash.update(await readFile(file));
+    return hash.digest("hex") === expected;
+  } catch {
+    return false;
+  }
+}
+
 async function readPackageJson(packageRoot) {
   try {
     return JSON.parse(await readFile(path.join(packageRoot, "package.json"), "utf8"));
@@ -199,6 +277,8 @@ async function computeBuildFingerprint() {
       nonDarwinPlatforms: NON_DARWIN_PLATFORMS,
       nativeBuildArtifactDirs: [...NATIVE_BUILD_ARTIFACT_DIRS],
       nativeBuildArtifactExtensions: [...NATIVE_BUILD_ARTIFACT_EXTENSIONS],
+      nodeRuntimeVersion: NODE_RUNTIME_VERSION,
+      nodeRuntimeArchives: NODE_RUNTIME_ARCHIVES,
     })
   );
 
@@ -352,6 +432,8 @@ async function main() {
   await bundle();
   console.log("[build-sidecar] copying external packages...");
   await copyExternals();
+  console.log("[build-sidecar] bundling Node.js runtime...");
+  await ensureBundledNodeRuntime();
   console.log("[build-sidecar] stripping non-darwin native binaries...");
   await stripNonDarwinBinaries(DIST_NODE_MODULES);
   console.log("[build-sidecar] stripping native build artifacts...");

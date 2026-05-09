@@ -10,6 +10,23 @@ struct NodeExecutableResolver {
     let shellLookup: ShellLookup
     let isExecutable: ExecutableCheck
     let directoryContentsProvider: DirectoryContentsProvider
+    let bundledNodeCandidates: () -> [String]
+
+    init(
+        environment: [String: String],
+        homeDirectory: String,
+        shellLookup: @escaping ShellLookup,
+        isExecutable: @escaping ExecutableCheck,
+        directoryContentsProvider: @escaping DirectoryContentsProvider,
+        bundledNodeCandidates: @escaping () -> [String] = { [] }
+    ) {
+        self.environment = environment
+        self.homeDirectory = homeDirectory
+        self.shellLookup = shellLookup
+        self.isExecutable = isExecutable
+        self.directoryContentsProvider = directoryContentsProvider
+        self.bundledNodeCandidates = bundledNodeCandidates
+    }
 
     func resolve() throws -> URL {
         for candidate in candidates() {
@@ -53,7 +70,7 @@ struct NodeExecutableResolver {
     }
 
     private func candidates() -> [String] {
-        [
+        bundledNodeCandidates() + [
             environment["NODE_BINARY"],
             shellLookup(),
             locateMiseNode(),
@@ -108,6 +125,19 @@ extension NodeExecutableResolver {
                     includingPropertiesForKeys: [.isDirectoryKey],
                     options: [.skipsHiddenFiles]
                 )
+            },
+            bundledNodeCandidates: {
+                guard let resourcesURL = Bundle.main.resourceURL else { return [] }
+                #if arch(arm64)
+                let runtimeArch = "arm64"
+                #else
+                let runtimeArch = "x64"
+                #endif
+                return [
+                    resourcesURL
+                        .appendingPathComponent("sidecar/runtime/node-darwin-\(runtimeArch)/bin/node")
+                        .path
+                ]
             }
         )
     }

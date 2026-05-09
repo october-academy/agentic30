@@ -11,7 +11,15 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const BUNDLE_ENTRY = path.resolve(__dirname, "..", "sidecar-build", "sidecar", "index.mjs");
+const BUNDLE_ROOT = path.resolve(__dirname, "..", "sidecar-build", "sidecar");
+const BUNDLE_ENTRY = path.join(BUNDLE_ROOT, "index.mjs");
+const BUNDLED_NODE = path.join(
+  BUNDLE_ROOT,
+  "runtime",
+  `node-darwin-${process.arch}`,
+  "bin",
+  "node"
+);
 const READY_TIMEOUT_MS = 8000;
 
 if (!existsSync(BUNDLE_ENTRY)) {
@@ -22,11 +30,19 @@ if (!existsSync(BUNDLE_ENTRY)) {
   process.exit(2);
 }
 
+if (!existsSync(BUNDLED_NODE)) {
+  console.error(
+    `[preflight-bundle] bundled Node runtime missing at ${BUNDLED_NODE}. ` +
+      `Run 'node scripts/build-sidecar.mjs' or build the Xcode target first.`
+  );
+  process.exit(2);
+}
+
 const workspaceRoot = process.argv.includes("--workspace")
   ? process.argv[process.argv.indexOf("--workspace") + 1]
   : os.homedir();
 
-const child = spawn(process.execPath, [BUNDLE_ENTRY, "--workspace", workspaceRoot], {
+const child = spawn(BUNDLED_NODE, [BUNDLE_ENTRY, "--workspace", workspaceRoot], {
   cwd: workspaceRoot,
   stdio: ["ignore", "pipe", "pipe"],
 });

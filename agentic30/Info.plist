@@ -41,5 +41,13 @@
 	<string>public.app-category.developer-tools</string>
 	<key>NSHumanReadableCopyright</key>
 	<string></string>
+	<key>SUFeedURL</key>
+	<string>https://agentic30.app/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>$(SPARKLE_PUBLIC_ED_KEY)</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>

@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		596660B12F86A4920021885C /* sidecar in Copy Sidecar Resources */ = {isa = PBXBuildFile; fileRef = 596660B02F86A4920021885C /* sidecar */; };
+		596660C02F86A4920021885C /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 596660C12F86A4920021885C /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -86,6 +87,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				596660C02F86A4920021885C /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -150,6 +152,7 @@
 			);
 			name = agentic30;
 			packageProductDependencies = (
+				596660C12F86A4920021885C /* Sparkle */,
 			);
 			productName = agentic30;
 			productReference = 596660502F86A4900021885C /* agentic30.app */;
@@ -233,6 +236,9 @@
 			);
 			mainGroup = 596660472F86A4900021885C;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				596660C22F86A4920021885C /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 596660512F86A4900021885C /* Products */;
 			projectDirPath = "";
@@ -514,6 +520,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "october-academy.agentic30";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
+				SPARKLE_PUBLIC_ED_KEY = "";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -544,6 +551,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "october-academy.agentic30";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
+				SPARKLE_PUBLIC_ED_KEY = "";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -669,6 +677,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		596660C22F86A4920021885C /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.9.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		596660C12F86A4920021885C /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 596660C22F86A4920021885C /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 596660482F86A4900021885C /* Project object */;
 }
