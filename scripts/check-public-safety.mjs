@@ -10,7 +10,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
 
 const BLOCKED_PATH_PATTERNS = [
-  /(^|\/)\.env(?:$|[.\-/])/,
+  /(^|\/)\.env(?:$|[.\-/]|rc$)/,
+  /(^|\/)\.(?:npmrc|netrc)$/,
   /(^|\/)secrets\//,
   /\.(?:p12|p8|pem|key|mobileprovision|provisionprofile)$/i,
 ];
@@ -33,11 +34,11 @@ const SECRET_PATTERNS = [
   },
   {
     id: "api-key",
-    pattern: /\b(?:api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token)\b\s*[:=]\s*["']?[A-Za-z0-9][A-Za-z0-9_-]{31,}/i,
+    pattern: /\b(?:api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret)\b\s*[:=]\s*["']?[A-Za-z0-9][A-Za-z0-9_-]{31,}/i,
   },
   {
     id: "client-secret",
-    pattern: /\bclient_secret\b\s*[:=]\s*["'][^"']{12,}["']/i,
+    pattern: /\bclient_secret\b\s*[:=]\s*["']?[^"'\s]{12,}/i,
   },
 ];
 
