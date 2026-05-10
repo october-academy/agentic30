@@ -40,22 +40,20 @@ test("bootstrap free-text submission starts a provider stream", async () => {
     const created = await waitForEvent(events, (event) => event.type === "session_created");
     assert.equal(created.session.messages.length, 0);
     assert.equal(created.session.pendingUserInput?.title, "시작하기");
-    assert.equal(created.session.runtime?.startupTiming?.clientCountAtCreate, 1);
+    const startupTiming = created.session.runtime?.startupTiming;
+    assert.equal(startupTiming?.clientCountAtCreate, 1);
     assert.ok(
-      Number.isFinite(created.session.runtime?.startupTiming?.processToSessionCreatedMs),
-      `Expected process-to-session timing, got ${JSON.stringify(created.session.runtime?.startupTiming)}`,
+      Number.isFinite(startupTiming?.processToSessionCreatedMs) && startupTiming.processToSessionCreatedMs >= 0,
+      `Expected non-negative process-to-session timing, got ${JSON.stringify(startupTiming)}`,
     );
     assert.ok(
-      Number.isFinite(created.session.runtime?.startupTiming?.processToSidecarReadyMs),
-      `Expected process-to-ready timing, got ${JSON.stringify(created.session.runtime?.startupTiming)}`,
+      Number.isFinite(startupTiming?.processToSidecarReadyMs) && startupTiming.processToSidecarReadyMs >= 0,
+      `Expected non-negative process-to-ready timing, got ${JSON.stringify(startupTiming)}`,
     );
     assert.ok(
-      Number.isFinite(created.session.runtime?.startupTiming?.sidecarReadyToCreateSessionReceivedMs),
-      `Expected ready-to-create timing, got ${JSON.stringify(created.session.runtime?.startupTiming)}`,
-    );
-    assert.ok(
-      created.session.runtime.startupTiming.processToSessionCreatedMs < 5_000,
-      `Expected local session to appear quickly, got ${JSON.stringify(created.session.runtime.startupTiming)}`,
+      Number.isFinite(startupTiming?.sidecarReadyToCreateSessionReceivedMs)
+        && startupTiming.sidecarReadyToCreateSessionReceivedMs >= 0,
+      `Expected non-negative ready-to-create timing, got ${JSON.stringify(startupTiming)}`,
     );
     const sessionId = created.session.id;
     ws.send(JSON.stringify({

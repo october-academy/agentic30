@@ -4203,6 +4203,13 @@ async function resolveBipCompletionProof({ threadsUrl = "", sheetRowNote = "" } 
     return { threadsUrl: resolvedThreadsUrl, sheetRowNote: resolvedSheetRowNote };
   }
 
+  const cached = inferBipCompletionProofFromEvidence(state.bipCoach?.evidence);
+  resolvedThreadsUrl ||= cached.threadsUrl;
+  resolvedSheetRowNote ||= cached.sheetRowNote;
+  if (resolvedThreadsUrl && resolvedSheetRowNote) {
+    return { threadsUrl: resolvedThreadsUrl, sheetRowNote: resolvedSheetRowNote };
+  }
+
   const config = state.bipCoach?.config || {};
   if (config.sheetId && config.docId) {
     const bundle = await readBipCoachEvidenceBundle();
@@ -5754,6 +5761,7 @@ function bootstrapQmdMemoryCollections() {
 
   worker.once("message", (message) => {
     if (!message?.ok) {
+      qmdBootstrapScheduled = false;
       const error = new Error(message?.error?.message || "QMD memory bootstrap failed.");
       if (message?.error?.stack) error.stack = message.error.stack;
       telemetry.captureException(error, {
@@ -5773,9 +5781,19 @@ function bootstrapQmdMemoryCollections() {
   });
 
   worker.once("error", (error) => {
+    qmdBootstrapScheduled = false;
     telemetry.captureException(error, {
       operation: "qmd_memory_bootstrap",
     });
+  });
+
+  worker.once("exit", (code) => {
+    if (code !== 0) {
+      qmdBootstrapScheduled = false;
+      telemetry.captureException(new Error(`QMD memory bootstrap worker exited with code ${code}.`), {
+        operation: "qmd_memory_bootstrap",
+      });
+    }
   });
 }
 

@@ -729,6 +729,7 @@ async function runCodexAttempt({
       onRuntimeUpdate?.(runtime);
       if (stopAfterCodexThreadStarted) {
         onRunEvent?.({ phase: "provider.codex.warm_thread_started" });
+        abortController.abort();
         return { runtime };
       }
       continue;

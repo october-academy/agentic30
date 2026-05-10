@@ -875,6 +875,29 @@ final class AgenticViewModel: ObservableObject {
         )
 
         let archivedAt = Date()
+        guard isConnected else {
+            lastError = "Sidecar is not connected."
+            PostHogTelemetry.capture(
+                "mac_session_archive_failed",
+                properties: properties.merging(["reason": "sidecar_disconnected"]) { current, _ in current },
+                authSession: macAuthSession
+            )
+            return
+        }
+        guard sidecar.send(payload: [
+            "type": "archive_session",
+            "sessionId": session.id,
+            "archivedAt": ISO8601DateFormatter().string(from: archivedAt),
+        ]) else {
+            lastError = "Sidecar is not connected."
+            PostHogTelemetry.capture(
+                "mac_session_archive_failed",
+                properties: properties.merging(["reason": "send_failed"]) { current, _ in current },
+                authSession: macAuthSession
+            )
+            return
+        }
+
         if let index = sessions.firstIndex(where: { $0.id == session.id }) {
             sessions[index].archivedAt = archivedAt
         }
@@ -883,11 +906,6 @@ final class AgenticViewModel: ObservableObject {
         }
         refreshPresentationState()
 
-        sidecar.send(payload: [
-            "type": "archive_session",
-            "sessionId": session.id,
-            "archivedAt": ISO8601DateFormatter().string(from: archivedAt),
-        ])
         if sessions.allSatisfy({ $0.archivedAt != nil }) {
             createSession(provider: selectedProvider, source: "archive_last_visible_session")
         }
@@ -3393,6 +3411,7 @@ private extension AgenticViewModel {
         guard let store = foundationProgressStore else { return }
         if arguments.contains("--ui-testing-reset-onboarding") {
             store.clear()
+            UserDefaults.standard.removeObject(forKey: Self.kFoundationStartedAtKey)
         }
 
         if var stored = store.load() {
@@ -3402,7 +3421,12 @@ private extension AgenticViewModel {
             return
         }
 
-        let snapshot = FoundationProgressSnapshot(workspaceRoot: WorkspaceSettings.resolvedURL().path)
+        var snapshot = FoundationProgressSnapshot(workspaceRoot: WorkspaceSettings.resolvedURL().path)
+        if WorkspaceSettings.hasExplicitWorkspace,
+           let legacyStartedAt = UserDefaults.standard.object(forKey: Self.kFoundationStartedAtKey) as? Date {
+            snapshot.startedAt = legacyStartedAt
+            store.save(snapshot)
+        }
         foundationProgressState = snapshot
         foundationStartedAt = snapshot.startedAt
     }

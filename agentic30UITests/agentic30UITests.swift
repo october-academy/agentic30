@@ -28,18 +28,26 @@ final class agentic30UITests: XCTestCase {
 
     @MainActor
     func testFirstRunContextAppearsWithoutLogin() throws {
-        let app = launchApp(arguments: [
-            "--ui-testing-reset-onboarding",
-            "--ui-testing-disable-sidecar",
-            "--ui-testing-open-workspace",
-        ])
+        let app = launchApp(
+            arguments: [
+                "--ui-testing-reset-onboarding",
+                "--ui-testing-disable-sidecar",
+                "--ui-testing-open-workspace",
+                "--ui-testing-opaque-window",
+            ],
+            environment: [
+                "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            ]
+        )
+        addTeardownBlock {
+            app.terminate()
+        }
 
         XCTAssertTrue(
             app.staticTexts["지금 어떤 상황에서 만들고 있나요?"].waitForExistence(timeout: 5)
         )
         XCTAssertFalse(app.buttons["Sign in with Google"].exists)
         XCTAssertTrue(app.buttons["Next"].exists)
-        app.terminate()
     }
 
     @MainActor
@@ -1198,6 +1206,8 @@ final class agentic30UITests: XCTestCase {
     @MainActor
     func testEveningBipNotificationExpandsCompletionFieldsForCurrentMission() throws {
         let workspacePath = "/tmp/agentic30-ui-bip-notification-evening-\(UUID().uuidString)"
+        resetDirectory(at: workspacePath)
+        hideKnownInterferingApplications()
         let app = launchApp(
             arguments: [
                 "--ui-testing-reset-onboarding",
@@ -1213,6 +1223,12 @@ final class agentic30UITests: XCTestCase {
                 "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
             ]
         )
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+        }
 
         XCTAssertTrue(app.descendants(matching: .any)["workspace.bipNotificationTaskSurface"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["21시 마감 체크"].exists)
@@ -1224,7 +1240,6 @@ final class agentic30UITests: XCTestCase {
         XCTAssertFalse(app.textFields["assistant.bipSheetRowNote"].exists)
         XCTAssertFalse(app.staticTexts["생성 중..."].exists)
         XCTAssertFalse(app.descendants(matching: .any)["workspace.settingsPage"].exists)
-        app.terminate()
     }
 
     @MainActor
@@ -1260,7 +1275,10 @@ final class agentic30UITests: XCTestCase {
         waitForAgenticAppToExit(bundleIdentifier: bundleIdentifier, timeout: 2)
 
         for application in runningApplications where !application.isTerminated {
-            kill(application.processIdentifier, SIGKILL)
+            let pid = application.processIdentifier
+            if pid > 0 {
+                kill(pid, SIGKILL)
+            }
         }
         waitForAgenticAppToExit(bundleIdentifier: bundleIdentifier, timeout: 2)
     }

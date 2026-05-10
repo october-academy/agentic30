@@ -601,12 +601,11 @@ export function buildFallbackBipMissionChoices({
 } = {}) {
   const normalized = normalizeBipCoachState(state);
   const evidence = normalized.evidence || {};
-  const workspaceScan = localEvidence && typeof localEvidence === "object" && !Array.isArray(localEvidence)
-    ? localEvidence.workspaceScan || {}
-    : {};
-  const onboardingContext = localEvidence && typeof localEvidence === "object" && !Array.isArray(localEvidence)
-    ? localEvidence.onboardingContext || {}
-    : {};
+  const normalizedLocalEvidence = localEvidence && typeof localEvidence === "object" && !Array.isArray(localEvidence)
+    ? localEvidence
+    : null;
+  const workspaceScan = normalizedLocalEvidence?.workspaceScan || {};
+  const onboardingContext = normalizedLocalEvidence?.onboardingContext || {};
   const rows = Array.isArray(evidence.allRows) ? evidence.allRows.filter((row) => row?.hasContent !== false) : [];
   const recentRows = Array.isArray(evidence.recentRows) && evidence.recentRows.length
     ? evidence.recentRows

@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 export const SESSION_STORE_SCHEMA_VERSION = 1;
 export const LEGACY_DEFAULT_CODEX_MODEL = "gpt-5.4";
@@ -71,7 +72,7 @@ function closeOrphanedRun(messages, provider) {
   return [
     ...messages,
     {
-      id: `orphaned-assistant-${Date.now()}`,
+      id: `orphaned-assistant-${randomUUID()}`,
       role: "assistant",
       provider: provider || last.provider || "codex",
       content: "이전 실행이 완료되기 전에 사이드카가 종료됐어요. 다시 시도할 수 있습니다.",

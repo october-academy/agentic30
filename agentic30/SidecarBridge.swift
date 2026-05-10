@@ -169,7 +169,8 @@ final class SidecarBridge {
         intentionalStop = false
     }
 
-    func send(payload: [String: Any]) {
+    @discardableResult
+    func send(payload: [String: Any]) -> Bool {
         guard let webSocket else {
             appendStartupTrace("send_while_disconnected", properties: [
                 "message_type": payload["type"] as? String ?? "unknown",
@@ -178,12 +179,12 @@ final class SidecarBridge {
                 "message_type": payload["type"] as? String ?? "unknown",
             ])
             emit(type: "error", message: "Sidecar is not connected.")
-            return
+            return false
         }
         guard JSONSerialization.isValidJSONObject(payload),
               let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
               let text = String(data: data, encoding: .utf8)
-        else { return }
+        else { return false }
 
         webSocket.send(.string(text)) { [weak self] error in
             if let error {
@@ -199,6 +200,7 @@ final class SidecarBridge {
                 self?.emit(type: "error", message: "WebSocket send failed: \(error.localizedDescription)")
             }
         }
+        return true
     }
 
     private func consumeStdout(_ chunk: String) {
@@ -431,11 +433,9 @@ final class SidecarBridge {
               let line = String(data: data, encoding: .utf8)
         else { return }
 
+        let supportURL = Self.appSupportURL()
         startupTraceQueue.async {
             let fileManager = FileManager.default
-            let supportURL = fileManager
-                .homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Application Support/agentic30")
             try? fileManager.createDirectory(at: supportURL, withIntermediateDirectories: true)
             let fileURL = supportURL.appendingPathComponent("startup-traces.jsonl")
             guard let lineData = "\(line)\n".data(using: .utf8) else { return }
@@ -452,6 +452,16 @@ final class SidecarBridge {
                 try? lineData.write(to: fileURL, options: [.atomic])
             }
         }
+    }
+
+    private static func appSupportURL() -> URL {
+        if let override = ProcessInfo.processInfo.environment["AGENTIC30_APP_SUPPORT_PATH"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !override.isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/agentic30", isDirectory: true)
     }
 
     private func handleTermination(_ terminatedProcess: Process) {

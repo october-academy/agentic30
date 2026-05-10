@@ -108,6 +108,7 @@ enum OnboardingIsolationLevel: String, Codable, CaseIterable, Hashable {
         try container.encode(rawValue)
     }
 
+    // UPDATE this list when adding new OnboardingIsolationLevel cases.
     static var allCases: [OnboardingIsolationLevel] {
         [
             .projectFolder,
@@ -168,7 +169,12 @@ struct OnboardingContext: Codable, Hashable {
         self.role = role
         self.projectStage = projectStage
         self.isolationLevel = isolationLevel
-        let levels = isolationLevels?.isEmpty == false ? isolationLevels ?? [isolationLevel] : [isolationLevel]
+        let levels: [OnboardingIsolationLevel]
+        if let isolationLevels, !isolationLevels.isEmpty {
+            levels = isolationLevels
+        } else {
+            levels = [isolationLevel]
+        }
         self.isolationLevels = Array(Set(levels)).sorted { $0.rawValue < $1.rawValue }
         self.completedAt = completedAt
     }
@@ -245,7 +251,7 @@ struct OnboardingContext: Codable, Hashable {
         if isolationLevels.contains(.weeklyLoop) {
             lines.append("[R2] BIP (Build In Public) 반응과 공개 실행 기록을 다음 proof 목표로 연결하세요.")
         }
-        if isolationLevels.contains(.community) || isolationLevels.isEmpty {
+        if isolationLevels.contains(.community) {
             lines.append("[R2] 기록이 없다는 전제로, 오늘 만들 첫 problem memo 또는 인터뷰 입력부터 요구하세요.")
         }
 

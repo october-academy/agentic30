@@ -1698,7 +1698,11 @@ struct SettingsView: View {
             var seededSettings = s
             seededSettings.preferredClaudeModel = AgentModelCatalog.normalizedModelID(preferredClaudeModel, provider: .claude)
             seededSettings.preferredCodexModel = AgentModelCatalog.normalizedModelID(preferredCodexModel, provider: .codex)
-            try? KeychainHelper.saveSettings(seededSettings)
+            do {
+                try KeychainHelper.saveSettings(seededSettings)
+            } catch {
+                assertionFailure("Failed to seed UI test model settings: \(error.localizedDescription)")
+            }
         }
         #endif
         posthogApiKey = s.posthogApiKey
