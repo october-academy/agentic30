@@ -5,6 +5,7 @@ import os from "node:os";
 import { spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 import { WebSocketServer } from "ws";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { MetaAdsClient } from "./meta-ads.mjs";
@@ -18,7 +19,6 @@ import {
 import {
   buildQmdGuidance,
   buildQmdMcpConfig,
-  ensureQmdMemoryCollections,
   getQmdState,
 } from "./qmd-support.mjs";
 import { createTelemetryClient } from "./telemetry.mjs";
@@ -155,6 +155,16 @@ import {
   shouldRunFoundationSummary,
 } from "./foundation-summary-integration.mjs";
 
+const sidecarProcessStartedAt = performance.now();
+const sidecarProcessStartedAtIso = new Date().toISOString();
+const sidecarBootTiming = {
+  sidecarReadyAt: null,
+  sidecarReadyPerf: null,
+  processToSidecarReadyMs: null,
+  lastClientAuthenticatedAt: null,
+  lastClientAuthenticatedPerf: null,
+  processToLastClientAuthenticatedMs: null,
+};
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const workspaceArg = readArg("--workspace");
@@ -426,6 +436,7 @@ const userInputPoll = setInterval(() => {
 const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
 let shutdownStarted = false;
 let clientDisconnectTimer = null;
+let qmdBootstrapScheduled = false;
 const parentProcessPoll = startParentProcessPoll();
 
 wss.on("connection", (socket, request) => {
@@ -472,6 +483,15 @@ wss.on("connection", (socket, request) => {
 
 function registerAuthenticatedClient(socket) {
   clearClientDisconnectTimer();
+  const authenticatedPerf = performance.now();
+  socket.agentic30AuthenticatedAt = authenticatedPerf;
+  socket.agentic30AuthenticatedAtIso = new Date().toISOString();
+  sidecarBootTiming.lastClientAuthenticatedAt = socket.agentic30AuthenticatedAtIso;
+  sidecarBootTiming.lastClientAuthenticatedPerf = authenticatedPerf;
+  sidecarBootTiming.processToLastClientAuthenticatedMs = Math.max(
+    0,
+    Math.round(authenticatedPerf - sidecarProcessStartedAt),
+  );
   state.clients.add(socket);
   const environment = getEnvironmentSummary();
   const preflight = buildSidecarPreflight(environment);
@@ -484,6 +504,7 @@ function registerAuthenticatedClient(socket) {
     diagnostics: buildSidecarDiagnostics(environment, preflight),
     bipCoach: state.bipCoach,
   });
+  scheduleQmdMemoryBootstrap();
 
   socket.on("message", async (raw) => {
     let payload;
@@ -518,12 +539,16 @@ function registerAuthenticatedClient(socket) {
 wss.on("listening", () => {
   const address = wss.address();
   const port = typeof address === "object" && address ? address.port : 0;
+  const readyPerf = performance.now();
+  sidecarBootTiming.sidecarReadyAt = new Date().toISOString();
+  sidecarBootTiming.sidecarReadyPerf = readyPerf;
+  sidecarBootTiming.processToSidecarReadyMs = Math.max(
+    0,
+    Math.round(readyPerf - sidecarProcessStartedAt),
+  );
   process.stdout.write(
     `${JSON.stringify({ type: "sidecar-ready", port, pid: process.pid, authToken: sidecarAuthToken })}\n`,
   );
-  if (process.env.AGENTIC30_DISABLE_QMD_BOOTSTRAP !== "1") {
-    setTimeout(bootstrapQmdMemoryCollections, 0);
-  }
 });
 
 process.on("SIGINT", shutdown);
@@ -606,14 +631,35 @@ async function handleClientMessage(socket, payload) {
       send(socket, { type: "sessions_snapshot", sessions: serializeSessions() });
       return;
     case "create_session": {
+      const createStartedAt = performance.now();
       const session = createSession(payload);
+      const bootstrapStartedAt = performance.now();
       await attachBootstrapIntake(session);
+      const bootstrapElapsedMs = Math.max(0, Math.round(performance.now() - bootstrapStartedAt));
       state.sessions.set(session.id, session);
+      setSessionStartupTiming(session, {
+        createStartedAt,
+        bootstrapElapsedMs,
+        clientSocket: socket,
+      });
+      const persistStartedAt = performance.now();
       await persistSessions();
+      const persistElapsedMs = Math.max(0, Math.round(performance.now() - persistStartedAt));
+      const syncStartedAt = performance.now();
       await syncAndBroadcastBipCoachSessionState({ preferredSessionId: session.id });
+      setSessionStartupTiming(session, {
+        createStartedAt,
+        bootstrapElapsedMs,
+        persistElapsedMs,
+        bipCoachSyncElapsedMs: Math.max(0, Math.round(performance.now() - syncStartedAt)),
+        clientSocket: socket,
+      });
+      await persistSessions();
       telemetry.captureEvent("mac_sidecar_session_created", {
         session_id: session.id,
         provider: session.provider,
+        process_to_session_created_ms: session.runtime?.startupTiming?.processToSessionCreatedMs,
+        create_session_elapsed_ms: session.runtime?.startupTiming?.createSessionElapsedMs,
       });
       broadcast({ type: "session_created", session });
       return;
@@ -630,6 +676,24 @@ async function handleClientMessage(socket, payload) {
         provider: session.provider,
       });
       broadcast({ type: "session_deleted", sessionId: session.id });
+      return;
+    }
+    case "archive_session": {
+      const session = getSession(payload.sessionId);
+      await stopSession(session.id);
+      cancelWarmSession(session.id);
+      session.archivedAt = typeof payload.archivedAt === "string"
+        ? payload.archivedAt
+        : new Date().toISOString();
+      session.status = "idle";
+      session.error = null;
+      await persistSessions();
+      await syncAndBroadcastBipCoachSessionState();
+      telemetry.captureEvent("mac_sidecar_session_archived", {
+        session_id: session.id,
+        provider: session.provider,
+      });
+      broadcast({ type: "session_updated", session });
       return;
     }
     case "rename_session": {
@@ -1039,6 +1103,7 @@ async function handleClientMessage(socket, payload) {
         provider: payload.provider,
         compact: Boolean(payload.compact),
         curriculumDay: payload.curriculumDay,
+        localEvidence: payload.localEvidence,
       });
       return;
     }
@@ -1053,6 +1118,7 @@ async function handleClientMessage(socket, payload) {
           provider: payload.provider,
           compact: true,
           curriculumDay: payload.curriculumDay,
+          localEvidence: payload.localEvidence,
         });
       }
       return;
@@ -1216,11 +1282,6 @@ async function runPrompt(
     return;
   }
 
-  const authState = getProviderAuthState(session.provider);
-  if (!authState.available) {
-    throw new Error(authState.message);
-  }
-
   const assistantMessage = makeMessage({
     role: "assistant",
     provider: session.provider,
@@ -1267,6 +1328,11 @@ async function runPrompt(
   });
 
   try {
+    const authState = getProviderAuthState(session.provider);
+    if (!authState.available) {
+      throw new Error(authState.message);
+    }
+
     state.activeRuns.get(session.id).stop = async () => {
       abortController.abort();
     };
@@ -1529,11 +1595,6 @@ async function runUnifiedFoundationChat(
   const runStartedAt = performance.now();
   const seenRunPhases = new Set();
 
-  const authState = getProviderAuthState(session.provider);
-  if (!authState.available) {
-    throw new Error(authState.message);
-  }
-
   const foundationContext = resolveFoundationContext({
     day: dayDescriptor.day,
     prompt,
@@ -1611,6 +1672,11 @@ async function runUnifiedFoundationChat(
   });
 
   try {
+    const authState = getProviderAuthState(session.provider);
+    if (!authState.available) {
+      throw new Error(authState.message);
+    }
+
     emitChatRunPhase(
       session,
       assistantMessage.id,
@@ -2118,13 +2184,14 @@ async function warmSession(session) {
       prompt: [
         "Prepare this Agentic30 fast chat session.",
         "Load the current developer instructions and workspace context.",
-        "Do not answer the user yet. Reply exactly: READY",
+        "Do not answer the user yet.",
       ].join("\n"),
       model: session.model,
       workspaceRoot,
       abortController,
       sessionIdForMcp: session.id,
       executionMode: "fast_chat",
+      stopAfterCodexThreadStarted: true,
       onTextDelta: () => {},
       onTextReplace: () => {},
       onToolEvent: () => {},
@@ -3613,7 +3680,7 @@ async function readBipCoachEvidenceBundle({ onProgress } = {}) {
   };
 }
 
-async function generateBipCoachMission({ sessionId, provider, compact = false, curriculumDay = null } = {}) {
+async function generateBipCoachMission({ sessionId, provider, compact = false, curriculumDay = null, localEvidence = null } = {}) {
   if (state.bipCoachRunning) {
     await setBipCoachError("공개 실행 코치가 이미 작업 중입니다.", "mac_sidecar_bip_coach_busy");
     return;
@@ -3621,7 +3688,7 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
 
   const gate = currentBipSetupGate();
   if (!gate.ready) {
-    await generateBasicBipCoachMission({ gate, sessionId, provider, compact, curriculumDay });
+    await generateBasicBipCoachMission({ gate, sessionId, provider, compact, curriculumDay, localEvidence });
     return;
   }
 
@@ -3756,6 +3823,7 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
         state: state.bipCoach,
         compact,
         curriculumDay,
+        localEvidence,
         today,
         now,
       });
@@ -3830,6 +3898,7 @@ async function generateBasicBipCoachMission({
   provider = "",
   compact = false,
   curriculumDay = null,
+  localEvidence = null,
 } = {}) {
   state.bipCoachRunning = true;
   broadcastBipSetupGateState(gate);
@@ -3864,6 +3933,7 @@ async function generateBasicBipCoachMission({
       curriculumDay,
       today,
       provider: "local",
+      localEvidence,
     });
     const now = new Date();
     state.bipCoach = normalizeBipCoachState({
@@ -3874,7 +3944,10 @@ async function generateBasicBipCoachMission({
         source: "partial_workspace",
         provider: "local",
         fallbackUsed: true,
-        summary: "프로젝트 문서나 Google 기록이 아직 준비되지 않아 선택한 Day 커리큘럼만으로 오늘 실행 후보를 만들었습니다.",
+        summary: localEvidence
+          ? "프로젝트 폴더와 온보딩 기록 선택을 기준으로 오늘 실행 후보를 만들었습니다."
+          : "프로젝트 문서나 Google 기록이 아직 준비되지 않아 선택한 Day 커리큘럼만으로 오늘 실행 후보를 만들었습니다.",
+        localEvidence,
         sheetTitle: "",
         sheetTabName: "",
         allRows: [],
@@ -4101,6 +4174,52 @@ function buildMissionCompletionVisibleMessage(coachState = {}) {
   ].filter(Boolean).join("\n");
 }
 
+function inferBipCompletionProofFromEvidence(evidence = {}) {
+  const rows = Array.isArray(evidence.allRows) ? evidence.allRows : [];
+  const latest = [...rows].reverse().find((row) =>
+    Array.isArray(row?.posts) && row.posts.length > 0,
+  ) || rows[rows.length - 1] || null;
+  const latestPost = Array.isArray(latest?.posts)
+    ? latest.posts.find((post) => /threads\.net|https?:\/\//i.test(String(post || ""))) || latest.posts[0]
+    : "";
+  const sheetLabel = [
+    evidence.sheetTitle || "Google Sheet",
+    evidence.sheetTabName ? `${evidence.sheetTabName}` : "",
+  ].filter(Boolean).join(" / ");
+  const rowLabel = latest?.rowNumber
+    ? `${latest.rowNumber}행`
+    : `전체 ${rows.length}행`;
+  const dateLabel = latest?.date ? ` (${latest.date})` : "";
+  return {
+    threadsUrl: String(latestPost || "").trim(),
+    sheetRowNote: `GWS 확인: ${sheetLabel} ${rowLabel}${dateLabel}`.trim(),
+  };
+}
+
+async function resolveBipCompletionProof({ threadsUrl = "", sheetRowNote = "" } = {}) {
+  let resolvedThreadsUrl = String(threadsUrl || "").trim();
+  let resolvedSheetRowNote = String(sheetRowNote || "").trim();
+  if (resolvedThreadsUrl && resolvedSheetRowNote) {
+    return { threadsUrl: resolvedThreadsUrl, sheetRowNote: resolvedSheetRowNote };
+  }
+
+  const config = state.bipCoach?.config || {};
+  if (config.sheetId && config.docId) {
+    const bundle = await readBipCoachEvidenceBundle();
+    state.bipCoach = normalizeBipCoachState({
+      ...state.bipCoach,
+      evidence: bundle.evidence,
+      updatedAt: new Date().toISOString(),
+    });
+    const inferred = inferBipCompletionProofFromEvidence(bundle.evidence);
+    resolvedThreadsUrl ||= inferred.threadsUrl;
+    resolvedSheetRowNote ||= inferred.sheetRowNote;
+  }
+
+  resolvedSheetRowNote ||= "자동 확인: 연결된 공개 기록 소스를 기준으로 완료 처리됨";
+  return { threadsUrl: resolvedThreadsUrl, sheetRowNote: resolvedSheetRowNote };
+}
+
 function normalizeListForChat(value) {
   return Array.isArray(value)
     ? value.map((item) => String(item || "").trim()).filter(Boolean)
@@ -4300,17 +4419,11 @@ function extractSheetRange(payload) {
 }
 
 async function completeCurrentBipCoachMission(payload) {
-  const threadsUrl = String(payload.threadsUrl || "").trim();
-  const sheetRowNote = String(payload.sheetRowNote || "").trim();
-  if (!threadsUrl || !sheetRowNote) {
-    await setBipCoachError(
-      "Completion requires both a Threads URL and a Sheet row note.",
-      "mac_sidecar_bip_coach_completion_rejected",
-    );
-    return;
-  }
-
   try {
+    const { threadsUrl, sheetRowNote } = await resolveBipCompletionProof({
+      threadsUrl: payload.threadsUrl,
+      sheetRowNote: payload.sheetRowNote,
+    });
     state.bipCoach = completeBipCoachMission(state.bipCoach, {
       threadsUrl,
       sheetRowNote,
@@ -4325,7 +4438,11 @@ async function completeCurrentBipCoachMission(payload) {
     );
     broadcast({ type: "bip_coach_completion_completed", bipCoach: state.bipCoach });
   } catch (error) {
-    await setBipCoachError(formatError(error), "mac_sidecar_bip_coach_completion_failed");
+    const rawError = formatError(error);
+    const userError = /gws|google|sheet|doc|oauth|rapt/i.test(rawError)
+      ? formatBipCoachGwsError(error)
+      : rawError;
+    await setBipCoachError(userError, "mac_sidecar_bip_coach_completion_failed");
   }
 }
 
@@ -5617,27 +5734,49 @@ function getEnvironmentSummary() {
   };
 }
 
+function scheduleQmdMemoryBootstrap() {
+  if (qmdBootstrapScheduled || process.env.AGENTIC30_DISABLE_QMD_BOOTSTRAP === "1") {
+    return;
+  }
+  qmdBootstrapScheduled = true;
+  setTimeout(bootstrapQmdMemoryCollections, 1_500).unref?.();
+}
+
 function bootstrapQmdMemoryCollections() {
-  try {
-    const bipConfig = readJsonFile(path.join(appSupportPath, "bip-config.json"));
-    const qmdWorkspaceRoot = String(bipConfig?.workspace?.root || "").trim() || workspaceRoot;
-    const result = ensureQmdMemoryCollections({
-      workspaceRoot: qmdWorkspaceRoot,
+  const worker = new Worker(new URL("./qmd-bootstrap-worker.mjs", import.meta.url), {
+    workerData: {
       appSupportPath,
       sidecarRoot,
-    });
+      workspaceRoot,
+    },
+  });
+  worker.unref?.();
+
+  worker.once("message", (message) => {
+    if (!message?.ok) {
+      const error = new Error(message?.error?.message || "QMD memory bootstrap failed.");
+      if (message?.error?.stack) error.stack = message.error.stack;
+      telemetry.captureException(error, {
+        operation: "qmd_memory_bootstrap",
+      });
+      return;
+    }
+
+    const result = message.result || {};
     telemetry.captureEvent("mac_sidecar_qmd_memory_bootstrap", {
       attempted: result.attempted,
       updated: result.updated,
       reason: result.reason || "",
-      collection_count: result.collections.length,
+      collection_count: Array.isArray(result.collections) ? result.collections.length : 0,
       qmd_source: result.qmd?.source || "",
     });
-  } catch (error) {
+  });
+
+  worker.once("error", (error) => {
     telemetry.captureException(error, {
       operation: "qmd_memory_bootstrap",
     });
-  }
+  });
 }
 
 function buildSidecarPreflight(environment = getEnvironmentSummary()) {
@@ -5841,11 +5980,10 @@ function setAssistantText(session, messageId, content) {
     messageId,
     content: resolvedContent,
   });
-  // message_replaced only carries content; the SwiftUI client needs a full
-  // session refresh to pick up the new `inlineDecision` field on the message.
-  if (extractedDecision) {
-    broadcast({ type: "session_updated", session });
-  }
+  // `message_replaced` can arrive before the host has observed the assistant
+  // placeholder. Follow it with a full snapshot so SwiftUI can reconcile the
+  // message content and any inlineDecision metadata from session state.
+  broadcast({ type: "session_updated", session });
 }
 
 async function stopSession(sessionId) {
@@ -5875,6 +6013,54 @@ function createSession(payload) {
     messages: [],
     pendingUserInput: null,
     runtime: {},
+  };
+}
+
+function setSessionStartupTiming(
+  session,
+  {
+    createStartedAt,
+    bootstrapElapsedMs = null,
+    persistElapsedMs = null,
+    bipCoachSyncElapsedMs = null,
+    clientSocket = null,
+  } = {},
+) {
+  const now = performance.now();
+  const sidecarReadyPerf = sidecarBootTiming.sidecarReadyPerf;
+  const clientAuthenticatedPerf = clientSocket?.agentic30AuthenticatedAt;
+  const timing = {
+    processStartedAt: sidecarProcessStartedAtIso,
+    sidecarReadyAt: sidecarBootTiming.sidecarReadyAt,
+    clientAuthenticatedAt: clientSocket?.agentic30AuthenticatedAtIso
+      || sidecarBootTiming.lastClientAuthenticatedAt,
+    sessionCreatedAt: new Date().toISOString(),
+    processToSidecarReadyMs: sidecarBootTiming.processToSidecarReadyMs,
+    processToClientAuthenticatedMs: Number.isFinite(clientAuthenticatedPerf)
+      ? Math.max(0, Math.round(clientAuthenticatedPerf - sidecarProcessStartedAt))
+      : sidecarBootTiming.processToLastClientAuthenticatedMs,
+    processToCreateSessionReceivedMs: Number.isFinite(createStartedAt)
+      ? Math.max(0, Math.round(createStartedAt - sidecarProcessStartedAt))
+      : null,
+    processToSessionCreatedMs: Math.max(0, Math.round(now - sidecarProcessStartedAt)),
+    sidecarReadyToCreateSessionReceivedMs: Number.isFinite(createStartedAt) && Number.isFinite(sidecarReadyPerf)
+      ? Math.max(0, Math.round(createStartedAt - sidecarReadyPerf))
+      : null,
+    clientAuthenticatedToCreateSessionReceivedMs: Number.isFinite(createStartedAt)
+      && Number.isFinite(clientAuthenticatedPerf)
+      ? Math.max(0, Math.round(createStartedAt - clientAuthenticatedPerf))
+      : null,
+    createSessionElapsedMs: Number.isFinite(createStartedAt)
+      ? Math.max(0, Math.round(now - createStartedAt))
+      : null,
+    bootstrapIntakeElapsedMs: bootstrapElapsedMs,
+    persistElapsedMs,
+    bipCoachSyncElapsedMs,
+    clientCountAtCreate: state.clients.size,
+  };
+  session.runtime = {
+    ...(session.runtime || {}),
+    startupTiming: timing,
   };
 }
 

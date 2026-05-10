@@ -19,6 +19,7 @@ export function normalizePersistedSessionsPayload(parsed) {
 
 export function normalizeSessionForStartup(session) {
   const next = { ...session };
+  const wasRunning = next.status === "running" || next.status === "awaiting_input";
   if (next.status === "running" || next.status === "awaiting_input") {
     next.status = "idle";
   }
@@ -39,20 +40,52 @@ export function normalizeSessionForStartup(session) {
   next.pendingUserInput = null;
   if (Array.isArray(next.messages)) {
     next.messages = next.messages
-      .filter((message) => !isStaleRuntimeFailureMessage(message))
-      .map((message) =>
-        message?.state === "error"
-          ? { ...message, state: "final", error: null }
-          : message,
-      );
+      .filter((message) => !isDiscardableRuntimeFailureMessage(message))
+      .map((message) => normalizeMessageForStartup(message));
+    if (wasRunning) {
+      next.messages = closeOrphanedRun(next.messages, next.provider);
+    }
   }
   return next;
 }
 
-function isStaleRuntimeFailureMessage(message) {
+function normalizeMessageForStartup(message) {
+  if (!message || typeof message !== "object") return message;
+  if (message.role === "assistant" && message.state === "streaming") {
+    const content = String(message.content || "").trim()
+      || "이전 실행이 완료되기 전에 사이드카가 종료됐어요. 이 턴은 다시 시도할 수 있습니다.";
+    return {
+      ...message,
+      content,
+      state: "error",
+      error: message.error || "Sidecar stopped before this response completed.",
+      recoverable: true,
+    };
+  }
+  return message;
+}
+
+function closeOrphanedRun(messages, provider) {
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== "user") return messages;
+  return [
+    ...messages,
+    {
+      id: `orphaned-assistant-${Date.now()}`,
+      role: "assistant",
+      provider: provider || last.provider || "codex",
+      content: "이전 실행이 완료되기 전에 사이드카가 종료됐어요. 다시 시도할 수 있습니다.",
+      state: "error",
+      createdAt: new Date().toISOString(),
+      error: "Sidecar stopped before producing a response.",
+      recoverable: true,
+    },
+  ];
+}
+
+function isDiscardableRuntimeFailureMessage(message) {
   if (!message || message.role !== "assistant") return false;
   const content = String(message.content || "");
-  if (message.state === "streaming" && content.trim() === "") return true;
   if (String(message.error || "") === "replaceAssistantText is not defined") return true;
   if (/spawn .*codex.* ENOENT/.test(content)) return true;
   if (content.trim() === "structured input unavailable") return true;

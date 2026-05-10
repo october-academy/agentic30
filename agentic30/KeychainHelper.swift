@@ -346,8 +346,11 @@ enum KeychainHelper {
         }
         if isInsecureDevStorageEnabled {
             cachedOnboardingContext = readDevSecrets().onboarding
+            if cachedOnboardingContext == nil {
+                pruneInvalidDevOnboardingContextIfNeeded()
+            }
         } else {
-            cachedOnboardingContext = loadCodable(account: onboardingContextAccount, as: OnboardingContext.self)
+            cachedOnboardingContext = loadOnboardingContextFromKeychain()
         }
         didLoadOnboardingContext = true
         return cachedOnboardingContext
@@ -373,7 +376,48 @@ enum KeychainHelper {
         delete(account: onboardingContextAccount)
     }
 
+    private static func loadOnboardingContextFromKeychain() -> OnboardingContext? {
+        guard let data = loadData(account: onboardingContextAccount) else {
+            return nil
+        }
+        guard let context = try? JSONDecoder().decode(OnboardingContext.self, from: data) else {
+            delete(account: onboardingContextAccount)
+            return nil
+        }
+        return context
+    }
+
+    private static func pruneInvalidDevOnboardingContextIfNeeded() {
+        guard let data = try? Data(contentsOf: devSecretsURL),
+              var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["onboarding"] != nil
+        else { return }
+
+        if let onboarding = object["onboarding"],
+           let onboardingData = try? JSONSerialization.data(withJSONObject: onboarding),
+           (try? JSONDecoder().decode(OnboardingContext.self, from: onboardingData)) != nil {
+            return
+        }
+
+        object.removeValue(forKey: "onboarding")
+        guard JSONSerialization.isValidJSONObject(object),
+              let prunedData = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+        else { return }
+        try? prunedData.write(to: devSecretsURL)
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: devSecretsURL.path
+        )
+    }
+
     private static func loadCodable<T: Decodable>(account: String, as type: T.Type) -> T? {
+        guard let data = loadData(account: account) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(type, from: data)
+    }
+
+    private static func loadData(account: String) -> Data? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -384,13 +428,8 @@ enum KeychainHelper {
 
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess,
-              let data = result as? Data,
-              let value = try? JSONDecoder().decode(type, from: data)
-        else {
-            return nil
-        }
-        return value
+        guard status == errSecSuccess else { return nil }
+        return result as? Data
     }
 
     private static func saveCodable<T: Encodable>(_ value: T, account: String) throws {

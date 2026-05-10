@@ -347,6 +347,44 @@ test("builds fallback mission choices from sidecar-read evidence and curriculum"
   assert.match(choices[2].evidenceRefs.join("\n"), /오늘은 ICP/);
 });
 
+test("builds local-first fallback missions without Google proof sinks", () => {
+  const choices = buildFallbackBipMissionChoices({
+    today: "2026-04-25",
+    now: new Date("2026-04-25T01:00:00.000Z"),
+    curriculumDay: {
+      day: 1,
+      title: "문제 지도를 만든다",
+      tasks: ["반복 문제 후보를 3개 적기"],
+      output: "문제 지도",
+    },
+    state: {
+      config: {},
+      evidence: {
+        source: "partial_workspace",
+        summary: "",
+      },
+    },
+    localEvidence: {
+      workspaceRoot: "/tmp/agentic30-icp",
+      onboardingContext: {
+        isolation_levels: ["project_folder", "work_log"],
+      },
+      workspaceScan: {
+        icp: "퇴사한 전업 1인 개발자",
+        spec: "기존 랜딩과 프로토타입 fast path",
+        goal: "첫 유료 고객 증거",
+      },
+    },
+  });
+
+  assert.equal(choices.length, 3);
+  const text = JSON.stringify(choices);
+  assert.match(text, /로컬 markdown|로컬 실행 로그|프로젝트 문서/);
+  assert.match(text, /퇴사한 전업 1인 개발자/);
+  assert.match(text, /project_folder, work_log/);
+  assert.doesNotMatch(text, /Threads URL|Sheet 오늘 행|Sheet에 URL|Threads에 올리고/);
+});
+
 test("parses three mission choices from provider JSON", () => {
   const choices = parseMissionChoicesResponse(
     JSON.stringify({
@@ -560,6 +598,45 @@ test("parses mission JSON and completes streaks", () => {
   assert.equal(completed.currentMission.status, "completed");
   assert.equal(completed.streak.current, 3);
   assert.equal(completed.streak.longest, 5);
+});
+
+test("completes current mission without manual proof fields", () => {
+  const mission = parseMissionResponse(
+    JSON.stringify({
+      title: "15분 관찰글",
+      mission: "오늘 관찰한 문제를 공개 기록한다.",
+    }),
+    {
+      provider: "claude",
+      today: "2026-04-24",
+      now: new Date("2026-04-24T01:00:00.000Z"),
+    },
+  );
+
+  const completed = completeBipCoachMission(
+    {
+      config: { provider: "claude", sheetId: "sheet", docId: "doc" },
+      evidence: {
+        fullRead: true,
+        allRows: [{ rowNumber: 2, date: "2026-04-24" }],
+        recentRows: [{ rowNumber: 2, date: "2026-04-24" }],
+        docText: "",
+        sheetRowsRead: 1,
+        docCharsRead: 0,
+      },
+      currentMission: mission,
+      streak: { current: 0, longest: 0, lastCompletedDate: null },
+    },
+    {
+      completedAt: new Date("2026-04-24T12:00:00.000Z"),
+      today: "2026-04-24",
+    },
+  );
+
+  assert.equal(completed.currentMission.status, "completed");
+  assert.equal(completed.currentMission.threadsUrl, "");
+  assert.equal(completed.currentMission.sheetRowNote, "");
+  assert.equal(completed.streak.current, 1);
 });
 
 test("persists normalized public execution coach state", async () => {

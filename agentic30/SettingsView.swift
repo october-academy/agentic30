@@ -452,6 +452,13 @@ struct SettingsView: View {
                 selection: $codexModelID
             )
 
+            #if DEBUG
+            if Self.isUITesting {
+                modelUITestingShortcuts(provider: .claude, selection: $claudeModelID)
+                modelUITestingShortcuts(provider: .codex, selection: $codexModelID)
+            }
+            #endif
+
             HStack(spacing: 14) {
                 Button(action: saveModelValues) {
                     Text("Save Models")
@@ -539,6 +546,49 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings.\(provider.rawValue).modelID")
         }
     }
+
+    #if DEBUG
+    private static var isUITesting: Bool {
+        ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--ui-testing-") })
+    }
+
+    private func modelUITestingShortcuts(
+        provider: AgentProvider,
+        selection: Binding<String>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(AgentModelCatalog.options(for: provider)) { option in
+                modelUITestingShortcutButton(option, selection: selection)
+            }
+        }
+    }
+
+    private func modelUITestingShortcutButton(
+        _ option: AgentModelOption,
+        selection: Binding<String>
+    ) -> some View {
+        let isSelected = option.id == selection.wrappedValue
+        let identifier = "settings.\(option.provider.rawValue).modelOption.\(option.id)"
+
+        return Button {
+            selection.wrappedValue = option.id
+        } label: {
+            Text(option.label)
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.62))
+                .frame(width: 230, height: 22, alignment: .leading)
+        }
+        .accessibilityIdentifier(identifier)
+        .accessibilityLabel(option.label)
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.white.opacity(isSelected ? 0.16 : 0.06))
+        )
+    }
+    #endif
 
     // MARK: - Ad Analytics Tab
 
@@ -699,7 +749,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 16) {
             sectionHeader(title: "BIP Notifications", configured: true)
 
-            Text("테스트 알림은 실제 macOS 알림 센터 경로를 사용합니다. 배너를 누르면 Agentic30 Workspace가 열리고 BIP 알림 task surface로 이동합니다.")
+            Text("테스트 알림은 실제 macOS 알림 센터 경로를 사용합니다. 배너를 누르면 Agentic30이 열리고 BIP 알림 task surface로 이동합니다.")
                 .font(.system(size: 13, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(0.50))
                 .fixedSize(horizontal: false, vertical: true)
@@ -1631,14 +1681,26 @@ struct SettingsView: View {
 
     /// Applies a Settings struct to all @State values.
     private func applySettings(_ s: KeychainHelper.Settings) {
+        let environment = ProcessInfo.processInfo.environment
+        let preferredClaudeModel = environment["AGENTIC30_UI_TEST_SETTINGS_CLAUDE_MODEL"] ?? s.preferredClaudeModel
+        let preferredCodexModel = environment["AGENTIC30_UI_TEST_SETTINGS_CODEX_MODEL"] ?? s.preferredCodexModel
         claudeModelID = AgentModelCatalog.normalizedModelID(
-            s.preferredClaudeModel,
+            preferredClaudeModel,
             provider: .claude
         )
         codexModelID = AgentModelCatalog.normalizedModelID(
-            s.preferredCodexModel,
+            preferredCodexModel,
             provider: .codex
         )
+        #if DEBUG
+        if environment["AGENTIC30_UI_TEST_SETTINGS_CLAUDE_MODEL"] != nil
+            || environment["AGENTIC30_UI_TEST_SETTINGS_CODEX_MODEL"] != nil {
+            var seededSettings = s
+            seededSettings.preferredClaudeModel = AgentModelCatalog.normalizedModelID(preferredClaudeModel, provider: .claude)
+            seededSettings.preferredCodexModel = AgentModelCatalog.normalizedModelID(preferredCodexModel, provider: .codex)
+            try? KeychainHelper.saveSettings(seededSettings)
+        }
+        #endif
         posthogApiKey = s.posthogApiKey
         posthogProjectAPIKey = s.posthogProjectAPIKey
         posthogHost = s.posthogHost

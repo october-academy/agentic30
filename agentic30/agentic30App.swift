@@ -19,7 +19,7 @@ struct agentic30App: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        Window("Agentic30 Workspace", id: "workspace") {
+        Window("Agentic30", id: "workspace") {
             ContentView(
                 viewModel: appDelegate.viewModel,
                 surfaceOverride: .workspace
@@ -62,7 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let petStateMachine = WolfStateMachine()
     let petWindowController = PetWindowController()
 
-    private let workspaceWindowTitle = "Agentic30 Workspace"
+    private let workspaceWindowTitle = "Agentic30"
     private var openWorkspaceHandler: (() -> Void)?
     private var pendingWorkspaceOpen = false
     private lazy var updaterController: SPUStandardUpdaterController? = Self.makeUpdaterController()
@@ -355,14 +355,15 @@ private struct StatusMenuContent: View {
                 }
             }
 
-            if !viewModel.sessions.isEmpty {
+            let visibleSessions = viewModel.sessions.filter { $0.archivedAt == nil }
+            if !visibleSessions.isEmpty {
                 Divider()
 
                 Text("Sessions")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
 
-                ForEach(viewModel.sessions.prefix(6)) { session in
+                ForEach(visibleSessions.prefix(6)) { session in
                     Button {
                         viewModel.selectSession(session.id)
                         openWorkspaceWindow()

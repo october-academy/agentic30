@@ -12,8 +12,8 @@ npm install
 
 1. Open `agentic30.xcodeproj` in Xcode and run the `agentic30` scheme.
 2. Confirm at least one provider is available in Settings: Claude Code login / `ANTHROPIC_API_KEY`, or Codex login / `CODEX_API_KEY` / `OPENAI_API_KEY`.
-3. Select the project folder you want Agentic30 to coach.
-4. Answer the three onboarding questions so the app can infer your project stage, likely users, and first proof target.
+3. Answer the onboarding questions so the app can infer your work context, role, stage, and available records.
+4. Select the project folder you want Agentic30 to coach.
 5. Open the assistant panel and confirm that Today Mission appears. Google Docs/Sheets setup is proof capture setup; it should not block the first local mission.
 
 ## Runtime Requirements

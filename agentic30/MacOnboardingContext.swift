@@ -79,14 +79,49 @@ enum OnboardingProjectStage: String, Codable, CaseIterable, Hashable {
 }
 
 enum OnboardingIsolationLevel: String, Codable, CaseIterable, Hashable {
-    case soloAll = "solo_all"
+    case projectFolder = "project_folder"
+    case workLog = "work_log"
     case occasional
     case weeklyLoop = "weekly_loop"
     case community
 
+    private static let legacySoloAllRawValue = "solo_all"
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        if rawValue == Self.legacySoloAllRawValue {
+            self = .projectFolder
+            return
+        }
+        guard let value = Self(rawValue: rawValue) else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Invalid onboarding isolation level: \(rawValue)"
+            )
+        }
+        self = value
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    static var allCases: [OnboardingIsolationLevel] {
+        [
+            .projectFolder,
+            .workLog,
+            .occasional,
+            .weeklyLoop,
+            .community,
+        ]
+    }
+
     var displayTitle: String {
         switch self {
-        case .soloAll: return "프로젝트 폴더 + 업무 일지"
+        case .projectFolder: return "프로젝트 폴더"
+        case .workLog: return "업무 일지"
         case .occasional: return "고객 대화 기록"
         case .weeklyLoop: return "공개 기록·Threads·블로그"
         case .community: return "아직 기록은 없다"
@@ -95,7 +130,8 @@ enum OnboardingIsolationLevel: String, Codable, CaseIterable, Hashable {
 
     var displayDescription: String {
         switch self {
-        case .soloAll: return "오늘 만든 것, 막힌 것, 배운 것을 읽을 수 있습니다"
+        case .projectFolder: return "코드, 문서, 설정 등 작업 중인 폴더를 읽을 수 있습니다"
+        case .workLog: return "오늘 만든 것, 막힌 것, 배운 것을 읽을 수 있습니다"
         case .occasional: return "고객이 말한 내용이나 인터뷰 파일이 있습니다"
         case .weeklyLoop: return "공개 실행, 반응, 배움을 기록한 채널이 있습니다"
         case .community: return "오늘부터 문제 메모와 실행 기록을 만들 수 있습니다"
@@ -108,6 +144,7 @@ struct OnboardingContext: Codable, Hashable {
     var role: OnboardingRole
     var projectStage: OnboardingProjectStage
     var isolationLevel: OnboardingIsolationLevel
+    var isolationLevels: [OnboardingIsolationLevel]
     var completedAt: String
 
     private enum CodingKeys: String, CodingKey {
@@ -115,6 +152,7 @@ struct OnboardingContext: Codable, Hashable {
         case role
         case projectStage = "project_stage"
         case isolationLevel = "isolation_level"
+        case isolationLevels = "isolation_levels"
         case completedAt = "completed_at"
     }
 
@@ -123,12 +161,15 @@ struct OnboardingContext: Codable, Hashable {
         role: OnboardingRole,
         projectStage: OnboardingProjectStage,
         isolationLevel: OnboardingIsolationLevel,
+        isolationLevels: [OnboardingIsolationLevel]? = nil,
         completedAt: String
     ) {
         self.workMode = workMode
         self.role = role
         self.projectStage = projectStage
         self.isolationLevel = isolationLevel
+        let levels = isolationLevels?.isEmpty == false ? isolationLevels ?? [isolationLevel] : [isolationLevel]
+        self.isolationLevels = Array(Set(levels)).sorted { $0.rawValue < $1.rawValue }
         self.completedAt = completedAt
     }
 
@@ -138,6 +179,10 @@ struct OnboardingContext: Codable, Hashable {
         role = try container.decode(OnboardingRole.self, forKey: .role)
         projectStage = try container.decode(OnboardingProjectStage.self, forKey: .projectStage)
         isolationLevel = try container.decode(OnboardingIsolationLevel.self, forKey: .isolationLevel)
+        isolationLevels = try container.decodeIfPresent([OnboardingIsolationLevel].self, forKey: .isolationLevels) ?? [isolationLevel]
+        if isolationLevels.isEmpty {
+            isolationLevels = [isolationLevel]
+        }
         completedAt = try container.decode(String.self, forKey: .completedAt)
     }
 
@@ -145,13 +190,15 @@ struct OnboardingContext: Codable, Hashable {
         workMode: OnboardingWorkMode = .fullTimeSolo,
         role: OnboardingRole,
         projectStage: OnboardingProjectStage,
-        isolationLevel: OnboardingIsolationLevel
+        isolationLevel: OnboardingIsolationLevel,
+        isolationLevels: [OnboardingIsolationLevel]? = nil
     ) -> OnboardingContext {
         OnboardingContext(
             workMode: workMode,
             role: role,
             projectStage: projectStage,
             isolationLevel: isolationLevel,
+            isolationLevels: isolationLevels,
             completedAt: ISO8601DateFormatter().string(from: Date())
         )
     }
@@ -161,7 +208,7 @@ struct OnboardingContext: Codable, Hashable {
     var assistantSystemPromptFragment: String {
         var lines: [String] = []
         lines.append(
-            "유저 컨텍스트: \(workMode.rawValue) · \(role.rawValue) · \(projectStage.rawValue) · \(isolationLevel.rawValue)."
+            "유저 컨텍스트: \(workMode.rawValue) · \(role.rawValue) · \(projectStage.rawValue) · \(isolationLevels.map(\.rawValue).joined(separator: ","))."
         )
 
         switch workMode {
@@ -186,14 +233,19 @@ struct OnboardingContext: Codable, Hashable {
             )
         }
 
-        switch isolationLevel {
-        case .soloAll:
-            lines.append("[R2] 프로젝트 폴더와 업무 일지를 근거로 오늘의 실행 과제를 구체화하세요.")
-        case .occasional:
+        if isolationLevels.contains(.projectFolder) {
+            lines.append("[R2] 프로젝트 폴더의 코드·문서·설정 상태를 근거로 오늘의 실행 과제를 구체화하세요.")
+        }
+        if isolationLevels.contains(.workLog) {
+            lines.append("[R2] 업무 일지에서 오늘 만든 것, 막힌 것, 배운 것을 근거로 다음 실행 과제를 구체화하세요.")
+        }
+        if isolationLevels.contains(.occasional) {
             lines.append("[R2] 고객 인터뷰 원문에서 과거 행동, 현재 대안, 비용 신호를 우선 추출하세요.")
-        case .weeklyLoop:
+        }
+        if isolationLevels.contains(.weeklyLoop) {
             lines.append("[R2] BIP (Build In Public) 반응과 공개 실행 기록을 다음 proof 목표로 연결하세요.")
-        case .community:
+        }
+        if isolationLevels.contains(.community) || isolationLevels.isEmpty {
             lines.append("[R2] 기록이 없다는 전제로, 오늘 만들 첫 problem memo 또는 인터뷰 입력부터 요구하세요.")
         }
 

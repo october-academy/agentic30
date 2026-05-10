@@ -84,10 +84,41 @@ test("normalizes legacy session payloads on startup", () => {
   assert.equal(sessions[1].pendingUserInput, null);
   assert.equal(sessions[2].status, "idle");
   assert.equal(sessions[2].error, null);
-  assert.equal(sessions[2].messages[0].state, "final");
-  assert.equal(sessions[2].messages[0].error, null);
-  assert.equal(sessions[3].messages.length, 1);
-  assert.equal(sessions[3].messages[0].content, "real answer");
+  assert.equal(sessions[2].messages[0].state, "error");
+  assert.equal(sessions[2].messages[0].error, "stale message failure");
+  assert.equal(sessions[3].messages.length, 2);
+  assert.equal(sessions[3].messages[0].state, "error");
+  assert.equal(sessions[3].messages[0].recoverable, true);
+  assert.match(sessions[3].messages[0].content, /사이드카가 종료/);
+  assert.equal(sessions[3].messages[1].content, "real answer");
+});
+
+test("startup normalization appends a recoverable assistant turn for orphaned user prompts", () => {
+  const [session] = normalizePersistedSessionsPayload({
+    sessions: [
+      {
+        id: "session-orphan",
+        provider: "codex",
+        status: "running",
+        messages: [
+          {
+            id: "msg-user",
+            role: "user",
+            state: "final",
+            content: "오늘 우선순위를 잡아줘",
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(session.status, "idle");
+  assert.equal(session.messages.length, 2);
+  assert.equal(session.messages[0].role, "user");
+  assert.equal(session.messages[1].role, "assistant");
+  assert.equal(session.messages[1].state, "error");
+  assert.equal(session.messages[1].recoverable, true);
+  assert.match(session.messages[1].error, /Sidecar stopped/);
 });
 
 test("drops stale Codex context-overflow responses on startup", () => {

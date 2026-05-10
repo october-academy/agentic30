@@ -260,7 +260,7 @@ struct BipCoachDisplayStateTests {
         BipCoachMission(
             id: id,
             date: "2026-04-27",
-            provider: .codex,
+            provider: AgentProvider.codex.rawValue,
             status: "drafted",
             compact: false,
             title: title,

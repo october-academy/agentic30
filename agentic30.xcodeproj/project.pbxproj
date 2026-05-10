@@ -306,6 +306,7 @@
 				"$(SRCROOT)/sidecar/preflight-cli.mjs",
 				"$(SRCROOT)/sidecar/preflight.mjs",
 				"$(SRCROOT)/sidecar/provider-runner.mjs",
+				"$(SRCROOT)/sidecar/qmd-bootstrap-worker.mjs",
 				"$(SRCROOT)/sidecar/qmd-support.mjs",
 				"$(SRCROOT)/sidecar/session-store.mjs",
 				"$(SRCROOT)/sidecar/telemetry.mjs",
@@ -330,6 +331,8 @@
 			);
 			inputPaths = (
 				"$(CODESIGNING_FOLDER_PATH)/Contents/Resources/sidecar",
+				"$(SRCROOT)/agentic30/agentic30.entitlements",
+				"$(SRCROOT)/scripts/sign-sidecar-native-binaries.sh",
 			);
 			name = "Sign Sidecar Native Binaries";
 			outputFileListPaths = (
@@ -339,7 +342,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "set -euo pipefail\nsidecar_root=\"$CODESIGNING_FOLDER_PATH/Contents/Resources/sidecar\"\nif [ ! -d \"$sidecar_root\" ]; then\n  echo \"warning: sidecar resources not found at $sidecar_root\" >&2\n  exit 0\nfi\nidentity=\"${EXPANDED_CODE_SIGN_IDENTITY:--}\"\nif [ -z \"$identity\" ] || [ \"$identity\" = \"Sign to Run Locally\" ]; then\n  identity=\"-\"\nfi\nif [ \"$identity\" = \"-\" ]; then\n  ts_arg=(--timestamp=none)\nelse\n  ts_arg=(--timestamp)\nfi\nsigned=0\nwhile IFS= read -r -d '' binary; do\n  if file -b \"$binary\" | grep -q 'Mach-O'; then\n    codesign --force --sign \"$identity\" \"${ts_arg[@]}\" --options runtime \"$binary\"\n    signed=$((signed + 1))\n  fi\ndone < <(find \"$sidecar_root\" -type f \\( -perm -111 -o -name '*.node' -o -name '*.dylib' -o -name '*.so' \\) -print0)\nif [ \"${SCRIPT_OUTPUT_FILE_COUNT:-0}\" -gt 0 ]; then\n  mkdir -p \"$(dirname \"$SCRIPT_OUTPUT_FILE_0\")\"\n  printf 'signed=%s\\n' \"$signed\" > \"$SCRIPT_OUTPUT_FILE_0\"\nfi\necho \"[sign-sidecar] signed $signed native binaries\"\n";
+			shellScript = "\"$SRCROOT/scripts/sign-sidecar-native-binaries.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

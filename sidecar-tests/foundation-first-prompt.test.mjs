@@ -3,9 +3,15 @@ import assert from "node:assert/strict";
 import {
   FOUNDATION_DAYS,
   buildFirstPromptForDay,
+  buildFoundationSystemContext,
   formatFirstPromptText,
   getFoundationDay,
+  resolveFoundationContext,
 } from "../sidecar/foundation-chat.mjs";
+import {
+  buildFoundationAntiDisplacementGate,
+  buildFoundationFrictionLogTemplate,
+} from "../sidecar/foundation-contracts.mjs";
 
 // Sub-AC 2.2 contract:
 //   sidecar/index.mjs imports `buildFirstPromptForDay` from foundation-chat.mjs
@@ -101,6 +107,18 @@ test("buildFirstPromptForDay returns the canonical envelope for every Day", () =
     assert.equal(typeof built.question, "string");
     assert.equal(typeof built.core_question, "string");
     assert.ok(Array.isArray(built.artifacts));
+    if (day === 0) {
+      assert.equal(built.value_contract, null);
+    } else {
+      assert.equal(typeof built.value_contract?.todayValue, "string");
+      assert.equal(typeof built.value_contract?.evidenceArtifact, "string");
+      assert.equal(typeof built.value_contract?.passGate, "string");
+      assert.equal(typeof built.value_contract?.failGate, "string");
+      assert.ok(Array.isArray(built.value_contract?.canonicalDocs));
+      assert.ok(built.value_contract.canonicalDocs.every((entry) => /^docs\/(ICP|VALUES|GOAL|SPEC)\.md$/.test(entry.path)));
+      assert.match(built.value_contract?.resourceObservationPrompt || "", /자료|예시|템플릿/);
+      assert.match(built.value_contract?.antiDisplacementGate?.rule || "", /hotfix|dogfood/);
+    }
     assert.equal(typeof built.text, "string");
     // spec_version must match the Day -> SPEC vN contract
     const expectedSpec = FOUNDATION_DAYS[day].spec_version ?? null;
@@ -256,6 +274,58 @@ test("Day 7 first_prompt substitutes strong_section + weak_section_v3", () => {
   });
   assert.ok(built.yesterday.includes("통증"));
   assert.ok(built.yesterday.includes("monetization"));
+});
+
+test("Foundation system context includes the dogfood VALUE contract", () => {
+  const context = resolveFoundationContext({
+    day: 3,
+    prompt: "Day 3 시작",
+    workspace: { root: "/tmp/workspace", available_sources: ["interview", "bip", "work_log"] },
+  });
+
+  assert.match(context.value_contract.todayValue, /Mom Test/);
+  assert.match(context.value_contract.externalLockIn, /캘린더/);
+
+  const system = buildFoundationSystemContext(context);
+  assert.match(system, /VALUE contract/);
+  assert.match(system, /오늘 얻는 가치/);
+  assert.match(system, /needed resource/);
+  assert.match(system, /anti-displacement/);
+  assert.match(system, /canonical docs evidence/);
+  assert.match(system, /docs\/ICP\.md/);
+  assert.match(system, /docs\/GOAL\.md/);
+  assert.match(system, /docs\/SPEC\.md/);
+  assert.match(system, /ICP 후보 최소 1명/);
+  assert.doesNotMatch(system, /승연|송재진|조제표/);
+});
+
+test("Foundation friction log template captures value, pass/fail, churn, and needed resource", () => {
+  const template = buildFoundationFrictionLogTemplate({ day: 1, date: "2026-05-11" });
+  assert.match(template, /Day 1 Friction Log - 2026-05-11/);
+  assert.match(template, /Today value:/);
+  assert.match(template, /Pass gate:/);
+  assert.match(template, /Fail gate:/);
+  assert.match(template, /Canonical docs evidence/);
+  assert.match(template, /docs\/ICP\.md/);
+  assert.match(template, /docs\/SPEC\.md/);
+  assert.match(template, /Would an external user churn here/);
+  assert.match(template, /Needed resource/);
+  assert.match(template, /자료|예시|템플릿/);
+});
+
+test("anti-displacement gate can be scoped without public dogfood-week constants", () => {
+  const defaultGate = buildFoundationAntiDisplacementGate();
+  assert.match(defaultGate.baselineCommand, /<dogfood-evidence-root>/);
+  assert.match(defaultGate.weeklyCheck, /<week-start-date>/);
+  assert.doesNotMatch(defaultGate.baselineCommand, /2026-05-11|october-academy-agentic30|dogfood-week/);
+  assert.doesNotMatch(defaultGate.weeklyCheck, /2026-05-11|october-academy-agentic30|dogfood-week/);
+
+  const scopedGate = buildFoundationAntiDisplacementGate({
+    evidenceRoot: "~/.gstack/projects/example/dogfood-week",
+    weekStartDate: "2026-05-11",
+  });
+  assert.match(scopedGate.baselineCommand, /~\/\.gstack\/projects\/example\/dogfood-week\/baseline-head\.txt/);
+  assert.match(scopedGate.weeklyCheck, /2026-05-11/);
 });
 
 test("Missing dynamic variables fall back to placeholder (no invented values)", () => {

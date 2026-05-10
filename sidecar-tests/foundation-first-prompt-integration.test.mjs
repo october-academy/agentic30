@@ -247,6 +247,65 @@ test("Sub-AC 4 :: every Day 0..7 round-trips a valid foundation_first_prompt env
   }
 });
 
+test("Foundation chat trivial greeting runs through provider", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    ws = await connectAndAwaitReady(harness);
+    const events = [];
+    ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
+
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.4-mini" }));
+    const created = await waitForEvent(events, (event) => event.type === "session_created");
+    ws.send(JSON.stringify({
+      type: "submit_user_input",
+      sessionId: created.session.id,
+      requestId: created.session.pendingUserInput.requestId,
+      responses: [{
+        question: "무엇부터 시작할까요?",
+        selectedOptions: ["프로젝트 전략 문서 만들기"],
+        freeText: "",
+      }],
+    }));
+    await waitForEvent(events, (event) =>
+      event.type === "session_updated"
+      && event.session?.id === created.session.id
+      && event.session.status === "idle"
+      && event.session.pendingUserInput == null,
+    );
+    events.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "foundation_chat",
+      sessionId: created.session.id,
+      prompt: "하이",
+      day: 7,
+    }));
+
+    const completed = await waitForEvent(events, (event) =>
+      event.type === "session_updated"
+      && event.session?.id === created.session.id
+      && event.session.status === "idle"
+      && latestAssistantMessage(event.session)?.state === "final"
+    );
+    const answer = latestAssistantMessage(completed.session);
+    assert.equal(typeof answer.content, "string");
+    assert.ok(answer.content.length > 0);
+    assert.ok(
+      answer.performance?.marks?.some((mark) => mark.phase === "foundation.provider_call_start"),
+      `Expected foundation.provider_call_start timing mark, got ${JSON.stringify(answer.performance)}`,
+    );
+    assert.equal(
+      answer.performance?.marks?.some((mark) => mark.phase === "foundation.instant_greeting_response_ready"),
+      false,
+      "trivial foundation greetings must not use the local instant greeting path",
+    );
+  } finally {
+    await closeWebSocket(ws);
+    await harness.dispose();
+  }
+});
+
 test("Sub-AC 4 :: out-of-range days fail closed with an error envelope (no firstPrompt)", async () => {
   const harness = await spawnSidecar();
   let ws;
@@ -581,4 +640,8 @@ async function waitForEvent(events, predicate, timeoutMs = 5_000) {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error("Timed out waiting for matching sidecar event");
+}
+
+function latestAssistantMessage(session) {
+  return [...(session?.messages || [])].reverse().find((message) => message.role === "assistant");
 }

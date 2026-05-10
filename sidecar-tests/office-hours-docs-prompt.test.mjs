@@ -48,6 +48,16 @@ test("office-hours docs system prompt embeds gstack forcing devices", () => {
   assert.match(prompt, /이번 주에 한 사용자 옆에 앉아서/);
 });
 
+test("office-hours docs prompt treats canonical docs as the Foundation evidence spine", () => {
+  const prompt = buildOfficeHoursDocsSystemPrompt("/workspace");
+
+  assert.match(prompt, /Foundation Evidence Spine/);
+  assert.match(prompt, /progressive rewrite of the four canonical product docs/);
+  assert.match(prompt, /Day 1 evidence updates `docs\/ICP\.md` and `docs\/SPEC\.md`/);
+  assert.match(prompt, /Day 7 evidence updates `docs\/ICP\.md`, `docs\/VALUES\.md`, `docs\/GOAL\.md`, and `docs\/SPEC\.md`/);
+  assert.match(prompt, /Supporting `day-N-\*\.md` files are allowed, but they are scratch evidence/);
+});
+
 test("office-hours docs user prompt includes optional starting context without deep-interview trigger words", () => {
   const prompt = buildOfficeHoursDocsPrompt("AI assistant for solo founders");
 

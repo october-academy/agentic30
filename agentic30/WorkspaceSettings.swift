@@ -54,6 +54,15 @@ enum WorkspaceSettings {
         if let path = UserDefaults.standard.string(forKey: kWorkspaceRootKey), !path.isEmpty {
             return isExistingDirectory(URL(fileURLWithPath: path, isDirectory: true))
         }
+        let legacy = legacyWorkspaceProvider()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !legacy.isEmpty {
+            let url = URL(fileURLWithPath: legacy, isDirectory: true)
+            if isExistingDirectory(url) {
+                store(url)
+                return true
+            }
+        }
         return false
     }
 

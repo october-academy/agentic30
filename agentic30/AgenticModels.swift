@@ -168,12 +168,14 @@ struct ChatSession: Identifiable, Codable, Hashable {
     var messages: [ChatMessage]
     var pendingUserInput: StructuredPromptRequest?
     var runtime: ChatSessionRuntime?
+    var archivedAt: Date? = nil
 }
 
 struct ChatSessionRuntime: Codable, Hashable {
     var codexThreadId: String?
     var codexThreadMeta: CodexThreadMeta?
     var codexWarm: CodexWarmState?
+    var startupTiming: StartupTimingState?
     var iddDocumentType: String?
 }
 
@@ -196,6 +198,24 @@ struct CodexWarmState: Codable, Hashable {
     var failedAt: String?
     var elapsedMs: Int?
     var error: String?
+}
+
+struct StartupTimingState: Codable, Hashable {
+    var processStartedAt: String?
+    var sidecarReadyAt: String?
+    var clientAuthenticatedAt: String?
+    var sessionCreatedAt: String?
+    var processToSidecarReadyMs: Int?
+    var processToClientAuthenticatedMs: Int?
+    var processToCreateSessionReceivedMs: Int?
+    var processToSessionCreatedMs: Int?
+    var sidecarReadyToCreateSessionReceivedMs: Int?
+    var clientAuthenticatedToCreateSessionReceivedMs: Int?
+    var createSessionElapsedMs: Int?
+    var bootstrapIntakeElapsedMs: Int?
+    var persistElapsedMs: Int?
+    var bipCoachSyncElapsedMs: Int?
+    var clientCountAtCreate: Int?
 }
 
 struct StructuredPromptRequest: Identifiable, Codable, Hashable {
@@ -416,7 +436,7 @@ struct BipCoachEvidence: Codable, Hashable {
     let docCharsRead: Int?
     let docCharsTotal: Int?
     let docWasTruncated: Bool?
-    let provider: AgentProvider?
+    let provider: String?
     let fallbackUsed: Bool?
     let elapsedMs: Int?
 }
@@ -436,7 +456,7 @@ struct BipCoachSheetRow: Codable, Hashable, Identifiable {
 struct BipCoachMission: Codable, Hashable {
     let id: String
     let date: String?
-    let provider: AgentProvider?
+    let provider: String?
     let status: String
     let compact: Bool?
     let title: String?

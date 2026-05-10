@@ -36,6 +36,7 @@ const NODE_RUNTIME_ARCHIVES = [
 
 const ENTRY_POINTS = [
   "index.mjs",
+  "qmd-bootstrap-worker.mjs",
   "mcp-server.mjs",
   "acp-adapter.mjs",
   "preflight-cli.mjs",

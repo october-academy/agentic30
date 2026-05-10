@@ -294,13 +294,12 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var workspaceSettingsOpenRequest = 0
     @Published private(set) var bipNotificationOpenRequest: BipNotificationOpenRequest?
     @Published private(set) var startupQueuedAction: StartupQueuedAction?
+    @Published private(set) var startupSessionAppearElapsedMs: Int?
     /// First-launch wall-clock timestamp that anchors the Foundation phase
-    /// Day N/30 counter. Persisted in `UserDefaults` so the counter survives
-    /// app restarts. Set lazily on the first successful `start()` (after the
-    /// macOnboarding gate clears) so we don't pre-arm Day 1 before the user
-    /// is actually set up. The agnt navigator engine uses the same anchor:
-    /// `D = floor((now - started_at) / 86400000) + 1`.
+    /// Day N/30 counter. The value is mirrored from `foundationProgressState`,
+    /// which is persisted per workspace/app-support rather than globally.
     @Published private(set) var foundationStartedAt: Date?
+    @Published private(set) var foundationProgressState = FoundationProgressSnapshot()
 
     // Notion OAuth
     @Published private(set) var notionConnected = false
@@ -310,6 +309,8 @@ final class AgenticViewModel: ObservableObject {
     private let authPresentationContext = AuthPresentationContext()
     private let authSessionFactory: WebAuthenticationSessionFactory
     private let activateAppForAuth: @MainActor () -> Void
+    private var startupSessionAppearStartedAt: Date?
+    private var didRecordStartupSessionAppear = false
 
     struct WorkspaceScanResult: Equatable {
         let icp: String?
@@ -361,17 +362,21 @@ final class AgenticViewModel: ObservableObject {
         case generateMission(compact: Bool)
     }
 
-    /// `UserDefaults` key for the Foundation phase Day-1 anchor. Stored as a
-    /// `Date` so callers don't have to round-trip through ISO-8601 strings.
+    /// Legacy global key used before the progress state became workspace-scoped.
+    /// Only migrate it when the current workspace is explicit; never read it as
+    /// active state for a fresh workspace.
     private static let kFoundationStartedAtKey = "agentic30.foundation.startedAt"
+    private var foundationProgressStore: FoundationProgressStore?
 
-    /// Lazy initializer for the Foundation phase counter. Idempotent — once
-    /// the user has crossed the onboarding gate the timestamp is locked, so
-    /// the counter monotonically advances and survives reboots.
+    /// Lazy initializer for the Foundation phase counter. Idempotent per
+    /// workspace so isolated projects do not inherit stale global progress.
     func ensureFoundationStarted(now: Date = Date()) {
-        guard foundationStartedAt == nil else { return }
-        foundationStartedAt = now
-        UserDefaults.standard.set(now, forKey: Self.kFoundationStartedAtKey)
+        ensureFoundationProgressStore()
+        guard foundationProgressState.startedAt == nil else { return }
+        updateFoundationProgress { snapshot in
+            snapshot.startedAt = now
+            snapshot.selectedDay = max(1, snapshot.selectedDay)
+        }
         PostHogTelemetry.capture(
             "mac_foundation_phase_started",
             properties: ["started_at": ISO8601DateFormatter().string(from: now)],
@@ -386,10 +391,8 @@ final class AgenticViewModel: ObservableObject {
     /// Capped at 30 for display so the badge stops counting past the
     /// program length, while the underlying anchor remains untouched.
     var foundationDayNumber: Int? {
-        guard let startedAt = foundationStartedAt else { return nil }
-        let elapsed = Date().timeIntervalSince(startedAt)
-        let day = Int(floor(elapsed / 86_400)) + 1
-        return max(1, min(day, 30))
+        guard foundationProgressState.startedAt != nil else { return nil }
+        return max(foundationProgressState.currentDayNumber() ?? 1, foundationProgressState.selectedDay)
     }
 
     /// 0…1 progress for the sidebar bar. Falls back to 0 before the anchor
@@ -406,6 +409,30 @@ final class AgenticViewModel: ObservableObject {
             return "Day \(day)/30"
         }
         return "Day —/30"
+    }
+
+    var selectedFoundationDay: Int {
+        foundationProgressState.selectedDay
+    }
+
+    func selectFoundationDay(_ day: Int) {
+        let clamped = max(1, min(day, 30))
+        guard isFoundationDayUnlocked(clamped) else { return }
+        updateFoundationProgress { snapshot in
+            snapshot.selectedDay = clamped
+        }
+    }
+
+    func isFoundationDayUnlocked(_ day: Int) -> Bool {
+        foundationProgressState.isUnlocked(day)
+    }
+
+    func markFoundationDayCompleted(_ day: Int) {
+        let clamped = max(1, min(day, 30))
+        updateFoundationProgress { snapshot in
+            snapshot.completedDays.insert(clamped)
+            snapshot.selectedDay = min(max(snapshot.selectedDay, clamped + 1), 30)
+        }
     }
 
     init(
@@ -483,14 +510,7 @@ final class AgenticViewModel: ObservableObject {
             onboardingContext = onboardingContextOverride
         }
 
-        // Restore the Foundation phase Day-1 anchor early so the sidebar
-        // counter renders correctly on the first frame; `start()` will fall
-        // back to lazy-initializing it when the user crosses the onboarding
-        // gate for the first time.
-        if !Self.isXCTestHost(arguments: arguments),
-           let storedStart = UserDefaults.standard.object(forKey: Self.kFoundationStartedAtKey) as? Date {
-            foundationStartedAt = storedStart
-        }
+        restoreFoundationProgress(arguments: arguments)
     }
 
     struct StructuredPromptSubmission: Hashable {
@@ -500,7 +520,7 @@ final class AgenticViewModel: ObservableObject {
     }
 
     var selectedSession: ChatSession? {
-        sessions.first(where: { $0.id == selectedSessionID })
+        sessions.first(where: { $0.id == selectedSessionID && $0.archivedAt == nil })
     }
 
     var pendingStructuredPrompt: StructuredPromptRequest? {
@@ -670,8 +690,7 @@ final class AgenticViewModel: ObservableObject {
     }
 
     var needsOnboardingContext: Bool {
-        WorkspaceSettings.hasExplicitWorkspace
-            && onboardingContext == nil
+        onboardingContext == nil
     }
 
     var signedInEmail: String? {
@@ -710,7 +729,7 @@ final class AgenticViewModel: ObservableObject {
     func start() {
         guard !started else { return }
         guard !requiresMacOnboarding else {
-            connectionLabel = needsProjectWorkspace ? "Choose a project workspace" : "Complete local setup"
+            connectionLabel = needsOnboardingContext ? "Complete local setup" : "Choose a project workspace"
             isConnected = false
             return
         }
@@ -759,6 +778,9 @@ final class AgenticViewModel: ObservableObject {
             }
         }
 
+        startupSessionAppearStartedAt = Date()
+        startupSessionAppearElapsedMs = nil
+        didRecordStartupSessionAppear = false
         sidecar.start()
         if macOnboardingStatus == .refreshing {
             refreshMacAuthIfNeeded()
@@ -800,13 +822,22 @@ final class AgenticViewModel: ObservableObject {
         PostHogTelemetry.capture("mac_assistant_surface_opened", authSession: macAuthSession)
     }
 
-    func createSession(provider: AgentProvider? = nil) {
+    func createSession(provider: AgentProvider? = nil, source: String? = nil) {
         let resolvedProvider = provider ?? selectedProvider
         let model = preferredModel(for: resolvedProvider)
-        PostHogTelemetry.capture("mac_session_create_requested", properties: [
+        var properties: [String: Any] = [
             "provider": resolvedProvider.rawValue,
             "model": model,
-        ], authSession: macAuthSession)
+        ]
+        if let source = source?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !source.isEmpty {
+            properties["source"] = source
+        }
+        PostHogTelemetry.capture(
+            "mac_session_create_requested",
+            properties: properties,
+            authSession: macAuthSession
+        )
         sidecar.send(
             payload: [
                 "type": "create_session",
@@ -828,6 +859,40 @@ final class AgenticViewModel: ObservableObject {
         ])
     }
 
+    func archiveSession(_ session: ChatSession, source: String? = nil) {
+        var properties: [String: Any] = [
+            "session_id": session.id,
+            "provider": session.provider.rawValue,
+        ]
+        if let source = source?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !source.isEmpty {
+            properties["source"] = source
+        }
+        PostHogTelemetry.capture(
+            "mac_session_archive_requested",
+            properties: properties,
+            authSession: macAuthSession
+        )
+
+        let archivedAt = Date()
+        if let index = sessions.firstIndex(where: { $0.id == session.id }) {
+            sessions[index].archivedAt = archivedAt
+        }
+        if selectedSessionID == session.id {
+            selectedSessionID = sessions.first(where: { $0.id != session.id && $0.archivedAt == nil })?.id
+        }
+        refreshPresentationState()
+
+        sidecar.send(payload: [
+            "type": "archive_session",
+            "sessionId": session.id,
+            "archivedAt": ISO8601DateFormatter().string(from: archivedAt),
+        ])
+        if sessions.allSatisfy({ $0.archivedAt != nil }) {
+            createSession(provider: selectedProvider, source: "archive_last_visible_session")
+        }
+    }
+
     func stopSelectedSession() {
         guard let session = selectedSession else { return }
         PostHogTelemetry.capture("mac_session_stop_requested", properties: [
@@ -838,6 +903,20 @@ final class AgenticViewModel: ObservableObject {
             "type": "stop_session",
             "sessionId": session.id,
         ])
+    }
+
+    func retryLastFailedChatTurn() {
+        guard let session = selectedSession else { return }
+        guard let failedIndex = session.messages.lastIndex(where: { $0.role == .assistant && $0.state == .error }) else {
+            return
+        }
+        let previousMessages = session.messages[..<failedIndex]
+        guard let userMessage = previousMessages.last(where: { $0.role == .user }),
+              let prompt = userMessage.content.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty else {
+            return
+        }
+        draft = prompt
+        sendPrompt()
     }
 
     /// Classify a draft prompt into one of the three routing modes. Pure
@@ -1409,6 +1488,7 @@ final class AgenticViewModel: ObservableObject {
             "sessionId": sessionID,
             "provider": provider.rawValue,
             "compact": compact,
+            "localEvidence": localEvidenceBundle(),
         ]
         if let curriculumDay {
             payload["curriculumDay"] = curriculumDay
@@ -1425,6 +1505,7 @@ final class AgenticViewModel: ObservableObject {
             "sessionId": sessionID,
             "provider": provider.rawValue,
             "autoStart": autoStart,
+            "localEvidence": localEvidenceBundle(),
         ])
     }
 
@@ -1458,15 +1539,11 @@ final class AgenticViewModel: ObservableObject {
         ])
     }
 
-    func completeBipMission(threadsUrl: String, sheetRowNote: String) {
+    func completeBipMission(threadsUrl: String = "", sheetRowNote: String = "") {
         guard isConnected else { return }
         guard let sessionID = currentBipCoachSessionID() else { return }
         let cleanedThreadsUrl = threadsUrl.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanedSheetRowNote = sheetRowNote.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanedThreadsUrl.isEmpty, !cleanedSheetRowNote.isEmpty else {
-            lastError = "Threads URL과 Sheet 행 기록을 모두 입력해야 완료 처리됩니다."
-            return
-        }
         isBipCoachCompleting = true
         lastError = nil
         PostHogTelemetry.capture("mac_bip_coach_completion_requested", properties: [
@@ -1490,6 +1567,42 @@ final class AgenticViewModel: ObservableObject {
             "rowId": "*",
             "action": "recheck",
         ])
+    }
+
+    private func localEvidenceBundle() -> [String: Any] {
+        var bundle: [String: Any] = [
+            "workspaceRoot": WorkspaceSettings.resolvedURL().path,
+        ]
+        if let onboardingContext {
+            bundle["onboardingContext"] = [
+                "work_mode": onboardingContext.workMode.rawValue,
+                "role": onboardingContext.role.rawValue,
+                "project_stage": onboardingContext.projectStage.rawValue,
+                "isolation_level": onboardingContext.isolationLevel.rawValue,
+                "isolation_levels": onboardingContext.isolationLevels.map(\.rawValue),
+            ]
+        }
+        if let scanResult {
+            var scan: [String: Any] = [:]
+            if let icp = scanResult.icp { scan["icp"] = icp }
+            if let spec = scanResult.spec { scan["spec"] = spec }
+            if let values = scanResult.values { scan["values"] = values }
+            if let designSystem = scanResult.designSystem { scan["designSystem"] = designSystem }
+            if let adr = scanResult.adr { scan["adr"] = adr }
+            if let goal = scanResult.goal { scan["goal"] = goal }
+            if let docs = scanResult.docs { scan["docs"] = docs }
+            if let sheet = scanResult.sheet { scan["sheet"] = sheet }
+            if let hypothesis = scanResult.onboardingHypothesis {
+                scan["onboardingHypothesis"] = [
+                    "productName": hypothesis.productName ?? "",
+                    "targetUser": hypothesis.targetUser ?? "",
+                    "likelyUsers": hypothesis.likelyUsers ?? [],
+                    "confidence": hypothesis.confidence ?? "",
+                ]
+            }
+            bundle["workspaceScan"] = scan
+        }
+        return bundle
     }
 
     func sendBipReadinessAction(rowId: BipReadinessRowId, action: String, payload: [String: Any] = [:]) {
@@ -1563,6 +1676,8 @@ final class AgenticViewModel: ObservableObject {
     func setProjectWorkspace(_ url: URL) {
         clearStartupQueuedAction()
         WorkspaceSettings.store(url)
+        foundationProgressStore = nil
+        restoreFoundationProgress(arguments: CommandLine.arguments)
         workspaceRoot = url.path
         PostHogTelemetry.capture("mac_project_workspace_selected", properties: [
             "workspace_basename": url.lastPathComponent,
@@ -1596,6 +1711,7 @@ final class AgenticViewModel: ObservableObject {
                 "role": context.role.rawValue,
                 "project_stage": context.projectStage.rawValue,
                 "isolation_level": context.isolationLevel.rawValue,
+                "isolation_levels": context.isolationLevels.map(\.rawValue).joined(separator: ","),
             ], authSession: macAuthSession)
             // Local persistence done. Server sync to /api/profile/onboarding-context is a follow-up.
             sendAuthContextToSidecar()
@@ -1801,6 +1917,7 @@ final class AgenticViewModel: ObservableObject {
                 "role": onboardingContext.role.rawValue,
                 "project_stage": onboardingContext.projectStage.rawValue,
                 "isolation_level": onboardingContext.isolationLevel.rawValue,
+                "isolation_levels": onboardingContext.isolationLevels.map(\.rawValue),
                 "completed_at": onboardingContext.completedAt,
             ]
         }
@@ -1944,8 +2061,9 @@ final class AgenticViewModel: ObservableObject {
                 "session_count": sessions.count,
                 "notion_connected": notionConnected,
             ], authSession: macAuthSession)
-            sendAuthContextToSidecar()
             ensureSelection()
+            recordStartupSessionAppearIfNeeded(source: "ready")
+            sendAuthContextToSidecar()
             refreshPresentationState()
             requestCodexWarmupIfNeeded()
             requestBipReadinessCheck()
@@ -1959,6 +2077,7 @@ final class AgenticViewModel: ObservableObject {
             if let sessions = event.sessions {
                 self.sessions = sessions.sorted(by: { $0.updatedAt > $1.updatedAt })
                 ensureSelection()
+                recordStartupSessionAppearIfNeeded(source: "sessions_snapshot")
                 refreshPresentationState()
                 requestCodexWarmupIfNeeded()
             }
@@ -1970,6 +2089,7 @@ final class AgenticViewModel: ObservableObject {
                     "session_id": session.id,
                     "provider": session.provider.rawValue,
                 ], authSession: macAuthSession)
+                recordStartupSessionAppearIfNeeded(source: "session_created")
                 refreshPresentationState()
                 requestCodexWarmupIfNeeded()
                 requestInitialBipGateIfNeeded()
@@ -2162,6 +2282,7 @@ final class AgenticViewModel: ObservableObject {
                 self.bipCoach = bipCoach
                 requestAndScheduleBipNotificationsIfNeeded(for: bipCoach)
             }
+            markFoundationDayCompleted(selectedFoundationDay)
         case "bip_coach_error":
             isBipCoachRefreshing = false
             isBipCoachGenerating = false
@@ -2325,10 +2446,11 @@ final class AgenticViewModel: ObservableObject {
     }
 
     private func ensureSelection() {
-        if selectedSessionID == nil {
-            selectedSessionID = sessions.first?.id
+        if selectedSessionID == nil ||
+            !sessions.contains(where: { $0.id == selectedSessionID && $0.archivedAt == nil }) {
+            selectedSessionID = sessions.first(where: { $0.archivedAt == nil })?.id
         }
-        if sessions.isEmpty {
+        if sessions.allSatisfy({ $0.archivedAt != nil }) {
             createSession(provider: selectedProvider)
         }
     }
@@ -2608,7 +2730,7 @@ final class AgenticViewModel: ObservableObject {
             currentMission: BipCoachMission(
                 id: "ui-test-bip-mission",
                 date: "2026-04-27",
-                provider: .codex,
+                provider: AgentProvider.codex.rawValue,
                 status: "drafted",
                 compact: false,
                 title: "오늘 배운 점을 Threads에 공개하기",
@@ -2633,7 +2755,7 @@ final class AgenticViewModel: ObservableObject {
             BipCoachMission(
                 id: "ui-test-local-mission-1",
                 date: "2026-04-30",
-                provider: .codex,
+                provider: AgentProvider.codex.rawValue,
                 status: "drafted",
                 compact: true,
                 title: "첫 고객 후보 3명 정하기",
@@ -2988,6 +3110,45 @@ final class AgenticViewModel: ObservableObject {
         })
     }
 
+    private func recordStartupSessionAppearIfNeeded(source: String) {
+        guard !didRecordStartupSessionAppear,
+              let session = selectedSession,
+              let startedAt = startupSessionAppearStartedAt
+        else { return }
+
+        let elapsedMs = max(0, Int((Date().timeIntervalSince(startedAt) * 1000).rounded()))
+        startupSessionAppearElapsedMs = elapsedMs
+        didRecordStartupSessionAppear = true
+
+        var properties: [String: Any] = [
+            "source": source,
+            "elapsed_ms": elapsedMs,
+            "session_id": session.id,
+            "provider": session.provider.rawValue,
+            "restored_session": source != "session_created",
+        ]
+        if let sidecarElapsed = session.runtime?.startupTiming?.processToSessionCreatedMs {
+            properties["sidecar_process_to_session_created_ms"] = sidecarElapsed
+        }
+        if let readyElapsed = session.runtime?.startupTiming?.processToSidecarReadyMs {
+            properties["sidecar_process_to_ready_ms"] = readyElapsed
+        }
+        if let readyToCreateElapsed = session.runtime?.startupTiming?.sidecarReadyToCreateSessionReceivedMs {
+            properties["sidecar_ready_to_create_session_received_ms"] = readyToCreateElapsed
+        }
+        if let authToCreateElapsed = session.runtime?.startupTiming?.clientAuthenticatedToCreateSessionReceivedMs {
+            properties["sidecar_auth_to_create_session_received_ms"] = authToCreateElapsed
+        }
+        if let createElapsed = session.runtime?.startupTiming?.createSessionElapsedMs {
+            properties["sidecar_create_session_elapsed_ms"] = createElapsed
+        }
+        PostHogTelemetry.capture(
+            "mac_startup_session_visible",
+            properties: properties,
+            authSession: macAuthSession
+        )
+    }
+
     func clearStartupQueuedAction() {
         startupQueuedAction = nil
     }
@@ -3095,7 +3256,7 @@ final class AgenticViewModel: ObservableObject {
         return OnboardingContext.make(
             role: .developer,
             projectStage: .firstUsers,
-            isolationLevel: .soloAll
+            isolationLevel: .projectFolder
         )
     }
 
@@ -3124,6 +3285,147 @@ final class AgenticViewModel: ObservableObject {
     }
 
     #endif
+}
+
+struct FoundationProgressSnapshot: Codable, Hashable {
+    var schemaVersion = 1
+    var workspaceRoot = ""
+    var startedAt: Date?
+    var selectedDay = 1
+    var completedDays: Set<Int> = []
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case workspaceRoot
+        case startedAt
+        case selectedDay
+        case completedDays
+    }
+
+    func currentDayNumber(now: Date = Date()) -> Int? {
+        guard let startedAt else { return nil }
+        let elapsed = now.timeIntervalSince(startedAt)
+        let day = Int(floor(elapsed / 86_400)) + 1
+        return max(1, min(day, 30))
+    }
+
+    func isUnlocked(_ day: Int) -> Bool {
+        if day <= 1 { return true }
+        return completedDays.contains(day - 1)
+    }
+}
+
+struct FoundationProgressStore {
+    let workspaceRoot: String
+    let appSupportURL: URL
+
+    init(
+        workspaceRoot: String,
+        appSupportURL: URL = FoundationProgressStore.defaultAppSupportURL()
+    ) {
+        self.workspaceRoot = workspaceRoot
+        self.appSupportURL = appSupportURL
+    }
+
+    var fileURL: URL {
+        appSupportURL
+            .appendingPathComponent("foundation-progress", isDirectory: true)
+            .appendingPathComponent("\(Self.stableWorkspaceID(workspaceRoot)).json")
+    }
+
+    func load() -> FoundationProgressSnapshot? {
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard var snapshot = try? decoder.decode(FoundationProgressSnapshot.self, from: data) else {
+            return nil
+        }
+        guard snapshot.workspaceRoot == workspaceRoot else { return nil }
+        snapshot.selectedDay = max(1, min(snapshot.selectedDay, 30))
+        snapshot.completedDays = Set(snapshot.completedDays.map { max(1, min($0, 30)) })
+        return snapshot
+    }
+
+    func save(_ snapshot: FoundationProgressSnapshot) {
+        var next = snapshot
+        next.workspaceRoot = workspaceRoot
+        next.selectedDay = max(1, min(next.selectedDay, 30))
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(next) else { return }
+        try? FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? data.write(to: fileURL)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+    }
+
+    func clear() {
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+
+    static func defaultAppSupportURL() -> URL {
+        if let override = ProcessInfo.processInfo.environment["AGENTIC30_APP_SUPPORT_PATH"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !override.isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/agentic30", isDirectory: true)
+    }
+
+    static func stableWorkspaceID(_ workspaceRoot: String) -> String {
+        let normalized = URL(fileURLWithPath: workspaceRoot, isDirectory: true).standardizedFileURL.path
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in normalized.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return String(format: "%016llx", hash)
+    }
+}
+
+private extension AgenticViewModel {
+    func restoreFoundationProgress(arguments: [String]) {
+        ensureFoundationProgressStore()
+        guard let store = foundationProgressStore else { return }
+        if arguments.contains("--ui-testing-reset-onboarding") {
+            store.clear()
+        }
+
+        if var stored = store.load() {
+            stored.selectedDay = stored.isUnlocked(stored.selectedDay) ? stored.selectedDay : 1
+            foundationProgressState = stored
+            foundationStartedAt = stored.startedAt
+            return
+        }
+
+        let snapshot = FoundationProgressSnapshot(workspaceRoot: WorkspaceSettings.resolvedURL().path)
+        foundationProgressState = snapshot
+        foundationStartedAt = snapshot.startedAt
+    }
+
+    func ensureFoundationProgressStore() {
+        let root = WorkspaceSettings.resolvedURL().path
+        if foundationProgressStore?.workspaceRoot != root {
+            foundationProgressStore = FoundationProgressStore(workspaceRoot: root)
+        }
+    }
+
+    func updateFoundationProgress(_ mutate: (inout FoundationProgressSnapshot) -> Void) {
+        ensureFoundationProgressStore()
+        var snapshot = foundationProgressState
+        snapshot.workspaceRoot = WorkspaceSettings.resolvedURL().path
+        mutate(&snapshot)
+        if !snapshot.isUnlocked(snapshot.selectedDay) {
+            snapshot.selectedDay = 1
+        }
+        foundationProgressState = snapshot
+        foundationStartedAt = snapshot.startedAt
+        foundationProgressStore?.save(snapshot)
+    }
 }
 
 // MARK: - ASWebAuthenticationPresentationContextProviding

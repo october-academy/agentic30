@@ -7,7 +7,7 @@ struct MacOnboardingContextView: View {
     @State private var selectedWorkMode: OnboardingWorkMode? = .fullTimeSolo
     @State private var selectedRole: OnboardingRole? = .developer
     @State private var selectedProjectStage: OnboardingProjectStage? = .ideaOnly
-    @State private var selectedIsolationLevel: OnboardingIsolationLevel? = .soloAll
+    @State private var selectedIsolationLevels: Set<OnboardingIsolationLevel> = [.projectFolder]
 
     private var totalScenes: Int { 4 }
 
@@ -267,11 +267,11 @@ struct MacOnboardingContextView: View {
                     optionRow(
                         title: level.displayTitle,
                         description: level.displayDescription,
-                        selected: selectedIsolationLevel == level,
+                        selected: selectedIsolationLevels.contains(level),
                         accent: isolationAccent,
                         identifier: "onboardingContext.option.\(level.rawValue)"
                     ) {
-                        selectedIsolationLevel = level
+                        toggleIsolationLevel(level)
                     }
                 }
             }
@@ -335,6 +335,8 @@ struct MacOnboardingContextView: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier(identifier)
         .accessibilityLabel("\(title), \(description)")
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     // MARK: - Footer
@@ -405,7 +407,7 @@ struct MacOnboardingContextView: View {
         case 0: return selectedWorkMode != nil
         case 1: return selectedRole != nil
         case 2: return selectedProjectStage != nil
-        case 3: return selectedIsolationLevel != nil
+        case 3: return !selectedIsolationLevels.isEmpty
         default: return false
         }
     }
@@ -433,17 +435,29 @@ struct MacOnboardingContextView: View {
         guard
             let workMode = selectedWorkMode,
             let role = selectedRole,
-            let stage = selectedProjectStage,
-            let level = selectedIsolationLevel
+            let stage = selectedProjectStage
         else { return }
+        let levels = Array(selectedIsolationLevels).sorted { $0.rawValue < $1.rawValue }
+        guard let primaryLevel = levels.first else { return }
 
         let context = OnboardingContext.make(
             workMode: workMode,
             role: role,
             projectStage: stage,
-            isolationLevel: level
+            isolationLevel: primaryLevel,
+            isolationLevels: levels
         )
         viewModel.submitOnboardingContext(context)
+    }
+
+    private func toggleIsolationLevel(_ level: OnboardingIsolationLevel) {
+        if selectedIsolationLevels.contains(level) {
+            if selectedIsolationLevels.count > 1 {
+                selectedIsolationLevels.remove(level)
+            }
+        } else {
+            selectedIsolationLevels.insert(level)
+        }
     }
 }
 

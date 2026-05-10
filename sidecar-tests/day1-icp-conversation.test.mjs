@@ -40,6 +40,23 @@ test("bootstrap free-text submission starts a provider stream", async () => {
     const created = await waitForEvent(events, (event) => event.type === "session_created");
     assert.equal(created.session.messages.length, 0);
     assert.equal(created.session.pendingUserInput?.title, "시작하기");
+    assert.equal(created.session.runtime?.startupTiming?.clientCountAtCreate, 1);
+    assert.ok(
+      Number.isFinite(created.session.runtime?.startupTiming?.processToSessionCreatedMs),
+      `Expected process-to-session timing, got ${JSON.stringify(created.session.runtime?.startupTiming)}`,
+    );
+    assert.ok(
+      Number.isFinite(created.session.runtime?.startupTiming?.processToSidecarReadyMs),
+      `Expected process-to-ready timing, got ${JSON.stringify(created.session.runtime?.startupTiming)}`,
+    );
+    assert.ok(
+      Number.isFinite(created.session.runtime?.startupTiming?.sidecarReadyToCreateSessionReceivedMs),
+      `Expected ready-to-create timing, got ${JSON.stringify(created.session.runtime?.startupTiming)}`,
+    );
+    assert.ok(
+      created.session.runtime.startupTiming.processToSessionCreatedMs < 5_000,
+      `Expected local session to appear quickly, got ${JSON.stringify(created.session.runtime.startupTiming)}`,
+    );
     const sessionId = created.session.id;
     ws.send(JSON.stringify({
       type: "submit_user_input",
@@ -151,6 +168,88 @@ test("Day 1 cached ICP coaching uses instant_chat and completes under 1s without
       answer.performance?.marks?.some((mark) => String(mark.phase).startsWith("provider.")),
       false,
       "instant_chat must not start the SDK provider path",
+    );
+    await closeWebSocket(ws);
+    ws = null;
+  } finally {
+    await closeWebSocket(ws);
+    await terminateChild(child);
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
+
+  assert.equal(stderr.trim(), "");
+});
+
+test("free chat trivial greeting runs through provider", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-free-greeting-workspace-"));
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-free-greeting-app-"));
+  await writeDay1Fixture(root, appSupportPath);
+
+  const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", root], {
+    cwd: packageRoot,
+    env: {
+      ...process.env,
+      AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
+      AGENTIC30_TEST_STUB_PROVIDER: "1",
+      AGENTIC30_CODEX_MODEL: "gpt-5.4-mini",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  let ws;
+
+  try {
+    const ready = await readSidecarReady(child);
+    const events = [];
+    ws = await connectAuthenticated(ready, events);
+
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.4-mini" }));
+    const created = await waitForEvent(events, (event) => event.type === "session_created");
+    const sessionId = created.session.id;
+    ws.send(JSON.stringify({
+      type: "submit_user_input",
+      sessionId,
+      requestId: created.session.pendingUserInput.requestId,
+      responses: [{
+        question: "무엇부터 시작할까요?",
+        selectedOptions: [],
+        freeText: "Day 1 뭐부터 시작해야 해? ICP 기준으로 짧게 진단해줘.",
+      }],
+    }));
+    await waitForEvent(events, (event) =>
+      event.type === "session_updated"
+      && event.session?.id === sessionId
+      && event.session.status === "idle"
+      && event.session.pendingUserInput == null
+    );
+    events.length = 0;
+
+    ws.send(JSON.stringify({
+      type: "send_prompt",
+      sessionId,
+      prompt: "하이",
+      mode: "free_chat",
+    }));
+
+    const completed = await waitForEvent(events, (event) => {
+      if (event.type !== "session_updated" || event.session?.id !== sessionId || event.session.status !== "idle") return false;
+      const answer = latestAssistantMessage(event.session);
+      return answer.state === "final" && typeof answer.content === "string" && answer.content.length > 0;
+    });
+    const answer = latestAssistantMessage(completed.session);
+    assert.ok(
+      answer.performance?.marks?.some((mark) => mark.phase === "provider.call_start"),
+      `Expected provider.call_start mark, got ${JSON.stringify(answer.performance)}`,
+    );
+    assert.equal(
+      answer.performance?.marks?.some((mark) => mark.phase === "chat.instant_greeting_response_ready"),
+      false,
+      "free chat greetings must not use the local instant greeting path",
     );
     await closeWebSocket(ws);
     ws = null;
