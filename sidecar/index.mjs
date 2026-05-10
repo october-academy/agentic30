@@ -4519,13 +4519,23 @@ async function refreshPersistedBipResourceReadiness(rowId, kind, urlOrId) {
 function resolveBipCoachSession(sessionId = "") {
   const requestedSessionId = String(sessionId || "").trim();
   if (requestedSessionId && state.sessions.has(requestedSessionId)) {
-    return state.sessions.get(requestedSessionId);
+    const requestedSession = state.sessions.get(requestedSessionId);
+    if (!isArchivedSession(requestedSession)) {
+      return requestedSession;
+    }
   }
   const currentSessionId = state.bipCoach?.sessionId;
   if (currentSessionId && state.sessions.has(currentSessionId)) {
-    return state.sessions.get(currentSessionId);
+    const currentSession = state.sessions.get(currentSessionId);
+    if (!isArchivedSession(currentSession)) {
+      return currentSession;
+    }
   }
-  return serializeSessions()[0] ?? null;
+  return serializeSessions().find((session) => !isArchivedSession(session)) ?? null;
+}
+
+function isArchivedSession(session) {
+  return Boolean(session?.archivedAt);
 }
 
 async function appendVisibleAssistantMessage(sessionId, content, extra = {}) {
@@ -5998,10 +6008,11 @@ function setAssistantText(session, messageId, content) {
     messageId,
     content: resolvedContent,
   });
-  // `message_replaced` can arrive before the host has observed the assistant
-  // placeholder. Follow it with a full snapshot so SwiftUI can reconcile the
-  // message content and any inlineDecision metadata from session state.
-  broadcast({ type: "session_updated", session });
+  // `message_replaced` only carries content; the SwiftUI client needs a full
+  // session refresh when inlineDecision metadata changes.
+  if (extractedDecision) {
+    broadcast({ type: "session_updated", session });
+  }
 }
 
 async function stopSession(sessionId) {

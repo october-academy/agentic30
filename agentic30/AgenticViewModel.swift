@@ -887,7 +887,7 @@ final class AgenticViewModel: ObservableObject {
         guard sidecar.send(payload: [
             "type": "archive_session",
             "sessionId": session.id,
-            "archivedAt": ISO8601DateFormatter().string(from: archivedAt),
+            "archivedAt": Self.sidecarDateString(from: archivedAt),
         ]) else {
             lastError = "Sidecar is not connected."
             PostHogTelemetry.capture(
@@ -3406,6 +3406,12 @@ struct FoundationProgressStore {
 }
 
 private extension AgenticViewModel {
+    static func sidecarDateString(from date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date)
+    }
+
     func restoreFoundationProgress(arguments: [String]) {
         ensureFoundationProgressStore()
         guard let store = foundationProgressStore else { return }
