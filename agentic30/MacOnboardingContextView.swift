@@ -8,6 +8,7 @@ struct MacOnboardingContextView: View {
     @State private var selectedRole: OnboardingRole? = .developer
     @State private var selectedProjectStage: OnboardingProjectStage? = .ideaOnly
     @State private var selectedIsolationLevels: Set<OnboardingIsolationLevel> = [.projectFolder]
+    @State private var primaryIsolationLevel: OnboardingIsolationLevel = .projectFolder
 
     private var totalScenes: Int { 4 }
 
@@ -438,7 +439,9 @@ struct MacOnboardingContextView: View {
             let stage = selectedProjectStage
         else { return }
         let levels = Array(selectedIsolationLevels).sorted { $0.rawValue < $1.rawValue }
-        guard let primaryLevel = levels.first else { return }
+        let primaryLevel = selectedIsolationLevels.contains(primaryIsolationLevel)
+            ? primaryIsolationLevel
+            : levels[0]
 
         let context = OnboardingContext.make(
             workMode: workMode,
@@ -454,9 +457,14 @@ struct MacOnboardingContextView: View {
         if selectedIsolationLevels.contains(level) {
             if selectedIsolationLevels.count > 1 {
                 selectedIsolationLevels.remove(level)
+                if primaryIsolationLevel == level,
+                   let fallback = selectedIsolationLevels.sorted(by: { $0.rawValue < $1.rawValue }).first {
+                    primaryIsolationLevel = fallback
+                }
             }
         } else {
             selectedIsolationLevels.insert(level)
+            primaryIsolationLevel = level
         }
     }
 }

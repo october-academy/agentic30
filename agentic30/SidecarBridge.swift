@@ -42,7 +42,6 @@ final class SidecarBridge {
     private let localURLSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 3
-        configuration.timeoutIntervalForResource = 10
         configuration.waitsForConnectivity = false
         configuration.connectionProxyDictionary = [:]
         return URLSession(configuration: configuration)

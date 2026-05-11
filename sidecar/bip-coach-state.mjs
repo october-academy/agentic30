@@ -560,6 +560,7 @@ export function parseMissionChoicesResponse(text, {
   compact = false,
   today = todayKey(),
   now = new Date(),
+  curriculumDay = null,
 } = {}) {
   const parsed = parseFirstJsonValue(text);
   const rawChoices = Array.isArray(parsed)
@@ -574,6 +575,7 @@ export function parseMissionChoicesResponse(text, {
     compact,
     today,
     now,
+    curriculumDay,
   });
   if (choices.length) {
     return padMissionChoices(choices, { provider, compact, today, now }).slice(0, 3);
@@ -586,8 +588,8 @@ export function parseMissionChoicesResponse(text, {
       drafts: [],
       eveningChecklist: ["Threads URL을 기록했다", "Sheet 오늘 행을 채웠다"],
       evidenceRefs: [],
-    }, { provider, compact, today, now, index: 0 }),
-  ], { provider, compact, today, now }).slice(0, 3);
+    }, { provider, compact, today, now, index: 0, curriculumDay }),
+  ], { provider, compact, today, now, curriculumDay }).slice(0, 3);
 }
 
 export function buildFallbackBipMissionChoices({
@@ -737,6 +739,7 @@ export function buildFallbackBipMissionChoices({
     compact,
     today,
     now,
+    curriculumDay,
   });
 }
 
@@ -745,8 +748,9 @@ export function parseMissionResponse(text, {
   compact = false,
   today = todayKey(),
   now = new Date(),
+  curriculumDay = null,
 } = {}) {
-  return parseMissionChoicesResponse(text, { provider, compact, today, now })[0];
+  return parseMissionChoicesResponse(text, { provider, compact, today, now, curriculumDay })[0];
 }
 
 export function completeBipCoachMission(state, {
@@ -855,12 +859,13 @@ function normalizeMissionChoices(value, {
   today = todayKey(),
   now = new Date(),
   keepIds = false,
+  curriculumDay = null,
 } = {}) {
   if (!Array.isArray(value)) {
     return [];
   }
   return value
-    .map((mission, index) => buildMission(mission, { provider, compact, today, now, index, keepIds }))
+    .map((mission, index) => buildMission(mission, { provider, compact, today, now, index, keepIds, curriculumDay }))
     .filter((mission) => mission.title || mission.mission);
 }
 
@@ -871,6 +876,7 @@ function buildMission(mission = {}, {
   now = new Date(),
   index = 0,
   keepIds = false,
+  curriculumDay = null,
 } = {}) {
   mission = objectOrEmpty(mission);
   const id = keepIds && mission.id
@@ -886,6 +892,7 @@ function buildMission(mission = {}, {
     angle: stringOrDefault(mission.angle, ""),
     mission: stringOrDefault(mission.mission, ""),
     proofTarget: stringOrDefault(mission.proofTarget, buildDefaultProofTarget(mission, compact)),
+    curriculumDay: normalizeCurriculumDay(mission.curriculumDay ?? curriculumDay),
     drafts: normalizeStringArray(mission.drafts).slice(0, 3),
     eveningChecklist: normalizeStringArray(mission.eveningChecklist),
     evidenceRefs: normalizeStringArray(mission.evidenceRefs),

@@ -462,6 +462,7 @@ struct BipCoachMission: Codable, Hashable {
     let title: String?
     let angle: String?
     let mission: String?
+    let curriculumDay: BipCoachCurriculumDay?
     let drafts: [String]?
     let eveningChecklist: [String]?
     let evidenceRefs: [String]?
@@ -469,6 +470,10 @@ struct BipCoachMission: Codable, Hashable {
     let completedAt: Date?
     let threadsUrl: String?
     let sheetRowNote: String?
+}
+
+struct BipCoachCurriculumDay: Codable, Hashable {
+    let day: Int?
 }
 
 struct BipCoachStreak: Codable, Hashable {

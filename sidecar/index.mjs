@@ -1329,11 +1329,6 @@ async function runPrompt(
   });
 
   try {
-    const authState = getProviderAuthState(session.provider);
-    if (!authState.available) {
-      throw new Error(authState.message);
-    }
-
     state.activeRuns.get(session.id).stop = async () => {
       abortController.abort();
     };
@@ -1378,6 +1373,11 @@ async function runPrompt(
       });
       return;
     }
+    const authState = getProviderAuthState(session.provider);
+    if (!authState.available) {
+      throw new Error(authState.message);
+    }
+
     const promptForProvider = await buildPromptWithBipContext(prompt, route);
     recordMessageTiming(session, assistantMessage, runStartedAt, "context.built", {
       promptChars: promptForProvider.length,
@@ -2217,7 +2217,7 @@ async function warmSession(session) {
       },
     });
 
-    if (!abortController.signal.aborted) {
+    if (result.runtime?.codexThreadId) {
       session.runtime = {
         ...(session.runtime || {}),
         ...(result.runtime || {}),
@@ -4037,12 +4037,14 @@ async function generateBipMissionChoicesFromEvidence({
         provider,
         compact,
         today,
+        curriculumDay,
       })[0];
     }));
     return parseMissionChoicesResponse(JSON.stringify({ missions: results }), {
       provider,
       compact,
       today,
+      curriculumDay,
     });
   }
 
@@ -4060,6 +4062,7 @@ async function generateBipMissionChoicesFromEvidence({
     provider,
     compact,
     today,
+    curriculumDay,
   });
 }
 

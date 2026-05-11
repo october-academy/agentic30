@@ -2304,11 +2304,14 @@ final class AgenticViewModel: ObservableObject {
             }
         case "bip_coach_completion_completed":
             isBipCoachCompleting = false
+            let completedDay = event.bipCoach?.currentMission?.curriculumDay?.day
+                ?? bipCoach?.currentMission?.curriculumDay?.day
+                ?? selectedFoundationDay
             if let bipCoach = event.bipCoach {
                 self.bipCoach = bipCoach
                 requestAndScheduleBipNotificationsIfNeeded(for: bipCoach)
             }
-            markFoundationDayCompleted(selectedFoundationDay)
+            markFoundationDayCompleted(completedDay)
         case "bip_coach_error":
             isBipCoachRefreshing = false
             isBipCoachGenerating = false
@@ -2760,6 +2763,7 @@ final class AgenticViewModel: ObservableObject {
                 title: "오늘 배운 점을 Threads에 공개하기",
                 angle: "작게 배운 것을 공개 기록으로 바꾸기",
                 mission: "오늘 작업에서 배운 점 1개와 다음 액션 1개를 Threads에 올리세요.",
+                curriculumDay: nil,
                 drafts: [],
                 eveningChecklist: ["Threads URL 남기기", "Sheet 행 메모 남기기"],
                 evidenceRefs: [],
@@ -2785,6 +2789,7 @@ final class AgenticViewModel: ObservableObject {
                 title: "첫 고객 후보 3명 정하기",
                 angle: "Google 설정 전에도 프로젝트 기준으로 오늘 실행을 시작하기",
                 mission: "현재 프로젝트를 가장 자주 겪을 사람 3명을 적고 첫 질문 하나를 보냅니다.",
+                curriculumDay: nil,
                 drafts: [],
                 eveningChecklist: ["후보 3명 적기", "첫 질문 1개 보내기"],
                 evidenceRefs: [],

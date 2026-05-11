@@ -266,6 +266,7 @@ struct BipCoachDisplayStateTests {
             title: title,
             angle: "한 줄 관점",
             mission: "한 줄 수행",
+            curriculumDay: nil,
             drafts: [],
             eveningChecklist: [],
             evidenceRefs: [],
