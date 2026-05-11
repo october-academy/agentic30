@@ -251,6 +251,29 @@ test("persists sessions with a schema version and timestamp", async () => {
   assert.equal(mode, 0o600);
 });
 
+test("concurrent session persists use unique temporary files", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-sessions-concurrent-"));
+  const filePath = path.join(dir, "sessions.json");
+  const originalDateNow = Date.now;
+
+  try {
+    Date.now = () => 1_775_000_000_000;
+    await Promise.all(
+      Array.from({ length: 25 }, (_, index) =>
+        persistSessionsToFile(filePath, [{ id: `session-${index}`, status: "idle" }]),
+      ),
+    );
+  } finally {
+    Date.now = originalDateNow;
+  }
+
+  const loaded = await loadSessionsFromFile(filePath);
+  assert.equal(loaded.length, 1);
+  assert.match(loaded[0].id, /^session-\d+$/);
+  const leftovers = (await fs.readdir(dir)).filter((entry) => entry.endsWith(".tmp"));
+  assert.deepEqual(leftovers, []);
+});
+
 test("missing session store is the only silent empty state", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-sessions-missing-"));
   const loaded = await loadSessionsFromFile(path.join(dir, "sessions.json"));

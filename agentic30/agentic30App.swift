@@ -22,7 +22,11 @@ struct agentic30App: App {
         Window("Agentic30", id: "workspace") {
             ContentView(
                 viewModel: appDelegate.viewModel,
-                surfaceOverride: .workspace
+                surfaceOverride: .workspace,
+                maximizeWorkspaceOnFirstAppear: appDelegate.shouldMaximizeWorkspaceWindowOnFirstAppear,
+                markWorkspaceInitialMaximizeApplied: {
+                    appDelegate.markInitialWorkspaceWindowMaximizeApplied()
+                }
             )
             .frame(minWidth: 1180, minHeight: 740)
             .onAppear {
@@ -65,7 +69,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let workspaceWindowTitle = "Agentic30"
     private var openWorkspaceHandler: (() -> Void)?
     private var pendingWorkspaceOpen = false
+    private(set) var shouldMaximizeWorkspaceWindowOnFirstAppear = AppDelegate.shouldMaximizeWorkspaceWindowOnLaunch(
+        isFirstLaunchEver: !PostHogTelemetry.hasPreviouslyGeneratedDistinctID,
+        isUITesting: AppDelegate.isUITestingLaunch()
+    )
     private lazy var updaterController: SPUStandardUpdaterController? = Self.makeUpdaterController()
+
+    static let initialWorkspaceMaximizeDefaultsKey = "agentic30.workspaceWindow.initialInstallMaximizeApplied.v1"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
@@ -74,6 +84,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Pending captures from a prior failed first-launch still flush; this
         // gate only suppresses NEW captureOnce attempts for upgraders.
         let isFirstLaunchEver = !PostHogTelemetry.hasPreviouslyGeneratedDistinctID
+        shouldMaximizeWorkspaceWindowOnFirstAppear = Self.shouldMaximizeWorkspaceWindowOnLaunch(
+            isFirstLaunchEver: isFirstLaunchEver,
+            isUITesting: Self.isUITestingLaunch()
+        )
         PostHogTelemetry.capture("mac_app_launched")
         PostHogTelemetry.flushPendingOnceCaptures()
         if isFirstLaunchEver {
@@ -156,6 +170,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             scheduleUITestingWorkspaceOpen(openSettings: false)
         }
         #endif
+    }
+
+    static func shouldMaximizeWorkspaceWindowOnLaunch(
+        isFirstLaunchEver: Bool,
+        isUITesting: Bool,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        isFirstLaunchEver
+            && !isUITesting
+            && !defaults.bool(forKey: initialWorkspaceMaximizeDefaultsKey)
+    }
+
+    func markInitialWorkspaceWindowMaximizeApplied() {
+        shouldMaximizeWorkspaceWindowOnFirstAppear = false
+        UserDefaults.standard.set(true, forKey: Self.initialWorkspaceMaximizeDefaultsKey)
+    }
+
+    private static func isUITestingLaunch() -> Bool {
+        CommandLine.arguments.contains { $0.hasPrefix("--ui-testing") }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

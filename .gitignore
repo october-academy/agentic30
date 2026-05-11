@@ -34,6 +34,7 @@ docs/SOUL.md
 PLAN.md
 .gstack/
 .agents/
+.agentic30/
 
 # Local Claude Code agent skills cache (e.g. PostHog wizard scaffold).
 # Reference EXAMPLE.md ships a sample phc_ token; never commit this folder.
