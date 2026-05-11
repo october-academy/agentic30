@@ -15,18 +15,18 @@ struct ContentView: View {
     private let openWorkspaceAction: (() -> Void)?
     private let closeWorkspaceAction: (() -> Void)?
     private let zoomWorkspaceAction: (() -> Void)?
+    private let workspaceSupportThreadBottomID = "workspace.supportThread.bottom"
+    private let workspaceAssistantReadableWidth: CGFloat = 760
+    private let workspaceUserReadableWidth: CGFloat = 560
 
     @State private var currentPromptID: String?
     @State private var promptDrafts: [String: StructuredAnswerDraft] = [:]
     @State private var showsBipMissionEvidence = false
     @State private var showsBipCompletionFields = false
-    @State private var bipThreadsURL = ""
-    @State private var bipSheetRowNote = ""
     @State private var showsBipReadinessPreview = false
     @State private var showsBipReadinessAdvanced = false
     @State private var showsInlineBipReadinessSetup = false
     @State private var showsWorkspaceEvidenceDetails = false
-    @State private var selectedWorkspaceDay: Int? = 1
     @State private var selectedWorkspaceSection: WorkspaceSection = .curriculum
     @State private var selectedCurriculumDetail: WorkspaceCurriculumDetail = .tasks
     @State private var selectedSettingsSection: SettingsSection = .account
@@ -41,6 +41,7 @@ struct ContentView: View {
     @State private var hoveredWorkspaceDay: Int?
     @State private var hoveredWorkspaceFooterItem: WorkspaceFooterItem?
     @State private var hoveredWorkspaceHistorySessionID: String?
+    @State private var isWorkspaceNewSessionButtonHovered = false
     // Foundation phase Sub-AC 3: 사이드바 하단 통합 설정 메뉴(프로필/알림/계정/로그아웃/
     // 전체 설정)를 popover로 노출하기 위한 토글 + hover 상태. 기존 gear 아이콘을 직접
     // 풀페이지 Settings로 라우팅하는 대신 popover 안의 항목을 통해 SettingsView의
@@ -213,7 +214,7 @@ struct ContentView: View {
     }
 
     private var workspaceSelectedDay: AgenticCurriculumDay {
-        AgenticCurriculumDay.days.first(where: { $0.day == (selectedWorkspaceDay ?? 1) })
+        AgenticCurriculumDay.days.first(where: { $0.day == viewModel.selectedFoundationDay })
             ?? AgenticCurriculumDay.days[0]
     }
 
@@ -810,20 +811,17 @@ struct ContentView: View {
     }
 
     private func workspaceSidebarState(for day: AgenticCurriculumDay) -> WorkspaceSidebarDayState {
-        if selectedWorkspaceDay == day.day {
+        if viewModel.selectedFoundationDay == day.day {
             return .active
         }
-        if day.day == 1 {
-            return .available
-        }
-        if day.day == 2, viewModel.visibleBipCoach?.currentMission?.status == "completed" {
+        if viewModel.isFoundationDayUnlocked(day.day) {
             return .available
         }
         return .locked(requiredDay: day.day - 1)
     }
 
     private func workspaceSidebarRow(_ day: AgenticCurriculumDay, state: WorkspaceSidebarDayState) -> some View {
-        let selected = selectedWorkspaceDay == day.day
+        let selected = viewModel.selectedFoundationDay == day.day
         let isHovered = hoveredWorkspaceDay == day.day
         let isLocked: Bool = {
             if case .locked = state {
@@ -835,7 +833,7 @@ struct ContentView: View {
         return Button {
             guard !isLocked else { return }
             withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-                selectedWorkspaceDay = day.day
+                viewModel.selectFoundationDay(day.day)
                 selectedWorkspaceSection = .curriculum
             }
         } label: {
@@ -1020,18 +1018,18 @@ struct ContentView: View {
     /// Foundation phase Sub-AC 2: 사이드바 중단(curriculum 스크롤 하단)에 누적
     /// 채팅 기록을 일자별로 묶어 노출한다. `AgenticViewModel.sessions`는 이미
     /// `updatedAt` desc로 정렬되어 publish되므로 별도 정렬을 추가하지 않는다.
-    /// 빈 상태에서는 `EmptyView()`로 접혀 사이드바가 의미 없는 헤더를 들고 있지
-    /// 않게 한다(Foundation Day 0 직후 첫 프레임은 sessions가 비어 있을 수 있다).
+    /// 빈 상태에서도 새 대화 시작점을 유지해 첫 사용자가 메뉴바로 돌아가지
+    /// 않고 바로 Codex 세션을 열 수 있게 한다.
     @ViewBuilder
     private func workspaceSidebarHistorySection() -> some View {
-        let sessions = viewModel.sessions
-        if sessions.isEmpty {
-            EmptyView()
-        } else {
-            let groups = workspaceSidebarHistoryGroups(from: sessions)
-            VStack(alignment: .leading, spacing: 10) {
-                workspaceSidebarHistoryHeader(count: sessions.count)
+        let sessions = viewModel.sessions.filter { $0.archivedAt == nil }
+        let groups = workspaceSidebarHistoryGroups(from: sessions)
+        VStack(alignment: .leading, spacing: 10) {
+            workspaceSidebarHistoryHeader()
 
+            if sessions.isEmpty {
+                workspaceSidebarHistoryEmptyState()
+            } else {
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(groups) { group in
                         VStack(alignment: .leading, spacing: 4) {
@@ -1049,14 +1047,14 @@ struct ContentView: View {
                     }
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.top, 14)
-            .padding(.bottom, 12)
-            .accessibilityIdentifier("workspace.sidebar.historySection")
         }
+        .padding(.horizontal, 10)
+        .padding(.top, 14)
+        .padding(.bottom, 12)
+        .accessibilityIdentifier("workspace.sidebar.historySection")
     }
 
-    private func workspaceSidebarHistoryHeader(count: Int) -> some View {
+    private func workspaceSidebarHistoryHeader() -> some View {
         HStack(spacing: 8) {
             Text("최근 대화")
                 .font(.system(size: 11, weight: .heavy, design: .rounded))
@@ -1068,15 +1066,103 @@ struct ContentView: View {
 
             Spacer(minLength: 0)
 
-            Text("\(count)")
-                .font(.system(size: 9, weight: .heavy, design: .rounded))
-                .foregroundStyle(.white.opacity(0.46))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Capsule().fill(Color.white.opacity(0.06)))
-                .accessibilityIdentifier("workspace.sidebar.historyCount")
+            workspaceSidebarNewCodexSessionButton()
         }
         .padding(.horizontal, 4)
+    }
+
+    private func workspaceSidebarNewCodexSessionButton() -> some View {
+        let canCreateSession = viewModel.isConnected
+        return Button {
+            startNewCodexSessionFromSidebar()
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 11, weight: .heavy))
+                .foregroundStyle(.white.opacity(
+                    canCreateSession ? (isWorkspaceNewSessionButtonHovered ? 0.94 : 0.70) : 0.28
+                ))
+                .frame(width: 24, height: 24)
+                .background(
+                    Circle()
+                        .fill(Color.white.opacity(
+                            canCreateSession ? (isWorkspaceNewSessionButtonHovered ? 0.115 : 0.065) : 0.03
+                        ))
+                )
+                .overlay(
+                    Circle()
+                        .stroke(
+                            Color.white.opacity(canCreateSession && isWorkspaceNewSessionButtonHovered ? 0.14 : 0.0),
+                            lineWidth: 1
+                        )
+                )
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!canCreateSession)
+        .help(canCreateSession ? "새 Codex 대화 시작" : "사이드카 연결 후 새 대화를 시작할 수 있어요")
+        .onHover { hovering in
+            isWorkspaceNewSessionButtonHovered = hovering
+        }
+        .animation(.easeOut(duration: 0.12), value: isWorkspaceNewSessionButtonHovered)
+        .accessibilityIdentifier("workspace.sidebar.newCodexSessionButton")
+        .accessibilityLabel("새 Codex 대화 시작")
+        .accessibilityHint(canCreateSession ? "새 Codex 세션을 만들고 바로 선택합니다." : "사이드카 연결 후 새 대화를 시작할 수 있어요.")
+    }
+
+    private func workspaceSidebarHistoryEmptyState() -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("아직 대화가 없어요")
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.66))
+                .lineLimit(1)
+
+            Text("새 Codex 대화로 바로 시작하세요.")
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.38))
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                startNewCodexSessionFromSidebar()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .heavy))
+                    Text("새 대화 시작")
+                        .font(.system(size: 10, weight: .heavy, design: .rounded))
+                }
+                .foregroundStyle(.white.opacity(viewModel.isConnected ? 0.80 : 0.30))
+                .padding(.horizontal, 9)
+                .frame(height: 26)
+                .background(Capsule().fill(Color.white.opacity(viewModel.isConnected ? 0.07 : 0.03)))
+            }
+            .buttonStyle(.plain)
+            .disabled(!viewModel.isConnected)
+            .accessibilityIdentifier("workspace.sidebar.emptyNewCodexSessionButton")
+            .accessibilityLabel("새 Codex 대화 시작")
+            .accessibilityHint(
+                viewModel.isConnected ? "새 Codex 세션을 만들고 바로 선택합니다." : "사이드카 연결 후 새 대화를 시작할 수 있어요."
+            )
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(Color.white.opacity(0.035))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(Color.white.opacity(0.065), lineWidth: 1)
+        )
+        .accessibilityIdentifier("workspace.sidebar.historyEmptyState")
+    }
+
+    private func startNewCodexSessionFromSidebar() {
+        guard viewModel.isConnected else { return }
+        viewModel.createSession(provider: .codex, source: "workspace_sidebar_history_header")
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.92)) {
+            selectedWorkspaceSection = .curriculum
+        }
     }
 
     private func workspaceSidebarHistoryRow(_ session: ChatSession) -> some View {
@@ -1086,76 +1172,99 @@ struct ContentView: View {
         let preview = workspaceSidebarHistoryPreview(for: session)
         let timeLabel = workspaceSidebarHistoryTimeLabel(for: session)
 
-        return Button {
-            // Sub-AC 2 contract: 클릭 시 해당 세션을 활성화한다. 이미 settings 섹션에
-            // 진입한 상태일 수도 있으므로 .curriculum으로 되돌리고, 이력 진입을
-            // PostHog에 기록해 KR4.1 측정 인프라가 클릭률을 추적할 수 있게 한다.
-            viewModel.selectSession(session.id)
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.92)) {
-                selectedWorkspaceSection = .curriculum
-            }
-            PostHogTelemetry.capture(
-                "mac_history_session_opened",
-                properties: [
-                    "session_id": session.id,
-                    "provider": session.provider.rawValue,
-                    "source": "workspace_sidebar_history",
-                ],
-                authSession: viewModel.macAuthSession
-            )
-        } label: {
-            HStack(alignment: .top, spacing: 10) {
-                Circle()
-                    .fill(workspaceSidebarHistoryStatusColor(for: session))
-                    .frame(width: 6, height: 6)
-                    .padding(.top, 7)
+        return HStack(alignment: .top, spacing: 10) {
+            Circle()
+                .fill(workspaceSidebarHistoryStatusColor(for: session))
+                .frame(width: 6, height: 6)
+                .padding(.top, 7)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(title)
-                            .font(.system(size: 12, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white.opacity(isSelected || isHovered ? 0.94 : 0.72))
-                            .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(isSelected || isHovered ? 0.94 : 0.72))
+                        .lineLimit(1)
 
-                        Spacer(minLength: 0)
+                    Spacer(minLength: 0)
 
+                    if isHovered {
+                        workspaceSidebarHistoryArchiveButton(session)
+                    } else {
                         Text(timeLabel)
                             .font(.system(size: 9, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.white.opacity(isSelected || isHovered ? 0.52 : 0.36))
-                            .lineLimit(1)
-                    }
-
-                    if let preview {
-                        Text(preview)
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(isSelected || isHovered ? 0.62 : 0.42))
+                            .foregroundStyle(.white.opacity(isSelected ? 0.52 : 0.36))
                             .lineLimit(1)
                     }
                 }
+
+                if let preview {
+                    Text(preview)
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(isSelected || isHovered ? 0.62 : 0.42))
+                        .lineLimit(1)
+                }
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 7)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.white.opacity(workspaceSidebarRowFillOpacity(
-                        isSelected: isSelected,
-                        isHovered: isHovered
-                    )))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.white.opacity(isHovered ? 0.10 : 0.0), lineWidth: 1)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(workspaceSidebarRowFillOpacity(
+                    isSelected: isSelected,
+                    isHovered: isHovered
+                )))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.white.opacity(isHovered ? 0.10 : 0.0), lineWidth: 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .onTapGesture {
+            openWorkspaceHistorySession(session)
+        }
         .onHover { hovering in
             hoveredWorkspaceHistorySessionID = hovering ? session.id : nil
         }
         .animation(.easeOut(duration: 0.12), value: isHovered)
         .accessibilityIdentifier("workspace.sidebar.historyRow.\(session.id)")
         .accessibilityLabel("\(title), \(timeLabel), \(preview ?? "기록 없음")")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private func workspaceSidebarHistoryArchiveButton(_ session: ChatSession) -> some View {
+        Button {
+            viewModel.archiveSession(session, source: "workspace_sidebar_history")
+        } label: {
+            Image(systemName: "archivebox")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.58))
+                .frame(width: 22, height: 22)
+                .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help("대화 아카이브")
+        .accessibilityIdentifier("workspace.sidebar.archiveSessionButton.\(session.id)")
+        .accessibilityLabel("대화 아카이브")
+    }
+
+    private func openWorkspaceHistorySession(_ session: ChatSession) {
+        // Sub-AC 2 contract: 클릭 시 해당 세션을 활성화한다. 이미 settings 섹션에
+        // 진입한 상태일 수도 있으므로 .curriculum으로 되돌리고, 이력 진입을
+        // PostHog에 기록해 KR4.1 측정 인프라가 클릭률을 추적할 수 있게 한다.
+        viewModel.selectSession(session.id)
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.92)) {
+            selectedWorkspaceSection = .curriculum
+        }
+        PostHogTelemetry.capture(
+            "mac_history_session_opened",
+            properties: [
+                "session_id": session.id,
+                "provider": session.provider.rawValue,
+                "source": "workspace_sidebar_history",
+            ],
+            authSession: viewModel.macAuthSession
+        )
     }
 
     private func workspaceSidebarHistoryTitle(for session: ChatSession) -> String {
@@ -1678,6 +1787,10 @@ struct ContentView: View {
                             workspaceMissionFirstSurface(day: day, session: session)
                             workspaceBipNotificationTaskSurface()
                             workspaceMissionSupportThread(session)
+                            Color.clear
+                                .frame(height: 1)
+                                .id(workspaceSupportThreadBottomID)
+                                .accessibilityHidden(true)
                         }
                         .frame(maxWidth: 1180, alignment: .leading)
                         .padding(.horizontal, 34)
@@ -1688,6 +1801,9 @@ struct ContentView: View {
                     }
                     .onChange(of: pendingBipNotificationScrollRequestID) { _, _ in
                         scrollToBipNotificationTargetIfNeeded(proxy)
+                    }
+                    .onChange(of: workspaceMissionSupportScrollFingerprint(session)) { _, _ in
+                        scrollToWorkspaceSupportBottomIfNeeded(proxy, session: session)
                     }
                 }
 
@@ -1710,6 +1826,43 @@ struct ContentView: View {
             }
             pendingBipNotificationScrollRequestID = nil
         }
+    }
+
+    private func scrollToWorkspaceSupportBottomIfNeeded(_ proxy: ScrollViewProxy, session: ChatSession) {
+        let visibleMessages = workspaceVisibleMessages(for: session)
+        let pendingPrompts = workspacePendingPrompts(for: session)
+        let supportMessages = workspaceMissionSupportMessages(
+            visibleMessages,
+            session: session,
+            pendingPrompts: pendingPrompts
+        )
+        let hasSupportContent = !supportMessages.isEmpty
+            || session.pendingUserInput != nil
+            || !pendingPrompts.isEmpty
+            || session.status == .running
+        guard hasSupportContent else { return }
+
+        DispatchQueue.main.async {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.90)) {
+                proxy.scrollTo(workspaceSupportThreadBottomID, anchor: .bottom)
+            }
+        }
+    }
+
+    private func workspaceMissionSupportScrollFingerprint(_ session: ChatSession) -> String {
+        let messageState = workspaceVisibleMessages(for: session)
+            .map { message in
+                "\(message.id):\(message.role.rawValue):\(message.state.rawValue):\(message.content.count)"
+            }
+            .joined(separator: "|")
+        let pendingPromptCount = workspacePendingPrompts(for: session).count
+        return [
+            session.id,
+            session.status.rawValue,
+            session.pendingUserInput?.requestId ?? "",
+            "pending:\(pendingPromptCount)",
+            messageState,
+        ].joined(separator: "#")
     }
 
     @ViewBuilder
@@ -2320,17 +2473,10 @@ struct ContentView: View {
                     } ?? true
                     workspaceInlineDecisionCard(decision, text: text, isActive: isCardActive)
                 } else {
-                    Text(text)
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.90))
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 10)
-                        .background(workspaceBubbleBackground(isUser: isUser, isError: message.state == .error))
+                    workspaceMessageBody(text: text, isUser: isUser, isError: message.state == .error)
                 }
             }
-            .frame(maxWidth: 720, alignment: isUser ? .trailing : .leading)
+            .frame(maxWidth: isUser ? workspaceUserReadableWidth : workspaceAssistantReadableWidth, alignment: isUser ? .trailing : .leading)
 
             if !isUser {
                 Spacer(minLength: 90)
@@ -2345,6 +2491,226 @@ struct ContentView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(isUser ? "workspace.chat.user" : "workspace.chat.assistant")
         .accessibilityLabel(text)
+    }
+
+    private struct WorkspaceReadableMessageBlock: Identifiable {
+        enum Kind {
+            case paragraph(String)
+            case section(String)
+            case labeled(label: String, body: String)
+            case numbered(Int, String)
+            case bullet(String)
+            case command(String)
+            case link(String)
+        }
+
+        let id: Int
+        let kind: Kind
+    }
+
+    private func workspaceMessageBody(text: String, isUser: Bool, isError: Bool) -> some View {
+        Group {
+            if isUser {
+                Text(text)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.90))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 10)
+            } else {
+                VStack(alignment: .leading, spacing: 9) {
+                    ForEach(workspaceReadableBlocks(from: text)) { block in
+                        workspaceReadableBlock(block)
+                    }
+                }
+                .textSelection(.enabled)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+            }
+        }
+        .background(workspaceBubbleBackground(isUser: isUser, isError: isError))
+    }
+
+    private func workspaceReadableBlocks(from text: String) -> [WorkspaceReadableMessageBlock] {
+        var blocks: [WorkspaceReadableMessageBlock] = []
+        var paragraphLines: [String] = []
+
+        func append(_ kind: WorkspaceReadableMessageBlock.Kind) {
+            blocks.append(WorkspaceReadableMessageBlock(id: blocks.count, kind: kind))
+        }
+
+        func flushParagraph() {
+            let paragraph = paragraphLines
+                .joined(separator: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !paragraph.isEmpty {
+                append(.paragraph(paragraph))
+            }
+            paragraphLines = []
+        }
+
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.isEmpty {
+                flushParagraph()
+                continue
+            }
+
+            if let numbered = workspaceNumberedLine(line) {
+                flushParagraph()
+                append(.numbered(numbered.number, numbered.text))
+            } else if let bullet = workspaceBulletLine(line) {
+                flushParagraph()
+                append(.bullet(bullet))
+            } else if workspaceLooksLikeStandaloneCommand(line) {
+                flushParagraph()
+                append(.command(line))
+            } else if workspaceLooksLikeLinkLine(line) {
+                flushParagraph()
+                append(.link(line))
+            } else if let labeled = workspaceLabeledLine(line) {
+                flushParagraph()
+                append(.labeled(label: labeled.label, body: labeled.body))
+            } else if workspaceLooksLikeSectionHeading(line) {
+                flushParagraph()
+                append(.section(String(line.dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)))
+            } else {
+                paragraphLines.append(line)
+            }
+        }
+
+        flushParagraph()
+        return blocks.isEmpty ? [WorkspaceReadableMessageBlock(id: 0, kind: .paragraph(text))] : blocks
+    }
+
+    private func workspaceNumberedLine(_ line: String) -> (number: Int, text: String)? {
+        guard let dotIndex = line.firstIndex(of: ".") else { return nil }
+        let prefix = line[..<dotIndex]
+        guard let number = Int(prefix), number > 0, number < 100 else { return nil }
+        let rest = line[line.index(after: dotIndex)...].trimmingCharacters(in: .whitespacesAndNewlines)
+        return rest.isEmpty ? nil : (number, rest)
+    }
+
+    private func workspaceBulletLine(_ line: String) -> String? {
+        for prefix in ["- ", "• ", "* "] where line.hasPrefix(prefix) {
+            let rest = line.dropFirst(prefix.count).trimmingCharacters(in: .whitespacesAndNewlines)
+            return rest.isEmpty ? nil : rest
+        }
+        return nil
+    }
+
+    private func workspaceLabeledLine(_ line: String) -> (label: String, body: String)? {
+        let separators = [":", "："]
+        guard let separatorIndex = line.firstIndex(where: { separators.contains(String($0)) }) else {
+            return nil
+        }
+        let label = line[..<separatorIndex].trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = line[line.index(after: separatorIndex)...].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty, !body.isEmpty, label.count <= 16 else { return nil }
+        return (label, body)
+    }
+
+    private func workspaceLooksLikeSectionHeading(_ line: String) -> Bool {
+        guard line.hasSuffix(":") || line.hasSuffix("：") else { return false }
+        let heading = String(line.dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+        return !heading.isEmpty && heading.count <= 22
+    }
+
+    private func workspaceLooksLikeStandaloneCommand(_ line: String) -> Bool {
+        line.hasPrefix("/")
+    }
+
+    private func workspaceLooksLikeLinkLine(_ line: String) -> Bool {
+        line.localizedCaseInsensitiveContains("http://")
+            || line.localizedCaseInsensitiveContains("https://")
+            || line.localizedCaseInsensitiveContains("threads.net")
+    }
+
+    @ViewBuilder
+    private func workspaceReadableBlock(_ block: WorkspaceReadableMessageBlock) -> some View {
+        switch block.kind {
+        case .paragraph(let text):
+            Text(text)
+                .font(.system(size: 14, weight: .regular))
+                .foregroundStyle(.white.opacity(0.88))
+                .lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+        case .section(let title):
+            Text(title)
+                .font(.system(size: 11, weight: .heavy, design: .rounded))
+                .foregroundStyle(workspaceMissionFirstAccent.opacity(0.86))
+                .padding(.top, 2)
+        case .labeled(let label, let body):
+            HStack(alignment: .top, spacing: 9) {
+                Text(label)
+                    .font(.system(size: 10, weight: .heavy, design: .rounded))
+                    .foregroundStyle(workspaceMissionFirstAccent.opacity(0.88))
+                    .padding(.horizontal, 7)
+                    .frame(minHeight: 21)
+                    .background(Capsule().fill(workspaceMissionFirstAccent.opacity(0.10)))
+                Text(body)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.82))
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        case .numbered(let number, let text):
+            HStack(alignment: .top, spacing: 9) {
+                Text("\(number)")
+                    .font(.system(size: 10, weight: .heavy, design: .rounded))
+                    .foregroundStyle(Color.black.opacity(0.70))
+                    .frame(width: 21, height: 21)
+                    .background(Circle().fill(workspaceMissionFirstAccent.opacity(0.88)))
+                Text(text)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.84))
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        case .bullet(let text):
+            HStack(alignment: .top, spacing: 9) {
+                Circle()
+                    .fill(workspaceMissionFirstAccent.opacity(0.78))
+                    .frame(width: 5, height: 5)
+                    .padding(.top, 8)
+                    .frame(width: 21)
+                Text(text)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.82))
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        case .command(let text):
+            workspaceReadableUtilityRow(text, systemImage: "terminal.fill")
+        case .link(let text):
+            workspaceReadableUtilityRow(text, systemImage: "link")
+        }
+    }
+
+    private func workspaceReadableUtilityRow(_ text: String, systemImage: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(workspaceMissionFirstAccent.opacity(0.82))
+                .frame(width: 15)
+                .padding(.top, 2)
+            Text(text)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.78))
+                .lineLimit(3)
+                .truncationMode(.middle)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Color.white.opacity(0.055))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+        )
     }
 
     private func workspaceStructuredPrompt(_ prompt: StructuredPromptRequest) -> some View {
@@ -2638,11 +3004,12 @@ struct ContentView: View {
             viewModel.selectBipMission(mission)
         } label: {
             HStack(alignment: .top, spacing: 10) {
-                Text("\(index + 1)")
-                    .font(.system(size: 11, weight: .heavy, design: .rounded))
+                Text("추천 \(index + 1)")
+                    .font(.system(size: 10, weight: .heavy, design: .rounded))
                     .foregroundStyle(Color.black.opacity(0.70))
-                    .frame(width: 24, height: 24)
-                    .background(Circle().fill(missionChoiceAccent(index).opacity(0.92)))
+                    .padding(.horizontal, 8)
+                    .frame(height: 24)
+                    .background(Capsule().fill(missionChoiceAccent(index).opacity(0.92)))
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(mission.title?.nonEmpty ?? "오늘 미션")
@@ -2663,18 +3030,23 @@ struct ContentView: View {
 
                 Spacer(minLength: 0)
 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.44))
-                    .padding(.top, 5)
+                VStack(alignment: .trailing, spacing: 5) {
+                    Text("15분")
+                        .font(.system(size: 10, weight: .heavy, design: .rounded))
+                        .foregroundStyle(workspaceMissionFirstAccent.opacity(0.88))
+                    Image(systemName: "chevron.right.circle.fill")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.48))
+                }
+                .padding(.top, 2)
             }
-            .padding(10)
+            .padding(12)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.white.opacity(0.055))
+                    .fill(Color.white.opacity(index == 0 ? 0.075 : 0.055))
                     .overlay(
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(Color.white.opacity(0.09), lineWidth: 1)
+                            .stroke(index == 0 ? workspaceMissionFirstAccent.opacity(0.18) : Color.white.opacity(0.09), lineWidth: 1)
                     )
             )
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -2831,6 +3203,7 @@ struct ContentView: View {
                 workspaceMissionFirstStatusLine(session: session)
             }
 
+            workspaceMissionFirstPath(session: session)
             workspaceBipCoachInlineMarker()
             workspaceMissionFirstBody(day: day, session: session)
         }
@@ -2846,6 +3219,161 @@ struct ContentView: View {
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("workspace.missionFirstSurface")
+    }
+
+    private enum WorkspaceMissionFirstStep: Int, CaseIterable {
+        case enter
+        case choose
+        case answer
+
+        var title: String {
+            switch self {
+            case .enter:
+                return "진입"
+            case .choose:
+                return "미션 선택"
+            case .answer:
+                return "답변 받기"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .enter:
+                return "macwindow"
+            case .choose:
+                return "list.bullet.clipboard.fill"
+            case .answer:
+                return "text.bubble.fill"
+            }
+        }
+    }
+
+    private func workspaceMissionFirstPath(session: ChatSession?) -> some View {
+        HStack(spacing: 8) {
+            ForEach(WorkspaceMissionFirstStep.allCases, id: \.self) { step in
+                workspaceMissionFirstStepChip(step, session: session)
+                if step != .answer {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.10))
+                        .frame(width: 18, height: 1)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("진행 단계: \(workspaceMissionFirstAccessibleStep(session: session))")
+    }
+
+    private func workspaceMissionFirstStepChip(_ step: WorkspaceMissionFirstStep, session: ChatSession?) -> some View {
+        let state = workspaceMissionFirstStepState(step, session: session)
+        return HStack(spacing: 6) {
+            Image(systemName: state.iconName(for: step))
+                .font(.system(size: 10, weight: .heavy))
+            Text(step.title)
+                .font(.system(size: 11, weight: .heavy, design: .rounded))
+        }
+        .foregroundStyle(workspaceMissionFirstStepForeground(state))
+        .padding(.horizontal, 9)
+        .frame(height: 28)
+        .background(Capsule().fill(workspaceMissionFirstStepBackground(state)))
+        .overlay(Capsule().stroke(workspaceMissionFirstStepStroke(state), lineWidth: 1))
+    }
+
+    private enum WorkspaceMissionFirstStepState {
+        case done
+        case active
+        case waiting
+
+        func iconName(for step: WorkspaceMissionFirstStep) -> String {
+            switch self {
+            case .done:
+                return "checkmark.circle.fill"
+            case .active, .waiting:
+                return step.icon
+            }
+        }
+    }
+
+    private func workspaceMissionFirstStepForeground(_ state: WorkspaceMissionFirstStepState) -> Color {
+        switch state {
+        case .done:
+            return workspaceMissionFirstAccent.opacity(0.92)
+        case .active:
+            return .white.opacity(0.88)
+        case .waiting:
+            return .white.opacity(0.42)
+        }
+    }
+
+    private func workspaceMissionFirstStepBackground(_ state: WorkspaceMissionFirstStepState) -> Color {
+        switch state {
+        case .done:
+            return workspaceMissionFirstAccent.opacity(0.12)
+        case .active:
+            return Color.white.opacity(0.10)
+        case .waiting:
+            return Color.white.opacity(0.045)
+        }
+    }
+
+    private func workspaceMissionFirstStepStroke(_ state: WorkspaceMissionFirstStepState) -> Color {
+        switch state {
+        case .done:
+            return workspaceMissionFirstAccent.opacity(0.18)
+        case .active:
+            return Color.white.opacity(0.13)
+        case .waiting:
+            return Color.white.opacity(0.06)
+        }
+    }
+
+    private func workspaceMissionFirstStepState(_ step: WorkspaceMissionFirstStep, session: ChatSession?) -> WorkspaceMissionFirstStepState {
+        if session == nil || workspaceMissionFirstErrorMessage(session: session) != nil {
+            return step == .enter ? .active : .waiting
+        }
+        if viewModel.isBipCoachGenerating || viewModel.bipMissionProgress != nil {
+            switch step {
+            case .enter:
+                return .done
+            case .choose:
+                return .active
+            case .answer:
+                return .waiting
+            }
+        }
+        if viewModel.visibleBipCoach?.currentMission != nil {
+            switch step {
+            case .enter, .choose:
+                return .done
+            case .answer:
+                return .active
+            }
+        }
+        if viewModel.visibleBipCoach?.pendingMissionChoices.isEmpty == false {
+            switch step {
+            case .enter:
+                return .done
+            case .choose:
+                return .active
+            case .answer:
+                return .waiting
+            }
+        }
+        return step == .enter ? .done : (step == .choose ? .active : .waiting)
+    }
+
+    private func workspaceMissionFirstAccessibleStep(session: ChatSession?) -> String {
+        if session == nil {
+            return "진입 준비 중"
+        }
+        if viewModel.visibleBipCoach?.currentMission != nil {
+            return "미션 선택 완료, 답변 받기 단계"
+        }
+        if viewModel.visibleBipCoach?.pendingMissionChoices.isEmpty == false {
+            return "미션 선택 단계"
+        }
+        return "미션 생성 준비 단계"
     }
 
     private var workspaceMissionFirstAccent: Color {
@@ -3046,7 +3574,7 @@ struct ContentView: View {
                 .accessibilityIdentifier("workspace.missionFirst.errorMessage")
 
             workspaceMissionPrimaryButton(
-                title: "다시 시도",
+                title: viewModel.sidecarFailureMessage != nil ? "다시 연결" : "미션 다시 생성",
                 systemImage: "arrow.clockwise",
                 accessibilityIdentifier: "workspace.missionFirst.retry"
             ) {
@@ -3077,21 +3605,24 @@ struct ContentView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            Text("이제 초안 요청을 누르면 선택한 미션 기준으로 바로 답변을 시작합니다.")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.58))
+                .fixedSize(horizontal: false, vertical: true)
+
             HStack(spacing: 8) {
                 workspaceMissionPrimaryButton(
-                    title: mission.status == "completed" ? "완료됨" : "완료 기록하기",
-                    systemImage: mission.status == "completed" ? "checkmark.circle.fill" : "square.and.pencil",
+                    title: mission.status == "completed" ? "완료됨" : "완료 확인",
+                    systemImage: "checkmark.circle.fill",
                     accessibilityIdentifier: "workspace.missionFirst.completeMission"
                 ) {
-                    withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
-                        showsBipCompletionFields.toggle()
-                    }
+                    submitBipCompletion()
                 }
                 .disabled(mission.status == "completed" || viewModel.isBipCoachCompleting)
 
                 workspaceMissionSecondaryButton(
-                    title: "도움 요청",
-                    systemImage: "questionmark.bubble.fill",
+                    title: "초안 요청",
+                    systemImage: "text.bubble.fill",
                     accessibilityIdentifier: "workspace.missionFirst.askForHelp"
                 ) {
                     beginBipMission(mission)
@@ -4029,18 +4560,30 @@ struct ContentView: View {
                                     .accessibilityIdentifier("assistant.latestAnswer")
                                     .accessibilityLabel("\(session.provider.title)가 응답을 준비하고 있습니다.")
                             } else if visibleCoach == nil {
-                                ScrollView {
-                                    Text(latestAnswerText)
-                                        .font(.system(size: 18, weight: .semibold, design: .rounded))
-                                        .foregroundStyle(.white.opacity(0.97))
-                                        .textSelection(.enabled)
-                                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                        .padding(.trailing, 4)
-                                        .accessibilityIdentifier("assistant.latestAnswer")
-                                        .accessibilityLabel(latestAnswerText)
+                                VStack(alignment: .leading, spacing: 10) {
+                                    ScrollView {
+                                        Text(latestAnswerText)
+                                            .font(.system(size: 18, weight: .semibold, design: .rounded))
+                                            .foregroundStyle(.white.opacity(0.97))
+                                            .textSelection(.enabled)
+                                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                            .padding(.trailing, 4)
+                                            .accessibilityIdentifier("assistant.latestAnswer")
+                                            .accessibilityLabel(latestAnswerText)
+                                    }
+                                    .frame(maxHeight: answerMaxHeight)
+
+                                    if lastAssistant?.state == .error {
+                                        workspaceMissionSecondaryButton(
+                                            title: "채팅 다시 시도",
+                                            systemImage: "arrow.clockwise",
+                                            accessibilityIdentifier: "assistant.retryFailedChat"
+                                        ) {
+                                            viewModel.retryLastFailedChatTurn()
+                                        }
+                                    }
                                 }
-                                .frame(maxHeight: answerMaxHeight)
                             } else {
                                 Text(latestAnswerText)
                                     .font(.system(size: 18, weight: .semibold, design: .rounded))
@@ -4991,21 +5534,22 @@ struct ContentView: View {
             viewModel.selectBipMission(mission)
         } label: {
             HStack(alignment: .top, spacing: 10) {
-                Text("\(index + 1)")
-                    .font(.system(size: 11, weight: .heavy, design: .rounded))
+                Text(index == 0 ? "추천" : "\(index + 1)")
+                    .font(.system(size: 10, weight: .heavy, design: .rounded))
                     .foregroundStyle(Color.black.opacity(0.70))
-                    .frame(width: 24, height: 24)
-                    .background(Circle().fill(missionChoiceAccent(index).opacity(0.92)))
+                    .padding(.horizontal, index == 0 ? 8 : 0)
+                    .frame(minWidth: 24, minHeight: 24)
+                    .background(Capsule().fill(missionChoiceAccent(index).opacity(0.92)))
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(mission.title?.nonEmpty ?? "오늘 미션")
                         .font(.system(size: 13, weight: .heavy, design: .rounded))
                         .foregroundStyle(.white.opacity(0.94))
-                        .lineLimit(1)
+                        .lineLimit(2)
                     Text(mission.angle?.nonEmpty ?? "공개 기록과 오늘 커리큘럼을 반영한 실행")
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.62))
-                        .lineLimit(1)
+                        .lineLimit(2)
                     if let missionText = mission.mission?.nonEmpty {
                         Text(missionText)
                             .font(.system(size: 11, weight: .medium, design: .rounded))
@@ -5016,20 +5560,24 @@ struct ContentView: View {
 
                 Spacer(minLength: 0)
 
-                Text("선택")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.82))
-                    .padding(.horizontal, 9)
-                    .frame(height: 26)
-                    .background(Capsule().fill(Color.white.opacity(0.10)))
+                HStack(spacing: 5) {
+                    Text("선택")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 10, weight: .heavy))
+                }
+                .foregroundStyle(.white.opacity(0.86))
+                .padding(.horizontal, 10)
+                .frame(height: 28)
+                .background(Capsule().fill(Color.white.opacity(0.11)))
             }
-            .padding(10)
+            .padding(12)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.white.opacity(0.055))
+                    .fill(Color.white.opacity(index == 0 ? 0.075 : 0.055))
                     .overlay(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(Color.white.opacity(0.09), lineWidth: 1)
+                            .stroke(index == 0 ? workspaceMissionFirstAccent.opacity(0.18) : Color.white.opacity(0.09), lineWidth: 1)
                     )
             )
             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -5269,31 +5817,23 @@ struct ContentView: View {
 
     private func bipCompletionFields() -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("게시 후 남길 기록")
+            Text("게시 기록 자동 확인")
                 .font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.72))
 
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .bottom, spacing: 8) {
-                    bipCompletionThreadsField()
-                    bipCompletionSheetNoteField()
-                    bipCompletionSubmitButton()
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    bipCompletionThreadsField()
-                    bipCompletionSheetNoteField()
-                    bipCompletionSubmitButton()
-                }
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.92))
+                Text("연결된 Google Sheet 기록을 다시 읽고, 확인된 최신 행으로 오늘 미션을 닫습니다.")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.58))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                bipCompletionSubmitButton()
             }
 
-            if let validation = bipCompletionValidationMessage {
-                Text(validation)
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color(red: 1.0, green: 0.67, blue: 0.42).opacity(0.90))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("assistant.bipCompletionValidation")
-            } else if let error = viewModel.visibleBipCoach?.lastError?.nonEmpty {
+            if let error = viewModel.visibleBipCoach?.lastError?.nonEmpty {
                 Text(error)
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundStyle(Color(red: 1.0, green: 0.67, blue: 0.42).opacity(0.90))
@@ -5306,42 +5846,6 @@ struct ContentView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color.black.opacity(0.12))
         )
-    }
-
-    private func bipCompletionThreadsField() -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Threads URL")
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.48))
-            TextField("https://www.threads.net/...", text: $bipThreadsURL)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.92))
-                .padding(.horizontal, 11)
-                .frame(height: 36)
-                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.black.opacity(0.16)))
-                .accessibilityIdentifier("assistant.bipThreadsURL")
-                .accessibilityLabel("Threads URL")
-        }
-        .frame(minWidth: 220, maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func bipCompletionSheetNoteField() -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Sheet 행 메모")
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.48))
-            TextField("예: 5월 1일 행에 URL과 반응 기록", text: $bipSheetRowNote)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.92))
-                .padding(.horizontal, 11)
-                .frame(height: 36)
-                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.black.opacity(0.16)))
-                .accessibilityIdentifier("assistant.bipSheetRowNote")
-                .accessibilityLabel("Sheet 행 메모")
-        }
-        .frame(minWidth: 180, maxWidth: .infinity, alignment: .leading)
     }
 
     private func bipCompletionSubmitButton() -> some View {
@@ -5369,25 +5873,11 @@ struct ContentView: View {
     }
 
     private var bipCompletionSubmitDisabled: Bool {
-        bipThreadsURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || bipSheetRowNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || viewModel.isBipCoachCompleting
-    }
-
-    private var bipCompletionValidationMessage: String? {
-        let hasThreadsURL = bipThreadsURL.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty != nil
-        let hasSheetNote = bipSheetRowNote.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty != nil
-        if hasThreadsURL && !hasSheetNote {
-            return "Sheet 행 메모도 남기면 오늘 미션을 닫을 수 있어요."
-        }
-        if !hasThreadsURL && hasSheetNote {
-            return "Threads URL도 붙여주세요."
-        }
-        return nil
+        viewModel.isBipCoachCompleting
     }
 
     private func submitBipCompletion() {
-        viewModel.completeBipMission(threadsUrl: bipThreadsURL, sheetRowNote: bipSheetRowNote)
+        viewModel.completeBipMission()
     }
 
     private func missionEvidenceDetails(_ mission: BipCoachMission, coach: BipCoachState) -> some View {
@@ -5427,8 +5917,8 @@ struct ContentView: View {
         if evidence.docWasTruncated == true {
             parts.append("불완전한 이전 근거")
         }
-        if let provider = evidence.provider {
-            parts.append(provider.title)
+        if let provider = evidence.provider?.nonEmpty {
+            parts.append(AgentProvider(rawValue: provider)?.title ?? provider)
         }
         if evidence.fallbackUsed == true {
             parts.append("fallback 사용")
@@ -5467,6 +5957,9 @@ struct ContentView: View {
     private func beginBipMission(_ mission: BipCoachMission) {
         let title = mission.title?.nonEmpty ?? "오늘 실행"
         viewModel.draft = "/bip-draft \(title)"
+        if viewModel.canSend {
+            viewModel.sendPrompt()
+        }
     }
 
     private func bipCoachButton(_ title: String, action: @escaping () -> Void) -> some View {
@@ -5771,9 +6264,9 @@ struct ContentView: View {
             assistantAvatar(size: size)
         }
         .buttonStyle(.plain)
-        .help("Agentic30 Workspace 열기")
+        .help("Agentic30 열기")
         .accessibilityIdentifier("assistant.openWorkspaceButton")
-        .accessibilityLabel("Agentic30 Workspace 열기")
+        .accessibilityLabel("Agentic30 열기")
     }
 
     private func quickStartRow() -> some View {
@@ -5807,16 +6300,17 @@ struct ContentView: View {
     }
 
     private func promptComposer() -> some View {
-        HStack(spacing: 10) {
+        let placeholder = workspacePromptPlaceholder()
+        return HStack(spacing: 10) {
             TextField(
-                viewModel.selectedSession == nil ? "첫 메시지 미리 적기" : "메시지 보내기",
+                placeholder,
                 text: $viewModel.draft
             )
             .textFieldStyle(.plain)
             .font(.system(size: 13, weight: .semibold, design: .rounded))
             .foregroundStyle(.white.opacity(0.94))
             .accessibilityIdentifier("assistant.promptComposer")
-            .accessibilityLabel(viewModel.selectedSession == nil ? "첫 메시지 미리 적기" : "메시지 보내기")
+            .accessibilityLabel(placeholder)
             .onSubmit {
                 if viewModel.canSend {
                     viewModel.sendPrompt()
@@ -5854,6 +6348,19 @@ struct ContentView: View {
                         .stroke(Color.white.opacity(0.1), lineWidth: 1)
                 )
         )
+    }
+
+    private func workspacePromptPlaceholder() -> String {
+        if viewModel.selectedSession == nil {
+            return "첫 메시지 미리 적기"
+        }
+        if viewModel.visibleBipCoach?.currentMission != nil {
+            return "선택한 미션에 대해 물어보기"
+        }
+        if viewModel.visibleBipCoach?.pendingMissionChoices.isEmpty == false {
+            return "후보를 고르거나 직접 질문하기"
+        }
+        return "메시지 보내기"
     }
 
     @ViewBuilder
@@ -6350,7 +6857,7 @@ private struct WorkspaceWindowChrome: NSViewRepresentable {
         DispatchQueue.main.async {
             guard let window = view.window else { return }
 
-            window.title = "Agentic30 Workspace"
+            window.title = "Agentic30"
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
             window.toolbarStyle = .unifiedCompact

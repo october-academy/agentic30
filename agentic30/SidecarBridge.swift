@@ -31,9 +31,21 @@ final class SidecarBridge {
     private var intentionalStop = false
     private var didConnect = false
     private var cachedNodeURL: URL?
+    private var startRequestedAt: Date?
+    private var processStartedAt: Date?
+    private var sidecarReadyStdoutAt: Date?
+    private var readyEventAt: Date?
     private let nodeResolver: NodeExecutableResolver
     private let sidecarScriptURLOverride: URL?
     private var emittedBootFailureReasons = Set<String>()
+    private let startupTraceQueue = DispatchQueue(label: "agentic30.sidecar.startup-trace")
+    private let localURLSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 3
+        configuration.waitsForConnectivity = false
+        configuration.connectionProxyDictionary = [:]
+        return URLSession(configuration: configuration)
+    }()
 
     init(
         nodeResolver: NodeExecutableResolver = .live(),
@@ -47,7 +59,12 @@ final class SidecarBridge {
         guard process == nil else { return }
         intentionalStop = false
         didConnect = false
+        startRequestedAt = Date()
+        processStartedAt = nil
+        sidecarReadyStdoutAt = nil
+        readyEventAt = nil
         PostHogTelemetry.capture("mac_sidecar_start_requested")
+        appendStartupTrace("start_requested")
 
         guard FileManager.default.fileExists(atPath: sidecarScriptURL.path) else {
             captureBootFailure(reason: "missing_script", properties: [
@@ -105,12 +122,20 @@ final class SidecarBridge {
 
             try process.run()
             self.process = process
+            processStartedAt = Date()
+            appendStartupTrace("process_started", properties: [
+                "pid": Int(process.processIdentifier),
+                "workspace_basename": workspaceURL.lastPathComponent,
+            ])
             PostHogTelemetry.capture("mac_sidecar_process_started", properties: [
                 "workspace_root": workspaceURL.path,
             ])
             emit(type: "sidecar_status", message: "Launching sidecar...")
         } catch {
             clearProcessIO()
+            appendStartupTrace("start_failed", properties: [
+                "error": error.localizedDescription,
+            ])
             if (error as NSError).domain == "NodeExecutableResolver" {
                 captureBootFailure(reason: "missing_node", properties: [
                     "sidecar_script_basename": sidecarScriptURL.lastPathComponent,
@@ -126,6 +151,7 @@ final class SidecarBridge {
 
     func stop() {
         PostHogTelemetry.capture("mac_sidecar_stop_requested")
+        appendStartupTrace("stop_requested")
         intentionalStop = true
         didConnect = false
         receiveTask?.cancel()
@@ -142,21 +168,29 @@ final class SidecarBridge {
         intentionalStop = false
     }
 
-    func send(payload: [String: Any]) {
+    @discardableResult
+    func send(payload: [String: Any]) -> Bool {
         guard let webSocket else {
+            appendStartupTrace("send_while_disconnected", properties: [
+                "message_type": payload["type"] as? String ?? "unknown",
+            ])
             PostHogTelemetry.capture("mac_sidecar_send_while_disconnected", properties: [
                 "message_type": payload["type"] as? String ?? "unknown",
             ])
             emit(type: "error", message: "Sidecar is not connected.")
-            return
+            return false
         }
         guard JSONSerialization.isValidJSONObject(payload),
               let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
               let text = String(data: data, encoding: .utf8)
-        else { return }
+        else { return false }
 
         webSocket.send(.string(text)) { [weak self] error in
             if let error {
+                self?.appendStartupTrace("send_failed", properties: [
+                    "message_type": payload["type"] as? String ?? "unknown",
+                    "error": error.localizedDescription,
+                ])
                 PostHogTelemetry.captureException(error, properties: [
                     "component": "sidecar_bridge",
                     "operation": "send",
@@ -165,6 +199,7 @@ final class SidecarBridge {
                 self?.emit(type: "error", message: "WebSocket send failed: \(error.localizedDescription)")
             }
         }
+        return true
     }
 
     private func consumeStdout(_ chunk: String) {
@@ -182,6 +217,18 @@ final class SidecarBridge {
                let port = ready["port"] as? Int,
                let authToken = ready["authToken"] as? String,
                !authToken.isEmpty {
+                sidecarReadyStdoutAt = Date()
+                appendStartupTrace("ready_line_observed", properties: [
+                    "port": port,
+                    "process_to_ready_line_ms": elapsedMs(since: processStartedAt) ?? -1,
+                    "start_to_ready_line_ms": elapsedMs(since: startRequestedAt) ?? -1,
+                ])
+                PostHogTelemetry.capture("mac_sidecar_ready_line_observed", properties: [
+                    "port": port,
+                    "process_to_ready_line_ms": elapsedMs(since: processStartedAt) ?? -1,
+                    "start_to_ready_line_ms": elapsedMs(since: startRequestedAt) ?? -1,
+                ])
+                emit(type: "sidecar_status", message: "Connecting to sidecar...")
                 connect(to: port, authToken: authToken)
             } else if type == "sidecar-ready" {
                 emit(type: "error", message: "Sidecar did not provide an authentication token.")
@@ -192,11 +239,16 @@ final class SidecarBridge {
     private func connect(to port: Int, authToken: String) {
         guard webSocket == nil else { return }
         didConnect = true
+        appendStartupTrace("socket_connecting", properties: [
+            "port": port,
+            "ready_line_to_socket_connect_ms": elapsedMs(since: sidecarReadyStdoutAt) ?? -1,
+        ])
         PostHogTelemetry.capture("mac_sidecar_socket_connecting", properties: [
             "port": port,
+            "ready_line_to_socket_connect_ms": elapsedMs(since: sidecarReadyStdoutAt) ?? -1,
         ])
         let url = URL(string: "ws://127.0.0.1:\(port)")!
-        let task = URLSession.shared.webSocketTask(with: url)
+        let task = localURLSession.webSocketTask(with: url)
         task.resume()
         webSocket = task
         authenticate(task: task, authToken: authToken)
@@ -216,11 +268,22 @@ final class SidecarBridge {
 
         task.send(.string(text)) { [weak self] error in
             if let error {
+                self?.appendStartupTrace("auth_send_failed", properties: [
+                    "error": error.localizedDescription,
+                    "ready_line_to_auth_failure_ms": self?.elapsedMs(since: self?.sidecarReadyStdoutAt) ?? -1,
+                ])
                 PostHogTelemetry.captureException(error, properties: [
                     "component": "sidecar_bridge",
                     "operation": "authenticate",
                 ])
                 self?.emit(type: "error", message: "Sidecar authentication failed: \(error.localizedDescription)")
+            } else {
+                self?.appendStartupTrace("auth_send_completed", properties: [
+                    "ready_line_to_auth_send_ms": self?.elapsedMs(since: self?.sidecarReadyStdoutAt) ?? -1,
+                ])
+                PostHogTelemetry.capture("mac_sidecar_socket_authenticated", properties: [
+                    "ready_line_to_auth_send_ms": self?.elapsedMs(since: self?.sidecarReadyStdoutAt) ?? -1,
+                ])
             }
         }
     }
@@ -242,6 +305,13 @@ final class SidecarBridge {
                 }
             }
         } catch {
+            if Task.isCancelled || intentionalStop {
+                return
+            }
+            appendStartupTrace("receive_loop_closed", properties: [
+                "error": error.localizedDescription,
+                "ready_line_to_close_ms": elapsedMs(since: sidecarReadyStdoutAt) ?? -1,
+            ])
             PostHogTelemetry.captureException(error, properties: [
                 "component": "sidecar_bridge",
                 "operation": "receive_loop",
@@ -254,8 +324,24 @@ final class SidecarBridge {
         guard let data = text.data(using: .utf8) else { return }
         do {
             let event = try decoder.decode(SidecarEvent.self, from: data)
+            if event.type == "ready" {
+                readyEventAt = Date()
+                appendStartupTrace("ready_event_received", properties: [
+                    "start_to_ready_event_ms": elapsedMs(since: startRequestedAt) ?? -1,
+                    "process_to_ready_event_ms": elapsedMs(since: processStartedAt) ?? -1,
+                    "ready_line_to_ready_event_ms": elapsedMs(since: sidecarReadyStdoutAt) ?? -1,
+                ])
+                PostHogTelemetry.capture("mac_sidecar_ready_event_received", properties: [
+                    "start_to_ready_event_ms": elapsedMs(since: startRequestedAt) ?? -1,
+                    "process_to_ready_event_ms": elapsedMs(since: processStartedAt) ?? -1,
+                    "ready_line_to_ready_event_ms": elapsedMs(since: sidecarReadyStdoutAt) ?? -1,
+                ])
+            }
             onEvent?(event)
         } catch {
+            appendStartupTrace("decode_failed", properties: [
+                "error": error.localizedDescription,
+            ])
             PostHogTelemetry.captureException(error, properties: [
                 "component": "sidecar_bridge",
                 "operation": "decode_event",
@@ -328,6 +414,55 @@ final class SidecarBridge {
         onEvent?(event)
     }
 
+    private func elapsedMs(since date: Date?) -> Int? {
+        guard let date else { return nil }
+        return max(0, Int((Date().timeIntervalSince(date) * 1000).rounded()))
+    }
+
+    private func appendStartupTrace(_ phase: String, properties: [String: Any] = [:]) {
+        var event: [String: Any] = [
+            "phase": phase,
+            "at": ISO8601DateFormatter().string(from: Date()),
+        ]
+        for (key, value) in properties {
+            event[key] = value
+        }
+        guard JSONSerialization.isValidJSONObject(event),
+              let data = try? JSONSerialization.data(withJSONObject: event, options: [.sortedKeys]),
+              let line = String(data: data, encoding: .utf8)
+        else { return }
+
+        let supportURL = Self.appSupportURL()
+        startupTraceQueue.async {
+            let fileManager = FileManager.default
+            try? fileManager.createDirectory(at: supportURL, withIntermediateDirectories: true)
+            let fileURL = supportURL.appendingPathComponent("startup-traces.jsonl")
+            guard let lineData = "\(line)\n".data(using: .utf8) else { return }
+            if fileManager.fileExists(atPath: fileURL.path),
+               let handle = try? FileHandle(forWritingTo: fileURL) {
+                defer { try? handle.close() }
+                do {
+                    try handle.seekToEnd()
+                    try handle.write(contentsOf: lineData)
+                } catch {
+                    return
+                }
+            } else {
+                try? lineData.write(to: fileURL, options: [.atomic])
+            }
+        }
+    }
+
+    private static func appSupportURL() -> URL {
+        if let override = ProcessInfo.processInfo.environment["AGENTIC30_APP_SUPPORT_PATH"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !override.isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/agentic30", isDirectory: true)
+    }
+
     private func handleTermination(_ terminatedProcess: Process) {
         if process === terminatedProcess {
             process = nil
@@ -344,6 +479,9 @@ final class SidecarBridge {
 
         if didConnect {
             didConnect = false
+            appendStartupTrace("process_stopped_after_connect", properties: [
+                "termination_status": Int(terminatedProcess.terminationStatus),
+            ])
             PostHogTelemetry.capture("mac_sidecar_stopped", properties: [
                 "termination_status": terminatedProcess.terminationStatus,
             ])
@@ -352,6 +490,10 @@ final class SidecarBridge {
         }
 
         let reason = terminatedProcess.terminationReason == .uncaughtSignal ? "signal" : "exit"
+        appendStartupTrace("early_process_exit", properties: [
+            "termination_reason": reason,
+            "termination_status": Int(terminatedProcess.terminationStatus),
+        ])
         captureBootFailure(reason: "early_process_exit", properties: [
             "termination_reason": reason,
             "termination_status": Int(terminatedProcess.terminationStatus),

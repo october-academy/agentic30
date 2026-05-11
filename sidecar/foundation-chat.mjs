@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { getFoundationValueContract } from "./foundation-contracts.mjs";
 
 /**
  * Foundation Phase Day 0-7 metadata.
@@ -10,6 +11,7 @@ import path from "node:path";
  * - sub_workflow: optional internal sub-workflow hint (NOT exposed to caller)
  * - spec_version: which SPEC.md vN this day produces (or null)
  * - artifacts: .md files written under workspace/.agentic30/foundation/
+ * - value_contract: daily value/evidence/pass gate for hard dogfood
  * - first_prompt: AI-driven daily opener in 3-section minimal template
  *     {yesterday: 1줄, today: 1줄, question: 1줄}
  *     Dynamic variables are written as `{var_name}` and replaced at runtime
@@ -334,6 +336,7 @@ function renderTemplate(template, vars) {
  *   spec_version: string|null,
  *   sub_workflow: string|null,
  *   artifacts: string[],
+ *   value_contract: object|null,
  *   text: string,
  * } | null}
  */
@@ -359,6 +362,7 @@ export function buildFirstPromptForDay({ day, dynamicVariables = {} } = {}) {
     spec_version: descriptor.spec_version ?? null,
     sub_workflow: descriptor.sub_workflow ?? null,
     artifacts: [...(descriptor.artifacts || [])],
+    value_contract: getFoundationValueContract(descriptor.day),
     text: formatFirstPromptText(rendered),
   };
 }
@@ -406,6 +410,7 @@ export function resolveFoundationContext({
     sub_workflow: descriptor?.sub_workflow ?? null,
     spec_version: descriptor?.spec_version ?? null,
     artifacts: descriptor?.artifacts ?? [],
+    value_contract: descriptor ? getFoundationValueContract(descriptor.day) : null,
     persona: PERSONA,
     template: "3-section minimal (Yesterday 1줄 / Today 1줄 / Q 1줄)",
     workspace_root: typeof workspace.root === "string" ? workspace.root : "",
@@ -436,6 +441,27 @@ export function buildFoundationSystemContext(context) {
   }
   if (Array.isArray(context.artifacts) && context.artifacts.length) {
     lines.push(`- Day 산출물: ${context.artifacts.join(", ")}`);
+  }
+  if (context.value_contract) {
+    lines.push("- VALUE contract:");
+    lines.push(`  - 오늘 얻는 가치: ${context.value_contract.todayValue}`);
+    lines.push(`  - 제출 증거: ${context.value_contract.evidenceArtifact}`);
+    lines.push(`  - 통과 기준: ${context.value_contract.passGate}`);
+    lines.push(`  - 실패 기준: ${context.value_contract.failGate}`);
+    if (Array.isArray(context.value_contract.canonicalDocs) && context.value_contract.canonicalDocs.length) {
+      lines.push("  - canonical docs evidence:");
+      for (const entry of context.value_contract.canonicalDocs) {
+        lines.push(`    - ${entry.path}: ${entry.evidence}`);
+      }
+    }
+    lines.push(`  - friction log: ${context.value_contract.frictionLogPrompt}`);
+    lines.push(`  - needed resource: ${context.value_contract.resourceObservationPrompt}`);
+    if (context.value_contract.externalLockIn) {
+      lines.push(`  - 외부 ICP lock-in: ${context.value_contract.externalLockIn}`);
+    }
+    if (context.value_contract.antiDisplacementGate?.rule) {
+      lines.push(`  - anti-displacement: ${context.value_contract.antiDisplacementGate.rule}`);
+    }
   }
   if (Array.isArray(context.input_sources) && context.input_sources.length) {
     lines.push(`- 활용 인풋: ${context.input_sources.join(", ")}`);
@@ -523,6 +549,7 @@ export async function persistEvidenceRefsSidecar({
     captured_at: new Date().toISOString(),
     sub_workflow: context?.sub_workflow ?? null,
     spec_version: context?.spec_version ?? null,
+    value_contract: context?.value_contract ?? null,
     overall_confidence: context?.overall_confidence ?? 0,
     dynamic_variables: context?.dynamic_variables ?? {},
     evidence_refs: context?.evidence_refs ?? [],

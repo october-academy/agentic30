@@ -560,6 +560,7 @@ export function parseMissionChoicesResponse(text, {
   compact = false,
   today = todayKey(),
   now = new Date(),
+  curriculumDay = null,
 } = {}) {
   const parsed = parseFirstJsonValue(text);
   const rawChoices = Array.isArray(parsed)
@@ -574,6 +575,7 @@ export function parseMissionChoicesResponse(text, {
     compact,
     today,
     now,
+    curriculumDay,
   });
   if (choices.length) {
     return padMissionChoices(choices, { provider, compact, today, now }).slice(0, 3);
@@ -586,27 +588,40 @@ export function parseMissionChoicesResponse(text, {
       drafts: [],
       eveningChecklist: ["Threads URL을 기록했다", "Sheet 오늘 행을 채웠다"],
       evidenceRefs: [],
-    }, { provider, compact, today, now, index: 0 }),
-  ], { provider, compact, today, now }).slice(0, 3);
+    }, { provider, compact, today, now, index: 0, curriculumDay }),
+  ], { provider, compact, today, now, curriculumDay }).slice(0, 3);
 }
 
 export function buildFallbackBipMissionChoices({
   state,
   compact = false,
   curriculumDay = null,
+  localEvidence = null,
   today = todayKey(),
   now = new Date(),
   provider = "local",
 } = {}) {
   const normalized = normalizeBipCoachState(state);
   const evidence = normalized.evidence || {};
+  const normalizedLocalEvidence = localEvidence && typeof localEvidence === "object" && !Array.isArray(localEvidence)
+    ? localEvidence
+    : null;
+  const workspaceScan = normalizedLocalEvidence?.workspaceScan || {};
+  const onboardingContext = normalizedLocalEvidence?.onboardingContext || {};
   const rows = Array.isArray(evidence.allRows) ? evidence.allRows.filter((row) => row?.hasContent !== false) : [];
   const recentRows = Array.isArray(evidence.recentRows) && evidence.recentRows.length
     ? evidence.recentRows
     : rows.slice(-7);
   const latest = [...recentRows].reverse().find((row) => row?.date || row?.posts?.length || row?.insights || row?.notes) || {};
   const previous = recentRows.length > 1 ? recentRows[recentRows.length - 2] : null;
-  const docText = String(evidence.docText || evidence.docExcerpt || "").replace(/\s+/g, " ").trim();
+  const localDocText = [
+    workspaceScan.icp,
+    workspaceScan.spec,
+    workspaceScan.goal,
+    workspaceScan.docs,
+    workspaceScan.sheet,
+  ].filter(Boolean).join(" ");
+  const docText = String(evidence.docText || evidence.docExcerpt || localDocText || "").replace(/\s+/g, " ").trim();
   const curriculum = normalizeCurriculumDay(adaptCurriculumDay({ curriculumDay, state: normalized }));
   const dayLabel = curriculum.day ? `Day ${curriculum.day}` : "오늘 커리큘럼";
   const dayTitle = curriculum.title || "오늘 커리큘럼";
@@ -630,7 +645,26 @@ export function buildFallbackBipMissionChoices({
         "Program: 이 실행이 반복 가능한 훈련 자산으로 남나?",
         "Product: 30일/100명/첫 매출 가설을 강화하나?",
       ];
-  const latestInsight = latest.insights || latest.notes || docText.slice(0, 90) || "최근 기록에서 아직 선명한 배움이 부족합니다.";
+  const hasGoogleProofSink = Boolean(
+    normalized.config?.sheetUrl || normalized.config?.docUrl || evidence.source === "sidecar_gws",
+  );
+  const selectedRecordSources = Array.isArray(onboardingContext.isolation_levels)
+    ? onboardingContext.isolation_levels
+    : [];
+  const localSourceLabel = selectedRecordSources.length
+    ? selectedRecordSources.join(", ")
+    : "프로젝트 폴더";
+  const proofAction = hasGoogleProofSink
+    ? "Threads에 쓰고 Sheet 오늘 행에 URL과 반응을 기록한다"
+    : "프로젝트 폴더의 로컬 markdown 실행 로그에 한 줄로 남긴다";
+  const proofTarget = hasGoogleProofSink
+    ? null
+    : "로컬 markdown 실행 로그에 오늘 증거, 확인 질문, 다음 24시간 실험을 남긴다.";
+  const proofChecklist = hasGoogleProofSink
+    ? ["Threads URL을 복사했다", "Sheet 오늘 행에 URL, 반응, 배운 점을 기록했다"]
+    : ["로컬 실행 로그에 오늘 증거 한 줄을 남겼다", "다음 확인 질문을 프로젝트 문서에 적었다"];
+  const proofRef = hasGoogleProofSink ? "공개 기록 Sheet 전체 기록" : `로컬 기록 소스: ${localSourceLabel}`;
+  const latestInsight = latest.insights || latest.notes || docText.slice(0, 90) || "최근 로컬 기록에서 아직 선명한 배움이 부족합니다.";
   const followerLine = [previous?.followers, latest.followers].filter(Boolean).length === 2
     ? `팔로어 ${previous.followers} -> ${latest.followers}`
     : latest.followers
@@ -640,8 +674,7 @@ export function buildFallbackBipMissionChoices({
     ? latest.posts[latest.posts.length - 1]
     : "최근 게시글 없음";
   const baseChecklist = [
-    "Threads URL을 복사했다",
-    "Sheet 오늘 행에 URL, 반응, 배운 점을 기록했다",
+    ...proofChecklist,
     ...adaptiveQuestionLines.slice(0, 2),
     ...layerCheckLines.slice(0, 3),
   ];
@@ -649,7 +682,8 @@ export function buildFallbackBipMissionChoices({
     {
       title: compact ? "15분 고객증거 관찰글" : "고객증거를 한 줄로 공개하기",
       angle: `${dayLabel} ${dayTitle}를 실제 문제 증거와 연결한다.`,
-      mission: `${primaryTask}를 하면서 발견한 실제 막힘이나 반복 문제 하나를 Threads에 쓴다. ${evidenceGapLine ? `${evidenceGapLine}. ` : ""}글 끝에는 “이 문제가 반복되는지 확인 중”이라고 남기고, 게시 후 Sheet 오늘 행에 URL과 반응을 기록한다.`,
+      mission: `${primaryTask}를 하면서 발견한 실제 막힘이나 반복 문제 하나를 정리한다. ${evidenceGapLine ? `${evidenceGapLine}. ` : ""}${proofAction}.`,
+      proofTarget,
       drafts: [
         `오늘 ${dayTitle}를 하면서 다시 확인한 문제: ${latestInsight} 그래서 오늘은 기능 설명보다 이 문제가 실제로 반복되는지 확인하려고 한다.`,
         `${followerLine}. 최근 기록을 보니 ${latestInsight} 오늘은 ${primaryTask}를 고객 문제 증거 하나로 좁혀 공개한다.`,
@@ -665,7 +699,8 @@ export function buildFallbackBipMissionChoices({
     {
       title: compact ? "오늘 산출물 스냅샷" : "제품진척을 첫 유저 관점으로 공개하기",
       angle: `${dayOutput}을 기능 나열이 아니라 첫 사용자가 볼 변화로 설명한다.`,
-      mission: `${dayTitle}의 산출물을 스크린샷 없이도 이해되는 한 문단으로 정리한다. “무엇이 가능해졌는지 / 아직 막힌 점 / 다음 확인” 3문장 구조로 Threads에 올리고 Sheet에 URL을 남긴다.`,
+      mission: `${dayTitle}의 산출물을 스크린샷 없이도 이해되는 한 문단으로 정리한다. “무엇이 가능해졌는지 / 아직 막힌 점 / 다음 확인” 3문장 구조로 쓰고 ${hasGoogleProofSink ? "Sheet에 URL을 남긴다" : "로컬 markdown 로그에 저장한다"}.`,
+      proofTarget,
       drafts: [
         `오늘 만든 것: ${dayOutput}. 기능을 늘린 게 아니라, 첫 사용자가 ${primaryTask}를 더 빨리 끝낼 수 있는지 확인하려는 변화다.`,
         `${dayTitle} 진행 중. 오늘의 작은 진척은 ${dayOutput}이고, 아직 확인해야 할 점은 실제 사용자가 이 흐름을 헷갈리지 않는지다.`,
@@ -675,17 +710,20 @@ export function buildFallbackBipMissionChoices({
       evidenceRefs: [
         `커리큘럼 산출물: ${dayOutput}`,
         latestPost,
-        evidence.summary || "공개 기록 Sheet 전체 기록",
+        evidence.summary || proofRef,
       ],
     },
     {
       title: compact ? "배운 점 하나만 공개" : "학습 회고와 다음 실험 공개하기",
       angle: "반응을 해석하고 다음 실험을 작게 만든다.",
-      mission: `최근 Sheet/Doc 기록에서 배운 점 하나를 고르고, 그것이 오늘 ${dayTitle} 계획을 어떻게 바꾸는지 쓴다. 결론은 다음 24시간 안에 확인할 가장 작은 실험 하나로 끝낸다.`,
+      mission: `최근 ${hasGoogleProofSink ? "Sheet/Doc" : "로컬 프로젝트"} 기록에서 배운 점 하나를 고르고, 그것이 오늘 ${dayTitle} 계획을 어떻게 바꾸는지 쓴다. 결론은 다음 24시간 안에 확인할 가장 작은 실험 하나로 끝낸다.`,
+      proofTarget,
       drafts: [
         `최근 기록에서 배운 점: ${latestInsight} 오늘은 이걸 ${dayTitle}에 반영해서 ${primaryTask}만 확인한다.`,
         `반응이 크지 않을 때 내가 줄여야 할 것: 범위. 오늘 ${dayOutput}은 “더 만들기”보다 “더 작게 검증하기”로 진행한다.`,
-        `오늘의 공개 회고: ${latestInsight} 그래서 다음 실험은 ${primaryTask}를 가장 작은 Threads 글 하나로 검증하는 것이다.`,
+        hasGoogleProofSink
+          ? `오늘의 공개 회고: ${latestInsight} 그래서 다음 실험은 ${primaryTask}를 가장 작은 Threads 글 하나로 검증하는 것이다.`
+          : `오늘의 로컬 회고: ${latestInsight} 그래서 다음 실험은 ${primaryTask}를 가장 작은 실행 로그 하나로 검증하는 것이다.`,
       ],
       eveningChecklist: baseChecklist,
       evidenceRefs: [
@@ -701,6 +739,7 @@ export function buildFallbackBipMissionChoices({
     compact,
     today,
     now,
+    curriculumDay,
   });
 }
 
@@ -709,8 +748,9 @@ export function parseMissionResponse(text, {
   compact = false,
   today = todayKey(),
   now = new Date(),
+  curriculumDay = null,
 } = {}) {
-  return parseMissionChoicesResponse(text, { provider, compact, today, now })[0];
+  return parseMissionChoicesResponse(text, { provider, compact, today, now, curriculumDay })[0];
 }
 
 export function completeBipCoachMission(state, {
@@ -819,12 +859,13 @@ function normalizeMissionChoices(value, {
   today = todayKey(),
   now = new Date(),
   keepIds = false,
+  curriculumDay = null,
 } = {}) {
   if (!Array.isArray(value)) {
     return [];
   }
   return value
-    .map((mission, index) => buildMission(mission, { provider, compact, today, now, index, keepIds }))
+    .map((mission, index) => buildMission(mission, { provider, compact, today, now, index, keepIds, curriculumDay }))
     .filter((mission) => mission.title || mission.mission);
 }
 
@@ -835,6 +876,7 @@ function buildMission(mission = {}, {
   now = new Date(),
   index = 0,
   keepIds = false,
+  curriculumDay = null,
 } = {}) {
   mission = objectOrEmpty(mission);
   const id = keepIds && mission.id
@@ -850,6 +892,7 @@ function buildMission(mission = {}, {
     angle: stringOrDefault(mission.angle, ""),
     mission: stringOrDefault(mission.mission, ""),
     proofTarget: stringOrDefault(mission.proofTarget, buildDefaultProofTarget(mission, compact)),
+    curriculumDay: normalizeCurriculumDay(mission.curriculumDay ?? curriculumDay),
     drafts: normalizeStringArray(mission.drafts).slice(0, 3),
     eveningChecklist: normalizeStringArray(mission.eveningChecklist),
     evidenceRefs: normalizeStringArray(mission.evidenceRefs),
@@ -921,6 +964,7 @@ function normalizeCurriculumDay(value) {
     summary: stringOrDefault(day.summary, ""),
     tasks: normalizeStringArray(day.tasks),
     output: stringOrDefault(day.output, ""),
+    valueContract: objectOrEmpty(day.valueContract),
     personalization: objectOrEmpty(day.personalization),
     evidenceNeeds: normalizeStringArray(day.evidenceNeeds),
     nextQuestions: normalizeStringArray(day.nextQuestions),

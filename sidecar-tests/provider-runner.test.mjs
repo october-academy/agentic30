@@ -250,7 +250,7 @@ test("resolveCodexReasoningEffort adapts to mode and prompt intent", () => {
     delete process.env.AGENTIC30_CODEX_REASONING_EFFORT;
     assert.equal(
       resolveCodexReasoningEffort({ executionMode: "fast_chat", prompt: "quick summary" }),
-      "low",
+      "minimal",
     );
     assert.equal(
       resolveCodexReasoningEffort({ executionMode: "agentic", prompt: "implement and test this" }),

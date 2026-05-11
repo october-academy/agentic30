@@ -3,7 +3,6 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { query, listSessions } from "@anthropic-ai/claude-agent-sdk";
-import { Codex } from "@openai/codex-sdk";
 import { buildAuthEnv } from "./auth-context.mjs";
 import { buildQmdGuidance, buildQmdMcpConfig } from "./qmd-support.mjs";
 import {
@@ -35,6 +34,7 @@ const appSupportPath = process.env.AGENTIC30_APP_SUPPORT_PATH
 const codexHomePath = path.join(appSupportPath, "codex-home");
 const internalMcpServerName = "agentic30_sidecar";
 const notionConfigPath = path.join(appSupportPath, "notion-config.json");
+let codexSdkImportPromise = null;
 
 export async function runProviderStream({
   provider,
@@ -54,6 +54,7 @@ export async function runProviderStream({
   onRuntimeUpdate,
   onRunEvent,
   onPetHookEvent,
+  stopAfterCodexThreadStarted = false,
 }) {
   onRunEvent?.({
     phase: "provider.entry",
@@ -120,6 +121,7 @@ export async function runProviderStream({
     onToolEvent,
     onRuntimeUpdate,
     onRunEvent,
+    stopAfterCodexThreadStarted,
   });
 }
 
@@ -639,6 +641,7 @@ async function runCodexAttempt({
   onToolEvent,
   onRuntimeUpdate,
   onRunEvent,
+  stopAfterCodexThreadStarted = false,
 }) {
   let runtime = { ...sessionRuntime };
   onRunEvent?.({ phase: "provider.codex.prepare_start" });
@@ -672,6 +675,8 @@ async function runCodexAttempt({
   if (apiKey) {
     codexOptions.apiKey = apiKey;
   }
+  const { Codex } = await loadCodexSdk();
+  onRunEvent?.({ phase: "provider.codex.sdk_loaded" });
   const codex = new Codex(codexOptions);
   const resolvedModel = resolveCodexModel(model);
   onRunEvent?.({ phase: "provider.codex.client_created", model: resolvedModel });
@@ -722,6 +727,11 @@ async function runCodexAttempt({
         },
       };
       onRuntimeUpdate?.(runtime);
+      if (stopAfterCodexThreadStarted) {
+        onRunEvent?.({ phase: "provider.codex.warm_thread_started" });
+        abortController.abort();
+        return { runtime };
+      }
       continue;
     }
 
@@ -826,6 +836,16 @@ async function runCodexAttempt({
   return {
     runtime,
   };
+}
+
+async function loadCodexSdk() {
+  if (!codexSdkImportPromise) {
+    codexSdkImportPromise = import("@openai/codex-sdk").catch((error) => {
+      codexSdkImportPromise = null;
+      throw error;
+    });
+  }
+  return codexSdkImportPromise;
 }
 
 export function shouldResumeCodexThread(sessionRuntime = {}, workspaceRoot = "", executionMode = "") {
@@ -1082,7 +1102,7 @@ export function resolveCodexReasoningEffort({ executionMode = "", prompt = "" } 
   const hasLightWorkSignal = /quick|brief|summari[sz]e|간단|짧게|요약/.test(text);
 
   if (executionMode === "fast_chat") {
-    return hasDeepWorkSignal ? "medium" : "low";
+    return hasDeepWorkSignal ? "medium" : "minimal";
   }
   if (executionMode === "isolated_read_only") {
     return hasDeepWorkSignal ? "medium" : "low";

@@ -42,6 +42,26 @@ test("adaptive Foundation days mirror Foundation chat day semantics", () => {
   const foundationDays = IDD_BASE_CURRICULUM.filter((day) => day.phase === "foundation");
 
   assert.deepEqual(foundationDays.map((day) => day.day), [1, 2, 3, 4, 5, 6, 7]);
+  for (const day of foundationDays) {
+    assert.equal(typeof day.valueContract?.todayValue, "string", `Day ${day.day} value`);
+    assert.equal(typeof day.valueContract?.evidenceArtifact, "string", `Day ${day.day} artifact`);
+    assert.equal(typeof day.valueContract?.passGate, "string", `Day ${day.day} pass gate`);
+    assert.equal(typeof day.valueContract?.failGate, "string", `Day ${day.day} fail gate`);
+    assert.ok(Array.isArray(day.valueContract?.canonicalDocs), `Day ${day.day} canonical docs`);
+    assert.ok(day.valueContract.canonicalDocs.length >= 2, `Day ${day.day} canonical docs non-empty`);
+    assert.match(day.valueContract?.frictionLogPrompt || "", /막혔/);
+    assert.match(day.valueContract?.resourceObservationPrompt || "", /자료|예시|템플릿/);
+    assert.match(day.valueContract?.antiDisplacementGate?.rule || "", /hotfix|dogfood/);
+  }
+  assert.match(foundationDays[2].valueContract.externalLockIn, /ICP 후보 최소 1명/);
+  assert.doesNotMatch(foundationDays[2].valueContract.externalLockIn, /승연|송재진|조제표/);
+  const docPaths = new Set(foundationDays.flatMap((day) =>
+    day.valueContract.canonicalDocs.map((entry) => entry.path),
+  ));
+  assert.deepEqual(
+    [...docPaths].sort(),
+    ["docs/GOAL.md", "docs/ICP.md", "docs/SPEC.md", "docs/VALUES.md"].sort(),
+  );
   assert.match(foundationDays[0].title, /고객의 어제 행동/);
   assert.match(FOUNDATION_DAYS[1].core_question, /압축된 통증/);
   assert.match(foundationDays[1].title, /돈이 흐르는 기준 시장/);
@@ -162,6 +182,8 @@ test("adaptCurriculumDay evolves missing-interview foundation days into evidence
   assert.equal(day.day, 5);
   assert.match(day.tasks[0], /L2 인터뷰 transcript/);
   assert.match(day.tasks[1], /시간\/돈\/다음 일정 ask/);
+  assert.match(day.valueContract.todayValue, /수요 신호/);
+  assert.match(day.valueContract.passGate, /reply|install|price/);
   assert.ok(day.evidenceNeeds.includes("L2 quote required before insight claims"));
   assert.ok(day.evidenceNeeds.includes("time_or_money_ask"));
   assert.match(day.nextQuestions[0], /office-hours/);

@@ -27,7 +27,7 @@ This checklist is for local dogfood releases of the macOS menu bar app. Public D
 - After uploading the PKG and DMG to GitHub Releases, run `npm run track:release-funnel -- --repo october-academy/agentic30-private --tag <release-tag>` on a short interval during launch day. The script polls `gh api` release asset `download_count` and emits one `installer_downloaded` event per new PKG/DMG download.
 - Confirm the signed app emits `mac_install_completed` once on first launch, gated on a fresh `agentic30.posthog.distinctId` so existing users who upgrade to this build do not fire the install event. The legacy `dmg_install_completed` event is still emitted for old dashboards.
 - The A4 funnel landed in this slice: `short_link_click` → `installer_downloaded` → `mac_install_completed`.
-- Follow-up (not in this slice): host-routed sidecar telemetry for `workspace_setup_started` / `workspace_setup_failed` / `workspace_setup_completed` to extend the funnel terminator. Track the wiring before defining the workspace-setup step in PostHog so the terminator does not sit at 0%.
+- Host-routed sidecar telemetry for `workspace_setup_started`, `workspace_setup_failed`, and `workspace_setup_completed` is wired. `workspace_setup_completed` is gated on workspace scan success plus first real input, so use it as the workspace-setup funnel terminator only after confirming the events in local telemetry capture or PostHog for the signed artifact.
 
 ## Public Distribution Blockers
 

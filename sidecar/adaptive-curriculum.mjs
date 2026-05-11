@@ -1,3 +1,5 @@
+import { getFoundationValueContract } from "./foundation-contracts.mjs";
+
 const DAY_COUNT = 30;
 
 export const IDD_CURRICULUM_SCHEMA_VERSION = 1;
@@ -214,6 +216,7 @@ function personalizeDay(base, signals) {
       revenueSignal: signals.hasRevenueSignal,
     },
     evidenceNeeds,
+    valueContract: base.valueContract ?? null,
     nextQuestions,
     layerFocus: layerFocusFor(base),
     layerChecks,
@@ -260,6 +263,7 @@ function mergeSelectedOverride(generated, selectedDay) {
     summary: generated.summary,
     tasks: generated.tasks,
     output: generated.output,
+    valueContract: generated.valueContract ?? null,
     staticDay: {
       title: stringOrDefault(selected.title, ""),
       tasks: normalizeStringArray(selected.tasks),
@@ -307,6 +311,7 @@ function day(dayNumber, phase, title, shortTitle, summary, tasks, output) {
     summary,
     tasks,
     output,
+    valueContract: phase === "foundation" ? getFoundationValueContract(dayNumber) : null,
   });
 }
 

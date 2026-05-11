@@ -1,4 +1,5 @@
 import { CODEX_STRUCTURED_INPUT_TOOL } from "./structured-input-tools.mjs";
+import { formatFoundationEvidenceSpineLines } from "./foundation-contracts.mjs";
 
 export function buildOfficeHoursDocsSystemPrompt(workspaceRoot, {
   provider = "codex",
@@ -135,6 +136,8 @@ export function buildOfficeHoursDocsSystemPrompt(workspaceRoot, {
     "- VALUES must be usable for daily tradeoff decisions.",
     "- SPEC must distinguish MVP from later scope.",
     "- If evidence is weak, say so in the docs and assign the next validation action.",
+    "",
+    ...formatFoundationEvidenceSpineLines(),
     "",
     "## Closing Assignment",
     "매 세션은 단 하나의 구체적 다음 행동으로 끝나야 합니다. 전략이 아니라 행동입니다.",

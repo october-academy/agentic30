@@ -19,8 +19,9 @@ private final class FakeWebAuthenticationSessionHandle: WebAuthenticationSession
     func cancel() {}
 }
 
+@Suite(.serialized)
 struct AgenticViewModelAuthTests {
-    @Test @MainActor func onboardingContextDecodesLegacyPayloadWithoutWorkMode() throws {
+    @Test @MainActor func onboardingContextMigratesLegacySoloAllValue() throws {
         let payload = """
         {
           "role": "developer",
@@ -35,7 +36,27 @@ struct AgenticViewModelAuthTests {
         #expect(context.workMode == .fullTimeSolo)
         #expect(context.role == .developer)
         #expect(context.projectStage == .building)
-        #expect(context.isolationLevel == .soloAll)
+        #expect(context.isolationLevel == .projectFolder)
+        #expect(context.isolationLevels == [.projectFolder])
+    }
+
+    @Test @MainActor func onboardingContextDecodesCurrentPayloadWithoutWorkMode() throws {
+        let payload = """
+        {
+          "role": "developer",
+          "project_stage": "building",
+          "isolation_level": "project_folder",
+          "completed_at": "2026-05-08T00:00:00Z"
+        }
+        """.data(using: .utf8)!
+
+        let context = try JSONDecoder().decode(OnboardingContext.self, from: payload)
+
+        #expect(context.workMode == .fullTimeSolo)
+        #expect(context.role == .developer)
+        #expect(context.projectStage == .building)
+        #expect(context.isolationLevel == .projectFolder)
+        #expect(context.isolationLevels == [.projectFolder])
         #expect(context.completedAt == "2026-05-08T00:00:00Z")
     }
 
@@ -49,27 +70,52 @@ struct AgenticViewModelAuthTests {
         )
 
         let data = try JSONEncoder().encode(context)
-        let object = try JSONSerialization.jsonObject(with: data) as? [String: String]
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
-        #expect(object?["work_mode"] == "side_project")
-        #expect(object?["role"] == "designer")
-        #expect(object?["project_stage"] == "pre_revenue")
-        #expect(object?["isolation_level"] == "weekly_loop")
-        #expect(object?["completed_at"] == "2026-05-08T00:00:00Z")
+        #expect(object?["work_mode"] as? String == "side_project")
+        #expect(object?["role"] as? String == "designer")
+        #expect(object?["project_stage"] as? String == "pre_revenue")
+        #expect(object?["isolation_level"] as? String == "weekly_loop")
+        #expect(object?["isolation_levels"] as? [String] == ["weekly_loop"])
+        #expect(object?["completed_at"] as? String == "2026-05-08T00:00:00Z")
+    }
+
+    @Test @MainActor func onboardingContextPersistsMultipleRecordSources() throws {
+        let context = OnboardingContext(
+            workMode: .fullTimeSolo,
+            role: .developer,
+            projectStage: .building,
+            isolationLevel: .projectFolder,
+            isolationLevels: [.workLog, .projectFolder, .workLog],
+            completedAt: "2026-05-08T00:00:00Z"
+        )
+
+        let data = try JSONEncoder().encode(context)
+        let decoded = try JSONDecoder().decode(OnboardingContext.self, from: data)
+
+        #expect(decoded.isolationLevel == .projectFolder)
+        #expect(decoded.isolationLevels == [.projectFolder, .workLog])
+        #expect(decoded.assistantSystemPromptFragment.contains("project_folder,work_log"))
+        #expect(decoded.assistantSystemPromptFragment.contains("프로젝트 폴더"))
+        #expect(decoded.assistantSystemPromptFragment.contains("업무 일지"))
     }
 
     @Test @MainActor func missingGoogleAuthDoesNotBlockLocalWorkspaceSelection() {
         WorkspaceSettings.clear()
+        let productionLegacyProvider = WorkspaceSettings.legacyWorkspaceProvider
+        WorkspaceSettings.legacyWorkspaceProvider = { "" }
         defer { WorkspaceSettings.clear() }
+        defer { WorkspaceSettings.legacyWorkspaceProvider = productionLegacyProvider }
 
         let viewModel = AgenticViewModel(activateAppForAuth: {})
 
         #expect(viewModel.macAuthSession == nil)
         #expect(viewModel.needsProjectWorkspace == true)
+        #expect(viewModel.needsOnboardingContext == true)
 
         viewModel.start()
 
-        #expect(viewModel.connectionLabel == "Choose a project workspace")
+        #expect(viewModel.connectionLabel == "Complete local setup")
         #expect(viewModel.isConnected == false)
     }
 
@@ -87,7 +133,7 @@ struct AgenticViewModelAuthTests {
             onboardingContextOverride: OnboardingContext.make(
                 role: .developer,
                 projectStage: .building,
-                isolationLevel: .soloAll
+                isolationLevel: .projectFolder
             ),
             activateAppForAuth: {}
         )
@@ -112,7 +158,7 @@ struct AgenticViewModelAuthTests {
             onboardingContextOverride: OnboardingContext.make(
                 role: .developer,
                 projectStage: .building,
-                isolationLevel: .soloAll
+                isolationLevel: .projectFolder
             ),
             activateAppForAuth: {}
         )
@@ -139,7 +185,7 @@ struct AgenticViewModelAuthTests {
             onboardingContextOverride: OnboardingContext.make(
                 role: .developer,
                 projectStage: .building,
-                isolationLevel: .soloAll
+                isolationLevel: .projectFolder
             ),
             activateAppForAuth: {}
         )
@@ -156,6 +202,25 @@ struct AgenticViewModelAuthTests {
         #expect(AgenticViewModel.isRawNullDayError(rawMessage))
         #expect(AgenticViewModel.userFacingMissionErrorMessage(rawMessage) == "다시 시도하면 미션 후보를 새로 만들게요.")
         #expect(!AgenticViewModel.userFacingMissionErrorMessage(rawMessage).contains("Cannot read properties"))
+    }
+
+    @Test @MainActor func bipCoachStateDecodesLocalEvidenceProvider() throws {
+        let payload = """
+        {
+          "config": { "provider": "codex" },
+          "evidence": { "provider": "local", "fallbackUsed": true },
+          "missionChoices": [],
+          "currentMission": null,
+          "streak": { "current": 0, "longest": 0, "lastCompletedDate": null },
+          "lastError": null
+        }
+        """.data(using: .utf8)!
+
+        let state = try JSONDecoder().decode(BipCoachState.self, from: payload)
+
+        #expect(state.config.provider == .codex)
+        #expect(state.evidence?.provider == "local")
+        #expect(state.evidence?.fallbackUsed == true)
     }
 
     @Test @MainActor func googleSignInReportsFailureWhenSystemAuthSessionCannotStart() {
