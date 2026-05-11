@@ -21,13 +21,12 @@ fi
 default_branch="$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')"
 base_ref="origin/${default_branch}"
 
-if ! git rev-parse --verify --quiet "${base_ref}" >/dev/null; then
-  git fetch origin "${default_branch}"
-fi
+git fetch --quiet origin "${default_branch}"
 base_sha="$(git merge-base "${base_ref}" HEAD)"
 
 npm run check:public-safety
 
+trufflehog --version
 trufflehog git file://. \
   --since-commit "${base_sha}" \
   --branch HEAD \
