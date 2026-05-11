@@ -27,6 +27,7 @@ final class SidecarBridge {
     private var stdoutPipe: Pipe?
     private var stderrPipe: Pipe?
     private var stdoutBuffer = ""
+    private var stderrRingBuffer = ""
     private var receiveTask: Task<Void, Never>?
     private var intentionalStop = false
     private var didConnect = false
@@ -38,6 +39,9 @@ final class SidecarBridge {
     private let nodeResolver: NodeExecutableResolver
     private let sidecarScriptURLOverride: URL?
     private var emittedBootFailureReasons = Set<String>()
+    private var unexpectedRestartAttempts = 0
+    private var pendingRestartWorkItem: DispatchWorkItem?
+    private var isAutoRestartStart = false
     private let startupTraceQueue = DispatchQueue(label: "agentic30.sidecar.startup-trace")
     private let localURLSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
@@ -57,12 +61,17 @@ final class SidecarBridge {
 
     func start() {
         guard process == nil else { return }
+        if !isAutoRestartStart {
+            unexpectedRestartAttempts = 0
+        }
+        isAutoRestartStart = false
         intentionalStop = false
         didConnect = false
         startRequestedAt = Date()
         processStartedAt = nil
         sidecarReadyStdoutAt = nil
         readyEventAt = nil
+        stderrRingBuffer = ""
         PostHogTelemetry.capture("mac_sidecar_start_requested")
         appendStartupTrace("start_requested")
 
@@ -117,6 +126,7 @@ final class SidecarBridge {
                 guard let self else { return }
                 let data = handle.availableData
                 guard !data.isEmpty, let chunk = String(data: data, encoding: .utf8) else { return }
+                self.appendStderrChunk(chunk)
                 self.emit(type: "sidecar_status", message: chunk.trimmingCharacters(in: .whitespacesAndNewlines))
             }
 
@@ -153,6 +163,9 @@ final class SidecarBridge {
         PostHogTelemetry.capture("mac_sidecar_stop_requested")
         appendStartupTrace("stop_requested")
         intentionalStop = true
+        pendingRestartWorkItem?.cancel()
+        pendingRestartWorkItem = nil
+        unexpectedRestartAttempts = 0
         didConnect = false
         receiveTask?.cancel()
         receiveTask = nil
@@ -365,6 +378,14 @@ final class SidecarBridge {
             diagnostics: nil,
             bipCoach: nil,
             bipSetupReady: nil,
+            iddSetupComplete: nil,
+            iddSetupStatus: nil,
+            iddCurrentDocType: nil,
+            iddAmbiguityScore: nil,
+            iddUnresolvedAssumptions: nil,
+            iddDocOrder: nil,
+            iddDocPreviews: nil,
+            iddProviderRecovery: nil,
             day: nil,
             firstPrompt: nil,
             missingLocalDocs: nil,
@@ -453,6 +474,40 @@ final class SidecarBridge {
         }
     }
 
+    private func appendStderrChunk(_ chunk: String) {
+        stderrRingBuffer += chunk
+        let maxLength = 12_000
+        if stderrRingBuffer.count > maxLength {
+            stderrRingBuffer = String(stderrRingBuffer.suffix(maxLength))
+        }
+    }
+
+    private func redactedStderrTail() -> String {
+        let tail = String(stderrRingBuffer.suffix(4_000))
+        let patterns = [
+            #"(?i)(token|secret|password|api[_-]?key|authorization)(["'\s:=]+)([^"'\s,}]+)"#,
+            #"(?i)Bearer\s+[A-Za-z0-9._~+/\-]+=*"#,
+        ]
+        return patterns.reduce(tail) { value, pattern in
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { return value }
+            let range = NSRange(value.startIndex..<value.endIndex, in: value)
+            if pattern.localizedCaseInsensitiveContains("bearer") {
+                return regex.stringByReplacingMatches(
+                    in: value,
+                    options: [],
+                    range: range,
+                    withTemplate: "Bearer [redacted]"
+                )
+            }
+            return regex.stringByReplacingMatches(
+                in: value,
+                options: [],
+                range: range,
+                withTemplate: "$1$2[redacted]"
+            )
+        }
+    }
+
     private static func appSupportURL() -> URL {
         if let override = ProcessInfo.processInfo.environment["AGENTIC30_APP_SUPPORT_PATH"]?
             .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -464,6 +519,7 @@ final class SidecarBridge {
     }
 
     private func handleTermination(_ terminatedProcess: Process) {
+        let stderrTail = redactedStderrTail()
         if process === terminatedProcess {
             process = nil
         }
@@ -481,11 +537,16 @@ final class SidecarBridge {
             didConnect = false
             appendStartupTrace("process_stopped_after_connect", properties: [
                 "termination_status": Int(terminatedProcess.terminationStatus),
+                "stderr_tail": stderrTail,
             ])
             PostHogTelemetry.capture("mac_sidecar_stopped", properties: [
                 "termination_status": terminatedProcess.terminationStatus,
             ])
-            emit(type: "sidecar_status", message: "Sidecar stopped")
+            emit(
+                type: "sidecar_unexpected_exit",
+                message: "Sidecar stopped unexpectedly (exit \(terminatedProcess.terminationStatus))."
+            )
+            scheduleUnexpectedRestart()
             return
         }
 
@@ -493,6 +554,7 @@ final class SidecarBridge {
         appendStartupTrace("early_process_exit", properties: [
             "termination_reason": reason,
             "termination_status": Int(terminatedProcess.terminationStatus),
+            "stderr_tail": stderrTail,
         ])
         captureBootFailure(reason: "early_process_exit", properties: [
             "termination_reason": reason,
@@ -531,6 +593,32 @@ final class SidecarBridge {
         stdoutPipe = nil
         stderrPipe = nil
         stdoutBuffer = ""
+    }
+
+    private func scheduleUnexpectedRestart() {
+        guard unexpectedRestartAttempts < 2 else {
+            appendStartupTrace("auto_restart_exhausted", properties: [
+                "attempts": unexpectedRestartAttempts,
+            ])
+            return
+        }
+        unexpectedRestartAttempts += 1
+        let delay: TimeInterval = unexpectedRestartAttempts == 1 ? 1 : 3
+        appendStartupTrace("auto_restart_scheduled", properties: [
+            "attempt": unexpectedRestartAttempts,
+            "delay_ms": Int(delay * 1000),
+        ])
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.process == nil, !self.intentionalStop else { return }
+            self.appendStartupTrace("auto_restart_starting", properties: [
+                "attempt": self.unexpectedRestartAttempts,
+            ])
+            self.isAutoRestartStart = true
+            self.start()
+        }
+        pendingRestartWorkItem?.cancel()
+        pendingRestartWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
     private func makeProcessEnvironment(nodeURL: URL) -> [String: String] {

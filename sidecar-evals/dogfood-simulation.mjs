@@ -545,6 +545,9 @@ async function createWorkspaceFixture(referenceDocs, scenario = {}) {
     await fs.mkdir(path.dirname(path.join(root, docPath)), { recursive: true });
     await fs.writeFile(path.join(root, docPath), content);
   }
+  if (scenario.fixture?.iddSetup === "approved") {
+    await writeApprovedIddSetupFixture(root, referenceDocs);
+  }
   if (scenario.fixture?.transcripts?.length) {
     await fs.mkdir(path.join(root, "transcripts"), { recursive: true });
     for (const transcript of scenario.fixture.transcripts) {
@@ -586,6 +589,11 @@ async function createWorkspaceFixture(referenceDocs, scenario = {}) {
 async function writeBipConfig({ workspaceRoot, appSupportPath, scenario = {} }) {
   await fs.mkdir(appSupportPath, { recursive: true });
   const docs = new Set(scenario.fixture?.docs || []);
+  if (scenario.fixture?.iddSetup === "approved") {
+    for (const name of ["ICP.md", "VALUES.md", "GOAL.md", "SPEC.md"]) {
+      docs.add(`docs/${name}`);
+    }
+  }
   const docPath = (name) => docs.has(`docs/${name}`) || docs.has(name) ? `docs/${name}` : "";
   await fs.writeFile(
     path.join(appSupportPath, "bip-config.json"),
@@ -604,6 +612,58 @@ async function writeBipConfig({ workspaceRoot, appSupportPath, scenario = {} }) 
       externalDocs: { googleDocs: [], googleSheets: [], notion: [] },
       social: { threads: "october", x: "" },
     }, null, 2),
+  );
+}
+
+async function writeApprovedIddSetupFixture(workspaceRoot, referenceDocs = {}) {
+  const now = new Date().toISOString();
+  const foundationDocs = [
+    ["icp", "ICP", "docs/ICP.md"],
+    ["goal", "GOAL", "docs/GOAL.md"],
+    ["values", "VALUES", "docs/VALUES.md"],
+    ["spec", "SPEC", "docs/SPEC.md"],
+  ];
+  const drafts = {};
+  for (const [type, title, docPath] of foundationDocs) {
+    const content = referenceDocs[`${title}.md`] || `# ${title}\n\nDogfood IDD fixture approved ${title}.`;
+    drafts[type] = content;
+    await fs.mkdir(path.dirname(path.join(workspaceRoot, docPath)), { recursive: true });
+    await fs.writeFile(path.join(workspaceRoot, docPath), content);
+  }
+
+  const iddDir = path.join(workspaceRoot, ".agentic30", "idd");
+  await fs.mkdir(iddDir, { recursive: true });
+  const state = {
+    schemaVersion: 1,
+    status: "approved",
+    currentDocType: "spec",
+    docOrder: foundationDocs.map(([type]) => type),
+    transcript: [
+      {
+        at: now,
+        role: "system",
+        docType: "spec",
+        content: "Dogfood fixture starts after Foundation Setup approval.",
+      },
+    ],
+    ambiguityScore: 12,
+    unresolvedAssumptions: [],
+    drafts,
+    approvedAt: now,
+    approvedDocPaths: foundationDocs.map(([, , docPath]) => docPath),
+    lastProvider: "codex",
+    providerRecovery: null,
+    updatedAt: now,
+  };
+  await fs.writeFile(path.join(iddDir, "setup-state.json"), `${JSON.stringify(state, null, 2)}\n`);
+  await fs.writeFile(path.join(iddDir, "transcript.json"), `${JSON.stringify(state.transcript, null, 2)}\n`);
+  await fs.writeFile(
+    path.join(iddDir, "assumptions.json"),
+    `${JSON.stringify({
+      ambiguityScore: state.ambiguityScore,
+      unresolvedAssumptions: state.unresolvedAssumptions,
+      updatedAt: state.updatedAt,
+    }, null, 2)}\n`,
   );
 }
 

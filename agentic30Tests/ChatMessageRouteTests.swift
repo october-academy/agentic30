@@ -169,6 +169,7 @@ struct ChatMessageRouteTests {
         // No anchor yet (foundationStartedAt == nil) and no override —
         // can't classify as daily-task without a day.
         let viewModel = AgenticViewModel(activateAppForAuth: {})
+        viewModel.resetFoundationProgressForTesting()
         let route = viewModel.classifyMessageRoute(
             prompt: "아직 anchor 없음",
             in: Self.makeSession(messages: []),
@@ -215,5 +216,375 @@ struct ChatMessageRouteTests {
 
     @MainActor @Test func bipDraftDoesNotRequireClaudeProvider() {
         #expect(ChatMessageRoute.SubWorkflow.bipDraft.requiresClaudeProvider == false)
+    }
+}
+
+struct StructuredPromptSubmissionStateTests {
+    private static func makeAssistantMessage(
+        _ content: String = "",
+        state: MessageState = .streaming
+    ) -> ChatMessage {
+        ChatMessage(
+            id: UUID().uuidString,
+            role: .assistant,
+            provider: .codex,
+            content: content,
+            state: state,
+            createdAt: Date(),
+            error: nil,
+            bipMissionChoices: nil,
+            providerAuthActions: nil
+        )
+    }
+
+    private static func makePrompt(
+        sessionId: String = "structured-session",
+        requestId: String = "request-1",
+        question: String = "누구를 인터뷰하나요?"
+    ) -> StructuredPromptRequest {
+        StructuredPromptRequest(
+            requestId: requestId,
+            sessionId: sessionId,
+            toolName: "request_user_input",
+            title: "Foundation Setup",
+            createdAt: Date(),
+            questions: [
+                StructuredPromptQuestion(
+                    header: "ICP",
+                    question: question,
+                    helperText: "가장 가까운 유저 타입을 고르세요.",
+                    options: [
+                        StructuredPromptOption(
+                            label: "Provider",
+                            description: "서비스 제공자",
+                            preview: nil,
+                            nextIntent: nil
+                        ),
+                    ],
+                    multiSelect: false,
+                    allowFreeText: true,
+                    requiresFreeText: nil,
+                    freeTextPlaceholder: "직접 입력",
+                    textMode: .short
+                ),
+            ]
+        )
+    }
+
+    private static func makeSession(
+        id: String = "structured-session",
+        pendingUserInput: StructuredPromptRequest?,
+        status: SessionStatus = .awaitingInput
+    ) -> ChatSession {
+        ChatSession(
+            id: id,
+            title: "Foundation Setup",
+            provider: .codex,
+            model: AgentModelCatalog.defaultModelID(for: .codex),
+            status: status,
+            createdAt: Date(),
+            updatedAt: Date(),
+            error: nil,
+            messages: [],
+            pendingUserInput: pendingUserInput,
+            runtime: nil
+        )
+    }
+
+    private static func makeLegacyStaticPrompt(sessionId: String = "structured-session") -> StructuredPromptRequest {
+        StructuredPromptRequest(
+            requestId: "legacy-static-request",
+            sessionId: sessionId,
+            toolName: "request_user_input",
+            title: "ICP 1/4",
+            createdAt: Date(),
+            questions: [
+                StructuredPromptQuestion(
+                    header: "첫 고객",
+                    question: "이번 주 바로 인터뷰할 첫 고객은 누구인가요?",
+                    helperText: "먼저 첫 고객 후보 하나만 고릅니다.",
+                    options: [
+                        StructuredPromptOption(
+                            label: "가장 절박한 하위 ICP",
+                            description: "legacy static option",
+                            preview: nil,
+                            nextIntent: nil
+                        ),
+                    ],
+                    multiSelect: false,
+                    allowFreeText: true,
+                    requiresFreeText: nil,
+                    freeTextPlaceholder: "예: MVP는 있지만 유료 고객이 없는 macOS 1인 개발자",
+                    textMode: .short
+                ),
+            ]
+        )
+    }
+
+    private static func makeIddPrompt(
+        sessionId: String = "structured-session",
+        docType: String,
+        toolName: String = "agentic30_request_user_input"
+    ) -> StructuredPromptRequest {
+        StructuredPromptRequest(
+            requestId: "idd-\(docType)-request",
+            sessionId: sessionId,
+            toolName: toolName,
+            title: "\(docType.uppercased()) 정하기",
+            createdAt: Date(),
+            questions: [
+                StructuredPromptQuestion(
+                    header: "Foundation",
+                    question: "\(docType) 질문",
+                    helperText: nil,
+                    options: [
+                        StructuredPromptOption(
+                            label: "선택",
+                            description: "설명",
+                            preview: nil,
+                            nextIntent: nil
+                        ),
+                    ],
+                    multiSelect: false,
+                    allowFreeText: true,
+                    requiresFreeText: true,
+                    freeTextPlaceholder: "직접 입력",
+                    textMode: .short
+                ),
+            ],
+            generation: StructuredPromptGeneration(mode: "host_structured", docType: docType)
+        )
+    }
+
+    @MainActor @Test func sidecarUnexpectedExitMarksRunningSessionRecoverable() {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        let session = ChatSession(
+            id: "running-session",
+            title: "Foundation Setup: ICP",
+            provider: .codex,
+            model: AgentModelCatalog.defaultCodexModelID,
+            status: .running,
+            createdAt: Date(),
+            updatedAt: Date(),
+            error: nil,
+            messages: [Self.makeAssistantMessage()],
+            pendingUserInput: nil,
+            runtime: nil
+        )
+
+        viewModel.replaceSessionsForTesting([session])
+        viewModel.recoverRunningSessionsForTesting(message: "Sidecar stopped unexpectedly (exit 1).")
+
+        let recovered = viewModel.sessions.first
+        #expect(recovered?.status == .error)
+        #expect(recovered?.error?.contains("Sidecar stopped unexpectedly") == true)
+        #expect(recovered?.messages.last?.state == .error)
+        #expect(recovered?.messages.last?.content.contains("Sidecar stopped before this response completed") == true)
+    }
+
+    @MainActor @Test func structuredPromptSubmissionKeepsPendingInputLocally() {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        let prompt = Self.makePrompt()
+        viewModel.replaceSessionsForTesting(
+            [Self.makeSession(pendingUserInput: prompt)],
+            selectedSessionID: prompt.sessionId
+        )
+
+        viewModel.submitStructuredPrompt(
+            sessionId: prompt.sessionId,
+            requestId: prompt.requestId,
+            responses: [
+                AgenticViewModel.StructuredPromptSubmission(
+                    question: prompt.questions[0].question,
+                    selectedOptions: ["Provider"],
+                    freeText: "B2B SaaS"
+                ),
+            ]
+        )
+
+        #expect(viewModel.selectedSession?.pendingUserInput?.requestId == prompt.requestId)
+        #expect(viewModel.selectedSession?.status == .running)
+        let state = viewModel.structuredPromptSubmissionState(for: prompt.sessionId)
+        #expect(state?.requestId == prompt.requestId)
+        #expect(state?.answerSummary.contains("Provider") == true)
+        #expect(state?.answerSummary.contains("B2B SaaS") == true)
+    }
+
+    @MainActor @Test func legacyStaticIddPromptIsHiddenWhileRegenerationRuns() {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        let prompt = Self.makeLegacyStaticPrompt()
+
+        viewModel.applySessionUpdatedForTesting(Self.makeSession(pendingUserInput: prompt))
+
+        #expect(viewModel.selectedSession?.pendingUserInput == nil)
+        #expect(viewModel.pendingStructuredPrompt == nil)
+        #expect(viewModel.selectedSession?.status == .running)
+    }
+
+    @MainActor @Test func foundationPromptMatchesCurrentDocOnly() {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        viewModel.setIddCurrentDocTypeForTesting("goal")
+
+        let matching = Self.makeIddPrompt(docType: "goal")
+        let mismatched = Self.makeIddPrompt(docType: "icp")
+        let generic = Self.makeIddPrompt(docType: "goal", toolName: "initial_intake")
+
+        #expect(viewModel.isMatchingFoundationPrompt(matching) == true)
+        #expect(viewModel.isMismatchedFoundationPrompt(matching) == false)
+        #expect(viewModel.isMatchingFoundationPrompt(mismatched) == false)
+        #expect(viewModel.isMismatchedFoundationPrompt(mismatched) == true)
+        #expect(viewModel.isMatchingFoundationPrompt(generic) == false)
+        #expect(viewModel.isMismatchedFoundationPrompt(generic) == true)
+    }
+
+    @MainActor @Test func matchingIddProgressUpdatesSubmittedState() {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        let prompt = Self.makePrompt()
+        viewModel.replaceSessionsForTesting(
+            [Self.makeSession(pendingUserInput: prompt)],
+            selectedSessionID: prompt.sessionId
+        )
+        viewModel.submitStructuredPrompt(
+            sessionId: prompt.sessionId,
+            requestId: prompt.requestId,
+            responses: [
+                AgenticViewModel.StructuredPromptSubmission(
+                    question: prompt.questions[0].question,
+                    selectedOptions: ["Provider"],
+                    freeText: ""
+                ),
+            ]
+        )
+
+        viewModel.applyIddSetupProgressForTesting(
+            sessionId: prompt.sessionId,
+            requestId: prompt.requestId,
+            stage: "recording_response",
+            progressText: "ICP 문서에 반영 중",
+            elapsedMs: 120
+        )
+
+        let state = viewModel.structuredPromptSubmissionState(for: prompt.sessionId)
+        #expect(state?.progressStage == "recording_response")
+        #expect(state?.progressText == "ICP 문서에 반영 중")
+        #expect(state?.elapsedMs == 120)
+        #expect(state?.progressUpdatedAt != nil)
+    }
+
+    @MainActor @Test func staleIddProgressDoesNotUpdateSubmittedState() {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        let prompt = Self.makePrompt(requestId: "request-1")
+        viewModel.replaceSessionsForTesting(
+            [Self.makeSession(pendingUserInput: prompt)],
+            selectedSessionID: prompt.sessionId
+        )
+        viewModel.submitStructuredPrompt(
+            sessionId: prompt.sessionId,
+            requestId: prompt.requestId,
+            responses: [
+                AgenticViewModel.StructuredPromptSubmission(
+                    question: prompt.questions[0].question,
+                    selectedOptions: ["Provider"],
+                    freeText: ""
+                ),
+            ]
+        )
+
+        viewModel.applyIddSetupProgressForTesting(
+            sessionId: prompt.sessionId,
+            requestId: "request-2",
+            stage: "recording_response",
+            progressText: "ICP 문서에 반영 중"
+        )
+
+        let state = viewModel.structuredPromptSubmissionState(for: prompt.sessionId)
+        #expect(state?.progressStage == nil)
+        #expect(state?.progressText == nil)
+    }
+
+    @MainActor @Test func validationErrorClearsSubmittedStateForRetry() {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        let prompt = Self.makePrompt()
+        viewModel.replaceSessionsForTesting(
+            [Self.makeSession(pendingUserInput: prompt)],
+            selectedSessionID: prompt.sessionId
+        )
+        viewModel.submitStructuredPrompt(
+            sessionId: prompt.sessionId,
+            requestId: prompt.requestId,
+            responses: [
+                AgenticViewModel.StructuredPromptSubmission(
+                    question: prompt.questions[0].question,
+                    selectedOptions: ["Provider"],
+                    freeText: ""
+                ),
+            ]
+        )
+
+        viewModel.applyIddSetupProgressForTesting(
+            sessionId: prompt.sessionId,
+            requestId: prompt.requestId,
+            stage: "validation_error",
+            progressText: "한 줄 근거를 입력해야 다음 질문으로 넘어갑니다."
+        )
+
+        #expect(viewModel.structuredPromptSubmissionState(for: prompt.sessionId) == nil)
+        #expect(viewModel.selectedSession?.pendingUserInput?.requestId == prompt.requestId)
+    }
+
+    @MainActor @Test func newPendingInputClearsSubmittedState() {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        let prompt = Self.makePrompt(requestId: "request-1")
+        viewModel.replaceSessionsForTesting(
+            [Self.makeSession(pendingUserInput: prompt)],
+            selectedSessionID: prompt.sessionId
+        )
+        viewModel.submitStructuredPrompt(
+            sessionId: prompt.sessionId,
+            requestId: prompt.requestId,
+            responses: [
+                AgenticViewModel.StructuredPromptSubmission(
+                    question: prompt.questions[0].question,
+                    selectedOptions: ["Provider"],
+                    freeText: ""
+                ),
+            ]
+        )
+
+        let nextPrompt = Self.makePrompt(
+            requestId: "request-2",
+            question: "어떤 문제를 검증하나요?"
+        )
+        viewModel.applySessionUpdatedForTesting(Self.makeSession(pendingUserInput: nextPrompt))
+
+        #expect(viewModel.structuredPromptSubmissionState(for: prompt.sessionId) == nil)
+        #expect(viewModel.selectedSession?.pendingUserInput?.requestId == "request-2")
+    }
+
+    @MainActor @Test func nilPendingInputClearsSubmittedState() {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        let prompt = Self.makePrompt()
+        viewModel.replaceSessionsForTesting(
+            [Self.makeSession(pendingUserInput: prompt)],
+            selectedSessionID: prompt.sessionId
+        )
+        viewModel.submitStructuredPrompt(
+            sessionId: prompt.sessionId,
+            requestId: prompt.requestId,
+            responses: [
+                AgenticViewModel.StructuredPromptSubmission(
+                    question: prompt.questions[0].question,
+                    selectedOptions: ["Provider"],
+                    freeText: ""
+                ),
+            ]
+        )
+
+        viewModel.applySessionUpdatedForTesting(
+            Self.makeSession(pendingUserInput: nil, status: .idle)
+        )
+
+        #expect(viewModel.structuredPromptSubmissionState(for: prompt.sessionId) == nil)
+        #expect(viewModel.selectedSession?.pendingUserInput == nil)
     }
 }

@@ -1,8 +1,81 @@
 import fsSync from "node:fs";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { isBipCoachConfigured } from "./bip-coach-state.mjs";
 import { normalizeWorkspaceOnboardingHypothesis } from "./onboarding-hypothesis.mjs";
 import { CODEX_STRUCTURED_INPUT_TOOL } from "./structured-input-tools.mjs";
+
+export const IDD_SETUP_SCHEMA_VERSION = 1;
+
+export const IDD_FOUNDATION_DOCS = [
+  {
+    type: "icp",
+    title: "ICP",
+    canonicalPath: "docs/ICP.md",
+    aliases: ["docs/ICP.md"],
+    focus: "ideal customer profile, anti-ICP, current alternatives, buying trigger, validation signals",
+  },
+  {
+    type: "goal",
+    title: "GOAL",
+    canonicalPath: "docs/GOAL.md",
+    aliases: ["docs/GOAL.md", "docs/OKR.md"],
+    focus: "mission, measurable objectives, key results, weekly milestones, operating cadence",
+  },
+  {
+    type: "values",
+    title: "VALUES",
+    canonicalPath: "docs/VALUES.md",
+    aliases: ["docs/VALUES.md", "docs/PRINCIPLES.md", "docs/PRODUCT_VALUES.md"],
+    focus: "decision principles, tradeoff rules, what the project refuses to do, behavioral examples",
+  },
+  {
+    type: "spec",
+    title: "SPEC",
+    canonicalPath: "docs/SPEC.md",
+    aliases: ["docs/SPEC.md"],
+    focus: "problem definition, core value, MVP scope, user journey, constraints, success metrics, UX, risks, tradeoffs",
+  },
+];
+
+export const IDD_FOUNDATION_DOC_TYPES = IDD_FOUNDATION_DOCS.map((doc) => doc.type);
+
+export const IDD_AMBIGUITY_THRESHOLD = 20;
+
+const IDD_RUBRIC_SIGNALS = {
+  icp: [
+    { id: "narrow_segment", label: "ICP가 좁은 세그먼트로 표현되어야 합니다.", dimension: "specificity" },
+    { id: "reachable_person", label: "이번 주 연락 가능한 실제 사람/계정이 필요합니다.", dimension: "evidence" },
+    { id: "current_alternative", label: "현재 대안이나 우회 행동이 필요합니다.", dimension: "evidence" },
+    { id: "pressure_cost", label: "시간, 돈, 평판 중 어떤 압박이 있는지 필요합니다.", dimension: "evidence" },
+  ],
+  goal: [
+    { id: "proof_target", label: "이번 주 proof target이 필요합니다.", dimension: "scope" },
+    { id: "metric", label: "진척을 판단할 측정 지표가 필요합니다.", dimension: "evidence" },
+    { id: "threshold", label: "기준값, 목표값, 기한 중 하나가 필요합니다.", dimension: "specificity" },
+    { id: "failure_condition", label: "실패 판정 조건이 필요합니다.", dimension: "risk" },
+  ],
+  values: [
+    { id: "tradeoff", label: "가치가 바꾸는 실제 tradeoff가 필요합니다.", dimension: "risk" },
+    { id: "rejected_option", label: "이 원칙 때문에 포기할 선택지가 필요합니다.", dimension: "scope" },
+    { id: "trigger", label: "언제 이 원칙을 적용하는지 필요합니다.", dimension: "specificity" },
+    { id: "violation_example", label: "위반 예시나 금지 행동이 필요합니다.", dimension: "risk" },
+  ],
+  spec: [
+    { id: "user_workflow", label: "한 사용자의 실제 workflow가 필요합니다.", dimension: "specificity" },
+    { id: "mvp_wedge", label: "이번 주 만들 가장 작은 MVP wedge가 필요합니다.", dimension: "scope" },
+    { id: "non_goal", label: "첫 버전에서 하지 않을 일이 필요합니다.", dimension: "scope" },
+    { id: "observable_success", label: "관찰 가능한 성공 기준이 필요합니다.", dimension: "evidence" },
+    { id: "core_risk", label: "틀리면 무너지는 핵심 리스크가 필요합니다.", dimension: "risk" },
+  ],
+};
+
+const IDD_DIMENSIONS = [
+  { id: "specificity", label: "구체성" },
+  { id: "evidence", label: "증거" },
+  { id: "scope", label: "범위" },
+  { id: "risk", label: "리스크" },
+];
 
 export const BIP_REQUIRED_LOCAL_DOCS = [
   {
@@ -63,43 +136,304 @@ export const BIP_REQUIRED_LOCAL_DOCS = [
   },
 ];
 
+export function iddArtifactsDir(workspaceRoot) {
+  return path.join(path.resolve(workspaceRoot || "."), ".agentic30", "idd");
+}
+
+export function iddSetupStatePath(workspaceRoot) {
+  return path.join(iddArtifactsDir(workspaceRoot), "setup-state.json");
+}
+
+export function emptyIddSetupState() {
+  return {
+    schemaVersion: IDD_SETUP_SCHEMA_VERSION,
+    status: "not_started",
+    currentDocType: IDD_FOUNDATION_DOCS[0].type,
+    docOrder: IDD_FOUNDATION_DOC_TYPES,
+    transcript: [],
+    ambiguityScore: 100,
+    ambiguityRubric: emptyIddAmbiguityRubric(),
+    unresolvedAssumptions: [
+      "첫 고객 정의가 아직 문서로 승인되지 않았습니다.",
+      "이번 주 목표와 하지 않을 일이 아직 고정되지 않았습니다.",
+      "제품 범위와 성공 기준이 아직 승인되지 않았습니다.",
+    ],
+    drafts: {},
+    approvedAt: null,
+    approvedDocPaths: [],
+    lastProvider: null,
+    providerRecovery: null,
+    setupError: null,
+    updatedAt: null,
+  };
+}
+
+export function normalizeIddSetupState(value = {}) {
+  const base = emptyIddSetupState();
+  const transcript = Array.isArray(value.transcript) ? value.transcript : [];
+  const drafts = value.drafts && typeof value.drafts === "object" && !Array.isArray(value.drafts)
+    ? value.drafts
+    : {};
+  const approved = value.status === "approved" || Boolean(value.approvedAt);
+  const answeredCount = IDD_FOUNDATION_DOC_TYPES.filter((type) => typeof drafts[type] === "string" && drafts[type].trim()).length;
+  const previewReady = answeredCount >= IDD_FOUNDATION_DOCS.length;
+  const rubric = calculateIddAmbiguityRubric({ ...value, transcript, drafts });
+  const rubricPreviewReady = previewReady && !rubric.blocked;
+  const currentDocType = IDD_FOUNDATION_DOC_TYPES.includes(value.currentDocType)
+    ? value.currentDocType
+    : IDD_FOUNDATION_DOCS[Math.min(answeredCount, IDD_FOUNDATION_DOCS.length - 1)].type;
+  return {
+    ...base,
+    ...value,
+    schemaVersion: IDD_SETUP_SCHEMA_VERSION,
+    status: approved ? "approved" : (rubricPreviewReady ? "preview_ready" : (value.status === "provider_recovery" || value.status === "error" ? value.status : (answeredCount > 0 ? "interviewing" : value.status || "not_started"))),
+    currentDocType,
+    docOrder: IDD_FOUNDATION_DOC_TYPES,
+    transcript,
+    ambiguityScore: rubric.score,
+    ambiguityRubric: rubric,
+    unresolvedAssumptions: approved && Array.isArray(value.unresolvedAssumptions)
+      ? value.unresolvedAssumptions.map(String).filter(Boolean)
+      : (rubric.unresolvedAssumptions.length ? rubric.unresolvedAssumptions : base.unresolvedAssumptions),
+    drafts,
+    approvedAt: typeof value.approvedAt === "string" ? value.approvedAt : null,
+    approvedDocPaths: Array.isArray(value.approvedDocPaths) ? value.approvedDocPaths.map(String) : [],
+    lastProvider: typeof value.lastProvider === "string" ? value.lastProvider : null,
+    providerRecovery: value.providerRecovery && typeof value.providerRecovery === "object" ? value.providerRecovery : null,
+    setupError: value.setupError && typeof value.setupError === "object" ? {
+      message: String(value.setupError.message || "Foundation Setup 질문 카드 준비가 중단됐습니다."),
+      provider: typeof value.setupError.provider === "string" ? value.setupError.provider : null,
+      docType: IDD_FOUNDATION_DOC_TYPES.includes(value.setupError.docType) ? value.setupError.docType : null,
+      recoverable: value.setupError.recoverable !== false,
+    } : null,
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : null,
+  };
+}
+
+export async function loadIddSetupState(workspaceRoot, { fsImpl = fs } = {}) {
+  try {
+    const raw = await fsImpl.readFile(iddSetupStatePath(workspaceRoot), "utf8");
+    return normalizeIddSetupState(JSON.parse(raw));
+  } catch {
+    return emptyIddSetupState();
+  }
+}
+
+export async function persistIddSetupState(workspaceRoot, state, { fsImpl = fs } = {}) {
+  const next = normalizeIddSetupState({
+    ...state,
+    updatedAt: new Date().toISOString(),
+  });
+  await fsImpl.mkdir(iddArtifactsDir(workspaceRoot), { recursive: true });
+  await fsImpl.writeFile(iddSetupStatePath(workspaceRoot), `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  await fsImpl.writeFile(
+    path.join(iddArtifactsDir(workspaceRoot), "transcript.json"),
+    `${JSON.stringify(next.transcript, null, 2)}\n`,
+    "utf8",
+  );
+  await fsImpl.writeFile(
+    path.join(iddArtifactsDir(workspaceRoot), "assumptions.json"),
+    `${JSON.stringify({
+      ambiguityScore: next.ambiguityScore,
+      ambiguityRubric: next.ambiguityRubric,
+      unresolvedAssumptions: next.unresolvedAssumptions,
+      updatedAt: next.updatedAt,
+    }, null, 2)}\n`,
+    "utf8",
+  );
+  return next;
+}
+
+export function nextIddFoundationDoc(state) {
+  const normalized = normalizeIddSetupState(state);
+  const answered = new Set(Object.entries(normalized.drafts)
+    .filter(([, draft]) => typeof draft === "string" && draft.trim())
+    .map(([type]) => type));
+  return IDD_FOUNDATION_DOCS.find((doc) => !answered.has(doc.type)) || null;
+}
+
+export function isIddSetupApproved(state) {
+  return normalizeIddSetupState(state).status === "approved";
+}
+
+export const ICP_CONTEXT_INTRO = {
+  title: "ICP (Ideal Customer Profile)",
+  body: "ICP는 가장 먼저 집중할 이상적 고객 유형입니다. 처음부터 완벽하게 쓰기보다, 이번 주 실제로 연락하고 인터뷰할 수 있는 좁은 고객 후보 하나를 고르면 됩니다.",
+  bullets: [
+    "상황: 직함보다 지금 어떤 문제 상황에 있는지",
+    "트리거: 언제 그 문제가 더 급해지는지",
+    "현재 대안: 지금 어떤 수작업이나 도구로 버티는지",
+    "검증: 이번 주 연락 가능한 실제 사람인지",
+  ],
+};
+
+export const ICP_RECOMMENDED_RESOURCES = [
+  {
+    title: "Creating an Ideal Customer Profile transformed our company",
+    source: "PostHog",
+    url: "https://posthog.com/newsletter/ideal-customer-profile-framework",
+    description: "ICP와 persona의 차이, 좁은 ICP가 전략에 주는 영향을 설명합니다.",
+  },
+  {
+    title: "How we found our Ideal Customer Profile",
+    source: "PostHog",
+    url: "https://posthog.com/founders/creating-ideal-customer-profile",
+    description: "PostHog가 needs/haves와 reference customers로 ICP를 좁힌 과정입니다.",
+  },
+  {
+    title: "Defining our ICP is the most important thing we ever did",
+    source: "Product for Engineers",
+    url: "https://newsletter.posthog.com/p/defining-our-icp-is-the-most-important",
+    description: "ICP를 빨리 세우고 테스트해야 하는 이유를 다룹니다.",
+  },
+];
+
+export function decorateIcpStructuredInput(input) {
+  if (!input || typeof input !== "object") return input;
+  return {
+    ...input,
+    intro: input.intro || ICP_CONTEXT_INTRO,
+    resources: Array.isArray(input.resources) && input.resources.length > 0
+      ? input.resources
+      : ICP_RECOMMENDED_RESOURCES,
+  };
+}
+
 export const ICP_IDD_INITIAL_INPUT = {
   toolName: CODEX_STRUCTURED_INPUT_TOOL,
-  title: "첫 ICP 구체화",
+  title: "ICP 1/4",
+  intro: ICP_CONTEXT_INTRO,
+  resources: ICP_RECOMMENDED_RESOURCES,
   questions: [
     {
-      header: "ICP 좁히기",
-      helperText: "제품명, 대상 유저, 해결 문제, 제품 목적을 먼저 확인한 뒤 첫 고객 범주를 더 좁힙니다.",
-      question: "첫 고객을 넓은 범주로 두지 않겠습니다.\n이번 주에 검증할 가장 좁은 ICP는 누구인가요?",
+      header: "첫 고객",
+      helperText: "먼저 실제로 연락 가능한 고객 유형 하나만 고릅니다. 자세한 기준은 다음 단계에서 정리합니다.",
+      question: "이번 주 가장 먼저 인터뷰할 고객 유형은 누구인가요?",
       options: [
         {
           label: "가장 절박한 사람",
-          description: "문제가 이번 주 일정, 돈, 평판 중 하나를 이미 압박합니다.",
+          description: "이번 주 돈, 시간, 평판 중 하나가 이미 압박합니다.",
           nextIntent: "urgent_icp",
         },
         {
           label: "이미 우회 중인 사람",
-          description: "스프레드시트, 수작업, 다른 툴로 이미 시간을 쓰고 있습니다.",
+          description: "수작업이나 다른 툴로 이미 시간을 쓰고 있습니다.",
           nextIntent: "existing_alternative",
         },
         {
           label: "이미 돈/시간 쓰는 사람",
-          description: "예산, 일정, 팀 논의가 걸려 있어 검증 신호가 강합니다.",
+          description: "예산이나 일정이 걸려 있어 신호가 강합니다.",
           nextIntent: "budget_or_time_committed",
         },
         {
-          label: "다른 하위 ICP",
-          description: "자유입력에 역할, 상황, 현재 대안, 연락 가능성을 함께 적습니다.",
+          label: "직접 입력",
+          description: "역할, 상황, 현재 대안을 한 줄로 적습니다.",
           nextIntent: "other_specific_icp",
         },
       ],
       multiSelect: false,
       allowFreeText: true,
-      freeTextPlaceholder: "예: 퇴사 후 수익 0원인 macOS 1인 개발자, 현재 Claude Code로 MVP를 만들었지만 유료 고객이 없음",
+      freeTextPlaceholder: "예: 퇴사 후 아직 첫 매출이 없는 1인 개발자",
       textMode: "short",
     },
   ],
 };
+
+const LEGACY_STATIC_IDD_FINGERPRINTS = [
+  "가장 절박한 하위 ICP",
+];
+
+export function isLegacyStaticIddUserInputRequest(request) {
+  const haystack = [
+    request?.title,
+    ...(Array.isArray(request?.questions)
+      ? request.questions.flatMap((question) => [
+          question?.header,
+          question?.question,
+          question?.helperText,
+          question?.freeTextPlaceholder,
+          ...(Array.isArray(question?.options)
+            ? question.options.flatMap((option) => [
+                option?.label,
+                option?.description,
+                option?.preview,
+                option?.nextIntent,
+              ])
+            : []),
+        ])
+      : []),
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return LEGACY_STATIC_IDD_FINGERPRINTS.some((fingerprint) =>
+    haystack.includes(fingerprint),
+  );
+}
+
+export function isStaleGenericHostIddUserInputRequest(request) {
+  if (request?.generation?.mode !== "host_structured" || request?.generation?.docType !== "icp") {
+    return false;
+  }
+  const questions = Array.isArray(request?.questions) ? request.questions : [];
+  const primaryQuestion = String(questions[0]?.question || "").trim();
+  const staleQuestion = primaryQuestion === "이번 주 바로 인터뷰할 첫 고객은 누구인가요?"
+    || primaryQuestion.includes("이번 주 바로 인터뷰할 첫 고객")
+    || primaryQuestion.includes("이번 주 먼저 만날 사람");
+  if (!staleQuestion) {
+    return false;
+  }
+  const optionLabels = questions.flatMap((question) =>
+    Array.isArray(question?.options) ? question.options.map((option) => String(option?.label || "")) : []
+  );
+  return optionLabels.some((label) =>
+    [
+      "퇴사 후 수익 0원 1인 개발자",
+      "에이전트로 MVP 만든 개발자",
+      "인터뷰/BIP 기록 의향 있음",
+    ].includes(label)
+  );
+}
+
+export function isStaleAwkwardIcpUserInputRequest(request) {
+  if (request?.generation?.docType !== "icp") {
+    return false;
+  }
+  if (!["host_structured", "sidecar_agent_synthesized"].includes(request?.generation?.mode)) {
+    return false;
+  }
+  const haystack = [
+    request?.title,
+    ...(Array.isArray(request?.questions)
+      ? request.questions.flatMap((question) => [
+          question?.question,
+          question?.helperText,
+          question?.freeTextPlaceholder,
+          ...(Array.isArray(question?.options)
+            ? question.options.flatMap((option) => [option?.label, option?.description])
+            : []),
+        ])
+      : []),
+  ].filter(Boolean).join("\n");
+  return /세그먼트부터 시작|N번째 제품 실패한|N번째 MVP 실패|macOS 개발자/.test(haystack);
+}
+
+export function isMissingIcpContextIntro(request) {
+  if (request?.generation?.docType !== "icp") {
+    return false;
+  }
+  if (!["host_structured", "sidecar_agent_synthesized", "provider_adaptive"].includes(request?.generation?.mode)) {
+    return false;
+  }
+  const introTitle = String(request?.intro?.title || "");
+  const introBody = String(request?.intro?.body || "");
+  const resourceUrls = Array.isArray(request?.resources)
+    ? request.resources.map((resource) => String(resource?.url || ""))
+    : [];
+  return !introTitle.includes("Ideal Customer Profile")
+    || !introBody.includes("이번 주 실제로 연락")
+    || !ICP_RECOMMENDED_RESOURCES.every((resource) => resourceUrls.includes(resource.url));
+}
 
 export function initialIddStructuredInputForDoc(
   doc,
@@ -107,11 +441,23 @@ export function initialIddStructuredInputForDoc(
     provider = "codex",
     onboardingHypothesis = null,
     onboardingContext = null,
+    forceHostStructuredInput = false,
   } = {},
 ) {
-  if (provider !== "codex" || !doc?.type) return null;
+  // Host-owned IDD question builder. Runtime first-question generation uses this
+  // path so Foundation Setup is not coupled to provider MCP approval state.
+  if ((!forceHostStructuredInput && provider !== "codex") || !doc?.type) return null;
   if (doc.type === "icp") {
-    return buildAdaptiveIcpInitialInput({ onboardingHypothesis, onboardingContext });
+    return decorateIcpStructuredInput(buildAdaptiveIcpInitialInput({ onboardingHypothesis, onboardingContext }));
+  }
+  if (doc.type === "goal") {
+    return buildGoalIddInitialInput(doc);
+  }
+  if (doc.type === "values") {
+    return buildValuesIddInitialInput(doc);
+  }
+  if (doc.type === "spec") {
+    return buildSpecIddInitialInput(doc);
   }
   return buildGenericIddInitialInput(doc);
 }
@@ -128,10 +474,10 @@ export function buildAdaptiveIcpInitialInput({
   const personalizedOptions = buildAdaptiveOptions({ hypothesis, primaryUser, onboardingContext });
   return {
     toolName: CODEX_STRUCTURED_INPUT_TOOL,
-    title: "첫 ICP 구체화",
+    title: "ICP 1/4",
     questions: [
       {
-        header: "ICP 좁히기",
+        header: "첫 고객",
         helperText,
         question,
         options: personalizedOptions,
@@ -156,17 +502,267 @@ export function buildGenericIddInitialInput(doc) {
     title: `${title} 정하기`,
     questions: [
       {
-        header: "지금 막힌 지점을 먼저 봅니다",
-        helperText: `지금은 문서를 채우는 일이 목표처럼 보이지만, 실제 목적은 ${purpose}입니다. ${risk} 답은 ${canonicalPath}에 저장됩니다.`,
-        question: `이번 주에 ${title}에서 가장 먼저 해결해야 할 문제는 무엇인가요?`,
+        header: "한 가지 선택",
+        helperText: `목적: ${shortenSentence(purpose, 70)} 저장: ${canonicalPath}`,
+        question: `${title}에서 이번 주 먼저 고정할 기준은 무엇인가요?`,
         options,
         multiSelect: false,
         allowFreeText: true,
-        freeTextPlaceholder: `예: ${canonicalPath}에 꼭 남겨야 할 실제 기준`,
+        freeTextPlaceholder: "예: 이번 주 결정에 꼭 필요한 기준 1개",
         textMode: "short",
       },
     ],
   };
+}
+
+function buildGoalIddInitialInput(doc) {
+  const canonicalPath = String(doc?.canonicalPath || "docs/GOAL.md").trim();
+  return {
+    toolName: CODEX_STRUCTURED_INPUT_TOOL,
+    title: "GOAL 정하기",
+    questions: [
+      {
+        header: "이번 주 GOAL",
+        helperText: `먼저 검증할 목표를 정합니다. proof target, 지표, 실패 조건은 다음 카드에서 좁힙니다. 저장: ${canonicalPath}`,
+        question: "이번 주에 가장 먼저 검증하거나 달성하려는 GOAL은 무엇인가요?",
+        options: [
+          {
+            label: "첫 고객 반응 확인",
+            description: "ICP가 이 문제에 답변, 미팅, 사용 시도 같은 실제 반응을 보이는지 봅니다.",
+            nextIntent: "goal_customer_response",
+          },
+          {
+            label: "문제 강도 확인",
+            description: "ICP가 현재 대안의 시간, 돈, 평판 비용을 실제로 겪는지 봅니다.",
+            nextIntent: "goal_problem_intensity",
+          },
+          {
+            label: "가장 작은 해결책 확인",
+            description: "이번 주 만들 수 있는 작은 wedge가 한 사용자에게 충분히 유용한지 봅니다.",
+            nextIntent: "goal_smallest_solution",
+          },
+          {
+            label: "직접 입력",
+            description: "이번 주 목표를 사람, 행동, 기한이 보이게 한 줄로 씁니다.",
+            nextIntent: "goal_custom",
+          },
+        ],
+        multiSelect: false,
+        allowFreeText: true,
+        requiresFreeText: true,
+        freeTextPlaceholder: "예: 이번 주 5명에게 인터뷰 요청하고 3명 이상 답하면 첫 고객 반응 GOAL을 통과로 본다",
+        textMode: "short",
+      },
+    ],
+  };
+}
+
+function buildValuesIddInitialInput(doc) {
+  const canonicalPath = String(doc?.canonicalPath || "docs/VALUES.md").trim();
+  return {
+    toolName: CODEX_STRUCTURED_INPUT_TOOL,
+    title: "VALUES 정하기",
+    questions: [
+      {
+        header: "결정 원칙",
+        helperText: `이번 주 의사결정에서 무엇을 포기할지 먼저 정합니다. 저장: ${canonicalPath}`,
+        question: "이번 주 어떤 상황에서 반드시 지킬 tradeoff나 거절 기준은 무엇인가요?",
+        options: [
+          {
+            label: "속도보다 증거",
+            description: "멋진 기능보다 실제 사용자 반응이나 과거 행동 증거를 우선합니다.",
+            nextIntent: "values_evidence_over_speed",
+          },
+          {
+            label: "자동화보다 직접 관찰",
+            description: "처음에는 에이전트 자동화보다 사용자가 막히는 장면을 직접 봅니다.",
+            nextIntent: "values_observation_over_automation",
+          },
+          {
+            label: "넓은 기능보다 좁은 성공",
+            description: "많은 Day/기능보다 한 사용자가 끝까지 완료하는 흐름을 우선합니다.",
+            nextIntent: "values_narrow_success",
+          },
+          {
+            label: "직접 입력",
+            description: "이번 주 포기할 선택지와 지킬 원칙을 한 줄로 씁니다.",
+            nextIntent: "values_custom",
+          },
+        ],
+        multiSelect: false,
+        allowFreeText: true,
+        requiresFreeText: true,
+        freeTextPlaceholder: "예: 첫 실행에서는 멋진 채팅보다 질문이 바뀌지 않는 신뢰를 우선한다",
+        textMode: "short",
+      },
+    ],
+  };
+}
+
+function buildSpecIddInitialInput(doc) {
+  const canonicalPath = String(doc?.canonicalPath || "docs/SPEC.md").trim();
+  return {
+    toolName: CODEX_STRUCTURED_INPUT_TOOL,
+    title: "SPEC 정하기",
+    questions: [
+      {
+        header: "MVP 흐름",
+        helperText: `한 사용자가 끝내야 할 workflow와 첫 버전 범위를 고정합니다. 저장: ${canonicalPath}`,
+        question: "이번 주 첫 버전에서 사용자가 반드시 끝내야 하는 핵심 workflow는 무엇인가요?",
+        options: [
+          {
+            label: "첫 질문에 답하기",
+            description: "Foundation 질문이 안정적으로 나타나고 사용자가 답변을 제출합니다.",
+            nextIntent: "spec_first_question_flow",
+          },
+          {
+            label: "4문서 승인하기",
+            description: "ICP, GOAL, VALUES, SPEC 초안을 검토하고 Today Mission을 엽니다.",
+            nextIntent: "spec_approve_foundation_docs",
+          },
+          {
+            label: "첫 미션 저장하기",
+            description: "문서 승인 뒤 Day 1 미션을 선택하거나 생성해 실행 상태로 둡니다.",
+            nextIntent: "spec_save_first_mission",
+          },
+          {
+            label: "직접 입력",
+            description: "사용자 행동, 완료 화면, 하지 않을 일을 한 줄로 씁니다.",
+            nextIntent: "spec_custom",
+          },
+        ],
+        multiSelect: false,
+        allowFreeText: true,
+        requiresFreeText: true,
+        freeTextPlaceholder: "예: 사용자가 첫 질문에 답하고 4문서 미리보기를 승인하면 Day 1 미션이 열린다",
+        textMode: "short",
+      },
+    ],
+  };
+}
+
+export function buildIddFollowupStructuredInputForDoc(doc, state = {}) {
+  const normalized = normalizeIddSetupState(state);
+  const docResult = normalized.ambiguityRubric.docs.find((entry) => entry.type === doc?.type);
+  const missingSignal = docResult?.missingSignals?.[0];
+  const signalId = missingSignal?.id || "missing_signal";
+  const signalLabel = missingSignal?.label || "문서를 구체적으로 쓰기 위한 근거가 더 필요합니다.";
+  const copy = followupCopyForSignal(doc, signalId, signalLabel);
+  return {
+    toolName: CODEX_STRUCTURED_INPUT_TOOL,
+    title: `${doc.title} 모호함 낮추기`,
+    questions: [
+      {
+        header: copy.header,
+        helperText: `Ambiguity ${normalized.ambiguityScore}% · 목표 ${IDD_AMBIGUITY_THRESHOLD}% 이하`,
+        question: copy.question,
+        options: copy.options,
+        multiSelect: false,
+        allowFreeText: true,
+        requiresFreeText: true,
+        freeTextPlaceholder: copy.placeholder,
+        textMode: copy.textMode || "short",
+      },
+    ],
+  };
+}
+
+function followupCopyForSignal(doc, signalId, signalLabel) {
+  const fallback = {
+    header: "근거 보완",
+    question: `${doc?.title || "문서"}를 쓸 수 있게 이 빠진 근거를 한 줄로 보완해주세요: ${signalLabel}`,
+    placeholder: "예: 이번 주 확인 가능한 사람/행동/숫자/실패 조건",
+    options: [
+      { label: "실제 사람/상황으로 보완", description: "누가 어떤 상황에서 겪는지 좁힙니다.", nextIntent: signalId },
+      { label: "숫자/기준으로 보완", description: "시간, 금액, 횟수, 기한, 목표값 중 하나를 넣습니다.", nextIntent: signalId },
+      { label: "리스크/실패 조건으로 보완", description: "틀렸을 때 무엇을 실패로 볼지 적습니다.", nextIntent: signalId },
+    ],
+  };
+
+  const bySignal = {
+    narrow_segment: {
+      header: "좁히기",
+      question: "이 ICP를 바로 문서에 쓸 수 있게 가장 좁은 고객 세그먼트로 다시 말하면 누구인가요?",
+      placeholder: "예: 유료 고객 0명이고 macOS에서 Codex를 쓰는 전업 1인 개발자",
+      options: [
+        { label: "상황으로 좁히기", description: "직업보다 현재 압박과 프로젝트 단계로 좁힙니다.", nextIntent: signalId },
+        { label: "도구/환경으로 좁히기", description: "사용 중인 OS, 도구, 업무 흐름으로 좁힙니다.", nextIntent: signalId },
+        { label: "성과 압박으로 좁히기", description: "이번 달 돈, 시간, 평판 압박으로 좁힙니다.", nextIntent: signalId },
+      ],
+    },
+    reachable_person: {
+      header: "실제 대상",
+      question: "이번 주 실제로 연락하거나 관찰할 수 있는 사람/계정은 누구인가요?",
+      placeholder: "예: X에서 DM 가능한 @handle, 전 직장 동료 A, Indie Hackers 글 작성자",
+      options: [
+        { label: "이미 아는 사람", description: "이름이나 관계가 있어 바로 연락 가능합니다.", nextIntent: signalId },
+        { label: "온라인 계정", description: "DM, 댓글, 커뮤니티로 접근 가능합니다.", nextIntent: signalId },
+        { label: "관찰 가능한 사용자", description: "직접 인터뷰 전에도 작업 흔적을 볼 수 있습니다.", nextIntent: signalId },
+      ],
+    },
+    current_alternative: {
+      header: "현재 대안",
+      question: "그 사람은 지금 이 문제를 어떤 수작업, 도구 조합, 우회 방식으로 해결하고 있나요?",
+      placeholder: "예: Notion에 인터뷰 메모를 쓰고 Claude에게 매번 복사해 다음 행동을 묻는다",
+      options: [
+        { label: "수작업", description: "반복 복사, 정리, 추적 같은 손작업입니다.", nextIntent: signalId },
+        { label: "기존 도구 조합", description: "여러 앱을 이어 붙여 해결합니다.", nextIntent: signalId },
+        { label: "그냥 방치", description: "시도하지 않는 이유와 결과를 적어야 합니다.", nextIntent: signalId },
+      ],
+    },
+    pressure_cost: {
+      header: "압박",
+      question: "현재 대안 때문에 드는 비용을 시간, 돈, 평판 중 하나의 숫자로 적으면 얼마인가요?",
+      placeholder: "예: 주 3시간 낭비, 월 20만원 도구비, 출시 2주 지연",
+      options: [
+        { label: "시간 비용", description: "주당/월당 낭비 시간을 적습니다.", nextIntent: signalId },
+        { label: "돈 비용", description: "도구비, 외주비, 놓친 매출을 적습니다.", nextIntent: signalId },
+        { label: "기회/평판 비용", description: "출시 지연, 공개 실패, 신뢰 하락을 적습니다.", nextIntent: signalId },
+      ],
+    },
+    proof_target: {
+      header: "Proof",
+      question: "방금 정한 GOAL이 계속 밀어붙일 가치가 있다고 판단하려면 이번 주 어떤 증거가 필요하나요?",
+      placeholder: "예: 전업 1인 개발자 3명이 첫 인터뷰 카드에 답하고 다음 미션을 저장한다",
+      options: [
+        { label: "문제 증거", description: "ICP가 이 문제를 실제로 겪고 지금 해결하려는지 봅니다.", nextIntent: signalId },
+        { label: "수요 증거", description: "응답, 미팅, 결제 의향처럼 비용을 내는 pull을 봅니다.", nextIntent: signalId },
+        { label: "사용 행동 증거", description: "누가 제품이나 수동 대안을 통해 핵심 행동을 끝냈는지 봅니다.", nextIntent: signalId },
+      ],
+    },
+    metric: {
+      header: "지표",
+      question: "그 proof target을 어떤 숫자 하나로 판단할 건가요?",
+      placeholder: "예: 인터뷰 카드 완료 3명, 답변 재시도율 50% 이하, 첫 미션 저장 2건",
+      options: [
+        { label: "완료 수", description: "몇 명/몇 건이 끝냈는지 봅니다.", nextIntent: signalId },
+        { label: "전환율", description: "시작 대비 완료나 응답 비율을 봅니다.", nextIntent: signalId },
+        { label: "시간/마찰", description: "완료까지 걸린 시간이나 실패 횟수를 봅니다.", nextIntent: signalId },
+      ],
+    },
+    failure_condition: {
+      header: "실패 조건",
+      question: "이번 주 어떤 결과가 나오면 이 목표는 실패라고 판단하나요?",
+      placeholder: "예: 연락 5명 중 0명이 과거 행동을 말하지 못하면 ICP를 다시 좁힌다",
+      options: [
+        { label: "응답 없음", description: "접근했지만 반응이 없는 경우입니다.", nextIntent: signalId },
+        { label: "행동 증거 없음", description: "좋다는 말만 있고 과거 행동이 없습니다.", nextIntent: signalId },
+        { label: "완료 실패", description: "제품/문서 흐름을 끝내지 못합니다.", nextIntent: signalId },
+      ],
+    },
+    threshold: fallback,
+    tradeoff: fallback,
+    rejected_option: fallback,
+    trigger: fallback,
+    violation_example: fallback,
+    user_workflow: fallback,
+    mvp_wedge: fallback,
+    non_goal: fallback,
+    observable_success: fallback,
+    core_risk: fallback,
+  };
+
+  return bySignal[signalId] || fallback;
 }
 
 function genericIddInitialOptionsFor(doc, { focus = "" } = {}) {
@@ -296,89 +892,109 @@ function genericIddRiskFor(doc, canonicalPath) {
 }
 
 function buildAdaptiveQuestion(hypothesis, primaryUser, projectKind) {
-  const productName = sentenceField(hypothesis.productName) || "이 제품";
+  const productName = sentenceField(userFacingProductName(hypothesis.productName));
   const currentIcp = sentenceField(hypothesis.targetUser || primaryUser);
-  const problem = sentenceField(hypothesis.problem);
+  if (isAgentic30IcpContext(hypothesis, primaryUser)) {
+    return "이번 주 가장 먼저 인터뷰할 1인 개발자 유형은 누구인가요?";
+  }
   if (hypothesis.confidence === "high" && currentIcp) {
-    const diagnosis = problem
-      ? `${productName}은 ${currentIcp} 중 ${problem} 문제를 가장 절박하게 겪는 고객을 찾아야 합니다.`
-      : `${productName}의 현재 고객 정의는 "${currentIcp}"까지 확인됐습니다.`;
-    return `${diagnosis}\n첫 ICP를 이 범주 전체로 두면 너무 넓습니다. 이번 주에 검증할 가장 좁은 하위 ICP는 누구인가요?`;
+    return `이번 주 가장 먼저 인터뷰할 ${targetSegmentFragment(currentIcp)} 유형은 누구인가요?`;
   }
-  if (hypothesis.confidence === "medium") {
-    const lead = naturalEvidenceLead(hypothesis.evidence);
-    const current = currentIcp ? `현재 고객 범주는 "${currentIcp}"입니다.` : "현재 고객 범주가 아직 넓습니다.";
-    return `${lead} ${current}\n이번 주에 검증할 가장 좁은 ICP는 누구인가요? 절박함, 현재 대안, 연락 가능성을 기준으로 하나만 고르세요.`;
+  if (hypothesis.confidence === "medium" && (productName || currentIcp || primaryUser)) {
+    const segment = shortenSentence(currentIcp || primaryUser || "잠재 고객", 56);
+    return `이번 주 먼저 만날 ${segment} 유형은 누구인가요?`;
   }
-  return "첫 고객을 넓은 범주로 두지 않겠습니다.\n이번 주에 검증할 가장 좁은 ICP는 누구인가요?";
+  return "이번 주 가장 먼저 인터뷰할 고객 유형은 누구인가요?";
 }
 
 function buildAdaptiveHelperText(hypothesis) {
-  const evidence = (hypothesis.evidence || []).slice(0, 2);
-  const productName = sentenceField(hypothesis.productName);
-  const targetUser = sentenceField(hypothesis.targetUser);
-  const problemText = sentenceField(hypothesis.problem);
-  const purposeText = sentenceField(hypothesis.purpose);
-  const product = productName ? `제품: ${productName}` : "";
-  const target = targetUser ? `대상: ${targetUser}` : "";
-  const problem = problemText ? `문제: ${problemText}` : "";
-  const purpose = purposeText ? `목적: ${shortenSentence(purposeText, 130)}` : "";
-  const diagnosis = [product, target, problem, purpose].filter(Boolean).join(" / ");
-  if (diagnosis) {
-    return `진단: ${diagnosis}. 오늘은 이 범주를 더 좁혀 첫 ICP 후보 하나를 고릅니다.`;
+  const primaryUser = hypothesis.likelyUsers?.[0] || "";
+  if (isAgentic30IcpContext(hypothesis, primaryUser)) {
+    return "만들 수는 있지만 팔릴 방향을 못 잡고 있는 사람 중, 실제로 연락 가능한 대상을 고릅니다.";
   }
-  if (evidence.length > 0) {
-    return `근거: ${evidence.join(" · ")}. 제품명, 대상 유저, 문제, 목적을 더 확인해야 하지만 첫 질문은 ICP를 좁히는 데 둡니다.`;
-  }
-  return "제품명, 대상 유저, 해결 문제, 제품 목적을 아직 단정할 근거가 부족합니다. 첫 질문은 가장 좁은 ICP를 정하는 데 둡니다.";
+  const parts = [];
+  const productName = userFacingProductName(hypothesis.productName);
+  if (productName) parts.push(`제품: ${shortenSentence(productName, 28)}`);
+  if (hypothesis.targetUser || primaryUser) parts.push(`대상: ${targetSegmentFragment(hypothesis.targetUser || primaryUser)}`);
+  if (hypothesis.problem) parts.push(`문제: ${problemFocusFragment(hypothesis.problem)}`);
+  if (parts.length === 0) return "먼저 첫 고객 후보 하나만 고릅니다.";
+  return `${parts.join(" · ")}. 이 맥락에서 첫 고객 후보 하나만 고릅니다.`;
+}
+
+function problemFocusFragment(value) {
+  const text = String(value || "").trim();
+  const firstClause = text.split(/[.,，、。]/)[0]?.trim() || text;
+  return shortenSentence(firstClause, 46);
+}
+
+function targetSegmentFragment(value) {
+  const text = String(value || "").trim();
+  const parts = text
+    .split(/[,，、]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length >= 2) return shortenSentence(parts.slice(0, 2).join(", "), 46);
+  return shortenSentence(text, 46);
+}
+
+function userFacingProductName(value) {
+  const name = String(value || "").trim();
+  if (!name) return "";
+  if (/workspace-[a-z0-9]{4,}$/i.test(name)) return "";
+  if (/^(tmp|temp|test)[-_]/i.test(name)) return "";
+  return name;
 }
 
 function buildAdaptiveOptions({ hypothesis, primaryUser, onboardingContext }) {
   if (isAgentic30IcpContext(hypothesis, primaryUser)) {
     return [
       {
-        label: "퇴사 후 수익 0원 1인 개발자",
-        description: "저축 소진 압박이 있어 30일 안에 사용자 증거와 첫 매출 신호를 원합니다.",
+        label: "퇴사 후 첫 매출이 없는 개발자",
+        description: "만들 수는 있지만 팔 대상과 첫 고객 증거가 없어 이번 달 압박이 큽니다.",
         nextIntent: "full_time_zero_revenue_indie",
       },
       {
-        label: "에이전트로 MVP 만든 개발자",
-        description: "Claude/Codex로 만들 수 있지만 무엇을 팔지, 누구에게 물을지 막혀 있습니다.",
+        label: "AI로 제품은 만들었지만 고객이 없는 개발자",
+        description: "Codex/Claude로 만들었지만 인터뷰, 수요 검증, 다음 행동이 비어 있습니다.",
         nextIntent: "agent_built_mvp_no_customers",
       },
       {
-        label: "인터뷰/BIP 기록 의향 있음",
-        description: "프로젝트 path, 업무 일지, 고객 인터뷰, 공개 기록을 매일 입력할 수 있습니다.",
-        nextIntent: "records_ready_builder",
+        label: "여러 번 출시했지만 반응이 약했던 개발자",
+        description: "반복 실패 뒤 방법을 바꿀 동기가 있어 첫 인터뷰 반응을 보기 좋습니다.",
+        nextIntent: "repeat_launch_weak_signal",
       },
       {
-        label: "다른 하위 ICP",
-        description: "자유입력에 역할, 상황, 현재 대안, 연락 가능성을 함께 적습니다.",
+        label: "직접 입력",
+        description: "역할, 상황, 현재 대안을 한 줄로 적습니다.",
         nextIntent: "other_specific_icp",
       },
     ];
   }
 
   const currentIcp = hypothesis?.targetUser || primaryUser || defaultSelfOptionLabel(onboardingContext);
+  const productName = hypothesis?.productName || "이 제품";
+  const problem = hypothesis?.problem || "";
   return [
     {
-      label: "가장 절박한 하위 ICP",
-      description: `${shortenLabel(currentIcp)} 중 문제가 이번 주 일정, 돈, 평판 중 하나를 이미 압박하는 사람입니다.`,
+      label: `${shortenLabel(currentIcp)} 중 지금 막힌 사람`,
+      description: problem
+        ? `${shortenSentence(problem, 54)} 때문에 이번 주 압박이 큰 사람입니다.`
+        : "이번 주 돈, 시간, 평판 중 하나가 이미 압박합니다.",
       nextIntent: "urgent_icp",
     },
     {
-      label: "이미 우회 중인 사람",
-      description: "스프레드시트, 수작업, 다른 툴로 이미 시간을 쓰고 있습니다.",
+      label: `${shortenLabel(productName)} 대안을 이미 쓰는 사람`,
+      description: "수작업이나 다른 툴 조합으로 같은 일을 이미 처리하고 있습니다.",
       nextIntent: "existing_alternative",
     },
     {
-      label: "이미 돈/시간 쓰는 사람",
-      description: "예산, 일정, 팀 논의가 걸려 있어 검증 신호가 강합니다.",
+      label: "돈이나 시간을 이미 쓰는 사람",
+      description: "예산, 일정, 반복 업무 시간이 걸려 있어 신호가 강합니다.",
       nextIntent: "budget_or_time_committed",
     },
     {
-      label: "다른 하위 ICP",
-      description: "자유입력에 역할, 상황, 현재 대안, 연락 가능성을 함께 적습니다.",
+      label: "직접 입력",
+      description: "역할, 상황, 현재 대안을 한 줄로 적습니다.",
       nextIntent: "other_specific_icp",
     },
   ];
@@ -407,12 +1023,12 @@ function defaultSelfOptionLabel(onboardingContext) {
 
 function freeTextPlaceholderFor(primaryUser, hypothesis = null) {
   if (isAgentic30IcpContext(hypothesis, primaryUser)) {
-    return "예: 현재 Claude Code로 MVP는 만들었지만 유료 고객이 없는 macOS 1인 개발자";
+    return "예: 퇴사 후 3개월째, AI로 MVP는 만들었지만 유료 고객이 없는 개발자";
   }
   if (primaryUser) {
-    return `예: ${shortenLabel(primaryUser)} 중 이번 주 바로 연락 가능한 하위 ICP, 현재 대안, 절박한 이유`;
+    return `예: ${shortenLabel(primaryUser)} 중 이번 주 바로 연락 가능한 사람`;
   }
-  return "예: 퇴사 후 수익 0원인 macOS 1인 개발자, 현재 대안은 YouTube/블로그/혼자 삽질";
+  return "예: 퇴사 후 아직 첫 매출이 없는 1인 개발자";
 }
 
 function sentenceField(value) {
@@ -486,12 +1102,12 @@ export function buildIddContinuationPrompt({
   return [
     iddPrompt,
     "",
-    "## 이미 받은 첫 구조화 답변",
-    "사용자가 host UI의 구조화 입력 카드에서 첫 ICP 신호 질문에 답했습니다.",
+    "## 직전 구조화 답변",
+    "사용자가 host UI의 구조화 입력 카드에서 직전 IDD 질문에 답했습니다.",
     answer || "(응답 텍스트 없음)",
     "",
-    "이 답변을 첫 인터뷰 입력으로 사용하세요. 같은 첫 고객 신호 질문을 반복하지 마세요.",
-    "다음 질문부터는 반드시 현재 프로젝트의 실제 맥락에 맞춰 Adaptive/Personalized 인터뷰로 진행하세요.",
+    "이 답변을 인터뷰 입력으로 사용하세요. 방금 답한 질문이나 같은 선택지 라벨을 반복하지 마세요.",
+    "다음 질문은 반드시 현재 프로젝트의 실제 맥락에 맞춰 Adaptive/Personalized 인터뷰로 새로 생성하세요.",
     "- 먼저 README, docs, package/config, 주요 소스, 최근 git 변경에서 관찰한 사실을 조합해 제품/사용자/제약 가설을 세우세요.",
     "- 질문은 제품 이름, 대상 유저, 해결 문제, 제품 목적을 확인한 뒤 그 진단의 가장 약한 부분을 검증하는 한 가지로 좁히고, question/options/freeTextPlaceholder에 관찰한 프로젝트 맥락을 반영하세요.",
     "- 어떤 프로젝트에도 붙일 수 있는 범용 질문이나 템플릿 질문을 반복하지 마세요.",
@@ -502,7 +1118,7 @@ export function buildIddContinuationPrompt({
     "- gstack 정렬 축을 매 질문에 적용하세요: 톤은 직접적이고 증거 중심, 단위는 한 질문=한 결정, 기준은 수요/범위/UX/DX/리스크, 사용 위치는 BIP 문서 완성 직전의 게이트, 실패 방지는 범용 문서/빈 결정/조용한 누락 차단입니다.",
     "- 대안/리스크/증거/실패 모드가 보이지 않는 질문은 좋은 IDD 질문이 아닙니다. 더 좁혀서 무엇을 선택해야 하는지, 어떤 근거가 있는지, 잘못 고르면 어떤 문서 실패가 생기는지 드러내세요.",
     "- 답변은 반드시 대상 문서의 섹션, 결정, Open Risks, 다음 BIP 공개 글감 중 하나로 연결하세요.",
-    `- 추가 결정이나 누락 정보가 필요하면 반드시 ${CODEX_STRUCTURED_INPUT_TOOL} MCP 도구로 한 질문 + 2-4개 후보 options를 담아 이어가세요. 이 구조화 입력은 host UI에서 request_user_input 카드로 표시됩니다.`,
+    `- 추가 결정이나 누락 정보가 필요하면 반드시 ${CODEX_STRUCTURED_INPUT_TOOL} MCP 도구로 한 질문 + 2-4개 후보 options + allowFreeText: true + requiresFreeText: true + freeTextPlaceholder를 담아 이어가세요. 이 구조화 입력은 host UI에서 request_user_input 카드로 표시됩니다.`,
     "- 도구 호출 자체가 실패하면 같은 질문을 prose/번호 목록으로 대신 출력하지 말고 중단하세요.",
     "- Pushback 즉시 적용: 사용자의 답이 \"개발자/창업자/엔터프라이즈\" 같은 집합명사이면 다음 question을 회사명·직함·주당 시간으로 좁히고, \"다들 좋다고 한다/웨이팅리스트\" 류 사회적 증거이면 결제·문의·고장 시 분노로 받고, \"풀 플랫폼이 필요하다\" 류 광범위 비전이면 이번 주 결제 가능한 한 가지로 좁히세요. 사랑은 수요가 아닙니다.",
     "- Anti-Sycophancy: \"흥미로운 접근이에요\", \"여러 방법이 있어요\" 같은 칭찬 표현은 금지. 정중체는 유지하되 \"이 가정은 미확인이에요\" / \"근거가 부족해요\" 같은 사실 진술로 받으세요.",
@@ -564,13 +1180,21 @@ function normalizeConfiguredDocPath(value, workspaceRoot) {
 }
 
 export function deriveLocalDocReadinessRows(workspaceRoot, options = {}) {
-  return findRequiredLocalDocsWithConfig(workspaceRoot, options).map((doc) => ({
+  const iddState = options.iddSetupState ? normalizeIddSetupState(options.iddSetupState) : null;
+  if (iddState) {
+    return IDD_FOUNDATION_DOCS.map((doc) => ({
+      id: localDocRowId(doc.type),
+      status: iddState.status === "approved" ? "done" : (iddState.drafts?.[doc.type]?.trim() ? "in-progress" : "pending"),
+      detail: iddState.status === "approved"
+        ? `${doc.title} 문서 승인됨: ${doc.canonicalPath}`
+        : `${doc.canonicalPath} 문서를 Foundation Setup에서 승인해야 해요.`,
+      ...(iddState.status === "approved" ? { resourceName: doc.title, resourceUrl: doc.canonicalPath } : {}),
+    }));
+  }
+  return IDD_FOUNDATION_DOCS.map((doc) => ({
     id: localDocRowId(doc.type),
-    status: doc.found ? "done" : "pending",
-    detail: doc.found
-      ? `${doc.title} 문서 확인됨: ${doc.foundPath}`
-      : `${doc.configuredPath || doc.canonicalPath} 문서를 IDD 인터뷰로 고정해야 해요.`,
-    ...(doc.found ? { resourceName: doc.title, resourceUrl: doc.foundPath } : {}),
+    status: "pending",
+    detail: `${doc.canonicalPath} 문서를 Foundation Setup에서 승인해야 해요.`,
   }));
 }
 
@@ -584,11 +1208,16 @@ export function docTypeFromLocalRowId(rowId) {
   const suffix = normalized.slice("local".length);
   if (!suffix) return null;
   const type = suffix.slice(0, 1).toLowerCase() + suffix.slice(1);
-  return BIP_REQUIRED_LOCAL_DOCS.some((doc) => doc.type === type) ? type : null;
+  return IDD_FOUNDATION_DOCS.some((doc) => doc.type === type)
+    || BIP_REQUIRED_LOCAL_DOCS.some((doc) => doc.type === type)
+    ? type
+    : null;
 }
 
 export function requiredDocByType(type) {
-  return BIP_REQUIRED_LOCAL_DOCS.find((doc) => doc.type === type) || null;
+  return IDD_FOUNDATION_DOCS.find((doc) => doc.type === type)
+    || BIP_REQUIRED_LOCAL_DOCS.find((doc) => doc.type === type)
+    || null;
 }
 
 export function getBipSetupGateStatus({ workspaceRoot, bipCoachState, bipConfig = null, fsImpl = fsSync } = {}) {
@@ -622,14 +1251,457 @@ export function getBipSetupGateStatus({ workspaceRoot, bipCoachState, bipConfig 
 }
 
 export function summarizeBipSetupGate(status) {
+  if (status?.iddSetupStatus && status.iddSetupStatus !== "approved") {
+    const nextTitle = status.nextLocalDoc ? genericIddUserFacingTitle(status.nextLocalDoc) : "문서 미리보기";
+    return `Foundation Setup이 먼저 필요합니다. ${nextTitle} 기준을 승인해야 오늘 미션을 만들 수 있어요.`;
+  }
   const missingLocal = (status?.missingLocalDocs ?? []).map((doc) => genericIddUserFacingTitle(doc)).join(", ");
   const missingExternal = (status?.missingExternalRequirements ?? []).map((item) => item.title).join(", ");
   const parts = [];
   if (missingLocal) parts.push(`로컬 문서: ${missingLocal}`);
   if (missingExternal) parts.push(`외부 연결: ${missingExternal}`);
   return parts.length
-    ? `오늘 미션은 바로 만들 수 있습니다. 더 정확한 추천을 위해 ${parts.join(" / ")} 기준을 채우면 좋아요.`
+    ? `Foundation 문서는 승인되었습니다. ${parts.join(" / ")} 연결은 추천 품질을 높이는 선택 단계입니다.`
     : "오늘 공개 실행 준비가 완료되었습니다.";
+}
+
+export function buildIddSetupGateStatus({
+  workspaceRoot,
+  iddSetupState,
+  bipCoachState,
+  bipConfig = null,
+  fsImpl = fsSync,
+} = {}) {
+  const normalizedIdd = normalizeIddSetupState(iddSetupState);
+  const approved = isIddSetupApproved(normalizedIdd);
+  const localDocs = IDD_FOUNDATION_DOCS.map((doc) => ({
+    ...doc,
+    found: approved,
+    foundPath: approved ? doc.canonicalPath : null,
+  }));
+  const missingLocalDocs = approved ? [] : IDD_FOUNDATION_DOCS.filter((doc) => !normalizedIdd.drafts?.[doc.type]?.trim());
+  const config = bipCoachState?.config ?? {};
+  const missingExternalRequirements = [];
+
+  if (!config.docId) {
+    missingExternalRequirements.push({
+      id: "googleDoc",
+      title: "Google Doc 업무일지",
+      detail: "매일 작업과 배운 점을 읽을 Google Doc URL/ID가 연결되어야 해요.",
+    });
+  }
+  if (!config.sheetId) {
+    missingExternalRequirements.push({
+      id: "googleSheet",
+      title: "Google Sheet 게시글 일지",
+      detail: "공개 글과 반응을 기록할 Google Sheet URL/ID가 연결되어야 해요.",
+    });
+  }
+
+  return {
+    ready: approved,
+    iddSetupComplete: approved,
+    iddSetupStatus: normalizedIdd.status,
+    iddCurrentDocType: normalizedIdd.currentDocType,
+    iddAmbiguityScore: normalizedIdd.ambiguityScore,
+    iddAmbiguityRubric: normalizedIdd.ambiguityRubric,
+    iddUnresolvedAssumptions: normalizedIdd.unresolvedAssumptions,
+    iddDocOrder: IDD_FOUNDATION_DOC_TYPES,
+    iddDocPreviews: buildIddDocPreviews(normalizedIdd),
+    iddProviderRecovery: normalizedIdd.providerRecovery,
+    localDocs,
+    missingLocalDocs,
+    missingExternalRequirements,
+    nextLocalDoc: nextIddFoundationDoc(normalizedIdd),
+    externalReady: missingExternalRequirements.length === 0 && isBipCoachConfigured(bipCoachState),
+    workspaceRoot,
+    bipConfig,
+    fsImpl,
+  };
+}
+
+export function serializeIddSetupFields(state) {
+  const normalized = normalizeIddSetupState(state);
+  return {
+    iddSetupStatus: normalized.status,
+    iddSetupComplete: normalized.status === "approved",
+    iddCurrentDocType: normalized.currentDocType,
+    iddAmbiguityScore: normalized.ambiguityScore,
+    iddAmbiguityRubric: normalized.ambiguityRubric,
+    iddUnresolvedAssumptions: normalized.unresolvedAssumptions,
+    iddDocOrder: IDD_FOUNDATION_DOC_TYPES,
+    iddDocPreviews: buildIddDocPreviews(normalized),
+    iddProviderRecovery: normalized.providerRecovery,
+    iddSetupError: normalized.setupError,
+  };
+}
+
+export function calculateIddAmbiguityRubric(state = {}) {
+  const transcript = Array.isArray(state.transcript) ? state.transcript : [];
+  const drafts = state.drafts && typeof state.drafts === "object" && !Array.isArray(state.drafts)
+    ? state.drafts
+    : {};
+  const docs = IDD_FOUNDATION_DOCS.map((doc) => {
+    const docTranscript = transcript
+      .filter((entry) => entry?.docType === doc.type)
+      .map((entry) => entry?.responseText || "")
+      .filter(Boolean);
+    const text = [
+      ...(docTranscript.length ? docTranscript : [drafts[doc.type] || ""]),
+    ].join("\n");
+    const signals = IDD_RUBRIC_SIGNALS[doc.type] || [];
+    const passedSignals = signals.filter((signal) => signalPasses(signal.id, text));
+    const missingSignals = signals.filter((signal) => !signalPasses(signal.id, text));
+    const score = signals.length
+      ? Math.round((missingSignals.length / signals.length) * 100)
+      : 0;
+    return {
+      type: doc.type,
+      title: doc.title,
+      score,
+      blocked: score > IDD_AMBIGUITY_THRESHOLD,
+      passedSignals: passedSignals.map(({ id, label, dimension }) => ({ id, label, dimension })),
+      missingSignals: missingSignals.map(({ id, label, dimension }) => ({ id, label, dimension })),
+    };
+  });
+
+  const allSignals = docs.flatMap((doc) => [
+    ...doc.passedSignals.map((signal) => ({ ...signal, passed: true, docType: doc.type })),
+    ...doc.missingSignals.map((signal) => ({ ...signal, passed: false, docType: doc.type })),
+  ]);
+  const missingSignals = allSignals.filter((signal) => !signal.passed);
+  const score = allSignals.length
+    ? Math.round((missingSignals.length / allSignals.length) * 100)
+    : 100;
+  const dimensions = IDD_DIMENSIONS.map((dimension) => {
+    const signals = allSignals.filter((signal) => signal.dimension === dimension.id);
+    const missing = signals.filter((signal) => !signal.passed);
+    return {
+      ...dimension,
+      score: signals.length ? Math.round((missing.length / signals.length) * 100) : 0,
+      missingSignals: missing.map(({ id, label, docType }) => ({ id, label, docType })),
+    };
+  });
+  const unresolvedAssumptions = docs
+    .flatMap((doc) => doc.missingSignals.map((signal) => `${doc.title}: ${signal.label}`))
+    .slice(0, 12);
+
+  return {
+    score,
+    threshold: IDD_AMBIGUITY_THRESHOLD,
+    blocked: score > IDD_AMBIGUITY_THRESHOLD,
+    docs,
+    dimensions,
+    unresolvedAssumptions,
+  };
+}
+
+function emptyIddAmbiguityRubric() {
+  return calculateIddAmbiguityRubric({ transcript: [], drafts: {} });
+}
+
+function signalPasses(signalId, text) {
+  const value = normalizeRubricText(text);
+  if (!value) return false;
+  switch (signalId) {
+    case "narrow_segment":
+      return value.length >= 18 && !/^(개발자|창업자|사용자|고객|팀|회사|developer|founder|user|customer)s?$/i.test(value);
+    case "reachable_person":
+      return /(이름|연락|dm|인터뷰|만날|계정|@|님|회사|팀|동료|친구|커뮤니티|handle|person|account|reach)/i.test(value);
+    case "current_alternative":
+      return /(현재|대안|우회|수작업|스프레드시트|엑셀|노션|notion|slack|툴|도구|쓰고|사용|복사|status quo|alternative|manual|workflow)/i.test(value);
+    case "pressure_cost":
+      return hasNumber(value) || /(시간|분|돈|비용|평판|압박|매출|원|달러|주당|월당|지연|낭비|cost|hour|minute|revenue)/i.test(value);
+    case "proof_target":
+      return /(이번 주|주간|proof|검증|확인|목표|마일스톤|증명|완료|week)/i.test(value);
+    case "metric":
+      return /(지표|metric|전환|응답|reply|매출|결제|사용|활성|숫자|완료|conversion|rate|count|%)/i.test(value);
+    case "threshold":
+      return hasNumber(value) || /(이하|이상|까지|기한|deadline|target|기준값|목표값|threshold)/i.test(value);
+    case "failure_condition":
+      return /(실패|중단|피벗|재시작|못하면|아니면|fail|stop|pivot|no reply|응답 없음)/i.test(value);
+    case "tradeoff":
+      return /(tradeoff|트레이드오프|대신|보다|우선|포기|선택|희생|감수)/i.test(value);
+    case "rejected_option":
+      return /(하지 않|안 하|포기|버리|제외|나중|금지|non-goal|refuse|skip|defer)/i.test(value);
+    case "trigger":
+      return /(때|상황|경우|if|when|trigger|트리거|결정|마다)/i.test(value);
+    case "violation_example":
+      return /(위반|예시|하면 안|금지|나쁜|잘못|반례|violate|bad|wrong)/i.test(value);
+    case "user_workflow":
+      return /(workflow|흐름|여정|사용자|단계|먼저|다음|클릭|입력|열고|고르고|저장|journey|step)/i.test(value);
+    case "mvp_wedge":
+      return /(mvp|wedge|작은|최소|첫 버전|v0|이번 주|one thing|smallest)/i.test(value);
+    case "non_goal":
+      return /(non-goal|하지 않|안 하|제외|나중|범위 밖|스코프 밖|defer|skip|out of scope)/i.test(value);
+    case "observable_success":
+      return /(성공|관찰|측정|완료|보이면|기준|signal|success|observe|measure)/i.test(value);
+    case "core_risk":
+      return /(리스크|위험|가정|틀리|실패|불확실|risk|assumption|fail|wrong)/i.test(value);
+    default:
+      return false;
+  }
+}
+
+function normalizeRubricText(text) {
+  return String(text || "")
+    .replace(/[`*_#>\-[\]()]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function hasNumber(text) {
+  return /[0-9０-９]/.test(String(text || ""));
+}
+
+export function recordIddStructuredResponse(state, {
+  doc,
+  provider = "codex",
+  responseText = "",
+} = {}) {
+  const normalized = normalizeIddSetupState(state);
+  const targetDoc = doc || nextIddFoundationDoc(normalized) || IDD_FOUNDATION_DOCS[0];
+  const now = new Date().toISOString();
+  const transcriptEntry = {
+    id: `${targetDoc.type}-${normalized.transcript.length + 1}`,
+    docType: targetDoc.type,
+    provider,
+    responseText: String(responseText || "").trim(),
+    createdAt: now,
+  };
+  const transcript = [...normalized.transcript, transcriptEntry];
+  const drafts = {
+    ...normalized.drafts,
+    [targetDoc.type]: buildIddDraftDocument(targetDoc, transcriptEntry, {
+      transcript,
+      provider,
+    }),
+  };
+  const rubric = calculateIddAmbiguityRubric({ ...normalized, transcript, drafts });
+  const targetDocRubric = rubric.docs.find((entry) => entry.type === targetDoc.type);
+  const targetDocBlocked = targetDocRubric ? targetDocRubric.blocked : true;
+  const nextDoc = targetDocBlocked
+    ? targetDoc
+    : IDD_FOUNDATION_DOCS.find((candidate) => !drafts[candidate.type]?.trim());
+  return normalizeIddSetupState({
+    ...normalized,
+    status: nextDoc || rubric.blocked ? "interviewing" : "preview_ready",
+    currentDocType: nextDoc?.type || targetDoc.type,
+    transcript,
+    drafts,
+    ambiguityScore: rubric.score,
+    ambiguityRubric: rubric,
+    unresolvedAssumptions: rubric.unresolvedAssumptions,
+    lastProvider: provider,
+    providerRecovery: null,
+    updatedAt: now,
+  });
+}
+
+export function setIddProviderRecovery(state, { provider = "codex", message = "" } = {}) {
+  const normalized = normalizeIddSetupState(state);
+  return normalizeIddSetupState({
+    ...normalized,
+    status: "provider_recovery",
+    providerRecovery: {
+      provider,
+      message: String(message || `${provider} 인증이 필요합니다.`),
+      actionId: `${provider}_login`,
+    },
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+export function setIddSetupError(state, { provider = "codex", docType = null, message = "" } = {}) {
+  const normalized = normalizeIddSetupState(state);
+  return normalizeIddSetupState({
+    ...normalized,
+    status: "error",
+    lastProvider: provider,
+    providerRecovery: null,
+    setupError: {
+      provider,
+      docType,
+      message: String(message || "Foundation Setup 질문 카드 준비가 중단됐습니다. 다시 시도해 주세요."),
+      recoverable: true,
+    },
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+export function markStaleIddInterviewingState(state, { provider = "codex", message = "" } = {}) {
+  const normalized = normalizeIddSetupState(state);
+  if (normalized.status !== "interviewing") {
+    return normalized;
+  }
+  return setIddSetupError(normalized, {
+    provider: normalized.lastProvider || provider,
+    docType: normalized.currentDocType,
+    message: message || "이전 Foundation Setup 인터뷰가 완료 이벤트 없이 중단됐습니다. 다시 시도해 주세요.",
+  });
+}
+
+export async function approveIddSetupDocuments(workspaceRoot, state, { fsImpl = fs } = {}) {
+  const normalized = normalizeIddSetupState(state);
+  const missing = IDD_FOUNDATION_DOCS.filter((doc) => !normalized.drafts?.[doc.type]?.trim());
+  if (missing.length) {
+    throw new Error(`IDD preview is incomplete: ${missing.map((doc) => doc.title).join(", ")}`);
+  }
+  if (normalized.ambiguityScore > IDD_AMBIGUITY_THRESHOLD) {
+    throw new Error(`IDD ambiguity is too high: ${normalized.ambiguityScore}% > ${IDD_AMBIGUITY_THRESHOLD}%`);
+  }
+  const root = path.resolve(workspaceRoot || ".");
+  const approvedDocPaths = [];
+  for (const doc of IDD_FOUNDATION_DOCS) {
+    const target = path.join(root, doc.canonicalPath);
+    await fsImpl.mkdir(path.dirname(target), { recursive: true });
+    await fsImpl.writeFile(target, normalized.drafts[doc.type], "utf8");
+    approvedDocPaths.push(doc.canonicalPath);
+  }
+  const next = normalizeIddSetupState({
+    ...normalized,
+    status: "approved",
+    approvedAt: new Date().toISOString(),
+    approvedDocPaths,
+    ambiguityScore: normalized.ambiguityScore,
+    ambiguityRubric: normalized.ambiguityRubric,
+    unresolvedAssumptions: normalized.unresolvedAssumptions.slice(0, 3),
+  });
+  return persistIddSetupState(workspaceRoot, next, { fsImpl });
+}
+
+export function buildIddApprovalSummary(state) {
+  const normalized = normalizeIddSetupState(state);
+  const paths = IDD_FOUNDATION_DOCS.map((doc) => doc.canonicalPath).join(", ");
+  return [
+    "Foundation Setup이 승인되었습니다.",
+    "",
+    `작성된 문서: ${paths}`,
+    `Ambiguity: ${normalized.ambiguityScore}%`,
+    normalized.unresolvedAssumptions.length
+      ? `남은 가정: ${normalized.unresolvedAssumptions.slice(0, 3).join(" / ")}`
+      : "남은 가정: 없음",
+    "",
+    "이제 Today Mission 후보를 생성할 수 있습니다.",
+  ].join("\n");
+}
+
+function buildIddDocPreviews(state) {
+  const normalized = normalizeIddSetupState(state);
+  return IDD_FOUNDATION_DOCS.map((doc) => ({
+    type: doc.type,
+    title: doc.title,
+    path: doc.canonicalPath,
+    status: normalized.drafts?.[doc.type]?.trim() ? "drafted" : "pending",
+    content: normalized.drafts?.[doc.type] || "",
+  }));
+}
+
+function buildIddDraftDocument(doc, transcriptEntry, { transcript = [], provider = "codex" } = {}) {
+  const answer = transcriptEntry.responseText || "(응답 없음)";
+  const pressurePass = pressurePassFor(doc);
+  const title = doc.title;
+  const allDocAnswers = transcript
+    .filter((entry) => entry.docType === doc?.type)
+    .map((entry) => entry.responseText)
+    .filter(Boolean);
+  const evidence = allDocAnswers.length ? allDocAnswers.join("\n") : answer;
+  const decision = evidence.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 4).join(" / ") || answer;
+  const rubric = calculateIddAmbiguityRubric({
+    transcript,
+    drafts: {
+      [doc.type]: evidence,
+    },
+  });
+  const docRubric = rubric.docs.find((entry) => entry.type === doc.type);
+  return [
+    `# ${title}`,
+    "",
+    `> Generated through Agentic30 IDD setup. Provider path: ${provider}.`,
+    "",
+    "## Core Decision",
+    decision,
+    "",
+    "## Evidence From Interview",
+    evidence,
+    "",
+    "## Rubric Signals",
+    ...(docRubric?.passedSignals?.length
+      ? docRubric.passedSignals.map((signal) => `- Confirmed: ${signal.label}`)
+      : ["- Confirmed: none yet"]),
+    ...(docRubric?.missingSignals?.length
+      ? docRubric.missingSignals.map((signal) => `- Missing: ${signal.label}`)
+      : ["- Missing: none"]),
+    "",
+    "## Non-Goals",
+    "- Do not expand scope before the first narrow validation signal is observed.",
+    "- Do not treat generic interest as demand.",
+    "- Do not add platform features that do not support this week's decision.",
+    "",
+    "## Decision Boundaries",
+    "- If the next action does not create user evidence this week, defer it.",
+    "- If the scope cannot be explained in one sentence, narrow it before building.",
+    "- If the tradeoff is unclear, record the rejected option and the evidence needed to revisit it.",
+    "",
+    "## Pressure-Pass Follow-Up",
+    pressurePass,
+    "",
+    "## Open Assumptions",
+    ...(docRubric?.missingSignals?.length
+      ? docRubric.missingSignals.map((item) => `- ${item.label}`)
+      : openAssumptionsFor(doc, transcript).map((item) => `- ${item}`)),
+    "",
+  ].join("\n");
+}
+
+function pressurePassFor(doc) {
+  switch (doc?.type) {
+    case "icp":
+      return "Name one reachable person or account that fits this ICP. If none exists, the ICP is still too broad.";
+    case "goal":
+      return "Cut the goal to one weekly proof target. If it cannot be measured this week, it is not the current goal.";
+    case "values":
+      return "Pick the rule that will hurt most when applied. If no tradeoff hurts, the value is decorative.";
+    case "spec":
+      return "Remove one feature from the first version. If nothing can be removed, the spec is still a wishlist.";
+    default:
+      return "State the riskiest assumption in one sentence and the smallest test that could disprove it.";
+  }
+}
+
+function openAssumptionsFor(doc, transcript = []) {
+  const base = {
+    icp: [
+      "The selected ICP is reachable this week.",
+      "The current alternative is painful enough to discuss or pay for.",
+    ],
+    goal: [
+      "The chosen metric reflects actual product progress.",
+      "The weekly milestone can be completed without hidden dependencies.",
+    ],
+    values: [
+      "The stated values will change a real product decision.",
+      "The non-goals are strict enough to prevent scope drift.",
+    ],
+    spec: [
+      "The MVP scope solves the core problem without extra platform work.",
+      "The success criteria can be observed by the target user.",
+    ],
+  };
+  const count = transcript.filter((entry) => entry.docType === doc?.type).length;
+  return (base[doc?.type] || ["The document still needs a sharper evidence source."])
+    .slice(0, Math.max(1, 3 - count));
+}
+
+function unresolvedAssumptionsForDrafts(drafts = {}) {
+  const missing = IDD_FOUNDATION_DOCS.filter((doc) => !drafts?.[doc.type]?.trim());
+  if (missing.length) {
+    return missing.map((doc) => `${doc.title} decision is not approved yet.`);
+  }
+  return [
+    "Validate the ICP with one named reachable user.",
+    "Confirm the SPEC scope survives one real user workflow.",
+  ];
 }
 
 export function buildIddDocumentPrompt(doc, {
@@ -669,11 +1741,13 @@ export function buildIddDocumentPrompt(doc, {
     "- 이 IDD 세션은 `/plan` 모드처럼 진행합니다. 인터뷰 질문은 사용자가 UI에서 클릭/입력할 수 있는 구조화 입력으로 받아야 합니다.",
     `- 선택지가 있는 질문, 우선순위 질문, 예/아니오 질문, 짧은 자유 입력이 붙은 질문은 일반 prose나 번호 목록으로 쓰지 말고 반드시 ${structuredToolName} 호출로만 물으세요.`,
     `- ${structuredToolName} 호출이 필요한 상황에서 같은 내용을 prose/번호 목록으로 대신 묻지 마세요. 도구 호출 자체가 실패하면 같은 질문을 prose/번호 목록으로 대신 출력하지 말고 중단하세요.`,
-    "- 도구 질문은 question/options/allowFreeText/freeTextPlaceholder/textMode를 채워 1개 질문 단위로 만드세요. 후보 options는 2-4개로 제한하고, 추가 맥락 한 줄이 필요하면 allowFreeText=true로 둡니다. 후보군 없이 자유입력만 묻지 마세요.",
+    "- 도구 질문은 question/options/allowFreeText/requiresFreeText/freeTextPlaceholder/textMode를 채워 1개 질문 단위로 만드세요. 후보 options는 2-4개로 제한하고, allowFreeText=true와 requiresFreeText=true를 항상 둡니다. 후보군 없이 자유입력만 묻지 마세요.",
     "- 금지 예: \"1. 반복 사용 2. 도입 준비 3. 먼저 요청함\" 같은 번호 목록을 assistant 메시지로 출력하는 것.",
-    "- 첫 ICP 질문 예: title=\"첫 ICP 구체화\", helperText=\"진단: 제품 Agentic30 / 대상 전업 1인 개발자 / 문제 무엇을 만들어야 팔리는지 모름 / 목적 30일 안에 PMF 검증 방향을 좁힘\", question=\"첫 ICP를 전업 1인 개발자 전체로 두면 너무 넓습니다. 이번 주에 검증할 가장 좁은 하위 ICP는 누구인가요?\", options=[퇴사 후 수익 0원 1인 개발자, 에이전트로 MVP 만든 개발자, 인터뷰/BIP 기록 의향 있음, 다른 하위 ICP], allowFreeText=true, freeTextPlaceholder=\"예: 현재 Claude Code로 MVP는 만들었지만 유료 고객이 없는 macOS 1인 개발자\", textMode=\"short\".",
+    "- legacy static 질문 금지: title=\"ICP 1/4\", question=\"이번 주 바로 인터뷰할 첫 고객은 누구인가요?\", option=\"가장 절박한 하위 ICP\"를 그대로 쓰면 실패입니다.",
+    "- 첫 질문은 반드시 관찰한 repo 사실을 포함하세요. 예: agentic30-public의 SwiftUI macOS 앱과 Node sidecar 구조, Codex/Claude provider 전환, 30일 커리큘럼, docs/ICP.md 같은 실제 맥락 중 하나 이상.",
     "- 이 세션에서는 이 문서 하나만 다룹니다. 다른 문서 인터뷰를 섞지 마세요.",
     "- 질문은 한 번에 하나의 고레버리지 질문으로 하세요.",
+    "- 첫 질문도 host가 미리 만든 고정 질문이 아닙니다. 반드시 sidecar MCP 도구로 워크스페이스를 살펴본 뒤 프로젝트 상태에 맞춰 새로 생성하세요.",
     "- 뻔한 질문 대신 문제 정의, 핵심 가치, 타겟 사용자, 사용자 여정, 비즈니스 모델, 경쟁 환경, 기술 제약, MVP 우선순위, 우려 사항, 트레이드오프를 깊게 파고드세요.",
     "",
     "Pushback 표준 응답 (gstack /office-hours 패턴 5종):",
@@ -696,7 +1770,7 @@ export function buildIddDocumentPrompt(doc, {
     "5. 이번 주 단 하나의 구체 행동 — 전략이 아니라 행동. \"이번 주에 [구체 인물]을 만나서 [구체 질문] 확인하기\" 같은 형태. 답변에서 도출되지 않으면 다음 질문에서 반드시 요청하세요.",
     "",
     "Adaptive/Personalized 인터뷰 규칙:",
-    "- 질문을 만들기 전에 현재 프로젝트의 README, docs, package/config, 주요 소스, 최근 git 변경을 확인해 실제 제품 맥락을 파악하세요.",
+    "- 질문을 만들기 전에 반드시 sidecar MCP의 list_workspace_files, read_workspace_file, search_workspace 중 2개 이상을 사용해 현재 프로젝트의 README, docs, package/config, 주요 소스, 최근 git 변경을 확인하세요. 도구를 쓰지 못하면 질문하지 말고 실패 상태를 설명하세요.",
     "- 매 질문은 관찰한 프로젝트 사실에 연결되어야 합니다. 예: 실제 기능명, 화면, 사용자 흐름, 통합 서비스, 기술 제약, 최근 구현 변경, 설정된 BIP 문서 경로.",
     "- 사용자의 직전 답변을 다음 질문의 입력으로 삼아 선택지와 자유 입력 placeholder를 조정하세요.",
     "- 사용자가 모를 수 있는 내부 용어(ICP, ADR, BIP, MVP 등)는 질문 본문에서 먼저 쓰지 말고 쉬운 말로 풀어 쓰세요. 필요한 경우 괄호로만 짧게 보충하세요.",
@@ -739,9 +1813,9 @@ export function buildIddDocumentPrompt(doc, {
     `- ${doc.focus}`,
     "",
     "시작 절차:",
-    "1. 워크스페이스의 README와 docs 디렉터리를 짧게 확인하세요.",
-    "2. 대상 파일 또는 호환 파일이 이미 있으면 섹션 구조를 확인하세요.",
-    "3. 바로 구조화 질문 도구로 첫 질문을 하세요.",
+    "1. list_workspace_files로 README/docs/package/config/source 후보를 찾으세요.",
+    "2. read_workspace_file로 README 또는 가장 관련 높은 docs/source 파일을 읽고, search_workspace로 대상 문서/핵심 기능명을 확인하세요.",
+    "3. question/options/helperText/freeTextPlaceholder 중 최소 하나에 관찰한 repo 사실을 넣어 구조화 질문 도구로 첫 질문을 하세요. 이 조건을 만족하지 못하는 범용 질문은 만들지 마세요.",
     "4. 인터뷰 결과를 바탕으로 대상 파일을 저장하세요.",
   ].join("\n");
 }

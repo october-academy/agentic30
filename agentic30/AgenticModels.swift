@@ -224,9 +224,97 @@ struct StructuredPromptRequest: Identifiable, Codable, Hashable {
     let toolName: String
     let title: String?
     let createdAt: Date
+    let intro: StructuredPromptIntro?
+    let resources: [StructuredPromptResource]?
     let questions: [StructuredPromptQuestion]
+    let generation: StructuredPromptGeneration?
+
+    init(
+        requestId: String,
+        sessionId: String,
+        toolName: String,
+        title: String?,
+        createdAt: Date,
+        intro: StructuredPromptIntro? = nil,
+        resources: [StructuredPromptResource]? = nil,
+        questions: [StructuredPromptQuestion],
+        generation: StructuredPromptGeneration? = nil
+    ) {
+        self.requestId = requestId
+        self.sessionId = sessionId
+        self.toolName = toolName
+        self.title = title
+        self.createdAt = createdAt
+        self.intro = intro
+        self.resources = resources
+        self.questions = questions
+        self.generation = generation
+    }
 
     var id: String { requestId }
+
+    var isProviderAdaptiveIddQuestion: Bool {
+        generation?.mode == "provider_adaptive"
+            || generation?.mode == "host_structured"
+            || generation?.mode == "sidecar_agent_synthesized"
+    }
+
+    var isAgentic30StructuredInput: Bool {
+        toolName == "agentic30_request_user_input"
+    }
+
+    var isLegacyStaticIddQuestion: Bool {
+        if isProviderAdaptiveIddQuestion {
+            return false
+        }
+        var fields: [String] = []
+        if let title {
+            fields.append(title)
+        }
+        for question in questions {
+            fields.append(question.header)
+            fields.append(question.question)
+            if let helperText = question.helperText {
+                fields.append(helperText)
+            }
+            if let freeTextPlaceholder = question.freeTextPlaceholder {
+                fields.append(freeTextPlaceholder)
+            }
+            for option in question.options ?? [] {
+                fields.append(option.label)
+                fields.append(option.description)
+                if let preview = option.preview {
+                    fields.append(preview)
+                }
+                if let nextIntent = option.nextIntent {
+                    fields.append(nextIntent)
+                }
+            }
+        }
+        let haystack = fields.joined(separator: "\n")
+        return haystack.contains("가장 절박한 하위 ICP")
+            || haystack.contains("가장 절박한 사람")
+    }
+}
+
+struct StructuredPromptIntro: Codable, Hashable {
+    let title: String?
+    let body: String?
+    let bullets: [String]?
+}
+
+struct StructuredPromptResource: Identifiable, Codable, Hashable {
+    let title: String
+    let source: String?
+    let url: String
+    let description: String?
+
+    var id: String { url }
+}
+
+struct StructuredPromptGeneration: Codable, Hashable {
+    let mode: String?
+    let docType: String?
 }
 
 struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
@@ -236,10 +324,26 @@ struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
     let options: [StructuredPromptOption]?
     let multiSelect: Bool?
     let allowFreeText: Bool?
+    let requiresFreeText: Bool?
     let freeTextPlaceholder: String?
     let textMode: StructuredPromptTextMode?
 
     var id: String { question }
+
+    func isSatisfied(selectedOptions: Set<String>, freeText: String) -> Bool {
+        let hasSelection = !selectedOptions.isEmpty
+        let hasFreeText = !freeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        if requiresFreeText == true {
+            return hasFreeText
+        }
+
+        if allowFreeText == true {
+            return hasSelection || hasFreeText
+        }
+
+        return hasSelection
+    }
 }
 
 struct StructuredPromptOption: Codable, Hashable {
@@ -265,6 +369,29 @@ struct WorkspaceOnboardingHypothesis: Codable, Hashable {
     let evidence: [String]?
     let confidence: String?
     let suggestedFirstQuestion: String?
+}
+
+struct IddDocPreview: Identifiable, Codable, Hashable {
+    let type: String
+    let title: String
+    let path: String
+    let status: String
+    let content: String
+
+    var id: String { type }
+}
+
+struct IddProviderRecovery: Codable, Hashable {
+    let provider: AgentProvider?
+    let message: String?
+    let actionId: String?
+}
+
+struct IddSetupError: Codable, Hashable {
+    let provider: AgentProvider?
+    let docType: String?
+    let message: String?
+    let recoverable: Bool?
 }
 
 enum AssistantPresentationPhase: String, Codable {

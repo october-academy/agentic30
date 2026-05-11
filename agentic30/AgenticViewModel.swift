@@ -277,6 +277,15 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var bipSetupGateMessage: String?
     @Published private(set) var missingBipLocalDocs: [String] = []
     @Published private(set) var missingBipExternalRequirements: [String] = []
+    @Published private(set) var iddSetupStatus: String = "not_started"
+    @Published private(set) var iddSetupComplete = false
+    @Published private(set) var iddCurrentDocType: String?
+    @Published private(set) var iddAmbiguityScore: Int?
+    @Published private(set) var iddUnresolvedAssumptions: [String] = []
+    @Published private(set) var iddDocOrder: [String] = []
+    @Published private(set) var iddDocPreviews: [IddDocPreview] = []
+    @Published private(set) var iddProviderRecovery: IddProviderRecovery?
+    @Published private(set) var iddSetupError: IddSetupError?
     @Published private(set) var bipTokenExpired: String?
     @Published private(set) var bipMissionProgress: BipMissionProgress?
     // R4 — Day 30 schema-invalid records that the sidecar quarantined. Empty
@@ -290,6 +299,7 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var providerAuthInProgress: AgentProvider?
     @Published private(set) var providerAuthMessage: String?
     @Published private(set) var sentPromptPreviews: [String: [PendingPromptPreview]] = [:]
+    @Published private(set) var submittedStructuredPromptBySession: [String: StructuredPromptSubmissionState] = [:]
     @Published private(set) var sidecarOutputLogs: [String: [String]] = [:]
     @Published private(set) var workspaceSettingsOpenRequest = 0
     @Published private(set) var bipNotificationOpenRequest: BipNotificationOpenRequest?
@@ -466,6 +476,7 @@ final class AgenticViewModel: ObservableObject {
             Self.applyUITestingWorkspaceSeeds(arguments: arguments)
             macAuthSession = Self.makeUITestingMacAuthSession(arguments: arguments)
             onboardingContext = Self.makeUITestingOnboardingContext(arguments: arguments)
+            applyUITestingIddSetupSeeds(arguments: arguments)
             if let seededDraft = Self.uiTestingArgumentValue("--ui-testing-seed-draft", arguments: arguments) {
                 draft = seededDraft
             }
@@ -520,12 +531,42 @@ final class AgenticViewModel: ObservableObject {
         let freeText: String
     }
 
+    struct StructuredPromptSubmissionState: Hashable {
+        let sessionId: String
+        let requestId: String
+        let responses: [StructuredPromptSubmission]
+        let submittedAt: Date
+        var progressStage: String? = nil
+        var progressText: String? = nil
+        var progressUpdatedAt: Date? = nil
+        var elapsedMs: Int? = nil
+
+        var answerSummary: String {
+            let parts = responses.flatMap { response -> [String] in
+                let selected = response.selectedOptions.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                let freeText = response.freeText.trimmingCharacters(in: .whitespacesAndNewlines)
+                return selected + (freeText.isEmpty ? [] : [freeText])
+            }
+            let summary = parts.filter { !$0.isEmpty }.joined(separator: ", ")
+            guard !summary.isEmpty else { return "응답" }
+            guard summary.count > 96 else { return summary }
+            return String(summary.prefix(96)) + "..."
+        }
+    }
+
     var selectedSession: ChatSession? {
         sessions.first(where: { $0.id == selectedSessionID && $0.archivedAt == nil })
     }
 
     var pendingStructuredPrompt: StructuredPromptRequest? {
-        selectedSession?.pendingUserInput
+        selectedSession?.pendingUserInput?.isLegacyStaticIddQuestion == true
+            ? nil
+            : selectedSession?.pendingUserInput
+    }
+
+    func structuredPromptSubmissionState(for sessionId: String?) -> StructuredPromptSubmissionState? {
+        guard let sessionId else { return nil }
+        return submittedStructuredPromptBySession[sessionId]
     }
 
     var sidecarFailureMessage: String? {
@@ -676,6 +717,24 @@ final class AgenticViewModel: ObservableObject {
             return nil
         }
         return coach
+    }
+
+    var isIddSetupBlockingWorkspace: Bool {
+        !iddSetupComplete
+    }
+
+    func isMatchingFoundationPrompt(_ prompt: StructuredPromptRequest?) -> Bool {
+        guard let prompt,
+              prompt.isAgentic30StructuredInput,
+              let promptDocType = prompt.generation?.docType?.lowercased(),
+              !promptDocType.isEmpty else { return false }
+        let expectedDocType = iddCurrentDocType?.lowercased()
+        return expectedDocType == nil || expectedDocType == promptDocType
+    }
+
+    func isMismatchedFoundationPrompt(_ prompt: StructuredPromptRequest?) -> Bool {
+        guard let prompt else { return false }
+        return !isMatchingFoundationPrompt(prompt)
     }
 
     var requiresMacOnboarding: Bool {
@@ -840,13 +899,15 @@ final class AgenticViewModel: ObservableObject {
             properties: properties,
             authSession: macAuthSession
         )
-        return sidecar.send(
-            payload: [
-                "type": "create_session",
-                "provider": resolvedProvider.rawValue,
-                "model": model,
-            ]
-        )
+        var payload: [String: Any] = [
+            "type": "create_session",
+            "provider": resolvedProvider.rawValue,
+            "model": model,
+        ]
+        if !iddSetupComplete {
+            payload["suppressBootstrapIntake"] = true
+        }
+        return sidecar.send(payload: payload)
     }
 
     private func createReplacementSessionIfNeeded(source: String) {
@@ -1015,7 +1076,7 @@ final class AgenticViewModel: ObservableObject {
                 )
             }
             draft = ""
-            submitStructuredPrompt(requestId: pendingUserInput.requestId, responses: responses)
+            submitStructuredPrompt(sessionId: session.id, requestId: pendingUserInput.requestId, responses: responses)
             return
         }
 
@@ -1238,10 +1299,13 @@ final class AgenticViewModel: ObservableObject {
     }
 
     func submitStructuredPrompt(
+        sessionId explicitSessionId: String? = nil,
         requestId: String,
         responses: [StructuredPromptSubmission]
     ) {
-        guard let session = selectedSession else { return }
+        let targetSessionId = explicitSessionId ?? selectedSessionID
+        guard let targetSessionId,
+              let session = sessions.first(where: { $0.id == targetSessionId && $0.archivedAt == nil }) else { return }
         if responses.contains(where: { response in
             !response.selectedOptions.isEmpty
                 || response.freeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
@@ -1261,6 +1325,11 @@ final class AgenticViewModel: ObservableObject {
                 "freeText": response.freeText,
             ] as [String : Any]
         }
+        markStructuredPromptSubmittedLocally(
+            sessionId: session.id,
+            requestId: requestId,
+            responses: responses
+        )
 
         sidecar.send(payload: [
             "type": "submit_user_input",
@@ -1268,6 +1337,25 @@ final class AgenticViewModel: ObservableObject {
             "requestId": requestId,
             "responses": payloadResponses,
         ])
+    }
+
+    private func markStructuredPromptSubmittedLocally(
+        sessionId: String,
+        requestId: String,
+        responses: [StructuredPromptSubmission]
+    ) {
+        guard let index = sessions.firstIndex(where: { $0.id == sessionId }) else { return }
+        guard sessions[index].pendingUserInput?.requestId == requestId else { return }
+
+        submittedStructuredPromptBySession[sessionId] = StructuredPromptSubmissionState(
+            sessionId: sessionId,
+            requestId: requestId,
+            responses: responses,
+            submittedAt: .now
+        )
+        sessions[index].status = .running
+        sessions[index].error = nil
+        sessions[index].updatedAt = .now
     }
 
     func selectSession(_ sessionID: String) {
@@ -1500,6 +1588,11 @@ final class AgenticViewModel: ObservableObject {
             queueStartupAction(.mission(compact: compact, curriculumDay: curriculumDay))
             return
         }
+        if !iddSetupComplete {
+            startBipIddQueue(docType: iddCurrentDocType)
+            lastError = "Foundation Setup을 먼저 승인해야 Today Mission을 만들 수 있습니다."
+            return
+        }
         isBipCoachGenerating = true
         lastBipRequestedAction = .generateMission(compact: compact)
         lastError = nil
@@ -1521,6 +1614,14 @@ final class AgenticViewModel: ObservableObject {
             payload["curriculumDay"] = curriculumDay
         }
         sidecar.send(payload: payload)
+    }
+
+    func approveIddSetup() {
+        guard isConnected, let sessionID = currentBipCoachSessionID() else { return }
+        sidecar.send(payload: [
+            "type": "idd_setup_approve",
+            "sessionId": sessionID,
+        ])
     }
 
     func requestBipSetupGate(autoStart: Bool = false) {
@@ -1549,6 +1650,10 @@ final class AgenticViewModel: ObservableObject {
             payload["docType"] = docType
         }
         sidecar.send(payload: payload)
+    }
+
+    func retryCurrentIddQuestion() {
+        startBipIddQueue(docType: iddCurrentDocType ?? selectedSession?.pendingUserInput?.generation?.docType)
     }
 
     func selectBipMission(_ mission: BipCoachMission) {
@@ -2062,6 +2167,13 @@ final class AgenticViewModel: ObservableObject {
             PostHogTelemetry.capture("mac_sidecar_status", properties: [
                 "message": event.message ?? "",
             ], authSession: macAuthSession)
+        case "sidecar_unexpected_exit":
+            let message = event.message ?? "Sidecar stopped unexpectedly."
+            connectionLabel = message
+            isConnected = false
+            markRunningSessionsRecoverableAfterSidecarExit(message: message)
+            markStartupQueuedActionFailed(message)
+            refreshPresentationState()
         case "request_emit":
             if let request = event.requestEmit {
                 handleRequestEmit(request)
@@ -2131,6 +2243,9 @@ final class AgenticViewModel: ObservableObject {
                 requestCodexWarmupIfNeeded()
                 flushStartupQueuedActionIfPossible()
             }
+        case "idd_setup_progress":
+            updateStructuredPromptSubmissionProgress(from: event)
+            refreshPresentationState()
         case "session_deleted":
             guard let sessionID = event.sessionId else { return }
             sessions.removeAll(where: { $0.id == sessionID })
@@ -2258,7 +2373,7 @@ final class AgenticViewModel: ObservableObject {
             }
         case "bip_setup_gate_state":
             updateBipSetupGate(from: event)
-            if event.bipSetupReady == true,
+            if event.iddSetupComplete == true,
                !requestedInitialBipMission,
                visibleBipCoach?.currentMission == nil,
                visibleBipCoach?.pendingMissionChoices.isEmpty != false {
@@ -2280,6 +2395,15 @@ final class AgenticViewModel: ObservableObject {
             isBipCoachGenerating = false
             bipMissionProgress = nil
             activeSurface = .assistantBubble
+        case "idd_setup_state", "idd_provider_recovery":
+            updateBipSetupGate(from: event)
+            isBipCoachGenerating = false
+            bipMissionProgress = nil
+        case "idd_setup_approved":
+            updateBipSetupGate(from: event)
+            isBipCoachGenerating = false
+            bipMissionProgress = nil
+            lastError = nil
         case "bip_coach_refresh_started":
             isBipCoachRefreshing = true
             if let bipCoach = event.bipCoach {
@@ -2442,6 +2566,11 @@ final class AgenticViewModel: ObservableObject {
             if event.sessionId == nil {
                 connectionLabel = event.message ?? connectionLabel
                 isConnected = false
+                if shouldRecoverRunningSessions(forGlobalSidecarError: event.message) {
+                    markRunningSessionsRecoverableAfterSidecarExit(
+                        message: event.message ?? "Sidecar connection closed."
+                    )
+                }
                 markStartupQueuedActionFailed(event.message ?? "Sidecar 연결이 끊겼습니다.")
             }
             PostHogTelemetry.captureException(
@@ -2490,6 +2619,23 @@ final class AgenticViewModel: ObservableObject {
     }
 
     private func updateBipSetupGate(from event: SidecarEvent) {
+        iddSetupComplete = event.iddSetupComplete ?? iddSetupComplete
+        iddSetupStatus = event.iddSetupStatus ?? iddSetupStatus
+        iddCurrentDocType = event.iddCurrentDocType ?? iddCurrentDocType
+        iddAmbiguityScore = event.iddAmbiguityScore ?? iddAmbiguityScore
+        iddUnresolvedAssumptions = event.iddUnresolvedAssumptions ?? iddUnresolvedAssumptions
+        iddDocOrder = event.iddDocOrder ?? iddDocOrder
+        iddDocPreviews = event.iddDocPreviews ?? iddDocPreviews
+        iddProviderRecovery = event.iddProviderRecovery ?? iddProviderRecovery
+        iddSetupError = event.iddSetupError ?? iddSetupError
+        if let status = event.iddSetupStatus {
+            if status != "provider_recovery" {
+                iddProviderRecovery = nil
+            }
+            if status != "error" {
+                iddSetupError = nil
+            }
+        }
         missingBipLocalDocs = event.missingLocalDocs ?? missingBipLocalDocs
         missingBipExternalRequirements = event.missingExternalRequirements ?? missingBipExternalRequirements
         bipSetupGateMessage = event.bipSetupGateMessage ?? bipSetupGateMessage
@@ -2662,46 +2808,48 @@ final class AgenticViewModel: ObservableObject {
         return StructuredPromptRequest(
             requestId: "ui-test-icp-request",
             sessionId: requestedSessionID,
-            toolName: "request_user_input",
-            title: "첫 ICP 구체화",
+            toolName: "agentic30_request_user_input",
+            title: "ICP 1/4",
             createdAt: createdAt,
             questions: [
                 StructuredPromptQuestion(
-                    header: "ICP 좁히기",
-                    question: "첫 ICP를 전업 1인 개발자 전체로 두면 너무 넓습니다.\n이번 주에 실제로 검증할 가장 좁은 하위 ICP는 누구인가요?",
-                    helperText: "진단: Agentic30은 전업 1인 개발자가 무엇을 만들어야 팔리는지 모르는 문제를 30일 실행 기록 기반 커리큘럼으로 좁히는 macOS assistant입니다.",
+                    header: "첫 고객",
+                    question: "agentic30-public의 SwiftUI macOS 앱과 Node sidecar 흐름에서 Day 1에 먼저 검증할 사용자는 누구인가요?",
+                    helperText: "UI testing seed도 host structured payload와 같은 형태만 사용합니다.",
                     options: [
                         StructuredPromptOption(
-                            label: "퇴사 후 수익 0원 1인 개발자",
-                            description: "저축 소진 압박이 있어 30일 안에 사용자 증거와 첫 매출 신호를 원합니다.",
+                            label: "Codex/Claude 전환 사용자",
+                            description: "provider 인증과 실행 전환에서 막히는 실제 사용자입니다.",
                             preview: nil,
-                            nextIntent: "full_time_zero_revenue_indie"
+                            nextIntent: "provider_switch_user"
                         ),
                         StructuredPromptOption(
-                            label: "에이전트로 MVP 만든 개발자",
-                            description: "Claude/Codex로 만들 수 있지만 무엇을 팔지, 누구에게 물을지 막혀 있습니다.",
+                            label: "30일 커리큘럼 참가자",
+                            description: "Foundation Setup 문서를 통과해야 다음 Day로 넘어갑니다.",
                             preview: nil,
-                            nextIntent: "agent_built_mvp_no_customers"
+                            nextIntent: "curriculum_day1_user"
                         ),
                         StructuredPromptOption(
-                            label: "인터뷰/BIP (Build In Public) 기록 의향 있음",
-                            description: "프로젝트 path, 업무 일지, 고객 인터뷰, 공개 기록을 매일 입력할 수 있습니다.",
+                            label: "macOS 메뉴바 앱 사용자",
+                            description: "SwiftUI panel에서 질문/응답 정체를 직접 겪습니다.",
                             preview: nil,
-                            nextIntent: "records_ready_builder"
+                            nextIntent: "macos_panel_user"
                         ),
                         StructuredPromptOption(
-                            label: "다른 하위 ICP",
-                            description: "역할, 상황, 현재 대안, 연락 가능성을 함께 적습니다.",
+                            label: "직접 입력",
+                            description: "역할, 상황, 현재 대안을 한 줄로 적습니다.",
                             preview: nil,
                             nextIntent: "other_specific_icp"
                         )
                     ],
                     multiSelect: false,
                     allowFreeText: true,
-                    freeTextPlaceholder: "예: 현재 Claude Code로 MVP는 만들었지만 유료 고객이 없는 macOS 1인 개발자",
+                    requiresFreeText: true,
+                    freeTextPlaceholder: "예: Day 1 참가자가 provider 인증 실패 후 static ICP 질문에 갇힌다",
                     textMode: .short
                 )
-            ]
+            ],
+            generation: StructuredPromptGeneration(mode: "host_structured", docType: "icp")
         )
         #else
         return nil
@@ -2733,6 +2881,26 @@ final class AgenticViewModel: ObservableObject {
         bipCoach = seedLocalMissionChoices
             ? Self.makeUITestingLocalBipCoachState(sessionID: sessionID)
             : Self.makeUITestingBipCoachState(sessionID: sessionID)
+        #endif
+    }
+
+    private func applyUITestingIddSetupSeeds(arguments: [String]) {
+        #if DEBUG
+        guard arguments.contains("--ui-testing-seed-idd-complete") else { return }
+        iddSetupComplete = true
+        iddSetupStatus = "approved"
+        iddCurrentDocType = nil
+        iddAmbiguityScore = 12
+        iddUnresolvedAssumptions = []
+        iddDocOrder = ["icp", "goal", "values", "spec"]
+        iddDocPreviews = [
+            IddDocPreview(type: "icp", title: "ICP", path: "docs/ICP.md", status: "approved", content: "Seed ICP"),
+            IddDocPreview(type: "goal", title: "GOAL", path: "docs/GOAL.md", status: "approved", content: "Seed GOAL"),
+            IddDocPreview(type: "values", title: "VALUES", path: "docs/VALUES.md", status: "approved", content: "Seed VALUES"),
+            IddDocPreview(type: "spec", title: "SPEC", path: "docs/SPEC.md", status: "approved", content: "Seed SPEC"),
+        ]
+        iddProviderRecovery = nil
+        iddSetupError = nil
         #endif
     }
 
@@ -2924,7 +3092,109 @@ final class AgenticViewModel: ObservableObject {
         return nil
     }
 
+    #if DEBUG
+    func replaceSessionsForTesting(_ sessions: [ChatSession], selectedSessionID: String? = nil) {
+        self.sessions = sessions
+        self.selectedSessionID = selectedSessionID ?? sessions.first?.id
+    }
+
+    func applySessionUpdatedForTesting(_ session: ChatSession) {
+        upsert(session)
+    }
+
+    func setIddCurrentDocTypeForTesting(_ docType: String?) {
+        iddCurrentDocType = docType
+    }
+
+    func recoverRunningSessionsForTesting(message: String) {
+        markRunningSessionsRecoverableAfterSidecarExit(message: message)
+    }
+
+    func resetFoundationProgressForTesting() {
+        foundationProgressState = FoundationProgressSnapshot(
+            workspaceRoot: WorkspaceSettings.resolvedURL().path,
+            startedAt: nil,
+            selectedDay: 1,
+            completedDays: []
+        )
+        foundationStartedAt = nil
+    }
+
+    func applyIddSetupProgressForTesting(
+        sessionId: String,
+        requestId: String,
+        stage: String,
+        progressText: String,
+        elapsedMs: Int? = nil
+    ) {
+        let event = SidecarEvent(
+            type: "idd_setup_progress",
+            message: nil,
+            sessionId: sessionId,
+            requestId: requestId,
+            messageId: nil,
+            delta: nil,
+            content: nil,
+            workspaceRoot: nil,
+            session: nil,
+            sessions: nil,
+            environment: nil,
+            diagnostics: nil,
+            bipCoach: nil,
+            bipSetupReady: nil,
+            day: nil,
+            firstPrompt: nil,
+            missingLocalDocs: nil,
+            missingExternalRequirements: nil,
+            nextIddDocumentType: nil,
+            nextIddDocumentTitle: nil,
+            bipSetupGateMessage: nil,
+            scanRoot: nil,
+            icp: nil,
+            spec: nil,
+            values: nil,
+            designSystem: nil,
+            adr: nil,
+            goal: nil,
+            docs: nil,
+            sheet: nil,
+            onboardingHypothesis: nil,
+            error: nil,
+            docType: nil,
+            docPath: nil,
+            progressText: progressText,
+            notionConnected: nil,
+            success: nil,
+            disconnected: nil,
+            authUrl: nil,
+            rowId: nil,
+            status: nil,
+            detail: nil,
+            log: nil,
+            readinessError: nil,
+            bipTokenExpiredMessage: nil,
+            resourceName: nil,
+            resourceUrl: nil,
+            stage: stage,
+            provider: nil,
+            sheetRowsRead: nil,
+            docCharsRead: nil,
+            elapsedMs: elapsedMs,
+            phase: nil,
+            toolName: nil,
+            summary: nil,
+            items: nil,
+            result: nil,
+            weeklyRitualPrompt: nil,
+            requestEmit: nil
+        )
+        updateStructuredPromptSubmissionProgress(from: event)
+    }
+    #endif
+
     private func upsert(_ session: ChatSession) {
+        let session = sanitizedSessionSnapshot(session)
+        reconcileStructuredPromptSubmissionState(with: session)
         if let index = sessions.firstIndex(where: { $0.id == session.id }) {
             sessions[index] = mergeSessionSnapshot(session, into: sessions[index])
         } else {
@@ -2934,6 +3204,44 @@ final class AgenticViewModel: ObservableObject {
         if selectedSessionID == nil {
             selectedSessionID = session.id
         }
+    }
+
+    private func sanitizedSessionSnapshot(_ session: ChatSession) -> ChatSession {
+        guard session.pendingUserInput?.isLegacyStaticIddQuestion == true else {
+            return session
+        }
+        var sanitized = session
+        sanitized.pendingUserInput = nil
+        if sanitized.status == .awaitingInput {
+            sanitized.status = .running
+        }
+        return sanitized
+    }
+
+    private func reconcileStructuredPromptSubmissionState(with incoming: ChatSession) {
+        guard let submitted = submittedStructuredPromptBySession[incoming.id] else { return }
+        guard incoming.pendingUserInput?.requestId == submitted.requestId else {
+            submittedStructuredPromptBySession.removeValue(forKey: incoming.id)
+            return
+        }
+    }
+
+    private func updateStructuredPromptSubmissionProgress(from event: SidecarEvent) {
+        guard let sessionId = event.sessionId,
+              let requestId = event.requestId,
+              var submitted = submittedStructuredPromptBySession[sessionId],
+              submitted.requestId == requestId else { return }
+
+        if event.stage == "validation_error" {
+            submittedStructuredPromptBySession.removeValue(forKey: sessionId)
+            return
+        }
+
+        submitted.progressStage = event.stage
+        submitted.progressText = event.progressText?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+        submitted.progressUpdatedAt = .now
+        submitted.elapsedMs = event.elapsedMs
+        submittedStructuredPromptBySession[sessionId] = submitted
     }
 
     private func mergeSessionSnapshot(_ incoming: ChatSession, into current: ChatSession) -> ChatSession {
@@ -3045,6 +3353,59 @@ final class AgenticViewModel: ObservableObject {
 
         mutate(&sessions[sessionIndex].messages[messageIndex])
         sessions[sessionIndex].updatedAt = .now
+    }
+
+    private func shouldRecoverRunningSessions(forGlobalSidecarError message: String?) -> Bool {
+        let value = (message ?? "").lowercased()
+        return value.contains("sidecar connection closed")
+            || value.contains("sidecar stopped")
+            || value.contains("sidecar is not connected")
+            || value.contains("failed to start sidecar")
+    }
+
+    private func markRunningSessionsRecoverableAfterSidecarExit(message: String) {
+        let recoveryText = "Sidecar stopped before this response completed. Restarting sidecar; retry this turn if it does not resume."
+        var changed = false
+        var recoveredCount = 0
+        for index in sessions.indices {
+            let hasStreamingMessage = sessions[index].messages.contains(where: { $0.state == .streaming })
+            guard sessions[index].status == .running || hasStreamingMessage else { continue }
+
+            if let messageIndex = sessions[index].messages.lastIndex(where: { $0.role == .assistant && $0.state == .streaming }) {
+                if sessions[index].messages[messageIndex].content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    sessions[index].messages[messageIndex].content = recoveryText
+                }
+                sessions[index].messages[messageIndex].state = .error
+                sessions[index].messages[messageIndex].error = message
+            } else {
+                sessions[index].messages.append(ChatMessage(
+                    id: UUID().uuidString,
+                    role: .assistant,
+                    provider: sessions[index].provider,
+                    content: recoveryText,
+                    state: .error,
+                    createdAt: Date(),
+                    error: message,
+                    bipMissionChoices: nil,
+                    providerAuthActions: nil
+                ))
+            }
+            sessions[index].status = .error
+            sessions[index].error = message
+            sessions[index].updatedAt = .now
+            changed = true
+            recoveredCount += 1
+        }
+
+        if changed {
+            isBipCoachRefreshing = false
+            isBipCoachGenerating = false
+            isBipCoachCompleting = false
+            bipMissionProgress = nil
+            PostHogTelemetry.capture("mac_sidecar_running_sessions_recovered", properties: [
+                "session_count": recoveredCount,
+            ], authSession: macAuthSession)
+        }
     }
 
     private func appendSidecarOutput(sessionID: String, event: SidecarEvent) {
@@ -3600,6 +3961,7 @@ struct SidecarEvent: Decodable {
     let type: String
     let message: String?
     let sessionId: String?
+    let requestId: String?
     let messageId: String?
     let delta: String?
     let content: String?
@@ -3610,6 +3972,15 @@ struct SidecarEvent: Decodable {
     let diagnostics: SidecarDiagnostics?
     let bipCoach: BipCoachState?
     let bipSetupReady: Bool?
+    let iddSetupComplete: Bool?
+    let iddSetupStatus: String?
+    let iddCurrentDocType: String?
+    let iddAmbiguityScore: Int?
+    let iddUnresolvedAssumptions: [String]?
+    let iddDocOrder: [String]?
+    let iddDocPreviews: [IddDocPreview]?
+    let iddProviderRecovery: IddProviderRecovery?
+    let iddSetupError: IddSetupError?
     /// Foundation Day index (0-7). Carried by `foundation_first_prompt`
     /// responses so the host knows which day's opener was rendered.
     let day: Int?
@@ -3674,6 +4045,146 @@ struct SidecarEvent: Decodable {
     // R6 weekly ritual prompt payload (`weekly_ritual_prompt` event).
     let weeklyRitualPrompt: WeeklyRitualPrompt?
     let requestEmit: SidecarRequestEmit?
+
+    init(
+        type: String,
+        message: String?,
+        sessionId: String?,
+        requestId: String? = nil,
+        messageId: String?,
+        delta: String?,
+        content: String?,
+        workspaceRoot: String?,
+        session: ChatSession?,
+        sessions: [ChatSession]?,
+        environment: SidecarEnvironment?,
+        diagnostics: SidecarDiagnostics?,
+        bipCoach: BipCoachState?,
+        bipSetupReady: Bool?,
+        iddSetupComplete: Bool? = nil,
+        iddSetupStatus: String? = nil,
+        iddCurrentDocType: String? = nil,
+        iddAmbiguityScore: Int? = nil,
+        iddUnresolvedAssumptions: [String]? = nil,
+        iddDocOrder: [String]? = nil,
+        iddDocPreviews: [IddDocPreview]? = nil,
+        iddProviderRecovery: IddProviderRecovery? = nil,
+        iddSetupError: IddSetupError? = nil,
+        day: Int?,
+        firstPrompt: FoundationFirstPrompt?,
+        missingLocalDocs: [String]?,
+        missingExternalRequirements: [String]?,
+        nextIddDocumentType: String?,
+        nextIddDocumentTitle: String?,
+        bipSetupGateMessage: String?,
+        scanRoot: String?,
+        icp: String?,
+        spec: String?,
+        values: String?,
+        designSystem: String?,
+        adr: String?,
+        goal: String?,
+        docs: String?,
+        sheet: String?,
+        onboardingHypothesis: WorkspaceOnboardingHypothesis?,
+        error: String?,
+        docType: String?,
+        docPath: String?,
+        progressText: String?,
+        notionConnected: Bool?,
+        success: Bool?,
+        disconnected: Bool?,
+        authUrl: String?,
+        rowId: String?,
+        status: String?,
+        detail: String?,
+        log: String?,
+        readinessError: BipReadinessError?,
+        bipTokenExpiredMessage: String?,
+        resourceName: String?,
+        resourceUrl: String?,
+        stage: String?,
+        provider: String?,
+        sheetRowsRead: Int?,
+        docCharsRead: Int?,
+        elapsedMs: Int?,
+        phase: String?,
+        toolName: String?,
+        summary: String?,
+        items: [QuarantineFileWithDump]?,
+        result: QuarantineRestoreResult?,
+        weeklyRitualPrompt: WeeklyRitualPrompt?,
+        requestEmit: SidecarRequestEmit?
+    ) {
+        self.type = type
+        self.message = message
+        self.sessionId = sessionId
+        self.requestId = requestId
+        self.messageId = messageId
+        self.delta = delta
+        self.content = content
+        self.workspaceRoot = workspaceRoot
+        self.session = session
+        self.sessions = sessions
+        self.environment = environment
+        self.diagnostics = diagnostics
+        self.bipCoach = bipCoach
+        self.bipSetupReady = bipSetupReady
+        self.iddSetupComplete = iddSetupComplete
+        self.iddSetupStatus = iddSetupStatus
+        self.iddCurrentDocType = iddCurrentDocType
+        self.iddAmbiguityScore = iddAmbiguityScore
+        self.iddUnresolvedAssumptions = iddUnresolvedAssumptions
+        self.iddDocOrder = iddDocOrder
+        self.iddDocPreviews = iddDocPreviews
+        self.iddProviderRecovery = iddProviderRecovery
+        self.iddSetupError = iddSetupError
+        self.day = day
+        self.firstPrompt = firstPrompt
+        self.missingLocalDocs = missingLocalDocs
+        self.missingExternalRequirements = missingExternalRequirements
+        self.nextIddDocumentType = nextIddDocumentType
+        self.nextIddDocumentTitle = nextIddDocumentTitle
+        self.bipSetupGateMessage = bipSetupGateMessage
+        self.scanRoot = scanRoot
+        self.icp = icp
+        self.spec = spec
+        self.values = values
+        self.designSystem = designSystem
+        self.adr = adr
+        self.goal = goal
+        self.docs = docs
+        self.sheet = sheet
+        self.onboardingHypothesis = onboardingHypothesis
+        self.error = error
+        self.docType = docType
+        self.docPath = docPath
+        self.progressText = progressText
+        self.notionConnected = notionConnected
+        self.success = success
+        self.disconnected = disconnected
+        self.authUrl = authUrl
+        self.rowId = rowId
+        self.status = status
+        self.detail = detail
+        self.log = log
+        self.readinessError = readinessError
+        self.bipTokenExpiredMessage = bipTokenExpiredMessage
+        self.resourceName = resourceName
+        self.resourceUrl = resourceUrl
+        self.stage = stage
+        self.provider = provider
+        self.sheetRowsRead = sheetRowsRead
+        self.docCharsRead = docCharsRead
+        self.elapsedMs = elapsedMs
+        self.phase = phase
+        self.toolName = toolName
+        self.summary = summary
+        self.items = items
+        self.result = result
+        self.weeklyRitualPrompt = weeklyRitualPrompt
+        self.requestEmit = requestEmit
+    }
 
     var bipMissionProgress: BipMissionProgress? {
         guard type == "bip_coach_generation_progress",
@@ -3952,6 +4463,7 @@ extension SidecarEvent {
         case type
         case message
         case sessionId
+        case requestId
         case messageId
         case delta
         case content
@@ -3962,6 +4474,15 @@ extension SidecarEvent {
         case diagnostics
         case bipCoach
         case bipSetupReady
+        case iddSetupComplete
+        case iddSetupStatus
+        case iddCurrentDocType
+        case iddAmbiguityScore
+        case iddUnresolvedAssumptions
+        case iddDocOrder
+        case iddDocPreviews
+        case iddProviderRecovery
+        case iddSetupError
         case day
         case firstPrompt
         case missingLocalDocs
@@ -4016,6 +4537,7 @@ extension SidecarEvent {
         type = try container.decode(String.self, forKey: .type)
         message = Self.decodeIfPresent(String.self, from: container, forKey: .message)
         sessionId = Self.decodeIfPresent(String.self, from: container, forKey: .sessionId)
+        requestId = Self.decodeIfPresent(String.self, from: container, forKey: .requestId)
         messageId = Self.decodeIfPresent(String.self, from: container, forKey: .messageId)
         delta = Self.decodeIfPresent(String.self, from: container, forKey: .delta)
         content = Self.decodeIfPresent(String.self, from: container, forKey: .content)
@@ -4026,6 +4548,15 @@ extension SidecarEvent {
         diagnostics = Self.decodeIfPresent(SidecarDiagnostics.self, from: container, forKey: .diagnostics)
         bipCoach = Self.decodeIfPresent(BipCoachState.self, from: container, forKey: .bipCoach)
         bipSetupReady = Self.decodeIfPresent(Bool.self, from: container, forKey: .bipSetupReady)
+        iddSetupComplete = Self.decodeIfPresent(Bool.self, from: container, forKey: .iddSetupComplete)
+        iddSetupStatus = Self.decodeIfPresent(String.self, from: container, forKey: .iddSetupStatus)
+        iddCurrentDocType = Self.decodeIfPresent(String.self, from: container, forKey: .iddCurrentDocType)
+        iddAmbiguityScore = Self.decodeIfPresent(Int.self, from: container, forKey: .iddAmbiguityScore)
+        iddUnresolvedAssumptions = Self.decodeIfPresent([String].self, from: container, forKey: .iddUnresolvedAssumptions)
+        iddDocOrder = Self.decodeIfPresent([String].self, from: container, forKey: .iddDocOrder)
+        iddDocPreviews = Self.decodeIfPresent([IddDocPreview].self, from: container, forKey: .iddDocPreviews)
+        iddProviderRecovery = Self.decodeIfPresent(IddProviderRecovery.self, from: container, forKey: .iddProviderRecovery)
+        iddSetupError = Self.decodeIfPresent(IddSetupError.self, from: container, forKey: .iddSetupError)
         day = Self.decodeIfPresent(Int.self, from: container, forKey: .day)
         firstPrompt = Self.decodeIfPresent(FoundationFirstPrompt.self, from: container, forKey: .firstPrompt)
         missingLocalDocs = Self.decodeIfPresent([String].self, from: container, forKey: .missingLocalDocs)

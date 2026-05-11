@@ -15,6 +15,8 @@ struct ContentView: View {
     private let openWorkspaceAction: (() -> Void)?
     private let closeWorkspaceAction: (() -> Void)?
     private let zoomWorkspaceAction: (() -> Void)?
+    private let maximizeWorkspaceOnFirstAppear: Bool
+    private let markWorkspaceInitialMaximizeApplied: (() -> Void)?
     private let workspaceSupportThreadBottomID = "workspace.supportThread.bottom"
     private let workspaceAssistantReadableWidth: CGFloat = 760
     private let workspaceUserReadableWidth: CGFloat = 560
@@ -34,6 +36,8 @@ struct ContentView: View {
     @State private var handledBipNotificationOpenRequestID: UUID?
     @State private var pendingBipNotificationScrollRequestID: UUID?
     @State private var bipNotificationHintIntent: BipNotificationIntent?
+    @State private var isWorkspaceMissionIntroExpanded = false
+    @State private var isWorkspaceMissionIntroDismissed = false
     @State private var isWorkspaceSidebarPresented = true
     @State private var isWorkspaceSidebarToggleHovered = false
     @State private var isWorkspaceMissionButtonHovered = false
@@ -55,13 +59,17 @@ struct ContentView: View {
         surfaceOverride: AgenticSurface? = nil,
         openWorkspaceAction: (() -> Void)? = nil,
         closeWorkspaceAction: (() -> Void)? = nil,
-        zoomWorkspaceAction: (() -> Void)? = nil
+        zoomWorkspaceAction: (() -> Void)? = nil,
+        maximizeWorkspaceOnFirstAppear: Bool = false,
+        markWorkspaceInitialMaximizeApplied: (() -> Void)? = nil
     ) {
         _viewModel = ObservedObject(wrappedValue: viewModel)
         self.surfaceOverride = surfaceOverride
         self.openWorkspaceAction = openWorkspaceAction
         self.closeWorkspaceAction = closeWorkspaceAction
         self.zoomWorkspaceAction = zoomWorkspaceAction
+        self.maximizeWorkspaceOnFirstAppear = maximizeWorkspaceOnFirstAppear
+        self.markWorkspaceInitialMaximizeApplied = markWorkspaceInitialMaximizeApplied
     }
 
     @ViewBuilder
@@ -71,7 +79,10 @@ struct ContentView: View {
             .padding(isWorkspaceWindow ? 0 : 22)
             .background {
                 if isWorkspaceWindow {
-                    WorkspaceWindowChrome()
+                    WorkspaceWindowChrome(
+                        maximizeOnInitialInstall: maximizeWorkspaceOnFirstAppear,
+                        markInitialInstallMaximizeApplied: markWorkspaceInitialMaximizeApplied
+                    )
                 } else {
                     WindowChrome()
                 }
@@ -126,6 +137,10 @@ struct ContentView: View {
         case generatingMission
         case ready
         case failed
+    }
+
+    private var isIddSetupLocked: Bool {
+        viewModel.isIddSetupBlockingWorkspace
     }
 
     private func workspaceMissionFirstPhase(session: ChatSession?) -> WorkspaceMissionFirstPhase {
@@ -811,6 +826,9 @@ struct ContentView: View {
     }
 
     private func workspaceSidebarState(for day: AgenticCurriculumDay) -> WorkspaceSidebarDayState {
+        if isIddSetupLocked {
+            return viewModel.selectedFoundationDay == day.day ? .active : .locked(requiredDay: 0)
+        }
         if viewModel.selectedFoundationDay == day.day {
             return .active
         }
@@ -917,6 +935,9 @@ struct ContentView: View {
 
     private func workspaceSidebarLockedHelp(for state: WorkspaceSidebarDayState) -> String? {
         if case .locked(let requiredDay) = state {
+            if requiredDay == 0 {
+                return "Foundation Setup을 승인해야 이동할 수 있어요."
+            }
             return "Day \(requiredDay)을 마쳐야 접근할 수 있어요."
         }
         return nil
@@ -1072,7 +1093,7 @@ struct ContentView: View {
     }
 
     private func workspaceSidebarNewCodexSessionButton() -> some View {
-        let canCreateSession = viewModel.isConnected
+        let canCreateSession = viewModel.isConnected && !isIddSetupLocked
         return Button {
             startNewCodexSessionFromSidebar()
         } label: {
@@ -1099,14 +1120,14 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .disabled(!canCreateSession)
-        .help(canCreateSession ? "새 Codex 대화 시작" : "사이드카 연결 후 새 대화를 시작할 수 있어요")
+        .help(canCreateSession ? "새 Codex 대화 시작" : (isIddSetupLocked ? "Foundation Setup 승인 후 새 대화를 시작할 수 있어요" : "사이드카 연결 후 새 대화를 시작할 수 있어요"))
         .onHover { hovering in
             isWorkspaceNewSessionButtonHovered = hovering
         }
         .animation(.easeOut(duration: 0.12), value: isWorkspaceNewSessionButtonHovered)
         .accessibilityIdentifier("workspace.sidebar.newCodexSessionButton")
         .accessibilityLabel("새 Codex 대화 시작")
-        .accessibilityHint(canCreateSession ? "새 Codex 세션을 만들고 바로 선택합니다." : "사이드카 연결 후 새 대화를 시작할 수 있어요.")
+        .accessibilityHint(canCreateSession ? "새 Codex 세션을 만들고 바로 선택합니다." : (isIddSetupLocked ? "Foundation Setup 승인 후 새 대화를 시작할 수 있어요." : "사이드카 연결 후 새 대화를 시작할 수 있어요."))
     }
 
     private func workspaceSidebarHistoryEmptyState() -> some View {
@@ -1249,6 +1270,7 @@ struct ContentView: View {
     }
 
     private func openWorkspaceHistorySession(_ session: ChatSession) {
+        guard !isIddSetupLocked else { return }
         // Sub-AC 2 contract: 클릭 시 해당 세션을 활성화한다. 이미 settings 섹션에
         // 진입한 상태일 수도 있으므로 .curriculum으로 되돌리고, 이력 진입을
         // PostHog에 기록해 KR4.1 측정 인프라가 클릭률을 추적할 수 있게 한다.
@@ -1784,9 +1806,13 @@ struct ContentView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
-                            workspaceMissionFirstSurface(day: day, session: session)
-                            workspaceBipNotificationTaskSurface()
-                            workspaceMissionSupportThread(session)
+                            if isIddSetupLocked {
+                                workspaceFoundationSetupSurface(session: session)
+                            } else {
+                                workspaceMissionFirstSurface(day: day, session: session)
+                                workspaceBipNotificationTaskSurface()
+                                workspaceMissionSupportThread(session)
+                            }
                             Color.clear
                                 .frame(height: 1)
                                 .id(workspaceSupportThreadBottomID)
@@ -1808,7 +1834,9 @@ struct ContentView: View {
                 }
 
                 VStack(spacing: 10) {
-                    promptComposer()
+                    if !isIddSetupLocked {
+                        promptComposer()
+                    }
                 }
                 .frame(maxWidth: 1180)
                 .padding(.horizontal, 34)
@@ -2720,7 +2748,7 @@ struct ContentView: View {
                     .font(.system(size: 10, weight: .bold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.42))
 
-                inlineStructuredPrompt(prompt)
+                inlineStructuredPrompt(prompt, submissionState: submissionState(for: prompt))
                     .padding(.horizontal, 13)
                     .padding(.vertical, 12)
                     .background(workspaceBubbleBackground(isUser: false, isError: false))
@@ -3143,7 +3171,11 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 16) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        workspaceMissionFirstSurface(day: day, session: nil)
+                        if isIddSetupLocked {
+                            workspaceFoundationSetupSurface(session: nil)
+                        } else {
+                            workspaceMissionFirstSurface(day: day, session: nil)
+                        }
                     }
                     .frame(maxWidth: 1180, alignment: .leading)
                     .padding(.horizontal, 34)
@@ -3151,8 +3183,10 @@ struct ContentView: View {
                 }
 
                 VStack(spacing: 8) {
-                    workspaceStartupQueueStatus()
-                    promptComposer()
+                    if !isIddSetupLocked {
+                        workspaceStartupQueueStatus()
+                        promptComposer()
+                    }
                 }
                 .frame(maxWidth: 1180)
                 .padding(.horizontal, 34)
@@ -3168,6 +3202,261 @@ struct ContentView: View {
 
     private func fullCoachReady(coach: BipCoachState, readiness: BipReadinessState) -> Bool {
         coach.isConfigured && readiness.bipCoachSetupComplete && !readiness.hasBlockingBipCoachSetupIssue
+    }
+
+    private func workspaceFoundationSetupSurface(session: ChatSession?) -> some View {
+        let previews = viewModel.iddDocPreviews
+        let draftedCount = previews.filter { $0.status == "drafted" || !$0.content.isEmpty }.count
+        let totalCount = max(viewModel.iddDocOrder.count, 4)
+        let isPreviewReady = viewModel.iddSetupStatus == "preview_ready"
+        let isSetupError = viewModel.iddSetupStatus == "error"
+        let currentDoc = viewModel.iddCurrentDocType?.uppercased() ?? "ICP"
+
+        return VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 13) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .font(.system(size: 17, weight: .heavy))
+                    .foregroundStyle(Color.black.opacity(0.76))
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.94)))
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("Foundation Setup")
+                        .font(.system(size: 11, weight: .heavy, design: .rounded))
+                        .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.94))
+                        .textCase(.uppercase)
+
+                    Text(isPreviewReady ? "문서 미리보기를 승인하세요" : "\(currentDoc) 기준부터 고정합니다")
+                        .font(.system(size: 25, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.97))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text("Today Mission은 ICP, GOAL, VALUES, SPEC 네 문서가 승인된 뒤 열립니다.")
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.62))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 16)
+
+                Text("\(draftedCount)/\(totalCount)")
+                    .font(.system(size: 12, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.78))
+                    .padding(.horizontal, 10)
+                    .frame(height: 28)
+                    .background(Capsule().fill(Color.white.opacity(0.09)))
+            }
+
+            HStack(spacing: 8) {
+                ForEach(["icp", "goal", "values", "spec"], id: \.self) { docType in
+                    workspaceFoundationDocChip(docType)
+                }
+                Spacer(minLength: 0)
+            }
+            .accessibilityIdentifier("workspace.iddSetup.progress")
+
+            if let recovery = viewModel.iddProviderRecovery,
+               let provider = recovery.provider {
+                workspaceFoundationProviderRecovery(recovery, provider: provider)
+            } else if let prompt = session?.pendingUserInput,
+                      viewModel.isMatchingFoundationPrompt(prompt) {
+                inlineStructuredPrompt(
+                    prompt,
+                    compact: true,
+                    submissionState: submissionState(for: prompt)
+                )
+                    .accessibilityIdentifier("workspace.iddSetup.question")
+            } else if viewModel.isMismatchedFoundationPrompt(session?.pendingUserInput) {
+                workspaceFoundationPromptMismatch(session?.pendingUserInput)
+                    .onAppear {
+                        viewModel.retryCurrentIddQuestion()
+                    }
+            } else if isPreviewReady {
+                workspaceFoundationPreview(previews)
+            } else if isSetupError {
+                workspaceFoundationSetupError(viewModel.iddSetupError)
+            } else {
+                workspaceFoundationWaitingState()
+            }
+
+            if isPreviewReady {
+                HStack(spacing: 10) {
+                    Spacer(minLength: 0)
+                    Button {
+                        viewModel.approveIddSetup()
+                    } label: {
+                        Label("문서 승인하고 미션 열기", systemImage: "checkmark.seal.fill")
+                            .font(.system(size: 13, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Color.black.opacity(0.76))
+                            .padding(.horizontal, 14)
+                            .frame(height: 36)
+                            .background(Capsule().fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.94)))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("workspace.iddSetup.approve")
+                }
+            }
+
+            if let ambiguity = viewModel.iddAmbiguityScore {
+                Text("Ambiguity \(ambiguity)% · 목표 20% 이하")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.48))
+                    .accessibilityIdentifier("workspace.iddSetup.ambiguity")
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color.white.opacity(0.075))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.18), lineWidth: 1)
+                )
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("workspace.iddSetupSurface")
+    }
+
+    private func workspaceFoundationDocChip(_ docType: String) -> some View {
+        let preview = viewModel.iddDocPreviews.first { $0.type == docType }
+        let isDrafted = preview?.status == "drafted" || preview?.content.isEmpty == false
+        let isCurrent = viewModel.iddCurrentDocType == docType && !isDrafted
+        return Label(docType.uppercased(), systemImage: isDrafted ? "checkmark.circle.fill" : (isCurrent ? "circle.dotted" : "circle"))
+            .font(.system(size: 11, weight: .heavy, design: .rounded))
+            .foregroundStyle(.white.opacity(isDrafted || isCurrent ? 0.82 : 0.42))
+            .padding(.horizontal, 9)
+            .frame(height: 28)
+            .background(Capsule().fill(Color.white.opacity(isDrafted ? 0.12 : 0.06)))
+            .accessibilityIdentifier("workspace.iddSetup.doc.\(docType)")
+    }
+
+    private func workspaceFoundationProviderRecovery(_ recovery: IddProviderRecovery, provider: AgentProvider) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(recovery.message?.nonEmpty ?? "\(provider.title) 로그인이 필요합니다.")
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.72))
+                .fixedSize(horizontal: false, vertical: true)
+
+            workspaceProviderAuthActions(actions: [
+                ProviderAuthAction(
+                    id: recovery.actionId ?? "\(provider.rawValue)_login",
+                    provider: provider,
+                    title: "\(provider.title) 로그인",
+                    detail: "Foundation Setup 인터뷰를 계속하려면 provider 인증이 필요합니다."
+                )
+            ])
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.black.opacity(0.16)))
+        .accessibilityIdentifier("workspace.iddSetup.providerRecovery")
+    }
+
+    private func workspaceFoundationSetupError(_ error: IddSetupError?) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("인터뷰 질문을 만들지 못했습니다.", systemImage: "exclamationmark.triangle.fill")
+                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .foregroundStyle(Color(red: 1.0, green: 0.75, blue: 0.35))
+
+            Text(error?.message?.nonEmpty ?? "질문 카드 준비가 중단됐습니다. 다시 시도해 주세요.")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.68))
+                .lineLimit(4)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                viewModel.startBipIddQueue(docType: error?.docType ?? viewModel.iddCurrentDocType)
+            } label: {
+                Label("다시 시도", systemImage: "arrow.clockwise")
+                    .font(.system(size: 12, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.88))
+                    .padding(.horizontal, 12)
+                    .frame(height: 32)
+                    .background(Capsule().fill(Color.white.opacity(0.10)))
+            }
+            .buttonStyle(.plain)
+            .disabled(!viewModel.isConnected)
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.black.opacity(0.16)))
+        .accessibilityIdentifier("workspace.iddSetup.error")
+    }
+
+    private func workspaceFoundationPromptMismatch(_ prompt: StructuredPromptRequest?) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("현재 단계와 질문이 맞지 않습니다.", systemImage: "arrow.triangle.2.circlepath.circle.fill")
+                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .foregroundStyle(Color(red: 1.0, green: 0.75, blue: 0.35))
+
+            Text("현재 Foundation 단계에 맞는 질문을 다시 준비하고 있습니다. 잠시 후에도 바뀌지 않으면 다시 시도해 주세요.")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.68))
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let prompt {
+                Text("받은 질문: \(prompt.toolName)")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.42))
+                    .lineLimit(1)
+            }
+
+            Button {
+                viewModel.retryCurrentIddQuestion()
+            } label: {
+                Label("다시 시도", systemImage: "arrow.clockwise")
+                    .font(.system(size: 12, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.88))
+                    .padding(.horizontal, 12)
+                    .frame(height: 32)
+                    .background(Capsule().fill(Color.white.opacity(0.10)))
+            }
+            .buttonStyle(.plain)
+            .disabled(!viewModel.isConnected)
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.black.opacity(0.16)))
+        .accessibilityIdentifier("workspace.iddSetup.promptMismatch")
+    }
+
+    private func workspaceFoundationPreview(_ previews: [IddDocPreview]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(previews.enumerated()), id: \.element.id) { index, preview in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(preview.path)
+                            .font(.system(size: 12, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.84))
+                        Spacer(minLength: 0)
+                        Text(preview.status)
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.42))
+                    }
+                    Text(preview.content.nonEmpty ?? "아직 초안이 없습니다.")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.58))
+                        .lineLimit(6)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 11)
+                if index < previews.count - 1 {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.08))
+                        .frame(height: 1)
+                }
+            }
+        }
+        .accessibilityIdentifier("workspace.iddSetup.preview")
+    }
+
+    private func workspaceFoundationWaitingState() -> some View {
+        HStack(spacing: 9) {
+            ProgressView()
+                .controlSize(.small)
+            Text("인터뷰 질문 카드를 준비하고 있어요.")
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.62))
+        }
+        .accessibilityIdentifier("workspace.iddSetup.waiting")
     }
 
     private func workspaceMissionFirstSurface(day: AgenticCurriculumDay, session: ChatSession?) -> some View {
@@ -3204,6 +3493,7 @@ struct ContentView: View {
             }
 
             workspaceMissionFirstPath(session: session)
+            workspaceMissionFirstIntroCard()
             workspaceBipCoachInlineMarker()
             workspaceMissionFirstBody(day: day, session: session)
         }
@@ -3223,17 +3513,20 @@ struct ContentView: View {
 
     private enum WorkspaceMissionFirstStep: Int, CaseIterable {
         case enter
+        case context
         case choose
         case answer
 
         var title: String {
             switch self {
             case .enter:
-                return "진입"
+                return "연결됨"
+            case .context:
+                return "맥락 확인"
             case .choose:
                 return "미션 선택"
             case .answer:
-                return "답변 받기"
+                return "초안/도움"
             }
         }
 
@@ -3241,6 +3534,8 @@ struct ContentView: View {
             switch self {
             case .enter:
                 return "macwindow"
+            case .context:
+                return "doc.text.magnifyingglass"
             case .choose:
                 return "list.bullet.clipboard.fill"
             case .answer:
@@ -3263,6 +3558,144 @@ struct ContentView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("진행 단계: \(workspaceMissionFirstAccessibleStep(session: session))")
+    }
+
+    @ViewBuilder
+    private func workspaceMissionFirstIntroCard() -> some View {
+        if !isWorkspaceMissionIntroDismissed {
+            VStack(alignment: .leading, spacing: 10) {
+                Button {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
+                        isWorkspaceMissionIntroExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 20, weight: .heavy))
+                            .foregroundStyle(workspaceMissionFirstAccent.opacity(0.92))
+                            .frame(width: 24)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("처음이신가요? 60초 보기")
+                                .font(.system(size: 12, weight: .heavy, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.90))
+                            Text("프로젝트 읽기 → 후보 선택 → 초안 요청 → 완료 기록")
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.54))
+                                .lineLimit(1)
+                        }
+
+                        Spacer(minLength: 0)
+
+                        Image(systemName: isWorkspaceMissionIntroExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 11, weight: .heavy))
+                            .foregroundStyle(.white.opacity(0.48))
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(height: 50)
+                    .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("workspace.missionFirst.introToggle")
+                .accessibilityLabel("처음이신가요? 60초 보기")
+
+                if isWorkspaceMissionIntroExpanded {
+                    VStack(alignment: .leading, spacing: 11) {
+                        HStack(alignment: .top, spacing: 8) {
+                            workspaceMissionIntroStep(
+                                icon: "folder.badge.gearshape",
+                                title: "읽기",
+                                detail: "선택한 프로젝트와 Day 맥락을 봅니다."
+                            )
+                            workspaceMissionIntroStep(
+                                icon: "list.bullet.clipboard.fill",
+                                title: "고르기",
+                                detail: "지금 끝낼 수 있는 후보 하나를 선택합니다."
+                            )
+                            workspaceMissionIntroStep(
+                                icon: "text.bubble.fill",
+                                title: "받기",
+                                detail: "필요한 질문, 초안, 다음 액션을 요청합니다."
+                            )
+                            workspaceMissionIntroStep(
+                                icon: "checkmark.seal.fill",
+                                title: "남기기",
+                                detail: "URL이나 배움을 기록하고 Day를 닫습니다."
+                            )
+                        }
+
+                        HStack(spacing: 8) {
+                            Button {
+                                withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                                    isWorkspaceMissionIntroExpanded = false
+                                }
+                            } label: {
+                                Text("접기")
+                                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.72))
+                                    .padding(.horizontal, 10)
+                                    .frame(height: 26)
+                                    .background(Capsule().fill(Color.white.opacity(0.08)))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("workspace.missionFirst.introCollapse")
+
+                            Button {
+                                withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                                    isWorkspaceMissionIntroDismissed = true
+                                    isWorkspaceMissionIntroExpanded = false
+                                }
+                            } label: {
+                                Text("다시 보지 않기")
+                                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.50))
+                                    .padding(.horizontal, 10)
+                                    .frame(height: 26)
+                                    .background(Capsule().fill(Color.white.opacity(0.045)))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("workspace.missionFirst.introDismiss")
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
+                    .accessibilityIdentifier("workspace.missionFirst.introDemo")
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .fill(Color.black.opacity(0.12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 15, style: .continuous)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    )
+            )
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("workspace.missionFirst.introCard")
+        }
+    }
+
+    private func workspaceMissionIntroStep(icon: String, title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .heavy))
+                .foregroundStyle(workspaceMissionFirstAccent.opacity(0.86))
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(workspaceMissionFirstAccent.opacity(0.10)))
+
+            Text(title)
+                .font(.system(size: 11, weight: .heavy, design: .rounded))
+                .foregroundStyle(.white.opacity(0.88))
+
+            Text(detail)
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.50))
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title): \(detail)")
     }
 
     private func workspaceMissionFirstStepChip(_ step: WorkspaceMissionFirstStep, session: ChatSession?) -> some View {
@@ -3336,15 +3769,17 @@ struct ContentView: View {
             switch step {
             case .enter:
                 return .done
-            case .choose:
+            case .context:
                 return .active
+            case .choose:
+                return .waiting
             case .answer:
                 return .waiting
             }
         }
         if viewModel.visibleBipCoach?.currentMission != nil {
             switch step {
-            case .enter, .choose:
+            case .enter, .context, .choose:
                 return .done
             case .answer:
                 return .active
@@ -3352,7 +3787,7 @@ struct ContentView: View {
         }
         if viewModel.visibleBipCoach?.pendingMissionChoices.isEmpty == false {
             switch step {
-            case .enter:
+            case .enter, .context:
                 return .done
             case .choose:
                 return .active
@@ -3360,7 +3795,7 @@ struct ContentView: View {
                 return .waiting
             }
         }
-        return step == .enter ? .done : (step == .choose ? .active : .waiting)
+        return step == .enter ? .done : (step == .context ? .active : .waiting)
     }
 
     private func workspaceMissionFirstAccessibleStep(session: ChatSession?) -> String {
@@ -3373,7 +3808,7 @@ struct ContentView: View {
         if viewModel.visibleBipCoach?.pendingMissionChoices.isEmpty == false {
             return "미션 선택 단계"
         }
-        return "미션 생성 준비 단계"
+        return "프로젝트 맥락 확인 단계"
     }
 
     private var workspaceMissionFirstAccent: Color {
@@ -3408,17 +3843,17 @@ struct ContentView: View {
             return "Day \(day.day) · \(day.title)"
         }
         if viewModel.isBipCoachGenerating || viewModel.bipMissionProgress != nil {
-            return "오늘 실행 후보를 만드는 중"
+            return "프로젝트와 Day 맥락 확인 중"
         }
         if let coach = viewModel.visibleBipCoach {
             if coach.currentMission != nil {
                 return "오늘 실행"
             }
             if !coach.pendingMissionChoices.isEmpty {
-                return "오늘 실행 \(min(coach.pendingMissionChoices.count, 3))개 중 하나를 고르세요"
+                return "프로젝트를 읽고 오늘 검증할 행동 하나를 고르세요"
             }
         }
-        return "Day \(day.day) · 오늘 할 일"
+        return "오늘 실행을 먼저 만들까요"
     }
 
     private func workspaceMissionFirstSubtitle(day: AgenticCurriculumDay, session: ChatSession?) -> String {
@@ -3436,10 +3871,10 @@ struct ContentView: View {
                 return mission.mission?.nonEmpty ?? mission.angle?.nonEmpty ?? "15분 안에 끝낼 공개 실행을 진행합니다."
             }
             if !coach.pendingMissionChoices.isEmpty {
-                return "팔릴 문제를 찾기 위한 실행 미션 하나만 선택하세요."
+                return "프로젝트를 읽고 지금 바로 실행할 수 있는 15분 미션으로 좁혀드릴게요."
             }
         }
-        return "팔릴 문제를 찾기 위한 실행 미션을 하나 고르세요."
+        return "프로젝트 기준으로 지금 할 수 있는 15분 실행 후보를 추천합니다."
     }
 
     private func workspaceMissionFirstStatusLine(session: ChatSession?) -> some View {
@@ -3496,7 +3931,7 @@ struct ContentView: View {
             return "실행 모드"
         }
         if viewModel.visibleBipCoach?.pendingMissionChoices.isEmpty == false {
-            return "선택 대기"
+            return "하나만 골라도 충분"
         }
         return "준비 완료"
     }
@@ -3536,7 +3971,7 @@ struct ContentView: View {
         case .creatingSession:
             return "Codex 세션을 여는 중"
         default:
-            return "오늘 실행을 준비하고 있어요."
+            return "프로젝트와 Day 맥락을 보고 있어요."
         }
     }
 
@@ -3544,7 +3979,7 @@ struct ContentView: View {
         HStack(spacing: 8) {
             ProgressView()
                 .controlSize(.small)
-            Text(viewModel.bipMissionProgress?.detail?.nonEmpty ?? "오늘 실행 후보를 좁히고 있어요.")
+            Text(viewModel.bipMissionProgress?.detail?.nonEmpty ?? "프로젝트와 Day 맥락을 보고 있어요.")
                 .font(.system(size: 13, weight: .bold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.72))
                 .lineLimit(2)
@@ -3554,14 +3989,23 @@ struct ContentView: View {
     }
 
     private func workspaceMissionFirstReadyBody(day: AgenticCurriculumDay) -> some View {
-        workspaceMissionPrimaryButton(
-            title: "오늘 실행 생성",
-            systemImage: "sparkles",
-            accessibilityIdentifier: "workspace.generateBipMission"
-        ) {
-            viewModel.generateBipMission(compact: true, curriculumDay: curriculumPayload(for: day))
+        VStack(alignment: .leading, spacing: 12) {
+            workspaceMissionFirstGuide()
+
+            Text("버튼을 누르면 프로젝트와 Day \(day.day) 기준으로 바로 시작할 수 있는 미션을 추천합니다.")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.58))
+                .fixedSize(horizontal: false, vertical: true)
+
+            workspaceMissionPrimaryButton(
+                title: "오늘 실행 생성",
+                systemImage: "sparkles",
+                accessibilityIdentifier: "workspace.generateBipMission"
+            ) {
+                viewModel.generateBipMission(compact: true, curriculumDay: curriculumPayload(for: day))
+            }
+            .disabled(viewModel.isBipCoachGenerating)
         }
-        .disabled(viewModel.isBipCoachGenerating)
     }
 
     private func workspaceMissionFirstErrorBody(_ message: String, day: AgenticCurriculumDay) -> some View {
@@ -3588,12 +4032,107 @@ struct ContentView: View {
     }
 
     private func workspaceMissionFirstChoices(_ choices: [BipCoachMission]) -> some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: 12) {
+            workspaceMissionFirstGuide()
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("추천된 오늘 실행")
+                    .font(.system(size: 13, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.90))
+                Spacer(minLength: 0)
+                Text("\(min(choices.count, 3))개 중 하나")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(workspaceMissionFirstAccent.opacity(0.88))
+                    .padding(.horizontal, 8)
+                    .frame(height: 24)
+                    .background(Capsule().fill(workspaceMissionFirstAccent.opacity(0.10)))
+            }
+
             ForEach(Array(choices.prefix(3).enumerated()), id: \.element.id) { index, mission in
                 bipCoachMissionChoiceCard(mission, index: index)
             }
+
+            HStack(spacing: 8) {
+                workspaceMissionSecondaryButton(
+                    title: "다시 추천받기",
+                    systemImage: "arrow.clockwise",
+                    accessibilityIdentifier: "workspace.missionFirst.regenerate"
+                ) {
+                    viewModel.generateBipMission(curriculumDay: curriculumPayload(for: workspaceSelectedDay))
+                }
+                .disabled(viewModel.isBipCoachGenerating)
+
+                workspaceMissionSecondaryButton(
+                    title: "15분 미션으로 줄이기",
+                    systemImage: "timer",
+                    accessibilityIdentifier: "workspace.missionFirst.compact"
+                ) {
+                    viewModel.generateBipMission(compact: true, curriculumDay: curriculumPayload(for: workspaceSelectedDay))
+                }
+                .disabled(viewModel.isBipCoachGenerating)
+            }
         }
         .accessibilityIdentifier("workspace.missionFirst.choices")
+    }
+
+    private func workspaceMissionFirstGuide() -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Agentic30가 하는 일")
+                .font(.system(size: 12, weight: .heavy, design: .rounded))
+                .foregroundStyle(.white.opacity(0.82))
+
+            VStack(alignment: .leading, spacing: 7) {
+                workspaceMissionFirstGuideRow(
+                    index: 1,
+                    title: "프로젝트 기준 확인",
+                    detail: "선택한 워크스페이스와 Day 맥락을 먼저 봅니다."
+                )
+                workspaceMissionFirstGuideRow(
+                    index: 2,
+                    title: "오늘 실행 하나 선택",
+                    detail: "추천 카드 중 하나만 고르면 실행 모드로 들어갑니다."
+                )
+                workspaceMissionFirstGuideRow(
+                    index: 3,
+                    title: "필요한 초안 요청",
+                    detail: "선택한 미션 기준으로 바로 답변과 초안을 받을 수 있습니다."
+                )
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.black.opacity(0.13))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("workspace.missionFirst.guide")
+    }
+
+    private func workspaceMissionFirstGuideRow(index: Int, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 9) {
+            Text("\(index)")
+                .font(.system(size: 10, weight: .heavy, design: .rounded))
+                .foregroundStyle(Color.black.opacity(0.72))
+                .frame(width: 20, height: 20)
+                .background(Circle().fill(workspaceMissionFirstAccent.opacity(0.90)))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.88))
+                Text(detail)
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.52))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .accessibilityIdentifier("workspace.missionFirst.guideStep.\(index)")
     }
 
     private func workspaceMissionFirstSelectedMission(_ mission: BipCoachMission, coach: BipCoachState) -> some View {
@@ -4529,7 +5068,7 @@ struct ContentView: View {
             }
 
             if let pendingPrompt {
-                inlineStructuredPrompt(pendingPrompt)
+                inlineStructuredPrompt(pendingPrompt, submissionState: submissionState(for: pendingPrompt))
                     .transition(.opacity)
             } else if visibleCoach != nil && latestAssistantIsBipMission {
                 Text("오늘 실행")
@@ -5541,27 +6080,51 @@ struct ContentView: View {
                     .frame(minWidth: 24, minHeight: 24)
                     .background(Capsule().fill(missionChoiceAccent(index).opacity(0.92)))
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(mission.title?.nonEmpty ?? "오늘 미션")
                         .font(.system(size: 13, weight: .heavy, design: .rounded))
                         .foregroundStyle(.white.opacity(0.94))
                         .lineLimit(2)
-                    Text(mission.angle?.nonEmpty ?? "공개 기록과 오늘 커리큘럼을 반영한 실행")
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.62))
+
+                    Text(missionRecommendationReason(mission, index: index))
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.68))
                         .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("workspace.missionFirst.recommendationReason")
+
                     if let missionText = mission.mission?.nonEmpty {
                         Text(missionText)
                             .font(.system(size: 11, weight: .medium, design: .rounded))
                             .foregroundStyle(.white.opacity(0.50))
                             .lineLimit(1)
                     }
+
+                    workspaceMissionChoiceMetaRow(
+                        text: missionEvidencePreview(mission),
+                        systemImage: "quote.bubble.fill",
+                        identifier: "workspace.missionFirst.choiceEvidence"
+                    )
+
+                    workspaceMissionChoiceMetaRow(
+                        text: "결과물: \(missionOutcomePreview(mission))",
+                        systemImage: "checkmark.circle.fill",
+                        identifier: "workspace.missionFirst.choiceOutcome"
+                    )
+
+                    HStack(spacing: 8) {
+                        Label("15분", systemImage: "timer")
+                        Label("선택 후 초안 요청 가능", systemImage: "text.bubble")
+                    }
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.46))
+                    .lineLimit(1)
                 }
 
                 Spacer(minLength: 0)
 
                 HStack(spacing: 5) {
-                    Text("선택")
+                    Text("이 미션으로 시작")
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                     Image(systemName: "arrow.right")
                         .font(.system(size: 10, weight: .heavy))
@@ -5570,6 +6133,7 @@ struct ContentView: View {
                 .padding(.horizontal, 10)
                 .frame(height: 28)
                 .background(Capsule().fill(Color.white.opacity(0.11)))
+                .accessibilityIdentifier("workspace.missionFirst.choicePrimaryAction")
             }
             .padding(12)
             .background(
@@ -5584,7 +6148,53 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("workspace.bipCoach.missionChoice.\(index + 1)")
-        .accessibilityLabel("\(mission.title?.nonEmpty ?? "오늘 실행 \(index + 1)") 선택")
+        .accessibilityLabel("\(mission.title?.nonEmpty ?? "오늘 실행 \(index + 1)") 이 미션으로 시작")
+    }
+
+    private func workspaceMissionChoiceMetaRow(text: String, systemImage: String, identifier: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(workspaceMissionFirstAccent.opacity(0.72))
+                .frame(width: 12)
+                .padding(.top, 1)
+            Text(text)
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.48))
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(identifier)
+    }
+
+    private func missionRecommendationReason(_ mission: BipCoachMission, index: Int) -> String {
+        if let angle = mission.angle?.nonEmpty {
+            return "추천 이유: \(angle)"
+        }
+        if index == 0 {
+            return "추천 이유: 지금 가장 작게 실행하고 바로 배울 수 있습니다."
+        }
+        return "추천 이유: 프로젝트와 오늘 커리큘럼에 맞춘 실행입니다."
+    }
+
+    private func missionEvidencePreview(_ mission: BipCoachMission) -> String {
+        if let firstEvidence = mission.evidenceRefs?.compactMap(\.nonEmpty).first {
+            return "근거: \(firstEvidence)"
+        }
+        if let day = mission.curriculumDay?.day {
+            return "근거: 프로젝트 폴더와 Day \(day) 커리큘럼"
+        }
+        return "근거: 프로젝트 폴더와 오늘 커리큘럼"
+    }
+
+    private func missionOutcomePreview(_ mission: BipCoachMission) -> String {
+        if let firstChecklist = mission.eveningChecklist?.compactMap(\.nonEmpty).first {
+            return firstChecklist
+        }
+        if mission.drafts?.isEmpty == false {
+            return "초안 하나를 만들고 바로 실행"
+        }
+        return "배움 하나와 다음 액션 하나 기록"
     }
 
     private func bipMissionChoicesEvidenceSummary(_ coach: BipCoachState) -> String {
@@ -5989,38 +6599,69 @@ struct ContentView: View {
         }
     }
 
-    private func inlineStructuredPrompt(_ prompt: StructuredPromptRequest) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(prompt.title?.nonEmpty ?? "Office Hours intake")
-                .font(.system(size: 15, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.9))
-                .accessibilityIdentifier("assistant.structuredPromptTitle")
+    private func inlineStructuredPrompt(
+        _ prompt: StructuredPromptRequest,
+        compact: Bool = false,
+        submissionState: AgenticViewModel.StructuredPromptSubmissionState? = nil
+    ) -> some View {
+        let isSubmitting = submissionState?.requestId == prompt.requestId
+        let canSubmitPrompt = canSubmit(prompt) && !isSubmitting
+        let submitTitle = isSubmitting
+            ? (compact ? "저장 중" : "저장 중...")
+            : (compact ? "답하기" : structuredPromptSubmitTitle(prompt))
 
-            VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: compact ? 10 : 14) {
+            if !compact {
+                Text(prompt.title?.nonEmpty ?? "Office Hours intake")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .accessibilityIdentifier("assistant.structuredPromptTitle")
+            }
+
+            if !compact {
+                structuredPromptContext(prompt)
+            }
+
+            VStack(alignment: .leading, spacing: compact ? 8 : 12) {
                 ForEach(prompt.questions) { question in
-                    questionCard(question)
+                    questionCard(question, compact: compact, isSubmitting: isSubmitting)
+                        .transition(.opacity)
                 }
             }
             .padding(.vertical, 2)
+            .animation(.easeInOut(duration: 0.16), value: prompt.requestId)
+
+            if let submissionState, isSubmitting {
+                structuredPromptSubmissionReceipt(submissionState, compact: compact)
+            }
 
             HStack(spacing: 12) {
                 Spacer(minLength: 0)
 
                 Button {
-                    submitPrompt(prompt)
+                    if !isSubmitting {
+                        submitPrompt(prompt)
+                    }
                 } label: {
-                    Text(structuredPromptSubmitTitle(prompt))
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(canSubmit(prompt) ? 0.96 : 0.42))
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 10)
-                        .background(
-                            Capsule()
-                                .fill(Color.white.opacity(canSubmit(prompt) ? 0.18 : 0.07))
-                        )
+                    HStack(spacing: 7) {
+                        if isSubmitting {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .scaleEffect(0.72)
+                        }
+                        Text(submitTitle)
+                    }
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(canSubmitPrompt ? 0.96 : 0.42))
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(canSubmitPrompt ? 0.18 : 0.07))
+                    )
                 }
                 .buttonStyle(.plain)
-                .disabled(!canSubmit(prompt))
+                .disabled(!canSubmitPrompt)
                 .accessibilityIdentifier("assistant.structuredContinueButton")
             }
         }
@@ -6028,67 +6669,206 @@ struct ContentView: View {
         .accessibilityIdentifier("assistant.structuredPrompt")
     }
 
+    @ViewBuilder
+    private func structuredPromptContext(_ prompt: StructuredPromptRequest) -> some View {
+        let introTitle = prompt.intro?.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let introBody = prompt.intro?.body?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bullets = (prompt.intro?.bullets ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let resources = (prompt.resources ?? []).filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+        if introTitle?.isEmpty == false || introBody?.isEmpty == false || !bullets.isEmpty || !resources.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                if let introTitle, !introTitle.isEmpty {
+                    Text(introTitle)
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color(red: 0.82, green: 0.89, blue: 1.0).opacity(0.94))
+                }
+
+                if let introBody, !introBody.isEmpty {
+                    Text(introBody)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.66))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if !bullets.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(bullets, id: \.self) { bullet in
+                            HStack(alignment: .top, spacing: 7) {
+                                Text("•")
+                                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.42))
+                                Text(bullet)
+                                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.58))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                }
+
+                if !resources.isEmpty {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("추천 리소스")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.58))
+
+                        ForEach(resources) { resource in
+                            if let url = URL(string: resource.url) {
+                                Link(destination: url) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "link")
+                                            .font(.system(size: 10, weight: .bold))
+                                        Text(resource.title)
+                                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                            .lineLimit(1)
+                                        if let source = resource.source?.nonEmpty {
+                                            Text(source)
+                                                .font(.system(size: 10, weight: .medium, design: .rounded))
+                                                .foregroundStyle(.white.opacity(0.42))
+                                                .lineLimit(1)
+                                        }
+                                    }
+                                    .foregroundStyle(.white.opacity(0.74))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+            }
+            .padding(.vertical, 3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("assistant.structuredPromptContext")
+        }
+    }
+
     private func structuredPromptSubmitTitle(_ prompt: StructuredPromptRequest) -> String {
         if prompt.title?.contains("첫") == true {
             return "이걸로 시작"
         }
+        if prompt.questions.contains(where: { $0.requiresFreeText == true }) {
+            return "한 줄 보완 후 답하기"
+        }
         return "다음 질문"
     }
 
-    private func questionCard(_ question: StructuredPromptQuestion) -> some View {
-        let draft = promptDrafts[question.id] ?? StructuredAnswerDraft()
+    private func submissionState(for prompt: StructuredPromptRequest) -> AgenticViewModel.StructuredPromptSubmissionState? {
+        guard let state = viewModel.structuredPromptSubmissionState(for: prompt.sessionId),
+              state.requestId == prompt.requestId else { return nil }
+        return state
+    }
 
-        return VStack(alignment: .leading, spacing: 12) {
-            if let helperText = question.helperText?.trimmingCharacters(in: .whitespacesAndNewlines), !helperText.isEmpty {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(question.header)
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color(red: 0.82, green: 0.89, blue: 1.0).opacity(0.92))
-                    Text(helperText)
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.62))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color.white.opacity(0.055))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                        )
-                )
+    private func structuredPromptSubmissionReceipt(
+        _ state: AgenticViewModel.StructuredPromptSubmissionState,
+        compact: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: compact ? 3 : 5) {
+            HStack(spacing: 7) {
+                ProgressView()
+                    .controlSize(.mini)
+                    .scaleEffect(0.72)
+                Text(state.progressText?.nonEmpty ?? "답변 저장 중: \(state.answerSummary)")
+                    .font(.system(size: compact ? 11 : 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.66))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
+            if !compact, state.progressText?.nonEmpty != nil {
+                Text("답변: \(state.answerSummary)")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.42))
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, compact ? 10 : 12)
+        .padding(.vertical, compact ? 7 : 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: compact ? 10 : 12, style: .continuous)
+                .fill(Color.white.opacity(0.055))
+        )
+        .accessibilityIdentifier("assistant.structuredSubmissionReceipt")
+    }
+
+    private func questionCard(
+        _ question: StructuredPromptQuestion,
+        compact: Bool = false,
+        isSubmitting: Bool = false
+    ) -> some View {
+        let draft = promptDrafts[question.id] ?? StructuredAnswerDraft()
+
+        return VStack(alignment: .leading, spacing: compact ? 9 : 12) {
             Text(question.question)
-                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .font(.system(size: compact ? 15 : 14, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.92))
                 .fixedSize(horizontal: false, vertical: true)
 
+            if let helperText = question.helperText?.trimmingCharacters(in: .whitespacesAndNewlines), !helperText.isEmpty {
+                if compact {
+                    Text(helperText)
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.54))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel(helperText)
+                } else {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(question.header)
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(Color(red: 0.82, green: 0.89, blue: 1.0).opacity(0.92))
+                        Text(helperText)
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.62))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.white.opacity(0.055))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                            )
+                    )
+                }
+            }
+
             if let options = question.options, !options.isEmpty {
-                VStack(spacing: 8) {
+                VStack(spacing: compact ? 6 : 8) {
                     ForEach(options, id: \.label) { option in
-                        choiceRow(option, question: question, selected: draft.selectedOptions.contains(option.label))
+                        choiceRow(
+                            option,
+                            question: question,
+                            selected: draft.selectedOptions.contains(option.label),
+                            showDescription: !compact,
+                            disabled: isSubmitting
+                        )
                     }
                 }
             }
 
             if question.allowFreeText == true || question.options?.isEmpty != false {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("직접 입력")
+                    Text(question.requiresFreeText == true ? "한 줄 근거" : (compact ? "다른 답" : "직접 입력"))
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.52))
-                    freeTextField(question: question)
+                    freeTextField(question: question, isDisabled: isSubmitting)
                 }
             }
         }
-        .padding(14)
+        .padding(compact ? 12 : 14)
+        .opacity(isSubmitting ? 0.72 : 1)
         .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: compact ? 14 : 16, style: .continuous)
                 .fill(Color.black.opacity(0.18))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    RoundedRectangle(cornerRadius: compact ? 14 : 16, style: .continuous)
                         .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 )
         )
@@ -6107,9 +6887,12 @@ struct ContentView: View {
         _ option: StructuredPromptOption,
         question: StructuredPromptQuestion,
         selected: Bool,
-        accent: Color = ContentView.structuredChoiceAccent
+        accent: Color = ContentView.structuredChoiceAccent,
+        showDescription: Bool = true,
+        disabled: Bool = false
     ) -> some View {
         Button {
+            guard !disabled else { return }
             toggleOption(option.label, for: question)
         } label: {
             HStack(alignment: .top, spacing: 12) {
@@ -6129,10 +6912,12 @@ struct ContentView: View {
                     Text(option.label)
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.94))
-                    Text(option.description)
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.54))
-                        .fixedSize(horizontal: false, vertical: true)
+                    if showDescription {
+                        Text(option.description)
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.54))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
 
                 Spacer(minLength: 0)
@@ -6150,6 +6935,7 @@ struct ContentView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(disabled)
         .accessibilityElement(children: .ignore)
         .accessibilityIdentifier("assistant.structuredChoice.\(question.id).\(option.label)")
         .accessibilityLabel(option.label)
@@ -6158,7 +6944,7 @@ struct ContentView: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    private func freeTextField(question: StructuredPromptQuestion) -> some View {
+    private func freeTextField(question: StructuredPromptQuestion, isDisabled: Bool = false) -> some View {
         if question.textMode == .long {
             return AnyView(
                 TextEditor(
@@ -6176,6 +6962,7 @@ struct ContentView: View {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .fill(Color.black.opacity(0.16))
                 )
+                .disabled(isDisabled)
                 .accessibilityIdentifier("assistant.structuredFreeText.\(question.id)")
                 .accessibilityLabel(question.freeTextPlaceholder?.nonEmpty ?? "Type your answer")
             )
@@ -6198,6 +6985,7 @@ struct ContentView: View {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(Color.black.opacity(0.16))
             )
+            .disabled(isDisabled)
             .accessibilityIdentifier("assistant.structuredFreeText.\(question.id)")
             .accessibilityLabel(question.freeTextPlaceholder?.nonEmpty ?? "Type your answer")
         )
@@ -6355,10 +7143,10 @@ struct ContentView: View {
             return "첫 메시지 미리 적기"
         }
         if viewModel.visibleBipCoach?.currentMission != nil {
-            return "선택한 미션에 대해 물어보기"
+            return "예: 초안 써줘 / 완료 기준을 더 작게 줄여줘"
         }
         if viewModel.visibleBipCoach?.pendingMissionChoices.isEmpty == false {
-            return "후보를 고르거나 직접 질문하기"
+            return "예: 왜 1번이 추천인가요? / 더 작은 미션으로 줄여줘"
         }
         return "메시지 보내기"
     }
@@ -6521,18 +7309,16 @@ struct ContentView: View {
     private func canSubmit(_ prompt: StructuredPromptRequest) -> Bool {
         prompt.questions.allSatisfy { question in
             let draft = promptDrafts[question.id] ?? StructuredAnswerDraft()
-            let hasSelection = !draft.selectedOptions.isEmpty
-            let hasFreeText = !draft.freeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-
-            if question.allowFreeText == true {
-                return hasSelection || hasFreeText
-            }
-
-            return hasSelection
+            return question.isSatisfied(
+                selectedOptions: draft.selectedOptions,
+                freeText: draft.freeText
+            )
         }
     }
 
     private func submitPrompt(_ prompt: StructuredPromptRequest) {
+        guard submissionState(for: prompt) == nil else { return }
+
         let submissions = prompt.questions.map { question in
             let draft = promptDrafts[question.id] ?? StructuredAnswerDraft()
             return AgenticViewModel.StructuredPromptSubmission(
@@ -6543,6 +7329,7 @@ struct ContentView: View {
         }
 
         viewModel.submitStructuredPrompt(
+            sessionId: prompt.sessionId,
             requestId: prompt.requestId,
             responses: submissions
         )
@@ -6843,17 +7630,28 @@ private struct WindowChrome: NSViewRepresentable {
 }
 
 private struct WorkspaceWindowChrome: NSViewRepresentable {
+    let maximizeOnInitialInstall: Bool
+    let markInitialInstallMaximizeApplied: (() -> Void)?
+
+    final class Coordinator {
+        var didApplyInitialInstallMaximize = false
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
-        configureWindow(for: view)
+        configureWindow(for: view, context: context)
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        configureWindow(for: nsView)
+        configureWindow(for: nsView, context: context)
     }
 
-    private func configureWindow(for view: NSView) {
+    private func configureWindow(for view: NSView, context: Context) {
         DispatchQueue.main.async {
             guard let window = view.window else { return }
 
@@ -6872,7 +7670,19 @@ private struct WorkspaceWindowChrome: NSViewRepresentable {
                 window.makeKeyAndOrderFront(nil)
                 NSApp.activate(ignoringOtherApps: true)
             }
+
+            if maximizeOnInitialInstall,
+               !context.coordinator.didApplyInitialInstallMaximize {
+                context.coordinator.didApplyInitialInstallMaximize = true
+                Self.maximizeToVisibleFrame(window)
+                markInitialInstallMaximizeApplied?()
+            }
         }
+    }
+
+    private static func maximizeToVisibleFrame(_ window: NSWindow) {
+        guard let visibleFrame = (window.screen ?? NSScreen.main)?.visibleFrame else { return }
+        window.setFrame(visibleFrame, display: true, animate: false)
     }
 }
 

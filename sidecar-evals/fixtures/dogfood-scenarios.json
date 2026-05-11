@@ -70,6 +70,7 @@
       "docs": ["docs/ICP.md", "docs/GOAL.md"],
       "transcripts": ["day1-customer-interview"],
       "state": { "setup": "partial" },
+      "iddSetup": "approved",
       "proofs": []
     },
     "expected_visible_outcome": {
@@ -110,6 +111,7 @@
       "docs": ["docs/ICP.md", "docs/VALUES.md", "docs/GOAL.md", "docs/SPEC.md"],
       "transcripts": ["day1-customer-interview"],
       "state": { "bip": "running" },
+      "iddSetup": "approved",
       "proofs": ["https://threads.net/@october/post/previous-proof"]
     },
     "expected_visible_outcome": {

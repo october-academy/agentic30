@@ -465,6 +465,7 @@ function normalizeFixture(value = {}) {
     docs: normalizeStringArray(fixture.docs),
     transcripts: normalizeStringArray(fixture.transcripts),
     state: fixture.state && typeof fixture.state === "object" && !Array.isArray(fixture.state) ? fixture.state : {},
+    iddSetup: String(fixture.iddSetup || "").trim(),
     proofs: normalizeStringArray(fixture.proofs),
   };
 }

@@ -33,7 +33,10 @@ export async function createUserInputRequest(
     sessionId,
     toolName,
     title = null,
+    intro = null,
+    resources = null,
     questions,
+    generation = null,
   },
 ) {
   const requestId = randomUUID();
@@ -45,6 +48,15 @@ export async function createUserInputRequest(
     createdAt: new Date().toISOString(),
     questions,
   };
+  if (intro && typeof intro === "object") {
+    request.intro = intro;
+  }
+  if (Array.isArray(resources) && resources.length > 0) {
+    request.resources = resources;
+  }
+  if (generation && typeof generation === "object") {
+    request.generation = generation;
+  }
 
   await ensureUserInputDirs(appSupportPath);
   await fs.writeFile(

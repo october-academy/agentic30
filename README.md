@@ -14,7 +14,7 @@ npm install
 2. Confirm at least one provider is available in Settings: Claude Code login / `ANTHROPIC_API_KEY`, or Codex login / `CODEX_API_KEY` / `OPENAI_API_KEY`.
 3. Answer the onboarding questions so the app can infer your work context, role, stage, and available records.
 4. Select the project folder you want Agentic30 to coach.
-5. Open the assistant panel and confirm that Today Mission appears. Google Docs/Sheets setup is proof capture setup; it should not block the first local mission.
+5. Open the assistant panel and complete Foundation Setup. The app asks for ICP, GOAL, VALUES, and SPEC, then opens Today Mission after the four documents are approved.
 
 ## Runtime Requirements
 

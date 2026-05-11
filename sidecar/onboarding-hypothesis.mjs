@@ -171,26 +171,66 @@ function fallbackHypothesis() {
     stage: "unknown",
     evidence: [],
     confidence: "low",
-    suggestedFirstQuestion: "첫 고객을 넓은 범주로 두지 않겠습니다. 이번 주에 검증할 가장 좁은 ICP는 누구인가요?",
+    suggestedFirstQuestion: "이번 주 가장 먼저 인터뷰할 고객 유형은 누구인가요?",
   };
 }
 
 function suggestedFirstQuestion({ confidence, productName, targetUser, problem, likelyUsers, evidence }) {
+  const product = cleanSentenceFragment(userFacingProductName(productName));
   const user = cleanSentenceFragment(likelyUsers?.[0]);
   const currentIcp = cleanSentenceFragment(targetUser || user);
+  if (isAgentic30IcpContext({ productName, targetUser, problem, likelyUsers })) {
+    return "이번 주 가장 먼저 인터뷰할 1인 개발자 유형은 누구인가요?";
+  }
   if (confidence === "high" && currentIcp) {
-    const product = cleanSentenceFragment(productName);
-    const pain = cleanSentenceFragment(problem);
-    const diagnosis = product && pain
-      ? `${product}은 ${pain} 문제를 다룹니다`
-      : [product, pain].filter(Boolean).join(": ");
-    return `${diagnosis ? `진단: ${diagnosis}. ` : ""}현재 ICP가 "${currentIcp}"까지는 보입니다. 이번 주에 검증할 더 좁은 하위 ICP는 누구인가요? 절박함, 현재 대안, 연락 가능성을 기준으로 하나만 고르세요.`;
+    return `이번 주 가장 먼저 인터뷰할 ${targetSegmentFragment(currentIcp)} 유형은 누구인가요?`;
   }
-  if (confidence === "medium") {
-    const lead = naturalEvidenceLead(evidence);
-    return `${lead} 첫 고객 정의가 아직 넓습니다. 이번 주에 검증할 더 좁은 ICP는 누구인가요? 절박함, 현재 대안, 연락 가능성을 기준으로 하나만 고르세요.`;
+  if (confidence === "medium" && (product || currentIcp)) {
+    return `이번 주 먼저 만날 ${targetSegmentFragment(currentIcp || "잠재 고객")} 유형은 누구인가요?`;
   }
-  return "첫 고객을 넓은 범주로 두지 않겠습니다. 이번 주에 검증할 가장 좁은 ICP는 누구인가요?";
+  return "이번 주 가장 먼저 인터뷰할 고객 유형은 누구인가요?";
+}
+
+function isAgentic30IcpContext({ productName, targetUser, problem, likelyUsers } = {}) {
+  const text = [
+    productName,
+    targetUser,
+    problem,
+    ...(Array.isArray(likelyUsers) ? likelyUsers : []),
+  ].join(" ").toLowerCase();
+  return text.includes("agentic30")
+    || /전업\s*1인\s*개발자/.test(text)
+    || /수익\s*0원/.test(text);
+}
+
+function problemFocusFragment(value) {
+  const text = cleanSentenceFragment(value);
+  const firstClause = text.split(/[.,，、。]/)[0]?.trim() || text;
+  return shortenText(firstClause, 46);
+}
+
+function targetSegmentFragment(value) {
+  const text = cleanSentenceFragment(value);
+  const parts = text
+    .split(/[,，、]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length >= 2) return shortenText(parts.slice(0, 2).join(", "), 46);
+  return shortenText(text, 46);
+}
+
+function userFacingProductName(value) {
+  const name = cleanText(value);
+  if (!name) return "";
+  if (/workspace-[a-z0-9]{4,}$/i.test(name)) return "";
+  if (/^(tmp|temp|test)[-_]/i.test(name)) return "";
+  return name;
+}
+
+function shortenText(value, max) {
+  const text = cleanSentenceFragment(value);
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(0, max - 1)).trim()}…`;
 }
 
 function inferProjectKind({ root, packageJson, context, recentFiles }) {
