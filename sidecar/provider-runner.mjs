@@ -839,7 +839,12 @@ async function runCodexAttempt({
 }
 
 async function loadCodexSdk() {
-  codexSdkImportPromise ??= import("@openai/codex-sdk");
+  if (!codexSdkImportPromise) {
+    codexSdkImportPromise = import("@openai/codex-sdk").catch((error) => {
+      codexSdkImportPromise = null;
+      throw error;
+    });
+  }
   return codexSdkImportPromise;
 }
 

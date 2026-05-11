@@ -343,6 +343,7 @@ final class AgenticViewModel: ObservableObject {
     private var requestedWarmSessionIDs = Set<String>()
     private var requestedInitialBipGate = false
     private var requestedInitialBipMission = false
+    private var replacementSessionCreateInFlight = false
     /// Idempotency guard for the AI-driven Foundation Day 0-7 first prompt.
     /// Keyed by `"<sessionId>:day-<day>"` so the same opener is never injected
     /// twice for the same (session, day) pair, even if the sidecar replays
@@ -822,7 +823,8 @@ final class AgenticViewModel: ObservableObject {
         PostHogTelemetry.capture("mac_assistant_surface_opened", authSession: macAuthSession)
     }
 
-    func createSession(provider: AgentProvider? = nil, source: String? = nil) {
+    @discardableResult
+    func createSession(provider: AgentProvider? = nil, source: String? = nil) -> Bool {
         let resolvedProvider = provider ?? selectedProvider
         let model = preferredModel(for: resolvedProvider)
         var properties: [String: Any] = [
@@ -838,13 +840,22 @@ final class AgenticViewModel: ObservableObject {
             properties: properties,
             authSession: macAuthSession
         )
-        sidecar.send(
+        return sidecar.send(
             payload: [
                 "type": "create_session",
                 "provider": resolvedProvider.rawValue,
                 "model": model,
             ]
         )
+    }
+
+    private func createReplacementSessionIfNeeded(source: String) {
+        guard sessions.allSatisfy({ $0.archivedAt != nil }),
+              !replacementSessionCreateInFlight else { return }
+        replacementSessionCreateInFlight = true
+        if !createSession(provider: selectedProvider, source: source) {
+            replacementSessionCreateInFlight = false
+        }
     }
 
     func deleteSelectedSession() {
@@ -906,9 +917,7 @@ final class AgenticViewModel: ObservableObject {
         }
         refreshPresentationState()
 
-        if sessions.allSatisfy({ $0.archivedAt != nil }) {
-            createSession(provider: selectedProvider, source: "archive_last_visible_session")
-        }
+        createReplacementSessionIfNeeded(source: "archive_last_visible_session")
     }
 
     func stopSelectedSession() {
@@ -2101,6 +2110,7 @@ final class AgenticViewModel: ObservableObject {
             }
         case "session_created":
             if let session = event.session {
+                replacementSessionCreateInFlight = false
                 upsert(session)
                 selectedSessionID = session.id
                 PostHogTelemetry.capture("mac_session_created", properties: [
@@ -2131,11 +2141,9 @@ final class AgenticViewModel: ObservableObject {
             injectedFoundationFirstPromptKeys = injectedFoundationFirstPromptKeys.filter { !$0.hasPrefix(prefix) }
             pendingFoundationFirstPromptKeys = pendingFoundationFirstPromptKeys.filter { !$0.hasPrefix(prefix) }
             if selectedSessionID == sessionID {
-                selectedSessionID = sessions.first?.id
+                selectedSessionID = sessions.first(where: { $0.archivedAt == nil })?.id
             }
-            if sessions.isEmpty {
-                createSession(provider: selectedProvider)
-            }
+            createReplacementSessionIfNeeded(source: "delete_last_visible_session")
             refreshPresentationState()
         case "message_delta":
             guard let sessionID = event.sessionId,
@@ -2468,9 +2476,7 @@ final class AgenticViewModel: ObservableObject {
             !sessions.contains(where: { $0.id == selectedSessionID && $0.archivedAt == nil }) {
             selectedSessionID = sessions.first(where: { $0.archivedAt == nil })?.id
         }
-        if sessions.allSatisfy({ $0.archivedAt != nil }) {
-            createSession(provider: selectedProvider)
-        }
+        createReplacementSessionIfNeeded(source: "ensure_visible_session")
     }
 
     private func requestInitialBipGateIfNeeded() {
@@ -3432,6 +3438,7 @@ private extension AgenticViewModel {
            let legacyStartedAt = UserDefaults.standard.object(forKey: Self.kFoundationStartedAtKey) as? Date {
             snapshot.startedAt = legacyStartedAt
             store.save(snapshot)
+            UserDefaults.standard.removeObject(forKey: Self.kFoundationStartedAtKey)
         }
         foundationProgressState = snapshot
         foundationStartedAt = snapshot.startedAt

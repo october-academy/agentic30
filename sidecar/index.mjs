@@ -687,6 +687,7 @@ async function handleClientMessage(socket, payload) {
         : new Date().toISOString();
       session.status = "idle";
       session.error = null;
+      touch(session);
       await persistSessions();
       await syncAndBroadcastBipCoachSessionState();
       telemetry.captureEvent("mac_sidecar_session_archived", {
@@ -6058,12 +6059,23 @@ function setSessionStartupTiming(
   const now = performance.now();
   const sidecarReadyPerf = sidecarBootTiming.sidecarReadyPerf;
   const clientAuthenticatedPerf = clientSocket?.agentic30AuthenticatedAt;
+  const existingCreatedAt = typeof session.runtime?.startupTiming?.sessionCreatedAt === "string"
+    ? session.runtime.startupTiming.sessionCreatedAt
+    : null;
+  const sessionCreatedAt = existingCreatedAt || new Date().toISOString();
+  const processStartedEpochMs = Date.parse(sidecarProcessStartedAtIso);
+  const sessionCreatedEpochMs = Date.parse(sessionCreatedAt);
+  const sessionCreatedPerf = existingCreatedAt
+    && Number.isFinite(processStartedEpochMs)
+    && Number.isFinite(sessionCreatedEpochMs)
+    ? sidecarProcessStartedAt + (sessionCreatedEpochMs - processStartedEpochMs)
+    : now;
   const timing = {
     processStartedAt: sidecarProcessStartedAtIso,
     sidecarReadyAt: sidecarBootTiming.sidecarReadyAt,
     clientAuthenticatedAt: clientSocket?.agentic30AuthenticatedAtIso
       || sidecarBootTiming.lastClientAuthenticatedAt,
-    sessionCreatedAt: new Date().toISOString(),
+    sessionCreatedAt,
     processToSidecarReadyMs: sidecarBootTiming.processToSidecarReadyMs,
     processToClientAuthenticatedMs: Number.isFinite(clientAuthenticatedPerf)
       ? Math.max(0, Math.round(clientAuthenticatedPerf - sidecarProcessStartedAt))
@@ -6071,7 +6083,7 @@ function setSessionStartupTiming(
     processToCreateSessionReceivedMs: Number.isFinite(createStartedAt)
       ? Math.max(0, Math.round(createStartedAt - sidecarProcessStartedAt))
       : null,
-    processToSessionCreatedMs: Math.max(0, Math.round(now - sidecarProcessStartedAt)),
+    processToSessionCreatedMs: Math.max(0, Math.round(sessionCreatedPerf - sidecarProcessStartedAt)),
     sidecarReadyToCreateSessionReceivedMs: Number.isFinite(createStartedAt) && Number.isFinite(sidecarReadyPerf)
       ? Math.max(0, Math.round(createStartedAt - sidecarReadyPerf))
       : null,
@@ -6080,7 +6092,7 @@ function setSessionStartupTiming(
       ? Math.max(0, Math.round(createStartedAt - clientAuthenticatedPerf))
       : null,
     createSessionElapsedMs: Number.isFinite(createStartedAt)
-      ? Math.max(0, Math.round(now - createStartedAt))
+      ? Math.max(0, Math.round(sessionCreatedPerf - createStartedAt))
       : null,
     bootstrapIntakeElapsedMs: bootstrapElapsedMs,
     persistElapsedMs,
