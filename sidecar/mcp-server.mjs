@@ -74,6 +74,8 @@ const structuredQuestionSchema = z
     options: z.array(structuredOptionSchema).min(2).max(4).optional(),
     multiSelect: z.boolean().default(false),
     allowFreeText: z.boolean().default(false),
+    requiresFreeText: z.boolean().default(false),
+    helperText: z.string().max(280).optional(),
     freeTextPlaceholder: z.string().max(280).optional(),
     textMode: z.enum(["short", "long"]).optional(),
   })
@@ -86,8 +88,23 @@ const structuredQuestionSchema = z
     }
   });
 
+const structuredPromptIntroSchema = z.object({
+  title: z.string().min(1).max(120).optional(),
+  body: z.string().min(1).max(500).optional(),
+  bullets: z.array(z.string().min(1).max(180)).max(6).optional(),
+});
+
+const structuredPromptResourceSchema = z.object({
+  title: z.string().min(1).max(160),
+  source: z.string().max(80).optional(),
+  url: z.string().url().max(500),
+  description: z.string().max(240).optional(),
+});
+
 const structuredPromptSchema = {
   title: z.string().max(120).optional(),
+  intro: structuredPromptIntroSchema.optional(),
+  resources: z.array(structuredPromptResourceSchema).max(5).optional(),
   questions: z.array(structuredQuestionSchema).min(1).max(4),
 };
 
@@ -383,11 +400,13 @@ server.tool(
 );
 
 function registerUserInputTool(name, description) {
-  server.tool(name, description, structuredPromptSchema, async ({ title, questions }) => {
+  server.tool(name, description, structuredPromptSchema, async ({ title, intro, resources, questions }) => {
     const request = await createUserInputRequest(appSupportPath, {
       sessionId,
       toolName: name,
       title: title ?? null,
+      intro: intro ?? null,
+      resources: resources ?? null,
       questions,
     });
 

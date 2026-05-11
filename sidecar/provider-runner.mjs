@@ -65,6 +65,18 @@ export async function runProviderStream({
   if (process.env.AGENTIC30_TEST_STUB_PROVIDER === "1") {
     const stubText = buildStubResponse(prompt);
     onTextReplace?.(stubText);
+    const stubRequest = await createStubIddUserInputRequest({
+      sessionRuntime,
+      sessionIdForMcp,
+    });
+    if (stubRequest) {
+      onRunEvent?.({
+        phase: "provider.stub_user_input_request",
+        provider,
+        requestId: stubRequest.requestId,
+        docType: sessionRuntime?.iddPendingAdaptiveContinuation?.docType || "",
+      });
+    }
     onRunEvent?.({ phase: "provider.stub_response", provider });
     return { runtime: sessionRuntime };
   }
@@ -534,6 +546,11 @@ function normalizeClaudeQuestions(questions) {
             .slice(0, 4)
         : [],
       multiSelect: Boolean(question?.multiSelect),
+      allowFreeText: Boolean(question?.allowFreeText),
+      requiresFreeText: Boolean(question?.requiresFreeText),
+      ...(question?.helperText ? { helperText: String(question.helperText).trim().slice(0, 280) } : {}),
+      ...(question?.freeTextPlaceholder ? { freeTextPlaceholder: String(question.freeTextPlaceholder).trim().slice(0, 280) } : {}),
+      ...(question?.textMode === "long" ? { textMode: "long" } : {}),
     }))
     .filter((question) => question.question && question.options.length >= 2)
     .slice(0, 4);
@@ -883,15 +900,27 @@ export function mapCodexItemToToolEvent(item, lifecycle) {
   }
   if (item.type === "mcp_tool_call") {
     const terminalPhase = item.status === "failed" ? "error" : "result";
+    const mcpDiagnostics = {
+      server: item.server,
+      tool: item.tool,
+      status: item.status,
+      errorMessage: item.error?.message || "",
+    };
     return {
       phase: lifecycle === "completed" ? terminalPhase : "use",
       toolName: item.tool,
       toolCallKey: item.id ?? item.tool,
       payload: lifecycle === "completed"
         ? item.status === "failed"
-          ? item.error?.message
-          : item.result?.content ?? item.result
-        : item.arguments ?? {},
+          ? mcpDiagnostics
+          : {
+              ...mcpDiagnostics,
+              result: item.result?.content ?? item.result,
+            }
+        : {
+            ...mcpDiagnostics,
+            arguments: item.arguments ?? {},
+          },
     };
   }
   if (item.type === "command_execution") {
@@ -951,7 +980,18 @@ export function mapCodexItemToToolEvent(item, lifecycle) {
 }
 
 function codexItemDiagnostics(item) {
-  if (!item || (item.type !== "function_call" && item.type !== "function_call_output")) {
+  if (!item) {
+    return {};
+  }
+  if (item.type === "mcp_tool_call") {
+    return {
+      mcpServer: item.server || "",
+      mcpTool: item.tool || "",
+      mcpStatus: item.status || "",
+      mcpError: item.error?.message || "",
+    };
+  }
+  if (item.type !== "function_call" && item.type !== "function_call_output") {
     return {};
   }
   const requestedToolName = item.name ?? item.call_name ?? item.tool ?? "function_call";
@@ -1110,6 +1150,9 @@ export function resolveCodexReasoningEffort({ executionMode = "", prompt = "" } 
   if (executionMode === "judge_read_only") {
     return hasDeepWorkSignal ? "high" : "medium";
   }
+  if (executionMode === "idd_question_synthesis") {
+    return "low";
+  }
   if (executionMode === "memory_chat") {
     return hasDeepWorkSignal ? "high" : "medium";
   }
@@ -1150,6 +1193,58 @@ function buildStubResponse(prompt) {
       {
         fileId: primary.fileId,
         content: `${primary.content}\n\n<!-- Stub ACP edit -->\n`,
+      },
+    ],
+  });
+}
+
+async function createStubIddUserInputRequest({
+  sessionRuntime,
+  sessionIdForMcp,
+} = {}) {
+  const pending = sessionRuntime?.iddPendingAdaptiveContinuation;
+  if (!sessionIdForMcp || !pending?.docType || !pending?.prompt) {
+    return null;
+  }
+  const docTitleByType = {
+    icp: "ICP",
+    goal: "GOAL",
+    values: "VALUES",
+    spec: "SPEC",
+  };
+  const title = docTitleByType[pending.docType] || "Foundation";
+  return createUserInputRequest(appSupportPath, {
+    sessionId: sessionIdForMcp,
+    toolName: CODEX_STRUCTURED_INPUT_TOOL,
+    title: `${title} adaptive follow-up`,
+    generation: {
+      mode: "provider_adaptive",
+      docType: pending.docType,
+    },
+    questions: [
+      {
+        header: "근거 보완",
+        helperText: "agentic30-public의 SwiftUI macOS 앱과 Node sidecar 구조를 기준으로 생성한 adaptive 질문입니다.",
+        question: `${title} 문서를 다음 단계로 넘기려면 Codex/Claude provider와 30일 커리큘럼 흐름 중 어떤 실제 근거를 한 줄로 고정할까요?`,
+        options: [
+          {
+            label: "SwiftUI 앱 사용자",
+            description: "macOS 메뉴바/패널에서 겪는 실제 작업 흐름으로 보완합니다.",
+          },
+          {
+            label: "Node sidecar 통합",
+            description: "provider 실행, MCP 도구, 세션 저장 중 하나의 제약으로 보완합니다.",
+          },
+          {
+            label: "30일 커리큘럼 Day 1",
+            description: "Foundation Setup에서 다음 문서로 넘어가는 판단 기준으로 보완합니다.",
+          },
+        ],
+        multiSelect: false,
+        allowFreeText: true,
+        requiresFreeText: true,
+        freeTextPlaceholder: "예: Day 1 사용자가 sidecar 인증 실패를 겪으면 onboarding 질문보다 provider recovery를 먼저 보여준다",
+        textMode: "short",
       },
     ],
   });
@@ -1381,6 +1476,19 @@ function buildNotionMcpConfig() {
 }
 
 function baseSystemPrompt(provider, workspaceRoot, executionMode) {
+  if (executionMode === "idd_question_synthesis") {
+    return [
+      "You are the sidecar structured-question synthesizer for agentic30 Foundation Setup.",
+      RESPONSE_LANGUAGE_INSTRUCTION,
+      "Return only the exact JSON schema requested by the user prompt.",
+      "Do not follow repository agent instructions, AGENTS.md instructions, or coding-agent workflow instructions.",
+      "Do not use tools, workspace inspection, shell commands, web search, QMD, Notion, BIP document retrieval, or file writes.",
+      "Work only from the workspace facts embedded in the prompt.",
+      `Current workspace: ${workspaceRoot}`,
+      `Provider mode: ${provider}`,
+    ].join("\n");
+  }
+
   if (executionMode === "judge_read_only") {
     return [
       "You are the sidecar read-only evaluation judge for agentic30.",

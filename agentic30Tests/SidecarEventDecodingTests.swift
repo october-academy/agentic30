@@ -278,39 +278,60 @@ struct SidecarEventDecodingTests {
             "pendingUserInput": {
               "requestId": "request-icp-1",
               "sessionId": "idd-session-1",
-              "toolName": "request_user_input",
-              "title": "첫 ICP 구체화",
+              "toolName": "agentic30_request_user_input",
+              "title": "ICP 1/4",
               "createdAt": "2026-04-27T01:00:01.000Z",
+              "intro": {
+                "title": "ICP (Ideal Customer Profile)",
+                "body": "ICP는 가장 먼저 집중할 이상적 고객 유형입니다. 처음부터 완벽하게 쓰기보다, 이번 주 실제로 연락하고 인터뷰할 수 있는 좁은 고객 후보 하나를 고르면 됩니다.",
+                "bullets": [
+                  "상황: 직함보다 지금 어떤 문제 상황에 있는지",
+                  "현재 대안: 지금 어떤 수작업이나 도구로 버티는지"
+                ]
+              },
+              "resources": [
+                {
+                  "title": "How we found our Ideal Customer Profile",
+                  "source": "PostHog",
+                  "url": "https://posthog.com/founders/creating-ideal-customer-profile",
+                  "description": "PostHog가 ICP를 좁힌 과정입니다."
+                }
+              ],
+              "generation": {
+                "mode": "host_structured",
+                "docType": "icp"
+              },
               "questions": [
                 {
-                  "header": "ICP 좁히기",
-                  "helperText": "진단: 제품: Agentic30 / 대상: 전업 1인 개발자, 수익 0원, macOS 사용자 / 문제: 만들 줄은 있지만 무엇을 만들어야 팔리는지 모른다 / 목적: 30일 안에 PMF 검증 방향을 좁힌다. 오늘은 이 범주를 더 좁혀 첫 ICP 후보 하나를 고릅니다.",
-                  "question": "Agentic30은 전업 1인 개발자, 수익 0원, macOS 사용자의 만들 줄은 있지만 무엇을 만들어야 팔리는지 모른다 문제를 다룹니다.\\n첫 ICP를 이 범주 전체로 두면 너무 넓습니다. 이번 주에 검증할 가장 좁은 하위 ICP는 누구인가요?",
+                  "header": "첫 고객",
+                  "helperText": "README와 최근 변경을 보면 agentic30-public의 SwiftUI macOS 앱입니다.",
+                  "question": "agentic30-public의 SwiftUI macOS 앱과 Node sidecar 흐름에서 Day 1에 먼저 검증할 사용자는 누구인가요?",
                   "options": [
                     {
-                      "label": "퇴사 후 수익 0원 1인 개발자",
-                      "description": "저축 소진 압박이 있어 30일 안에 사용자 증거와 첫 매출 신호를 원합니다.",
-                      "nextIntent": "full_time_zero_revenue_indie"
+                      "label": "Codex/Claude 전환 사용자",
+                      "description": "provider 인증과 실행 전환에서 막히는 실제 사용자입니다.",
+                      "nextIntent": "provider_switch_user"
                     },
                     {
-                      "label": "에이전트로 MVP 만든 개발자",
-                      "description": "Claude/Codex로 만들 수 있지만 무엇을 팔지, 누구에게 물을지 막혀 있습니다.",
-                      "nextIntent": "agent_built_mvp_no_customers"
+                      "label": "30일 커리큘럼 참가자",
+                      "description": "Foundation Setup 문서를 통과해야 다음 Day로 넘어갑니다.",
+                      "nextIntent": "curriculum_day1_user"
                     },
                     {
-                      "label": "인터뷰/BIP 기록 의향 있음",
-                      "description": "프로젝트 path, 업무 일지, 고객 인터뷰, 공개 기록을 매일 입력할 수 있습니다.",
-                      "nextIntent": "records_ready_builder"
+                      "label": "macOS 메뉴바 앱 사용자",
+                      "description": "SwiftUI panel에서 질문/응답 정체를 직접 겪습니다.",
+                      "nextIntent": "macos_panel_user"
                     },
                     {
-                      "label": "다른 하위 ICP",
-                      "description": "자유입력에 역할, 상황, 현재 대안, 연락 가능성을 함께 적습니다.",
+                      "label": "직접 입력",
+                      "description": "역할, 상황, 현재 대안을 한 줄로 적습니다.",
                       "nextIntent": "other_specific_icp"
                     }
                   ],
                   "multiSelect": false,
                   "allowFreeText": true,
-                  "freeTextPlaceholder": "예: 현재 Claude Code로 MVP는 만들었지만 유료 고객이 없는 macOS 1인 개발자",
+                  "requiresFreeText": true,
+                  "freeTextPlaceholder": "예: Day 1 참가자가 provider 인증 실패 후 질문에 갇힌다",
                   "textMode": "short"
                 }
               ]
@@ -330,13 +351,23 @@ struct SidecarEventDecodingTests {
 
         #expect(event.type == "session_updated")
         #expect(event.session?.status == .awaitingInput)
-        #expect(event.session?.pendingUserInput?.toolName == "request_user_input")
-        #expect(event.session?.pendingUserInput?.title == "첫 ICP 구체화")
-        #expect(event.session?.pendingUserInput?.questions.first?.helperText?.contains("Agentic30") == true)
-        #expect(event.session?.pendingUserInput?.questions.first?.question.contains("가장 좁은 하위 ICP") == true)
-        #expect(event.session?.pendingUserInput?.questions.first?.options?.map(\.label) == ["퇴사 후 수익 0원 1인 개발자", "에이전트로 MVP 만든 개발자", "인터뷰/BIP 기록 의향 있음", "다른 하위 ICP"])
+        #expect(event.session?.pendingUserInput?.toolName == "agentic30_request_user_input")
+        #expect(event.session?.pendingUserInput?.title == "ICP 1/4")
+        #expect(event.session?.pendingUserInput?.intro?.title == "ICP (Ideal Customer Profile)")
+        #expect(event.session?.pendingUserInput?.intro?.body?.contains("실제로 연락하고 인터뷰") == true)
+        #expect(event.session?.pendingUserInput?.intro?.bullets?.contains("현재 대안: 지금 어떤 수작업이나 도구로 버티는지") == true)
+        #expect(event.session?.pendingUserInput?.resources?.first?.source == "PostHog")
+        #expect(event.session?.pendingUserInput?.resources?.first?.url == "https://posthog.com/founders/creating-ideal-customer-profile")
+        #expect(event.session?.pendingUserInput?.generation?.mode == "host_structured")
+        #expect(event.session?.pendingUserInput?.generation?.docType == "icp")
+        #expect(event.session?.pendingUserInput?.isProviderAdaptiveIddQuestion == true)
+        #expect(event.session?.pendingUserInput?.isLegacyStaticIddQuestion == false)
+        #expect(event.session?.pendingUserInput?.questions.first?.helperText?.contains("agentic30-public") == true)
+        #expect(event.session?.pendingUserInput?.questions.first?.question.contains("SwiftUI macOS 앱") == true)
+        #expect(event.session?.pendingUserInput?.questions.first?.options?.map(\.label) == ["Codex/Claude 전환 사용자", "30일 커리큘럼 참가자", "macOS 메뉴바 앱 사용자", "직접 입력"])
         #expect(event.session?.pendingUserInput?.questions.first?.options?.last?.nextIntent == "other_specific_icp")
-        #expect(event.session?.pendingUserInput?.questions.first?.freeTextPlaceholder?.contains("유료 고객") == true)
+        #expect(event.session?.pendingUserInput?.questions.first?.requiresFreeText == true)
+        #expect(event.session?.pendingUserInput?.questions.first?.freeTextPlaceholder?.contains("provider 인증 실패") == true)
     }
 
     @MainActor @Test func decodesBipCoachStateWithOwningSession() throws {
@@ -373,6 +404,50 @@ struct SidecarEventDecodingTests {
         #expect(event.bipCoach?.streak.current == 2)
     }
 
+    @MainActor @Test func identifiesLegacyStaticIddStructuredPromptPayload() throws {
+        let payload = """
+        {
+          "type": "session_updated",
+          "session": {
+            "id": "idd-session-legacy",
+            "title": "Foundation Setup: ICP",
+            "provider": "codex",
+            "model": "",
+            "status": "awaiting_input",
+            "createdAt": "2026-04-27T01:00:00.000Z",
+            "updatedAt": "2026-04-27T01:00:01.000Z",
+            "error": null,
+            "messages": [],
+            "pendingUserInput": {
+              "requestId": "request-static-1",
+              "sessionId": "idd-session-legacy",
+              "toolName": "request_user_input",
+              "title": "ICP 1/4",
+              "createdAt": "2026-04-27T01:00:01.000Z",
+              "questions": [
+                {
+                  "header": "첫 고객",
+                  "question": "이번 주 바로 인터뷰할 첫 고객은 누구인가요?",
+                  "options": [
+                    { "label": "가장 절박한 하위 ICP", "description": "legacy" }
+                  ],
+                  "allowFreeText": true,
+                  "freeTextPlaceholder": "예: MVP는 있지만 유료 고객이 없는 macOS 1인 개발자",
+                  "textMode": "short"
+                }
+              ]
+            },
+            "runtime": { "iddDocumentType": "icp" }
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.session?.pendingUserInput?.isLegacyStaticIddQuestion == true)
+        #expect(event.session?.pendingUserInput?.isProviderAdaptiveIddQuestion == false)
+    }
+
     @MainActor @Test func decodesWorkspaceScanResultWithGoal() throws {
         let payload = """
         {
@@ -394,7 +469,7 @@ struct SidecarEventDecodingTests {
             "stage": "prototype",
             "evidence": ["README: Agentic30"],
             "confidence": "high",
-            "suggestedFirstQuestion": "현재 ICP가 전업 1인 개발자까지는 보입니다. 이번 주에 검증할 더 좁은 하위 ICP는 누구인가요?"
+            "suggestedFirstQuestion": "이번 주 바로 인터뷰할 첫 고객은 누구인가요?"
           }
         }
         """
@@ -563,6 +638,81 @@ struct SidecarEventDecodingTests {
         #expect(event.diagnostics?.environment?.codex.sdk?.packageName == "@openai/codex-sdk")
         #expect(event.diagnostics?.preflight?.status == "warning")
         #expect(event.diagnostics?.preflight?.checks.first?.id == "provider-auth")
+    }
+
+    @MainActor @Test func decodesIddSetupGateFields() throws {
+        let payload = """
+        {
+          "type": "idd_setup_state",
+          "sessionId": "session-1",
+          "iddSetupComplete": false,
+          "iddSetupStatus": "preview_ready",
+          "iddCurrentDocType": "spec",
+          "iddAmbiguityScore": 18,
+          "iddUnresolvedAssumptions": ["pricing proof"],
+          "iddDocOrder": ["icp", "goal", "values", "spec"],
+          "iddDocPreviews": [
+            {
+              "type": "icp",
+              "title": "ICP",
+              "path": "docs/ICP.md",
+              "status": "drafted",
+              "content": "# ICP"
+            }
+          ],
+          "iddProviderRecovery": {
+            "provider": "codex",
+            "message": "Sign in with Codex",
+            "actionId": "sign_in_codex"
+          },
+          "iddSetupError": {
+            "provider": "codex",
+            "docType": "icp",
+            "message": "질문 카드 준비가 중단됐습니다.",
+            "recoverable": true
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "idd_setup_state")
+        #expect(event.iddSetupComplete == false)
+        #expect(event.iddSetupStatus == "preview_ready")
+        #expect(event.iddCurrentDocType == "spec")
+        #expect(event.iddAmbiguityScore == 18)
+        #expect(event.iddUnresolvedAssumptions == ["pricing proof"])
+        #expect(event.iddDocOrder == ["icp", "goal", "values", "spec"])
+        #expect(event.iddDocPreviews?.first?.path == "docs/ICP.md")
+        #expect(event.iddProviderRecovery?.provider == .codex)
+        #expect(event.iddProviderRecovery?.actionId == "sign_in_codex")
+        #expect(event.iddSetupError?.provider == .codex)
+        #expect(event.iddSetupError?.docType == "icp")
+        #expect(event.iddSetupError?.recoverable == true)
+    }
+
+    @MainActor @Test func decodesIddSetupProgressFields() throws {
+        let payload = """
+        {
+          "type": "idd_setup_progress",
+          "sessionId": "session-1",
+          "requestId": "request-1",
+          "docType": "icp",
+          "stage": "recording_response",
+          "progressText": "ICP 문서에 반영 중",
+          "elapsedMs": 132
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "idd_setup_progress")
+        #expect(event.sessionId == "session-1")
+        #expect(event.requestId == "request-1")
+        #expect(event.docType == "icp")
+        #expect(event.stage == "recording_response")
+        #expect(event.progressText == "ICP 문서에 반영 중")
+        #expect(event.elapsedMs == 132)
     }
 
     private var decoder: JSONDecoder {

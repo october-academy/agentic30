@@ -128,6 +128,7 @@ struct ChatMessageDecodingTests {
             ],
             multiSelect: false,
             allowFreeText: false,
+            requiresFreeText: nil,
             freeTextPlaceholder: nil,
             textMode: .short
         )
@@ -177,5 +178,39 @@ struct ChatMessageDecodingTests {
         #expect(throws: DecodingError.self) {
             _ = try decoder.decode(ChatMessage.self, from: payload)
         }
+    }
+
+    @MainActor @Test func structuredPromptQuestionRequiresFreeTextWhenRequested() throws {
+        let payload = """
+        {
+          "id": "msg-requires-free-text",
+          "role": "assistant",
+          "provider": "codex",
+          "content": "한 줄 근거를 입력해 주세요",
+          "state": "final",
+          "createdAt": "2026-04-29T01:30:00.000Z",
+          "error": null,
+          "inlineDecision": {
+            "header": "근거 보완",
+            "question": "VALUES를 쓸 수 있게 이 빠진 근거를 한 줄로 보완해주세요.",
+            "helperText": "Ambiguity 65% · 목표 20% 이하",
+            "options": [
+              { "label": "리스크/실패 조건으로 보완", "description": "틀렸을 때 무엇을 실패로 볼지 적습니다.", "preview": null, "nextIntent": "tradeoff" }
+            ],
+            "multiSelect": false,
+            "allowFreeText": true,
+            "requiresFreeText": true,
+            "freeTextPlaceholder": "예: 이번 주 확인 가능한 실패 조건",
+            "textMode": "short"
+          }
+        }
+        """.data(using: .utf8)!
+
+        let message = try Self.makeDecoder().decode(ChatMessage.self, from: payload)
+        let question = try #require(message.inlineDecision)
+
+        #expect(question.requiresFreeText == true)
+        #expect(question.isSatisfied(selectedOptions: ["리스크/실패 조건으로 보완"], freeText: "") == false)
+        #expect(question.isSatisfied(selectedOptions: ["리스크/실패 조건으로 보완"], freeText: "5명 중 0명이 과거 행동을 말하지 못하면 ICP를 다시 좁힌다") == true)
     }
 }

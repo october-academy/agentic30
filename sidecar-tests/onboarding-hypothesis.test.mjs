@@ -51,7 +51,7 @@ test("deriveWorkspaceOnboardingHypothesisLocally infers project context from REA
     assert.match(hypothesis.targetUser, /전업 1인 개발자|developers using Codex/i);
     assert.equal(hypothesis.stage, "first_users");
     assert.ok(hypothesis.likelyUsers.includes("AI 코딩 도구를 쓰는 개발자"));
-    assert.match(hypothesis.suggestedFirstQuestion, /더 좁은 하위 ICP|가장 좁은 ICP/);
+    assert.match(hypothesis.suggestedFirstQuestion, /가장 먼저 인터뷰할 1인 개발자 유형/);
     assert.ok(hypothesis.evidence.some((item) => item.includes("README")));
   });
 });
@@ -75,7 +75,7 @@ test("normalizeWorkspaceOnboardingHypothesis keeps malformed provider output saf
       stage: "prototype",
       evidence: ["README"],
       confidence: "low",
-      suggestedFirstQuestion: "첫 고객을 넓은 범주로 두지 않겠습니다. 이번 주에 검증할 가장 좁은 ICP는 누구인가요?",
+      suggestedFirstQuestion: "이번 주 가장 먼저 인터뷰할 고객 유형은 누구인가요?",
     },
   );
 });
@@ -100,8 +100,8 @@ test("normalizeWorkspaceOnboardingHypothesis accepts provider snake_case fields"
   assert.equal(hypothesis.problem, "무엇을 만들어야 팔리는지 모른다");
   assert.equal(hypothesis.purpose, "30일 안에 PMF 검증 방향을 좁힌다");
   assert.deepEqual(hypothesis.likelyUsers, ["AI 코딩 도구를 쓰는 개발자"]);
-  assert.match(hypothesis.suggestedFirstQuestion, /첫 고객 정의가 아직 넓/);
-  assert.match(hypothesis.suggestedFirstQuestion, /더 좁은 ICP/);
+  assert.match(hypothesis.suggestedFirstQuestion, /1인 개발자/);
+  assert.match(hypothesis.suggestedFirstQuestion, /가장 먼저 인터뷰/);
 });
 
 test("mergeWorkspaceOnboardingHypotheses combines local and provider evidence", () => {
@@ -132,7 +132,7 @@ test("mergeWorkspaceOnboardingHypotheses combines local and provider evidence", 
   assert.equal(merged.confidence, "high");
   assert.deepEqual(merged.likelyUsers, ["개발자", "AI 코딩 도구를 쓰는 개발자"]);
   assert.deepEqual(merged.evidence, ["README", "package.json"]);
-  assert.match(merged.suggestedFirstQuestion, /더 좁은 하위 ICP|가장 좁은 ICP/);
+  assert.match(merged.suggestedFirstQuestion, /가장 먼저 인터뷰할 1인 개발자 유형/);
 });
 
 test("mergeWorkspaceOnboardingHypotheses keeps concrete kind when highest confidence is unknown", () => {

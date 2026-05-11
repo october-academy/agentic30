@@ -538,11 +538,11 @@ final class agentic30UITests: XCTestCase {
         }
         XCTAssertTrue(promptVisible)
         XCTAssertTrue(structuredPromptTitle.waitForExistence(timeout: 2))
-        XCTAssertTrue(app.staticTexts["ICP 좁히기"].waitForExistence(timeout: 2))
-        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "다른 하위 ICP")).firstMatch.waitForExistence(timeout: 2))
+        XCTAssertTrue(app.staticTexts["첫 고객"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "직접 입력")).firstMatch.waitForExistence(timeout: 2))
 
         let unknownChoice = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == %@", "다른 하위 ICP"))
+            .matching(NSPredicate(format: "label == %@", "직접 입력"))
             .firstMatch
         clickCenter(of: unknownChoice)
 
@@ -560,6 +560,14 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(continueButton.waitForExistence(timeout: 2))
         XCTAssertTrue(waitUntilEnabled(continueButton, timeout: 2))
         clickCenter(of: continueButton)
+
+        XCTAssertTrue(structuredPrompt.waitForExistence(timeout: 1))
+        XCTAssertTrue(app.descendants(matching: .any)["assistant.structuredSubmissionReceipt"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", "저장 중"))
+            .firstMatch
+            .waitForExistence(timeout: 2))
+        XCTAssertFalse(app.descendants(matching: .any)["workspace.iddSetup.waiting"].exists)
     }
 
     @MainActor
@@ -974,6 +982,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-seed-auth",
             "--ui-testing-seed-onboarding-context",
             "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
             "--ui-testing-sidecar-failure",
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
@@ -998,7 +1007,7 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
-    func testWorkspaceStartupShowsDayOneAndQueuesFirstPrompt() throws {
+    func testWorkspaceStartupShowsFoundationSetupAndLocksNavigation() throws {
         let workspacePath = "/tmp/agentic30-ui-startup-queue-\(UUID().uuidString)"
         resetDirectory(at: workspacePath)
         let app = launchApp(arguments: [
@@ -1018,38 +1027,29 @@ final class agentic30UITests: XCTestCase {
             self.removeDirectory(at: workspacePath)
         }
 
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirstSurface"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetupSurface"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.descendants(matching: .any)["workspace.missionFirstSurface"].exists)
         XCTAssertTrue(app.staticTexts["Day 1 · 고객의 어제 행동에서 통증 1개를 압축한다"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["workspace.day.1"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["workspace.day.2"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["workspace.day.8"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["workspace.curriculumFutureModule"].exists)
-        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Day 1을 마쳐야 접근할 수 있어요")).firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetup.progress"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetup.doc.icp"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetup.doc.goal"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetup.doc.values"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetup.doc.spec"].exists)
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Foundation Setup을 승인해야 이동할 수 있어요")).firstMatch.exists)
         app.descendants(matching: .any)["workspace.day.2"].click()
         XCTAssertTrue(app.staticTexts["Day 1 · 고객의 어제 행동에서 통증 1개를 압축한다"].waitForExistence(timeout: 2))
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirstSurface"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetupSurface"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["workspace.startupStatusRail"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["workspace.startupQueueHint"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["workspace.curriculumFocus"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["workspace.chatAssistant"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["workspace.queueBipMission"].exists)
-
-        let promptComposer = textField(in: app, matching: [
-            "assistant.promptComposer",
-            "첫 메시지 미리 적기",
-        ])
-        XCTAssertTrue(promptComposer.waitForExistence(timeout: 5))
-        enterPrompt("로딩 중 첫 액션을 미리 적는다", in: app, promptComposer: promptComposer)
-
-        let sendButton = button(in: app, matching: [
-            "assistant.sendPromptButton",
-            "Send prompt",
-        ])
-        XCTAssertTrue(waitUntilEnabled(sendButton, timeout: 5))
-        clickCenter(of: sendButton)
-
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.startupQueue.cancel"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["로딩 중 첫 액션을 미리 적는다"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["assistant.promptComposer"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["workspace.generateBipMission"].exists)
     }
 
     @MainActor
@@ -1062,6 +1062,7 @@ final class agentic30UITests: XCTestCase {
                 "--ui-testing-seed-auth",
                 "--ui-testing-seed-onboarding-context",
                 "--ui-testing-seed-workspace=\(workspacePath)",
+                "--ui-testing-seed-idd-complete",
                 "--ui-testing-disable-sidecar",
                 "--ui-testing-open-workspace",
                 "--ui-testing-opaque-window",
@@ -1108,6 +1109,7 @@ final class agentic30UITests: XCTestCase {
                 "--ui-testing-seed-onboarding-context",
                 "--ui-testing-seed-workspace=\(workspacePath)",
                 "--ui-testing-disable-sidecar",
+                "--ui-testing-seed-idd-complete",
                 "--ui-testing-seed-bip-local-mission-choices",
                 "--ui-testing-open-workspace",
                 "--ui-testing-opaque-window",
@@ -1127,8 +1129,27 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirstSurface"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["workspace.bipCoach.inlineModule"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["workspace.chat.bipMissionCard"].exists)
+        XCTAssertTrue(app.staticTexts["프로젝트를 읽고 오늘 검증할 행동 하나를 고르세요"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.introCard"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.introToggle"].exists)
+        app.descendants(matching: .any)["workspace.missionFirst.introToggle"].click()
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.introDemo"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.guide"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.guideStep.1"].exists)
+        XCTAssertTrue(app.staticTexts["프로젝트 기준 확인"].exists)
+        XCTAssertTrue(app.staticTexts["오늘 실행 하나 선택"].exists)
+        XCTAssertTrue(app.staticTexts["필요한 초안 요청"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.choices"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "첫 고객 후보 3명 정하기")).firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.recommendationReason"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.choiceEvidence"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.choiceOutcome"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.choicePrimaryAction"].exists)
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "이 미션으로 시작")).firstMatch.exists)
+        XCTAssertTrue(textField(in: app, matching: [
+            "assistant.promptComposer",
+            "예: 왜 1번이 추천인가요? / 더 작은 미션으로 줄여줘",
+        ]).exists)
         XCTAssertFalse(app.staticTexts["먼저 프로젝트 기준과 기록 장소를 준비합니다."].exists)
         XCTAssertFalse(app.descendants(matching: .any)["workspace.settingsPage"].exists)
     }
@@ -1144,6 +1165,7 @@ final class agentic30UITests: XCTestCase {
                 "--ui-testing-seed-onboarding-context",
                 "--ui-testing-seed-workspace=\(workspacePath)",
                 "--ui-testing-disable-sidecar",
+                "--ui-testing-seed-idd-complete",
                 "--ui-testing-seed-bip-local-mission-choices",
                 "--ui-testing-open-bip-notification=morning",
                 "--ui-testing-opaque-window",
@@ -1179,6 +1201,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-seed-auth",
             "--ui-testing-seed-onboarding-context",
             "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
             "--ui-testing-sidecar-failure",
             "--ui-testing-open-workspace",
             "--ui-testing-open-bip-notification=morning",
@@ -1215,6 +1238,7 @@ final class agentic30UITests: XCTestCase {
                 "--ui-testing-seed-onboarding-context",
                 "--ui-testing-seed-workspace=\(workspacePath)",
                 "--ui-testing-disable-sidecar",
+                "--ui-testing-seed-idd-complete",
                 "--ui-testing-seed-bip-current-mission",
                 "--ui-testing-open-bip-notification=evening",
                 "--ui-testing-opaque-window",

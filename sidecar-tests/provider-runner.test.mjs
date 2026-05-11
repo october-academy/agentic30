@@ -386,6 +386,28 @@ test("mapCodexItemToToolEvent normalizes streamed Codex item lifecycle events", 
       },
     },
   );
+  assert.deepEqual(
+    mapCodexItemToToolEvent({
+      id: "mcp-1",
+      type: "mcp_tool_call",
+      server: "agentic30_sidecar",
+      tool: "list_workspace_files",
+      arguments: { relativePath: "." },
+      status: "failed",
+      error: { message: "user cancelled MCP tool call" },
+    }, "completed"),
+    {
+      phase: "error",
+      toolName: "list_workspace_files",
+      toolCallKey: "mcp-1",
+      payload: {
+        server: "agentic30_sidecar",
+        tool: "list_workspace_files",
+        status: "failed",
+        errorMessage: "user cancelled MCP tool call",
+      },
+    },
+  );
 });
 
 function restoreEnv(name, value) {

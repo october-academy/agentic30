@@ -21,6 +21,10 @@ test("user input request lifecycle round-trips through request and response file
     sessionId: "session-1",
     toolName: "agentic30_request_user_input",
     title: "assistant needs a choice",
+    generation: {
+      mode: "provider_adaptive",
+      docType: "icp",
+    },
     questions: [
       {
         header: "Scope",
@@ -40,6 +44,10 @@ test("user input request lifecycle round-trips through request and response file
   assert.equal(requests.length, 1);
   assert.equal(requests[0].requestId, request.requestId);
   assert.equal(requests[0].toolName, "agentic30_request_user_input");
+  assert.deepEqual(requests[0].generation, {
+    mode: "provider_adaptive",
+    docType: "icp",
+  });
 
   const waitPromise = waitForUserInputResponse(appSupportPath, {
     sessionId: "session-1",

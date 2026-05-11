@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
-import { WebSocketServer } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { MetaAdsClient } from "./meta-ads.mjs";
 import { buildAdStrategyPrompt } from "./ad-strategy-prompt.mjs";
@@ -100,14 +100,31 @@ import {
 } from "./bip-readiness.mjs";
 import {
   BIP_REQUIRED_LOCAL_DOCS,
+  IDD_FOUNDATION_DOCS,
+  approveIddSetupDocuments,
+  buildIddApprovalSummary,
+  buildIddFollowupStructuredInputForDoc,
   buildIddContinuationPrompt,
   buildIddDocumentPrompt,
+  buildIddSetupGateStatus,
+  decorateIcpStructuredInput,
   deriveLocalDocReadinessRows,
   docTypeFromLocalRowId,
-  getBipSetupGateStatus,
   genericIddUserFacingTitle,
   initialIddStructuredInputForDoc,
+  isMissingIcpContextIntro,
+  isStaleAwkwardIcpUserInputRequest,
+  isLegacyStaticIddUserInputRequest,
+  isStaleGenericHostIddUserInputRequest,
+  loadIddSetupState,
+  markStaleIddInterviewingState,
+  nextIddFoundationDoc,
+  persistIddSetupState,
+  recordIddStructuredResponse,
   requiredDocByType,
+  serializeIddSetupFields,
+  setIddSetupError,
+  setIddProviderRecovery,
   summarizeBipSetupGate,
 } from "./idd-doc-gate.mjs";
 import {
@@ -210,6 +227,7 @@ const state = {
   resolvedUserInputIds: new Set(),
   sessionStoreWarnings: [],
   bipCoach: null,
+  iddSetup: null,
   bipCoachRunning: false,
   providerAuthRuns: new Map(),
   workspaceOnboardingHypothesis: null,
@@ -225,6 +243,8 @@ const state = {
     foundCount: 0,
   },
 };
+
+let workspaceOnboardingHypothesisWarmup = null;
 const chatBipExternalContextCache = new Map();
 
 // Foundation Phase day-derivation utilities live in `foundation-chat.mjs`
@@ -239,8 +259,9 @@ function currentBipConfig() {
 }
 
 function currentBipSetupGate() {
-  return getBipSetupGateStatus({
+  return buildIddSetupGateStatus({
     workspaceRoot,
+    iddSetupState: state.iddSetup,
     bipCoachState: state.bipCoach,
     bipConfig: currentBipConfig(),
   });
@@ -255,8 +276,112 @@ state.bipCoach = mergeBipConfigIntoCoachState(
   currentBipConfig(),
 );
 state.bipCoach = syncBipCoachSessionState();
+state.iddSetup = await loadIddSetupState(workspaceRoot);
+if (state.iddSetup.status === "interviewing") {
+  state.iddSetup = await persistIddSetupState(
+    workspaceRoot,
+    markStaleIddInterviewingState(state.iddSetup, {
+      provider: state.iddSetup.lastProvider || "codex",
+      message: "이전 Foundation Setup 인터뷰가 완료 이벤트 없이 중단됐습니다. 다시 시도해 주세요.",
+    }),
+  );
+}
 await persistBipCoachState(bipCoachFilePath, state.bipCoach);
 const telemetry = createTelemetryClient({ appSupportPath, workspaceRoot });
+let fatalSidecarWriteInProgress = false;
+
+function fireAndForget(operation, promise, properties = {}) {
+  Promise.resolve(promise).catch((error) => {
+    telemetry.captureException(error, {
+      operation,
+      ...properties,
+    });
+    writeSidecarCrashRecord("background_rejection", error, {
+      operation,
+      ...properties,
+    });
+  });
+}
+
+if (process.env.AGENTIC30_TEST_BACKGROUND_REJECTION === "1") {
+  fireAndForget(
+    "testBackgroundRejection",
+    Promise.reject(new Error("Synthetic background rejection for sidecar resilience test")),
+  );
+}
+
+function writeSidecarCrashRecord(phase, error, properties = {}) {
+  const normalized = normalizeFatalError(error);
+  const record = {
+    at: new Date().toISOString(),
+    phase,
+    pid: process.pid,
+    activeRunCount: state.activeRuns.size,
+    activeSessionIds: [...state.activeRuns.keys()],
+    error: normalized.message,
+    stack: redactCrashText(normalized.stack),
+    properties: sanitizeCrashProperties(properties),
+  };
+  try {
+    fsSync.mkdirSync(appSupportPath, { recursive: true });
+    fsSync.appendFileSync(
+      path.join(appSupportPath, "sidecar-crashes.jsonl"),
+      `${JSON.stringify(record)}\n`,
+      { mode: 0o600 },
+    );
+  } catch {}
+}
+
+function normalizeFatalError(error) {
+  if (error instanceof Error) {
+    return {
+      message: redactCrashText(error.message),
+      stack: error.stack || "",
+    };
+  }
+  return {
+    message: redactCrashText(String(error)),
+    stack: "",
+  };
+}
+
+function sanitizeCrashProperties(properties = {}) {
+  const safe = {};
+  for (const [key, value] of Object.entries(properties || {})) {
+    if (/token|secret|password|api[_-]?key|authorization/i.test(key)) {
+      safe[key] = "[redacted]";
+    } else if (typeof value === "string") {
+      safe[key] = redactCrashText(value);
+    } else {
+      safe[key] = value;
+    }
+  }
+  return safe;
+}
+
+function redactCrashText(text = "") {
+  return String(text)
+    .replace(/(token|secret|password|api[_-]?key|authorization)(["'\s:=]+)([^"'\s,}]+)/gi, "$1$2[redacted]")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]")
+    .slice(0, 12_000);
+}
+
+function handleFatalSidecarError(phase, error) {
+  if (fatalSidecarWriteInProgress) {
+    process.exit(1);
+  }
+  fatalSidecarWriteInProgress = true;
+  writeSidecarCrashRecord(phase, error);
+  telemetry.captureException(error, { operation: phase }, false);
+  setTimeout(() => process.exit(1), 25).unref?.();
+}
+
+process.on("uncaughtException", (error) => {
+  handleFatalSidecarError("uncaughtException", error);
+});
+process.on("unhandledRejection", (reason) => {
+  handleFatalSidecarError("unhandledRejection", reason);
+});
 // Replay pending ritual after telemetry client exists. broadcast() may run
 // even before any client connects — that's fine, the persisted pendingRitual
 // stays until ack so reconnects also see it.
@@ -286,13 +411,13 @@ async function broadcastQuarantineList(socket) {
             originalSummary: summarizeOriginalRecord(entry.original),
           })),
         },
-      });
+    });
     }
     send(socket, { type: "rubric_quarantine_list", items });
   } catch (err) {
     send(socket, {
       type: "rubric_quarantine_error",
-      stage: "list",
+    stage: "list",
       message: err?.message || String(err),
     });
   }
@@ -311,7 +436,7 @@ async function handleWeeklyRitualAck(payload) {
 async function handleQuarantineRestoreWithReason(socket, payload) {
   try {
     const dump = await readQuarantineDump({
-      workspaceRoot,
+    workspaceRoot,
       quarantinePath: payload?.quarantinePath,
     });
     const entry = dump.records.find((r) => r.index === payload?.recordIndex);
@@ -328,13 +453,13 @@ async function handleQuarantineRestoreWithReason(socket, payload) {
       payload?.honestModeReason ?? "",
     );
     const result = await restoreQuarantinedRecord({
-      workspaceRoot,
+    workspaceRoot,
       quarantinePath: dump.quarantinePath,
       recordIndex: payload?.recordIndex,
       fixedRecord,
       expectedMtimeMs: payload?.expectedMtimeMs,
     });
-    telemetry.captureEvent("mac_sidecar_rubric_quarantine_restored_with_reason", {
+  telemetry.captureEvent("mac_sidecar_rubric_quarantine_restored_with_reason", {
       remaining: result.remainingInvalidCount,
       duplicateAvoided: result.duplicateAvoided ?? false,
     });
@@ -343,7 +468,7 @@ async function handleQuarantineRestoreWithReason(socket, payload) {
   } catch (err) {
     send(socket, {
       type: "rubric_quarantine_error",
-      stage: "restore_with_reason",
+    stage: "restore_with_reason",
       message: err?.message || String(err),
     });
   }
@@ -352,13 +477,13 @@ async function handleQuarantineRestoreWithReason(socket, payload) {
 async function handleQuarantineRestore(socket, payload) {
   try {
     const result = await restoreQuarantinedRecord({
-      workspaceRoot,
+    workspaceRoot,
       quarantinePath: payload?.quarantinePath,
       recordIndex: payload?.recordIndex,
       fixedRecord: payload?.fixedRecord,
       expectedMtimeMs: payload?.expectedMtimeMs,
     });
-    telemetry.captureEvent("mac_sidecar_rubric_quarantine_restored", {
+  telemetry.captureEvent("mac_sidecar_rubric_quarantine_restored", {
       remaining: result.remainingInvalidCount,
     });
     send(socket, { type: "rubric_quarantine_restored", result });
@@ -367,7 +492,7 @@ async function handleQuarantineRestore(socket, payload) {
   } catch (err) {
     send(socket, {
       type: "rubric_quarantine_error",
-      stage: "restore",
+    stage: "restore",
       message: err?.message || String(err),
     });
   }
@@ -428,9 +553,9 @@ function replayPendingRitualOnBoot() {
 telemetry.captureEvent("mac_sidecar_booted", {
   session_count: state.sessions.size,
 });
-void refreshPersistedBipCoachReadinessOnBoot();
+fireAndForget("refreshPersistedBipCoachReadinessOnBoot", refreshPersistedBipCoachReadinessOnBoot());
 const userInputPoll = setInterval(() => {
-  void syncPendingUserInputRequests();
+  fireAndForget("syncPendingUserInputRequests", syncPendingUserInputRequests());
 }, 250);
 
 const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
@@ -438,6 +563,11 @@ let shutdownStarted = false;
 let clientDisconnectTimer = null;
 let qmdBootstrapScheduled = false;
 const parentProcessPoll = startParentProcessPoll();
+
+wss.on("error", (error) => {
+  telemetry.captureException(error, { operation: "websocket_server" });
+  writeSidecarCrashRecord("websocket_server_error", error);
+});
 
 wss.on("connection", (socket, request) => {
   if (!isAllowedWebSocketOrigin(request?.headers?.origin)) {
@@ -479,6 +609,12 @@ wss.on("connection", (socket, request) => {
       scheduleShutdownWhenClientless();
     }
   });
+  socket.on("error", (error) => {
+    clearTimeout(authTimer);
+    state.clients.delete(socket);
+    telemetry.captureException(error, { operation: "websocket_client" });
+    scheduleShutdownWhenClientless();
+  });
 });
 
 function registerAuthenticatedClient(socket) {
@@ -514,7 +650,7 @@ function registerAuthenticatedClient(socket) {
       telemetry.captureException(new Error("Invalid JSON payload"), {
         operation: "handleClientMessage",
         message_type: "invalid_json",
-      });
+    });
       send(socket, { type: "error", message: "Invalid JSON payload." });
       return;
     }
@@ -526,12 +662,12 @@ function registerAuthenticatedClient(socket) {
         operation: "handleClientMessage",
         session_id: payload?.sessionId || "",
         message_type: payload?.type || "unknown",
-      });
+    });
       send(socket, {
         type: "error",
         sessionId: payload?.sessionId,
         message: formatError(error),
-      });
+    });
     }
   });
 }
@@ -587,8 +723,8 @@ function startParentProcessPoll() {
       process.kill(parentPid, 0);
     } catch (error) {
       if (error?.code === "ESRCH") {
-        void shutdown();
-      }
+        fireAndForget("shutdown.parent_process_missing", shutdown());
+    }
     }
   }, 1_000);
 }
@@ -601,7 +737,7 @@ function scheduleShutdownWhenClientless() {
   clientDisconnectTimer = setTimeout(() => {
     clientDisconnectTimer = null;
     if (state.clients.size === 0) {
-      void shutdown();
+      fireAndForget("shutdown.clientless", shutdown());
     }
   }, 1_500);
 }
@@ -634,14 +770,16 @@ async function handleClientMessage(socket, payload) {
       const createStartedAt = performance.now();
       const session = createSession(payload);
       const bootstrapStartedAt = performance.now();
-      await attachBootstrapIntake(session);
+      if (payload.suppressBootstrapIntake !== true) {
+        await attachBootstrapIntake(session);
+      }
       const bootstrapElapsedMs = Math.max(0, Math.round(performance.now() - bootstrapStartedAt));
       state.sessions.set(session.id, session);
       setSessionStartupTiming(session, {
         createStartedAt,
         bootstrapElapsedMs,
         clientSocket: socket,
-      });
+    });
       const persistStartedAt = performance.now();
       await persistSessions();
       const persistElapsedMs = Math.max(0, Math.round(performance.now() - persistStartedAt));
@@ -653,14 +791,14 @@ async function handleClientMessage(socket, payload) {
         persistElapsedMs,
         bipCoachSyncElapsedMs: Math.max(0, Math.round(performance.now() - syncStartedAt)),
         clientSocket: socket,
-      });
+    });
       await persistSessions();
       telemetry.captureEvent("mac_sidecar_session_created", {
         session_id: session.id,
         provider: session.provider,
         process_to_session_created_ms: session.runtime?.startupTiming?.processToSessionCreatedMs,
         create_session_elapsed_ms: session.runtime?.startupTiming?.createSessionElapsedMs,
-      });
+    });
       broadcast({ type: "session_created", session });
       return;
     }
@@ -674,7 +812,7 @@ async function handleClientMessage(socket, payload) {
       telemetry.captureEvent("mac_sidecar_session_deleted", {
         session_id: session.id,
         provider: session.provider,
-      });
+    });
       broadcast({ type: "session_deleted", sessionId: session.id });
       return;
     }
@@ -685,57 +823,54 @@ async function handleClientMessage(socket, payload) {
       session.archivedAt = typeof payload.archivedAt === "string"
         ? payload.archivedAt
         : new Date().toISOString();
-      session.status = "idle";
+    session.status = "idle";
       session.error = null;
-      touch(session);
+    touch(session);
       await persistSessions();
       await syncAndBroadcastBipCoachSessionState();
       telemetry.captureEvent("mac_sidecar_session_archived", {
         session_id: session.id,
         provider: session.provider,
-      });
-      broadcast({ type: "session_updated", session });
+    });
+    broadcast({ type: "session_updated", session });
       return;
     }
     case "rename_session": {
       const session = getSession(payload.sessionId);
       session.title = String(payload.title || "Untitled Session").trim() || "Untitled Session";
-      touch(session);
+    touch(session);
       await persistSessions();
-      broadcast({ type: "session_updated", session });
+    broadcast({ type: "session_updated", session });
       return;
     }
     case "stop_session": {
       const session = getSession(payload.sessionId);
       await stopSession(session.id);
       cancelWarmSession(session.id);
-      session.status = "idle";
+    session.status = "idle";
       session.error = null;
-      touch(session);
+    touch(session);
       await persistSessions();
       telemetry.captureEvent("mac_sidecar_session_stopped", {
         session_id: session.id,
         provider: session.provider,
-      });
-      broadcast({ type: "session_updated", session });
+    });
+    broadcast({ type: "session_updated", session });
       return;
     }
     case "warm_session": {
       const session = getSession(payload.sessionId);
-      void warmSession(session).catch((error) => {
-        telemetry.captureException(error, {
-          operation: "warmSession",
-          session_id: session.id,
-          provider: session.provider,
-        });
-      });
+      fireAndForget("warmSession", warmSession(session), {
+        session_id: session.id,
+        provider: session.provider,
+    });
       return;
     }
     case "send_prompt": {
       const session = getSession(payload.sessionId);
       if (session.pendingUserInput) {
         throw new Error("This session is waiting for structured input.");
-      }
+    }
       const prompt = String(payload.prompt || "").trim();
       if (!prompt) {
         telemetry.captureEvent("mac_sidecar_prompt_rejected", {
@@ -749,7 +884,7 @@ async function handleClientMessage(socket, payload) {
           message: "Prompt is empty.",
         });
         return;
-      }
+    }
       markWorkspaceSetupFirstInput("prompt");
       // Sub-AC 2.3 IPC reconciliation: when the Swift host classifies a
       // message as Foundation Day daily-task (`mode: "daily_task"`), funnel
@@ -803,17 +938,17 @@ async function handleClientMessage(socket, payload) {
           transport: "send_prompt_bridge",
         });
         return;
-      }
+    }
       if (state.activeRuns.has(session.id)) {
         await enqueuePrompt(session, prompt, {
           executionIntent: payload.executionIntent,
         });
         return;
-      }
+    }
       cancelWarmSession(session.id);
       await runPrompt(session, prompt, {
         executionIntent: payload.executionIntent,
-      });
+    });
       return;
     }
     case "foundation_first_prompt": {
@@ -834,23 +969,23 @@ async function handleClientMessage(socket, payload) {
           message: "Foundation day must be in range 0-7.",
         });
         return;
-      }
+    }
       const firstPrompt = buildFirstPromptForDay({
         day: dayDescriptor.day,
         dynamicVariables: payload.dynamicVariables,
-      });
+    });
       telemetry.captureEvent("mac_sidecar_foundation_first_prompt_built", {
         session_id: payload.sessionId || "",
         day: dayDescriptor.day,
         sub_workflow: dayDescriptor.sub_workflow || "",
         spec_version: dayDescriptor.spec_version || "",
-      });
+    });
       send(socket, {
         type: "foundation_first_prompt",
         sessionId: payload.sessionId,
         day: dayDescriptor.day,
         firstPrompt,
-      });
+    });
       return;
     }
     case "foundation_chat": {
@@ -861,7 +996,7 @@ async function handleClientMessage(socket, payload) {
       const session = getSession(payload.sessionId);
       if (session.pendingUserInput) {
         throw new Error("This session is waiting for structured input.");
-      }
+    }
       const prompt = String(payload.prompt || "").trim();
       if (!prompt) {
         telemetry.captureEvent("mac_sidecar_foundation_chat_rejected", {
@@ -883,7 +1018,7 @@ async function handleClientMessage(socket, payload) {
           message: "Prompt is empty.",
         });
         return;
-      }
+    }
       // Resolve the Foundation day with the wall-clock anchor as fallback.
       // The host normally sends an explicit `day`, but sidecar-driven
       // re-entry (queued prompts, warmstart) may carry only the
@@ -913,13 +1048,13 @@ async function handleClientMessage(socket, payload) {
           message: "Foundation day must be in range 0-7.",
         });
         return;
-      }
+    }
       if (state.activeRuns.has(session.id)) {
         await enqueuePrompt(session, prompt, {
           executionIntent: "foundation_chat",
         });
         return;
-      }
+    }
       cancelWarmSession(session.id);
       await runUnifiedFoundationChat(session, prompt, {
         day: dayDescriptor.day,
@@ -927,7 +1062,7 @@ async function handleClientMessage(socket, payload) {
         evidenceRefs: payload.evidenceRefs,
         workspace: payload.workspace,
         transport: "foundation_chat",
-      });
+    });
       return;
     }
     case "submit_user_input": {
@@ -935,17 +1070,51 @@ async function handleClientMessage(socket, payload) {
       const requestId = String(payload.requestId || "").trim();
       if (!requestId || session.pendingUserInput?.requestId !== requestId) {
         throw new Error("No matching structured input request is waiting for this session.");
+    }
+      const pendingIddContinuation = session.runtime?.pendingIddContinuation;
+      const pendingIddContinuationDocType = pendingIddContinuation?.requestId === requestId
+        ? String(pendingIddContinuation.docType || "")
+        : "";
+      const iddProgressStartedAt = Date.now();
+      const broadcastIddSubmitProgress = (stage, progressText, docType = pendingIddContinuationDocType) => {
+        if (!docType) return;
+        broadcast({
+          type: "idd_setup_progress",
+          sessionId: session.id,
+          requestId,
+          docType: docType || "",
+          stage,
+          progressText,
+          elapsedMs: Date.now() - iddProgressStartedAt,
+        });
+      };
+      const response = normalizeUserInputResponse(session.pendingUserInput, payload);
+      const missingRequiredFreeText = findMissingRequiredFreeTextQuestion(response);
+      if (missingRequiredFreeText) {
+        broadcastIddSubmitProgress(
+          "validation_error",
+          "한 줄 근거를 입력해야 다음 질문으로 넘어갑니다.",
+        );
+        session.status = "awaiting_input";
+        session.error = null;
+        touch(session);
+        await persistSessions();
+        broadcast({ type: "session_updated", session });
+        return;
       }
-
       const {
         prompt: iddContinuationPrompt,
         docType: iddContinuationDocType,
+        hostGenerated: iddContinuationHostGenerated,
       } = takePendingIddContinuationPrompt(session, requestId);
-      const response = normalizeUserInputResponse(session.pendingUserInput, payload);
+      let iddContinuationPromptForRun = iddContinuationHostGenerated ? "" : iddContinuationPrompt;
+      let iddContinuationDocTypeForRun = iddContinuationDocType;
+      let iddContinuationTerminal = false;
       const userResponseText = formatStructuredPromptResponse(response);
+      broadcastIddSubmitProgress("accepted", "답변 저장됨");
       if (userResponseText) {
         markWorkspaceSetupFirstInput("structured_input");
-      }
+    }
       if (userResponseText) {
         session.messages.push(
           makeMessage({
@@ -955,43 +1124,112 @@ async function handleClientMessage(socket, payload) {
             state: "final",
           }),
         );
-      }
+    }
       const hasActiveRun = state.activeRuns.has(session.id);
       await writeUserInputResponse(appSupportPath, {
         sessionId: session.id,
-        requestId,
+      requestId,
         response,
-      });
+    });
       if (!hasActiveRun) {
         await deleteUserInputArtifacts(appSupportPath, session.id, requestId);
-      }
+    }
 
       state.resolvedUserInputIds.add(requestId);
       session.pendingUserInput = null;
-      session.status = hasActiveRun ? "running" : "idle";
+      session.status = hasActiveRun || Boolean(iddContinuationPromptForRun) ? "running" : "idle";
       touch(session);
+
+      if (iddContinuationDocType) {
+        const completedDoc = IDD_FOUNDATION_DOCS.find((doc) => doc.type === iddContinuationDocType)
+          || requiredDocByType(iddContinuationDocType);
+        broadcastIddSubmitProgress(
+          "recording_response",
+          `${completedDoc.title} 문서에 반영 중`,
+          completedDoc.type,
+        );
+        state.iddSetup = await persistIddSetupState(
+          workspaceRoot,
+          recordIddStructuredResponse(state.iddSetup, {
+            doc: completedDoc,
+            provider: session.provider,
+            responseText: userResponseText,
+          }),
+        );
+        const nextDoc = selectNextIddAdaptiveDoc(state.iddSetup, completedDoc);
+        broadcastIddSubmitProgress("routing_followup", "다음 질문 카드를 준비 중", nextDoc?.type || completedDoc.type);
+        if (nextDoc) {
+          await createHostIddQuestionRequest(session, nextDoc, {
+            previousRequestId: requestId,
+            progressText: "다음 질문 카드 준비 완료",
+          });
+          iddContinuationPromptForRun = "";
+          iddContinuationDocTypeForRun = nextDoc.type;
+        } else {
+          broadcastIddSubmitProgress("preview_ready", "문서 미리보기 준비 완료", completedDoc.type);
+          session.runtime = {
+            ...(session.runtime || {}),
+            pendingIddContinuation: null,
+            iddPendingAdaptiveContinuation: null,
+          };
+          if (!hasActiveRun) {
+            session.messages.push(makeMessage({
+              role: "assistant",
+              provider: session.provider,
+              content: "Foundation Setup preview is ready. Review the four documents and approve them before Today Mission unlocks.",
+              state: "final",
+            }));
+          }
+          session.status = hasActiveRun ? "running" : "idle";
+          iddContinuationTerminal = true;
+          touch(session);
+        }
+        telemetry.captureEvent("mac_sidecar_idd_setup_answer_recorded", {
+          session_id: session.id,
+          provider: session.provider,
+          doc_type: iddContinuationDocType,
+          status: state.iddSetup.status,
+          ambiguity_score: state.iddSetup.ambiguityScore,
+        });
+        broadcast({
+          type: "idd_setup_state",
+          ...serializeIddSetupFields(state.iddSetup),
+          ...serializeBipSetupGate(currentBipSetupGate()),
+        });
+        if (iddContinuationTerminal) {
+          await persistSessions();
+          broadcast({ type: "session_updated", session });
+          return;
+        }
+        if (nextDoc) {
+          await persistSessions();
+          broadcast({ type: "session_updated", session });
+          return;
+        }
+    }
+
       await persistSessions();
       telemetry.captureEvent("mac_sidecar_structured_input_received", {
         session_id: session.id,
         provider: session.provider,
         request_id: requestId,
         response_count: Array.isArray(payload.responses) ? payload.responses.length : 0,
-      });
-      broadcast({ type: "session_updated", session });
+    });
+    broadcast({ type: "session_updated", session });
       const hasSelectedStructuredOption = response.responses?.some((entry) => entry.selectedOptions?.length);
-      if (!hasActiveRun && !iddContinuationPrompt && hasSelectedStructuredOption) {
+      if (!hasActiveRun && !iddContinuationPromptForRun && hasSelectedStructuredOption) {
         await appendVisibleAssistantMessage(
           session.id,
           buildStructuredInputConfirmation(response),
         );
         return;
-      }
-      if (!hasActiveRun && (userResponseText || iddContinuationPrompt)) {
+    }
+      if (!hasActiveRun && (userResponseText || iddContinuationPromptForRun)) {
         let continuationSpecialistInjection = "";
         let continuationSelection = null;
-        if (iddContinuationPrompt) {
-          const continuationDoc = iddContinuationDocType
-            ? requiredDocByType(iddContinuationDocType)
+        if (iddContinuationPromptForRun) {
+          const continuationDoc = iddContinuationDocTypeForRun
+            ? requiredDocByType(iddContinuationDocTypeForRun)
             : null;
           continuationSelection = selectSpecialist({
             bipSetupGate: currentBipSetupGate(),
@@ -1007,7 +1245,7 @@ async function handleClientMessage(socket, payload) {
             specialist_id: continuationSelection.id,
             phase: continuationSelection.phase,
             decision_kind: continuationSelection.decisionKind,
-            doc_type: iddContinuationDocType || "",
+            doc_type: iddContinuationDocTypeForRun || "",
             vendor_used: Boolean(
               continuationSelection?.vendor?.claude?.exists
                 && continuationSelection?.vendor?.codex?.exists,
@@ -1016,9 +1254,9 @@ async function handleClientMessage(socket, payload) {
         }
         await runPrompt(
           session,
-          iddContinuationPrompt
+          iddContinuationPromptForRun
             ? buildIddContinuationPrompt({
-                iddPrompt: iddContinuationPrompt,
+                iddPrompt: iddContinuationPromptForRun,
                 structuredResponseText: userResponseText,
                 specialistInjection: continuationSpecialistInjection,
               })
@@ -1029,7 +1267,7 @@ async function handleClientMessage(socket, payload) {
             specialist: continuationSelection,
           },
         );
-      }
+    }
       return;
     }
     case "scan_workspace": {
@@ -1040,7 +1278,7 @@ async function handleClientMessage(socket, payload) {
         });
         send(socket, { type: "error", message: "Workspace root is required for scan." });
         return;
-      }
+    }
       markWorkspaceSetupStarted(root);
       const rootStat = await fs.stat(root).catch(() => null);
       if (!rootStat?.isDirectory()) {
@@ -1057,16 +1295,16 @@ async function handleClientMessage(socket, payload) {
           error: error.message,
         });
         return;
-      }
+    }
       broadcast({
         type: "workspace_scan_started",
         scanRoot: root,
         progressText: "Starting workspace scan...",
-      });
+    });
       runWorkspaceScan(root, {
         sessionId: payload.sessionId,
         prompt: payload.prompt,
-      });
+    });
       return;
     }
     case "create_doc": {
@@ -1079,7 +1317,7 @@ async function handleClientMessage(socket, payload) {
         });
         send(socket, { type: "error", message: "docType and root are required for create_doc." });
         return;
-      }
+    }
       broadcast({ type: "doc_creation_started", docType });
       runCreateDoc(root, docType);
       return;
@@ -1105,23 +1343,19 @@ async function handleClientMessage(socket, payload) {
         compact: Boolean(payload.compact),
         curriculumDay: payload.curriculumDay,
         localEvidence: payload.localEvidence,
-      });
+    });
       return;
     }
     case "bip_setup_gate_check": {
       const gate = currentBipSetupGate();
       broadcastBipSetupGateState(gate);
-      if (payload.autoStart === true && !gate.ready) {
-        await maybeFireWeeklyRitual(payload.curriculumDay);
-        await generateBasicBipCoachMission({
+      if (payload.autoStart === true && !gate.iddSetupComplete) {
+        await startIddDocumentQueue({
           gate,
           sessionId: payload.sessionId,
           provider: payload.provider,
-          compact: true,
-          curriculumDay: payload.curriculumDay,
-          localEvidence: payload.localEvidence,
         });
-      }
+    }
       return;
     }
     case "bip_idd_start_queue": {
@@ -1131,14 +1365,38 @@ async function handleClientMessage(socket, payload) {
         sessionId: payload.sessionId,
         provider: payload.provider,
         requestedDocType: payload.docType,
-      });
+    });
+      return;
+    }
+    case "idd_setup_approve": {
+      state.iddSetup = await approveIddSetupDocuments(workspaceRoot, state.iddSetup);
+      const session = payload.sessionId ? resolveBipCoachSession(payload.sessionId) : null;
+      if (session) {
+        session.messages.push(makeMessage({
+          role: "assistant",
+          provider: session.provider,
+          content: buildIddApprovalSummary(state.iddSetup),
+          state: "final",
+        }));
+        session.status = "idle";
+        session.error = null;
+        touch(session);
+        await persistSessions();
+        broadcast({ type: "session_updated", session });
+    }
+      broadcast({
+        type: "idd_setup_approved",
+        ...serializeIddSetupFields(state.iddSetup),
+        ...serializeBipSetupGate(currentBipSetupGate()),
+    });
+      broadcastBipSetupGateState(currentBipSetupGate());
       return;
     }
     case "bip_coach_select_mission": {
       await selectBipCoachMission({
         sessionId: payload.sessionId,
         missionId: payload.missionId,
-      });
+    });
       return;
     }
     case "bip_coach_complete_mission": {
@@ -1157,7 +1415,7 @@ async function handleClientMessage(socket, payload) {
         });
         send(socket, { type: "error", message: "OAuth callback missing authorization code." });
         return;
-      }
+    }
       completeNotionOAuth(code);
       return;
     }
@@ -1175,7 +1433,7 @@ async function handleClientMessage(socket, payload) {
       send(socket, {
         type: "auth_context_updated",
         auth: getAuthContextSummary(),
-      });
+    });
       return;
     }
     case "bip_readiness_action": {
@@ -1192,7 +1450,7 @@ async function handleClientMessage(socket, payload) {
       send(socket, {
         type: "diagnostics_snapshot",
         diagnostics: buildSidecarDiagnostics(environment, preflight),
-      });
+    });
       return;
     }
     case "rubric_quarantine_list_request": {
@@ -1215,7 +1473,7 @@ async function handleClientMessage(socket, payload) {
       telemetry.captureException(new Error(`Unknown message type: ${payload.type}`), {
         operation: "handleClientMessage",
         message_type: payload.type || "unknown",
-      });
+    });
       send(socket, { type: "error", message: `Unknown message type: ${payload.type}` });
   }
 }
@@ -1302,13 +1560,13 @@ async function runPrompt(
       content: prompt,
       state: "final",
     });
-    session.messages.push(userMessage);
+  session.messages.push(userMessage);
   }
 
   if (defaultTitle && (!session.title || session.title === "New Session")) {
-    session.title = defaultTitle;
+  session.title = defaultTitle;
   } else if (displayUserMessage && shouldDeriveTitle(session)) {
-    session.title = deriveTitle(prompt);
+  session.title = deriveTitle(prompt);
   }
 
   session.messages.push(assistantMessage);
@@ -1343,34 +1601,34 @@ async function runPrompt(
         contextAddedChars: instant.contextChars,
         cacheHit: instant.cacheHit,
         fileCount: instant.files.length,
-      });
+    });
       emitChatRunPhase(session, assistantMessage.id, instant.cacheHit ? "context=cache_hit" : "context=cache_miss");
       emitAgentEvent(session, assistantMessage.id, {
         eventType: "run.started",
         provider: session.provider,
         executionMode: route.executionMode,
-      });
+    });
       setAssistantText(session, assistantMessage.id, instant.text);
       emitAgentEvent(session, assistantMessage.id, {
         eventType: "message.replace",
         textLength: instant.text.length,
-      });
+    });
       recordMessageTiming(session, assistantMessage, runStartedAt, "instant.response_ready", {
         targetMs: INSTANT_CHAT_COMPLETE_SLO_MS,
         cacheHit: instant.cacheHit,
-      });
+    });
       session.runtime = {
         ...(session.runtime || {}),
         lastInstantChatAt: new Date().toISOString(),
-      };
+    };
       assistantMessage.state = "final";
-      session.status = "idle";
+    session.status = "idle";
       session.error = null;
       emitAgentEvent(session, assistantMessage.id, {
         eventType: "run.completed",
         provider: session.provider,
         executionMode: route.executionMode,
-      });
+    });
       return;
     }
     const authState = getProviderAuthState(session.provider);
@@ -1378,7 +1636,7 @@ async function runPrompt(
       throw new Error(authState.message);
     }
 
-    const promptForProvider = await buildPromptWithBipContext(prompt, route);
+  const promptForProvider = await buildPromptWithBipContext(prompt, route);
     recordMessageTiming(session, assistantMessage, runStartedAt, "context.built", {
       promptChars: promptForProvider.length,
       originalPromptChars: prompt.length,
@@ -1462,13 +1720,13 @@ async function runPrompt(
       onPetHookEvent: session.provider === "claude" ? broadcast : undefined,
     });
 
-    session.runtime = runtime;
+    session.runtime = mergeProviderRuntime(session.runtime, runtime);
     setAssistantText(session, assistantMessage.id, assistantMessage.content);
     recordMessageTiming(session, assistantMessage, runStartedAt, "provider.call_finished");
 
     assistantMessage.state = "final";
-    session.status = "idle";
-    session.error = null;
+  session.status = "idle";
+  session.error = null;
     emitAgentEvent(session, assistantMessage.id, {
       eventType: "run.completed",
       provider: session.provider,
@@ -1479,56 +1737,56 @@ async function runPrompt(
       telemetry.captureEvent("mac_sidecar_prompt_aborted", {
         session_id: session.id,
         provider: session.provider,
-      });
+    });
       assistantMessage.state = "final";
-      session.status = "idle";
+    session.status = "idle";
       session.error = null;
     } else {
       telemetry.captureException(error, {
         operation: "runPrompt",
         session_id: session.id,
         provider: session.provider,
-      });
+    });
       assistantMessage.state = "error";
       assistantMessage.error = formatError(error);
       const authActions = buildProviderAuthActionsForError(session.provider, assistantMessage.error);
       if (authActions.length) {
         assistantMessage.providerAuthActions = authActions;
-      }
+    }
       recordMessageTiming(session, assistantMessage, runStartedAt, "prompt.error", {
         message: assistantMessage.error,
-      });
+    });
       if (!assistantMessage.content) {
         assistantMessage.content = assistantMessage.error;
-      }
-      session.status = "error";
+    }
+    session.status = "error";
       session.error = assistantMessage.error;
       emitAgentEvent(session, assistantMessage.id, {
         eventType: "run.failed",
         error: assistantMessage.error,
         recoverable: false,
-      });
+    });
       broadcast({
         type: "error",
         sessionId: session.id,
         message: assistantMessage.error,
-      });
+    });
     }
   } finally {
     if (session.status === "idle" && assistantMessage.state === "final") {
       recordMessageTiming(session, assistantMessage, runStartedAt, "prompt.completed", {
         totalMs: Math.round(performance.now() - runStartedAt),
-      });
+    });
       telemetry.captureEvent("mac_sidecar_prompt_completed", {
         session_id: session.id,
         provider: session.provider,
         message_count: session.messages.length,
-      });
+    });
     }
     state.activeRuns.delete(session.id);
     touch(session);
-    await persistSessions();
-    broadcast({ type: "session_updated", session });
+  await persistSessions();
+  broadcast({ type: "session_updated", session });
     scheduleQueuedPromptRun(session);
   }
 }
@@ -1643,7 +1901,7 @@ async function runUnifiedFoundationChat(
   session.messages.push(userMessage);
 
   if (!session.title || session.title === "New Session") {
-    session.title = `Day ${foundationContext.day} — ${foundationContext.core_question?.slice(0, 32) || "Foundation"}`;
+  session.title = `Day ${foundationContext.day} — ${foundationContext.core_question?.slice(0, 32) || "Foundation"}`;
   }
 
   session.messages.push(assistantMessage);
@@ -1690,7 +1948,7 @@ async function runUnifiedFoundationChat(
       telemetry.captureException(error, {
         operation: "buildChatBipContext.foundation",
         session_id: session.id,
-      });
+    });
       return "";
     });
     const bipManifest = buildChatBipManifest();
@@ -1716,7 +1974,7 @@ async function runUnifiedFoundationChat(
       .filter((block) => typeof block === "string" && block.length > 0)
       .join("\n\n");
 
-    const promptForProvider = composeUnifiedFoundationPrompt({
+  const promptForProvider = composeUnifiedFoundationPrompt({
       context: foundationContext,
       bipContextBlock: composedBipContextBlock,
       workspaceManifest: bipManifest,
@@ -1730,10 +1988,10 @@ async function runUnifiedFoundationChat(
     });
 
     emitFoundationChatEvent({
-      sessionId: session.id,
+    sessionId: session.id,
       messageId: assistantMessage.id,
       day: foundationContext.day,
-      phase: "context_built",
+    phase: "context_built",
       subWorkflow: foundationContext.sub_workflow || null,
       specVersion: foundationContext.spec_version || null,
       evidenceRefCount: foundationContext.evidence_refs.length,
@@ -1759,10 +2017,10 @@ async function runUnifiedFoundationChat(
     });
 
     emitFoundationChatEvent({
-      sessionId: session.id,
+    sessionId: session.id,
       messageId: assistantMessage.id,
       day: foundationContext.day,
-      phase: "streaming",
+    phase: "streaming",
       subWorkflow: foundationContext.sub_workflow || null,
       specVersion: foundationContext.spec_version || null,
       transport,
@@ -1773,7 +2031,7 @@ async function runUnifiedFoundationChat(
       sessionRuntime: session.runtime,
       prompt: promptForProvider,
       model: session.model,
-      workspaceRoot,
+    workspaceRoot,
       abortController,
       sessionIdForMcp: session.id,
       // The provider always sees the same execution mode. Internal sub-workflow
@@ -1851,7 +2109,7 @@ async function runUnifiedFoundationChat(
       onPetHookEvent: session.provider === "claude" ? broadcast : undefined,
     });
 
-    session.runtime = {
+  session.runtime = {
       ...runtime,
       foundation: session.runtime?.foundation ?? null,
     };
@@ -1932,7 +2190,7 @@ async function runUnifiedFoundationChat(
           operation: "applyMonetizationAskOutcome",
           session_id: session.id,
         });
-      }
+    }
     }
 
     // Sub-AC 5: foundation-summary sub-workflow outcome (Day 7).
@@ -2023,7 +2281,7 @@ async function runUnifiedFoundationChat(
           operation: "applyFoundationSummaryOutcome",
           session_id: session.id,
         });
-      }
+    }
     }
 
     // Persist evidence_refs JSON sidecar (KR4.1/4.2 measurement infra).
@@ -2034,20 +2292,20 @@ async function runUnifiedFoundationChat(
         messageId: assistantMessage.id,
         day: foundationContext.day,
         context: foundationContext,
-      });
+    });
       if (sidecarPath) {
         assistantMessage.foundation.evidence_sidecar = sidecarPath;
-      }
+    }
     } catch (error) {
       telemetry.captureException(error, {
         operation: "persistEvidenceRefsSidecar",
         session_id: session.id,
-      });
+    });
     }
 
     assistantMessage.state = "final";
-    session.status = "idle";
-    session.error = null;
+  session.status = "idle";
+  session.error = null;
     emitAgentEvent(session, assistantMessage.id, {
       eventType: "run.completed",
       provider: session.provider,
@@ -2055,10 +2313,10 @@ async function runUnifiedFoundationChat(
       day: foundationContext.day,
     });
     emitFoundationChatEvent({
-      sessionId: session.id,
+    sessionId: session.id,
       messageId: assistantMessage.id,
       day: foundationContext.day,
-      phase: "completed",
+    phase: "completed",
       subWorkflow: foundationContext.sub_workflow || null,
       specVersion: foundationContext.spec_version || null,
       evidenceRefCount: foundationContext.evidence_refs.length,
@@ -2074,9 +2332,9 @@ async function runUnifiedFoundationChat(
         session_id: session.id,
         provider: session.provider,
         day: foundationContext.day,
-      });
+    });
       assistantMessage.state = "final";
-      session.status = "idle";
+    session.status = "idle";
       session.error = null;
       emitFoundationChatEvent({
         sessionId: session.id,
@@ -2087,56 +2345,56 @@ async function runUnifiedFoundationChat(
         specVersion: foundationContext.spec_version || null,
         elapsedMs: Math.round(performance.now() - runStartedAt),
         transport,
-      });
+    });
     } else {
       telemetry.captureException(error, {
         operation: "runUnifiedFoundationChat",
         session_id: session.id,
         provider: session.provider,
         day: foundationContext.day,
-      });
+    });
       assistantMessage.state = "error";
       assistantMessage.error = formatError(error);
       const authActions = buildProviderAuthActionsForError(session.provider, assistantMessage.error);
       if (authActions.length) {
         assistantMessage.providerAuthActions = authActions;
-      }
+    }
       recordMessageTiming(session, assistantMessage, runStartedAt, "foundation.prompt_error", {
         message: assistantMessage.error,
-      });
+    });
       if (!assistantMessage.content) {
         assistantMessage.content = assistantMessage.error;
-      }
-      session.status = "error";
+    }
+    session.status = "error";
       session.error = assistantMessage.error;
       emitAgentEvent(session, assistantMessage.id, {
         eventType: "run.failed",
         error: assistantMessage.error,
         recoverable: false,
-      });
+    });
       broadcast({
         type: "error",
         sessionId: session.id,
         message: assistantMessage.error,
-      });
+    });
     }
   } finally {
     if (session.status === "idle" && assistantMessage.state === "final") {
       recordMessageTiming(session, assistantMessage, runStartedAt, "foundation.prompt_completed", {
         totalMs: Math.round(performance.now() - runStartedAt),
-      });
+    });
       telemetry.captureEvent("mac_sidecar_foundation_chat_completed", {
         session_id: session.id,
         provider: session.provider,
         day: foundationContext.day,
         sub_workflow: foundationContext.sub_workflow || "",
         message_count: session.messages.length,
-      });
+    });
     }
     state.activeRuns.delete(session.id);
     touch(session);
-    await persistSessions();
-    broadcast({ type: "session_updated", session });
+  await persistSessions();
+  broadcast({ type: "session_updated", session });
     scheduleQueuedPromptRun(session);
   }
 }
@@ -2154,12 +2412,12 @@ async function warmSession(session) {
     setCodexWarmRuntime(session, {
       state: "failed",
       model,
-      workspaceRoot,
+    workspaceRoot,
       executionMode: "fast_chat",
       error: authState.message,
     });
-    await persistSessions();
-    broadcast({ type: "session_updated", session });
+  await persistSessions();
+  broadcast({ type: "session_updated", session });
     return;
   }
 
@@ -2188,7 +2446,7 @@ async function warmSession(session) {
         "Do not answer the user yet.",
       ].join("\n"),
       model: session.model,
-      workspaceRoot,
+    workspaceRoot,
       abortController,
       sessionIdForMcp: session.id,
       executionMode: "fast_chat",
@@ -2231,7 +2489,7 @@ async function warmSession(session) {
         completedAt: new Date().toISOString(),
         elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
         timings,
-      });
+    });
       telemetry.captureEvent("mac_sidecar_codex_warmup_completed", {
         session_id: session.id,
         provider: session.provider,
@@ -2267,8 +2525,8 @@ async function warmSession(session) {
   } finally {
     state.warmRuns.delete(session.id);
     touch(session);
-    await persistSessions();
-    broadcast({ type: "session_updated", session });
+  await persistSessions();
+  broadcast({ type: "session_updated", session });
   }
 }
 
@@ -2364,12 +2622,9 @@ async function runNextQueuedPrompt(sessionId) {
 
 function scheduleQueuedPromptRun(session) {
   queueMicrotask(() => {
-    runNextQueuedPrompt(session.id).catch((error) => {
-      telemetry.captureException(error, {
-        operation: "runNextQueuedPrompt",
-        session_id: session.id,
-        provider: session.provider,
-      });
+    fireAndForget("runNextQueuedPrompt", runNextQueuedPrompt(session.id), {
+      session_id: session.id,
+      provider: session.provider,
     });
   });
 }
@@ -2408,20 +2663,20 @@ async function runOfficeHoursDocs(session, topic, originalPrompt) {
   try {
     const userPrompt = buildOfficeHoursDocsPrompt(topic);
     const officeHoursSelection = selectSpecialist({
-      bipSetupGate: currentBipSetupGate(),
+    bipSetupGate: currentBipSetupGate(),
       doc: null,
       lastAnswer: topic || "",
     });
-    telemetry.captureEvent("mac_sidecar_specialist_routed", {
-      session_id: session.id,
-      stage: "office_hours_docs",
-      specialist_id: officeHoursSelection.id,
-      phase: officeHoursSelection.phase,
-      decision_kind: officeHoursSelection.decisionKind,
-      vendor_used: Boolean(
+  telemetry.captureEvent("mac_sidecar_specialist_routed", {
+    session_id: session.id,
+    stage: "office_hours_docs",
+    specialist_id: officeHoursSelection.id,
+    phase: officeHoursSelection.phase,
+    decision_kind: officeHoursSelection.decisionKind,
+    vendor_used: Boolean(
         officeHoursSelection?.vendor?.claude?.exists
           && officeHoursSelection?.vendor?.codex?.exists,
-      ),
+    ),
     });
     const officeHoursSpecialistInjection = buildSpecialistInjection(officeHoursSelection, {
       provider: session.provider,
@@ -2430,7 +2685,7 @@ async function runOfficeHoursDocs(session, topic, originalPrompt) {
       provider: session.provider,
       sessionRuntime: session.runtime,
       prompt: userPrompt,
-      workspaceRoot,
+    workspaceRoot,
       abortController,
       sessionIdForMcp: session.id,
       executionMode: "agentic",
@@ -2462,49 +2717,49 @@ async function runOfficeHoursDocs(session, topic, originalPrompt) {
       }),
     });
 
-    session.runtime = result.runtime;
+  session.runtime = result.runtime;
     assistantMessage.state = "final";
-    session.status = "idle";
-    session.error = null;
+  session.status = "idle";
+  session.error = null;
   } catch (error) {
     if (abortController.signal.aborted || error?.name === "AbortError") {
       telemetry.captureEvent("mac_sidecar_office_hours_docs_aborted", {
         session_id: session.id,
         provider: session.provider,
-      });
+    });
       assistantMessage.state = "final";
-      session.status = "idle";
+    session.status = "idle";
       session.error = null;
     } else {
       telemetry.captureException(error, {
         operation: "runOfficeHoursDocs",
         session_id: session.id,
         provider: session.provider,
-      });
+    });
       assistantMessage.state = "error";
       assistantMessage.error = formatError(error);
       if (!assistantMessage.content) {
         assistantMessage.content = `Office Hours docs failed: ${formatError(error)}`;
-      }
-      session.status = "error";
+    }
+    session.status = "error";
       session.error = formatError(error);
       broadcast({
         type: "error",
         sessionId: session.id,
         message: formatError(error),
-      });
+    });
     }
   } finally {
     if (session.status === "idle" && assistantMessage.state === "final") {
       telemetry.captureEvent("mac_sidecar_office_hours_docs_completed", {
         session_id: session.id,
         provider: session.provider,
-      });
+    });
     }
     state.activeRuns.delete(session.id);
     touch(session);
-    await persistSessions();
-    broadcast({ type: "session_updated", session });
+  await persistSessions();
+  broadcast({ type: "session_updated", session });
     scheduleQueuedPromptRun(session);
   }
 }
@@ -2515,10 +2770,10 @@ async function consumeClaudeStream(stream, session, assistantMessage) {
       session.runtime = {
         ...session.runtime,
         claudeSessionId: event.session_id,
-      };
-      touch(session);
+    };
+    touch(session);
       await persistSessions();
-      broadcast({ type: "session_updated", session });
+    broadcast({ type: "session_updated", session });
       continue;
     }
 
@@ -2543,7 +2798,7 @@ async function consumeClaudeStream(stream, session, assistantMessage) {
             payload: { text: content.thinking },
           });
         }
-      }
+    }
     }
 
     if (event.type === "user" && event.message?.content && typeof event.message.content !== "string") {
@@ -2557,7 +2812,7 @@ async function consumeClaudeStream(stream, session, assistantMessage) {
             payload: content.content,
           });
         }
-      }
+    }
     }
   }
 }
@@ -2666,7 +2921,7 @@ async function runAnalyzeAds(session, targetUrl, originalPrompt) {
         headers: {
           Authorization: `Bearer ${posthogKey}`,
         },
-      };
+    };
     }
 
     // 3. Build specialized system prompt
@@ -2721,16 +2976,16 @@ async function runAnalyzeAds(session, targetUrl, originalPrompt) {
     await consumeClaudeStream(stream, session, assistantMessage);
 
     assistantMessage.state = "final";
-    session.status = "idle";
-    session.error = null;
+  session.status = "idle";
+  session.error = null;
   } catch (error) {
     if (abortController.signal.aborted || error?.name === "AbortError") {
       telemetry.captureEvent("mac_sidecar_analyze_ads_aborted", {
         session_id: session.id,
         provider: session.provider,
-      });
+    });
       assistantMessage.state = "final";
-      session.status = "idle";
+    session.status = "idle";
       session.error = null;
     } else {
       telemetry.captureException(error, {
@@ -2738,19 +2993,19 @@ async function runAnalyzeAds(session, targetUrl, originalPrompt) {
         session_id: session.id,
         provider: session.provider,
         target_url: targetUrl,
-      });
+    });
       assistantMessage.state = "error";
       assistantMessage.error = formatError(error);
       if (!assistantMessage.content) {
         assistantMessage.content = assistantMessage.error;
-      }
-      session.status = "error";
+    }
+    session.status = "error";
       session.error = assistantMessage.error;
       broadcast({
         type: "error",
         sessionId: session.id,
         message: assistantMessage.error,
-      });
+    });
     }
   } finally {
     if (session.status === "idle" && assistantMessage.state === "final") {
@@ -2758,12 +3013,12 @@ async function runAnalyzeAds(session, targetUrl, originalPrompt) {
         session_id: session.id,
         provider: session.provider,
         target_url: targetUrl,
-      });
+    });
     }
     state.activeRuns.delete(session.id);
     touch(session);
-    await persistSessions();
-    broadcast({ type: "session_updated", session });
+  await persistSessions();
+  broadcast({ type: "session_updated", session });
     scheduleQueuedPromptRun(session);
   }
 }
@@ -2784,7 +3039,7 @@ async function buildPromptWithBipContext(prompt, route = classifyChatExecutionRo
       : prompt;
   }
   const bipContext = await buildChatBipContext().catch((error) => {
-    telemetry.captureException(error, { operation: "buildChatBipContext" });
+  telemetry.captureException(error, { operation: "buildChatBipContext" });
     return "";
   });
   if (!bipContext) {
@@ -2809,6 +3064,19 @@ function classifyChatExecutionRoute(prompt, options = {}) {
     qmdAvailable: getQmdState({ sidecarRoot }).available,
     executionIntent: options.executionIntent || "chat",
   });
+}
+
+function mergeProviderRuntime(currentRuntime = {}, providerRuntime = {}) {
+  const merged = {
+    ...(currentRuntime || {}),
+    ...(providerRuntime || {}),
+  };
+  for (const key of ["iddDocumentType", "pendingIddContinuation", "iddPendingAdaptiveContinuation"]) {
+    if (Object.prototype.hasOwnProperty.call(currentRuntime || {}, key)) {
+      merged[key] = currentRuntime[key];
+    }
+  }
+  return merged;
 }
 
 async function buildInstantChatResponse(prompt) {
@@ -3185,7 +3453,7 @@ async function collectChatBipLocalDocs(bipConfig, root) {
         role,
         relativePath: value,
         content: "Skipped: configured path is outside the workspace root.",
-      });
+    });
       continue;
     }
     const matches = await listChatBipMarkdownDocs(resolvedPath, root);
@@ -3194,7 +3462,7 @@ async function collectChatBipLocalDocs(bipConfig, root) {
         role,
         relativePath: path.relative(root, resolvedPath) || ".",
         content: "No readable Markdown document found at this configured path.",
-      });
+    });
       continue;
     }
     for (const filePath of matches) {
@@ -3206,7 +3474,7 @@ async function collectChatBipLocalDocs(bipConfig, root) {
         role,
         relativePath,
         content: truncateChatBipText(content, CHAT_BIP_LOCAL_DOC_MAX_CHARS),
-      });
+    });
     }
   }
   return docs;
@@ -3376,7 +3644,7 @@ async function runBipDraft(session, topic, originalPrompt) {
   });
 
   if (!session.title || session.title === "New Session") {
-    session.title = topic
+  session.title = topic
       ? `BIP: ${topic.slice(0, 36)}${topic.length > 36 ? "..." : ""}`
       : "BIP Draft";
   }
@@ -3459,47 +3727,47 @@ async function runBipDraft(session, topic, originalPrompt) {
     await consumeClaudeStream(stream, session, assistantMessage);
 
     assistantMessage.state = "final";
-    session.status = "idle";
-    session.error = null;
+  session.status = "idle";
+  session.error = null;
   } catch (error) {
     if (abortController.signal.aborted || error?.name === "AbortError") {
       telemetry.captureEvent("mac_sidecar_bip_draft_aborted", {
         session_id: session.id,
         provider: session.provider,
-      });
+    });
       assistantMessage.state = "final";
-      session.status = "idle";
+    session.status = "idle";
       session.error = null;
     } else {
       telemetry.captureException(error, {
         operation: "runBipDraft",
         session_id: session.id,
         provider: session.provider,
-      });
+    });
       assistantMessage.state = "error";
       assistantMessage.error = formatError(error);
       if (!assistantMessage.content) {
         assistantMessage.content = assistantMessage.error;
-      }
-      session.status = "error";
+    }
+    session.status = "error";
       session.error = assistantMessage.error;
       broadcast({
         type: "error",
         sessionId: session.id,
         message: assistantMessage.error,
-      });
+    });
     }
   } finally {
     if (session.status === "idle" && assistantMessage.state === "final") {
       telemetry.captureEvent("mac_sidecar_bip_draft_completed", {
         session_id: session.id,
         provider: session.provider,
-      });
+    });
     }
     state.activeRuns.delete(session.id);
     touch(session);
-    await persistSessions();
-    broadcast({ type: "session_updated", session });
+  await persistSessions();
+  broadcast({ type: "session_updated", session });
     scheduleQueuedPromptRun(session);
   }
 }
@@ -3544,13 +3812,13 @@ async function configureBipCoach(payload) {
 
 async function refreshBipCoachEvidence() {
   if (state.bipCoachRunning) {
-    await setBipCoachError("공개 실행 코치가 이미 작업 중입니다.", "mac_sidecar_bip_coach_busy");
+  await setBipCoachError("공개 실행 코치가 이미 작업 중입니다.", "mac_sidecar_bip_coach_busy");
     return;
   }
   if (!isBipCoachConfigured(state.bipCoach)) {
-    await setBipCoachError(
+  await setBipCoachError(
       "공개 실행 코치에는 Google Docs 업무일지 1개와 Google Sheets 공개 기록 표 1개가 필요합니다.",
-      "mac_sidecar_bip_coach_not_configured",
+    "mac_sidecar_bip_coach_not_configured",
     );
     return;
   }
@@ -3560,9 +3828,9 @@ async function refreshBipCoachEvidence() {
   const startedAt = Date.now();
 
   function emitMissionProgress(stage, detail, extra = {}) {
-    broadcast({
+  broadcast({
       type: "bip_coach_generation_progress",
-      stage,
+    stage,
       detail,
       elapsedMs: Date.now() - startedAt,
       ...extra,
@@ -3593,7 +3861,7 @@ async function refreshBipCoachEvidence() {
       doc_was_truncated: evidence.docWasTruncated,
       duration_ms: Date.now() - startedAt,
     });
-    broadcast({ type: "bip_coach_refresh_completed", bipCoach: state.bipCoach });
+  broadcast({ type: "bip_coach_refresh_completed", bipCoach: state.bipCoach });
   } catch (error) {
     const rawError = formatError(error);
     const userError = formatBipCoachGwsError(error);
@@ -3612,7 +3880,7 @@ async function refreshBipCoachEvidence() {
       error: rawError,
       user_error: userError,
     });
-    broadcast({
+  broadcast({
       type: "bip_coach_error",
       message: state.bipCoach.lastError,
       bipCoach: state.bipCoach,
@@ -3683,21 +3951,22 @@ async function readBipCoachEvidenceBundle({ onProgress } = {}) {
 
 async function generateBipCoachMission({ sessionId, provider, compact = false, curriculumDay = null, localEvidence = null } = {}) {
   if (state.bipCoachRunning) {
-    await setBipCoachError("공개 실행 코치가 이미 작업 중입니다.", "mac_sidecar_bip_coach_busy");
+  await setBipCoachError("공개 실행 코치가 이미 작업 중입니다.", "mac_sidecar_bip_coach_busy");
     return;
   }
 
   const gate = currentBipSetupGate();
-  if (!gate.ready) {
-    await generateBasicBipCoachMission({ gate, sessionId, provider, compact, curriculumDay, localEvidence });
+  if (!gate.iddSetupComplete) {
+    await startIddDocumentQueue({ gate, sessionId, provider });
+  await setBipCoachError(
+      "Foundation Setup을 먼저 승인해야 Today Mission 후보를 만들 수 있습니다.",
+    "mac_sidecar_idd_setup_required",
+    );
     return;
   }
 
   if (!isBipCoachConfigured(state.bipCoach)) {
-    await setBipCoachError(
-      "공개 실행 코치에는 Google Docs 업무일지 1개와 Google Sheets 공개 기록 표 1개가 필요합니다.",
-      "mac_sidecar_bip_coach_not_configured",
-    );
+    await generateBasicBipCoachMission({ gate, sessionId, provider, compact, curriculumDay, localEvidence });
     return;
   }
 
@@ -3706,9 +3975,9 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
   const startedAt = Date.now();
 
   function emitMissionProgress(stage, detail, extra = {}) {
-    broadcast({
+  broadcast({
       type: "bip_coach_generation_progress",
-      stage,
+    stage,
       detail,
       elapsedMs: Date.now() - startedAt,
       ...extra,
@@ -3735,7 +4004,7 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
       ...state.bipCoach,
       updatedAt: new Date().toISOString(),
       config: normalizeBipCoachConfig({
-        ...state.bipCoach.config,
+      ...state.bipCoach.config,
         sheetTabName: evidenceBundle.tabName,
       }),
       evidence: evidenceBundle.evidence,
@@ -3747,7 +4016,7 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
       if (!authState.available) {
         failures.push(`${candidate}: ${authState.message}`);
         continue;
-      }
+    }
 
       try {
         emitMissionProgress("generating", "확인한 공개 기록 근거로 실행 후보를 생성하는 중", {
@@ -3812,13 +4081,13 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
         return;
       } catch (error) {
         failures.push(`${candidate}: ${formatError(error)}`);
-      }
+    }
     }
 
     if (state.bipCoach?.evidence?.fullRead) {
       emitMissionProgress("finalizing", "생성 provider 연결이 불안정해 로컬 fallback 미션을 정리하는 중", {
         provider: "local",
-      });
+    });
       const now = new Date();
       const missionChoices = buildFallbackBipMissionChoices({
         state: state.bipCoach,
@@ -3827,9 +4096,9 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
         localEvidence,
         today,
         now,
-      });
+    });
       state.bipCoach = normalizeBipCoachState({
-        ...state.bipCoach,
+      ...state.bipCoach,
         updatedAt: now.toISOString(),
         evidence: {
           ...state.bipCoach.evidence,
@@ -3843,7 +4112,7 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
         missionChoices,
         currentMission: null,
         lastError: null,
-      });
+    });
       if (coachSession) {
         coachSession.messages.push(makeMessage({
           role: "assistant",
@@ -3861,14 +4130,14 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
         touch(coachSession);
         await persistSessions();
         broadcast({ type: "session_updated", session: coachSession });
-      }
+    }
       await persistAndBroadcastBipCoach("mac_sidecar_bip_coach_mission_generated", {
         provider: "local",
         compact,
         fallback_used: true,
         provider_failures: failures,
         duration_ms: Date.now() - startedAt,
-      });
+    });
       broadcast({ type: "bip_coach_generation_completed", bipCoach: state.bipCoach });
       return;
     }
@@ -3883,7 +4152,7 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
     await persistAndBroadcastBipCoach("mac_sidecar_bip_coach_generation_failed", {
       error: formatError(error),
     });
-    broadcast({
+  broadcast({
       type: "bip_coach_error",
       message: state.bipCoach.lastError,
       bipCoach: state.bipCoach,
@@ -3908,9 +4177,9 @@ async function generateBasicBipCoachMission({
   const today = todayKey();
 
   function emitMissionProgress(stage, detail, extra = {}) {
-    broadcast({
+  broadcast({
       type: "bip_coach_generation_progress",
-      stage,
+    stage,
       detail,
       elapsedMs: Date.now() - startedAt,
       ...extra,
@@ -3974,7 +4243,7 @@ async function generateBasicBipCoachMission({
         content: buildMissionChoicesVisibleMessage(
           missionChoices,
           "문서 준비가 아직 끝나지 않아도 오늘 실행은 바로 시작할 수 있어요. 선택한 Day 커리큘럼만으로 15분 안에 끝낼 후보 3개를 먼저 만들었어요.",
-        ),
+    ),
         state: "final",
         bipMissionChoices: missionChoices,
       }));
@@ -3982,7 +4251,7 @@ async function generateBasicBipCoachMission({
       coachSession.error = null;
       touch(coachSession);
       await persistSessions();
-      broadcast({ type: "session_updated", session: coachSession });
+    broadcast({ type: "session_updated", session: coachSession });
     }
 
     await persistAndBroadcastBipCoach("mac_sidecar_bip_coach_basic_mission_generated", {
@@ -3991,7 +4260,7 @@ async function generateBasicBipCoachMission({
       missing_external_requirements: missingExternal.length,
       duration_ms: Date.now() - startedAt,
     });
-    broadcast({ type: "bip_coach_generation_completed", bipCoach: state.bipCoach });
+  broadcast({ type: "bip_coach_generation_completed", bipCoach: state.bipCoach });
   } catch (error) {
     state.bipCoach = normalizeBipCoachState({
       ...state.bipCoach,
@@ -4001,7 +4270,7 @@ async function generateBasicBipCoachMission({
     await persistAndBroadcastBipCoach("mac_sidecar_bip_coach_basic_mission_failed", {
       error: formatError(error),
     });
-    broadcast({
+  broadcast({
       type: "bip_coach_error",
       message: state.bipCoach.lastError,
       bipCoach: state.bipCoach,
@@ -4028,11 +4297,11 @@ async function generateBipMissionChoicesFromEvidence({
         curriculumDay,
         today,
         lane,
-      });
+    });
       const { text } = await runBipCoachProvider(provider, prompt, coachSession, {
         onEvidenceProgress: onProgress,
         requireGwsToolRead: false,
-      });
+    });
       return parseMissionChoicesResponse(text, {
         provider,
         compact,
@@ -4070,7 +4339,7 @@ async function selectBipCoachMission({ sessionId, missionId } = {}) {
   const id = String(missionId || "").trim();
   const mission = (state.bipCoach?.missionChoices || []).find((candidate) => candidate.id === id);
   if (!mission) {
-    await setBipCoachError("선택한 미션 후보를 찾지 못했어요. 미션을 다시 생성해 주세요.", "mac_sidecar_bip_coach_selection_missing");
+  await setBipCoachError("선택한 미션 후보를 찾지 못했어요. 미션을 다시 생성해 주세요.", "mac_sidecar_bip_coach_selection_missing");
     return;
   }
 
@@ -4087,7 +4356,7 @@ async function selectBipCoachMission({ sessionId, missionId } = {}) {
   });
 
   if (session) {
-    session.messages.push(
+  session.messages.push(
       makeMessage({
         role: "user",
         provider: session.provider,
@@ -4101,11 +4370,11 @@ async function selectBipCoachMission({ sessionId, missionId } = {}) {
         state: "final",
       }),
     );
-    session.status = "idle";
-    session.error = null;
+  session.status = "idle";
+  session.error = null;
     touch(session);
-    await persistSessions();
-    broadcast({ type: "session_updated", session });
+  await persistSessions();
+  broadcast({ type: "session_updated", session });
   }
 
   await persistAndBroadcastBipCoach("mac_sidecar_bip_coach_mission_selected", {
@@ -4260,7 +4529,7 @@ async function runBipCoachProvider(provider, prompt, coachSession = null, {
       model: coachSession?.provider === provider ? coachSession?.model ?? "" : "",
       sessionRuntime: coachSession?.runtime ?? {},
       prompt,
-      workspaceRoot,
+    workspaceRoot,
       abortController,
       sessionIdForMcp: coachSession?.id ?? "bip-coach",
       executionMode: "bip_coach_read_only",
@@ -4368,13 +4637,13 @@ function observeBipCoachToolEvent(event, {
         onEvidenceProgress?.("reading_sheet", "Agent가 gws로 Sheet 탭을 확인하는 중", {
           provider,
         });
-      }
+    }
       return;
     }
     if (event?.phase === "result") {
       if (toolUsage.sheetValuesRequested || payloadText.includes("\"values\"")) {
         toolUsage.sheetValuesRead = true;
-      }
+    }
       return;
     }
   }
@@ -4384,7 +4653,7 @@ function observeBipCoachToolEvent(event, {
       toolUsage.docRequested = true;
       onEvidenceProgress?.("reading_doc", "Agent가 gws로 업무일지 Doc 전체 payload를 읽는 중", {
         provider,
-      });
+    });
       return;
     }
     if (event?.phase === "result") {
@@ -4447,13 +4716,13 @@ async function completeCurrentBipCoachMission(payload) {
       payload.sessionId,
       buildMissionCompletionVisibleMessage(state.bipCoach),
     );
-    broadcast({ type: "bip_coach_completion_completed", bipCoach: state.bipCoach });
+  broadcast({ type: "bip_coach_completion_completed", bipCoach: state.bipCoach });
   } catch (error) {
     const rawError = formatError(error);
     const userError = /gws|google|sheet|doc|oauth|rapt/i.test(rawError)
       ? formatBipCoachGwsError(error)
       : rawError;
-    await setBipCoachError(userError, "mac_sidecar_bip_coach_completion_failed");
+  await setBipCoachError(userError, "mac_sidecar_bip_coach_completion_failed");
   }
 }
 
@@ -4481,17 +4750,17 @@ async function refreshPersistedBipCoachReadinessOnBoot() {
         status: "blocked",
         readinessError: auth.error,
         error: auth.error?.user_message || auth.error?.raw || "Google Workspace 연결을 다시 확인해야 해요.",
-      });
+    });
       return;
     }
 
-    broadcast({ type: "bip_readiness_event", rowId: "gwsAuth", status: "done" });
+  broadcast({ type: "bip_readiness_event", rowId: "gwsAuth", status: "done" });
 
     await refreshPersistedBipResourceReadiness("docUrl", "doc", config.docUrl || config.docId);
     await refreshPersistedBipResourceReadiness("sheetUrl", "sheet", config.sheetUrl || config.sheetId);
   } catch (error) {
     const readinessError = formatReadinessError(error);
-    broadcast({
+  broadcast({
       type: "bip_readiness_event",
       rowId: "gwsAuth",
       status: "blocked",
@@ -4504,7 +4773,7 @@ async function refreshPersistedBipCoachReadinessOnBoot() {
 async function refreshPersistedBipResourceReadiness(rowId, kind, urlOrId) {
   const result = await validateUrl({ env: process.env, url: urlOrId, kind });
   if (result.ok) {
-    broadcast({ type: "bip_readiness_event", rowId, status: "done" });
+  broadcast({ type: "bip_readiness_event", rowId, status: "done" });
     return;
   }
 
@@ -4516,7 +4785,7 @@ async function refreshPersistedBipResourceReadiness(rowId, kind, urlOrId) {
     error: result.error?.user_message || result.error?.raw || "Google 리소스 권한을 확인하지 못했어요.",
   });
   if (result.error?.kind === "auth_expired") {
-    broadcast({ type: "bip_readiness_event", rowId: "gwsAuth", status: "pending" });
+  broadcast({ type: "bip_readiness_event", rowId: "gwsAuth", status: "pending" });
   }
 }
 
@@ -4641,7 +4910,7 @@ async function clearInitialIntakeIfNeeded(session) {
   const requestId = session.pendingUserInput.requestId;
   session.pendingUserInput = null;
   if (session.status === "awaiting_input") {
-    session.status = "idle";
+  session.status = "idle";
   }
   touch(session);
   state.resolvedUserInputIds.add(requestId);
@@ -4653,6 +4922,14 @@ async function clearInitialIntakeIfNeeded(session) {
 function serializeBipSetupGate(gate) {
   return {
     bipSetupReady: Boolean(gate?.ready),
+    iddSetupComplete: Boolean(gate?.iddSetupComplete),
+    iddSetupStatus: gate?.iddSetupStatus ?? "not_started",
+    iddCurrentDocType: gate?.iddCurrentDocType ?? null,
+    iddAmbiguityScore: gate?.iddAmbiguityScore ?? null,
+    iddUnresolvedAssumptions: gate?.iddUnresolvedAssumptions ?? [],
+    iddDocOrder: gate?.iddDocOrder ?? [],
+    iddDocPreviews: gate?.iddDocPreviews ?? [],
+    iddProviderRecovery: gate?.iddProviderRecovery ?? null,
     missingLocalDocs: (gate?.missingLocalDocs ?? []).map((doc) => doc.type),
     missingExternalRequirements: (gate?.missingExternalRequirements ?? []).map((item) => item.id),
     nextIddDocumentType: gate?.nextLocalDoc?.type ?? null,
@@ -4679,11 +4956,16 @@ function resolveIddSessionSeed({ sessionId = "", provider = "" } = {}) {
   };
 }
 
-function findExistingIddSession(docType) {
+function findExistingIddSession(docType, { includeRecoverableError = false } = {}) {
   const marker = `[IDD:${docType}]`;
   return [...state.sessions.values()].find((session) =>
     (session.runtime?.iddDocumentType === docType || session.title?.includes(marker))
-    && (session.status === "running" || session.status === "awaiting_input" || session.status === "idle")
+    && (
+      session.status === "running"
+      || session.status === "awaiting_input"
+      || session.status === "idle"
+      || (includeRecoverableError && session.status === "error")
+    )
   ) || null;
 }
 
@@ -4700,7 +4982,622 @@ function takePendingIddContinuationPrompt(session, requestId) {
   return {
     prompt: String(pending.prompt),
     docType: String(pending.docType || ""),
+    hostGenerated: pending.hostGenerated === true,
   };
+}
+
+async function createHostIddQuestionRequest(session, doc, {
+  previousRequestId = null,
+  progressText = "질문 카드 준비 완료",
+} = {}) {
+  if (!session?.id || !doc?.type) {
+    throw new Error("Host IDD question requires a session and document type.");
+  }
+
+  if (session.pendingUserInput?.requestId) {
+    await deleteUserInputArtifacts(appSupportPath, session.id, session.pendingUserInput.requestId).catch(() => {});
+    state.resolvedUserInputIds.add(session.pendingUserInput.requestId);
+  }
+
+  const hasDraftForDoc = Boolean(state.iddSetup?.drafts?.[doc.type]?.trim());
+  const fallbackInput = hasDraftForDoc
+    ? buildIddFollowupStructuredInputForDoc(doc, state.iddSetup)
+    : initialIddStructuredInputForDoc(doc, {
+        provider: session.provider,
+        onboardingHypothesis: doc.type === "icp" ? await currentWorkspaceOnboardingHypothesis() : null,
+        forceHostStructuredInput: true,
+      });
+  const structuredInput = hasDraftForDoc
+    ? fallbackInput
+    : await synthesizeIddQuestionWithSidecarAgent(session, doc, fallbackInput) || fallbackInput;
+  if (!structuredInput?.toolName || !Array.isArray(structuredInput.questions)) {
+    throw new Error(`Unable to build host IDD question for ${doc.type}.`);
+  }
+
+  const request = await createUserInputRequest(appSupportPath, {
+    sessionId: session.id,
+    toolName: structuredInput.toolName,
+    title: structuredInput.title || `${doc.title} 질문`,
+    intro: structuredInput.intro || null,
+    resources: structuredInput.resources || null,
+    questions: structuredInput.questions,
+    generation: {
+      ...(structuredInput.generation && typeof structuredInput.generation === "object"
+        ? structuredInput.generation
+        : {}),
+      mode: structuredInput.generation?.mode || "host_structured",
+      docType: doc.type,
+    },
+  });
+
+  session.pendingUserInput = request;
+  session.status = "awaiting_input";
+  session.error = null;
+  session.title = `Foundation Setup: ${doc.title}`;
+  session.runtime = {
+    ...(session.runtime || {}),
+    iddDocumentType: doc.type,
+    pendingIddContinuation: {
+      requestId: request.requestId,
+      docType: doc.type,
+      prompt: "host_structured_idd_question",
+      hostGenerated: true,
+    },
+    iddPendingAdaptiveContinuation: null,
+    iddAdaptiveRegenerationInFlight: false,
+  };
+  touch(session);
+
+  broadcast({
+    type: "idd_setup_progress",
+    sessionId: session.id,
+    requestId: previousRequestId || request.requestId,
+    docType: doc.type,
+    stage: "preparing_question",
+    progressText,
+    elapsedMs: 0,
+  });
+  telemetry.captureEvent("mac_sidecar_idd_host_question_created", {
+    session_id: session.id,
+    doc_type: doc.type,
+    request_id: request.requestId,
+    question_count: request.questions.length,
+    has_existing_draft: hasDraftForDoc,
+    generation_mode: request.generation?.mode || "host_structured",
+  });
+  return request;
+}
+
+async function synthesizeIddQuestionWithSidecarAgent(session, doc, fallbackInput) {
+  if (process.env.AGENTIC30_DISABLE_IDD_AGENT_SYNTHESIS === "1") return null;
+  if (!session?.provider || !doc?.type || !fallbackInput?.questions?.length) return null;
+  const authState = getProviderAuthState(session.provider);
+  if (!authState.available) {
+    telemetry.captureEvent("mac_sidecar_idd_agent_synthesis_skipped", {
+      session_id: session.id,
+      doc_type: doc.type,
+      provider: session.provider,
+      reason: authState.source,
+    });
+    return null;
+  }
+
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45_000);
+  let responseText = "";
+
+  try {
+    broadcast({
+      type: "idd_setup_progress",
+      sessionId: session.id,
+      docType: doc.type,
+      stage: "agent_question_synthesis",
+      progressText: "sidecar agent가 프로젝트 맥락으로 질문 카드를 합성 중",
+      elapsedMs: 0,
+    });
+
+    if (process.env.AGENTIC30_TEST_IDD_AGENT_SYNTHESIS_JSON) {
+      responseText = process.env.AGENTIC30_TEST_IDD_AGENT_SYNTHESIS_JSON;
+    } else {
+      await runProviderStream({
+        provider: session.provider,
+        sessionRuntime: {},
+        prompt: await buildIddAgentSynthesisPrompt(doc, fallbackInput),
+        model: session.model,
+        workspaceRoot,
+        abortController: controller,
+        executionMode: "idd_question_synthesis",
+        systemPromptOverride: [
+          "You synthesize one structured customer-discovery question for agentic30 Foundation Setup.",
+          "You do not use tools. Work only from the workspace facts embedded in the prompt.",
+          "Return only valid JSON matching the requested schema.",
+        ].join("\n"),
+        onTextDelta: (text) => {
+          responseText += text;
+        },
+        onTextReplace: (text) => {
+          responseText = text;
+        },
+        onRunEvent: (event) => {
+          if (event.once) return;
+          telemetry.captureEvent("mac_sidecar_idd_agent_synthesis_phase", {
+            session_id: session.id,
+            doc_type: doc.type,
+            provider: session.provider,
+            phase: event.phase,
+          });
+        },
+      });
+    }
+
+    const structuredInput = parseIddAgentSynthesis(responseText, doc, fallbackInput);
+    if (!structuredInput) {
+      throw new Error("Agent synthesis returned no valid structured question.");
+    }
+    telemetry.captureEvent("mac_sidecar_idd_agent_synthesis_completed", {
+      session_id: session.id,
+      doc_type: doc.type,
+      provider: session.provider,
+      duration_ms: Date.now() - startedAt,
+    });
+    return structuredInput;
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "idd_agent_question_synthesis",
+      session_id: session.id,
+      doc_type: doc.type,
+      provider: session.provider,
+      duration_ms: Date.now() - startedAt,
+    });
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function iddAgentSynthesisBrief(doc) {
+  switch (doc?.type) {
+    case "goal":
+      return {
+        taskLine: "The user is the Agentic30 builder/founder. Ask which measurable proof target they will pursue first.",
+        evidenceLine: "Use the workspace facts below to choose the sharpest GOAL question about proof target, metric, threshold, or failure condition.",
+        audienceRule: "- Do not ask the end customer a research question. Ask the builder to choose a measurable goal for this week.",
+        questionShapeRule: "- The question should be one clear sentence ending in 요/까요, usually asking what proof target or metric will define progress this week.",
+        optionRule: "- Every option label must be a possible proof target or measurable progress criterion.",
+        header: "이번 주 GOAL",
+        schemaQuestion: "이번 주 가장 먼저 증명할 목표와 판단 지표는 무엇인가요?",
+        options: [
+          { label: "첫 고객 반응", description: "응답, 미팅, 사용 시도처럼 ICP가 실제 반응하는지 봅니다.", nextIntent: "goal_customer_response" },
+          { label: "문제 강도", description: "현재 대안의 시간, 돈, 평판 비용이 충분히 큰지 봅니다.", nextIntent: "goal_problem_intensity" },
+          { label: "완료 행동", description: "사용자가 핵심 workflow를 끝까지 완료하는지 봅니다.", nextIntent: "goal_completion_behavior" },
+          { label: "직접 입력", description: "목표, 숫자, 기한, 실패 조건을 한 줄로 적습니다.", nextIntent: "goal_custom" },
+        ],
+        placeholder: "예: 이번 주 5명에게 인터뷰 요청하고 3명 이상 답하면 GOAL 기준을 통과로 본다",
+      };
+    case "values":
+      return {
+        taskLine: "The user is the Agentic30 builder/founder. Ask which tradeoff or refusal rule should guide this week.",
+        evidenceLine: "Use the workspace facts below to choose the sharpest VALUES question about tradeoffs, rejected options, triggers, or violations.",
+        audienceRule: "- Do not ask for brand values or aspirational words. Ask for a decision rule that changes what the builder will do or refuse.",
+        questionShapeRule: "- The question should be one clear sentence ending in 요/까요, usually asking what tradeoff or refusal trigger matters this week.",
+        optionRule: "- Every option label must be a possible decision principle, tradeoff, or refusal rule.",
+        header: "결정 원칙",
+        schemaQuestion: "이번 주 어떤 상황에서 반드시 지킬 tradeoff나 거절 기준은 무엇인가요?",
+        options: [
+          { label: "증거 우선", description: "새 기능보다 사용자 행동 증거를 먼저 봅니다.", nextIntent: "values_evidence_first" },
+          { label: "좁은 성공", description: "넓은 기능보다 한 workflow 완료를 우선합니다.", nextIntent: "values_narrow_success" },
+          { label: "직접 관찰", description: "자동화보다 사용자가 막히는 장면을 먼저 봅니다.", nextIntent: "values_observe_first" },
+          { label: "직접 입력", description: "포기할 선택지와 지킬 원칙을 한 줄로 적습니다.", nextIntent: "values_custom" },
+        ],
+        placeholder: "예: 첫 실행에서는 멋진 채팅보다 질문이 바뀌지 않는 신뢰를 우선한다",
+      };
+    case "spec":
+      return {
+        taskLine: "The user is the Agentic30 builder/founder. Ask which MVP workflow and non-goal should define the first build.",
+        evidenceLine: "Use the workspace facts below to choose the sharpest SPEC question about user workflow, MVP wedge, non-goal, success signal, or core risk.",
+        audienceRule: "- Do not ask for a full product requirements document. Ask for the smallest workflow that must work for one user.",
+        questionShapeRule: "- The question should be one clear sentence ending in 요/까요, usually asking what core workflow the first version must complete.",
+        optionRule: "- Every option label must be a possible workflow, MVP wedge, non-goal, or success criterion.",
+        header: "MVP 흐름",
+        schemaQuestion: "이번 주 첫 버전에서 사용자가 반드시 끝내야 하는 핵심 workflow는 무엇인가요?",
+        options: [
+          { label: "첫 질문 답변", description: "맞춤 질문이 안정적으로 나타나고 사용자가 답변합니다.", nextIntent: "spec_first_question" },
+          { label: "4문서 승인", description: "Foundation 문서를 검토하고 Today Mission을 엽니다.", nextIntent: "spec_approve_docs" },
+          { label: "첫 미션 저장", description: "Day 1 미션을 선택하거나 생성해 실행 상태로 둡니다.", nextIntent: "spec_save_mission" },
+          { label: "직접 입력", description: "행동, 완료 화면, 하지 않을 일을 한 줄로 적습니다.", nextIntent: "spec_custom" },
+        ],
+        placeholder: "예: 사용자가 첫 질문에 답하고 4문서 미리보기를 승인하면 Day 1 미션이 열린다",
+      };
+    default:
+      return {
+        taskLine: "The user is the Agentic30 builder/founder. Ask the builder which customer segment they will interview first.",
+        evidenceLine: "Use the workspace facts below to choose the sharpest ICP/customer segment question.",
+        audienceRule: "- Do not ask the end customer a research question. Ask the builder to choose the first ICP/customer segment.",
+        questionShapeRule: "- The question should be one clear sentence ending in 요/까요, usually '이번 주 가장 먼저 인터뷰할 ... 누구인가요?'",
+        optionRule: "- Every option label must be a possible Agentic30 customer segment.",
+        header: "첫 고객",
+        schemaQuestion: "이번 주 가장 먼저 인터뷰할 1인 개발자 유형은 누구인가요?",
+        options: [
+          { label: "퇴사 후 첫 매출이 없는 개발자", description: "why this segment is a strong first interview target", nextIntent: "first_revenue_zero" },
+          { label: "AI로 제품은 만들었지만 고객이 없는 개발자", description: "why this segment is a strong first interview target", nextIntent: "agent_built_no_customers" },
+          { label: "여러 번 출시했지만 반응이 약했던 개발자", description: "why this segment is a strong first interview target", nextIntent: "weak_launch_response" },
+          { label: "직접 입력", description: "역할, 상황, 현재 대안을 한 줄로 적습니다.", nextIntent: "other_specific_icp" },
+        ],
+        placeholder: "예: 퇴사 후 3개월째, AI로 MVP는 만들었지만 유료 고객이 없는 개발자",
+      };
+  }
+}
+
+async function buildIddAgentSynthesisPrompt(doc, fallbackInput) {
+  const brief = iddAgentSynthesisBrief(doc);
+  const onboardingHypothesis = await currentWorkspaceOnboardingHypothesis();
+  const contextFiles = await collectIddSynthesisContextFiles();
+  const fallbackQuestion = fallbackInput?.questions?.[0] || {};
+  return [
+    "Return exactly one JSON object. No markdown. No prose.",
+    "",
+    `Task: create the first Foundation Setup ${doc.title} question card for the app builder.`,
+    brief.taskLine,
+    "The question must be dynamic and project-adaptive, not a template with variables filled in.",
+    brief.evidenceLine,
+    "",
+    "Hard rules:",
+    "- Do not call tools or ask to inspect files.",
+    "- Do not ask whether the project summary is correct.",
+    brief.audienceRule,
+    "- Do not ask about onboarding, workspace permissions, local file access, provider execution, implementation, or setup trust.",
+    "- Do not ask generic questions like '이번 주 바로 인터뷰할 첫 고객은 누구인가요?' unless the Agentic30 ICP context is explicitly embedded in the same sentence.",
+    "- Keep the question under 130 Korean characters when possible.",
+    "- Prefer concise, natural Korean. Write like product UI, not like copied documentation.",
+    "- Do not force product name, Mac, macOS, provider names, or file/workspace terms into the question or option labels unless they are essential to choosing the customer segment.",
+    "- If platform fit matters, put it in helperText or option descriptions, not in every label.",
+    brief.questionShapeRule,
+    "- Provide 3 project-specific options plus one direct-input option.",
+    "- Options must name concrete choices, not abstract criteria.",
+    brief.optionRule,
+    "- Option labels should be short and natural, ideally under 22 Korean characters.",
+    "- Avoid awkward literal phrases like 'N번째 제품 실패한', 'macOS 개발자', or '세그먼트부터 시작'. Rewrite them as natural customer language.",
+    "- Return Korean UI copy.",
+    "- Return exactly the compact schema below. Do not create multiple questions.",
+    "",
+    "JSON schema:",
+    JSON.stringify({
+      title: `${doc.title} 정하기`,
+      header: brief.header,
+      helperText: "one short natural sentence with the project-specific context",
+      question: brief.schemaQuestion,
+      options: brief.options,
+      freeTextPlaceholder: brief.placeholder,
+    }, null, 2),
+    "",
+    "Document:",
+    JSON.stringify({
+      type: doc.type,
+      title: doc.title,
+      canonicalPath: doc.canonicalPath,
+    }, null, 2),
+    "",
+    "Workspace hypothesis:",
+    JSON.stringify(onboardingHypothesis, null, 2),
+    "",
+    "Local evidence excerpts:",
+    JSON.stringify(contextFiles, null, 2),
+    "",
+    "Fallback card for reference only. Improve it; do not copy it blindly:",
+    JSON.stringify(fallbackInput, null, 2),
+    "",
+    "Return JSON now.",
+  ].join("\n");
+}
+
+async function collectIddSynthesisContextFiles() {
+  const configPaths = currentBipConfig()?.workspace || {};
+  const candidates = [
+    "docs/ICP.md",
+    "docs/SPEC.md",
+    "docs/GOAL.md",
+    "docs/VALUES.md",
+    ...Object.values(configPaths || {}).filter(Boolean),
+  ];
+  const seen = new Set();
+  const excerpts = [];
+  for (const relativePath of candidates) {
+    const normalized = String(relativePath || "").trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    const excerpt = await readWorkspaceTextExcerpt(normalized, 2200);
+    if (excerpt) excerpts.push(excerpt);
+    if (excerpts.length >= 8) break;
+  }
+  return excerpts;
+}
+
+async function readWorkspaceTextExcerpt(relativePath, maxChars) {
+  const resolved = path.resolve(workspaceRoot, relativePath);
+  const root = path.resolve(workspaceRoot);
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) return null;
+  try {
+    const stat = await fs.stat(resolved);
+    if (!stat.isFile() || stat.size > 2_000_000) return null;
+    const content = await fs.readFile(resolved, "utf8");
+    return {
+      path: path.relative(root, resolved).split(path.sep).join(path.posix.sep),
+      excerpt: content.slice(0, maxChars),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseIddAgentSynthesis(text, doc, fallbackInput = null) {
+  const parsed = parseFirstJsonObject(text);
+  const question = parsed?.questions?.[0] || salvageIddAgentQuestionObject(parsed, fallbackInput);
+  if (!question || typeof question !== "object") return null;
+  const normalizedQuestion = normalizeIddAgentQuestion(question);
+  if (!normalizedQuestion) return null;
+  const structuredInput = {
+    toolName: CODEX_STRUCTURED_INPUT_TOOL,
+    title: cleanShortText(parsed.title, 80) || `${doc.title} 1/4`,
+    generation: {
+      mode: "sidecar_agent_synthesized",
+      docType: doc.type,
+    },
+    questions: [normalizedQuestion],
+  };
+  return doc.type === "icp" ? decorateIcpStructuredInput(structuredInput) : structuredInput;
+}
+
+function normalizeIddAgentQuestion(question) {
+  const questionText = cleanShortText(question.question, 220);
+  const options = Array.isArray(question.options)
+    ? question.options
+        .map((option) => ({
+          label: cleanShortText(option?.label, 64),
+          description: cleanShortText(option?.description, 110),
+          nextIntent: cleanToken(option?.nextIntent) || "project_specific_icp",
+        }))
+        .filter((option) => option.label && option.description)
+        .slice(0, 4)
+    : [];
+  const directInputIndex = options.findIndex((option) => option.label === "직접 입력");
+  if (directInputIndex < 0) {
+    options.push({
+      label: "직접 입력",
+      description: "역할, 상황, 현재 대안을 한 줄로 적습니다.",
+      nextIntent: "other_specific_icp",
+    });
+  }
+  if (!questionText || options.length < 3) return null;
+  return {
+    header: cleanShortText(question.header, 40) || "첫 고객",
+    helperText: cleanShortText(question.helperText, 180) || "프로젝트 맥락에서 첫 고객 후보 하나만 고릅니다.",
+    question: questionText,
+    options: options.slice(0, 4),
+    multiSelect: false,
+    allowFreeText: true,
+    freeTextPlaceholder: cleanShortText(question.freeTextPlaceholder, 140) || "예: 이번 주 실제로 연락 가능한 고객 후보",
+    textMode: question.textMode === "long" ? "long" : "short",
+  };
+}
+
+function salvageIddAgentQuestionObject(parsed, fallbackInput) {
+  if (!parsed || typeof parsed !== "object") return null;
+  const questionText = cleanShortText(parsed.question, 220);
+  if (!questionText) return null;
+  const fallbackQuestion = fallbackInput?.questions?.[0] || {};
+  const fallbackOptions = Array.isArray(fallbackQuestion.options) ? fallbackQuestion.options : [];
+  const options = Array.isArray(parsed.options)
+    ? parsed.options
+        .map((option) => ({
+          label: cleanShortText(option?.label, 64),
+          description: cleanShortText(option?.description, 110),
+          nextIntent: cleanToken(option?.nextIntent) || "project_specific_icp",
+        }))
+        .filter((option) => option.label && option.description)
+        .slice(0, 4)
+    : [];
+  const targetCustomer = cleanShortText(parsed.target_customer || parsed.targetCustomer, 64);
+  if (targetCustomer && !options.some((option) => option.label === targetCustomer)) {
+    options.push({
+      label: targetCustomer,
+      description: cleanShortText(parsed.why_it_matters || parsed.whyItMatters, 110)
+        || "프로젝트 문서에서 가장 직접적인 첫 인터뷰 후보로 추론됐습니다.",
+      nextIntent: "agent_suggested_icp",
+    });
+  }
+  for (const option of fallbackOptions) {
+    if (!option?.label || options.some((existing) => existing.label === option.label)) continue;
+    options.push(option);
+    if (options.length >= 4) break;
+  }
+  return {
+    header: cleanShortText(parsed.header, 40) || fallbackQuestion.header || "첫 고객",
+    helperText: cleanShortText(parsed.helperText || parsed.learning_goal || parsed.learningGoal || parsed.why_it_matters || parsed.whyItMatters, 180)
+      || fallbackQuestion.helperText
+      || "프로젝트 맥락에서 첫 고객 후보 하나만 고릅니다.",
+    question: questionText,
+    options,
+    multiSelect: false,
+    allowFreeText: true,
+    freeTextPlaceholder: cleanShortText(parsed.freeTextPlaceholder, 140)
+      || fallbackQuestion.freeTextPlaceholder
+      || "예: 이번 주 실제로 연락 가능한 고객 후보",
+    textMode: parsed.textMode === "long" ? "long" : "short",
+  };
+}
+
+function parseFirstJsonObject(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return null;
+  const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const unfenced = fenceMatch?.[1]?.trim() ?? raw;
+  const start = unfenced.indexOf("{");
+  const end = unfenced.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  try {
+    return JSON.parse(unfenced.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+function cleanShortText(value, maxLength) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  return text.length > maxLength ? `${text.slice(0, Math.max(0, maxLength - 1)).trim()}…` : text;
+}
+
+function cleanToken(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 48);
+}
+
+function selectNextIddAdaptiveDoc(iddSetup, completedDoc) {
+  const completedType = String(completedDoc?.type || "");
+  const currentDocRubric = iddSetup?.ambiguityRubric?.docs?.find((entry) => entry.type === completedType);
+  if (currentDocRubric?.blocked && iddSetup?.drafts?.[completedType]?.trim()) {
+    return completedDoc;
+  }
+
+  const blockedDocRubric = iddSetup?.ambiguityRubric?.docs?.find((entry) =>
+    entry.blocked && iddSetup?.drafts?.[entry.type]?.trim()
+  );
+  if (blockedDocRubric) {
+    return IDD_FOUNDATION_DOCS.find((doc) => doc.type === blockedDocRubric.type) || null;
+  }
+
+  return nextIddFoundationDoc(iddSetup);
+}
+
+function isStructuredInputToolName(toolName) {
+  const normalized = String(toolName || "");
+  return normalized === CODEX_STRUCTURED_INPUT_TOOL
+    || normalized === "AskUserQuestion"
+    || normalized === "ask_user_question";
+}
+
+function requireFreeTextForIddQuestions(request) {
+  if (!Array.isArray(request?.questions)) {
+    return request;
+  }
+  return {
+    ...request,
+    questions: request.questions.map((question) => ({
+      ...question,
+      allowFreeText: true,
+      requiresFreeText: true,
+      freeTextPlaceholder: question?.freeTextPlaceholder || "예: 이번 주 확인 가능한 사람/행동/숫자/실패 조건",
+      textMode: question?.textMode || "short",
+    })),
+  };
+}
+
+function attachIddAdaptiveContinuationToRequest(session, request) {
+  const pending = session.runtime?.iddPendingAdaptiveContinuation;
+  if (!pending?.docType || !pending?.prompt || !isStructuredInputToolName(request?.toolName)) {
+    return request;
+  }
+
+  const nextDoc = IDD_FOUNDATION_DOCS.find((doc) => doc.type === pending.docType)
+    || requiredDocByType(pending.docType);
+  const nextRequest = {
+    ...requireFreeTextForIddQuestions(request),
+    generation: {
+      ...(request.generation && typeof request.generation === "object" ? request.generation : {}),
+      mode: "provider_adaptive",
+      docType: pending.docType,
+    },
+  };
+  session.runtime = {
+    ...(session.runtime || {}),
+    iddDocumentType: pending.docType,
+    pendingIddContinuation: {
+      requestId: request.requestId,
+      docType: pending.docType,
+      prompt: pending.prompt,
+    },
+    iddPendingAdaptiveContinuation: null,
+    iddAdaptiveRegenerationInFlight: false,
+  };
+  session.title = `Foundation Setup: ${nextDoc.title}`;
+  broadcast({
+    type: "idd_setup_progress",
+    sessionId: session.id,
+    requestId: pending.previousRequestId || request.requestId,
+    docType: pending.docType,
+    stage: "preparing_question",
+    progressText: "adaptive 질문 준비 완료",
+    elapsedMs: 0,
+  });
+  return nextRequest;
+}
+
+function isIddInterviewSession(session) {
+  return Boolean(
+    session?.runtime?.iddDocumentType
+      || session?.runtime?.pendingIddContinuation?.docType
+      || session?.runtime?.iddPendingAdaptiveContinuation?.docType
+      || String(session?.title || "").startsWith("Foundation Setup:"),
+  );
+}
+
+async function restartIddAdaptiveQuestionGeneration(session, {
+  previousRequestId = null,
+  reason = "legacy_static_blocked",
+} = {}) {
+  if (!isIddInterviewSession(session)) return false;
+  if (state.activeRuns.has(session.id)) {
+    session.status = "running";
+    touch(session);
+    return true;
+  }
+  if (session.runtime?.iddAdaptiveRegenerationInFlight) {
+    session.status = "running";
+    touch(session);
+    return true;
+  }
+
+  const pending = session.runtime?.pendingIddContinuation
+    || session.runtime?.iddPendingAdaptiveContinuation
+    || {};
+  const docType = pending.docType || session.runtime?.iddDocumentType;
+  if (!docType) return false;
+  const doc = IDD_FOUNDATION_DOCS.find((candidate) => candidate.type === docType)
+    || requiredDocByType(docType);
+  if (!doc) return false;
+
+  session.pendingUserInput = null;
+  session.status = "awaiting_input";
+  session.runtime = {
+    ...(session.runtime || {}),
+    iddDocumentType: doc.type,
+    pendingIddContinuation: null,
+    iddAdaptiveRegenerationInFlight: false,
+    iddPendingAdaptiveContinuation: null,
+  };
+  await createHostIddQuestionRequest(session, doc, {
+    previousRequestId,
+    progressText: "static 질문을 폐기하고 질문 카드를 다시 준비했습니다.",
+  });
+  touch(session);
+  state.sessions.set(session.id, session);
+  await persistSessions();
+  broadcast({
+    type: "idd_setup_progress",
+    sessionId: session.id,
+    requestId: previousRequestId,
+    docType: doc.type,
+    stage: reason,
+    progressText: "static 질문을 폐기하고 질문 카드를 다시 준비했습니다.",
+    elapsedMs: 0,
+  });
+  broadcast({ type: "session_updated", session });
+  return true;
 }
 
 async function currentWorkspaceOnboardingHypothesis() {
@@ -4713,6 +5610,30 @@ async function currentWorkspaceOnboardingHypothesis() {
   return state.workspaceOnboardingHypothesis;
 }
 
+function scheduleWorkspaceOnboardingHypothesisWarmup() {
+  if (state.workspaceOnboardingHypothesis || workspaceOnboardingHypothesisWarmup) {
+    return;
+  }
+  workspaceOnboardingHypothesisWarmup = currentWorkspaceOnboardingHypothesis()
+    .catch((error) => {
+      telemetry.captureException(error, {
+        operation: "workspaceOnboardingHypothesisWarmup",
+    });
+      return null;
+    })
+    .finally(() => {
+      workspaceOnboardingHypothesisWarmup = null;
+    });
+}
+
+function cachedWorkspaceOnboardingHypothesisForIddDoc(doc) {
+  if (doc?.type !== "icp") {
+    return null;
+  }
+  scheduleWorkspaceOnboardingHypothesisWarmup();
+  return state.workspaceOnboardingHypothesis ?? null;
+}
+
 async function startIddDocumentQueue({
   gate = null,
   sessionId = "",
@@ -4720,10 +5641,21 @@ async function startIddDocumentQueue({
   requestedDocType = "",
 } = {}) {
   const resolvedGate = gate ?? currentBipSetupGate();
-  const requestedDoc = requestedDocType ? requiredDocByType(String(requestedDocType)) : null;
+  if (resolvedGate.iddSetupComplete) {
+  broadcast({
+    type: "idd_setup_state",
+    ...serializeBipSetupGate(resolvedGate),
+    });
+    return null;
+  }
+
+  const requestedDoc = requestedDocType
+    ? IDD_FOUNDATION_DOCS.find((doc) => doc.type === String(requestedDocType))
+    : null;
+  const foundationNextDoc = nextIddFoundationDoc(state.iddSetup);
   const nextDoc = requestedDoc && resolvedGate.missingLocalDocs.some((doc) => doc.type === requestedDoc.type)
     ? requestedDoc
-    : resolvedGate.nextLocalDoc;
+    : foundationNextDoc;
   const message = summarizeBipSetupGate(resolvedGate);
 
   broadcast({
@@ -4732,16 +5664,30 @@ async function startIddDocumentQueue({
   });
 
   if (!nextDoc) {
-    await setBipCoachError(
+  await setBipCoachError(
       message,
-      "mac_sidecar_bip_coach_idd_required",
+    "mac_sidecar_bip_coach_idd_required",
     );
     return null;
   }
 
-  const existing = findExistingIddSession(nextDoc.type);
+  const seed = resolveIddSessionSeed({ sessionId, provider });
+  const existing = findExistingIddSession(nextDoc.type, { includeRecoverableError: true });
   if (existing) {
     const userFacingTitle = genericIddUserFacingTitle(nextDoc);
+    state.iddSetup = await persistIddSetupState(workspaceRoot, {
+      ...state.iddSetup,
+      status: "interviewing",
+      currentDocType: nextDoc.type,
+      lastProvider: seed.provider,
+      providerRecovery: null,
+      setupError: null,
+    });
+    await createHostIddQuestionRequest(existing, nextDoc, {
+      progressText: "질문 카드 준비 완료",
+    });
+    state.sessions.set(existing.id, existing);
+    await persistSessions();
     broadcast({
       type: "bip_idd_session_ready",
       sessionId: existing.id,
@@ -4750,20 +5696,43 @@ async function startIddDocumentQueue({
       ...serializeBipSetupGate(resolvedGate),
     });
     await setBipCoachError(
-      `${message} 이미 열린 ${userFacingTitle} 정리 세션에서 먼저 기준을 완성해주세요.`,
+      `${message} ${userFacingTitle} 질문 카드를 다시 준비했어요.`,
       "mac_sidecar_bip_coach_idd_required",
     );
+    broadcast({
+      type: "idd_setup_state",
+      ...serializeIddSetupFields(state.iddSetup),
+      ...serializeBipSetupGate(currentBipSetupGate()),
+    });
+    broadcast({ type: "session_updated", session: existing });
     return existing;
   }
 
-  const seed = resolveIddSessionSeed({ sessionId, provider });
   const session = createSession(seed);
   const userFacingTitle = genericIddUserFacingTitle(nextDoc);
-  session.title = `기준 정리: ${userFacingTitle}`;
+  session.title = `Foundation Setup: ${nextDoc.title}`;
   session.runtime = {
     ...(session.runtime || {}),
     iddDocumentType: nextDoc.type,
   };
+  telemetry.captureEvent("mac_sidecar_idd_host_question_started", {
+    session_id: session.id,
+    doc_type: nextDoc.type,
+    provider: seed.provider,
+  });
+  state.iddSetup = await persistIddSetupState(workspaceRoot, {
+    ...state.iddSetup,
+    status: "interviewing",
+    currentDocType: nextDoc.type,
+    lastProvider: seed.provider,
+    providerRecovery: null,
+    setupError: null,
+  });
+  await createHostIddQuestionRequest(session, nextDoc, {
+    progressText: "첫 질문 카드 준비 완료",
+  });
+  touch(session);
+
   state.sessions.set(session.id, session);
   await persistSessions();
   await syncAndBroadcastBipCoachSessionState({ preferredSessionId: session.id });
@@ -4781,86 +5750,66 @@ async function startIddDocumentQueue({
     "mac_sidecar_bip_coach_idd_required",
   );
 
-  const initialSelection = selectSpecialist({
-    bipSetupGate: resolvedGate,
-    doc: nextDoc,
+  broadcast({
+    type: "idd_setup_state",
+    ...serializeIddSetupFields(state.iddSetup),
+    ...serializeBipSetupGate(currentBipSetupGate()),
   });
-  const initialSpecialistInjection = buildSpecialistInjection(initialSelection, {
-    provider: seed.provider,
-  });
-  telemetry.captureEvent("mac_sidecar_specialist_routed", {
-    session_id: session.id,
-    stage: "idd_document_start",
-    specialist_id: initialSelection.id,
-    phase: initialSelection.phase,
-    decision_kind: initialSelection.decisionKind,
-    doc_type: nextDoc.type,
-    vendor_used: Boolean(
-      initialSelection?.vendor?.claude?.exists
-        && initialSelection?.vendor?.codex?.exists,
-    ),
-  });
-  const prompt = buildIddDocumentPrompt(nextDoc, {
-    provider: seed.provider,
-    workspaceRoot,
-    queue: resolvedGate.missingLocalDocs,
-    specialistInjection: initialSpecialistInjection,
-  });
-  const initialStructuredInput = initialIddStructuredInputForDoc(nextDoc, {
-    provider: seed.provider,
-    onboardingHypothesis: await currentWorkspaceOnboardingHypothesis(),
-    onboardingContext: getAuthContextSummary().onboardingContext,
-  });
-  if (initialStructuredInput) {
-    session.pendingUserInput = await createUserInputRequest(appSupportPath, {
-      sessionId: session.id,
-      toolName: initialStructuredInput.toolName,
-      title: initialStructuredInput.title,
-      questions: initialStructuredInput.questions,
-    });
-    session.runtime = {
-      ...(session.runtime || {}),
-      pendingIddContinuation: {
-        requestId: session.pendingUserInput.requestId,
-        docType: nextDoc.type,
-        prompt,
-      },
-    };
-    session.status = "awaiting_input";
-    touch(session);
-    await persistSessions();
-    broadcast({ type: "session_updated", session });
-    return session;
-  }
-
-  void (async () => {
-    try {
-      await runPrompt(session, prompt, {
-        displayUserMessage: false,
-        defaultTitle: session.title,
-        specialist: initialSelection,
-      });
-      const nextGate = currentBipSetupGate();
-      broadcastBipSetupGateState(nextGate);
-      if (
-        !nextGate.ready
-        && nextGate.nextLocalDoc
-        && nextGate.nextLocalDoc.type !== nextDoc.type
-      ) {
-        await startIddDocumentQueue({
-          gate: nextGate,
-          provider: seed.provider,
-        });
-      }
-    } catch (error) {
-      telemetry.captureException(error, {
-        operation: "startIddDocumentQueue.runPrompt",
-        session_id: session.id,
-        doc_type: nextDoc.type,
-      });
-    }
-  })();
+  broadcast({ type: "session_updated", session });
   return session;
+}
+
+async function recoverStalledIddInterviewIfNeeded(sessionId, { provider = "codex", docType = null } = {}) {
+  const session = state.sessions.get(sessionId);
+  if (!session?.runtime?.iddDocumentType) return false;
+  if (session.pendingUserInput) return false;
+  if (docType && state.iddSetup?.drafts?.[docType]?.trim()) return false;
+
+  const lastAssistant = [...(session.messages || [])]
+    .reverse()
+    .find((message) => message?.role === "assistant");
+  const lastContent = String(lastAssistant?.content || "").trim();
+  const message = lastContent
+    ? `인터뷰 질문 카드 준비가 중단됐습니다: ${lastContent}`
+    : "인터뷰 질문 카드 준비가 중단됐습니다. 다시 시작해 주세요.";
+
+  state.iddSetup = await persistIddSetupState(
+    workspaceRoot,
+    setIddSetupError(state.iddSetup, {
+      provider,
+      docType,
+      message,
+    }),
+  );
+
+  if (lastAssistant && lastAssistant.state !== "error") {
+    lastAssistant.state = "error";
+    lastAssistant.error = message;
+  } else if (!lastAssistant) {
+    session.messages.push(makeMessage({
+      role: "assistant",
+      provider: session.provider,
+      content: message,
+      state: "error",
+    }));
+  }
+  session.status = "error";
+  session.error = message;
+  session.runtime = {
+    ...(session.runtime || {}),
+    iddPendingAdaptiveContinuation: null,
+  };
+  touch(session);
+  state.sessions.set(session.id, session);
+  await persistSessions();
+
+  broadcast({
+    type: "idd_setup_state",
+    ...serializeIddSetupFields(state.iddSetup),
+    ...serializeBipSetupGate(currentBipSetupGate()),
+  });
+  broadcast({ type: "session_updated", session });
+  return true;
 }
 
 async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) {
@@ -4887,13 +5836,13 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
         codex_model: WORKSPACE_SCAN_CODEX_MODEL,
         agent_result_count: 0,
         provider_verification_skipped: true,
-      });
+    });
       markWorkspaceSetupScanSucceeded(scanRoot, {
         found_count: localFoundCount,
         onboarding_hypothesis_confidence: localOnboardingHypothesis.confidence,
         agent_result_count: 0,
         provider_verification_skipped: true,
-      });
+    });
       broadcast({
         type: "workspace_scan_result",
         scanRoot,
@@ -4906,7 +5855,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
         docs: localResult.docs || null,
         sheet: localResult.sheet || null,
         onboardingHypothesis: localOnboardingHypothesis,
-      });
+    });
       return;
     }
     broadcastWorkspaceScanProgress(
@@ -4938,7 +5887,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
     state.workspaceOnboardingHypothesis = onboardingHypothesis;
     const foundCount = countWorkspaceScanResults(merged);
 
-    telemetry.captureEvent("mac_sidecar_workspace_scan_completed", {
+  telemetry.captureEvent("mac_sidecar_workspace_scan_completed", {
       scan_root: scanRoot,
       found_count: foundCount,
       onboarding_hypothesis_confidence: onboardingHypothesis.confidence,
@@ -4951,7 +5900,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
       onboarding_hypothesis_confidence: onboardingHypothesis.confidence,
       agent_result_count: parsedAgentResults.length,
     });
-    broadcast({
+  broadcast({
       type: "workspace_scan_result",
       scanRoot,
       icp: merged.icp || null,
@@ -4962,15 +5911,15 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
       goal: merged.goal || null,
       docs: merged.docs || null,
       sheet: merged.sheet || null,
-      onboardingHypothesis,
+    onboardingHypothesis,
     });
   } catch (error) {
-    telemetry.captureException(error, {
+  telemetry.captureException(error, {
       operation: "runWorkspaceScan",
       scan_root: scanRoot,
     });
     markWorkspaceSetupFailed(scanRoot, error);
-    broadcast({
+  broadcast({
       type: "workspace_scan_result",
       scanRoot,
       error: formatError(error),
@@ -5014,7 +5963,7 @@ async function appendWorkspaceScanVisibleAnswer({ sessionId = "", prompt = "", s
 async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
   const authState = getProviderAuthState(provider);
   if (!authState.available) {
-    telemetry.captureEvent("mac_sidecar_workspace_scan_provider_skipped", {
+  telemetry.captureEvent("mac_sidecar_workspace_scan_provider_skipped", {
       provider,
       model,
       reason: authState.source,
@@ -5067,7 +6016,7 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
       provider,
       prompt: scanPrompt,
       model,
-      workspaceRoot: scanRoot,
+    workspaceRoot: scanRoot,
       abortController,
       executionMode: "agentic",
       systemPromptOverride,
@@ -5089,7 +6038,7 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
     const parsed = parseWorkspaceScanText(responseText);
     const result = {
       ...normalizeWorkspaceScanResult(parsed, scanRoot),
-      onboardingHypothesis: normalizeWorkspaceOnboardingHypothesis(parsed?.onboardingHypothesis),
+    onboardingHypothesis: normalizeWorkspaceOnboardingHypothesis(parsed?.onboardingHypothesis),
     };
     const foundCount = countWorkspaceScanResults(result);
     broadcastWorkspaceScanProgress(
@@ -5098,7 +6047,7 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
     );
     return result;
   } catch (error) {
-    telemetry.captureException(error, {
+  telemetry.captureException(error, {
       operation: "runWorkspaceScanAgent",
       provider,
       model,
@@ -5254,14 +6203,14 @@ async function findWorkspaceDocsLocally(scanRoot) {
           queue.push({ absolute: absolutePath, relative: relativePath, depth: current.depth + 1 });
         }
         continue;
-      }
+    }
       if (!entry.isFile()) continue;
       const filename = entry.name.toLowerCase();
       for (const [key, names] of Object.entries(targets)) {
         if (!result[key] && names.includes(filename)) {
           result[key] = relativePath;
         }
-      }
+    }
     }
   }
 
@@ -5358,7 +6307,7 @@ function countWorkspaceScanResults(result) {
 async function runCreateDoc(docRoot, docType) {
   const authState = getProviderAuthState("claude");
   if (!authState.available) {
-    broadcast({
+  broadcast({
       type: "doc_creation_result",
       docType,
       error: "Claude is not available. " + authState.message,
@@ -5435,7 +6384,7 @@ async function runCreateDoc(docRoot, docType) {
 
   const template = templates[docType];
   if (!template) {
-    broadcast({
+  broadcast({
       type: "doc_creation_result",
       docType,
       error: `Unknown document type: ${docType}`,
@@ -5479,7 +6428,7 @@ async function runCreateDoc(docRoot, docType) {
       abortController,
     };
 
-    const prompt = [
+  const prompt = [
       `${template.guide}`,
       "",
       `Explore this workspace first, then write the document and save it to "${template.filename}".`,
@@ -5510,7 +6459,7 @@ async function runCreateDoc(docRoot, docType) {
             broadcast({ type: "doc_creation_progress", docType, progressText: text });
           }
         }
-      }
+    }
     }
 
     // Verify the file was created
@@ -5520,12 +6469,12 @@ async function runCreateDoc(docRoot, docType) {
       telemetry.captureEvent("mac_sidecar_doc_created", {
         doc_type: docType,
         doc_path: template.filename,
-      });
+    });
       broadcast({
         type: "doc_creation_result",
         docType,
         docPath: template.filename,
-      });
+    });
     } catch {
       telemetry.captureException(
         new Error(`Agent finished but the file was not found at ${template.filename}`),
@@ -5539,14 +6488,14 @@ async function runCreateDoc(docRoot, docType) {
         type: "doc_creation_result",
         docType,
         error: `Agent finished but the file was not found at ${template.filename}`,
-      });
+    });
     }
   } catch (error) {
-    telemetry.captureException(error, {
+  telemetry.captureException(error, {
       operation: "runCreateDoc",
-      doc_type: docType,
+    doc_type: docType,
     });
-    broadcast({
+  broadcast({
       type: "doc_creation_result",
       docType,
       error: formatError(error),
@@ -5671,7 +6620,7 @@ async function ensureNotionToken() {
           broadcast({ type: "notion_oauth_result", success: false, error: "Token refresh failed. Please reconnect." });
           return null;
         }
-      }
+    }
     }
   }
 
@@ -5707,7 +6656,7 @@ async function runNotionOAuth() {
     }
     // Otherwise, wait for notion_oauth_callback message from the app
   } catch (error) {
-    broadcast({
+  broadcast({
       type: "notion_oauth_result",
       success: false,
       error: formatError(error),
@@ -5731,9 +6680,9 @@ async function completeNotionOAuth(code) {
       },
     };
     writeNotionConfig(config);
-    broadcast({ type: "notion_oauth_result", success: true });
+  broadcast({ type: "notion_oauth_result", success: true });
   } catch (error) {
-    broadcast({
+  broadcast({
       type: "notion_oauth_result",
       success: false,
       error: formatError(error),
@@ -5768,7 +6717,7 @@ function bootstrapQmdMemoryCollections() {
     workerData: {
       appSupportPath,
       sidecarRoot,
-      workspaceRoot,
+    workspaceRoot,
     },
   });
   worker.unref?.();
@@ -5780,12 +6729,12 @@ function bootstrapQmdMemoryCollections() {
       if (message?.error?.stack) error.stack = message.error.stack;
       telemetry.captureException(error, {
         operation: "qmd_memory_bootstrap",
-      });
+    });
       return;
     }
 
     const result = message.result || {};
-    telemetry.captureEvent("mac_sidecar_qmd_memory_bootstrap", {
+  telemetry.captureEvent("mac_sidecar_qmd_memory_bootstrap", {
       attempted: result.attempted,
       updated: result.updated,
       reason: result.reason || "",
@@ -5796,7 +6745,7 @@ function bootstrapQmdMemoryCollections() {
 
   worker.once("error", (error) => {
     qmdBootstrapScheduled = false;
-    telemetry.captureException(error, {
+  telemetry.captureException(error, {
       operation: "qmd_memory_bootstrap",
     });
   });
@@ -5806,7 +6755,7 @@ function bootstrapQmdMemoryCollections() {
       qmdBootstrapScheduled = false;
       telemetry.captureException(new Error(`QMD memory bootstrap worker exited with code ${code}.`), {
         operation: "qmd_memory_bootstrap",
-      });
+    });
     }
   });
 }
@@ -5985,7 +6934,7 @@ function setAssistantText(session, messageId, content) {
         );
       } else {
         extractedDecision = extracted.decision;
-      }
+    }
     }
   }
   if (
@@ -6015,7 +6964,7 @@ function setAssistantText(session, messageId, content) {
   // `message_replaced` only carries content; the SwiftUI client needs a full
   // session refresh when inlineDecision metadata changes.
   if (extractedDecision) {
-    broadcast({ type: "session_updated", session });
+  broadcast({ type: "session_updated", session });
   }
 }
 
@@ -6179,7 +7128,7 @@ function makeMessage({
       if (inferred.decision) {
         resolvedDecision = inferred.decision;
         resolvedContent = inferred.text;
-      }
+    }
     }
   }
 
@@ -6247,7 +7196,7 @@ function buildProviderAuthActions(providers = []) {
     .map((provider) => ({
       id: `${provider}_login`,
       provider,
-      title: provider === "claude" ? "Claude 로그인" : "Codex 로그인",
+    title: provider === "claude" ? "Claude 로그인" : "Codex 로그인",
       detail: provider === "claude"
         ? "Claude Agent SDK의 claude auth login을 실행합니다."
         : "Codex CLI의 codex login을 실행합니다.",
@@ -6315,6 +7264,25 @@ function touch(session) {
   session.updatedAt = new Date().toISOString();
 }
 
+function shouldRestartIddQuestionRequest(session, request) {
+  if (isLegacyStaticIddUserInputRequest(request)) {
+    return true;
+  }
+  if (isStaleAwkwardIcpUserInputRequest(request)) {
+    return getProviderAuthState(session?.provider).available;
+  }
+  if (isMissingIcpContextIntro(request)) {
+    return true;
+  }
+  if (!isStaleGenericHostIddUserInputRequest(request)) {
+    return false;
+  }
+  if (process.env.AGENTIC30_DISABLE_IDD_AGENT_SYNTHESIS === "1") {
+    return false;
+  }
+  return getProviderAuthState(session?.provider).available;
+}
+
 async function syncPendingUserInputRequests() {
   const requests = await listUserInputRequests(appSupportPath);
   const activeRequestIds = new Set(requests.map((request) => request.requestId));
@@ -6324,9 +7292,26 @@ async function syncPendingUserInputRequests() {
     if (state.resolvedUserInputIds.has(request.requestId)) continue;
     const session = state.sessions.get(request.sessionId);
     if (!session) continue;
+    if (
+      isIddInterviewSession(session)
+      && shouldRestartIddQuestionRequest(session, request)
+    ) {
+      await deleteUserInputArtifacts(appSupportPath, request.sessionId, request.requestId);
+      state.resolvedUserInputIds.add(request.requestId);
+      activeRequestIds.delete(request.requestId);
+      if (session.pendingUserInput?.requestId === request.requestId) {
+        session.pendingUserInput = null;
+      }
+      await restartIddAdaptiveQuestionGeneration(session, {
+        previousRequestId: request.requestId,
+        reason: "legacy_static_blocked",
+      });
+      changedSessions.add(session.id);
+      continue;
+    }
     if (session.pendingUserInput?.requestId === request.requestId) continue;
 
-    session.pendingUserInput = request;
+    session.pendingUserInput = attachIddAdaptiveContinuationToRequest(session, request);
     session.status = "awaiting_input";
     touch(session);
     changedSessions.add(session.id);
@@ -6334,6 +7319,22 @@ async function syncPendingUserInputRequests() {
 
   for (const session of state.sessions.values()) {
     const pending = session.pendingUserInput;
+    if (
+      pending
+      && isIddInterviewSession(session)
+      && shouldRestartIddQuestionRequest(session, pending)
+    ) {
+      await deleteUserInputArtifacts(appSupportPath, session.id, pending.requestId);
+      state.resolvedUserInputIds.add(pending.requestId);
+      activeRequestIds.delete(pending.requestId);
+      session.pendingUserInput = null;
+      await restartIddAdaptiveQuestionGeneration(session, {
+        previousRequestId: pending.requestId,
+        reason: "legacy_static_blocked",
+      });
+      changedSessions.add(session.id);
+      continue;
+    }
     if (!pending || activeRequestIds.has(pending.requestId)) continue;
 
     session.pendingUserInput = null;
@@ -6354,7 +7355,7 @@ async function syncPendingUserInputRequests() {
 
   await persistSessions();
   for (const sessionId of changedSessions) {
-    broadcast({ type: "session_updated", session: state.sessions.get(sessionId) });
+  broadcast({ type: "session_updated", session: state.sessions.get(sessionId) });
   }
 }
 
@@ -6381,7 +7382,7 @@ function normalizeUserInputResponse(promptRequest, payload) {
       annotations[question.question] = {
         ...(match?.preview ? { preview: String(match.preview) } : {}),
         ...(freeText ? { notes: freeText } : match?.notes ? { notes: String(match.notes) } : {}),
-      };
+    };
     }
   }
 
@@ -6397,6 +7398,17 @@ function normalizeUserInputResponse(promptRequest, payload) {
       freeText: typeof entry?.freeText === "string" ? entry.freeText : "",
     })),
   };
+}
+
+function findMissingRequiredFreeTextQuestion(response) {
+  const responsesByQuestion = new Map(
+    (response.responses || []).map((entry) => [entry.question, entry]),
+  );
+  return (response.questions || []).find((question) => {
+    if (question?.requiresFreeText !== true) return false;
+    const entry = responsesByQuestion.get(question.question);
+    return !String(entry?.freeText || "").trim();
+  }) || null;
 }
 
 function formatStructuredPromptResponse(response) {
@@ -6417,7 +7429,7 @@ function formatStructuredPromptResponse(response) {
 
 async function loadSessions() {
   if (process.env.AGENTIC30_RESTORE_SESSIONS_ON_BOOT !== "1") {
-    await persistSessionsToFile(sessionsFilePath, []);
+  await persistSessionsToFile(sessionsFilePath, []);
     return;
   }
 
@@ -6426,17 +7438,17 @@ async function loadSessions() {
       state.sessionStoreWarnings.push({
         ...warning,
         occurredAt: new Date().toISOString(),
-      });
+    });
       if (state.sessionStoreWarnings.length > 5) {
         state.sessionStoreWarnings = state.sessionStoreWarnings.slice(-5);
-      }
+    }
     },
   });
   for (const session of sessions) {
-    state.sessions.set(session.id, session);
+  state.sessions.set(session.id, session);
   }
   if (sessions.length > 0) {
-    await persistSessions();
+  await persistSessions();
   }
 }
 
@@ -6464,14 +7476,52 @@ function readArg(name) {
 }
 
 function send(socket, payload) {
-  socket.send(JSON.stringify(payload));
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    state.clients.delete(socket);
+    return false;
+  }
+  try {
+    socket.send(JSON.stringify(payload), (error) => {
+      if (!error) return;
+      state.clients.delete(socket);
+      telemetry.captureException(error, {
+        operation: "websocket_send",
+        message_type: payload?.type || "unknown",
+      });
+    });
+    return true;
+  } catch (error) {
+    state.clients.delete(socket);
+    telemetry.captureException(error, {
+      operation: "websocket_send",
+      message_type: payload?.type || "unknown",
+    });
+    return false;
+  }
 }
 
 function broadcast(payload) {
   const message = JSON.stringify(payload);
   for (const client of state.clients) {
-    if (client.readyState === 1) {
-      client.send(message);
+    if (client.readyState !== WebSocket.OPEN) {
+      state.clients.delete(client);
+      continue;
+    }
+    try {
+      client.send(message, (error) => {
+        if (!error) return;
+        state.clients.delete(client);
+        telemetry.captureException(error, {
+          operation: "websocket_broadcast",
+          message_type: payload?.type || "unknown",
+        });
+      });
+    } catch (error) {
+      state.clients.delete(client);
+      telemetry.captureException(error, {
+        operation: "websocket_broadcast",
+        message_type: payload?.type || "unknown",
+      });
     }
   }
 }
@@ -6538,7 +7588,7 @@ function markWorkspaceSetupStarted(root) {
   const resolvedRoot = path.resolve(String(root || workspaceRoot));
   const telemetryState = state.workspaceSetupTelemetry;
   if (
-    telemetryState.root !== resolvedRoot
+  telemetryState.root !== resolvedRoot
     || telemetryState.failed
     || telemetryState.completed
   ) {
@@ -6588,7 +7638,7 @@ function markWorkspaceSetupFirstInput(source) {
 function maybeEmitWorkspaceSetupCompleted(extra = {}) {
   const telemetryState = state.workspaceSetupTelemetry;
   if (
-    telemetryState.completed
+  telemetryState.completed
     || !telemetryState.started
     || !telemetryState.scanSucceeded
     || !telemetryState.firstInput
@@ -6683,7 +7733,7 @@ async function startProviderAuthLogin(payload = {}) {
   const provider = payload.provider === "claude" ? "claude" : "codex";
   const existing = state.providerAuthRuns.get(provider);
   if (existing) {
-    broadcast({
+  broadcast({
       type: "provider_auth_progress",
       provider,
       detail: `${provider} login is already running.`,
@@ -6701,7 +7751,7 @@ async function startProviderAuthLogin(payload = {}) {
           "--claudeai",
         ],
         env: buildClaudeLoginEnv(),
-      }
+    }
     : {
         executable: process.execPath,
         args: [
@@ -6709,7 +7759,7 @@ async function startProviderAuthLogin(payload = {}) {
           "login",
         ],
         env: buildCodexLoginEnv(),
-      };
+    };
 
   broadcast({
     type: "provider_auth_started",
@@ -6738,7 +7788,7 @@ async function startProviderAuthLogin(payload = {}) {
         provider,
         detail: trimmed.slice(-1000),
         stream,
-      });
+    });
     }
     const authUrl = extractFirstUrl(text);
     if (authUrl) {
@@ -6746,7 +7796,7 @@ async function startProviderAuthLogin(payload = {}) {
         type: "provider_auth_browser_opened",
         provider,
         authUrl,
-      });
+    });
     }
   }
 
@@ -6754,7 +7804,7 @@ async function startProviderAuthLogin(payload = {}) {
   child.stderr.on("data", (chunk) => handleChunk(chunk, "stderr"));
   child.on("error", (error) => {
     state.providerAuthRuns.delete(provider);
-    broadcast({
+  broadcast({
       type: "provider_auth_result",
       provider,
       success: false,
@@ -6766,7 +7816,7 @@ async function startProviderAuthLogin(payload = {}) {
     state.providerAuthRuns.delete(provider);
     const authState = getProviderAuthState(provider);
     const success = code === 0 && authState.available;
-    broadcast({
+  broadcast({
       type: "provider_auth_result",
       provider,
       success,
@@ -6774,7 +7824,7 @@ async function startProviderAuthLogin(payload = {}) {
       authState,
       durationMs: Date.now() - startedAt,
     });
-    telemetry.captureEvent("mac_sidecar_provider_auth_login_finished", {
+  telemetry.captureEvent("mac_sidecar_provider_auth_login_finished", {
       provider,
       success,
       duration_ms: Date.now() - startedAt,
@@ -6891,7 +7941,7 @@ async function handleBipReadinessAction(request) {
         telemetry.captureEvent("mac_bip_readiness_all_complete", { total_duration_ms_from_view });
         bipReadinessViewedAt = null;
         bipReadinessCompletedRows.clear();
-      }
+    }
     }
 
     // Telemetry: row_failed
@@ -6899,7 +7949,7 @@ async function handleBipReadinessAction(request) {
       telemetry.captureEvent("mac_bip_readiness_row_failed", {
         row_id: id,
         error_kind: error.kind || "unknown",
-      });
+    });
     }
   }
 
@@ -6943,7 +7993,7 @@ async function handleBipReadinessAction(request) {
     const bipCoachConfig = state.bipCoach?.config ?? {};
     const result = deriveReadinessState({ keychainSettings, workspaceSettings, bipCoachConfig, env: process.env });
     result.rows = [
-      ...deriveLocalDocReadinessRows(workspaceRoot, { bipConfig: currentBipConfig() }),
+      ...deriveLocalDocReadinessRows(workspaceRoot, { bipConfig: currentBipConfig(), iddSetupState: state.iddSetup }),
       ...result.rows,
     ];
     for (const row of result.rows) {
@@ -6951,7 +8001,7 @@ async function handleBipReadinessAction(request) {
       normalizeReadinessEventError(msg, row.error);
       broadcast(msg);
     }
-    const initial_completion = bipReadinessTotalDoneCount(result.rows);
+  const initial_completion = bipReadinessTotalDoneCount(result.rows);
     // Track view time for all_complete duration measurement
     if (bipReadinessViewedAt == null) {
       bipReadinessViewedAt = Date.now();
@@ -6960,9 +8010,9 @@ async function handleBipReadinessAction(request) {
     for (const row of result.rows) {
       if (row.status === "done" && bipReadinessUserFacingRows.has(row.id)) {
         bipReadinessCompletedRows.add(row.id);
-      }
     }
-    telemetry.captureEvent("mac_bip_readiness_card_viewed", { initial_completion });
+    }
+  telemetry.captureEvent("mac_bip_readiness_card_viewed", { initial_completion });
     return;
   }
 
@@ -6975,7 +8025,7 @@ async function handleBipReadinessAction(request) {
     const bipCoachConfig = state.bipCoach?.config ?? {};
     const result = deriveReadinessState({ keychainSettings, workspaceSettings, bipCoachConfig, env: process.env });
     result.rows = [
-      ...deriveLocalDocReadinessRows(workspaceRoot, { bipConfig: currentBipConfig() }),
+      ...deriveLocalDocReadinessRows(workspaceRoot, { bipConfig: currentBipConfig(), iddSetupState: state.iddSetup }),
       ...result.rows,
     ];
     const row = result.rows.find((r) => r.id === rowId);
@@ -7002,7 +8052,7 @@ async function handleBipReadinessAction(request) {
 
   function completeGwsAuth(authStartedAt) {
     activeAuthCancels.delete("gwsAuth");
-    telemetry.captureEvent("mac_bip_readiness_row_completed", {
+  telemetry.captureEvent("mac_bip_readiness_row_completed", {
       row_id: "gwsAuth",
       duration_ms: Date.now() - authStartedAt,
     });
@@ -7016,7 +8066,7 @@ async function handleBipReadinessAction(request) {
     const existing = activeAuthCancels.get("gwsAuth");
     if (existing) existing();
 
-    telemetry.captureEvent("mac_bip_readiness_row_started", { row_id: "gwsAuth" });
+  telemetry.captureEvent("mac_bip_readiness_row_started", { row_id: "gwsAuth" });
     const authStartedAt = Date.now();
 
     emitRow("gwsAuth", "in-progress", "저장된 Google Workspace 연결을 확인하는 중...");
@@ -7050,10 +8100,11 @@ async function handleBipReadinessAction(request) {
   }
 
   function startGwsLoginFlowSafely() {
-    void startGwsLoginFlow().catch((error) => {
+    fireAndForget("startGwsLoginFlow", startGwsLoginFlow().catch((error) => {
       activeAuthCancels.delete("gwsAuth");
       emitRow("gwsAuth", "blocked", undefined, formatReadinessError(error));
-    });
+      throw error;
+    }));
   }
 
   // gwsInstall: install via npm
@@ -7069,14 +8120,14 @@ async function handleBipReadinessAction(request) {
     }
 
     emitRow("gwsInstall", "in-progress", "gws CLI가 없어 npm으로 설치하는 중...");
-    broadcast({
+  broadcast({
       type: "bip_readiness_event",
       rowId: "gwsInstall",
       status: "in-progress",
       detail: "npm 설치 중",
       log: "npm install -g @googleworkspace/cli",
     });
-    telemetry.captureEvent("mac_bip_readiness_row_started", { row_id: "gwsInstall" });
+  telemetry.captureEvent("mac_bip_readiness_row_started", { row_id: "gwsInstall" });
     const installStartedAt = Date.now();
     installGws({
       env: process.env,
@@ -7142,13 +8193,13 @@ async function handleBipReadinessAction(request) {
     const sourceId = kind === "doc" ? BIP_TEMPLATE_DOC_ID : BIP_TEMPLATE_SHEET_ID;
     const title = kind === "doc" ? "Agentic30 업무일지" : "Agentic30 게시글 일지";
     emitRow(rowId, "in-progress", "템플릿을 내 Drive에 복사 중");
-    telemetry.captureEvent("mac_bip_readiness_row_started", { row_id: rowId, action: "copy_template" });
+  telemetry.captureEvent("mac_bip_readiness_row_started", { row_id: rowId, action: "copy_template" });
     const copyStartedAt = Date.now();
     const result = await copyTemplateToDrive({
       env: process.env,
       kind,
       sourceId,
-      title,
+    title,
       onLog(line) {
         broadcast({
           type: "bip_readiness_event",
@@ -7164,7 +8215,7 @@ async function handleBipReadinessAction(request) {
       telemetry.captureEvent("mac_bip_readiness_row_completed", {
         row_id: rowId,
         duration_ms: Date.now() - copyStartedAt,
-      });
+    });
       bipReadinessCompletedRows.add(rowId);
       emitRow(
         rowId,
@@ -7182,7 +8233,7 @@ async function handleBipReadinessAction(request) {
       emitRow(rowId, "blocked", undefined, result.error);
       if (result.error?.kind === "auth_expired") {
         emitRow("gwsAuth", "pending");
-      }
+    }
     }
     return;
   }
@@ -7192,7 +8243,7 @@ async function handleBipReadinessAction(request) {
     const url = String(actionPayload.url || "").trim();
     const kind = rowId === "docUrl" ? "doc" : "sheet";
     emitRow(rowId, "in-progress", "권한 확인 중");
-    telemetry.captureEvent("mac_bip_readiness_row_started", { row_id: rowId });
+  telemetry.captureEvent("mac_bip_readiness_row_started", { row_id: rowId });
     const validateStartedAt = Date.now();
     validateUrl({ env: process.env, url, kind }).then((result) => {
       if (result.ok) {
@@ -7214,7 +8265,7 @@ async function handleBipReadinessAction(request) {
         if (result.error?.kind === "auth_expired") {
           emitRow("gwsAuth", "pending");
         }
-      }
+    }
     }).catch((err) => {
       emitRow(rowId, "blocked", undefined, { user_message: formatBipCoachGwsError(err), kind: "unknown" });
     });
@@ -7237,7 +8288,7 @@ async function handleBipReadinessAction(request) {
       if (done) {
         emitRow("docUrl", "pending");
         emitRow("sheetUrl", "pending");
-      }
+    }
     }).catch(() => {});
     return;
   }
