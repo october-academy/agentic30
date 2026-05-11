@@ -180,3 +180,54 @@ final class WorkspaceSettingsTests: XCTestCase {
         XCTAssertFalse(snapshot.isUnlocked(3))
     }
 }
+
+final class WorkspaceInitialWindowSizingTests: XCTestCase {
+    private var defaults: UserDefaults!
+    private var suiteName: String!
+
+    override func setUp() {
+        super.setUp()
+        suiteName = "agentic30.workspace.initialSizing.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults = nil
+        suiteName = nil
+        super.tearDown()
+    }
+
+    func testFirstLaunchMaximizesWorkspaceWindowOnce() {
+        XCTAssertTrue(AppDelegate.shouldMaximizeWorkspaceWindowOnLaunch(
+            isFirstLaunchEver: true,
+            isUITesting: false,
+            defaults: defaults
+        ))
+
+        defaults.set(true, forKey: AppDelegate.initialWorkspaceMaximizeDefaultsKey)
+
+        XCTAssertFalse(AppDelegate.shouldMaximizeWorkspaceWindowOnLaunch(
+            isFirstLaunchEver: true,
+            isUITesting: false,
+            defaults: defaults
+        ))
+    }
+
+    func testUpgradeLaunchDoesNotMaximizeWorkspaceWindow() {
+        XCTAssertFalse(AppDelegate.shouldMaximizeWorkspaceWindowOnLaunch(
+            isFirstLaunchEver: false,
+            isUITesting: false,
+            defaults: defaults
+        ))
+    }
+
+    func testUITestingLaunchDoesNotMaximizeWorkspaceWindow() {
+        XCTAssertFalse(AppDelegate.shouldMaximizeWorkspaceWindowOnLaunch(
+            isFirstLaunchEver: true,
+            isUITesting: true,
+            defaults: defaults
+        ))
+    }
+}

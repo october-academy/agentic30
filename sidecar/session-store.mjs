@@ -137,7 +137,7 @@ export async function persistSessionsToFile(
   const base = path.basename(filePath);
   const tempPath = path.join(
     dir,
-    `.${base}.${process.pid}.${Date.now()}.tmp`,
+    `.${base}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,
   );
   await fs.mkdir(dir, { recursive: true });
   try {
