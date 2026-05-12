@@ -539,12 +539,7 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(promptVisible)
         XCTAssertTrue(structuredPromptTitle.waitForExistence(timeout: 2))
         XCTAssertTrue(app.staticTexts["첫 고객"].waitForExistence(timeout: 2))
-        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "직접 입력")).firstMatch.waitForExistence(timeout: 2))
-
-        let unknownChoice = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == %@", "직접 입력"))
-            .firstMatch
-        clickCenter(of: unknownChoice)
+        XCTAssertTrue(app.staticTexts["기타"].waitForExistence(timeout: 2))
 
         let freeText = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "assistant.structuredFreeText."))
@@ -1029,7 +1024,8 @@ final class agentic30UITests: XCTestCase {
 
         XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetupSurface"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.descendants(matching: .any)["workspace.missionFirstSurface"].exists)
-        XCTAssertTrue(app.staticTexts["Day 1 · 고객의 어제 행동에서 통증 1개를 압축한다"].exists)
+        XCTAssertTrue(app.staticTexts["먼저 도울 사람을 정해요"].exists)
+        XCTAssertTrue(app.staticTexts["오늘 할 일을 만들기 전에, 누구를 위해 무엇을 검증할지 먼저 정해요."].exists)
         XCTAssertTrue(app.descendants(matching: .any)["workspace.day.1"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["workspace.day.2"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["workspace.day.8"].exists)
@@ -1041,7 +1037,7 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetup.doc.spec"].exists)
         XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Foundation Setup을 승인해야 이동할 수 있어요")).firstMatch.exists)
         app.descendants(matching: .any)["workspace.day.2"].click()
-        XCTAssertTrue(app.staticTexts["Day 1 · 고객의 어제 행동에서 통증 1개를 압축한다"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.staticTexts["먼저 도울 사람을 정해요"].waitForExistence(timeout: 2))
         XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetupSurface"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["workspace.startupStatusRail"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["workspace.startupQueueHint"].exists)

@@ -325,11 +325,6 @@ export const ICP_IDD_INITIAL_INPUT = {
           description: "예산이나 일정이 걸려 있어 신호가 강합니다.",
           nextIntent: "budget_or_time_committed",
         },
-        {
-          label: "직접 입력",
-          description: "역할, 상황, 현재 대안을 한 줄로 적습니다.",
-          nextIntent: "other_specific_icp",
-        },
       ],
       multiSelect: false,
       allowFreeText: true,
@@ -541,15 +536,10 @@ function buildGoalIddInitialInput(doc) {
             description: "이번 주 만들 수 있는 작은 wedge가 한 사용자에게 충분히 유용한지 봅니다.",
             nextIntent: "goal_smallest_solution",
           },
-          {
-            label: "직접 입력",
-            description: "이번 주 목표를 사람, 행동, 기한이 보이게 한 줄로 씁니다.",
-            nextIntent: "goal_custom",
-          },
         ],
         multiSelect: false,
         allowFreeText: true,
-        requiresFreeText: true,
+        requiresFreeText: false,
         freeTextPlaceholder: "예: 이번 주 5명에게 인터뷰 요청하고 3명 이상 답하면 첫 고객 반응 GOAL을 통과로 본다",
         textMode: "short",
       },
@@ -583,15 +573,10 @@ function buildValuesIddInitialInput(doc) {
             description: "많은 Day/기능보다 한 사용자가 끝까지 완료하는 흐름을 우선합니다.",
             nextIntent: "values_narrow_success",
           },
-          {
-            label: "직접 입력",
-            description: "이번 주 포기할 선택지와 지킬 원칙을 한 줄로 씁니다.",
-            nextIntent: "values_custom",
-          },
         ],
         multiSelect: false,
         allowFreeText: true,
-        requiresFreeText: true,
+        requiresFreeText: false,
         freeTextPlaceholder: "예: 첫 실행에서는 멋진 채팅보다 질문이 바뀌지 않는 신뢰를 우선한다",
         textMode: "short",
       },
@@ -617,7 +602,7 @@ function buildSpecIddInitialInput(doc) {
           },
           {
             label: "4문서 승인하기",
-            description: "ICP, GOAL, VALUES, SPEC 초안을 검토하고 Today Mission을 엽니다.",
+            description: "ICP, GOAL, VALUES, SPEC 초안을 검토하고 Day 1 Mission을 엽니다.",
             nextIntent: "spec_approve_foundation_docs",
           },
           {
@@ -625,15 +610,10 @@ function buildSpecIddInitialInput(doc) {
             description: "문서 승인 뒤 Day 1 미션을 선택하거나 생성해 실행 상태로 둡니다.",
             nextIntent: "spec_save_first_mission",
           },
-          {
-            label: "직접 입력",
-            description: "사용자 행동, 완료 화면, 하지 않을 일을 한 줄로 씁니다.",
-            nextIntent: "spec_custom",
-          },
         ],
         multiSelect: false,
         allowFreeText: true,
-        requiresFreeText: true,
+        requiresFreeText: false,
         freeTextPlaceholder: "예: 사용자가 첫 질문에 답하고 4문서 미리보기를 승인하면 Day 1 미션이 열린다",
         textMode: "short",
       },
@@ -647,7 +627,7 @@ export function buildIddFollowupStructuredInputForDoc(doc, state = {}) {
   const missingSignal = docResult?.missingSignals?.[0];
   const signalId = missingSignal?.id || "missing_signal";
   const signalLabel = missingSignal?.label || "문서를 구체적으로 쓰기 위한 근거가 더 필요합니다.";
-  const copy = followupCopyForSignal(doc, signalId, signalLabel);
+  const copy = followupCopyForSignal(doc, signalId, signalLabel, normalized);
   return {
     toolName: CODEX_STRUCTURED_INPUT_TOOL,
     title: `${doc.title} 모호함 낮추기`,
@@ -659,7 +639,7 @@ export function buildIddFollowupStructuredInputForDoc(doc, state = {}) {
         options: copy.options,
         multiSelect: false,
         allowFreeText: true,
-        requiresFreeText: true,
+        requiresFreeText: false,
         freeTextPlaceholder: copy.placeholder,
         textMode: copy.textMode || "short",
       },
@@ -667,7 +647,7 @@ export function buildIddFollowupStructuredInputForDoc(doc, state = {}) {
   };
 }
 
-function followupCopyForSignal(doc, signalId, signalLabel) {
+function followupCopyForSignal(doc, signalId, signalLabel, state = null) {
   const fallback = {
     header: "근거 보완",
     question: `${doc?.title || "문서"}를 쓸 수 있게 이 빠진 근거를 한 줄로 보완해주세요: ${signalLabel}`,
@@ -678,6 +658,10 @@ function followupCopyForSignal(doc, signalId, signalLabel) {
       { label: "리스크/실패 조건으로 보완", description: "틀렸을 때 무엇을 실패로 볼지 적습니다.", nextIntent: signalId },
     ],
   };
+  if (doc?.type === "values") {
+    const valuesCopy = valuesFollowupCopyForSignal(signalId, state);
+    if (valuesCopy) return valuesCopy;
+  }
 
   const bySignal = {
     narrow_segment: {
@@ -765,6 +749,120 @@ function followupCopyForSignal(doc, signalId, signalLabel) {
   return bySignal[signalId] || fallback;
 }
 
+function valuesFollowupCopyForSignal(signalId, state = null) {
+  const latestAnswer = latestDocAnswerForFollowup(state, "values");
+  const tradeoff = parseValuesTradeoff(latestAnswer);
+  const priority = tradeoff.priority || firstMeaningfulPhrase(latestAnswer) || "방금 정한 원칙";
+  const deferred = tradeoff.deferred || "반대 선택지";
+  const source = shortenSentence(latestAnswer, 72) || priority;
+  const concreteOptions = (labels, descriptions) => labels.map((label, index) => ({
+    label: shortenOptionLabel(label),
+    description: descriptions[index],
+    nextIntent: signalId,
+  }));
+  const bySignal = {
+    tradeoff: {
+      header: "포기할 선택",
+      question: `"${source}" 원칙을 지키려고 이번 주 실제로 포기할 선택은 무엇인가요?`,
+      placeholder: `예: ${deferred}보다 ${priority}을/를 먼저 끝낸다`,
+      options: concreteOptions(
+        [`${priority} 먼저`, `${deferred} 미루기`, `${priority} 없으면 중단`],
+        [
+          `방금 답한 원칙을 이번 주 첫 결정 기준으로 둡니다.`,
+          `원칙과 충돌하는 선택지를 이번 주 범위 밖으로 뺍니다.`,
+          `원칙을 확인할 증거가 없으면 문서 승인을 멈춥니다.`,
+        ],
+      ),
+    },
+    rejected_option: {
+      header: "거절 기준",
+      question: `"${source}" 원칙이 이번 주 명확히 거절해야 하는 요청은 무엇인가요?`,
+      placeholder: `예: ${priority} 근거 없이 ${deferred}부터 하자는 요청은 거절한다`,
+      options: concreteOptions(
+        [`${deferred} 요청 거절`, `${priority} 없는 승인 거절`, `${deferred} 우선순위 거절`],
+        [
+          `방금 답한 원칙과 반대되는 요청을 차단합니다.`,
+          `원칙을 뒷받침할 근거가 없으면 통과시키지 않습니다.`,
+          `이번 주 우선순위가 원칙 밖으로 흐르는 것을 막습니다.`,
+        ],
+      ),
+    },
+    trigger: {
+      header: "적용 상황",
+      question: `"${source}" 원칙은 어떤 순간에 바로 적용하나요?`,
+      placeholder: `예: ${priority} 근거가 안 보이면 ${deferred} 결정을 미룬다`,
+      options: concreteOptions(
+        [`${priority} 근거 없음`, `${deferred}가 앞설 때`, `${priority} 판단이 흔들릴 때`],
+        [
+          `원칙을 뒷받침하는 관찰이나 숫자가 없을 때 적용합니다.`,
+          `반대 선택지가 우선순위를 밀어낼 때 적용합니다.`,
+          `팀이나 사용자가 다음 행동을 고르지 못할 때 적용합니다.`,
+        ],
+      ),
+    },
+    violation_example: {
+      header: "위반 예시",
+      question: `"${source}" 원칙을 어긴 것으로 기록할 이번 주 행동은 무엇인가요?`,
+      placeholder: `예: ${priority} 확인 없이 ${deferred}을/를 먼저 하면 위반이다`,
+      options: concreteOptions(
+        [`${priority} 없이 통과`, `${deferred}부터 실행`, `${priority} 근거 생략`],
+        [
+          `방금 답한 원칙이 문서 승인에 반영되지 않은 상태입니다.`,
+          `원칙과 충돌하는 선택지를 먼저 실행하는 행동입니다.`,
+          `근거를 남기지 않고 원칙만 선언하는 행동입니다.`,
+        ],
+      ),
+    },
+  };
+  return bySignal[signalId] || null;
+}
+
+function latestDocAnswerForFollowup(state, docType) {
+  const transcript = Array.isArray(state?.transcript) ? state.transcript : [];
+  return [...transcript]
+    .reverse()
+    .find((entry) => entry?.docType === docType && String(entry?.responseText || "").trim())
+    ?.responseText || "";
+}
+
+function parseValuesTradeoff(answer) {
+  const text = normalizeRubricText(answer);
+  const contrast = text.match(/(.{2,36}?)(?:보다|대신)\s+(.{2,36}?)(?:을|를|이|가)?\s*(?:우선|먼저|선택|지킨|집중)/);
+  if (contrast) {
+    return {
+      deferred: cleanupValuesPhrase(contrast[1]),
+      priority: cleanupValuesPhrase(contrast[2]),
+    };
+  }
+  const priority = text.match(/(.{2,36}?)(?:을|를|이|가)?\s*(?:우선|먼저|지킨|집중|선택)/);
+  return {
+    deferred: "",
+    priority: cleanupValuesPhrase(priority?.[1] || text),
+  };
+}
+
+function firstMeaningfulPhrase(answer) {
+  return cleanupValuesPhrase(
+    normalizeRubricText(answer)
+      .split(/[.!?\n。]| — |,|，/)
+      .map((part) => part.trim())
+      .find((part) => part.length >= 2) || "",
+  );
+}
+
+function cleanupValuesPhrase(value) {
+  return String(value || "")
+    .replace(/^(선택:|근거:|예:)\s*/i, "")
+    .replace(/\s*(한다|합니다|이에요|입니다|우선한다|선택한다|지킨다)\s*$/g, "")
+    .trim()
+    .slice(0, 28);
+}
+
+function shortenOptionLabel(label) {
+  const value = String(label || "").replace(/\s+/g, " ").trim();
+  return value.length > 24 ? `${value.slice(0, 23)}…` : value;
+}
+
 function genericIddInitialOptionsFor(doc, { focus = "" } = {}) {
   if (doc?.type === "designSystem") {
     return [
@@ -775,7 +873,7 @@ function genericIddInitialOptionsFor(doc, { focus = "" } = {}) {
       },
       {
         label: "선택지 모양부터 정리",
-        description: "복잡한 질문을 한눈에 고르는 작은 카드로 바꿉니다.\n[질문]  [선택 A] [선택 B] [직접 입력]",
+        description: "복잡한 질문을 한눈에 고르는 작은 카드로 바꿉니다.\n[질문]  [선택 A] [선택 B] [기타 입력]",
         nextIntent: "document_nearest_action",
       },
       {
@@ -963,11 +1061,6 @@ function buildAdaptiveOptions({ hypothesis, primaryUser, onboardingContext }) {
         description: "반복 실패 뒤 방법을 바꿀 동기가 있어 첫 인터뷰 반응을 보기 좋습니다.",
         nextIntent: "repeat_launch_weak_signal",
       },
-      {
-        label: "직접 입력",
-        description: "역할, 상황, 현재 대안을 한 줄로 적습니다.",
-        nextIntent: "other_specific_icp",
-      },
     ];
   }
 
@@ -991,11 +1084,6 @@ function buildAdaptiveOptions({ hypothesis, primaryUser, onboardingContext }) {
       label: "돈이나 시간을 이미 쓰는 사람",
       description: "예산, 일정, 반복 업무 시간이 걸려 있어 신호가 강합니다.",
       nextIntent: "budget_or_time_committed",
-    },
-    {
-      label: "직접 입력",
-      description: "역할, 상황, 현재 대안을 한 줄로 적습니다.",
-      nextIntent: "other_specific_icp",
     },
   ];
 }
@@ -1118,7 +1206,7 @@ export function buildIddContinuationPrompt({
     "- gstack 정렬 축을 매 질문에 적용하세요: 톤은 직접적이고 증거 중심, 단위는 한 질문=한 결정, 기준은 수요/범위/UX/DX/리스크, 사용 위치는 BIP 문서 완성 직전의 게이트, 실패 방지는 범용 문서/빈 결정/조용한 누락 차단입니다.",
     "- 대안/리스크/증거/실패 모드가 보이지 않는 질문은 좋은 IDD 질문이 아닙니다. 더 좁혀서 무엇을 선택해야 하는지, 어떤 근거가 있는지, 잘못 고르면 어떤 문서 실패가 생기는지 드러내세요.",
     "- 답변은 반드시 대상 문서의 섹션, 결정, Open Risks, 다음 BIP 공개 글감 중 하나로 연결하세요.",
-    `- 추가 결정이나 누락 정보가 필요하면 반드시 ${CODEX_STRUCTURED_INPUT_TOOL} MCP 도구로 한 질문 + 2-4개 후보 options + allowFreeText: true + requiresFreeText: true + freeTextPlaceholder를 담아 이어가세요. 이 구조화 입력은 host UI에서 request_user_input 카드로 표시됩니다.`,
+    `- 추가 결정이나 누락 정보가 필요하면 반드시 ${CODEX_STRUCTURED_INPUT_TOOL} MCP 도구로 한 질문 + 2-4개 후보 options + allowFreeText: true + freeTextPlaceholder를 담아 이어가세요. 사용자는 선택지 또는 기타 자유 입력 중 하나로 답할 수 있습니다. 이 구조화 입력은 host UI에서 request_user_input 카드로 표시됩니다.`,
     "- 도구 호출 자체가 실패하면 같은 질문을 prose/번호 목록으로 대신 출력하지 말고 중단하세요.",
     "- Pushback 즉시 적용: 사용자의 답이 \"개발자/창업자/엔터프라이즈\" 같은 집합명사이면 다음 question을 회사명·직함·주당 시간으로 좁히고, \"다들 좋다고 한다/웨이팅리스트\" 류 사회적 증거이면 결제·문의·고장 시 분노로 받고, \"풀 플랫폼이 필요하다\" 류 광범위 비전이면 이번 주 결제 가능한 한 가지로 좁히세요. 사랑은 수요가 아닙니다.",
     "- Anti-Sycophancy: \"흥미로운 접근이에요\", \"여러 방법이 있어요\" 같은 칭찬 표현은 금지. 정중체는 유지하되 \"이 가정은 미확인이에요\" / \"근거가 부족해요\" 같은 사실 진술로 받으세요.",
@@ -1309,6 +1397,7 @@ export function buildIddSetupGateStatus({
     iddDocOrder: IDD_FOUNDATION_DOC_TYPES,
     iddDocPreviews: buildIddDocPreviews(normalizedIdd),
     iddProviderRecovery: normalizedIdd.providerRecovery,
+    iddSetupError: normalizedIdd.setupError,
     localDocs,
     missingLocalDocs,
     missingExternalRequirements,
@@ -1529,18 +1618,6 @@ export function setIddSetupError(state, { provider = "codex", docType = null, me
   });
 }
 
-export function markStaleIddInterviewingState(state, { provider = "codex", message = "" } = {}) {
-  const normalized = normalizeIddSetupState(state);
-  if (normalized.status !== "interviewing") {
-    return normalized;
-  }
-  return setIddSetupError(normalized, {
-    provider: normalized.lastProvider || provider,
-    docType: normalized.currentDocType,
-    message: message || "이전 Foundation Setup 인터뷰가 완료 이벤트 없이 중단됐습니다. 다시 시도해 주세요.",
-  });
-}
-
 export async function approveIddSetupDocuments(workspaceRoot, state, { fsImpl = fs } = {}) {
   const normalized = normalizeIddSetupState(state);
   const missing = IDD_FOUNDATION_DOCS.filter((doc) => !normalized.drafts?.[doc.type]?.trim());
@@ -1582,7 +1659,7 @@ export function buildIddApprovalSummary(state) {
       ? `남은 가정: ${normalized.unresolvedAssumptions.slice(0, 3).join(" / ")}`
       : "남은 가정: 없음",
     "",
-    "이제 Today Mission 후보를 생성할 수 있습니다.",
+    "이제 Day 1 Mission 후보를 생성할 수 있습니다.",
   ].join("\n");
 }
 
@@ -1741,7 +1818,7 @@ export function buildIddDocumentPrompt(doc, {
     "- 이 IDD 세션은 `/plan` 모드처럼 진행합니다. 인터뷰 질문은 사용자가 UI에서 클릭/입력할 수 있는 구조화 입력으로 받아야 합니다.",
     `- 선택지가 있는 질문, 우선순위 질문, 예/아니오 질문, 짧은 자유 입력이 붙은 질문은 일반 prose나 번호 목록으로 쓰지 말고 반드시 ${structuredToolName} 호출로만 물으세요.`,
     `- ${structuredToolName} 호출이 필요한 상황에서 같은 내용을 prose/번호 목록으로 대신 묻지 마세요. 도구 호출 자체가 실패하면 같은 질문을 prose/번호 목록으로 대신 출력하지 말고 중단하세요.`,
-    "- 도구 질문은 question/options/allowFreeText/requiresFreeText/freeTextPlaceholder/textMode를 채워 1개 질문 단위로 만드세요. 후보 options는 2-4개로 제한하고, allowFreeText=true와 requiresFreeText=true를 항상 둡니다. 후보군 없이 자유입력만 묻지 마세요.",
+    "- 도구 질문은 question/options/allowFreeText/freeTextPlaceholder/textMode를 채워 1개 질문 단위로 만드세요. 후보 options는 2-4개로 제한하고, allowFreeText=true를 둡니다. 선택지와 한 줄 근거를 동시에 요구하지 말고, 선택지 또는 기타 자유 입력 중 하나로 답하게 하세요. 후보군 없이 자유입력만 묻지 마세요.",
     "- 금지 예: \"1. 반복 사용 2. 도입 준비 3. 먼저 요청함\" 같은 번호 목록을 assistant 메시지로 출력하는 것.",
     "- legacy static 질문 금지: title=\"ICP 1/4\", question=\"이번 주 바로 인터뷰할 첫 고객은 누구인가요?\", option=\"가장 절박한 하위 ICP\"를 그대로 쓰면 실패입니다.",
     "- 첫 질문은 반드시 관찰한 repo 사실을 포함하세요. 예: agentic30-public의 SwiftUI macOS 앱과 Node sidecar 구조, Codex/Claude provider 전환, 30일 커리큘럼, docs/ICP.md 같은 실제 맥락 중 하나 이상.",

@@ -542,7 +542,7 @@ function normalizeClaudeQuestions(questions) {
               description: String(option?.description || "").trim(),
               ...(option?.preview ? { preview: String(option.preview) } : {}),
             }))
-            .filter((option) => option.label && option.description)
+            .filter((option) => option.label && option.description && !/^(직접 입력|기타|other)$/i.test(option.label))
             .slice(0, 4)
         : [],
       multiSelect: Boolean(question?.multiSelect),
@@ -1242,7 +1242,7 @@ async function createStubIddUserInputRequest({
         ],
         multiSelect: false,
         allowFreeText: true,
-        requiresFreeText: true,
+        requiresFreeText: false,
         freeTextPlaceholder: "예: Day 1 사용자가 sidecar 인증 실패를 겪으면 onboarding 질문보다 provider recovery를 먼저 보여준다",
         textMode: "short",
       },

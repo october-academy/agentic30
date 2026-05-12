@@ -117,8 +117,8 @@ import {
   isLegacyStaticIddUserInputRequest,
   isStaleGenericHostIddUserInputRequest,
   loadIddSetupState,
-  markStaleIddInterviewingState,
   nextIddFoundationDoc,
+  normalizeIddSetupState,
   persistIddSetupState,
   recordIddStructuredResponse,
   requiredDocByType,
@@ -245,6 +245,7 @@ const state = {
 };
 
 let workspaceOnboardingHypothesisWarmup = null;
+const iddDocumentQueueInFlight = new Map();
 const chatBipExternalContextCache = new Map();
 
 // Foundation Phase day-derivation utilities live in `foundation-chat.mjs`
@@ -277,15 +278,6 @@ state.bipCoach = mergeBipConfigIntoCoachState(
 );
 state.bipCoach = syncBipCoachSessionState();
 state.iddSetup = await loadIddSetupState(workspaceRoot);
-if (state.iddSetup.status === "interviewing") {
-  state.iddSetup = await persistIddSetupState(
-    workspaceRoot,
-    markStaleIddInterviewingState(state.iddSetup, {
-      provider: state.iddSetup.lastProvider || "codex",
-      message: "이전 Foundation Setup 인터뷰가 완료 이벤트 없이 중단됐습니다. 다시 시도해 주세요.",
-    }),
-  );
-}
 await persistBipCoachState(bipCoachFilePath, state.bipCoach);
 const telemetry = createTelemetryClient({ appSupportPath, workspaceRoot });
 let fatalSidecarWriteInProgress = false;
@@ -1093,7 +1085,7 @@ async function handleClientMessage(socket, payload) {
       if (missingRequiredFreeText) {
         broadcastIddSubmitProgress(
           "validation_error",
-          "한 줄 근거를 입력해야 다음 질문으로 넘어갑니다.",
+          "선택지를 고르거나 기타를 입력해야 다음 질문으로 넘어갑니다.",
         );
         session.status = "awaiting_input";
         session.error = null;
@@ -1176,7 +1168,7 @@ async function handleClientMessage(socket, payload) {
             session.messages.push(makeMessage({
               role: "assistant",
               provider: session.provider,
-              content: "Foundation Setup preview is ready. Review the four documents and approve them before Today Mission unlocks.",
+              content: "Foundation Setup preview is ready. Review the four documents and approve them before Day 1 Mission unlocks.",
               state: "final",
             }));
           }
@@ -1349,7 +1341,7 @@ async function handleClientMessage(socket, payload) {
     case "bip_setup_gate_check": {
       const gate = currentBipSetupGate();
       broadcastBipSetupGateState(gate);
-      if (payload.autoStart === true && !gate.iddSetupComplete) {
+      if (payload.autoStart === true && shouldAutoStartIddDocumentQueue(gate)) {
         await startIddDocumentQueue({
           gate,
           sessionId: payload.sessionId,
@@ -3959,7 +3951,7 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
   if (!gate.iddSetupComplete) {
     await startIddDocumentQueue({ gate, sessionId, provider });
   await setBipCoachError(
-      "Foundation Setup을 먼저 승인해야 Today Mission 후보를 만들 수 있습니다.",
+      "Foundation Setup을 먼저 승인해야 Day 1 Mission 후보를 만들 수 있습니다.",
     "mac_sidecar_idd_setup_required",
     );
     return;
@@ -4930,6 +4922,7 @@ function serializeBipSetupGate(gate) {
     iddDocOrder: gate?.iddDocOrder ?? [],
     iddDocPreviews: gate?.iddDocPreviews ?? [],
     iddProviderRecovery: gate?.iddProviderRecovery ?? null,
+    iddSetupError: gate?.iddSetupError ?? null,
     missingLocalDocs: (gate?.missingLocalDocs ?? []).map((doc) => doc.type),
     missingExternalRequirements: (gate?.missingExternalRequirements ?? []).map((item) => item.id),
     nextIddDocumentType: gate?.nextLocalDoc?.type ?? null,
@@ -4943,6 +4936,39 @@ function broadcastBipSetupGateState(gate) {
     type: "bip_setup_gate_state",
     ...serializeBipSetupGate(gate),
   });
+}
+
+function hasActiveIddQuestionSession(docType) {
+  return [...state.sessions.values()].some((session) =>
+    (session.runtime?.iddDocumentType === docType || session.title?.includes(`[IDD:${docType}]`))
+      && (
+        session.status === "running"
+        || session.status === "awaiting_input"
+        || Boolean(session.pendingUserInput)
+      )
+  );
+}
+
+function shouldAutoStartIddDocumentQueue(gate) {
+  if (!gate || gate.iddSetupComplete) return false;
+  if (!gate.nextLocalDoc?.type) return false;
+  if (gate.iddSetupStatus === "error" && isRecoverableLegacyStaleIddSetupError(gate)) {
+    return !hasActiveIddQuestionSession(gate.nextLocalDoc.type);
+  }
+  if (["error", "provider_recovery", "preview_ready", "approved"].includes(gate.iddSetupStatus)) {
+    return false;
+  }
+  return !hasActiveIddQuestionSession(gate.nextLocalDoc.type);
+}
+
+function isRecoverableLegacyStaleIddSetupError(gate) {
+  const error = gate?.iddSetupError;
+  if (!error || error.recoverable === false) return false;
+  const errorDocType = error.docType || gate?.nextLocalDoc?.type || "";
+  if (errorDocType && gate?.nextLocalDoc?.type && errorDocType !== gate.nextLocalDoc.type) {
+    return false;
+  }
+  return /완료 이벤트 없이 중단/.test(String(error.message || ""));
 }
 
 function resolveIddSessionSeed({ sessionId = "", provider = "" } = {}) {
@@ -5007,9 +5033,10 @@ async function createHostIddQuestionRequest(session, doc, {
         onboardingHypothesis: doc.type === "icp" ? await currentWorkspaceOnboardingHypothesis() : null,
         forceHostStructuredInput: true,
       });
-  const structuredInput = hasDraftForDoc
-    ? fallbackInput
-    : await synthesizeIddQuestionWithSidecarAgent(session, doc, fallbackInput) || fallbackInput;
+  const structuredInput = await synthesizeIddQuestionWithSidecarAgent(session, doc, fallbackInput, {
+    iddSetup: state.iddSetup,
+    followup: hasDraftForDoc,
+  }) || fallbackInput;
   if (!structuredInput?.toolName || !Array.isArray(structuredInput.questions)) {
     throw new Error(`Unable to build host IDD question for ${doc.type}.`);
   }
@@ -5068,7 +5095,10 @@ async function createHostIddQuestionRequest(session, doc, {
   return request;
 }
 
-async function synthesizeIddQuestionWithSidecarAgent(session, doc, fallbackInput) {
+async function synthesizeIddQuestionWithSidecarAgent(session, doc, fallbackInput, {
+  iddSetup = null,
+  followup = false,
+} = {}) {
   if (process.env.AGENTIC30_DISABLE_IDD_AGENT_SYNTHESIS === "1") return null;
   if (!session?.provider || !doc?.type || !fallbackInput?.questions?.length) return null;
   const authState = getProviderAuthState(session.provider);
@@ -5103,7 +5133,7 @@ async function synthesizeIddQuestionWithSidecarAgent(session, doc, fallbackInput
       await runProviderStream({
         provider: session.provider,
         sessionRuntime: {},
-        prompt: await buildIddAgentSynthesisPrompt(doc, fallbackInput),
+        prompt: await buildIddAgentSynthesisPrompt(doc, fallbackInput, { iddSetup, followup }),
         model: session.model,
         workspaceRoot,
         abortController: controller,
@@ -5171,7 +5201,6 @@ function iddAgentSynthesisBrief(doc) {
           { label: "첫 고객 반응", description: "응답, 미팅, 사용 시도처럼 ICP가 실제 반응하는지 봅니다.", nextIntent: "goal_customer_response" },
           { label: "문제 강도", description: "현재 대안의 시간, 돈, 평판 비용이 충분히 큰지 봅니다.", nextIntent: "goal_problem_intensity" },
           { label: "완료 행동", description: "사용자가 핵심 workflow를 끝까지 완료하는지 봅니다.", nextIntent: "goal_completion_behavior" },
-          { label: "직접 입력", description: "목표, 숫자, 기한, 실패 조건을 한 줄로 적습니다.", nextIntent: "goal_custom" },
         ],
         placeholder: "예: 이번 주 5명에게 인터뷰 요청하고 3명 이상 답하면 GOAL 기준을 통과로 본다",
       };
@@ -5188,7 +5217,6 @@ function iddAgentSynthesisBrief(doc) {
           { label: "증거 우선", description: "새 기능보다 사용자 행동 증거를 먼저 봅니다.", nextIntent: "values_evidence_first" },
           { label: "좁은 성공", description: "넓은 기능보다 한 workflow 완료를 우선합니다.", nextIntent: "values_narrow_success" },
           { label: "직접 관찰", description: "자동화보다 사용자가 막히는 장면을 먼저 봅니다.", nextIntent: "values_observe_first" },
-          { label: "직접 입력", description: "포기할 선택지와 지킬 원칙을 한 줄로 적습니다.", nextIntent: "values_custom" },
         ],
         placeholder: "예: 첫 실행에서는 멋진 채팅보다 질문이 바뀌지 않는 신뢰를 우선한다",
       };
@@ -5203,9 +5231,8 @@ function iddAgentSynthesisBrief(doc) {
         schemaQuestion: "이번 주 첫 버전에서 사용자가 반드시 끝내야 하는 핵심 workflow는 무엇인가요?",
         options: [
           { label: "첫 질문 답변", description: "맞춤 질문이 안정적으로 나타나고 사용자가 답변합니다.", nextIntent: "spec_first_question" },
-          { label: "4문서 승인", description: "Foundation 문서를 검토하고 Today Mission을 엽니다.", nextIntent: "spec_approve_docs" },
+          { label: "4문서 승인", description: "Foundation 문서를 검토하고 Day 1 Mission을 엽니다.", nextIntent: "spec_approve_docs" },
           { label: "첫 미션 저장", description: "Day 1 미션을 선택하거나 생성해 실행 상태로 둡니다.", nextIntent: "spec_save_mission" },
-          { label: "직접 입력", description: "행동, 완료 화면, 하지 않을 일을 한 줄로 적습니다.", nextIntent: "spec_custom" },
         ],
         placeholder: "예: 사용자가 첫 질문에 답하고 4문서 미리보기를 승인하면 Day 1 미션이 열린다",
       };
@@ -5222,22 +5249,35 @@ function iddAgentSynthesisBrief(doc) {
           { label: "퇴사 후 첫 매출이 없는 개발자", description: "why this segment is a strong first interview target", nextIntent: "first_revenue_zero" },
           { label: "AI로 제품은 만들었지만 고객이 없는 개발자", description: "why this segment is a strong first interview target", nextIntent: "agent_built_no_customers" },
           { label: "여러 번 출시했지만 반응이 약했던 개발자", description: "why this segment is a strong first interview target", nextIntent: "weak_launch_response" },
-          { label: "직접 입력", description: "역할, 상황, 현재 대안을 한 줄로 적습니다.", nextIntent: "other_specific_icp" },
         ],
         placeholder: "예: 퇴사 후 3개월째, AI로 MVP는 만들었지만 유료 고객이 없는 개발자",
       };
   }
 }
 
-async function buildIddAgentSynthesisPrompt(doc, fallbackInput) {
+async function buildIddAgentSynthesisPrompt(doc, fallbackInput, {
+  iddSetup = null,
+  followup = false,
+} = {}) {
   const brief = iddAgentSynthesisBrief(doc);
   const onboardingHypothesis = await currentWorkspaceOnboardingHypothesis();
   const contextFiles = await collectIddSynthesisContextFiles();
   const fallbackQuestion = fallbackInput?.questions?.[0] || {};
+  const normalizedIdd = iddSetup ? normalizeIddSetupState(iddSetup) : null;
+  const docRubric = normalizedIdd?.ambiguityRubric?.docs?.find((entry) => entry.type === doc.type) || null;
+  const missingSignals = Array.isArray(docRubric?.missingSignals) ? docRubric.missingSignals : [];
+  const docAnswers = Array.isArray(normalizedIdd?.transcript)
+    ? normalizedIdd.transcript
+        .filter((entry) => entry?.docType === doc.type)
+        .map((entry) => String(entry?.responseText || "").trim())
+        .filter(Boolean)
+        .slice(-4)
+    : [];
+  const stageLabel = followup ? "next" : "first";
   return [
     "Return exactly one JSON object. No markdown. No prose.",
     "",
-    `Task: create the first Foundation Setup ${doc.title} question card for the app builder.`,
+    `Task: create the ${stageLabel} Foundation Setup ${doc.title} question card for the app builder.`,
     brief.taskLine,
     "The question must be dynamic and project-adaptive, not a template with variables filled in.",
     brief.evidenceLine,
@@ -5246,6 +5286,9 @@ async function buildIddAgentSynthesisPrompt(doc, fallbackInput) {
     "- Do not call tools or ask to inspect files.",
     "- Do not ask whether the project summary is correct.",
     brief.audienceRule,
+    followup
+      ? "- This is a follow-up. Use the user's previous answer and the missing rubric signals below to ask the next necessary decision. Do not repeat the previous question or option labels."
+      : "- This is the first card for this document. Use workspace evidence to make the first decision concrete.",
     "- Do not ask about onboarding, workspace permissions, local file access, provider execution, implementation, or setup trust.",
     "- Do not ask generic questions like '이번 주 바로 인터뷰할 첫 고객은 누구인가요?' unless the Agentic30 ICP context is explicitly embedded in the same sentence.",
     "- Keep the question under 130 Korean characters when possible.",
@@ -5255,6 +5298,7 @@ async function buildIddAgentSynthesisPrompt(doc, fallbackInput) {
     brief.questionShapeRule,
     "- Provide 3 project-specific options plus one direct-input option.",
     "- Options must name concrete choices, not abstract criteria.",
+    "- For follow-ups, every option must be derived from the previous answer, workspace evidence, or the named missing signal. Do not use generic labels like 새 기능 보류, 자동화 보류, 숫자/기준, 실제 사람/상황, 리스크/실패 조건 unless the previous answer itself used that exact concrete choice.",
     brief.optionRule,
     "- Option labels should be short and natural, ideally under 22 Korean characters.",
     "- Avoid awkward literal phrases like 'N번째 제품 실패한', 'macOS 개발자', or '세그먼트부터 시작'. Rewrite them as natural customer language.",
@@ -5280,6 +5324,20 @@ async function buildIddAgentSynthesisPrompt(doc, fallbackInput) {
     "",
     "Workspace hypothesis:",
     JSON.stringify(onboardingHypothesis, null, 2),
+    "",
+    "Current IDD state:",
+    JSON.stringify(normalizedIdd ? {
+      status: normalizedIdd.status,
+      ambiguityScore: normalizedIdd.ambiguityScore,
+      currentDocType: normalizedIdd.currentDocType,
+      currentDocRubric: docRubric ? {
+        score: docRubric.score,
+        missingSignals,
+        passedSignals: docRubric.passedSignals,
+      } : null,
+      previousAnswersForThisDocument: docAnswers,
+      unresolvedAssumptions: normalizedIdd.unresolvedAssumptions?.slice(0, 8) || [],
+    } : null, null, 2),
     "",
     "Local evidence excerpts:",
     JSON.stringify(contextFiles, null, 2),
@@ -5357,18 +5415,10 @@ function normalizeIddAgentQuestion(question) {
           description: cleanShortText(option?.description, 110),
           nextIntent: cleanToken(option?.nextIntent) || "project_specific_icp",
         }))
-        .filter((option) => option.label && option.description)
+        .filter((option) => option.label && option.description && !isOtherTextOptionLabel(option.label))
         .slice(0, 4)
     : [];
-  const directInputIndex = options.findIndex((option) => option.label === "직접 입력");
-  if (directInputIndex < 0) {
-    options.push({
-      label: "직접 입력",
-      description: "역할, 상황, 현재 대안을 한 줄로 적습니다.",
-      nextIntent: "other_specific_icp",
-    });
-  }
-  if (!questionText || options.length < 3) return null;
+  if (!questionText || options.length < 2) return null;
   return {
     header: cleanShortText(question.header, 40) || "첫 고객",
     helperText: cleanShortText(question.helperText, 180) || "프로젝트 맥락에서 첫 고객 후보 하나만 고릅니다.",
@@ -5376,6 +5426,7 @@ function normalizeIddAgentQuestion(question) {
     options: options.slice(0, 4),
     multiSelect: false,
     allowFreeText: true,
+    requiresFreeText: false,
     freeTextPlaceholder: cleanShortText(question.freeTextPlaceholder, 140) || "예: 이번 주 실제로 연락 가능한 고객 후보",
     textMode: question.textMode === "long" ? "long" : "short",
   };
@@ -5394,7 +5445,7 @@ function salvageIddAgentQuestionObject(parsed, fallbackInput) {
           description: cleanShortText(option?.description, 110),
           nextIntent: cleanToken(option?.nextIntent) || "project_specific_icp",
         }))
-        .filter((option) => option.label && option.description)
+        .filter((option) => option.label && option.description && !isOtherTextOptionLabel(option.label))
         .slice(0, 4)
     : [];
   const targetCustomer = cleanShortText(parsed.target_customer || parsed.targetCustomer, 64);
@@ -5408,6 +5459,7 @@ function salvageIddAgentQuestionObject(parsed, fallbackInput) {
   }
   for (const option of fallbackOptions) {
     if (!option?.label || options.some((existing) => existing.label === option.label)) continue;
+    if (isOtherTextOptionLabel(option.label)) continue;
     options.push(option);
     if (options.length >= 4) break;
   }
@@ -5420,6 +5472,7 @@ function salvageIddAgentQuestionObject(parsed, fallbackInput) {
     options,
     multiSelect: false,
     allowFreeText: true,
+    requiresFreeText: false,
     freeTextPlaceholder: cleanShortText(parsed.freeTextPlaceholder, 140)
       || fallbackQuestion.freeTextPlaceholder
       || "예: 이번 주 실제로 연락 가능한 고객 후보",
@@ -5481,7 +5534,7 @@ function isStructuredInputToolName(toolName) {
     || normalized === "ask_user_question";
 }
 
-function requireFreeTextForIddQuestions(request) {
+function allowOtherTextForIddQuestions(request) {
   if (!Array.isArray(request?.questions)) {
     return request;
   }
@@ -5490,11 +5543,15 @@ function requireFreeTextForIddQuestions(request) {
     questions: request.questions.map((question) => ({
       ...question,
       allowFreeText: true,
-      requiresFreeText: true,
+      requiresFreeText: false,
       freeTextPlaceholder: question?.freeTextPlaceholder || "예: 이번 주 확인 가능한 사람/행동/숫자/실패 조건",
       textMode: question?.textMode || "short",
     })),
   };
+}
+
+function isOtherTextOptionLabel(label) {
+  return /^(직접 입력|기타|other)$/i.test(String(label || "").trim());
 }
 
 function attachIddAdaptiveContinuationToRequest(session, request) {
@@ -5506,7 +5563,7 @@ function attachIddAdaptiveContinuationToRequest(session, request) {
   const nextDoc = IDD_FOUNDATION_DOCS.find((doc) => doc.type === pending.docType)
     || requiredDocByType(pending.docType);
   const nextRequest = {
-    ...requireFreeTextForIddQuestions(request),
+    ...allowOtherTextForIddQuestions(request),
     generation: {
       ...(request.generation && typeof request.generation === "object" ? request.generation : {}),
       mode: "provider_adaptive",
@@ -5634,7 +5691,27 @@ function cachedWorkspaceOnboardingHypothesisForIddDoc(doc) {
   return state.workspaceOnboardingHypothesis ?? null;
 }
 
-async function startIddDocumentQueue({
+async function startIddDocumentQueue(options = {}) {
+  const queueKey = String(
+    options.requestedDocType
+      || options.gate?.nextLocalDoc?.type
+      || state.iddSetup?.currentDocType
+      || "unknown",
+  );
+  const inFlight = iddDocumentQueueInFlight.get(queueKey);
+  if (inFlight) return inFlight;
+
+  const run = startIddDocumentQueueOnce(options)
+    .finally(() => {
+      if (iddDocumentQueueInFlight.get(queueKey) === run) {
+        iddDocumentQueueInFlight.delete(queueKey);
+      }
+    });
+  iddDocumentQueueInFlight.set(queueKey, run);
+  return run;
+}
+
+async function startIddDocumentQueueOnce({
   gate = null,
   sessionId = "",
   provider = "",
@@ -5728,6 +5805,8 @@ async function startIddDocumentQueue({
     providerRecovery: null,
     setupError: null,
   });
+  state.sessions.set(session.id, session);
+  await persistSessions();
   await createHostIddQuestionRequest(session, nextDoc, {
     progressText: "첫 질문 카드 준비 완료",
   });
@@ -7372,7 +7451,10 @@ function normalizeUserInputResponse(promptRequest, payload) {
           .filter(Boolean)
       : [];
     const freeText = typeof match?.freeText === "string" ? match.freeText.trim() : "";
-    const answerValue = selectedOptions.length > 0
+    const selectedAsOther = selectedOptions.some((value) => isOtherTextOptionLabel(value));
+    const answerValue = freeText && selectedAsOther
+      ? freeText
+      : selectedOptions.length > 0
       ? selectedOptions.join(", ")
       : freeText;
 
@@ -7407,7 +7489,10 @@ function findMissingRequiredFreeTextQuestion(response) {
   return (response.questions || []).find((question) => {
     if (question?.requiresFreeText !== true) return false;
     const entry = responsesByQuestion.get(question.question);
-    return !String(entry?.freeText || "").trim();
+    const selectedOptions = Array.isArray(entry?.selectedOptions)
+      ? entry.selectedOptions.filter((value) => String(value || "").trim()).length
+      : 0;
+    return selectedOptions === 0 && !String(entry?.freeText || "").trim();
   }) || null;
 }
 

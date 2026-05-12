@@ -187,27 +187,20 @@ test("Day 1 cached ICP coaching uses instant_chat and completes under 1s without
     const events = [];
     ws = await connectAuthenticated(ready, events);
 
-    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.4-mini" }));
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.4-mini",
+      suppressBootstrapIntake: true,
+    }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
     const sessionId = created.session.id;
-    if (created.session.pendingUserInput) {
-      ws.send(JSON.stringify({
-        type: "submit_user_input",
-        sessionId,
-        requestId: created.session.pendingUserInput.requestId,
-        responses: [{
-          question: "무엇부터 시작할까요?",
-          selectedOptions: [],
-          freeText: "Day 1 뭐부터 시작해야 해? ICP 기준으로 짧게 진단해줘.",
-        }],
-      }));
-    } else {
-      ws.send(JSON.stringify({
-        type: "send_prompt",
-        sessionId,
-        prompt: "Day 1 뭐부터 시작해야 해? ICP 기준으로 짧게 진단해줘.",
-      }));
-    }
+    assert.equal(created.session.pendingUserInput, null);
+    ws.send(JSON.stringify({
+      type: "send_prompt",
+      sessionId,
+      prompt: "Day 1 뭐부터 시작해야 해? ICP 기준으로 짧게 진단해줘.",
+    }));
 
     const completed = await waitForEvent(events, (event) => {
       if (event.type !== "session_updated" || event.session?.id !== sessionId || event.session.status !== "idle") return false;
@@ -272,7 +265,7 @@ test("free chat trivial greeting runs through provider", async () => {
       responses: [{
         question: "무엇부터 시작할까요?",
         selectedOptions: [],
-        freeText: "Day 1 뭐부터 시작해야 해? ICP 기준으로 짧게 진단해줘.",
+        freeText: "일반 채팅 준비",
       }],
     }));
     await waitForEvent(events, (event) =>
@@ -534,7 +527,7 @@ test("Codex IDD queue generates GOAL questions through host-owned structured inp
     assert.equal(iddReady.session.messages.length, 0);
     assert.ok(iddReady.session.runtime?.pendingIddContinuation?.prompt);
     assert.match(iddReady.session.pendingUserInput.questions[0].question, /가장 먼저 검증하거나 달성하려는 GOAL/);
-    assert.equal(iddReady.session.pendingUserInput.questions[0].requiresFreeText, true);
+    assert.equal(iddReady.session.pendingUserInput.questions[0].requiresFreeText, false);
     assert.doesNotMatch(
       JSON.stringify(iddReady.session),
       /structured input unavailable/,
@@ -592,7 +585,7 @@ test("Codex IDD queue generates GOAL questions through host-owned structured inp
     assert.equal(nextQuestion.session.status, "awaiting_input");
     assert.notEqual(nextQuestion.session.pendingUserInput.requestId, requestId);
 
-    assert.equal(nextQuestion.session.pendingUserInput.questions[0].requiresFreeText, true);
+    assert.equal(nextQuestion.session.pendingUserInput.questions[0].requiresFreeText, false);
     const followupRequestId = nextQuestion.session.pendingUserInput.requestId;
     ws.send(JSON.stringify({
       type: "submit_user_input",
@@ -602,32 +595,6 @@ test("Codex IDD queue generates GOAL questions through host-owned structured inp
         question: nextQuestion.session.pendingUserInput.questions[0].question,
         selectedOptions: [nextQuestion.session.pendingUserInput.questions[0].options[0].label],
         freeText: "",
-      }],
-    }));
-
-    await waitForEvent(events, (event) =>
-      event.type === "idd_setup_progress"
-      && event.sessionId === iddReady.session.id
-      && event.requestId === followupRequestId
-      && event.stage === "validation_error"
-      && /한 줄 근거/.test(event.progressText || "")
-    );
-    const validationUpdate = await waitForEvent(events, (event) =>
-      event.type === "session_updated"
-      && event.session?.id === iddReady.session.id
-      && event.session?.pendingUserInput?.requestId === followupRequestId
-      && event.session?.status === "awaiting_input"
-    );
-    assert.equal(validationUpdate.session.pendingUserInput.requestId, followupRequestId);
-
-    ws.send(JSON.stringify({
-      type: "submit_user_input",
-      sessionId: iddReady.session.id,
-      requestId: followupRequestId,
-      responses: [{
-        question: nextQuestion.session.pendingUserInput.questions[0].question,
-        selectedOptions: [nextQuestion.session.pendingUserInput.questions[0].options[0].label],
-        freeText: "이번 주 인터뷰 요청 5명 중 0명이 응답하지 않으면 실패로 보고 타깃을 좁힌다",
       }],
     }));
 
@@ -803,6 +770,101 @@ test("IDD start uses sidecar agent synthesized structured question when availabl
   assert.equal(stderr.trim(), "");
 });
 
+test("IDD follow-up uses sidecar agent synthesis instead of host template when available", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-followup-synth-workspace-"));
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-followup-synth-app-"));
+  await writeDay1Fixture(root, appSupportPath);
+
+  const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", root], {
+    cwd: packageRoot,
+    env: {
+      ...process.env,
+      AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
+      AGENTIC30_TEST_STUB_PROVIDER: "1",
+      AGENTIC30_TEST_IDD_AGENT_SYNTHESIS_JSON: JSON.stringify({
+        title: "VALUES 결정",
+        header: "결정 원칙",
+        helperText: "직전 답변의 속도보다 증거 원칙을 Agentic30 질문 카드 흐름에 연결합니다.",
+        question: "증거 우선 원칙을 지키려고 이번 주 어떤 Agentic30 결정을 미루나요?",
+        options: [
+          { label: "Day 확장 미루기", description: "첫 질문 품질 증거가 생길 때까지 다음 Day를 열지 않습니다.", nextIntent: "values_delay_days" },
+          { label: "자동 문서 승인 미루기", description: "근거 없는 통과보다 사용자의 한 줄 결정을 요구합니다.", nextIntent: "values_delay_auto_approval" },
+          { label: "UI polish 미루기", description: "보기 좋은 카드보다 답변이 실제 결정으로 이어지는지 봅니다.", nextIntent: "values_delay_polish" },
+          { label: "직접 입력", description: "이번 주 미룰 결정을 직접 적습니다.", nextIntent: "values_custom" },
+        ],
+        freeTextPlaceholder: "예: 첫 질문이 프로젝트 맥락을 반영할 때까지 Day 2 오픈은 미룬다",
+      }),
+      AGENTIC30_CODEX_MODEL: "gpt-5.4-mini",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  let ws;
+
+  try {
+    const ready = await readSidecarReady(child);
+    const events = [];
+    ws = await connectAuthenticated(ready, events);
+
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.4-mini" }));
+    const created = await waitForEvent(events, (event) => event.type === "session_created");
+
+    ws.send(JSON.stringify({
+      type: "bip_idd_start_queue",
+      sessionId: created.session.id,
+      provider: "codex",
+      docType: "values",
+    }));
+
+    const iddReady = await waitForEvent(events, (event) =>
+      event.type === "session_updated"
+      && event.session?.title === "Foundation Setup: VALUES"
+      && event.session?.status === "awaiting_input"
+      && event.session?.pendingUserInput?.generation?.mode === "sidecar_agent_synthesized"
+    );
+    const request = iddReady.session.pendingUserInput;
+
+    ws.send(JSON.stringify({
+      type: "submit_user_input",
+      sessionId: iddReady.session.id,
+      requestId: request.requestId,
+      responses: [{
+        question: request.questions[0].question,
+        selectedOptions: [request.questions[0].options[0].label],
+        freeText: "속도보다 증거를 우선하고 Day 확장은 하지 않는다",
+      }],
+    }));
+
+    const followup = await waitForEvent(events, (event) =>
+      event.type === "session_updated"
+      && event.session?.id === iddReady.session.id
+      && event.session?.status === "awaiting_input"
+      && event.session?.pendingUserInput?.requestId
+      && event.session.pendingUserInput.requestId !== request.requestId
+    );
+    assert.equal(followup.session.pendingUserInput.generation?.mode, "sidecar_agent_synthesized");
+    assert.equal(followup.session.pendingUserInput.generation?.docType, "values");
+    assert.match(followup.session.pendingUserInput.questions[0].question, /Agentic30 결정을 미루/);
+    assert.deepEqual(
+      followup.session.pendingUserInput.questions[0].options.slice(0, 3).map((option) => option.label),
+      ["Day 확장 미루기", "자동 문서 승인 미루기", "UI polish 미루기"],
+    );
+    await closeWebSocket(ws);
+    ws = null;
+  } finally {
+    await closeWebSocket(ws);
+    await terminateChild(child);
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
+
+  assert.equal(stderr.trim(), "");
+});
+
 test("recoverable IDD setup error retry creates host question without provider run", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-error-retry-workspace-"));
   const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-error-retry-app-"));
@@ -898,9 +960,293 @@ test("recoverable IDD setup error retry creates host question without provider r
   assert.equal(stderr.trim(), "");
 });
 
-test("Day 1 ICP sidecar timing instrumentation records a five-turn local conversation", async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-icp-workspace-"));
-  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-icp-app-"));
+test("IDD auto-start resumes persisted interviewing state without showing setup error", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-interviewing-resume-workspace-"));
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-interviewing-resume-app-"));
+  await writeDay1Fixture(root, appSupportPath);
+  await writeIddSetupState(root, {
+    schemaVersion: 1,
+    status: "interviewing",
+    currentDocType: "icp",
+    docOrder: ["icp", "goal", "values", "spec"],
+    transcript: [],
+    drafts: {},
+    lastProvider: "codex",
+    providerRecovery: null,
+    setupError: null,
+  });
+
+  const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", root], {
+    cwd: packageRoot,
+    env: {
+      ...process.env,
+      AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
+      AGENTIC30_DISABLE_IDD_AGENT_SYNTHESIS: "1",
+      CODEX_API_KEY: "",
+      OPENAI_API_KEY: "",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  let ws;
+
+  try {
+    const ready = await readSidecarReady(child);
+    const events = [];
+    ws = await connectAuthenticated(ready, events);
+
+    ws.send(JSON.stringify({
+      type: "bip_setup_gate_check",
+      provider: "codex",
+      autoStart: true,
+    }));
+
+    const gate = await waitForEvent(events, (event) =>
+      event.type === "bip_setup_gate_state"
+      && event.iddSetupStatus === "interviewing"
+    );
+    assert.equal(gate.iddSetupError, null);
+
+    const created = await waitForEvent(events, (event) =>
+      event.type === "session_created"
+      && event.session?.title === "Foundation Setup: ICP"
+      && event.session?.pendingUserInput?.toolName === "agentic30_request_user_input"
+    );
+    assert.equal(created.session.pendingUserInput.generation?.docType, "icp");
+
+    const setupState = events.findLast?.((event) => event.type === "idd_setup_state")
+      || [...events].reverse().find((event) => event.type === "idd_setup_state");
+    assert.equal(setupState?.iddSetupStatus, "interviewing");
+    assert.equal(setupState?.iddSetupError, null);
+    await closeWebSocket(ws);
+    ws = null;
+  } finally {
+    await closeWebSocket(ws);
+    await terminateChild(child);
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
+
+  assert.equal(stderr.trim(), "");
+});
+
+test("IDD auto-start recovers legacy stale setup error caused by interrupted interviewing state", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-stale-error-autostart-workspace-"));
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-stale-error-autostart-app-"));
+  await writeDay1Fixture(root, appSupportPath);
+  await writeIddSetupState(root, {
+    schemaVersion: 1,
+    status: "error",
+    currentDocType: "icp",
+    docOrder: ["icp", "goal", "values", "spec"],
+    transcript: [],
+    drafts: {},
+    lastProvider: "codex",
+    providerRecovery: null,
+    setupError: {
+      provider: "codex",
+      docType: "icp",
+      message: "이전 Foundation Setup 인터뷰가 완료 이벤트 없이 중단됐습니다. 다시 시도해 주세요.",
+      recoverable: true,
+    },
+  });
+
+  const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", root], {
+    cwd: packageRoot,
+    env: {
+      ...process.env,
+      AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
+      AGENTIC30_DISABLE_IDD_AGENT_SYNTHESIS: "1",
+      CODEX_API_KEY: "",
+      OPENAI_API_KEY: "",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  let ws;
+
+  try {
+    const ready = await readSidecarReady(child);
+    const events = [];
+    ws = await connectAuthenticated(ready, events);
+
+    ws.send(JSON.stringify({
+      type: "bip_setup_gate_check",
+      provider: "codex",
+      autoStart: true,
+    }));
+
+    await waitForEvent(events, (event) =>
+      event.type === "bip_setup_gate_state"
+      && event.iddSetupStatus === "error"
+      && /완료 이벤트 없이 중단/.test(event.iddSetupError?.message ?? "")
+    );
+
+    const created = await waitForEvent(events, (event) =>
+      event.type === "session_created"
+      && event.session?.title === "Foundation Setup: ICP"
+      && event.session?.pendingUserInput?.toolName === "agentic30_request_user_input"
+    );
+    assert.equal(created.session.pendingUserInput.generation?.docType, "icp");
+
+    const setupState = events.findLast?.((event) => event.type === "idd_setup_state")
+      || [...events].reverse().find((event) => event.type === "idd_setup_state");
+    assert.equal(setupState?.iddSetupStatus, "interviewing");
+    assert.equal(setupState?.iddSetupError, null);
+    await closeWebSocket(ws);
+    ws = null;
+  } finally {
+    await closeWebSocket(ws);
+    await terminateChild(child);
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
+
+  assert.equal(stderr.trim(), "");
+});
+
+test("IDD auto-start preserves persisted setup error until explicit retry", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-error-autostart-workspace-"));
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-error-autostart-app-"));
+  await writeDay1Fixture(root, appSupportPath);
+  await writeIddSetupState(root, {
+    schemaVersion: 1,
+    status: "error",
+    currentDocType: "icp",
+    docOrder: ["icp", "goal", "values", "spec"],
+    transcript: [],
+    drafts: {},
+    lastProvider: "codex",
+    providerRecovery: null,
+    setupError: {
+      provider: "codex",
+      docType: "icp",
+      message: "질문 카드 준비가 중단됐습니다.",
+      recoverable: true,
+    },
+  });
+
+  const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", root], {
+    cwd: packageRoot,
+    env: {
+      ...process.env,
+      AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
+      AGENTIC30_DISABLE_IDD_AGENT_SYNTHESIS: "1",
+      CODEX_API_KEY: "",
+      OPENAI_API_KEY: "",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  let ws;
+
+  try {
+    const ready = await readSidecarReady(child);
+    const events = [];
+    ws = await connectAuthenticated(ready, events);
+
+    ws.send(JSON.stringify({
+      type: "bip_setup_gate_check",
+      provider: "codex",
+      autoStart: true,
+    }));
+
+    const gate = await waitForEvent(events, (event) =>
+      event.type === "bip_setup_gate_state"
+      && event.iddSetupStatus === "error"
+    );
+    assert.equal(gate.iddSetupError?.docType, "icp");
+    assert.match(gate.iddSetupError?.message ?? "", /질문 카드 준비/);
+
+    await sleep(400);
+    assert.equal(events.some((event) => event.type === "session_created"), false);
+    assert.equal(events.some((event) => event.type === "bip_idd_session_ready"), false);
+    await closeWebSocket(ws);
+    ws = null;
+  } finally {
+    await closeWebSocket(ws);
+    await terminateChild(child);
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
+
+  assert.equal(stderr.trim(), "");
+});
+
+test("concurrent IDD start requests create only one Foundation Setup session", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-concurrent-start-workspace-"));
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-concurrent-start-app-"));
+  await writeDay1Fixture(root, appSupportPath);
+
+  const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", root], {
+    cwd: packageRoot,
+    env: {
+      ...process.env,
+      AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
+      AGENTIC30_DISABLE_IDD_AGENT_SYNTHESIS: "1",
+      CODEX_API_KEY: "",
+      OPENAI_API_KEY: "",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  let ws;
+
+  try {
+    const ready = await readSidecarReady(child);
+    const events = [];
+    ws = await connectAuthenticated(ready, events);
+
+    const payload = {
+      type: "bip_idd_start_queue",
+      provider: "codex",
+      docType: "icp",
+    };
+    ws.send(JSON.stringify(payload));
+    ws.send(JSON.stringify(payload));
+
+    await waitForEvent(events, (event) =>
+      event.type === "session_created"
+      && event.session?.title === "Foundation Setup: ICP"
+      && event.session?.pendingUserInput?.toolName === "agentic30_request_user_input"
+    );
+    await sleep(400);
+
+    const createdIds = new Set(events
+      .filter((event) => event.type === "session_created" && event.session?.title === "Foundation Setup: ICP")
+      .map((event) => event.session.id));
+    assert.equal(createdIds.size, 1);
+    await closeWebSocket(ws);
+    ws = null;
+  } finally {
+    await closeWebSocket(ws);
+    await terminateChild(child);
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
+
+  assert.equal(stderr.trim(), "");
+});
+
+test("Post-Foundation Day 1 ICP coaching records a five-turn local conversation", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-post-foundation-day1-icp-workspace-"));
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-post-foundation-day1-icp-app-"));
   await fs.mkdir(path.join(root, "docs"), { recursive: true });
   await fs.writeFile(
     path.join(root, "docs", "ICP.md"),
@@ -954,27 +1300,16 @@ test("Day 1 ICP sidecar timing instrumentation records a five-turn local convers
     const events = [];
     ws = await connectAuthenticated(ready, events);
 
-    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.4-mini" }));
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.4-mini",
+      suppressBootstrapIntake: true,
+    }));
     const created = await waitForEvent(events, (event) => event.type === "session_created");
     const sessionId = created.session.id;
-    const requestId = created.session.pendingUserInput.requestId;
-    ws.send(JSON.stringify({
-      type: "submit_user_input",
-      sessionId,
-      requestId,
-      responses: [{
-        question: "무엇부터 시작할까요?",
-        selectedOptions: ["프로젝트 전략 문서 만들기"],
-        freeText: "",
-      }],
-    }));
-    await waitForEvent(events, (event) =>
-      event.type === "session_updated"
-      && event.session?.id === sessionId
-      && !event.session.pendingUserInput
-      && event.session.status === "idle"
-      && Boolean(latestAssistantMessage(event.session).content)
-    );
+    assert.equal(created.session.pendingUserInput, null);
+    assert.notEqual(created.session.status, "awaiting_input");
 
     const turns = [
       "DAY1_ICP_TURN_1: Day 1 시작. docs/ICP.md 기준으로 내가 맞는 유저인지 먼저 진단해줘.",
@@ -1057,22 +1392,11 @@ test("Day 1 ICP user completes a five-turn live Codex SDK conversation", {
       type: "create_session",
       provider: "codex",
       model: process.env.AGENTIC30_CODEX_MODEL || "gpt-5.4-mini",
+      suppressBootstrapIntake: true,
     }));
     const created = await waitForEvent(events, (event) => event.type === "session_created", 30_000);
     const sessionId = created.session.id;
-    if (created.session.pendingUserInput) {
-      ws.send(JSON.stringify({
-        type: "submit_user_input",
-        sessionId,
-        requestId: created.session.pendingUserInput.requestId,
-        responses: [{
-          question: "무엇부터 시작할까요?",
-          selectedOptions: ["프로젝트 전략 문서 만들기"],
-          freeText: "Use docs/ICP.md as my user profile for Day 1.",
-        }],
-      }));
-      await waitForEvent(events, (event) => event.type === "session_updated" && event.session?.id === sessionId && !event.session.pendingUserInput, 30_000);
-    }
+    assert.equal(created.session.pendingUserInput, null);
 
     const turns = liveDay1Turns();
     const timings = [];
@@ -1147,6 +1471,16 @@ async function writeDay1Fixture(root, appSupportPath) {
   );
 }
 
+async function writeIddSetupState(root, state) {
+  const iddDir = path.join(root, ".agentic30", "idd");
+  await fs.mkdir(iddDir, { recursive: true });
+  await fs.writeFile(
+    path.join(iddDir, "setup-state.json"),
+    `${JSON.stringify(state, null, 2)}\n`,
+    "utf8",
+  );
+}
+
 function liveDay1Turns() {
   return [
     "LIVE_DAY1_ICP_STEP_1: Day 1 시작. docs/ICP.md 기준으로 내가 맞는 유저인지 진단해줘. 응답에는 반드시 LIVE_DAY1_ICP_STEP_1_OK 를 포함해.",
@@ -1155,6 +1489,10 @@ function liveDay1Turns() {
     "LIVE_DAY1_ICP_STEP_4: SPEC.md v0 proof baseline에는 어떤 현재 상태와 다음 proof target을 남겨야 해? 응답에는 반드시 LIVE_DAY1_ICP_STEP_4_OK 를 포함해.",
     "LIVE_DAY1_ICP_STEP_5: 5턴 대화의 결론으로 오늘 바로 실행할 우선순위 1개와 확인할 응답을 정리해줘. 응답에는 반드시 LIVE_DAY1_ICP_STEP_5_OK 를 포함해.",
   ];
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function latestAssistantMessage(session) {

@@ -334,12 +334,12 @@ struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
         let hasSelection = !selectedOptions.isEmpty
         let hasFreeText = !freeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
-        if requiresFreeText == true {
-            return hasFreeText
-        }
-
         if allowFreeText == true {
             return hasSelection || hasFreeText
+        }
+
+        if requiresFreeText == true {
+            return hasFreeText
         }
 
         return hasSelection
