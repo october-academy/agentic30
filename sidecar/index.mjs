@@ -5555,8 +5555,11 @@ function isOtherTextOptionLabel(label) {
     .trim()
     .replace(/\s+/g, " ")
     .replace(/[()（）]/g, " ")
+    .toLowerCase()
     .trim();
-  return /^(?:직접\s*입력|기타(?:\s*(?:입력|직접\s*입력))?|other(?:\s*[:：-]\s*describe)?)$/i.test(normalized);
+  return /(?:^|[\s:：\-_/])직접\s*입력(?:$|[\s:：\-_/])/.test(normalized)
+    || /^기타(?:$|[\s:：\-_/])/.test(normalized)
+    || /^other(?:$|[\s:：\-_/])/.test(normalized);
 }
 
 function attachIddAdaptiveContinuationToRequest(session, request) {
@@ -7525,8 +7528,11 @@ function formatStructuredPromptResponse(response) {
   const lines = [];
   for (const entry of response.responses || []) {
     const parts = [];
-    if (Array.isArray(entry.selectedOptions) && entry.selectedOptions.length > 0) {
-      parts.push(entry.selectedOptions.join(", "));
+    const selectedOptions = Array.isArray(entry.selectedOptions)
+      ? entry.selectedOptions.filter((option) => !isOtherTextOptionLabel(option))
+      : [];
+    if (selectedOptions.length > 0) {
+      parts.push(selectedOptions.join(", "));
     }
     if (typeof entry.freeText === "string" && entry.freeText.trim()) {
       parts.push(entry.freeText.trim());

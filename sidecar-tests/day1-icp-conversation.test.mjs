@@ -794,11 +794,13 @@ test("IDD follow-up uses sidecar agent synthesis instead of host template when a
         options: [
           { label: "Day 확장 미루기", description: "첫 질문 품질 증거가 생길 때까지 다음 Day를 열지 않습니다.", nextIntent: "values_delay_days" },
           { label: "직접입력", description: "이번 주 미룰 결정을 직접 적습니다.", nextIntent: "values_custom_compact" },
+          { label: "기타 - 설명", description: "이번 주 미룰 결정을 직접 적습니다.", nextIntent: "values_custom_dash" },
           { label: "자동 문서 승인 미루기", description: "근거 없는 통과보다 사용자의 한 줄 결정을 요구합니다.", nextIntent: "values_delay_auto_approval" },
           { label: "기타 입력", description: "이번 주 미룰 결정을 직접 적습니다.", nextIntent: "values_custom_korean" },
           { label: "UI polish 미루기", description: "보기 좋은 카드보다 답변이 실제 결정으로 이어지는지 봅니다.", nextIntent: "values_delay_polish" },
           { label: "기타(직접 입력)", description: "이번 주 미룰 결정을 직접 적습니다.", nextIntent: "values_custom_parentheses" },
           { label: "Other: describe", description: "Describe another tradeoff.", nextIntent: "values_custom_other" },
+          { label: "Other - describe", description: "Describe another tradeoff.", nextIntent: "values_custom_other_dash" },
         ],
         freeTextPlaceholder: "예: 첫 질문이 프로젝트 맥락을 반영할 때까지 Day 2 오픈은 미룬다",
       }),
@@ -858,7 +860,7 @@ test("IDD follow-up uses sidecar agent synthesis instead of host template when a
     assert.match(followup.session.pendingUserInput.questions[0].question, /Agentic30 결정을 미루/);
     const labels = followup.session.pendingUserInput.questions[0].options.map((option) => option.label);
     assert.deepEqual(labels.slice(0, 3), ["Day 확장 미루기", "자동 문서 승인 미루기", "UI polish 미루기"]);
-    assert.doesNotMatch(labels.join("\n"), /직접\s*입력|직접입력|기타(?:\s*입력)?|Other: describe/i);
+    assert.doesNotMatch(labels.join("\n"), /직접\s*입력|직접입력|기타(?:\s*[-:]?\s*\S*)?|Other\s*[:：-]\s*describe/i);
     await closeWebSocket(ws);
     ws = null;
   } finally {
