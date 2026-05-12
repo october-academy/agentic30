@@ -319,6 +319,7 @@ final class AgenticViewModel: ObservableObject {
     private let authPresentationContext = AuthPresentationContext()
     private let authSessionFactory: WebAuthenticationSessionFactory
     private let activateAppForAuth: @MainActor () -> Void
+    private let disablesSidecarStartForTesting: Bool
     private var startupSessionAppearStartedAt: Date?
     private var didRecordStartupSessionAppear = false
 
@@ -449,6 +450,7 @@ final class AgenticViewModel: ObservableObject {
     init(
         authSessionFactory: WebAuthenticationSessionFactory? = nil,
         onboardingContextOverride: OnboardingContext? = nil,
+        disablesSidecarStartForTesting: Bool = false,
         activateAppForAuth: @escaping @MainActor () -> Void = {
             NSApplication.shared.activate(ignoringOtherApps: true)
         }
@@ -463,6 +465,7 @@ final class AgenticViewModel: ObservableObject {
             )
         }
         self.activateAppForAuth = activateAppForAuth
+        self.disablesSidecarStartForTesting = disablesSidecarStartForTesting
 
         let arguments = CommandLine.arguments
 
@@ -793,6 +796,7 @@ final class AgenticViewModel: ObservableObject {
             isConnected = false
             return
         }
+        hydrateWorkspaceRootFromSettingsIfAvailable()
         started = true
         PostHogTelemetry.capture("mac_view_model_started", authSession: macAuthSession)
 
@@ -801,6 +805,12 @@ final class AgenticViewModel: ObservableObject {
         // counter monotonic across reconnects, sidecar restarts, and app
         // relaunches.
         ensureFoundationStarted()
+
+        if disablesSidecarStartForTesting {
+            connectionLabel = "Sidecar disabled for unit tests"
+            isConnected = false
+            return
+        }
 
         if CommandLine.arguments.contains("--ui-testing-sidecar-failure") {
             workspaceRoot = WorkspaceSettings.resolvedURL().path
@@ -911,7 +921,8 @@ final class AgenticViewModel: ObservableObject {
     }
 
     private func createReplacementSessionIfNeeded(source: String) {
-        guard sessions.allSatisfy({ $0.archivedAt != nil }),
+        guard iddSetupComplete,
+              sessions.allSatisfy({ $0.archivedAt != nil }),
               !replacementSessionCreateInFlight else { return }
         replacementSessionCreateInFlight = true
         if !createSession(provider: selectedProvider, source: source) {
@@ -1590,7 +1601,7 @@ final class AgenticViewModel: ObservableObject {
         }
         if !iddSetupComplete {
             startBipIddQueue(docType: iddCurrentDocType)
-            lastError = "Foundation Setup을 먼저 승인해야 Today Mission을 만들 수 있습니다."
+            lastError = "Foundation Setup을 먼저 승인해야 Day 1 Mission을 만들 수 있습니다."
             return
         }
         isBipCoachGenerating = true
@@ -1626,26 +1637,29 @@ final class AgenticViewModel: ObservableObject {
 
     func requestBipSetupGate(autoStart: Bool = false) {
         guard isConnected else { return }
-        guard let sessionID = currentBipCoachSessionID() else { return }
         let provider = selectedSession?.provider ?? visibleBipCoach?.config.provider ?? selectedProvider
-        sidecar.send(payload: [
+        var payload: [String: Any] = [
             "type": "bip_setup_gate_check",
-            "sessionId": sessionID,
             "provider": provider.rawValue,
             "autoStart": autoStart,
             "localEvidence": localEvidenceBundle(),
-        ])
+        ]
+        if let sessionID = currentBipCoachSessionID() {
+            payload["sessionId"] = sessionID
+        }
+        sidecar.send(payload: payload)
     }
 
     func startBipIddQueue(docType: String? = nil) {
         guard isConnected else { return }
-        guard let sessionID = currentBipCoachSessionID() else { return }
         let provider = selectedSession?.provider ?? visibleBipCoach?.config.provider ?? selectedProvider
         var payload: [String: Any] = [
             "type": "bip_idd_start_queue",
-            "sessionId": sessionID,
             "provider": provider.rawValue,
         ]
+        if let sessionID = currentBipCoachSessionID() {
+            payload["sessionId"] = sessionID
+        }
         if let docType, !docType.isEmpty {
             payload["docType"] = docType
         }
@@ -1805,6 +1819,31 @@ final class AgenticViewModel: ObservableObject {
         sendAuthContextToSidecar()
     }
 
+    func resetAgentic30LocalUserData() throws -> KeychainHelper.LocalDataResetReport {
+        let hadAppSupport = FileManager.default.fileExists(atPath: KeychainHelper.applicationSupportURL.path)
+        let workspaceURLForReset = WorkspaceSettings.hasExplicitWorkspace
+            ? WorkspaceSettings.resolvedURL()
+            : nil
+        PostHogTelemetry.capture(
+            "mac_local_data_reset_requested",
+            properties: [
+                "had_app_support": hadAppSupport,
+                "had_workspace_agentic30": workspaceURLForReset.map {
+                    FileManager.default.fileExists(atPath: $0.appendingPathComponent(".agentic30", isDirectory: true).path)
+                } ?? false,
+            ],
+            authSession: macAuthSession
+        )
+
+        authSession?.cancel()
+        authSession = nil
+        sidecar.stop()
+        started = false
+
+        defer { resetVolatileLocalUserDataState() }
+        return try KeychainHelper.resetAgentic30LocalData(workspaceURL: workspaceURLForReset)
+    }
+
     func setProjectWorkspace(_ url: URL) {
         clearStartupQueuedAction()
         WorkspaceSettings.store(url)
@@ -1848,6 +1887,7 @@ final class AgenticViewModel: ObservableObject {
             // Local persistence done. Server sync to /api/profile/onboarding-context is a follow-up.
             sendAuthContextToSidecar()
             if !started, !requiresMacOnboarding {
+                hydrateWorkspaceRootFromSettingsIfAvailable()
                 start()
             }
         } catch {
@@ -2613,7 +2653,6 @@ final class AgenticViewModel: ObservableObject {
 
     private func requestInitialBipGateIfNeeded() {
         guard isConnected, !requestedInitialBipGate else { return }
-        guard currentBipCoachSessionID() != nil else { return }
         requestedInitialBipGate = true
         requestBipSetupGate(autoStart: true)
     }
@@ -2780,7 +2819,7 @@ final class AgenticViewModel: ObservableObject {
                     id: UUID().uuidString,
                     role: .assistant,
                     provider: selectedProvider,
-                    content: "무엇부터 시작할까요? Day 1 커리큘럼을 진행할 수 있어요.",
+                    content: "일반 채팅을 시작할 수 있어요.",
                     state: .final,
                     createdAt: now,
                     error: nil,
@@ -2834,17 +2873,11 @@ final class AgenticViewModel: ObservableObject {
                             description: "SwiftUI panel에서 질문/응답 정체를 직접 겪습니다.",
                             preview: nil,
                             nextIntent: "macos_panel_user"
-                        ),
-                        StructuredPromptOption(
-                            label: "직접 입력",
-                            description: "역할, 상황, 현재 대안을 한 줄로 적습니다.",
-                            preview: nil,
-                            nextIntent: "other_specific_icp"
                         )
                     ],
                     multiSelect: false,
                     allowFreeText: true,
-                    requiresFreeText: true,
+                    requiresFreeText: false,
                     freeTextPlaceholder: "예: Day 1 참가자가 provider 인증 실패 후 static ICP 질문에 갇힌다",
                     textMode: .short
                 )
@@ -3601,6 +3634,11 @@ final class AgenticViewModel: ObservableObject {
         }
     }
 
+    private func hydrateWorkspaceRootFromSettingsIfAvailable() {
+        guard WorkspaceSettings.hasExplicitWorkspace else { return }
+        workspaceRoot = WorkspaceSettings.resolvedURL().path
+    }
+
     private func currentBipCoachSessionID() -> String? {
         if let selectedSessionID {
             return selectedSessionID
@@ -3782,6 +3820,85 @@ private extension AgenticViewModel {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter.string(from: date)
+    }
+
+    func resetVolatileLocalUserDataState() {
+        sessions = []
+        selectedSessionID = nil
+        selectedProvider = .codex
+        draft = ""
+        environment = .placeholder
+        sidecarDiagnostics = nil
+        connectionLabel = "Choose a project workspace"
+        isConnected = false
+        workspaceRoot = WorkspaceSettings.resolvedURL().path
+        lastError = nil
+        presentationPhase = .compact
+        activeSurface = .assistantBubble
+        isScanning = false
+        scanProgressMessage = ""
+        scanProgressLogs = []
+        scanResult = nil
+        isCreatingDoc = nil
+        docCreationLogs = []
+        lastDocCreated = nil
+        macAuthSession = nil
+        macOnboardingStatus = .idle
+        onboardingContext = nil
+        onboardingContextStatus = .idle
+        bipCoach = nil
+        isBipCoachRefreshing = false
+        isBipCoachGenerating = false
+        isBipCoachCompleting = false
+        bipReadiness = nil
+        bipSetupGateMessage = nil
+        missingBipLocalDocs = []
+        missingBipExternalRequirements = []
+        iddSetupStatus = "not_started"
+        iddSetupComplete = false
+        iddCurrentDocType = nil
+        iddAmbiguityScore = nil
+        iddUnresolvedAssumptions = []
+        iddDocOrder = []
+        iddDocPreviews = []
+        iddProviderRecovery = nil
+        iddSetupError = nil
+        bipTokenExpired = nil
+        bipMissionProgress = nil
+        quarantineFiles = []
+        quarantineRefreshError = nil
+        pendingWeeklyRitual = nil
+        providerAuthInProgress = nil
+        providerAuthMessage = nil
+        sentPromptPreviews = [:]
+        submittedStructuredPromptBySession = [:]
+        sidecarOutputLogs = [:]
+        bipNotificationOpenRequest = nil
+        startupQueuedAction = nil
+        startupSessionAppearElapsedMs = nil
+        foundationStartedAt = nil
+        foundationProgressState = FoundationProgressSnapshot(workspaceRoot: WorkspaceSettings.resolvedURL().path)
+        notionConnected = false
+        notionOAuthInProgress = false
+        notionOAuthError = nil
+
+        revealWorkItem?.cancel()
+        revealWorkItem = nil
+        activePresentationSessionID = nil
+        revealedAssistantMessageID = nil
+        lastBipRequestedAction = nil
+        pendingBipAuthRetry = nil
+        pendingWorkspaceScanRoot = nil
+        workspaceSetupTelemetryGate = WorkspaceSetupTelemetryGate()
+        requestedWarmSessionIDs = []
+        requestedInitialBipGate = false
+        requestedInitialBipMission = false
+        replacementSessionCreateInFlight = false
+        injectedFoundationFirstPromptKeys = []
+        pendingFoundationFirstPromptKeys = []
+        startupSessionAppearStartedAt = nil
+        didRecordStartupSessionAppear = false
+        foundationProgressStore = nil
     }
 
     func restoreFoundationProgress(arguments: [String]) {

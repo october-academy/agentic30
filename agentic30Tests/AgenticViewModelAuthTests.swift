@@ -144,6 +144,34 @@ struct AgenticViewModelAuthTests {
         #expect(viewModel.needsOnboardingContext == false)
     }
 
+    @Test @MainActor func startHydratesExplicitWorkspaceBeforeSidecarReady() throws {
+        let workspaceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-start-hydrates-workspace-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+        WorkspaceSettings.store(workspaceURL)
+        defer {
+            WorkspaceSettings.clear()
+            try? FileManager.default.removeItem(at: workspaceURL)
+        }
+
+        let viewModel = AgenticViewModel(
+            onboardingContextOverride: OnboardingContext.make(
+                role: .developer,
+                projectStage: .building,
+                isolationLevel: .projectFolder
+            ),
+            disablesSidecarStartForTesting: true,
+            activateAppForAuth: {}
+        )
+
+        #expect(viewModel.workspaceRoot.isEmpty)
+
+        viewModel.start()
+
+        #expect(viewModel.workspaceRoot == workspaceURL.path)
+        #expect(viewModel.isConnected == false)
+    }
+
     @Test @MainActor func promptBeforeSessionQueuesStartupAction() throws {
         let workspaceURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("agentic30-startup-queue-\(UUID().uuidString)", isDirectory: true)

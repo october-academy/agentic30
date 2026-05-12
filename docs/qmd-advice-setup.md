@@ -1,6 +1,6 @@
 # QMD Advice Setup
 
-QMD advice is optional context retrieval for local coaching. It should improve answers when configured, but it must not block first-run onboarding or Today Mission.
+QMD advice is optional context retrieval for local coaching. It should improve answers when configured, but it must not block first-run onboarding or Day 1 Mission.
 
 ## Expected Behavior
 

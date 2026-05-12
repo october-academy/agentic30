@@ -103,6 +103,8 @@ struct SettingsView: View {
     @State private var scanMessage = ""
     @State private var diagnosticsMessage = ""
     @State private var developerToolsMessage = ""
+    @State private var resetLocalDataMessage = ""
+    @State private var showsResetLocalDataConfirmation = false
     @State private var localSelectedSection: SettingsSection = .account
     @State private var isBackButtonHovered = false
 
@@ -169,6 +171,14 @@ struct SettingsView: View {
                 if let created = viewModel.lastDocCreated {
                     applyDocCreated(type: created.type, path: created.path)
                 }
+            }
+            .alert("Reset local Agentic30 data?", isPresented: $showsResetLocalDataConfirmation) {
+                Button("Reset Local Data", role: .destructive) {
+                    resetAgentic30LocalData()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This clears Agentic30 settings, Keychain entries, local sessions, caches, onboarding state, and the selected workspace's .agentic30 setup/interview data. Other project files are not deleted.")
             }
     }
 
@@ -347,6 +357,7 @@ struct SettingsView: View {
         ) {
             accountConnectionSection
             appUpdatesSection
+            localDataResetSection
             agentModelsSection
         }
     }
@@ -429,6 +440,41 @@ struct SettingsView: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("settings.updates.checkForUpdates")
+        }
+        .padding(20)
+        .background(cardBackground)
+    }
+
+    private var localDataResetSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            sectionHeader(title: "Local Data", configured: true)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Reset Agentic30 on this Mac")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.88))
+                Text("Clears Agentic30 UserDefaults, Keychain entries, local sessions, caches, setup state, and the selected workspace's .agentic30 setup/interview data. Other project files are not deleted.")
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.48))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 14) {
+                accountButton("Reset Local Data...", destructive: true) {
+                    showsResetLocalDataConfirmation = true
+                }
+                .accessibilityIdentifier("settings.account.resetLocalDataButton")
+
+                if !resetLocalDataMessage.isEmpty {
+                    Text(resetLocalDataMessage)
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                        .foregroundStyle(resetLocalDataMessage.hasPrefix("Reset failed") ? .red.opacity(0.82) : .green.opacity(0.8))
+                        .transition(.opacity)
+                        .accessibilityIdentifier("settings.account.resetLocalDataMessage")
+                }
+
+                Spacer()
+            }
         }
         .padding(20)
         .background(cardBackground)
@@ -1893,6 +1939,19 @@ struct SettingsView: View {
             provider: viewModel.selectedProvider
         )
         showMessage($bipSaveMessage, text: "Cleared")
+    }
+
+    private func resetAgentic30LocalData() {
+        do {
+            let report = try viewModel.resetAgentic30LocalUserData()
+            loadAllValues()
+            let scope = report.removedWorkspaceAgentic30
+                ? "settings, sessions, caches, and workspace setup data"
+                : (report.removedAppSupport ? "settings, sessions, and caches" : "settings")
+            showMessage($resetLocalDataMessage, text: "Reset \(scope)")
+        } catch {
+            showMessage($resetLocalDataMessage, text: "Reset failed: \(error.localizedDescription)")
+        }
     }
 
     private func showMessage(_ binding: Binding<String>, text: String) {

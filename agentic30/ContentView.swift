@@ -318,8 +318,6 @@ struct ContentView: View {
                 }
 
                 Spacer(minLength: 0)
-
-                workspaceMissionFirstToolbarStatus()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 
@@ -327,19 +325,6 @@ struct ContentView: View {
                 .padding(.leading, isWorkspaceWindow ? 0 : 42)
                 .padding(.top, 52)
                 .zIndex(100)
-        }
-    }
-
-    @ViewBuilder
-    private func workspaceMissionFirstToolbarStatus() -> some View {
-        if selectedWorkspaceSection != .settings {
-            Text(viewModel.isBipCoachGenerating ? "오늘 실행 준비 중" : "Mission-first")
-                .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.42))
-                .padding(.horizontal, 10)
-                .frame(height: 28)
-                .background(Capsule().fill(Color.white.opacity(0.055)))
-                .accessibilityIdentifier("workspace.missionFirst.toolbarStatus")
         }
     }
 
@@ -359,10 +344,6 @@ struct ContentView: View {
                 }
 
                 Spacer(minLength: 0)
-
-                if selectedWorkspaceSection != .settings {
-                    workspacePreparingStatusPill()
-                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 
@@ -382,57 +363,6 @@ struct ContentView: View {
         selectedWorkspaceSection == .settings
             ? "Workspace 환경 설정"
             : "Day \(day.day) · \(day.phase.title) · \(session.provider.title)"
-    }
-
-    private func workspacePreparingStatusPill() -> some View {
-        let phase = workspaceMissionFirstPhase(session: nil)
-        let hasFailure = phase == .failed
-
-        return HStack(spacing: 7) {
-            Image(systemName: workspacePreparingStatusIcon(phase))
-                .font(.system(size: 11, weight: .semibold))
-                .frame(width: 14, height: 14)
-            Text(workspacePreparingStatusText(phase))
-                .font(.system(size: 12, weight: .bold, design: .rounded))
-        }
-        .foregroundStyle(.white.opacity(hasFailure ? 0.72 : 0.52))
-        .padding(.horizontal, 13)
-        .frame(height: 32)
-        .background(Capsule().fill(Color.white.opacity(hasFailure ? 0.11 : 0.08)))
-        .overlay(
-            Capsule()
-                .stroke(Color.white.opacity(hasFailure ? 0.10 : 0.0), lineWidth: 1)
-        )
-    }
-
-    private func workspacePreparingStatusIcon(_ phase: WorkspaceMissionFirstPhase) -> String {
-        switch phase {
-        case .failed:
-            return "exclamationmark.triangle.fill"
-        case .sidecarStarting:
-            return "bolt.horizontal.circle.fill"
-        case .creatingSession:
-            return "bubble.left.and.bubble.right.fill"
-        case .generatingMission:
-            return "sparkles"
-        case .ready:
-            return "checkmark.circle.fill"
-        }
-    }
-
-    private func workspacePreparingStatusText(_ phase: WorkspaceMissionFirstPhase) -> String {
-        switch phase {
-        case .failed:
-            return "연결 필요"
-        case .sidecarStarting:
-            return "실행 환경 준비 중"
-        case .creatingSession:
-            return "세션 준비 중"
-        case .generatingMission:
-            return "오늘 실행 준비 중"
-        case .ready:
-            return "준비 완료"
-        }
     }
 
     private func workspaceSidebarToggleButton() -> some View {
@@ -737,12 +667,6 @@ struct ContentView: View {
                     .accessibilityIdentifier("workspace.sidebar.dayCounter.label")
 
                 Spacer(minLength: 0)
-
-                Text("Foundation")
-                    .font(.system(size: 9, weight: .semibold, design: .rounded))
-                    .tracking(0.6)
-                    .textCase(.uppercase)
-                    .foregroundStyle(.white.opacity(0.46))
             }
 
             GeometryReader { proxy in
@@ -874,13 +798,6 @@ struct ContentView: View {
                             .transition(.opacity)
                             .padding(.trailing, 7)
                     }
-
-                    Text("잠김")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(isHovered ? 0.42 : 0.28))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(Color.white.opacity(isHovered ? 0.055 : 0.035)))
                 }
             }
             .padding(.horizontal, 9)
@@ -992,17 +909,6 @@ struct ContentView: View {
                     .lineLimit(1)
 
                 Spacer(minLength: 0)
-
-                Text("Pro")
-                    .font(.system(size: 9, weight: .heavy, design: .rounded))
-                    .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.82))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.white.opacity(0.055)))
-                    .overlay(
-                        Capsule()
-                            .stroke(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.15), lineWidth: 1)
-                    )
             }
 
             Text("Day 7을 마치면 Day 8부터 이어집니다")
@@ -1131,38 +1037,58 @@ struct ContentView: View {
     }
 
     private func workspaceSidebarHistoryEmptyState() -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("아직 대화가 없어요")
-                .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.66))
-                .lineLimit(1)
+        let isPreparingFoundationSession = !viewModel.requiresMacOnboarding
+            && isIddSetupLocked
+            && viewModel.sidecarFailureMessage == nil
+            && viewModel.iddSetupStatus != "error"
+            && viewModel.iddSetupStatus != "preview_ready"
+        let title = workspaceSidebarHistoryEmptyTitle(isPreparingFoundationSession: isPreparingFoundationSession)
+        let subtitle = workspaceSidebarHistoryEmptySubtitle(isPreparingFoundationSession: isPreparingFoundationSession)
 
-            Text("새 Codex 대화로 바로 시작하세요.")
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 7) {
+                if isPreparingFoundationSession {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .scaleEffect(0.56)
+                        .frame(width: 14, height: 14)
+                        .tint(.white.opacity(0.62))
+                }
+
+                Text(title)
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.66))
+                    .lineLimit(1)
+            }
+
+            Text(subtitle)
                 .font(.system(size: 10, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.38))
                 .fixedSize(horizontal: false, vertical: true)
 
-            Button {
-                startNewCodexSessionFromSidebar()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 10, weight: .heavy))
-                    Text("새 대화 시작")
-                        .font(.system(size: 10, weight: .heavy, design: .rounded))
+            if !isPreparingFoundationSession {
+                Button {
+                    startNewCodexSessionFromSidebar()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 10, weight: .heavy))
+                        Text("새 대화 시작")
+                            .font(.system(size: 10, weight: .heavy, design: .rounded))
+                    }
+                    .foregroundStyle(.white.opacity(viewModel.isConnected ? 0.80 : 0.30))
+                    .padding(.horizontal, 9)
+                    .frame(height: 26)
+                    .background(Capsule().fill(Color.white.opacity(viewModel.isConnected ? 0.07 : 0.03)))
                 }
-                .foregroundStyle(.white.opacity(viewModel.isConnected ? 0.80 : 0.30))
-                .padding(.horizontal, 9)
-                .frame(height: 26)
-                .background(Capsule().fill(Color.white.opacity(viewModel.isConnected ? 0.07 : 0.03)))
+                .buttonStyle(.plain)
+                .disabled(!viewModel.isConnected)
+                .accessibilityIdentifier("workspace.sidebar.emptyNewCodexSessionButton")
+                .accessibilityLabel("새 Codex 대화 시작")
+                .accessibilityHint(
+                    viewModel.isConnected ? "새 Codex 세션을 만들고 바로 선택합니다." : "사이드카 연결 후 새 대화를 시작할 수 있어요."
+                )
             }
-            .buttonStyle(.plain)
-            .disabled(!viewModel.isConnected)
-            .accessibilityIdentifier("workspace.sidebar.emptyNewCodexSessionButton")
-            .accessibilityLabel("새 Codex 대화 시작")
-            .accessibilityHint(
-                viewModel.isConnected ? "새 Codex 세션을 만들고 바로 선택합니다." : "사이드카 연결 후 새 대화를 시작할 수 있어요."
-            )
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 11)
@@ -1176,6 +1102,44 @@ struct ContentView: View {
                 .stroke(Color.white.opacity(0.065), lineWidth: 1)
         )
         .accessibilityIdentifier("workspace.sidebar.historyEmptyState")
+    }
+
+    private func workspaceSidebarHistoryEmptyTitle(isPreparingFoundationSession: Bool) -> String {
+        if viewModel.iddSetupStatus == "preview_ready" {
+            return "확인 대기 중"
+        }
+        if viewModel.iddSetupStatus == "error" {
+            return "질문 준비 실패"
+        }
+        if isPreparingFoundationSession {
+            return "세션 준비 중"
+        }
+        return viewModel.isConnected ? "아직 대화가 없어요" : "사이드카 연결 중"
+    }
+
+    private func workspaceSidebarHistoryEmptySubtitle(isPreparingFoundationSession: Bool) -> String {
+        switch viewModel.iddSetupStatus {
+        case "preview_ready":
+            return "확인하면 바로 오늘 할 일을 만들 수 있어요."
+        case "error":
+            return "Foundation Setup 질문 준비가 멈췄습니다."
+        default:
+            break
+        }
+
+        guard isPreparingFoundationSession else {
+            return viewModel.isConnected
+                ? "새 Codex 대화로 바로 시작하세요."
+                : "연결되면 새 대화를 시작할 수 있어요."
+        }
+
+        switch viewModel.iddSetupStatus {
+        case "provider_recovery":
+            return "Provider 인증을 확인하면 질문 준비를 이어갑니다."
+        default:
+            let doc = viewModel.iddCurrentDocType?.uppercased() ?? "ICP"
+            return "\(doc) 인터뷰 질문 카드를 준비하고 있어요."
+        }
     }
 
     private func startNewCodexSessionFromSidebar() {
@@ -1448,6 +1412,7 @@ struct ContentView: View {
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(isHovered ? 0.92 : 0.74))
                         .lineLimit(1)
+                        .accessibilityIdentifier("workspace.sidebar.projectFolderName")
                     Text("프로젝트 폴더")
                         .font(.system(size: 10, weight: .medium, design: .rounded))
                         .foregroundStyle(.white.opacity(isHovered ? 0.56 : 0.38))
@@ -1470,6 +1435,7 @@ struct ContentView: View {
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("workspace.sidebar.projectFolderButton")
         .onHover { hovering in
             if hovering {
                 hoveredWorkspaceFooterItem = .projectFolder
@@ -3210,7 +3176,10 @@ struct ContentView: View {
         let totalCount = max(viewModel.iddDocOrder.count, 4)
         let isPreviewReady = viewModel.iddSetupStatus == "preview_ready"
         let isSetupError = viewModel.iddSetupStatus == "error"
-        let currentDoc = viewModel.iddCurrentDocType?.uppercased() ?? "ICP"
+        let setupTitle = isPreviewReady ? "시작 기준을 확인하세요" : workspaceFoundationSetupTitle(for: viewModel.iddCurrentDocType)
+        let setupSubtitle = isPreviewReady
+            ? "확인하면 바로 오늘 할 일을 만들 수 있어요."
+            : "오늘 할 일을 만들기 전에, 누구를 위해 무엇을 검증할지 먼저 정해요."
 
         return VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 13) {
@@ -3221,17 +3190,12 @@ struct ContentView: View {
                     .background(Circle().fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.94)))
 
                 VStack(alignment: .leading, spacing: 7) {
-                    Text("Foundation Setup")
-                        .font(.system(size: 11, weight: .heavy, design: .rounded))
-                        .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.94))
-                        .textCase(.uppercase)
-
-                    Text(isPreviewReady ? "문서 미리보기를 승인하세요" : "\(currentDoc) 기준부터 고정합니다")
+                    Text(setupTitle)
                         .font(.system(size: 25, weight: .heavy, design: .rounded))
                         .foregroundStyle(.white.opacity(0.97))
                         .fixedSize(horizontal: false, vertical: true)
 
-                    Text("Today Mission은 ICP, GOAL, VALUES, SPEC 네 문서가 승인된 뒤 열립니다.")
+                    Text(setupSubtitle)
                         .font(.system(size: 14, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.62))
                         .fixedSize(horizontal: false, vertical: true)
@@ -3253,6 +3217,7 @@ struct ContentView: View {
                 }
                 Spacer(minLength: 0)
             }
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("workspace.iddSetup.progress")
 
             if let recovery = viewModel.iddProviderRecovery,
@@ -3285,7 +3250,7 @@ struct ContentView: View {
                     Button {
                         viewModel.approveIddSetup()
                     } label: {
-                        Label("문서 승인하고 미션 열기", systemImage: "checkmark.seal.fill")
+                        Label("확인하고 오늘 할 일 만들기", systemImage: "checkmark.seal.fill")
                             .font(.system(size: 13, weight: .heavy, design: .rounded))
                             .foregroundStyle(Color.black.opacity(0.76))
                             .padding(.horizontal, 14)
@@ -3297,12 +3262,6 @@ struct ContentView: View {
                 }
             }
 
-            if let ambiguity = viewModel.iddAmbiguityScore {
-                Text("Ambiguity \(ambiguity)% · 목표 20% 이하")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.48))
-                    .accessibilityIdentifier("workspace.iddSetup.ambiguity")
-            }
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -3318,16 +3277,32 @@ struct ContentView: View {
         .accessibilityIdentifier("workspace.iddSetupSurface")
     }
 
+    private func workspaceFoundationSetupTitle(for docType: String?) -> String {
+        switch docType?.lowercased() {
+        case "goal":
+            return "이번 주 확인할 목표를 정해요"
+        case "values":
+            return "중요한 판단 기준을 정해요"
+        case "spec":
+            return "첫 버전의 범위를 정해요"
+        default:
+            return "먼저 도울 사람을 정해요"
+        }
+    }
+
     private func workspaceFoundationDocChip(_ docType: String) -> some View {
         let preview = viewModel.iddDocPreviews.first { $0.type == docType }
         let isDrafted = preview?.status == "drafted" || preview?.content.isEmpty == false
         let isCurrent = viewModel.iddCurrentDocType == docType && !isDrafted
+        let accessibilityState = isDrafted ? "완료" : (isCurrent ? "현재 단계" : "대기")
         return Label(docType.uppercased(), systemImage: isDrafted ? "checkmark.circle.fill" : (isCurrent ? "circle.dotted" : "circle"))
             .font(.system(size: 11, weight: .heavy, design: .rounded))
             .foregroundStyle(.white.opacity(isDrafted || isCurrent ? 0.82 : 0.42))
             .padding(.horizontal, 9)
             .frame(height: 28)
             .background(Capsule().fill(Color.white.opacity(isDrafted ? 0.12 : 0.06)))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(docType.uppercased()), \(accessibilityState)")
             .accessibilityIdentifier("workspace.iddSetup.doc.\(docType)")
     }
 
@@ -3488,8 +3463,6 @@ struct ContentView: View {
                 }
 
                 Spacer(minLength: 16)
-
-                workspaceMissionFirstStatusLine(session: session)
             }
 
             workspaceMissionFirstPath(session: session)
@@ -3875,65 +3848,6 @@ struct ContentView: View {
             }
         }
         return "프로젝트 기준으로 지금 할 수 있는 15분 실행 후보를 추천합니다."
-    }
-
-    private func workspaceMissionFirstStatusLine(session: ChatSession?) -> some View {
-        HStack(spacing: 7) {
-            Image(systemName: workspaceMissionFirstStatusIcon(session: session))
-                .font(.system(size: 11, weight: .bold))
-                .frame(width: 12, height: 12)
-
-            Text(workspaceMissionFirstStatusText(session: session))
-                .font(.system(size: 11, weight: .heavy, design: .rounded))
-                .lineLimit(1)
-        }
-        .foregroundStyle(.white.opacity(0.68))
-        .padding(.horizontal, 10)
-        .frame(height: 28)
-        .background(Capsule().fill(Color.white.opacity(0.07)))
-        .accessibilityIdentifier("workspace.missionFirst.statusLine")
-        .accessibilityLabel(workspaceMissionFirstStatusText(session: session))
-    }
-
-    private func workspaceMissionFirstStatusIcon(session: ChatSession?) -> String {
-        switch workspaceMissionFirstPhase(session: session) {
-        case .failed:
-            return "arrow.clockwise"
-        case .sidecarStarting:
-            return "bolt.horizontal.circle.fill"
-        case .creatingSession:
-            return "bubble.left.and.bubble.right.fill"
-        case .generatingMission:
-            return "sparkles"
-        case .ready:
-            break
-        }
-        if viewModel.visibleBipCoach?.currentMission != nil {
-            return "checkmark.circle.fill"
-        }
-        return "circle.fill"
-    }
-
-    private func workspaceMissionFirstStatusText(session: ChatSession?) -> String {
-        switch workspaceMissionFirstPhase(session: session) {
-        case .failed:
-            return "다시 시도 필요"
-        case .sidecarStarting:
-            return "실행 환경 확인"
-        case .creatingSession:
-            return "세션 열기"
-        case .generatingMission:
-            return "미션 생성 중"
-        case .ready:
-            break
-        }
-        if viewModel.visibleBipCoach?.currentMission != nil {
-            return "실행 모드"
-        }
-        if viewModel.visibleBipCoach?.pendingMissionChoices.isEmpty == false {
-            return "하나만 골라도 충분"
-        }
-        return "준비 완료"
     }
 
     @ViewBuilder
@@ -6631,7 +6545,7 @@ struct ContentView: View {
             .padding(.vertical, 2)
             .animation(.easeInOut(duration: 0.16), value: prompt.requestId)
 
-            if let submissionState, isSubmitting {
+            if let submissionState, isSubmitting, !compact {
                 structuredPromptSubmissionReceipt(submissionState, compact: compact)
             }
 
@@ -6750,9 +6664,6 @@ struct ContentView: View {
         if prompt.title?.contains("첫") == true {
             return "이걸로 시작"
         }
-        if prompt.questions.contains(where: { $0.requiresFreeText == true }) {
-            return "한 줄 보완 후 답하기"
-        }
         return "다음 질문"
     }
 
@@ -6767,16 +6678,11 @@ struct ContentView: View {
         compact: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: compact ? 3 : 5) {
-            HStack(spacing: 7) {
-                ProgressView()
-                    .controlSize(.mini)
-                    .scaleEffect(0.72)
-                Text(state.progressText?.nonEmpty ?? "답변 저장 중: \(state.answerSummary)")
-                    .font(.system(size: compact ? 11 : 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.66))
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Text(state.progressText?.nonEmpty ?? "답변 저장 중: \(state.answerSummary)")
+                .font(.system(size: compact ? 11 : 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.66))
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
 
             if !compact, state.progressText?.nonEmpty != nil {
                 Text("답변: \(state.answerSummary)")
@@ -6855,7 +6761,7 @@ struct ContentView: View {
 
             if question.allowFreeText == true || question.options?.isEmpty != false {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(question.requiresFreeText == true ? "한 줄 근거" : (compact ? "다른 답" : "직접 입력"))
+                    Text(freeTextLabel(for: question, compact: compact))
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.52))
                     freeTextField(question: question, isDisabled: isSubmitting)
@@ -6872,6 +6778,13 @@ struct ContentView: View {
                         .stroke(Color.white.opacity(0.08), lineWidth: 1)
                 )
         )
+    }
+
+    private func freeTextLabel(for question: StructuredPromptQuestion, compact: Bool) -> String {
+        if question.options?.isEmpty == false {
+            return "기타"
+        }
+        return compact ? "직접 입력" : "자유 입력"
     }
 
     /// Default accent for the form-style structured prompt (office-hours intake).

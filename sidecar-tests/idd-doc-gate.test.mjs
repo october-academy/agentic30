@@ -20,7 +20,6 @@ import {
   isStaleAwkwardIcpUserInputRequest,
   isStaleGenericHostIddUserInputRequest,
   localDocRowId,
-  markStaleIddInterviewingState,
   recordIddStructuredResponse,
   serializeIddSetupFields,
   setIddSetupError,
@@ -119,7 +118,98 @@ test("IDD follow-up targets the highest missing signal for the current document"
   assert.match(input.questions[0].helperText, /Ambiguity/);
   assert.match(input.questions[0].question, /연락하거나 관찰/);
   assert.equal(input.questions[0].allowFreeText, true);
-  assert.equal(input.questions[0].requiresFreeText, true);
+  assert.equal(input.questions[0].requiresFreeText, false);
+});
+
+test("VALUES follow-up questions ask for decisions instead of fallback evidence format", () => {
+  const doc = BIP_REQUIRED_LOCAL_DOCS.find((item) => item.type === "values");
+  const cases = [
+    {
+      signalId: "tradeoff",
+      responseText: "고객 인터뷰 기록",
+      questionPattern: /실제로 포기할 선택/,
+      optionPattern: /고객 인터뷰 기록/,
+    },
+    {
+      signalId: "rejected_option",
+      responseText: "속도보다 증거를 우선한다.",
+      questionPattern: /거절해야 하는 요청/,
+      optionPattern: /속도|증거/,
+    },
+    {
+      signalId: "trigger",
+      responseText: "속도보다 증거를 우선하고 새 기능은 하지 않는다.",
+      questionPattern: /어떤 순간에 바로 적용/,
+      optionPattern: /속도|증거/,
+    },
+    {
+      signalId: "violation_example",
+      responseText: "속도보다 증거를 우선하고 새 기능은 하지 않는다. 사용자가 막히는 상황 때 이 원칙을 적용한다.",
+      questionPattern: /어긴 것으로 기록/,
+      optionPattern: /속도|증거/,
+    },
+  ];
+
+  for (const entry of cases) {
+    const state = {
+      transcript: [{ docType: doc.type, responseText: entry.responseText }],
+      drafts: {},
+    };
+    const input = buildIddFollowupStructuredInputForDoc(doc, state);
+    const question = input.questions[0];
+
+    assert.equal(input.title, "VALUES 모호함 낮추기");
+    assert.match(question.helperText, /Ambiguity/);
+    assert.match(question.question, entry.questionPattern);
+    assert.doesNotMatch(question.question, /이 빠진 근거를 한 줄로 보완/);
+    assert.match(question.options.map((option) => option.label).join("\n"), entry.optionPattern);
+    assert.doesNotMatch(
+      question.options.map((option) => option.label).join("\n"),
+      /새 기능 보류|자동화 보류|빠른 미션 오픈 보류|실제 사람\/상황|숫자\/기준|리스크\/실패 조건/,
+    );
+    assert.deepEqual(question.options.map((option) => option.nextIntent), [
+      entry.signalId,
+      entry.signalId,
+      entry.signalId,
+    ]);
+    assert.equal(question.requiresFreeText, false);
+    assert.equal(question.allowFreeText, true);
+  }
+});
+
+test("VALUES follow-up falls back to generic copy only without usable prior answer", () => {
+  const doc = BIP_REQUIRED_LOCAL_DOCS.find((item) => item.type === "values");
+  const emptyStates = [
+    { transcript: [], drafts: {} },
+    { transcript: [{ docType: doc.type, responseText: "" }], drafts: {} },
+    { transcript: [{ docType: doc.type, responseText: "   \n\t" }], drafts: {} },
+  ];
+
+  for (const state of emptyStates) {
+    const question = buildIddFollowupStructuredInputForDoc(doc, state).questions[0];
+    assert.match(question.question, /이 빠진 근거/);
+    assert.doesNotMatch(question.question, /방금 정한 원칙/);
+    assert.deepEqual(
+      question.options.map((option) => option.label),
+      ["실제 사람/상황으로 보완", "숫자/기준으로 보완", "리스크/실패 조건으로 보완"],
+    );
+  }
+
+  const unparseable = buildIddFollowupStructuredInputForDoc(doc, {
+    transcript: [{ docType: doc.type, responseText: "고객 인터뷰 기록" }],
+    drafts: {},
+  }).questions[0];
+  assert.match(unparseable.question, /실제로 포기할 선택/);
+  assert.match(unparseable.options.map((option) => option.label).join("\n"), /고객 인터뷰 기록/);
+  assert.doesNotMatch(unparseable.question, /이 빠진 근거/);
+
+  const normalTradeoff = buildIddFollowupStructuredInputForDoc(doc, {
+    transcript: [{ docType: doc.type, responseText: "속도보다 증거를 우선한다." }],
+    drafts: {},
+  }).questions[0];
+  assert.match(normalTradeoff.question, /거절해야 하는 요청|실제로 포기할 선택/);
+  assert.match(normalTradeoff.options.map((option) => option.label).join("\n"), /속도|증거/);
+  assert.doesNotMatch(normalTradeoff.question, /방금 정한 원칙/);
 });
 
 test("initial IDD structured inputs are document-specific for GOAL, VALUES, and SPEC", () => {
@@ -140,17 +230,17 @@ test("initial IDD structured inputs are document-specific for GOAL, VALUES, and 
   assert.equal(goal.title, "GOAL 정하기");
   assert.match(goal.questions[0].question, /GOAL/);
   assert.match(goal.questions[0].helperText, /proof target|목표/);
-  assert.equal(goal.questions[0].requiresFreeText, true);
+  assert.equal(goal.questions[0].requiresFreeText, false);
 
   assert.equal(values.title, "VALUES 정하기");
   assert.match(values.questions[0].question, /tradeoff|거절 기준/);
   assert.match(values.questions[0].freeTextPlaceholder, /신뢰/);
-  assert.equal(values.questions[0].requiresFreeText, true);
+  assert.equal(values.questions[0].requiresFreeText, false);
 
   assert.equal(spec.title, "SPEC 정하기");
   assert.match(spec.questions[0].question, /핵심 workflow/);
   assert.match(spec.questions[0].freeTextPlaceholder, /Day 1 미션/);
-  assert.equal(spec.questions[0].requiresFreeText, true);
+  assert.equal(spec.questions[0].requiresFreeText, false);
 });
 
 test("IDD setup error is serialized for the Mac surface", () => {
@@ -166,21 +256,6 @@ test("IDD setup error is serialized for the Mac surface", () => {
   assert.equal(event.iddSetupError.provider, "codex");
   assert.equal(event.iddSetupError.docType, "icp");
   assert.match(event.iddSetupError.message, /질문 카드 준비/);
-});
-
-test("stale IDD interviewing state normalizes to retryable setup error", () => {
-  const state = markStaleIddInterviewingState({
-    status: "interviewing",
-    currentDocType: "icp",
-    lastProvider: "codex",
-  });
-  const event = serializeIddSetupFields(state);
-
-  assert.equal(event.iddSetupStatus, "error");
-  assert.equal(event.iddSetupError.provider, "codex");
-  assert.equal(event.iddSetupError.docType, "icp");
-  assert.equal(event.iddSetupError.recoverable, true);
-  assert.match(event.iddSetupError.message, /완료 이벤트 없이 중단/);
 });
 
 test("IDD rubric drops below threshold only when all foundation docs contain required signals", async () => {
@@ -515,12 +590,11 @@ test("Codex ICP IDD initial input is host-side agentic30_request_user_input with
   assert.match(input.questions[0].question, /가장 먼저 인터뷰할 1인 개발자 유형/);
   assert.deepEqual(
     input.questions[0].options.map((option) => option.label),
-    ["퇴사 후 첫 매출이 없는 개발자", "AI로 제품은 만들었지만 고객이 없는 개발자", "여러 번 출시했지만 반응이 약했던 개발자", "직접 입력"],
+    ["퇴사 후 첫 매출이 없는 개발자", "AI로 제품은 만들었지만 고객이 없는 개발자", "여러 번 출시했지만 반응이 약했던 개발자"],
   );
   assert.match(input.questions[0].options[0].description, /팔 대상과 첫 고객 증거/);
   assert.match(input.questions[0].options[1].description, /Codex\/Claude/);
   assert.match(input.questions[0].options[2].description, /반복 실패/);
-  assert.equal(input.questions[0].options.at(-1).nextIntent, "other_specific_icp");
   assert.equal(initialIddStructuredInputForDoc(doc, { provider: "claude" }), null);
 });
 
@@ -560,10 +634,10 @@ test("Codex GOAL IDD initial input asks for the goal before proof target", () =>
   assert.equal(question.header, "이번 주 GOAL");
   assert.match(question.helperText, /proof target, 지표, 실패 조건은 다음 카드/);
   assert.match(question.question, /가장 먼저 검증하거나 달성하려는 GOAL/);
-  assert.equal(question.requiresFreeText, true);
+  assert.equal(question.requiresFreeText, false);
   assert.deepEqual(
     question.options.map((option) => option.label),
-    ["첫 고객 반응 확인", "문제 강도 확인", "가장 작은 해결책 확인", "직접 입력"],
+    ["첫 고객 반응 확인", "문제 강도 확인", "가장 작은 해결책 확인"],
   );
 
   const state = recordIddStructuredResponse({}, {
@@ -594,7 +668,7 @@ test("Codex design-system initial input shows concrete visual examples", () => {
   assert.equal(input.title, "화면 원칙 정하기");
   assert.match(question.question, /화면 원칙에서 이번 주 먼저 고정할 기준/);
   assert.match(descriptions, /\[상단: 오늘 할 일\] -> \[본문: 질문\] -> \[하단: 다음 행동\]/);
-  assert.match(descriptions, /\[질문\]  \[선택 A\] \[선택 B\] \[직접 입력\]/);
+  assert.match(descriptions, /\[질문\]  \[선택 A\] \[선택 B\] \[기타 입력\]/);
   assert.match(descriptions, /A: 업무형  B: 카드형  C: 대화형/);
   assert.match(prompt, /design-shotgun/);
   assert.match(prompt, /ASCII ART 와이어프레임/);
@@ -610,7 +684,7 @@ test("Codex ICP IDD initial input has a low-confidence fallback that does not re
   assert.equal(input.questions[0].helperText, "먼저 첫 고객 후보 하나만 고릅니다.");
   assert.deepEqual(
     input.questions[0].options.map((option) => option.label),
-    ["나 또는 우리 팀 중 지금 막힌 사람", "이 제품 대안을 이미 쓰는 사람", "돈이나 시간을 이미 쓰는 사람", "직접 입력"],
+    ["나 또는 우리 팀 중 지금 막힌 사람", "이 제품 대안을 이미 쓰는 사람", "돈이나 시간을 이미 쓰는 사람"],
   );
 });
 
@@ -664,7 +738,8 @@ test("IDD continuation prompt carries structured response and prevents repeating
   assert.match(prompt, /agentic30_request_user_input MCP 도구/);
   assert.match(prompt, /request_user_input 카드/);
   assert.match(prompt, /2-4개 후보 options/);
-  assert.match(prompt, /requiresFreeText: true/);
+  assert.doesNotMatch(prompt, /requiresFreeText: true/);
+  assert.match(prompt, /선택지 또는 기타 자유 입력/);
   assert.doesNotMatch(prompt, /structured input unavailable/);
 });
 

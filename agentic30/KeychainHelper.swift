@@ -39,6 +39,10 @@ enum KeychainHelper {
         appSupportURL.appendingPathComponent("dev-secrets.json")
     }
 
+    static var applicationSupportURL: URL {
+        appSupportURL
+    }
+
     private static func readDevSecrets() -> DevSecretsBlob {
         guard let data = try? Data(contentsOf: devSecretsURL) else {
             return DevSecretsBlob()
@@ -376,6 +380,78 @@ enum KeychainHelper {
         delete(account: onboardingContextAccount)
     }
 
+    struct LocalDataResetReport: Equatable {
+        let removedDefaultsCount: Int
+        let removedAppSupport: Bool
+        let removedWorkspaceAgentic30: Bool
+    }
+
+    static func resetAgentic30LocalData(
+        defaults: UserDefaults = .standard,
+        fileManager: FileManager = .default,
+        removeAppSupport: Bool = true,
+        workspaceURL: URL? = nil,
+        removeWorkspaceAgentic30: Bool = true
+    ) throws -> LocalDataResetReport {
+        cachedSettings = nil
+        cachedMacAuthSession = nil
+        didLoadMacAuthSession = true
+        cachedOnboardingContext = nil
+        didLoadOnboardingContext = true
+
+        deleteSettings()
+        deleteMacAuthSession()
+        deleteOnboardingContext()
+        deleteAllServiceEntries()
+
+        let removedDefaults = resetAgentic30Defaults(defaults)
+        var removedAppSupport = false
+        if removeAppSupport, fileManager.fileExists(atPath: appSupportURL.path) {
+            try fileManager.removeItem(at: appSupportURL)
+            removedAppSupport = true
+        }
+        let removedWorkspaceAgentic30 = try (removeWorkspaceAgentic30
+            ? removeWorkspaceAgentic30Data(in: workspaceURL, fileManager: fileManager)
+            : false)
+
+        return LocalDataResetReport(
+            removedDefaultsCount: removedDefaults,
+            removedAppSupport: removedAppSupport,
+            removedWorkspaceAgentic30: removedWorkspaceAgentic30
+        )
+    }
+
+    @discardableResult
+    static func removeWorkspaceAgentic30Data(
+        in workspaceURL: URL?,
+        fileManager: FileManager = .default
+    ) throws -> Bool {
+        guard let workspaceURL else { return false }
+        let agentic30URL = workspaceURL
+            .standardizedFileURL
+            .appendingPathComponent(".agentic30", isDirectory: true)
+        guard fileManager.fileExists(atPath: agentic30URL.path) else {
+            return false
+        }
+        try fileManager.removeItem(at: agentic30URL)
+        return true
+    }
+
+    @discardableResult
+    static func resetAgentic30Defaults(_ defaults: UserDefaults = .standard) -> Int {
+        let keys = defaults.dictionaryRepresentation().keys.filter { key in
+            key.hasPrefix("agentic30.")
+                || key.hasPrefix("com.agentic30.")
+                || key.hasPrefix("pet.")
+                || key == "bipWorkspaceRoot"
+        }
+        for key in keys {
+            defaults.removeObject(forKey: key)
+        }
+        defaults.synchronize()
+        return keys.count
+    }
+
     private static func loadOnboardingContextFromKeychain() -> OnboardingContext? {
         guard let data = loadData(account: onboardingContextAccount) else {
             return nil
@@ -469,6 +545,14 @@ enum KeychainHelper {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    private static func deleteAllServiceEntries() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
         ]
         SecItemDelete(query as CFDictionary)
     }

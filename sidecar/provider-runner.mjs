@@ -542,7 +542,11 @@ function normalizeClaudeQuestions(questions) {
               description: String(option?.description || "").trim(),
               ...(option?.preview ? { preview: String(option.preview) } : {}),
             }))
-            .filter((option) => option.label && option.description)
+            .filter((option) => {
+              return option.label
+                && option.description
+                && !isOtherTextOptionLabel(option.label);
+            })
             .slice(0, 4)
         : [],
       multiSelect: Boolean(question?.multiSelect),
@@ -554,6 +558,18 @@ function normalizeClaudeQuestions(questions) {
     }))
     .filter((question) => question.question && question.options.length >= 2)
     .slice(0, 4);
+}
+
+function isOtherTextOptionLabel(label) {
+  const normalized = String(label || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[()（）]/g, " ")
+    .toLowerCase()
+    .trim();
+  return /(?:^|[\s:：\-_/])직접\s*입력(?:$|[\s:：\-_/])/.test(normalized)
+    || /^기타(?:$|[\s:：\-_/])/.test(normalized)
+    || /^other(?:$|[\s:：\-_/])/.test(normalized);
 }
 
 export function extractClaudePartialText(event) {
@@ -1242,7 +1258,7 @@ async function createStubIddUserInputRequest({
         ],
         multiSelect: false,
         allowFreeText: true,
-        requiresFreeText: true,
+        requiresFreeText: false,
         freeTextPlaceholder: "예: Day 1 사용자가 sidecar 인증 실패를 겪으면 onboarding 질문보다 provider recovery를 먼저 보여준다",
         textMode: "short",
       },
