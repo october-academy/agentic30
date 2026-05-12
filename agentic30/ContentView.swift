@@ -1037,7 +1037,11 @@ struct ContentView: View {
     }
 
     private func workspaceSidebarHistoryEmptyState() -> some View {
-        let isPreparingFoundationSession = viewModel.isConnected && isIddSetupLocked
+        let isPreparingFoundationSession = !viewModel.requiresMacOnboarding
+            && isIddSetupLocked
+            && viewModel.sidecarFailureMessage == nil
+            && viewModel.iddSetupStatus != "error"
+            && viewModel.iddSetupStatus != "preview_ready"
         let title = workspaceSidebarHistoryEmptyTitle(isPreparingFoundationSession: isPreparingFoundationSession)
         let subtitle = workspaceSidebarHistoryEmptySubtitle(isPreparingFoundationSession: isPreparingFoundationSession)
 
@@ -1101,6 +1105,12 @@ struct ContentView: View {
     }
 
     private func workspaceSidebarHistoryEmptyTitle(isPreparingFoundationSession: Bool) -> String {
+        if viewModel.iddSetupStatus == "preview_ready" {
+            return "확인 대기 중"
+        }
+        if viewModel.iddSetupStatus == "error" {
+            return "질문 준비 실패"
+        }
         if isPreparingFoundationSession {
             return "세션 준비 중"
         }
@@ -1108,6 +1118,15 @@ struct ContentView: View {
     }
 
     private func workspaceSidebarHistoryEmptySubtitle(isPreparingFoundationSession: Bool) -> String {
+        switch viewModel.iddSetupStatus {
+        case "preview_ready":
+            return "확인하면 바로 오늘 할 일을 만들 수 있어요."
+        case "error":
+            return "Foundation Setup 질문 준비가 멈췄습니다."
+        default:
+            break
+        }
+
         guard isPreparingFoundationSession else {
             return viewModel.isConnected
                 ? "새 Codex 대화로 바로 시작하세요."
@@ -1115,12 +1134,8 @@ struct ContentView: View {
         }
 
         switch viewModel.iddSetupStatus {
-        case "preview_ready":
-            return "확인하면 바로 오늘 할 일을 만들 수 있어요."
         case "provider_recovery":
             return "Provider 인증을 확인하면 질문 준비를 이어갑니다."
-        case "error":
-            return "Foundation Setup 질문 준비가 멈췄습니다."
         default:
             let doc = viewModel.iddCurrentDocType?.uppercased() ?? "ICP"
             return "\(doc) 인터뷰 질문 카드를 준비하고 있어요."
@@ -1397,6 +1412,7 @@ struct ContentView: View {
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(isHovered ? 0.92 : 0.74))
                         .lineLimit(1)
+                        .accessibilityIdentifier("workspace.sidebar.projectFolderName")
                     Text("프로젝트 폴더")
                         .font(.system(size: 10, weight: .medium, design: .rounded))
                         .foregroundStyle(.white.opacity(isHovered ? 0.56 : 0.38))
@@ -1419,6 +1435,7 @@ struct ContentView: View {
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("workspace.sidebar.projectFolderButton")
         .onHover { hovering in
             if hovering {
                 hoveredWorkspaceFooterItem = .projectFolder

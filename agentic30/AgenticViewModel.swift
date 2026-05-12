@@ -319,6 +319,7 @@ final class AgenticViewModel: ObservableObject {
     private let authPresentationContext = AuthPresentationContext()
     private let authSessionFactory: WebAuthenticationSessionFactory
     private let activateAppForAuth: @MainActor () -> Void
+    private let disablesSidecarStartForTesting: Bool
     private var startupSessionAppearStartedAt: Date?
     private var didRecordStartupSessionAppear = false
 
@@ -449,6 +450,7 @@ final class AgenticViewModel: ObservableObject {
     init(
         authSessionFactory: WebAuthenticationSessionFactory? = nil,
         onboardingContextOverride: OnboardingContext? = nil,
+        disablesSidecarStartForTesting: Bool = false,
         activateAppForAuth: @escaping @MainActor () -> Void = {
             NSApplication.shared.activate(ignoringOtherApps: true)
         }
@@ -463,6 +465,7 @@ final class AgenticViewModel: ObservableObject {
             )
         }
         self.activateAppForAuth = activateAppForAuth
+        self.disablesSidecarStartForTesting = disablesSidecarStartForTesting
 
         let arguments = CommandLine.arguments
 
@@ -793,6 +796,7 @@ final class AgenticViewModel: ObservableObject {
             isConnected = false
             return
         }
+        hydrateWorkspaceRootFromSettingsIfAvailable()
         started = true
         PostHogTelemetry.capture("mac_view_model_started", authSession: macAuthSession)
 
@@ -801,6 +805,12 @@ final class AgenticViewModel: ObservableObject {
         // counter monotonic across reconnects, sidecar restarts, and app
         // relaunches.
         ensureFoundationStarted()
+
+        if disablesSidecarStartForTesting {
+            connectionLabel = "Sidecar disabled for unit tests"
+            isConnected = false
+            return
+        }
 
         if CommandLine.arguments.contains("--ui-testing-sidecar-failure") {
             workspaceRoot = WorkspaceSettings.resolvedURL().path
@@ -1878,6 +1888,7 @@ final class AgenticViewModel: ObservableObject {
             // Local persistence done. Server sync to /api/profile/onboarding-context is a follow-up.
             sendAuthContextToSidecar()
             if !started, !requiresMacOnboarding {
+                hydrateWorkspaceRootFromSettingsIfAvailable()
                 start()
             }
         } catch {
@@ -3622,6 +3633,11 @@ final class AgenticViewModel: ObservableObject {
         case .mission:
             return "mission"
         }
+    }
+
+    private func hydrateWorkspaceRootFromSettingsIfAvailable() {
+        guard WorkspaceSettings.hasExplicitWorkspace else { return }
+        workspaceRoot = WorkspaceSettings.resolvedURL().path
     }
 
     private func currentBipCoachSessionID() -> String? {

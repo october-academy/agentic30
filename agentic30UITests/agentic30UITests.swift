@@ -1023,6 +1023,12 @@ final class agentic30UITests: XCTestCase {
         }
 
         XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetupSurface"].waitForExistence(timeout: 10))
+        let projectFolderButton = app.buttons
+            .matching(NSPredicate(format: "label CONTAINS %@", (workspacePath as NSString).lastPathComponent))
+            .firstMatch
+        XCTAssertTrue(projectFolderButton.waitForExistence(timeout: 2))
+        XCTAssertTrue(app.staticTexts["세션 준비 중"].exists)
+        XCTAssertFalse(app.staticTexts["사이드카 연결 중"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["workspace.missionFirstSurface"].exists)
         XCTAssertTrue(app.staticTexts["먼저 도울 사람을 정해요"].exists)
         XCTAssertTrue(app.staticTexts["오늘 할 일을 만들기 전에, 누구를 위해 무엇을 검증할지 먼저 정해요."].exists)
