@@ -3294,6 +3294,7 @@ struct ContentView: View {
         let preview = viewModel.iddDocPreviews.first { $0.type == docType }
         let isDrafted = preview?.status == "drafted" || preview?.content.isEmpty == false
         let isCurrent = viewModel.iddCurrentDocType == docType && !isDrafted
+        let accessibilityState = isDrafted ? "완료" : (isCurrent ? "현재 단계" : "대기")
         return Label(docType.uppercased(), systemImage: isDrafted ? "checkmark.circle.fill" : (isCurrent ? "circle.dotted" : "circle"))
             .font(.system(size: 11, weight: .heavy, design: .rounded))
             .foregroundStyle(.white.opacity(isDrafted || isCurrent ? 0.82 : 0.42))
@@ -3301,7 +3302,7 @@ struct ContentView: View {
             .frame(height: 28)
             .background(Capsule().fill(Color.white.opacity(isDrafted ? 0.12 : 0.06)))
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(docType.uppercased())
+            .accessibilityLabel("\(docType.uppercased()), \(accessibilityState)")
             .accessibilityIdentifier("workspace.iddSetup.doc.\(docType)")
     }
 

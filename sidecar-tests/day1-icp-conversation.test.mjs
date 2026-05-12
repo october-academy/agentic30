@@ -8,6 +8,10 @@ import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const iddAutostartFixturePath = path.join(
+  packageRoot,
+  "sidecar-tests/fixtures/sidecar-events/idd-setup-autostart.json",
+);
 
 test("bootstrap free-text submission starts a provider stream", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-bootstrap-chat-workspace-"));
@@ -789,9 +793,12 @@ test("IDD follow-up uses sidecar agent synthesis instead of host template when a
         question: "증거 우선 원칙을 지키려고 이번 주 어떤 Agentic30 결정을 미루나요?",
         options: [
           { label: "Day 확장 미루기", description: "첫 질문 품질 증거가 생길 때까지 다음 Day를 열지 않습니다.", nextIntent: "values_delay_days" },
+          { label: "직접입력", description: "이번 주 미룰 결정을 직접 적습니다.", nextIntent: "values_custom_compact" },
           { label: "자동 문서 승인 미루기", description: "근거 없는 통과보다 사용자의 한 줄 결정을 요구합니다.", nextIntent: "values_delay_auto_approval" },
+          { label: "기타 입력", description: "이번 주 미룰 결정을 직접 적습니다.", nextIntent: "values_custom_korean" },
           { label: "UI polish 미루기", description: "보기 좋은 카드보다 답변이 실제 결정으로 이어지는지 봅니다.", nextIntent: "values_delay_polish" },
-          { label: "직접 입력", description: "이번 주 미룰 결정을 직접 적습니다.", nextIntent: "values_custom" },
+          { label: "기타(직접 입력)", description: "이번 주 미룰 결정을 직접 적습니다.", nextIntent: "values_custom_parentheses" },
+          { label: "Other: describe", description: "Describe another tradeoff.", nextIntent: "values_custom_other" },
         ],
         freeTextPlaceholder: "예: 첫 질문이 프로젝트 맥락을 반영할 때까지 Day 2 오픈은 미룬다",
       }),
@@ -849,10 +856,9 @@ test("IDD follow-up uses sidecar agent synthesis instead of host template when a
     assert.equal(followup.session.pendingUserInput.generation?.mode, "sidecar_agent_synthesized");
     assert.equal(followup.session.pendingUserInput.generation?.docType, "values");
     assert.match(followup.session.pendingUserInput.questions[0].question, /Agentic30 결정을 미루/);
-    assert.deepEqual(
-      followup.session.pendingUserInput.questions[0].options.slice(0, 3).map((option) => option.label),
-      ["Day 확장 미루기", "자동 문서 승인 미루기", "UI polish 미루기"],
-    );
+    const labels = followup.session.pendingUserInput.questions[0].options.map((option) => option.label);
+    assert.deepEqual(labels.slice(0, 3), ["Day 확장 미루기", "자동 문서 승인 미루기", "UI polish 미루기"]);
+    assert.doesNotMatch(labels.join("\n"), /직접\s*입력|직접입력|기타(?:\s*입력)?|Other: describe/i);
     await closeWebSocket(ws);
     ws = null;
   } finally {
@@ -998,6 +1004,76 @@ test("IDD auto-start resumes persisted interviewing state without showing setup 
     const ready = await readSidecarReady(child);
     const events = [];
     ws = await connectAuthenticated(ready, events);
+    const fixture = await loadIddAutostartFixture();
+
+    ws.send(JSON.stringify(fixture.request));
+
+    const gate = await waitForEvent(events, (event) =>
+      event.type === "bip_setup_gate_state"
+      && event.iddSetupStatus === "interviewing"
+    );
+    assertContainsShape(gate, fixture.events.find((event) => event.type === "bip_setup_gate_state"), "autostart gate event");
+
+    const created = await waitForEvent(events, (event) =>
+      event.type === "session_created"
+      && event.session?.title === "Foundation Setup: ICP"
+      && event.session?.pendingUserInput?.toolName === "agentic30_request_user_input"
+    );
+    assertContainsShape(created, fixture.events.find((event) => event.type === "session_created"), "autostart session event");
+
+    const setupState = events.findLast?.((event) => event.type === "idd_setup_state")
+      || [...events].reverse().find((event) => event.type === "idd_setup_state");
+    assertContainsShape(setupState, fixture.events.find((event) => event.type === "idd_setup_state"), "autostart setup event");
+    await closeWebSocket(ws);
+    ws = null;
+  } finally {
+    await closeWebSocket(ws);
+    await terminateChild(child);
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
+
+  assert.equal(stderr.trim(), "");
+});
+
+test("IDD auto-start resumes the persisted current document instead of the first missing doc", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-interviewing-current-doc-workspace-"));
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-interviewing-current-doc-app-"));
+  await writeDay1Fixture(root, appSupportPath);
+  await writeIddSetupState(root, {
+    schemaVersion: 1,
+    status: "interviewing",
+    currentDocType: "values",
+    docOrder: ["icp", "goal", "values", "spec"],
+    transcript: [],
+    drafts: {},
+    lastProvider: "codex",
+    providerRecovery: null,
+    setupError: null,
+  });
+
+  const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", root], {
+    cwd: packageRoot,
+    env: {
+      ...process.env,
+      AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
+      AGENTIC30_DISABLE_IDD_AGENT_SYNTHESIS: "1",
+      CODEX_API_KEY: "",
+      OPENAI_API_KEY: "",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  let ws;
+
+  try {
+    const ready = await readSidecarReady(child);
+    const events = [];
+    ws = await connectAuthenticated(ready, events);
 
     ws.send(JSON.stringify({
       type: "bip_setup_gate_check",
@@ -1005,23 +1081,13 @@ test("IDD auto-start resumes persisted interviewing state without showing setup 
       autoStart: true,
     }));
 
-    const gate = await waitForEvent(events, (event) =>
-      event.type === "bip_setup_gate_state"
-      && event.iddSetupStatus === "interviewing"
-    );
-    assert.equal(gate.iddSetupError, null);
-
     const created = await waitForEvent(events, (event) =>
       event.type === "session_created"
-      && event.session?.title === "Foundation Setup: ICP"
+      && event.session?.title === "Foundation Setup: VALUES"
       && event.session?.pendingUserInput?.toolName === "agentic30_request_user_input"
     );
-    assert.equal(created.session.pendingUserInput.generation?.docType, "icp");
+    assert.equal(created.session.pendingUserInput.generation?.docType, "values");
 
-    const setupState = events.findLast?.((event) => event.type === "idd_setup_state")
-      || [...events].reverse().find((event) => event.type === "idd_setup_state");
-    assert.equal(setupState?.iddSetupStatus, "interviewing");
-    assert.equal(setupState?.iddSetupError, null);
     await closeWebSocket(ws);
     ws = null;
   } finally {
@@ -1170,9 +1236,12 @@ test("IDD auto-start preserves persisted setup error until explicit retry", asyn
     assert.equal(gate.iddSetupError?.docType, "icp");
     assert.match(gate.iddSetupError?.message ?? "", /질문 카드 준비/);
 
-    await sleep(400);
-    assert.equal(events.some((event) => event.type === "session_created"), false);
-    assert.equal(events.some((event) => event.type === "bip_idd_session_ready"), false);
+    await assertNoEventUntil(
+      events,
+      (event) => event.type === "session_created" || event.type === "bip_idd_session_ready",
+      400,
+      "unexpected IDD session start",
+    );
     await closeWebSocket(ws);
     ws = null;
   } finally {
@@ -1221,12 +1290,20 @@ test("concurrent IDD start requests create only one Foundation Setup session", a
     ws.send(JSON.stringify(payload));
     ws.send(JSON.stringify(payload));
 
-    await waitForEvent(events, (event) =>
+    const created = await waitForEvent(events, (event) =>
       event.type === "session_created"
       && event.session?.title === "Foundation Setup: ICP"
       && event.session?.pendingUserInput?.toolName === "agentic30_request_user_input"
     );
-    await sleep(400);
+    await assertNoEventUntil(
+      events,
+      (event) =>
+        event.type === "session_created"
+        && event.session?.title === "Foundation Setup: ICP"
+        && event.session?.id !== created.session.id,
+      400,
+      "duplicate Foundation Setup session",
+    );
 
     const createdIds = new Set(events
       .filter((event) => event.type === "session_created" && event.session?.title === "Foundation Setup: ICP")
@@ -1493,6 +1570,39 @@ function liveDay1Turns() {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function loadIddAutostartFixture() {
+  return JSON.parse(await fs.readFile(iddAutostartFixturePath, "utf8"));
+}
+
+async function assertNoEventUntil(events, predicate, timeoutMs, label) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const match = events.find(predicate);
+    assert.equal(match, undefined, `Unexpected ${label}: ${JSON.stringify(match)}`);
+    await sleep(25);
+  }
+}
+
+function assertContainsShape(actual, expected, label = "value") {
+  assert.notEqual(expected, undefined, `Missing expected ${label} fixture`);
+  if (Array.isArray(expected)) {
+    assert.ok(Array.isArray(actual), `Expected ${label} to be an array`);
+    assert.ok(actual.length >= expected.length, `Expected ${label} to contain at least ${expected.length} items`);
+    expected.forEach((item, index) => {
+      assertContainsShape(actual[index], item, `${label}[${index}]`);
+    });
+    return;
+  }
+  if (expected && typeof expected === "object") {
+    assert.ok(actual && typeof actual === "object", `Expected ${label} to be an object`);
+    for (const [key, value] of Object.entries(expected)) {
+      assertContainsShape(actual[key], value, `${label}.${key}`);
+    }
+    return;
+  }
+  assert.deepEqual(actual, expected, label);
 }
 
 function latestAssistantMessage(session) {

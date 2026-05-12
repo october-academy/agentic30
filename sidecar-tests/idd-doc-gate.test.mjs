@@ -177,6 +177,41 @@ test("VALUES follow-up questions ask for decisions instead of fallback evidence 
   }
 });
 
+test("VALUES follow-up falls back to generic copy only without usable prior answer", () => {
+  const doc = BIP_REQUIRED_LOCAL_DOCS.find((item) => item.type === "values");
+  const emptyStates = [
+    { transcript: [], drafts: {} },
+    { transcript: [{ docType: doc.type, responseText: "" }], drafts: {} },
+    { transcript: [{ docType: doc.type, responseText: "   \n\t" }], drafts: {} },
+  ];
+
+  for (const state of emptyStates) {
+    const question = buildIddFollowupStructuredInputForDoc(doc, state).questions[0];
+    assert.match(question.question, /이 빠진 근거/);
+    assert.doesNotMatch(question.question, /방금 정한 원칙/);
+    assert.deepEqual(
+      question.options.map((option) => option.label),
+      ["실제 사람/상황으로 보완", "숫자/기준으로 보완", "리스크/실패 조건으로 보완"],
+    );
+  }
+
+  const unparseable = buildIddFollowupStructuredInputForDoc(doc, {
+    transcript: [{ docType: doc.type, responseText: "고객 인터뷰 기록" }],
+    drafts: {},
+  }).questions[0];
+  assert.match(unparseable.question, /실제로 포기할 선택/);
+  assert.match(unparseable.options.map((option) => option.label).join("\n"), /고객 인터뷰 기록/);
+  assert.doesNotMatch(unparseable.question, /이 빠진 근거/);
+
+  const normalTradeoff = buildIddFollowupStructuredInputForDoc(doc, {
+    transcript: [{ docType: doc.type, responseText: "속도보다 증거를 우선한다." }],
+    drafts: {},
+  }).questions[0];
+  assert.match(normalTradeoff.question, /거절해야 하는 요청|실제로 포기할 선택/);
+  assert.match(normalTradeoff.options.map((option) => option.label).join("\n"), /속도|증거/);
+  assert.doesNotMatch(normalTradeoff.question, /방금 정한 원칙/);
+});
+
 test("initial IDD structured inputs are document-specific for GOAL, VALUES, and SPEC", () => {
   const docsByType = new Map(BIP_REQUIRED_LOCAL_DOCS.map((doc) => [doc.type, doc]));
   const goal = initialIddStructuredInputForDoc(docsByType.get("goal"), {

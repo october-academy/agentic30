@@ -3,6 +3,25 @@ import Testing
 @testable import agentic30
 
 struct SidecarEventDecodingTests {
+    private static func fixtureData(_ relativePath: String, filePath: String = #filePath) throws -> Data {
+        let root = try repositoryRoot(filePath: filePath)
+        return try Data(contentsOf: root.appendingPathComponent(relativePath))
+    }
+
+    private static func repositoryRoot(filePath: String) throws -> URL {
+        var directory = URL(fileURLWithPath: filePath).deletingLastPathComponent()
+        while directory.path != "/" {
+            let package = directory.appendingPathComponent("package.json")
+            let sidecarTests = directory.appendingPathComponent("sidecar-tests", isDirectory: true)
+            if FileManager.default.fileExists(atPath: package.path)
+                && FileManager.default.fileExists(atPath: sidecarTests.path) {
+                return directory
+            }
+            directory.deleteLastPathComponent()
+        }
+        throw CocoaError(.fileNoSuchFile)
+    }
+
     @MainActor @Test func decodesReadyPayloadFromSidecar() throws {
         let payload = """
         {
@@ -262,92 +281,13 @@ struct SidecarEventDecodingTests {
     }
 
     @MainActor @Test func decodesIcpIddStructuredPromptPayload() throws {
-        let payload = """
-        {
-          "type": "session_updated",
-          "session": {
-            "id": "idd-session-1",
-            "title": "IDD: ICP [IDD:icp]",
-            "provider": "codex",
-            "model": "",
-            "status": "awaiting_input",
-            "createdAt": "2026-04-27T01:00:00.000Z",
-            "updatedAt": "2026-04-27T01:00:01.000Z",
-            "error": null,
-            "messages": [],
-            "pendingUserInput": {
-              "requestId": "request-icp-1",
-              "sessionId": "idd-session-1",
-              "toolName": "agentic30_request_user_input",
-              "title": "ICP 1/4",
-              "createdAt": "2026-04-27T01:00:01.000Z",
-              "intro": {
-                "title": "ICP (Ideal Customer Profile)",
-                "body": "ICP는 가장 먼저 집중할 이상적 고객 유형입니다. 처음부터 완벽하게 쓰기보다, 이번 주 실제로 연락하고 인터뷰할 수 있는 좁은 고객 후보 하나를 고르면 됩니다.",
-                "bullets": [
-                  "상황: 직함보다 지금 어떤 문제 상황에 있는지",
-                  "현재 대안: 지금 어떤 수작업이나 도구로 버티는지"
-                ]
-              },
-              "resources": [
-                {
-                  "title": "How we found our Ideal Customer Profile",
-                  "source": "PostHog",
-                  "url": "https://posthog.com/founders/creating-ideal-customer-profile",
-                  "description": "PostHog가 ICP를 좁힌 과정입니다."
-                }
-              ],
-              "generation": {
-                "mode": "host_structured",
-                "docType": "icp"
-              },
-              "questions": [
-                {
-                  "header": "첫 고객",
-                  "helperText": "README와 최근 변경을 보면 agentic30-public의 SwiftUI macOS 앱입니다.",
-                  "question": "agentic30-public의 SwiftUI macOS 앱과 Node sidecar 흐름에서 Day 1에 먼저 검증할 사용자는 누구인가요?",
-                  "options": [
-                    {
-                      "label": "Codex/Claude 전환 사용자",
-                      "description": "provider 인증과 실행 전환에서 막히는 실제 사용자입니다.",
-                      "nextIntent": "provider_switch_user"
-                    },
-                    {
-                      "label": "30일 커리큘럼 참가자",
-                      "description": "Foundation Setup 문서를 통과해야 다음 Day로 넘어갑니다.",
-                      "nextIntent": "curriculum_day1_user"
-                    },
-                    {
-                      "label": "macOS 메뉴바 앱 사용자",
-                      "description": "SwiftUI panel에서 질문/응답 정체를 직접 겪습니다.",
-                      "nextIntent": "macos_panel_user"
-                    },
-                    {
-                      "label": "직접 입력",
-                      "description": "역할, 상황, 현재 대안을 한 줄로 적습니다.",
-                      "nextIntent": "other_specific_icp"
-                    }
-                  ],
-                  "multiSelect": false,
-                  "allowFreeText": true,
-                  "requiresFreeText": true,
-                  "freeTextPlaceholder": "예: Day 1 참가자가 provider 인증 실패 후 질문에 갇힌다",
-                  "textMode": "short"
-                }
-              ]
-            },
-            "runtime": {
-              "pendingIddContinuation": {
-                "requestId": "request-icp-1",
-                "docType": "icp",
-                "prompt": "IDD 문서 인터뷰를 시작합니다: ICP"
-              }
-            }
-          }
-        }
-        """
+        let fixtureData = try Self.fixtureData("sidecar-tests/fixtures/sidecar-events/idd-setup-autostart.json")
+        let fixtureObject = try #require(JSONSerialization.jsonObject(with: fixtureData) as? [String: Any])
+        let events = try #require(fixtureObject["events"] as? [[String: Any]])
+        let sessionUpdated = try #require(events.first { $0["type"] as? String == "session_updated" })
+        let payload = try JSONSerialization.data(withJSONObject: sessionUpdated)
 
-        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        let event = try decoder.decode(SidecarEvent.self, from: payload)
 
         #expect(event.type == "session_updated")
         #expect(event.session?.status == .awaitingInput)
@@ -362,12 +302,12 @@ struct SidecarEventDecodingTests {
         #expect(event.session?.pendingUserInput?.generation?.docType == "icp")
         #expect(event.session?.pendingUserInput?.isProviderAdaptiveIddQuestion == true)
         #expect(event.session?.pendingUserInput?.isLegacyStaticIddQuestion == false)
-        #expect(event.session?.pendingUserInput?.questions.first?.helperText?.contains("agentic30-public") == true)
-        #expect(event.session?.pendingUserInput?.questions.first?.question.contains("SwiftUI macOS 앱") == true)
-        #expect(event.session?.pendingUserInput?.questions.first?.options?.map(\.label) == ["Codex/Claude 전환 사용자", "30일 커리큘럼 참가자", "macOS 메뉴바 앱 사용자", "직접 입력"])
-        #expect(event.session?.pendingUserInput?.questions.first?.options?.last?.nextIntent == "other_specific_icp")
-        #expect(event.session?.pendingUserInput?.questions.first?.requiresFreeText == true)
-        #expect(event.session?.pendingUserInput?.questions.first?.freeTextPlaceholder?.contains("provider 인증 실패") == true)
+        #expect(event.session?.pendingUserInput?.questions.first?.helperText?.contains("팔릴 방향") == true)
+        #expect(event.session?.pendingUserInput?.questions.first?.question.contains("1인 개발자 유형") == true)
+        #expect(event.session?.pendingUserInput?.questions.first?.options?.map(\.label) == ["퇴사 후 첫 매출이 없는 개발자", "AI로 제품은 만들었지만 고객이 없는 개발자", "여러 번 출시했지만 반응이 약했던 개발자"])
+        #expect(event.session?.pendingUserInput?.questions.first?.options?.last?.nextIntent == "repeat_launch_weak_signal")
+        #expect(event.session?.pendingUserInput?.questions.first?.requiresFreeText == false)
+        #expect(event.session?.pendingUserInput?.questions.first?.freeTextPlaceholder?.contains("유료 고객이 없는 개발자") == true)
     }
 
     @MainActor @Test func decodesBipCoachStateWithOwningSession() throws {

@@ -328,6 +328,7 @@ export const ICP_IDD_INITIAL_INPUT = {
       ],
       multiSelect: false,
       allowFreeText: true,
+      requiresFreeText: false,
       freeTextPlaceholder: "예: 퇴사 후 아직 첫 매출이 없는 1인 개발자",
       textMode: "short",
     },
@@ -478,6 +479,7 @@ export function buildAdaptiveIcpInitialInput({
         options: personalizedOptions,
         multiSelect: false,
         allowFreeText: true,
+        requiresFreeText: false,
         freeTextPlaceholder: freeTextPlaceholderFor(primaryUser, hypothesis),
         textMode: "short",
       },
@@ -503,6 +505,7 @@ export function buildGenericIddInitialInput(doc) {
         options,
         multiSelect: false,
         allowFreeText: true,
+        requiresFreeText: false,
         freeTextPlaceholder: "예: 이번 주 결정에 꼭 필요한 기준 1개",
         textMode: "short",
       },
@@ -751,6 +754,9 @@ function followupCopyForSignal(doc, signalId, signalLabel, state = null) {
 
 function valuesFollowupCopyForSignal(signalId, state = null) {
   const latestAnswer = latestDocAnswerForFollowup(state, "values");
+  if (!String(latestAnswer || "").trim()) {
+    return null;
+  }
   const tradeoff = parseValuesTradeoff(latestAnswer);
   const priority = tradeoff.priority || firstMeaningfulPhrase(latestAnswer) || "방금 정한 원칙";
   const deferred = tradeoff.deferred || "반대 선택지";

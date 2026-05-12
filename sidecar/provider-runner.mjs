@@ -542,7 +542,12 @@ function normalizeClaudeQuestions(questions) {
               description: String(option?.description || "").trim(),
               ...(option?.preview ? { preview: String(option.preview) } : {}),
             }))
-            .filter((option) => option.label && option.description && !/^(직접 입력|기타|other)$/i.test(option.label))
+            .filter((option) => {
+              const normalized = option.label.replace(/\s+/g, " ").replace(/[()（）]/g, " ").trim();
+              return option.label
+                && option.description
+                && !/^(?:직접\s*입력|기타(?:\s*(?:입력|직접\s*입력))?|other(?:\s*[:：-]\s*describe)?)$/i.test(normalized);
+            })
             .slice(0, 4)
         : [],
       multiSelect: Boolean(question?.multiSelect),

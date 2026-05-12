@@ -1840,9 +1840,8 @@ final class AgenticViewModel: ObservableObject {
         sidecar.stop()
         started = false
 
-        let report = try KeychainHelper.resetAgentic30LocalData(workspaceURL: workspaceURLForReset)
-        resetVolatileLocalUserDataState()
-        return report
+        defer { resetVolatileLocalUserDataState() }
+        return try KeychainHelper.resetAgentic30LocalData(workspaceURL: workspaceURLForReset)
     }
 
     func setProjectWorkspace(_ url: URL) {

@@ -180,7 +180,7 @@ struct ChatMessageDecodingTests {
         }
     }
 
-    @MainActor @Test func structuredPromptQuestionAllowsSelectionWhenFreeTextIsRequested() throws {
+    @MainActor @Test func structuredPromptQuestionRequiresFreeTextEvenWithSelection() throws {
         let payload = """
         {
           "id": "msg-requires-free-text",
@@ -211,7 +211,7 @@ struct ChatMessageDecodingTests {
 
         #expect(question.requiresFreeText == true)
         #expect(question.isSatisfied(selectedOptions: [], freeText: "") == false)
-        #expect(question.isSatisfied(selectedOptions: ["리스크/실패 조건으로 보완"], freeText: "") == true)
+        #expect(question.isSatisfied(selectedOptions: ["리스크/실패 조건으로 보완"], freeText: "") == false)
         #expect(question.isSatisfied(selectedOptions: ["리스크/실패 조건으로 보완"], freeText: "5명 중 0명이 과거 행동을 말하지 못하면 ICP를 다시 좁힌다") == true)
     }
 }

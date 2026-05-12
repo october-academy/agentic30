@@ -5296,7 +5296,7 @@ async function buildIddAgentSynthesisPrompt(doc, fallbackInput, {
     "- Do not force product name, Mac, macOS, provider names, or file/workspace terms into the question or option labels unless they are essential to choosing the customer segment.",
     "- If platform fit matters, put it in helperText or option descriptions, not in every label.",
     brief.questionShapeRule,
-    "- Provide 3 project-specific options plus one direct-input option.",
+    "- Provide 2-4 project-specific options. Free text is provided by the host UI, so do not add a direct-input option.",
     "- Options must name concrete choices, not abstract criteria.",
     "- For follow-ups, every option must be derived from the previous answer, workspace evidence, or the named missing signal. Do not use generic labels like 새 기능 보류, 자동화 보류, 숫자/기준, 실제 사람/상황, 리스크/실패 조건 unless the previous answer itself used that exact concrete choice.",
     brief.optionRule,
@@ -5551,7 +5551,12 @@ function allowOtherTextForIddQuestions(request) {
 }
 
 function isOtherTextOptionLabel(label) {
-  return /^(직접 입력|기타|other)$/i.test(String(label || "").trim());
+  const normalized = String(label || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[()（）]/g, " ")
+    .trim();
+  return /^(?:직접\s*입력|기타(?:\s*(?:입력|직접\s*입력))?|other(?:\s*[:：-]\s*describe)?)$/i.test(normalized);
 }
 
 function attachIddAdaptiveContinuationToRequest(session, request) {
@@ -5729,10 +5734,15 @@ async function startIddDocumentQueueOnce({
   const requestedDoc = requestedDocType
     ? IDD_FOUNDATION_DOCS.find((doc) => doc.type === String(requestedDocType))
     : null;
+  const currentInterviewDoc = !requestedDoc
+    && state.iddSetup?.status === "interviewing"
+    && state.iddSetup?.currentDocType
+    ? IDD_FOUNDATION_DOCS.find((doc) => doc.type === state.iddSetup.currentDocType)
+    : null;
   const foundationNextDoc = nextIddFoundationDoc(state.iddSetup);
   const nextDoc = requestedDoc && resolvedGate.missingLocalDocs.some((doc) => doc.type === requestedDoc.type)
     ? requestedDoc
-    : foundationNextDoc;
+    : currentInterviewDoc || foundationNextDoc;
   const message = summarizeBipSetupGate(resolvedGate);
 
   broadcast({
@@ -5805,11 +5815,29 @@ async function startIddDocumentQueueOnce({
     providerRecovery: null,
     setupError: null,
   });
-  state.sessions.set(session.id, session);
-  await persistSessions();
-  await createHostIddQuestionRequest(session, nextDoc, {
-    progressText: "첫 질문 카드 준비 완료",
-  });
+  try {
+    await createHostIddQuestionRequest(session, nextDoc, {
+      progressText: "첫 질문 카드 준비 완료",
+    });
+  } catch (error) {
+    state.sessions.delete(session.id);
+    await persistSessions();
+    state.iddSetup = await persistIddSetupState(workspaceRoot, setIddSetupError(state.iddSetup, {
+      provider: seed.provider,
+      docType: nextDoc.type,
+      message: error?.message || "Foundation Setup 질문 카드를 준비하지 못했어요.",
+    }));
+    await setBipCoachError(
+      `${message} ${userFacingTitle} 질문 카드 준비가 멈췄어요. 다시 시도할 수 있어요.`,
+      "mac_sidecar_bip_coach_idd_required",
+    );
+    broadcast({
+      type: "idd_setup_state",
+      ...serializeIddSetupFields(state.iddSetup),
+      ...serializeBipSetupGate(currentBipSetupGate()),
+    });
+    return null;
+  }
   touch(session);
 
   state.sessions.set(session.id, session);
@@ -7489,10 +7517,7 @@ function findMissingRequiredFreeTextQuestion(response) {
   return (response.questions || []).find((question) => {
     if (question?.requiresFreeText !== true) return false;
     const entry = responsesByQuestion.get(question.question);
-    const selectedOptions = Array.isArray(entry?.selectedOptions)
-      ? entry.selectedOptions.filter((value) => String(value || "").trim()).length
-      : 0;
-    return selectedOptions === 0 && !String(entry?.freeText || "").trim();
+    return !String(entry?.freeText || "").trim();
   }) || null;
 }
 
