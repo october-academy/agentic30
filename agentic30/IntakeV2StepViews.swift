@@ -56,9 +56,11 @@ struct IntakeV2WorkmodeView: View {
                     onNext: onNext
                 )
             }
-            .padding(.horizontal, 36)
-            .padding(.top, 28)
-            .padding(.bottom, 30)
+            .padding(.horizontal, 56)
+            .padding(.top, 36)
+            .padding(.bottom, 36)
+            .frame(maxWidth: 1080, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
     }
 }
@@ -104,9 +106,11 @@ struct IntakeV2RoleView: View {
                     onNext: onNext
                 )
             }
-            .padding(.horizontal, 36)
-            .padding(.top, 28)
-            .padding(.bottom, 30)
+            .padding(.horizontal, 56)
+            .padding(.top, 36)
+            .padding(.bottom, 36)
+            .frame(maxWidth: 1080, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
     }
 }
@@ -176,9 +180,11 @@ struct IntakeV2StuckView: View {
                     onNext: onNext
                 )
             }
-            .padding(.horizontal, 36)
-            .padding(.top, 28)
-            .padding(.bottom, 30)
+            .padding(.horizontal, 56)
+            .padding(.top, 36)
+            .padding(.bottom, 36)
+            .frame(maxWidth: 1080, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
     }
 }
@@ -249,9 +255,11 @@ struct IntakeV2FolderPickView: View {
                     }
                 )
             }
-            .padding(.horizontal, 36)
-            .padding(.top, 28)
-            .padding(.bottom, 30)
+            .padding(.horizontal, 56)
+            .padding(.top, 36)
+            .padding(.bottom, 36)
+            .frame(maxWidth: 1080, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -345,9 +353,11 @@ struct IntakeV2SplashView: View {
                 )
                 Spacer()
             }
-            .padding(.horizontal, 36)
-            .padding(.top, 28)
-            .padding(.bottom, 30)
+            .padding(.horizontal, 56)
+            .padding(.top, 36)
+            .padding(.bottom, 36)
+            .frame(maxWidth: 1080, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
         .task {
             await runScan()
