@@ -328,15 +328,13 @@ struct OnboardingProgramIntro {
     static let requiredSceneIDs = [
         "intro_welcome",
         "intro_assistant",
-        "intro_30_day_path",
-        "intro_evidence_loop",
     ]
 
     static let scenes: [Scene] = [
         Scene(
             id: "intro_welcome",
-            title: "Welcome to Agentic30",
-            subtitle: "혼자 제품을 만들 때 오늘 무엇을 해야 할지 함께 정리해주는 Mac assistant입니다.",
+            title: "혼자, 30일, 100명, 첫 매출",
+            subtitle: "1인 개발자가 출시부터 첫 결제까지 끝내는 30일 챌린지.",
             visual: .mark
         ),
         Scene(
@@ -344,18 +342,6 @@ struct OnboardingProgramIntro {
             title: "혼자 만들지만, 혼자 막막하지 않게",
             subtitle: "프로젝트 문서, 인터뷰 기록, 결제 응답, 연결된 Google·Notion 문서를 읽고 오늘의 한 가지를 골라드립니다.",
             visual: .briefing
-        ),
-        Scene(
-            id: "intro_30_day_path",
-            title: "Build, launch, earn in 30 days",
-            subtitle: "아이디어를 실제 사용자 반응과 첫 결제 가능성까지 빠르게 검증하도록 돕습니다.",
-            visual: .launch
-        ),
-        Scene(
-            id: "intro_evidence_loop",
-            title: "Ship faster, learn faster",
-            subtitle: "만든 것, 배운 것, 고객 반응을 모아 다음 행동을 더 또렷하게 정합니다.",
-            visual: .integrations
         ),
     ]
 
@@ -376,7 +362,7 @@ struct OnboardingProgramIntro {
 
 struct OnboardingCompletionTiming {
     static let maximumDurationSeconds: TimeInterval = 120
-    static let programIntroSceneCount = 4
+    static let programIntroSceneCount = 2
     static let requiredContextQuestionIDs = [
         "business_description",
         "current_stage",
@@ -386,8 +372,6 @@ struct OnboardingCompletionTiming {
     static let plannedSteps: [PlannedStep] = [
         PlannedStep(id: "intro_welcome", kind: .programIntro, estimatedSeconds: 8),
         PlannedStep(id: "intro_assistant", kind: .programIntro, estimatedSeconds: 8),
-        PlannedStep(id: "intro_30_day_path", kind: .programIntro, estimatedSeconds: 8),
-        PlannedStep(id: "intro_evidence_loop", kind: .programIntro, estimatedSeconds: 8),
         PlannedStep(id: "business_description", kind: .contextQuestion, estimatedSeconds: 24),
         PlannedStep(id: "current_stage", kind: .contextQuestion, estimatedSeconds: 24),
         PlannedStep(id: "goal", kind: .contextQuestion, estimatedSeconds: 24),
@@ -544,17 +528,21 @@ struct OnboardingContextQuestionResponses: Codable, Hashable {
 
     var inferredProjectStage: OnboardingProjectStage {
         let haystack = "\(businessDescription) \(currentStage) \(goal)".lowercased()
+        // Specific pre-revenue / pricing terms first so they don't get swallowed
+        // by the broader "revenue" match below ("pre-revenue", "수익화" before "revenue").
+        if haystack.contains("pre-revenue")
+            || haystack.contains("prerevenue")
+            || haystack.contains("price")
+            || haystack.contains("pricing")
+            || haystack.contains("가격")
+            || haystack.contains("수익화") {
+            return .preRevenue
+        }
         if haystack.contains("revenue")
             || haystack.contains("매출")
             || haystack.contains("결제")
             || haystack.contains("유료") {
             return .postRevenue
-        }
-        if haystack.contains("price")
-            || haystack.contains("pricing")
-            || haystack.contains("가격")
-            || haystack.contains("수익화") {
-            return .preRevenue
         }
         if haystack.contains("user")
             || haystack.contains("customer")

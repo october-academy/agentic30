@@ -3916,6 +3916,11 @@ final class AgenticViewModel: ObservableObject {
             if current.state == .streaming && incoming.state == .streaming {
                 merged.state = .streaming
             }
+            // Preserve a freshly-applied inlineDecision (reframe/structured prompt)
+            // when the incoming snapshot is stale and would otherwise null it out.
+            if incoming.inlineDecision == nil, current.inlineDecision != nil {
+                merged.inlineDecision = current.inlineDecision
+            }
         }
 
         return merged
