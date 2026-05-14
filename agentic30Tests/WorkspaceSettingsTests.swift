@@ -1,4 +1,5 @@
 import XCTest
+import Darwin
 @testable import agentic30
 
 final class WorkspaceSettingsTests: XCTestCase {
@@ -178,6 +179,211 @@ final class WorkspaceSettingsTests: XCTestCase {
 
         XCTAssertTrue(snapshot.isUnlocked(2))
         XCTAssertFalse(snapshot.isUnlocked(3))
+    }
+
+    func testDayOneCompletionSaveHandlerPersistsDoneStateAndUnlocksDayTwo() {
+        let appSupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-day1-completion-support-\(UUID().uuidString)", isDirectory: true)
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-day1-completion-workspace-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: appSupport)
+            try? FileManager.default.removeItem(at: workspace)
+        }
+
+        let store = FoundationProgressStore(workspaceRoot: workspace.path, appSupportURL: appSupport)
+        let handler = FoundationDayCompletionSaveHandler(store: store)
+        let startedAt = Date(timeIntervalSince1970: 1_777_000_000)
+
+        let result = handler.saveDayCompletion(
+            1,
+            snapshot: FoundationProgressSnapshot(
+                workspaceRoot: workspace.path,
+                startedAt: startedAt,
+                selectedDay: 1,
+                completedDays: []
+            ),
+            workspaceRoot: workspace.path
+        )
+
+        XCTAssertEqual(result.completedDay, 1)
+        XCTAssertEqual(result.unlockedDay, 2)
+        XCTAssertEqual(result.snapshot.completedDays, Set([1]))
+        XCTAssertTrue(result.snapshot.isUnlocked(2))
+
+        let loaded = store.load()
+        XCTAssertEqual(loaded?.completedDays, Set([1]))
+        XCTAssertEqual(loaded?.selectedDay, 2)
+        XCTAssertEqual(loaded?.startedAt, startedAt)
+    }
+
+    func testDayOneCompletionIncludesDayTwoTopicTeaser() {
+        let dayOne = BipCoachCurriculumDay(day: 1)
+        let dayTwo = BipCoachCurriculumDay(day: 2)
+
+        XCTAssertEqual(
+            dayOne.completionNextDayTeaser,
+            "다음: Day 2 Market - 돈이 흐르는 기준 시장을 가볍게 확인해보세요."
+        )
+        XCTAssertNil(dayTwo.completionNextDayTeaser)
+    }
+
+    func testCompletionQuestionCountLabelUsesTutorialProgressCount() {
+        let oneQuestionMission = makeCompletedMission(completedQuestionCount: 1)
+        let threeQuestionMission = makeCompletedMission(completedQuestionCount: 3)
+        let missingProgressMission = makeCompletedMission(completedQuestionCount: nil)
+
+        XCTAssertEqual(oneQuestionMission.completionQuestionCountLabel, "질문 1개 완료")
+        XCTAssertEqual(threeQuestionMission.completionQuestionCountLabel, "질문 3개 완료")
+        XCTAssertNil(missingProgressMission.completionQuestionCountLabel)
+    }
+
+    func testFoundationCurriculumPresentationViewModelRoutesGraduatedProgressToGraduation() {
+        let active = FoundationProgressSnapshot(
+            workspaceRoot: "/tmp/project",
+            startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+            selectedDay: 12,
+            completedDays: Set(1...11)
+        )
+        let graduated = FoundationProgressSnapshot(
+            workspaceRoot: "/tmp/project",
+            startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+            selectedDay: 30,
+            completedDays: Set(1...30)
+        )
+        let staleGraduated = FoundationProgressSnapshot(
+            workspaceRoot: "/tmp/project",
+            startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+            selectedDay: 7,
+            completedDays: Set(1...30)
+        )
+
+        XCTAssertEqual(
+            FoundationCurriculumPresentationViewModel(snapshot: active).destination,
+            .curriculumDay(12)
+        )
+        XCTAssertEqual(
+            FoundationCurriculumPresentationViewModel(snapshot: graduated).destination,
+            .graduation
+        )
+        XCTAssertEqual(
+            FoundationCurriculumPresentationViewModel(snapshot: staleGraduated).destination,
+            .graduation
+        )
+    }
+
+    @MainActor
+    func testCompletingDayThirtyEntersGraduationWithoutHidingRunningAppOrMenubarSurface() {
+        let previousAppSupportPath = ProcessInfo.processInfo.environment["AGENTIC30_APP_SUPPORT_PATH"]
+        let appSupportURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-graduation-lifecycle-support-\(UUID().uuidString)", isDirectory: true)
+        let workspaceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-graduation-lifecycle-workspace-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: appSupportURL, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+        setenv("AGENTIC30_APP_SUPPORT_PATH", appSupportURL.path, 1)
+        WorkspaceSettings.store(workspaceURL)
+        addTeardownBlock {
+            if let previousAppSupportPath {
+                setenv("AGENTIC30_APP_SUPPORT_PATH", previousAppSupportPath, 1)
+            } else {
+                unsetenv("AGENTIC30_APP_SUPPORT_PATH")
+            }
+            try? FileManager.default.removeItem(at: appSupportURL)
+            try? FileManager.default.removeItem(at: workspaceURL)
+        }
+
+        var terminationRequests = 0
+        var quitRequests = 0
+        var appHideRequests = 0
+        var menubarSurfaceHideRequests = 0
+        var menubarItemUnregisterRequests = 0
+        let lifecycleController = FoundationCurriculumLifecycleController(
+            terminateApplication: { terminationRequests += 1 },
+            quitApplication: { quitRequests += 1 },
+            surfaceVisibilityController: FoundationCurriculumSurfaceVisibilityController(
+                applicationIsRunning: { true },
+                activeMenubarSurfaceIsVisible: { true },
+                hideApplication: { appHideRequests += 1 },
+                hideActiveMenubarSurface: { menubarSurfaceHideRequests += 1 }
+            ),
+            menubarItemController: MacMenubarItemController(
+                menuBarItemIsRegistered: { true },
+                unregisterMenuBarItem: { menubarItemUnregisterRequests += 1 }
+            )
+        )
+        let viewModel = AgenticViewModel(
+            disablesSidecarStartForTesting: true,
+            foundationCurriculumLifecycleController: lifecycleController
+        )
+
+        for day in 1...30 {
+            _ = viewModel.markFoundationDayCompleted(day)
+        }
+
+        XCTAssertEqual(viewModel.foundationCurriculumPresentationDestination, .graduation)
+        XCTAssertEqual(
+            lifecycleController.enterCompletedState(viewModel.foundationProgressState),
+            .graduation
+        )
+        let visibility = lifecycleController.surfaceVisibilityAfterEnteringCompletedState(
+            viewModel.foundationProgressState
+        )
+        XCTAssertEqual(
+            visibility,
+            FoundationCurriculumSurfaceVisibilitySnapshot(
+                applicationIsRunning: true,
+                activeMenubarSurfaceIsVisible: true
+            )
+        )
+        XCTAssertEqual(
+            lifecycleController.menubarItemRegistrationAfterEnteringCompletedState(
+                viewModel.foundationProgressState
+            ),
+            MacMenubarItemRegistrationSnapshot(isRegistered: true)
+        )
+        XCTAssertEqual(terminationRequests, 0)
+        XCTAssertEqual(quitRequests, 0)
+        XCTAssertEqual(appHideRequests, 0)
+        XCTAssertEqual(menubarSurfaceHideRequests, 0)
+        XCTAssertEqual(menubarItemUnregisterRequests, 0)
+    }
+
+    @MainActor
+    func testMacMenubarItemControllerKeepsItemRegisteredWhenCurriculumGraduates() {
+        var unregisterRequests = 0
+        let menubarItemController = MacMenubarItemController(
+            menuBarItemIsRegistered: { true },
+            unregisterMenuBarItem: { unregisterRequests += 1 }
+        )
+
+        let snapshot = menubarItemController.enterCompletedOrGraduatedState()
+
+        XCTAssertEqual(snapshot, MacMenubarItemRegistrationSnapshot(isRegistered: true))
+        XCTAssertEqual(unregisterRequests, 0)
+    }
+
+    private func makeCompletedMission(completedQuestionCount: Int?) -> BipCoachMission {
+        BipCoachMission(
+            id: "mission-\(completedQuestionCount.map(String.init) ?? "none")",
+            date: "2026-05-14",
+            provider: AgentProvider.codex.rawValue,
+            status: "completed",
+            compact: false,
+            title: "Day 1 완료",
+            angle: "튜토리얼 질문 응답",
+            mission: "Day 1 튜토리얼을 완료합니다.",
+            curriculumDay: BipCoachCurriculumDay(day: 1),
+            drafts: [],
+            eveningChecklist: [],
+            evidenceRefs: [],
+            generatedAt: nil,
+            completedAt: nil,
+            completedQuestionCount: completedQuestionCount,
+            threadsUrl: nil,
+            sheetRowNote: nil
+        )
     }
 }
 

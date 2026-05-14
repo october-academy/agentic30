@@ -174,6 +174,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
                 }
             }
+        } else if CommandLine.arguments.contains("--ui-testing-open-workspace-switcher-tour") {
+            scheduleUITestingWorkspaceOpen(openSettings: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+                self?.viewModel.requestWorkspaceSwitcherTourOpen()
+            }
+        } else if CommandLine.arguments.contains("--ui-testing-open-workspace-curriculum-navigator-tour") {
+            scheduleUITestingWorkspaceOpen(openSettings: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+                self?.viewModel.requestWorkspaceCurriculumNavigatorTourOpen()
+            }
+        } else if CommandLine.arguments.contains("--ui-testing-open-workspace-settings-tour") {
+            scheduleUITestingWorkspaceOpen(openSettings: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+                self?.viewModel.requestWorkspaceSettingsTourOpen()
+            }
+        } else if CommandLine.arguments.contains("--ui-testing-open-workspace-help-tour") {
+            scheduleUITestingWorkspaceOpen(openSettings: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+                self?.viewModel.requestWorkspaceHelpTourOpen()
+            }
+        } else if CommandLine.arguments.contains("--ui-testing-open-workspace-recent-conversations-tour") {
+            scheduleUITestingWorkspaceOpen(openSettings: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+                self?.viewModel.requestWorkspaceRecentConversationsTourOpen()
+            }
         } else if CommandLine.arguments.contains("--ui-testing-open-workspace-settings") {
             scheduleUITestingWorkspaceOpen(openSettings: true)
         } else if CommandLine.arguments.contains("--ui-testing-open-workspace") {
@@ -384,6 +409,31 @@ private struct StatusMenuContent: View {
             Divider()
 
             Button("Open Workspace") {
+                openWorkspaceWindow()
+            }
+
+            Button("Workspace Switcher Tour") {
+                viewModel.requestWorkspaceSwitcherTourOpen()
+                openWorkspaceWindow()
+            }
+
+            Button("Curriculum Navigator Tour") {
+                viewModel.requestWorkspaceCurriculumNavigatorTourOpen()
+                openWorkspaceWindow()
+            }
+
+            Button("Settings Tour") {
+                viewModel.requestWorkspaceSettingsTourOpen()
+                openWorkspaceWindow()
+            }
+
+            Button("Help Tour") {
+                viewModel.requestWorkspaceHelpTourOpen()
+                openWorkspaceWindow()
+            }
+
+            Button("Recent Conversations Tour") {
+                viewModel.requestWorkspaceRecentConversationsTourOpen()
                 openWorkspaceWindow()
             }
 

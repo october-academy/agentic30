@@ -558,6 +558,7 @@ test("parses mission JSON and completes streaks", () => {
       title: "오늘은 문제를 좁힌다",
       angle: "마케팅이 아니라 첫 반응 수집",
       mission: "Threads에 관찰글을 올리고 Sheet를 채운다.",
+      completed_question_count: 3,
       drafts: ["초안1", "초안2", "초안3"],
       eveningChecklist: ["URL 기록", "Sheet 행 기록"],
       evidenceRefs: ["Sheet row 2"],
@@ -570,6 +571,7 @@ test("parses mission JSON and completes streaks", () => {
   );
 
   assert.equal(mission.provider, "claude");
+  assert.equal(mission.completedQuestionCount, 3);
   assert.equal(mission.drafts.length, 3);
 
   const completed = completeBipCoachMission(
@@ -596,6 +598,7 @@ test("parses mission JSON and completes streaks", () => {
 
   assert.equal(completed.schemaVersion, BIP_COACH_SCHEMA_VERSION);
   assert.equal(completed.currentMission.status, "completed");
+  assert.equal(completed.currentMission.completedQuestionCount, 3);
   assert.equal(completed.streak.current, 3);
   assert.equal(completed.streak.longest, 5);
 });

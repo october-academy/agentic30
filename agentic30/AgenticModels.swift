@@ -253,6 +253,19 @@ struct StructuredPromptRequest: Identifiable, Codable, Hashable {
 
     var id: String { requestId }
 
+    var uiBindingToken: String {
+        let questionTokens = questions.map { question in
+            [
+                question.id,
+                question.header,
+                question.question,
+                question.helperText ?? "",
+                question.freeTextPlaceholder ?? "",
+            ].joined(separator: "\u{1F}")
+        }
+        return ([requestId, sessionId, toolName] + questionTokens).joined(separator: "\u{1E}")
+    }
+
     var isProviderAdaptiveIddQuestion: Bool {
         generation?.mode == "provider_adaptive"
             || generation?.mode == "host_structured"
@@ -318,8 +331,9 @@ struct StructuredPromptGeneration: Codable, Hashable {
 }
 
 struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
+    let questionId: String?
     let header: String
-    let question: String
+    var question: String
     let helperText: String?
     let options: [StructuredPromptOption]?
     let multiSelect: Bool?
@@ -328,7 +342,46 @@ struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
     let freeTextPlaceholder: String?
     let textMode: StructuredPromptTextMode?
 
-    var id: String { question }
+    init(
+        questionId: String? = nil,
+        header: String,
+        question: String,
+        helperText: String?,
+        options: [StructuredPromptOption]?,
+        multiSelect: Bool?,
+        allowFreeText: Bool?,
+        requiresFreeText: Bool?,
+        freeTextPlaceholder: String?,
+        textMode: StructuredPromptTextMode?
+    ) {
+        self.questionId = questionId
+        self.header = header
+        self.question = question
+        self.helperText = helperText
+        self.options = options
+        self.multiSelect = multiSelect
+        self.allowFreeText = allowFreeText
+        self.requiresFreeText = requiresFreeText
+        self.freeTextPlaceholder = freeTextPlaceholder
+        self.textMode = textMode
+    }
+
+    var id: String { questionId ?? question }
+
+    func replacingQuestionText(_ text: String, preservingIdentity identity: String? = nil) -> StructuredPromptQuestion {
+        StructuredPromptQuestion(
+            questionId: identity ?? id,
+            header: header,
+            question: text,
+            helperText: helperText,
+            options: options,
+            multiSelect: multiSelect,
+            allowFreeText: allowFreeText,
+            requiresFreeText: requiresFreeText,
+            freeTextPlaceholder: freeTextPlaceholder,
+            textMode: textMode
+        )
+    }
 
     func isSatisfied(selectedOptions: Set<String>, freeText: String) -> Bool {
         let hasSelection = !selectedOptions.isEmpty
@@ -343,6 +396,51 @@ struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
         }
 
         return hasSelection
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case questionId
+        case questionID = "question_id"
+        case header
+        case question
+        case helperText
+        case options
+        case multiSelect
+        case allowFreeText
+        case requiresFreeText
+        case freeTextPlaceholder
+        case textMode
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        questionId = try container.decodeIfPresent(String.self, forKey: .questionId)
+            ?? container.decodeIfPresent(String.self, forKey: .questionID)
+            ?? container.decodeIfPresent(String.self, forKey: .id)
+        header = try container.decode(String.self, forKey: .header)
+        question = try container.decode(String.self, forKey: .question)
+        helperText = try container.decodeIfPresent(String.self, forKey: .helperText)
+        options = try container.decodeIfPresent([StructuredPromptOption].self, forKey: .options)
+        multiSelect = try container.decodeIfPresent(Bool.self, forKey: .multiSelect)
+        allowFreeText = try container.decodeIfPresent(Bool.self, forKey: .allowFreeText)
+        requiresFreeText = try container.decodeIfPresent(Bool.self, forKey: .requiresFreeText)
+        freeTextPlaceholder = try container.decodeIfPresent(String.self, forKey: .freeTextPlaceholder)
+        textMode = try container.decodeIfPresent(StructuredPromptTextMode.self, forKey: .textMode)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(questionId, forKey: .questionId)
+        try container.encode(header, forKey: .header)
+        try container.encode(question, forKey: .question)
+        try container.encodeIfPresent(helperText, forKey: .helperText)
+        try container.encodeIfPresent(options, forKey: .options)
+        try container.encodeIfPresent(multiSelect, forKey: .multiSelect)
+        try container.encodeIfPresent(allowFreeText, forKey: .allowFreeText)
+        try container.encodeIfPresent(requiresFreeText, forKey: .requiresFreeText)
+        try container.encodeIfPresent(freeTextPlaceholder, forKey: .freeTextPlaceholder)
+        try container.encodeIfPresent(textMode, forKey: .textMode)
     }
 }
 
@@ -595,12 +693,52 @@ struct BipCoachMission: Codable, Hashable {
     let evidenceRefs: [String]?
     let generatedAt: Date?
     let completedAt: Date?
+    let completedQuestionCount: Int?
     let threadsUrl: String?
     let sheetRowNote: String?
+
+    var completionQuestionCountLabel: String? {
+        guard let completedQuestionCount, completedQuestionCount > 0 else { return nil }
+        return "질문 \(completedQuestionCount)개 완료"
+    }
 }
 
 struct BipCoachCurriculumDay: Codable, Hashable {
     let day: Int?
+
+    var completionNextDayTeaser: String? {
+        guard day == 1 else { return nil }
+        return "다음: Day 2 Market - 돈이 흐르는 기준 시장을 가볍게 확인해보세요."
+    }
+}
+
+struct ReviewDayDashboardViewModel: Codable, Hashable {
+    let schemaVersion: Int
+    let componentType: String
+    let reviewDay: Int
+    let dayRange: ReviewDayRange?
+    let tone: String
+    let curatedMetrics: [ReviewDayDashboardMetric]
+    let insights: [String]
+    let nextSteps: [String]
+    let isEmpty: Bool
+}
+
+struct ReviewDayRange: Codable, Hashable {
+    let start: Int
+    let end: Int
+}
+
+struct ReviewDayDashboardMetric: Codable, Hashable, Identifiable {
+    let label: String
+    let value: String
+    let trend: String
+    let intent: String
+    let status: String
+
+    var id: String {
+        [label, value, trend, intent, status].joined(separator: "|")
+    }
 }
 
 struct BipCoachStreak: Codable, Hashable {

@@ -10,12 +10,12 @@ struct MacOnboardingView: View {
     private let scenes = MacOnboardingScene.all
 
     var body: some View {
-        if viewModel.needsOnboardingContext {
+        if viewModel.needsOnboardingIntro {
+            onboardingStage
+        } else if viewModel.needsOnboardingContext {
             MacOnboardingContextView(viewModel: viewModel)
         } else if viewModel.needsProjectWorkspace {
             workspacePickerStage
-        } else {
-            onboardingStage
         }
     }
 
@@ -244,7 +244,7 @@ struct MacOnboardingView: View {
             Button {
                 primaryAction()
             } label: {
-                Text("Next")
+                Text(primaryButtonTitle)
                 .font(.system(size: 16, weight: .bold, design: .rounded))
                 .foregroundStyle(Color.black.opacity(0.86))
                 .padding(.horizontal, 28)
@@ -256,19 +256,25 @@ struct MacOnboardingView: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("macOnboarding.primaryButton")
-            .accessibilityLabel("Next")
+            .accessibilityLabel(primaryButtonTitle)
         }
     }
 
+    private var primaryButtonTitle: String {
+        sceneIndex == scenes.count - 1 ? "Start setup" : "Next"
+    }
+
     private func primaryAction() {
-        let nextIndex = min(scenes.count - 1, sceneIndex + 1)
-        if nextIndex != sceneIndex {
-            PostHogTelemetry.capture("mac_onboarding_intro_scene_advanced", properties: [
-                "from_scene": sceneIndex,
-                "to_scene": nextIndex,
-                "total_scenes": scenes.count,
-            ])
+        guard sceneIndex < scenes.count - 1 else {
+            viewModel.completeMacOnboardingIntro()
+            return
         }
+        let nextIndex = min(scenes.count - 1, sceneIndex + 1)
+        PostHogTelemetry.capture("mac_onboarding_intro_scene_advanced", properties: [
+            "from_scene": sceneIndex,
+            "to_scene": nextIndex,
+            "total_scenes": scenes.count,
+        ])
         sceneIndex = nextIndex
     }
 
@@ -323,48 +329,42 @@ private struct MacOnboardingScene: Hashable {
         case integrations
     }
 
-    static let all: [MacOnboardingScene] = [
-        MacOnboardingScene(
-            title: "Welcome to Agentic30",
-            subtitle: "혼자 제품을 만들 때 오늘 무엇을 해야 할지 함께 정리해주는 Mac assistant입니다.",
-            visual: .mark,
-            visualColors: [
+    static let all: [MacOnboardingScene] = OnboardingProgramIntro.scenes.map(MacOnboardingScene.init(introScene:))
+
+    init(introScene: OnboardingProgramIntro.Scene) {
+        title = introScene.title
+        subtitle = introScene.subtitle
+        switch introScene.visual {
+        case .mark:
+            visual = .mark
+            visualColors = [
                 Color(red: 0.06, green: 0.07, blue: 0.07),
                 Color(red: 0.11, green: 0.22, blue: 0.16),
                 Color(red: 0.40, green: 0.74, blue: 0.33).opacity(0.75),
             ]
-        ),
-        MacOnboardingScene(
-            title: "We’re always by your side",
-            subtitle: "막히면 프로젝트와 기록을 보고, 오늘 가장 중요한 한 가지 행동을 제안합니다.",
-            visual: .briefing,
-            visualColors: [
+        case .briefing:
+            visual = .briefing
+            visualColors = [
                 Color(red: 0.08, green: 0.10, blue: 0.09),
                 Color(red: 0.35, green: 0.41, blue: 0.28),
                 Color(red: 0.80, green: 0.74, blue: 0.52),
             ]
-        ),
-        MacOnboardingScene(
-            title: "Build, launch, earn in 30 days",
-            subtitle: "아이디어를 실제 사용자 반응과 첫 결제 가능성까지 빠르게 검증하도록 돕습니다.",
-            visual: .launch,
-            visualColors: [
+        case .launch:
+            visual = .launch
+            visualColors = [
                 Color(red: 0.08, green: 0.10, blue: 0.09),
                 Color(red: 0.24, green: 0.33, blue: 0.24),
                 Color(red: 0.70, green: 0.64, blue: 0.44),
             ]
-        ),
-        MacOnboardingScene(
-            title: "Ship faster, learn faster",
-            subtitle: "만든 것, 배운 것, 고객 반응을 모아 다음 행동을 더 또렷하게 정합니다.",
-            visual: .integrations,
-            visualColors: [
+        case .integrations:
+            visual = .integrations
+            visualColors = [
                 Color(red: 0.07, green: 0.075, blue: 0.08),
                 Color(red: 0.08, green: 0.08, blue: 0.09),
                 Color(red: 0.13, green: 0.13, blue: 0.14),
             ]
-        ),
-    ]
+        }
+    }
 }
 
 private struct HalftoneField: View {
@@ -430,17 +430,20 @@ private struct AssistantMark: View {
 private struct FloatingBriefingBubble: View {
     var body: some View {
         HStack(spacing: 14) {
-            AssistantMark()
-                .frame(width: 42, height: 34)
+            Image(nsImage: NSApplication.shared.applicationIconImage)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 42, height: 42)
             VStack(alignment: .leading, spacing: 4) {
-                Text("Today’s focus")
+                Text("오늘의 한 가지")
                     .font(.system(size: 15, weight: .bold, design: .rounded))
-                Text("Fix checkout friction before buying more ads.")
+                Text("이번 주 가입자 3명에게 30분 인터뷰 요청하고 결제 의향 묻기.")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.72))
             }
             Spacer(minLength: 0)
-            Text("Execute")
+            Text("실행")
                 .font(.system(size: 14, weight: .bold, design: .rounded))
                 .padding(.horizontal, 18)
                 .padding(.vertical, 10)

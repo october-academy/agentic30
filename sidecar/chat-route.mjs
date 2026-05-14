@@ -1,5 +1,8 @@
 import { isStructuredInputToolName } from "./structured-input-tools.mjs";
 
+export const MINI_ACTION_EXECUTION_ONLY_INTENT = "curriculum_mini_action_execution_only";
+export const MINI_ACTION_EXECUTION_ONLY_MODE = "mini_action_execution_only";
+
 export function classifyChatExecutionRoute(
   prompt,
   {
@@ -10,6 +13,18 @@ export function classifyChatExecutionRoute(
   const value = String(prompt || "").trim();
   const lower = value.toLowerCase();
   const approvedToolExecution = isApprovedWorkspaceAction(executionIntent);
+
+  if (isMiniActionExecutionOnlyIntent(executionIntent)) {
+    return {
+      executionMode: MINI_ACTION_EXECUTION_ONLY_MODE,
+      reason: "curriculum_mini_action_execution_only",
+      contextSummary: "context=mini_action_execute_and_verify",
+      approvedToolExecution: true,
+      suppressUserResponsePrompt: true,
+      requiresUserInput: false,
+      requiresUserInputCheckpoint: false,
+    };
+  }
 
   if (requiresStructuredUserInputTool(value)) {
     return {
@@ -107,7 +122,13 @@ export function classifyChatExecutionRoute(
 }
 
 export function isApprovedWorkspaceAction(executionIntent = "chat") {
-  return String(executionIntent || "").trim() === "approved_workspace_action";
+  const normalized = String(executionIntent || "").trim();
+  return normalized === "approved_workspace_action"
+    || isMiniActionExecutionOnlyIntent(normalized);
+}
+
+export function isMiniActionExecutionOnlyIntent(executionIntent = "chat") {
+  return String(executionIntent || "").trim() === MINI_ACTION_EXECUTION_ONLY_INTENT;
 }
 
 export function requiresStructuredUserInputTool(prompt) {

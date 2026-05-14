@@ -214,4 +214,24 @@ struct ChatMessageDecodingTests {
         #expect(question.isSatisfied(selectedOptions: ["리스크/실패 조건으로 보완"], freeText: "") == false)
         #expect(question.isSatisfied(selectedOptions: ["리스크/실패 조건으로 보완"], freeText: "5명 중 0명이 과거 행동을 말하지 못하면 ICP를 다시 좁힌다") == true)
     }
+
+    @MainActor @Test func structuredPromptQuestionDecodesStableQuestionIdentity() throws {
+        let payload = """
+        {
+          "header": "ICP",
+          "question_id": "day1-question-1",
+          "question": "누구를 인터뷰하나요?",
+          "helperText": null,
+          "options": null,
+          "multiSelect": false,
+          "allowFreeText": true,
+          "freeTextPlaceholder": "직접 입력",
+          "textMode": "short"
+        }
+        """.data(using: .utf8)!
+
+        let question = try Self.makeDecoder().decode(StructuredPromptQuestion.self, from: payload)
+        #expect(question.id == "day1-question-1")
+        #expect(question.question == "누구를 인터뷰하나요?")
+    }
 }

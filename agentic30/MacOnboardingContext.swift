@@ -6,12 +6,18 @@ enum OnboardingWorkMode: String, Codable, CaseIterable, Hashable {
     case teamStartup = "team_startup"
     case exploring
 
+    static let onboardingChoices: [OnboardingWorkMode] = [
+        .fullTimeSolo,
+        .sideProject,
+        .teamStartup,
+    ]
+
     var displayTitle: String {
         switch self {
         case .fullTimeSolo: return "전업 1인 개발자"
         case .sideProject: return "일·학업과 병행"
         case .teamStartup: return "팀과 함께 만드는 중"
-        case .exploring: return "아직 탐색 중"
+        case .exploring: return "기타"
         }
     }
 
@@ -20,7 +26,7 @@ enum OnboardingWorkMode: String, Codable, CaseIterable, Hashable {
         case .fullTimeSolo: return "퇴사했고 혼자 제품을 만들고 있습니다"
         case .sideProject: return "직장이나 학업을 하면서 틈틈이 만들고 있습니다"
         case .teamStartup: return "함께 정하는 사람이 있거나 작은 팀이 있습니다"
-        case .exploring: return "아이디어와 방향을 아직 고르는 중입니다"
+        case .exploring: return "내 상황을 직접 입력합니다"
         }
     }
 }
@@ -56,6 +62,13 @@ enum OnboardingProjectStage: String, Codable, CaseIterable, Hashable {
     case firstUsers = "first_users_5"
     case preRevenue = "pre_revenue"
     case postRevenue = "post_revenue"
+
+    static let onboardingChoices: [OnboardingProjectStage] = [
+        .ideaOnly,
+        .building,
+        .firstUsers,
+        .preRevenue,
+    ]
 
     var displayTitle: String {
         switch self {
@@ -141,6 +154,10 @@ enum OnboardingIsolationLevel: String, Codable, CaseIterable, Hashable {
 }
 
 struct OnboardingContext: Codable, Hashable {
+    var businessDescription: String
+    var currentStage: String
+    var goal: String
+    var customWorkMode: String
     var workMode: OnboardingWorkMode
     var role: OnboardingRole
     var projectStage: OnboardingProjectStage
@@ -149,6 +166,10 @@ struct OnboardingContext: Codable, Hashable {
     var completedAt: String
 
     private enum CodingKeys: String, CodingKey {
+        case businessDescription = "business_description"
+        case currentStage = "current_stage"
+        case goal
+        case customWorkMode = "custom_work_mode"
         case workMode = "work_mode"
         case role
         case projectStage = "project_stage"
@@ -158,6 +179,10 @@ struct OnboardingContext: Codable, Hashable {
     }
 
     init(
+        businessDescription: String = "",
+        currentStage: String = "",
+        goal: String = "",
+        customWorkMode: String = "",
         workMode: OnboardingWorkMode,
         role: OnboardingRole,
         projectStage: OnboardingProjectStage,
@@ -165,6 +190,10 @@ struct OnboardingContext: Codable, Hashable {
         isolationLevels: [OnboardingIsolationLevel]? = nil,
         completedAt: String
     ) {
+        self.businessDescription = businessDescription.trimmedContextAnswer
+        self.currentStage = currentStage.trimmedContextAnswer
+        self.goal = goal.trimmedContextAnswer
+        self.customWorkMode = customWorkMode.trimmedContextAnswer
         self.workMode = workMode
         self.role = role
         self.projectStage = projectStage
@@ -181,6 +210,10 @@ struct OnboardingContext: Codable, Hashable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        businessDescription = try container.decodeIfPresent(String.self, forKey: .businessDescription)?.trimmedContextAnswer ?? ""
+        currentStage = try container.decodeIfPresent(String.self, forKey: .currentStage)?.trimmedContextAnswer ?? ""
+        goal = try container.decodeIfPresent(String.self, forKey: .goal)?.trimmedContextAnswer ?? ""
+        customWorkMode = try container.decodeIfPresent(String.self, forKey: .customWorkMode)?.trimmedContextAnswer ?? ""
         workMode = try container.decodeIfPresent(OnboardingWorkMode.self, forKey: .workMode) ?? .fullTimeSolo
         role = try container.decode(OnboardingRole.self, forKey: .role)
         projectStage = try container.decode(OnboardingProjectStage.self, forKey: .projectStage)
@@ -193,6 +226,10 @@ struct OnboardingContext: Codable, Hashable {
     }
 
     static func make(
+        businessDescription: String = "",
+        currentStage: String = "",
+        goal: String = "",
+        customWorkMode: String = "",
         workMode: OnboardingWorkMode = .fullTimeSolo,
         role: OnboardingRole,
         projectStage: OnboardingProjectStage,
@@ -200,6 +237,10 @@ struct OnboardingContext: Codable, Hashable {
         isolationLevels: [OnboardingIsolationLevel]? = nil
     ) -> OnboardingContext {
         OnboardingContext(
+            businessDescription: businessDescription,
+            currentStage: currentStage,
+            goal: goal,
+            customWorkMode: customWorkMode,
             workMode: workMode,
             role: role,
             projectStage: projectStage,
@@ -213,8 +254,16 @@ struct OnboardingContext: Codable, Hashable {
     /// Owner: ContentView Assistant call wrapper. Single source of truth for tone personalization.
     var assistantSystemPromptFragment: String {
         var lines: [String] = []
+        if !businessDescription.isEmpty || !currentStage.isEmpty || !goal.isEmpty {
+            lines.append(
+                "온보딩 답변: 사업 설명=\(businessDescription); 현재 단계=\(currentStage); 30일 목표=\(goal)."
+            )
+        }
+        let workModeContext = customWorkMode.isEmpty
+            ? workMode.rawValue
+            : "\(workMode.rawValue)(\(customWorkMode))"
         lines.append(
-            "유저 컨텍스트: \(workMode.rawValue) · \(role.rawValue) · \(projectStage.rawValue) · \(isolationLevels.map(\.rawValue).joined(separator: ","))."
+            "유저 컨텍스트: \(workModeContext) · \(role.rawValue) · \(projectStage.rawValue) · \(isolationLevels.map(\.rawValue).joined(separator: ","))."
         )
 
         switch workMode {
@@ -225,7 +274,11 @@ struct OnboardingContext: Codable, Hashable {
         case .teamStartup:
             lines.append("[R0] 팀 매칭이나 공동창업 조언보다, 1인 실행 시스템과 기록 기반 검증 관점으로 답하세요.")
         case .exploring:
-            lines.append("[R0] 아이디어 탐색을 빠르게 좁히고, 오늘 만들 기록/인터뷰 입력을 먼저 만들도록 안내하세요.")
+            if customWorkMode.isEmpty {
+                lines.append("[R0] 아이디어 탐색을 빠르게 좁히고, 오늘 만들 기록/인터뷰 입력을 먼저 만들도록 안내하세요.")
+            } else {
+                lines.append("[R0] 사용자가 직접 입력한 빌드 상황을 기준으로 제약과 다음 실행을 구체화하세요.")
+            }
         }
 
         switch projectStage {
@@ -269,4 +322,276 @@ enum OnboardingContextSubmissionStatus: Hashable {
     case idle
     case submitting
     case failed(String)
+}
+
+struct OnboardingProgramIntro {
+    static let requiredSceneIDs = [
+        "intro_welcome",
+        "intro_assistant",
+        "intro_30_day_path",
+        "intro_evidence_loop",
+    ]
+
+    static let scenes: [Scene] = [
+        Scene(
+            id: "intro_welcome",
+            title: "Welcome to Agentic30",
+            subtitle: "혼자 제품을 만들 때 오늘 무엇을 해야 할지 함께 정리해주는 Mac assistant입니다.",
+            visual: .mark
+        ),
+        Scene(
+            id: "intro_assistant",
+            title: "혼자 만들지만, 혼자 막막하지 않게",
+            subtitle: "프로젝트 문서, 인터뷰 기록, 결제 응답, 연결된 Google·Notion 문서를 읽고 오늘의 한 가지를 골라드립니다.",
+            visual: .briefing
+        ),
+        Scene(
+            id: "intro_30_day_path",
+            title: "Build, launch, earn in 30 days",
+            subtitle: "아이디어를 실제 사용자 반응과 첫 결제 가능성까지 빠르게 검증하도록 돕습니다.",
+            visual: .launch
+        ),
+        Scene(
+            id: "intro_evidence_loop",
+            title: "Ship faster, learn faster",
+            subtitle: "만든 것, 배운 것, 고객 반응을 모아 다음 행동을 더 또렷하게 정합니다.",
+            visual: .integrations
+        ),
+    ]
+
+    struct Scene: Hashable {
+        enum Visual: Hashable {
+            case mark
+            case briefing
+            case launch
+            case integrations
+        }
+
+        var id: String
+        var title: String
+        var subtitle: String
+        var visual: Visual
+    }
+}
+
+struct OnboardingCompletionTiming {
+    static let maximumDurationSeconds: TimeInterval = 120
+    static let programIntroSceneCount = 4
+    static let requiredContextQuestionIDs = [
+        "business_description",
+        "current_stage",
+        "goal",
+    ]
+
+    static let plannedSteps: [PlannedStep] = [
+        PlannedStep(id: "intro_welcome", kind: .programIntro, estimatedSeconds: 8),
+        PlannedStep(id: "intro_assistant", kind: .programIntro, estimatedSeconds: 8),
+        PlannedStep(id: "intro_30_day_path", kind: .programIntro, estimatedSeconds: 8),
+        PlannedStep(id: "intro_evidence_loop", kind: .programIntro, estimatedSeconds: 8),
+        PlannedStep(id: "business_description", kind: .contextQuestion, estimatedSeconds: 24),
+        PlannedStep(id: "current_stage", kind: .contextQuestion, estimatedSeconds: 24),
+        PlannedStep(id: "goal", kind: .contextQuestion, estimatedSeconds: 24),
+        PlannedStep(id: "submit_context", kind: .completion, estimatedSeconds: 6),
+    ]
+
+    struct PlannedStep: Equatable {
+        enum Kind: Equatable {
+            case programIntro
+            case contextQuestion
+            case completion
+        }
+
+        var id: String
+        var kind: Kind
+        var estimatedSeconds: TimeInterval
+    }
+
+    struct PlannedFlowReport: Equatable {
+        var introSceneCount: Int
+        var contextQuestionIDs: [String]
+        var estimatedSeconds: TimeInterval
+        var maximumSeconds: TimeInterval
+
+        var canCompleteWithinBudget: Bool {
+            estimatedSeconds <= maximumSeconds
+        }
+
+        var remainingSeconds: TimeInterval {
+            maximumSeconds - estimatedSeconds
+        }
+    }
+
+    struct MeasuredFlowReport: Equatable {
+        var introViewed: Bool
+        var answeredQuestionIDs: [String]
+        var missingQuestionIDs: [String]
+        var elapsedSeconds: TimeInterval
+        var maximumSeconds: TimeInterval
+
+        var hasRequiredQuestions: Bool {
+            missingQuestionIDs.isEmpty
+        }
+
+        var isWithinBudget: Bool {
+            elapsedSeconds <= maximumSeconds
+        }
+
+        var isComplete: Bool {
+            introViewed && hasRequiredQuestions && isWithinBudget
+        }
+    }
+
+    static func plannedFlowReport(
+        steps: [PlannedStep] = plannedSteps,
+        maximumSeconds: TimeInterval = maximumDurationSeconds
+    ) -> PlannedFlowReport {
+        PlannedFlowReport(
+            introSceneCount: steps.filter { $0.kind == .programIntro }.count,
+            contextQuestionIDs: steps.filter { $0.kind == .contextQuestion }.map(\.id),
+            estimatedSeconds: steps.reduce(0) { $0 + $1.estimatedSeconds },
+            maximumSeconds: maximumSeconds
+        )
+    }
+
+    static func measuredFlowReport(
+        startedAt: Date,
+        completedAt: Date,
+        introViewed: Bool,
+        answeredQuestionIDs: [String],
+        maximumSeconds: TimeInterval = maximumDurationSeconds
+    ) -> MeasuredFlowReport {
+        let normalizedAnsweredIDs = Set(answeredQuestionIDs.map(normalizeQuestionID).filter { !$0.isEmpty })
+        let missingQuestionIDs = requiredContextQuestionIDs.filter { !normalizedAnsweredIDs.contains($0) }
+        return MeasuredFlowReport(
+            introViewed: introViewed,
+            answeredQuestionIDs: requiredContextQuestionIDs.filter { normalizedAnsweredIDs.contains($0) },
+            missingQuestionIDs: missingQuestionIDs,
+            elapsedSeconds: max(0, completedAt.timeIntervalSince(startedAt)),
+            maximumSeconds: maximumSeconds
+        )
+    }
+
+    nonisolated private static func normalizeQuestionID(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch trimmed {
+        case "onboardingContext.businessDescription":
+            return "business_description"
+        case "onboardingContext.currentStage":
+            return "current_stage"
+        case "onboardingContext.goal":
+            return "goal"
+        default:
+            return trimmed
+        }
+    }
+}
+
+enum OnboardingContextQuestionValidationError: Error, Equatable, LocalizedError {
+    case missingBusinessDescription
+    case missingCurrentStage
+    case missingGoal
+    case duplicateAnswers
+
+    var errorDescription: String? {
+        switch self {
+        case .missingBusinessDescription:
+            return "사업 설명을 입력해 주세요."
+        case .missingCurrentStage:
+            return "현재 단계를 입력해 주세요."
+        case .missingGoal:
+            return "30일 목표를 입력해 주세요."
+        case .duplicateAnswers:
+            return "세 질문에는 서로 다른 답변을 입력해 주세요."
+        }
+    }
+}
+
+struct OnboardingContextQuestionResponses: Codable, Hashable {
+    var businessDescription: String
+    var currentStage: String
+    var goal: String
+
+    init(
+        businessDescription: String,
+        currentStage: String,
+        goal: String
+    ) throws {
+        let businessDescription = businessDescription.trimmedContextAnswer
+        let currentStage = currentStage.trimmedContextAnswer
+        let goal = goal.trimmedContextAnswer
+
+        guard !businessDescription.isEmpty else {
+            throw OnboardingContextQuestionValidationError.missingBusinessDescription
+        }
+        guard !currentStage.isEmpty else {
+            throw OnboardingContextQuestionValidationError.missingCurrentStage
+        }
+        guard !goal.isEmpty else {
+            throw OnboardingContextQuestionValidationError.missingGoal
+        }
+
+        let normalizedAnswers = Set([businessDescription, currentStage, goal].map {
+            $0.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        })
+        guard normalizedAnswers.count == 3 else {
+            throw OnboardingContextQuestionValidationError.duplicateAnswers
+        }
+
+        self.businessDescription = businessDescription
+        self.currentStage = currentStage
+        self.goal = goal
+    }
+
+    var inferredProjectStage: OnboardingProjectStage {
+        let haystack = "\(businessDescription) \(currentStage) \(goal)".lowercased()
+        if haystack.contains("revenue")
+            || haystack.contains("매출")
+            || haystack.contains("결제")
+            || haystack.contains("유료") {
+            return .postRevenue
+        }
+        if haystack.contains("price")
+            || haystack.contains("pricing")
+            || haystack.contains("가격")
+            || haystack.contains("수익화") {
+            return .preRevenue
+        }
+        if haystack.contains("user")
+            || haystack.contains("customer")
+            || haystack.contains("사용자")
+            || haystack.contains("고객") {
+            return .firstUsers
+        }
+        if haystack.contains("build")
+            || haystack.contains("mvp")
+            || haystack.contains("만드는")
+            || haystack.contains("개발") {
+            return .building
+        }
+        return .ideaOnly
+    }
+
+    func makeContext(
+        workMode: OnboardingWorkMode = .fullTimeSolo,
+        role: OnboardingRole = .developer,
+        isolationLevel: OnboardingIsolationLevel = .projectFolder
+    ) -> OnboardingContext {
+        OnboardingContext.make(
+            businessDescription: businessDescription,
+            currentStage: currentStage,
+            goal: goal,
+            workMode: workMode,
+            role: role,
+            projectStage: inferredProjectStage,
+            isolationLevel: isolationLevel
+        )
+    }
+}
+
+private extension String {
+    var trimmedContextAnswer: String {
+        components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
 }

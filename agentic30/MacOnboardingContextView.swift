@@ -5,10 +5,12 @@ struct MacOnboardingContextView: View {
 
     @State private var sceneIndex = 0
     @State private var selectedWorkMode: OnboardingWorkMode? = .fullTimeSolo
+    @State private var customWorkMode = ""
     @State private var selectedRole: OnboardingRole? = .developer
     @State private var selectedProjectStage: OnboardingProjectStage? = .ideaOnly
     @State private var selectedIsolationLevels: Set<OnboardingIsolationLevel> = [.projectFolder]
     @State private var primaryIsolationLevel: OnboardingIsolationLevel = .projectFolder
+    @FocusState private var customWorkModeFocused: Bool
 
     private var totalScenes: Int { 4 }
 
@@ -184,7 +186,7 @@ struct MacOnboardingContextView: View {
 
     private var currentTitle: String {
         switch sceneIndex {
-        case 0: return "지금 어떤 상황에서 만들고 있나요?"
+        case 0: return "지금 어떤 상황에서 빌드하고 있나요?"
         case 1: return "어떤 일을 하고 계신가요?"
         case 2: return "현재 가장 큰 막힘은 무엇인가요?"
         case 3: return "어떤 기록을 연결할 수 있나요?"
@@ -222,7 +224,7 @@ struct MacOnboardingContextView: View {
         switch sceneIndex {
         case 0:
             VStack(spacing: 6) {
-                ForEach(OnboardingWorkMode.allCases, id: \.self) { mode in
+                ForEach(OnboardingWorkMode.onboardingChoices, id: \.self) { mode in
                     optionRow(
                         title: mode.displayTitle,
                         description: mode.displayDescription,
@@ -233,6 +235,7 @@ struct MacOnboardingContextView: View {
                         selectedWorkMode = mode
                     }
                 }
+                customWorkModeOption
             }
         case 1:
             VStack(spacing: 6) {
@@ -250,7 +253,7 @@ struct MacOnboardingContextView: View {
             }
         case 2:
             VStack(spacing: 5) {
-                ForEach(OnboardingProjectStage.allCases, id: \.self) { stage in
+                ForEach(OnboardingProjectStage.onboardingChoices, id: \.self) { stage in
                     optionRow(
                         title: stage.displayTitle,
                         description: stage.displayDescription,
@@ -285,6 +288,50 @@ struct MacOnboardingContextView: View {
     private var roleAccent: Color { Color(red: 0.82, green: 0.99, blue: 0.69) }
     private var stageAccent: Color { Color(red: 0.82, green: 0.99, blue: 0.69) }
     private var isolationAccent: Color { Color(red: 0.66, green: 0.78, blue: 0.91) }
+
+    private var trimmedCustomWorkMode: String {
+        customWorkMode.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var customWorkModeSelected: Bool {
+        selectedWorkMode == .exploring
+    }
+
+    private var customWorkModeOption: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            optionRow(
+                title: OnboardingWorkMode.exploring.displayTitle,
+                description: customWorkModeSelected && !trimmedCustomWorkMode.isEmpty
+                    ? trimmedCustomWorkMode
+                    : OnboardingWorkMode.exploring.displayDescription,
+                selected: customWorkModeSelected,
+                accent: workModeAccent,
+                identifier: "onboardingContext.option.custom_work_mode"
+            ) {
+                selectedWorkMode = .exploring
+                customWorkModeFocused = true
+            }
+
+            if customWorkModeSelected {
+                TextField("예: 퇴근 후 주 2일, 공동창업자와 검증 중", text: $customWorkMode)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .focused($customWorkModeFocused)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.white.opacity(0.06))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(workModeAccent.opacity(0.42), lineWidth: 1)
+                            )
+                    )
+                    .accessibilityIdentifier("onboardingContext.option.custom_work_mode.input")
+            }
+        }
+    }
 
     private func optionRow(
         title: String,
@@ -405,7 +452,12 @@ struct MacOnboardingContextView: View {
 
     private var primaryButtonEnabled: Bool {
         switch sceneIndex {
-        case 0: return selectedWorkMode != nil
+        case 0:
+            guard let selectedWorkMode else { return false }
+            if selectedWorkMode == .exploring {
+                return !trimmedCustomWorkMode.isEmpty
+            }
+            return true
         case 1: return selectedRole != nil
         case 2: return selectedProjectStage != nil
         case 3: return !selectedIsolationLevels.isEmpty
@@ -444,6 +496,7 @@ struct MacOnboardingContextView: View {
             : levels[0]
 
         let context = OnboardingContext.make(
+            customWorkMode: workMode == .exploring ? trimmedCustomWorkMode : "",
             workMode: workMode,
             role: role,
             projectStage: stage,

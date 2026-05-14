@@ -62,6 +62,7 @@ struct AgenticViewModelAuthTests {
 
     @Test @MainActor func onboardingContextEncodesWorkModeForSidecarContract() throws {
         let context = OnboardingContext(
+            customWorkMode: "주말마다 고객 인터뷰를 돌리는 중",
             workMode: .sideProject,
             role: .designer,
             projectStage: .preRevenue,
@@ -73,6 +74,7 @@ struct AgenticViewModelAuthTests {
         let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
         #expect(object?["work_mode"] as? String == "side_project")
+        #expect(object?["custom_work_mode"] as? String == "주말마다 고객 인터뷰를 돌리는 중")
         #expect(object?["role"] as? String == "designer")
         #expect(object?["project_stage"] as? String == "pre_revenue")
         #expect(object?["isolation_level"] as? String == "weekly_loop")
@@ -100,6 +102,149 @@ struct AgenticViewModelAuthTests {
         #expect(decoded.assistantSystemPromptFragment.contains("업무 일지"))
     }
 
+    @Test @MainActor func onboardingContextQuestionResponsesRequireThreeDistinctAnswers() throws {
+        do {
+            _ = try OnboardingContextQuestionResponses(
+                businessDescription: "AI menubar coach for indie builders",
+                currentStage: "  ",
+                goal: "Finish one verified customer interview loop"
+            )
+            Issue.record("Expected current stage validation to fail")
+        } catch let error as OnboardingContextQuestionValidationError {
+            #expect(error == .missingCurrentStage)
+        }
+
+        do {
+            _ = try OnboardingContextQuestionResponses(
+                businessDescription: "Same answer",
+                currentStage: "same answer",
+                goal: "Ship day 1"
+            )
+            Issue.record("Expected duplicate answer validation to fail")
+        } catch let error as OnboardingContextQuestionValidationError {
+            #expect(error == .duplicateAnswers)
+        }
+    }
+
+    @Test @MainActor func onboardingContextQuestionResponsesBuildPersistedContext() throws {
+        let responses = try OnboardingContextQuestionResponses(
+            businessDescription: "A Mac menubar AI assistant for solo founders",
+            currentStage: "MVP is built and first users are trying it",
+            goal: "Reach 10 retained users in 30 days"
+        )
+
+        let context = responses.makeContext()
+        let data = try JSONEncoder().encode(context)
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let decoded = try JSONDecoder().decode(OnboardingContext.self, from: data)
+
+        #expect(object?["business_description"] as? String == "A Mac menubar AI assistant for solo founders")
+        #expect(object?["current_stage"] as? String == "MVP is built and first users are trying it")
+        #expect(object?["goal"] as? String == "Reach 10 retained users in 30 days")
+        #expect(decoded.businessDescription == responses.businessDescription)
+        #expect(decoded.currentStage == responses.currentStage)
+        #expect(decoded.goal == responses.goal)
+        #expect(decoded.projectStage == .firstUsers)
+        #expect(decoded.assistantSystemPromptFragment.contains("온보딩 답변"))
+    }
+
+    @Test @MainActor func onboardingCompletionTimingPlanCoversIntroAndThreeQuestionsUnderTwoMinutes() {
+        let report = OnboardingCompletionTiming.plannedFlowReport()
+
+        #expect(report.introSceneCount == OnboardingCompletionTiming.programIntroSceneCount)
+        #expect(report.contextQuestionIDs == [
+            "business_description",
+            "current_stage",
+            "goal",
+        ])
+        #expect(report.contextQuestionIDs.count == 3)
+        #expect(report.estimatedSeconds == 110)
+        #expect(report.canCompleteWithinBudget)
+        #expect(report.remainingSeconds == 10)
+    }
+
+    @Test @MainActor func onboardingIntroContentIsRequiredBeforeContextQuestionsBegin() {
+        let scenes = OnboardingProgramIntro.scenes
+        let plannedSteps = OnboardingCompletionTiming.plannedSteps
+        let introStepIDs = plannedSteps
+            .prefix(OnboardingProgramIntro.requiredSceneIDs.count)
+            .map(\.id)
+        let firstContextQuestionIndex = plannedSteps.firstIndex { $0.kind == .contextQuestion }
+
+        #expect(scenes.map(\.id) == OnboardingProgramIntro.requiredSceneIDs)
+        #expect(scenes.map(\.id) == Array(introStepIDs))
+        #expect(firstContextQuestionIndex == OnboardingProgramIntro.requiredSceneIDs.count)
+        if let firstContextQuestionIndex {
+            #expect(plannedSteps[..<firstContextQuestionIndex].allSatisfy { $0.kind == .programIntro })
+        }
+        #expect(Set(scenes.map(\.visual)).count == scenes.count)
+        #expect(scenes.map(\.title) == [
+            "Welcome to Agentic30",
+            "We’re always by your side",
+            "Build, launch, earn in 30 days",
+            "Ship faster, learn faster",
+        ])
+        #expect(scenes[0].subtitle.contains("Mac assistant"))
+        #expect(scenes[1].subtitle.contains("오늘 가장 중요한 한 가지 행동"))
+        #expect(scenes[2].subtitle.contains("첫 결제 가능성"))
+        #expect(scenes[3].subtitle.contains("고객 반응"))
+    }
+
+    @Test @MainActor func onboardingCompletionTimingValidatesMeasuredFullFlow() {
+        let startedAt = Date(timeIntervalSince1970: 1_778_000_000)
+        let completedAt = startedAt.addingTimeInterval(119)
+
+        let report = OnboardingCompletionTiming.measuredFlowReport(
+            startedAt: startedAt,
+            completedAt: completedAt,
+            introViewed: true,
+            answeredQuestionIDs: [
+                "onboardingContext.goal",
+                "onboardingContext.businessDescription",
+                "onboardingContext.currentStage",
+            ]
+        )
+
+        #expect(report.isComplete)
+        #expect(report.isWithinBudget)
+        #expect(report.hasRequiredQuestions)
+        #expect(report.missingQuestionIDs.isEmpty)
+        #expect(report.answeredQuestionIDs == [
+            "business_description",
+            "current_stage",
+            "goal",
+        ])
+    }
+
+    @Test @MainActor func onboardingCompletionTimingRejectsOverBudgetOrIncompleteFlow() {
+        let startedAt = Date(timeIntervalSince1970: 1_778_000_000)
+
+        let overBudget = OnboardingCompletionTiming.measuredFlowReport(
+            startedAt: startedAt,
+            completedAt: startedAt.addingTimeInterval(121),
+            introViewed: true,
+            answeredQuestionIDs: [
+                "business_description",
+                "current_stage",
+                "goal",
+            ]
+        )
+        #expect(!overBudget.isComplete)
+        #expect(!overBudget.isWithinBudget)
+
+        let missingGoal = OnboardingCompletionTiming.measuredFlowReport(
+            startedAt: startedAt,
+            completedAt: startedAt.addingTimeInterval(90),
+            introViewed: true,
+            answeredQuestionIDs: [
+                "business_description",
+                "current_stage",
+            ]
+        )
+        #expect(!missingGoal.isComplete)
+        #expect(missingGoal.missingQuestionIDs == ["goal"])
+    }
+
     @Test @MainActor func missingGoogleAuthDoesNotBlockLocalWorkspaceSelection() {
         WorkspaceSettings.clear()
         let productionLegacyProvider = WorkspaceSettings.legacyWorkspaceProvider
@@ -117,6 +262,62 @@ struct AgenticViewModelAuthTests {
 
         #expect(viewModel.connectionLabel == "Complete local setup")
         #expect(viewModel.isConnected == false)
+    }
+
+    @Test @MainActor func volatileLocalDataResetRestoresFirstRunIntroGate() {
+        KeychainHelper.resetAgentic30Defaults()
+        defer { KeychainHelper.resetAgentic30Defaults() }
+
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true, activateAppForAuth: {})
+        viewModel.completeMacOnboardingIntro()
+        viewModel.setGuidedDay1OverlayActive(true)
+        viewModel.skipGuidedDay1Overlay()
+        let prompt = StructuredPromptRequest(
+            requestId: "reset-draft",
+            sessionId: "reset-session",
+            toolName: "agentic30_request_user_input",
+            title: "Reset draft",
+            createdAt: Date(timeIntervalSince1970: 0),
+            questions: [
+                StructuredPromptQuestion(
+                    questionId: "q1",
+                    header: "Question",
+                    question: "What should reset?",
+                    helperText: nil,
+                    options: nil,
+                    multiSelect: nil,
+                    allowFreeText: true,
+                    requiresFreeText: true,
+                    freeTextPlaceholder: nil,
+                    textMode: nil
+                ),
+            ]
+        )
+        viewModel.updateStructuredPromptFreeText("draft that must reset", for: prompt.questions[0], in: prompt)
+
+        #expect(viewModel.needsOnboardingIntro == false)
+        #expect(viewModel.day1InterviewTutorialMode == .unguided)
+        #expect(viewModel.structuredPromptDraftBySession.isEmpty == false)
+
+        viewModel.resetVolatileLocalUserDataStateForTesting()
+
+        #expect(viewModel.needsOnboardingIntro == true)
+        #expect(viewModel.guidedDay1OverlayActive == false)
+        #expect(viewModel.day1InterviewTutorialMode == .guided)
+        #expect(viewModel.structuredPromptDraftBySession.isEmpty)
+    }
+
+    @Test @MainActor func day1OverlaySkipSwitchesToUnguidedInterviewMode() {
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true, activateAppForAuth: {})
+
+        viewModel.setGuidedDay1OverlayActive(true)
+        #expect(viewModel.guidedDay1OverlayActive == true)
+        #expect(viewModel.day1InterviewTutorialMode == .guided)
+
+        viewModel.skipGuidedDay1Overlay()
+
+        #expect(viewModel.guidedDay1OverlayActive == false)
+        #expect(viewModel.day1InterviewTutorialMode == .unguided)
     }
 
     @Test @MainActor func explicitWorkspaceAndLocalContextCanStartWithoutGoogleAuth() throws {

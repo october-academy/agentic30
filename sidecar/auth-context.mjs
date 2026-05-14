@@ -109,6 +109,7 @@ function normalizeBaseUrl(value) {
 function normalizeOnboardingContext(value) {
   if (!value || typeof value !== "object") return null;
   const workMode = String(value.workMode || value.work_mode || "").trim();
+  const customWorkMode = String(value.customWorkMode || value.custom_work_mode || "").trim();
   const role = String(value.role || "").trim();
   const projectStage = String(value.projectStage || value.project_stage || "").trim();
   const isolationLevel = String(value.isolationLevel || value.isolation_level || "").trim();
@@ -116,6 +117,7 @@ function normalizeOnboardingContext(value) {
   if (!workMode && !role && !projectStage && !isolationLevel) return null;
   return {
     workMode,
+    customWorkMode,
     role,
     projectStage,
     isolationLevel,

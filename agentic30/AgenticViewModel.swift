@@ -115,6 +115,11 @@ struct BipNotificationOpenRequest: Identifiable, Equatable, Sendable {
     }
 }
 
+enum Day1InterviewTutorialMode: String, Equatable, Sendable {
+    case guided
+    case unguided
+}
+
 /// Routing classification for chat input. All three branches funnel into the
 /// same `send_prompt` sidecar message — Sub-AC 2's contract is that the
 /// chat is a *single* AI interaction surface, so daily-task, sub-workflow,
@@ -241,6 +246,8 @@ struct StartupQueuedAction: Identifiable {
 
 @MainActor
 final class AgenticViewModel: ObservableObject {
+    private static let macOnboardingIntroCompletedDefaultsKey = "agentic30.macOnboardingIntroCompleted"
+
     /// Fanout for the desktop pet (and any future state-driven UI). Fires
     /// after a sidecar event has been folded into ViewModel state, so the
     /// `sessions` snapshot reflects the post-event world.
@@ -267,6 +274,7 @@ final class AgenticViewModel: ObservableObject {
     @Published var lastDocCreated: (type: String, path: String)?
     @Published private(set) var macAuthSession: MacAuthSession?
     @Published private(set) var macOnboardingStatus: MacOnboardingStatus = .idle
+    @Published private(set) var macOnboardingIntroCompleted: Bool = false
     @Published private(set) var onboardingContext: OnboardingContext?
     @Published private(set) var onboardingContextStatus: OnboardingContextSubmissionStatus = .idle
     @Published private(set) var bipCoach: BipCoachState?
@@ -300,11 +308,20 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var providerAuthMessage: String?
     @Published private(set) var sentPromptPreviews: [String: [PendingPromptPreview]] = [:]
     @Published private(set) var submittedStructuredPromptBySession: [String: StructuredPromptSubmissionState] = [:]
+    @Published private(set) var structuredPromptDraftBySession: [String: StructuredPromptDraftState] = [:]
     @Published private(set) var sidecarOutputLogs: [String: [String]] = [:]
     @Published private(set) var workspaceSettingsOpenRequest = 0
+    @Published private(set) var workspaceSwitcherTourOpenRequest = 0
+    @Published private(set) var workspaceCurriculumNavigatorTourOpenRequest = 0
+    @Published private(set) var workspaceSettingsTourOpenRequest = 0
+    @Published private(set) var workspaceHelpTourOpenRequest = 0
+    @Published private(set) var workspaceRecentConversationsTourOpenRequest = 0
+    @Published private(set) var guidedDay1OverlayActive = false
+    @Published private(set) var day1InterviewTutorialMode: Day1InterviewTutorialMode = .guided
     @Published private(set) var bipNotificationOpenRequest: BipNotificationOpenRequest?
     @Published private(set) var startupQueuedAction: StartupQueuedAction?
     @Published private(set) var startupSessionAppearElapsedMs: Int?
+    @Published private(set) var reviewDayDashboardViewModel: ReviewDayDashboardViewModel?
     /// First-launch wall-clock timestamp that anchors the Foundation phase
     /// Day N/30 counter. The value is mirrored from `foundationProgressState`,
     /// which is persisted per workspace/app-support rather than globally.
@@ -355,6 +372,7 @@ final class AgenticViewModel: ObservableObject {
     private var requestedInitialBipGate = false
     private var requestedInitialBipMission = false
     private var replacementSessionCreateInFlight = false
+    private var latestCurriculumQuestionReframesByKey: [String: CurriculumQuestionReframeRecord] = [:]
     /// Idempotency guard for the AI-driven Foundation Day 0-7 first prompt.
     /// Keyed by `"<sessionId>:day-<day>"` so the same opener is never injected
     /// twice for the same (session, day) pair, even if the sidecar replays
@@ -379,6 +397,7 @@ final class AgenticViewModel: ObservableObject {
     /// active state for a fresh workspace.
     private static let kFoundationStartedAtKey = "agentic30.foundation.startedAt"
     private var foundationProgressStore: FoundationProgressStore?
+    private let foundationCurriculumLifecycleController: FoundationCurriculumLifecycleController
 
     /// Lazy initializer for the Foundation phase counter. Idempotent per
     /// workspace so isolated projects do not inherit stale global progress.
@@ -427,6 +446,14 @@ final class AgenticViewModel: ObservableObject {
         foundationProgressState.selectedDay
     }
 
+    var foundationCurriculumPresentation: FoundationCurriculumPresentationViewModel {
+        FoundationCurriculumPresentationViewModel(snapshot: foundationProgressState)
+    }
+
+    var foundationCurriculumPresentationDestination: FoundationCurriculumPresentationDestination {
+        foundationCurriculumPresentation.destination
+    }
+
     func selectFoundationDay(_ day: Int) {
         let clamped = max(1, min(day, 30))
         guard isFoundationDayUnlocked(clamped) else { return }
@@ -439,18 +466,39 @@ final class AgenticViewModel: ObservableObject {
         foundationProgressState.isUnlocked(day)
     }
 
-    func markFoundationDayCompleted(_ day: Int) {
-        let clamped = max(1, min(day, 30))
-        updateFoundationProgress { snapshot in
-            snapshot.completedDays.insert(clamped)
-            snapshot.selectedDay = min(max(snapshot.selectedDay, clamped + 1), 30)
+    @discardableResult
+    func markFoundationDayCompleted(_ day: Int) -> FoundationDayCompletionSaveResult {
+        ensureFoundationProgressStore()
+        let handler = FoundationDayCompletionSaveHandler(store: foundationProgressStore)
+        let result = handler.saveDayCompletion(
+            day,
+            snapshot: foundationProgressState,
+            workspaceRoot: WorkspaceSettings.resolvedURL().path
+        )
+        foundationProgressState = result.snapshot
+        foundationStartedAt = result.snapshot.startedAt
+        _ = foundationCurriculumLifecycleController.enterCompletedState(result.snapshot)
+        return result
+    }
+
+    @discardableResult
+    func advanceFromCompletedMission(_ mission: BipCoachMission) -> FoundationDayCompletionSaveResult? {
+        guard let completedDay = mission.curriculumDay?.day,
+              completedDay < 30 else {
+            return nil
         }
+        let result = markFoundationDayCompleted(completedDay)
+        if result.unlockedDay == 2 {
+            requestFoundationFirstPrompt(day: result.unlockedDay)
+        }
+        return result
     }
 
     init(
         authSessionFactory: WebAuthenticationSessionFactory? = nil,
         onboardingContextOverride: OnboardingContext? = nil,
         disablesSidecarStartForTesting: Bool = false,
+        foundationCurriculumLifecycleController: FoundationCurriculumLifecycleController? = nil,
         activateAppForAuth: @escaping @MainActor () -> Void = {
             NSApplication.shared.activate(ignoringOtherApps: true)
         }
@@ -466,6 +514,7 @@ final class AgenticViewModel: ObservableObject {
         }
         self.activateAppForAuth = activateAppForAuth
         self.disablesSidecarStartForTesting = disablesSidecarStartForTesting
+        self.foundationCurriculumLifecycleController = foundationCurriculumLifecycleController ?? FoundationCurriculumLifecycleController()
 
         let arguments = CommandLine.arguments
 
@@ -474,14 +523,20 @@ final class AgenticViewModel: ObservableObject {
             if arguments.contains("--ui-testing-reset-onboarding") {
                 KeychainHelper.deleteMacAuthSession()
                 KeychainHelper.deleteOnboardingContext()
+                Self.resetMacOnboardingIntroCompleted()
                 WorkspaceSettings.clear()
             }
             Self.applyUITestingWorkspaceSeeds(arguments: arguments)
             macAuthSession = Self.makeUITestingMacAuthSession(arguments: arguments)
             onboardingContext = Self.makeUITestingOnboardingContext(arguments: arguments)
+            macOnboardingIntroCompleted = onboardingContext != nil || Self.loadMacOnboardingIntroCompleted()
             applyUITestingIddSetupSeeds(arguments: arguments)
             if let seededDraft = Self.uiTestingArgumentValue("--ui-testing-seed-draft", arguments: arguments) {
                 draft = seededDraft
+            }
+            if arguments.contains("--ui-testing-guided-day1-overlay-active") {
+                guidedDay1OverlayActive = true
+                day1InterviewTutorialMode = .guided
             }
             // R6-P3F: load quarantine fixture during init so the surface is
             // ready before SwiftUI subscribes — start() may not run when the
@@ -499,23 +554,28 @@ final class AgenticViewModel: ObservableObject {
         } else if Self.isXCTestHost(arguments: arguments) {
             macAuthSession = nil
             onboardingContext = nil
+            macOnboardingIntroCompleted = false
         } else {
             if arguments.contains("--ui-testing-reset-onboarding") {
                 KeychainHelper.deleteMacAuthSession()
                 KeychainHelper.deleteOnboardingContext()
+                Self.resetMacOnboardingIntroCompleted()
                 WorkspaceSettings.clear()
             }
             macAuthSession = KeychainHelper.loadMacAuthSession()
             onboardingContext = KeychainHelper.loadOnboardingContext()
+            macOnboardingIntroCompleted = onboardingContext != nil || Self.loadMacOnboardingIntroCompleted()
         }
         #else
         if arguments.contains("--ui-testing-reset-onboarding") {
             KeychainHelper.deleteMacAuthSession()
             KeychainHelper.deleteOnboardingContext()
+            Self.resetMacOnboardingIntroCompleted()
             WorkspaceSettings.clear()
         }
         macAuthSession = KeychainHelper.loadMacAuthSession()
         onboardingContext = KeychainHelper.loadOnboardingContext()
+        macOnboardingIntroCompleted = onboardingContext != nil || Self.loadMacOnboardingIntroCompleted()
         #endif
 
         if let session = macAuthSession, session.shouldRefreshSoon {
@@ -557,6 +617,24 @@ final class AgenticViewModel: ObservableObject {
         }
     }
 
+    struct StructuredPromptAnswerDraft: Hashable {
+        var selectedOptions: Set<String> = []
+        var freeText = ""
+    }
+
+    struct StructuredPromptDraftState: Hashable {
+        let sessionId: String
+        let requestId: String
+        var answersByQuestionID: [String: StructuredPromptAnswerDraft]
+    }
+
+    private struct CurriculumQuestionReframeRecord: Hashable {
+        let sessionId: String
+        let requestId: String
+        let questionId: String
+        let reframedQuestion: String
+    }
+
     var selectedSession: ChatSession? {
         sessions.first(where: { $0.id == selectedSessionID && $0.archivedAt == nil })
     }
@@ -570,6 +648,113 @@ final class AgenticViewModel: ObservableObject {
     func structuredPromptSubmissionState(for sessionId: String?) -> StructuredPromptSubmissionState? {
         guard let sessionId else { return nil }
         return submittedStructuredPromptBySession[sessionId]
+    }
+
+    func synchronizeStructuredPromptDrafts(with prompt: StructuredPromptRequest?) {
+        guard let prompt else {
+            structuredPromptDraftBySession = structuredPromptDraftBySession.filter { entry in
+                sessions.contains { $0.id == entry.key && $0.pendingUserInput != nil }
+            }
+            return
+        }
+
+        if var existing = structuredPromptDraftBySession[prompt.sessionId],
+           existing.requestId == prompt.requestId {
+            for question in prompt.questions where existing.answersByQuestionID[question.id] == nil {
+                existing.answersByQuestionID[question.id] = StructuredPromptAnswerDraft()
+            }
+            structuredPromptDraftBySession[prompt.sessionId] = existing
+            return
+        }
+
+        structuredPromptDraftBySession[prompt.sessionId] = StructuredPromptDraftState(
+            sessionId: prompt.sessionId,
+            requestId: prompt.requestId,
+            answersByQuestionID: Dictionary(
+                uniqueKeysWithValues: prompt.questions.map { question in
+                    (question.id, StructuredPromptAnswerDraft())
+                }
+            )
+        )
+    }
+
+    func structuredPromptDraft(
+        for question: StructuredPromptQuestion,
+        in prompt: StructuredPromptRequest
+    ) -> StructuredPromptAnswerDraft {
+        return structuredPromptDraftBySession[prompt.sessionId]?.answersByQuestionID[question.id]
+            ?? StructuredPromptAnswerDraft()
+    }
+
+    func updateStructuredPromptFreeText(
+        _ text: String,
+        for question: StructuredPromptQuestion,
+        in prompt: StructuredPromptRequest
+    ) {
+        synchronizeStructuredPromptDrafts(with: prompt)
+        var state = structuredPromptDraftBySession[prompt.sessionId] ?? StructuredPromptDraftState(
+            sessionId: prompt.sessionId,
+            requestId: prompt.requestId,
+            answersByQuestionID: [:]
+        )
+        var draft = state.answersByQuestionID[question.id] ?? StructuredPromptAnswerDraft()
+        draft.freeText = text
+        state.answersByQuestionID[question.id] = draft
+        structuredPromptDraftBySession[prompt.sessionId] = state
+    }
+
+    func toggleStructuredPromptOption(
+        _ label: String,
+        for question: StructuredPromptQuestion,
+        in prompt: StructuredPromptRequest
+    ) {
+        synchronizeStructuredPromptDrafts(with: prompt)
+        var state = structuredPromptDraftBySession[prompt.sessionId] ?? StructuredPromptDraftState(
+            sessionId: prompt.sessionId,
+            requestId: prompt.requestId,
+            answersByQuestionID: [:]
+        )
+        var draft = state.answersByQuestionID[question.id] ?? StructuredPromptAnswerDraft()
+
+        if question.multiSelect == true {
+            if draft.selectedOptions.contains(label) {
+                draft.selectedOptions.remove(label)
+            } else {
+                draft.selectedOptions.insert(label)
+            }
+        } else {
+            draft.selectedOptions = [label]
+        }
+
+        state.answersByQuestionID[question.id] = draft
+        structuredPromptDraftBySession[prompt.sessionId] = state
+    }
+
+    func canSubmitStructuredPrompt(_ prompt: StructuredPromptRequest) -> Bool {
+        return prompt.questions.allSatisfy { question in
+            let draft = structuredPromptDraft(for: question, in: prompt)
+            return question.isSatisfied(
+                selectedOptions: draft.selectedOptions,
+                freeText: draft.freeText
+            )
+        }
+    }
+
+    func structuredPromptSubmissions(for prompt: StructuredPromptRequest) -> [StructuredPromptSubmission] {
+        synchronizeStructuredPromptDrafts(with: prompt)
+        return prompt.questions.map { question in
+            let draft = structuredPromptDraft(for: question, in: prompt)
+            let optionOrder = (question.options ?? []).map(\.label)
+            let orderedSelections = optionOrder.filter { draft.selectedOptions.contains($0) }
+            let customSelections = draft.selectedOptions
+                .filter { !optionOrder.contains($0) }
+                .sorted()
+            return StructuredPromptSubmission(
+                question: question.question,
+                selectedOptions: orderedSelections + customSelections,
+                freeText: draft.freeText.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
     }
 
     var sidecarFailureMessage: String? {
@@ -602,8 +787,60 @@ final class AgenticViewModel: ObservableObject {
         return message
     }
 
+    private static func loadMacOnboardingIntroCompleted(defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: macOnboardingIntroCompletedDefaultsKey)
+    }
+
+    private static func saveMacOnboardingIntroCompleted(defaults: UserDefaults = .standard) {
+        defaults.set(true, forKey: macOnboardingIntroCompletedDefaultsKey)
+    }
+
+    private static func resetMacOnboardingIntroCompleted(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: macOnboardingIntroCompletedDefaultsKey)
+    }
+
     func requestWorkspaceSettingsOpen() {
         workspaceSettingsOpenRequest += 1
+    }
+
+    func requestWorkspaceSwitcherTourOpen() {
+        workspaceSwitcherTourOpenRequest += 1
+    }
+
+    func requestWorkspaceCurriculumNavigatorTourOpen() {
+        workspaceCurriculumNavigatorTourOpenRequest += 1
+    }
+
+    func requestWorkspaceSettingsTourOpen() {
+        workspaceSettingsTourOpenRequest += 1
+    }
+
+    func requestWorkspaceHelpTourOpen() {
+        workspaceHelpTourOpenRequest += 1
+    }
+
+    func requestWorkspaceRecentConversationsTourOpen() {
+        workspaceRecentConversationsTourOpenRequest += 1
+    }
+
+    func setGuidedDay1OverlayActive(_ active: Bool) {
+        guidedDay1OverlayActive = active
+        if active {
+            day1InterviewTutorialMode = .guided
+        }
+        PostHogTelemetry.capture("mac_guided_day1_overlay_state_changed", properties: [
+            "active": active,
+            "interviewMode": day1InterviewTutorialMode.rawValue,
+        ], authSession: macAuthSession)
+    }
+
+    func skipGuidedDay1Overlay() {
+        guidedDay1OverlayActive = false
+        day1InterviewTutorialMode = .unguided
+        PostHogTelemetry.capture("mac_guided_day1_overlay_skipped", properties: [
+            "interviewMode": day1InterviewTutorialMode.rawValue,
+            "overlayActive": guidedDay1OverlayActive,
+        ], authSession: macAuthSession)
     }
 
     func requestBipNotificationOpen(
@@ -750,6 +987,10 @@ final class AgenticViewModel: ObservableObject {
 
     var needsProjectWorkspace: Bool {
         !WorkspaceSettings.hasExplicitWorkspace
+    }
+
+    var needsOnboardingIntro: Bool {
+        onboardingContext == nil && !macOnboardingIntroCompleted
     }
 
     var needsOnboardingContext: Bool {
@@ -1192,8 +1433,9 @@ final class AgenticViewModel: ObservableObject {
         sessionId: String? = nil,
         dynamicVariables: [String: Any]? = nil
     ) {
-        let resolvedSessionId = sessionId ?? selectedSessionID
+        let resolvedSessionId = sessionId ?? currentBipCoachSessionID()
         guard let resolvedSessionId, !resolvedSessionId.isEmpty else { return }
+        guard isConnected else { return }
         guard (0...7).contains(day) else {
             PostHogTelemetry.capture(
                 "mac_foundation_first_prompt_request_rejected",
@@ -1721,6 +1963,10 @@ final class AgenticViewModel: ObservableObject {
         ]
         if let onboardingContext {
             bundle["onboardingContext"] = [
+                "business_description": onboardingContext.businessDescription,
+                "current_stage": onboardingContext.currentStage,
+                "goal": onboardingContext.goal,
+                "custom_work_mode": onboardingContext.customWorkMode,
                 "work_mode": onboardingContext.workMode.rawValue,
                 "role": onboardingContext.role.rawValue,
                 "project_stage": onboardingContext.projectStage.rawValue,
@@ -1867,8 +2113,18 @@ final class AgenticViewModel: ObservableObject {
     func resetMacOnboarding() {
         signOutMacAuth()
         KeychainHelper.deleteOnboardingContext()
+        Self.resetMacOnboardingIntroCompleted()
+        macOnboardingIntroCompleted = false
         onboardingContext = nil
         onboardingContextStatus = .idle
+    }
+
+    func completeMacOnboardingIntro() {
+        Self.saveMacOnboardingIntroCompleted()
+        macOnboardingIntroCompleted = true
+        PostHogTelemetry.capture("mac_onboarding_intro_completed", properties: [
+            "total_scenes": OnboardingCompletionTiming.programIntroSceneCount,
+        ], authSession: macAuthSession)
     }
 
     func submitOnboardingContext(_ context: OnboardingContext) {
@@ -1878,7 +2134,11 @@ final class AgenticViewModel: ObservableObject {
             onboardingContext = context
             onboardingContextStatus = .idle
             PostHogTelemetry.capture("mac_onboarding_context_submitted", properties: [
+                "has_business_description": !context.businessDescription.isEmpty,
+                "has_current_stage": !context.currentStage.isEmpty,
+                "has_goal": !context.goal.isEmpty,
                 "work_mode": context.workMode.rawValue,
+                "has_custom_work_mode": !context.customWorkMode.isEmpty,
                 "role": context.role.rawValue,
                 "project_stage": context.projectStage.rawValue,
                 "isolation_level": context.isolationLevel.rawValue,
@@ -2085,6 +2345,10 @@ final class AgenticViewModel: ObservableObject {
         }
         if let onboardingContext {
             payload["onboardingContext"] = [
+                "business_description": onboardingContext.businessDescription,
+                "current_stage": onboardingContext.currentStage,
+                "goal": onboardingContext.goal,
+                "custom_work_mode": onboardingContext.customWorkMode,
                 "work_mode": onboardingContext.workMode.rawValue,
                 "role": onboardingContext.role.rawValue,
                 "project_stage": onboardingContext.projectStage.rawValue,
@@ -2283,6 +2547,9 @@ final class AgenticViewModel: ObservableObject {
                 requestCodexWarmupIfNeeded()
                 flushStartupQueuedActionIfPossible()
             }
+        case "curriculum_original_question_reframed":
+            applyCurriculumQuestionReframe(event)
+            refreshPresentationState()
         case "idd_setup_progress":
             updateStructuredPromptSubmissionProgress(from: event)
             refreshPresentationState()
@@ -2804,9 +3071,11 @@ final class AgenticViewModel: ObservableObject {
             return
         }
 
-        let pendingUserInput = Self.makeUITestingIcpStructuredPromptIfNeeded(sessionID: UUID().uuidString, createdAt: now)
+        let stubSessionID = UUID().uuidString
+        let pendingUserInput = Self.makeUITestingFoundationDay2QuestionIfNeeded(sessionID: stubSessionID, createdAt: now)
+            ?? Self.makeUITestingIcpStructuredPromptIfNeeded(sessionID: stubSessionID, createdAt: now)
         let session = ChatSession(
-            id: pendingUserInput?.sessionId ?? UUID().uuidString,
+            id: pendingUserInput?.sessionId ?? stubSessionID,
             title: "Codex Assistant",
             provider: selectedProvider,
             model: preferredModel(for: selectedProvider),
@@ -2834,6 +3103,60 @@ final class AgenticViewModel: ObservableObject {
         selectedSessionID = session.id
         seedInlineUITestBipCoachIfNeeded()
         refreshPresentationState()
+    }
+
+    private static func makeUITestingFoundationDay2QuestionIfNeeded(
+        sessionID: String,
+        createdAt: Date
+    ) -> StructuredPromptRequest? {
+        #if DEBUG
+        guard CommandLine.arguments.contains("--ui-testing-seed-foundation-day2-question") else {
+            return nil
+        }
+        return StructuredPromptRequest(
+            requestId: "ui-test-foundation-day2-question",
+            sessionId: sessionID,
+            toolName: "foundation_day_2_resume_question",
+            title: "Day 2 Market 질문",
+            createdAt: createdAt,
+            intro: StructuredPromptIntro(
+                title: "Day 2 기준",
+                body: "이어지는 질문부터 바로 답하면 됩니다.",
+                bullets: []
+            ),
+            resources: [],
+            questions: [
+                StructuredPromptQuestion(
+                    questionId: "day2_market_reference",
+                    header: "기준 시장",
+                    question: "이미 돈을 내는 기준 시장은 어디인가요?",
+                    helperText: "카테고리 1개와 유료 대체재 1개만 먼저 적어보세요.",
+                    options: [
+                        StructuredPromptOption(
+                            label: "Mac 앱",
+                            description: "메뉴바, 생산성, 개발자 도구처럼 이미 결제 중인 Mac 앱 시장입니다.",
+                            preview: nil,
+                            nextIntent: "mac_app_market"
+                        ),
+                        StructuredPromptOption(
+                            label: "Web SaaS",
+                            description: "팀이나 개인이 반복 업무 해결에 돈을 내는 웹 도구 시장입니다.",
+                            preview: nil,
+                            nextIntent: "web_saas_market"
+                        ),
+                    ],
+                    multiSelect: false,
+                    allowFreeText: true,
+                    requiresFreeText: true,
+                    freeTextPlaceholder: "예: 회의 요약 SaaS, 월 $15 도구",
+                    textMode: .short
+                )
+            ],
+            generation: StructuredPromptGeneration(mode: "host_structured", docType: "day2_market")
+        )
+        #else
+        return nil
+        #endif
     }
 
     private static func makeUITestingIcpStructuredPromptIfNeeded(
@@ -2892,13 +3215,14 @@ final class AgenticViewModel: ObservableObject {
     private func seedInlineUITestBipCoachIfNeeded() {
         #if DEBUG
         let seedCurrentMission = CommandLine.arguments.contains("--ui-testing-seed-bip-current-mission")
+        let seedCompletedMission = CommandLine.arguments.contains("--ui-testing-seed-bip-completed-mission")
         let seedLocalMissionChoices = CommandLine.arguments.contains("--ui-testing-seed-bip-local-mission-choices")
-        guard (seedCurrentMission || seedLocalMissionChoices),
+        guard (seedCurrentMission || seedCompletedMission || seedLocalMissionChoices),
               let sessionID = selectedSessionID else {
             return
         }
 
-        if seedCurrentMission {
+        if seedCurrentMission || seedCompletedMission {
             var readiness = BipReadinessState.loading
             for rowID in BipReadinessRowId.bipCoachSetupCases {
                 readiness.rows[rowID] = BipReadinessRow(
@@ -2913,7 +3237,7 @@ final class AgenticViewModel: ObservableObject {
         }
         bipCoach = seedLocalMissionChoices
             ? Self.makeUITestingLocalBipCoachState(sessionID: sessionID)
-            : Self.makeUITestingBipCoachState(sessionID: sessionID)
+            : Self.makeUITestingBipCoachState(sessionID: sessionID, isCompleted: seedCompletedMission)
         #endif
     }
 
@@ -2937,7 +3261,7 @@ final class AgenticViewModel: ObservableObject {
         #endif
     }
 
-    private static func makeUITestingBipCoachState(sessionID: String) -> BipCoachState {
+    private static func makeUITestingBipCoachState(sessionID: String, isCompleted: Bool = false) -> BipCoachState {
         BipCoachState(
             schemaVersion: 1,
             updatedAt: Date(),
@@ -2959,19 +3283,20 @@ final class AgenticViewModel: ObservableObject {
                 id: "ui-test-bip-mission",
                 date: "2026-04-27",
                 provider: AgentProvider.codex.rawValue,
-                status: "drafted",
+                status: isCompleted ? "completed" : "drafted",
                 compact: false,
                 title: "오늘 배운 점을 Threads에 공개하기",
                 angle: "작게 배운 것을 공개 기록으로 바꾸기",
                 mission: "오늘 작업에서 배운 점 1개와 다음 액션 1개를 Threads에 올리세요.",
-                curriculumDay: nil,
+                curriculumDay: isCompleted ? BipCoachCurriculumDay(day: 1) : nil,
                 drafts: [],
                 eveningChecklist: ["Threads URL 남기기", "Sheet 행 메모 남기기"],
                 evidenceRefs: [],
                 generatedAt: Date(),
-                completedAt: nil,
-                threadsUrl: nil,
-                sheetRowNote: nil
+                completedAt: isCompleted ? Date() : nil,
+                completedQuestionCount: isCompleted ? 3 : nil,
+                threadsUrl: isCompleted ? "https://threads.net/@october/post/proof" : nil,
+                sheetRowNote: isCompleted ? "오늘 배운 점과 다음 액션 기록" : nil
             ),
             streak: BipCoachStreak(current: 1, longest: 2, lastCompletedDate: nil),
             lastError: nil
@@ -2996,6 +3321,7 @@ final class AgenticViewModel: ObservableObject {
                 evidenceRefs: [],
                 generatedAt: now,
                 completedAt: nil,
+                completedQuestionCount: nil,
                 threadsUrl: nil,
                 sheetRowNote: nil
             )
@@ -3135,6 +3461,78 @@ final class AgenticViewModel: ObservableObject {
         upsert(session)
     }
 
+    func applyCurriculumQuestionReframeForTesting(
+        sessionId: String,
+        questionId: String?,
+        originalQuestion: String? = nil,
+        reframedQuestion: String
+    ) {
+        let event = SidecarEvent(
+            type: "curriculum_original_question_reframed",
+            message: nil,
+            sessionId: sessionId,
+            messageId: nil,
+            delta: nil,
+            content: nil,
+            workspaceRoot: nil,
+            session: nil,
+            sessions: nil,
+            environment: nil,
+            diagnostics: nil,
+            bipCoach: nil,
+            bipSetupReady: nil,
+            day: nil,
+            firstPrompt: nil,
+            missingLocalDocs: nil,
+            missingExternalRequirements: nil,
+            nextIddDocumentType: nil,
+            nextIddDocumentTitle: nil,
+            bipSetupGateMessage: nil,
+            scanRoot: nil,
+            icp: nil,
+            spec: nil,
+            values: nil,
+            designSystem: nil,
+            adr: nil,
+            goal: nil,
+            docs: nil,
+            sheet: nil,
+            onboardingHypothesis: nil,
+            error: nil,
+            docType: nil,
+            docPath: nil,
+            progressText: nil,
+            notionConnected: nil,
+            success: nil,
+            disconnected: nil,
+            authUrl: nil,
+            rowId: nil,
+            status: nil,
+            detail: nil,
+            log: nil,
+            readinessError: nil,
+            bipTokenExpiredMessage: nil,
+            resourceName: nil,
+            resourceUrl: nil,
+            stage: nil,
+            provider: nil,
+            sheetRowsRead: nil,
+            docCharsRead: nil,
+            elapsedMs: nil,
+            phase: nil,
+            toolName: nil,
+            summary: nil,
+            items: nil,
+            result: nil,
+            weeklyRitualPrompt: nil,
+            requestEmit: nil,
+            questionId: questionId,
+            originalQuestion: originalQuestion,
+            reframedQuestion: reframedQuestion
+        )
+        applyCurriculumQuestionReframe(event)
+    }
+
     func setIddCurrentDocTypeForTesting(_ docType: String?) {
         iddCurrentDocType = docType
     }
@@ -3226,8 +3624,9 @@ final class AgenticViewModel: ObservableObject {
     #endif
 
     private func upsert(_ session: ChatSession) {
-        let session = sanitizedSessionSnapshot(session)
+        let session = sessionByApplyingCurriculumQuestionReframeGuards(to: sanitizedSessionSnapshot(session))
         reconcileStructuredPromptSubmissionState(with: session)
+        reconcileStructuredPromptDraftState(with: session)
         if let index = sessions.firstIndex(where: { $0.id == session.id }) {
             sessions[index] = mergeSessionSnapshot(session, into: sessions[index])
         } else {
@@ -3259,6 +3658,16 @@ final class AgenticViewModel: ObservableObject {
         }
     }
 
+    private func reconcileStructuredPromptDraftState(with incoming: ChatSession) {
+        guard let prompt = incoming.pendingUserInput else {
+            structuredPromptDraftBySession.removeValue(forKey: incoming.id)
+            pruneCurriculumQuestionReframeRecords(sessionId: incoming.id)
+            return
+        }
+        pruneCurriculumQuestionReframeRecords(sessionId: incoming.id, activePrompt: prompt)
+        synchronizeStructuredPromptDrafts(with: prompt)
+    }
+
     private func updateStructuredPromptSubmissionProgress(from event: SidecarEvent) {
         guard let sessionId = event.sessionId,
               let requestId = event.requestId,
@@ -3275,6 +3684,192 @@ final class AgenticViewModel: ObservableObject {
         submitted.progressUpdatedAt = .now
         submitted.elapsedMs = event.elapsedMs
         submittedStructuredPromptBySession[sessionId] = submitted
+    }
+
+    private func applyCurriculumQuestionReframe(_ event: SidecarEvent) {
+        guard let sessionId = event.sessionId,
+              let reframedQuestion = event.reframedQuestion?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty,
+              let index = sessions.firstIndex(where: { $0.id == sessionId }) else { return }
+
+        var session = sessions[index]
+        let targetQuestionId = event.questionId?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+        var didApply = false
+
+        if let pendingUserInput = session.pendingUserInput,
+           let questionIndex = indexOfQuestionToReframe(
+                in: pendingUserInput.questions,
+                targetQuestionId: targetQuestionId,
+                originalQuestion: event.originalQuestion
+           ) {
+            var questions = pendingUserInput.questions
+            let existing = questions[questionIndex]
+            questions[questionIndex] = existing.replacingQuestionText(
+                reframedQuestion,
+                preservingIdentity: existing.id
+            )
+            session.pendingUserInput = StructuredPromptRequest(
+                requestId: pendingUserInput.requestId,
+                sessionId: pendingUserInput.sessionId,
+                toolName: pendingUserInput.toolName,
+                title: pendingUserInput.title,
+                createdAt: pendingUserInput.createdAt,
+                intro: pendingUserInput.intro,
+                resources: pendingUserInput.resources,
+                questions: questions,
+                generation: pendingUserInput.generation
+            )
+            recordCurriculumQuestionReframe(
+                sessionId: session.id,
+                requestId: pendingUserInput.requestId,
+                questionId: existing.id,
+                reframedQuestion: reframedQuestion
+            )
+            didApply = true
+        }
+
+        session = sessionByApplyingCurriculumQuestionReframeGuards(to: session)
+
+        session.messages = session.messages.map { message in
+            guard let inlineDecision = message.inlineDecision,
+                  shouldReframeQuestion(
+                    inlineDecision,
+                    targetQuestionId: targetQuestionId,
+                    originalQuestion: event.originalQuestion
+                  ) else {
+                return message
+            }
+            var updated = message
+            updated.inlineDecision = inlineDecision.replacingQuestionText(
+                reframedQuestion,
+                preservingIdentity: inlineDecision.id
+            )
+            if updated.content == inlineDecision.question {
+                updated.content = reframedQuestion
+            }
+            didApply = true
+            return updated
+        }
+
+        guard didApply else { return }
+        var updatedSessions = sessions
+        updatedSessions[index] = session
+        sessions = updatedSessions
+        reconcileStructuredPromptDraftState(with: session)
+    }
+
+    private func indexOfQuestionToReframe(
+        in questions: [StructuredPromptQuestion],
+        targetQuestionId: String?,
+        originalQuestion: String?
+    ) -> Int? {
+        if let targetQuestionId {
+            return questions.firstIndex { $0.id == targetQuestionId || $0.questionId == targetQuestionId }
+        }
+        if let originalQuestion = originalQuestion?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty {
+            return questions.firstIndex { $0.question == originalQuestion }
+        }
+        return questions.count == 1 ? questions.startIndex : nil
+    }
+
+    private func shouldReframeQuestion(
+        _ question: StructuredPromptQuestion,
+        targetQuestionId: String?,
+        originalQuestion: String?
+    ) -> Bool {
+        if let targetQuestionId {
+            return question.id == targetQuestionId || question.questionId == targetQuestionId
+        }
+        if let originalQuestion = originalQuestion?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty {
+            return question.question == originalQuestion
+        }
+        return false
+    }
+
+    private func sessionByApplyingCurriculumQuestionReframeGuards(to session: ChatSession) -> ChatSession {
+        guard let prompt = session.pendingUserInput else { return session }
+        var seenQuestionIds = Set<String>()
+        var questions: [StructuredPromptQuestion] = []
+        var didChange = false
+
+        for question in prompt.questions {
+            let questionId = question.id
+            guard seenQuestionIds.insert(questionId).inserted else {
+                didChange = true
+                continue
+            }
+
+            guard let record = latestCurriculumQuestionReframesByKey[curriculumQuestionReframeKey(
+                sessionId: session.id,
+                requestId: prompt.requestId,
+                questionId: questionId
+            )] else {
+                questions.append(question)
+                continue
+            }
+
+            if question.question == record.reframedQuestion {
+                questions.append(question)
+            } else {
+                questions.append(question.replacingQuestionText(
+                    record.reframedQuestion,
+                    preservingIdentity: questionId
+                ))
+                didChange = true
+            }
+        }
+
+        guard didChange else { return session }
+        var updated = session
+        updated.pendingUserInput = StructuredPromptRequest(
+            requestId: prompt.requestId,
+            sessionId: prompt.sessionId,
+            toolName: prompt.toolName,
+            title: prompt.title,
+            createdAt: prompt.createdAt,
+            intro: prompt.intro,
+            resources: prompt.resources,
+            questions: questions,
+            generation: prompt.generation
+        )
+        return updated
+    }
+
+    private func recordCurriculumQuestionReframe(
+        sessionId: String,
+        requestId: String,
+        questionId: String,
+        reframedQuestion: String
+    ) {
+        latestCurriculumQuestionReframesByKey[curriculumQuestionReframeKey(
+            sessionId: sessionId,
+            requestId: requestId,
+            questionId: questionId
+        )] = CurriculumQuestionReframeRecord(
+            sessionId: sessionId,
+            requestId: requestId,
+            questionId: questionId,
+            reframedQuestion: reframedQuestion
+        )
+    }
+
+    private func pruneCurriculumQuestionReframeRecords(
+        sessionId: String,
+        activePrompt: StructuredPromptRequest? = nil
+    ) {
+        latestCurriculumQuestionReframesByKey = latestCurriculumQuestionReframesByKey.filter { _, record in
+            guard record.sessionId == sessionId else { return true }
+            guard let activePrompt else { return false }
+            guard record.requestId == activePrompt.requestId else { return false }
+            return activePrompt.questions.contains { $0.id == record.questionId }
+        }
+    }
+
+    private func curriculumQuestionReframeKey(
+        sessionId: String,
+        requestId: String,
+        questionId: String
+    ) -> String {
+        [sessionId, requestId, questionId].joined(separator: "\u{1F}")
     }
 
     private func mergeSessionSnapshot(_ incoming: ChatSession, into current: ChatSession) -> ChatSession {
@@ -3682,6 +4277,9 @@ final class AgenticViewModel: ObservableObject {
     private static func makeUITestingOnboardingContext(arguments: [String]) -> OnboardingContext? {
         guard arguments.contains("--ui-testing-seed-onboarding-context") else { return nil }
         return OnboardingContext.make(
+            businessDescription: "Agentic30 dogfood workspace",
+            currentStage: "First users and onboarding validation",
+            goal: "Complete Day 1 and verify curriculum setup",
             role: .developer,
             projectStage: .firstUsers,
             isolationLevel: .projectFolder
@@ -3740,6 +4338,171 @@ struct FoundationProgressSnapshot: Codable, Hashable {
     func isUnlocked(_ day: Int) -> Bool {
         if day <= 1 { return true }
         return completedDays.contains(day - 1)
+    }
+
+    var presentationDestination: FoundationCurriculumPresentationDestination {
+        if completedDays.contains(30) {
+            return .graduation
+        }
+        return .curriculumDay(max(1, min(selectedDay, 30)))
+    }
+}
+
+enum FoundationCurriculumPresentationDestination: Hashable {
+    case curriculumDay(Int)
+    case graduation
+}
+
+enum FoundationCurriculumLifecycleTransition: Hashable {
+    case curriculumDay(Int)
+    case graduation
+}
+
+struct FoundationCurriculumSurfaceVisibilitySnapshot: Hashable {
+    let applicationIsRunning: Bool
+    let activeMenubarSurfaceIsVisible: Bool
+}
+
+struct MacMenubarItemRegistrationSnapshot: Hashable {
+    let isRegistered: Bool
+}
+
+struct MacMenubarItemController {
+    private let menuBarItemIsRegistered: @MainActor () -> Bool
+    private let unregisterMenuBarItem: @MainActor () -> Void
+
+    init(
+        menuBarItemIsRegistered: @escaping @MainActor () -> Bool = { true },
+        unregisterMenuBarItem: @escaping @MainActor () -> Void = {}
+    ) {
+        self.menuBarItemIsRegistered = menuBarItemIsRegistered
+        self.unregisterMenuBarItem = unregisterMenuBarItem
+    }
+
+    @MainActor
+    func enterCompletedOrGraduatedState() -> MacMenubarItemRegistrationSnapshot {
+        MacMenubarItemRegistrationSnapshot(isRegistered: menuBarItemIsRegistered())
+    }
+
+    @MainActor
+    func unregisterFromExplicitApplicationTeardown() {
+        unregisterMenuBarItem()
+    }
+}
+
+struct FoundationCurriculumSurfaceVisibilityController {
+    private let applicationIsRunning: @MainActor () -> Bool
+    private let activeMenubarSurfaceIsVisible: @MainActor () -> Bool
+    private let hideApplication: @MainActor () -> Void
+    private let hideActiveMenubarSurface: @MainActor () -> Void
+
+    init(
+        applicationIsRunning: @escaping @MainActor () -> Bool = { true },
+        activeMenubarSurfaceIsVisible: @escaping @MainActor () -> Bool = { true },
+        hideApplication: @escaping @MainActor () -> Void = {},
+        hideActiveMenubarSurface: @escaping @MainActor () -> Void = {}
+    ) {
+        self.applicationIsRunning = applicationIsRunning
+        self.activeMenubarSurfaceIsVisible = activeMenubarSurfaceIsVisible
+        self.hideApplication = hideApplication
+        self.hideActiveMenubarSurface = hideActiveMenubarSurface
+    }
+
+    @MainActor
+    func enterCompletedOrGraduatedState() -> FoundationCurriculumSurfaceVisibilitySnapshot {
+        FoundationCurriculumSurfaceVisibilitySnapshot(
+            applicationIsRunning: applicationIsRunning(),
+            activeMenubarSurfaceIsVisible: activeMenubarSurfaceIsVisible()
+        )
+    }
+
+    @MainActor
+    func hideApplicationFromExplicitUserRequest() {
+        hideApplication()
+    }
+
+    @MainActor
+    func hideActiveMenubarSurfaceFromExplicitUserRequest() {
+        hideActiveMenubarSurface()
+    }
+}
+
+struct FoundationCurriculumLifecycleController {
+    private let terminateApplication: @MainActor () -> Void
+    private let quitApplication: @MainActor () -> Void
+    private let surfaceVisibilityController: FoundationCurriculumSurfaceVisibilityController
+    private let menubarItemController: MacMenubarItemController
+
+    init(
+        terminateApplication: @escaping @MainActor () -> Void = {},
+        quitApplication: @escaping @MainActor () -> Void = {},
+        surfaceVisibilityController: FoundationCurriculumSurfaceVisibilityController = FoundationCurriculumSurfaceVisibilityController(),
+        menubarItemController: MacMenubarItemController = MacMenubarItemController()
+    ) {
+        self.terminateApplication = terminateApplication
+        self.quitApplication = quitApplication
+        self.surfaceVisibilityController = surfaceVisibilityController
+        self.menubarItemController = menubarItemController
+    }
+
+    @MainActor
+    func enterCompletedState(_ snapshot: FoundationProgressSnapshot) -> FoundationCurriculumLifecycleTransition {
+        switch snapshot.presentationDestination {
+        case .curriculumDay(let day):
+            return .curriculumDay(day)
+        case .graduation:
+            _ = surfaceVisibilityController.enterCompletedOrGraduatedState()
+            _ = menubarItemController.enterCompletedOrGraduatedState()
+            return .graduation
+        }
+    }
+
+    @MainActor
+    func surfaceVisibilityAfterEnteringCompletedState(
+        _ snapshot: FoundationProgressSnapshot
+    ) -> FoundationCurriculumSurfaceVisibilitySnapshot? {
+        guard snapshot.presentationDestination == .graduation else {
+            return nil
+        }
+        return surfaceVisibilityController.enterCompletedOrGraduatedState()
+    }
+
+    @MainActor
+    func menubarItemRegistrationAfterEnteringCompletedState(
+        _ snapshot: FoundationProgressSnapshot
+    ) -> MacMenubarItemRegistrationSnapshot? {
+        guard snapshot.presentationDestination == .graduation else {
+            return nil
+        }
+        return menubarItemController.enterCompletedOrGraduatedState()
+    }
+
+    @MainActor
+    func terminateFromExplicitUserRequest() {
+        terminateApplication()
+    }
+
+    @MainActor
+    func quitFromExplicitUserRequest() {
+        quitApplication()
+    }
+
+    @MainActor
+    func hideApplicationFromExplicitUserRequest() {
+        surfaceVisibilityController.hideApplicationFromExplicitUserRequest()
+    }
+
+    @MainActor
+    func hideActiveMenubarSurfaceFromExplicitUserRequest() {
+        surfaceVisibilityController.hideActiveMenubarSurfaceFromExplicitUserRequest()
+    }
+}
+
+struct FoundationCurriculumPresentationViewModel: Hashable {
+    let destination: FoundationCurriculumPresentationDestination
+
+    init(snapshot: FoundationProgressSnapshot) {
+        destination = snapshot.presentationDestination
     }
 }
 
@@ -3815,6 +4578,45 @@ struct FoundationProgressStore {
     }
 }
 
+struct FoundationDayCompletionSaveResult: Hashable {
+    let completedDay: Int
+    let unlockedDay: Int
+    let snapshot: FoundationProgressSnapshot
+}
+
+struct FoundationDayCompletionSaveHandler {
+    let store: FoundationProgressStore?
+
+    func saveDayCompletion(
+        _ day: Int,
+        snapshot: FoundationProgressSnapshot,
+        workspaceRoot: String
+    ) -> FoundationDayCompletionSaveResult {
+        let completedDay = max(1, min(day, 30))
+        var next = snapshot
+        next.workspaceRoot = workspaceRoot
+        next.completedDays.insert(completedDay)
+        next.selectedDay = min(max(next.selectedDay, completedDay + 1), 30)
+        if !next.isUnlocked(next.selectedDay) {
+            next.selectedDay = 1
+        }
+        store?.save(next)
+        return FoundationDayCompletionSaveResult(
+            completedDay: completedDay,
+            unlockedDay: next.selectedDay,
+            snapshot: next
+        )
+    }
+}
+
+#if DEBUG
+extension AgenticViewModel {
+    func resetVolatileLocalUserDataStateForTesting() {
+        resetVolatileLocalUserDataState()
+    }
+}
+#endif
+
 private extension AgenticViewModel {
     static func sidecarDateString(from date: Date) -> String {
         let formatter = ISO8601DateFormatter()
@@ -3844,6 +4646,7 @@ private extension AgenticViewModel {
         lastDocCreated = nil
         macAuthSession = nil
         macOnboardingStatus = .idle
+        macOnboardingIntroCompleted = false
         onboardingContext = nil
         onboardingContextStatus = .idle
         bipCoach = nil
@@ -3872,10 +4675,14 @@ private extension AgenticViewModel {
         providerAuthMessage = nil
         sentPromptPreviews = [:]
         submittedStructuredPromptBySession = [:]
+        structuredPromptDraftBySession = [:]
         sidecarOutputLogs = [:]
+        guidedDay1OverlayActive = false
+        day1InterviewTutorialMode = .guided
         bipNotificationOpenRequest = nil
         startupQueuedAction = nil
         startupSessionAppearElapsedMs = nil
+        reviewDayDashboardViewModel = nil
         foundationStartedAt = nil
         foundationProgressState = FoundationProgressSnapshot(workspaceRoot: WorkspaceSettings.resolvedURL().path)
         notionConnected = false
@@ -3894,6 +4701,7 @@ private extension AgenticViewModel {
         requestedInitialBipGate = false
         requestedInitialBipMission = false
         replacementSessionCreateInFlight = false
+        latestCurriculumQuestionReframesByKey = [:]
         injectedFoundationFirstPromptKeys = []
         pendingFoundationFirstPromptKeys = []
         startupSessionAppearStartedAt = nil
@@ -3908,6 +4716,35 @@ private extension AgenticViewModel {
             store.clear()
             UserDefaults.standard.removeObject(forKey: Self.kFoundationStartedAtKey)
         }
+
+        #if DEBUG
+        if arguments.contains("--ui-testing-seed-review-day-dashboard") {
+            let snapshot = FoundationProgressSnapshot(
+                workspaceRoot: WorkspaceSettings.resolvedURL().path,
+                startedAt: Date(timeIntervalSince1970: 0),
+                selectedDay: 7,
+                completedDays: Set(1...6)
+            )
+            store.save(snapshot)
+            foundationProgressState = snapshot
+            foundationStartedAt = snapshot.startedAt
+            reviewDayDashboardViewModel = Self.makeUITestingReviewDayDashboardViewModel()
+            return
+        }
+
+        if arguments.contains("--ui-testing-seed-foundation-graduation") {
+            let snapshot = FoundationProgressSnapshot(
+                workspaceRoot: WorkspaceSettings.resolvedURL().path,
+                startedAt: Date(timeIntervalSince1970: 0),
+                selectedDay: 30,
+                completedDays: Set(1...30)
+            )
+            store.save(snapshot)
+            foundationProgressState = snapshot
+            foundationStartedAt = snapshot.startedAt
+            return
+        }
+        #endif
 
         if var stored = store.load() {
             stored.selectedDay = stored.isUnlocked(stored.selectedDay) ? stored.selectedDay : 1
@@ -3926,6 +4763,41 @@ private extension AgenticViewModel {
         foundationProgressState = snapshot
         foundationStartedAt = snapshot.startedAt
     }
+
+    #if DEBUG
+    private static func makeUITestingReviewDayDashboardViewModel() -> ReviewDayDashboardViewModel {
+        ReviewDayDashboardViewModel(
+            schemaVersion: 1,
+            componentType: "curriculum_review_day_view_model",
+            reviewDay: 7,
+            dayRange: ReviewDayRange(start: 1, end: 7),
+            tone: "deceleration_coaching",
+            curatedMetrics: [
+                ReviewDayDashboardMetric(
+                    label: "완료 Days",
+                    value: "6/7",
+                    trend: "steady",
+                    intent: "Review Day에 표시할 진행 범위",
+                    status: "watch"
+                ),
+                ReviewDayDashboardMetric(
+                    label: "검증된 Actions",
+                    value: "3",
+                    trend: "evidence-backed",
+                    intent: "자동 검증 또는 증거가 있는 실행 수",
+                    status: "healthy"
+                ),
+            ],
+            insights: [
+                "완료 속도는 좋지만 Day 8 전에는 미완료 Action 1개를 작게 닫아보세요.",
+            ],
+            nextSteps: [
+                "가격 ask 링크 1개를 남기고 다음 Action Day에서 자동 검증해보세요.",
+            ],
+            isEmpty: false
+        )
+    }
+    #endif
 
     func ensureFoundationProgressStore() {
         let root = WorkspaceSettings.resolvedURL().path
@@ -4162,6 +5034,9 @@ struct SidecarEvent: Decodable {
     // R6 weekly ritual prompt payload (`weekly_ritual_prompt` event).
     let weeklyRitualPrompt: WeeklyRitualPrompt?
     let requestEmit: SidecarRequestEmit?
+    let questionId: String?
+    let originalQuestion: String?
+    let reframedQuestion: String?
 
     init(
         type: String,
@@ -4231,7 +5106,10 @@ struct SidecarEvent: Decodable {
         items: [QuarantineFileWithDump]?,
         result: QuarantineRestoreResult?,
         weeklyRitualPrompt: WeeklyRitualPrompt?,
-        requestEmit: SidecarRequestEmit?
+        requestEmit: SidecarRequestEmit?,
+        questionId: String? = nil,
+        originalQuestion: String? = nil,
+        reframedQuestion: String? = nil
     ) {
         self.type = type
         self.message = message
@@ -4301,6 +5179,9 @@ struct SidecarEvent: Decodable {
         self.result = result
         self.weeklyRitualPrompt = weeklyRitualPrompt
         self.requestEmit = requestEmit
+        self.questionId = questionId
+        self.originalQuestion = originalQuestion
+        self.reframedQuestion = reframedQuestion
     }
 
     var bipMissionProgress: BipMissionProgress? {
@@ -4646,6 +5527,18 @@ extension SidecarEvent {
         case result
         // R6 weekly ritual broadcast
         case weeklyRitualPrompt = "prompt"
+        case questionId
+        case questionID = "question_id"
+        case activeQuestionId
+        case activeQuestionID = "active_question_id"
+        case currentQuestionId
+        case currentQuestionID = "current_question_id"
+        case originalQuestion
+        case originalQuestionID = "original_question"
+        case reframedQuestion
+        case reframedQuestionID = "reframed_question"
+        case reframedVariant
+        case reframedVariantID = "reframed_variant"
     }
 
     init(from decoder: Decoder) throws {
@@ -4723,6 +5616,18 @@ extension SidecarEvent {
         result = Self.decodeIfPresent(QuarantineRestoreResult.self, from: container, forKey: .result)
         weeklyRitualPrompt = Self.decodeIfPresent(WeeklyRitualPrompt.self, from: container, forKey: .weeklyRitualPrompt)
         requestEmit = type == "request_emit" ? try SidecarRequestEmit(from: decoder) : nil
+        questionId = Self.decodeIfPresent(String.self, from: container, forKey: .questionId)
+            ?? Self.decodeIfPresent(String.self, from: container, forKey: .questionID)
+            ?? Self.decodeIfPresent(String.self, from: container, forKey: .activeQuestionId)
+            ?? Self.decodeIfPresent(String.self, from: container, forKey: .activeQuestionID)
+            ?? Self.decodeIfPresent(String.self, from: container, forKey: .currentQuestionId)
+            ?? Self.decodeIfPresent(String.self, from: container, forKey: .currentQuestionID)
+        originalQuestion = Self.decodeIfPresent(String.self, from: container, forKey: .originalQuestion)
+            ?? Self.decodeIfPresent(String.self, from: container, forKey: .originalQuestionID)
+        reframedQuestion = Self.decodeIfPresent(String.self, from: container, forKey: .reframedQuestion)
+            ?? Self.decodeIfPresent(String.self, from: container, forKey: .reframedQuestionID)
+            ?? Self.decodeIfPresent(String.self, from: container, forKey: .reframedVariant)
+            ?? Self.decodeIfPresent(String.self, from: container, forKey: .reframedVariantID)
     }
 
     private static func decodeIfPresent<T: Decodable>(
