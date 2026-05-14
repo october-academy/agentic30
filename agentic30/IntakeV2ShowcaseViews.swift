@@ -166,10 +166,8 @@ struct IntakeV2BootIntroView: View {
             VStack(alignment: .leading, spacing: 20) {
                 ShowcaseEyebrow(label: "STEP 1 / 4 · BOOT")
                 IntakeV2Header(
-                    stepLabel: "STEP 1 / 4",
                     title: "Agentic30 — 1인 개발자를 위한 실행 OS",
-                    subtitle: "컨텍스트를 읽고, 오늘 한 가지를 결정하고, 실행을 추적합니다. Read → Decide → Execute 세 동작이 매일 반복됩니다.",
-                    sysline: nil
+                    subtitle: "컨텍스트를 읽고, 오늘 한 가지를 결정하고, 실행을 추적합니다. Read → Decide → Execute 세 동작이 매일 반복됩니다."
                 )
 
                 HStack(alignment: .top, spacing: 14) {
@@ -556,10 +554,8 @@ struct IntakeV2DecideShowcaseView: View {
             VStack(alignment: .leading, spacing: 22) {
                 ShowcaseEyebrow(label: "STEP 2 / 4 · DECIDE")
                 IntakeV2Header(
-                    stepLabel: "STEP 2 / 4",
                     title: "오늘의 결정",
-                    subtitle: "OS가 컨텍스트를 읽고 신호 강도·우선순위·미처리 기간으로 오늘 가장 시급한 한 가지를 결정합니다. macOS 알림 형태로 도착합니다.",
-                    sysline: nil
+                    subtitle: "OS가 컨텍스트를 읽고 신호 강도·우선순위·미처리 기간으로 오늘 가장 시급한 한 가지를 결정합니다. macOS 알림 형태로 도착합니다."
                 )
 
                 let t = tasks[idx]
@@ -786,10 +782,8 @@ struct IntakeV2ConnectShowcaseView: View {
             VStack(alignment: .leading, spacing: 22) {
                 ShowcaseEyebrow(label: "STEP 3 / 4 · CONNECT")
                 IntakeV2Header(
-                    stepLabel: "STEP 3 / 4",
                     title: "Source 연결",
-                    subtitle: "OS가 읽을 데이터 소스를 정의합니다. 컨텍스트가 클수록 결정 정확도가 높아집니다. 나중에 Settings에서 추가·제거 가능. 카드 클릭으로 토글.",
-                    sysline: nil
+                    subtitle: "OS가 읽을 데이터 소스를 정의합니다. 컨텍스트가 클수록 결정 정확도가 높아집니다. 나중에 Settings에서 추가·제거 가능. 카드 클릭으로 토글."
                 )
 
                 let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
@@ -978,12 +972,10 @@ struct IntakeV2ReadyAnalyzeView: View {
             VStack(alignment: .leading, spacing: 22) {
                 ShowcaseEyebrow(label: "STEP 4 / 4 · READY")
                 IntakeV2Header(
-                    stepLabel: "STEP 4 / 4",
                     title: "Init 완료. 첫 결정을 분석합니다.",
                     subtitle: scanFailed
                         ? "Local scan에서 충분한 신호를 못 찾았어요. intake 답변만으로 첫 결정을 준비합니다."
-                        : "당신의 폴더를 읽고 신호를 추출해 오늘의 한 가지를 결정합니다. 완료 후 자동으로 inbox 로 이동합니다.",
-                    sysline: nil
+                        : "당신의 폴더를 읽고 신호를 추출해 오늘의 한 가지를 결정합니다. 완료 후 자동으로 inbox 로 이동합니다."
                 )
 
                 terminalBox
