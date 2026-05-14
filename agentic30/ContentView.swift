@@ -193,7 +193,14 @@ struct ContentView: View {
         ZStack {
             Color.clear.ignoresSafeArea()
             if viewModel.requiresMacOnboarding {
-                MacOnboardingView(viewModel: viewModel)
+                IntakeV2FlowView(onComplete: {
+                    // V2 onboarding completion — review-driven redesign 2026-05-14.
+                    // V2 store/sources own their own state; here we just mark the legacy
+                    // onboarding-intro flag so the rest of the routing settles.
+                    // Deeper integration (OnboardingContext submission, workspace setting from
+                    // V2 folderURL) lands in a follow-up PR.
+                    viewModel.completeMacOnboardingIntro()
+                })
             } else if let session = viewModel.selectedSession {
                 switch activeSurface {
                 case .assistantBubble:
