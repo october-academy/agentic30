@@ -158,9 +158,9 @@ struct AgenticViewModelAuthTests {
             "goal",
         ])
         #expect(report.contextQuestionIDs.count == 3)
-        #expect(report.estimatedSeconds == 110)
+        #expect(report.estimatedSeconds == 94)
         #expect(report.canCompleteWithinBudget)
-        #expect(report.remainingSeconds == 10)
+        #expect(report.remainingSeconds == 26)
     }
 
     @Test @MainActor func onboardingIntroContentIsRequiredBeforeContextQuestionsBegin() {
@@ -179,15 +179,11 @@ struct AgenticViewModelAuthTests {
         }
         #expect(Set(scenes.map(\.visual)).count == scenes.count)
         #expect(scenes.map(\.title) == [
-            "Welcome to Agentic30",
-            "We’re always by your side",
-            "Build, launch, earn in 30 days",
-            "Ship faster, learn faster",
+            "혼자, 30일, 100명, 첫 매출",
+            "혼자 만들지만, 혼자 막막하지 않게",
         ])
-        #expect(scenes[0].subtitle.contains("Mac assistant"))
-        #expect(scenes[1].subtitle.contains("오늘 가장 중요한 한 가지 행동"))
-        #expect(scenes[2].subtitle.contains("첫 결제 가능성"))
-        #expect(scenes[3].subtitle.contains("고객 반응"))
+        #expect(scenes[0].subtitle.contains("30일 챌린지"))
+        #expect(scenes[1].subtitle.contains("프로젝트 문서"))
     }
 
     @Test @MainActor func onboardingCompletionTimingValidatesMeasuredFullFlow() {

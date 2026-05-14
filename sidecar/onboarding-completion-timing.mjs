@@ -9,8 +9,6 @@ export const ONBOARDING_CONTEXT_QUESTION_IDS = Object.freeze([
 export const ONBOARDING_COMPLETION_TIMING_STEPS = Object.freeze([
   Object.freeze({ id: "intro_welcome", kind: "program_intro", estimatedSeconds: 8 }),
   Object.freeze({ id: "intro_assistant", kind: "program_intro", estimatedSeconds: 8 }),
-  Object.freeze({ id: "intro_30_day_path", kind: "program_intro", estimatedSeconds: 8 }),
-  Object.freeze({ id: "intro_evidence_loop", kind: "program_intro", estimatedSeconds: 8 }),
   Object.freeze({ id: "business_description", kind: "context_question", estimatedSeconds: 24 }),
   Object.freeze({ id: "current_stage", kind: "context_question", estimatedSeconds: 24 }),
   Object.freeze({ id: "goal", kind: "context_question", estimatedSeconds: 24 }),

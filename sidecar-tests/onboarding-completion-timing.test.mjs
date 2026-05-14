@@ -10,17 +10,17 @@ import {
 test("onboarding timing plan covers full intro plus three context questions under 2 minutes", () => {
   const report = buildOnboardingCompletionTimingReport();
 
-  assert.equal(report.introSceneCount, 4);
+  assert.equal(report.introSceneCount, 2);
   assert.deepEqual(report.contextQuestionIds, [
     "business_description",
     "current_stage",
     "goal",
   ]);
   assert.deepEqual(report.contextQuestionIds, ONBOARDING_CONTEXT_QUESTION_IDS);
-  assert.equal(report.estimatedSeconds, 110);
+  assert.equal(report.estimatedSeconds, 94);
   assert.equal(report.maximumSeconds, ONBOARDING_COMPLETION_TIMEBOX_SECONDS);
   assert.equal(report.canCompleteWithinBudget, true);
-  assert.equal(report.remainingSeconds, 10);
+  assert.equal(report.remainingSeconds, 26);
 });
 
 test("onboarding measured timing verifies intro viewed, all three answers, and 120s budget", () => {
