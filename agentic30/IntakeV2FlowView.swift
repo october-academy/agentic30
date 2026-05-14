@@ -2,8 +2,8 @@ import SwiftUI
 import AppKit
 
 // MARK: - Intake V2 Flow — review decisions 2026-05-14
-// 4-step onboarding: Workmode → Role → Stuck → Folder pick
-// then analyzing splash → first Decide card → post-onboarding Records banner
+// Boot intro → 4-step onboarding: Workmode → Role → Stuck → Folder pick
+// then source connect → analyzing splash → first Decide card → post-onboarding Records banner
 //
 // Design decisions reflected:
 //   D7 (design): step 4 folder pick uses hero band pattern + 3 option cards
@@ -25,6 +25,12 @@ enum IntakeV2Color {
     static let monospaceMuted = Color.white.opacity(0.4)
 }
 
+enum IntakeV2Layout {
+    static let contentMaxWidth: CGFloat = 1080
+    static let horizontalPadding: CGFloat = 56
+    static let narrowHorizontalPadding: CGFloat = 28
+}
+
 // MARK: - Dash pagination
 
 struct IntakeV2DashPagination: View {
@@ -40,6 +46,10 @@ struct IntakeV2DashPagination: View {
                         Capsule()
                             .fill(.white)
                             .frame(width: 24, height: 6)
+                    } else if idx < current {
+                        Circle()
+                            .fill(IntakeV2Color.accent)
+                            .frame(width: 6, height: 6)
                     } else {
                         Circle()
                             .fill(.white.opacity(0.18))
@@ -55,6 +65,7 @@ struct IntakeV2DashPagination: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Step \(current) of \(total), \(label)")
+        .accessibilityIdentifier("intakeV2.progress")
     }
 }
 
@@ -162,6 +173,7 @@ struct IntakeV2Footer: View {
     let backDisabled: Bool
     let nextTitle: String       // "Next →" or "Start assistant →" (final)
     let nextEnabled: Bool
+    var nextAccessibilityIdentifier: String? = nil
     let onBack: () -> Void
     let onNext: () -> Void
 
@@ -195,6 +207,9 @@ struct IntakeV2Footer: View {
             .buttonStyle(.plain)
             .disabled(!nextEnabled)
             .accessibilityLabel(nextAccessibilityLabel)
+            .ifLet(nextAccessibilityIdentifier) { view, identifier in
+                view.accessibilityIdentifier(identifier)
+            }
         }
         .padding(.top, 8)
     }
@@ -207,13 +222,44 @@ struct IntakeV2Footer: View {
     }
 }
 
+private extension View {
+    @ViewBuilder
+    func ifLet<Value, Content: View>(
+        _ value: Value?,
+        transform: (Self, Value) -> Content
+    ) -> some View {
+        if let value {
+            transform(self, value)
+        } else {
+            self
+        }
+    }
+}
+
+extension View {
+    func intakeV2StepShell() -> some View {
+        frame(
+            maxWidth: IntakeV2Layout.contentMaxWidth,
+            maxHeight: .infinity,
+            alignment: .topLeading
+        )
+        .background {
+            Color.clear
+                .accessibilityIdentifier("intakeV2.stepShell")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
 // MARK: - Flow container
 
 enum IntakeV2Step: Int, CaseIterable {
+    // OS-product intro
+    case bootIntro = 1
     // Intake (user answers)
-    case workmode = 1, role, stuck, folderPick
-    // OS-product showcase (Read → Decide → Connect → Ready)
-    case bootIntro, decideShowcase, connectShowcase, readyAnalyze
+    case workmode, role, stuck, folderPick
+    // OS-product setup + analysis
+    case connectShowcase, readyAnalyze
 }
 
 @MainActor
@@ -221,7 +267,7 @@ struct IntakeV2FlowView: View {
     @StateObject private var store = IntakeV2Store()
     @StateObject private var sources = IntakeV2SourceManager()
 
-    @State private var step: IntakeV2Step = .workmode
+    @State private var step: IntakeV2Step = .bootIntro
 
     /// onComplete delivers the final store + source manager so the host can run
     /// integration logic (submit OnboardingContext, register workspace, mark intro
@@ -239,10 +285,16 @@ struct IntakeV2FlowView: View {
 
     @ViewBuilder private var content: some View {
         switch step {
+        case .bootIntro:
+            IntakeV2BootIntroView(
+                backDisabled: true,
+                onBack: {},
+                onNext: { step = .workmode }
+            )
         case .workmode:
             IntakeV2WorkmodeView(
                 store: store,
-                onBack: {},
+                onBack: { step = .bootIntro },
                 onNext: { step = .role }
             )
         case .role:
@@ -265,29 +317,20 @@ struct IntakeV2FlowView: View {
                 onNext: {
                     store.markCompleted()
                     onWorkspacePrefetchRequested?(store, sources)
-                    step = .bootIntro
+                    step = .connectShowcase
                 }
-            )
-        case .bootIntro:
-            IntakeV2BootIntroView(
-                onBack: { step = .folderPick },
-                onNext: { step = .decideShowcase }
-            )
-        case .decideShowcase:
-            IntakeV2DecideShowcaseView(
-                onBack: { step = .bootIntro },
-                onNext: { step = .connectShowcase }
             )
         case .connectShowcase:
             IntakeV2ConnectShowcaseView(
                 sources: sources,
-                onBack: { step = .decideShowcase },
+                onBack: { step = .folderPick },
                 onNext: { step = .readyAnalyze }
             )
         case .readyAnalyze:
             IntakeV2ReadyAnalyzeView(
                 store: store,
                 sources: sources,
+                onBack: { step = .connectShowcase },
                 onDone: { onComplete?(store, sources) }
             )
         }

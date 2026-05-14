@@ -51,6 +51,25 @@ struct IntakeV2Decision: Equatable {
         case acquisition = "ACQUISITION"
         case pricing = "PRICING"
         case fallback = "FALLBACK"
+
+        var displayName: String {
+            switch self {
+            case .interviewRequest:
+                return "인터뷰 요청"
+            case .paymentResponse:
+                return "결제 응답"
+            case .docChange:
+                return "문서 변경"
+            case .churnSignal:
+                return "이탈 신호"
+            case .acquisition:
+                return "가입 행동"
+            case .pricing:
+                return "가격 검증"
+            case .fallback:
+                return "기록 시작"
+            }
+        }
     }
 
     enum Priority: String {
@@ -62,7 +81,7 @@ struct IntakeV2Decision: Equatable {
     let taskID: String
     let body: String
     let rationale: String
-    let metaLine: String         // e.g. "priority=critical · age=8w"
+    let metaLine: String         // e.g. "8주 공백 · 최우선"
     let attributedSources: [IntakeSourceID]
 }
 
@@ -82,7 +101,7 @@ struct IntakeV2DecisionEngine {
                 taskID: makeID("docchg"),
                 body: "TODOS.md가 \(staleDays)일째 변경 없음. 다음 한 가지를 정의해 업데이트.",
                 rationale: "오래된 TODOS.md = 다음 단계가 불분명한 상태. 결정 정확도를 높이려면 우선 정리.",
-                metaLine: "source=local · age=\(staleDays)d · priority=med",
+                metaLine: "로컬 폴더 · \(staleDays)일 경과 · 보통",
                 attributedSources: [.localFolder]
             )
         }
@@ -95,8 +114,8 @@ struct IntakeV2DecisionEngine {
                 priority: .critical,
                 taskID: makeID("intvw"),
                 body: "이번 주 신규 가입자 3명에게 30분 인터뷰 요청 발송.",
-                rationale: "stuck=problem_discovery. 누구의 어떤 문제인지부터 좁혀야 함. 인터뷰가 가장 시급한 input.",
-                metaLine: "priority=critical · gap=\(weeksGap)w",
+                rationale: "문제 발견 단계입니다. 누구의 어떤 문제인지부터 좁혀야 하므로 인터뷰가 가장 시급한 입력입니다.",
+                metaLine: "\(weeksGap)주 공백 · 최우선",
                 attributedSources: attributedSourcesForInterview(intake: intake)
             )
         }
@@ -107,9 +126,9 @@ struct IntakeV2DecisionEngine {
                 category: .paymentResponse,
                 priority: .high,
                 taskID: makeID("pmt"),
-                body: "지난 결제 거절·이탈 응답을 모아 공통 reason 3가지 정리.",
-                rationale: "stuck=monetization. 결제 직전 이탈이 가장 비싼 신호. 패턴부터 봄.",
-                metaLine: "priority=high · age=2d",
+                body: "지난 결제 거절·이탈 응답을 모아 공통 사유 3가지 정리.",
+                rationale: "수익화가 막혀 있습니다. 결제 직전 이탈이 가장 비싼 신호이므로 패턴부터 봅니다.",
+                metaLine: "2일 경과 · 높음",
                 attributedSources: scan.hasPaymentResponses
                     ? [.localFolder, .toss, .stripe]
                     : [.localFolder]
@@ -123,8 +142,8 @@ struct IntakeV2DecisionEngine {
                 priority: .high,
                 taskID: makeID("price"),
                 body: "가격 후보 2개를 정하고 다음 인터뷰에서 직접 제안 테스트.",
-                rationale: "stuck=pricing. 가격은 물어봐야 알 수 있음. 다음 인터뷰가 실험장.",
-                metaLine: "priority=high · gap=untested",
+                rationale: "가격 검증이 필요합니다. 가격은 직접 제안해 봐야 알 수 있으므로 다음 인터뷰가 실험장입니다.",
+                metaLine: "미검증 · 높음",
                 attributedSources: [.localFolder]
             )
         }
@@ -136,8 +155,8 @@ struct IntakeV2DecisionEngine {
                 priority: .high,
                 taskID: makeID("acq"),
                 body: "최근 가입자 5명의 가입 직후 첫 행동을 시간순으로 정리.",
-                rationale: "stuck=acquisition. 들어온 사람이 무엇을 보고 떠나는지가 답.",
-                metaLine: "priority=high · age=24h",
+                rationale: "가입 이후 행동이 불명확합니다. 들어온 사람이 무엇을 보고 떠나는지가 답입니다.",
+                metaLine: "24시간 경과 · 높음",
                 attributedSources: [.localFolder, .posthog]
             )
         }
@@ -149,8 +168,8 @@ struct IntakeV2DecisionEngine {
                 priority: .medium,
                 taskID: makeID("churn"),
                 body: "6개월 이상 사용자 중 최근 30일 미접속 명단을 정리.",
-                rationale: "stuck=growth. 오래 쓴 사람의 이탈이 가장 비싼 신호.",
-                metaLine: "priority=med · users=tbd",
+                rationale: "성장 단계에서는 오래 쓴 사람의 이탈이 가장 비싼 신호입니다.",
+                metaLine: "사용자 확인 필요 · 보통",
                 attributedSources: [.localFolder, .posthog]
             )
         }
@@ -162,7 +181,7 @@ struct IntakeV2DecisionEngine {
             taskID: makeID("fb"),
             body: "오늘 5분 동안 어제 만든 것·막힌 것·배운 것을 한 문장씩 메모.",
             rationale: "기록이 부족합니다. 컨텍스트가 쌓이면 더 정확한 결정을 만들 수 있어요.",
-            metaLine: "priority=low · corpus=empty",
+            metaLine: "코퍼스 없음 · 낮음",
             attributedSources: []
         )
     }

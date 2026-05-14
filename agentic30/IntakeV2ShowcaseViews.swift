@@ -3,28 +3,9 @@ import AppKit
 import Combine
 
 // MARK: - Intake V2 Showcase Views — 2026-05-14
-// Post-intake OS-product showcase. 4 screens that ride after folder pick:
-//   BootIntro → DecideShowcase → ConnectShowcase → ReadyAnalyze
+// OS-product intro + post-intake setup screens:
+//   BootIntro before intake, then ConnectShowcase → ReadyAnalyze after folder pick
 // Matches mockup at ~/.gstack/.../onboarding-step2-redesign-20260514/flow-step{1,2,3,4}.html
-
-// MARK: - Shared eyebrow
-
-private struct ShowcaseEyebrow: View {
-    let label: String
-    var body: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(IntakeV2Color.accent)
-                .frame(width: 6, height: 6)
-                .shadow(color: IntakeV2Color.accent.opacity(0.7), radius: 6)
-            Text(label)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundStyle(IntakeV2Color.accent)
-                .tracking(1.65)
-                .textCase(.uppercase)
-        }
-    }
-}
 
 // MARK: - Brand icon tile (used in BootIntro Read column & ConnectShowcase)
 
@@ -34,11 +15,11 @@ private enum BrandIcon: String, CaseIterable {
     var bg: Color {
         switch self {
         case .github: return Color(red: 0.051, green: 0.067, blue: 0.090)
-        case .gdocs: return Color(red: 0.259, green: 0.522, blue: 0.957)
-        case .gsheets: return Color(red: 0.059, green: 0.616, blue: 0.345)
+        case .gdocs: return .white
+        case .gsheets: return .white
         case .notion: return .white
         case .discord: return Color(red: 0.345, green: 0.396, blue: 0.949)
-        case .posthog: return .black
+        case .posthog: return .white
         case .txt: return Color(red: 0.322, green: 0.322, blue: 0.357)
         case .toss: return Color(red: 0.000, green: 0.392, blue: 1.000)
         case .stripe: return Color(red: 0.388, green: 0.357, blue: 1.000)
@@ -47,10 +28,33 @@ private enum BrandIcon: String, CaseIterable {
         }
     }
 
+    var assetName: String? {
+        switch self {
+        case .github: return "BrandGitHub"
+        case .gdocs: return "BrandGoogleDocs"
+        case .gsheets: return "BrandGoogleSheets"
+        case .notion: return "BrandNotion"
+        case .discord: return "BrandDiscord"
+        case .posthog: return "BrandPostHog"
+        case .toss: return "BrandToss"
+        case .stripe: return "BrandStripe"
+        case .threads: return "BrandThreads"
+        case .txt, .folder: return nil
+        }
+    }
+
+    var assetScale: CGFloat {
+        switch self {
+        case .stripe: return 0.68
+        case .posthog: return 0.74
+        case .notion: return 0.78
+        case .gdocs, .gsheets: return 0.82
+        default: return 0.64
+        }
+    }
+
     var fg: Color {
         switch self {
-        case .notion: return .black
-        case .posthog: return Color(red: 0.976, green: 0.741, blue: 0.169)
         case .folder: return Color(red: 0.984, green: 0.749, blue: 0.137)
         default: return .white
         }
@@ -58,22 +62,10 @@ private enum BrandIcon: String, CaseIterable {
 
     var glyph: String {
         switch self {
-        case .github: return "chevron.left.forwardslash.chevron.right"
-        case .gdocs: return "doc.fill"
-        case .gsheets: return "tablecells.fill"
-        case .notion: return "N"        // text glyph
-        case .discord: return "bubble.left.and.bubble.right.fill"
-        case .posthog: return "chart.line.uptrend.xyaxis"
         case .txt: return "doc.plaintext.fill"
-        case .toss: return "T"           // text glyph
-        case .stripe: return "S"         // text glyph
-        case .threads: return "at"
         case .folder: return "folder.fill"
+        default: return ""
         }
-    }
-
-    var isTextGlyph: Bool {
-        switch self { case .notion, .toss, .stripe: return true; default: return false }
     }
 
     var name: String {
@@ -118,10 +110,11 @@ private struct BrandIconTile: View {
         ZStack {
             RoundedRectangle(cornerRadius: corner, style: .continuous)
                 .fill(icon.bg)
-            if icon.isTextGlyph {
-                Text(icon.glyph)
-                    .font(.system(size: size * 0.52, weight: .black, design: .serif))
-                    .foregroundStyle(icon.fg)
+            if let assetName = icon.assetName {
+                Image(assetName)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: size * icon.assetScale, height: size * icon.assetScale)
             } else {
                 Image(systemName: icon.glyph)
                     .font(.system(size: size * 0.46, weight: .bold))
@@ -132,19 +125,22 @@ private struct BrandIconTile: View {
     }
 }
 
-// MARK: - Step 5 (Showcase 1 / 4) — BOOT
+// MARK: - Step 1 — BOOT
 
 @MainActor
 struct IntakeV2BootIntroView: View {
+    var backDisabled: Bool = false
     let onBack: () -> Void
     let onNext: () -> Void
 
     @State private var activeColumn: Int = 0
     @State private var iconSpotlight: Int = 0
     @State private var decideIdx: Int = 0
+    @State private var executePulse: Bool = false
     @State private var columnTimer: Timer?
     @State private var iconTimer: Timer?
     @State private var decideTimer: Timer?
+    @State private var executeTimer: Timer?
 
     private let readIcons: [BrandIcon] = [
         .github, .gdocs, .gsheets, .notion, .discord, .posthog, .txt, .toss, .threads
@@ -152,88 +148,147 @@ struct IntakeV2BootIntroView: View {
 
     private let decideSamples: [(body: String, tag: String)] = [
         ("이번 주 가입자 3명에게 30분 인터뷰 요청하고 결제 의향 묻기",
-         "signal=interview_request · priority=critical"),
-        ("결제 거절 응답 3건의 공통 reason 분석",
-         "signal=payment_response · priority=high"),
+         "인터뷰 요청 · 최우선"),
+        ("결제 거절 응답 3건의 공통 사유 분석",
+         "결제 응답 · 높음"),
         ("어제 수정된 SPEC.md changelog 반영",
-         "signal=doc_change · priority=med"),
+         "문서 변경 · 보통"),
         ("구독 6개월 사용자 churn 패턴 정리",
-         "signal=churn · priority=med")
+         "이탈 신호 · 보통")
     ]
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 28) {
-                    ShowcaseEyebrow(label: "STEP 1 / 4 · BOOT")
-                    IntakeV2Header(
-                        title: "Agentic30 — 1인 개발자를 위한 실행 OS",
-                        subtitle: "컨텍스트를 읽고, 오늘 한 가지를 결정하고, 실행을 추적합니다. Read → Decide → Execute 세 동작이 매일 반복됩니다."
-                    )
-                    .layoutPriority(1)
-                    .padding(.bottom, 18)
-
-                    HStack(alignment: .top, spacing: 14) {
-                        capCard(number: "01", verb: "Read",
-                                desc: "코드·문서·인터뷰·결제·공개 기록을 컨텍스트로 흡수합니다.",
-                                active: activeColumn == 0) {
-                            ReadIconGrid(icons: readIcons, spotlight: iconSpotlight)
-                        }
-                        capCard(number: "02", verb: "Decide",
-                                desc: "신호 강도·우선순위·미처리 기간으로 오늘의 한 가지를 결정.",
-                                active: activeColumn == 1) {
-                            DecideMiniNotif(bodyText: decideSamples[decideIdx].body,
-                                            tag: decideSamples[decideIdx].tag)
-                        }
-                        capCard(number: "03", verb: "Execute",
-                                desc: "당신이 실행. OS는 결과를 기록하고 다음 결정에 반영.",
-                                active: activeColumn == 2) {
-                            ExecuteTaskList()
-                        }
-                    }
-                    .frame(height: 330)
-
-                    HStack(spacing: 6) {
-                        Circle().fill(IntakeV2Color.accent).frame(width: 6, height: 6)
-                        Text("kernel ready · 3 modules loaded ·")
-                            .foregroundStyle(IntakeV2Color.textTertiary)
-                        Text("→ continue")
-                            .foregroundStyle(IntakeV2Color.textSecondary)
-                    }
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .tracking(0.6)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, 2)
-                }
-                .padding(.horizontal, 56)
-                .padding(.top, 42)
-                .padding(.bottom, 18)
-                .frame(maxWidth: 1180, alignment: .leading)
-                .frame(maxWidth: .infinity)
-            }
-            .scrollIndicators(.hidden)
-
-            IntakeV2Footer(
-                backDisabled: false,
-                nextTitle: "Continue →",
-                nextEnabled: true,
-                onBack: onBack,
-                onNext: onNext
+        GeometryReader { geometry in
+            let isNarrow = geometry.size.width < 900
+            let horizontalPadding = isNarrow
+                ? IntakeV2Layout.narrowHorizontalPadding
+                : IntakeV2Layout.horizontalPadding
+            let contentWidth = min(
+                max(geometry.size.width - (horizontalPadding * 2), 0),
+                IntakeV2Layout.contentMaxWidth
             )
-            .padding(.horizontal, 56)
-            .padding(.top, 12)
-            .padding(.bottom, 36)
-            .frame(maxWidth: 1180, alignment: .leading)
-            .frame(maxWidth: .infinity)
-            .background {
-                IntakeV2Color.bg
+
+            VStack(spacing: 0) {
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: isNarrow ? 22 : 28) {
+                        bootHeader(isNarrow: isNarrow)
+
+                        bootCards(isNarrow: isNarrow)
+                            .accessibilityElement(children: .contain)
+                            .accessibilityIdentifier("intakeV2.boot.cards")
+                            .frame(height: isNarrow ? 988 : 430)
+                    }
+                    .padding(.horizontal, horizontalPadding)
+                    .padding(.top, isNarrow ? 30 : 42)
+                    .padding(.bottom, 18)
+                    .frame(width: contentWidth, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                }
+                .scrollIndicators(.hidden)
+
+                IntakeV2Footer(
+                    backDisabled: backDisabled,
+                    nextTitle: "Continue →",
+                    nextEnabled: true,
+                    onBack: onBack,
+                    onNext: onNext
+                )
+                .padding(.horizontal, horizontalPadding)
+                .padding(.top, 12)
+                .padding(.bottom, 36)
+                .frame(width: contentWidth, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .background {
+                    IntakeV2Color.bg
+                }
             }
+            .frame(width: contentWidth, alignment: .topLeading)
+            .frame(maxHeight: .infinity, alignment: .topLeading)
+            .background {
+                Color.clear
+                    .accessibilityIdentifier("intakeV2.stepShell")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .onAppear { startTimers() }
         .onDisappear { stopTimers() }
     }
 
+    private func bootHeader(isNarrow: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 22) {
+            IntakeV2DashPagination(current: 1, total: 7, label: "BOOT")
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Agentic30 — 1인 개발자를 위한 실행 OS")
+                    .font(.system(size: isNarrow ? 30 : 34, weight: .bold, design: .rounded))
+                    .foregroundStyle(IntakeV2Color.textPrimary)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("컨텍스트를 읽고, 오늘 한 가지를 결정하고, 실행을 추적합니다. Read → Decide → Execute 세 동작이 매일 반복됩니다.")
+                    .font(.system(size: isNarrow ? 16 : 18, weight: .medium, design: .rounded))
+                    .foregroundStyle(IntakeV2Color.textSecondary)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("intakeV2.boot.subtitle")
+            }
+            .frame(maxWidth: .infinity, minHeight: isNarrow ? 116 : 92, alignment: .topLeading)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("intakeV2.boot.header")
+        .frame(maxWidth: .infinity, minHeight: isNarrow ? 210 : 168, alignment: .topLeading)
+    }
+
     @ViewBuilder
-    private func capCard<C: View>(number: String, verb: String, desc: String, active: Bool, @ViewBuilder visual: () -> C) -> some View {
+    private func bootCards(isNarrow: Bool) -> some View {
+        let cardHeight: CGFloat = isNarrow ? 320 : 430
+
+        if isNarrow {
+            VStack(alignment: .leading, spacing: 14) {
+                bootCardViews(cardHeight: cardHeight)
+            }
+        } else {
+            HStack(alignment: .top, spacing: 14) {
+                bootCardViews(cardHeight: cardHeight)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func bootCardViews(cardHeight: CGFloat) -> some View {
+        capCard(number: "01", verb: "Read",
+                desc: "코드·문서·인터뷰·결제·공개 기록을 컨텍스트로 흡수합니다.",
+                active: activeColumn == 0,
+                height: cardHeight) {
+            ReadIconGrid(
+                icons: readIcons,
+                spotlight: iconSpotlight,
+                isActive: activeColumn == 0
+            )
+        }
+        capCard(number: "02", verb: "Decide",
+                desc: "신호 강도·우선순위·미처리 기간으로 오늘의 한 가지를 결정.",
+                active: activeColumn == 1,
+                height: cardHeight) {
+            DecideMiniNotif(bodyText: decideSamples[decideIdx].body,
+                            tag: decideSamples[decideIdx].tag,
+                            decisionID: decideIdx,
+                            isActive: activeColumn == 1)
+        }
+        capCard(number: "03", verb: "Execute",
+                desc: "당신이 실행. OS는 결과를 기록하고 다음 결정에 반영.",
+                active: activeColumn == 2,
+                height: cardHeight) {
+            ExecuteTaskList(isActive: activeColumn == 2, pulse: executePulse)
+        }
+    }
+
+    @ViewBuilder
+    private func capCard<C: View>(
+        number: String,
+        verb: String,
+        desc: String,
+        active: Bool,
+        height: CGFloat,
+        @ViewBuilder visual: () -> C
+    ) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(number)
@@ -254,12 +309,12 @@ struct IntakeV2BootIntroView: View {
                 .foregroundStyle(IntakeV2Color.textTertiary)
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 8)
             visual()
                 .frame(maxWidth: .infinity)
+                .frame(maxHeight: .infinity, alignment: .center)
         }
         .padding(20)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .topLeading)
         .background(
             ZStack(alignment: .top) {
                 RoundedRectangle(cornerRadius: 14)
@@ -290,27 +345,44 @@ struct IntakeV2BootIntroView: View {
     }
 
     private func startTimers() {
+        resetAnimationState(for: activeColumn)
         columnTimer?.invalidate()
         columnTimer = Timer.scheduledTimer(withTimeInterval: 2.8, repeats: true) { _ in
             Task { @MainActor in
+                let nextColumn = (activeColumn + 1) % 3
+                resetAnimationState(for: nextColumn)
                 withAnimation(.easeInOut(duration: 0.4)) {
-                    activeColumn = (activeColumn + 1) % 3
+                    activeColumn = nextColumn
                 }
             }
         }
         iconTimer?.invalidate()
-        iconTimer = Timer.scheduledTimer(withTimeInterval: 0.7, repeats: true) { _ in
+        iconTimer = Timer.scheduledTimer(withTimeInterval: 0.28, repeats: true) { _ in
             Task { @MainActor in
+                guard activeColumn == 0 else { return }
                 withAnimation(.easeInOut(duration: 0.25)) {
                     iconSpotlight = (iconSpotlight + 1) % readIcons.count
                 }
             }
         }
         decideTimer?.invalidate()
-        decideTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { _ in
+        decideTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
             Task { @MainActor in
+                guard activeColumn == 1 else { return }
                 withAnimation(.easeInOut(duration: 0.3)) {
                     decideIdx = (decideIdx + 1) % decideSamples.count
+                }
+            }
+        }
+        executeTimer?.invalidate()
+        executeTimer = Timer.scheduledTimer(withTimeInterval: 0.72, repeats: true) { _ in
+            Task { @MainActor in
+                guard activeColumn == 2 else {
+                    executePulse = false
+                    return
+                }
+                withAnimation(.easeInOut(duration: 0.42)) {
+                    executePulse.toggle()
                 }
             }
         }
@@ -320,6 +392,23 @@ struct IntakeV2BootIntroView: View {
         columnTimer?.invalidate(); columnTimer = nil
         iconTimer?.invalidate(); iconTimer = nil
         decideTimer?.invalidate(); decideTimer = nil
+        executeTimer?.invalidate(); executeTimer = nil
+        executePulse = false
+    }
+
+    private func resetAnimationState(for column: Int) {
+        switch column {
+        case 0:
+            iconSpotlight = 0
+            executePulse = false
+        case 1:
+            decideIdx = 0
+            executePulse = false
+        case 2:
+            executePulse = true
+        default:
+            executePulse = false
+        }
     }
 }
 
@@ -328,33 +417,64 @@ struct IntakeV2BootIntroView: View {
 private struct ReadIconGrid: View {
     let icons: [BrandIcon]
     let spotlight: Int
+    let isActive: Bool
 
     var body: some View {
-        VStack(spacing: 10) {
-            let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 3)
-            LazyVGrid(columns: columns, spacing: 10) {
-                ForEach(Array(icons.enumerated()), id: \.offset) { idx, icon in
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(idx == spotlight ? IntakeV2Color.accent.opacity(0.07) : .white.opacity(0.02))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(idx == spotlight ? IntakeV2Color.accent.opacity(0.28) : .white.opacity(0.04), lineWidth: 1)
-                            )
-                        BrandIconTile(icon: icon, size: 30, corner: 8)
+        GeometryReader { proxy in
+            let spacing: CGFloat = 10
+            let captionHeight: CGFloat = 16
+            let availableGridHeight = max(proxy.size.height - captionHeight - spacing, 0)
+            let tileByWidth = max((proxy.size.width - (spacing * 2)) / 3, 0)
+            let tileByHeight = max((availableGridHeight - (spacing * 2)) / 3, 0)
+            let tileSize = min(tileByWidth, tileByHeight)
+            let iconSize = min(max(tileSize * 0.42, 24), 44)
+
+            VStack(spacing: spacing) {
+                VStack(spacing: spacing) {
+                    ForEach(0..<3, id: \.self) { row in
+                        HStack(spacing: spacing) {
+                            ForEach(0..<3, id: \.self) { column in
+                                let idx = row * 3 + column
+                                let icon = icons[idx]
+                                let isSpotlit = isActive && idx == spotlight
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(isSpotlit ? IntakeV2Color.accent.opacity(0.09) : .white.opacity(0.02))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .stroke(isSpotlit ? IntakeV2Color.accent.opacity(0.34) : .white.opacity(0.04), lineWidth: 1)
+                                        )
+                                        .shadow(
+                                            color: isSpotlit ? IntakeV2Color.accent.opacity(0.16) : .clear,
+                                            radius: isSpotlit ? 10 : 0,
+                                            y: isSpotlit ? 4 : 0
+                                        )
+                                    BrandIconTile(icon: icon, size: iconSize, corner: 8)
+                                        .brightness(isSpotlit ? 0.08 : 0)
+                                }
+                                .frame(width: tileSize, height: tileSize)
+                                .scaleEffect(isSpotlit ? 1.035 : 1.0)
+                                .animation(.easeInOut(duration: 0.22), value: isSpotlit)
+                            }
+                        }
                     }
-                    .aspectRatio(1, contentMode: .fit)
-                    .scaleEffect(idx == spotlight ? 1.03 : 1.0)
                 }
+
+                Text(readCaption)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(IntakeV2Color.textCardSecondary)
+                    .tracking(0.35)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .frame(maxWidth: .infinity, minHeight: captionHeight, alignment: .center)
             }
-            Text("\(icons[spotlight].name) · \(icons[spotlight].kind)")
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundStyle(IntakeV2Color.textCardSecondary)
-                .tracking(0.35)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-                .frame(maxWidth: .infinity, alignment: .center)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
+    }
+
+    private var readCaption: String {
+        guard isActive else { return "Ready to scan · CONTEXT" }
+        return "\(icons[spotlight].name) · \(icons[spotlight].kind)"
     }
 }
 
@@ -363,6 +483,8 @@ private struct ReadIconGrid: View {
 private struct DecideMiniNotif: View {
     let bodyText: String
     let tag: String
+    let decisionID: Int
+    let isActive: Bool
 
     var body: some View {
         VStack(spacing: 6) {
@@ -384,20 +506,37 @@ private struct DecideMiniNotif: View {
                     )
                 HStack(spacing: 10) {
                     AppLogoSmall()
+                        .scaleEffect(isActive ? 1.04 : 1.0)
                     VStack(alignment: .leading, spacing: 3) {
                         Text("오늘의 한 가지")
                             .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(.white)
-                        Text(bodyText)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.white.opacity(0.85))
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
+                        ZStack(alignment: .topLeading) {
+                            Text(bodyText)
+                                .id(decisionID)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.white.opacity(0.85))
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.72)
+                                .truncationMode(.tail)
+                                .allowsTightening(true)
+                                .transition(
+                                    .asymmetric(
+                                        insertion: .move(edge: .bottom).combined(with: .opacity),
+                                        removal: .move(edge: .top).combined(with: .opacity)
+                                    )
+                                )
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 27, maxHeight: 27, alignment: .topLeading)
+                        .clipped()
                     }
+                    .layoutPriority(1)
                     Spacer(minLength: 6)
                     Text("실행")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(Color(red: 0.020, green: 0.180, blue: 0.086))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
                         .background(Capsule().fill(Color(red: 0.290, green: 0.871, blue: 0.502)))
@@ -405,13 +544,22 @@ private struct DecideMiniNotif: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
             }
-            .frame(height: 76)
+            .frame(height: 86)
             .shadow(color: .black.opacity(0.4), radius: 12, y: 8)
+            .scaleEffect(isActive ? 1.012 : 1.0)
+            .animation(.easeInOut(duration: 0.28), value: isActive)
 
             Text(tag)
+                .id("tag-\(decisionID)")
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(IntakeV2Color.textTertiary)
                 .tracking(0.4)
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, minHeight: 12, maxHeight: 12, alignment: .leading)
+                .clipped()
+                .transition(.opacity)
         }
     }
 }
@@ -436,9 +584,11 @@ private struct AppLogoSmall: View {
 private struct ExecuteTaskList: View {
     private struct Row { let label: String; let meta: String; let state: ExecState }
     private enum ExecState { case done, current, pending }
+    let isActive: Bool
+    let pulse: Bool
 
     private let rows: [Row] = [
-        Row(label: "월 · 결제 거절 reason 분석", meta: "2h", state: .done),
+        Row(label: "월 · 결제 거절 사유 분석", meta: "2h", state: .done),
         Row(label: "화 · SPEC.md changelog 반영", meta: "40m", state: .done),
         Row(label: "오늘 · 인터뷰 요청 3건 발송", meta: "…", state: .current),
         Row(label: "내일 · churn 패턴 정리", meta: "—", state: .pending)
@@ -447,28 +597,40 @@ private struct ExecuteTaskList: View {
     var body: some View {
         VStack(spacing: 6) {
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                let rowPulse = isActive && pulse && row.state == .current
                 HStack(spacing: 10) {
-                    checkBox(state: row.state)
+                    checkBox(state: row.state, pulse: rowPulse)
                     Text(row.label)
                         .font(.system(size: 11))
                         .foregroundStyle(textColor(row.state))
                         .strikethrough(row.state == .done, color: IntakeV2Color.accent.opacity(0.5))
-                    Spacer()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 6)
                     Text(row.meta)
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(IntakeV2Color.textTertiary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(row.state == .current ? IntakeV2Color.accent.opacity(0.08) : .white.opacity(0.02))
+                        .fill(row.state == .current ? IntakeV2Color.accent.opacity(rowPulse ? 0.13 : 0.08) : .white.opacity(0.02))
                         .overlay(
                             RoundedRectangle(cornerRadius: 8)
-                                .stroke(row.state == .current ? IntakeV2Color.accent.opacity(0.3) : .white.opacity(0.04),
+                                .stroke(row.state == .current ? IntakeV2Color.accent.opacity(rowPulse ? 0.52 : 0.3) : .white.opacity(0.04),
                                         lineWidth: 1)
                         )
                 )
+                .shadow(
+                    color: rowPulse ? IntakeV2Color.accent.opacity(0.12) : .clear,
+                    radius: rowPulse ? 12 : 0,
+                    y: rowPulse ? 5 : 0
+                )
+                .animation(.easeInOut(duration: 0.42), value: rowPulse)
             }
         }
     }
@@ -482,12 +644,12 @@ private struct ExecuteTaskList: View {
     }
 
     @ViewBuilder
-    private func checkBox(state: ExecState) -> some View {
+    private func checkBox(state: ExecState, pulse: Bool) -> some View {
         RoundedRectangle(cornerRadius: 4)
-            .fill(state == .done ? IntakeV2Color.accent : .clear)
+            .fill(state == .done ? IntakeV2Color.accent : (pulse ? IntakeV2Color.accent.opacity(0.12) : .clear))
             .overlay(
                 RoundedRectangle(cornerRadius: 4)
-                    .stroke(state == .done ? IntakeV2Color.accent : (state == .current ? IntakeV2Color.accent : .white.opacity(0.2)),
+                    .stroke(state == .done ? IntakeV2Color.accent : (state == .current ? IntakeV2Color.accent.opacity(pulse ? 0.9 : 1.0) : .white.opacity(0.2)),
                             lineWidth: 1.5)
             )
             .overlay {
@@ -498,10 +660,12 @@ private struct ExecuteTaskList: View {
                 }
             }
             .frame(width: 16, height: 16)
+            .scaleEffect(pulse ? 1.12 : 1.0)
+            .animation(.easeInOut(duration: 0.42), value: pulse)
     }
 }
 
-// MARK: - Step 6 (Showcase 2 / 4) — DECIDE
+// MARK: - Legacy Decide showcase (not in the active 7-step flow)
 
 @MainActor
 struct IntakeV2DecideShowcaseView: View {
@@ -520,26 +684,26 @@ struct IntakeV2DecideShowcaseView: View {
 
     private let tasks: [Candidate] = [
         Candidate(
-            badge: "INTERVIEW_REQUEST",
-            meta: "priority=critical · age=8w",
+            badge: "인터뷰 요청",
+            meta: "8주 공백 · 최우선",
             id: "task_9c1e",
             body: "이번 주 신규 가입자 3명에게 30분 인터뷰 요청 발송",
-            why: "8주간 demand interview 0건. ICP 정의 update 없음. 결정 정확도가 떨어지는 가장 큰 원인.",
+            why: "8주간 수요 인터뷰 0건. ICP 정의도 갱신되지 않아 결정 정확도가 떨어지는 가장 큰 원인.",
             srcs: [.notion, .gdocs, .txt],
             label: "Notion · Docs · interviews.txt"
         ),
         Candidate(
-            badge: "PAYMENT_RESPONSE",
-            meta: "count=3 · age=2d · priority=high",
+            badge: "결제 응답",
+            meta: "3건 · 2일 경과 · 높음",
             id: "task_8af3",
-            body: "결제 거절 응답 3건의 공통 reason 분석",
+            body: "결제 거절 응답 3건의 공통 사유 분석",
             why: "결제 거절 신호가 2일째 미처리. 다른 신호(인터뷰·문서 변경)보다 우선순위 점수가 높음.",
             srcs: [.toss, .gsheets, .discord],
             label: "Toss · Sheets · Discord"
         ),
         Candidate(
-            badge: "DOC_CHANGE",
-            meta: "source=notion · age=6h · priority=med",
+            badge: "문서 변경",
+            meta: "Notion · 6시간 전 · 보통",
             id: "task_a042",
             body: "어제 수정된 SPEC.md 의 v0.4 변경점을 changelog 에 반영",
             why: "어제 18:32 SPEC.md 변경. changelog 미반영. 다음 release 차단 가능.",
@@ -547,11 +711,11 @@ struct IntakeV2DecideShowcaseView: View {
             label: "Git · Notion · TXT"
         ),
         Candidate(
-            badge: "CHURN_SIGNAL",
-            meta: "users=2 · age=24h · priority=med",
+            badge: "이탈 신호",
+            meta: "2명 · 24시간 전 · 보통",
             id: "task_b1cc",
             body: "구독 6개월 사용자 2명의 churn 패턴 정리",
-            why: "장기 사용자 이탈 = 가장 비싼 신호. 단 결제 응답보다 age 가 짧아 우선순위 차순.",
+            why: "장기 사용자 이탈은 가장 비싼 신호입니다. 다만 결제 응답보다 미처리 기간이 짧아 다음 순서입니다.",
             srcs: [.posthog, .toss, .gsheets],
             label: "PostHog · Toss · Sheets"
         )
@@ -564,7 +728,6 @@ struct IntakeV2DecideShowcaseView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 22) {
-                ShowcaseEyebrow(label: "STEP 2 / 4 · DECIDE")
                 IntakeV2Header(
                     title: "오늘의 결정",
                     subtitle: "OS가 컨텍스트를 읽고 신호 강도·우선순위·미처리 기간으로 오늘 가장 시급한 한 가지를 결정합니다. macOS 알림 형태로 도착합니다."
@@ -772,7 +935,7 @@ private struct HeroNotifIcon: View {
     }
 }
 
-// MARK: - Step 7 (Showcase 3 / 4) — CONNECT
+// MARK: - Step 6 — CONNECT
 
 @MainActor
 struct IntakeV2ConnectShowcaseView: View {
@@ -791,10 +954,10 @@ struct IntakeV2ConnectShowcaseView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 22) {
-                ShowcaseEyebrow(label: "STEP 3 / 4 · CONNECT")
+                IntakeV2DashPagination(current: 6, total: 7, label: "CONNECT")
                 IntakeV2Header(
-                    title: "Source 연결",
-                    subtitle: "OS가 읽을 데이터 소스를 정의합니다. 컨텍스트가 클수록 결정 정확도가 높아집니다. 나중에 Settings에서 추가·제거 가능. 카드 클릭으로 토글."
+                    title: "읽을 기록 더 연결하기",
+                    subtitle: "지금은 연결할 기록을 표시만 합니다. 실제 인증과 권한 연결은 나중에 Settings에서 직접 완료합니다."
                 )
 
                 let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
@@ -810,8 +973,14 @@ struct IntakeV2ConnectShowcaseView: View {
                 HStack {
                     HStack(spacing: 6) {
                         Circle().fill(IntakeV2Color.accent).frame(width: 5, height: 5)
-                        Text("\(selection.count) connected")
+                        Text("\(connectedSelectionCount) connected")
                             .foregroundStyle(IntakeV2Color.textTertiary)
+                        if requestedSelectionCount > 0 {
+                            Text("·").foregroundStyle(.white.opacity(0.15))
+                            Circle().fill(Color(red: 0.961, green: 0.620, blue: 0.043)).frame(width: 5, height: 5)
+                            Text("\(requestedSelectionCount) requested")
+                                .foregroundStyle(IntakeV2Color.textTertiary)
+                        }
                         if !errorTiles.isEmpty {
                             Text("·").foregroundStyle(.white.opacity(0.15))
                             Circle().fill(Color(red: 0.961, green: 0.620, blue: 0.043)).frame(width: 5, height: 5)
@@ -821,7 +990,7 @@ struct IntakeV2ConnectShowcaseView: View {
                     }
                     .font(.system(size: 11, design: .monospaced))
                     Spacer()
-                    Text("Click 토글 · → 계속")
+                    Text("Click 표시 · Settings에서 연결")
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(IntakeV2Color.monospaceMuted)
                 }
@@ -842,19 +1011,27 @@ struct IntakeV2ConnectShowcaseView: View {
                     }
                 )
             }
-            .padding(.horizontal, 56)
+            .padding(.horizontal, IntakeV2Layout.horizontalPadding)
             .padding(.top, 36)
             .padding(.bottom, 36)
-            .frame(maxWidth: 1180, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            .intakeV2StepShell()
         }
         .onAppear { syncSelectionWithRegisteredSources() }
+    }
+
+    private var connectedSelectionCount: Int {
+        selection.filter { sourceConnectionState(for: $0) == .connected }.count
+    }
+
+    private var requestedSelectionCount: Int {
+        selection.filter { sourceConnectionState(for: $0) == .requested }.count
     }
 
     @ViewBuilder
     private func sourceCard(_ src: BrandIcon) -> some View {
         let isOn = selection.contains(src)
         let isError = errorTiles.contains(src)
+        let connectionState = sourceConnectionState(for: src)
         Button(action: { toggle(src) }) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top) {
@@ -874,12 +1051,12 @@ struct IntakeV2ConnectShowcaseView: View {
                 Spacer(minLength: 4)
                 HStack(spacing: 5) {
                     Circle()
-                        .fill(isError ? Color(red: 0.961, green: 0.620, blue: 0.043) : (isOn ? IntakeV2Color.accent : .white.opacity(0.2)))
+                        .fill(statusColor(isError: isError, state: connectionState))
                         .frame(width: 6, height: 6)
-                        .shadow(color: isOn ? IntakeV2Color.accent.opacity(0.6) : .clear, radius: 6)
-                    Text(statusText(src, isOn: isOn, isError: isError))
+                        .shadow(color: connectionState == .connected ? IntakeV2Color.accent.opacity(0.6) : .clear, radius: 6)
+                    Text(statusText(src, isOn: isOn, isError: isError, state: connectionState))
                         .font(.system(size: 11))
-                        .foregroundStyle(isError ? Color(red: 0.961, green: 0.620, blue: 0.043) : (isOn ? IntakeV2Color.accentBright : IntakeV2Color.textTertiary))
+                        .foregroundStyle(statusTextColor(isError: isError, state: connectionState))
                 }
             }
             .padding(16)
@@ -890,7 +1067,7 @@ struct IntakeV2ConnectShowcaseView: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 14)
-                    .stroke(isOn ? IntakeV2Color.accent : .white.opacity(0.06),
+                    .stroke(isOn ? statusStrokeColor(for: connectionState) : .white.opacity(0.06),
                             lineWidth: isOn ? 1.5 : 1)
             )
             .shadow(color: isOn ? IntakeV2Color.accent.opacity(0.08) : .clear, radius: 12)
@@ -935,15 +1112,56 @@ struct IntakeV2ConnectShowcaseView: View {
         .animation(.easeInOut(duration: 0.18), value: on)
     }
 
-    private func statusText(_ src: BrandIcon, isOn: Bool, isError: Bool) -> String {
+    private enum SourceConnectionState {
+        case disconnected
+        case requested
+        case connected
+    }
+
+    private func statusText(_ src: BrandIcon, isOn: Bool, isError: Bool, state: SourceConnectionState) -> String {
         if isError { return "folder empty" }
         if !isOn { return "Not connected" }
-        switch src {
-        case .github: return "Connected · 3 repos"
-        case .gdocs: return "Connected · 128 docs"
-        case .notion: return "Connected · 47 pages"
-        case .folder: return localFolderStatusText()
-        default: return "Connected"
+        switch state {
+        case .connected:
+            return localFolderStatusText()
+        case .requested:
+            return "Connect later · Settings"
+        case .disconnected:
+            return "Not connected"
+        }
+    }
+
+    private func sourceConnectionState(for src: BrandIcon) -> SourceConnectionState {
+        guard selection.contains(src) else { return .disconnected }
+        if src == .folder, sources.status(of: .localFolder) == .connected {
+            return .connected
+        }
+        return .requested
+    }
+
+    private func statusColor(isError: Bool, state: SourceConnectionState) -> Color {
+        if isError { return Color(red: 0.961, green: 0.620, blue: 0.043) }
+        switch state {
+        case .connected: return IntakeV2Color.accent
+        case .requested: return Color(red: 0.961, green: 0.620, blue: 0.043)
+        case .disconnected: return .white.opacity(0.2)
+        }
+    }
+
+    private func statusTextColor(isError: Bool, state: SourceConnectionState) -> Color {
+        if isError { return Color(red: 0.961, green: 0.620, blue: 0.043) }
+        switch state {
+        case .connected: return IntakeV2Color.accentBright
+        case .requested: return Color(red: 0.961, green: 0.620, blue: 0.043)
+        case .disconnected: return IntakeV2Color.textTertiary
+        }
+    }
+
+    private func statusStrokeColor(for state: SourceConnectionState) -> Color {
+        switch state {
+        case .connected: return IntakeV2Color.accent
+        case .requested: return Color(red: 0.961, green: 0.620, blue: 0.043).opacity(0.75)
+        case .disconnected: return .white.opacity(0.06)
         }
     }
 
@@ -977,7 +1195,7 @@ struct IntakeV2ConnectShowcaseView: View {
 
     private func localFolderStatusText() -> String {
         guard let source = sources.sources.first(where: { $0.id == .localFolder }) else {
-            return "Connected"
+            return "Connected · local folder"
         }
         if let detail = source.detail {
             return "Connected · \(detail)"
@@ -1000,12 +1218,13 @@ struct IntakeV2ConnectShowcaseView: View {
     }
 }
 
-// MARK: - Step 8 (Showcase 4 / 4) — READY
+// MARK: - Step 7 — READY
 
 @MainActor
 struct IntakeV2ReadyAnalyzeView: View {
     @ObservedObject var store: IntakeV2Store
     @ObservedObject var sources: IntakeV2SourceManager
+    let onBack: () -> Void
     let onDone: () -> Void
 
     @State private var logLines: [TerminalLine] = []
@@ -1015,17 +1234,32 @@ struct IntakeV2ReadyAnalyzeView: View {
     @State private var showTodoWindow: Bool = false
     @State private var generatedTodoTasks: [GeneratedTodoTask] = []
     @State private var todoGenerationComplete: Bool = false
+    @State private var showExecuteNudge: Bool = false
     @State private var todoGenerationTask: Task<Void, Never>?
+
+    private enum InboxCTAState: Equatable {
+        case needsExecute
+        case preparingInbox
+        case ready
+    }
+
+    private var inboxCTAState: InboxCTAState {
+        if !showTodoWindow {
+            return .needsExecute
+        }
+        if !todoGenerationComplete {
+            return .preparingInbox
+        }
+        return .ready
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 22) {
-                ShowcaseEyebrow(label: "STEP 4 / 4 · READY")
+                IntakeV2DashPagination(current: 7, total: 7, label: "READY")
                 IntakeV2Header(
                     title: "Init 완료. 첫 결정을 분석합니다.",
-                    subtitle: scanFailed
-                        ? "Local scan에서 충분한 신호를 못 찾았어요. intake 답변만으로 첫 결정을 준비합니다."
-                        : "당신의 폴더를 읽고 신호를 추출해 오늘의 한 가지를 결정합니다. 완료 후 자동으로 inbox 로 이동합니다."
+                    subtitle: readySubtitle
                 )
 
                 terminalBox
@@ -1053,32 +1287,57 @@ struct IntakeV2ReadyAnalyzeView: View {
 
                 Spacer(minLength: 0)
 
-                HStack {
-                    Spacer()
-                    Button(action: onDone) {
-                        Text("Open inbox →")
-                            .font(.system(size: 15, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 30)
-                            .padding(.vertical, 14)
-                            .background(Capsule().fill(IntakeV2Color.accent))
-                            .shadow(color: IntakeV2Color.accent.opacity(0.25), radius: 16, y: 8)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!revealCard)
-                    .opacity(revealCard ? 1 : 0.4)
-                }
+                IntakeV2Footer(
+                    backDisabled: false,
+                    nextTitle: inboxFooterTitle,
+                    nextEnabled: inboxCTAState == .ready,
+                    nextAccessibilityIdentifier: "intakeV2.openInboxButton",
+                    onBack: onBack,
+                    onNext: handleInboxCTA
+                )
             }
-            .padding(.horizontal, 56)
+            .padding(.horizontal, IntakeV2Layout.horizontalPadding)
             .padding(.top, 36)
             .padding(.bottom, 36)
-            .frame(maxWidth: 1180, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            .intakeV2StepShell()
         }
         .task { await runBootSequence() }
         .onDisappear {
             todoGenerationTask?.cancel()
             todoGenerationTask = nil
+        }
+    }
+
+    private var readySubtitle: String {
+        if store.folderURL == nil {
+            return "폴더 없이 시작합니다. intake 답변만으로 첫 결정을 준비합니다."
+        }
+        if scanFailed {
+            return "Local scan에서 충분한 신호를 못 찾았어요. intake 답변만으로 첫 결정을 준비합니다."
+        }
+        return "선택한 폴더를 읽고 신호를 추출해 오늘의 한 가지를 결정합니다."
+    }
+
+    private var inboxFooterTitle: String {
+        switch inboxCTAState {
+        case .preparingInbox:
+            return "Preparing inbox…"
+        case .needsExecute, .ready:
+            return "Open inbox →"
+        }
+    }
+
+    private func handleInboxCTA() {
+        switch inboxCTAState {
+        case .ready:
+            onDone()
+        case .needsExecute:
+            guard revealCard else { return }
+            withAnimation(.easeOut(duration: 0.18)) {
+                showExecuteNudge = true
+            }
+        case .preparingInbox:
+            break
         }
     }
 
@@ -1156,8 +1415,8 @@ struct IntakeV2ReadyAnalyzeView: View {
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
                     .background(RoundedRectangle(cornerRadius: 4).fill(IntakeV2Color.accent))
-                Text(d.category.rawValue)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                Text(d.category.displayName)
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(IntakeV2Color.accentBright)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
@@ -1189,28 +1448,44 @@ struct IntakeV2ReadyAnalyzeView: View {
                 alignment: .bottom
             )
 
-            HStack(spacing: 18) {
-                Text(d.body)
-                    .font(.system(size: 19, weight: .medium))
-                    .foregroundStyle(.white)
-                    .lineSpacing(3)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 12)
-                Button(action: { startTodoGeneration(for: d) }) {
-                    HStack(spacing: 8) {
-                        Text(executeStartedTitle)
-                        Text("↵").opacity(0.8)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 18) {
+                    Text(d.body)
+                        .font(.system(size: 19, weight: .medium))
+                        .foregroundStyle(.white)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 12)
+                    Button(action: { startTodoGeneration(for: d) }) {
+                        HStack(spacing: 8) {
+                            Text(executeStartedTitle)
+                            Text("↵").opacity(0.8)
+                        }
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 22)
+                        .padding(.vertical, 12)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(IntakeV2Color.accent))
+                        .shadow(color: IntakeV2Color.accent.opacity(0.3), radius: 16, y: 6)
                     }
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 22)
-                    .padding(.vertical, 12)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(IntakeV2Color.accent))
-                    .shadow(color: IntakeV2Color.accent.opacity(0.3), radius: 16, y: 6)
+                    .buttonStyle(.plain)
+                    .disabled(showTodoWindow)
+                    .opacity(showTodoWindow ? 0.82 : 1)
+                    .accessibilityIdentifier("intakeV2.executeButton")
                 }
-                .buttonStyle(.plain)
-                .disabled(showTodoWindow)
-                .opacity(showTodoWindow ? 0.82 : 1)
+
+                if showExecuteNudge && !showTodoWindow {
+                    HStack(spacing: 8) {
+                        Text("↳")
+                            .foregroundStyle(IntakeV2Color.accent)
+                        Text("Execute를 먼저 눌러 inbox를 준비하세요.")
+                            .foregroundStyle(IntakeV2Color.textSecondary)
+                    }
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .accessibilityIdentifier("intakeV2.openInboxNudge")
+                }
             }
             .padding(22)
         }
@@ -1380,6 +1655,7 @@ struct IntakeV2ReadyAnalyzeView: View {
         generatedTodoTasks = []
         todoGenerationComplete = false
         withAnimation(.spring(response: 0.48, dampingFraction: 0.82)) {
+            showExecuteNudge = false
             showTodoWindow = true
         }
         todoGenerationTask = Task { await runTodoGeneration(for: decision) }
@@ -1412,7 +1688,7 @@ struct IntakeV2ReadyAnalyzeView: View {
         case .paymentResponse, .pricing:
             return [
                 GeneratedTodoTask(id: 1, title: "결제/가격 관련 응답을 한곳에 모읍니다.", detail: "거절 이유, 가격 표현, 대안 언급을 분리합니다.", tag: "COLLECT"),
-                GeneratedTodoTask(id: 2, title: "반복되는 reason 3개를 라벨링합니다.", detail: "빈도보다 구매 차단 강도가 큰 항목을 먼저 봅니다.", tag: "LABEL"),
+                GeneratedTodoTask(id: 2, title: "반복되는 사유 3개를 라벨링합니다.", detail: "빈도보다 구매 차단 강도가 큰 항목을 먼저 봅니다.", tag: "LABEL"),
                 GeneratedTodoTask(id: 3, title: "가격 메시지 수정안을 하나 만듭니다.", detail: "다음 사용자 대화에서 바로 검증할 문장으로 끝냅니다.", tag: "SHIP"),
             ]
         case .docChange:
@@ -1449,11 +1725,14 @@ struct IntakeV2ReadyAnalyzeView: View {
         await pushLine(cmd: "kernel.init", delayMs: 400)
         await markLast(status: "✓ ready", delayMs: 500)
 
-        // 2. sources.connect — show connected count from manager
-        let connected = max(1, sources.connectedCount)
+        // 2. sources.connect — only count sources that are actually authorized now.
+        let connected = sources.connectedCount
         let names = sources.connectedSources.compactMap { srcShortName($0.id) }.prefix(2).joined(separator: " · ")
         await pushLine(cmd: "sources.connect", delayMs: 200)
-        await markLast(status: "\(connected) active (\(names.isEmpty ? "local" : names))", delayMs: 600)
+        let connectedStatus = connected == 0
+            ? "0 active (intake only)"
+            : "\(connected) active (\(names.isEmpty ? "local" : names))"
+        await markLast(status: connectedStatus, delayMs: 600)
 
         // 3. context.read — actual scan
         let intake = IntakeSnapshot.from(store: store)
@@ -1471,7 +1750,7 @@ struct IntakeV2ReadyAnalyzeView: View {
         } else {
             scanFailed = true
             await pushLine(cmd: "context.read (no folder)", delayMs: 200)
-            await markLast(status: "skipped", delayMs: 400)
+            await markLast(status: "intake-only", delayMs: 400)
         }
 
         // 4. signals.detect

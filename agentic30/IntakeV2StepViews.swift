@@ -2,10 +2,10 @@ import SwiftUI
 import AppKit
 
 // MARK: - Intake V2 Step Views — review decisions 2026-05-14
-// Step 1 Workmode / Step 2 Role / Step 3 Stuck / Step 4 Folder Pick
+// Step 2 Context / Step 3 Role / Step 4 Blocker / Step 5 Folder Pick
 // + Splash (real local scan) + First Decide
 
-// MARK: - Step 1: Workmode
+// MARK: - Step 2: Context
 
 @MainActor
 struct IntakeV2WorkmodeView: View {
@@ -15,7 +15,7 @@ struct IntakeV2WorkmodeView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            IntakeV2DashPagination(current: 1, total: 4, label: "상황")
+            IntakeV2DashPagination(current: 2, total: 7, label: "CONTEXT")
             IntakeV2Header(
                 title: "얼마나 혼자, 얼마나 자주 만들 수 있나요?",
                 subtitle: "쓸 수 있는 시간과 책임 범위에 맞춰 오늘 할 일을 정합니다."
@@ -36,24 +36,38 @@ struct IntakeV2WorkmodeView: View {
                     onTap: { store.workmode = .exploring; store.persist() }
                 )
             }
+            if let workmode = store.workmode {
+                IntakeV2SelectionImpactView(text: workmodeImpactText(workmode))
+            }
             IntakeV2Footer(
-                backDisabled: true,
+                backDisabled: false,
                 nextTitle: "Next →",
                 nextEnabled: store.isStep1Complete,
                 onBack: onBack,
                 onNext: onNext
             )
         }
-        .padding(.horizontal, 56)
+        .padding(.horizontal, IntakeV2Layout.horizontalPadding)
         .padding(.top, 56)
         .padding(.bottom, 36)
-        .frame(maxWidth: 1080, alignment: .leading)
-        .frame(maxHeight: .infinity, alignment: .topLeading)
-        .frame(maxWidth: .infinity)
+        .intakeV2StepShell()
+    }
+
+    private func workmodeImpactText(_ workmode: OnboardingWorkMode) -> String {
+        switch workmode {
+        case .fullTimeSolo:
+            return "오늘 할 일은 하루 단위로 끝낼 수 있는 실행 크기로 잡습니다."
+        case .sideProject:
+            return "오늘 할 일은 30-60분 안에 끝낼 수 있는 크기로 줄입니다."
+        case .teamStartup:
+            return "결정 근거와 다음 행동을 팀에 공유하기 쉬운 형태로 정리합니다."
+        case .exploring:
+            return "먼저 상황 정리와 문제 정의를 우선해 다음 결정을 작게 만듭니다."
+        }
     }
 }
 
-// MARK: - Step 2: Role
+// MARK: - Step 3: Role
 
 @MainActor
 struct IntakeV2RoleView: View {
@@ -63,7 +77,7 @@ struct IntakeV2RoleView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            IntakeV2DashPagination(current: 2, total: 4, label: "역할")
+            IntakeV2DashPagination(current: 3, total: 7, label: "ROLE")
             IntakeV2Header(
                 title: "가장 자주 하는 역할은 무엇인가요?",
                 subtitle: "익숙한 일하는 방식에 맞춰 설명과 제안을 조정합니다."
@@ -78,6 +92,9 @@ struct IntakeV2RoleView: View {
                     )
                 }
             }
+            if let role = store.role {
+                IntakeV2SelectionImpactView(text: roleImpactText(role))
+            }
             IntakeV2Footer(
                 backDisabled: false,
                 nextTitle: "Next →",
@@ -86,16 +103,27 @@ struct IntakeV2RoleView: View {
                 onNext: onNext
             )
         }
-        .padding(.horizontal, 56)
+        .padding(.horizontal, IntakeV2Layout.horizontalPadding)
         .padding(.top, 56)
         .padding(.bottom, 36)
-        .frame(maxWidth: 1080, alignment: .leading)
-        .frame(maxHeight: .infinity, alignment: .topLeading)
-        .frame(maxWidth: .infinity)
+        .intakeV2StepShell()
+    }
+
+    private func roleImpactText(_ role: OnboardingRole) -> String {
+        switch role {
+        case .developer:
+            return "제안은 코드·문서·릴리즈 흐름을 기준으로 더 구체화합니다."
+        case .designer:
+            return "브랜드, UX 판단, 화면 표현이 필요한 실행안을 더 먼저 보여줍니다."
+        case .productManager:
+            return "문제, 지표, 운영 흐름 중심으로 결정 이유를 정리합니다."
+        case .student:
+            return "학습 부담을 줄이고 작은 확인 과제로 나누어 제안합니다."
+        }
     }
 }
 
-// MARK: - Step 3: Stuck
+// MARK: - Step 4: Blocker
 
 @MainActor
 struct IntakeV2StuckView: View {
@@ -105,7 +133,7 @@ struct IntakeV2StuckView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            IntakeV2DashPagination(current: 3, total: 4, label: "막힘")
+            IntakeV2DashPagination(current: 4, total: 7, label: "BLOCKER")
             IntakeV2Header(
                 title: "현재 가장 큰 막힘은 무엇인가요?",
                 subtitle: "막힌 지점에 맞춰 먼저 볼 문제를 정합니다."
@@ -120,6 +148,9 @@ struct IntakeV2StuckView: View {
                     )
                 }
             }
+            if let stuck = store.stuck {
+                IntakeV2SelectionImpactView(text: stuckImpactText(stuck))
+            }
             IntakeV2Footer(
                 backDisabled: false,
                 nextTitle: "Next →",
@@ -128,16 +159,29 @@ struct IntakeV2StuckView: View {
                 onNext: onNext
             )
         }
-        .padding(.horizontal, 56)
+        .padding(.horizontal, IntakeV2Layout.horizontalPadding)
         .padding(.top, 56)
         .padding(.bottom, 36)
-        .frame(maxWidth: 1080, alignment: .leading)
-        .frame(maxHeight: .infinity, alignment: .topLeading)
-        .frame(maxWidth: .infinity)
+        .intakeV2StepShell()
+    }
+
+    private func stuckImpactText(_ stuck: OnboardingProjectStage) -> String {
+        switch stuck {
+        case .ideaOnly:
+            return "첫 결정은 인터뷰 요청과 문제 좁히기 중심으로 준비합니다."
+        case .building:
+            return "첫 결정은 가입자 행동과 첫 사용자 확보 신호를 우선합니다."
+        case .firstUsers:
+            return "첫 결정은 결제 전환을 막는 응답과 이탈 사유를 우선합니다."
+        case .preRevenue:
+            return "첫 결정은 가격 후보와 다음 제안 실험을 우선합니다."
+        case .postRevenue:
+            return "첫 결정은 재사용, 이탈, 확산 신호를 우선합니다."
+        }
     }
 }
 
-// MARK: - Step 4: Folder pick (D5 eng + D7/D9 design)
+// MARK: - Step 5: Folder pick (D5 eng + D7/D9 design)
 
 @MainActor
 struct IntakeV2FolderPickView: View {
@@ -151,7 +195,7 @@ struct IntakeV2FolderPickView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            IntakeV2DashPagination(current: 4, total: 4, label: "폴더")
+            IntakeV2DashPagination(current: 5, total: 7, label: "FOLDER")
             IntakeV2Header(
                 title: "어디서 읽을까요?",
                 subtitle: "OS가 읽을 폴더를 선택해주세요. 컨텍스트가 클수록 결정 정확도가 높아집니다.",
@@ -173,9 +217,14 @@ struct IntakeV2FolderPickView: View {
                     onTap: { skipSelected = true; store.folderURL = nil; store.persist() }
                 )
             }
+            if skipSelected {
+                IntakeV2SelectionImpactView(
+                    text: "intake 답변만으로 시작합니다. 첫 결정은 템플릿에 가깝고, 폴더는 Settings에서 추가할 수 있습니다."
+                )
+            }
             IntakeV2Footer(
                 backDisabled: false,
-                nextTitle: "Start assistant →",
+                nextTitle: "Continue →",
                 nextEnabled: store.isStep4Complete || skipSelected,
                 onBack: onBack,
                 onNext: {
@@ -186,12 +235,10 @@ struct IntakeV2FolderPickView: View {
                 }
             )
         }
-        .padding(.horizontal, 56)
+        .padding(.horizontal, IntakeV2Layout.horizontalPadding)
         .padding(.top, 56)
         .padding(.bottom, 36)
-        .frame(maxWidth: 1080, alignment: .leading)
-        .frame(maxHeight: .infinity, alignment: .topLeading)
-        .frame(maxWidth: .infinity)
+        .intakeV2StepShell()
     }
 
     private func chooseFolder() {
@@ -231,9 +278,37 @@ struct IntakeV2FolderPickView: View {
     #endif
 }
 
+private struct IntakeV2SelectionImpactView: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "arrow.turn.down.right")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(IntakeV2Color.accentBright)
+            Text(text)
+                .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                .foregroundStyle(IntakeV2Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(IntakeV2Color.accent.opacity(0.055))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(IntakeV2Color.accent.opacity(0.16), lineWidth: 1)
+                )
+        )
+        .accessibilityIdentifier("intakeV2.selectionImpact")
+    }
+}
+
 // MARK: - Splash + FirstDecision removed 2026-05-14
-// Replaced by 4-step showcase flow in IntakeV2ShowcaseViews.swift:
-//   BootIntro → DecideShowcase → ConnectShowcase → ReadyAnalyze (terminal + first decision card)
+// Replaced by BootIntro before intake, then ConnectShowcase → ReadyAnalyze
+// (terminal + first decision card) after folder pick.
 
 #if SPLASH_LEGACY_KEEP_FOR_REFERENCE
 @MainActor
@@ -420,8 +495,8 @@ struct IntakeV2FirstDecisionView: View {
 
                 // Meta line
                 HStack(spacing: 8) {
-                    Text(decision.category.rawValue)
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    Text(decision.category.displayName)
+                        .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(IntakeV2Color.accentBright)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
