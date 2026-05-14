@@ -332,7 +332,10 @@ struct IntakeV2Footer: View {
 // MARK: - Flow container
 
 enum IntakeV2Step: Int, CaseIterable {
-    case workmode = 1, role, stuck, folderPick, splash, firstDecision
+    // Intake (user answers)
+    case workmode = 1, role, stuck, folderPick
+    // OS-product showcase (Read → Decide → Connect → Ready)
+    case bootIntro, decideShowcase, connectShowcase, readyAnalyze
 }
 
 @MainActor
@@ -341,9 +344,6 @@ struct IntakeV2FlowView: View {
     @StateObject private var sources = IntakeV2SourceManager()
 
     @State private var step: IntakeV2Step = .workmode
-    @State private var splashResult: IntakeV2Decision?
-    @State private var scanFailed = false
-    private let decisionEngine = IntakeV2DecisionEngine()
 
     /// onComplete delivers the final store + source manager so the host can run
     /// integration logic (submit OnboardingContext, register workspace, mark intro
@@ -385,24 +385,29 @@ struct IntakeV2FlowView: View {
                 onBack: { step = .stuck },
                 onNext: {
                     store.markCompleted()
-                    step = .splash
+                    step = .bootIntro
                 }
             )
-        case .splash:
-            IntakeV2SplashView(
+        case .bootIntro:
+            IntakeV2BootIntroView(
+                onBack: { step = .folderPick },
+                onNext: { step = .decideShowcase }
+            )
+        case .decideShowcase:
+            IntakeV2DecideShowcaseView(
+                onBack: { step = .bootIntro },
+                onNext: { step = .connectShowcase }
+            )
+        case .connectShowcase:
+            IntakeV2ConnectShowcaseView(
+                sources: sources,
+                onBack: { step = .decideShowcase },
+                onNext: { step = .readyAnalyze }
+            )
+        case .readyAnalyze:
+            IntakeV2ReadyAnalyzeView(
                 store: store,
                 sources: sources,
-                onComplete: { decision, didFail in
-                    splashResult = decision
-                    scanFailed = didFail
-                    step = .firstDecision
-                }
-            )
-        case .firstDecision:
-            IntakeV2FirstDecisionView(
-                decision: splashResult ?? decisionEngine.fallbackTemplate(intake: IntakeSnapshot.from(store: store)),
-                sources: sources,
-                scanFailed: scanFailed,
                 onDone: { onComplete?(store, sources) }
             )
         }

@@ -298,10 +298,13 @@ struct IntakeV2FolderPickView: View {
     }
 }
 
-// MARK: - Splash (D2 eng + D8 design)
+// MARK: - Splash + FirstDecision removed 2026-05-14
+// Replaced by 4-step showcase flow in IntakeV2ShowcaseViews.swift:
+//   BootIntro → DecideShowcase → ConnectShowcase → ReadyAnalyze (terminal + first decision card)
 
+#if SPLASH_LEGACY_KEEP_FOR_REFERENCE
 @MainActor
-struct IntakeV2SplashView: View {
+struct IntakeV2SplashView_Legacy: View {
     @ObservedObject var store: IntakeV2Store
     @ObservedObject var sources: IntakeV2SourceManager
     let onComplete: (IntakeV2Decision, Bool) -> Void  // (decision, scanFailed)
@@ -619,7 +622,7 @@ struct IntakeV2FirstDecisionView: View {
     }
 }
 
-private struct AppIconLogo: View {
+private struct AppIconLogo_Legacy: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -633,3 +636,4 @@ private struct AppIconLogo: View {
         }
     }
 }
+#endif
