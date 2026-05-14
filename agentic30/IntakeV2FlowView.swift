@@ -337,14 +337,18 @@ enum IntakeV2Step: Int, CaseIterable {
 
 @MainActor
 struct IntakeV2FlowView: View {
-    @StateObject var store = IntakeV2Store()
-    @StateObject var sources = IntakeV2SourceManager()
+    @StateObject private var store = IntakeV2Store()
+    @StateObject private var sources = IntakeV2SourceManager()
 
     @State private var step: IntakeV2Step = .workmode
     @State private var splashResult: IntakeV2Decision?
     @State private var scanFailed = false
+    private let decisionEngine = IntakeV2DecisionEngine()
 
-    var onComplete: (() -> Void)? = nil
+    /// onComplete delivers the final store + source manager so the host can run
+    /// integration logic (submit OnboardingContext, register workspace, mark intro
+    /// complete) without IntakeV2 having to know about AgenticViewModel.
+    var onComplete: ((IntakeV2Store, IntakeV2SourceManager) -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -401,10 +405,10 @@ struct IntakeV2FlowView: View {
             )
         case .firstDecision:
             IntakeV2FirstDecisionView(
-                decision: splashResult ?? IntakeV2DecisionEngine().fallbackTemplate(intake: IntakeSnapshot.from(store: store)),
+                decision: splashResult ?? decisionEngine.fallbackTemplate(intake: IntakeSnapshot.from(store: store)),
                 sources: sources,
                 scanFailed: scanFailed,
-                onDone: { onComplete?() }
+                onDone: { onComplete?(store, sources) }
             )
         }
     }

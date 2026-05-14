@@ -193,14 +193,28 @@ struct ContentView: View {
         ZStack {
             Color.clear.ignoresSafeArea()
             if viewModel.requiresMacOnboarding {
-                IntakeV2FlowView(onComplete: {
+                IntakeV2FlowView { store, _ in
                     // V2 onboarding completion — review-driven redesign 2026-05-14.
-                    // V2 store/sources own their own state; here we just mark the legacy
-                    // onboarding-intro flag so the rest of the routing settles.
-                    // Deeper integration (OnboardingContext submission, workspace setting from
-                    // V2 folderURL) lands in a follow-up PR.
+                    // Maps V2 store answers into the legacy OnboardingContext schema
+                    // so the rest of the routing (needsOnboardingContext, needsProjectWorkspace)
+                    // settles in one shot.
+                    if let workmode = store.workmode,
+                       let role = store.role,
+                       let stuck = store.stuck {
+                        let context = OnboardingContext.make(
+                            workMode: workmode,
+                            role: role,
+                            projectStage: stuck,
+                            isolationLevel: .projectFolder,
+                            isolationLevels: [.projectFolder]
+                        )
+                        viewModel.submitOnboardingContext(context)
+                    }
+                    if let url = store.folderURL {
+                        WorkspaceSettings.store(url)
+                    }
                     viewModel.completeMacOnboardingIntro()
-                })
+                }
             } else if let session = viewModel.selectedSession {
                 switch activeSurface {
                 case .assistantBubble:
@@ -1617,6 +1631,12 @@ struct ContentView: View {
         withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
             selectedWorkspaceSection = .curriculum
             isWorkspaceSidebarPresented = true
+            showsSidebarSettingsMenu = false
+            isWorkspaceCurriculumNavigatorTourPresented = false
+            isWorkspaceSettingsTourPresented = false
+            isWorkspaceHelpTourPresented = false
+            isWorkspaceHelpPresented = false
+            isWorkspaceRecentConversationsTourPresented = false
             isWorkspaceSwitcherTourPresented = true
         }
     }
@@ -8580,9 +8600,10 @@ private struct BipCompletionConfettiBurst: View {
                     )
             }
         }
-        .accessibilityLabel("Confetti animation")
-        .accessibilityValue(isReleased ? "playing" : "ready")
+        .accessibilityHidden(true)
         .onAppear {
+            // Skip animation under hermetic UI tests so screenshots stay pixel-stable.
+            guard ProcessInfo.processInfo.environment["AGENTIC30_TEST_STUB_PROVIDER"] != "1" else { return }
             isReleased = true
         }
     }

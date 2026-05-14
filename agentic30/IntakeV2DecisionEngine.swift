@@ -110,7 +110,9 @@ struct IntakeV2DecisionEngine {
                 body: "지난 결제 거절·이탈 응답을 모아 공통 reason 3가지 정리.",
                 rationale: "stuck=monetization. 결제 직전 이탈이 가장 비싼 신호. 패턴부터 봄.",
                 metaLine: "priority=high · age=2d",
-                attributedSources: [.localFolder, .toss, .stripe].filter { _ in true }
+                attributedSources: scan.hasPaymentResponses
+                    ? [.localFolder, .toss, .stripe]
+                    : [.localFolder]
             )
         }
 
@@ -168,9 +170,7 @@ struct IntakeV2DecisionEngine {
     /// Make decision when scan completely failed (D3 design — graceful fallback).
     /// Used by splash when scan errors or permission denied — template-only Decide.
     func fallbackTemplate(intake: IntakeSnapshot) -> IntakeV2Decision {
-        var snapshot = intake
-        // Force empty scan path through main generate() so the same rules cover stuck mapping
-        _ = snapshot
+        // Force empty scan path through main generate() so the same rules cover stuck mapping.
         return generate(intake: intake, scan: .empty)
     }
 

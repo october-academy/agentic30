@@ -423,7 +423,7 @@ struct IntakeV2SplashView: View {
             staleSpecDays: nil,
             staleTodoDays: staleTodo,
             lastCommitDays: nil,
-            hasInterviewTranscripts: contents.contains { $0.contains("interview") },
+            hasInterviewTranscripts: contents.contains { $0.range(of: "interview", options: .caseInsensitive) != nil },
             hasPaymentResponses: false
         )
     }
