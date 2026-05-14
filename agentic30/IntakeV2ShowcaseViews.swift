@@ -88,7 +88,7 @@ private enum BrandIcon: String, CaseIterable {
         case .toss: return "Toss"
         case .stripe: return "Stripe"
         case .threads: return "Threads"
-        case .folder: return "Local folder"
+        case .folder: return "Local folders"
         }
     }
 
@@ -160,62 +160,73 @@ struct IntakeV2BootIntroView: View {
         ("구독 6개월 사용자 churn 패턴 정리",
          "signal=churn · priority=med")
     ]
-
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 20) {
-                ShowcaseEyebrow(label: "STEP 1 / 4 · BOOT")
-                IntakeV2Header(
-                    title: "Agentic30 — 1인 개발자를 위한 실행 OS",
-                    subtitle: "컨텍스트를 읽고, 오늘 한 가지를 결정하고, 실행을 추적합니다. Read → Decide → Execute 세 동작이 매일 반복됩니다."
-                )
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 28) {
+                    ShowcaseEyebrow(label: "STEP 1 / 4 · BOOT")
+                    IntakeV2Header(
+                        title: "Agentic30 — 1인 개발자를 위한 실행 OS",
+                        subtitle: "컨텍스트를 읽고, 오늘 한 가지를 결정하고, 실행을 추적합니다. Read → Decide → Execute 세 동작이 매일 반복됩니다."
+                    )
+                    .layoutPriority(1)
+                    .padding(.bottom, 18)
 
-                HStack(alignment: .top, spacing: 14) {
-                    capCard(number: "01", verb: "Read",
-                            desc: "코드·문서·인터뷰·결제·공개 기록을 컨텍스트로 흡수합니다.",
-                            active: activeColumn == 0) {
-                        ReadIconGrid(icons: readIcons, spotlight: iconSpotlight)
+                    HStack(alignment: .top, spacing: 14) {
+                        capCard(number: "01", verb: "Read",
+                                desc: "코드·문서·인터뷰·결제·공개 기록을 컨텍스트로 흡수합니다.",
+                                active: activeColumn == 0) {
+                            ReadIconGrid(icons: readIcons, spotlight: iconSpotlight)
+                        }
+                        capCard(number: "02", verb: "Decide",
+                                desc: "신호 강도·우선순위·미처리 기간으로 오늘의 한 가지를 결정.",
+                                active: activeColumn == 1) {
+                            DecideMiniNotif(bodyText: decideSamples[decideIdx].body,
+                                            tag: decideSamples[decideIdx].tag)
+                        }
+                        capCard(number: "03", verb: "Execute",
+                                desc: "당신이 실행. OS는 결과를 기록하고 다음 결정에 반영.",
+                                active: activeColumn == 2) {
+                            ExecuteTaskList()
+                        }
                     }
-                    capCard(number: "02", verb: "Decide",
-                            desc: "신호 강도·우선순위·미처리 기간으로 오늘의 한 가지를 결정.",
-                            active: activeColumn == 1) {
-                        DecideMiniNotif(bodyText: decideSamples[decideIdx].body,
-                                        tag: decideSamples[decideIdx].tag)
+                    .frame(height: 330)
+
+                    HStack(spacing: 6) {
+                        Circle().fill(IntakeV2Color.accent).frame(width: 6, height: 6)
+                        Text("kernel ready · 3 modules loaded ·")
+                            .foregroundStyle(IntakeV2Color.textTertiary)
+                        Text("→ continue")
+                            .foregroundStyle(IntakeV2Color.textSecondary)
                     }
-                    capCard(number: "03", verb: "Execute",
-                            desc: "당신이 실행. OS는 결과를 기록하고 다음 결정에 반영.",
-                            active: activeColumn == 2) {
-                        ExecuteTaskList()
-                    }
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .tracking(0.6)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, 2)
                 }
-                .frame(maxHeight: 340)
-
-                HStack(spacing: 6) {
-                    Circle().fill(IntakeV2Color.accent).frame(width: 6, height: 6)
-                    Text("kernel ready · 3 modules loaded ·")
-                        .foregroundStyle(IntakeV2Color.textTertiary)
-                    Text("→ continue")
-                        .foregroundStyle(IntakeV2Color.textSecondary)
-                }
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .tracking(0.6)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.top, 2)
-
-                Spacer(minLength: 0)
-                IntakeV2Footer(
-                    backDisabled: false,
-                    nextTitle: "Continue →",
-                    nextEnabled: true,
-                    onBack: onBack,
-                    onNext: onNext
-                )
+                .padding(.horizontal, 56)
+                .padding(.top, 42)
+                .padding(.bottom, 18)
+                .frame(maxWidth: 1180, alignment: .leading)
+                .frame(maxWidth: .infinity)
             }
+            .scrollIndicators(.hidden)
+
+            IntakeV2Footer(
+                backDisabled: false,
+                nextTitle: "Continue →",
+                nextEnabled: true,
+                onBack: onBack,
+                onNext: onNext
+            )
             .padding(.horizontal, 56)
-            .padding(.top, 36)
+            .padding(.top, 12)
             .padding(.bottom, 36)
             .frame(maxWidth: 1180, alignment: .leading)
             .frame(maxWidth: .infinity)
+            .background {
+                IntakeV2Color.bg
+            }
         }
         .onAppear { startTimers() }
         .onDisappear { stopTimers() }
@@ -252,14 +263,14 @@ struct IntakeV2BootIntroView: View {
         .background(
             ZStack(alignment: .top) {
                 RoundedRectangle(cornerRadius: 14)
-                    .fill(active ? Color(red: 0.086, green: 0.098, blue: 0.110) : IntakeV2Color.panel)
+                    .fill(active ? Color(red: 0.082, green: 0.090, blue: 0.098) : IntakeV2Color.panel)
                 if active {
                     LinearGradient(
                         colors: [.clear, IntakeV2Color.accent, .clear],
                         startPoint: .leading,
                         endPoint: .trailing
                     )
-                    .frame(height: 2)
+                    .frame(height: 1)
                     .mask(
                         RoundedRectangle(cornerRadius: 14)
                             .frame(height: 2)
@@ -270,11 +281,11 @@ struct IntakeV2BootIntroView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14)
-                .stroke(active ? IntakeV2Color.accent.opacity(0.4) : .white.opacity(0.06),
+                .stroke(active ? IntakeV2Color.accent.opacity(0.26) : .white.opacity(0.06),
                         lineWidth: 1)
         )
-        .shadow(color: active ? IntakeV2Color.accent.opacity(0.12) : .clear,
-                radius: active ? 36 : 0, y: active ? 12 : 0)
+        .shadow(color: active ? IntakeV2Color.accent.opacity(0.06) : .clear,
+                radius: active ? 18 : 0, y: active ? 8 : 0)
         .animation(.easeInOut(duration: 0.3), value: active)
     }
 
@@ -319,29 +330,30 @@ private struct ReadIconGrid: View {
     let spotlight: Int
 
     var body: some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 3)
-        LazyVGrid(columns: columns, spacing: 10) {
-            ForEach(Array(icons.enumerated()), id: \.offset) { idx, icon in
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(idx == spotlight ? IntakeV2Color.accent.opacity(0.08) : .white.opacity(0.02))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(idx == spotlight ? IntakeV2Color.accent.opacity(0.35) : .white.opacity(0.04), lineWidth: 1)
-                        )
-                    BrandIconTile(icon: icon, size: 30, corner: 8)
-                }
-                .aspectRatio(1, contentMode: .fit)
-                .scaleEffect(idx == spotlight ? 1.05 : 1.0)
-                .overlay(alignment: .bottom) {
-                    if idx == spotlight {
-                        Capsule()
-                            .fill(IntakeV2Color.accent)
-                            .frame(width: 18, height: 2)
-                            .offset(y: 4)
+        VStack(spacing: 10) {
+            let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 3)
+            LazyVGrid(columns: columns, spacing: 10) {
+                ForEach(Array(icons.enumerated()), id: \.offset) { idx, icon in
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(idx == spotlight ? IntakeV2Color.accent.opacity(0.07) : .white.opacity(0.02))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(idx == spotlight ? IntakeV2Color.accent.opacity(0.28) : .white.opacity(0.04), lineWidth: 1)
+                            )
+                        BrandIconTile(icon: icon, size: 30, corner: 8)
                     }
+                    .aspectRatio(1, contentMode: .fit)
+                    .scaleEffect(idx == spotlight ? 1.03 : 1.0)
                 }
             }
+            Text("\(icons[spotlight].name) · \(icons[spotlight].kind)")
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(IntakeV2Color.textCardSecondary)
+                .tracking(0.35)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .frame(maxWidth: .infinity, alignment: .center)
         }
     }
 }
@@ -768,13 +780,12 @@ struct IntakeV2ConnectShowcaseView: View {
     let onBack: () -> Void
     let onNext: () -> Void
 
-    // Default selection mirrors mockup. Local folder pulls from existing store registration.
-    @State private var selection: Set<BrandIcon> = [.github, .gdocs, .notion, .folder]
-    @State private var errorTiles: Set<BrandIcon> = [.txt]
+    @State private var selection: Set<BrandIcon> = []
+    @State private var errorTiles: Set<BrandIcon> = []
 
     private let allSources: [BrandIcon] = [
-        .github, .gdocs, .gsheets, .notion, .discord, .posthog,
-        .toss, .stripe, .threads, .folder, .txt
+        .folder, .github, .gdocs, .gsheets, .notion, .discord, .posthog,
+        .toss, .stripe, .threads, .txt
     ]
 
     var body: some View {
@@ -837,6 +848,7 @@ struct IntakeV2ConnectShowcaseView: View {
             .frame(maxWidth: 1180, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
+        .onAppear { syncSelectionWithRegisteredSources() }
     }
 
     @ViewBuilder
@@ -930,7 +942,7 @@ struct IntakeV2ConnectShowcaseView: View {
         case .github: return "Connected · 3 repos"
         case .gdocs: return "Connected · 128 docs"
         case .notion: return "Connected · 47 pages"
-        case .folder: return "Connected · ~/Projects"
+        case .folder: return localFolderStatusText()
         default: return "Connected"
         }
     }
@@ -946,11 +958,45 @@ struct IntakeV2ConnectShowcaseView: View {
             .notion: .notion, .discord: .discord, .posthog: .posthog,
             .toss: .toss, .stripe: .stripe, .threads: .threads, .txt: .interviewTxt
         ]
+        if !selection.contains(.folder) {
+            sources.remove(.localFolder)
+        }
         for (icon, id) in mapping {
             if selection.contains(icon) {
                 sources.toggle(id, to: .disabled) // marked as "user wanted but not yet connected"
+            } else {
+                sources.remove(id)
             }
         }
+    }
+
+    private func syncSelectionWithRegisteredSources() {
+        selection = sources.status(of: .localFolder) == .connected ? [.folder] : []
+        errorTiles = []
+    }
+
+    private func localFolderStatusText() -> String {
+        guard let source = sources.sources.first(where: { $0.id == .localFolder }) else {
+            return "Connected"
+        }
+        if let detail = source.detail {
+            return "Connected · \(detail)"
+        }
+        if let path = source.path {
+            return "Connected · \(abbreviatedPath(path))"
+        }
+        return "Connected"
+    }
+
+    private func abbreviatedPath(_ path: String) -> String {
+        let home = NSHomeDirectory()
+        if path == home {
+            return "~"
+        }
+        if path.hasPrefix(home + "/") {
+            return "~/" + String(path.dropFirst(home.count + 1))
+        }
+        return URL(fileURLWithPath: path).lastPathComponent
     }
 }
 
@@ -966,6 +1012,10 @@ struct IntakeV2ReadyAnalyzeView: View {
     @State private var decision: IntakeV2Decision?
     @State private var revealCard: Bool = false
     @State private var scanFailed: Bool = false
+    @State private var showTodoWindow: Bool = false
+    @State private var generatedTodoTasks: [GeneratedTodoTask] = []
+    @State private var todoGenerationComplete: Bool = false
+    @State private var todoGenerationTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -983,13 +1033,22 @@ struct IntakeV2ReadyAnalyzeView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
 
                 if revealCard, let d = decision {
-                    firstDecisionCard(d)
-                        .frame(maxWidth: 880)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .transition(.asymmetric(
-                            insertion: .move(edge: .bottom).combined(with: .opacity),
-                            removal: .opacity
-                        ))
+                    VStack(spacing: 14) {
+                        firstDecisionCard(d)
+                        if showTodoWindow {
+                            todoListWindow(for: d)
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .bottom).combined(with: .opacity).combined(with: .scale(scale: 0.98, anchor: .top)),
+                                    removal: .opacity
+                                ))
+                        }
+                    }
+                    .frame(maxWidth: 880)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .bottom).combined(with: .opacity),
+                        removal: .opacity
+                    ))
                 }
 
                 Spacer(minLength: 0)
@@ -1017,6 +1076,10 @@ struct IntakeV2ReadyAnalyzeView: View {
             .frame(maxWidth: .infinity)
         }
         .task { await runBootSequence() }
+        .onDisappear {
+            todoGenerationTask?.cancel()
+            todoGenerationTask = nil
+        }
     }
 
     // MARK: terminal
@@ -1026,6 +1089,13 @@ struct IntakeV2ReadyAnalyzeView: View {
         let cmd: String
         var status: String?
         var deciding: Bool = false
+    }
+
+    private struct GeneratedTodoTask: Identifiable, Equatable {
+        let id: Int
+        let title: String
+        let detail: String
+        let tag: String
     }
 
     private var terminalBox: some View {
@@ -1126,16 +1196,21 @@ struct IntakeV2ReadyAnalyzeView: View {
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 12)
-                HStack(spacing: 8) {
-                    Text("Execute")
-                    Text("↵").opacity(0.8)
+                Button(action: { startTodoGeneration(for: d) }) {
+                    HStack(spacing: 8) {
+                        Text(executeStartedTitle)
+                        Text("↵").opacity(0.8)
+                    }
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 12)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(IntakeV2Color.accent))
+                    .shadow(color: IntakeV2Color.accent.opacity(0.3), radius: 16, y: 6)
                 }
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 22)
-                .padding(.vertical, 12)
-                .background(RoundedRectangle(cornerRadius: 10).fill(IntakeV2Color.accent))
-                .shadow(color: IntakeV2Color.accent.opacity(0.3), radius: 16, y: 6)
+                .buttonStyle(.plain)
+                .disabled(showTodoWindow)
+                .opacity(showTodoWindow ? 0.82 : 1)
             }
             .padding(22)
         }
@@ -1157,6 +1232,213 @@ struct IntakeV2ReadyAnalyzeView: View {
                         cornerRadii: .init(topLeading: 12, bottomLeading: 12, bottomTrailing: 0, topTrailing: 0)
                     )
                 )
+        }
+    }
+
+    private var executeStartedTitle: String {
+        showTodoWindow ? "Executing" : "Execute"
+    }
+
+    private func todoListWindow(for d: IntakeV2Decision) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Circle().fill(Color(red: 1.00, green: 0.373, blue: 0.341)).frame(width: 9, height: 9)
+                Circle().fill(Color(red: 0.996, green: 0.737, blue: 0.180)).frame(width: 9, height: 9)
+                Circle().fill(Color(red: 0.157, green: 0.784, blue: 0.251)).frame(width: 9, height: 9)
+                Text("todo.list")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(IntakeV2Color.monospaceMuted)
+                    .padding(.leading, 8)
+                Spacer()
+                Text(todoGenerationComplete ? "3 tasks ready" : "generating")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(todoGenerationComplete ? IntakeV2Color.accent : IntakeV2Color.textTertiary)
+                if !todoGenerationComplete {
+                    DotPulse()
+                }
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 13)
+            .background(.white.opacity(0.018))
+            .overlay(Rectangle().fill(.white.opacity(0.045)).frame(height: 1), alignment: .bottom)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Text(d.taskID)
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(IntakeV2Color.accentBright)
+                    Text("→ split into executable tasks")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(IntakeV2Color.textTertiary)
+                    Spacer()
+                }
+                .padding(.bottom, 2)
+
+                ForEach(generatedTodoTasks) { task in
+                    todoTaskRow(task)
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.96, anchor: .top)),
+                            removal: .opacity
+                        ))
+                }
+
+                if !todoGenerationComplete {
+                    todoDraftRow(nextIndex: generatedTodoTasks.count + 1)
+                        .transition(.opacity)
+                }
+            }
+            .padding(16)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(red: 0.038, green: 0.042, blue: 0.047))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(IntakeV2Color.accent.opacity(0.22), lineWidth: 1)
+                )
+                .shadow(color: IntakeV2Color.accent.opacity(0.10), radius: 28, y: 14)
+        )
+    }
+
+    private func todoTaskRow(_ task: GeneratedTodoTask) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(IntakeV2Color.accent.opacity(0.16))
+                    .overlay(Circle().stroke(IntakeV2Color.accent.opacity(0.55), lineWidth: 1))
+                Text("\(task.id)")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundStyle(IntakeV2Color.accentBright)
+            }
+            .frame(width: 26, height: 26)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(task.title)
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.94))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(task.detail)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(IntakeV2Color.textTertiary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 12)
+
+            Text(task.tag)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(IntakeV2Color.accent)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(IntakeV2Color.accent.opacity(0.10))
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(IntakeV2Color.accent.opacity(0.16), lineWidth: 1))
+                )
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(.white.opacity(0.025))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.055), lineWidth: 1))
+        )
+    }
+
+    private func todoDraftRow(nextIndex: Int) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .stroke(IntakeV2Color.accent.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                DotPulse()
+                    .scaleEffect(0.82)
+            }
+            .frame(width: 26, height: 26)
+
+            VStack(alignment: .leading, spacing: 6) {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(.white.opacity(0.10))
+                    .frame(width: nextIndex == 1 ? 230 : 280, height: 8)
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(.white.opacity(0.055))
+                    .frame(width: nextIndex == 3 ? 190 : 245, height: 7)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(.white.opacity(0.014))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.035), lineWidth: 1))
+        )
+    }
+
+    private func startTodoGeneration(for decision: IntakeV2Decision) {
+        guard !showTodoWindow else { return }
+        todoGenerationTask?.cancel()
+        generatedTodoTasks = []
+        todoGenerationComplete = false
+        withAnimation(.spring(response: 0.48, dampingFraction: 0.82)) {
+            showTodoWindow = true
+        }
+        todoGenerationTask = Task { await runTodoGeneration(for: decision) }
+    }
+
+    @MainActor private func runTodoGeneration(for decision: IntakeV2Decision) async {
+        let tasks = todoTasks(for: decision)
+        for task in tasks {
+            try? await Task.sleep(nanoseconds: 650_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.spring(response: 0.44, dampingFraction: 0.84)) {
+                generatedTodoTasks.append(task)
+            }
+        }
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        guard !Task.isCancelled else { return }
+        withAnimation(.easeOut(duration: 0.24)) {
+            todoGenerationComplete = true
+        }
+    }
+
+    private func todoTasks(for decision: IntakeV2Decision) -> [GeneratedTodoTask] {
+        switch decision.category {
+        case .interviewRequest:
+            return [
+                GeneratedTodoTask(id: 1, title: "최근 가입자 후보 3명을 추립니다.", detail: "가입 직후 행동 로그와 연락 가능한 사용자를 우선합니다.", tag: "FIND"),
+                GeneratedTodoTask(id: 2, title: "30분 인터뷰 요청 메시지를 작성합니다.", detail: "질문은 문제 상황, 대안, 결제 의향 순서로 좁힙니다.", tag: "DRAFT"),
+                GeneratedTodoTask(id: 3, title: "응답 여부와 다음 follow-up을 기록합니다.", detail: "오늘 보낸 요청과 회신 상태를 inbox에 남깁니다.", tag: "TRACK"),
+            ]
+        case .paymentResponse, .pricing:
+            return [
+                GeneratedTodoTask(id: 1, title: "결제/가격 관련 응답을 한곳에 모읍니다.", detail: "거절 이유, 가격 표현, 대안 언급을 분리합니다.", tag: "COLLECT"),
+                GeneratedTodoTask(id: 2, title: "반복되는 reason 3개를 라벨링합니다.", detail: "빈도보다 구매 차단 강도가 큰 항목을 먼저 봅니다.", tag: "LABEL"),
+                GeneratedTodoTask(id: 3, title: "가격 메시지 수정안을 하나 만듭니다.", detail: "다음 사용자 대화에서 바로 검증할 문장으로 끝냅니다.", tag: "SHIP"),
+            ]
+        case .docChange:
+            return [
+                GeneratedTodoTask(id: 1, title: "변경된 문서와 관련 코드 경로를 확인합니다.", detail: "SPEC, README, 최근 수정 파일을 같은 맥락으로 묶습니다.", tag: "READ"),
+                GeneratedTodoTask(id: 2, title: "changelog에 반영할 사용자 영향만 추립니다.", detail: "내부 구현 설명보다 사용자가 겪는 변화에 맞춥니다.", tag: "EDIT"),
+                GeneratedTodoTask(id: 3, title: "릴리즈 메모 초안을 저장합니다.", detail: "누락된 결정과 follow-up을 inbox에 연결합니다.", tag: "SAVE"),
+            ]
+        case .acquisition:
+            return [
+                GeneratedTodoTask(id: 1, title: "최근 가입자 5명의 첫 행동을 시간순으로 정리합니다.", detail: "첫 실행, 이탈 지점, 반복 클릭을 분리합니다.", tag: "MAP"),
+                GeneratedTodoTask(id: 2, title: "공통 activation 신호를 하나 고릅니다.", detail: "가입 직후 10분 안에 반복되는 행동을 우선합니다.", tag: "SIGNAL"),
+                GeneratedTodoTask(id: 3, title: "온보딩에서 바로 바꿀 한 문장을 작성합니다.", detail: "검증 가능한 copy 변경으로 작게 실행합니다.", tag: "APPLY"),
+            ]
+        case .churnSignal:
+            return [
+                GeneratedTodoTask(id: 1, title: "이탈 사용자 2명의 마지막 성공 행동을 찾습니다.", detail: "마지막 사용일과 직전 세션의 차단 지점을 비교합니다.", tag: "TRACE"),
+                GeneratedTodoTask(id: 2, title: "반복 이탈 패턴을 한 문장으로 요약합니다.", detail: "기능 부족, 가치 미인지, 실행 부담을 구분합니다.", tag: "SUM"),
+                GeneratedTodoTask(id: 3, title: "재활성화 메시지 또는 제품 수정안을 고릅니다.", detail: "오늘 실행 가능한 작은 조치 하나로 제한합니다.", tag: "ACT"),
+            ]
+        case .fallback:
+            return [
+                GeneratedTodoTask(id: 1, title: "현재 프로젝트에서 가장 최근 수정된 파일을 확인합니다.", detail: "결정 근거가 부족하므로 최신 작업 흔적부터 읽습니다.", tag: "READ"),
+                GeneratedTodoTask(id: 2, title: "오늘 막힌 지점을 한 문장으로 정리합니다.", detail: "문제, 대상 사용자, 다음 행동을 분리합니다.", tag: "FRAME"),
+                GeneratedTodoTask(id: 3, title: "30분 안에 끝낼 확인 작업 하나를 정합니다.", detail: "결과를 inbox에 남겨 다음 결정의 근거로 씁니다.", tag: "DO"),
+            ]
         }
     }
 

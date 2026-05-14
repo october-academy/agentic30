@@ -98,15 +98,19 @@ struct KeychainSettingsMigrationTests {
 
         defaults.set("/tmp/workspace", forKey: "agentic30.workspaceRoot")
         defaults.set(true, forKey: "com.agentic30.didCompleteSetup")
+        defaults.set(Data([0x01]), forKey: "IntakeV2.state.v1")
+        defaults.set(Data([0x02]), forKey: "IntakeV2.sources.v1")
         defaults.set("frame", forKey: "pet.window.frame")
         defaults.set("/tmp/legacy", forKey: "bipWorkspaceRoot")
         defaults.set("keep", forKey: "unrelated.app.key")
 
         let removedCount = KeychainHelper.resetAgentic30Defaults(defaults)
 
-        #expect(removedCount == 4)
+        #expect(removedCount == 6)
         #expect(defaults.object(forKey: "agentic30.workspaceRoot") == nil)
         #expect(defaults.object(forKey: "com.agentic30.didCompleteSetup") == nil)
+        #expect(defaults.object(forKey: "IntakeV2.state.v1") == nil)
+        #expect(defaults.object(forKey: "IntakeV2.sources.v1") == nil)
         #expect(defaults.object(forKey: "pet.window.frame") == nil)
         #expect(defaults.object(forKey: "bipWorkspaceRoot") == nil)
         #expect(defaults.string(forKey: "unrelated.app.key") == "keep")

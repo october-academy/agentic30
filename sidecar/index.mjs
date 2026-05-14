@@ -1424,6 +1424,7 @@ async function handleClientMessage(socket, payload) {
           gate,
           sessionId: payload.sessionId,
           provider: payload.provider,
+          localEvidence: payload.localEvidence,
         });
     }
       return;
@@ -5091,6 +5092,7 @@ function takePendingIddContinuationPrompt(session, requestId) {
 }
 
 async function createHostIddQuestionRequest(session, doc, {
+  localEvidence = null,
   previousRequestId = null,
   progressText = "질문 카드 준비 완료",
 } = {}) {
@@ -5109,6 +5111,7 @@ async function createHostIddQuestionRequest(session, doc, {
     : initialIddStructuredInputForDoc(doc, {
         provider: session.provider,
         onboardingHypothesis: doc.type === "icp" ? await currentWorkspaceOnboardingHypothesis() : null,
+        onboardingContext: doc.type === "icp" ? localEvidence?.onboardingContext : null,
         forceHostStructuredInput: true,
       });
   const structuredInput = await synthesizeIddQuestionWithSidecarAgent(session, doc, fallbackInput, {
@@ -5802,6 +5805,7 @@ async function startIddDocumentQueueOnce({
   sessionId = "",
   provider = "",
   requestedDocType = "",
+  localEvidence = null,
 } = {}) {
   const resolvedGate = gate ?? currentBipSetupGate();
   if (resolvedGate.iddSetupComplete) {
@@ -5852,6 +5856,7 @@ async function startIddDocumentQueueOnce({
       setupError: null,
     });
     await createHostIddQuestionRequest(existing, nextDoc, {
+      localEvidence,
       progressText: "질문 카드 준비 완료",
     });
     state.sessions.set(existing.id, existing);
@@ -5898,6 +5903,7 @@ async function startIddDocumentQueueOnce({
   });
   try {
     await createHostIddQuestionRequest(session, nextDoc, {
+      localEvidence,
       progressText: "첫 질문 카드 준비 완료",
     });
   } catch (error) {

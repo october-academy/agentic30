@@ -14,19 +14,19 @@ enum OnboardingWorkMode: String, Codable, CaseIterable, Hashable {
 
     var displayTitle: String {
         switch self {
-        case .fullTimeSolo: return "전업 1인 개발자"
-        case .sideProject: return "일·학업과 병행"
+        case .fullTimeSolo: return "전업으로 혼자 만들고 있음"
+        case .sideProject: return "틈틈이 혼자 만들고 있음"
         case .teamStartup: return "팀과 함께 만드는 중"
-        case .exploring: return "기타"
+        case .exploring: return "아직 상황을 정리 중"
         }
     }
 
     var displayDescription: String {
         switch self {
-        case .fullTimeSolo: return "퇴사했고 혼자 제품을 만들고 있습니다"
-        case .sideProject: return "직장이나 학업을 하면서 틈틈이 만들고 있습니다"
+        case .fullTimeSolo: return "하루 대부분을 제품에 쓰고 직접 결정합니다"
+        case .sideProject: return "직장이나 학업 사이의 고정된 시간에 만듭니다"
         case .teamStartup: return "함께 정하는 사람이 있거나 작은 팀이 있습니다"
-        case .exploring: return "내 상황을 직접 입력합니다"
+        case .exploring: return "아직 시간·역할·책임 범위를 정리하는 중입니다"
         }
     }
 }
@@ -73,9 +73,9 @@ enum OnboardingProjectStage: String, Codable, CaseIterable, Hashable {
     var displayTitle: String {
         switch self {
         case .ideaOnly: return "무엇을 만들어야 할지 모르겠다"
-        case .building: return "제품은 있는데 사용자가 오지 않는다"
-        case .firstUsers: return "쓰는 사람은 있는데 돈을 못 받고 있다"
-        case .preRevenue: return "가격이나 결제 제안이 막혀 있다"
+        case .building: return "첫 사용자를 찾지 못하고 있다"
+        case .firstUsers: return "사용자는 있지만 유료 전환 전이다"
+        case .preRevenue: return "가격·제안 실험이 막혀 있다"
         case .postRevenue: return "이미 매출이 있고 더 키우고 싶다"
         }
     }

@@ -371,6 +371,7 @@ final class AgenticViewModel: ObservableObject {
     private var requestedWarmSessionIDs = Set<String>()
     private var requestedInitialBipGate = false
     private var requestedInitialBipMission = false
+    private var activeOnboardingWorkspacePrefetchFingerprint: String?
     private var replacementSessionCreateInFlight = false
     private var latestCurriculumQuestionReframesByKey: [String: CurriculumQuestionReframeRecord] = [:]
     /// Idempotency guard for the AI-driven Foundation Day 0-7 first prompt.
@@ -583,6 +584,7 @@ final class AgenticViewModel: ObservableObject {
         }
         if let onboardingContextOverride {
             onboardingContext = onboardingContextOverride
+            macOnboardingIntroCompleted = true
         }
 
         restoreFoundationProgress(arguments: arguments)
@@ -983,6 +985,7 @@ final class AgenticViewModel: ObservableObject {
         }
         return !WorkspaceSettings.hasExplicitWorkspace
             || onboardingContext == nil
+            || !macOnboardingIntroCompleted
     }
 
     var needsProjectWorkspace: Bool {
@@ -990,7 +993,7 @@ final class AgenticViewModel: ObservableObject {
     }
 
     var needsOnboardingIntro: Bool {
-        onboardingContext == nil && !macOnboardingIntroCompleted
+        !macOnboardingIntroCompleted
     }
 
     var needsOnboardingContext: Bool {
@@ -1031,8 +1034,15 @@ final class AgenticViewModel: ObservableObject {
     }
 
     func start() {
+        start(allowOnboardingPrefetch: false, anchorFoundation: true)
+    }
+
+    private func start(allowOnboardingPrefetch: Bool, anchorFoundation: Bool) {
         guard !started else { return }
-        guard !requiresMacOnboarding else {
+        let canStartForOnboardingPrefetch = allowOnboardingPrefetch
+            && WorkspaceSettings.hasExplicitWorkspace
+            && onboardingContext != nil
+        guard !requiresMacOnboarding || canStartForOnboardingPrefetch else {
             connectionLabel = needsOnboardingContext ? "Complete local setup" : "Choose a project workspace"
             isConnected = false
             return
@@ -1045,7 +1055,9 @@ final class AgenticViewModel: ObservableObject {
         // the Foundation phase. Subsequent calls are no-ops, keeping the
         // counter monotonic across reconnects, sidecar restarts, and app
         // relaunches.
-        ensureFoundationStarted()
+        if anchorFoundation {
+            ensureFoundationStarted()
+        }
 
         if disablesSidecarStartForTesting {
             connectionLabel = "Sidecar disabled for unit tests"
@@ -1125,6 +1137,7 @@ final class AgenticViewModel: ObservableObject {
 
     func showWorkspace() {
         guard !requiresMacOnboarding, selectedSession != nil else { return }
+        activeSurface = .workspace
         PostHogTelemetry.capture("mac_workspace_surface_opened", authSession: macAuthSession)
     }
 
@@ -2110,6 +2123,55 @@ final class AgenticViewModel: ObservableObject {
         scanWorkspace(root: url.path)
     }
 
+    func prefetchOnboardingWorkspace(url: URL, context: OnboardingContext) {
+        let fingerprint = Self.onboardingWorkspacePrefetchFingerprint(url: url, context: context)
+        guard activeOnboardingWorkspacePrefetchFingerprint != fingerprint else { return }
+
+        let isChangingPrefetchTarget = activeOnboardingWorkspacePrefetchFingerprint != nil
+        activeOnboardingWorkspacePrefetchFingerprint = fingerprint
+        onboardingContext = context
+        onboardingContextStatus = .idle
+        WorkspaceSettings.store(url)
+        workspaceRoot = url.path
+        requestedInitialBipGate = false
+        requestedInitialBipMission = false
+        pendingWorkspaceScanRoot = nil
+        scanResult = nil
+        lastError = nil
+
+        if isChangingPrefetchTarget, started {
+            connectionLabel = "Switching workspace..."
+            isConnected = false
+            selectedSessionID = nil
+            sidecar.stop()
+            started = false
+        }
+
+        PostHogTelemetry.capture("mac_onboarding_workspace_prefetch_requested", properties: [
+            "workspace_basename": url.lastPathComponent,
+            "work_mode": context.workMode.rawValue,
+            "role": context.role.rawValue,
+            "project_stage": context.projectStage.rawValue,
+        ], authSession: macAuthSession)
+
+        start(allowOnboardingPrefetch: true, anchorFoundation: false)
+        scanWorkspace(root: url.path)
+    }
+
+    private static func onboardingWorkspacePrefetchFingerprint(
+        url: URL,
+        context: OnboardingContext
+    ) -> String {
+        [
+            url.standardizedFileURL.path,
+            context.workMode.rawValue,
+            context.role.rawValue,
+            context.projectStage.rawValue,
+            context.isolationLevel.rawValue,
+            context.isolationLevels.map(\.rawValue).joined(separator: ","),
+        ].joined(separator: "|")
+    }
+
     func resetMacOnboarding() {
         signOutMacAuth()
         KeychainHelper.deleteOnboardingContext()
@@ -2117,14 +2179,26 @@ final class AgenticViewModel: ObservableObject {
         macOnboardingIntroCompleted = false
         onboardingContext = nil
         onboardingContextStatus = .idle
+        activeOnboardingWorkspacePrefetchFingerprint = nil
     }
 
-    func completeMacOnboardingIntro() {
+    func completeMacOnboardingIntro(openWorkspace: Bool = false) {
         Self.saveMacOnboardingIntroCompleted()
         macOnboardingIntroCompleted = true
+        activeOnboardingWorkspacePrefetchFingerprint = nil
         PostHogTelemetry.capture("mac_onboarding_intro_completed", properties: [
             "total_scenes": OnboardingCompletionTiming.programIntroSceneCount,
         ], authSession: macAuthSession)
+        if !requiresMacOnboarding {
+            ensureFoundationStarted()
+        }
+        if !started, !requiresMacOnboarding {
+            hydrateWorkspaceRootFromSettingsIfAvailable()
+            start()
+        }
+        if openWorkspace {
+            activeSurface = .workspace
+        }
     }
 
     func submitOnboardingContext(_ context: OnboardingContext) {
@@ -4705,6 +4779,7 @@ private extension AgenticViewModel {
         requestedWarmSessionIDs = []
         requestedInitialBipGate = false
         requestedInitialBipMission = false
+        activeOnboardingWorkspacePrefetchFingerprint = nil
         replacementSessionCreateInFlight = false
         latestCurriculumQuestionReframesByKey = [:]
         injectedFoundationFirstPromptKeys = []

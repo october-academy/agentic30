@@ -112,6 +112,15 @@ final class IntakeV2SourceManagerTests: XCTestCase {
         XCTAssertEqual(mgr.status(of: .localFolder), .connected)
     }
 
+    func test_registerLocalFolder_keepsLocalFolderFirst() {
+        let mgr = IntakeV2SourceManager(defaults: suiteDefaults)
+        mgr.toggle(.github, to: .connected)
+        mgr.toggle(.notion, to: .connected)
+        mgr.registerLocalFolder(URL(fileURLWithPath: "/tmp/x"), fileCount: nil)
+
+        XCTAssertEqual(mgr.sources.first?.id, .localFolder)
+    }
+
     func test_toggle_setsStatus() {
         let mgr = IntakeV2SourceManager(defaults: suiteDefaults)
         mgr.toggle(.notion, to: .connecting)

@@ -28,10 +28,10 @@ final class LoginItemsManager: ObservableObject {
     private let defaults: UserDefaults
 
     init(
-        registrar: LoginItemRegistering = SMAppServiceRegistrar(),
+        registrar: LoginItemRegistering? = nil,
         defaults: UserDefaults = .standard
     ) {
-        self.registrar = registrar
+        self.registrar = registrar ?? SMAppServiceRegistrar()
         self.defaults = defaults
         syncFromSystem()
     }

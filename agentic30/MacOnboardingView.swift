@@ -186,7 +186,7 @@ struct MacOnboardingView: View {
     private var visualStage: some View {
         ZStack {
             LinearGradient(
-                colors: currentScene.visualColors,
+                colors: currentScene.visualColors.map(sceneColor),
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
@@ -210,6 +210,10 @@ struct MacOnboardingView: View {
             }
         }
         .clipped()
+    }
+
+    private func sceneColor(_ color: SceneColor) -> Color {
+        Color(red: color.red, green: color.green, blue: color.blue, opacity: color.opacity)
     }
 
     private var progressDots: some View {
@@ -320,7 +324,7 @@ private struct MacOnboardingScene: Hashable {
     let title: String
     let subtitle: String
     let visual: Visual
-    let visualColors: [Color]
+    let visualColors: [SceneColor]
 
     enum Visual: Hashable {
         case mark
@@ -331,39 +335,53 @@ private struct MacOnboardingScene: Hashable {
 
     static let all: [MacOnboardingScene] = OnboardingProgramIntro.scenes.map(MacOnboardingScene.init(introScene:))
 
-    init(introScene: OnboardingProgramIntro.Scene) {
+    nonisolated init(introScene: OnboardingProgramIntro.Scene) {
         title = introScene.title
         subtitle = introScene.subtitle
         switch introScene.visual {
         case .mark:
             visual = .mark
             visualColors = [
-                Color(red: 0.06, green: 0.07, blue: 0.07),
-                Color(red: 0.11, green: 0.22, blue: 0.16),
-                Color(red: 0.40, green: 0.74, blue: 0.33).opacity(0.75),
+                SceneColor(red: 0.06, green: 0.07, blue: 0.07),
+                SceneColor(red: 0.11, green: 0.22, blue: 0.16),
+                SceneColor(red: 0.40, green: 0.74, blue: 0.33, opacity: 0.75),
             ]
         case .briefing:
             visual = .briefing
             visualColors = [
-                Color(red: 0.08, green: 0.10, blue: 0.09),
-                Color(red: 0.35, green: 0.41, blue: 0.28),
-                Color(red: 0.80, green: 0.74, blue: 0.52),
+                SceneColor(red: 0.08, green: 0.10, blue: 0.09),
+                SceneColor(red: 0.35, green: 0.41, blue: 0.28),
+                SceneColor(red: 0.80, green: 0.74, blue: 0.52),
             ]
         case .launch:
             visual = .launch
             visualColors = [
-                Color(red: 0.08, green: 0.10, blue: 0.09),
-                Color(red: 0.24, green: 0.33, blue: 0.24),
-                Color(red: 0.70, green: 0.64, blue: 0.44),
+                SceneColor(red: 0.08, green: 0.10, blue: 0.09),
+                SceneColor(red: 0.24, green: 0.33, blue: 0.24),
+                SceneColor(red: 0.70, green: 0.64, blue: 0.44),
             ]
         case .integrations:
             visual = .integrations
             visualColors = [
-                Color(red: 0.07, green: 0.075, blue: 0.08),
-                Color(red: 0.08, green: 0.08, blue: 0.09),
-                Color(red: 0.13, green: 0.13, blue: 0.14),
+                SceneColor(red: 0.07, green: 0.075, blue: 0.08),
+                SceneColor(red: 0.08, green: 0.08, blue: 0.09),
+                SceneColor(red: 0.13, green: 0.13, blue: 0.14),
             ]
         }
+    }
+}
+
+private struct SceneColor: Hashable {
+    let red: Double
+    let green: Double
+    let blue: Double
+    let opacity: Double
+
+    nonisolated init(red: Double, green: Double, blue: Double, opacity: Double = 1) {
+        self.red = red
+        self.green = green
+        self.blue = blue
+        self.opacity = opacity
     }
 }
 

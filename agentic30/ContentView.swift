@@ -193,28 +193,26 @@ struct ContentView: View {
         ZStack {
             Color.clear.ignoresSafeArea()
             if viewModel.requiresMacOnboarding {
-                IntakeV2FlowView { store, _ in
-                    // V2 onboarding completion — review-driven redesign 2026-05-14.
-                    // Maps V2 store answers into the legacy OnboardingContext schema
-                    // so the rest of the routing (needsOnboardingContext, needsProjectWorkspace)
-                    // settles in one shot.
-                    if let workmode = store.workmode,
-                       let role = store.role,
-                       let stuck = store.stuck {
-                        let context = OnboardingContext.make(
-                            workMode: workmode,
-                            role: role,
-                            projectStage: stuck,
-                            isolationLevel: .projectFolder,
-                            isolationLevels: [.projectFolder]
-                        )
-                        viewModel.submitOnboardingContext(context)
+                IntakeV2FlowView(
+                    onWorkspacePrefetchRequested: { store, _ in
+                        guard let context = intakeV2OnboardingContext(from: store),
+                              let url = store.folderURL else { return }
+                        viewModel.prefetchOnboardingWorkspace(url: url, context: context)
+                    },
+                    onComplete: { store, _ in
+                        // V2 onboarding completion — review-driven redesign 2026-05-14.
+                        // Maps V2 store answers into the legacy OnboardingContext schema
+                        // so the rest of the routing (needsOnboardingContext, needsProjectWorkspace)
+                        // settles in one shot.
+                        if let context = intakeV2OnboardingContext(from: store) {
+                            viewModel.submitOnboardingContext(context)
+                        }
+                        if let url = store.folderURL {
+                            WorkspaceSettings.store(url)
+                        }
+                        viewModel.completeMacOnboardingIntro(openWorkspace: true)
                     }
-                    if let url = store.folderURL {
-                        WorkspaceSettings.store(url)
-                    }
-                    viewModel.completeMacOnboardingIntro()
-                }
+                )
             } else if let session = viewModel.selectedSession {
                 switch activeSurface {
                 case .assistantBubble:
@@ -231,6 +229,19 @@ struct ContentView: View {
                 )
             }
         }
+    }
+
+    private func intakeV2OnboardingContext(from store: IntakeV2Store) -> OnboardingContext? {
+        guard let workmode = store.workmode,
+              let role = store.role,
+              let stuck = store.stuck else { return nil }
+        return OnboardingContext.make(
+            workMode: workmode,
+            role: role,
+            projectStage: stuck,
+            isolationLevel: .projectFolder,
+            isolationLevels: [.projectFolder]
+        )
     }
 
     @ViewBuilder

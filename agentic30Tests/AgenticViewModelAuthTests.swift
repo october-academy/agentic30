@@ -341,6 +341,104 @@ struct AgenticViewModelAuthTests {
         #expect(viewModel.needsOnboardingContext == false)
     }
 
+    @Test @MainActor func onboardingWorkspacePrefetchStartsBeforeIntroCompletionWithoutAnchoringFoundation() throws {
+        let workspaceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-prefetch-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+        defer {
+            WorkspaceSettings.clear()
+            try? FileManager.default.removeItem(at: workspaceURL)
+        }
+
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true, activateAppForAuth: {})
+        let context = OnboardingContext.make(
+            workMode: .teamStartup,
+            role: .designer,
+            projectStage: .firstUsers,
+            isolationLevel: .projectFolder
+        )
+
+        viewModel.prefetchOnboardingWorkspace(url: workspaceURL, context: context)
+
+        #expect(viewModel.requiresMacOnboarding == true)
+        #expect(viewModel.needsOnboardingIntro == true)
+        #expect(viewModel.needsOnboardingContext == false)
+        #expect(viewModel.workspaceRoot == workspaceURL.path)
+        #expect(viewModel.onboardingContext?.role == .designer)
+        #expect(viewModel.foundationStartedAt == nil)
+        #expect(viewModel.isScanning == true)
+        #expect(viewModel.scanProgressMessage == "Waiting for workspace connection...")
+    }
+
+    @Test @MainActor func onboardingWorkspacePrefetchFingerprintChangeDropsStaleSessionSelection() throws {
+        let firstWorkspaceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-prefetch-a-\(UUID().uuidString)", isDirectory: true)
+        let secondWorkspaceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-prefetch-b-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: firstWorkspaceURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: secondWorkspaceURL, withIntermediateDirectories: true)
+        defer {
+            WorkspaceSettings.clear()
+            try? FileManager.default.removeItem(at: firstWorkspaceURL)
+            try? FileManager.default.removeItem(at: secondWorkspaceURL)
+        }
+
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true, activateAppForAuth: {})
+        let firstContext = OnboardingContext.make(
+            workMode: .fullTimeSolo,
+            role: .developer,
+            projectStage: .building,
+            isolationLevel: .projectFolder
+        )
+        let secondContext = OnboardingContext.make(
+            workMode: .sideProject,
+            role: .productManager,
+            projectStage: .preRevenue,
+            isolationLevel: .projectFolder
+        )
+
+        viewModel.prefetchOnboardingWorkspace(url: firstWorkspaceURL, context: firstContext)
+        viewModel.selectedSessionID = "stale-foundation-session"
+
+        viewModel.prefetchOnboardingWorkspace(url: secondWorkspaceURL, context: secondContext)
+
+        #expect(viewModel.selectedSessionID == nil)
+        #expect(viewModel.workspaceRoot == secondWorkspaceURL.path)
+        #expect(viewModel.onboardingContext?.workMode == .sideProject)
+        #expect(viewModel.foundationStartedAt == nil)
+        #expect(viewModel.isScanning == true)
+    }
+
+    @Test @MainActor func completingPrefetchedOnboardingOpensWorkspaceSurfaceAndAnchorsFoundation() throws {
+        let workspaceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-prefetch-complete-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+        defer {
+            WorkspaceSettings.clear()
+            try? FileManager.default.removeItem(at: workspaceURL)
+        }
+
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true, activateAppForAuth: {})
+        viewModel.prefetchOnboardingWorkspace(
+            url: workspaceURL,
+            context: OnboardingContext.make(
+                workMode: .fullTimeSolo,
+                role: .developer,
+                projectStage: .building,
+                isolationLevel: .projectFolder
+            )
+        )
+
+        #expect(viewModel.requiresMacOnboarding == true)
+        #expect(viewModel.foundationStartedAt == nil)
+
+        viewModel.completeMacOnboardingIntro(openWorkspace: true)
+
+        #expect(viewModel.requiresMacOnboarding == false)
+        #expect(viewModel.activeSurface == .workspace)
+        #expect(viewModel.foundationStartedAt != nil)
+    }
+
     @Test @MainActor func startHydratesExplicitWorkspaceBeforeSidecarReady() throws {
         let workspaceURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("agentic30-start-hydrates-workspace-\(UUID().uuidString)", isDirectory: true)

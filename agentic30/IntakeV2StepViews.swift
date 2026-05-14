@@ -15,9 +15,9 @@ struct IntakeV2WorkmodeView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            IntakeV2DashPagination(current: 1, total: 4)
+            IntakeV2DashPagination(current: 1, total: 4, label: "상황")
             IntakeV2Header(
-                title: "지금 어떤 상황에서 빌드하고 있나요?",
+                title: "얼마나 혼자, 얼마나 자주 만들 수 있나요?",
                 subtitle: "쓸 수 있는 시간과 책임 범위에 맞춰 오늘 할 일을 정합니다."
             )
             VStack(spacing: 8) {
@@ -36,7 +36,6 @@ struct IntakeV2WorkmodeView: View {
                     onTap: { store.workmode = .exploring; store.persist() }
                 )
             }
-            Spacer(minLength: 8)
             IntakeV2Footer(
                 backDisabled: true,
                 nextTitle: "Next →",
@@ -49,6 +48,7 @@ struct IntakeV2WorkmodeView: View {
         .padding(.top, 56)
         .padding(.bottom, 36)
         .frame(maxWidth: 1080, alignment: .leading)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
         .frame(maxWidth: .infinity)
     }
 }
@@ -63,9 +63,9 @@ struct IntakeV2RoleView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            IntakeV2DashPagination(current: 2, total: 4)
+            IntakeV2DashPagination(current: 2, total: 4, label: "역할")
             IntakeV2Header(
-                title: "어떤 일을 하고 계신가요?",
+                title: "가장 자주 하는 역할은 무엇인가요?",
                 subtitle: "익숙한 일하는 방식에 맞춰 설명과 제안을 조정합니다."
             )
             VStack(spacing: 8) {
@@ -78,7 +78,6 @@ struct IntakeV2RoleView: View {
                     )
                 }
             }
-            Spacer(minLength: 8)
             IntakeV2Footer(
                 backDisabled: false,
                 nextTitle: "Next →",
@@ -91,6 +90,7 @@ struct IntakeV2RoleView: View {
         .padding(.top, 56)
         .padding(.bottom, 36)
         .frame(maxWidth: 1080, alignment: .leading)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
         .frame(maxWidth: .infinity)
     }
 }
@@ -105,7 +105,7 @@ struct IntakeV2StuckView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            IntakeV2DashPagination(current: 3, total: 4)
+            IntakeV2DashPagination(current: 3, total: 4, label: "막힘")
             IntakeV2Header(
                 title: "현재 가장 큰 막힘은 무엇인가요?",
                 subtitle: "막힌 지점에 맞춰 먼저 볼 문제를 정합니다."
@@ -120,7 +120,6 @@ struct IntakeV2StuckView: View {
                     )
                 }
             }
-            Spacer(minLength: 8)
             IntakeV2Footer(
                 backDisabled: false,
                 nextTitle: "Next →",
@@ -133,6 +132,7 @@ struct IntakeV2StuckView: View {
         .padding(.top, 56)
         .padding(.bottom, 36)
         .frame(maxWidth: 1080, alignment: .leading)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
         .frame(maxWidth: .infinity)
     }
 }
@@ -151,32 +151,31 @@ struct IntakeV2FolderPickView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            IntakeV2DashPagination(current: 4, total: 4)
+            IntakeV2DashPagination(current: 4, total: 4, label: "폴더")
             IntakeV2Header(
                 title: "어디서 읽을까요?",
                 subtitle: "OS가 읽을 폴더를 선택해주세요. 컨텍스트가 클수록 결정 정확도가 높아집니다.",
-                trustLine: "// 파일은 이 Mac에만 머뭅니다. 외부 전송 0건."
+                trustLine: "// 선택한 폴더는 이 Mac에서만 읽습니다. 클라우드 연결은 나중에 직접 켭니다."
             )
             VStack(spacing: 8) {
                 IntakeV2OptionCard(
                     title: store.folderURL != nil
-                        ? "선택됨: \(store.folderURL!.lastPathComponent)"
+                        ? "읽을 폴더: \(store.folderURL!.lastPathComponent)"
                         : "프로젝트 선택하기",
-                    description: "원하는 폴더를 직접 고릅니다",
+                    description: store.folderURL != nil ? "클릭해서 다른 폴더 선택" : "원하는 폴더를 직접 고릅니다",
                     selected: store.folderURL != nil,
                     onTap: { chooseFolder() }
                 )
                 IntakeV2OptionCard(
                     title: "지금은 건너뛰기",
-                    description: "intake 답변만으로 결정. 나중에 Settings에서 폴더 추가 가능",
+                    description: "코드·문서를 읽지 못해 첫 결정 정확도는 낮아집니다. 나중에 Settings에서 추가할 수 있습니다.",
                     selected: skipSelected,
                     onTap: { skipSelected = true; store.folderURL = nil; store.persist() }
                 )
             }
-            Spacer(minLength: 8)
             IntakeV2Footer(
                 backDisabled: false,
-                nextTitle: "Start assistant ✨",
+                nextTitle: "Start assistant →",
                 nextEnabled: store.isStep4Complete || skipSelected,
                 onBack: onBack,
                 onNext: {
@@ -191,10 +190,21 @@ struct IntakeV2FolderPickView: View {
         .padding(.top, 56)
         .padding(.bottom, 36)
         .frame(maxWidth: 1080, alignment: .leading)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
         .frame(maxWidth: .infinity)
     }
 
     private func chooseFolder() {
+        #if DEBUG
+        if let url = uiTestingWorkspacePickerURL() {
+            store.folderURL = url
+            fileCount = (try? FileManager.default.contentsOfDirectory(atPath: url.path).count) ?? 0
+            store.persist()
+            skipSelected = false
+            return
+        }
+        #endif
+
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
@@ -207,6 +217,18 @@ struct IntakeV2FolderPickView: View {
             skipSelected = false
         }
     }
+
+    #if DEBUG
+    private func uiTestingWorkspacePickerURL() -> URL? {
+        let prefix = "--ui-testing-picker-path="
+        guard let argument = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix(prefix) }) else {
+            return nil
+        }
+        let path = String(argument.dropFirst(prefix.count))
+        guard !path.isEmpty else { return nil }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+    #endif
 }
 
 // MARK: - Splash + FirstDecision removed 2026-05-14

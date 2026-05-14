@@ -46,7 +46,7 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Sign in with Google"].exists)
         advanceOnboardingIntroToContext(in: app)
-        XCTAssertTrue(app.staticTexts["지금 어떤 상황에서 빌드하고 있나요?"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Next"].exists)
     }
 
@@ -74,7 +74,7 @@ final class agentic30UITests: XCTestCase {
 
         XCTAssertTrue(onboardingApp.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 5))
         advanceOnboardingIntroToContext(in: onboardingApp)
-        let contextVisible = onboardingApp.staticTexts["지금 어떤 상황에서 빌드하고 있나요?"].waitForExistence(timeout: 5)
+        let contextVisible = onboardingApp.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 5)
         if !contextVisible {
             attachText(onboardingApp.debugDescription, named: "00 Onboarding Context Missing Tree")
         }
@@ -83,6 +83,65 @@ final class agentic30UITests: XCTestCase {
         XCTAssertFalse(onboardingApp.buttons["Opening Google"].exists)
         XCTAssertFalse(onboardingApp.buttons["Completing sign in"].exists)
         attachScreenshot(from: onboardingApp, named: "01 Loginless Onboarding Context")
+    }
+
+    @MainActor
+    func testIntakeV2PrefetchShowsPreparedQuestionOnWorkspaceEntry() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-intake-prefetch-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-intake-prefetch-app-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+        try "Agentic30 UI prefetch fixture\n".write(
+            toFile: "\(workspacePath)/README.md",
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-picker-path=\(workspacePath)",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_DISABLE_IDD_AGENT_SYNTHESIS": "1",
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            "AGENTIC30_CODEX_MODEL": "gpt-5.4-mini",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(app.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 10))
+        clickCenter(of: buttonContaining(in: app, text: "전업으로 혼자 만들고 있음"))
+        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        clickCenter(of: buttonContaining(in: app, text: "개발자"))
+        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        clickCenter(of: buttonContaining(in: app, text: "첫 사용자를 찾지 못하고 있다"))
+        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        clickCenter(of: buttonContaining(in: app, text: "프로젝트 선택하기"))
+        XCTAssertTrue(buttonContaining(in: app, text: "읽을 폴더: \((workspacePath as NSString).lastPathComponent)").waitForExistence(timeout: 3))
+        clickCenter(of: button(in: app, matching: ["Start assistant →", "Start assistant"]))
+
+        for _ in 0..<3 {
+            let continueButton = button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"])
+            XCTAssertTrue(continueButton.waitForExistence(timeout: 10))
+            clickCenter(of: continueButton)
+        }
+
+        let openInbox = button(in: app, matching: ["Open inbox →", "Open inbox"])
+        XCTAssertTrue(openInbox.waitForExistence(timeout: 30))
+        clickCenter(of: openInbox)
+
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetupSurface"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetup.question"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.descendants(matching: .any)["workspace.iddSetup.waiting"].exists)
     }
 
     @MainActor
@@ -471,7 +530,7 @@ final class agentic30UITests: XCTestCase {
 
         XCTAssertTrue(projectApp.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 5))
         advanceOnboardingIntroToContext(in: projectApp)
-        XCTAssertTrue(projectApp.staticTexts["지금 어떤 상황에서 빌드하고 있나요?"].waitForExistence(timeout: 5))
+        XCTAssertTrue(projectApp.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 5))
         XCTAssertFalse(projectApp.staticTexts["Choose your project folder"].exists)
         attachScreenshot(from: projectApp, named: "01 Context Before Project Picker")
         projectApp.terminate()
@@ -516,11 +575,11 @@ final class agentic30UITests: XCTestCase {
 
         XCTAssertTrue(seededWorkspaceApp.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 10))
         advanceOnboardingIntroToContext(in: seededWorkspaceApp)
-        XCTAssertTrue(seededWorkspaceApp.staticTexts["지금 어떤 상황에서 빌드하고 있나요?"].waitForExistence(timeout: 10))
+        XCTAssertTrue(seededWorkspaceApp.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 10))
         let fullTimeOption = button(in: seededWorkspaceApp, matching: [
             "onboardingContext.option.full_time_solo",
-            "전업 1인 개발자, 퇴사했고 혼자 제품을 만들고 있습니다",
-            "전업 1인 개발자",
+            "전업으로 혼자 만들고 있음, 하루 대부분을 제품에 쓰고 직접 결정합니다",
+            "전업으로 혼자 만들고 있음",
         ])
         XCTAssertTrue(fullTimeOption.exists)
         attachScreenshot(from: seededWorkspaceApp, named: "02 Context Work Mode")
@@ -531,7 +590,7 @@ final class agentic30UITests: XCTestCase {
         ])
         clickCenter(of: contextPrimary)
 
-        XCTAssertTrue(seededWorkspaceApp.staticTexts["어떤 일을 하고 계신가요?"].waitForExistence(timeout: 5))
+        XCTAssertTrue(seededWorkspaceApp.staticTexts["가장 자주 하는 역할은 무엇인가요?"].waitForExistence(timeout: 5))
         let developerOption = button(in: seededWorkspaceApp, matching: [
             "onboardingContext.option.developer",
             "개발자, 앱·웹·제품을 직접 구현합니다",
@@ -3029,6 +3088,13 @@ final class agentic30UITests: XCTestCase {
             }
         }
         return app.buttons[names[0]]
+    }
+
+    @MainActor
+    private func buttonContaining(in app: XCUIApplication, text: String) -> XCUIElement {
+        app.buttons
+            .matching(NSPredicate(format: "label CONTAINS %@", text))
+            .firstMatch
     }
 
     @MainActor

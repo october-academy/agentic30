@@ -8,7 +8,7 @@ import AppKit
 // Design decisions reflected:
 //   D7 (design): step 4 folder pick uses hero band pattern + 3 option cards
 //   D8 (design): splash failure → graceful fallback (Continue anyway) + template Decide
-//   D9 (design): step 4 trust copy ("// 파일은 이 Mac에만 머뭅니다. 외부 전송 0건.")
+//   D9 (design): step 4 trust copy avoids overclaiming system-wide network behavior.
 //   D10 (design): post-onboarding Records banner inline below first Decide card
 
 // MARK: - Color tokens
@@ -20,6 +20,7 @@ enum IntakeV2Color {
     static let accentBright = Color(red: 0.294, green: 0.871, blue: 0.502) // #4ade80
     static let textPrimary = Color.white
     static let textSecondary = Color.white.opacity(0.65)
+    static let textCardSecondary = Color.white.opacity(0.62)
     static let textTertiary = Color.white.opacity(0.45)
     static let monospaceMuted = Color.white.opacity(0.4)
 }
@@ -29,21 +30,31 @@ enum IntakeV2Color {
 struct IntakeV2DashPagination: View {
     let current: Int      // 1...total
     let total: Int
+    let label: String
 
     var body: some View {
-        HStack(spacing: 6) {
-            ForEach(1...total, id: \.self) { idx in
-                if idx == current {
-                    Capsule()
-                        .fill(.white)
-                        .frame(width: 24, height: 6)
-                } else {
-                    Circle()
-                        .fill(.white.opacity(0.15))
-                        .frame(width: 6, height: 6)
+        HStack(spacing: 10) {
+            HStack(spacing: 6) {
+                ForEach(1...total, id: \.self) { idx in
+                    if idx == current {
+                        Capsule()
+                            .fill(.white)
+                            .frame(width: 24, height: 6)
+                    } else {
+                        Circle()
+                            .fill(.white.opacity(0.18))
+                            .frame(width: 6, height: 6)
+                    }
                 }
             }
+            Text("\(current) / \(total) · \(label)")
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(IntakeV2Color.textSecondary)
+                .tracking(0.8)
+                .textCase(.uppercase)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Step \(current) of \(total), \(label)")
     }
 }
 
@@ -99,13 +110,12 @@ struct IntakeV2OptionCard: View {
             HStack(alignment: .center, spacing: 14) {
                 ZStack {
                     Circle()
-                        .fill(selected ? IntakeV2Color.accentBright : .white.opacity(0.18))
-                        .frame(width: 10, height: 10)
+                        .stroke(selected ? IntakeV2Color.accentBright : .white.opacity(0.22), lineWidth: 1.5)
+                        .frame(width: 14, height: 14)
                     if selected {
                         Circle()
-                            .stroke(IntakeV2Color.accentBright.opacity(0.4), lineWidth: 6)
-                            .frame(width: 18, height: 18)
-                            .blur(radius: 4)
+                            .fill(IntakeV2Color.accentBright)
+                            .frame(width: 6, height: 6)
                     }
                 }
                 .frame(width: 18)
@@ -116,7 +126,7 @@ struct IntakeV2OptionCard: View {
                         .foregroundStyle(IntakeV2Color.textPrimary)
                     Text(description)
                         .font(.system(size: 14, weight: .medium, design: .rounded))
-                        .foregroundStyle(IntakeV2Color.textTertiary)
+                        .foregroundStyle(IntakeV2Color.textCardSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -132,7 +142,7 @@ struct IntakeV2OptionCard: View {
             .padding(.vertical, 18)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(selected ? IntakeV2Color.accent.opacity(0.08) : .white.opacity(0.03))
+                    .fill(selected ? IntakeV2Color.accent.opacity(0.055) : .white.opacity(0.03))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
@@ -150,7 +160,7 @@ struct IntakeV2OptionCard: View {
 
 struct IntakeV2Footer: View {
     let backDisabled: Bool
-    let nextTitle: String       // "Next →" or "Start assistant" (final)
+    let nextTitle: String       // "Next →" or "Start assistant →" (final)
     let nextEnabled: Bool
     let onBack: () -> Void
     let onNext: () -> Void
@@ -167,6 +177,9 @@ struct IntakeV2Footer: View {
                         .background(Capsule().fill(.white.opacity(0.06)))
                 }
                 .buttonStyle(.plain)
+            } else {
+                Color.clear
+                    .frame(width: 112, height: 1)
             }
 
             Spacer()
@@ -181,7 +194,16 @@ struct IntakeV2Footer: View {
             }
             .buttonStyle(.plain)
             .disabled(!nextEnabled)
+            .accessibilityLabel(nextAccessibilityLabel)
         }
+        .padding(.top, 8)
+    }
+
+    private var nextAccessibilityLabel: String {
+        nextTitle
+            .replacingOccurrences(of: " →", with: "")
+            .replacingOccurrences(of: "→", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -204,6 +226,7 @@ struct IntakeV2FlowView: View {
     /// onComplete delivers the final store + source manager so the host can run
     /// integration logic (submit OnboardingContext, register workspace, mark intro
     /// complete) without IntakeV2 having to know about AgenticViewModel.
+    var onWorkspacePrefetchRequested: ((IntakeV2Store, IntakeV2SourceManager) -> Void)? = nil
     var onComplete: ((IntakeV2Store, IntakeV2SourceManager) -> Void)? = nil
 
     var body: some View {
@@ -241,6 +264,7 @@ struct IntakeV2FlowView: View {
                 onBack: { step = .stuck },
                 onNext: {
                     store.markCompleted()
+                    onWorkspacePrefetchRequested?(store, sources)
                     step = .bootIntro
                 }
             )

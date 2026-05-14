@@ -214,8 +214,16 @@ final class IntakeV2SourceManager: ObservableObject {
     func upsert(_ state: IntakeSourceState) {
         if let idx = sources.firstIndex(where: { $0.id == state.id }) {
             sources[idx] = state
+            if state.id == .localFolder, idx != sources.startIndex {
+                let local = sources.remove(at: idx)
+                sources.insert(local, at: sources.startIndex)
+            }
         } else {
-            sources.append(state)
+            if state.id == .localFolder {
+                sources.insert(state, at: sources.startIndex)
+            } else {
+                sources.append(state)
+            }
         }
         persist()
     }

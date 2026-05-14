@@ -442,6 +442,7 @@ enum KeychainHelper {
         let keys = defaults.dictionaryRepresentation().keys.filter { key in
             key.hasPrefix("agentic30.")
                 || key.hasPrefix("com.agentic30.")
+                || key.hasPrefix("IntakeV2.")
                 || key.hasPrefix("pet.")
                 || key == "bipWorkspaceRoot"
         }

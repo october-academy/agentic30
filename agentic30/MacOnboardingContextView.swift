@@ -186,8 +186,8 @@ struct MacOnboardingContextView: View {
 
     private var currentTitle: String {
         switch sceneIndex {
-        case 0: return "지금 어떤 상황에서 빌드하고 있나요?"
-        case 1: return "어떤 일을 하고 계신가요?"
+        case 0: return "얼마나 혼자, 얼마나 자주 만들 수 있나요?"
+        case 1: return "가장 자주 하는 역할은 무엇인가요?"
         case 2: return "현재 가장 큰 막힘은 무엇인가요?"
         case 3: return "어떤 기록을 연결할 수 있나요?"
         default: return ""
@@ -303,7 +303,7 @@ struct MacOnboardingContextView: View {
                 title: OnboardingWorkMode.exploring.displayTitle,
                 description: customWorkModeSelected && !trimmedCustomWorkMode.isEmpty
                     ? trimmedCustomWorkMode
-                    : OnboardingWorkMode.exploring.displayDescription,
+                    : "내 상황을 직접 입력합니다",
                 selected: customWorkModeSelected,
                 accent: workModeAccent,
                 identifier: "onboardingContext.option.custom_work_mode"
