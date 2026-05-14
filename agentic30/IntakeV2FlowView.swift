@@ -354,13 +354,8 @@ struct IntakeV2FlowView: View {
         VStack(spacing: 0) {
             content
         }
-        .frame(width: 760, height: 780)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(IntakeV2Color.bg)
-        .clipShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 34, style: .continuous)
-                .stroke(.white.opacity(0.08), lineWidth: 1)
-        )
     }
 
     @ViewBuilder private var content: some View {
