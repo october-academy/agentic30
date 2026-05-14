@@ -76,7 +76,7 @@ struct IntakeV2HeroBand<Content: View>: View {
                 .opacity(0.5)
             content()
         }
-        .frame(height: 254)
+        .frame(height: 304)
     }
 }
 
@@ -109,16 +109,16 @@ struct IntakeV2HeroPill: View {
     let accent: Color
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 18, weight: .bold))
+                .font(.system(size: 22, weight: .bold))
                 .foregroundStyle(accent)
             Text(label)
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: 20, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white)
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 26)
+        .padding(.vertical, 14)
         .background(
             Capsule()
                 .fill(.black.opacity(0.4))
@@ -179,21 +179,23 @@ struct IntakeV2Header: View {
     var trustLine: String? = nil  // D9 — step 4 trust copy
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             // step label is in pagination; this is the syslin
             Text(title)
-                .font(.system(size: 28, weight: .bold))
+                .font(.system(size: 34, weight: .bold, design: .rounded))
                 .foregroundStyle(IntakeV2Color.textPrimary)
+                .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
             Text(subtitle)
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: 18, weight: .medium, design: .rounded))
                 .foregroundStyle(IntakeV2Color.textSecondary)
+                .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
             if let sysline {
                 Text(sysline)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundStyle(IntakeV2Color.accent)
-                    .padding(.top, 4)
+                    .padding(.top, 6)
             }
             if let trustLine {
                 Text(trustLine)
@@ -240,17 +242,17 @@ struct IntakeV2OptionCard: View {
                 }
                 .frame(width: 18)
 
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
                         Text(title)
-                            .font(.system(size: 15, weight: .bold))
+                            .font(.system(size: 17, weight: .bold, design: .rounded))
                             .foregroundStyle(IntakeV2Color.textPrimary)
                         if selected, let sysVar {
                             Text(sysVar)
-                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
                                 .foregroundStyle(IntakeV2Color.accentBright)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 1)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2)
                                 .background(
                                     RoundedRectangle(cornerRadius: 4)
                                         .stroke(IntakeV2Color.accentBright.opacity(0.3), lineWidth: 1)
@@ -258,7 +260,7 @@ struct IntakeV2OptionCard: View {
                         }
                     }
                     Text(description)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 14, weight: .medium, design: .rounded))
                         .foregroundStyle(IntakeV2Color.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -267,11 +269,12 @@ struct IntakeV2OptionCard: View {
 
                 if selected {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(IntakeV2Color.accentBright)
                 }
             }
-            .padding(16)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 18)
             .background(
                 RoundedRectangle(cornerRadius: 12)
                     .fill(selected ? IntakeV2Color.accent.opacity(0.08) : .white.opacity(0.03))
@@ -301,11 +304,11 @@ struct IntakeV2Footer: View {
         HStack {
             Button(action: onBack) {
                 Text("Back")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(backDisabled ? .white.opacity(0.18) : .white.opacity(0.65))
-                    .padding(.horizontal, 26)
-                    .padding(.vertical, 12)
-                    .background(Capsule().fill(.white.opacity(backDisabled ? 0.02 : 0.05)))
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .foregroundStyle(backDisabled ? .white.opacity(0.18) : .white.opacity(0.7))
+                    .padding(.horizontal, 30)
+                    .padding(.vertical, 14)
+                    .background(Capsule().fill(.white.opacity(backDisabled ? 0.02 : 0.06)))
             }
             .buttonStyle(.plain)
             .disabled(backDisabled)
@@ -314,10 +317,10 @@ struct IntakeV2Footer: View {
 
             Button(action: onNext) {
                 Text(nextTitle)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
                     .foregroundStyle(nextEnabled ? .black : .white.opacity(0.3))
-                    .padding(.horizontal, 26)
-                    .padding(.vertical, 12)
+                    .padding(.horizontal, 30)
+                    .padding(.vertical, 14)
                     .background(Capsule().fill(nextEnabled ? Color.white : .white.opacity(0.1)))
             }
             .buttonStyle(.plain)
@@ -347,12 +350,12 @@ struct IntakeV2FlowView: View {
         VStack(spacing: 0) {
             content
         }
-        .frame(width: 720, height: 720)
+        .frame(width: 760, height: 780)
         .background(IntakeV2Color.bg)
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(.white.opacity(0.06), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 34, style: .continuous)
+                .stroke(.white.opacity(0.08), lineWidth: 1)
         )
     }
 

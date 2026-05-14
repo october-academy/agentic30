@@ -21,7 +21,7 @@ struct IntakeV2WorkmodeView: View {
                     IntakeV2HeroPill(icon: "hammer.fill", label: "Making", accent: Color(red: 0.98, green: 0.74, blue: 0.18))
                 }
             }
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 24) {
                 IntakeV2DashPagination(current: 1, total: 4)
                 IntakeV2Header(
                     stepLabel: "STEP 1 / 4",
@@ -56,9 +56,9 @@ struct IntakeV2WorkmodeView: View {
                     onNext: onNext
                 )
             }
-            .padding(.horizontal, 32)
-            .padding(.top, 22)
-            .padding(.bottom, 24)
+            .padding(.horizontal, 36)
+            .padding(.top, 28)
+            .padding(.bottom, 30)
         }
     }
 }
@@ -76,7 +76,7 @@ struct IntakeV2RoleView: View {
             IntakeV2HeroBand(tone: .green) {
                 RoleHeroIcon()
             }
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 24) {
                 IntakeV2DashPagination(current: 2, total: 4)
                 IntakeV2Header(
                     stepLabel: "STEP 2 / 4",
@@ -104,9 +104,9 @@ struct IntakeV2RoleView: View {
                     onNext: onNext
                 )
             }
-            .padding(.horizontal, 32)
-            .padding(.top, 22)
-            .padding(.bottom, 24)
+            .padding(.horizontal, 36)
+            .padding(.top, 28)
+            .padding(.bottom, 30)
         }
     }
 }
@@ -148,7 +148,7 @@ struct IntakeV2StuckView: View {
             IntakeV2HeroBand(tone: .gold) {
                 IntakeV2HeroPill(icon: "sparkles", label: "Stuck point", accent: Color(red: 0.98, green: 0.74, blue: 0.18))
             }
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 24) {
                 IntakeV2DashPagination(current: 3, total: 4)
                 IntakeV2Header(
                     stepLabel: "STEP 3 / 4",
@@ -176,9 +176,9 @@ struct IntakeV2StuckView: View {
                     onNext: onNext
                 )
             }
-            .padding(.horizontal, 32)
-            .padding(.top, 22)
-            .padding(.bottom, 24)
+            .padding(.horizontal, 36)
+            .padding(.top, 28)
+            .padding(.bottom, 30)
         }
     }
 }
@@ -201,7 +201,7 @@ struct IntakeV2FolderPickView: View {
             IntakeV2HeroBand(tone: .blue) {
                 IntakeV2HeroPill(icon: "folder.fill", label: "Folder", accent: .white)
             }
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 24) {
                 IntakeV2DashPagination(current: 4, total: 4)
                 IntakeV2Header(
                     stepLabel: "STEP 4 / 4",
@@ -249,9 +249,9 @@ struct IntakeV2FolderPickView: View {
                     }
                 )
             }
-            .padding(.horizontal, 32)
-            .padding(.top, 22)
-            .padding(.bottom, 24)
+            .padding(.horizontal, 36)
+            .padding(.top, 28)
+            .padding(.bottom, 30)
         }
     }
 
@@ -345,9 +345,9 @@ struct IntakeV2SplashView: View {
                 )
                 Spacer()
             }
-            .padding(.horizontal, 32)
-            .padding(.top, 22)
-            .padding(.bottom, 24)
+            .padding(.horizontal, 36)
+            .padding(.top, 28)
+            .padding(.bottom, 30)
         }
         .task {
             await runScan()
