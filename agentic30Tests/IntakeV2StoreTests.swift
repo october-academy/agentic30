@@ -36,6 +36,8 @@ final class IntakeV2StoreTests: XCTestCase {
         store1.stuck = .ideaOnly
         store1.folderURL = URL(fileURLWithPath: "/Users/test/Projects")
         store1.persist()
+        XCTAssertNotNil(suiteDefaults.data(forKey: IntakeV2Store.stateDefaultsKey))
+        XCTAssertNil(suiteDefaults.data(forKey: IntakeV2Store.legacyStateDefaultsKey))
 
         let store2 = IntakeV2Store(defaults: suiteDefaults)
         XCTAssertEqual(store2.workmode, .fullTimeSolo)
@@ -58,7 +60,7 @@ final class IntakeV2StoreTests: XCTestCase {
 
     func test_corruptStorage_surfacesRestoreFailedFlag() {
         // Inject garbage at the storage key
-        suiteDefaults.set(Data([0xFF, 0xFE, 0xFD]), forKey: "IntakeV2.state.v1")
+        suiteDefaults.set(Data([0xFF, 0xFE, 0xFD]), forKey: IntakeV2Store.stateDefaultsKey)
         let store = IntakeV2Store(defaults: suiteDefaults)
         XCTAssertTrue(store.restoreFailed, "corrupt UserDefaults should set restoreFailed=true (eng D6 critical gap)")
         XCTAssertNil(store.workmode)
@@ -66,12 +68,31 @@ final class IntakeV2StoreTests: XCTestCase {
         XCTAssertNil(store.stuck)
     }
 
+    func test_legacyStorage_migratesToAgentic30Namespace() throws {
+        let data = try XCTUnwrap("""
+        {"workmode":"full_time_solo","role":"developer","stuck":"idea_only","folderPath":"/tmp/legacy","firstDecisionShown":false}
+        """.data(using: .utf8))
+        suiteDefaults.set(data, forKey: IntakeV2Store.legacyStateDefaultsKey)
+
+        let store = IntakeV2Store(defaults: suiteDefaults)
+
+        XCTAssertEqual(store.workmode, .fullTimeSolo)
+        XCTAssertEqual(store.role, .developer)
+        XCTAssertEqual(store.stuck, .ideaOnly)
+        XCTAssertEqual(store.folderURL?.path, "/tmp/legacy")
+        XCTAssertNotNil(suiteDefaults.data(forKey: IntakeV2Store.stateDefaultsKey))
+        XCTAssertNil(suiteDefaults.data(forKey: IntakeV2Store.legacyStateDefaultsKey))
+    }
+
     func test_reset_clearsStateAndStorage() {
         let store = IntakeV2Store(defaults: suiteDefaults)
         store.workmode = .teamStartup
         store.persist()
+        suiteDefaults.set(Data([0x01]), forKey: IntakeV2Store.legacyStateDefaultsKey)
         store.reset()
         XCTAssertNil(store.workmode)
+        XCTAssertNil(suiteDefaults.data(forKey: IntakeV2Store.stateDefaultsKey))
+        XCTAssertNil(suiteDefaults.data(forKey: IntakeV2Store.legacyStateDefaultsKey))
 
         let fresh = IntakeV2Store(defaults: suiteDefaults)
         XCTAssertNil(fresh.workmode)
@@ -134,10 +155,26 @@ final class IntakeV2SourceManagerTests: XCTestCase {
         let mgr1 = IntakeV2SourceManager(defaults: suiteDefaults)
         mgr1.registerLocalFolder(URL(fileURLWithPath: "/x"), fileCount: 1)
         mgr1.toggle(.github, to: .connected)
+        XCTAssertNotNil(suiteDefaults.data(forKey: IntakeV2SourceManager.sourcesDefaultsKey))
+        XCTAssertNil(suiteDefaults.data(forKey: IntakeV2SourceManager.legacySourcesDefaultsKey))
 
         let mgr2 = IntakeV2SourceManager(defaults: suiteDefaults)
         XCTAssertEqual(mgr2.connectedCount, 2)
         XCTAssertEqual(mgr2.status(of: .github), .connected)
+    }
+
+    func test_legacySources_migrateToAgentic30Namespace() throws {
+        let data = try XCTUnwrap("""
+        [{"id":"local_folder","status":"connected","path":"/tmp/legacy","detail":"1 docs"}]
+        """.data(using: .utf8))
+        suiteDefaults.set(data, forKey: IntakeV2SourceManager.legacySourcesDefaultsKey)
+
+        let mgr = IntakeV2SourceManager(defaults: suiteDefaults)
+
+        XCTAssertEqual(mgr.connectedCount, 1)
+        XCTAssertEqual(mgr.sources.first?.path, "/tmp/legacy")
+        XCTAssertNotNil(suiteDefaults.data(forKey: IntakeV2SourceManager.sourcesDefaultsKey))
+        XCTAssertNil(suiteDefaults.data(forKey: IntakeV2SourceManager.legacySourcesDefaultsKey))
     }
 
     func test_remove_clearsEntry() {

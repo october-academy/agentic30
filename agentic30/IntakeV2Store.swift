@@ -71,8 +71,10 @@ final class IntakeV2Store: ObservableObject {
     @Published var completedAt: Date?
     @Published var firstDecisionShown: Bool = false
 
+    static let stateDefaultsKey = "agentic30.intakeV2.state.v1"
+    static let legacyStateDefaultsKey = "IntakeV2.state.v1"
+
     private let defaults: UserDefaults
-    private let key = "IntakeV2.state.v1"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -94,22 +96,31 @@ final class IntakeV2Store: ObservableObject {
     }
 
     private func restore() {
-        guard let data = defaults.data(forKey: key) else { return }
-        do {
-            let snap = try JSONDecoder().decode(Snapshot.self, from: data)
-            self.workmode = snap.workmode
-            self.role = snap.role
-            self.stuck = snap.stuck
-            if let path = snap.folderPath {
-                self.folderURL = URL(fileURLWithPath: path)
+        var foundCorruptStorage = false
+        for key in [Self.stateDefaultsKey, Self.legacyStateDefaultsKey] {
+            guard let data = defaults.data(forKey: key) else { continue }
+            do {
+                let snap = try JSONDecoder().decode(Snapshot.self, from: data)
+                self.workmode = snap.workmode
+                self.role = snap.role
+                self.stuck = snap.stuck
+                if let path = snap.folderPath {
+                    self.folderURL = URL(fileURLWithPath: path)
+                }
+                self.completedAt = snap.completedAt
+                self.firstDecisionShown = snap.firstDecisionShown
+                if key != Self.stateDefaultsKey {
+                    defaults.set(data, forKey: Self.stateDefaultsKey)
+                    defaults.removeObject(forKey: key)
+                }
+                return
+            } catch {
+                // Corrupt — wipe and surface the failure (eng D6 critical gap)
+                defaults.removeObject(forKey: key)
+                foundCorruptStorage = true
             }
-            self.completedAt = snap.completedAt
-            self.firstDecisionShown = snap.firstDecisionShown
-        } catch {
-            // Corrupt — wipe and surface the failure (eng D6 critical gap)
-            defaults.removeObject(forKey: key)
-            self.restoreFailed = true
         }
+        self.restoreFailed = foundCorruptStorage
     }
 
     func persist() {
@@ -123,7 +134,8 @@ final class IntakeV2Store: ObservableObject {
         )
         do {
             let data = try JSONEncoder().encode(snap)
-            defaults.set(data, forKey: key)
+            defaults.set(data, forKey: Self.stateDefaultsKey)
+            defaults.removeObject(forKey: Self.legacyStateDefaultsKey)
         } catch {
             // Encoding should never fail for these primitives — log via PostHog elsewhere
         }
@@ -137,7 +149,8 @@ final class IntakeV2Store: ObservableObject {
         completedAt = nil
         firstDecisionShown = false
         restoreFailed = false
-        defaults.removeObject(forKey: key)
+        defaults.removeObject(forKey: Self.stateDefaultsKey)
+        defaults.removeObject(forKey: Self.legacyStateDefaultsKey)
     }
 
     // MARK: - Step completion
@@ -166,8 +179,10 @@ final class IntakeV2Store: ObservableObject {
 final class IntakeV2SourceManager: ObservableObject {
     @Published private(set) var sources: [IntakeSourceState] = []
 
+    static let sourcesDefaultsKey = "agentic30.intakeV2.sources.v1"
+    static let legacySourcesDefaultsKey = "IntakeV2.sources.v1"
+
     private let defaults: UserDefaults
-    private let key = "IntakeV2.sources.v1"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -175,17 +190,25 @@ final class IntakeV2SourceManager: ObservableObject {
     }
 
     private func restore() {
-        guard let data = defaults.data(forKey: key) else { return }
-        if let decoded = try? JSONDecoder().decode([IntakeSourceState].self, from: data) {
-            self.sources = decoded
-        } else {
-            defaults.removeObject(forKey: key)
+        for key in [Self.sourcesDefaultsKey, Self.legacySourcesDefaultsKey] {
+            guard let data = defaults.data(forKey: key) else { continue }
+            if let decoded = try? JSONDecoder().decode([IntakeSourceState].self, from: data) {
+                self.sources = decoded
+                if key != Self.sourcesDefaultsKey {
+                    defaults.set(data, forKey: Self.sourcesDefaultsKey)
+                    defaults.removeObject(forKey: key)
+                }
+                return
+            } else {
+                defaults.removeObject(forKey: key)
+            }
         }
     }
 
     private func persist() {
         if let data = try? JSONEncoder().encode(sources) {
-            defaults.set(data, forKey: key)
+            defaults.set(data, forKey: Self.sourcesDefaultsKey)
+            defaults.removeObject(forKey: Self.legacySourcesDefaultsKey)
         }
     }
 

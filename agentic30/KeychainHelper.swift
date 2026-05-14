@@ -444,6 +444,8 @@ enum KeychainHelper {
                 || key.hasPrefix("com.agentic30.")
                 || key.hasPrefix("IntakeV2.")
                 || key.hasPrefix("pet.")
+                || key.hasPrefix("NSNavPanel")
+                || key == "NSOSPLastRootDirectory"
                 || key == "bipWorkspaceRoot"
         }
         for key in keys {

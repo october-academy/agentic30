@@ -524,7 +524,7 @@ final class AgenticViewModel: ObservableObject {
             if arguments.contains("--ui-testing-reset-onboarding") {
                 KeychainHelper.deleteMacAuthSession()
                 KeychainHelper.deleteOnboardingContext()
-                Self.resetMacOnboardingIntroCompleted()
+                Self.resetMacOnboardingState()
                 WorkspaceSettings.clear()
             }
             Self.applyUITestingWorkspaceSeeds(arguments: arguments)
@@ -560,7 +560,7 @@ final class AgenticViewModel: ObservableObject {
             if arguments.contains("--ui-testing-reset-onboarding") {
                 KeychainHelper.deleteMacAuthSession()
                 KeychainHelper.deleteOnboardingContext()
-                Self.resetMacOnboardingIntroCompleted()
+                Self.resetMacOnboardingState()
                 WorkspaceSettings.clear()
             }
             macAuthSession = KeychainHelper.loadMacAuthSession()
@@ -571,7 +571,7 @@ final class AgenticViewModel: ObservableObject {
         if arguments.contains("--ui-testing-reset-onboarding") {
             KeychainHelper.deleteMacAuthSession()
             KeychainHelper.deleteOnboardingContext()
-            Self.resetMacOnboardingIntroCompleted()
+            Self.resetMacOnboardingState()
             WorkspaceSettings.clear()
         }
         macAuthSession = KeychainHelper.loadMacAuthSession()
@@ -799,6 +799,15 @@ final class AgenticViewModel: ObservableObject {
 
     private static func resetMacOnboardingIntroCompleted(defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: macOnboardingIntroCompletedDefaultsKey)
+    }
+
+    private static func resetMacOnboardingState(defaults: UserDefaults = .standard) {
+        resetMacOnboardingIntroCompleted(defaults: defaults)
+        defaults.removeObject(forKey: IntakeV2Store.stateDefaultsKey)
+        defaults.removeObject(forKey: IntakeV2Store.legacyStateDefaultsKey)
+        defaults.removeObject(forKey: IntakeV2SourceManager.sourcesDefaultsKey)
+        defaults.removeObject(forKey: IntakeV2SourceManager.legacySourcesDefaultsKey)
+        defaults.synchronize()
     }
 
     func requestWorkspaceSettingsOpen() {

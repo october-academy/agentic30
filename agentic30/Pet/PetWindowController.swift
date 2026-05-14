@@ -7,8 +7,10 @@ import SwiftUI
 @MainActor
 final class PetWindowController {
 
-    private let frameDefaultsKey = "pet.window.frame"
-    private let enabledDefaultsKey = "pet.enabled"
+    private static let frameDefaultsKey = "agentic30.pet.window.frame"
+    private static let enabledDefaultsKey = "agentic30.pet.enabled"
+    private static let legacyFrameDefaultsKey = "pet.window.frame"
+    private static let legacyEnabledDefaultsKey = "pet.enabled"
     private let petSize = NSSize(width: 114, height: 114)
 
     private var panel: NSPanel?
@@ -25,13 +27,20 @@ final class PetWindowController {
     var isEnabled: Bool {
         get {
             // Default ON for first launch.
-            if UserDefaults.standard.object(forKey: enabledDefaultsKey) == nil {
+            if UserDefaults.standard.object(forKey: Self.enabledDefaultsKey) == nil {
+                if UserDefaults.standard.object(forKey: Self.legacyEnabledDefaultsKey) != nil {
+                    let legacy = UserDefaults.standard.bool(forKey: Self.legacyEnabledDefaultsKey)
+                    UserDefaults.standard.set(legacy, forKey: Self.enabledDefaultsKey)
+                    UserDefaults.standard.removeObject(forKey: Self.legacyEnabledDefaultsKey)
+                    return legacy
+                }
                 return true
             }
-            return UserDefaults.standard.bool(forKey: enabledDefaultsKey)
+            return UserDefaults.standard.bool(forKey: Self.enabledDefaultsKey)
         }
         set {
-            UserDefaults.standard.set(newValue, forKey: enabledDefaultsKey)
+            UserDefaults.standard.set(newValue, forKey: Self.enabledDefaultsKey)
+            UserDefaults.standard.removeObject(forKey: Self.legacyEnabledDefaultsKey)
             if newValue {
                 show()
             } else {
@@ -124,14 +133,22 @@ final class PetWindowController {
 
     @objc private func persistFrame() {
         guard let panel else { return }
-        UserDefaults.standard.set(NSStringFromRect(normalizedFrame(from: panel.frame)), forKey: frameDefaultsKey)
+        UserDefaults.standard.set(NSStringFromRect(normalizedFrame(from: panel.frame)), forKey: Self.frameDefaultsKey)
+        UserDefaults.standard.removeObject(forKey: Self.legacyFrameDefaultsKey)
     }
 
     private func restoredFrame() -> NSRect? {
-        guard let raw = UserDefaults.standard.string(forKey: frameDefaultsKey) else {
+        let raw: String?
+        if let current = UserDefaults.standard.string(forKey: Self.frameDefaultsKey) {
+            raw = current
+        } else if let legacy = UserDefaults.standard.string(forKey: Self.legacyFrameDefaultsKey) {
+            UserDefaults.standard.set(legacy, forKey: Self.frameDefaultsKey)
+            UserDefaults.standard.removeObject(forKey: Self.legacyFrameDefaultsKey)
+            raw = legacy
+        } else {
             return nil
         }
-        let rect = NSRectFromString(raw)
+        let rect = NSRectFromString(raw ?? "")
         guard rect.width > 0, rect.height > 0 else { return nil }
         return normalizedFrame(from: rect)
     }
@@ -142,7 +159,8 @@ final class PetWindowController {
             panel.setFrame(nextFrame, display: true)
             hostingController?.view.frame = NSRect(origin: .zero, size: nextFrame.size)
         }
-        UserDefaults.standard.set(NSStringFromRect(nextFrame), forKey: frameDefaultsKey)
+        UserDefaults.standard.set(NSStringFromRect(nextFrame), forKey: Self.frameDefaultsKey)
+        UserDefaults.standard.removeObject(forKey: Self.legacyFrameDefaultsKey)
     }
 
     private func normalizedFrame(from rect: NSRect) -> NSRect {
