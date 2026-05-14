@@ -146,7 +146,6 @@ struct IntakeV2FolderPickView: View {
     let onBack: () -> Void
     let onNext: () -> Void
 
-    @State private var detectedURL: URL?
     @State private var fileCount: Int = 0
     @State private var skipSelected: Bool = false
 
@@ -160,17 +159,11 @@ struct IntakeV2FolderPickView: View {
             )
             VStack(spacing: 8) {
                 IntakeV2OptionCard(
-                    title: detectedURL.map { "자동 감지: \($0.lastPathComponent)" } ?? "자동 감지 시도",
-                    description: detectedURL == nil ? "~/Projects, ~/Documents 등에서 후보 탐색" : "\(fileCount)개 파일",
-                    selected: store.folderURL != nil && store.folderURL == detectedURL,
-                    onTap: { autoDetect() }
-                )
-                IntakeV2OptionCard(
-                    title: store.folderURL != nil && store.folderURL != detectedURL
+                    title: store.folderURL != nil
                         ? "선택됨: \(store.folderURL!.lastPathComponent)"
-                        : "직접 선택...",
+                        : "프로젝트 선택하기",
                     description: "원하는 폴더를 직접 고릅니다",
-                    selected: store.folderURL != nil && store.folderURL != detectedURL,
+                    selected: store.folderURL != nil,
                     onTap: { chooseFolder() }
                 )
                 IntakeV2OptionCard(
@@ -199,26 +192,6 @@ struct IntakeV2FolderPickView: View {
         .padding(.bottom, 36)
         .frame(maxWidth: 1080, alignment: .leading)
         .frame(maxWidth: .infinity)
-    }
-
-    private func autoDetect() {
-        let candidates = [
-            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Projects"),
-            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Developer"),
-            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents")
-        ]
-        for url in candidates {
-            var isDir: ObjCBool = false
-            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
-                detectedURL = url
-                store.folderURL = url
-                fileCount = (try? FileManager.default.contentsOfDirectory(atPath: url.path).count) ?? 0
-                store.persist()
-                skipSelected = false
-                return
-            }
-        }
-        detectedURL = nil
     }
 
     private func chooseFolder() {
