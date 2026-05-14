@@ -24,128 +24,6 @@ enum IntakeV2Color {
     static let monospaceMuted = Color.white.opacity(0.4)
 }
 
-enum IntakeV2HeroTone {
-    case green, gold, blue
-
-    var gradient: LinearGradient {
-        switch self {
-        case .green:
-            return LinearGradient(
-                colors: [
-                    Color(red: 0.055, green: 0.10, blue: 0.08),
-                    Color(red: 0.08, green: 0.21, blue: 0.16),
-                    Color(red: 0.13, green: 0.40, blue: 0.30)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottom
-            )
-        case .gold:
-            return LinearGradient(
-                colors: [
-                    Color(red: 0.10, green: 0.094, blue: 0.063),
-                    Color(red: 0.23, green: 0.20, blue: 0.14),
-                    Color(red: 0.48, green: 0.39, blue: 0.18)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottom
-            )
-        case .blue:
-            return LinearGradient(
-                colors: [
-                    Color(red: 0.055, green: 0.075, blue: 0.102),
-                    Color(red: 0.10, green: 0.15, blue: 0.22),
-                    Color(red: 0.16, green: 0.27, blue: 0.43)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottom
-            )
-        }
-    }
-}
-
-// MARK: - Hero band
-
-struct IntakeV2HeroBand<Content: View>: View {
-    let tone: IntakeV2HeroTone
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        ZStack {
-            tone.gradient
-            DotField()
-                .opacity(0.5)
-            content()
-        }
-        .frame(height: 304)
-    }
-}
-
-private struct DotField: View {
-    var body: some View {
-        Canvas { ctx, size in
-            let spacing: CGFloat = 18
-            let cols = Int(size.width / spacing)
-            let rows = Int(size.height / spacing)
-            for x in 0...cols {
-                for y in 0...rows {
-                    let rect = CGRect(
-                        x: CGFloat(x) * spacing - 1,
-                        y: CGFloat(y) * spacing - 1,
-                        width: 2, height: 2
-                    )
-                    ctx.fill(Path(ellipseIn: rect), with: .color(.white.opacity(0.18)))
-                }
-            }
-        }
-        .allowsHitTesting(false)
-    }
-}
-
-// MARK: - Hero pill
-
-struct IntakeV2HeroPill: View {
-    let icon: String       // SF Symbol name
-    let label: String
-    let accent: Color
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 22, weight: .bold))
-                .foregroundStyle(accent)
-            Text(label)
-                .font(.system(size: 20, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
-        }
-        .padding(.horizontal, 26)
-        .padding(.vertical, 14)
-        .background(
-            Capsule()
-                .fill(.black.opacity(0.4))
-                .overlay(Capsule().stroke(.white.opacity(0.08), lineWidth: 1))
-        )
-    }
-}
-
-// MARK: - OS identity tag (step 1 hero only, D-design A)
-
-struct IntakeV2OSIdentity: View {
-    var body: some View {
-        HStack(spacing: 8) {
-            Text("agentic30")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(.white)
-            Text("·")
-                .foregroundStyle(.white.opacity(0.3))
-            Text("1인 개발자를 위한 실행 OS")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.65))
-        }
-        .textCase(.uppercase)
-        .tracking(1.2)
-    }
-}
-
 // MARK: - Dash pagination
 
 struct IntakeV2DashPagination: View {
@@ -172,15 +50,12 @@ struct IntakeV2DashPagination: View {
 // MARK: - Headline block
 
 struct IntakeV2Header: View {
-    let stepLabel: String
     let title: String
     let subtitle: String
-    let sysline: String?       // monospace `// STEP X / 4 · variable → ...`
     var trustLine: String? = nil  // D9 — step 4 trust copy
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // step label is in pagination; this is the syslin
             Text(title)
                 .font(.system(size: 34, weight: .bold, design: .rounded))
                 .foregroundStyle(IntakeV2Color.textPrimary)
@@ -191,12 +66,6 @@ struct IntakeV2Header: View {
                 .foregroundStyle(IntakeV2Color.textSecondary)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
-            if let sysline {
-                Text(sysline)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(IntakeV2Color.accent)
-                    .padding(.top, 6)
-            }
             if let trustLine {
                 Text(trustLine)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -222,7 +91,6 @@ struct IntakeV2Header: View {
 struct IntakeV2OptionCard: View {
     let title: String
     let description: String
-    let sysVar: String?
     let selected: Bool
     let onTap: () -> Void
 
@@ -243,22 +111,9 @@ struct IntakeV2OptionCard: View {
                 .frame(width: 18)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text(title)
-                            .font(.system(size: 17, weight: .bold, design: .rounded))
-                            .foregroundStyle(IntakeV2Color.textPrimary)
-                        if selected, let sysVar {
-                            Text(sysVar)
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundStyle(IntakeV2Color.accentBright)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 2)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .stroke(IntakeV2Color.accentBright.opacity(0.3), lineWidth: 1)
-                                )
-                        }
-                    }
+                    Text(title)
+                        .font(.system(size: 17, weight: .bold, design: .rounded))
+                        .foregroundStyle(IntakeV2Color.textPrimary)
                     Text(description)
                         .font(.system(size: 14, weight: .medium, design: .rounded))
                         .foregroundStyle(IntakeV2Color.textTertiary)
@@ -302,16 +157,17 @@ struct IntakeV2Footer: View {
 
     var body: some View {
         HStack {
-            Button(action: onBack) {
-                Text("Back")
-                    .font(.system(size: 16, weight: .semibold, design: .rounded))
-                    .foregroundStyle(backDisabled ? .white.opacity(0.18) : .white.opacity(0.7))
-                    .padding(.horizontal, 30)
-                    .padding(.vertical, 14)
-                    .background(Capsule().fill(.white.opacity(backDisabled ? 0.02 : 0.06)))
+            if !backDisabled {
+                Button(action: onBack) {
+                    Text("Back")
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.7))
+                        .padding(.horizontal, 30)
+                        .padding(.vertical, 14)
+                        .background(Capsule().fill(.white.opacity(0.06)))
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
-            .disabled(backDisabled)
 
             Spacer()
 

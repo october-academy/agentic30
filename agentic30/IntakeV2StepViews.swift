@@ -14,54 +14,42 @@ struct IntakeV2WorkmodeView: View {
     let onNext: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            IntakeV2HeroBand(tone: .green) {
-                VStack(spacing: 16) {
-                    IntakeV2OSIdentity()
-                    IntakeV2HeroPill(icon: "hammer.fill", label: "Making", accent: Color(red: 0.98, green: 0.74, blue: 0.18))
-                }
-            }
-            VStack(alignment: .leading, spacing: 24) {
-                IntakeV2DashPagination(current: 1, total: 4)
-                IntakeV2Header(
-                    stepLabel: "STEP 1 / 4",
-                    title: "지금 어떤 상황에서 빌드하고 있나요?",
-                    subtitle: "쓸 수 있는 시간과 책임 범위에 맞춰 오늘 할 일을 정합니다.",
-                    sysline: "// STEP 01 / 04 · workmode → daily decision priority"
-                )
-                VStack(spacing: 8) {
-                    ForEach(OnboardingWorkMode.onboardingChoices, id: \.self) { mode in
-                        IntakeV2OptionCard(
-                            title: mode.displayTitle,
-                            description: mode.displayDescription,
-                            sysVar: "workmode=\(mode.rawValue)",
-                            selected: store.workmode == mode,
-                            onTap: { store.workmode = mode; store.persist() }
-                        )
-                    }
+        VStack(alignment: .leading, spacing: 24) {
+            IntakeV2DashPagination(current: 1, total: 4)
+            IntakeV2Header(
+                title: "지금 어떤 상황에서 빌드하고 있나요?",
+                subtitle: "쓸 수 있는 시간과 책임 범위에 맞춰 오늘 할 일을 정합니다."
+            )
+            VStack(spacing: 8) {
+                ForEach(OnboardingWorkMode.onboardingChoices, id: \.self) { mode in
                     IntakeV2OptionCard(
-                        title: OnboardingWorkMode.exploring.displayTitle,
-                        description: OnboardingWorkMode.exploring.displayDescription,
-                        sysVar: "workmode=other",
-                        selected: store.workmode == .exploring,
-                        onTap: { store.workmode = .exploring; store.persist() }
+                        title: mode.displayTitle,
+                        description: mode.displayDescription,
+                        selected: store.workmode == mode,
+                        onTap: { store.workmode = mode; store.persist() }
                     )
                 }
-                Spacer(minLength: 8)
-                IntakeV2Footer(
-                    backDisabled: true,
-                    nextTitle: "Next →",
-                    nextEnabled: store.isStep1Complete,
-                    onBack: onBack,
-                    onNext: onNext
+                IntakeV2OptionCard(
+                    title: OnboardingWorkMode.exploring.displayTitle,
+                    description: OnboardingWorkMode.exploring.displayDescription,
+                    selected: store.workmode == .exploring,
+                    onTap: { store.workmode = .exploring; store.persist() }
                 )
             }
-            .padding(.horizontal, 56)
-            .padding(.top, 36)
-            .padding(.bottom, 36)
-            .frame(maxWidth: 1080, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            Spacer(minLength: 8)
+            IntakeV2Footer(
+                backDisabled: true,
+                nextTitle: "Next →",
+                nextEnabled: store.isStep1Complete,
+                onBack: onBack,
+                onNext: onNext
+            )
         }
+        .padding(.horizontal, 56)
+        .padding(.top, 56)
+        .padding(.bottom, 36)
+        .frame(maxWidth: 1080, alignment: .leading)
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -74,68 +62,36 @@ struct IntakeV2RoleView: View {
     let onNext: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            IntakeV2HeroBand(tone: .green) {
-                RoleHeroIcon()
-            }
-            VStack(alignment: .leading, spacing: 24) {
-                IntakeV2DashPagination(current: 2, total: 4)
-                IntakeV2Header(
-                    stepLabel: "STEP 2 / 4",
-                    title: "어떤 일을 하고 계신가요?",
-                    subtitle: "익숙한 일하는 방식에 맞춰 설명과 제안을 조정합니다.",
-                    sysline: "// STEP 02 / 04 · role → vocabulary & deliverable shape"
-                )
-                VStack(spacing: 8) {
-                    ForEach(OnboardingRole.allCases, id: \.self) { role in
-                        IntakeV2OptionCard(
-                            title: role.displayTitle,
-                            description: role.displayDescription,
-                            sysVar: "role=\(role.rawValue)",
-                            selected: store.role == role,
-                            onTap: { store.role = role; store.persist() }
-                        )
-                    }
-                }
-                Spacer(minLength: 8)
-                IntakeV2Footer(
-                    backDisabled: false,
-                    nextTitle: "Next →",
-                    nextEnabled: store.isStep2Complete,
-                    onBack: onBack,
-                    onNext: onNext
-                )
-            }
-            .padding(.horizontal, 56)
-            .padding(.top, 36)
-            .padding(.bottom, 36)
-            .frame(maxWidth: 1080, alignment: .leading)
-            .frame(maxWidth: .infinity)
-        }
-    }
-}
-
-private struct RoleHeroIcon: View {
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.294, green: 0.871, blue: 0.502),
-                            Color(red: 0.086, green: 0.639, blue: 0.290)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
+        VStack(alignment: .leading, spacing: 24) {
+            IntakeV2DashPagination(current: 2, total: 4)
+            IntakeV2Header(
+                title: "어떤 일을 하고 계신가요?",
+                subtitle: "익숙한 일하는 방식에 맞춰 설명과 제안을 조정합니다."
+            )
+            VStack(spacing: 8) {
+                ForEach(OnboardingRole.allCases, id: \.self) { role in
+                    IntakeV2OptionCard(
+                        title: role.displayTitle,
+                        description: role.displayDescription,
+                        selected: store.role == role,
+                        onTap: { store.role = role; store.persist() }
                     )
-                )
-                .frame(width: 96, height: 96)
-                .shadow(color: .green.opacity(0.4), radius: 20, y: 10)
-            HStack(spacing: 10) {
-                Capsule().fill(.white).frame(width: 14, height: 20)
-                Capsule().fill(.white).frame(width: 14, height: 20)
+                }
             }
+            Spacer(minLength: 8)
+            IntakeV2Footer(
+                backDisabled: false,
+                nextTitle: "Next →",
+                nextEnabled: store.isStep2Complete,
+                onBack: onBack,
+                onNext: onNext
+            )
         }
+        .padding(.horizontal, 56)
+        .padding(.top, 56)
+        .padding(.bottom, 36)
+        .frame(maxWidth: 1080, alignment: .leading)
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -148,44 +104,36 @@ struct IntakeV2StuckView: View {
     let onNext: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            IntakeV2HeroBand(tone: .gold) {
-                IntakeV2HeroPill(icon: "sparkles", label: "Stuck point", accent: Color(red: 0.98, green: 0.74, blue: 0.18))
-            }
-            VStack(alignment: .leading, spacing: 24) {
-                IntakeV2DashPagination(current: 3, total: 4)
-                IntakeV2Header(
-                    stepLabel: "STEP 3 / 4",
-                    title: "현재 가장 큰 막힘은 무엇인가요?",
-                    subtitle: "막힌 지점에 맞춰 먼저 볼 문제를 정합니다.",
-                    sysline: "// STEP 03 / 04 · stuck_point → highest-priority signal class"
-                )
-                VStack(spacing: 8) {
-                    ForEach(OnboardingProjectStage.onboardingChoices, id: \.self) { stage in
-                        IntakeV2OptionCard(
-                            title: stage.displayTitle,
-                            description: stage.displayDescription,
-                            sysVar: "stuck=\(stage.rawValue)",
-                            selected: store.stuck == stage,
-                            onTap: { store.stuck = stage; store.persist() }
-                        )
-                    }
+        VStack(alignment: .leading, spacing: 24) {
+            IntakeV2DashPagination(current: 3, total: 4)
+            IntakeV2Header(
+                title: "현재 가장 큰 막힘은 무엇인가요?",
+                subtitle: "막힌 지점에 맞춰 먼저 볼 문제를 정합니다."
+            )
+            VStack(spacing: 8) {
+                ForEach(OnboardingProjectStage.onboardingChoices, id: \.self) { stage in
+                    IntakeV2OptionCard(
+                        title: stage.displayTitle,
+                        description: stage.displayDescription,
+                        selected: store.stuck == stage,
+                        onTap: { store.stuck = stage; store.persist() }
+                    )
                 }
-                Spacer(minLength: 8)
-                IntakeV2Footer(
-                    backDisabled: false,
-                    nextTitle: "Next →",
-                    nextEnabled: store.isStep3Complete,
-                    onBack: onBack,
-                    onNext: onNext
-                )
             }
-            .padding(.horizontal, 56)
-            .padding(.top, 36)
-            .padding(.bottom, 36)
-            .frame(maxWidth: 1080, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            Spacer(minLength: 8)
+            IntakeV2Footer(
+                backDisabled: false,
+                nextTitle: "Next →",
+                nextEnabled: store.isStep3Complete,
+                onBack: onBack,
+                onNext: onNext
+            )
         }
+        .padding(.horizontal, 56)
+        .padding(.top, 56)
+        .padding(.bottom, 36)
+        .frame(maxWidth: 1080, alignment: .leading)
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -203,64 +151,54 @@ struct IntakeV2FolderPickView: View {
     @State private var skipSelected: Bool = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            IntakeV2HeroBand(tone: .blue) {
-                IntakeV2HeroPill(icon: "folder.fill", label: "Folder", accent: .white)
-            }
-            VStack(alignment: .leading, spacing: 24) {
-                IntakeV2DashPagination(current: 4, total: 4)
-                IntakeV2Header(
-                    stepLabel: "STEP 4 / 4",
-                    title: "어디서 읽을까요?",
-                    subtitle: "OS가 읽을 폴더를 선택해주세요. 컨텍스트가 클수록 결정 정확도가 높아집니다.",
-                    sysline: "// STEP 04 / 04 · folder → local context corpus",
-                    trustLine: "// 파일은 이 Mac에만 머뭅니다. 외부 전송 0건."
+        VStack(alignment: .leading, spacing: 24) {
+            IntakeV2DashPagination(current: 4, total: 4)
+            IntakeV2Header(
+                title: "어디서 읽을까요?",
+                subtitle: "OS가 읽을 폴더를 선택해주세요. 컨텍스트가 클수록 결정 정확도가 높아집니다.",
+                trustLine: "// 파일은 이 Mac에만 머뭅니다. 외부 전송 0건."
+            )
+            VStack(spacing: 8) {
+                IntakeV2OptionCard(
+                    title: detectedURL.map { "자동 감지: \($0.lastPathComponent)" } ?? "자동 감지 시도",
+                    description: detectedURL == nil ? "~/Projects, ~/Documents 등에서 후보 탐색" : "\(fileCount)개 파일",
+                    selected: store.folderURL != nil && store.folderURL == detectedURL,
+                    onTap: { autoDetect() }
                 )
-                VStack(spacing: 8) {
-                    IntakeV2OptionCard(
-                        title: detectedURL.map { "자동 감지: \($0.lastPathComponent)" } ?? "자동 감지 시도",
-                        description: detectedURL == nil ? "~/Projects, ~/Documents 등에서 후보 탐색" : "\(fileCount)개 파일",
-                        sysVar: detectedURL.map { _ in "src=auto" },
-                        selected: store.folderURL != nil && store.folderURL == detectedURL,
-                        onTap: { autoDetect() }
-                    )
-                    IntakeV2OptionCard(
-                        title: store.folderURL != nil && store.folderURL != detectedURL
-                            ? "선택됨: \(store.folderURL!.lastPathComponent)"
-                            : "직접 선택...",
-                        description: "원하는 폴더를 직접 고릅니다",
-                        sysVar: (store.folderURL != nil && store.folderURL != detectedURL) ? "src=manual" : nil,
-                        selected: store.folderURL != nil && store.folderURL != detectedURL,
-                        onTap: { chooseFolder() }
-                    )
-                    IntakeV2OptionCard(
-                        title: "지금은 건너뛰기",
-                        description: "intake 답변만으로 결정. 나중에 Settings에서 폴더 추가 가능",
-                        sysVar: skipSelected ? "src=skip" : nil,
-                        selected: skipSelected,
-                        onTap: { skipSelected = true; store.folderURL = nil; store.persist() }
-                    )
-                }
-                Spacer(minLength: 8)
-                IntakeV2Footer(
-                    backDisabled: false,
-                    nextTitle: "Start assistant ✨",
-                    nextEnabled: store.isStep4Complete || skipSelected,
-                    onBack: onBack,
-                    onNext: {
-                        if let url = store.folderURL {
-                            sources.registerLocalFolder(url, fileCount: fileCount > 0 ? fileCount : nil)
-                        }
-                        onNext()
+                IntakeV2OptionCard(
+                    title: store.folderURL != nil && store.folderURL != detectedURL
+                        ? "선택됨: \(store.folderURL!.lastPathComponent)"
+                        : "직접 선택...",
+                    description: "원하는 폴더를 직접 고릅니다",
+                    selected: store.folderURL != nil && store.folderURL != detectedURL,
+                    onTap: { chooseFolder() }
+                )
+                IntakeV2OptionCard(
+                    title: "지금은 건너뛰기",
+                    description: "intake 답변만으로 결정. 나중에 Settings에서 폴더 추가 가능",
+                    selected: skipSelected,
+                    onTap: { skipSelected = true; store.folderURL = nil; store.persist() }
+                )
+            }
+            Spacer(minLength: 8)
+            IntakeV2Footer(
+                backDisabled: false,
+                nextTitle: "Start assistant ✨",
+                nextEnabled: store.isStep4Complete || skipSelected,
+                onBack: onBack,
+                onNext: {
+                    if let url = store.folderURL {
+                        sources.registerLocalFolder(url, fileCount: fileCount > 0 ? fileCount : nil)
                     }
-                )
-            }
-            .padding(.horizontal, 56)
-            .padding(.top, 36)
-            .padding(.bottom, 36)
-            .frame(maxWidth: 1080, alignment: .leading)
-            .frame(maxWidth: .infinity)
+                    onNext()
+                }
+            )
         }
+        .padding(.horizontal, 56)
+        .padding(.top, 56)
+        .padding(.bottom, 36)
+        .frame(maxWidth: 1080, alignment: .leading)
+        .frame(maxWidth: .infinity)
     }
 
     private func autoDetect() {
@@ -313,55 +251,55 @@ struct IntakeV2SplashView_Legacy: View {
     @State private var scanFailed = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            IntakeV2HeroBand(tone: .green) {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
                 ProgressView()
-                    .controlSize(.large)
-                    .tint(.white)
+                    .controlSize(.small)
+                    .tint(IntakeV2Color.accentBright)
+                Text("ANALYZING")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundStyle(IntakeV2Color.accent)
+                    .tracking(1.4)
             }
-            VStack(alignment: .leading, spacing: 16) {
-                IntakeV2Header(
-                    stepLabel: "ANALYZING",
-                    title: "Init 완료. 첫 결정을 분석합니다.",
-                    subtitle: scanFailed
-                        ? "Local scan에서 충분한 신호를 못 찾았어요. intake 답변만으로 첫 결정을 준비합니다."
-                        : "당신의 폴더를 읽고 신호를 추출해 오늘의 한 가지를 결정합니다.",
-                    sysline: nil
-                )
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(logLines.indices, id: \.self) { i in
-                        HStack(spacing: 8) {
-                            Text("$")
+            IntakeV2Header(
+                title: "Init 완료. 첫 결정을 분석합니다.",
+                subtitle: scanFailed
+                    ? "Local scan에서 충분한 신호를 못 찾았어요. intake 답변만으로 첫 결정을 준비합니다."
+                    : "당신의 폴더를 읽고 신호를 추출해 오늘의 한 가지를 결정합니다."
+            )
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(logLines.indices, id: \.self) { i in
+                    HStack(spacing: 8) {
+                        Text("$")
+                            .foregroundStyle(IntakeV2Color.accent)
+                        Text(logLines[i].text)
+                            .foregroundStyle(IntakeV2Color.textSecondary)
+                        if logLines[i].done {
+                            Text("✓")
                                 .foregroundStyle(IntakeV2Color.accent)
-                            Text(logLines[i].text)
-                                .foregroundStyle(IntakeV2Color.textSecondary)
-                            if logLines[i].done {
-                                Text("✓")
-                                    .foregroundStyle(IntakeV2Color.accent)
-                            }
-                            Spacer()
                         }
-                        .font(.system(size: 12, design: .monospaced))
+                        Spacer()
                     }
+                    .font(.system(size: 12, design: .monospaced))
                 }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(.black.opacity(0.4))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(.white.opacity(0.05), lineWidth: 1)
-                        )
-                )
-                Spacer()
             }
-            .padding(.horizontal, 56)
-            .padding(.top, 36)
-            .padding(.bottom, 36)
-            .frame(maxWidth: 1080, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(.black.opacity(0.4))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(.white.opacity(0.05), lineWidth: 1)
+                    )
+            )
+            Spacer()
         }
+        .padding(.horizontal, 56)
+        .padding(.top, 56)
+        .padding(.bottom, 36)
+        .frame(maxWidth: 1080, alignment: .leading)
+        .frame(maxWidth: .infinity)
         .task {
             await runScan()
         }
