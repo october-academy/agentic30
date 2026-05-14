@@ -27,7 +27,7 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
-    func testFirstRunContextAppearsWithoutLogin() throws {
+    func testFirstRunIntroAdvancesIntoContextCollectionWithoutLogin() throws {
         let app = launchApp(
             arguments: [
                 "--ui-testing-reset-onboarding",
@@ -43,10 +43,10 @@ final class agentic30UITests: XCTestCase {
             app.terminate()
         }
 
-        XCTAssertTrue(
-            app.staticTexts["지금 어떤 상황에서 만들고 있나요?"].waitForExistence(timeout: 5)
-        )
+        XCTAssertTrue(app.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Sign in with Google"].exists)
+        advanceOnboardingIntroToContext(in: app)
+        XCTAssertTrue(app.staticTexts["지금 어떤 상황에서 빌드하고 있나요?"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Next"].exists)
     }
 
@@ -72,7 +72,9 @@ final class agentic30UITests: XCTestCase {
             self.removeDirectory(at: appSupportPath)
         }
 
-        let contextVisible = onboardingApp.staticTexts["지금 어떤 상황에서 만들고 있나요?"].waitForExistence(timeout: 5)
+        XCTAssertTrue(onboardingApp.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 5))
+        advanceOnboardingIntroToContext(in: onboardingApp)
+        let contextVisible = onboardingApp.staticTexts["지금 어떤 상황에서 빌드하고 있나요?"].waitForExistence(timeout: 5)
         if !contextVisible {
             attachText(onboardingApp.debugDescription, named: "00 Onboarding Context Missing Tree")
         }
@@ -81,6 +83,302 @@ final class agentic30UITests: XCTestCase {
         XCTAssertFalse(onboardingApp.buttons["Opening Google"].exists)
         XCTAssertFalse(onboardingApp.buttons["Completing sign in"].exists)
         attachScreenshot(from: onboardingApp, named: "01 Loginless Onboarding Context")
+    }
+
+    @MainActor
+    func testMenubarWorkspaceSwitcherTourOpensExplainsAndCloses() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-switcher-tour-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-switcher-tour-app-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace-switcher-tour",
+            "--ui-testing-opaque-window",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        let tourOverlay = elementWithIdentifier(in: app, "workspace.switcherTour.overlay")
+        XCTAssertTrue(tourOverlay.waitForExistence(timeout: 10))
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.curriculumSidebar").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.switcherTour.body").label.contains("left switcher"))
+        attachScreenshot(from: app, named: "01 Workspace Switcher Tour")
+
+        let closeTour = button(in: app, matching: [
+            "workspace.switcherTour.close",
+            "Got it",
+        ])
+        XCTAssertTrue(closeTour.exists)
+        clickCenter(of: closeTour)
+
+        XCTAssertTrue(waitForElementToDisappear(tourOverlay, timeout: 3))
+        XCTAssertFalse(elementWithIdentifier(in: app, "workspace.curriculumSidebar").exists)
+    }
+
+    @MainActor
+    func testMenubarCurriculumNavigatorTourOpensExplainsAndCloses() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-curriculum-tour-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-curriculum-tour-app-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace-curriculum-navigator-tour",
+            "--ui-testing-opaque-window",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        let tourOverlay = elementWithIdentifier(in: app, "workspace.curriculumNavigatorTour.overlay")
+        XCTAssertTrue(tourOverlay.waitForExistence(timeout: 10))
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.curriculumSidebar").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.day.1").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.day.7").exists)
+        let tourBody = elementWithIdentifier(in: app, "workspace.curriculumNavigatorTour.body").label
+        XCTAssertTrue(tourBody.contains("menubar curriculum button opens this 30-day curriculum navigator"))
+        XCTAssertTrue(tourBody.contains("shows the Day path"))
+        XCTAssertTrue(tourBody.contains("just know this place exists"))
+        attachScreenshot(from: app, named: "01 Workspace Curriculum Navigator Tour")
+
+        let closeTour = button(in: app, matching: [
+            "workspace.curriculumNavigatorTour.close",
+            "Got it",
+        ])
+        XCTAssertTrue(closeTour.exists)
+        clickCenter(of: closeTour)
+
+        XCTAssertTrue(waitForElementToDisappear(tourOverlay, timeout: 3))
+        XCTAssertFalse(elementWithIdentifier(in: app, "workspace.curriculumSidebar").exists)
+        XCTAssertFalse(elementWithIdentifier(in: app, "workspace.curriculumNavigatorTour.close").exists)
+    }
+
+    @MainActor
+    func testMenubarSettingsTourOpensExplainsAndClosesSettings() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-settings-tour-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-settings-tour-app-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace-settings-tour",
+            "--ui-testing-opaque-window",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        let tourOverlay = elementWithIdentifier(in: app, "workspace.settingsTour.overlay")
+        XCTAssertTrue(tourOverlay.waitForExistence(timeout: 10))
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.settingsPage").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.settingsTour.body").label.contains("Settings button opens this panel"))
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.settingsTour.body").label.contains("only need to know where it is"))
+        attachScreenshot(from: app, named: "01 Workspace Settings Tour")
+
+        let closeTour = button(in: app, matching: [
+            "workspace.settingsTour.close",
+            "Got it",
+        ])
+        XCTAssertTrue(closeTour.exists)
+        clickCenter(of: closeTour)
+
+        XCTAssertTrue(waitForElementToDisappear(tourOverlay, timeout: 3))
+        XCTAssertFalse(elementWithIdentifier(in: app, "workspace.settingsPage").exists)
+    }
+
+    @MainActor
+    func testMenubarHelpTourOpensExplainsAndClosesHelp() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-help-tour-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-help-tour-app-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace-help-tour",
+            "--ui-testing-opaque-window",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        let tourOverlay = elementWithIdentifier(in: app, "workspace.helpTour.overlay")
+        XCTAssertTrue(tourOverlay.waitForExistence(timeout: 10))
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.helpPanel").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.helpPanel.title").label.contains("Help"))
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.helpTour.body").label.contains("Help button opens this panel"))
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.helpTour.body").label.contains("only need to know where it is"))
+        attachScreenshot(from: app, named: "01 Workspace Help Tour")
+
+        let closeTour = button(in: app, matching: [
+            "workspace.helpTour.close",
+            "Got it",
+        ])
+        XCTAssertTrue(closeTour.exists)
+        clickCenter(of: closeTour)
+
+        XCTAssertTrue(waitForElementToDisappear(tourOverlay, timeout: 3))
+        XCTAssertFalse(elementWithIdentifier(in: app, "workspace.helpPanel").exists)
+    }
+
+    @MainActor
+    func testMenubarRecentConversationsTourClosesCleanlyAndRestoresPriorState() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-recent-tour-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-recent-tour-app-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace-recent-conversations-tour",
+            "--ui-testing-opaque-window",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        let tourOverlay = elementWithIdentifier(in: app, "workspace.recentConversationsTour.overlay")
+        XCTAssertTrue(tourOverlay.waitForExistence(timeout: 10))
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.curriculumSidebar").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.sidebar.historySection").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.sidebar.historyTitle").label.contains("최근 대화"))
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.sidebar.historyEmptyState").exists)
+        XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Codex Assistant")).firstMatch.exists)
+        let tourBody = elementWithIdentifier(in: app, "workspace.recentConversationsTour.body").label
+        XCTAssertTrue(tourBody.contains("sidebar history surface"))
+        XCTAssertTrue(tourBody.contains("Conversations will appear here after you use Agentic30"))
+        XCTAssertTrue(tourBody.contains("just know this place exists"))
+        attachScreenshot(from: app, named: "01 Workspace Recent Conversations Tour")
+
+        let closeTour = button(in: app, matching: [
+            "workspace.recentConversationsTour.close",
+            "Got it",
+        ])
+        XCTAssertTrue(closeTour.exists)
+        clickCenter(of: closeTour)
+
+        XCTAssertTrue(waitForElementToDisappear(tourOverlay, timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.curriculumSidebar").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.sidebar.historySection").exists)
+        XCTAssertFalse(elementWithIdentifier(in: app, "workspace.recentConversationsTour.close").exists)
+    }
+
+    @MainActor
+    func testGuidedDay1OverlayRendersAndRemovesWhenInactive() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-day1-overlay-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-day1-overlay-app-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-guided-day1-overlay-active",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        let overlay = elementWithIdentifier(in: app, "onboarding.day1CoachMark.overlay")
+        XCTAssertTrue(overlay.waitForExistence(timeout: 10))
+        let workspaceSurface = elementWithIdentifier(in: app, "workspace.surface")
+        XCTAssertTrue(workspaceSurface.exists)
+        XCTAssertEqual(overlay.frame.width, workspaceSurface.frame.width, accuracy: 1.0)
+        XCTAssertEqual(overlay.frame.height, workspaceSurface.frame.height, accuracy: 1.0)
+        XCTAssertEqual(overlay.frame.minX, workspaceSurface.frame.minX, accuracy: 1.0)
+        XCTAssertEqual(overlay.frame.minY, workspaceSurface.frame.minY, accuracy: 1.0)
+        XCTAssertTrue(elementWithIdentifier(in: app, "onboarding.day1CoachMark.dim").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "onboarding.day1CoachMark.highlight").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "onboarding.day1CoachMark.card").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.day.1").exists)
+
+        let skipOverlay = button(in: app, matching: [
+            "onboarding.day1CoachMark.skip",
+            "Skip Day 1 overlay",
+        ])
+        XCTAssertTrue(skipOverlay.exists)
+        clickCenter(of: skipOverlay)
+
+        XCTAssertTrue(waitForElementToDisappear(overlay, timeout: 3))
+        XCTAssertFalse(elementWithIdentifier(in: app, "onboarding.day1CoachMark.dim").exists)
     }
 
     @MainActor
@@ -171,7 +469,9 @@ final class agentic30UITests: XCTestCase {
             self.removeDirectory(at: contextWorkspacePath)
         }
 
-        XCTAssertTrue(projectApp.staticTexts["지금 어떤 상황에서 만들고 있나요?"].waitForExistence(timeout: 5))
+        XCTAssertTrue(projectApp.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 5))
+        advanceOnboardingIntroToContext(in: projectApp)
+        XCTAssertTrue(projectApp.staticTexts["지금 어떤 상황에서 빌드하고 있나요?"].waitForExistence(timeout: 5))
         XCTAssertFalse(projectApp.staticTexts["Choose your project folder"].exists)
         attachScreenshot(from: projectApp, named: "01 Context Before Project Picker")
         projectApp.terminate()
@@ -214,7 +514,9 @@ final class agentic30UITests: XCTestCase {
             seededWorkspaceApp.terminate()
         }
 
-        XCTAssertTrue(seededWorkspaceApp.staticTexts["지금 어떤 상황에서 만들고 있나요?"].waitForExistence(timeout: 10))
+        XCTAssertTrue(seededWorkspaceApp.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 10))
+        advanceOnboardingIntroToContext(in: seededWorkspaceApp)
+        XCTAssertTrue(seededWorkspaceApp.staticTexts["지금 어떤 상황에서 빌드하고 있나요?"].waitForExistence(timeout: 10))
         let fullTimeOption = button(in: seededWorkspaceApp, matching: [
             "onboardingContext.option.full_time_solo",
             "전업 1인 개발자, 퇴사했고 혼자 제품을 만들고 있습니다",
@@ -1269,6 +1571,242 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    func testCompletedMissionRendersCompletionCardCelebrationCopy() throws {
+        let workspacePath = "/tmp/agentic30-ui-bip-completion-card-\(UUID().uuidString)"
+        resetDirectory(at: workspacePath)
+        hideKnownInterferingApplications()
+        let app = launchApp(
+            arguments: [
+                "--ui-testing-reset-onboarding",
+                "--ui-testing-seed-auth",
+                "--ui-testing-seed-onboarding-context",
+                "--ui-testing-seed-workspace=\(workspacePath)",
+                "--ui-testing-disable-sidecar",
+                "--ui-testing-seed-idd-complete",
+                "--ui-testing-seed-bip-completed-mission",
+                "--ui-testing-open-bip-notification=evening",
+                "--ui-testing-opaque-window",
+            ],
+            environment: [
+                "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
+            ]
+        )
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+        }
+
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.bipNotificationTaskSurface"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.completionCard.title"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Day 1 완료!"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.completionCard.encouragement"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["좋아요, 이 근거로 다음 Day를 더 정확히 이어갈게요."].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.completionCard.questionCount"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["질문 3개 완료"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.completionCard.nextDayTeaser"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["다음: Day 2 Market - 돈이 흐르는 기준 시장을 가볍게 확인해보세요."].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.completionCard.confetti"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["workspace.completionCard.cta"].waitForExistence(timeout: 3))
+        XCTAssertEqual(app.buttons["workspace.completionCard.cta"].label, "Day 2 시작하기")
+
+        clickCenter(of: app.buttons["workspace.completionCard.cta"])
+
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirstSurface"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.day.2"].exists)
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Day 2 기준")).firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["workspace.generateBipMission"].waitForExistence(timeout: 3))
+    }
+
+    @MainActor
+    func testGraduationDestinationRendersGraduationScreen() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-graduation-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-graduation-app-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+        hideKnownInterferingApplications()
+
+        let app = launchApp(
+            arguments: [
+                "--ui-testing-reset-onboarding",
+                "--ui-testing-seed-auth",
+                "--ui-testing-seed-onboarding-context",
+                "--ui-testing-seed-workspace=\(workspacePath)",
+                "--ui-testing-disable-sidecar",
+                "--ui-testing-seed-idd-complete",
+                "--ui-testing-seed-foundation-graduation",
+                "--ui-testing-open-workspace",
+                "--ui-testing-opaque-window",
+            ],
+            environment: [
+                "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+                "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            ]
+        )
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.graduationSurface"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.graduation.title"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["30일 커리큘럼을 완료했어요"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.graduation.body"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Graduation reached"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.day.30"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["workspace.missionFirstSurface"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["assistant.promptComposer"].exists)
+        XCTAssertFalse(app.buttons["workspace.generateBipMission"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["workspace.iddSetupSurface"].exists)
+        attachScreenshot(from: app, named: "01 Graduation Destination")
+    }
+
+    @MainActor
+    func testReviewDayDashboardRendersOnlyCuratedViewModelFields() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-review-dashboard-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-review-dashboard-app-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+        hideKnownInterferingApplications()
+
+        let app = launchApp(
+            arguments: [
+                "--ui-testing-reset-onboarding",
+                "--ui-testing-seed-auth",
+                "--ui-testing-seed-onboarding-context",
+                "--ui-testing-seed-workspace=\(workspacePath)",
+                "--ui-testing-disable-sidecar",
+                "--ui-testing-seed-idd-complete",
+                "--ui-testing-seed-review-day-dashboard",
+                "--ui-testing-open-workspace",
+                "--ui-testing-opaque-window",
+            ],
+            environment: [
+                "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+                "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            ]
+        )
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.reviewDashboardSurface"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.reviewDashboard.title"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Review Day dashboard"].exists)
+        XCTAssertTrue(app.staticTexts["Day 1-7에서 고른 핵심 지표만 봅니다."].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.reviewDashboard.metrics"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.reviewDashboard.metric.1"].exists)
+        XCTAssertTrue(app.staticTexts["완료 Days"].exists)
+        XCTAssertTrue(app.staticTexts["6/7"].exists)
+        XCTAssertTrue(app.staticTexts["검증된 Actions"].exists)
+        XCTAssertTrue(app.staticTexts["3"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.reviewDashboard.insights"].exists)
+        XCTAssertTrue(app.staticTexts["완료 속도는 좋지만 Day 8 전에는 미완료 Action 1개를 작게 닫아보세요."].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["workspace.reviewDashboard.nextSteps"].exists)
+        XCTAssertTrue(app.staticTexts["가격 ask 링크 1개를 남기고 다음 Action Day에서 자동 검증해보세요."].exists)
+
+        let renderedTree = app.debugDescription
+        XCTAssertFalse(renderedTree.contains("source_statuses"))
+        XCTAssertFalse(renderedTree.contains("source_categories"))
+        XCTAssertFalse(renderedTree.contains("priority_trace"))
+        XCTAssertFalse(renderedTree.contains("raw_collected_model"))
+        XCTAssertFalse(renderedTree.contains("SECRET_SOURCE_TRACE_DO_NOT_RENDER"))
+        XCTAssertFalse(app.descendants(matching: .any)["workspace.missionFirstSurface"].exists)
+        XCTAssertFalse(app.buttons["workspace.generateBipMission"].exists)
+        attachScreenshot(from: app, named: "01 Review Day Curated Dashboard")
+    }
+
+    @MainActor
+    func testReopeningAfterDayOneCompletionRestoresDayTwoQuestionView() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-day2-restore-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-day2-restore-app-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+        hideKnownInterferingApplications()
+
+        let firstLaunch = launchApp(
+            arguments: [
+                "--ui-testing-reset-onboarding",
+                "--ui-testing-seed-auth",
+                "--ui-testing-seed-onboarding-context",
+                "--ui-testing-seed-workspace=\(workspacePath)",
+                "--ui-testing-disable-sidecar",
+                "--ui-testing-seed-idd-complete",
+                "--ui-testing-seed-bip-completed-mission",
+                "--ui-testing-open-bip-notification=evening",
+                "--ui-testing-opaque-window",
+            ],
+            environment: [
+                "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+                "AGENTIC30_TEST_STUB_PROVIDER": "1",
+                "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
+            ]
+        )
+        firstLaunch.activate()
+        addTeardownBlock {
+            firstLaunch.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(firstLaunch.buttons["workspace.completionCard.cta"].waitForExistence(timeout: 5))
+        XCTAssertEqual(firstLaunch.buttons["workspace.completionCard.cta"].label, "Day 2 시작하기")
+        clickCenter(of: firstLaunch.buttons["workspace.completionCard.cta"])
+        XCTAssertTrue(firstLaunch.descendants(matching: .any)["workspace.missionFirstSurface"].waitForExistence(timeout: 3))
+        XCTAssertTrue(firstLaunch.descendants(matching: .any)["workspace.day.2"].exists)
+        firstLaunch.terminate()
+        waitForAgenticAppToExit(bundleIdentifier: "october-academy.agentic30", timeout: 3)
+
+        let reopened = launchApp(
+            arguments: [
+                "--ui-testing-seed-auth",
+                "--ui-testing-seed-onboarding-context",
+                "--ui-testing-seed-workspace=\(workspacePath)",
+                "--ui-testing-disable-sidecar",
+                "--ui-testing-seed-idd-complete",
+                "--ui-testing-seed-foundation-day2-question",
+                "--ui-testing-open-workspace",
+                "--ui-testing-opaque-window",
+            ],
+            environment: [
+                "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+                "AGENTIC30_TEST_STUB_PROVIDER": "1",
+                "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
+            ]
+        )
+        reopened.activate()
+        addTeardownBlock {
+            reopened.terminate()
+        }
+
+        XCTAssertTrue(reopened.descendants(matching: .any)["workspace.supportThread"].waitForExistence(timeout: 5))
+        XCTAssertTrue(reopened.descendants(matching: .any)["workspace.chat.structuredPrompt"].waitForExistence(timeout: 3))
+        XCTAssertTrue(reopened.descendants(matching: .any)["assistant.structuredPrompt"].exists)
+        XCTAssertTrue(reopened.staticTexts["Day 2 Market 질문"].waitForExistence(timeout: 3))
+        XCTAssertTrue(reopened.staticTexts["이미 돈을 내는 기준 시장은 어디인가요?"].waitForExistence(timeout: 3))
+        XCTAssertTrue(reopened.descendants(matching: .any)["workspace.day.2"].waitForExistence(timeout: 3))
+        XCTAssertTrue(reopened.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Day 2 기준")).firstMatch.waitForExistence(timeout: 3))
+        XCTAssertFalse(reopened.descendants(matching: .any)["workspace.missionFirstSurface"].exists)
+        XCTAssertFalse(reopened.descendants(matching: .any)["workspace.missionFirst.introCard"].exists)
+        XCTAssertFalse(reopened.buttons["workspace.generateBipMission"].exists)
+        XCTAssertFalse(reopened.descendants(matching: .any)["workspace.completionCard.title"].exists)
+        XCTAssertFalse(reopened.descendants(matching: .any)["workspace.iddSetupSurface"].exists)
+        XCTAssertFalse(reopened.staticTexts["Welcome to Agentic30"].exists)
+    }
+
+    @MainActor
     private func launchApp(
         arguments: [String],
         environment: [String: String] = [:]
@@ -1456,6 +1994,28 @@ final class agentic30UITests: XCTestCase {
         app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier == %@", identifier))
             .element(boundBy: 0)
+    }
+
+    @MainActor
+    private func advanceOnboardingIntroToContext(in app: XCUIApplication) {
+        let primary = button(in: app, matching: [
+            "macOnboarding.primaryButton",
+            "Next",
+            "Start setup",
+        ])
+
+        for expectedTitle in [
+            "We’re always by your side",
+            "Build, launch, earn in 30 days",
+            "Ship faster, learn faster",
+        ] {
+            XCTAssertTrue(primary.waitForExistence(timeout: 5))
+            clickCenter(of: primary)
+            XCTAssertTrue(app.staticTexts[expectedTitle].waitForExistence(timeout: 5))
+        }
+
+        XCTAssertTrue(primary.waitForExistence(timeout: 5))
+        clickCenter(of: primary)
     }
 
     @MainActor
@@ -2376,6 +2936,18 @@ final class agentic30UITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         } while Date() < deadline
         return element.exists && element.isEnabled
+    }
+
+    @MainActor
+    private func waitForElementToDisappear(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if !element.exists {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        } while Date() < deadline
+        return !element.exists
     }
 
     private enum BootstrapReadiness {

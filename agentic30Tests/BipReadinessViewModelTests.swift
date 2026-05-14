@@ -272,6 +272,7 @@ struct BipCoachDisplayStateTests {
             evidenceRefs: [],
             generatedAt: nil,
             completedAt: nil,
+            completedQuestionCount: nil,
             threadsUrl: nil,
             sheetRowNote: nil
         )

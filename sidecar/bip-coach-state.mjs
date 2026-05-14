@@ -898,6 +898,9 @@ function buildMission(mission = {}, {
     evidenceRefs: normalizeStringArray(mission.evidenceRefs),
     generatedAt: stringOrDefault(mission.generatedAt, now.toISOString()),
     completedAt: mission.completedAt ?? null,
+    completedQuestionCount: normalizePositiveInteger(
+      mission.completedQuestionCount ?? mission.completed_question_count ?? mission.questionCount ?? mission.question_count,
+    ),
     threadsUrl: stringOrDefault(mission.threadsUrl, ""),
     sheetRowNote: stringOrDefault(mission.sheetRowNote, ""),
   };
@@ -1002,6 +1005,12 @@ function objectOrEmpty(value) {
 function stringOrDefault(value, fallback) {
   const text = String(value || "").trim();
   return text || fallback;
+}
+
+function normalizePositiveInteger(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.trunc(n);
 }
 
 function normalizeStringArray(value) {

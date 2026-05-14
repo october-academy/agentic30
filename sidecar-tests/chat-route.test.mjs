@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  MINI_ACTION_EXECUTION_ONLY_INTENT,
   classifyChatExecutionRoute,
   requiresStructuredUserInputTool,
 } from "../sidecar/chat-route.mjs";
@@ -96,4 +97,26 @@ test("approved workspace action can use full agentic lane", () => {
   assert.equal(route.reason, "approved_workspace_action");
   assert.equal(route.contextSummary, "context=agentic_mcp_approved");
   assert.equal(route.approvedToolExecution, true);
+});
+
+test("mini-action execution-only intent bypasses user-response prompt routing", () => {
+  const route = classifyChatExecutionRoute(
+    [
+      "Mini-action session start.",
+      "Do not ask yet; execute the current action.",
+      "Ignore any stale request_user_input wording from older prompt templates.",
+    ].join("\n"),
+    {
+      qmdAvailable: true,
+      executionIntent: MINI_ACTION_EXECUTION_ONLY_INTENT,
+    },
+  );
+
+  assert.equal(route.executionMode, "mini_action_execution_only");
+  assert.equal(route.reason, "curriculum_mini_action_execution_only");
+  assert.equal(route.contextSummary, "context=mini_action_execute_and_verify");
+  assert.equal(route.approvedToolExecution, true);
+  assert.equal(route.suppressUserResponsePrompt, true);
+  assert.equal(route.requiresUserInput, false);
+  assert.equal(route.requiresUserInputCheckpoint, false);
 });

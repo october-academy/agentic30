@@ -20,6 +20,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sidecarRoot = path.resolve(__dirname);
 process.env.AGENTIC30_SIDECAR_ROOT ??= sidecarRoot;
 const DEFAULT_CODEX_MODEL = "gpt-5.5";
+const MINI_ACTION_EXECUTION_ONLY_MODE = "mini_action_execution_only";
 const CODEX_REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
 const RESPONSE_LANGUAGE_INSTRUCTION =
   "Reply in Korean (ko, 한국어) for all assistant-facing prose unless the user's prompt explicitly requests another language or an exact machine-readable output schema requires fixed tokens.";
@@ -1175,6 +1176,9 @@ export function resolveCodexReasoningEffort({ executionMode = "", prompt = "" } 
   if (executionMode === "bip_coach_read_only") {
     return hasLightWorkSignal ? "high" : "xhigh";
   }
+  if (executionMode === MINI_ACTION_EXECUTION_ONLY_MODE) {
+    return "high";
+  }
   if (executionMode === "agentic") {
     return hasLightWorkSignal && !hasDeepWorkSignal ? "medium" : "high";
   }
@@ -1530,6 +1534,20 @@ function baseSystemPrompt(provider, workspaceRoot, executionMode) {
     ].join("\n");
   }
 
+  if (executionMode === MINI_ACTION_EXECUTION_ONLY_MODE) {
+    return [
+      "You are the sidecar execution engine for an Agentic30 curriculum mini-action session.",
+      "Start immediately at the execution step. Do not emit, ask, or wait for a user-response prompt before acting.",
+      RESPONSE_LANGUAGE_INSTRUCTION,
+      `Current workspace: ${workspaceRoot}`,
+      `Provider mode: ${provider}`,
+      "Use the agentic30 MCP server, configured CLI checks, Browser verification, or Google Workspace read tools to execute and verify the current mini-action.",
+      "Use auto-verification first when configured. If verification is insufficient, request only the configured evidence fallback.",
+      "Do not enter planning, interview, or review flows. Do not use AskUserQuestion, agentic30_request_user_input, or request_user_input for a kickoff checkpoint.",
+      "Keep coaching non-blocking; carry incomplete work forward instead of blocking Day progression.",
+    ].join("\n");
+  }
+
   const lines = [
     "You are the sidecar reasoning engine for agentic30.",
     "Reply in concise conversational prose suitable for the host client surface.",
@@ -1570,7 +1588,7 @@ function baseSystemPrompt(provider, workspaceRoot, executionMode) {
   }
 
   const notionConfig = readJsonFile(notionConfigPath);
-  if (executionMode === "agentic" && notionConfig?.enabled) {
+  if ((executionMode === "agentic" || executionMode === MINI_ACTION_EXECUTION_ONLY_MODE) && notionConfig?.enabled) {
     lines.push("");
     lines.push("## Notion Integration");
     lines.push("The official Notion MCP server is connected.");
@@ -1599,7 +1617,8 @@ export function allowsProviderPermissionBypass({
   executionMode = "",
   approvedToolExecution = false,
 } = {}) {
-  return executionMode === "agentic" && approvedToolExecution === true;
+  return (executionMode === "agentic" || executionMode === MINI_ACTION_EXECUTION_ONLY_MODE)
+    && approvedToolExecution === true;
 }
 
 export function codexSandboxForExecution({
@@ -1612,7 +1631,10 @@ export function codexSandboxForExecution({
 }
 
 function usesInternalMcp(executionMode = "") {
-  return executionMode === "agentic" || executionMode === "memory_chat" || executionMode === "bip_coach_read_only";
+  return executionMode === "agentic"
+    || executionMode === "memory_chat"
+    || executionMode === "bip_coach_read_only"
+    || executionMode === MINI_ACTION_EXECUTION_ONLY_MODE;
 }
 
 function usesQmdMcp(executionMode = "") {

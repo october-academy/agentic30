@@ -21,8 +21,7 @@ struct ContentView: View {
     private let workspaceAssistantReadableWidth: CGFloat = 760
     private let workspaceUserReadableWidth: CGFloat = 560
 
-    @State private var currentPromptID: String?
-    @State private var promptDrafts: [String: StructuredAnswerDraft] = [:]
+    @State private var currentPromptBindingToken: String?
     @State private var showsBipMissionEvidence = false
     @State private var showsBipCompletionFields = false
     @State private var showsBipReadinessPreview = false
@@ -33,6 +32,19 @@ struct ContentView: View {
     @State private var selectedCurriculumDetail: WorkspaceCurriculumDetail = .tasks
     @State private var selectedSettingsSection: SettingsSection = .account
     @State private var handledWorkspaceSettingsOpenRequest = 0
+    @State private var handledWorkspaceSwitcherTourOpenRequest = 0
+    @State private var handledWorkspaceCurriculumNavigatorTourOpenRequest = 0
+    @State private var handledWorkspaceSettingsTourOpenRequest = 0
+    @State private var handledWorkspaceHelpTourOpenRequest = 0
+    @State private var handledWorkspaceRecentConversationsTourOpenRequest = 0
+    @State private var isWorkspaceSwitcherTourPresented = false
+    @State private var isWorkspaceCurriculumNavigatorTourPresented = false
+    @State private var isWorkspaceSettingsTourPresented = false
+    @State private var isWorkspaceHelpPresented = false
+    @State private var isWorkspaceHelpTourPresented = false
+    @State private var isWorkspaceRecentConversationsTourPresented = false
+    @State private var workspaceRecentConversationsTourReturnState: WorkspaceTourReturnState?
+    @State private var workspaceRecentConversationsScrollRequest = 0
     @State private var handledBipNotificationOpenRequestID: UUID?
     @State private var pendingBipNotificationScrollRequestID: UUID?
     @State private var bipNotificationHintIntent: BipNotificationIntent?
@@ -89,7 +101,13 @@ struct ContentView: View {
             }
             .onAppear {
                 viewModel.start()
+                syncPromptDrafts(bindingToken: viewModel.pendingStructuredPrompt?.uiBindingToken)
                 handleWorkspaceSettingsOpenRequest()
+                handleWorkspaceSwitcherTourOpenRequest()
+                handleWorkspaceCurriculumNavigatorTourOpenRequest()
+                handleWorkspaceSettingsTourOpenRequest()
+                handleWorkspaceHelpTourOpenRequest()
+                handleWorkspaceRecentConversationsTourOpenRequest()
                 handleBipNotificationOpenRequest()
             }
             .onDisappear {
@@ -97,11 +115,26 @@ struct ContentView: View {
                     viewModel.stop()
                 }
             }
-            .onChange(of: viewModel.pendingStructuredPrompt?.requestId) { _, requestID in
-                syncPromptDrafts(requestID: requestID)
+            .onChange(of: viewModel.pendingStructuredPrompt?.uiBindingToken) { _, bindingToken in
+                syncPromptDrafts(bindingToken: bindingToken)
             }
             .onChange(of: viewModel.workspaceSettingsOpenRequest) { _, _ in
                 handleWorkspaceSettingsOpenRequest()
+            }
+            .onChange(of: viewModel.workspaceSwitcherTourOpenRequest) { _, _ in
+                handleWorkspaceSwitcherTourOpenRequest()
+            }
+            .onChange(of: viewModel.workspaceCurriculumNavigatorTourOpenRequest) { _, _ in
+                handleWorkspaceCurriculumNavigatorTourOpenRequest()
+            }
+            .onChange(of: viewModel.workspaceSettingsTourOpenRequest) { _, _ in
+                handleWorkspaceSettingsTourOpenRequest()
+            }
+            .onChange(of: viewModel.workspaceHelpTourOpenRequest) { _, _ in
+                handleWorkspaceHelpTourOpenRequest()
+            }
+            .onChange(of: viewModel.workspaceRecentConversationsTourOpenRequest) { _, _ in
+                handleWorkspaceRecentConversationsTourOpenRequest()
             }
             .onChange(of: viewModel.bipNotificationOpenRequest?.id) { _, _ in
                 handleBipNotificationOpenRequest()
@@ -160,7 +193,28 @@ struct ContentView: View {
         ZStack {
             Color.clear.ignoresSafeArea()
             if viewModel.requiresMacOnboarding {
-                MacOnboardingView(viewModel: viewModel)
+                IntakeV2FlowView { store, _ in
+                    // V2 onboarding completion — review-driven redesign 2026-05-14.
+                    // Maps V2 store answers into the legacy OnboardingContext schema
+                    // so the rest of the routing (needsOnboardingContext, needsProjectWorkspace)
+                    // settles in one shot.
+                    if let workmode = store.workmode,
+                       let role = store.role,
+                       let stuck = store.stuck {
+                        let context = OnboardingContext.make(
+                            workMode: workmode,
+                            role: role,
+                            projectStage: stuck,
+                            isolationLevel: .projectFolder,
+                            isolationLevels: [.projectFolder]
+                        )
+                        viewModel.submitOnboardingContext(context)
+                    }
+                    if let url = store.folderURL {
+                        WorkspaceSettings.store(url)
+                    }
+                    viewModel.completeMacOnboardingIntro()
+                }
             } else if let session = viewModel.selectedSession {
                 switch activeSurface {
                 case .assistantBubble:
@@ -204,6 +258,9 @@ struct ContentView: View {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(workspaceShellBackground)
+                .overlay(alignment: .topLeading) {
+                    workspaceTourOverlay()
+                }
                 .accessibilityIdentifier("workspace.surface")
         } else {
             content
@@ -214,6 +271,9 @@ struct ContentView: View {
                     RoundedRectangle(cornerRadius: 28, style: .continuous)
                         .stroke(Color.white.opacity(0.12), lineWidth: 1)
                 )
+                .overlay(alignment: .topLeading) {
+                    workspaceTourOverlay()
+                }
                 .accessibilityIdentifier("workspace.surface")
         }
     }
@@ -271,6 +331,9 @@ struct ContentView: View {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(workspaceShellBackground)
+                .overlay(alignment: .topLeading) {
+                    workspaceTourOverlay()
+                }
                 .accessibilityIdentifier("workspace.surface")
         } else {
             content
@@ -281,6 +344,9 @@ struct ContentView: View {
                     RoundedRectangle(cornerRadius: 28, style: .continuous)
                         .stroke(Color.white.opacity(0.12), lineWidth: 1)
                 )
+                .overlay(alignment: .topLeading) {
+                    workspaceTourOverlay()
+                }
                 .accessibilityIdentifier("workspace.surface")
         }
     }
@@ -354,15 +420,23 @@ struct ContentView: View {
     }
 
     private func workspaceToolbarTitle(_ day: AgenticCurriculumDay) -> String {
-        selectedWorkspaceSection == .settings
-            ? "설정"
-            : "\(selectedWorkspaceSection.title) / Day \(day.day)"
+        if selectedWorkspaceSection == .settings {
+            return "설정"
+        }
+        if viewModel.foundationCurriculumPresentationDestination == .graduation {
+            return "\(selectedWorkspaceSection.title) / Graduation"
+        }
+        return "\(selectedWorkspaceSection.title) / Day \(day.day)"
     }
 
     private func workspaceToolbarSubtitle(day: AgenticCurriculumDay, session: ChatSession) -> String {
-        selectedWorkspaceSection == .settings
-            ? "Workspace 환경 설정"
-            : "Day \(day.day) · \(day.phase.title) · \(session.provider.title)"
+        if selectedWorkspaceSection == .settings {
+            return "Workspace 환경 설정"
+        }
+        if viewModel.foundationCurriculumPresentationDestination == .graduation {
+            return "30일 커리큘럼 완료 · \(session.provider.title)"
+        }
+        return "Day \(day.day) · \(day.phase.title) · \(session.provider.title)"
     }
 
     private func workspaceSidebarToggleButton() -> some View {
@@ -483,18 +557,31 @@ struct ContentView: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 12)
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        workspaceCurriculumPathSection()
-                            .padding(.horizontal, 10)
-                            .padding(.bottom, 12)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            workspaceCurriculumPathSection()
+                                .padding(.horizontal, 10)
+                                .padding(.bottom, 12)
 
-                        // Foundation phase Sub-AC 2: 사이드바 중단에 누적
-                        // 기록(과거 채팅 세션 / 일자별 요약)을 노출한다.
-                        // AgenticViewModel.sessions에서 history를 로드해 일자별로
-                        // 그룹화하고, 클릭하면 해당 세션을 활성화한다. 빈 상태에서는
-                        // EmptyView로 접혀 사이드바 레이아웃이 흐트러지지 않는다.
-                        workspaceSidebarHistorySection()
+                            // Foundation phase Sub-AC 2: 사이드바 중단에 누적
+                            // 기록(과거 채팅 세션 / 일자별 요약)을 노출한다.
+                            // AgenticViewModel.sessions에서 history를 로드해 일자별로
+                            // 그룹화하고, 클릭하면 해당 세션을 활성화한다. 빈 상태에서는
+                            // EmptyView로 접혀 사이드바 레이아웃이 흐트러지지 않는다.
+                            workspaceSidebarHistorySection()
+                                .id("workspace.sidebar.historySection.scrollTarget")
+                        }
+                    }
+                    .onChange(of: workspaceRecentConversationsScrollRequest) { _, _ in
+                        withAnimation(.spring(response: 0.24, dampingFraction: 0.9)) {
+                            proxy.scrollTo("workspace.sidebar.historySection.scrollTarget", anchor: .top)
+                        }
+                    }
+                    .onAppear {
+                        if isWorkspaceRecentConversationsTourPresented {
+                            proxy.scrollTo("workspace.sidebar.historySection.scrollTarget", anchor: .top)
+                        }
                     }
                 }
                 .accessibilityIdentifier("workspace.curriculumSidebar")
@@ -1374,7 +1461,9 @@ struct ContentView: View {
                 }
 
                 workspaceFooterIconButton(item: .help, systemName: "questionmark.circle.fill") {
-                    NSWorkspace.shared.open(MacOnboardingConstants.appBaseURL)
+                    withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
+                        isWorkspaceHelpPresented = true
+                    }
                 }
             }
             .padding(8)
@@ -1531,6 +1620,666 @@ struct ContentView: View {
 
         handledWorkspaceSettingsOpenRequest = viewModel.workspaceSettingsOpenRequest
         openWorkspaceSettings()
+    }
+
+    private func handleWorkspaceSwitcherTourOpenRequest() {
+        guard viewModel.workspaceSwitcherTourOpenRequest != handledWorkspaceSwitcherTourOpenRequest else {
+            return
+        }
+
+        handledWorkspaceSwitcherTourOpenRequest = viewModel.workspaceSwitcherTourOpenRequest
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+            selectedWorkspaceSection = .curriculum
+            isWorkspaceSidebarPresented = true
+            showsSidebarSettingsMenu = false
+            isWorkspaceCurriculumNavigatorTourPresented = false
+            isWorkspaceSettingsTourPresented = false
+            isWorkspaceHelpTourPresented = false
+            isWorkspaceHelpPresented = false
+            isWorkspaceRecentConversationsTourPresented = false
+            isWorkspaceSwitcherTourPresented = true
+        }
+    }
+
+    private func handleWorkspaceCurriculumNavigatorTourOpenRequest() {
+        guard viewModel.workspaceCurriculumNavigatorTourOpenRequest != handledWorkspaceCurriculumNavigatorTourOpenRequest else {
+            return
+        }
+
+        handledWorkspaceCurriculumNavigatorTourOpenRequest = viewModel.workspaceCurriculumNavigatorTourOpenRequest
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+            selectedWorkspaceSection = .curriculum
+            isWorkspaceSidebarPresented = true
+            showsSidebarSettingsMenu = false
+            isWorkspaceSwitcherTourPresented = false
+            isWorkspaceCurriculumNavigatorTourPresented = true
+            isWorkspaceSettingsTourPresented = false
+            isWorkspaceHelpTourPresented = false
+            isWorkspaceHelpPresented = false
+            isWorkspaceRecentConversationsTourPresented = false
+        }
+    }
+
+    private func handleWorkspaceSettingsTourOpenRequest() {
+        guard viewModel.workspaceSettingsTourOpenRequest != handledWorkspaceSettingsTourOpenRequest else {
+            return
+        }
+
+        handledWorkspaceSettingsTourOpenRequest = viewModel.workspaceSettingsTourOpenRequest
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+            selectedWorkspaceSection = .settings
+            selectedSettingsSection = .account
+            isWorkspaceSidebarPresented = true
+            showsSidebarSettingsMenu = false
+            isWorkspaceSwitcherTourPresented = false
+            isWorkspaceCurriculumNavigatorTourPresented = false
+            isWorkspaceSettingsTourPresented = true
+        }
+    }
+
+    private func handleWorkspaceHelpTourOpenRequest() {
+        guard viewModel.workspaceHelpTourOpenRequest != handledWorkspaceHelpTourOpenRequest else {
+            return
+        }
+
+        handledWorkspaceHelpTourOpenRequest = viewModel.workspaceHelpTourOpenRequest
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+            selectedWorkspaceSection = .curriculum
+            isWorkspaceSidebarPresented = true
+            showsSidebarSettingsMenu = false
+            isWorkspaceSwitcherTourPresented = false
+            isWorkspaceCurriculumNavigatorTourPresented = false
+            isWorkspaceSettingsTourPresented = false
+            isWorkspaceHelpPresented = true
+            isWorkspaceHelpTourPresented = true
+        }
+    }
+
+    private func handleWorkspaceRecentConversationsTourOpenRequest() {
+        guard viewModel.workspaceRecentConversationsTourOpenRequest != handledWorkspaceRecentConversationsTourOpenRequest else {
+            return
+        }
+
+        handledWorkspaceRecentConversationsTourOpenRequest = viewModel.workspaceRecentConversationsTourOpenRequest
+        workspaceRecentConversationsTourReturnState = WorkspaceTourReturnState(
+            section: selectedWorkspaceSection,
+            settingsSection: selectedSettingsSection,
+            sidebarPresented: isWorkspaceSidebarPresented,
+            helpPresented: isWorkspaceHelpPresented,
+            sidebarSettingsMenuPresented: showsSidebarSettingsMenu
+        )
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+            selectedWorkspaceSection = .curriculum
+            isWorkspaceSidebarPresented = true
+            showsSidebarSettingsMenu = false
+            isWorkspaceSwitcherTourPresented = false
+            isWorkspaceCurriculumNavigatorTourPresented = false
+            isWorkspaceSettingsTourPresented = false
+            isWorkspaceHelpTourPresented = false
+            isWorkspaceHelpPresented = false
+            isWorkspaceRecentConversationsTourPresented = true
+            workspaceRecentConversationsScrollRequest += 1
+        }
+    }
+
+    private func closeWorkspaceRecentConversationsTour() {
+        let returnState = workspaceRecentConversationsTourReturnState
+        workspaceRecentConversationsTourReturnState = nil
+
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.92)) {
+            isWorkspaceRecentConversationsTourPresented = false
+
+            if let returnState {
+                selectedWorkspaceSection = returnState.section
+                selectedSettingsSection = returnState.settingsSection
+                isWorkspaceSidebarPresented = returnState.sidebarPresented
+                isWorkspaceHelpPresented = returnState.helpPresented
+                showsSidebarSettingsMenu = returnState.sidebarSettingsMenuPresented
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func workspaceTourOverlay() -> some View {
+        workspaceHelpPanelOverlay()
+        workspaceSwitcherTourOverlay()
+        workspaceCurriculumNavigatorTourOverlay()
+        workspaceSettingsTourOverlay()
+        workspaceHelpTourOverlay()
+        workspaceRecentConversationsTourOverlay()
+        guidedDay1CoachMarkOverlay()
+    }
+
+    @ViewBuilder
+    private func workspaceHelpPanelOverlay() -> some View {
+        if isWorkspaceHelpPresented {
+            ZStack(alignment: .topLeading) {
+                Color.black.opacity(0.26)
+                    .ignoresSafeArea()
+
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "questionmark.circle.fill")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(Color.white.opacity(0.92))
+
+                        Text("Help")
+                            .font(.system(size: 18, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.96))
+                            .accessibilityIdentifier("workspace.helpPanel.title")
+
+                        Spacer(minLength: 0)
+
+                        Button {
+                            withAnimation(.spring(response: 0.22, dampingFraction: 0.92)) {
+                                isWorkspaceHelpPresented = false
+                            }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 11, weight: .heavy))
+                                .foregroundStyle(.white.opacity(0.72))
+                                .frame(width: 28, height: 28)
+                                .background(Circle().fill(Color.white.opacity(0.08)))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("workspace.helpPanel.close")
+                        .accessibilityLabel("Close Help")
+                    }
+
+                    Text("Use Help when you want setup guidance, curriculum context, or a path back to the docs. For now, just know this button exists.")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.72))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("workspace.helpPanel.body")
+
+                    Button {
+                        NSWorkspace.shared.open(MacOnboardingConstants.appBaseURL)
+                    } label: {
+                        Label("Open Help Center", systemImage: "safari")
+                            .font(.system(size: 13, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Color.black.opacity(0.84))
+                            .frame(height: 36)
+                            .frame(maxWidth: .infinity)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.white.opacity(0.94))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("workspace.helpPanel.openDocs")
+                }
+                .padding(18)
+                .frame(width: 360, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(Color(red: 0.12, green: 0.13, blue: 0.15).opacity(0.98))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                        )
+                )
+                .shadow(color: .black.opacity(0.36), radius: 24, x: 0, y: 14)
+                .padding(.leading, isWorkspaceWindow ? 342 : 330)
+                .padding(.top, isWorkspaceWindow ? 164 : 150)
+            }
+            .transition(.opacity)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("workspace.helpPanel")
+        }
+    }
+
+    @ViewBuilder
+    private func workspaceSwitcherTourOverlay() -> some View {
+        if isWorkspaceSwitcherTourPresented {
+            ZStack(alignment: .topLeading) {
+                Color.black.opacity(0.48)
+                    .ignoresSafeArea()
+
+                RoundedRectangle(cornerRadius: isWorkspaceWindow ? 0 : 24, style: .continuous)
+                    .stroke(Color.white.opacity(0.84), lineWidth: 2)
+                    .frame(width: isWorkspaceWindow ? 320 : 278, height: isWorkspaceWindow ? nil : 692)
+                    .padding(.leading, isWorkspaceWindow ? 0 : 12)
+                    .padding(.top, isWorkspaceWindow ? 0 : 12)
+                    .shadow(color: Color.white.opacity(0.16), radius: 18)
+                    .allowsHitTesting(false)
+
+                VStack(alignment: .leading, spacing: 13) {
+                    HStack(spacing: 9) {
+                        Image(systemName: "sidebar.left")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color.black.opacity(0.78))
+                            .frame(width: 28, height: 28)
+                            .background(Circle().fill(Color.white.opacity(0.96)))
+
+                        Text("Workspace switcher")
+                            .font(.system(size: 17, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.96))
+                            .accessibilityIdentifier("workspace.switcherTour.title")
+                    }
+
+                    Text("This left switcher is where you jump between the 30-day path, recent sessions, and workspace settings. You only need to know it exists for now.")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.74))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("workspace.switcherTour.body")
+
+                    Button {
+                        withAnimation(.spring(response: 0.22, dampingFraction: 0.92)) {
+                            isWorkspaceSwitcherTourPresented = false
+                            isWorkspaceSidebarPresented = false
+                        }
+                    } label: {
+                        Text("Got it")
+                            .font(.system(size: 13, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Color.black.opacity(0.84))
+                            .frame(height: 34)
+                            .frame(maxWidth: .infinity)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.white.opacity(0.94))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("workspace.switcherTour.close")
+                }
+                .padding(16)
+                .frame(width: 316, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color(red: 0.12, green: 0.13, blue: 0.15).opacity(0.98))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                        )
+                )
+                .shadow(color: .black.opacity(0.34), radius: 22, x: 0, y: 12)
+                .padding(.leading, isWorkspaceWindow ? 342 : 318)
+                .padding(.top, isWorkspaceWindow ? 78 : 70)
+            }
+            .transition(.opacity)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("workspace.switcherTour.overlay")
+        }
+    }
+
+    @ViewBuilder
+    private func workspaceCurriculumNavigatorTourOverlay() -> some View {
+        if isWorkspaceCurriculumNavigatorTourPresented {
+            ZStack(alignment: .topLeading) {
+                Color.black.opacity(0.46)
+                    .ignoresSafeArea()
+
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.white.opacity(0.84), lineWidth: 2)
+                    .frame(width: isWorkspaceWindow ? 292 : 252, height: 282)
+                    .padding(.leading, isWorkspaceWindow ? 14 : 24)
+                    .padding(.top, isWorkspaceWindow ? 128 : 134)
+                    .shadow(color: Color.white.opacity(0.16), radius: 18)
+                    .allowsHitTesting(false)
+
+                VStack(alignment: .leading, spacing: 13) {
+                    HStack(spacing: 9) {
+                        Image(systemName: "calendar")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color.black.opacity(0.78))
+                            .frame(width: 28, height: 28)
+                            .background(Circle().fill(Color.white.opacity(0.96)))
+
+                        Text("30-day curriculum navigator")
+                            .font(.system(size: 17, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.96))
+                            .accessibilityIdentifier("workspace.curriculumNavigatorTour.title")
+                    }
+
+                    Text("The menubar curriculum button opens this 30-day curriculum navigator. It shows the Day path, the current Day, and where upcoming Days will unlock. For now, just know this place exists.")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.74))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("workspace.curriculumNavigatorTour.body")
+
+                    Button {
+                        withAnimation(.spring(response: 0.22, dampingFraction: 0.92)) {
+                            isWorkspaceCurriculumNavigatorTourPresented = false
+                            isWorkspaceSidebarPresented = false
+                        }
+                    } label: {
+                        Text("Got it")
+                            .font(.system(size: 13, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Color.black.opacity(0.84))
+                            .frame(height: 34)
+                            .frame(maxWidth: .infinity)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.white.opacity(0.94))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("workspace.curriculumNavigatorTour.close")
+                }
+                .padding(16)
+                .frame(width: 346, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color(red: 0.12, green: 0.13, blue: 0.15).opacity(0.98))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                        )
+                )
+                .shadow(color: .black.opacity(0.34), radius: 22, x: 0, y: 12)
+                .padding(.leading, isWorkspaceWindow ? 342 : 318)
+                .padding(.top, isWorkspaceWindow ? 132 : 124)
+            }
+            .transition(.opacity)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("workspace.curriculumNavigatorTour.overlay")
+        }
+    }
+
+    @ViewBuilder
+    private func workspaceSettingsTourOverlay() -> some View {
+        if isWorkspaceSettingsTourPresented {
+            ZStack(alignment: .topLeading) {
+                Color.black.opacity(0.48)
+                    .ignoresSafeArea()
+
+                RoundedRectangle(cornerRadius: isWorkspaceWindow ? 0 : 24, style: .continuous)
+                    .stroke(Color.white.opacity(0.84), lineWidth: 2)
+                    .frame(width: isWorkspaceWindow ? nil : 818, height: isWorkspaceWindow ? nil : 692)
+                    .padding(.leading, isWorkspaceWindow ? 320 : 306)
+                    .padding(.top, isWorkspaceWindow ? 0 : 12)
+                    .shadow(color: Color.white.opacity(0.16), radius: 18)
+                    .allowsHitTesting(false)
+
+                VStack(alignment: .leading, spacing: 13) {
+                    HStack(spacing: 9) {
+                        Image(systemName: "gearshape.fill")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color.black.opacity(0.78))
+                            .frame(width: 28, height: 28)
+                            .background(Circle().fill(Color.white.opacity(0.96)))
+
+                        Text("Settings")
+                            .font(.system(size: 17, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.96))
+                            .accessibilityIdentifier("workspace.settingsTour.title")
+                    }
+
+                    Text("The Settings button opens this panel for account, model, notification, and workspace preferences. You only need to know where it is for now.")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.74))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("workspace.settingsTour.body")
+
+                    Button {
+                        withAnimation(.spring(response: 0.22, dampingFraction: 0.92)) {
+                            isWorkspaceSettingsTourPresented = false
+                            selectedWorkspaceSection = .curriculum
+                            isWorkspaceSidebarPresented = false
+                        }
+                    } label: {
+                        Text("Got it")
+                            .font(.system(size: 13, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Color.black.opacity(0.84))
+                            .frame(height: 34)
+                            .frame(maxWidth: .infinity)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.white.opacity(0.94))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("workspace.settingsTour.close")
+                }
+                .padding(16)
+                .frame(width: 330, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color(red: 0.12, green: 0.13, blue: 0.15).opacity(0.98))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                        )
+                )
+                .shadow(color: .black.opacity(0.34), radius: 22, x: 0, y: 12)
+                .padding(.leading, isWorkspaceWindow ? 342 : 330)
+                .padding(.top, isWorkspaceWindow ? 78 : 70)
+            }
+            .transition(.opacity)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("workspace.settingsTour.overlay")
+        }
+    }
+
+    @ViewBuilder
+    private func workspaceHelpTourOverlay() -> some View {
+        if isWorkspaceHelpTourPresented {
+            ZStack(alignment: .topLeading) {
+                Color.black.opacity(0.42)
+                    .ignoresSafeArea()
+
+                RoundedRectangle(cornerRadius: 17, style: .continuous)
+                    .stroke(Color.white.opacity(0.84), lineWidth: 2)
+                    .frame(width: 370, height: 202)
+                    .padding(.leading, isWorkspaceWindow ? 336 : 324)
+                    .padding(.top, isWorkspaceWindow ? 158 : 144)
+                    .shadow(color: Color.white.opacity(0.16), radius: 18)
+                    .allowsHitTesting(false)
+
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color.white.opacity(0.86), lineWidth: 2)
+                    .frame(width: 46, height: 46)
+                    .padding(.leading, isWorkspaceWindow ? 260 : 248)
+                    .padding(.top, isWorkspaceWindow ? 682 : 666)
+                    .shadow(color: Color.white.opacity(0.18), radius: 16)
+                    .allowsHitTesting(false)
+
+                VStack(alignment: .leading, spacing: 13) {
+                    HStack(spacing: 9) {
+                        Image(systemName: "questionmark.circle.fill")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color.black.opacity(0.78))
+                            .frame(width: 28, height: 28)
+                            .background(Circle().fill(Color.white.opacity(0.96)))
+
+                        Text("Help")
+                            .font(.system(size: 17, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.96))
+                            .accessibilityIdentifier("workspace.helpTour.title")
+                    }
+
+                    Text("The Help button opens this panel for setup guidance and curriculum context. You only need to know where it is for now.")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.74))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("workspace.helpTour.body")
+
+                    Button {
+                        withAnimation(.spring(response: 0.22, dampingFraction: 0.92)) {
+                            isWorkspaceHelpTourPresented = false
+                            isWorkspaceHelpPresented = false
+                            isWorkspaceSidebarPresented = false
+                        }
+                    } label: {
+                        Text("Got it")
+                            .font(.system(size: 13, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Color.black.opacity(0.84))
+                            .frame(height: 34)
+                            .frame(maxWidth: .infinity)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.white.opacity(0.94))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("workspace.helpTour.close")
+                }
+                .padding(16)
+                .frame(width: 330, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color(red: 0.12, green: 0.13, blue: 0.15).opacity(0.98))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                        )
+                )
+                .shadow(color: .black.opacity(0.34), radius: 22, x: 0, y: 12)
+                .padding(.leading, isWorkspaceWindow ? 730 : 700)
+                .padding(.top, isWorkspaceWindow ? 172 : 158)
+            }
+            .transition(.opacity)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("workspace.helpTour.overlay")
+        }
+    }
+
+    @ViewBuilder
+    private func workspaceRecentConversationsTourOverlay() -> some View {
+        if isWorkspaceRecentConversationsTourPresented {
+            ZStack(alignment: .topLeading) {
+                Color.black.opacity(0.46)
+                    .ignoresSafeArea()
+
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .stroke(Color.white.opacity(0.84), lineWidth: 2)
+                    .frame(width: isWorkspaceWindow ? 292 : 252, height: 230)
+                    .padding(.leading, isWorkspaceWindow ? 14 : 24)
+                    .padding(.top, isWorkspaceWindow ? 420 : 392)
+                    .shadow(color: Color.white.opacity(0.16), radius: 18)
+                    .allowsHitTesting(false)
+
+                VStack(alignment: .leading, spacing: 13) {
+                    HStack(spacing: 9) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color.black.opacity(0.78))
+                            .frame(width: 28, height: 28)
+                            .background(Circle().fill(Color.white.opacity(0.96)))
+
+                        Text("Recent conversations")
+                            .font(.system(size: 17, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.96))
+                            .accessibilityIdentifier("workspace.recentConversationsTour.title")
+                    }
+
+                    Text("The menubar recent conversations button opens this sidebar history surface. Conversations will appear here after you use Agentic30; for now, just know this place exists for returning to prior threads or starting a fresh Codex thread.")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.74))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("workspace.recentConversationsTour.body")
+
+                    Button {
+                        closeWorkspaceRecentConversationsTour()
+                    } label: {
+                        Text("Got it")
+                            .font(.system(size: 13, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Color.black.opacity(0.84))
+                            .frame(height: 34)
+                            .frame(maxWidth: .infinity)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.white.opacity(0.94))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("workspace.recentConversationsTour.close")
+                }
+                .padding(16)
+                .frame(width: 336, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color(red: 0.12, green: 0.13, blue: 0.15).opacity(0.98))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                        )
+                )
+                .shadow(color: .black.opacity(0.34), radius: 22, x: 0, y: 12)
+                .padding(.leading, isWorkspaceWindow ? 342 : 318)
+                .padding(.top, isWorkspaceWindow ? 390 : 364)
+            }
+            .transition(.opacity)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("workspace.recentConversationsTour.overlay")
+        }
+    }
+
+    @ViewBuilder
+    private func guidedDay1CoachMarkOverlay() -> some View {
+        if viewModel.guidedDay1OverlayActive {
+            ZStack(alignment: .topLeading) {
+                Color.black.opacity(0.54)
+                    .ignoresSafeArea()
+                    .accessibilityIdentifier("onboarding.day1CoachMark.dim")
+
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.white.opacity(0.88), lineWidth: 2)
+                    .frame(width: isWorkspaceWindow ? 292 : 250, height: 48)
+                    .padding(.leading, isWorkspaceWindow ? 14 : 24)
+                    .padding(.top, isWorkspaceWindow ? 196 : 206)
+                    .shadow(color: Color.white.opacity(0.20), radius: 18)
+                    .allowsHitTesting(false)
+                    .accessibilityIdentifier("onboarding.day1CoachMark.highlight")
+
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 9) {
+                        Image(systemName: "target")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color.black.opacity(0.78))
+                            .frame(width: 28, height: 28)
+                            .background(Circle().fill(Color.white.opacity(0.96)))
+
+                        Text("Day 1 tutorial")
+                            .font(.system(size: 17, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.96))
+                    }
+
+                    Text("먼저 Day 1 카드를 열고 첫 질문에 답해보세요. 이 답변은 연습이 아니라 30일 커리큘럼의 실제 데이터로 저장됩니다.")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.74))
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button {
+                        withAnimation(.spring(response: 0.22, dampingFraction: 0.92)) {
+                            viewModel.skipGuidedDay1Overlay()
+                        }
+                    } label: {
+                        Text("Overlay skip")
+                            .font(.system(size: 13, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Color.black.opacity(0.84))
+                            .frame(height: 34)
+                            .frame(maxWidth: .infinity)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.white.opacity(0.94))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("onboarding.day1CoachMark.skip")
+                    .accessibilityLabel("Skip Day 1 overlay")
+                }
+                .padding(16)
+                .frame(width: 336, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color(red: 0.12, green: 0.13, blue: 0.15).opacity(0.98))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                        )
+                )
+                .shadow(color: .black.opacity(0.34), radius: 22, x: 0, y: 12)
+                .padding(.leading, isWorkspaceWindow ? 330 : 302)
+                .padding(.top, isWorkspaceWindow ? 178 : 170)
+                .accessibilityIdentifier("onboarding.day1CoachMark.card")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .transition(.opacity)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("onboarding.day1CoachMark.overlay")
+        }
     }
 
     private func handleBipNotificationOpenRequest() {
@@ -1774,9 +2523,16 @@ struct ContentView: View {
                         VStack(alignment: .leading, spacing: 16) {
                             if isIddSetupLocked {
                                 workspaceFoundationSetupSurface(session: session)
+                            } else if viewModel.foundationCurriculumPresentationDestination == .graduation {
+                                workspaceGraduationSurface()
+                            } else if let reviewDashboard = viewModel.reviewDayDashboardViewModel,
+                                      reviewDashboard.reviewDay == day.day {
+                                workspaceReviewDayDashboardSurface(reviewDashboard)
                             } else {
-                                workspaceMissionFirstSurface(day: day, session: session)
-                                workspaceBipNotificationTaskSurface()
+                                if !shouldResumeDirectlyToQuestion(day: day, session: session) {
+                                    workspaceMissionFirstSurface(day: day, session: session)
+                                    workspaceBipNotificationTaskSurface()
+                                }
                                 workspaceMissionSupportThread(session)
                             }
                             Color.clear
@@ -1800,7 +2556,7 @@ struct ContentView: View {
                 }
 
                 VStack(spacing: 10) {
-                    if !isIddSetupLocked {
+                    if !isIddSetupLocked && viewModel.foundationCurriculumPresentationDestination != .graduation {
                         promptComposer()
                     }
                 }
@@ -1902,6 +2658,156 @@ struct ContentView: View {
             .accessibilityIdentifier("workspace.bipNotificationTaskSurface")
             .accessibilityLabel(bipNotificationTaskTitle(intent))
             .id("workspace.bipNotificationTaskSurface.scrollTarget")
+        }
+    }
+
+    private func workspaceReviewDayDashboardSurface(_ dashboard: ReviewDayDashboardViewModel) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 13) {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .font(.system(size: 17, weight: .heavy))
+                    .foregroundStyle(Color.black.opacity(0.76))
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(workspaceMissionFirstAccent.opacity(0.94)))
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("Day \(dashboard.reviewDay) · Review")
+                        .font(.system(size: 11, weight: .heavy, design: .rounded))
+                        .foregroundStyle(workspaceMissionFirstAccent.opacity(0.94))
+                        .textCase(.uppercase)
+
+                    Text("Review Day dashboard")
+                        .font(.system(size: 25, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.97))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("workspace.reviewDashboard.title")
+
+                    Text(workspaceReviewDaySubtitle(dashboard))
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.62))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("workspace.reviewDashboard.dayRange")
+                }
+
+                Spacer(minLength: 16)
+            }
+
+            LazyVGrid(columns: [
+                GridItem(.adaptive(minimum: 170, maximum: 230), spacing: 10, alignment: .topLeading),
+            ], alignment: .leading, spacing: 10) {
+                ForEach(Array(dashboard.curatedMetrics.enumerated()), id: \.element.id) { index, metric in
+                    workspaceReviewMetricCard(metric, index: index)
+                }
+            }
+            .accessibilityIdentifier("workspace.reviewDashboard.metrics")
+
+            workspaceReviewDashboardList(
+                title: "Agent insights",
+                systemImage: "sparkles",
+                items: dashboard.insights,
+                identifier: "workspace.reviewDashboard.insights"
+            )
+
+            workspaceReviewDashboardList(
+                title: "Next actions",
+                systemImage: "checklist",
+                items: dashboard.nextSteps,
+                identifier: "workspace.reviewDashboard.nextSteps"
+            )
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color.white.opacity(0.075))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(workspaceMissionFirstAccent.opacity(0.18), lineWidth: 1)
+                )
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("workspace.reviewDashboardSurface")
+    }
+
+    private func workspaceReviewDaySubtitle(_ dashboard: ReviewDayDashboardViewModel) -> String {
+        if let range = dashboard.dayRange {
+            return "Day \(range.start)-\(range.end)에서 고른 핵심 지표만 봅니다."
+        }
+        return "이번 Review에서 고른 핵심 지표만 봅니다."
+    }
+
+    private func workspaceReviewMetricCard(_ metric: ReviewDayDashboardMetric, index: Int) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(metric.label)
+                .font(.system(size: 12, weight: .heavy, design: .rounded))
+                .foregroundStyle(.white.opacity(0.78))
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(metric.value)
+                .font(.system(size: 25, weight: .heavy, design: .rounded))
+                .foregroundStyle(.white.opacity(0.97))
+                .lineLimit(1)
+
+            if let trend = metric.trend.nonEmpty {
+                Text(trend)
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(workspaceMissionFirstAccent.opacity(0.90))
+                    .lineLimit(1)
+            }
+        }
+        .padding(13)
+        .frame(maxWidth: .infinity, minHeight: 118, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.black.opacity(0.13))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("workspace.reviewDashboard.metric.\(index + 1)")
+    }
+
+    @ViewBuilder
+    private func workspaceReviewDashboardList(
+        title: String,
+        systemImage: String,
+        items: [String],
+        identifier: String
+    ) -> some View {
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 9) {
+                Label(title, systemImage: systemImage)
+                    .font(.system(size: 13, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.88))
+
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    HStack(alignment: .top, spacing: 8) {
+                        Circle()
+                            .fill(workspaceMissionFirstAccent.opacity(0.86))
+                            .frame(width: 5, height: 5)
+                            .padding(.top, 7)
+                        Text(item)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.62))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .padding(13)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.black.opacity(0.10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(Color.white.opacity(0.07), lineWidth: 1)
+                    )
+            )
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier(identifier)
         }
     }
 
@@ -2130,16 +3036,127 @@ struct ContentView: View {
     }
 
     private func bipNotificationCompletionSummary(_ mission: BipCoachMission) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("오늘 공개 실행 완료")
-                .font(.system(size: 14, weight: .heavy, design: .rounded))
-                .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.94))
-            Text([mission.threadsUrl?.nonEmpty, mission.sheetRowNote?.nonEmpty].compactMap { $0 }.joined(separator: " · ").nonEmpty ?? "기록이 저장됐습니다.")
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.58))
-                .fixedSize(horizontal: false, vertical: true)
+        bipCompletionCard(mission: mission, isCompact: true)
+    }
+
+    private func bipCompletionCelebrationTitle(for mission: BipCoachMission) -> String {
+        if let day = mission.curriculumDay?.day {
+            return "Day \(day) 완료!"
         }
-        .accessibilityIdentifier("workspace.bipNotificationCompletionSummary")
+        return "오늘 실행 완료!"
+    }
+
+    private func bipCompletionEncouragementText(for mission: BipCoachMission) -> String {
+        if mission.curriculumDay?.day != nil {
+            return "좋아요, 이 근거로 다음 Day를 더 정확히 이어갈게요."
+        }
+        return "좋아요, 오늘 기록이 다음 실행의 근거가 됩니다."
+    }
+
+    private func bipMissionMatchesDay(_ mission: BipCoachMission, day: AgenticCurriculumDay) -> Bool {
+        guard let missionDay = mission.curriculumDay?.day else { return true }
+        return missionDay == day.day
+    }
+
+    private func bipCompletionCTALabel(for mission: BipCoachMission) -> String? {
+        guard let completedDay = mission.curriculumDay?.day,
+              completedDay < 30 else {
+            return nil
+        }
+        return "Day \(completedDay + 1) 시작하기"
+    }
+
+    private func advanceFromCompletedMission(_ mission: BipCoachMission) {
+        guard let completedDay = mission.curriculumDay?.day,
+              completedDay < 30 else {
+            return
+        }
+        viewModel.advanceFromCompletedMission(mission)
+        selectedWorkspaceSection = .curriculum
+    }
+
+    private func bipCompletionCard(mission: BipCoachMission, isCompact: Bool = false) -> some View {
+        return ZStack(alignment: .topTrailing) {
+            VStack(alignment: .leading, spacing: isCompact ? 6 : 9) {
+                HStack(alignment: .center, spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: isCompact ? 12 : 14, weight: .heavy))
+                        .foregroundStyle(Color.black.opacity(0.72))
+                        .frame(width: isCompact ? 24 : 28, height: isCompact ? 24 : 28)
+                        .background(Circle().fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.94)))
+
+                    Text(bipCompletionCelebrationTitle(for: mission))
+                        .font(.system(size: isCompact ? 14 : 17, weight: .heavy, design: .rounded))
+                        .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.96))
+                        .accessibilityIdentifier("workspace.completionCard.title")
+                }
+
+                Text(bipCompletionEncouragementText(for: mission))
+                    .font(.system(size: isCompact ? 12 : 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.72))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("workspace.completionCard.encouragement")
+
+                if let questionCountLabel = mission.completionQuestionCountLabel {
+                    Text(questionCountLabel)
+                        .font(.system(size: isCompact ? 12 : 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.64))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("workspace.completionCard.questionCount")
+                }
+
+                if let teaser = mission.curriculumDay?.completionNextDayTeaser {
+                    Text(teaser)
+                        .font(.system(size: isCompact ? 11 : 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.46))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("workspace.completionCard.nextDayTeaser")
+                }
+
+                Text([mission.threadsUrl?.nonEmpty, mission.sheetRowNote?.nonEmpty].compactMap { $0 }.joined(separator: " · ").nonEmpty ?? "기록이 저장됐습니다.")
+                    .font(.system(size: isCompact ? 12 : 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.58))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let ctaLabel = bipCompletionCTALabel(for: mission) {
+                    Button {
+                        advanceFromCompletedMission(mission)
+                    } label: {
+                        Text(ctaLabel)
+                            .font(.system(size: isCompact ? 12 : 13, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Color.black.opacity(0.78))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: isCompact ? 30 : 34)
+                            .background(
+                                Capsule()
+                                    .fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.94))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("workspace.completionCard.cta")
+                }
+            }
+
+            if !isCompact {
+                BipCompletionConfettiBurst()
+                    .frame(width: 190, height: 128)
+                    .allowsHitTesting(false)
+                    .accessibilityIdentifier("workspace.completionCard.confetti")
+            }
+        }
+        .padding(isCompact ? 0 : 12)
+        .background {
+            if !isCompact {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.16), lineWidth: 1)
+                    )
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(isCompact ? "workspace.bipNotificationCompletionSummary" : "workspace.completionCard")
     }
 
     private func workspaceChatThread(_ session: ChatSession, day: AgenticCurriculumDay) -> some View {
@@ -3434,6 +4451,61 @@ struct ContentView: View {
         .accessibilityIdentifier("workspace.iddSetup.waiting")
     }
 
+    private func workspaceGraduationSurface() -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 13) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 18, weight: .heavy))
+                    .foregroundStyle(Color.black.opacity(0.76))
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.94)))
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("Graduation")
+                        .font(.system(size: 11, weight: .heavy, design: .rounded))
+                        .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.94))
+                        .textCase(.uppercase)
+
+                    Text("30일 커리큘럼을 완료했어요")
+                        .font(.system(size: 26, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.97))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("workspace.graduation.title")
+
+                    Text("이제 첫 가치, 유입, 지불 행동의 근거를 기준으로 continue, pivot, stop 중 하나를 선택해보세요.")
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.62))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("workspace.graduation.body")
+                }
+
+                Spacer(minLength: 16)
+            }
+
+            Text("Agentic30은 여기서 단순하게 끝납니다. 남은 일은 새 모드가 아니라, Day 30 회고를 바탕으로 다음 제품 결정을 실행하는 것입니다.")
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.58))
+                .fixedSize(horizontal: false, vertical: true)
+
+            Label("Graduation reached", systemImage: "flag.checkered")
+                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.92))
+                .accessibilityIdentifier("workspace.graduation.status")
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color.white.opacity(0.075))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.18), lineWidth: 1)
+                )
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("workspace.graduationSurface")
+    }
+
     private func workspaceMissionFirstSurface(day: AgenticCurriculumDay, session: ChatSession?) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 13) {
@@ -3819,7 +4891,7 @@ struct ContentView: View {
             return "프로젝트와 Day 맥락 확인 중"
         }
         if let coach = viewModel.visibleBipCoach {
-            if coach.currentMission != nil {
+            if let mission = coach.currentMission, bipMissionMatchesDay(mission, day: day) {
                 return "오늘 실행"
             }
             if !coach.pendingMissionChoices.isEmpty {
@@ -3840,7 +4912,7 @@ struct ContentView: View {
             return "프로젝트 기준과 Day \(day.day) 맥락을 보고 실행 하나로 좁히는 중입니다."
         }
         if let coach = viewModel.visibleBipCoach {
-            if let mission = coach.currentMission {
+            if let mission = coach.currentMission, bipMissionMatchesDay(mission, day: day) {
                 return mission.mission?.nonEmpty ?? mission.angle?.nonEmpty ?? "15분 안에 끝낼 공개 실행을 진행합니다."
             }
             if !coach.pendingMissionChoices.isEmpty {
@@ -3858,7 +4930,9 @@ struct ContentView: View {
             workspaceMissionFirstPreparingBody(session: session)
         } else if viewModel.isBipCoachGenerating || viewModel.bipMissionProgress != nil {
             workspaceMissionFirstGeneratingBody()
-        } else if let coach = viewModel.visibleBipCoach, let mission = coach.currentMission {
+        } else if let coach = viewModel.visibleBipCoach,
+                  let mission = coach.currentMission,
+                  bipMissionMatchesDay(mission, day: day) {
             workspaceMissionFirstSelectedMission(mission, coach: coach)
         } else if let coach = viewModel.visibleBipCoach, !coach.pendingMissionChoices.isEmpty {
             workspaceMissionFirstChoices(coach.pendingMissionChoices)
@@ -4051,6 +5125,10 @@ struct ContentView: View {
 
     private func workspaceMissionFirstSelectedMission(_ mission: BipCoachMission, coach: BipCoachState) -> some View {
         VStack(alignment: .leading, spacing: 12) {
+            if mission.status == "completed" {
+                bipCompletionCard(mission: mission)
+            }
+
             if let title = mission.title?.nonEmpty {
                 Text(title)
                     .font(.system(size: 17, weight: .heavy, design: .rounded))
@@ -4058,10 +5136,12 @@ struct ContentView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Text("이제 초안 요청을 누르면 선택한 미션 기준으로 바로 답변을 시작합니다.")
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.58))
-                .fixedSize(horizontal: false, vertical: true)
+            if mission.status != "completed" {
+                Text("이제 초안 요청을 누르면 선택한 미션 기준으로 바로 답변을 시작합니다.")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.58))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             HStack(spacing: 8) {
                 workspaceMissionPrimaryButton(
@@ -4207,6 +5287,10 @@ struct ContentView: View {
             || !pendingPrompts.isEmpty
             || session.status == .running
         return (hasUserTurn || hasActiveSupport) ? messages : []
+    }
+
+    private func shouldResumeDirectlyToQuestion(day: AgenticCurriculumDay, session: ChatSession) -> Bool {
+        day.day >= 2 && session.pendingUserInput != nil
     }
 
     private func workspaceHeroCard(_ day: AgenticCurriculumDay, session: ChatSession) -> some View {
@@ -6236,6 +7320,10 @@ struct ContentView: View {
 
     private func missionSuggestionCard(_ mission: BipCoachMission, coach: BipCoachState) -> some View {
         VStack(alignment: .leading, spacing: 9) {
+            if mission.status == "completed" {
+                bipCompletionCard(mission: mission)
+            }
+
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(coach.currentMission?.status == "completed" ? "완료된 미션" : "오늘 미션")
                     .font(.system(size: 15, weight: .bold, design: .rounded))
@@ -6538,7 +7626,7 @@ struct ContentView: View {
 
             VStack(alignment: .leading, spacing: compact ? 8 : 12) {
                 ForEach(prompt.questions) { question in
-                    questionCard(question, compact: compact, isSubmitting: isSubmitting)
+                    questionCard(question, prompt: prompt, compact: compact, isSubmitting: isSubmitting)
                         .transition(.opacity)
                 }
             }
@@ -6703,10 +7791,11 @@ struct ContentView: View {
 
     private func questionCard(
         _ question: StructuredPromptQuestion,
+        prompt: StructuredPromptRequest,
         compact: Bool = false,
         isSubmitting: Bool = false
     ) -> some View {
-        let draft = promptDrafts[question.id] ?? StructuredAnswerDraft()
+        let draft = viewModel.structuredPromptDraft(for: question, in: prompt)
 
         return VStack(alignment: .leading, spacing: compact ? 9 : 12) {
             Text(question.question)
@@ -6751,6 +7840,7 @@ struct ContentView: View {
                         choiceRow(
                             option,
                             question: question,
+                            prompt: prompt,
                             selected: draft.selectedOptions.contains(option.label),
                             showDescription: !compact,
                             disabled: isSubmitting
@@ -6764,7 +7854,7 @@ struct ContentView: View {
                     Text(freeTextLabel(for: question, compact: compact))
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.52))
-                    freeTextField(question: question, isDisabled: isSubmitting)
+                    freeTextField(question: question, prompt: prompt, isDisabled: isSubmitting)
                 }
             }
         }
@@ -6799,6 +7889,7 @@ struct ContentView: View {
     private func choiceRow(
         _ option: StructuredPromptOption,
         question: StructuredPromptQuestion,
+        prompt: StructuredPromptRequest,
         selected: Bool,
         accent: Color = ContentView.structuredChoiceAccent,
         showDescription: Bool = true,
@@ -6806,7 +7897,7 @@ struct ContentView: View {
     ) -> some View {
         Button {
             guard !disabled else { return }
-            toggleOption(option.label, for: question)
+            viewModel.toggleStructuredPromptOption(option.label, for: question, in: prompt)
         } label: {
             HStack(alignment: .top, spacing: 12) {
                 ZStack {
@@ -6857,13 +7948,17 @@ struct ContentView: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    private func freeTextField(question: StructuredPromptQuestion, isDisabled: Bool = false) -> some View {
+    private func freeTextField(
+        question: StructuredPromptQuestion,
+        prompt: StructuredPromptRequest,
+        isDisabled: Bool = false
+    ) -> some View {
         if question.textMode == .long {
             return AnyView(
                 TextEditor(
                     text: Binding(
-                        get: { promptDrafts[question.id]?.freeText ?? "" },
-                        set: { updateFreeText($0, for: question) }
+                        get: { viewModel.structuredPromptDraft(for: question, in: prompt).freeText },
+                        set: { viewModel.updateStructuredPromptFreeText($0, for: question, in: prompt) }
                     )
                 )
                 .font(.system(size: 13, weight: .medium, design: .rounded))
@@ -6885,8 +7980,8 @@ struct ContentView: View {
             TextField(
                 question.freeTextPlaceholder?.nonEmpty ?? "Type your answer",
                 text: Binding(
-                    get: { promptDrafts[question.id]?.freeText ?? "" },
-                    set: { updateFreeText($0, for: question) }
+                    get: { viewModel.structuredPromptDraft(for: question, in: prompt).freeText },
+                    set: { viewModel.updateStructuredPromptFreeText($0, for: question, in: prompt) }
                 )
             )
             .textFieldStyle(.plain)
@@ -7197,49 +8292,14 @@ struct ContentView: View {
         session.messages.last(where: { $0.role == .user })?.content.nonEmpty
     }
 
-    private func toggleOption(_ label: String, for question: StructuredPromptQuestion) {
-        var draft = promptDrafts[question.id] ?? StructuredAnswerDraft()
-
-        if question.multiSelect == true {
-            if draft.selectedOptions.contains(label) {
-                draft.selectedOptions.remove(label)
-            } else {
-                draft.selectedOptions.insert(label)
-            }
-        } else {
-            draft.selectedOptions = [label]
-        }
-
-        promptDrafts[question.id] = draft
-    }
-
-    private func updateFreeText(_ text: String, for question: StructuredPromptQuestion) {
-        var draft = promptDrafts[question.id] ?? StructuredAnswerDraft()
-        draft.freeText = text
-        promptDrafts[question.id] = draft
-    }
-
     private func canSubmit(_ prompt: StructuredPromptRequest) -> Bool {
-        prompt.questions.allSatisfy { question in
-            let draft = promptDrafts[question.id] ?? StructuredAnswerDraft()
-            return question.isSatisfied(
-                selectedOptions: draft.selectedOptions,
-                freeText: draft.freeText
-            )
-        }
+        viewModel.canSubmitStructuredPrompt(prompt)
     }
 
     private func submitPrompt(_ prompt: StructuredPromptRequest) {
         guard submissionState(for: prompt) == nil else { return }
 
-        let submissions = prompt.questions.map { question in
-            let draft = promptDrafts[question.id] ?? StructuredAnswerDraft()
-            return AgenticViewModel.StructuredPromptSubmission(
-                question: question.question,
-                selectedOptions: Array(draft.selectedOptions),
-                freeText: draft.freeText.trimmingCharacters(in: .whitespacesAndNewlines)
-            )
-        }
+        let submissions = viewModel.structuredPromptSubmissions(for: prompt)
 
         viewModel.submitStructuredPrompt(
             sessionId: prompt.sessionId,
@@ -7248,20 +8308,17 @@ struct ContentView: View {
         )
     }
 
-    private func syncPromptDrafts(requestID: String?) {
+    private func syncPromptDrafts(bindingToken: String?) {
         guard let request = viewModel.pendingStructuredPrompt else {
-            currentPromptID = nil
-            promptDrafts = [:]
+            currentPromptBindingToken = nil
+            viewModel.synchronizeStructuredPromptDrafts(with: nil)
             return
         }
-        guard currentPromptID != request.requestId else { return }
+        let resolvedBindingToken = bindingToken ?? request.uiBindingToken
+        guard currentPromptBindingToken != resolvedBindingToken else { return }
 
-        currentPromptID = request.requestId
-        promptDrafts = Dictionary(
-            uniqueKeysWithValues: request.questions.map { question in
-                (question.id, StructuredAnswerDraft())
-            }
-        )
+        currentPromptBindingToken = resolvedBindingToken
+        viewModel.synchronizeStructuredPromptDrafts(with: request)
     }
 }
 
@@ -7328,11 +8385,6 @@ private struct AgenticCurriculumDay: Identifiable, Hashable {
     ]
 }
 
-private struct StructuredAnswerDraft: Hashable {
-    var selectedOptions: Set<String> = []
-    var freeText = ""
-}
-
 /// Foundation phase Sub-AC 2: 사이드바 누적 기록을 일자별로 묶어 노출하기 위한
 /// 뷰 모델. 그룹은 `label`(예: "오늘", "어제", "5월 1일 (목)")로 식별되며 동일
 /// 라벨에 묶인 세션들은 `AgenticViewModel.sessions`의 정렬 순서를 그대로 보존한다.
@@ -7367,6 +8419,14 @@ private enum WorkspaceSection {
             return "설정"
         }
     }
+}
+
+private struct WorkspaceTourReturnState {
+    let section: WorkspaceSection
+    let settingsSection: SettingsSection
+    let sidebarPresented: Bool
+    let helpPresented: Bool
+    let sidebarSettingsMenuPresented: Bool
 }
 
 private enum WorkspaceCurriculumDetail: String, CaseIterable, Identifiable {
@@ -7503,6 +8563,61 @@ private enum SidebarSettingsMenuItem: Hashable {
 
 #Preview {
     ContentView(viewModel: AgenticViewModel())
+}
+
+private struct BipCompletionConfettiBurst: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isReleased = false
+
+    private let particles: [ConfettiParticle] = [
+        ConfettiParticle(id: 0, x: 10, y: 18, endX: -6, endY: 92, rotation: -36, color: Color(red: 0.55, green: 0.90, blue: 0.66), delay: 0.00),
+        ConfettiParticle(id: 1, x: 30, y: 8, endX: 14, endY: 112, rotation: 42, color: Color(red: 1.00, green: 0.78, blue: 0.34), delay: 0.04),
+        ConfettiParticle(id: 2, x: 52, y: 20, endX: 42, endY: 102, rotation: -64, color: Color(red: 0.53, green: 0.77, blue: 1.00), delay: 0.08),
+        ConfettiParticle(id: 3, x: 78, y: 10, endX: 72, endY: 118, rotation: 78, color: Color(red: 1.00, green: 0.48, blue: 0.58), delay: 0.02),
+        ConfettiParticle(id: 4, x: 104, y: 24, endX: 112, endY: 100, rotation: -52, color: Color(red: 0.74, green: 0.64, blue: 1.00), delay: 0.10),
+        ConfettiParticle(id: 5, x: 132, y: 12, endX: 146, endY: 110, rotation: 58, color: Color(red: 0.91, green: 0.98, blue: 0.52), delay: 0.06),
+        ConfettiParticle(id: 6, x: 158, y: 26, endX: 178, endY: 96, rotation: -30, color: Color(red: 0.52, green: 0.94, blue: 0.88), delay: 0.12),
+    ]
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(particles) { particle in
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    .fill(particle.color)
+                    .frame(width: 6, height: 12)
+                    .rotationEffect(.degrees(isReleased ? particle.rotation : 0))
+                    .offset(
+                        x: isReleased ? particle.endX : particle.x,
+                        y: isReleased ? particle.endY : particle.y
+                    )
+                    .opacity(isReleased ? 0.92 : 0.0)
+                    .animation(
+                        reduceMotion
+                            ? nil
+                            : .spring(response: 0.72, dampingFraction: 0.72)
+                                .delay(particle.delay),
+                        value: isReleased
+                    )
+            }
+        }
+        .accessibilityHidden(true)
+        .onAppear {
+            // Skip animation under hermetic UI tests so screenshots stay pixel-stable.
+            guard ProcessInfo.processInfo.environment["AGENTIC30_TEST_STUB_PROVIDER"] != "1" else { return }
+            isReleased = true
+        }
+    }
+
+    private struct ConfettiParticle: Identifiable {
+        let id: Int
+        let x: CGFloat
+        let y: CGFloat
+        let endX: CGFloat
+        let endY: CGFloat
+        let rotation: Double
+        let color: Color
+        let delay: Double
+    }
 }
 
 private extension View {

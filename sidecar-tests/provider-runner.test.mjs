@@ -496,3 +496,17 @@ test("buildSystemPromptText keeps Korean response language in judge lane", () =>
   assert.match(prompt, /Reply in Korean \(ko, 한국어\)/);
   assert.match(prompt, /Return only the exact output format requested/);
 });
+
+test("buildSystemPromptText starts mini-action execution-only sessions without user-response prompt", () => {
+  const prompt = buildSystemPromptText({
+    provider: "codex",
+    workspaceRoot: "/tmp/workspace",
+    executionMode: "mini_action_execution_only",
+  });
+
+  assert.match(prompt, /Start immediately at the execution step/);
+  assert.match(prompt, /Do not emit, ask, or wait for a user-response prompt/);
+  assert.match(prompt, /Use auto-verification first/);
+  assert.match(prompt, /Do not enter planning, interview, or review flows/);
+  assert.match(prompt, /agentic30_request_user_input/);
+});

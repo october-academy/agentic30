@@ -24,7 +24,10 @@ import {
 import { createTelemetryClient } from "./telemetry.mjs";
 import { createPetHooks } from "./pet-hooks.mjs";
 import { getCachedBipContext } from "./context-cache.mjs";
-import { classifyChatExecutionRoute as classifyChatExecutionRouteWithState } from "./chat-route.mjs";
+import {
+  MINI_ACTION_EXECUTION_ONLY_INTENT,
+  classifyChatExecutionRoute as classifyChatExecutionRouteWithState,
+} from "./chat-route.mjs";
 import {
   deriveWorkspaceOnboardingHypothesisLocally,
   mergeWorkspaceOnboardingHypotheses,
@@ -127,6 +130,8 @@ import {
   setIddProviderRecovery,
   summarizeBipSetupGate,
 } from "./idd-doc-gate.mjs";
+import { buildMiniActionSessionTriggerEvent } from "./adaptive-curriculum.mjs";
+import { emitInlineHintTriggerForFeatureAppearance } from "./curriculum-hint-eligibility.mjs";
 import {
   CODEX_STRUCTURED_INPUT_TOOL,
 } from "./structured-input-tools.mjs";
@@ -231,6 +236,7 @@ const state = {
   bipCoachRunning: false,
   providerAuthRuns: new Map(),
   workspaceOnboardingHypothesis: null,
+  curriculumInlineHintState: {},
   workspaceSetupTelemetry: {
     root: "",
     started: false,
@@ -534,6 +540,50 @@ function broadcastPendingRitual(day) {
   });
 }
 
+function maybeEmitCurriculumMiniActionTrigger({ session, prompt, payload = {} } = {}) {
+  const event = buildMiniActionSessionTriggerEvent({
+    sessionId: session?.id || "",
+    day: resolveMiniActionDay(payload),
+    curriculumDay: payload.curriculumDay,
+    message: {
+      role: "user",
+      content: prompt,
+      day: payload.foundationDay ?? payload.day,
+      curriculumDay: payload.curriculumDay,
+    },
+  });
+  if (!event) return null;
+
+  broadcast(event);
+  telemetry.captureEvent("mac_sidecar_curriculum_mini_action_triggered", {
+    session_id: session?.id || "",
+    day: event.day ?? -1,
+    reason: event.trigger?.reason || "",
+    coaching_mode: event.trigger?.coachingMode || "",
+  });
+  return event;
+}
+
+function resolveMiniActionDay(payload = {}) {
+  return normalizeMiniActionDay(
+    payload.curriculumDay?.day
+      ?? payload.curriculumDay?.dayId
+      ?? payload.curriculumDay?.day_id
+      ?? payload.foundationDay
+      ?? payload.day
+      ?? state.bipCoach?.currentMission?.curriculumDay?.day
+      ?? state.bipCoach?.currentMission?.curriculumDay?.dayId
+      ?? state.bipCoach?.currentMission?.curriculumDay?.day_id,
+  );
+}
+
+function normalizeMiniActionDay(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  const day = Math.trunc(number);
+  return day >= 1 && day <= 30 ? day : null;
+}
+
 // On sidecar boot, if state has a pending ritual that was never acknowledged,
 // re-broadcast it. Codex flagged that the original "persist before emit"
 // ordering meant a crash between persist and emit lost the prompt forever.
@@ -758,6 +808,30 @@ async function handleClientMessage(socket, payload) {
     case "list_sessions":
       send(socket, { type: "sessions_snapshot", sessions: serializeSessions() });
       return;
+    case "curriculum_feature_surface": {
+      const result = emitInlineHintTriggerForFeatureAppearance({
+        state: state.curriculumInlineHintState,
+        featureId: payload.featureId ?? payload.feature_id,
+        surface: payload.surface,
+        metadata: payload.metadata,
+        emit: (event) => broadcast(event),
+      });
+      state.curriculumInlineHintState = result.state;
+      if (result.emitted) {
+        telemetry.captureEvent("mac_sidecar_curriculum_inline_hint_triggered", {
+          feature_id: result.featureId,
+          surface: payload.surface || "",
+        });
+      }
+      send(socket, {
+        type: "curriculum_feature_surface_recorded",
+        featureId: result.featureId,
+        feature_id: result.featureId,
+        emitted: result.emitted,
+        reason: result.reason,
+      });
+      return;
+    }
     case "create_session": {
       const createStartedAt = performance.now();
       const session = createSession(payload);
@@ -876,8 +950,12 @@ async function handleClientMessage(socket, payload) {
           message: "Prompt is empty.",
         });
         return;
-    }
+      }
       markWorkspaceSetupFirstInput("prompt");
+      const miniActionEvent = maybeEmitCurriculumMiniActionTrigger({ session, prompt, payload });
+      const executionIntent = miniActionEvent
+        ? MINI_ACTION_EXECUTION_ONLY_INTENT
+        : payload.executionIntent;
       // Sub-AC 2.3 IPC reconciliation: when the Swift host classifies a
       // message as Foundation Day daily-task (`mode: "daily_task"`), funnel
       // it through the unified Foundation chat handler so the single chat
@@ -933,13 +1011,13 @@ async function handleClientMessage(socket, payload) {
     }
       if (state.activeRuns.has(session.id)) {
         await enqueuePrompt(session, prompt, {
-          executionIntent: payload.executionIntent,
+          executionIntent,
         });
         return;
     }
       cancelWarmSession(session.id);
       await runPrompt(session, prompt, {
-        executionIntent: payload.executionIntent,
+        executionIntent,
     });
       return;
     }

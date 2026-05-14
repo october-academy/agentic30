@@ -37,6 +37,7 @@ test("auth context normalizes onboarding context from snake_case payload", () =>
     accessToken: "access-secret",
     onboardingContext: {
       work_mode: "side_project",
+      custom_work_mode: "주말마다 고객 인터뷰를 돌리는 중",
       role: "designer",
       project_stage: "pre_revenue",
       isolation_level: "weekly_loop",
@@ -46,6 +47,7 @@ test("auth context normalizes onboarding context from snake_case payload", () =>
 
   assert.deepEqual(getAuthContextSummary().onboardingContext, {
     workMode: "side_project",
+    customWorkMode: "주말마다 고객 인터뷰를 돌리는 중",
     role: "designer",
     projectStage: "pre_revenue",
     isolationLevel: "weekly_loop",

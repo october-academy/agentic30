@@ -108,6 +108,10 @@ struct SettingsView: View {
     @State private var localSelectedSection: SettingsSection = .account
     @State private var isBackButtonHovered = false
 
+    // MARK: - Launch at Login
+
+    @ObservedObject private var loginItemsManager = LoginItemsManager.shared
+
     init(
         viewModel: AgenticViewModel,
         embeddedInWorkspace: Bool = false,
@@ -356,6 +360,7 @@ struct SettingsView: View {
             subtitle: "The macOS app runs in local mode. No web account is required."
         ) {
             accountConnectionSection
+            launchAtLoginSection
             appUpdatesSection
             localDataResetSection
             agentModelsSection
@@ -414,6 +419,29 @@ struct SettingsView: View {
                 .background(Capsule().fill(color.opacity(destructive ? 0.10 : 0.14)))
         }
         .buttonStyle(.plain)
+    }
+
+    private var launchAtLoginSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            sectionHeader(title: "Launch at Login", configured: loginItemsManager.isEnabled)
+
+            Text("Mac에 로그인하면 Agentic30 메뉴바 아이콘이 자동으로 활성화됩니다. 워크스페이스 윈도우는 메뉴바에서 직접 열 수 있습니다.")
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.48))
+
+            Toggle(isOn: Binding(
+                get: { loginItemsManager.isEnabled },
+                set: { loginItemsManager.setEnabled($0) }
+            )) {
+                Text("로그인 시 자동 시작")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.86))
+            }
+            .toggleStyle(.switch)
+            .accessibilityIdentifier("settings.account.launchAtLogin.toggle")
+        }
+        .padding(20)
+        .background(cardBackground)
     }
 
     private var appUpdatesSection: some View {
