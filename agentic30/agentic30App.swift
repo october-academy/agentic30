@@ -75,7 +75,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
     private lazy var updaterController: SPUStandardUpdaterController? = Self.makeUpdaterController()
 
+    private(set) var wasLaunchedAtLogin = false
+
     static let initialWorkspaceMaximizeDefaultsKey = "agentic30.workspaceWindow.initialInstallMaximizeApplied.v1"
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        wasLaunchedAtLogin = LoginItemsManager.wasLaunchedAtLogin()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
@@ -111,6 +117,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 ],
                 authSession: viewModel.macAuthSession
             )
+        }
+
+        if !Self.isUITestingLaunch() {
+            LoginItemsManager.shared.autoEnrollIfFirstLaunch(isFirstLaunchEver: isFirstLaunchEver)
         }
 
         // Wire sidecar events into the desktop-pet state machine.
@@ -170,6 +180,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             scheduleUITestingWorkspaceOpen(openSettings: false)
         }
         #endif
+
+        if wasLaunchedAtLogin {
+            DispatchQueue.main.async { [weak self] in
+                self?.closeWorkspaceWindows()
+            }
+        }
     }
 
     static func shouldMaximizeWorkspaceWindowOnLaunch(
