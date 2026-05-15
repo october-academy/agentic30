@@ -6,6 +6,7 @@ Thanks for your interest in contributing.
 
 ```bash
 npm install
+npm run doctor
 npm run check:public-safety
 npm run test:sidecar
 xcodebuild test -project agentic30.xcodeproj -scheme agentic30 -destination 'platform=macOS'
@@ -21,7 +22,7 @@ npm run scan:secrets:gh
 
 You can opt this checkout into the pre-commit secret scan with `npm run hooks:install`. The hook is not installed automatically because hooks are local git configuration.
 
-For full prerequisites and signing notes, see the [README](./README.md).
+For the full source run path, first-success criteria, prerequisites, and signing notes, see the [README](./README.md).
 
 ## How this repo relates to October Academy
 

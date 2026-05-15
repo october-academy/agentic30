@@ -4,17 +4,31 @@ Native macOS menu bar assistant shell for agentic30. The app owns the macOS surf
 
 Product context: agentic30 helps solo developers reach 100 users and first revenue in 30 days by turning a selected project path, work logs, customer interviews, and Build in Public records into a personalized adaptive curriculum.
 
-## Run locally in 5 minutes
+## Run from source
 
 ```bash
 npm install
+npm run doctor
 ```
 
-1. Open `agentic30.xcodeproj` in Xcode and run the `agentic30` scheme.
-2. Confirm at least one provider is available in Settings: Claude Code login / `ANTHROPIC_API_KEY`, or Codex login / `CODEX_API_KEY` / `OPENAI_API_KEY`.
-3. Answer the onboarding questions so the app can infer your work context, role, stage, and available records.
-4. Select the project folder you want Agentic30 to coach.
-5. Open the assistant panel and complete Foundation Setup. The app asks for ICP, GOAL, VALUES, and SPEC, then opens Today Mission after the four documents are approved.
+1. Install dependencies, then run `npm run doctor` from the repo root.
+2. Open `agentic30.xcodeproj` in Xcode and run the `agentic30` scheme.
+3. Complete first-run setup in the app: confirm at least one provider is available in Settings, answer onboarding, select the project folder you want Agentic30 to coach, then complete Foundation Setup.
+
+First success means:
+
+- `npm run doctor` reports no `failed` checks.
+- At least one provider is authenticated: Claude Code login / `ANTHROPIC_API_KEY`, or Codex login / `CODEX_API_KEY` / `OPENAI_API_KEY`.
+- A project folder is selected and onboarding is complete.
+- Foundation Setup asks for ICP, GOAL, VALUES, and SPEC, then a Day 1 Mission card appears within 2-5 minutes after the four documents are approved.
+
+Preflight interpretation:
+
+- `failed` means fix the reported recovery step before trying to run the app.
+- `warning` can be okay for optional surfaces such as ACP isolated editor integrations or QMD memory. Provider warnings must be fixed before real chat or coaching will work.
+- Use Settings -> Diagnostics -> Copy Diagnostics when the app launches but the sidecar, provider auth, or workspace setup looks wrong.
+
+See [docs/first-run-walkthrough.md](docs/first-run-walkthrough.md) for the full first-run path and expected diagnostic output shape.
 
 ## Runtime Requirements
 
@@ -44,6 +58,7 @@ Live canaries are opt-in:
 ## Contributor Checks
 
 ```bash
+npm run doctor
 npm run check:public-safety
 npm run test:sidecar
 xcodebuild test -project agentic30.xcodeproj -scheme agentic30 -destination 'platform=macOS'
@@ -75,4 +90,5 @@ See:
 - [docs/release-checklist.md](docs/release-checklist.md)
 - [docs/known-limitations.md](docs/known-limitations.md)
 - [docs/diagnostics-guide.md](docs/diagnostics-guide.md)
+- [docs/first-run-walkthrough.md](docs/first-run-walkthrough.md)
 - [docs/qmd-advice-setup.md](docs/qmd-advice-setup.md)

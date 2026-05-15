@@ -10,7 +10,7 @@ QMD advice is optional context retrieval for local coaching. It should improve a
 
 ## Local Setup
 
-1. Run `npm install` in `packages/mac/agentic30`.
+1. Run `npm install` from the repo root.
 2. Launch the app from Xcode.
 3. Select a project folder.
 4. Ask a project-memory question such as `ICP.md 문서 어디에 있어?`.

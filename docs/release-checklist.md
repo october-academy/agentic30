@@ -4,7 +4,8 @@ This checklist is for local dogfood releases of the macOS menu bar app. Public D
 
 ## Dogfood Gate
 
-- `npm install` succeeds from `packages/mac/agentic30`.
+- `npm install` succeeds from the repo root.
+- `npm run doctor` reports no `failed` checks.
 - `npm run test:sidecar` passes.
 - Focused UI tests pass for hermetic chat, structured prompt choices, settings model pickers, and BIP sidecar failure handling.
 - `xcodebuild test -project agentic30.xcodeproj -scheme agentic30 -destination 'platform=macOS'` is green or any failure is documented as unrelated to the release.

@@ -6,6 +6,7 @@
     "sidecar": "node sidecar/index.mjs",
     "mcp": "node sidecar/mcp-server.mjs",
     "acp": "node sidecar/acp-adapter.mjs",
+    "doctor": "node sidecar/preflight-cli.mjs",
     "preflight:release": "node sidecar/preflight-cli.mjs",
     "preflight:bundle": "node scripts/preflight-bundle.mjs",
     "build:sidecar": "node scripts/build-sidecar.mjs",
