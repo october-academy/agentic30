@@ -32,7 +32,7 @@ final class IntakeV2StoreTests: XCTestCase {
     func test_setAnswers_persistsAcrossInstances() {
         let store1 = IntakeV2Store(defaults: suiteDefaults)
         store1.workmode = .fullTimeSolo
-        store1.role = .developer
+        store1.role = .marketerBusiness
         store1.stuck = .ideaOnly
         store1.folderURL = URL(fileURLWithPath: "/Users/test/Projects")
         store1.persist()
@@ -41,9 +41,18 @@ final class IntakeV2StoreTests: XCTestCase {
 
         let store2 = IntakeV2Store(defaults: suiteDefaults)
         XCTAssertEqual(store2.workmode, .fullTimeSolo)
-        XCTAssertEqual(store2.role, .developer)
+        XCTAssertEqual(store2.role, .marketerBusiness)
         XCTAssertEqual(store2.stuck, .ideaOnly)
         XCTAssertEqual(store2.folderURL?.path, "/Users/test/Projects")
+    }
+
+    func test_onboardingRoleChoices_excludeLegacyStudentStatus() {
+        XCTAssertEqual(
+            OnboardingRole.onboardingChoices,
+            [.developer, .designer, .productManager, .marketerBusiness, .generalist]
+        )
+        XCTAssertFalse(OnboardingRole.onboardingChoices.contains(.student))
+        XCTAssertTrue(OnboardingRole.allCases.contains(.student))
     }
 
     func test_stepCompletion_flags() {

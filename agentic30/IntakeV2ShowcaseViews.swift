@@ -222,7 +222,7 @@ struct IntakeV2BootIntroView: View {
 
     private func bootHeader(isNarrow: Bool) -> some View {
         VStack(alignment: .leading, spacing: 22) {
-            IntakeV2DashPagination(current: 1, total: 7, label: "BOOT", progressNamespace: progressNamespace)
+            IntakeV2ProgressReservedSpace()
             VStack(alignment: .leading, spacing: 12) {
                 Text("Agentic30 — 1인 개발자를 위한 실행 OS")
                     .font(.system(size: isNarrow ? 30 : 34, weight: .bold, design: .rounded))
@@ -1082,7 +1082,7 @@ struct IntakeV2ConnectShowcaseView: View {
     var body: some View {
         IntakeV2PinnedStepScaffold { _ in
             VStack(alignment: .leading, spacing: 22) {
-                IntakeV2DashPagination(current: 6, total: 7, label: "CONNECT", progressNamespace: progressNamespace)
+                IntakeV2ProgressReservedSpace()
                 IntakeV2Header(
                     title: "읽을 기록 더 연결하기",
                     subtitle: "지금은 연결할 기록을 표시만 합니다. 실제 인증과 권한 연결은 나중에 Settings에서 직접 완료합니다."
@@ -1121,9 +1121,6 @@ struct IntakeV2ConnectShowcaseView: View {
                     }
                     .font(.system(size: 11, design: .monospaced))
                     Spacer()
-                    Text("Click 표시 · Settings에서 연결")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(IntakeV2Color.monospaceMuted)
                 }
                 .frame(maxWidth: 920)
                 .frame(maxWidth: .infinity, alignment: .center)
@@ -1226,6 +1223,7 @@ struct IntakeV2ConnectShowcaseView: View {
                     .foregroundStyle(IntakeV2Color.textSecondary)
             }
             .frame(maxWidth: .infinity, minHeight: 140)
+            .contentShape(RoundedRectangle(cornerRadius: 14))
             .overlay(
                 RoundedRectangle(cornerRadius: 14)
                     .strokeBorder(.white.opacity(0.1), style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
@@ -1801,7 +1799,7 @@ struct IntakeV2ReadyAnalyzeView: View {
     var body: some View {
         IntakeV2PinnedStepScaffold { _ in
             VStack(alignment: .leading, spacing: 22) {
-                IntakeV2DashPagination(current: 7, total: 7, label: "READY", progressNamespace: progressNamespace)
+                IntakeV2ProgressReservedSpace()
                 IntakeV2Header(
                     title: "Init 완료. 첫 결정을 분석합니다.",
                     subtitle: readySubtitle
@@ -1925,6 +1923,8 @@ struct IntakeV2ReadyAnalyzeView: View {
                         }
                     }
                     .font(.system(size: 13, design: .monospaced))
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(line.status.map { "\(line.cmd) \($0)" } ?? line.cmd)
                     .transition(.opacity)
                 }
             }

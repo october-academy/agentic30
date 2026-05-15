@@ -4,10 +4,10 @@ struct MacOnboardingContextView: View {
     @ObservedObject var viewModel: AgenticViewModel
 
     @State private var sceneIndex = 0
-    @State private var selectedWorkMode: OnboardingWorkMode? = .fullTimeSolo
+    @State private var selectedWorkMode: OnboardingWorkMode?
     @State private var customWorkMode = ""
-    @State private var selectedRole: OnboardingRole? = .developer
-    @State private var selectedProjectStage: OnboardingProjectStage? = .ideaOnly
+    @State private var selectedRole: OnboardingRole?
+    @State private var selectedProjectStage: OnboardingProjectStage?
     @State private var selectedIsolationLevels: Set<OnboardingIsolationLevel> = [.projectFolder]
     @State private var primaryIsolationLevel: OnboardingIsolationLevel = .projectFolder
     @FocusState private var customWorkModeFocused: Bool
@@ -186,8 +186,8 @@ struct MacOnboardingContextView: View {
 
     private var currentTitle: String {
         switch sceneIndex {
-        case 0: return "얼마나 혼자, 얼마나 자주 만들 수 있나요?"
-        case 1: return "가장 자주 하는 역할은 무엇인가요?"
+        case 0: return "가장 자주 하는 역할은 무엇인가요?"
+        case 1: return "현재 어떤 상황에서 제품을 만들고 있나요?"
         case 2: return "현재 가장 큰 막힘은 무엇인가요?"
         case 3: return "어떤 기록을 연결할 수 있나요?"
         default: return ""
@@ -196,8 +196,8 @@ struct MacOnboardingContextView: View {
 
     private var currentSubtitle: String {
         switch sceneIndex {
-        case 0: return "쓸 수 있는 시간과 책임 범위에 맞춰 오늘 할 일을 정합니다."
-        case 1: return "익숙한 일하는 방식에 맞춰 설명과 제안을 조정합니다."
+        case 0: return "익숙한 일하는 방식에 맞춰 설명과 제안을 조정합니다."
+        case 1: return "지금의 시간 제약과 책임 범위에 맞춰 오늘 할 일을 정합니다."
         case 2: return "막힌 지점에 맞춰 먼저 볼 문제를 정합니다."
         case 3: return "프로젝트와 실행 기록을 읽어 오늘의 과제를 개인화합니다."
         default: return ""
@@ -224,6 +224,20 @@ struct MacOnboardingContextView: View {
         switch sceneIndex {
         case 0:
             VStack(spacing: 6) {
+                ForEach(OnboardingRole.onboardingChoices, id: \.self) { role in
+                    optionRow(
+                        title: role.displayTitle,
+                        description: role.displayDescription,
+                        selected: selectedRole == role,
+                        accent: roleAccent,
+                        identifier: "onboardingContext.option.\(role.rawValue)"
+                    ) {
+                        selectedRole = role
+                    }
+                }
+            }
+        case 1:
+            VStack(spacing: 6) {
                 ForEach(OnboardingWorkMode.onboardingChoices, id: \.self) { mode in
                     optionRow(
                         title: mode.displayTitle,
@@ -236,20 +250,6 @@ struct MacOnboardingContextView: View {
                     }
                 }
                 customWorkModeOption
-            }
-        case 1:
-            VStack(spacing: 6) {
-                ForEach(OnboardingRole.allCases, id: \.self) { role in
-                    optionRow(
-                        title: role.displayTitle,
-                        description: role.displayDescription,
-                        selected: selectedRole == role,
-                        accent: roleAccent,
-                        identifier: "onboardingContext.option.\(role.rawValue)"
-                    ) {
-                        selectedRole = role
-                    }
-                }
             }
         case 2:
             VStack(spacing: 5) {
@@ -452,13 +452,13 @@ struct MacOnboardingContextView: View {
 
     private var primaryButtonEnabled: Bool {
         switch sceneIndex {
-        case 0:
+        case 0: return selectedRole != nil
+        case 1:
             guard let selectedWorkMode else { return false }
             if selectedWorkMode == .exploring {
                 return !trimmedCustomWorkMode.isEmpty
             }
             return true
-        case 1: return selectedRole != nil
         case 2: return selectedProjectStage != nil
         case 3: return !selectedIsolationLevels.isEmpty
         default: return false

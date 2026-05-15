@@ -2496,7 +2496,7 @@ struct ContentView: View {
     /// 없으면 macAuthSession 만료/리프레시 상태를 안내한다.
     private func sidebarSettingsMenuIdentitySubtitle() -> String? {
         if let context = viewModel.onboardingContext {
-            return "\(context.role.rawValue) · \(context.projectStage.rawValue)"
+            return "\(context.role.displayTitle) · \(context.projectStage.displayTitle)"
         }
         switch viewModel.macOnboardingStatus {
         case .signingIn:

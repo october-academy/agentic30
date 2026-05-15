@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 // MARK: - Intake V2 Flow — review decisions 2026-05-14
-// Boot intro → 4-step onboarding: Workmode → Role → Stuck → Folder pick
+// Boot intro → 4-step onboarding: Role → Workmode → Stuck → Folder pick
 // then source connect → analyzing splash → first Decide card → post-onboarding Records banner
 //
 // Design decisions reflected:
@@ -30,6 +30,7 @@ enum IntakeV2Layout {
     static let horizontalPadding: CGFloat = 56
     static let narrowHorizontalPadding: CGFloat = 28
     static let stepTopPadding: CGFloat = 56
+    static let progressReservedHeight: CGFloat = 14
     static let footerBottomPadding: CGFloat = 36
 }
 
@@ -38,7 +39,7 @@ enum IntakeV2Layout {
 struct IntakeV2DashPagination: View {
     let current: Int      // 1...total
     let total: Int
-    let label: String
+    var reduceMotion: Bool = false
     var progressNamespace: Namespace.ID? = nil
 
     var body: some View {
@@ -48,37 +49,68 @@ struct IntakeV2DashPagination: View {
                     marker(for: idx)
                 }
             }
-            Text("\(current) / \(total) · \(label)")
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundStyle(IntakeV2Color.textSecondary)
-                .tracking(0.8)
-                .textCase(.uppercase)
+            HStack(spacing: 0) {
+                progressNumber
+                Text(" / \(total)")
+            }
+            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+            .foregroundStyle(IntakeV2Color.textSecondary)
+            .tracking(0.8)
+            .monospacedDigit()
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Step \(current) of \(total), \(label)")
+        .accessibilityLabel("Step \(current) of \(total)")
         .accessibilityIdentifier("intakeV2.progress")
     }
 
     @ViewBuilder
     private func marker(for idx: Int) -> some View {
         if idx == current {
-            Capsule()
-                .fill(.white)
-                .frame(width: 24, height: 6)
-                .ifLet(progressNamespace) { view, namespace in
-                    view.matchedGeometryEffect(id: "intakeV2.progress.current", in: namespace)
-                }
+            currentMarker
         } else if idx < current {
             Circle()
                 .fill(IntakeV2Color.accent)
                 .frame(width: 6, height: 6)
                 .scaleEffect(1.0)
-                .transition(.scale(scale: 0.85).combined(with: .opacity))
+                .transition(reduceMotion ? .opacity : .scale(scale: 0.85).combined(with: .opacity))
         } else {
             Circle()
                 .fill(.white.opacity(0.18))
                 .frame(width: 6, height: 6)
         }
+    }
+
+    @ViewBuilder
+    private var currentMarker: some View {
+        let marker = Capsule()
+            .fill(.white)
+            .frame(width: 24, height: 6)
+
+        if reduceMotion {
+            marker
+        } else {
+            marker.ifLet(progressNamespace) { view, namespace in
+                view.matchedGeometryEffect(id: "intakeV2.progress.current", in: namespace)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var progressNumber: some View {
+        if reduceMotion {
+            Text("\(current)")
+        } else {
+            Text("\(current)")
+                .contentTransition(.numericText(value: Double(current)))
+        }
+    }
+}
+
+struct IntakeV2ProgressReservedSpace: View {
+    var body: some View {
+        Color.clear
+            .frame(height: IntakeV2Layout.progressReservedHeight)
+            .accessibilityHidden(true)
     }
 }
 
@@ -317,9 +349,17 @@ enum IntakeV2Step: Int, CaseIterable {
     // OS-product intro
     case bootIntro = 1
     // Intake (user answers)
-    case workmode, role, stuck, folderPick
+    case role, workmode, stuck, folderPick
     // OS-product setup + analysis
     case connectShowcase, readyAnalyze
+
+    var progressCurrent: Int {
+        rawValue
+    }
+
+    var progressTotal: Int {
+        7
+    }
 }
 
 private enum IntakeV2NavigationDirection {
@@ -344,14 +384,37 @@ struct IntakeV2FlowView: View {
     var onComplete: ((IntakeV2Store, IntakeV2SourceManager) -> Void)? = nil
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .top) {
             content
                 .id(step)
                 .transition(stepTransition)
+
+            fixedProgress
         }
         .clipped()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(IntakeV2Color.bg)
+    }
+
+    private var fixedProgress: some View {
+        GeometryReader { geometry in
+            let isNarrow = geometry.size.width < 900
+            let horizontalPadding = isNarrow
+                ? IntakeV2Layout.narrowHorizontalPadding
+                : IntakeV2Layout.horizontalPadding
+
+            IntakeV2DashPagination(
+                current: step.progressCurrent,
+                total: step.progressTotal,
+                reduceMotion: reduceMotion,
+                progressNamespace: progressNamespace
+            )
+            .padding(.horizontal, horizontalPadding)
+            .padding(.top, IntakeV2Layout.stepTopPadding)
+            .frame(maxWidth: IntakeV2Layout.contentMaxWidth, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .allowsHitTesting(false)
+        }
     }
 
     @ViewBuilder private var content: some View {
@@ -360,27 +423,27 @@ struct IntakeV2FlowView: View {
             IntakeV2BootIntroView(
                 backDisabled: true,
                 onBack: {},
-                onNext: { navigate(to: .workmode) },
-                progressNamespace: progressNamespace
-            )
-        case .workmode:
-            IntakeV2WorkmodeView(
-                store: store,
-                onBack: { navigate(to: .bootIntro) },
                 onNext: { navigate(to: .role) },
                 progressNamespace: progressNamespace
             )
         case .role:
             IntakeV2RoleView(
                 store: store,
-                onBack: { navigate(to: .workmode) },
+                onBack: { navigate(to: .bootIntro) },
+                onNext: { navigate(to: .workmode) },
+                progressNamespace: progressNamespace
+            )
+        case .workmode:
+            IntakeV2WorkmodeView(
+                store: store,
+                onBack: { navigate(to: .role) },
                 onNext: { navigate(to: .stuck) },
                 progressNamespace: progressNamespace
             )
         case .stuck:
             IntakeV2StuckView(
                 store: store,
-                onBack: { navigate(to: .role) },
+                onBack: { navigate(to: .workmode) },
                 onNext: { navigate(to: .folderPick) },
                 progressNamespace: progressNamespace
             )

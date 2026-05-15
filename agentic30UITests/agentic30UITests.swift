@@ -48,13 +48,13 @@ final class agentic30UITests: XCTestCase {
         } else if elementWithIdentifier(in: app, "intakeV2.boot.cards").waitForExistence(timeout: 5) {
             verifyBootIntroLayout(in: app)
             clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
-        } else if app.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 2) {
-            // Some persisted UI-test launch states enter the context step directly.
+        } else if app.staticTexts["가장 자주 하는 역할은 무엇인가요?"].waitForExistence(timeout: 2) {
+            // Some persisted UI-test launch states enter the first intake step directly.
         } else {
             XCTFail("Expected first-run intro or Intake V2 boot intro")
         }
         XCTAssertFalse(app.buttons["Sign in with Google"].exists)
-        XCTAssertTrue(app.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["가장 자주 하는 역할은 무엇인가요?"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Next"].exists)
     }
 
@@ -82,7 +82,7 @@ final class agentic30UITests: XCTestCase {
 
         XCTAssertTrue(onboardingApp.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 5))
         advanceOnboardingIntroToContext(in: onboardingApp)
-        let contextVisible = onboardingApp.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 5)
+        let contextVisible = onboardingApp.staticTexts["가장 자주 하는 역할은 무엇인가요?"].waitForExistence(timeout: 5)
         if !contextVisible {
             attachText(onboardingApp.debugDescription, named: "00 Onboarding Context Missing Tree")
         }
@@ -147,16 +147,14 @@ final class agentic30UITests: XCTestCase {
             assertStableIntakeStepLayout(
                 in: app,
                 current: 1,
-                label: "BOOT",
                 baseline: &intakeLayoutBaseline
             )
             clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
         }
-        XCTAssertTrue(app.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["가장 자주 하는 역할은 무엇인가요?"].waitForExistence(timeout: 10))
         assertStableIntakeStepLayout(
             in: app,
             current: 2,
-            label: "CONTEXT",
             baseline: &intakeLayoutBaseline
         )
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
@@ -165,36 +163,46 @@ final class agentic30UITests: XCTestCase {
         assertStableIntakeStepLayout(
             in: app,
             current: 1,
-            label: "BOOT",
             baseline: &intakeLayoutBaseline
         )
         clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
-        XCTAssertTrue(app.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 5))
-        assertStableIntakeStepLayout(
-            in: app,
-            current: 2,
-            label: "CONTEXT",
-            baseline: &intakeLayoutBaseline
-        )
-        clickCenter(of: buttonContaining(in: app, text: "전업으로 혼자 만들고 있음"))
-        XCTAssertTrue(button(in: app, matching: ["Next →", "Next"]).isEnabled)
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
         XCTAssertTrue(app.staticTexts["가장 자주 하는 역할은 무엇인가요?"].waitForExistence(timeout: 5))
         assertStableIntakeStepLayout(
             in: app,
+            current: 2,
+            baseline: &intakeLayoutBaseline
+        )
+        clickCenter(of: buttonContaining(in: app, text: "개발자"))
+        XCTAssertTrue(button(in: app, matching: ["Next →", "Next"]).isEnabled)
+        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        XCTAssertTrue(app.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 5))
+        assertStableIntakeStepLayout(
+            in: app,
             current: 3,
-            label: "ROLE",
             baseline: &intakeLayoutBaseline
         )
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
-        clickCenter(of: buttonContaining(in: app, text: "개발자"))
+        clickCenter(of: button(in: app, matching: ["Back"]))
+        XCTAssertTrue(app.staticTexts["가장 자주 하는 역할은 무엇인가요?"].waitForExistence(timeout: 5))
+        assertStableIntakeStepLayout(
+            in: app,
+            current: 2,
+            baseline: &intakeLayoutBaseline
+        )
+        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        XCTAssertTrue(app.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 5))
+        assertStableIntakeStepLayout(
+            in: app,
+            current: 3,
+            baseline: &intakeLayoutBaseline
+        )
+        clickCenter(of: buttonContaining(in: app, text: "전업으로 혼자 만들고 있음"))
         XCTAssertTrue(button(in: app, matching: ["Next →", "Next"]).isEnabled)
         clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
         XCTAssertTrue(app.staticTexts["현재 가장 큰 막힘은 무엇인가요?"].waitForExistence(timeout: 5))
         assertStableIntakeStepLayout(
             in: app,
             current: 4,
-            label: "BLOCKER",
             baseline: &intakeLayoutBaseline
         )
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
@@ -205,7 +213,6 @@ final class agentic30UITests: XCTestCase {
         assertStableIntakeStepLayout(
             in: app,
             current: 5,
-            label: "FOLDER",
             baseline: &intakeLayoutBaseline
         )
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
@@ -222,7 +229,6 @@ final class agentic30UITests: XCTestCase {
         assertStableIntakeStepLayout(
             in: app,
             current: 6,
-            label: "CONNECT",
             baseline: &intakeLayoutBaseline
         )
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
@@ -236,7 +242,6 @@ final class agentic30UITests: XCTestCase {
         assertStableIntakeStepLayout(
             in: app,
             current: 7,
-            label: "READY",
             timeout: 10,
             baseline: &intakeLayoutBaseline
         )
@@ -245,14 +250,12 @@ final class agentic30UITests: XCTestCase {
         assertStableIntakeStepLayout(
             in: app,
             current: 6,
-            label: "CONNECT",
             baseline: &intakeLayoutBaseline
         )
         clickCenter(of: button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"]))
         assertStableIntakeStepLayout(
             in: app,
             current: 7,
-            label: "READY",
             timeout: 10,
             baseline: &intakeLayoutBaseline
         )
@@ -270,6 +273,7 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "intakeV2.openInboxButton", containing: "Preparing inbox", timeout: 5))
         let todoListWindow = elementWithIdentifier(in: app, "intakeV2.todoListWindow")
         XCTAssertTrue(todoListWindow.waitForExistence(timeout: 5))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.8))
         let todoListFrameAfterInsertion = todoListWindow.frame
         for _ in 0..<4 {
             RunLoop.current.run(until: Date().addingTimeInterval(0.45))
@@ -329,11 +333,11 @@ final class agentic30UITests: XCTestCase {
             clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
         }
 
-        XCTAssertTrue(app.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 10))
-        clickCenter(of: buttonContaining(in: app, text: "전업으로 혼자 만들고 있음"))
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
         XCTAssertTrue(app.staticTexts["가장 자주 하는 역할은 무엇인가요?"].waitForExistence(timeout: 5))
         clickCenter(of: buttonContaining(in: app, text: "개발자"))
+        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        XCTAssertTrue(app.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 10))
+        clickCenter(of: buttonContaining(in: app, text: "전업으로 혼자 만들고 있음"))
         clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
         XCTAssertTrue(app.staticTexts["현재 가장 큰 막힘은 무엇인가요?"].waitForExistence(timeout: 5))
         clickCenter(of: buttonContaining(in: app, text: "첫 사용자를 찾지 못하고 있다"))
@@ -343,7 +347,7 @@ final class agentic30UITests: XCTestCase {
         clickCenter(of: buttonContaining(in: app, text: "나중에 폴더 선택"))
 
         XCTAssertTrue(app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10))
-        assertIntakeProgress(in: app, current: 6, label: "CONNECT")
+        assertIntakeProgress(in: app, current: 6)
         let githubSource = buttonContaining(in: app, text: "GitHub")
         XCTAssertTrue(githubSource.waitForExistence(timeout: 5))
         clickCenter(of: githubSource)
@@ -351,7 +355,7 @@ final class agentic30UITests: XCTestCase {
         XCTAssertFalse(element(githubSource, contains: "Connected ·"))
         clickCenter(of: button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"]))
 
-        assertIntakeProgress(in: app, current: 7, label: "READY", timeout: 10)
+        assertIntakeProgress(in: app, current: 7, timeout: 10)
         let executeButton = elementWithIdentifier(in: app, "intakeV2.executeButton")
         XCTAssertTrue(executeButton.waitForExistence(timeout: 30))
         let renderedTree = app.debugDescription
@@ -398,11 +402,11 @@ final class agentic30UITests: XCTestCase {
             clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
         }
 
-        XCTAssertTrue(app.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 10))
-        clickCenter(of: buttonContaining(in: app, text: "전업으로 혼자 만들고 있음"))
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
         XCTAssertTrue(app.staticTexts["가장 자주 하는 역할은 무엇인가요?"].waitForExistence(timeout: 5))
         clickCenter(of: buttonContaining(in: app, text: "개발자"))
+        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        XCTAssertTrue(app.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 10))
+        clickCenter(of: buttonContaining(in: app, text: "전업으로 혼자 만들고 있음"))
         clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
         XCTAssertTrue(app.staticTexts["현재 가장 큰 막힘은 무엇인가요?"].waitForExistence(timeout: 5))
         clickCenter(of: buttonContaining(in: app, text: "첫 사용자를 찾지 못하고 있다"))
@@ -411,7 +415,7 @@ final class agentic30UITests: XCTestCase {
         clickCenter(of: buttonContaining(in: app, text: "나중에 폴더 선택"))
 
         XCTAssertTrue(app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10))
-        assertIntakeProgress(in: app, current: 6, label: "CONNECT")
+        assertIntakeProgress(in: app, current: 6)
         clickCenter(of: elementWithIdentifier(in: app, "intakeV2.addSource"))
         XCTAssertTrue(elementWithIdentifier(in: app, "intakeV2.addSource.modal").waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["기록 소스 추가"].exists)
@@ -823,7 +827,7 @@ final class agentic30UITests: XCTestCase {
 
         XCTAssertTrue(projectApp.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 5))
         advanceOnboardingIntroToContext(in: projectApp)
-        XCTAssertTrue(projectApp.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 5))
+        XCTAssertTrue(projectApp.staticTexts["가장 자주 하는 역할은 무엇인가요?"].waitForExistence(timeout: 5))
         XCTAssertFalse(projectApp.staticTexts["Choose your project folder"].exists)
         attachScreenshot(from: projectApp, named: "01 Context Before Project Picker")
         projectApp.terminate()
@@ -868,48 +872,77 @@ final class agentic30UITests: XCTestCase {
 
         XCTAssertTrue(seededWorkspaceApp.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 10))
         advanceOnboardingIntroToContext(in: seededWorkspaceApp)
-        XCTAssertTrue(seededWorkspaceApp.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 10))
+        let contextPrimary = button(in: seededWorkspaceApp, matching: [
+            "onboardingContext.primaryButton",
+            "Next",
+        ])
+
+        XCTAssertTrue(seededWorkspaceApp.staticTexts["가장 자주 하는 역할은 무엇인가요?"].waitForExistence(timeout: 10))
+        let developerOption = button(in: seededWorkspaceApp, matching: [
+            "onboardingContext.option.developer",
+            "개발자, 앱, 웹 등 프로덕트를 직접 구현합니다",
+            "개발자",
+        ])
+        let designerOption = button(in: seededWorkspaceApp, matching: [
+            "onboardingContext.option.designer",
+            "디자이너, 브랜드, UI/UX, 프로덕트 디자인을 다룹니다",
+            "디자이너",
+        ])
+        let marketerOption = button(in: seededWorkspaceApp, matching: [
+            "onboardingContext.option.marketer_business",
+            "마케터 / 비즈니스, 제품의 성장과 비즈니스 전략을 고민합니다",
+            "마케터 / 비즈니스",
+        ])
+        let generalistOption = button(in: seededWorkspaceApp, matching: [
+            "onboardingContext.option.generalist",
+            "그 외 / 여러 역할, 위 직군에 속하지 않거나 다양한 역할을 겸합니다",
+            "그 외 / 여러 역할",
+        ])
+        XCTAssertTrue(developerOption.exists)
+        XCTAssertTrue(designerOption.exists)
+        XCTAssertTrue(marketerOption.exists)
+        XCTAssertTrue(generalistOption.exists)
+        XCTAssertFalse(elementWithIdentifier(in: seededWorkspaceApp, "onboardingContext.option.student").exists)
+        XCTAssertEqual(developerOption.value as? String, "Not selected")
+        XCTAssertFalse(contextPrimary.isEnabled)
+        let developerFrameBefore = developerOption.frame
+        let designerFrameBefore = designerOption.frame
+        attachScreenshot(from: seededWorkspaceApp, named: "02 Context Role")
+
+        designerOption.click()
+        XCTAssertTrue(contextPrimary.isEnabled)
+        XCTAssertEqual(developerOption.frame.height, developerFrameBefore.height, accuracy: 0.5)
+        XCTAssertEqual(designerOption.frame.height, designerFrameBefore.height, accuracy: 0.5)
+        XCTAssertEqual(designerOption.frame.minY, designerFrameBefore.minY, accuracy: 0.5)
+        attachScreenshot(from: seededWorkspaceApp, named: "03 Context Role Changed")
+
+        clickCenter(of: contextPrimary)
+        XCTAssertTrue(seededWorkspaceApp.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 5))
         let fullTimeOption = button(in: seededWorkspaceApp, matching: [
             "onboardingContext.option.full_time_solo",
             "전업으로 혼자 만들고 있음, 하루 대부분을 제품에 쓰고 직접 결정합니다",
             "전업으로 혼자 만들고 있음",
         ])
         XCTAssertTrue(fullTimeOption.exists)
-        attachScreenshot(from: seededWorkspaceApp, named: "02 Context Work Mode")
-
-        let contextPrimary = button(in: seededWorkspaceApp, matching: [
-            "onboardingContext.primaryButton",
-            "Next",
-        ])
-        clickCenter(of: contextPrimary)
-
-        XCTAssertTrue(seededWorkspaceApp.staticTexts["가장 자주 하는 역할은 무엇인가요?"].waitForExistence(timeout: 5))
-        let developerOption = button(in: seededWorkspaceApp, matching: [
-            "onboardingContext.option.developer",
-            "개발자, 앱·웹·제품을 직접 구현합니다",
-            "개발자",
-        ])
-        let designerOption = button(in: seededWorkspaceApp, matching: [
-            "onboardingContext.option.designer",
-            "디자이너, 브랜드, 시각, 프로덕트 디자인을 다룹니다",
-            "디자이너",
-        ])
-        XCTAssertTrue(developerOption.exists)
-        XCTAssertTrue(designerOption.exists)
-        let developerFrameBefore = developerOption.frame
-        let designerFrameBefore = designerOption.frame
-        attachScreenshot(from: seededWorkspaceApp, named: "03 Context Role")
-
-        designerOption.click()
-        XCTAssertEqual(developerOption.frame.height, developerFrameBefore.height, accuracy: 0.5)
-        XCTAssertEqual(designerOption.frame.height, designerFrameBefore.height, accuracy: 0.5)
-        XCTAssertEqual(designerOption.frame.minY, designerFrameBefore.minY, accuracy: 0.5)
-        attachScreenshot(from: seededWorkspaceApp, named: "04 Context Role Changed")
+        XCTAssertFalse(contextPrimary.isEnabled)
+        fullTimeOption.click()
+        XCTAssertTrue(contextPrimary.isEnabled)
+        attachScreenshot(from: seededWorkspaceApp, named: "04 Context Work Mode")
 
         clickCenter(of: contextPrimary)
         XCTAssertTrue(seededWorkspaceApp.staticTexts["현재 가장 큰 막힘은 무엇인가요?"].waitForExistence(timeout: 5))
+        let ideaOnlyOption = button(in: seededWorkspaceApp, matching: [
+            "onboardingContext.option.idea_only",
+            "무엇을 만들어야 할지 모르겠다, 누구의 어떤 문제를 풀지부터 좁혀야 합니다",
+            "무엇을 만들어야 할지 모르겠다",
+        ])
+        XCTAssertTrue(ideaOnlyOption.exists)
+        XCTAssertEqual(ideaOnlyOption.value as? String, "Not selected")
+        XCTAssertFalse(contextPrimary.isEnabled)
         attachScreenshot(from: seededWorkspaceApp, named: "05 Context Blocker")
 
+        ideaOnlyOption.click()
+        XCTAssertTrue(contextPrimary.isEnabled)
         clickCenter(of: contextPrimary)
         XCTAssertTrue(seededWorkspaceApp.staticTexts["어떤 기록을 연결할 수 있나요?"].waitForExistence(timeout: 5))
         let projectFolderOption = button(in: seededWorkspaceApp, matching: [
@@ -2370,7 +2403,7 @@ final class agentic30UITests: XCTestCase {
         clickCenter(of: primary)
 
         verifyBootIntroLayout(in: app)
-        XCTAssertFalse(app.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].exists)
+        XCTAssertFalse(app.staticTexts["가장 자주 하는 역할은 무엇인가요?"].exists)
         let continueButton = button(in: app, matching: ["Continue →", "Continue"])
         XCTAssertTrue(continueButton.waitForExistence(timeout: 5))
         clickCenter(of: continueButton)
@@ -2382,7 +2415,7 @@ final class agentic30UITests: XCTestCase {
         let bootSubtitle = elementWithIdentifier(in: app, "intakeV2.boot.subtitle")
         let bootCards = elementWithIdentifier(in: app, "intakeV2.boot.cards")
         XCTAssertTrue(bootHeader.waitForExistence(timeout: 10))
-        assertIntakeProgress(in: app, current: 1, label: "BOOT")
+        assertIntakeProgress(in: app, current: 1)
         XCTAssertTrue(bootSubtitle.waitForExistence(timeout: 10))
         XCTAssertTrue(bootCards.waitForExistence(timeout: 10))
         XCTAssertLessThanOrEqual(
@@ -2456,12 +2489,11 @@ final class agentic30UITests: XCTestCase {
     private func assertIntakeProgress(
         in app: XCUIApplication,
         current: Int,
-        label: String,
         timeout: TimeInterval = 5,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        let expectedLabel = "Step \(current) of 7, \(label)"
+        let expectedLabel = "Step \(current) of 7"
         let progress = app.descendants(matching: .any)
             .matching(NSPredicate(
                 format: "identifier == %@ AND label == %@",
@@ -2489,7 +2521,6 @@ final class agentic30UITests: XCTestCase {
     private func assertStableIntakeStepLayout(
         in app: XCUIApplication,
         current: Int,
-        label: String,
         timeout: TimeInterval = 5,
         baseline: inout IntakeLayoutBaseline,
         file: StaticString = #filePath,
@@ -2498,7 +2529,6 @@ final class agentic30UITests: XCTestCase {
         assertIntakeProgress(
             in: app,
             current: current,
-            label: label,
             timeout: timeout,
             file: file,
             line: line
@@ -2529,7 +2559,7 @@ final class agentic30UITests: XCTestCase {
             baseline.shellFrame = shellFrame
         }
 
-        let progress = intakeProgressElement(in: app, current: current, label: label)
+        let progress = intakeProgressElement(in: app, current: current)
         XCTAssertTrue(
             progress.waitForExistence(timeout: timeout),
             "Expected intake progress frame for step \(current)",
@@ -2565,8 +2595,8 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
-    private func intakeProgressElement(in app: XCUIApplication, current: Int, label: String) -> XCUIElement {
-        let expectedLabel = "Step \(current) of 7, \(label)"
+    private func intakeProgressElement(in app: XCUIApplication, current: Int) -> XCUIElement {
+        let expectedLabel = "Step \(current) of 7"
         return app.descendants(matching: .any)
             .matching(NSPredicate(
                 format: "identifier == %@ AND label == %@",

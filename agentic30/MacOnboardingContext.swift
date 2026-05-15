@@ -15,7 +15,7 @@ enum OnboardingWorkMode: String, Codable, CaseIterable, Hashable {
     var displayTitle: String {
         switch self {
         case .fullTimeSolo: return "전업으로 혼자 만들고 있음"
-        case .sideProject: return "틈틈이 혼자 만들고 있음"
+        case .sideProject: return "직장·학업과 병행하는 중"
         case .teamStartup: return "팀과 함께 만드는 중"
         case .exploring: return "아직 상황을 정리 중"
         }
@@ -24,7 +24,7 @@ enum OnboardingWorkMode: String, Codable, CaseIterable, Hashable {
     var displayDescription: String {
         switch self {
         case .fullTimeSolo: return "하루 대부분을 제품에 쓰고 직접 결정합니다"
-        case .sideProject: return "직장이나 학업 사이의 고정된 시간에 만듭니다"
+        case .sideProject: return "직장, 학업, 취업 준비 사이의 고정된 시간에 만듭니다"
         case .teamStartup: return "함께 정하는 사람이 있거나 작은 팀이 있습니다"
         case .exploring: return "아직 시간·역할·책임 범위를 정리하는 중입니다"
         }
@@ -35,22 +35,36 @@ enum OnboardingRole: String, Codable, CaseIterable, Hashable {
     case developer
     case designer
     case productManager = "product_manager"
+    case marketerBusiness = "marketer_business"
+    case generalist
     case student
+
+    static let onboardingChoices: [OnboardingRole] = [
+        .developer,
+        .designer,
+        .productManager,
+        .marketerBusiness,
+        .generalist,
+    ]
 
     var displayTitle: String {
         switch self {
         case .developer: return "개발자"
         case .designer: return "디자이너"
-        case .productManager: return "PM"
+        case .productManager: return "기획자 / PM"
+        case .marketerBusiness: return "마케터 / 비즈니스"
+        case .generalist: return "그 외 / 여러 역할"
         case .student: return "학생"
         }
     }
 
     var displayDescription: String {
         switch self {
-        case .developer: return "앱·웹·제품을 직접 구현합니다"
-        case .designer: return "브랜드, 시각, 프로덕트 디자인을 다룹니다"
-        case .productManager: return "제품·서비스 기획과 운영을 리드합니다"
+        case .developer: return "앱, 웹 등 프로덕트를 직접 구현합니다"
+        case .designer: return "브랜드, UI/UX, 프로덕트 디자인을 다룹니다"
+        case .productManager: return "제품과 서비스의 기획 및 운영을 리드합니다"
+        case .marketerBusiness: return "제품의 성장과 비즈니스 전략을 고민합니다"
+        case .generalist: return "위 직군에 속하지 않거나 다양한 역할을 겸합니다"
         case .student: return "학업과 병행하며 제품을 만듭니다"
         }
     }

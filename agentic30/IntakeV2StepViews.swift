@@ -2,10 +2,10 @@ import SwiftUI
 import AppKit
 
 // MARK: - Intake V2 Step Views — review decisions 2026-05-14
-// Step 2 Context / Step 3 Role / Step 4 Blocker / Step 5 Folder Pick
+// Step 2 Role / Step 3 Situation / Step 4 Blocker / Step 5 Folder Pick
 // + Splash (real local scan) + First Decide
 
-// MARK: - Step 2: Context
+// MARK: - Step 3: Situation
 
 @MainActor
 struct IntakeV2WorkmodeView: View {
@@ -17,7 +17,7 @@ struct IntakeV2WorkmodeView: View {
     var body: some View {
         IntakeV2PinnedStepScaffold { _ in
             VStack(alignment: .leading, spacing: 24) {
-                IntakeV2DashPagination(current: 2, total: 7, label: "CONTEXT", progressNamespace: progressNamespace)
+                IntakeV2ProgressReservedSpace()
                 IntakeV2Header(
                     title: "얼마나 혼자, 얼마나 자주 만들 수 있나요?",
                     subtitle: "쓸 수 있는 시간과 책임 범위에 맞춰 오늘 할 일을 정합니다."
@@ -52,7 +52,7 @@ struct IntakeV2WorkmodeView: View {
 
 }
 
-// MARK: - Step 3: Role
+// MARK: - Step 2: Role
 
 @MainActor
 struct IntakeV2RoleView: View {
@@ -64,13 +64,13 @@ struct IntakeV2RoleView: View {
     var body: some View {
         IntakeV2PinnedStepScaffold { _ in
             VStack(alignment: .leading, spacing: 24) {
-                IntakeV2DashPagination(current: 3, total: 7, label: "ROLE", progressNamespace: progressNamespace)
+                IntakeV2ProgressReservedSpace()
                 IntakeV2Header(
                     title: "가장 자주 하는 역할은 무엇인가요?",
                     subtitle: "익숙한 일하는 방식에 맞춰 설명과 제안을 조정합니다."
                 )
                 VStack(spacing: 8) {
-                    ForEach(OnboardingRole.allCases, id: \.self) { role in
+                    ForEach(OnboardingRole.onboardingChoices, id: \.self) { role in
                         IntakeV2OptionCard(
                             title: role.displayTitle,
                             description: role.displayDescription,
@@ -105,7 +105,7 @@ struct IntakeV2StuckView: View {
     var body: some View {
         IntakeV2PinnedStepScaffold { _ in
             VStack(alignment: .leading, spacing: 24) {
-                IntakeV2DashPagination(current: 4, total: 7, label: "BLOCKER", progressNamespace: progressNamespace)
+                IntakeV2ProgressReservedSpace()
                 IntakeV2Header(
                     title: "현재 가장 큰 막힘은 무엇인가요?",
                     subtitle: "막힌 지점에 맞춰 먼저 볼 문제를 정합니다."
@@ -149,11 +149,11 @@ struct IntakeV2FolderPickView: View {
     var body: some View {
         IntakeV2PinnedStepScaffold { _ in
             VStack(alignment: .leading, spacing: 24) {
-                IntakeV2DashPagination(current: 5, total: 7, label: "FOLDER", progressNamespace: progressNamespace)
+                IntakeV2ProgressReservedSpace()
                 IntakeV2Header(
                     title: "어디서 읽을까요?",
                     subtitle: store.folderURL == nil
-                        ? "폴더를 선택하면 코드와 문서를 바탕으로 더 정확하게 도와드릴 수 있습니다."
+                        ? "폴더를 선택하면 첫 결정을 프로젝트 코드와 문서에 맞춰 더 정확하게 만들 수 있습니다. 지금 건너뛰어도 시작할 수 있습니다."
                         : "선택한 프로젝트를 바탕으로 첫 결정을 준비합니다."
                 )
                 VStack(alignment: .leading, spacing: 18) {
