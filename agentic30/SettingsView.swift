@@ -496,7 +496,7 @@ struct SettingsView: View {
                 if !resetLocalDataMessage.isEmpty {
                     Text(resetLocalDataMessage)
                         .font(.system(size: 13, weight: .medium, design: .rounded))
-                        .foregroundStyle(resetLocalDataMessage.hasPrefix("Reset failed") ? .red.opacity(0.82) : .green.opacity(0.8))
+                        .foregroundStyle(resetLocalDataMessage.hasPrefix("Reset failed") ? .red.opacity(0.82) : Agentic30BrandColor.green.opacity(0.8))
                         .transition(.opacity)
                         .accessibilityIdentifier("settings.account.resetLocalDataMessage")
                 }
@@ -548,7 +548,7 @@ struct SettingsView: View {
                 if !modelSaveMessage.isEmpty {
                     Text(modelSaveMessage)
                         .font(.system(size: 13, weight: .medium, design: .rounded))
-                        .foregroundStyle(.green.opacity(0.8))
+                        .foregroundStyle(Agentic30BrandColor.green.opacity(0.8))
                         .transition(.opacity)
                         .accessibilityIdentifier("settings.models.saveMessage")
                 }
@@ -713,7 +713,7 @@ struct SettingsView: View {
                 // Connected state
                 HStack(spacing: 12) {
                     Circle()
-                        .fill(.green.opacity(0.8))
+                        .fill(Agentic30BrandColor.green.opacity(0.8))
                         .frame(width: 8, height: 8)
                     Text("Connected to Notion")
                         .font(.system(size: 14, weight: .semibold, design: .rounded))
@@ -849,7 +849,7 @@ struct SettingsView: View {
             if !developerToolsMessage.isEmpty {
                 Text(developerToolsMessage)
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.green.opacity(0.82))
+                    .foregroundStyle(Agentic30BrandColor.green.opacity(0.82))
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.opacity)
                     .accessibilityIdentifier("settings.developerTools.message")
@@ -968,7 +968,7 @@ struct SettingsView: View {
             if !diagnosticsMessage.isEmpty {
                 Text(diagnosticsMessage)
                     .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(.green.opacity(0.8))
+                    .foregroundStyle(Agentic30BrandColor.green.opacity(0.8))
                     .transition(.opacity)
             }
 
@@ -1186,7 +1186,7 @@ struct SettingsView: View {
             if !scanMessage.isEmpty {
                 Text(scanMessage)
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.9))
+                    .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.9))
                     .transition(.opacity)
             }
 
@@ -1309,7 +1309,7 @@ struct SettingsView: View {
             if !adSaveMessage.isEmpty {
                 Text(adSaveMessage)
                     .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(.green.opacity(0.8))
+                    .foregroundStyle(Agentic30BrandColor.green.opacity(0.8))
                     .transition(.opacity)
             }
 
@@ -1342,7 +1342,7 @@ struct SettingsView: View {
             if !bipSaveMessage.isEmpty {
                 Text(bipSaveMessage)
                     .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(.green.opacity(0.8))
+                    .foregroundStyle(Agentic30BrandColor.green.opacity(0.8))
                     .transition(.opacity)
             }
 
@@ -1473,22 +1473,22 @@ struct SettingsView: View {
                 if detected {
                     Text("auto-detected")
                         .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66))
+                        .foregroundStyle(Agentic30BrandColor.greenBright)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(
                             Capsule()
-                                .fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.15))
+                                .fill(Agentic30BrandColor.greenBright.opacity(0.15))
                         )
                 } else if exists {
                     Text("verified")
                         .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66))
+                        .foregroundStyle(Agentic30BrandColor.greenBright)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(
                             Capsule()
-                                .fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.15))
+                                .fill(Agentic30BrandColor.greenBright.opacity(0.15))
                         )
                 } else if missing {
                     Text("not found")
@@ -1519,12 +1519,12 @@ struct SettingsView: View {
                             Text("Create")
                         }
                         .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66))
+                        .foregroundStyle(Agentic30BrandColor.greenBright)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(
                             Capsule()
-                                .fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.12))
+                                .fill(Agentic30BrandColor.greenBright.opacity(0.12))
                         )
                     }
                     .buttonStyle(.plain)
@@ -1575,7 +1575,7 @@ struct SettingsView: View {
     private func sectionHeader(title: String, configured: Bool) -> some View {
         HStack(spacing: 10) {
             Circle()
-                .fill(configured ? Color(red: 0.55, green: 0.90, blue: 0.66) : Color.white.opacity(0.18))
+                .fill(configured ? Agentic30BrandColor.greenBright : Color.white.opacity(0.18))
                 .frame(width: 9, height: 9)
             Text(title)
                 .font(.system(size: 16, weight: .bold, design: .rounded))
@@ -1586,7 +1586,7 @@ struct SettingsView: View {
     private func color(for status: String) -> Color {
         switch status {
         case "ok":
-            return Color(red: 0.55, green: 0.90, blue: 0.66)
+            return Agentic30BrandColor.greenBright
         case "warning":
             return Color(red: 0.96, green: 0.78, blue: 0.54)
         case "failed":

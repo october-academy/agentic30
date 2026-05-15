@@ -29,6 +29,7 @@ struct agentic30App: App {
                 }
             )
             .frame(minWidth: 1180, minHeight: 740)
+            .tint(Agentic30BrandColor.green)
             .onAppear {
                 PostHogTelemetry.capture(
                     "mac_workspace_surface_opened",
@@ -48,6 +49,7 @@ struct agentic30App: App {
 
         Settings {
             SettingsView(viewModel: appDelegate.viewModel)
+                .tint(Agentic30BrandColor.green)
         }
 
         MenuBarExtra {
@@ -389,7 +391,7 @@ private struct StatusMenuContent: View {
                 ? "checkmark.circle.fill"
                 : "antenna.radiowaves.left.and.right.slash"
             )
-            .foregroundStyle(viewModel.isConnected ? .green : .secondary)
+            .foregroundStyle(viewModel.isConnected ? Agentic30BrandColor.green : .secondary)
 
             if let session = viewModel.selectedSession {
                 VStack(alignment: .leading, spacing: 4) {
@@ -536,7 +538,7 @@ private struct StatusMenuContent: View {
         case .idle:
             return .white.opacity(0.32)
         case .running:
-            return .green
+            return Agentic30BrandColor.green
         case .awaitingInput:
             return .blue
         case .error:

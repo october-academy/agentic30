@@ -42,7 +42,7 @@ struct RubricQuarantineView: View {
                 if let message = lastResultMessage {
                     Text(message)
                         .font(.footnote)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Agentic30BrandColor.green)
                         .accessibilityIdentifier("quarantine-toast")
                 }
             }
@@ -68,7 +68,7 @@ struct RubricQuarantineView: View {
         VStack(spacing: 8) {
             Image(systemName: "checkmark.seal")
                 .font(.system(size: 28))
-                .foregroundStyle(.green)
+                .foregroundStyle(Agentic30BrandColor.green)
             Text("복구할 record가 없습니다.")
                 .foregroundStyle(.white)
             Text("Day 30 schema가 거부한 record가 생기면 여기로 옵니다.")

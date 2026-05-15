@@ -1395,7 +1395,7 @@ struct ContentView: View {
     private func workspaceSidebarHistoryStatusColor(for session: ChatSession) -> Color {
         switch session.status {
         case .running:
-            return Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.85)
+            return Agentic30BrandColor.greenBright.opacity(0.85)
         case .awaitingInput:
             return Color(red: 1.0, green: 0.78, blue: 0.36).opacity(0.85)
         case .error:
@@ -2633,9 +2633,9 @@ struct ContentView: View {
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: intent == .morning ? "sun.max.fill" : "moon.stars.fill")
                         .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.92))
+                        .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.92))
                         .frame(width: 28, height: 28)
-                        .background(Circle().fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.12)))
+                        .background(Circle().fill(Agentic30BrandColor.greenBright.opacity(0.12)))
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text(bipNotificationTaskTitle(intent))
@@ -2662,7 +2662,7 @@ struct ContentView: View {
                     .fill(Color.white.opacity(0.075))
                     .overlay(
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.16), lineWidth: 1)
+                            .stroke(Agentic30BrandColor.greenBright.opacity(0.16), lineWidth: 1)
                     )
             )
             .accessibilityElement(children: .contain)
@@ -2859,7 +2859,7 @@ struct ContentView: View {
                 .foregroundStyle(Color.black.opacity(action.isDisabled ? 0.40 : 0.78))
                 .padding(.horizontal, 14)
                 .frame(height: 34)
-                .background(Capsule().fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(action.isDisabled ? 0.34 : 0.92)))
+                .background(Capsule().fill(Agentic30BrandColor.greenBright.opacity(action.isDisabled ? 0.34 : 0.92)))
             }
             .buttonStyle(.plain)
             .disabled(action.isDisabled)
@@ -3094,11 +3094,11 @@ struct ContentView: View {
                         .font(.system(size: isCompact ? 12 : 14, weight: .heavy))
                         .foregroundStyle(Color.black.opacity(0.72))
                         .frame(width: isCompact ? 24 : 28, height: isCompact ? 24 : 28)
-                        .background(Circle().fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.94)))
+                        .background(Circle().fill(Agentic30BrandColor.greenBright.opacity(0.94)))
 
                     Text(bipCompletionCelebrationTitle(for: mission))
                         .font(.system(size: isCompact ? 14 : 17, weight: .heavy, design: .rounded))
-                        .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.96))
+                        .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.96))
                         .accessibilityIdentifier("workspace.completionCard.title")
                 }
 
@@ -3140,7 +3140,7 @@ struct ContentView: View {
                             .frame(height: isCompact ? 30 : 34)
                             .background(
                                 Capsule()
-                                    .fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.94))
+                                    .fill(Agentic30BrandColor.greenBright.opacity(0.94))
                             )
                     }
                     .buttonStyle(.plain)
@@ -3159,10 +3159,10 @@ struct ContentView: View {
         .background {
             if !isCompact {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.10))
+                    .fill(Agentic30BrandColor.greenBright.opacity(0.10))
                     .overlay(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.16), lineWidth: 1)
+                            .stroke(Agentic30BrandColor.greenBright.opacity(0.16), lineWidth: 1)
                     )
             }
         }
@@ -3772,7 +3772,7 @@ struct ContentView: View {
             HStack(spacing: 6) {
                 Image(systemName: "arrow.down.forward.circle.fill")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.80))
+                    .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.80))
                 Text("오늘 실행 카드에서 후보를 선택하세요.")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.86))
@@ -4081,7 +4081,7 @@ struct ContentView: View {
     private func missionChoiceAccent(_ index: Int) -> Color {
         switch index {
         case 0:
-            return Color(red: 0.55, green: 0.90, blue: 0.66)
+            return Agentic30BrandColor.greenBright
         case 1:
             return Color(red: 0.96, green: 0.73, blue: 0.42)
         default:
@@ -4215,7 +4215,7 @@ struct ContentView: View {
                     .font(.system(size: 17, weight: .heavy))
                     .foregroundStyle(Color.black.opacity(0.76))
                     .frame(width: 34, height: 34)
-                    .background(Circle().fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.94)))
+                    .background(Circle().fill(Agentic30BrandColor.greenBright.opacity(0.94)))
 
                 VStack(alignment: .leading, spacing: 7) {
                     Text(setupTitle)
@@ -4283,7 +4283,7 @@ struct ContentView: View {
                             .foregroundStyle(Color.black.opacity(0.76))
                             .padding(.horizontal, 14)
                             .frame(height: 36)
-                            .background(Capsule().fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.94)))
+                            .background(Capsule().fill(Agentic30BrandColor.greenBright.opacity(0.94)))
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("workspace.iddSetup.approve")
@@ -4298,7 +4298,7 @@ struct ContentView: View {
                 .fill(Color.white.opacity(0.075))
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .stroke(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.18), lineWidth: 1)
+                        .stroke(Agentic30BrandColor.greenBright.opacity(0.18), lineWidth: 1)
                 )
         )
         .accessibilityElement(children: .contain)
@@ -4469,12 +4469,12 @@ struct ContentView: View {
                     .font(.system(size: 18, weight: .heavy))
                     .foregroundStyle(Color.black.opacity(0.76))
                     .frame(width: 36, height: 36)
-                    .background(Circle().fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.94)))
+                    .background(Circle().fill(Agentic30BrandColor.greenBright.opacity(0.94)))
 
                 VStack(alignment: .leading, spacing: 7) {
                     Text("Graduation")
                         .font(.system(size: 11, weight: .heavy, design: .rounded))
-                        .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.94))
+                        .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.94))
                         .textCase(.uppercase)
 
                     Text("30일 커리큘럼을 완료했어요")
@@ -4500,7 +4500,7 @@ struct ContentView: View {
 
             Label("Graduation reached", systemImage: "flag.checkered")
                 .font(.system(size: 13, weight: .heavy, design: .rounded))
-                .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.92))
+                .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.92))
                 .accessibilityIdentifier("workspace.graduation.status")
         }
         .padding(20)
@@ -4510,7 +4510,7 @@ struct ContentView: View {
                 .fill(Color.white.opacity(0.075))
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .stroke(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.18), lineWidth: 1)
+                        .stroke(Agentic30BrandColor.greenBright.opacity(0.18), lineWidth: 1)
                 )
         )
         .accessibilityElement(children: .contain)
@@ -4868,7 +4868,7 @@ struct ContentView: View {
     }
 
     private var workspaceMissionFirstAccent: Color {
-        Color(red: 0.55, green: 0.90, blue: 0.66)
+        Agentic30BrandColor.greenBright
     }
 
     private func workspaceMissionFirstIcon(session: ChatSession?) -> String {
@@ -5409,7 +5409,7 @@ struct ContentView: View {
             return Color(red: 1.0, green: 0.45, blue: 0.38).opacity(0.86)
         }
         if isComplete {
-            return Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.84)
+            return Agentic30BrandColor.greenBright.opacity(0.84)
         }
         if isCurrent {
             return Color.white.opacity(0.70)
@@ -5722,7 +5722,7 @@ struct ContentView: View {
                     }
                     .buttonStyle(.plain)
                     .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.92))
+                    .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.92))
                     .accessibilityIdentifier("workspace.startupQueue.retry")
                 }
 
@@ -5778,7 +5778,7 @@ struct ContentView: View {
         case .sending:
             return Color(red: 0.54, green: 0.78, blue: 0.96)
         case .waiting:
-            return Color(red: 0.55, green: 0.90, blue: 0.66)
+            return Agentic30BrandColor.greenBright
         }
     }
 
@@ -6402,7 +6402,7 @@ struct ContentView: View {
         HStack(alignment: .top, spacing: 9) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66))
+                .foregroundStyle(Agentic30BrandColor.greenBright)
                 .padding(.top, 1)
 
             VStack(alignment: .leading, spacing: 4) {
@@ -6490,7 +6490,7 @@ struct ContentView: View {
         switch status {
         case .done:
             Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66))
+                .foregroundStyle(Agentic30BrandColor.greenBright)
         case .inProgress:
             ProgressView().controlSize(.mini).frame(width: 16, height: 16)
         case .blocked:
@@ -6538,7 +6538,7 @@ struct ContentView: View {
         return HStack(spacing: 6) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.78))
+                .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.78))
             Text("완료된 준비 \(rowIds.count)개 · \(titles)")
                 .font(.system(size: 10, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(0.42))
@@ -6570,7 +6570,7 @@ struct ContentView: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Image(systemName: "doc.badge.checkmark")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66))
+                    .foregroundStyle(Agentic30BrandColor.greenBright)
                 Text("\(title) 복사 완료")
                     .font(.system(size: 11, weight: .bold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.82))
@@ -6630,7 +6630,7 @@ struct ContentView: View {
                 HStack(spacing: 7) {
                     Image(systemName: done == group.ids.count ? "checkmark.circle.fill" : "circle.dotted")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(done == group.ids.count ? Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.80) : .white.opacity(0.34))
+                        .foregroundStyle(done == group.ids.count ? Agentic30BrandColor.greenBright.opacity(0.80) : .white.opacity(0.34))
                     Text(group.title)
                         .font(.system(size: 10, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.54))
@@ -6725,7 +6725,7 @@ struct ContentView: View {
                 switch row.status {
                 case .done:
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66))
+                        .foregroundStyle(Agentic30BrandColor.greenBright)
                 case .inProgress:
                     ProgressView().controlSize(.mini).frame(width: 16, height: 16)
                 case .blocked:
@@ -7035,10 +7035,10 @@ struct ContentView: View {
 
                 Text("\(min(choices.count, 3))개 후보")
                     .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.92))
+                    .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.92))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Capsule().fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.12)))
+                    .background(Capsule().fill(Agentic30BrandColor.greenBright.opacity(0.12)))
             }
 
             Text("근거: \(bipMissionChoicesEvidenceSummary(coach))")
@@ -7315,7 +7315,7 @@ struct ContentView: View {
         return HStack(spacing: 7) {
             Image(systemName: isComplete ? "checkmark.circle.fill" : (isActive ? "circle.dotted" : "circle"))
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(isComplete ? Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.82) : .white.opacity(isActive ? 0.64 : 0.28))
+                .foregroundStyle(isComplete ? Agentic30BrandColor.greenBright.opacity(0.82) : .white.opacity(isActive ? 0.64 : 0.28))
             Text(title)
                 .font(.system(size: 10, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(isActive ? 0.68 : (isComplete ? 0.58 : 0.42)))
@@ -7342,10 +7342,10 @@ struct ContentView: View {
                 Spacer(minLength: 0)
                 Text("연속 \(coach.streak.current)일")
                     .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.92))
+                    .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.92))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Capsule().fill(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.12)))
+                    .background(Capsule().fill(Agentic30BrandColor.greenBright.opacity(0.12)))
             }
 
             Text(mission.title?.nonEmpty ?? "오늘 실행")
@@ -7447,7 +7447,7 @@ struct ContentView: View {
             HStack(alignment: .center, spacing: 8) {
                 Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color(red: 0.55, green: 0.90, blue: 0.66).opacity(0.92))
+                    .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.92))
                 Text("연결된 Google Sheet 기록을 다시 읽고, 확인된 최신 행으로 오늘 미션을 닫습니다.")
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.58))
@@ -8581,7 +8581,7 @@ private struct BipCompletionConfettiBurst: View {
     @State private var isReleased = false
 
     private let particles: [ConfettiParticle] = [
-        ConfettiParticle(id: 0, x: 10, y: 18, endX: -6, endY: 92, rotation: -36, color: Color(red: 0.55, green: 0.90, blue: 0.66), delay: 0.00),
+        ConfettiParticle(id: 0, x: 10, y: 18, endX: -6, endY: 92, rotation: -36, color: Agentic30BrandColor.greenBright, delay: 0.00),
         ConfettiParticle(id: 1, x: 30, y: 8, endX: 14, endY: 112, rotation: 42, color: Color(red: 1.00, green: 0.78, blue: 0.34), delay: 0.04),
         ConfettiParticle(id: 2, x: 52, y: 20, endX: 42, endY: 102, rotation: -64, color: Color(red: 0.53, green: 0.77, blue: 1.00), delay: 0.08),
         ConfettiParticle(id: 3, x: 78, y: 10, endX: 72, endY: 118, rotation: 78, color: Color(red: 1.00, green: 0.48, blue: 0.58), delay: 0.02),
