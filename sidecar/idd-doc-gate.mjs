@@ -1111,6 +1111,8 @@ function defaultSelfOptionLabel(onboardingContext) {
   const role = String(onboardingContext?.role || "").trim();
   if (role === "designer") return "나 같은 디자이너";
   if (role === "product_manager") return "나 같은 PM";
+  if (role === "marketer_business") return "나 같은 마케터/비즈니스 담당자";
+  if (role === "generalist") return "나처럼 여러 역할을 맡은 사람";
   if (role === "student") return "나 같은 학생";
   return "나 또는 우리 팀";
 }

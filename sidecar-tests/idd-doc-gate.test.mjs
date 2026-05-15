@@ -7,6 +7,7 @@ import {
   BIP_REQUIRED_LOCAL_DOCS,
   IDD_AMBIGUITY_THRESHOLD,
   approveIddSetupDocuments,
+  buildAdaptiveIcpInitialInput,
   buildIddFollowupStructuredInputForDoc,
   buildIddContinuationPrompt,
   buildIddDocumentPrompt,
@@ -241,6 +242,23 @@ test("initial IDD structured inputs are document-specific for GOAL, VALUES, and 
   assert.match(spec.questions[0].question, /핵심 workflow/);
   assert.match(spec.questions[0].freeTextPlaceholder, /Day 1 미션/);
   assert.equal(spec.questions[0].requiresFreeText, false);
+});
+
+test("adaptive ICP self option labels support new onboarding roles", () => {
+  const marketerInput = buildAdaptiveIcpInitialInput({
+    onboardingContext: { role: "marketer_business" },
+  });
+  assert.match(marketerInput.questions[0].options[0].label, /마케터\/비즈니스 담당자/);
+
+  const generalistInput = buildAdaptiveIcpInitialInput({
+    onboardingContext: { role: "generalist" },
+  });
+  assert.match(generalistInput.questions[0].options[0].label, /여러 역할을 맡은 사람/);
+
+  const legacyStudentInput = buildAdaptiveIcpInitialInput({
+    onboardingContext: { role: "student" },
+  });
+  assert.match(legacyStudentInput.questions[0].options[0].label, /나 같은 학생/);
 });
 
 test("IDD setup error is serialized for the Mac surface", () => {
