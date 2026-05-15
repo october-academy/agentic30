@@ -139,8 +139,7 @@ final class agentic30UITests: XCTestCase {
             self.removeDirectory(at: appSupportPath)
         }
 
-        var intakeWindowFrame: CGRect?
-        var intakeShellFrame: CGRect?
+        var intakeLayoutBaseline = IntakeLayoutBaseline()
         if app.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 3) {
             advanceOnboardingIntroToContext(in: app)
         } else if elementWithIdentifier(in: app, "intakeV2.boot.cards").waitForExistence(timeout: 3) {
@@ -149,8 +148,7 @@ final class agentic30UITests: XCTestCase {
                 in: app,
                 current: 1,
                 label: "BOOT",
-                windowBaseline: &intakeWindowFrame,
-                shellBaseline: &intakeShellFrame
+                baseline: &intakeLayoutBaseline
             )
             clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
         }
@@ -159,8 +157,7 @@ final class agentic30UITests: XCTestCase {
             in: app,
             current: 2,
             label: "CONTEXT",
-            windowBaseline: &intakeWindowFrame,
-            shellBaseline: &intakeShellFrame
+            baseline: &intakeLayoutBaseline
         )
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
         clickCenter(of: button(in: app, matching: ["Back"]))
@@ -169,8 +166,7 @@ final class agentic30UITests: XCTestCase {
             in: app,
             current: 1,
             label: "BOOT",
-            windowBaseline: &intakeWindowFrame,
-            shellBaseline: &intakeShellFrame
+            baseline: &intakeLayoutBaseline
         )
         clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
         XCTAssertTrue(app.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 5))
@@ -178,32 +174,28 @@ final class agentic30UITests: XCTestCase {
             in: app,
             current: 2,
             label: "CONTEXT",
-            windowBaseline: &intakeWindowFrame,
-            shellBaseline: &intakeShellFrame
+            baseline: &intakeLayoutBaseline
         )
         clickCenter(of: buttonContaining(in: app, text: "전업으로 혼자 만들고 있음"))
-        XCTAssertTrue(elementWithIdentifier(in: app, "intakeV2.selectionImpact").waitForExistence(timeout: 2))
-        XCTAssertTrue(app.debugDescription.contains("하루 단위"))
+        XCTAssertTrue(button(in: app, matching: ["Next →", "Next"]).isEnabled)
         clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
         XCTAssertTrue(app.staticTexts["가장 자주 하는 역할은 무엇인가요?"].waitForExistence(timeout: 5))
         assertStableIntakeStepLayout(
             in: app,
             current: 3,
             label: "ROLE",
-            windowBaseline: &intakeWindowFrame,
-            shellBaseline: &intakeShellFrame
+            baseline: &intakeLayoutBaseline
         )
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
         clickCenter(of: buttonContaining(in: app, text: "개발자"))
-        XCTAssertTrue(app.debugDescription.contains("코드·문서"))
+        XCTAssertTrue(button(in: app, matching: ["Next →", "Next"]).isEnabled)
         clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
         XCTAssertTrue(app.staticTexts["현재 가장 큰 막힘은 무엇인가요?"].waitForExistence(timeout: 5))
         assertStableIntakeStepLayout(
             in: app,
             current: 4,
             label: "BLOCKER",
-            windowBaseline: &intakeWindowFrame,
-            shellBaseline: &intakeShellFrame
+            baseline: &intakeLayoutBaseline
         )
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
         clickCenter(of: buttonContaining(in: app, text: "첫 사용자를 찾지 못하고 있다"))
@@ -214,12 +206,16 @@ final class agentic30UITests: XCTestCase {
             in: app,
             current: 5,
             label: "FOLDER",
-            windowBaseline: &intakeWindowFrame,
-            shellBaseline: &intakeShellFrame
+            baseline: &intakeLayoutBaseline
         )
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
-        clickCenter(of: buttonContaining(in: app, text: "프로젝트 선택하기"))
-        XCTAssertTrue(buttonContaining(in: app, text: "읽을 폴더: \((workspacePath as NSString).lastPathComponent)").waitForExistence(timeout: 3))
+        XCTAssertFalse(button(in: app, matching: ["Continue →", "Continue"]).exists)
+        clickCenter(of: buttonContaining(in: app, text: "폴더 선택하기"))
+        XCTAssertTrue(buttonContaining(in: app, text: "다른 폴더 선택").waitForExistence(timeout: 3))
+        XCTAssertFalse(buttonContaining(in: app, text: "나중에 폴더 선택").exists)
+        let selectedFolderName = elementWithIdentifier(in: app, "intakeV2.selectedFolderName")
+        XCTAssertTrue(selectedFolderName.waitForExistence(timeout: 3))
+        XCTAssertEqual(selectedFolderName.label, (workspacePath as NSString).lastPathComponent)
         clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
 
         XCTAssertTrue(app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10))
@@ -227,8 +223,7 @@ final class agentic30UITests: XCTestCase {
             in: app,
             current: 6,
             label: "CONNECT",
-            windowBaseline: &intakeWindowFrame,
-            shellBaseline: &intakeShellFrame
+            baseline: &intakeLayoutBaseline
         )
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
         XCTAssertTrue(button(in: app, matching: ["Continue →", "Continue"]).exists)
@@ -243,8 +238,7 @@ final class agentic30UITests: XCTestCase {
             current: 7,
             label: "READY",
             timeout: 10,
-            windowBaseline: &intakeWindowFrame,
-            shellBaseline: &intakeShellFrame
+            baseline: &intakeLayoutBaseline
         )
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
         clickCenter(of: button(in: app, matching: ["Back"]))
@@ -252,8 +246,7 @@ final class agentic30UITests: XCTestCase {
             in: app,
             current: 6,
             label: "CONNECT",
-            windowBaseline: &intakeWindowFrame,
-            shellBaseline: &intakeShellFrame
+            baseline: &intakeLayoutBaseline
         )
         clickCenter(of: button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"]))
         assertStableIntakeStepLayout(
@@ -261,19 +254,44 @@ final class agentic30UITests: XCTestCase {
             current: 7,
             label: "READY",
             timeout: 10,
-            windowBaseline: &intakeWindowFrame,
-            shellBaseline: &intakeShellFrame
+            baseline: &intakeLayoutBaseline
         )
         let openInbox = elementWithIdentifier(in: app, "intakeV2.openInboxButton")
         let executeButton = elementWithIdentifier(in: app, "intakeV2.executeButton")
+        let firstDecisionCard = elementWithIdentifier(in: app, "intakeV2.firstDecisionCard")
         XCTAssertTrue(executeButton.waitForExistence(timeout: 30))
         XCTAssertTrue(openInbox.waitForExistence(timeout: 5))
+        XCTAssertTrue(firstDecisionCard.waitForExistence(timeout: 5))
         XCTAssertFalse(openInbox.isEnabled)
         XCTAssertFalse(app.descendants(matching: .any)["workspace.iddSetupSurface"].exists)
+        let firstDecisionFrameBeforeExecute = firstDecisionCard.frame
+        let openInboxFrameBeforeExecute = openInbox.frame
         clickCenter(of: executeButton)
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "intakeV2.openInboxButton", containing: "Preparing inbox", timeout: 5))
+        let todoListWindow = elementWithIdentifier(in: app, "intakeV2.todoListWindow")
+        XCTAssertTrue(todoListWindow.waitForExistence(timeout: 5))
+        let todoListFrameAfterInsertion = todoListWindow.frame
+        for _ in 0..<4 {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.45))
+            assertExecuteTodoLayoutStable(
+                firstDecisionCard: firstDecisionCard,
+                baselineFirstDecisionFrame: firstDecisionFrameBeforeExecute,
+                openInboxButton: openInbox,
+                baselineOpenInboxFrame: openInboxFrameBeforeExecute,
+                todoListWindow: todoListWindow,
+                baselineTodoListFrame: todoListFrameAfterInsertion
+            )
+        }
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "intakeV2.openInboxButton", containing: "Open inbox", timeout: 10))
         XCTAssertTrue(waitUntilEnabled(openInbox, timeout: 5))
+        assertExecuteTodoLayoutStable(
+            firstDecisionCard: firstDecisionCard,
+            baselineFirstDecisionFrame: firstDecisionFrameBeforeExecute,
+            openInboxButton: openInbox,
+            baselineOpenInboxFrame: openInboxFrameBeforeExecute,
+            todoListWindow: todoListWindow,
+            baselineTodoListFrame: todoListFrameAfterInsertion
+        )
         clickCenter(of: openInbox)
         XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetupSurface"].waitForExistence(timeout: 30))
         XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetup.question"].waitForExistence(timeout: 10))
@@ -285,6 +303,74 @@ final class agentic30UITests: XCTestCase {
         let runID = UUID().uuidString
         let appSupportPath = FileManager.default.temporaryDirectory
             .appendingPathComponent("agentic30-ui-intake-skip-app-\(runID)", isDirectory: true)
+            .path
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_DISABLE_IDD_AGENT_SYNTHESIS": "1",
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        if app.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 3) {
+            advanceOnboardingIntroToContext(in: app)
+        } else if elementWithIdentifier(in: app, "intakeV2.boot.cards").waitForExistence(timeout: 3) {
+            clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
+        }
+
+        XCTAssertTrue(app.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 10))
+        clickCenter(of: buttonContaining(in: app, text: "전업으로 혼자 만들고 있음"))
+        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        XCTAssertTrue(app.staticTexts["가장 자주 하는 역할은 무엇인가요?"].waitForExistence(timeout: 5))
+        clickCenter(of: buttonContaining(in: app, text: "개발자"))
+        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        XCTAssertTrue(app.staticTexts["현재 가장 큰 막힘은 무엇인가요?"].waitForExistence(timeout: 5))
+        clickCenter(of: buttonContaining(in: app, text: "첫 사용자를 찾지 못하고 있다"))
+        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        XCTAssertTrue(app.staticTexts["어디서 읽을까요?"].waitForExistence(timeout: 5))
+        XCTAssertFalse(button(in: app, matching: ["Continue →", "Continue"]).exists)
+        clickCenter(of: buttonContaining(in: app, text: "나중에 폴더 선택"))
+
+        XCTAssertTrue(app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10))
+        assertIntakeProgress(in: app, current: 6, label: "CONNECT")
+        let githubSource = buttonContaining(in: app, text: "GitHub")
+        XCTAssertTrue(githubSource.waitForExistence(timeout: 5))
+        clickCenter(of: githubSource)
+        XCTAssertTrue(buttonContaining(in: app, text: "Connected later").waitForExistence(timeout: 3))
+        XCTAssertFalse(element(githubSource, contains: "Connected ·"))
+        clickCenter(of: button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"]))
+
+        assertIntakeProgress(in: app, current: 7, label: "READY", timeout: 10)
+        let executeButton = elementWithIdentifier(in: app, "intakeV2.executeButton")
+        XCTAssertTrue(executeButton.waitForExistence(timeout: 30))
+        let renderedTree = app.debugDescription
+        XCTAssertTrue(renderedTree.contains("폴더 없이 시작합니다"))
+        XCTAssertTrue(renderedTree.contains("0 active (intake only)"))
+        XCTAssertTrue(renderedTree.contains("context.read (no folder)"))
+        XCTAssertTrue(renderedTree.contains("intake-only"))
+        XCTAssertFalse(renderedTree.contains("당신의 폴더를 읽고"))
+        let openInbox = elementWithIdentifier(in: app, "intakeV2.openInboxButton")
+        XCTAssertTrue(openInbox.exists)
+        XCTAssertFalse(openInbox.isEnabled)
+        XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
+    }
+
+    @MainActor
+    func testIntakeV2AddSourceModalSearchSelectsAndShowsCustomEmptyState() throws {
+        let runID = UUID().uuidString
+        let appSupportPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-ui-add-source-app-\(runID)", isDirectory: true)
             .path
         resetDirectory(at: appSupportPath)
 
@@ -322,33 +408,33 @@ final class agentic30UITests: XCTestCase {
         clickCenter(of: buttonContaining(in: app, text: "첫 사용자를 찾지 못하고 있다"))
         clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
         XCTAssertTrue(app.staticTexts["어디서 읽을까요?"].waitForExistence(timeout: 5))
-        clickCenter(of: buttonContaining(in: app, text: "지금은 건너뛰기"))
-        XCTAssertTrue(elementWithIdentifier(in: app, "intakeV2.selectionImpact").waitForExistence(timeout: 2))
-        XCTAssertTrue(app.debugDescription.contains("intake 답변만"))
-        clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
+        clickCenter(of: buttonContaining(in: app, text: "나중에 폴더 선택"))
 
         XCTAssertTrue(app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10))
         assertIntakeProgress(in: app, current: 6, label: "CONNECT")
-        let githubSource = buttonContaining(in: app, text: "GitHub")
-        XCTAssertTrue(githubSource.waitForExistence(timeout: 5))
-        clickCenter(of: githubSource)
-        XCTAssertTrue(buttonContaining(in: app, text: "Connect later").waitForExistence(timeout: 3))
-        XCTAssertFalse(element(githubSource, contains: "Connected"))
-        clickCenter(of: button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"]))
+        clickCenter(of: elementWithIdentifier(in: app, "intakeV2.addSource"))
+        XCTAssertTrue(elementWithIdentifier(in: app, "intakeV2.addSource.modal").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["기록 소스 추가"].exists)
 
-        assertIntakeProgress(in: app, current: 7, label: "READY", timeout: 10)
-        let executeButton = elementWithIdentifier(in: app, "intakeV2.executeButton")
-        XCTAssertTrue(executeButton.waitForExistence(timeout: 30))
-        let renderedTree = app.debugDescription
-        XCTAssertTrue(renderedTree.contains("폴더 없이 시작합니다"))
-        XCTAssertTrue(renderedTree.contains("0 active (intake only)"))
-        XCTAssertTrue(renderedTree.contains("context.read (no folder)"))
-        XCTAssertTrue(renderedTree.contains("intake-only"))
-        XCTAssertFalse(renderedTree.contains("당신의 폴더를 읽고"))
-        let openInbox = elementWithIdentifier(in: app, "intakeV2.openInboxButton")
-        XCTAssertTrue(openInbox.exists)
-        XCTAssertFalse(openInbox.isEnabled)
-        XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
+        let search = textField(in: app, matching: ["intakeV2.addSource.search", "소스 검색"])
+        XCTAssertTrue(search.waitForExistence(timeout: 3))
+        clickCenter(of: search)
+        search.typeText("RevenueCat")
+        let revenueCatRow = elementWithIdentifier(in: app, "intakeV2.addSource.row.revenue_cat")
+        XCTAssertTrue(revenueCatRow.waitForExistence(timeout: 3))
+        clickCenter(of: revenueCatRow)
+        app.typeKey(.return, modifierFlags: [])
+
+        XCTAssertTrue(app.staticTexts["RevenueCat"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Connect later · Settings"].exists)
+
+        clickCenter(of: elementWithIdentifier(in: app, "intakeV2.addSource"))
+        XCTAssertTrue(elementWithIdentifier(in: app, "intakeV2.addSource.modal").waitForExistence(timeout: 5))
+        let emptySearch = textField(in: app, matching: ["intakeV2.addSource.search", "소스 검색"])
+        clickCenter(of: emptySearch)
+        emptySearch.typeText("zzzzzz")
+        XCTAssertTrue(app.staticTexts["결과 없음"].waitForExistence(timeout: 3))
+        XCTAssertTrue(buttonContaining(in: app, text: "Custom source로 추가").waitForExistence(timeout: 3))
     }
 
     @MainActor
@@ -2304,8 +2390,66 @@ final class agentic30UITests: XCTestCase {
             bootCards.frame.minY,
             "Boot intro cards must not overlap the header/subtitle area"
         )
+        let readVisual = elementWithIdentifier(in: app, "intakeV2.boot.read.visual")
+        let decideVisual = elementWithIdentifier(in: app, "intakeV2.boot.decide.visual")
+        let executeVisual = elementWithIdentifier(in: app, "intakeV2.boot.execute.visual")
+        XCTAssertTrue(readVisual.waitForExistence(timeout: 5))
+        XCTAssertTrue(decideVisual.waitForExistence(timeout: 5))
+        XCTAssertTrue(executeVisual.waitForExistence(timeout: 5))
+        assertFrame(decideVisual.frame, isInside: bootCards.frame, message: "Decide visual viewport must stay inside the BOOT card container")
+        XCTAssertLessThanOrEqual(
+            abs(readVisual.frame.minY - decideVisual.frame.minY),
+            2,
+            "Read and Decide visual modules should start on the same internal card grid line"
+        )
+        XCTAssertLessThanOrEqual(
+            abs(decideVisual.frame.minY - executeVisual.frame.minY),
+            2,
+            "Decide and Execute visual modules should start on the same internal card grid line"
+        )
+        RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+        assertFrame(decideVisual.frame, isInside: bootCards.frame, message: "Animated Decide visual viewport must stay inside the BOOT card container")
         XCTAssertTrue(button(in: app, matching: ["Continue →", "Continue"]).exists)
         XCTAssertFalse(button(in: app, matching: ["Back"]).exists)
+    }
+
+    @MainActor
+    private func assertFrame(
+        _ frame: CGRect,
+        isInside container: CGRect,
+        message: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let tolerance: CGFloat = 1.5
+        XCTAssertGreaterThanOrEqual(frame.minX, container.minX - tolerance, message, file: file, line: line)
+        XCTAssertGreaterThanOrEqual(frame.minY, container.minY - tolerance, message, file: file, line: line)
+        XCTAssertLessThanOrEqual(frame.maxX, container.maxX + tolerance, message, file: file, line: line)
+        XCTAssertLessThanOrEqual(frame.maxY, container.maxY + tolerance, message, file: file, line: line)
+    }
+
+    @MainActor
+    private func assertExecuteTodoLayoutStable(
+        firstDecisionCard: XCUIElement,
+        baselineFirstDecisionFrame: CGRect,
+        openInboxButton: XCUIElement,
+        baselineOpenInboxFrame: CGRect,
+        todoListWindow: XCUIElement,
+        baselineTodoListFrame: CGRect,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let firstDecisionFrame = firstDecisionCard.frame
+        XCTAssertEqual(firstDecisionFrame.minY, baselineFirstDecisionFrame.minY, accuracy: 2.0, file: file, line: line)
+        XCTAssertEqual(firstDecisionFrame.midX, baselineFirstDecisionFrame.midX, accuracy: 2.0, file: file, line: line)
+
+        let openInboxFrame = openInboxButton.frame
+        XCTAssertEqual(openInboxFrame.maxX, baselineOpenInboxFrame.maxX, accuracy: 2.0, file: file, line: line)
+        XCTAssertEqual(openInboxFrame.midY, baselineOpenInboxFrame.midY, accuracy: 2.0, file: file, line: line)
+
+        let todoListFrame = todoListWindow.frame
+        XCTAssertEqual(todoListFrame.minY, baselineTodoListFrame.minY, accuracy: 2.0, file: file, line: line)
+        XCTAssertEqual(todoListFrame.height, baselineTodoListFrame.height, accuracy: 2.0, file: file, line: line)
     }
 
     @MainActor
@@ -2334,13 +2478,20 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    private struct IntakeLayoutBaseline {
+        var windowFrame: CGRect?
+        var shellFrame: CGRect?
+        var progressFrame: CGRect?
+        var primaryButtonFrame: CGRect?
+    }
+
+    @MainActor
     private func assertStableIntakeStepLayout(
         in app: XCUIApplication,
         current: Int,
         label: String,
         timeout: TimeInterval = 5,
-        windowBaseline: inout CGRect?,
-        shellBaseline: inout CGRect?,
+        baseline: inout IntakeLayoutBaseline,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
@@ -2364,18 +2515,78 @@ final class agentic30UITests: XCTestCase {
         let windowFrame = app.windows.firstMatch.frame
         let shellFrame = shell.frame
 
-        if let baseline = windowBaseline {
-            XCTAssertEqual(windowFrame.width, baseline.width, accuracy: 1.0, file: file, line: line)
-            XCTAssertEqual(windowFrame.height, baseline.height, accuracy: 1.0, file: file, line: line)
+        if let baselineFrame = baseline.windowFrame {
+            XCTAssertEqual(windowFrame.width, baselineFrame.width, accuracy: 1.0, file: file, line: line)
+            XCTAssertEqual(windowFrame.height, baselineFrame.height, accuracy: 1.0, file: file, line: line)
         } else {
-            windowBaseline = windowFrame
+            baseline.windowFrame = windowFrame
         }
 
-        if let baseline = shellBaseline {
-            XCTAssertEqual(shellFrame.width, baseline.width, accuracy: 1.0, file: file, line: line)
-            XCTAssertEqual(shellFrame.height, baseline.height, accuracy: 1.0, file: file, line: line)
+        if let baselineFrame = baseline.shellFrame {
+            XCTAssertEqual(shellFrame.width, baselineFrame.width, accuracy: 1.0, file: file, line: line)
+            XCTAssertEqual(shellFrame.height, baselineFrame.height, accuracy: 1.0, file: file, line: line)
         } else {
-            shellBaseline = shellFrame
+            baseline.shellFrame = shellFrame
+        }
+
+        let progress = intakeProgressElement(in: app, current: current, label: label)
+        XCTAssertTrue(
+            progress.waitForExistence(timeout: timeout),
+            "Expected intake progress frame for step \(current)",
+            file: file,
+            line: line
+        )
+        let progressFrame = progress.frame
+        if let baselineFrame = baseline.progressFrame {
+            XCTAssertEqual(progressFrame.minX, baselineFrame.minX, accuracy: 1.5, file: file, line: line)
+            XCTAssertEqual(progressFrame.minY, baselineFrame.minY, accuracy: 1.5, file: file, line: line)
+        } else {
+            baseline.progressFrame = progressFrame
+        }
+
+        if current == 5 && !button(in: app, matching: ["Continue →", "Continue"]).exists {
+            return
+        }
+
+        let primaryButton = intakePrimaryButton(in: app, current: current)
+        XCTAssertTrue(
+            primaryButton.waitForExistence(timeout: timeout),
+            "Expected intake primary button for step \(current)",
+            file: file,
+            line: line
+        )
+        let primaryFrame = primaryButton.frame
+        if let baselineFrame = baseline.primaryButtonFrame {
+            XCTAssertEqual(primaryFrame.maxX, baselineFrame.maxX, accuracy: 1.5, file: file, line: line)
+            XCTAssertEqual(primaryFrame.midY, baselineFrame.midY, accuracy: 1.5, file: file, line: line)
+        } else {
+            baseline.primaryButtonFrame = primaryFrame
+        }
+    }
+
+    @MainActor
+    private func intakeProgressElement(in app: XCUIApplication, current: Int, label: String) -> XCUIElement {
+        let expectedLabel = "Step \(current) of 7, \(label)"
+        return app.descendants(matching: .any)
+            .matching(NSPredicate(
+                format: "identifier == %@ AND label == %@",
+                "intakeV2.progress",
+                expectedLabel
+            ))
+            .firstMatch
+    }
+
+    @MainActor
+    private func intakePrimaryButton(in app: XCUIApplication, current: Int) -> XCUIElement {
+        switch current {
+        case 2, 3, 4:
+            return button(in: app, matching: ["Next →", "Next"])
+        case 6:
+            return button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"])
+        case 7:
+            return elementWithIdentifier(in: app, "intakeV2.openInboxButton")
+        default:
+            return button(in: app, matching: ["Continue →", "Continue"])
         }
     }
 

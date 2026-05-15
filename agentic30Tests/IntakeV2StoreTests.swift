@@ -133,6 +133,20 @@ final class IntakeV2SourceManagerTests: XCTestCase {
         XCTAssertEqual(mgr.status(of: .localFolder), .connected)
     }
 
+    func test_localFolderStatusText_prefersFolderNameOverDetail() {
+        let source = IntakeSourceState(
+            id: .localFolder,
+            status: .connected,
+            path: "/tmp/agentic-30",
+            detail: "42 docs"
+        )
+
+        XCTAssertEqual(
+            IntakeV2LocalFolderStatusFormatter.statusText(for: source),
+            "Connected · agentic-30"
+        )
+    }
+
     func test_registerLocalFolder_keepsLocalFolderFirst() {
         let mgr = IntakeV2SourceManager(defaults: suiteDefaults)
         mgr.toggle(.github, to: .connected)
@@ -140,6 +154,35 @@ final class IntakeV2SourceManagerTests: XCTestCase {
         mgr.registerLocalFolder(URL(fileURLWithPath: "/tmp/x"), fileCount: nil)
 
         XCTAssertEqual(mgr.sources.first?.id, .localFolder)
+    }
+
+    func test_addCatalogSources_persistsDisabledPlaceholders() {
+        let mgr = IntakeV2SourceManager(defaults: suiteDefaults)
+
+        mgr.addCatalogSources([.workLogFolder, .gmailEmail])
+
+        XCTAssertEqual(mgr.status(of: .workLogFolder), .disabled)
+        XCTAssertEqual(mgr.status(of: .gmailEmail), .disabled)
+        XCTAssertEqual(mgr.connectedCount, 0)
+    }
+
+    func test_addCatalogSources_roundTripsThroughPersistence() {
+        let mgr1 = IntakeV2SourceManager(defaults: suiteDefaults)
+        mgr1.addCatalogSources([.blogRss, .revenueCat])
+
+        let mgr2 = IntakeV2SourceManager(defaults: suiteDefaults)
+
+        XCTAssertEqual(mgr2.status(of: .blogRss), .disabled)
+        XCTAssertEqual(mgr2.status(of: .revenueCat), .disabled)
+    }
+
+    func test_addCatalogSources_keepsLocalFolderFirst() {
+        let mgr = IntakeV2SourceManager(defaults: suiteDefaults)
+        mgr.addCatalogSources([.workLogFolder])
+        mgr.registerLocalFolder(URL(fileURLWithPath: "/tmp/x"), fileCount: nil)
+
+        XCTAssertEqual(mgr.sources.first?.id, .localFolder)
+        XCTAssertEqual(mgr.status(of: .workLogFolder), .disabled)
     }
 
     func test_toggle_setsStatus() {

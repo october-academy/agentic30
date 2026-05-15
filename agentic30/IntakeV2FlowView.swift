@@ -16,8 +16,8 @@ import AppKit
 enum IntakeV2Color {
     static let bg = Color(red: 0.055, green: 0.055, blue: 0.063)          // #0e0e10
     static let panel = Color(red: 0.075, green: 0.075, blue: 0.086)       // #131316
-    static let accent = Color(red: 0.086, green: 0.639, blue: 0.290)      // #16a34a
-    static let accentBright = Color(red: 0.294, green: 0.871, blue: 0.502) // #4ade80
+    static let accent = Agentic30BrandColor.green      // #16a34a
+    static let accentBright = Agentic30BrandColor.greenBright // #4ade80
     static let textPrimary = Color.white
     static let textSecondary = Color.white.opacity(0.65)
     static let textCardSecondary = Color.white.opacity(0.62)
@@ -29,6 +29,8 @@ enum IntakeV2Layout {
     static let contentMaxWidth: CGFloat = 1080
     static let horizontalPadding: CGFloat = 56
     static let narrowHorizontalPadding: CGFloat = 28
+    static let stepTopPadding: CGFloat = 56
+    static let footerBottomPadding: CGFloat = 36
 }
 
 // MARK: - Dash pagination
@@ -37,24 +39,13 @@ struct IntakeV2DashPagination: View {
     let current: Int      // 1...total
     let total: Int
     let label: String
+    var progressNamespace: Namespace.ID? = nil
 
     var body: some View {
         HStack(spacing: 10) {
             HStack(spacing: 6) {
                 ForEach(1...total, id: \.self) { idx in
-                    if idx == current {
-                        Capsule()
-                            .fill(.white)
-                            .frame(width: 24, height: 6)
-                    } else if idx < current {
-                        Circle()
-                            .fill(IntakeV2Color.accent)
-                            .frame(width: 6, height: 6)
-                    } else {
-                        Circle()
-                            .fill(.white.opacity(0.18))
-                            .frame(width: 6, height: 6)
-                    }
+                    marker(for: idx)
                 }
             }
             Text("\(current) / \(total) · \(label)")
@@ -66,6 +57,28 @@ struct IntakeV2DashPagination: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Step \(current) of \(total), \(label)")
         .accessibilityIdentifier("intakeV2.progress")
+    }
+
+    @ViewBuilder
+    private func marker(for idx: Int) -> some View {
+        if idx == current {
+            Capsule()
+                .fill(.white)
+                .frame(width: 24, height: 6)
+                .ifLet(progressNamespace) { view, namespace in
+                    view.matchedGeometryEffect(id: "intakeV2.progress.current", in: namespace)
+                }
+        } else if idx < current {
+            Circle()
+                .fill(IntakeV2Color.accent)
+                .frame(width: 6, height: 6)
+                .scaleEffect(1.0)
+                .transition(.scale(scale: 0.85).combined(with: .opacity))
+        } else {
+            Circle()
+                .fill(.white.opacity(0.18))
+                .frame(width: 6, height: 6)
+        }
     }
 }
 
@@ -173,6 +186,7 @@ struct IntakeV2Footer: View {
     let backDisabled: Bool
     let nextTitle: String       // "Next →" or "Start assistant →" (final)
     let nextEnabled: Bool
+    var nextVisible: Bool = true
     var nextAccessibilityIdentifier: String? = nil
     let onBack: () -> Void
     let onNext: () -> Void
@@ -196,19 +210,24 @@ struct IntakeV2Footer: View {
 
             Spacer()
 
-            Button(action: onNext) {
-                Text(nextTitle)
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundStyle(nextEnabled ? .black : .white.opacity(0.3))
-                    .padding(.horizontal, 30)
-                    .padding(.vertical, 14)
-                    .background(Capsule().fill(nextEnabled ? Color.white : .white.opacity(0.1)))
-            }
-            .buttonStyle(.plain)
-            .disabled(!nextEnabled)
-            .accessibilityLabel(nextAccessibilityLabel)
-            .ifLet(nextAccessibilityIdentifier) { view, identifier in
-                view.accessibilityIdentifier(identifier)
+            if nextVisible {
+                Button(action: onNext) {
+                    Text(nextTitle)
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .foregroundStyle(nextEnabled ? .black : .white.opacity(0.3))
+                        .padding(.horizontal, 30)
+                        .padding(.vertical, 14)
+                        .background(Capsule().fill(nextEnabled ? Color.white : .white.opacity(0.1)))
+                }
+                .buttonStyle(.plain)
+                .disabled(!nextEnabled)
+                .accessibilityLabel(nextAccessibilityLabel)
+                .ifLet(nextAccessibilityIdentifier) { view, identifier in
+                    view.accessibilityIdentifier(identifier)
+                }
+            } else {
+                Color.clear
+                    .frame(width: 112, height: 1)
             }
         }
         .padding(.top, 8)
@@ -251,6 +270,47 @@ extension View {
     }
 }
 
+struct IntakeV2PinnedStepScaffold<Content: View, Footer: View>: View {
+    @ViewBuilder let content: (_ isNarrow: Bool) -> Content
+    @ViewBuilder let footer: (_ isNarrow: Bool) -> Footer
+
+    var body: some View {
+        GeometryReader { geometry in
+            let isNarrow = geometry.size.width < 900
+            let horizontalPadding = isNarrow
+                ? IntakeV2Layout.narrowHorizontalPadding
+                : IntakeV2Layout.horizontalPadding
+
+            VStack(spacing: 0) {
+                ScrollView(.vertical) {
+                    content(isNarrow)
+                        .padding(.horizontal, horizontalPadding)
+                        .padding(.top, IntakeV2Layout.stepTopPadding)
+                        .padding(.bottom, 18)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                .scrollIndicators(.hidden)
+
+                footer(isNarrow)
+                    .padding(.horizontal, horizontalPadding)
+                    .padding(.top, 12)
+                    .padding(.bottom, IntakeV2Layout.footerBottomPadding)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background { IntakeV2Color.bg }
+            }
+            .frame(maxWidth: IntakeV2Layout.contentMaxWidth, maxHeight: .infinity, alignment: .topLeading)
+            .overlay {
+                Color.white.opacity(0.001)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Intake step shell")
+                    .accessibilityIdentifier("intakeV2.stepShell")
+                    .allowsHitTesting(false)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+    }
+}
+
 // MARK: - Flow container
 
 enum IntakeV2Step: Int, CaseIterable {
@@ -262,12 +322,20 @@ enum IntakeV2Step: Int, CaseIterable {
     case connectShowcase, readyAnalyze
 }
 
+private enum IntakeV2NavigationDirection {
+    case forward
+    case backward
+}
+
 @MainActor
 struct IntakeV2FlowView: View {
     @StateObject private var store = IntakeV2Store()
     @StateObject private var sources = IntakeV2SourceManager()
 
     @State private var step: IntakeV2Step = .bootIntro
+    @State private var navigationDirection: IntakeV2NavigationDirection = .forward
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var progressNamespace
 
     /// onComplete delivers the final store + source manager so the host can run
     /// integration logic (submit OnboardingContext, register workspace, mark intro
@@ -276,9 +344,12 @@ struct IntakeV2FlowView: View {
     var onComplete: ((IntakeV2Store, IntakeV2SourceManager) -> Void)? = nil
 
     var body: some View {
-        VStack(spacing: 0) {
+        ZStack {
             content
+                .id(step)
+                .transition(stepTransition)
         }
+        .clipped()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(IntakeV2Color.bg)
     }
@@ -289,50 +360,84 @@ struct IntakeV2FlowView: View {
             IntakeV2BootIntroView(
                 backDisabled: true,
                 onBack: {},
-                onNext: { step = .workmode }
+                onNext: { navigate(to: .workmode) },
+                progressNamespace: progressNamespace
             )
         case .workmode:
             IntakeV2WorkmodeView(
                 store: store,
-                onBack: { step = .bootIntro },
-                onNext: { step = .role }
+                onBack: { navigate(to: .bootIntro) },
+                onNext: { navigate(to: .role) },
+                progressNamespace: progressNamespace
             )
         case .role:
             IntakeV2RoleView(
                 store: store,
-                onBack: { step = .workmode },
-                onNext: { step = .stuck }
+                onBack: { navigate(to: .workmode) },
+                onNext: { navigate(to: .stuck) },
+                progressNamespace: progressNamespace
             )
         case .stuck:
             IntakeV2StuckView(
                 store: store,
-                onBack: { step = .role },
-                onNext: { step = .folderPick }
+                onBack: { navigate(to: .role) },
+                onNext: { navigate(to: .folderPick) },
+                progressNamespace: progressNamespace
             )
         case .folderPick:
             IntakeV2FolderPickView(
                 store: store,
                 sources: sources,
-                onBack: { step = .stuck },
+                onBack: { navigate(to: .stuck) },
                 onNext: {
                     store.markCompleted()
                     onWorkspacePrefetchRequested?(store, sources)
-                    step = .connectShowcase
-                }
+                    navigate(to: .connectShowcase)
+                },
+                progressNamespace: progressNamespace
             )
         case .connectShowcase:
             IntakeV2ConnectShowcaseView(
                 sources: sources,
-                onBack: { step = .folderPick },
-                onNext: { step = .readyAnalyze }
+                onBack: { navigate(to: .folderPick) },
+                onNext: { navigate(to: .readyAnalyze) },
+                progressNamespace: progressNamespace
             )
         case .readyAnalyze:
             IntakeV2ReadyAnalyzeView(
                 store: store,
                 sources: sources,
-                onBack: { step = .connectShowcase },
-                onDone: { onComplete?(store, sources) }
+                onBack: { navigate(to: .connectShowcase) },
+                onDone: { onComplete?(store, sources) },
+                progressNamespace: progressNamespace
             )
+        }
+    }
+
+    private var stepTransition: AnyTransition {
+        guard !reduceMotion else {
+            return .opacity
+        }
+
+        let insertionOffset: CGFloat = navigationDirection == .forward ? 28 : -28
+        let removalOffset: CGFloat = navigationDirection == .forward ? -18 : 18
+        return .asymmetric(
+            insertion: .offset(x: insertionOffset).combined(with: .opacity),
+            removal: .offset(x: removalOffset).combined(with: .opacity)
+        )
+    }
+
+    private var stepAnimation: Animation {
+        reduceMotion
+            ? .easeOut(duration: 0.16)
+            : .spring(response: 0.24, dampingFraction: 0.88, blendDuration: 0.02)
+    }
+
+    private func navigate(to target: IntakeV2Step) {
+        guard target != step else { return }
+        navigationDirection = target.rawValue > step.rawValue ? .forward : .backward
+        withAnimation(stepAnimation) {
+            step = target
         }
     }
 }
