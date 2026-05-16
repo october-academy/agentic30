@@ -44,9 +44,9 @@ export const FOUNDATION_DAYS = Object.freeze({
     spec_version: "v0",
     artifacts: ["SPEC.md", "day-1-pain-summary.md"],
     first_prompt: Object.freeze({
-      yesterday: "어제 채널 등록 끝냈어. runway {runway}, 과거 실패 {past_failures} — 이거 잊지 마.",
-      today: "4종 인풋에서 가장 압축된 통증 1개만 뽑아 SPEC.md v0 박아. 통증 2개 이상이면 실패야.",
-      question: "그 통증, 누가 어제 어떤 행동으로 보여줬어? 가정 말고 행동.",
+      yesterday: "{day1_yesterday}",
+      today: "{day1_today}",
+      question: "{day1_question}",
     }),
   },
   2: {
@@ -245,31 +245,60 @@ function normalizeFoundationTimestampMs(value) {
 }
 
 /**
- * Allowed dynamic variable keys for first_prompt placeholder substitution.
- * Mirrors the Agentic30FoundationPhase ontology (dynamic_variables).
+ * Single source of truth for first_prompt dynamic variables.
+ * Each entry pins a length cap so renderTemplate output stays inside the
+ * 3-section minimal contract (one line each) regardless of upstream payload.
+ *
+ * Day 2-7 keys mirror the Agentic30FoundationPhase ontology. Day 1 keys hold
+ * the full opener body (yesterday/today/question) since Day 1's template was
+ * redesigned to consume composed strings end-to-end (see CCG plan stage 1).
  */
-const ALLOWED_DYNAMIC_VARS = Object.freeze([
-  "runway",
-  "past_failures",
-  "weak_hypothesis_id",
-  "validated_or_refuted",
-  "n_quotes",
-  "weak_section",
-  "reason",
-  "impressions",
-  "clicks",
-  "signups",
-  "signal_strength",
-  "strong_section",
-  "weak_section_v3",
-]);
+const FIRST_PROMPT_VAR_SCHEMA = Object.freeze({
+  runway:               { maxLen: 80 },
+  past_failures:        { maxLen: 120 },
+  weak_hypothesis_id:   { maxLen: 40 },
+  validated_or_refuted: { maxLen: 40 },
+  n_quotes:             { maxLen: 20 },
+  weak_section:         { maxLen: 80 },
+  reason:               { maxLen: 120 },
+  impressions:          { maxLen: 20 },
+  clicks:               { maxLen: 20 },
+  signups:              { maxLen: 20 },
+  signal_strength:      { maxLen: 40 },
+  strong_section:       { maxLen: 80 },
+  weak_section_v3:      { maxLen: 80 },
+  day1_yesterday:       { maxLen: 240 },
+  day1_today:           { maxLen: 240 },
+  day1_question:        { maxLen: 200 },
+});
+
+const ALLOWED_DYNAMIC_VARS = Object.freeze(Object.keys(FIRST_PROMPT_VAR_SCHEMA));
 
 /**
- * Fallback rendered when a `{var}` placeholder is missing in dynamicVariables.
- * Stays honest about gaps instead of inventing values — the AI must press the
- * creator to fill them in. (KR4.1/4.2 evidence integrity.)
+ * Default fallback values per Foundation day. Used by renderTemplate when a
+ * variable is unset/empty so the user never sees `(아직 데이터 없음)` for
+ * Day 1's body slots. Day 2-7 still fall through to MISSING_VAR_PLACEHOLDER
+ * because their placeholders mark genuine evidence gaps the AI must press on.
+ */
+const DAY_DEFAULTS = Object.freeze({
+  1: Object.freeze({
+    day1_yesterday: "폴더 신호가 조용하네. 기록이 없으면 오늘 만드는 게 곧 역사가 돼.",
+    day1_today: "고객의 어제 행동에서 가장 압축된 통증 1개만 뽑아 SPEC.md v0 박아.",
+    day1_question: "지금 이 제품이 없어서 가장 고통받는 사람이 구체적으로 누구야? 가정 말고 행동으로.",
+  }),
+});
+
+/**
+ * Fallback rendered when a `{var}` placeholder is missing in dynamicVariables
+ * AND no day default exists. Stays honest about gaps instead of inventing
+ * values — the AI must press the creator to fill them in. (KR4.1/4.2 evidence
+ * integrity.)
  */
 const MISSING_VAR_PLACEHOLDER = "(아직 데이터 없음)";
+
+const SENTINEL_PREFIX_PATTERN = /^(?:어제|오늘|Q)\s*[:：]\s*/u;
+const CONTROL_CHAR_PATTERN = /[\u0000-\u001F\u007F\u200B-\u200F\u2028\u2029\uFEFF]/g;
+const WHITESPACE_RUN_PATTERN = /\s+/g;
 
 /**
  * Normalize the day index into the Foundation 0-7 range.
@@ -286,23 +315,25 @@ export function getFoundationDay(dayInput) {
 
 /**
  * Substitute `{var}` placeholders inside `template` using `vars` map.
- * Unknown / nullish values fall back to MISSING_VAR_PLACEHOLDER so the YC
- * partner tone never invents numbers. Whitelist-only — keys outside
- * ALLOWED_DYNAMIC_VARS are ignored.
+ * - Whitelist-only — keys outside ALLOWED_DYNAMIC_VARS are left as-is.
+ * - Unset/empty values fall back to `defaults[key]` (per-day fallback) and
+ *   then to MISSING_VAR_PLACEHOLDER.
+ * - Object values are JSON-stringified once; sanitization elsewhere ensures
+ *   primitives reach this function.
  */
-function renderTemplate(template, vars) {
+function renderTemplate(template, vars, defaults = {}) {
   if (typeof template !== "string" || template.length === 0) return "";
   return template.replace(/\{(\w+)\}/g, (match, key) => {
     if (!ALLOWED_DYNAMIC_VARS.includes(key)) return match;
     const value = vars?.[key];
     if (value === undefined || value === null || value === "") {
-      return MISSING_VAR_PLACEHOLDER;
+      return defaults[key] ?? MISSING_VAR_PLACEHOLDER;
     }
     if (typeof value === "object") {
       try {
         return JSON.stringify(value);
       } catch {
-        return MISSING_VAR_PLACEHOLDER;
+        return defaults[key] ?? MISSING_VAR_PLACEHOLDER;
       }
     }
     return String(value);
@@ -346,11 +377,15 @@ export function buildFirstPromptForDay({ day, dynamicVariables = {} } = {}) {
   const tpl = descriptor.first_prompt;
   if (!tpl) return null;
 
-  const vars = dynamicVariables && typeof dynamicVariables === "object" ? dynamicVariables : {};
+  // Always run user-supplied vars through the sanitizer before rendering so
+  // newlines / sentinel tokens / oversize strings can never break the
+  // 3-section minimal contract or the dedup fingerprint.
+  const vars = sanitizeDynamicVariables(dynamicVariables);
+  const defaults = DAY_DEFAULTS[descriptor.day] || {};
   const rendered = {
-    yesterday: renderTemplate(tpl.yesterday, vars),
-    today: renderTemplate(tpl.today, vars),
-    question: renderTemplate(tpl.question, vars),
+    yesterday: renderTemplate(tpl.yesterday, vars, defaults),
+    today: renderTemplate(tpl.today, vars, defaults),
+    question: renderTemplate(tpl.question, vars, defaults),
   };
 
   return {
@@ -559,28 +594,55 @@ export async function persistEvidenceRefsSidecar({
   return filePath;
 }
 
+/**
+ * Sanitize a single first_prompt variable value:
+ *   1) coerce non-strings (objects → JSON, primitives → String)
+ *   2) strip control chars / zero-width / line-paragraph separators / BOM
+ *   3) collapse all whitespace runs to a single space and trim
+ *   4) drop leading "어제:"/"오늘:"/"Q:" sentinels (the 3-section formatter
+ *      adds them; we must not double-render)
+ *   5) clamp length to schema.maxLen with an ellipsis on truncation
+ * Returns null when the result is empty so renderTemplate falls back to the
+ * day default or MISSING_VAR_PLACEHOLDER.
+ */
+function sanitizeVarValue(rawValue, schema) {
+  if (rawValue === undefined || rawValue === null) return null;
+  let value;
+  if (typeof rawValue === "object") {
+    try { value = JSON.stringify(rawValue); }
+    catch { return null; }
+  } else {
+    value = String(rawValue);
+  }
+  // Convert structural whitespace (CR/LF/TAB) to spaces FIRST so word
+  // boundaries survive the control-char strip below — otherwise newlines and
+  // tabs (in [\u0000-\u001F]) would be dropped silently and glue tokens.
+  // dropped silently and glue adjacent tokens together.
+  value = value.replace(/[\r\n\t]+/g, " ");
+  value = value.replace(CONTROL_CHAR_PATTERN, "");
+  value = value.replace(WHITESPACE_RUN_PATTERN, " ").trim();
+  // Strip sentinels repeatedly in case of accidental double-prefixing.
+  while (SENTINEL_PREFIX_PATTERN.test(value)) {
+    value = value.replace(SENTINEL_PREFIX_PATTERN, "");
+  }
+  value = value.trim();
+  if (value === "") return null;
+  const cap = schema?.maxLen;
+  if (typeof cap === "number" && value.length > cap) {
+    value = value.slice(0, Math.max(0, cap - 1)).trimEnd() + "…";
+  }
+  return value;
+}
+
 function sanitizeDynamicVariables(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return {};
-  const allowed = [
-    "runway",
-    "past_failures",
-    "weak_hypothesis_id",
-    "validated_or_refuted",
-    "n_quotes",
-    "weak_section",
-    "reason",
-    "impressions",
-    "clicks",
-    "signups",
-    "signal_strength",
-    "strong_section",
-    "weak_section_v3",
-  ];
   const out = {};
-  for (const key of allowed) {
-    if (input[key] !== undefined && input[key] !== null) {
-      out[key] = input[key];
-    }
+  for (const key of ALLOWED_DYNAMIC_VARS) {
+    // Object.hasOwn guards against prototype-pollution payloads that set
+    // `__proto__.day1_today` etc. via JSON.parse-of-attacker-controlled-input.
+    if (!Object.hasOwn(input, key)) continue;
+    const sanitized = sanitizeVarValue(input[key], FIRST_PROMPT_VAR_SCHEMA[key]);
+    if (sanitized !== null) out[key] = sanitized;
   }
   return out;
 }

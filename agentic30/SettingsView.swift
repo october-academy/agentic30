@@ -812,7 +812,15 @@ struct SettingsView: View {
 
             Button {
                 if provider == .gemini {
-                    viewModel.openGeminiAdcLoginInTerminal()
+                    Task { @MainActor in
+                        let opened = await viewModel.attemptOpenGeminiAdcLogin()
+                        if !opened {
+                            let brewAvailable = await Task.detached(priority: .userInitiated) {
+                                AgenticViewModel.detectBrewAvailable()
+                            }.value
+                            presentGcloudMissingAlert(brewAvailable: brewAvailable)
+                        }
+                    }
                 } else {
                     viewModel.startProviderLogin(provider)
                 }
@@ -831,6 +839,14 @@ struct SettingsView: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("settings.\(provider.rawValue).openAuthButton")
 
+            if provider == .gemini, let diagnostic = providerEnvironment(for: .gemini)?.geminiAdc, diagnostic.isGcloudMissing {
+                Text("팁: Gemini API key를 쓰면 gcloud 설치 단계를 건너뛸 수 있습니다. (aistudio.google.com/apikey)")
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("settings.gemini.byokHint")
+            }
+
             if viewModel.providerAuthInProgress == provider {
                 HStack(spacing: 8) {
                     ProgressView()
@@ -839,6 +855,59 @@ struct SettingsView: View {
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.55))
                 }
+            }
+        }
+    }
+
+    @MainActor
+    private func presentGcloudMissingAlert(brewAvailable: Bool) {
+        let alert = NSAlert()
+        alert.messageText = "Google Cloud SDK가 설치되어 있지 않습니다"
+        alert.informativeText = """
+        대부분의 경우 Gemini API key가 가장 빠릅니다 (30초·1,000 req/day 무료, aistudio.google.com/apikey).
+
+        Google Cloud SDK를 쓰려면 설치 + `gcloud auth application-default login`까지 마쳐야 ADC 로그인이 동작합니다.
+        설치 명령 예시: brew install --cask google-cloud-sdk
+        """
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Gemini API key 사용 (권장)")
+        if brewAvailable {
+            alert.addButton(withTitle: "Terminal에서 brew로 설치")
+        }
+        alert.addButton(withTitle: "Google Cloud SDK 설치 페이지 열기")
+        alert.addButton(withTitle: "취소")
+
+        let response = alert.runModal()
+        let openInstallPageURL: () -> Void = {
+            if let url = URL(string: "https://cloud.google.com/sdk/docs/install-sdk") {
+                NSWorkspace.shared.open(url)
+            }
+        }
+        let logCancelled: () -> Void = {
+            PostHogTelemetry.capture("mac_gemini_gcloud_alert_cancelled", properties: [
+                "brew_available": brewAvailable,
+            ], authSession: viewModel.macAuthSession)
+        }
+
+        if brewAvailable {
+            switch response {
+            case .alertFirstButtonReturn:
+                geminiAuthMode = AgentAuthMode.apiKey.rawValue
+            case .alertSecondButtonReturn:
+                viewModel.openGcloudBrewInstallInTerminal()
+            case .alertThirdButtonReturn:
+                openInstallPageURL()
+            default:
+                logCancelled()
+            }
+        } else {
+            switch response {
+            case .alertFirstButtonReturn:
+                geminiAuthMode = AgentAuthMode.apiKey.rawValue
+            case .alertSecondButtonReturn:
+                openInstallPageURL()
+            default:
+                logCancelled()
             }
         }
     }

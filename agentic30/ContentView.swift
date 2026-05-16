@@ -17,9 +17,19 @@ struct Day1IntroPromptModel: Hashable {
         let option: StructuredPromptOption
     }
 
+    enum DimensionDotState: Hashable { case passed, current, upcoming }
+
+    struct DimensionDot: Identifiable, Hashable {
+        let index: Int
+        let state: DimensionDotState
+        var id: Int { index }
+    }
+
     let title: String
     let signalLabel: String
     let metaLabel: String
+    let contextLabel: String
+    let ctaLabel: String
     let body: String
     let helperText: String?
     let statusLabel: String
@@ -28,6 +38,8 @@ struct Day1IntroPromptModel: Hashable {
     let rows: [TodoRow]
     let freeTextPlaceholder: String?
     let allowsFreeText: Bool
+    let previousAnswerChip: String?
+    let dimensionBreadcrumb: [DimensionDot]
 
     static func make(prompt: StructuredPromptRequest, dayNumber: Int) -> Day1IntroPromptModel? {
         guard dayNumber == 1,
@@ -47,20 +59,100 @@ struct Day1IntroPromptModel: Hashable {
             )
         }
         let visibleRowCount = rows.isEmpty ? 1 : rows.count
+        let isFollowUp = (prompt.title?.contains(" · ") ?? false)
+        // F2: when the rubric reports the user is on the last missing signal
+        // for this doc, swap the CTA to a milestone ("ICP 정의 완료") so the
+        // user sees the wrap-up coming. Otherwise follow-up cards say "다음"
+        // and only the first card says "이걸로 시작".
+        let isLastCard = prompt.generation?.isLastSignalForDoc == true
+        let ctaLabel: String = {
+            if isLastCard { return "ICP 정의 완료" }
+            if isFollowUp { return "다음" }
+            return "이걸로 시작"
+        }()
+        let contextLabel: String = {
+            if isLastCard { return "마지막 단계" }
+            if isFollowUp { return "ICP 좁히기" }
+            return "오늘의 한 가지"
+        }()
+
+        // PR1: surface the user's previous selection as a chip so each
+        // follow-up card carries forward what was already decided. Sidecar
+        // sends previousAnswerLabel (22-char slice of the response) when
+        // the rubric transitions dimensions; fall back to previousSignalLabel
+        // when the response text is empty (e.g. inline choice with no free
+        // text).
+        let previousAnswerChip: String? = {
+            let chipText = prompt.generation?.previousAnswerLabel?.nonEmpty
+                ?? prompt.generation?.previousSignalLabel?.nonEmpty
+            return chipText.map { "← \($0)" }
+        }()
+
+        // PR1: 4-dot dimension breadcrumb derived from sidecar rubric step
+        // index. Empty when sidecar didn't ship the step indices (legacy
+        // host fallback or non-ICP doc), so existing first-card flow stays
+        // untouched.
+        let dimensionBreadcrumb: [DimensionDot] = {
+            guard let total = prompt.generation?.dimensionTotal, total > 0,
+                  let current = prompt.generation?.dimensionStepIndex, current >= 1 else {
+                return []
+            }
+            return (1...total).map { idx in
+                let state: DimensionDotState
+                if idx < current { state = .passed }
+                else if idx == current { state = .current }
+                else { state = .upcoming }
+                return DimensionDot(index: idx, state: state)
+            }
+        }()
+
+        // PR1: status label gains "n/total · 차원명" when sidecar provides
+        // the dimension step indices. Without them we keep the legacy
+        // "N개 중 1개 선택" copy so the first ICP card and other docs
+        // continue to read the same way.
+        let statusLabel: String = {
+            if let total = prompt.generation?.dimensionTotal, total > 0,
+               let current = prompt.generation?.dimensionStepIndex, current >= 1 {
+                if let signalLabel = prompt.generation?.signalLabel?.nonEmpty {
+                    return "\(current)/\(total) · \(signalLabel)"
+                }
+                return "\(current)/\(total) 단계"
+            }
+            return "\(visibleRowCount)개 중 1개 선택"
+        }()
 
         return Day1IntroPromptModel(
-            title: "첫 고객 ICP를 좁힙니다.",
+            title: derivedIntroTitle(prompt: prompt, question: question),
             signalLabel: question.header.nonEmpty ?? "ICP",
             metaLabel: "Day 1",
+            contextLabel: contextLabel,
+            ctaLabel: ctaLabel,
             body: question.question,
             helperText: question.helperText?.nonEmpty ?? prompt.intro?.body?.nonEmpty,
-            statusLabel: "\(visibleRowCount) choices ready",
+            statusLabel: statusLabel,
             readyLine: rows.isEmpty ? "ready answer with context" : "ready choose an ICP path",
             question: question,
             rows: rows,
             freeTextPlaceholder: question.freeTextPlaceholder?.nonEmpty,
-            allowsFreeText: question.allowFreeText == true || question.options?.isEmpty != false
+            allowsFreeText: question.allowFreeText == true || question.options?.isEmpty != false,
+            previousAnswerChip: previousAnswerChip,
+            dimensionBreadcrumb: dimensionBreadcrumb
         )
+    }
+
+    private static func derivedIntroTitle(
+        prompt: StructuredPromptRequest,
+        question: StructuredPromptQuestion
+    ) -> String {
+        // Sidecar follow-up cards now ship "ICP · 직접 만날 사람" /
+        // "ICP · 기존의 방식" / "ICP · 고통과 시급성" titles so the user can tell
+        // which rubric dimension each card targets. Pick that up when present so
+        // the intro card title reflects the actual question instead of always
+        // saying "좁힙니다".
+        if let title = prompt.title?.nonEmpty, title.contains(" · ") {
+            return title
+        }
+        return "첫 고객 ICP를 좁힙니다."
     }
 
     static func suppressesStructuredPromptForm(prompt: StructuredPromptRequest, dayNumber: Int) -> Bool {
@@ -80,16 +172,24 @@ struct Day1IntroPromptModel: Hashable {
     }
 
     private static func optionTag(for option: StructuredPromptOption, index: Int) -> String {
+        // Pure-ASCII chips like "AGENT" / "REPEAT" / "LANDIN" are truncated
+        // nextIntent tokens that carry no information for Korean users. Suppress
+        // them so the row chip stays empty (and the chip view hides) unless the
+        // upstream tag is a meaningful Korean glyph.
         let raw = option.nextIntent?.split(separator: "_").first.map(String.init)
             ?? option.label.split(separator: " ").first.map(String.init)
-            ?? "OPT\(index + 1)"
-        let uppercased = raw.uppercased()
-        return String(uppercased.prefix(6))
+            ?? ""
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty || trimmed.unicodeScalars.allSatisfy({ $0.isASCII }) {
+            return ""
+        }
+        return String(trimmed.prefix(6))
     }
 }
 
 struct ContentView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var viewModel: AgenticViewModel
     private let surfaceOverride: AgenticSurface?
     private let openWorkspaceAction: (() -> Void)?
@@ -4314,6 +4414,9 @@ struct ContentView: View {
             : "오늘 할 일을 만들기 전에, 누구를 위해 무엇을 검증할지 먼저 정해요."
 
         return VStack(alignment: .leading, spacing: 16) {
+            if let toast = viewModel.dimensionTransitionToast {
+                workspaceFoundationDimensionTransitionToast(toast)
+            }
             HStack(alignment: .top, spacing: 13) {
                 Image(systemName: "doc.text.magnifyingglass")
                     .font(.system(size: 17, weight: .heavy))
@@ -4413,6 +4516,42 @@ struct ContentView: View {
         .accessibilityIdentifier("workspace.iddSetupSurface")
     }
 
+    @ViewBuilder
+    private func workspaceFoundationDimensionTransitionToast(
+        _ toast: AgenticViewModel.DimensionTransitionToast
+    ) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 13, weight: .heavy))
+                .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.94))
+            Text("좋아요. \(toast.from) 완료 → \(toast.to)로 넘어갑니다.")
+                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .foregroundStyle(.white.opacity(0.92))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Agentic30BrandColor.greenBright.opacity(0.10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Agentic30BrandColor.greenBright.opacity(0.30), lineWidth: 1)
+                )
+        )
+        .transition(
+            reduceMotion
+                ? .opacity
+                : .asymmetric(
+                    insertion: .offset(y: -6).combined(with: .opacity),
+                    removal: .opacity
+                )
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("workspace.iddSetup.dimensionTransitionToast")
+    }
+
     private func day1IntroPromptModel(
         for prompt: StructuredPromptRequest,
         day: AgenticCurriculumDay
@@ -4428,11 +4567,7 @@ struct ContentView: View {
         let isSubmitting = submission?.requestId == prompt.requestId
 
         return VStack(alignment: .leading, spacing: 12) {
-            workspaceDay1IntroCard(
-                model: model,
-                prompt: prompt,
-                isSubmitting: isSubmitting
-            )
+            workspaceDay1IntroCard(model: model)
 
             workspaceDay1TodoList(
                 model: model,
@@ -4449,13 +4584,9 @@ struct ContentView: View {
     }
 
     private func workspaceDay1IntroCard(
-        model: Day1IntroPromptModel,
-        prompt: StructuredPromptRequest,
-        isSubmitting: Bool
+        model: Day1IntroPromptModel
     ) -> some View {
-        let canSubmitPrompt = canSubmit(prompt) && !isSubmitting
-
-        return HStack(alignment: .top, spacing: 18) {
+        HStack(alignment: .top, spacing: 18) {
             Image(systemName: "person.crop.circle.badge.questionmark")
                 .font(.system(size: 26, weight: .heavy))
                 .foregroundStyle(Color.black.opacity(0.78))
@@ -4473,13 +4604,17 @@ struct ContentView: View {
                     Text("·")
                         .font(.system(size: 14, weight: .heavy, design: .rounded))
                         .foregroundStyle(.white.opacity(0.36))
-                    Text("오늘의 한 가지")
+                    Text(model.contextLabel)
                         .font(.system(size: 15, weight: .heavy, design: .rounded))
                         .foregroundStyle(.white.opacity(0.78))
                     Spacer(minLength: 0)
                     Text("방금")
                         .font(.system(size: 12, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.46))
+                }
+
+                if let chip = model.previousAnswerChip {
+                    workspaceDay1IntroPreviousChip(chip)
                 }
 
                 Text(model.title)
@@ -4490,6 +4625,9 @@ struct ContentView: View {
                 HStack(spacing: 8) {
                     workspaceDay1IntroBadge(model.signalLabel, isPrimary: true)
                     workspaceDay1IntroBadge(model.metaLabel, isPrimary: false)
+                    if !model.dimensionBreadcrumb.isEmpty {
+                        workspaceDay1IntroBreadcrumb(model.dimensionBreadcrumb)
+                    }
                 }
 
                 Text(model.body)
@@ -4498,37 +4636,11 @@ struct ContentView: View {
                     .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
 
-                HStack(alignment: .center, spacing: 12) {
-                    if let helperText = model.helperText {
-                        Text(helperText)
-                            .font(.system(size: 12, weight: .medium, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.46))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    Spacer(minLength: 12)
-
-                    Button {
-                        guard canSubmitPrompt else { return }
-                        submitPrompt(prompt)
-                    } label: {
-                        Label(isSubmitting ? "저장 중" : "이걸로 시작", systemImage: isSubmitting ? "hourglass" : "arrow.turn.down.left")
-                            .font(.system(size: 13, weight: .heavy, design: .rounded))
-                            .foregroundStyle(Agentic30BrandColor.greenBright.opacity(canSubmitPrompt ? 0.94 : 0.34))
-                            .padding(.horizontal, 12)
-                            .frame(height: 34)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(Agentic30BrandColor.greenBright.opacity(canSubmitPrompt ? 0.10 : 0.045))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                            .stroke(Agentic30BrandColor.greenBright.opacity(canSubmitPrompt ? 0.22 : 0.08), lineWidth: 1)
-                                    )
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!canSubmitPrompt)
-                    .accessibilityIdentifier("workspace.day1Intro.submit")
+                if let helperText = model.helperText {
+                    Text(helperText)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.46))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -4544,6 +4656,66 @@ struct ContentView: View {
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("workspace.day1Intro.card")
+    }
+
+    private func workspaceDay1IntroPreviousChip(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12, weight: .heavy, design: .rounded))
+            .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.92))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .padding(.horizontal, 10)
+            .frame(height: 24)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Agentic30BrandColor.greenBright.opacity(0.10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Agentic30BrandColor.greenBright.opacity(0.24), lineWidth: 1)
+                    )
+            )
+            .accessibilityIdentifier("workspace.day1Intro.previousChip")
+    }
+
+    private func workspaceDay1IntroBreadcrumb(_ dots: [Day1IntroPromptModel.DimensionDot]) -> some View {
+        HStack(spacing: 5) {
+            ForEach(dots) { dot in
+                Circle()
+                    .fill(dotFill(for: dot.state))
+                    .overlay(
+                        Circle().stroke(dotStroke(for: dot.state), lineWidth: 1)
+                    )
+                    .frame(width: dot.state == .current ? 9 : 7,
+                           height: dot.state == .current ? 9 : 7)
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 26)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.white.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+        )
+        .accessibilityIdentifier("workspace.day1Intro.breadcrumb")
+    }
+
+    private func dotFill(for state: Day1IntroPromptModel.DimensionDotState) -> Color {
+        switch state {
+        case .passed:   return Agentic30BrandColor.greenBright.opacity(0.74)
+        case .current:  return Agentic30BrandColor.greenBright.opacity(0.96)
+        case .upcoming: return Color.white.opacity(0.10)
+        }
+    }
+
+    private func dotStroke(for state: Day1IntroPromptModel.DimensionDotState) -> Color {
+        switch state {
+        case .passed:   return Agentic30BrandColor.greenBright.opacity(0.30)
+        case .current:  return Agentic30BrandColor.greenBright.opacity(0.45)
+        case .upcoming: return Color.white.opacity(0.14)
+        }
     }
 
     private func workspaceDay1IntroBadge(_ text: String, isPrimary: Bool) -> some View {
@@ -4568,37 +4740,25 @@ struct ContentView: View {
         isSubmitting: Bool
     ) -> some View {
         let draft = viewModel.structuredPromptDraft(for: model.question, in: prompt)
+        let hasAnswer = canSubmit(prompt)
+        let canSubmitPrompt = hasAnswer && !isSubmitting
 
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Circle().fill(Color(red: 1.00, green: 0.373, blue: 0.341)).frame(width: 10, height: 10)
-                Circle().fill(Color(red: 0.996, green: 0.737, blue: 0.180)).frame(width: 10, height: 10)
-                Circle().fill(Color(red: 0.157, green: 0.784, blue: 0.251)).frame(width: 10, height: 10)
-                Text("todo.list")
-                    .font(.system(size: 12, weight: .heavy, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.40))
-                    .padding(.leading, 8)
+                Text("이 중에서 골라요")
+                    .font(.system(size: 13, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.80))
                 Spacer()
                 Text(model.statusLabel)
-                    .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                    .font(.system(size: 12, weight: .heavy, design: .rounded))
                     .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.88))
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 14)
-            .background(Color.white.opacity(0.018))
-            .overlay(Rectangle().fill(.white.opacity(0.045)).frame(height: 1), alignment: .bottom)
+            .background(Color.white.opacity(0.025))
+            .overlay(Rectangle().fill(.white.opacity(0.06)).frame(height: 1), alignment: .bottom)
 
             VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    Text("ready")
-                        .font(.system(size: 11, weight: .heavy, design: .monospaced))
-                        .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.94))
-                    Text(model.readyLine)
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.44))
-                    Spacer()
-                }
-
                 ForEach(model.rows) { row in
                     workspaceDay1TodoRow(
                         row,
@@ -4614,10 +4774,46 @@ struct ContentView: View {
                 }
             }
             .padding(16)
+
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                Button {
+                    guard canSubmitPrompt else { return }
+                    submitPrompt(prompt)
+                } label: {
+                    Group {
+                        if isSubmitting {
+                            Label("저장 중", systemImage: "hourglass")
+                        } else if hasAnswer {
+                            Label(model.ctaLabel, systemImage: "arrow.turn.down.left")
+                        } else {
+                            Text("옵션을 골라 주세요")
+                        }
+                    }
+                    .font(.system(size: 13, weight: .heavy, design: .rounded))
+                    .foregroundStyle(Agentic30BrandColor.greenBright.opacity(canSubmitPrompt ? 0.94 : 0.34))
+                    .padding(.horizontal, 14)
+                    .frame(height: 36)
+                    .background(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(Agentic30BrandColor.greenBright.opacity(canSubmitPrompt ? 0.10 : 0.045))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .stroke(Agentic30BrandColor.greenBright.opacity(canSubmitPrompt ? 0.22 : 0.08), lineWidth: 1)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSubmitPrompt)
+                .accessibilityIdentifier("workspace.day1Intro.submit")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .overlay(Rectangle().fill(.white.opacity(0.06)).frame(height: 1), alignment: .top)
         }
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(red: 0.038, green: 0.042, blue: 0.047))
+                .fill(Color.white.opacity(0.075))
                 .overlay(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .stroke(Agentic30BrandColor.greenBright.opacity(0.20), lineWidth: 1)
@@ -4666,19 +4862,21 @@ struct ContentView: View {
 
                 Spacer(minLength: 12)
 
-                Text(row.tag)
-                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
-                    .foregroundStyle(Agentic30BrandColor.greenBright.opacity(selected ? 0.98 : 0.78))
-                    .padding(.horizontal, 9)
-                    .frame(height: 28)
-                    .background(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(Agentic30BrandColor.greenBright.opacity(selected ? 0.16 : 0.08))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .stroke(Agentic30BrandColor.greenBright.opacity(selected ? 0.34 : 0.16), lineWidth: 1)
-                            )
-                    )
+                if !row.tag.isEmpty {
+                    Text(row.tag)
+                        .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                        .foregroundStyle(Agentic30BrandColor.greenBright.opacity(selected ? 0.98 : 0.78))
+                        .padding(.horizontal, 9)
+                        .frame(height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(Agentic30BrandColor.greenBright.opacity(selected ? 0.16 : 0.08))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                        .stroke(Agentic30BrandColor.greenBright.opacity(selected ? 0.34 : 0.16), lineWidth: 1)
+                                )
+                        )
+                }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 13)

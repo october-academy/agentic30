@@ -213,7 +213,7 @@ struct IntakeV2DecisionEngine {
     }
 
     /// Make decision when scan completely failed (D3 design — graceful fallback).
-    /// Used by splash when scan errors or permission denied — template-only Decide.
+    /// Used by readyAnalyze when sidecar scan errors or permission denied — template-only Decide.
     func fallbackTemplate(intake: IntakeSnapshot) -> IntakeV2Decision {
         // Force empty scan path through main generate() so the same rules cover stuck mapping.
         return generate(intake: intake, scan: .empty)

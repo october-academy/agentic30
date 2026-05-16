@@ -6,15 +6,19 @@ import fs from "node:fs/promises";
 import {
   BIP_REQUIRED_LOCAL_DOCS,
   IDD_AMBIGUITY_THRESHOLD,
+  agentSynthesisTargetsCorrectSignal,
   approveIddSetupDocuments,
   buildAdaptiveIcpInitialInput,
   buildIddFollowupStructuredInputForDoc,
   buildIddContinuationPrompt,
   buildIddDocumentPrompt,
   calculateIddAmbiguityRubric,
+  dedupeIddAgentOptions,
   deriveLocalDocReadinessRows,
   docTypeFromLocalRowId,
   getBipSetupGateStatus,
+  iddOptionContentTokens,
+  iddOptionTokenJaccard,
   initialIddStructuredInputForDoc,
   isLegacyStaticIddUserInputRequest,
   isMissingIcpContextIntro,
@@ -115,11 +119,88 @@ test("IDD follow-up targets the highest missing signal for the current document"
   const input = buildIddFollowupStructuredInputForDoc(doc, state);
 
   assert.equal(input.toolName, "agentic30_request_user_input");
-  assert.equal(input.title, "ICP 모호함 낮추기");
+  assert.equal(input.title, "ICP · 직접 만날 사람");
+  assert.equal(input.generation?.docType, "icp");
+  assert.equal(input.generation?.signalId, "reachable_person");
+  assert.equal(input.generation?.signalLabel, "직접 만날 사람");
   assert.match(input.questions[0].helperText, /Ambiguity/);
   assert.match(input.questions[0].question, /연락하거나 관찰/);
   assert.equal(input.questions[0].allowFreeText, true);
   assert.equal(input.questions[0].requiresFreeText, false);
+});
+
+test("ICP follow-up surfaces dimension transition chip and breadcrumb metadata", () => {
+  // PR1: prevent the "1/4 뺑뺑이" UX. After 2 narrow_segment answers the
+  // rubric advances to reachable_person; the follow-up should now ship
+  // previousAnswerLabel + dimensionStepIndex + a transition line in
+  // helperText so the Mac UI can render the chip and 4-dot breadcrumb.
+  const doc = BIP_REQUIRED_LOCAL_DOCS.find((item) => item.type === "icp");
+  const after1 = recordIddStructuredResponse({}, {
+    doc,
+    provider: "codex",
+    responseText: "퇴사 후 첫 매출이 없는 macOS 1인 개발자",
+    signalId: "narrow_segment",
+    signalLabel: "좁히기",
+  });
+  const after2 = recordIddStructuredResponse(after1, {
+    doc,
+    provider: "codex",
+    responseText: "AI 코딩 도구를 매일 쓰는 풀타임 1인 개발자",
+    signalId: "narrow_segment",
+    signalLabel: "좁히기",
+  });
+  const followup = buildIddFollowupStructuredInputForDoc(doc, after2);
+
+  assert.equal(followup.generation?.signalId, "reachable_person");
+  assert.equal(followup.generation?.dimensionTransitioned, true);
+  assert.equal(followup.generation?.previousSignalLabel, "좁히기");
+  assert.equal(
+    followup.generation?.previousAnswerLabel,
+    "AI 코딩 도구를 매일 쓰는 풀타임 1인…",
+    "previousAnswerLabel should be a 22-char slice of the most recent doc transcript response",
+  );
+  assert.equal(followup.generation?.dimensionStepIndex, 2, "reachable_person is the 2nd ICP signal (1-indexed)");
+  assert.equal(followup.generation?.dimensionTotal, 4, "ICP has 4 rubric signals total");
+
+  const helperText = followup.questions[0].helperText || "";
+  assert.match(helperText, /방금/, "helperText should lead with the dimension transition line");
+  assert.ok(helperText.includes("AI 코딩 도구를 매일 쓰는 풀타임 1인…"), "transition line should quote the previous answer");
+  assert.ok(helperText.includes("직접 만날 사람"), "transition line should name the new dimension");
+  assert.match(helperText, /Ambiguity/, "ambiguity score line should still be present");
+});
+
+test("ICP rubric auto-passes narrow_segment after 2+ answers to escape infinite narrowing", () => {
+  const doc = BIP_REQUIRED_LOCAL_DOCS.find((item) => item.type === "icp");
+  const after1 = recordIddStructuredResponse({}, {
+    doc,
+    provider: "codex",
+    responseText: "출시했지만 반응이 약한 개발자",
+  });
+  const icpRubric1 = after1.ambiguityRubric.docs.find((entry) => entry.type === "icp");
+  assert.equal(icpRubric1.missingSignals[0].id, "narrow_segment", "1 answer with short label keeps narrow_segment missing");
+
+  const after2 = recordIddStructuredResponse(after1, {
+    doc,
+    provider: "codex",
+    responseText: "방문자는 있지만 가입이 없는 웹 개발자",
+  });
+  const icpRubric2 = after2.ambiguityRubric.docs.find((entry) => entry.type === "icp");
+  assert.notEqual(
+    icpRubric2.missingSignals[0]?.id,
+    "narrow_segment",
+    "after 2 narrowing answers, rubric should advance off narrow_segment to next dimension",
+  );
+  assert.ok(
+    icpRubric2.passedSignals.some((signal) => signal.id === "narrow_segment"),
+    "narrow_segment should be auto-passed once user has answered ICP card 2 times",
+  );
+
+  const followup = buildIddFollowupStructuredInputForDoc(doc, after2);
+  assert.doesNotMatch(
+    followup.questions[0].question,
+    /가장 좁은 고객 세그먼트/,
+    "follow-up card should NOT keep asking to narrow segment further",
+  );
 });
 
 test("VALUES follow-up questions ask for decisions instead of fallback evidence format", () => {
@@ -127,24 +208,28 @@ test("VALUES follow-up questions ask for decisions instead of fallback evidence 
   const cases = [
     {
       signalId: "tradeoff",
+      header: "포기할 선택",
       responseText: "고객 인터뷰 기록",
       questionPattern: /실제로 포기할 선택/,
       optionPattern: /고객 인터뷰 기록/,
     },
     {
       signalId: "rejected_option",
+      header: "거절 기준",
       responseText: "속도보다 증거를 우선한다.",
       questionPattern: /거절해야 하는 요청/,
       optionPattern: /속도|증거/,
     },
     {
       signalId: "trigger",
+      header: "적용 상황",
       responseText: "속도보다 증거를 우선하고 새 기능은 하지 않는다.",
       questionPattern: /어떤 순간에 바로 적용/,
       optionPattern: /속도|증거/,
     },
     {
       signalId: "violation_example",
+      header: "위반 예시",
       responseText: "속도보다 증거를 우선하고 새 기능은 하지 않는다. 사용자가 막히는 상황 때 이 원칙을 적용한다.",
       questionPattern: /어긴 것으로 기록/,
       optionPattern: /속도|증거/,
@@ -159,7 +244,8 @@ test("VALUES follow-up questions ask for decisions instead of fallback evidence 
     const input = buildIddFollowupStructuredInputForDoc(doc, state);
     const question = input.questions[0];
 
-    assert.equal(input.title, "VALUES 모호함 낮추기");
+    assert.equal(input.title, `VALUES · ${entry.header}`);
+    assert.equal(input.generation?.signalLabel, entry.header);
     assert.match(question.helperText, /Ambiguity/);
     assert.match(question.question, entry.questionPattern);
     assert.doesNotMatch(question.question, /이 빠진 근거를 한 줄로 보완/);
@@ -796,4 +882,383 @@ test("IDD continuation prompt embeds short-form pushback and anti-sycophancy rem
   assert.match(prompt, /Anti-Sycophancy/);
   assert.match(prompt, /흥미로운 접근이에요/);
   assert.match(prompt, /근거가 부족해요/);
+});
+
+// F1: agent post-validation — reject drift, accept on-topic synthesis.
+test("agentSynthesisTargetsCorrectSignal rejects questions that drift off the expected rubric signal", () => {
+  // narrow_segment expected, but question only talks about reachability → reject.
+  assert.equal(
+    agentSynthesisTargetsCorrectSignal({
+      question: "이번 주 DM 가능한 @handle은 누구인가요?",
+      options: [
+        { label: "이미 아는 사람", description: "이름이나 관계가 있어 바로 연락 가능합니다." },
+      ],
+      expectedSignalId: "narrow_segment",
+    }),
+    false,
+  );
+
+  // reachable_person expected and question matches → accept.
+  assert.equal(
+    agentSynthesisTargetsCorrectSignal({
+      question: "이번 주 직접 만날 사람은 누구인가요?",
+      options: [
+        { label: "전 직장 동료", description: "DM으로 인터뷰 연락 가능합니다." },
+      ],
+      expectedSignalId: "reachable_person",
+    }),
+    true,
+  );
+
+  // current_alternative expected and option text carries the keyword → accept.
+  assert.equal(
+    agentSynthesisTargetsCorrectSignal({
+      question: "이 사람은 지금 어떻게 일을 처리하나요?",
+      options: [
+        { label: "기존의 방식 그대로", description: "Notion에 메모를 복사해 씁니다." },
+      ],
+      expectedSignalId: "current_alternative",
+    }),
+    true,
+  );
+
+  // unknown signal id → conservative pass.
+  assert.equal(
+    agentSynthesisTargetsCorrectSignal({
+      question: "임의의 질문",
+      options: [],
+      expectedSignalId: "totally_made_up_signal",
+    }),
+    true,
+  );
+
+  // no expected signal id → pass through.
+  assert.equal(agentSynthesisTargetsCorrectSignal({ question: "임의의 질문" }), true);
+});
+
+// F4: dedupe helpers — semantic duplicates collapse, distinct options stay.
+test("dedupeIddAgentOptions drops semantic duplicates and preserves distinct options", () => {
+  const collapsed = dedupeIddAgentOptions([
+    { label: "AI로 MVP만 만든 개발자", description: "AI 코딩 도구로 첫 prototype은 끝냈지만 고객이 없는 개발자" },
+    { label: "AI로 제품은 만들었지만 고객이 없는 개발자", description: "AI 코딩 도구로 MVP는 만들었지만 유료 고객이 없는 개발자" },
+  ]);
+  assert.equal(collapsed.length, 1);
+
+  const preserved = dedupeIddAgentOptions([
+    { label: "시간 비용", description: "주당 낭비 시간을 적습니다." },
+    { label: "돈 비용", description: "도구비, 외주비, 놓친 매출을 적습니다." },
+    { label: "기회 비용", description: "출시 지연, 공개 실패, 신뢰 하락을 적습니다." },
+  ]);
+  assert.equal(preserved.length, 3);
+
+  // Safe with empty/null entries.
+  assert.deepEqual(
+    dedupeIddAgentOptions([null, undefined, { label: "유효한 항목", description: "유효한 설명" }]),
+    [null, undefined, { label: "유효한 항목", description: "유효한 설명" }],
+  );
+
+  // After Korean stop-suffix stripping, "개발자" reduces away — what survives
+  // is description content. Two options with semantically distinct descriptions
+  // should not collapse just because both labels start with "개발자".
+  const distinct = dedupeIddAgentOptions([
+    { label: "개발자 A", description: "macOS Codex 환경" },
+    { label: "개발자 B", description: "Windows Claude 환경" },
+  ]);
+  assert.equal(distinct.length, 2);
+});
+
+test("iddOptionContentTokens strips Korean stop suffixes and short noise", () => {
+  const tokens = iddOptionContentTokens("AI로 만든 MVP만 발표한 개발자");
+  // suffix-stripped, lowercased; ≥2 chars
+  assert.ok(tokens.has("ai") || tokens.has("mvp"));
+  // bare "개발자" should become empty after suffix strip → filtered
+  assert.equal(tokens.has("개발자"), false);
+});
+
+test("iddOptionTokenJaccard returns 0 when either side is empty", () => {
+  assert.equal(iddOptionTokenJaccard(new Set(), new Set(["a"])), 0);
+  assert.equal(iddOptionTokenJaccard(new Set(["a"]), new Set()), 0);
+});
+
+// F2/F6: follow-up generation stamps for last-signal + dimension transition.
+test("ICP follow-up stamps isLastSignalForDoc and dimensionTransitioned for the next card", () => {
+  const doc = BIP_REQUIRED_LOCAL_DOCS.find((item) => item.type === "icp");
+  // First answer: concrete narrow segment, intentionally digit-free so the
+  // shared rubric text does not accidentally auto-pass pressure_cost via the
+  // hasNumber branch.
+  const after1 = recordIddStructuredResponse({}, {
+    doc,
+    provider: "codex",
+    responseText: "유료 고객이 없는 macOS Codex 사용자인 전업 솔로 개발자",
+    signalId: "narrow_segment",
+    signalLabel: "좁히기",
+  });
+  const input1 = buildIddFollowupStructuredInputForDoc(doc, after1);
+  // After one ICP card, we should now be on reachable_person (next missing
+  // signal), with a dimension transition flag stamped.
+  assert.equal(input1.generation?.signalId, "reachable_person");
+  assert.equal(input1.generation?.dimensionTransitioned, true);
+  assert.equal(input1.generation?.previousSignalLabel, "좁히기");
+  assert.equal(input1.generation?.isLastSignalForDoc, false);
+
+  // Provide reachable_person + current_alternative content so only
+  // pressure_cost remains — that card must report isLastSignalForDoc=true.
+  let stepped = after1;
+  stepped = recordIddStructuredResponse(stepped, {
+    doc,
+    provider: "codex",
+    responseText: "이번 주 전 직장 동료 A님에게 DM으로 인터뷰 연락 가능합니다.",
+    signalId: "reachable_person",
+    signalLabel: "직접 만날 사람",
+  });
+  stepped = recordIddStructuredResponse(stepped, {
+    doc,
+    provider: "codex",
+    responseText: "현재 Notion과 스프레드시트에 인터뷰 메모를 복사해 쓰는 대안.",
+    signalId: "current_alternative",
+    signalLabel: "기존의 방식",
+  });
+  const inputLast = buildIddFollowupStructuredInputForDoc(doc, stepped);
+  assert.equal(inputLast.generation?.signalId, "pressure_cost");
+  assert.equal(inputLast.generation?.signalLabel, "고통과 시급성");
+  assert.equal(inputLast.title, "ICP · 고통과 시급성");
+  assert.equal(inputLast.generation?.isLastSignalForDoc, true);
+  assert.equal(inputLast.generation?.dimensionTransitioned, true);
+  assert.equal(inputLast.generation?.previousSignalLabel, "기존의 방식");
+});
+
+// F7: generic-noun guard — bare "개발자" repeats must NOT auto-pass narrow_segment.
+test("autoPassSignalsFromRepeatedAnswers keeps narrow_segment missing when every ICP answer is a generic noun", () => {
+  const doc = BIP_REQUIRED_LOCAL_DOCS.find((item) => item.type === "icp");
+  let state = recordIddStructuredResponse({}, {
+    doc,
+    provider: "codex",
+    responseText: "개발자",
+  });
+  state = recordIddStructuredResponse(state, {
+    doc,
+    provider: "codex",
+    responseText: "개발자",
+  });
+  const icpRubric = state.ambiguityRubric.docs.find((entry) => entry.type === "icp");
+  assert.equal(
+    icpRubric.missingSignals[0]?.id,
+    "narrow_segment",
+    "two bare 개발자 answers must keep narrow_segment alive (no auto-pass)",
+  );
+});
+
+test("autoPassSignalsFromRepeatedAnswers auto-passes when at least one answer is concrete", () => {
+  const doc = BIP_REQUIRED_LOCAL_DOCS.find((item) => item.type === "icp");
+  let state = recordIddStructuredResponse({}, {
+    doc,
+    provider: "codex",
+    responseText: "개발자",
+  });
+  state = recordIddStructuredResponse(state, {
+    doc,
+    provider: "codex",
+    responseText: "출시 후 반응 약한 1인 개발자",
+  });
+  const icpRubric = state.ambiguityRubric.docs.find((entry) => entry.type === "icp");
+  assert.ok(
+    icpRubric.passedSignals.some((signal) => signal.id === "narrow_segment"),
+    "concrete answer alongside generic noun should still auto-pass narrow_segment",
+  );
+});
+
+// Reproduces the Day 1 ICP card "2/4 · 직접 만날 사람" stuck-counter bug.
+// Sidecar-synthesized option labels rarely include the reachable_person
+// keyword set (이름/연락/dm/만날/계정/...), so signalPasses keeps failing and
+// the host re-asks the same dimension forever. The repeated-answer guard now
+// covers reachable_person/current_alternative/pressure_cost so a second click
+// on the same signal advances the rubric.
+test("ICP reachable_person auto-passes after 2 same-signal answers that miss the keyword regex", () => {
+  const doc = BIP_REQUIRED_LOCAL_DOCS.find((item) => item.type === "icp");
+  let state = recordIddStructuredResponse({}, {
+    doc,
+    provider: "codex",
+    responseText: "퇴사 후 첫 결제 없는 솔로 풀타임 개발자",
+    signalId: "narrow_segment",
+    signalLabel: "좁히기",
+  });
+  state = recordIddStructuredResponse(state, {
+    doc,
+    provider: "codex",
+    responseText: "Threads에 빌드 기록 중인 개발자",
+    signalId: "reachable_person",
+    signalLabel: "직접 만날 사람",
+  });
+  state = recordIddStructuredResponse(state, {
+    doc,
+    provider: "codex",
+    responseText: "내 글에 반응한 개발자",
+    signalId: "reachable_person",
+    signalLabel: "직접 만날 사람",
+  });
+  const icpRubric = state.ambiguityRubric.docs.find((entry) => entry.type === "icp");
+  assert.ok(
+    icpRubric.passedSignals.some((signal) => signal.id === "reachable_person"),
+    "two reachable_person clicks lacking keyword should still advance the loop",
+  );
+  const followup = buildIddFollowupStructuredInputForDoc(doc, state);
+  assert.notEqual(
+    followup.generation?.signalId,
+    "reachable_person",
+    "follow-up must advance off reachable_person to the next missing signal",
+  );
+});
+
+test("ICP reachable_person stays missing on a single same-signal answer", () => {
+  const doc = BIP_REQUIRED_LOCAL_DOCS.find((item) => item.type === "icp");
+  const state = recordIddStructuredResponse({}, {
+    doc,
+    provider: "codex",
+    responseText: "Threads에 빌드 기록 중인 개발자",
+    signalId: "reachable_person",
+    signalLabel: "직접 만날 사람",
+  });
+  const icpRubric = state.ambiguityRubric.docs.find((entry) => entry.type === "icp");
+  assert.ok(
+    icpRubric.missingSignals.some((signal) => signal.id === "reachable_person"),
+    "one answer without keyword match must not auto-pass reachable_person",
+  );
+});
+
+test("ICP reachable_person stays missing when every same-signal answer is a bare generic noun", () => {
+  const doc = BIP_REQUIRED_LOCAL_DOCS.find((item) => item.type === "icp");
+  let state = recordIddStructuredResponse({}, {
+    doc,
+    provider: "codex",
+    responseText: "개발자",
+    signalId: "reachable_person",
+    signalLabel: "직접 만날 사람",
+  });
+  state = recordIddStructuredResponse(state, {
+    doc,
+    provider: "codex",
+    responseText: "사용자",
+    signalId: "reachable_person",
+    signalLabel: "직접 만날 사람",
+  });
+  const icpRubric = state.ambiguityRubric.docs.find((entry) => entry.type === "icp");
+  assert.ok(
+    icpRubric.missingSignals.some((signal) => signal.id === "reachable_person"),
+    "two bare generic answers must keep reachable_person missing (no auto-pass)",
+  );
+});
+
+// The synthesized option list almost always packs the rubric keywords into
+// description, not label. Without this signal, every ICP follow-up signal
+// gets asked twice before the repeated-answer fallback fires.
+test("ICP reachable_person passes on a single click when the description carries the keyword", () => {
+  const doc = BIP_REQUIRED_LOCAL_DOCS.find((item) => item.type === "icp");
+  let state = recordIddStructuredResponse({}, {
+    doc,
+    provider: "codex",
+    responseText: "퇴사 후 첫 결제 없는 솔로 풀타임 개발자",
+    signalId: "narrow_segment",
+    signalLabel: "좁히기",
+  });
+  state = recordIddStructuredResponse(state, {
+    doc,
+    provider: "codex",
+    responseText: "Threads에 빌드 기록 중인 개발자",
+    responseDescription: "최근 게시글과 계정이 보여 관찰 후 DM으로 인터뷰를 요청하기 쉽습니다.",
+    signalId: "reachable_person",
+    signalLabel: "직접 만날 사람",
+  });
+  const icpRubric = state.ambiguityRubric.docs.find((entry) => entry.type === "icp");
+  assert.ok(
+    icpRubric.passedSignals.some((signal) => signal.id === "reachable_person"),
+    "single click with keyword-bearing description should advance reachable_person without the repeated-answer fallback",
+  );
+});
+
+test("ICP reachable_person stays missing on a single click when neither label nor description carries the keyword", () => {
+  const doc = BIP_REQUIRED_LOCAL_DOCS.find((item) => item.type === "icp");
+  let state = recordIddStructuredResponse({}, {
+    doc,
+    provider: "codex",
+    responseText: "퇴사 후 첫 결제 없는 솔로 풀타임 개발자",
+    signalId: "narrow_segment",
+    signalLabel: "좁히기",
+  });
+  state = recordIddStructuredResponse(state, {
+    doc,
+    provider: "codex",
+    responseText: "Threads에 빌드 기록 중인 개발자",
+    responseDescription: "최근 빌드 기록이 보이는 사람",
+    signalId: "reachable_person",
+    signalLabel: "직접 만날 사람",
+  });
+  const icpRubric = state.ambiguityRubric.docs.find((entry) => entry.type === "icp");
+  assert.ok(
+    icpRubric.missingSignals.some((signal) => signal.id === "reachable_person"),
+    "without keyword in label or description, a single click must not advance reachable_person — repeated-answer fallback must still kick in on the next click",
+  );
+});
+
+test("ICP current_alternative and pressure_cost share the repeated-answer auto-pass", () => {
+  const doc = BIP_REQUIRED_LOCAL_DOCS.find((item) => item.type === "icp");
+  let state = recordIddStructuredResponse({}, {
+    doc,
+    provider: "codex",
+    responseText: "퇴사 후 첫 결제 없는 솔로 풀타임 개발자",
+    signalId: "narrow_segment",
+    signalLabel: "좁히기",
+  });
+  state = recordIddStructuredResponse(state, {
+    doc,
+    provider: "codex",
+    responseText: "Threads에 빌드 기록 중인 개발자",
+    signalId: "reachable_person",
+    signalLabel: "직접 만날 사람",
+  });
+  state = recordIddStructuredResponse(state, {
+    doc,
+    provider: "codex",
+    responseText: "내 글에 반응한 개발자",
+    signalId: "reachable_person",
+    signalLabel: "직접 만날 사람",
+  });
+  state = recordIddStructuredResponse(state, {
+    doc,
+    provider: "codex",
+    responseText: "그냥 머리로만 정리하는 사람",
+    signalId: "current_alternative",
+    signalLabel: "기존의 방식",
+  });
+  state = recordIddStructuredResponse(state, {
+    doc,
+    provider: "codex",
+    responseText: "수첩에 손으로 적는 사람",
+    signalId: "current_alternative",
+    signalLabel: "기존의 방식",
+  });
+  let icpRubric = state.ambiguityRubric.docs.find((entry) => entry.type === "icp");
+  assert.ok(
+    icpRubric.passedSignals.some((signal) => signal.id === "current_alternative"),
+    "two current_alternative clicks lacking keyword should advance the loop",
+  );
+
+  state = recordIddStructuredResponse(state, {
+    doc,
+    provider: "codex",
+    responseText: "이대로 가면 끝장이라 느끼는 사람",
+    signalId: "pressure_cost",
+    signalLabel: "고통과 시급성",
+  });
+  state = recordIddStructuredResponse(state, {
+    doc,
+    provider: "codex",
+    responseText: "그만두고 싶을 만큼 답답한 사람",
+    signalId: "pressure_cost",
+    signalLabel: "고통과 시급성",
+  });
+  icpRubric = state.ambiguityRubric.docs.find((entry) => entry.type === "icp");
+  assert.ok(
+    icpRubric.passedSignals.some((signal) => signal.id === "pressure_cost"),
+    "two pressure_cost clicks lacking keyword/digits should advance the loop",
+  );
 });

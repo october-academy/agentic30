@@ -359,14 +359,18 @@ test("Sub-AC 4 :: dynamicVariables flow through transport (Day 1 substitution + 
     const events = [];
     ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
 
-    // ── With variables: runway + past_failures substitute end-to-end ──
+    // ── With variables: day1_yesterday/today/question substitute end-to-end ──
     const variablesSessionId = "integ-vars-day-1-with";
     ws.send(
       JSON.stringify({
         type: "foundation_first_prompt",
         sessionId: variablesSessionId,
         day: 1,
-        dynamicVariables: { runway: "6주", past_failures: "2건" },
+        dynamicVariables: {
+          day1_yesterday: "최근 7일 6주차, 코드 12커밋·문서 0커밋",
+          day1_today: "통증 1개로 SPEC.md v0 박아",
+          day1_question: "어제 결제한 사람 누구야",
+        },
       }),
     );
     const withVars = await waitForEvent(
@@ -375,28 +379,31 @@ test("Sub-AC 4 :: dynamicVariables flow through transport (Day 1 substitution + 
         event.type === "foundation_first_prompt"
         && event.sessionId === variablesSessionId,
     );
-    assert.ok(
-      withVars.firstPrompt.yesterday.includes("6주"),
-      "runway value must appear in Day 1 yesterday",
+    assert.equal(
+      withVars.firstPrompt.yesterday,
+      "최근 7일 6주차, 코드 12커밋·문서 0커밋",
+      "day1_yesterday must render verbatim",
+    );
+    assert.equal(
+      withVars.firstPrompt.today,
+      "통증 1개로 SPEC.md v0 박아",
+      "day1_today must render verbatim",
+    );
+    assert.equal(
+      withVars.firstPrompt.question,
+      "어제 결제한 사람 누구야",
+      "day1_question must render verbatim",
     );
     assert.ok(
-      withVars.firstPrompt.yesterday.includes("2건"),
-      "past_failures value must appear in Day 1 yesterday",
-    );
-    assert.ok(
-      !withVars.firstPrompt.yesterday.includes("{runway}"),
-      "{runway} placeholder must be fully consumed",
-    );
-    assert.ok(
-      !withVars.firstPrompt.yesterday.includes("{past_failures}"),
-      "{past_failures} placeholder must be fully consumed",
+      !withVars.firstPrompt.yesterday.includes("{day1_yesterday}"),
+      "{day1_yesterday} placeholder must be fully consumed",
     );
     assert.ok(
       !withVars.firstPrompt.yesterday.includes("아직 데이터 없음"),
-      "fallback placeholder must NOT appear when variables provided",
+      "MISSING placeholder must NOT appear when variables provided",
     );
 
-    // ── Without variables: missing-variable placeholder appears (no invented values) ──
+    // ── Without variables: Day 1 falls back to coach-tone defaults (DAY_DEFAULTS) ──
     const fallbackSessionId = "integ-vars-day-1-without";
     ws.send(
       JSON.stringify({
@@ -412,16 +419,22 @@ test("Sub-AC 4 :: dynamicVariables flow through transport (Day 1 substitution + 
         && event.sessionId === fallbackSessionId,
     );
     assert.ok(
-      noVars.firstPrompt.yesterday.includes("(아직 데이터 없음)"),
-      "missing-variable placeholder must surface when variables omitted",
+      !noVars.firstPrompt.yesterday.includes("(아직 데이터 없음)"),
+      "Day 1 must use DAY_DEFAULTS coach fallback, not the MISSING placeholder",
+    );
+    assert.match(
+      noVars.firstPrompt.today,
+      /SPEC\.md/,
+      "Day 1 today default must mention SPEC.md",
+    );
+    assert.match(
+      noVars.firstPrompt.question,
+      /고통/,
+      "Day 1 question default must press on the pain dimension",
     );
     assert.ok(
-      !noVars.firstPrompt.yesterday.includes("{runway}"),
-      "{runway} placeholder must be replaced even with empty vars",
-    );
-    assert.ok(
-      !noVars.firstPrompt.yesterday.includes("{past_failures}"),
-      "{past_failures} placeholder must be replaced even with empty vars",
+      !noVars.firstPrompt.yesterday.includes("{day1_yesterday}"),
+      "{day1_yesterday} placeholder must be replaced even with empty vars",
     );
 
     // ── Day 5 ad-metric variables flow through to `today` line ──

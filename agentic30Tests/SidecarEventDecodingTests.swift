@@ -446,6 +446,79 @@ struct SidecarEventDecodingTests {
         #expect(event.error == nil)
     }
 
+    @MainActor @Test func decodesWorkspaceScanResultWithDay1Context() throws {
+        // Stage 2 of the day1-discovery plan attaches a `day1Context` payload
+        // to every workspace_scan_result so Day 1 first_prompt mappers can
+        // reach scan-derived signals without re-querying the sidecar.
+        let payload = """
+        {
+          "type": "workspace_scan_result",
+          "scanRoot": "/Users/october/prj/myapp",
+          "icp": "docs/ICP.md",
+          "spec": null,
+          "values": null,
+          "designSystem": null,
+          "adr": null,
+          "goal": null,
+          "docs": null,
+          "sheet": null,
+          "onboardingHypothesis": {
+            "productName": "Agentic30",
+            "projectKind": "mac_app",
+            "targetUser": "전업 1인 개발자",
+            "problem": "무엇을 만들지 모름",
+            "purpose": null,
+            "likelyUsers": [],
+            "stage": "prototype",
+            "evidence": [],
+            "confidence": "medium",
+            "suggestedFirstQuestion": "이번 주 인터뷰할 첫 고객은?"
+          },
+          "day1Context": {
+            "schemaVersion": 1,
+            "sourceScanRoot": "/Users/october/prj/myapp",
+            "confidence": "medium",
+            "productName": "Agentic30",
+            "targetUser": "전업 1인 개발자",
+            "problem": "무엇을 만들지 모름",
+            "suggestedFirstQuestion": "이번 주 인터뷰할 첫 고객은?",
+            "foundDocCount": 1,
+            "missingExpectedDocs": ["spec", "goal", "values"]
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "workspace_scan_result")
+        #expect(event.day1Context != nil)
+        #expect(event.day1Context?.schemaVersion == 1)
+        #expect(event.day1Context?.sourceScanRoot == "/Users/october/prj/myapp")
+        #expect(event.day1Context?.confidence == "medium")
+        #expect(event.day1Context?.productName == "Agentic30")
+        #expect(event.day1Context?.targetUser == "전업 1인 개발자")
+        #expect(event.day1Context?.suggestedFirstQuestion == "이번 주 인터뷰할 첫 고객은?")
+        #expect(event.day1Context?.foundDocCount == 1)
+        #expect(event.day1Context?.missingExpectedDocs == ["spec", "goal", "values"])
+    }
+
+    @MainActor @Test func decodesWorkspaceScanResultWithoutDay1ContextIsNil() throws {
+        // Backwards compat: older sidecars (and the error path) omit the
+        // day1Context field. The decoder must keep it nil rather than throwing.
+        let payload = """
+        {
+          "type": "workspace_scan_result",
+          "scanRoot": "/Users/october/prj/myapp",
+          "icp": null
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "workspace_scan_result")
+        #expect(event.day1Context == nil)
+    }
+
     @MainActor @Test func decodesWorkspaceScanResultWithError() throws {
         let payload = """
         {
@@ -593,6 +666,83 @@ struct SidecarEventDecodingTests {
         #expect(event.diagnostics?.environment?.codex.sdk?.packageName == "@openai/codex-sdk")
         #expect(event.diagnostics?.preflight?.status == "warning")
         #expect(event.diagnostics?.preflight?.checks.first?.id == "provider-auth")
+    }
+
+    @MainActor @Test func decodesGeminiAdcDiagnosticOnMissingAuthState() throws {
+        // After commit 85b63ef, sidecar attaches a `geminiAdc` diagnostic when
+        // Gemini auth is not ready, so the Mac shell can distinguish "gcloud not
+        // installed" from "gcloud installed, ADC missing" and surface the right
+        // recovery affordance (BYOK fallback vs ADC login).
+        let payload = """
+        {
+          "type": "ready",
+          "environment": {
+            "claude": {
+              "available": false,
+              "source": "missing",
+              "message": "Sign in with Claude Code or set ANTHROPIC_API_KEY"
+            },
+            "codex": {
+              "available": false,
+              "source": "missing",
+              "message": "Sign in with Codex or set CODEX_API_KEY / OPENAI_API_KEY"
+            },
+            "gemini": {
+              "available": false,
+              "source": "missing",
+              "message": "gcloud SDK not installed — set GEMINI_API_KEY / GOOGLE_API_KEY or install Google Cloud SDK",
+              "geminiAdc": {
+                "status": "gcloud-missing",
+                "gcloudInstalled": false,
+                "adcCredentialsPresent": false
+              }
+            }
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        let gemini = try #require(event.environment?.gemini)
+        let diagnostic = try #require(gemini.geminiAdc)
+        #expect(diagnostic.status == "gcloud-missing")
+        #expect(diagnostic.isGcloudMissing == true)
+        #expect(diagnostic.needsAdcLogin == false)
+        #expect(diagnostic.gcloudInstalled == false)
+        #expect(event.environment?.claude.geminiAdc == nil)
+    }
+
+    @MainActor @Test func decodesGeminiEnvironmentWithoutGeminiAdcField() throws {
+        // Backwards compatibility: older sidecar payloads (and non-gemini providers)
+        // omit the geminiAdc field entirely. The Swift decoder must treat it as nil
+        // rather than rejecting the envelope.
+        let payload = """
+        {
+          "type": "ready",
+          "environment": {
+            "claude": {
+              "available": true,
+              "source": "local-session",
+              "message": "Local Claude login session"
+            },
+            "codex": {
+              "available": true,
+              "source": "local-session",
+              "message": "Local Codex login session"
+            },
+            "gemini": {
+              "available": true,
+              "source": "api-key",
+              "message": "API key from GEMINI_API_KEY / GOOGLE_API_KEY"
+            }
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.environment?.gemini?.available == true)
+        #expect(event.environment?.gemini?.geminiAdc == nil)
     }
 
     @MainActor @Test func decodesIddSetupGateFields() throws {

@@ -26,7 +26,7 @@ final class PetWindowController {
     /// Whether the pet window should appear on launch.
     var isEnabled: Bool {
         get {
-            // Default ON for first launch.
+            // Default OFF for first launch.
             if UserDefaults.standard.object(forKey: Self.enabledDefaultsKey) == nil {
                 if UserDefaults.standard.object(forKey: Self.legacyEnabledDefaultsKey) != nil {
                     let legacy = UserDefaults.standard.bool(forKey: Self.legacyEnabledDefaultsKey)
@@ -34,7 +34,7 @@ final class PetWindowController {
                     UserDefaults.standard.removeObject(forKey: Self.legacyEnabledDefaultsKey)
                     return legacy
                 }
-                return true
+                return false
             }
             return UserDefaults.standard.bool(forKey: Self.enabledDefaultsKey)
         }

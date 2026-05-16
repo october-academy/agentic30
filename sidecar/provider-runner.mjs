@@ -1,6 +1,7 @@
 import fsSync from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { query, listSessions } from "@anthropic-ai/claude-agent-sdk";
 import { GoogleGenAI } from "@google/genai";
@@ -21,7 +22,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sidecarRoot = path.resolve(__dirname);
 process.env.AGENTIC30_SIDECAR_ROOT ??= sidecarRoot;
 const DEFAULT_CODEX_MODEL = "gpt-5.5";
-const DEFAULT_GEMINI_MODEL = "gemini-2.5-pro";
+const DEFAULT_GEMINI_MODEL = "gemini-3.1-pro-preview";
 const MINI_ACTION_EXECUTION_ONLY_MODE = "mini_action_execution_only";
 const CODEX_REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
 const GEMINI_CAPABLE_EXECUTION_MODES = new Set([
@@ -309,15 +310,25 @@ export function getProviderAuthState(provider) {
     };
   }
 
+  if (provider === "gemini") {
+    const diagnostic = geminiAdcDiagnostic();
+    return {
+      available: false,
+      source: "missing",
+      message: diagnostic.gcloudInstalled
+        ? "Run `gcloud auth application-default login`, set GEMINI_API_KEY / GOOGLE_API_KEY, or configure Vertex AI"
+        : "gcloud SDK not installed — set GEMINI_API_KEY / GOOGLE_API_KEY or install Google Cloud SDK",
+      geminiAdc: diagnostic,
+    };
+  }
+
   return {
     available: false,
     source: "missing",
     message:
       provider === "claude"
         ? "Sign in with Claude Code or set ANTHROPIC_API_KEY"
-        : provider === "gemini"
-          ? "Set GEMINI_API_KEY / GOOGLE_API_KEY, run `gcloud auth application-default login`, or configure Vertex AI"
-          : "Sign in with Codex or set CODEX_API_KEY / OPENAI_API_KEY",
+        : "Sign in with Codex or set CODEX_API_KEY / OPENAI_API_KEY",
   };
 }
 
@@ -1875,6 +1886,52 @@ function hasGeminiLocalSession() {
       return false;
     }
   });
+}
+
+function defaultGcloudInstallPaths() {
+  return [
+    "/usr/local/bin/gcloud",
+    "/opt/homebrew/bin/gcloud",
+    "/opt/homebrew/share/google-cloud-sdk/bin/gcloud",
+    "/usr/local/share/google-cloud-sdk/bin/gcloud",
+    path.join(os.homedir(), "google-cloud-sdk/bin/gcloud"),
+    path.join(os.homedir(), ".local/google-cloud-sdk/bin/gcloud"),
+  ];
+}
+
+export function hasGcloudBinary({ installPaths, env } = {}) {
+  const paths = installPaths ?? defaultGcloudInstallPaths();
+  for (const candidate of paths) {
+    try {
+      if (fsSync.existsSync(candidate)) return true;
+    } catch {
+      /* ignore */
+    }
+  }
+  try {
+    const result = spawnSync("/usr/bin/env", ["which", "gcloud"], {
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 1500,
+      env: env ?? process.env,
+    });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+export function geminiAdcDiagnostic(opts = {}) {
+  const gcloudInstalled = hasGcloudBinary(opts);
+  const adcCredentialsPresent = hasGeminiLocalSession();
+  let status;
+  if (adcCredentialsPresent) {
+    status = "ready";
+  } else if (gcloudInstalled) {
+    status = "gcloud-present-no-adc";
+  } else {
+    status = "gcloud-missing";
+  }
+  return { status, gcloudInstalled, adcCredentialsPresent };
 }
 
 function hasConfiguredEnvironment(env = {}, mode = "custom") {

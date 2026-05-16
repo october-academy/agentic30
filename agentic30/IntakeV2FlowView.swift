@@ -3,11 +3,11 @@ import AppKit
 
 // MARK: - Intake V2 Flow — review decisions 2026-05-14
 // Boot intro → onboarding: Role → Blocker → Commitment → Evidence → Folder pick
-// then source connect → analyzing splash → first Decide card → post-onboarding Records banner
+// then source connect → ready analyze (boot.log + first Decide) → post-onboarding Records banner
 //
 // Design decisions reflected:
 //   D7 (design): step 4 folder pick uses hero band pattern + 3 option cards
-//   D8 (design): splash failure → graceful fallback (Continue anyway) + template Decide
+//   D8 (design): scan failure → graceful fallback (Continue anyway) + template Decide
 //   D9 (design): step 4 trust copy avoids overclaiming system-wide network behavior.
 //   D10 (design): post-onboarding Records banner inline below first Decide card
 
@@ -241,6 +241,7 @@ struct IntakeV2Footer: View {
     let nextTitle: String       // "Next →" or "Start assistant →" (final)
     let nextEnabled: Bool
     var nextVisible: Bool = true
+    var nextLoading: Bool = false
     var nextAccessibilityIdentifier: String? = nil
     let onBack: () -> Void
     let onNext: () -> Void
@@ -266,12 +267,21 @@ struct IntakeV2Footer: View {
 
             if nextVisible {
                 Button(action: onNext) {
-                    Text(nextTitle)
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .foregroundStyle(nextEnabled ? .black : .white.opacity(0.3))
-                        .padding(.horizontal, 30)
-                        .padding(.vertical, 14)
-                        .background(Capsule().fill(nextEnabled ? Color.white : .white.opacity(0.1)))
+                    HStack(spacing: 8) {
+                        if nextLoading {
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                                .controlSize(.small)
+                                .tint(.white.opacity(0.55))
+                                .accessibilityIdentifier("intakeV2.footerNextSpinner")
+                        }
+                        Text(nextTitle)
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                            .foregroundStyle(nextEnabled ? .black : .white.opacity(0.3))
+                    }
+                    .padding(.horizontal, 30)
+                    .padding(.vertical, 14)
+                    .background(Capsule().fill(nextEnabled ? Color.white : .white.opacity(0.1)))
                 }
                 .buttonStyle(.plain)
                 .disabled(!nextEnabled)

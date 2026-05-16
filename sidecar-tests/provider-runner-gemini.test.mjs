@@ -64,7 +64,7 @@ test("Gemini provider connection reports installed @google/genai SDK", () => {
   assert.match(state.sdk.version, /^\d+\.\d+\.\d+/);
 });
 
-test("resolveGeminiModel defaults to gemini-2.5-pro when no override is set", () => {
+test("resolveGeminiModel defaults to gemini-3.1-pro-preview when no override is set", () => {
   const previousAgentic = process.env.AGENTIC30_GEMINI_MODEL;
   const previousGemini = process.env.GEMINI_MODEL;
   const previousGenai = process.env.GOOGLE_GENAI_MODEL;
@@ -72,7 +72,7 @@ test("resolveGeminiModel defaults to gemini-2.5-pro when no override is set", ()
     delete process.env.AGENTIC30_GEMINI_MODEL;
     delete process.env.GEMINI_MODEL;
     delete process.env.GOOGLE_GENAI_MODEL;
-    assert.equal(resolveGeminiModel(), "gemini-2.5-pro");
+    assert.equal(resolveGeminiModel(), "gemini-3.1-pro-preview");
   } finally {
     restoreEnv("AGENTIC30_GEMINI_MODEL", previousAgentic);
     restoreEnv("GEMINI_MODEL", previousGemini);

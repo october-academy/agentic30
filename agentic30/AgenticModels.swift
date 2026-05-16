@@ -108,10 +108,10 @@ struct AgentModelOption: Identifiable, Hashable {
 
 enum AgentModelCatalog {
     static let claude: [AgentModelOption] = [
-        AgentModelOption(id: "claude-opus-4-7", label: "Claude Opus 4.7", provider: .claude),
+        AgentModelOption(id: "claude-opus-4-7", label: "Claude Opus 4.7 (Best)", provider: .claude, isRecommended: true),
         AgentModelOption(id: "claude-opus-4-6", label: "Claude Opus 4.6", provider: .claude),
         AgentModelOption(id: "claude-opus-4-5", label: "Claude Opus 4.5", provider: .claude),
-        AgentModelOption(id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", provider: .claude, isRecommended: true),
+        AgentModelOption(id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", provider: .claude),
         AgentModelOption(id: "claude-haiku-4-5", label: "Claude Haiku 4.5", provider: .claude),
     ]
 
@@ -127,15 +127,17 @@ enum AgentModelCatalog {
     ]
 
     static let gemini: [AgentModelOption] = [
-        AgentModelOption(id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", provider: .gemini, isRecommended: true),
+        AgentModelOption(id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro (Preview) (Best)", provider: .gemini, isRecommended: true),
+        AgentModelOption(id: "gemini-3-flash-preview", label: "Gemini 3 Flash (Preview)", provider: .gemini),
+        AgentModelOption(id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite", provider: .gemini),
+        AgentModelOption(id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", provider: .gemini),
         AgentModelOption(id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", provider: .gemini),
         AgentModelOption(id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite", provider: .gemini),
-        AgentModelOption(id: "gemini-2.0-flash", label: "Gemini 2.0 Flash", provider: .gemini),
     ]
 
-    static let defaultClaudeModelID = "claude-sonnet-4-6"
+    static let defaultClaudeModelID = "claude-opus-4-7"
     static let defaultCodexModelID = "gpt-5.5"
-    static let defaultGeminiModelID = "gemini-2.5-pro"
+    static let defaultGeminiModelID = "gemini-3.1-pro-preview"
 
     static func options(for provider: AgentProvider) -> [AgentModelOption] {
         switch provider {
@@ -393,6 +395,38 @@ struct StructuredPromptResource: Identifiable, Codable, Hashable {
 struct StructuredPromptGeneration: Codable, Hashable {
     let mode: String?
     let docType: String?
+    let signalId: String?
+    let signalLabel: String?
+    let isLastSignalForDoc: Bool?
+    let dimensionTransitioned: Bool?
+    let previousSignalLabel: String?
+    let previousAnswerLabel: String?
+    let dimensionStepIndex: Int?
+    let dimensionTotal: Int?
+
+    init(
+        mode: String? = nil,
+        docType: String? = nil,
+        signalId: String? = nil,
+        signalLabel: String? = nil,
+        isLastSignalForDoc: Bool? = nil,
+        dimensionTransitioned: Bool? = nil,
+        previousSignalLabel: String? = nil,
+        previousAnswerLabel: String? = nil,
+        dimensionStepIndex: Int? = nil,
+        dimensionTotal: Int? = nil
+    ) {
+        self.mode = mode
+        self.docType = docType
+        self.signalId = signalId
+        self.signalLabel = signalLabel
+        self.isLastSignalForDoc = isLastSignalForDoc
+        self.dimensionTransitioned = dimensionTransitioned
+        self.previousSignalLabel = previousSignalLabel
+        self.previousAnswerLabel = previousAnswerLabel
+        self.dimensionStepIndex = dimensionStepIndex
+        self.dimensionTotal = dimensionTotal
+    }
 }
 
 struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
@@ -534,6 +568,90 @@ struct WorkspaceOnboardingHypothesis: Codable, Hashable {
     let suggestedFirstQuestion: String?
 }
 
+/// Stage-2 payload bundled into every `workspace_scan_result` so Day 1's
+/// first_prompt mapper can reach scan-derived signals without re-querying the
+/// sidecar. Mirrors `buildWorkspaceDay1Context` in sidecar/index.mjs.
+///
+/// All fields are nullable: the sidecar omits them when the underlying scan
+/// produced nothing, and forwards-compat lets us add fields later without a
+/// schema bump on the wire (Mac just sees them as `nil`).
+struct WorkspaceDay1Context: Codable, Hashable {
+    let schemaVersion: Int
+    let sourceScanRoot: String
+    let confidence: String?
+    let productName: String?
+    let targetUser: String?
+    let problem: String?
+    let suggestedFirstQuestion: String?
+    let foundDocCount: Int?
+    let missingExpectedDocs: [String]?
+    let localDiscovery: WorkspaceLocalDiscovery?
+}
+
+/// Stage-3 deterministic signals from the project folder. Mirrors the
+/// `localDiscovery` block in sidecar/local-discovery.mjs. Pure data — used
+/// by WorkspaceDay1Mapper to fill Day 1 first_prompt slots without an LLM.
+struct WorkspaceLocalDiscovery: Codable, Hashable {
+    let schemaVersion: Int
+    let git: WorkspaceGitSummary
+    let project: WorkspaceProjectShape
+    let runway: WorkspaceRunwayHints
+}
+
+struct WorkspaceGitSummary: Codable, Hashable {
+    let isGitRepo: Bool
+    let head: String?
+    let firstCommitAt: String?
+    let last7DaysCommitCount: Int
+    let dirty: Bool?
+    let branch: String?
+
+    // Hand-written init so test fixtures and forwards-compat sidecar payloads
+    // can omit `head` (added in PR3). The Codable synthesised init/decoder
+    // still gets a String? optional for the wire field.
+    init(
+        isGitRepo: Bool,
+        head: String? = nil,
+        firstCommitAt: String?,
+        last7DaysCommitCount: Int,
+        dirty: Bool?,
+        branch: String?
+    ) {
+        self.isGitRepo = isGitRepo
+        self.head = head
+        self.firstCommitAt = firstCommitAt
+        self.last7DaysCommitCount = last7DaysCommitCount
+        self.dirty = dirty
+        self.branch = branch
+    }
+}
+
+struct WorkspaceProjectShape: Codable, Hashable {
+    let stacks: [String]
+    let hasReadme: Bool
+    let manifestPaths: [String]
+}
+
+struct WorkspaceRunwayHints: Codable, Hashable {
+    let projectAgeDays: Int?
+    let recentlyActive: Bool?
+}
+
+/// Stage-4/5 LLM-composed Day 1 opener. Arrives via the
+/// `workspace_day1_compose_result` event after the initial
+/// `workspace_scan_result`, so the user's first message can refresh from
+/// deterministic-only to LLM-quality once the composer returns.
+struct ComposedDay1Opening: Codable, Hashable {
+    let schemaVersion: Int
+    let yesterday: String
+    let today: String
+    let question: String
+    let confidence: Double
+    let source: String
+    let fellBackToDeterministic: Bool
+    let webUsed: Bool
+}
+
 struct IddDocPreview: Identifiable, Codable, Hashable {
     let type: String
     let title: String
@@ -573,6 +691,16 @@ struct SidecarProviderEnvironment: Codable, Hashable {
     let source: String
     let message: String
     let sdk: SidecarProviderSDKEnvironment?
+    let geminiAdc: GeminiAuthDiagnostic?
+}
+
+struct GeminiAuthDiagnostic: Codable, Hashable {
+    let status: String
+    let gcloudInstalled: Bool
+    let adcCredentialsPresent: Bool
+
+    var isGcloudMissing: Bool { status == "gcloud-missing" }
+    var needsAdcLogin: Bool { status == "gcloud-present-no-adc" }
 }
 
 struct SidecarProviderSDKEnvironment: Codable, Hashable {
@@ -819,19 +947,22 @@ extension SidecarEnvironment {
             available: false,
             source: "unknown",
             message: "Checking Claude auth...",
-            sdk: nil
+            sdk: nil,
+            geminiAdc: nil
         ),
         codex: SidecarProviderEnvironment(
             available: false,
             source: "unknown",
             message: "Checking Codex auth...",
-            sdk: nil
+            sdk: nil,
+            geminiAdc: nil
         ),
         gemini: SidecarProviderEnvironment(
             available: false,
             source: "unknown",
             message: "Checking Gemini auth...",
-            sdk: nil
+            sdk: nil,
+            geminiAdc: nil
         ),
         acp: SidecarACPEnvironment(
             available: false,

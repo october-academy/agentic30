@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import Combine
+import UserNotifications
 
 enum IntakeV2LocalFolderStatusFormatter {
     static func statusText(for source: IntakeSourceState?) -> String {
@@ -1783,6 +1784,7 @@ struct IntakeV2ReadyAnalyzeView: View {
     @State private var showExecuteNudge: Bool = false
     @State private var firstDecisionExpanded: Bool = true
     @State private var todoGenerationTask: Task<Void, Never>?
+    @State private var didNotifyAnalyzeComplete: Bool = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private enum InboxCTAState: Equatable {
@@ -1827,6 +1829,7 @@ struct IntakeV2ReadyAnalyzeView: View {
                 backDisabled: false,
                 nextTitle: inboxFooterTitle,
                 nextEnabled: inboxCTAState == .ready,
+                nextLoading: inboxCTAState != .ready,
                 nextAccessibilityIdentifier: "intakeV2.openInboxButton",
                 onBack: onBack,
                 onNext: handleInboxCTA
@@ -1834,16 +1837,61 @@ struct IntakeV2ReadyAnalyzeView: View {
         }
         .onAppear {
             synchronizeDecisionWithBootState()
+            if analysisReady {
+                didNotifyAnalyzeComplete = true
+            }
         }
         .onChange(of: bootLogState) { _, _ in
             synchronizeDecisionWithBootState()
+            notifyAnalyzeCompleteIfReady()
         }
         .onChange(of: workspaceScanResult) { _, _ in
             synchronizeDecisionWithBootState()
+            notifyAnalyzeCompleteIfReady()
         }
         .onDisappear {
             todoGenerationTask?.cancel()
             todoGenerationTask = nil
+        }
+    }
+
+    private func notifyAnalyzeCompleteIfReady() {
+        guard analysisReady, !didNotifyAnalyzeComplete else { return }
+        didNotifyAnalyzeComplete = true
+        Task { await deliverAnalyzeCompleteNotification() }
+    }
+
+    private func deliverAnalyzeCompleteNotification() async {
+        let center = UNUserNotificationCenter.current()
+        let settings = await withCheckedContinuation { continuation in
+            center.getNotificationSettings { continuation.resume(returning: $0) }
+        }
+
+        var authorized = settings.authorizationStatus == .authorized
+            || settings.authorizationStatus == .provisional
+        if settings.authorizationStatus == .notDetermined {
+            authorized = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+        }
+        guard authorized else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = "Day 1 첫 질문이 준비됐어요"
+        if store.folderURL == nil {
+            content.body = "intake 답변만으로 첫 ICP 질문을 준비했어요. Open inbox로 이어가세요."
+        } else if bootLogState.scanDidFail {
+            content.body = "scan 신호를 못 찾아 intake 답변만으로 준비했어요. Open inbox로 이어가세요."
+        } else {
+            content.body = "선택한 폴더에서 신호를 추출했어요. Open inbox로 이어가세요."
+        }
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: "agentic30.intakeV2.scanAnalyzeComplete.\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        _ = await withCheckedContinuation { (continuation: CheckedContinuation<Error?, Never>) in
+            center.add(request) { continuation.resume(returning: $0) }
         }
     }
 

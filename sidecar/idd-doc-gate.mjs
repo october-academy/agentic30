@@ -631,13 +631,61 @@ export function buildIddFollowupStructuredInputForDoc(doc, state = {}) {
   const signalId = missingSignal?.id || "missing_signal";
   const signalLabel = missingSignal?.label || "문서를 구체적으로 쓰기 위한 근거가 더 필요합니다.";
   const copy = followupCopyForSignal(doc, signalId, signalLabel, normalized);
+  const docTranscript = Array.isArray(normalized.transcript)
+    ? normalized.transcript.filter((entry) => entry?.docType === doc?.type)
+    : [];
+  const previousEntry = docTranscript.length ? docTranscript[docTranscript.length - 1] : null;
+  const previousSignalId = previousEntry?.signalId ? String(previousEntry.signalId) : null;
+  const previousSignalLabel = previousEntry?.signalLabel ? String(previousEntry.signalLabel) : null;
+  const dimensionTransitioned = Boolean(previousSignalId && previousSignalId !== signalId);
+  const isLastSignalForDoc = (docResult?.missingSignals?.length || 0) === 1;
+
+  // PR1: surface dimension progress so the Mac UI can render a 4-dot
+  // breadcrumb and a "previously chose X" chip. Without these the user
+  // sees "1/4" three times in a row even though the rubric is genuinely
+  // walking narrow_segment → reachable_person → current_alternative →
+  // pressure_cost behind the scenes.
+  const docSignalsAll = Array.isArray(IDD_RUBRIC_SIGNALS[doc?.type])
+    ? IDD_RUBRIC_SIGNALS[doc.type]
+    : [];
+  const dimensionTotal = docSignalsAll.length || null;
+  const currentSignalIdx = dimensionTotal
+    ? docSignalsAll.findIndex((entry) => entry.id === signalId)
+    : -1;
+  const dimensionStepIndex = currentSignalIdx >= 0 ? currentSignalIdx + 1 : null;
+  const previousAnswerText = String(previousEntry?.responseText || "").trim();
+  const previousAnswerLabel = dimensionTransitioned && previousAnswerText
+    ? (previousAnswerText.length > 22
+        ? `${previousAnswerText.slice(0, 22).trim()}…`
+        : previousAnswerText)
+    : null;
+
+  const ambiguityLine = `Ambiguity ${normalized.ambiguityScore}% · 목표 ${IDD_AMBIGUITY_THRESHOLD}% 이하`;
+  const transitionPrev = previousAnswerLabel || previousSignalLabel;
+  const transitionLine = dimensionTransitioned && transitionPrev
+    ? `방금 ‘${transitionPrev}’ 선택 완료. 이제 ${copy.header} 단계입니다.`
+    : null;
+  const helperText = transitionLine ? `${transitionLine}\n${ambiguityLine}` : ambiguityLine;
+
   return {
     toolName: CODEX_STRUCTURED_INPUT_TOOL,
-    title: `${doc.title} 모호함 낮추기`,
+    title: `${doc.title} · ${copy.header}`,
+    generation: {
+      mode: "host_structured",
+      docType: doc?.type || "",
+      signalId,
+      signalLabel: copy.header,
+      isLastSignalForDoc,
+      dimensionTransitioned,
+      previousSignalLabel: dimensionTransitioned ? previousSignalLabel : null,
+      previousAnswerLabel,
+      dimensionStepIndex,
+      dimensionTotal,
+    },
     questions: [
       {
         header: copy.header,
-        helperText: `Ambiguity ${normalized.ambiguityScore}% · 목표 ${IDD_AMBIGUITY_THRESHOLD}% 이하`,
+        helperText,
         question: copy.question,
         options: copy.options,
         multiSelect: false,
@@ -678,9 +726,9 @@ function followupCopyForSignal(doc, signalId, signalLabel, state = null) {
       ],
     },
     reachable_person: {
-      header: "실제 대상",
+      header: "직접 만날 사람",
       question: "이번 주 실제로 연락하거나 관찰할 수 있는 사람/계정은 누구인가요?",
-      placeholder: "예: X에서 DM 가능한 @handle, 전 직장 동료 A, Indie Hackers 글 작성자",
+      placeholder: "예: Threads에서 DM 가능한 @handle, 전 직장 동료 A, Indie Hackers 글 작성자",
       options: [
         { label: "이미 아는 사람", description: "이름이나 관계가 있어 바로 연락 가능합니다.", nextIntent: signalId },
         { label: "온라인 계정", description: "DM, 댓글, 커뮤니티로 접근 가능합니다.", nextIntent: signalId },
@@ -688,7 +736,7 @@ function followupCopyForSignal(doc, signalId, signalLabel, state = null) {
       ],
     },
     current_alternative: {
-      header: "현재 대안",
+      header: "기존의 방식",
       question: "그 사람은 지금 이 문제를 어떤 수작업, 도구 조합, 우회 방식으로 해결하고 있나요?",
       placeholder: "예: Notion에 인터뷰 메모를 쓰고 Claude에게 매번 복사해 다음 행동을 묻는다",
       options: [
@@ -698,7 +746,7 @@ function followupCopyForSignal(doc, signalId, signalLabel, state = null) {
       ],
     },
     pressure_cost: {
-      header: "압박",
+      header: "고통과 시급성",
       question: "현재 대안 때문에 드는 비용을 시간, 돈, 평판 중 하나의 숫자로 적으면 얼마인가요?",
       placeholder: "예: 주 3시간 낭비, 월 20만원 도구비, 출시 2주 지연",
       options: [
@@ -1439,16 +1487,38 @@ export function calculateIddAmbiguityRubric(state = {}) {
     ? state.drafts
     : {};
   const docs = IDD_FOUNDATION_DOCS.map((doc) => {
-    const docTranscript = transcript
-      .filter((entry) => entry?.docType === doc.type)
+    const docTranscriptEntries = transcript.filter((entry) => entry?.docType === doc.type);
+    const docTranscript = docTranscriptEntries
       .map((entry) => entry?.responseText || "")
       .filter(Boolean);
-    const text = [
-      ...(docTranscript.length ? docTranscript : [drafts[doc.type] || ""]),
+    // Gate text additionally includes responseDescription so signalPasses sees
+    // the keywords the AI option synthesizer puts in descriptions (DM, 인터뷰,
+    // 시간, 매출, ...) — labels alone almost never carry them and would force
+    // the repeated-answer auto-pass fallback to fire twice per signal. Other
+    // consumers (transcript display, ICP.md draft, previousAnswerLabel slice)
+    // keep using docTranscript which stays label-only.
+    const docGateTexts = docTranscriptEntries
+      .map((entry) => [entry?.responseText, entry?.responseDescription]
+        .map((part) => String(part || "").trim())
+        .filter(Boolean)
+        .join(" "))
+      .filter(Boolean);
+    const gateText = [
+      ...(docGateTexts.length ? docGateTexts : [drafts[doc.type] || ""]),
     ].join("\n");
     const signals = IDD_RUBRIC_SIGNALS[doc.type] || [];
-    const passedSignals = signals.filter((signal) => signalPasses(signal.id, text));
-    const missingSignals = signals.filter((signal) => !signalPasses(signal.id, text));
+    const autoPassed = autoPassSignalsFromRepeatedAnswers(
+      doc.type,
+      docTranscript.length,
+      docTranscript,
+      docTranscriptEntries,
+    );
+    const passedSignals = signals.filter((signal) =>
+      signalPasses(signal.id, gateText) || autoPassed.has(signal.id),
+    );
+    const missingSignals = signals.filter((signal) =>
+      !signalPasses(signal.id, gateText) && !autoPassed.has(signal.id),
+    );
     const score = signals.length
       ? Math.round((missingSignals.length / signals.length) * 100)
       : 0;
@@ -1495,6 +1565,121 @@ export function calculateIddAmbiguityRubric(state = {}) {
 
 function emptyIddAmbiguityRubric() {
   return calculateIddAmbiguityRubric({ transcript: [], drafts: {} });
+}
+
+function autoPassSignalsFromRepeatedAnswers(docType, answerCount, answersText = [], entries = []) {
+  // Break ICP infinite loops: when the user has already answered the same
+  // rubric signal 2+ times via clickable options, treat that signal as
+  // resolved so the host advances to the next one. Without this, sidecar-
+  // synthesized option labels (which often miss the strict keyword regex in
+  // signalPasses) keep failing and the host/agent re-asks the same dimension
+  // forever. narrow_segment had this guard from the start (label≤17 chars vs.
+  // length≥18 gate); reachable_person/current_alternative/pressure_cost get
+  // the same treatment so picking 2 reasonable options always advances.
+  //
+  // Guard: do not auto-pass when every answer is a bare generic noun like
+  // "개발자" / "사용자" — those are genuinely ambiguous ICPs that should keep
+  // the current card alive instead of falsely advancing.
+  if (docType !== "icp") return new Set();
+  const genericOnly = /^(개발자|창업자|사용자|고객|팀|회사|developer|founder|user|customer)s?\s*$/i;
+  const passed = new Set();
+
+  if (answerCount >= 2) {
+    const anyConcrete = (Array.isArray(answersText) ? answersText : []).some(
+      (text) => !genericOnly.test(String(text || "").trim()),
+    );
+    if (anyConcrete) passed.add("narrow_segment");
+  }
+
+  const safeEntries = Array.isArray(entries) ? entries : [];
+  for (const signalId of ["reachable_person", "current_alternative", "pressure_cost"]) {
+    const signalEntries = safeEntries.filter(
+      (entry) => entry && entry.signalId === signalId,
+    );
+    if (signalEntries.length < 2) continue;
+    const anyConcrete = signalEntries.some((entry) => {
+      const trimmed = String(entry?.responseText || "").trim();
+      return trimmed.length > 0 && !genericOnly.test(trimmed);
+    });
+    if (anyConcrete) passed.add(signalId);
+  }
+
+  return passed;
+}
+
+// Keyword patterns used to verify that an LLM-synthesized question actually
+// targets the rubric signal it was supposed to address. Each pattern collects
+// the dimension-specific words that appear in genuine on-topic copy (signal
+// passes regex above, dimension label, follow-up card header). Used at the
+// caller after parseIddAgentSynthesis to reject drift before showing the
+// card to the user (F1).
+const IDD_SIGNAL_KEYWORD_PATTERNS = {
+  narrow_segment: /(좁히|세그먼트|구체|상황|특정|범위)/i,
+  reachable_person: /(이름|연락|dm|인터뷰|만날|만날 사람|직접 만날|계정|@|님|동료|친구|커뮤니티|handle|person|account|reach)/i,
+  current_alternative: /(현재|대안|기존|기존의 방식|기존 방식|우회|수작업|스프레드시트|엑셀|노션|notion|slack|툴|도구|쓰고|사용|복사|status quo|alternative|manual|workflow)/i,
+  pressure_cost: /(시간|돈|비용|평판|압박|매출|원|달러|주당|월당|지연|낭비|고통|시급|cost|hour|minute|revenue)/i,
+};
+
+// Drop semantic duplicates: same scenario phrased two ways. Triggered when
+// the agent emits one option and the host fallback merges another that
+// means the same thing (e.g., "AI로 MVP만 만든 개발자" vs "AI로 제품은 만들었지만
+// 고객이 없는 개발자"). Jaccard-match on label+description content tokens
+// with Korean stop suffixes stripped.
+export function dedupeIddAgentOptions(options) {
+  if (!Array.isArray(options) || options.length <= 1) {
+    return Array.isArray(options) ? options : [];
+  }
+  const tokenSets = options.map((option) =>
+    iddOptionContentTokens(`${option?.label || ""} ${option?.description || ""}`),
+  );
+  const result = [];
+  const kept = [];
+  for (let i = 0; i < options.length; i++) {
+    const tokens = tokenSets[i];
+    const isDuplicate = kept.some((priorTokens) => iddOptionTokenJaccard(tokens, priorTokens) >= 0.4);
+    if (isDuplicate) continue;
+    kept.push(tokens);
+    result.push(options[i]);
+  }
+  return result;
+}
+
+export function iddOptionContentTokens(text) {
+  return new Set(
+    String(text || "")
+      .toLowerCase()
+      .replace(/[.,!?·…/\\(){}[\]"'`*_~+\-—]/g, " ")
+      .split(/\s+/)
+      .map((token) =>
+        token
+          .replace(/(개발자|사용자|유저|팀|회사)$/u, "")
+          .replace(/(은|는|이|가|을|를|로|으로|에|에서|과|와|도|만|의|만의|들의|에게|한테)$/u, ""),
+      )
+      .filter((token) => token.length >= 2),
+  );
+}
+
+export function iddOptionTokenJaccard(a, b) {
+  if (!a?.size || !b?.size) return 0;
+  let intersect = 0;
+  for (const token of a) if (b.has(token)) intersect += 1;
+  return intersect / (a.size + b.size - intersect);
+}
+
+export function agentSynthesisTargetsCorrectSignal({ question, options, expectedSignalId } = {}) {
+  if (!expectedSignalId) return true;
+  const pattern = IDD_SIGNAL_KEYWORD_PATTERNS[expectedSignalId];
+  if (!pattern) return true;
+  const haystack = [
+    String(question || ""),
+    ...(Array.isArray(options) ? options : []).flatMap((option) => [
+      option?.label,
+      option?.description,
+    ]),
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return pattern.test(haystack);
 }
 
 function signalPasses(signalId, text) {
@@ -1555,6 +1740,9 @@ export function recordIddStructuredResponse(state, {
   doc,
   provider = "codex",
   responseText = "",
+  responseDescription = "",
+  signalId = null,
+  signalLabel = null,
 } = {}) {
   const normalized = normalizeIddSetupState(state);
   const targetDoc = doc || nextIddFoundationDoc(normalized) || IDD_FOUNDATION_DOCS[0];
@@ -1564,6 +1752,9 @@ export function recordIddStructuredResponse(state, {
     docType: targetDoc.type,
     provider,
     responseText: String(responseText || "").trim(),
+    responseDescription: String(responseDescription || "").trim(),
+    signalId: signalId ? String(signalId) : null,
+    signalLabel: signalLabel ? String(signalLabel) : null,
     createdAt: now,
   };
   const transcript = [...normalized.transcript, transcriptEntry];

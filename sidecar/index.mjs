@@ -24,6 +24,8 @@ import {
 import { createTelemetryClient } from "./telemetry.mjs";
 import { createPetHooks } from "./pet-hooks.mjs";
 import { getCachedBipContext } from "./context-cache.mjs";
+import { collectLocalDiscovery } from "./local-discovery.mjs";
+import { composeDay1Opening } from "./compose-day1-opening.mjs";
 import {
   MINI_ACTION_EXECUTION_ONLY_INTENT,
   classifyChatExecutionRoute as classifyChatExecutionRouteWithState,
@@ -109,6 +111,7 @@ import {
 import {
   BIP_REQUIRED_LOCAL_DOCS,
   IDD_FOUNDATION_DOCS,
+  agentSynthesisTargetsCorrectSignal,
   approveIddSetupDocuments,
   buildIddApprovalSummary,
   buildIddFollowupStructuredInputForDoc,
@@ -116,6 +119,7 @@ import {
   buildIddDocumentPrompt,
   buildIddSetupGateStatus,
   decorateIcpStructuredInput,
+  dedupeIddAgentOptions,
   deriveLocalDocReadinessRows,
   docTypeFromLocalRowId,
   genericIddUserFacingTitle,
@@ -1061,6 +1065,10 @@ async function handleClientMessage(socket, payload) {
         sessionId: payload.sessionId,
         day: dayDescriptor.day,
         firstPrompt,
+        // PR2 (P1a): echo richness bucket so Mac can decide whether this
+        // payload should replace an earlier inject. 0 means "no richness
+        // gating requested" — handler then uses base-key dedup.
+        richnessBucket: Number.isFinite(payload.richnessBucket) ? payload.richnessBucket : 0,
     });
       return;
     }
@@ -1187,6 +1195,21 @@ async function handleClientMessage(socket, payload) {
       let iddContinuationDocTypeForRun = iddContinuationDocType;
       let iddContinuationTerminal = false;
       const userResponseText = formatStructuredPromptResponse(response);
+      // Resolve the picked option(s) back to their description text so the IDD
+      // gate sees label + description in calculateIddAmbiguityRubric. Labels
+      // alone almost never carry the rubric keywords; descriptions reliably
+      // do, so this lets a single click advance the signal instead of always
+      // needing the repeated-answer auto-pass fallback.
+      const userResponseDescription = collectSelectedOptionDescriptions(
+        session.pendingUserInput,
+        response,
+      );
+      // Capture signalId/signalLabel from the structured input the user is
+      // answering so the transcript entry can carry rubric-dimension lineage
+      // for the next follow-up's dimension-transition stamp (F6).
+      const answeredGeneration = session.pendingUserInput?.generation || null;
+      const answeredSignalId = answeredGeneration?.signalId ? String(answeredGeneration.signalId) : null;
+      const answeredSignalLabel = answeredGeneration?.signalLabel ? String(answeredGeneration.signalLabel) : null;
       broadcastIddSubmitProgress("accepted", "답변 저장됨");
       if (userResponseText) {
         markWorkspaceSetupFirstInput("structured_input");
@@ -1230,6 +1253,9 @@ async function handleClientMessage(socket, payload) {
             doc: completedDoc,
             provider: session.provider,
             responseText: userResponseText,
+            responseDescription: userResponseDescription,
+            signalId: answeredSignalId,
+            signalLabel: answeredSignalLabel,
           }),
         );
         const nextDoc = selectNextIddAdaptiveDoc(state.iddSetup, completedDoc);
@@ -5262,6 +5288,26 @@ async function synthesizeIddQuestionWithSidecarAgent(session, doc, fallbackInput
     if (!structuredInput) {
       throw new Error("Agent synthesis returned no valid structured question.");
     }
+    // F1: reject agent-synthesized cards that drifted off the rubric signal
+    // the follow-up was supposed to address. The HARD TARGETING prompt rule
+    // is instruction-only; a runtime keyword check guarantees the user never
+    // sees another narrow_segment card when the rubric wants reachability or
+    // pressure-cost. On reject we throw — the parent catch returns null and
+    // the caller automatically falls back to the host_structured card.
+    const expectedSignalId = fallbackInput?.generation?.signalId || null;
+    if (expectedSignalId && !agentSynthesisTargetsCorrectSignal({
+      question: structuredInput.questions?.[0]?.question,
+      options: structuredInput.questions?.[0]?.options,
+      expectedSignalId,
+    })) {
+      telemetry.captureEvent("mac_sidecar_idd_agent_dimension_drift_rejected", {
+        session_id: session.id,
+        doc_type: doc.type,
+        provider: session.provider,
+        expected_signal_id: expectedSignalId,
+      });
+      throw new Error(`Agent synthesis drifted off expected signal ${expectedSignalId}.`);
+    }
     telemetry.captureEvent("mac_sidecar_idd_agent_synthesis_completed", {
       session_id: session.id,
       doc_type: doc.type,
@@ -5386,6 +5432,9 @@ async function buildIddAgentSynthesisPrompt(doc, fallbackInput, {
     followup
       ? "- This is a follow-up. Use the user's previous answer and the missing rubric signals below to ask the next necessary decision. Do not repeat the previous question or option labels."
       : "- This is the first card for this document. Use workspace evidence to make the first decision concrete.",
+    followup
+      ? "- HARD TARGETING: your question MUST address the FIRST entry in currentDocRubric.missingSignals (id and label). Do NOT keep narrowing a signal that already appears in passedSignals. If missingSignals[0].id is reachable_person, ask about reachability (이름·계정·DM 가능성). If current_alternative, ask how the segment currently works around the problem. If pressure_cost, ask about time/money/reputation cost. Switching dimension is the goal — repeating the same dimension wastes the user's interview turn."
+      : "",
     "- Do not ask about onboarding, workspace permissions, local file access, provider execution, implementation, or setup trust.",
     "- Do not ask generic questions like '이번 주 바로 인터뷰할 첫 고객은 누구인가요?' unless the Agentic30 ICP context is explicitly embedded in the same sentence.",
     "- Keep the question under 130 Korean characters when possible.",
@@ -5394,11 +5443,13 @@ async function buildIddAgentSynthesisPrompt(doc, fallbackInput, {
     "- If platform fit matters, put it in helperText or option descriptions, not in every label.",
     brief.questionShapeRule,
     "- Provide 2-4 project-specific options. Free text is provided by the host UI, so do not add a direct-input option.",
+    "- Options must be SEMANTICALLY DISTINCT scenarios. Two options that share more than two content keywords (e.g., both about 'AI로 만든 / 고객 없는' or both about '출시 후 반응 약함') are duplicates — merge them into one or replace one with a different angle.",
     "- Options must name concrete choices, not abstract criteria.",
     "- For follow-ups, every option must be derived from the previous answer, workspace evidence, or the named missing signal. Do not use generic labels like 새 기능 보류, 자동화 보류, 숫자/기준, 실제 사람/상황, 리스크/실패 조건 unless the previous answer itself used that exact concrete choice.",
     brief.optionRule,
     "- Option labels should be short and natural, ideally under 22 Korean characters.",
     "- Avoid awkward literal phrases like 'N번째 제품 실패한', 'macOS 개발자', or '세그먼트부터 시작'. Rewrite them as natural customer language.",
+    "- freeTextPlaceholder must invite a concrete behavioral example (one person + one observed action + one specific number/place) rather than a paraphrase of the option labels. Bad: '예: Threads에 랜딩을 올렸지만 방문만 있고 가입이 없는 1인 개발자' (just rewrites the segment). Good: '예: A씨가 어제 Threads에 랜딩을 올렸는데 3시간 동안 방문 240명, 가입 0명' (concrete person + verb + numbers). Korean creators reach the indie/maker audience on Threads, not X — prefer Threads in any platform example.",
     "- Return Korean UI copy.",
     "- Return exactly the compact schema below. Do not create multiple questions.",
     "",
@@ -5491,12 +5542,30 @@ function parseIddAgentSynthesis(text, doc, fallbackInput = null) {
   if (!question || typeof question !== "object") return null;
   const normalizedQuestion = normalizeIddAgentQuestion(question);
   if (!normalizedQuestion) return null;
+  // PR1: when an LLM-synthesized card replaces the host fallback, keep the
+  // dimension/transition metadata so the Mac UI still renders the chip,
+  // breadcrumb, and "n/total · signalLabel" status.
+  const fallbackGen = fallbackInput?.generation && typeof fallbackInput.generation === "object"
+    ? fallbackInput.generation
+    : null;
   const structuredInput = {
     toolName: CODEX_STRUCTURED_INPUT_TOOL,
     title: cleanShortText(parsed.title, 80) || `${doc.title} 1/4`,
     generation: {
       mode: "sidecar_agent_synthesized",
       docType: doc.type,
+      ...(fallbackGen
+        ? {
+            signalId: fallbackGen.signalId ?? undefined,
+            signalLabel: fallbackGen.signalLabel ?? undefined,
+            isLastSignalForDoc: fallbackGen.isLastSignalForDoc ?? undefined,
+            dimensionTransitioned: fallbackGen.dimensionTransitioned ?? undefined,
+            previousSignalLabel: fallbackGen.previousSignalLabel ?? undefined,
+            previousAnswerLabel: fallbackGen.previousAnswerLabel ?? undefined,
+            dimensionStepIndex: fallbackGen.dimensionStepIndex ?? undefined,
+            dimensionTotal: fallbackGen.dimensionTotal ?? undefined,
+          }
+        : {}),
     },
     questions: [normalizedQuestion],
   };
@@ -5506,14 +5575,15 @@ function parseIddAgentSynthesis(text, doc, fallbackInput = null) {
 function normalizeIddAgentQuestion(question) {
   const questionText = cleanShortText(question.question, 220);
   const options = Array.isArray(question.options)
-    ? question.options
-        .map((option) => ({
-          label: cleanShortText(option?.label, 64),
-          description: cleanShortText(option?.description, 110),
-          nextIntent: cleanToken(option?.nextIntent) || "project_specific_icp",
-        }))
-        .filter((option) => option.label && option.description && !isOtherTextOptionLabel(option.label))
-        .slice(0, 4)
+    ? dedupeIddAgentOptions(
+        question.options
+          .map((option) => ({
+            label: cleanShortText(option?.label, 64),
+            description: cleanShortText(option?.description, 110),
+            nextIntent: cleanToken(option?.nextIntent) || "project_specific_icp",
+          }))
+          .filter((option) => option.label && option.description && !isOtherTextOptionLabel(option.label)),
+      ).slice(0, 4)
     : [];
   if (!questionText || options.length < 2) return null;
   return {
@@ -5560,13 +5630,14 @@ function salvageIddAgentQuestionObject(parsed, fallbackInput) {
     options.push(option);
     if (options.length >= 4) break;
   }
+  const dedupedOptions = dedupeIddAgentOptions(options).slice(0, 4);
   return {
     header: cleanShortText(parsed.header, 40) || fallbackQuestion.header || "첫 고객",
     helperText: cleanShortText(parsed.helperText || parsed.learning_goal || parsed.learningGoal || parsed.why_it_matters || parsed.whyItMatters, 180)
       || fallbackQuestion.helperText
       || "프로젝트 맥락에서 첫 고객 후보 하나만 고릅니다.",
     question: questionText,
-    options,
+    options: dedupedOptions,
     multiSelect: false,
     allowFreeText: true,
     requiresFreeText: false,
@@ -6026,6 +6097,10 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
   try {
     broadcastWorkspaceScanProgress(scanRoot, "Checking common doc filenames locally...");
     const localResult = await findWorkspaceDocsLocally(scanRoot);
+    // Stage-3 deterministic local signals — git activity, project shape,
+    // runway hints. Pure read; absorbs all errors so a non-git folder still
+    // produces a stable shape.
+    const localDiscovery = await collectLocalDiscovery(scanRoot);
     await appendWorkspaceScanVisibleAnswer({
       sessionId,
       prompt,
@@ -6066,7 +6141,22 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
         docs: localResult.docs || null,
         sheet: localResult.sheet || null,
         onboardingHypothesis: localOnboardingHypothesis,
+        day1Context: buildWorkspaceDay1Context({
+          scanRoot,
+          hypothesis: localOnboardingHypothesis,
+          scanResult: localResult,
+          localDiscovery,
+        }),
     });
+      triggerDay1ComposeBroadcast({
+        scanRoot,
+        day1Context: buildWorkspaceDay1Context({
+          scanRoot,
+          hypothesis: localOnboardingHypothesis,
+          scanResult: localResult,
+          localDiscovery,
+        }),
+      });
       return;
     }
     broadcastWorkspaceScanProgress(
@@ -6129,6 +6219,21 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
       docs: merged.docs || null,
       sheet: merged.sheet || null,
     onboardingHypothesis,
+      day1Context: buildWorkspaceDay1Context({
+        scanRoot,
+        hypothesis: onboardingHypothesis,
+        scanResult: merged,
+        localDiscovery,
+      }),
+    });
+    triggerDay1ComposeBroadcast({
+      scanRoot,
+      day1Context: buildWorkspaceDay1Context({
+        scanRoot,
+        hypothesis: onboardingHypothesis,
+        scanResult: merged,
+        localDiscovery,
+      }),
     });
   } catch (error) {
   telemetry.captureException(error, {
@@ -6520,6 +6625,89 @@ function countWorkspaceScanResults(result) {
     result.docs,
     result.sheet,
   ].filter(Boolean).length;
+}
+
+const WORKSPACE_DAY1_CONTEXT_SCHEMA_VERSION = 1;
+const WORKSPACE_DAY1_EXPECTED_DOCS = Object.freeze(["icp", "spec", "goal", "values"]);
+
+/**
+ * Stage-2 helper: collapse the workspace-scan output + onboarding hypothesis
+ * into the Day 1 context payload Mac uses to fill {day1_yesterday/today/
+ * question}. No new agent calls — this is pure data shaping over fields the
+ * existing scan already produces. Keeps the foundation_first_prompt path
+ * stateless on the sidecar side; Mac maps this struct → dynamicVariables in
+ * stage 3.
+ */
+/**
+ * Stage-5 fire-and-forget composer trigger. Runs composeDay1Opening with the
+ * SDK's `query` (or skips when in test stub mode) and emits a separate
+ * `workspace_day1_compose_result` event so the initial scan broadcast is not
+ * blocked by the LLM call. Web tools stay opt-in via AGENTIC30_DISCOVERY_WEB.
+ */
+function triggerDay1ComposeBroadcast({ scanRoot, day1Context, deterministicVariables = {} }) {
+  if (!scanRoot || !day1Context) return;
+  // Skip the live LLM call in stubbed test runs so the WebSocket integration
+  // tests stay deterministic. The deterministic mapper already covers Day 1.
+  if (process.env.AGENTIC30_TEST_STUB_PROVIDER === "1") return;
+  const enableWeb = process.env.AGENTIC30_DISCOVERY_WEB === "1";
+  // Fire-and-forget; never let composer failures bubble into the scan path.
+  Promise.resolve()
+    .then(() => composeDay1Opening({
+      workspaceRoot: scanRoot,
+      context: day1Context,
+      // Sidecar doesn't keep onboarding answers; Mac's mapper handles that
+      // when it merges composedOpening with its local OnboardingContext.
+      onboarding: null,
+      deterministicVariables,
+      queryImpl: query,
+      enableWeb,
+    }))
+    .then((result) => {
+      if (!result) return;
+      broadcast({
+        type: "workspace_day1_compose_result",
+        scanRoot,
+        composedOpening: {
+          schemaVersion: result.schemaVersion,
+          yesterday: result.yesterday,
+          today: result.today,
+          question: result.question,
+          confidence: result.confidence,
+          source: result.source,
+          fellBackToDeterministic: result.fellBackToDeterministic,
+          webUsed: result.webUsed,
+        },
+      });
+    })
+    .catch((error) => {
+      telemetry.captureException(error, {
+        operation: "triggerDay1ComposeBroadcast",
+        scan_root: scanRoot,
+      });
+    });
+}
+
+function buildWorkspaceDay1Context({ scanRoot, hypothesis, scanResult, localDiscovery = null }) {
+  if (!scanRoot) return null;
+  const docs = scanResult || {};
+  const h = hypothesis || {};
+  const trimmedString = (value) => {
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    return trimmed === "" ? null : trimmed;
+  };
+  return {
+    schemaVersion: WORKSPACE_DAY1_CONTEXT_SCHEMA_VERSION,
+    sourceScanRoot: scanRoot,
+    confidence: trimmedString(h.confidence),
+    productName: trimmedString(h.productName),
+    targetUser: trimmedString(h.targetUser),
+    problem: trimmedString(h.problem),
+    suggestedFirstQuestion: trimmedString(h.suggestedFirstQuestion),
+    foundDocCount: countWorkspaceScanResults(docs),
+    missingExpectedDocs: WORKSPACE_DAY1_EXPECTED_DOCS.filter((key) => !docs[key]),
+    localDiscovery: localDiscovery || null,
+  };
 }
 
 async function runCreateDoc(docRoot, docType) {
@@ -7667,6 +7855,39 @@ function formatStructuredPromptResponse(response) {
     lines.push(parts.join(" — "));
   }
   return lines.join("\n");
+}
+
+// Resolve descriptions for whichever options the user clicked. The sidecar
+// keeps the prompt object (with full option label+description pairs) on the
+// session up until submit, but the client only sends back labels. Looking the
+// descriptions up here lets the IDD rubric gate see the keyword-rich text
+// instead of the bare label, so a single deliberate click can advance the
+// signal without falling back to the repeated-answer auto-pass.
+function collectSelectedOptionDescriptions(pendingUserInput, response) {
+  if (!pendingUserInput || !response) return "";
+  const questions = Array.isArray(pendingUserInput.questions) ? pendingUserInput.questions : [];
+  const lookup = new Map();
+  for (const question of questions) {
+    const options = Array.isArray(question?.options) ? question.options : [];
+    for (const option of options) {
+      const label = typeof option?.label === "string" ? option.label.trim() : "";
+      const description = typeof option?.description === "string" ? option.description.trim() : "";
+      if (!label || !description) continue;
+      if (!lookup.has(label)) lookup.set(label, description);
+    }
+  }
+  if (lookup.size === 0) return "";
+  const descriptions = [];
+  for (const entry of response.responses || []) {
+    const selectedOptions = Array.isArray(entry?.selectedOptions) ? entry.selectedOptions : [];
+    for (const option of selectedOptions) {
+      const label = typeof option === "string" ? option.trim() : "";
+      if (!label || isOtherTextOptionLabel(label)) continue;
+      const description = lookup.get(label);
+      if (description) descriptions.push(description);
+    }
+  }
+  return descriptions.join(" ");
 }
 
 async function loadSessions() {

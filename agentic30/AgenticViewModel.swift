@@ -469,6 +469,11 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var scanProgressMessage = ""
     @Published private(set) var scanProgressLogs: [String] = []
     @Published var scanResult: WorkspaceScanResult?
+    /// Stage-4/5 LLM-composed Day 1 opener delivered separately from the
+    /// initial workspace_scan_result so the user's first message can refresh
+    /// once the composer returns. WorkspaceDay1Mapper prefers this over the
+    /// deterministic mapper output when it carries higher confidence.
+    @Published var composedDay1Opening: ComposedDay1Opening?
     @Published private(set) var isCreatingDoc: String?
     @Published private(set) var docCreationLogs: [String] = []
     @Published var lastDocCreated: (type: String, path: String)?
@@ -496,6 +501,12 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var iddSetupError: IddSetupError?
     @Published private(set) var bipTokenExpired: String?
     @Published private(set) var bipMissionProgress: BipMissionProgress?
+    // F6: transient banner displayed in the Foundation surface when the IDD
+    // rubric advances from one signal (e.g. 좁히기) to the next (e.g. 직접 만날
+    // 사람). The sidecar stamps `generation.dimensionTransitioned` on follow-up
+    // cards; on receipt the ViewModel sets the toast and a background task
+    // clears it 3 seconds later.
+    @Published private(set) var dimensionTransitionToast: DimensionTransitionToast?
     // R4 — Day 30 schema-invalid records that the sidecar quarantined. Empty
     // until `requestQuarantineList()` resolves; refreshed on each restore.
     @Published private(set) var quarantineFiles: [QuarantineFileWithDump] = []
@@ -550,6 +561,7 @@ final class AgenticViewModel: ObservableObject {
         let docs: String?
         let sheet: String?
         let onboardingHypothesis: WorkspaceOnboardingHypothesis?
+        let day1Context: WorkspaceDay1Context?
         let error: String?
 
         var foundArtifactPaths: [String] {
@@ -596,6 +608,13 @@ final class AgenticViewModel: ObservableObject {
     /// Keys mirror `injectedFoundationFirstPromptKeys` so the request side and
     /// the inject side share a single naming convention.
     private var pendingFoundationFirstPromptKeys = Set<String>()
+    /// PR2 (P1a): per-session record of the richest Day 1 opener we have
+    /// already injected. Lets a later richer payload (LLM compose result,
+    /// freshly populated day1Context) supersede an earlier deterministic-only
+    /// inject by reusing the stable deterministic messageId. Key shape:
+    /// "<sessionId>:day-1". Values are richness buckets (already debounced
+    /// at the request side, see WorkspaceDay1Mapper.richnessScore).
+    private var lastInjectedDay1RichnessBucket: [String: Int] = [:]
 
     private enum BipRequestedAction: Hashable {
         case refreshEvidence
@@ -698,10 +717,56 @@ final class AgenticViewModel: ObservableObject {
             return nil
         }
         let result = markFoundationDayCompleted(completedDay)
-        if result.unlockedDay == 2 {
-            requestFoundationFirstPrompt(day: result.unlockedDay)
+        if result.unlockedDay == 1 {
+            maybeRequestDay1FirstPrompt(trigger: .dayUnlocked)
+        } else if result.unlockedDay == 2 {
+            requestFoundationFirstPrompt(day: 2)
         }
         return result
+    }
+
+    /// Stage-5 trigger gate. Multiple events can ask Day 1's first prompt to
+    /// be (re-)broadcast — Day 0 completion, workspace_scan_result arrival,
+    /// workspace_day1_compose_result arrival, session_created, ready. The
+    /// gate computes the current richness, debounces by bucket, and lets the
+    /// `requestFoundationFirstPrompt` key suffix decide whether the call goes
+    /// through or short-circuits via `pending/injected` sets.
+    enum Day1FirstPromptTrigger: String {
+        case dayUnlocked
+        case workspaceScanResult
+        case workspaceDay1ComposeResult
+        case sessionCreated
+        case ready
+    }
+
+    func maybeRequestDay1FirstPrompt(trigger: Day1FirstPromptTrigger) {
+        let vars = WorkspaceDay1Mapper.dynamicVariables(
+            scanResult: scanResult,
+            composedOpening: composedDay1Opening,
+            onboarding: onboardingContext
+        )
+        let richness = WorkspaceDay1Mapper.richnessScore(
+            scanResult: scanResult,
+            composedOpening: composedDay1Opening
+        )
+        // Bucket by 25 so small score drift across triggers doesn't churn keys.
+        let bucket = (richness / 25) * 25
+        requestFoundationFirstPrompt(
+            day: 1,
+            dynamicVariables: vars.isEmpty ? nil : vars,
+            richnessBucket: bucket
+        )
+        PostHogTelemetry.capture(
+            "mac_day1_first_prompt_trigger",
+            properties: [
+                "trigger": trigger.rawValue,
+                "richness": richness,
+                "bucket": bucket,
+                "has_composed_opening": composedDay1Opening != nil,
+                "has_day1_context": scanResult?.day1Context != nil,
+            ],
+            authSession: macAuthSession
+        )
     }
 
     init(
@@ -1637,8 +1702,18 @@ final class AgenticViewModel: ObservableObject {
     /// Stable key used by both the request side and the inject side so the
     /// idempotency invariant ("one first-prompt per session-day pair") is
     /// expressed in one place. Pure function, exposed `internal` for tests.
-    static func foundationFirstPromptKey(sessionId: String, day: Int) -> String {
-        "\(sessionId):day-\(day)"
+    ///
+    /// Stage-5 richness suffix: when `richnessBucket > 0` the key encodes the
+    /// bucket so a richer payload (LLM compose result, freshly populated
+    /// day1Context) is treated as a *new* request and bypasses the early
+    /// pending/injected guard. Buckets stay coarse (25-pt steps) so small
+    /// score wobble does not churn the key.
+    static func foundationFirstPromptKey(sessionId: String, day: Int, richnessBucket: Int = 0) -> String {
+        let bucket = max(0, richnessBucket)
+        if bucket > 0 {
+            return "\(sessionId):day-\(day):rich-\(bucket)"
+        }
+        return "\(sessionId):day-\(day)"
     }
 
     /// Deterministic chat message ID used when injecting the AI-driven
@@ -1675,7 +1750,8 @@ final class AgenticViewModel: ObservableObject {
     func requestFoundationFirstPrompt(
         day: Int,
         sessionId: String? = nil,
-        dynamicVariables: [String: Any]? = nil
+        dynamicVariables: [String: Any]? = nil,
+        richnessBucket: Int = 0
     ) {
         let resolvedSessionId = sessionId ?? currentBipCoachSessionID()
         guard let resolvedSessionId, !resolvedSessionId.isEmpty else { return }
@@ -1693,7 +1769,11 @@ final class AgenticViewModel: ObservableObject {
             return
         }
 
-        let key = Self.foundationFirstPromptKey(sessionId: resolvedSessionId, day: day)
+        let key = Self.foundationFirstPromptKey(
+            sessionId: resolvedSessionId,
+            day: day,
+            richnessBucket: richnessBucket
+        )
         if injectedFoundationFirstPromptKeys.contains(key) { return }
         if pendingFoundationFirstPromptKeys.contains(key) { return }
 
@@ -1703,6 +1783,9 @@ final class AgenticViewModel: ObservableObject {
             "type": "foundation_first_prompt",
             "sessionId": resolvedSessionId,
             "day": day,
+            // PR2 (P1a): echo the bucket so the response handler can compare
+            // arriving richness against what we last injected for this day.
+            "richnessBucket": richnessBucket,
         ]
         if let dynamicVariables, !dynamicVariables.isEmpty {
             payload["dynamicVariables"] = dynamicVariables
@@ -1735,8 +1818,17 @@ final class AgenticViewModel: ObservableObject {
         guard let day = event.day, (0...7).contains(day) else { return }
         guard let firstPrompt = event.firstPrompt else { return }
 
-        let key = Self.foundationFirstPromptKey(sessionId: sessionId, day: day)
-        pendingFoundationFirstPromptKeys.remove(key)
+        let bucket = event.richnessBucket ?? 0
+        // Pending-key throttle was keyed by richness on the send side; the
+        // base key still gates inject-side dedup so the deterministic
+        // messageId stays the single source of truth.
+        let pendingKey = Self.foundationFirstPromptKey(
+            sessionId: sessionId,
+            day: day,
+            richnessBucket: bucket
+        )
+        pendingFoundationFirstPromptKeys.remove(pendingKey)
+        let baseKey = Self.foundationFirstPromptKey(sessionId: sessionId, day: day)
 
         guard let sessionIndex = sessions.firstIndex(where: { $0.id == sessionId }) else {
             // Session not yet present in the local snapshot — drop, the next
@@ -1746,10 +1838,19 @@ final class AgenticViewModel: ObservableObject {
         }
 
         let messageId = Self.foundationFirstPromptMessageId(sessionId: sessionId, day: day)
-        if sessions[sessionIndex].messages.contains(where: { $0.id == messageId }) {
-            // Already injected (e.g. re-entry after reconnect). Lock the
-            // idempotency guard and bail without emitting telemetry noise.
-            injectedFoundationFirstPromptKeys.insert(key)
+        let existingIndex = sessions[sessionIndex].messages.firstIndex(where: { $0.id == messageId })
+
+        // PR2 (P1a): for Day 1, a strictly richer arrival replaces the
+        // already-injected opener in place (same messageId → preserves
+        // mergeSessionSnapshot's preservation rule). Other days keep the
+        // first-write-wins contract because they have no compose pipeline.
+        let lastBucket = day == 1 ? (lastInjectedDay1RichnessBucket[sessionId] ?? 0) : 0
+        let shouldReplaceExisting = existingIndex != nil && day == 1 && bucket > lastBucket
+
+        if existingIndex != nil && !shouldReplaceExisting {
+            // Already injected and not a richer payload — keep guard, bail
+            // without telemetry noise.
+            injectedFoundationFirstPromptKeys.insert(baseKey)
             return
         }
 
@@ -1770,14 +1871,19 @@ final class AgenticViewModel: ObservableObject {
             providerAuthActions: nil
         )
 
-        // Insert at the head of the conversation so the opener anchors the
-        // chat surface — Foundation Day 0-7 contract: the AI speaks first.
-        // If user/assistant messages already exist (e.g. session was selected
-        // mid-conversation), still seed at index 0 to preserve the opener as
-        // the conversation root.
-        sessions[sessionIndex].messages.insert(seededMessage, at: 0)
+        if let existing = existingIndex {
+            // In-place replace preserves scroll position and message order.
+            sessions[sessionIndex].messages[existing] = seededMessage
+        } else {
+            // Insert at the head so the opener anchors the chat surface —
+            // Foundation Day 0-7 contract: the AI speaks first.
+            sessions[sessionIndex].messages.insert(seededMessage, at: 0)
+        }
         sessions[sessionIndex].updatedAt = now
-        injectedFoundationFirstPromptKeys.insert(key)
+        injectedFoundationFirstPromptKeys.insert(baseKey)
+        if day == 1 {
+            lastInjectedDay1RichnessBucket[sessionId] = bucket
+        }
 
         PostHogTelemetry.capture(
             "mac_foundation_first_prompt_injected",
@@ -1788,6 +1894,8 @@ final class AgenticViewModel: ObservableObject {
                 "sub_workflow": firstPrompt.subWorkflow ?? "",
                 "artifact_count": firstPrompt.artifacts.count,
                 "text_length": displayText.count,
+                "richness_bucket": bucket,
+                "replaced_existing": shouldReplaceExisting,
             ],
             authSession: macAuthSession
         )
@@ -2032,6 +2140,90 @@ final class AgenticViewModel: ObservableObject {
             PostHogTelemetry.captureException(error, properties: [
                 "component": "agentic_view_model",
                 "operation": "open_gemini_auth_terminal",
+            ], authSession: macAuthSession)
+        }
+    }
+
+    /// Returns true if Terminal was launched, false if gcloud is missing on PATH (caller should
+    /// surface a recovery affordance such as switching to BYOK).
+    @MainActor
+    func attemptOpenGeminiAdcLogin() async -> Bool {
+        providerAuthInProgress = .gemini
+        providerAuthMessage = "gcloud SDK 확인 중..."
+        let installed = await Task.detached(priority: .userInitiated) {
+            AgenticViewModel.detectGcloudAvailable()
+        }.value
+        if installed {
+            openGeminiAdcLoginInTerminal()
+            return true
+        }
+        providerAuthInProgress = nil
+        providerAuthMessage = nil
+        PostHogTelemetry.capture("mac_provider_auth_gcloud_missing", properties: [
+            "provider": AgentProvider.gemini.rawValue,
+        ], authSession: macAuthSession)
+        return false
+    }
+
+    nonisolated static func detectGcloudAvailable() -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-lc", "command -v gcloud"]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    nonisolated static func detectBrewAvailable() -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-lc", "command -v brew"]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    func openGcloudBrewInstallInTerminal() {
+        providerAuthInProgress = .gemini
+        providerAuthMessage = "gcloud 설치 명령을 Terminal에서 시작했습니다. 설치 완료 후 자동으로 ADC 로그인이 이어집니다."
+        lastError = nil
+
+        let command = "brew install --cask google-cloud-sdk && gcloud auth application-default login"
+        let script = """
+        tell application "Terminal"
+            activate
+            do script \(Self.appleScriptLiteral(command))
+        end tell
+        """
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+
+        do {
+            try process.run()
+            PostHogTelemetry.capture("mac_gemini_gcloud_brew_install_started", properties: [
+                "provider": AgentProvider.gemini.rawValue,
+            ], authSession: macAuthSession)
+        } catch {
+            providerAuthInProgress = nil
+            providerAuthMessage = "brew 설치 명령을 열 수 없습니다: \(error.localizedDescription)"
+            lastError = providerAuthMessage
+            PostHogTelemetry.captureException(error, properties: [
+                "component": "agentic_view_model",
+                "operation": "open_gcloud_brew_install_terminal",
             ], authSession: macAuthSession)
         }
     }
@@ -2923,6 +3115,7 @@ final class AgenticViewModel: ObservableObject {
             if let session = event.session {
                 upsert(session)
                 pruneSentPromptPreviews(for: session)
+                detectDimensionTransitionToast(in: session)
                 refreshPresentationState()
                 requestCodexWarmupIfNeeded()
                 flushStartupQueuedActionIfPossible()
@@ -2942,6 +3135,7 @@ final class AgenticViewModel: ObservableObject {
             let prefix = "\(sessionID):day-"
             injectedFoundationFirstPromptKeys = injectedFoundationFirstPromptKeys.filter { !$0.hasPrefix(prefix) }
             pendingFoundationFirstPromptKeys = pendingFoundationFirstPromptKeys.filter { !$0.hasPrefix(prefix) }
+            lastInjectedDay1RichnessBucket.removeValue(forKey: sessionID)
             if selectedSessionID == sessionID {
                 selectedSessionID = sessions.first(where: { $0.archivedAt == nil })?.id
             }
@@ -2998,9 +3192,22 @@ final class AgenticViewModel: ObservableObject {
                 docs: event.docs,
                 sheet: event.sheet,
                 onboardingHypothesis: event.onboardingHypothesis,
+                day1Context: event.day1Context,
                 error: event.error
             )
             persistWorkspaceScanResult(event)
+            // Stage-5 state-machine trigger: scan result is one of the five
+            // events that can refresh Day 1's opener with richer dynamic vars.
+            maybeRequestDay1FirstPrompt(trigger: .workspaceScanResult)
+        case "workspace_day1_compose_result":
+            // Stage-4/5: LLM-composed opener arrives separately from the
+            // initial scan broadcast. Store it and re-evaluate Day 1's first
+            // prompt — the richness suffix lets a higher-confidence payload
+            // overwrite an earlier deterministic-only send.
+            if let composed = event.composedOpening {
+                composedDay1Opening = composed
+                maybeRequestDay1FirstPrompt(trigger: .workspaceDay1ComposeResult)
+            }
             if let error = event.error {
                 PostHogTelemetry.captureException(
                     NSError(domain: "WorkspaceScan", code: -1, userInfo: [NSLocalizedDescriptionKey: error]),
@@ -4109,6 +4316,38 @@ final class AgenticViewModel: ObservableObject {
         submittedStructuredPromptBySession[sessionId] = submitted
     }
 
+    // F6: when the sidecar advances the IDD rubric to a new signal, the
+    // follow-up card arrives with generation.dimensionTransitioned=true and a
+    // previousSignalLabel describing the dimension just completed. Show a
+    // 3-second toast in the Foundation surface so the user perceives forward
+    // motion ("좋아요. 좁히기 완료 → 직접 만날 사람으로 넘어갑니다.") instead of
+    // feeling stuck on yet another card.
+    struct DimensionTransitionToast: Identifiable, Equatable {
+        let id = UUID()
+        let from: String
+        let to: String
+    }
+
+    private func detectDimensionTransitionToast(in session: ChatSession) {
+        guard let prompt = session.pendingUserInput else { return }
+        guard prompt.generation?.dimensionTransitioned == true else { return }
+        guard let from = prompt.generation?.previousSignalLabel?.trimmingCharacters(in: .whitespacesAndNewlines), !from.isEmpty,
+              let to = prompt.generation?.signalLabel?.trimmingCharacters(in: .whitespacesAndNewlines), !to.isEmpty else {
+            return
+        }
+        let toast = DimensionTransitionToast(from: from, to: to)
+        dimensionTransitionToast = toast
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            await MainActor.run {
+                guard let self else { return }
+                if self.dimensionTransitionToast?.id == toast.id {
+                    self.dimensionTransitionToast = nil
+                }
+            }
+        }
+    }
+
     private func applyCurriculumQuestionReframe(_ event: SidecarEvent) {
         guard let sessionId = event.sessionId,
               let reframedQuestion = event.reframedQuestion?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty,
@@ -5133,6 +5372,7 @@ private extension AgenticViewModel {
         latestCurriculumQuestionReframesByKey = [:]
         injectedFoundationFirstPromptKeys = []
         pendingFoundationFirstPromptKeys = []
+        lastInjectedDay1RichnessBucket = [:]
         startupSessionAppearStartedAt = nil
         didRecordStartupSessionAppear = false
         foundationProgressStore = nil
@@ -5422,6 +5662,13 @@ struct SidecarEvent: Decodable {
     let docs: String?
     let sheet: String?
     let onboardingHypothesis: WorkspaceOnboardingHypothesis?
+    let day1Context: WorkspaceDay1Context?
+    let composedOpening: ComposedDay1Opening?
+    /// PR2: richness bucket echoed by the sidecar on foundation_first_prompt
+    /// payloads so the inject-side handler can decide whether the arriving
+    /// opener should replace a previously seeded one. nil/0 means "no
+    /// richness gating".
+    let richnessBucket: Int?
     let error: String?
 
     // Document creation fields
@@ -5508,6 +5755,9 @@ struct SidecarEvent: Decodable {
         docs: String?,
         sheet: String?,
         onboardingHypothesis: WorkspaceOnboardingHypothesis?,
+        day1Context: WorkspaceDay1Context? = nil,
+        composedOpening: ComposedDay1Opening? = nil,
+        richnessBucket: Int? = nil,
         error: String?,
         docType: String?,
         docPath: String?,
@@ -5580,6 +5830,9 @@ struct SidecarEvent: Decodable {
         self.docs = docs
         self.sheet = sheet
         self.onboardingHypothesis = onboardingHypothesis
+        self.day1Context = day1Context
+        self.composedOpening = composedOpening
+        self.richnessBucket = richnessBucket
         self.error = error
         self.docType = docType
         self.docPath = docPath
@@ -5927,6 +6180,9 @@ extension SidecarEvent {
         case docs
         case sheet
         case onboardingHypothesis
+        case day1Context
+        case composedOpening
+        case richnessBucket
         case error
         case docType
         case docPath
@@ -6013,6 +6269,9 @@ extension SidecarEvent {
         docs = Self.decodeIfPresent(String.self, from: container, forKey: .docs)
         sheet = Self.decodeIfPresent(String.self, from: container, forKey: .sheet)
         onboardingHypothesis = Self.decodeIfPresent(WorkspaceOnboardingHypothesis.self, from: container, forKey: .onboardingHypothesis)
+        day1Context = Self.decodeIfPresent(WorkspaceDay1Context.self, from: container, forKey: .day1Context)
+        composedOpening = Self.decodeIfPresent(ComposedDay1Opening.self, from: container, forKey: .composedOpening)
+        richnessBucket = Self.decodeIfPresent(Int.self, from: container, forKey: .richnessBucket)
 
         let stringError = Self.decodeIfPresent(String.self, from: container, forKey: .error)
         let structuredError = Self.decodeIfPresent(BipReadinessError.self, from: container, forKey: .error)

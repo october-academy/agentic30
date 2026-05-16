@@ -286,10 +286,257 @@ struct ChatMessageDecodingTests {
             "AI로 제품은 만들었지만 고객이 없는 개발자",
         ])
         #expect(model.rows.map(\.detail).first == "수익화 전환이 가장 시급한 하위 ICP입니다.")
-        #expect(model.rows.map(\.tag) == ["FIRST", "AGENT"])
+        // Truncated ASCII chips (FIRST/AGENT/LANDIN/COMMUN/...) carry no info
+        // for Korean users, so optionTag() now suppresses them. Empty tags
+        // collapse the chip view in workspaceDay1TodoRow.
+        #expect(model.rows.map(\.tag) == ["", ""])
+        #expect(model.contextLabel == "오늘의 한 가지")
+        #expect(model.ctaLabel == "이걸로 시작")
         #expect(model.freeTextPlaceholder == "예: 퇴사 후 3개월째, AI로 MVP는 만들었지만 유료 고객이 없는 개발자")
         #expect(model.allowsFreeText)
         #expect(Day1IntroPromptModel.suppressesStructuredPromptForm(prompt: prompt, dayNumber: 1))
+    }
+
+    @MainActor @Test func day1IntroModelFollowUpUsesNextDimensionCopy() throws {
+        let prompt = StructuredPromptRequest(
+            requestId: "day1-icp-reachable",
+            sessionId: "session-1",
+            toolName: "agentic30_request_user_input",
+            title: "ICP · 직접 만날 사람",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            questions: [
+                StructuredPromptQuestion(
+                    questionId: "day1-question-reachable",
+                    header: "직접 만날 사람",
+                    question: "이번 주 실제로 연락하거나 관찰할 수 있는 사람/계정은 누구인가요?",
+                    helperText: nil,
+                    options: [
+                        StructuredPromptOption(
+                            label: "이미 아는 사람",
+                            description: "이름이나 관계가 있어 바로 연락 가능합니다.",
+                            preview: nil,
+                            nextIntent: "reachable_person"
+                        ),
+                        StructuredPromptOption(
+                            label: "온라인 계정",
+                            description: "DM, 댓글, 커뮤니티로 접근 가능합니다.",
+                            preview: nil,
+                            nextIntent: "reachable_person"
+                        ),
+                    ],
+                    multiSelect: false,
+                    allowFreeText: true,
+                    requiresFreeText: false,
+                    freeTextPlaceholder: "예: X에서 DM 가능한 @handle",
+                    textMode: .short
+                )
+            ],
+            generation: StructuredPromptGeneration(
+                mode: "host_structured",
+                docType: "icp",
+                signalId: "reachable_person",
+                signalLabel: "직접 만날 사람",
+                isLastSignalForDoc: false,
+                dimensionTransitioned: true,
+                previousSignalLabel: "좁히기"
+            )
+        )
+
+        let model = try #require(Day1IntroPromptModel.make(prompt: prompt, dayNumber: 1))
+        #expect(model.title == "ICP · 직접 만날 사람")
+        #expect(model.contextLabel == "ICP 좁히기")
+        #expect(model.ctaLabel == "다음")
+    }
+
+    @MainActor @Test func day1IntroModelLastSignalShowsMilestoneCta() throws {
+        let prompt = StructuredPromptRequest(
+            requestId: "day1-icp-pressure",
+            sessionId: "session-1",
+            toolName: "agentic30_request_user_input",
+            title: "ICP · 고통과 시급성",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            questions: [
+                StructuredPromptQuestion(
+                    questionId: "day1-question-pressure",
+                    header: "고통과 시급성",
+                    question: "현재 대안 때문에 드는 비용은 시간, 돈, 평판 중 얼마인가요?",
+                    helperText: nil,
+                    options: [
+                        StructuredPromptOption(
+                            label: "시간 비용",
+                            description: "주당/월당 낭비 시간을 적습니다.",
+                            preview: nil,
+                            nextIntent: "pressure_cost"
+                        ),
+                        StructuredPromptOption(
+                            label: "돈 비용",
+                            description: "도구비, 외주비, 놓친 매출을 적습니다.",
+                            preview: nil,
+                            nextIntent: "pressure_cost"
+                        ),
+                    ],
+                    multiSelect: false,
+                    allowFreeText: true,
+                    requiresFreeText: false,
+                    freeTextPlaceholder: "예: 주 3시간 낭비",
+                    textMode: .short
+                )
+            ],
+            generation: StructuredPromptGeneration(
+                mode: "host_structured",
+                docType: "icp",
+                signalId: "pressure_cost",
+                signalLabel: "고통과 시급성",
+                isLastSignalForDoc: true,
+                dimensionTransitioned: true,
+                previousSignalLabel: "기존의 방식"
+            )
+        )
+
+        let model = try #require(Day1IntroPromptModel.make(prompt: prompt, dayNumber: 1))
+        #expect(model.contextLabel == "마지막 단계")
+        #expect(model.ctaLabel == "ICP 정의 완료")
+    }
+
+    @MainActor @Test func day1IntroModelExposesPreviousAnswerChip() throws {
+        // PR1: when sidecar reports a dimension transition, the follow-up
+        // card surfaces the user's previous answer as a chip so they see
+        // their selection carry forward instead of feeling stuck on 1/4.
+        func makePrompt(generation: StructuredPromptGeneration) -> StructuredPromptRequest {
+            StructuredPromptRequest(
+                requestId: "day1-icp-chip",
+                sessionId: "session-1",
+                toolName: "agentic30_request_user_input",
+                title: "ICP · 직접 만날 사람",
+                createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                questions: [
+                    StructuredPromptQuestion(
+                        questionId: "day1-question-chip",
+                        header: "직접 만날 사람",
+                        question: "이번 주 실제로 연락하거나 관찰할 수 있는 사람/계정은 누구인가요?",
+                        helperText: nil,
+                        options: [
+                            StructuredPromptOption(
+                                label: "이미 아는 사람",
+                                description: "이름이나 관계가 있어 바로 연락 가능합니다.",
+                                preview: nil,
+                                nextIntent: "reachable_person"
+                            ),
+                            StructuredPromptOption(
+                                label: "온라인 계정",
+                                description: "DM, 댓글, 커뮤니티로 접근 가능합니다.",
+                                preview: nil,
+                                nextIntent: "reachable_person"
+                            ),
+                        ],
+                        multiSelect: false,
+                        allowFreeText: true,
+                        requiresFreeText: false,
+                        freeTextPlaceholder: "예: X에서 DM 가능한 @handle",
+                        textMode: .short
+                    )
+                ],
+                generation: generation
+            )
+        }
+
+        let withAnswerLabel = makePrompt(generation: StructuredPromptGeneration(
+            mode: "host_structured",
+            docType: "icp",
+            signalId: "reachable_person",
+            signalLabel: "직접 만날 사람",
+            isLastSignalForDoc: false,
+            dimensionTransitioned: true,
+            previousSignalLabel: "좁히기",
+            previousAnswerLabel: "퇴사 후 첫 매출이 없는 개발자"
+        ))
+        let withSignalLabelOnly = makePrompt(generation: StructuredPromptGeneration(
+            mode: "host_structured",
+            docType: "icp",
+            signalId: "reachable_person",
+            signalLabel: "직접 만날 사람",
+            isLastSignalForDoc: false,
+            dimensionTransitioned: true,
+            previousSignalLabel: "좁히기"
+        ))
+        let firstCard = makePrompt(generation: StructuredPromptGeneration(
+            mode: "host_structured",
+            docType: "icp"
+        ))
+
+        let modelWithAnswer = try #require(Day1IntroPromptModel.make(prompt: withAnswerLabel, dayNumber: 1))
+        let modelWithSignal = try #require(Day1IntroPromptModel.make(prompt: withSignalLabelOnly, dayNumber: 1))
+        let modelFirstCard = try #require(Day1IntroPromptModel.make(prompt: firstCard, dayNumber: 1))
+
+        #expect(modelWithAnswer.previousAnswerChip == "← 퇴사 후 첫 매출이 없는 개발자")
+        #expect(modelWithSignal.previousAnswerChip == "← 좁히기")
+        #expect(modelFirstCard.previousAnswerChip == nil)
+    }
+
+    @MainActor @Test func day1IntroModelStatusLabelIncludesDimensionName() throws {
+        // PR1: when sidecar ships dimensionStepIndex/dimensionTotal, the
+        // status label switches from "N개 중 1개 선택" to "n/total · 차원명"
+        // so the user can see which of the four ICP signals this card
+        // belongs to. Without those fields we keep the legacy copy.
+        func makePrompt(generation: StructuredPromptGeneration) -> StructuredPromptRequest {
+            StructuredPromptRequest(
+                requestId: "day1-icp-status",
+                sessionId: "session-1",
+                toolName: "agentic30_request_user_input",
+                title: "ICP · 직접 만날 사람",
+                createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                questions: [
+                    StructuredPromptQuestion(
+                        questionId: "day1-question-status",
+                        header: "직접 만날 사람",
+                        question: "이번 주 실제로 연락하거나 관찰할 수 있는 사람/계정은 누구인가요?",
+                        helperText: nil,
+                        options: [
+                            StructuredPromptOption(
+                                label: "이미 아는 사람",
+                                description: "관계가 있어 바로 연락 가능합니다.",
+                                preview: nil,
+                                nextIntent: "reachable_person"
+                            ),
+                            StructuredPromptOption(
+                                label: "온라인 계정",
+                                description: "DM, 댓글, 커뮤니티로 접근 가능합니다.",
+                                preview: nil,
+                                nextIntent: "reachable_person"
+                            ),
+                        ],
+                        multiSelect: false,
+                        allowFreeText: true,
+                        requiresFreeText: false,
+                        freeTextPlaceholder: "예: X에서 DM 가능한 @handle",
+                        textMode: .short
+                    )
+                ],
+                generation: generation
+            )
+        }
+
+        let withDimension = makePrompt(generation: StructuredPromptGeneration(
+            mode: "host_structured",
+            docType: "icp",
+            signalId: "reachable_person",
+            signalLabel: "직접 만날 사람",
+            dimensionStepIndex: 2,
+            dimensionTotal: 4
+        ))
+        let withoutDimension = makePrompt(generation: StructuredPromptGeneration(
+            mode: "host_structured",
+            docType: "icp"
+        ))
+
+        let modelWithDimension = try #require(Day1IntroPromptModel.make(prompt: withDimension, dayNumber: 1))
+        let modelWithoutDimension = try #require(Day1IntroPromptModel.make(prompt: withoutDimension, dayNumber: 1))
+
+        #expect(modelWithDimension.statusLabel == "2/4 · 직접 만날 사람")
+        #expect(modelWithDimension.dimensionBreadcrumb.count == 4)
+        #expect(modelWithDimension.dimensionBreadcrumb.map(\.state) == [.passed, .current, .upcoming, .upcoming])
+        #expect(modelWithoutDimension.statusLabel == "2개 중 1개 선택")
+        #expect(modelWithoutDimension.dimensionBreadcrumb.isEmpty)
     }
 
     @MainActor @Test func day1IntroModelOnlyAppliesToDay1IcpPrompts() throws {

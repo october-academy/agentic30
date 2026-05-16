@@ -190,16 +190,25 @@ test("3-section minimal — each section is a single line (no \\n inside section
   }
 });
 
-test("Day 1 first_prompt substitutes runway + past_failures variables", () => {
+test("Day 1 first_prompt substitutes day1_yesterday/today/question variables", () => {
+  // Stage 1 of the day1-discovery plan replaced the {runway}/{past_failures}
+  // placeholders with three body slots so a discovery-driven mapper can compose
+  // the entire Day 1 opener instead of mad-libbing two values into a fixed
+  // sentence. The YC-tone defaults live in DAY_DEFAULTS for missing inputs.
   const built = buildFirstPromptForDay({
     day: 1,
-    dynamicVariables: { runway: "4개월", past_failures: "3건" },
+    dynamicVariables: {
+      day1_yesterday: "ICP 있고 SPEC 비어있어",
+      day1_today: "통증 1개로 SPEC.md v0 박아",
+      day1_question: "어제 결제한 사람 누구야",
+    },
   });
-  assert.ok(built.yesterday.includes("4개월"));
-  assert.ok(built.yesterday.includes("3건"));
-  // Make sure the placeholder syntax is fully consumed.
-  assert.ok(!built.yesterday.includes("{runway}"));
-  assert.ok(!built.yesterday.includes("{past_failures}"));
+  assert.equal(built.yesterday, "ICP 있고 SPEC 비어있어");
+  assert.equal(built.today, "통증 1개로 SPEC.md v0 박아");
+  assert.equal(built.question, "어제 결제한 사람 누구야");
+  assert.ok(!built.yesterday.includes("{day1_yesterday}"));
+  assert.ok(!built.today.includes("{day1_today}"));
+  assert.ok(!built.question.includes("{day1_question}"));
 });
 
 test("Day 2 first_prompt substitutes weak_hypothesis_id", () => {
@@ -329,29 +338,26 @@ test("anti-displacement gate can be scoped without public dogfood-week constants
 });
 
 test("Missing dynamic variables fall back to placeholder (no invented values)", () => {
-  // Sub-AC 2.2 + KR4.1/4.2: AI must not invent runway, past_failures, etc.
-  // when data is absent. The placeholder forces the creator to fill it in.
-  const built = buildFirstPromptForDay({ day: 1, dynamicVariables: {} });
+  // Sub-AC 2.2 + KR4.1/4.2: AI must not invent weak_hypothesis_id etc. when
+  // data is absent. Day 2's template still uses the legacy placeholder so the
+  // missing-fallback contract is exercised there.
+  // Day 1 was redesigned to lean on DAY_DEFAULTS (coach-tone fallback) so the
+  // user never sees `(아직 데이터 없음)` for the body slots — that case is
+  // covered by foundation-chat-sanitizer.test.mjs.
+  const built = buildFirstPromptForDay({ day: 2, dynamicVariables: {} });
   assert.ok(built.yesterday.includes(MISSING));
-  // Both placeholders for {runway} and {past_failures} should be replaced.
-  assert.ok(!built.yesterday.includes("{runway}"));
-  assert.ok(!built.yesterday.includes("{past_failures}"));
-  // Two missing variables → MISSING appears at least twice on Day 1's
-  // yesterday line.
-  const occurrences = built.yesterday.split(MISSING).length - 1;
-  assert.ok(
-    occurrences >= 2,
-    `Day 1 must show MISSING placeholder for both {runway} and {past_failures}. Got ${occurrences}.`,
-  );
+  assert.ok(!built.yesterday.includes("{weak_hypothesis_id}"));
 });
 
 test("Unknown variable keys outside the whitelist do not substitute", () => {
   const built = buildFirstPromptForDay({
     day: 1,
-    dynamicVariables: { runway: "5개월", malicious: "<script>" },
+    dynamicVariables: { day1_yesterday: "5개월 left", malicious: "<script>" },
   });
-  assert.ok(built.yesterday.includes("5개월"));
+  assert.equal(built.yesterday, "5개월 left");
   assert.ok(!built.yesterday.includes("<script>"));
+  assert.ok(!built.today.includes("<script>"));
+  assert.ok(!built.question.includes("<script>"));
 });
 
 test("formatFirstPromptText fingerprint is stable + matches built.text", () => {

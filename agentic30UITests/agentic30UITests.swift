@@ -1109,7 +1109,7 @@ final class agentic30UITests: XCTestCase {
             chooseModelOption(
                 in: app,
                 pickerIdentifier: "settings.claude.modelPicker",
-                optionLabel: "Claude Opus 4.7",
+                optionLabel: "Claude Opus 4.7 (Best)",
                 optionIdentifier: "settings.claude.modelOption.claude-opus-4-7"
             )
         )
