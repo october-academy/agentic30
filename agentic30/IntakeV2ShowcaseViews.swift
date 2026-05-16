@@ -454,7 +454,7 @@ struct IntakeV2BootIntroView: View {
                 body: sample,
                 timeLabel: timeLabel(forVisibleOffset: offset),
                 signalLabel: "결정 후보",
-                meta: "우선순위 스캔"
+                meta: "신호 스캔"
             )
         }
     }
@@ -830,41 +830,26 @@ struct IntakeV2DecideShowcaseView: View {
     let onNext: () -> Void
 
     private struct Candidate {
-        let id: String
         let body: String
         let why: String
-        let srcs: [BrandIcon]
-        let label: String
     }
 
     private let tasks: [Candidate] = [
         Candidate(
-            id: "task_9c1e",
             body: "이번 주 신규 가입자 3명에게 30분 인터뷰 요청 발송",
-            why: "8주간 수요 인터뷰 0건. ICP 정의도 갱신되지 않아 결정 정확도가 떨어지는 가장 큰 원인.",
-            srcs: [.notion, .gdocs, .txt],
-            label: "Notion · Docs · interviews.txt"
+            why: "8주간 수요 인터뷰 0건. ICP 정의도 갱신되지 않아 결정 정확도가 떨어지는 가장 큰 원인."
         ),
         Candidate(
-            id: "task_8af3",
             body: "결제 거절 응답 3건의 공통 사유 분석",
-            why: "결제 거절 신호가 2일째 미처리. 다른 신호(인터뷰·문서 변경)보다 우선순위 점수가 높음.",
-            srcs: [.toss, .gsheets, .discord],
-            label: "Toss · Sheets · Discord"
+            why: "결제 거절 신호가 2일째 미처리. 다음 결정을 막는 구매 차단 이유부터 봅니다."
         ),
         Candidate(
-            id: "task_a042",
             body: "어제 수정된 SPEC.md 의 v0.4 변경점을 changelog 에 반영",
-            why: "어제 18:32 SPEC.md 변경. changelog 미반영. 다음 release 차단 가능.",
-            srcs: [.github, .notion, .txt],
-            label: "Git · Notion · TXT"
+            why: "어제 18:32 SPEC.md 변경. changelog 미반영. 다음 release 차단 가능."
         ),
         Candidate(
-            id: "task_b1cc",
             body: "구독 6개월 사용자 2명의 이탈 징후 정리",
-            why: "장기 사용자 이탈은 가장 비싼 신호입니다. 다만 결제 응답보다 미처리 기간이 짧아 다음 순서입니다.",
-            srcs: [.posthog, .toss, .gsheets],
-            label: "PostHog · Toss · Sheets"
+            why: "장기 사용자 이탈은 가장 비싼 신호입니다. 마지막 성공 행동과 이탈 직전 흐름을 확인합니다."
         )
     ]
 
@@ -877,19 +862,10 @@ struct IntakeV2DecideShowcaseView: View {
             VStack(alignment: .leading, spacing: 22) {
                 IntakeV2Header(
                     title: "오늘의 결정",
-                    subtitle: "OS가 컨텍스트를 읽고 신호 강도·우선순위·미처리 기간으로 오늘 가장 시급한 한 가지를 결정합니다. macOS 알림 형태로 도착합니다."
+                    subtitle: "OS가 컨텍스트를 읽고 신호와 미처리 기간으로 오늘 가장 시급한 한 가지를 결정합니다. macOS 알림 형태로 도착합니다."
                 )
 
                 let t = tasks[idx]
-
-                HStack(spacing: 10) {
-                    Spacer()
-                    Text(t.id)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(IntakeV2Color.monospaceMuted)
-                }
-                .frame(maxWidth: 880)
-                .frame(maxWidth: .infinity, alignment: .center)
 
                 // Hero notification card
                 HStack(spacing: 22) {
@@ -949,32 +925,6 @@ struct IntakeV2DecideShowcaseView: View {
                         .opacity(fading ? 0 : 1)
                         .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
-                    Spacer()
-                }
-                .frame(maxWidth: 880)
-                .frame(maxWidth: .infinity, alignment: .center)
-
-                // Source chips
-                HStack(spacing: 6) {
-                    Text("READ FROM ·")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(IntakeV2Color.monospaceMuted)
-                        .tracking(0.6)
-                    ForEach(Array(t.srcs.enumerated()), id: \.offset) { _, src in
-                        HStack(spacing: 5) {
-                            BrandIconTile(icon: src, size: 14, corner: 4)
-                            Text(src.name)
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundStyle(.white.opacity(0.8))
-                        }
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule()
-                                .fill(.white.opacity(0.03))
-                                .overlay(Capsule().stroke(.white.opacity(0.06), lineWidth: 1))
-                        )
-                    }
                     Spacer()
                 }
                 .frame(maxWidth: 880)
@@ -1238,7 +1188,7 @@ struct IntakeV2ConnectShowcaseView: View {
     private func catalogSourceCard(_ item: SourceCatalogItem) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
-                catalogIconTile(systemImage: item.systemImage)
+                IntakeSourceIconTile(id: item.id, fallbackSystemImage: item.systemImage, size: 44, corner: 10)
                 Spacer()
                 Image(systemName: "checkmark")
                     .font(.system(size: 12, weight: .bold))
@@ -1275,18 +1225,6 @@ struct IntakeV2ConnectShowcaseView: View {
             RoundedRectangle(cornerRadius: 14)
                 .stroke(Color(red: 0.961, green: 0.620, blue: 0.043).opacity(0.75), lineWidth: 1.5)
         )
-    }
-
-    @ViewBuilder
-    private func catalogIconTile(systemImage: String, size: CGFloat = 44) -> some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(red: 0.322, green: 0.322, blue: 0.357))
-            Image(systemName: systemImage)
-                .font(.system(size: size * 0.42, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.86))
-        }
-        .frame(width: size, height: size)
     }
 
     @ViewBuilder
@@ -1404,9 +1342,17 @@ private struct IntakeV2AddSourceModal: View {
     @State private var selectedIDs: Set<IntakeSourceID> = []
     @State private var saveError: String?
 
+    private var unavailableSourceIDs: Set<IntakeSourceID> {
+        IntakeSourceCatalog.builtInMainGridIDs.union(sources.sources.map(\.id))
+    }
+
+    private var availableCatalogItems: [SourceCatalogItem] {
+        IntakeSourceCatalog.addableItems.filter { !unavailableSourceIDs.contains($0.id) }
+    }
+
     private var filteredItems: [SourceCatalogItem] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return IntakeSourceCatalog.items.filter { item in
+        return availableCatalogItems.filter { item in
             guard !trimmedQuery.isEmpty else {
                 return item.category == selectedCategory
             }
@@ -1432,6 +1378,7 @@ private struct IntakeV2AddSourceModal: View {
         .padding(24)
         .frame(width: 760, height: 620, alignment: .topLeading)
         .background(IntakeV2Color.bg)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("intakeV2.addSource.modal")
     }
 
@@ -1606,15 +1553,14 @@ private struct IntakeV2AddSourceModal: View {
     @ViewBuilder
     private func catalogRow(_ item: SourceCatalogItem) -> some View {
         let state = rowState(for: item)
-        let isDisabled = state.isDisabled
         Button(action: { toggle(item) }) {
             HStack(spacing: 12) {
-                AddSourceCatalogIcon(systemImage: item.systemImage)
+                IntakeSourceIconTile(id: item.id, fallbackSystemImage: item.systemImage)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
                         Text(item.id.displayName)
                             .font(.system(size: 14, weight: .bold, design: .rounded))
-                            .foregroundStyle(isDisabled ? .white.opacity(0.52) : .white)
+                            .foregroundStyle(.white)
                             .lineLimit(1)
                         Text(item.kind)
                             .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -1624,7 +1570,7 @@ private struct IntakeV2AddSourceModal: View {
                     }
                     Text(item.why)
                         .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(isDisabled ? .white.opacity(0.38) : IntakeV2Color.textSecondary)
+                        .foregroundStyle(IntakeV2Color.textSecondary)
                         .lineLimit(2)
                 }
                 Spacer(minLength: 10)
@@ -1640,22 +1586,16 @@ private struct IntakeV2AddSourceModal: View {
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(rowStroke(for: state), lineWidth: state == .selected ? 1.5 : 1)
             )
-            .opacity(isDisabled ? 0.82 : 1)
         }
         .buttonStyle(.plain)
-        .disabled(isDisabled)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(item.id.displayName)
         .accessibilityIdentifier("intakeV2.addSource.row.\(item.id.rawValue)")
     }
 
     @ViewBuilder
     private func rowBadge(_ state: AddSourceRowState) -> some View {
         switch state {
-        case .connected:
-            labelPill("Connected", color: IntakeV2Color.accentBright)
-        case .alreadyRequested:
-            labelPill("Already requested", color: Color(red: 0.961, green: 0.620, blue: 0.043))
-        case .alreadyShown:
-            labelPill("Already shown", color: IntakeV2Color.textTertiary)
         case .selected:
             HStack(spacing: 6) {
                 Image(systemName: "checkmark")
@@ -1672,36 +1612,20 @@ private struct IntakeV2AddSourceModal: View {
         }
     }
 
-    @ViewBuilder
-    private func labelPill(_ text: String, color: Color) -> some View {
-        Text(text)
-            .font(.system(size: 11, weight: .bold, design: .rounded))
-            .foregroundStyle(color)
-            .padding(.horizontal, 9)
-            .frame(height: 24)
-            .background(Capsule().fill(color.opacity(0.10)))
-    }
-
     private func rowStroke(for state: AddSourceRowState) -> Color {
         switch state {
-        case .connected: return IntakeV2Color.accent.opacity(0.75)
-        case .alreadyRequested, .selected: return Color(red: 0.961, green: 0.620, blue: 0.043).opacity(0.75)
-        case .alreadyShown, .available: return .white.opacity(0.07)
+        case .selected: return Color(red: 0.961, green: 0.620, blue: 0.043).opacity(0.75)
+        case .available: return .white.opacity(0.07)
         }
     }
 
     private func rowState(for item: SourceCatalogItem) -> AddSourceRowState {
-        let status = sources.status(of: item.id)
-        if status == .connected { return .connected }
-        if status == .disabled { return .alreadyRequested }
         if selectedIDs.contains(item.id) { return .selected }
-        if item.alreadyShownInMainGrid { return .alreadyShown }
         return .available
     }
 
     private func toggle(_ item: SourceCatalogItem) {
         saveError = nil
-        guard !rowState(for: item).isDisabled else { return }
         if selectedIDs.contains(item.id) {
             selectedIDs.remove(item.id)
         } else {
@@ -1713,7 +1637,7 @@ private struct IntakeV2AddSourceModal: View {
         selectedCategory = .custom
         query = ""
         guard let customURL = IntakeSourceCatalog.item(for: .customUrl),
-              rowState(for: customURL).isDisabled == false else { return }
+              availableCatalogItems.contains(customURL) else { return }
         selectedIDs.insert(.customUrl)
     }
 
@@ -1730,100 +1654,173 @@ private struct IntakeV2AddSourceModal: View {
 private enum AddSourceRowState {
     case available
     case selected
-    case alreadyShown
-    case alreadyRequested
-    case connected
-
-    var isDisabled: Bool {
-        switch self {
-        case .alreadyShown, .alreadyRequested, .connected:
-            return true
-        case .available, .selected:
-            return false
-        }
-    }
 }
 
-private struct AddSourceCatalogIcon: View {
-    let systemImage: String
+private struct IntakeSourceIconTile: View {
+    let id: IntakeSourceID
+    let fallbackSystemImage: String
+    var size: CGFloat = 38
+    var corner: CGFloat = 9
+
+    private var iconKind: IntakeSourceIconKind {
+        IntakeSourceIconCatalog.iconKind(for: id, fallbackSystemImage: fallbackSystemImage)
+    }
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color(red: 0.322, green: 0.322, blue: 0.357))
+            RoundedRectangle(cornerRadius: corner, style: .continuous)
+                .fill(tileBackground)
+            iconContent
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var iconContent: some View {
+        switch iconKind {
+        case .asset(let assetName):
+            Image(assetName)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size * assetScale(for: assetName), height: size * assetScale(for: assetName))
+        case .composite(let assetNames):
+            compositeIcon(assetNames)
+        case .symbol(let systemImage):
             Image(systemName: systemImage)
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: size * 0.45, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.86))
         }
-        .frame(width: 38, height: 38)
+    }
+
+    @ViewBuilder
+    private func compositeIcon(_ assetNames: [String]) -> some View {
+        let badgeSize = size * (assetNames.count > 2 ? 0.42 : 0.48)
+        HStack(spacing: -size * 0.08) {
+            ForEach(assetNames, id: \.self) { assetName in
+                ZStack {
+                    Circle()
+                        .fill(assetBackground(for: assetName))
+                    Image(assetName)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: badgeSize * assetScale(for: assetName, inComposite: true),
+                               height: badgeSize * assetScale(for: assetName, inComposite: true))
+                }
+                .frame(width: badgeSize, height: badgeSize)
+                .overlay(Circle().stroke(Color.black.opacity(0.08), lineWidth: 0.5))
+            }
+        }
+    }
+
+    private var tileBackground: Color {
+        switch iconKind {
+        case .asset(let assetName):
+            return assetBackground(for: assetName)
+        case .composite:
+            return Color(red: 0.322, green: 0.322, blue: 0.357)
+        case .symbol:
+            return Color(red: 0.322, green: 0.322, blue: 0.357)
+        }
+    }
+
+    private func assetBackground(for assetName: String) -> Color {
+        switch assetName {
+        case "BrandGitHub":
+            return Color(red: 0.051, green: 0.067, blue: 0.090)
+        case "BrandDiscord":
+            return Color(red: 0.345, green: 0.396, blue: 0.949)
+        case "BrandToss":
+            return Color(red: 0.000, green: 0.392, blue: 1.000)
+        case "BrandStripe":
+            return Color(red: 0.388, green: 0.357, blue: 1.000)
+        case "BrandThreads", "BrandPaddle":
+            return .black
+        default:
+            return .white
+        }
+    }
+
+    private func assetScale(for assetName: String, inComposite: Bool = false) -> CGFloat {
+        switch assetName {
+        case "BrandDiscord":
+            return inComposite ? 0.72 : 0.82
+        case "BrandNotion":
+            return inComposite ? 0.72 : 0.78
+        case "BrandPostHog":
+            return inComposite ? 0.70 : 0.74
+        case "BrandStripe":
+            return inComposite ? 0.66 : 0.68
+        case "BrandGoogleDocs", "BrandGoogleSheets", "BrandGmail", "BrandGoogleCalendar", "BrandGoogleForms":
+            return inComposite ? 0.76 : 0.82
+        case "BrandPaddle":
+            return inComposite ? 0.92 : 0.88
+        case "BrandAppStoreConnect", "BrandGooglePlay", "BrandLemonSqueezy", "BrandGumroad":
+            return inComposite ? 0.86 : 0.82
+        default:
+            return inComposite ? 0.78 : 0.76
+        }
     }
 }
 
-// MARK: - Step 7 — READY
+// MARK: - Step 8 — READY
 
 @MainActor
 struct IntakeV2ReadyAnalyzeView: View {
     @ObservedObject var store: IntakeV2Store
     @ObservedObject var sources: IntakeV2SourceManager
+    let bootLogState: IntakeV2BootLogState
+    let workspaceScanResult: AgenticViewModel.WorkspaceScanResult?
     let onBack: () -> Void
     let onDone: () -> Void
     var progressNamespace: Namespace.ID? = nil
 
-    @State private var logLines: [TerminalLine] = []
     @State private var decision: IntakeV2Decision?
     @State private var revealCard: Bool = false
-    @State private var scanFailed: Bool = false
     @State private var showTodoWindow: Bool = false
     @State private var generatedTodoTasks: [GeneratedTodoTask] = []
     @State private var todoGenerationComplete: Bool = false
     @State private var showExecuteNudge: Bool = false
     @State private var firstDecisionExpanded: Bool = true
     @State private var todoGenerationTask: Task<Void, Never>?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private enum InboxCTAState: Equatable {
+        case preparingDecision
         case needsExecute
         case preparingInbox
         case ready
     }
 
     private var inboxCTAState: InboxCTAState {
-        if !showTodoWindow {
-            return .needsExecute
-        }
-        if !todoGenerationComplete {
-            return .preparingInbox
-        }
-        return .ready
+        analysisReady ? .ready : .preparingInbox
+    }
+
+    private var analysisReady: Bool {
+        store.folderURL == nil || workspaceScanResult != nil || bootLogState.scanDidFail
     }
 
     var body: some View {
         IntakeV2PinnedStepScaffold { _ in
             VStack(alignment: .leading, spacing: 22) {
                 IntakeV2ProgressReservedSpace()
-                IntakeV2Header(
-                    title: "Init 완료. 첫 결정을 분석합니다.",
-                    subtitle: readySubtitle
-                )
 
-                terminalBox
-                    .frame(maxWidth: 880)
-                    .frame(maxWidth: .infinity, alignment: .center)
+                VStack(alignment: .leading, spacing: 22) {
+                    IntakeV2Header(
+                        title: readyTitle,
+                        subtitle: readySubtitle
+                    )
 
-                if revealCard, let d = decision {
-                    VStack(spacing: 14) {
-                        firstDecisionCard(d)
-                        if showTodoWindow {
-                            todoListWindow(for: d)
-                                .transition(.asymmetric(
-                                    insertion: .move(edge: .bottom).combined(with: .opacity).combined(with: .scale(scale: 0.98, anchor: .top)),
-                                    removal: .opacity
-                                ))
-                        }
+                    terminalBox
+
+                    if analysisReady {
+                        intakeReadyHandoff
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .transition(.opacity)
                     }
-                    .frame(maxWidth: 880)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .transition(.opacity)
                 }
+                .frame(maxWidth: 880, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         } footer: { _ in
             IntakeV2Footer(
@@ -1835,30 +1832,102 @@ struct IntakeV2ReadyAnalyzeView: View {
                 onNext: handleInboxCTA
             )
         }
-        .task { await runBootSequence() }
+        .onAppear {
+            synchronizeDecisionWithBootState()
+        }
+        .onChange(of: bootLogState) { _, _ in
+            synchronizeDecisionWithBootState()
+        }
+        .onChange(of: workspaceScanResult) { _, _ in
+            synchronizeDecisionWithBootState()
+        }
         .onDisappear {
             todoGenerationTask?.cancel()
             todoGenerationTask = nil
         }
     }
 
+    private var readyTitle: String {
+        if store.folderURL == nil || bootLogState.scanDidFail {
+            return "Day 1 첫 질문이 준비됐습니다."
+        }
+        if analysisReady {
+            return "Day 1 첫 질문이 준비됐습니다."
+        }
+        return "Day 1 첫 질문을 준비하고 있습니다."
+    }
+
     private var readySubtitle: String {
         if store.folderURL == nil {
-            return "폴더 없이 시작합니다. intake 답변만으로 첫 결정을 준비합니다."
+            return "폴더 없이 시작합니다. intake 답변만으로 첫 ICP 질문을 준비합니다."
         }
-        if scanFailed {
-            return "Local scan에서 충분한 신호를 못 찾았어요. intake 답변만으로 첫 결정을 준비합니다."
+        if bootLogState.scanDidFail {
+            return "Sidecar scan에서 충분한 신호를 못 찾았어요. intake 답변만으로 첫 ICP 질문을 준비했습니다."
         }
-        return "선택한 폴더를 읽고 신호를 추출해 오늘의 한 가지를 결정합니다."
+        if workspaceScanResult == nil {
+            return "선택한 폴더를 읽고, Day 1 첫 질문에 쓸 신호만 추리고 있습니다."
+        }
+        return "선택한 폴더를 읽고 신호를 추출했습니다. Day 1 첫 질문으로 이어갑니다."
+    }
+
+    private var intakeReadyHandoff: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "arrow.down.forward.circle.fill")
+                .font(.system(size: 20, weight: .heavy))
+                .foregroundStyle(IntakeV2Color.accentBright)
+                .frame(width: 28, height: 28)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("오늘의 한 가지와 todo.list는 Day 1에서 시작합니다.")
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.94))
+                Text("Open inbox를 누르면 첫 ICP 질문 앞에서 바로 선택하고 답할 수 있습니다.")
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(IntakeV2Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.white.opacity(0.035))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(IntakeV2Color.accent.opacity(0.16), lineWidth: 1)
+                )
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("intakeV2.day1ReadyHandoff")
     }
 
     private var inboxFooterTitle: String {
         switch inboxCTAState {
+        case .preparingDecision:
+            return "Preparing inbox…"
         case .preparingInbox:
             return "Preparing inbox…"
-        case .needsExecute, .ready:
+        case .needsExecute:
+            return "Preparing inbox…"
+        case .ready:
             return "Open inbox →"
         }
+    }
+
+    private var todoWindowTransition: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        return .asymmetric(
+            insertion: .move(edge: .bottom)
+                .combined(with: .opacity)
+                .combined(with: .scale(scale: 0.98, anchor: .top)),
+            removal: .opacity
+        )
+    }
+
+    private var todoTaskTransition: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        return .opacity.combined(with: .scale(scale: 0.985, anchor: .center))
     }
 
     private func handleInboxCTA() {
@@ -1866,12 +1935,10 @@ struct IntakeV2ReadyAnalyzeView: View {
         case .ready:
             onDone()
         case .needsExecute:
-            guard revealCard else { return }
-            withAnimation(.easeOut(duration: 0.18)) {
-                firstDecisionExpanded = true
-                showExecuteNudge = true
-            }
+            break
         case .preparingInbox:
+            break
+        case .preparingDecision:
             break
         }
     }
@@ -1879,10 +1946,18 @@ struct IntakeV2ReadyAnalyzeView: View {
     // MARK: terminal
 
     private struct TerminalLine: Identifiable {
-        let id = UUID()
-        let cmd: String
+        let id: String
+        var cmd: String
         var status: String?
         var deciding: Bool = false
+    }
+
+    private enum TerminalMetrics {
+        static let boxHeight: CGFloat = 220
+        static let rowHeight: CGFloat = 22
+        static let promptWidth: CGFloat = 16
+        static let statusWidth: CGFloat = 312
+        static let columnSpacing: CGFloat = 8
     }
 
     private struct GeneratedTodoTask: Identifiable, Equatable {
@@ -1890,6 +1965,17 @@ struct IntakeV2ReadyAnalyzeView: View {
         let title: String
         let detail: String
         let tag: String
+    }
+
+    private var logLines: [TerminalLine] {
+        bootLogState.lines.map { line in
+            TerminalLine(
+                id: line.id,
+                cmd: line.command,
+                status: line.status,
+                deciding: line.isActive
+            )
+        }
     }
 
     private var terminalBox: some View {
@@ -1908,30 +1994,14 @@ struct IntakeV2ReadyAnalyzeView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(logLines) { line in
-                    HStack(spacing: 8) {
-                        Text("$")
-                            .foregroundStyle(IntakeV2Color.accent)
-                        Text(line.cmd)
-                            .foregroundStyle(.white.opacity(0.85))
-                        if line.deciding {
-                            DotPulse()
-                        }
-                        Spacer(minLength: 8)
-                        if let status = line.status {
-                            Text(status)
-                                .foregroundStyle(status.hasPrefix("✓") ? IntakeV2Color.accent : IntakeV2Color.textTertiary)
-                        }
-                    }
-                    .font(.system(size: 13, design: .monospaced))
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(line.status.map { "\(line.cmd) \($0)" } ?? line.cmd)
-                    .transition(.opacity)
+                    terminalLine(line)
                 }
             }
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 18)
-        .frame(maxWidth: .infinity, minHeight: 220, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: TerminalMetrics.boxHeight, maxHeight: TerminalMetrics.boxHeight, alignment: .topLeading)
+        .clipped()
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(Color(red: 0.039, green: 0.039, blue: 0.047))
@@ -1940,44 +2010,65 @@ struct IntakeV2ReadyAnalyzeView: View {
                         .stroke(.white.opacity(0.06), lineWidth: 1)
                 )
         )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("intakeV2.bootLog")
+    }
+
+    private func terminalLine(_ line: TerminalLine) -> some View {
+        HStack(spacing: TerminalMetrics.columnSpacing) {
+            Text("$")
+                .foregroundStyle(IntakeV2Color.accent)
+                .frame(width: TerminalMetrics.promptWidth, alignment: .leading)
+
+            HStack(spacing: 2) {
+                Text(line.cmd)
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .layoutPriority(0)
+                if line.deciding {
+                    DotPulse()
+                }
+            }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .clipped()
+
+            Text(line.status ?? "")
+                .foregroundStyle(terminalStatusColor(for: line.status))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(width: TerminalMetrics.statusWidth, alignment: .trailing)
+                .layoutPriority(1)
+        }
+        .font(.system(size: 13, design: .monospaced))
+        .frame(maxWidth: .infinity, minHeight: TerminalMetrics.rowHeight, maxHeight: TerminalMetrics.rowHeight, alignment: .leading)
+        .clipped()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(line.status.map { "\(line.cmd) \($0)" } ?? line.cmd)
+        .transition(.opacity)
+    }
+
+    private func terminalStatusColor(for status: String?) -> Color {
+        guard let status else { return .clear }
+        if status.hasPrefix("✗") {
+            return Color(red: 1.00, green: 0.373, blue: 0.341)
+        }
+        return status.hasPrefix("✓") ? IntakeV2Color.accent : IntakeV2Color.textTertiary
     }
 
     private func firstDecisionCard(_ d: IntakeV2Decision) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                Text("FIRST DECISION")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.44))
-                    .tracking(0.5)
-                Spacer()
-                Text(d.taskID)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(IntakeV2Color.monospaceMuted)
-            }
-
-            DecideNotificationGroupView(
-                items: [firstDecisionNotificationItem(for: d)],
-                expanded: firstDecisionExpanded,
-                mode: .decisionAction,
-                actionTitle: executeStartedTitle,
-                actionSystemImage: "arrow.turn.down.left",
-                actionDisabled: showTodoWindow,
-                actionHint: showExecuteNudge && !showTodoWindow ? "Execute를 먼저 눌러 inbox를 준비하세요." : nil,
-                onToggleExpanded: {
-                    firstDecisionExpanded.toggle()
-                },
-                onPrimaryAction: { startTodoGeneration(for: d) }
-            )
-        }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(IntakeV2Color.panel.opacity(0.55))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(.white.opacity(0.045), lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.12), radius: 14, y: 8)
+        DecideNotificationGroupView(
+            items: [firstDecisionNotificationItem(for: d)],
+            expanded: firstDecisionExpanded,
+            mode: .decisionAction,
+            actionTitle: executeStartedTitle,
+            actionSystemImage: "arrow.turn.down.left",
+            actionDisabled: showTodoWindow,
+            actionHint: showExecuteNudge && !showTodoWindow ? "Execute를 먼저 눌러 inbox를 준비하세요." : nil,
+            onToggleExpanded: {
+                firstDecisionExpanded.toggle()
+            },
+            onPrimaryAction: { startTodoGeneration(for: d) }
         )
         .accessibilityIdentifier("intakeV2.firstDecisionCard")
     }
@@ -1988,28 +2079,13 @@ struct IntakeV2ReadyAnalyzeView: View {
             body: d.body,
             timeLabel: "방금",
             signalLabel: d.category.displayName,
-            priority: priorityDisplayName(d.priority),
             meta: d.metaLine,
-            rationale: d.rationale,
-            sources: d.attributedSources.map(\.displayName)
+            rationale: d.rationale
         )
     }
 
-    private func priorityDisplayName(_ priority: IntakeV2Decision.Priority) -> String {
-        switch priority {
-        case .critical:
-            return "최우선"
-        case .high:
-            return "높음"
-        case .medium:
-            return "보통"
-        case .low:
-            return "낮음"
-        }
-    }
-
     private var executeStartedTitle: String {
-        showTodoWindow ? "Executing" : "Execute"
+        showTodoWindow ? "Executing" : "Execute first"
     }
 
     private enum ReadyTodoMetrics {
@@ -2019,7 +2095,7 @@ struct IntakeV2ReadyAnalyzeView: View {
         static let bodyHeight: CGFloat = 14 + 2 + (rowHeight * CGFloat(slotCount)) + (rowSpacing * CGFloat(slotCount))
     }
 
-    private func todoListWindow(for d: IntakeV2Decision) -> some View {
+    private func todoListWindow(for _: IntakeV2Decision) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Circle().fill(Color(red: 1.00, green: 0.373, blue: 0.341)).frame(width: 9, height: 9)
@@ -2044,10 +2120,10 @@ struct IntakeV2ReadyAnalyzeView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
-                    Text(d.taskID)
+                    Text("ready")
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
                         .foregroundStyle(IntakeV2Color.accentBright)
-                    Text("→ split into executable tasks")
+                    Text("split into executable tasks")
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(IntakeV2Color.textTertiary)
                     Spacer()
@@ -2082,7 +2158,7 @@ struct IntakeV2ReadyAnalyzeView: View {
 
             if let task {
                 todoTaskRow(task)
-                    .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .center)))
+                    .transition(todoTaskTransition)
             }
         }
         .frame(maxWidth: .infinity, minHeight: ReadyTodoMetrics.rowHeight, maxHeight: ReadyTodoMetrics.rowHeight, alignment: .topLeading)
@@ -2170,7 +2246,7 @@ struct IntakeV2ReadyAnalyzeView: View {
         todoGenerationTask?.cancel()
         generatedTodoTasks = []
         todoGenerationComplete = false
-        withAnimation(.spring(response: 0.48, dampingFraction: 0.82)) {
+        withAnimation(reduceMotion ? nil : .spring(response: 0.48, dampingFraction: 0.82)) {
             showExecuteNudge = false
             showTodoWindow = true
         }
@@ -2182,13 +2258,13 @@ struct IntakeV2ReadyAnalyzeView: View {
         for task in tasks {
             try? await Task.sleep(nanoseconds: 650_000_000)
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.22)) {
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) {
                 generatedTodoTasks.append(task)
             }
         }
         try? await Task.sleep(nanoseconds: 250_000_000)
         guard !Task.isCancelled else { return }
-        withAnimation(.easeOut(duration: 0.24)) {
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.24)) {
             todoGenerationComplete = true
         }
     }
@@ -2236,125 +2312,47 @@ struct IntakeV2ReadyAnalyzeView: View {
 
     // MARK: boot sequence
 
-    private func runBootSequence() async {
-        // 1. kernel.init
-        await pushLine(cmd: "kernel.init", delayMs: 400)
-        await markLast(status: "✓ ready", delayMs: 500)
+    @MainActor private func synchronizeDecisionWithBootState() {
+        guard !revealCard else { return }
 
-        // 2. sources.connect — only count sources that are actually authorized now.
-        let connected = sources.connectedCount
-        let names = sources.connectedSources.compactMap { srcShortName($0.id) }.prefix(2).joined(separator: " · ")
-        await pushLine(cmd: "sources.connect", delayMs: 200)
-        let connectedStatus = connected == 0
-            ? "0 active (intake only)"
-            : "\(connected) active (\(names.isEmpty ? "local" : names))"
-        await markLast(status: connectedStatus, delayMs: 600)
-
-        // 3. context.read — actual scan
         let intake = IntakeSnapshot.from(store: store)
-        var scan = LocalScanResult.empty
-        if let url = store.folderURL {
-            await pushLine(cmd: "context.read \(url.lastPathComponent)", delayMs: 200)
-            do {
-                scan = try realScan(url: url)
-                let approxKB = (scan.fileCount * 6) // rough
-                await markLast(status: "✓ \(scan.fileCount) docs · \(approxKB) KB indexed", delayMs: 800)
-            } catch {
-                scanFailed = true
-                await markLast(status: "✗ scan failed", delayMs: 600)
-            }
-        } else {
-            scanFailed = true
-            await pushLine(cmd: "context.read (no folder)", delayMs: 200)
-            await markLast(status: "intake-only", delayMs: 400)
+        let engine = IntakeV2DecisionEngine()
+
+        guard store.folderURL != nil else {
+            revealDecision(engine.fallbackTemplate(intake: intake))
+            return
         }
 
-        // 4. signals.detect
-        await pushLine(cmd: "signals.detect", delayMs: 200)
-        await markLast(status: "✓ \(scan.fileCount > 0 ? "12 signals (4 high · 6 med · 2 low)" : "template signals")", delayMs: 900)
+        guard let workspaceScanResult else { return }
 
-        // 5. decide… (deciding)
-        await pushLine(cmd: "decide", deciding: true, delayMs: 200)
-        let made: IntakeV2Decision = scanFailed
-            ? IntakeV2DecisionEngine().fallbackTemplate(intake: intake)
-            : IntakeV2DecisionEngine().generate(intake: intake, scan: scan)
-        try? await Task.sleep(nanoseconds: 1_200_000_000)
+        let made = workspaceScanResult.error == nil
+            ? engine.generate(intake: intake, scan: sidecarScanInput(from: workspaceScanResult))
+            : engine.fallbackTemplate(intake: intake)
+        revealDecision(made)
+    }
 
-        // 6. decide ✓
-        await replaceLastDeciding(with: "decide", status: "✓ \(made.taskID)", delayMs: 500)
-
-        // Reveal first-decision card
+    @MainActor private func revealDecision(_ made: IntakeV2Decision) {
         decision = made
-        withAnimation(.easeInOut(duration: 0.44)) {
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.44)) {
             revealCard = true
         }
     }
 
-    @MainActor private func pushLine(cmd: String, deciding: Bool = false, delayMs: Int) async {
-        try? await Task.sleep(nanoseconds: UInt64(delayMs) * 1_000_000)
-        withAnimation(.easeIn(duration: 0.25)) {
-            logLines.append(TerminalLine(cmd: cmd, status: nil, deciding: deciding))
-        }
-    }
-
-    @MainActor private func markLast(status: String, delayMs: Int) async {
-        try? await Task.sleep(nanoseconds: UInt64(delayMs) * 1_000_000)
-        guard !logLines.isEmpty else { return }
-        logLines[logLines.count - 1].status = status
-    }
-
-    @MainActor private func replaceLastDeciding(with cmd: String, status: String, delayMs: Int) async {
-        try? await Task.sleep(nanoseconds: UInt64(delayMs) * 1_000_000)
-        guard !logLines.isEmpty else { return }
-        logLines[logLines.count - 1] = TerminalLine(cmd: cmd, status: status, deciding: false)
-    }
-
-    private func realScan(url: URL) throws -> LocalScanResult {
-        let fm = FileManager.default
-        let contents = try fm.contentsOfDirectory(atPath: url.path)
+    private func sidecarScanInput(from result: AgenticViewModel.WorkspaceScanResult) -> LocalScanResult {
+        let paths = result.foundArtifactPaths
         return LocalScanResult(
-            fileCount: contents.count,
+            fileCount: paths.count,
             totalBytes: 0,
             staleSpecDays: nil,
             staleTodoDays: nil,
             lastCommitDays: nil,
-            hasInterviewTranscripts: contents.contains { $0.range(of: "interview", options: .caseInsensitive) != nil },
-            hasPaymentResponses: false
+            hasInterviewTranscripts: paths.contains { $0.range(of: "interview", options: .caseInsensitive) != nil },
+            hasPaymentResponses: result.sheet != nil || paths.contains { path in
+                path.range(of: "payment", options: .caseInsensitive) != nil
+                    || path.range(of: "price", options: .caseInsensitive) != nil
+                    || path.range(of: "pricing", options: .caseInsensitive) != nil
+            }
         )
-    }
-
-    private func srcShortName(_ id: IntakeSourceID) -> String? {
-        switch id {
-        case .localFolder: return "local"
-        case .googleDocs: return "gdocs"
-        case .github: return "git"
-        case .notion: return "notion"
-        case .googleSheets: return "sheets"
-        case .discord: return "discord"
-        case .posthog: return "posthog"
-        case .toss: return "toss"
-        case .stripe: return "stripe"
-        case .threads: return "threads"
-        case .interviewTxt: return "txt"
-        case .workLogFolder: return "worklog"
-        case .interviewTranscriptFolder: return "transcripts"
-        case .githubIssuesLinear: return "issues"
-        case .gmailEmail: return "email"
-        case .calendarCalls: return "calls"
-        case .formsSurvey: return "forms"
-        case .blogRss: return "blog"
-        case .xTwitter: return "x"
-        case .youtubeLoomDemo: return "demo"
-        case .metaAds: return "ads"
-        case .googleAnalyticsPlausible: return "analytics"
-        case .appStoreGooglePlay: return "store"
-        case .revenueCat: return "revenuecat"
-        case .lemonSqueezyPaddleGumroad: return "payments"
-        case .customUrl: return "url"
-        case .customLocalFileFolder: return "files"
-        case .customManualNote: return "note"
-        case .customCsvImport: return "csv"
-        }
     }
 }
 
@@ -2363,14 +2361,22 @@ struct IntakeV2ReadyAnalyzeView: View {
 private struct DotPulse: View {
     @State private var phase: Int = 0
     private let timer = Timer.publish(every: 0.4, on: .main, in: .common).autoconnect()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        Text(String(repeating: ".", count: phase + 1))
-            .font(.system(size: 13, design: .monospaced))
-            .foregroundStyle(IntakeV2Color.accent)
-            .frame(width: 22, alignment: .leading)
-            .onReceive(timer) { _ in
-                phase = (phase + 1) % 3
+        HStack(spacing: 0) {
+            ForEach(0..<3, id: \.self) { index in
+                Text(".")
+                    .opacity(reduceMotion || index <= phase ? 1 : 0)
             }
+        }
+        .font(.system(size: 13, design: .monospaced))
+        .foregroundStyle(IntakeV2Color.accent)
+        .frame(width: 28, alignment: .leading)
+        .accessibilityHidden(true)
+        .onReceive(timer) { _ in
+            guard !reduceMotion else { return }
+            phase = (phase + 1) % 3
+        }
     }
 }

@@ -2,13 +2,13 @@ import SwiftUI
 import AppKit
 
 // MARK: - Intake V2 Step Views — review decisions 2026-05-14
-// Step 2 Role / Step 3 Situation / Step 4 Blocker / Step 5 Folder Pick
+// Role / Blocker / Commitment / Evidence / Folder Pick
 // + Splash (real local scan) + First Decide
 
-// MARK: - Step 3: Situation
+// MARK: - Commitment
 
 @MainActor
-struct IntakeV2WorkmodeView: View {
+struct IntakeV2CommitmentView: View {
     @ObservedObject var store: IntakeV2Store
     let onBack: () -> Void
     let onNext: () -> Void
@@ -19,31 +19,26 @@ struct IntakeV2WorkmodeView: View {
             VStack(alignment: .leading, spacing: 24) {
                 IntakeV2ProgressReservedSpace()
                 IntakeV2Header(
-                    title: "얼마나 혼자, 얼마나 자주 만들 수 있나요?",
-                    subtitle: "쓸 수 있는 시간과 책임 범위에 맞춰 오늘 할 일을 정합니다."
+                    title: "하루에 얼마나 시간을 쓸 수 있나요?",
+                    subtitle: "쓸 수 있는 시간에 맞춰 오늘 과제의 크기를 조절합니다."
                 )
                 VStack(spacing: 8) {
-                    ForEach(OnboardingWorkMode.onboardingChoices, id: \.self) { mode in
+                    ForEach(IntakeV2CommitmentLevel.allCases, id: \.self) { level in
                         IntakeV2OptionCard(
-                            title: mode.displayTitle,
-                            description: mode.displayDescription,
-                            selected: store.workmode == mode,
-                            onTap: { store.workmode = mode; store.persist() }
+                            title: level.displayTitle,
+                            description: level.displayDescription,
+                            selected: store.commitmentLevel == level,
+                            accessibilityIdentifier: "intakeV2.commitment.option.\(level.rawValue)",
+                            onTap: { store.selectCommitmentLevel(level) }
                         )
                     }
-                    IntakeV2OptionCard(
-                        title: OnboardingWorkMode.exploring.displayTitle,
-                        description: OnboardingWorkMode.exploring.displayDescription,
-                        selected: store.workmode == .exploring,
-                        onTap: { store.workmode = .exploring; store.persist() }
-                    )
                 }
             }
         } footer: { _ in
             IntakeV2Footer(
                 backDisabled: false,
                 nextTitle: "Next →",
-                nextEnabled: store.isStep1Complete,
+                nextEnabled: store.isCommitmentComplete,
                 onBack: onBack,
                 onNext: onNext
             )
@@ -52,7 +47,7 @@ struct IntakeV2WorkmodeView: View {
 
 }
 
-// MARK: - Step 2: Role
+// MARK: - Role
 
 @MainActor
 struct IntakeV2RoleView: View {
@@ -66,7 +61,7 @@ struct IntakeV2RoleView: View {
             VStack(alignment: .leading, spacing: 24) {
                 IntakeV2ProgressReservedSpace()
                 IntakeV2Header(
-                    title: "가장 자주 하는 역할은 무엇인가요?",
+                    title: "지금 하루를 가장 많이 쓰는 역할은 무엇인가요?",
                     subtitle: "익숙한 일하는 방식에 맞춰 설명과 제안을 조정합니다."
                 )
                 VStack(spacing: 8) {
@@ -75,6 +70,7 @@ struct IntakeV2RoleView: View {
                             title: role.displayTitle,
                             description: role.displayDescription,
                             selected: store.role == role,
+                            accessibilityIdentifier: "intakeV2.role.option.\(role.rawValue)",
                             onTap: { store.role = role; store.persist() }
                         )
                     }
@@ -84,7 +80,7 @@ struct IntakeV2RoleView: View {
             IntakeV2Footer(
                 backDisabled: false,
                 nextTitle: "Next →",
-                nextEnabled: store.isStep2Complete,
+                nextEnabled: store.isRoleComplete,
                 onBack: onBack,
                 onNext: onNext
             )
@@ -93,7 +89,7 @@ struct IntakeV2RoleView: View {
 
 }
 
-// MARK: - Step 4: Blocker
+// MARK: - Blocker
 
 @MainActor
 struct IntakeV2StuckView: View {
@@ -107,7 +103,7 @@ struct IntakeV2StuckView: View {
             VStack(alignment: .leading, spacing: 24) {
                 IntakeV2ProgressReservedSpace()
                 IntakeV2Header(
-                    title: "현재 가장 큰 막힘은 무엇인가요?",
+                    title: "지금 가장 큰 막힘은 무엇인가요?",
                     subtitle: "막힌 지점에 맞춰 먼저 볼 문제를 정합니다."
                 )
                 VStack(spacing: 8) {
@@ -116,6 +112,7 @@ struct IntakeV2StuckView: View {
                             title: stage.displayTitle,
                             description: stage.displayDescription,
                             selected: store.stuck == stage,
+                            accessibilityIdentifier: "intakeV2.blocker.option.\(stage.rawValue)",
                             onTap: { store.stuck = stage; store.persist() }
                         )
                     }
@@ -125,7 +122,7 @@ struct IntakeV2StuckView: View {
             IntakeV2Footer(
                 backDisabled: false,
                 nextTitle: "Next →",
-                nextEnabled: store.isStep3Complete,
+                nextEnabled: store.isBlockerComplete,
                 onBack: onBack,
                 onNext: onNext
             )
@@ -134,7 +131,49 @@ struct IntakeV2StuckView: View {
 
 }
 
-// MARK: - Step 5: Folder pick (D5 eng + D7/D9 design)
+// MARK: - Evidence
+
+@MainActor
+struct IntakeV2EvidenceView: View {
+    @ObservedObject var store: IntakeV2Store
+    let onBack: () -> Void
+    let onNext: () -> Void
+    var progressNamespace: Namespace.ID? = nil
+
+    var body: some View {
+        IntakeV2PinnedStepScaffold { _ in
+            VStack(alignment: .leading, spacing: 24) {
+                IntakeV2ProgressReservedSpace()
+                IntakeV2Header(
+                    title: "이미 가진 기록이 있나요?",
+                    subtitle: "여러 개 선택할 수 있어요. 이 기록을 기준으로 첫 결정을 더 구체적으로 만듭니다."
+                )
+                VStack(spacing: 8) {
+                    ForEach(OnboardingIsolationLevel.intakeV2EvidenceChoices, id: \.self) { level in
+                        IntakeV2OptionCard(
+                            title: level.displayTitle,
+                            description: level.displayDescription,
+                            selected: store.evidenceLevels.contains(level),
+                            selectionStyle: .multiple,
+                            accessibilityIdentifier: "intakeV2.evidence.option.\(level.rawValue)",
+                            onTap: { store.toggleEvidenceLevel(level) }
+                        )
+                    }
+                }
+            }
+        } footer: { _ in
+            IntakeV2Footer(
+                backDisabled: false,
+                nextTitle: "Next →",
+                nextEnabled: store.isEvidenceComplete,
+                onBack: onBack,
+                onNext: onNext
+            )
+        }
+    }
+}
+
+// MARK: - Folder pick (D5 eng + D7/D9 design)
 
 @MainActor
 struct IntakeV2FolderPickView: View {
@@ -151,9 +190,9 @@ struct IntakeV2FolderPickView: View {
             VStack(alignment: .leading, spacing: 24) {
                 IntakeV2ProgressReservedSpace()
                 IntakeV2Header(
-                    title: "어디서 읽을까요?",
+                    title: "첫 결정을 만들 프로젝트 폴더를 선택할까요?",
                     subtitle: store.folderURL == nil
-                        ? "폴더를 선택하면 첫 결정을 프로젝트 코드와 문서에 맞춰 더 정확하게 만들 수 있습니다. 지금 건너뛰어도 시작할 수 있습니다."
+                        ? "코드·문서·SPEC을 읽으면 오늘 할 일을 더 정확하게 고를 수 있습니다. 지금 건너뛰어도 시작할 수 있습니다."
                         : "선택한 프로젝트를 바탕으로 첫 결정을 준비합니다."
                 )
                 VStack(alignment: .leading, spacing: 18) {
@@ -402,7 +441,7 @@ struct IntakeV2SplashView_Legacy: View {
             markLastDone()
         }
 
-        appendLine("signals.detect + weight.priority")
+        appendLine("signals.detect")
         try? await sleep(ms: 500)
         markLastDone()
 
@@ -414,7 +453,7 @@ struct IntakeV2SplashView_Legacy: View {
             : IntakeV2DecisionEngine().generate(intake: intake, scan: scan)
 
         markLastDone()
-        appendLine("→ \(decision.taskID)")
+        appendLine("→ ready")
         try? await sleep(ms: 600)
         onComplete(decision, scanFailed)
     }
@@ -463,6 +502,7 @@ struct IntakeV2SplashView_Legacy: View {
         if intake.workmode != nil { n += 1 }
         if intake.role != nil { n += 1 }
         if intake.stuck != nil { n += 1 }
+        if !intake.evidenceLevels.isEmpty { n += 1 }
         if intake.folderURL != nil { n += 1 }
         return n
     }
@@ -483,19 +523,6 @@ struct IntakeV2FirstDecisionView: View {
         VStack(spacing: 0) {
             // No hero band — straight into result
             VStack(alignment: .leading, spacing: 18) {
-                Text("FIRST DECISION")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundStyle(IntakeV2Color.accent)
-                    .tracking(1.4)
-                    .padding(.top, 32)
-
-                HStack(spacing: 8) {
-                    Spacer()
-                    Text(decision.taskID)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(IntakeV2Color.textTertiary)
-                }
-
                 // macOS-style notification card
                 HStack(spacing: 18) {
                     AppIconLogo()
@@ -532,6 +559,7 @@ struct IntakeV2FirstDecisionView: View {
                                 .stroke(.white.opacity(0.05), lineWidth: 1)
                         )
                 )
+                .padding(.top, 32)
 
                 // WHY rationale
                 HStack(alignment: .top, spacing: 12) {

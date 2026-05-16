@@ -105,6 +105,19 @@ struct SidecarEventDecodingTests {
                 "message": "Codex SDK and CLI binary are installed"
               }
             },
+            "gemini": {
+              "available": true,
+              "source": "api-key",
+              "message": "API key from GEMINI_API_KEY / GOOGLE_API_KEY",
+              "sdk": {
+                "available": true,
+                "packageName": "@google/genai",
+                "version": "2.3.0",
+                "packageRoot": "/repo/node_modules/@google/genai",
+                "entrypointPath": "/repo/node_modules/@google/genai/package.json",
+                "message": "Google Gen AI SDK is installed"
+              }
+            },
             "acp": {
               "available": true,
               "message": "ACP adapter ready for Zed registration",
@@ -124,6 +137,8 @@ struct SidecarEventDecodingTests {
         #expect(event.environment?.claude.sdk?.packageName == "@anthropic-ai/claude-agent-sdk")
         #expect(event.environment?.codex.source == "local-session")
         #expect(event.environment?.codex.sdk?.available == true)
+        #expect(event.environment?.gemini?.source == "api-key")
+        #expect(event.environment?.gemini?.sdk?.packageName == "@google/genai")
         #expect(event.environment?.acp?.available == true)
         #expect(event.sessions?.count == 1)
         #expect(event.sessions?.first?.messages.first?.content == "OK")

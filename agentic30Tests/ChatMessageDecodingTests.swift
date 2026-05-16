@@ -234,4 +234,90 @@ struct ChatMessageDecodingTests {
         #expect(question.id == "day1-question-1")
         #expect(question.question == "누구를 인터뷰하나요?")
     }
+
+    @MainActor @Test func day1IntroModelMapsIcpPromptQuestionAndOptions() throws {
+        let prompt = StructuredPromptRequest(
+            requestId: "day1-icp",
+            sessionId: "session-1",
+            toolName: "agentic30_request_user_input",
+            title: "ICP 1/4",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            intro: StructuredPromptIntro(
+                title: "ICP",
+                body: "누구를 위해 무엇을 검증할지 먼저 정합니다.",
+                bullets: []
+            ),
+            questions: [
+                StructuredPromptQuestion(
+                    questionId: "day1-question-1",
+                    header: "첫 고객",
+                    question: "이번 주 가장 먼저 인터뷰할 1인 개발자 유형은 누구인가요?",
+                    helperText: "첫 답변은 ICP 문서의 기준으로 저장됩니다.",
+                    options: [
+                        StructuredPromptOption(
+                            label: "퇴사 후 첫 매출이 없는 개발자",
+                            description: "수익화 전환이 가장 시급한 하위 ICP입니다.",
+                            preview: nil,
+                            nextIntent: "first_revenue_zero"
+                        ),
+                        StructuredPromptOption(
+                            label: "AI로 제품은 만들었지만 고객이 없는 개발자",
+                            description: "제품은 있지만 고객 반응이 비어 있는 하위 ICP입니다.",
+                            preview: nil,
+                            nextIntent: "agent_built_no_customers"
+                        ),
+                    ],
+                    multiSelect: false,
+                    allowFreeText: true,
+                    requiresFreeText: false,
+                    freeTextPlaceholder: "예: 퇴사 후 3개월째, AI로 MVP는 만들었지만 유료 고객이 없는 개발자",
+                    textMode: .short
+                )
+            ],
+            generation: StructuredPromptGeneration(mode: "host_structured", docType: "icp")
+        )
+
+        let model = try #require(Day1IntroPromptModel.make(prompt: prompt, dayNumber: 1))
+        #expect(model.title == "첫 고객 ICP를 좁힙니다.")
+        #expect(model.body == "이번 주 가장 먼저 인터뷰할 1인 개발자 유형은 누구인가요?")
+        #expect(model.helperText == "첫 답변은 ICP 문서의 기준으로 저장됩니다.")
+        #expect(model.rows.map(\.title) == [
+            "퇴사 후 첫 매출이 없는 개발자",
+            "AI로 제품은 만들었지만 고객이 없는 개발자",
+        ])
+        #expect(model.rows.map(\.detail).first == "수익화 전환이 가장 시급한 하위 ICP입니다.")
+        #expect(model.rows.map(\.tag) == ["FIRST", "AGENT"])
+        #expect(model.freeTextPlaceholder == "예: 퇴사 후 3개월째, AI로 MVP는 만들었지만 유료 고객이 없는 개발자")
+        #expect(model.allowsFreeText)
+        #expect(Day1IntroPromptModel.suppressesStructuredPromptForm(prompt: prompt, dayNumber: 1))
+    }
+
+    @MainActor @Test func day1IntroModelOnlyAppliesToDay1IcpPrompts() throws {
+        let prompt = StructuredPromptRequest(
+            requestId: "goal",
+            sessionId: "session-1",
+            toolName: "agentic30_request_user_input",
+            title: "GOAL 정하기",
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            questions: [
+                StructuredPromptQuestion(
+                    questionId: "goal-question-1",
+                    header: "이번 주 GOAL",
+                    question: "이번 주 가장 먼저 증명할 목표와 판단 지표는 무엇인가요?",
+                    helperText: nil,
+                    options: nil,
+                    multiSelect: false,
+                    allowFreeText: true,
+                    requiresFreeText: true,
+                    freeTextPlaceholder: "예: 5명에게 인터뷰 요청",
+                    textMode: .short
+                )
+            ],
+            generation: StructuredPromptGeneration(mode: "host_structured", docType: "goal")
+        )
+
+        #expect(Day1IntroPromptModel.make(prompt: prompt, dayNumber: 1) == nil)
+        #expect(Day1IntroPromptModel.make(prompt: prompt, dayNumber: 2) == nil)
+        #expect(Day1IntroPromptModel.suppressesStructuredPromptForm(prompt: prompt, dayNumber: 1) == false)
+    }
 }

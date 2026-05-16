@@ -17,6 +17,7 @@ const appSupportPath = path.join(
 const environment = {
   claude: getProviderAuthState("claude"),
   codex: getProviderAuthState("codex"),
+  gemini: getProviderAuthState("gemini"),
   acp: getAcpAdapterState(),
 };
 

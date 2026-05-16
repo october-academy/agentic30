@@ -10,6 +10,7 @@ struct IntakeSnapshot: Equatable {
     let workmode: OnboardingWorkMode?
     let role: OnboardingRole?
     let stuck: OnboardingProjectStage?
+    let evidenceLevels: [OnboardingIsolationLevel]
     let folderURL: URL?
 
     static func from(store: IntakeV2Store) -> IntakeSnapshot {
@@ -17,6 +18,7 @@ struct IntakeSnapshot: Equatable {
             workmode: store.workmode,
             role: store.role,
             stuck: store.stuck,
+            evidenceLevels: store.evidenceLevels,
             folderURL: store.folderURL
         )
     }
@@ -81,7 +83,7 @@ struct IntakeV2Decision: Equatable {
     let taskID: String
     let body: String
     let rationale: String
-    let metaLine: String         // e.g. "8주 공백 · 최우선"
+    let metaLine: String         // e.g. "8주 공백"
     let attributedSources: [IntakeSourceID]
 }
 
@@ -101,7 +103,7 @@ struct IntakeV2DecisionEngine {
                 taskID: makeID("docchg"),
                 body: "TODOS.md가 \(staleDays)일째 변경 없음. 다음 한 가지를 정의해 업데이트.",
                 rationale: "오래된 TODOS.md = 다음 단계가 불분명한 상태. 결정 정확도를 높이려면 우선 정리.",
-                metaLine: "로컬 폴더 · \(staleDays)일 경과 · 보통",
+                metaLine: "\(staleDays)일 경과",
                 attributedSources: [.localFolder]
             )
         }
@@ -109,26 +111,50 @@ struct IntakeV2DecisionEngine {
         // Rule 2 — stuck=ideaOnly + interview gap → demand interview
         if intake.stuck == .ideaOnly {
             let weeksGap = scan.lastCommitDays.map { Int(Double($0) / 7.0) } ?? 8
+            if intake.evidenceLevels.contains(.occasional) || scan.hasInterviewTranscripts {
+                return IntakeV2Decision(
+                    category: .interviewRequest,
+                    priority: .critical,
+                    taskID: makeID("intvw"),
+                    body: "기존 인터뷰 기록 3건에서 반복 통증 1개와 현재 대안 1개 추출.",
+                    rationale: "이미 고객 발화가 있습니다. 새 인터뷰를 잡기 전에 과거 행동과 반복 통증을 압축해야 다음 질문이 날카로워집니다.",
+                    metaLine: "인터뷰 기록 있음",
+                    attributedSources: attributedSourcesForInterview(intake: intake)
+                )
+            }
             return IntakeV2Decision(
                 category: .interviewRequest,
                 priority: .critical,
                 taskID: makeID("intvw"),
                 body: "이번 주 신규 가입자 3명에게 30분 인터뷰 요청 발송.",
                 rationale: "문제 발견 단계입니다. 누구의 어떤 문제인지부터 좁혀야 하므로 인터뷰가 가장 시급한 입력입니다.",
-                metaLine: "\(weeksGap)주 공백 · 최우선",
+                metaLine: "\(weeksGap)주 공백",
                 attributedSources: attributedSourcesForInterview(intake: intake)
             )
         }
 
         // Rule 3 — stuck=firstUsers (payment) + hint of payment data → payment analysis
         if intake.stuck == .firstUsers {
+            if intake.evidenceLevels.contains(.paymentResponses) {
+                return IntakeV2Decision(
+                    category: .paymentResponse,
+                    priority: .high,
+                    taskID: makeID("pmt"),
+                    body: "이미 받은 가격·결제 반응을 모아 거절 사유와 지불 신호를 분리.",
+                    rationale: "유료 전환 전 단계입니다. 가격 반응이 있다면 더 많은 기능보다 결제 직전의 막힌 이유를 먼저 정리해야 합니다.",
+                    metaLine: "가격·결제 반응 있음",
+                    attributedSources: scan.hasPaymentResponses
+                        ? [.localFolder, .toss, .stripe]
+                        : [.localFolder]
+                )
+            }
             return IntakeV2Decision(
                 category: .paymentResponse,
                 priority: .high,
                 taskID: makeID("pmt"),
                 body: "지난 결제 거절·이탈 응답을 모아 공통 사유 3가지 정리.",
                 rationale: "수익화가 막혀 있습니다. 결제 직전 이탈이 가장 비싼 신호이므로 패턴부터 봅니다.",
-                metaLine: "2일 경과 · 높음",
+                metaLine: "2일 경과",
                 attributedSources: scan.hasPaymentResponses
                     ? [.localFolder, .toss, .stripe]
                     : [.localFolder]
@@ -143,7 +169,7 @@ struct IntakeV2DecisionEngine {
                 taskID: makeID("price"),
                 body: "가격 후보 2개를 정하고 다음 인터뷰에서 직접 제안 테스트.",
                 rationale: "가격 검증이 필요합니다. 가격은 직접 제안해 봐야 알 수 있으므로 다음 인터뷰가 실험장입니다.",
-                metaLine: "미검증 · 높음",
+                metaLine: "미검증",
                 attributedSources: [.localFolder]
             )
         }
@@ -156,7 +182,7 @@ struct IntakeV2DecisionEngine {
                 taskID: makeID("acq"),
                 body: "최근 가입자 5명의 가입 직후 첫 행동을 시간순으로 정리.",
                 rationale: "가입 이후 행동이 불명확합니다. 들어온 사람이 무엇을 보고 떠나는지가 답입니다.",
-                metaLine: "24시간 경과 · 높음",
+                metaLine: "24시간 경과",
                 attributedSources: [.localFolder, .posthog]
             )
         }
@@ -169,7 +195,7 @@ struct IntakeV2DecisionEngine {
                 taskID: makeID("churn"),
                 body: "6개월 이상 사용자 중 최근 30일 미접속 명단을 정리.",
                 rationale: "성장 단계에서는 오래 쓴 사람의 이탈이 가장 비싼 신호입니다.",
-                metaLine: "사용자 확인 필요 · 보통",
+                metaLine: "사용자 확인 필요",
                 attributedSources: [.localFolder, .posthog]
             )
         }
@@ -181,7 +207,7 @@ struct IntakeV2DecisionEngine {
             taskID: makeID("fb"),
             body: "오늘 5분 동안 어제 만든 것·막힌 것·배운 것을 한 문장씩 메모.",
             rationale: "기록이 부족합니다. 컨텍스트가 쌓이면 더 정확한 결정을 만들 수 있어요.",
-            metaLine: "코퍼스 없음 · 낮음",
+            metaLine: "코퍼스 없음",
             attributedSources: []
         )
     }

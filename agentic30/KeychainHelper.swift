@@ -69,14 +69,24 @@ enum KeychainHelper {
     // MARK: - Single-Blob Settings
 
     struct Settings: Codable {
-        static let currentSchemaVersion = 4
+        static let currentSchemaVersion = 5
         static let legacyDefaultCodexModelID = "gpt-5.4"
 
         var schemaVersion: Int = Settings.currentSchemaVersion
 
-        // Agent Models
+        // Agent Settings
         var preferredClaudeModel: String = AgentModelCatalog.defaultClaudeModelID
         var preferredCodexModel: String = AgentModelCatalog.defaultCodexModelID
+        var preferredGeminiModel: String = AgentModelCatalog.defaultGeminiModelID
+        var claudeAuthMode: String = AgentAuthMode.local.rawValue
+        var codexAuthMode: String = AgentAuthMode.local.rawValue
+        var geminiAuthMode: String = AgentAuthMode.local.rawValue
+        var claudeApiKey: String = ""
+        var codexApiKey: String = ""
+        var geminiApiKey: String = ""
+        var claudeEnvironment: String = ""
+        var codexEnvironment: String = ""
+        var geminiEnvironment: String = ""
 
         // Ad Analytics
         var posthogApiKey: String = ""
@@ -113,6 +123,16 @@ enum KeychainHelper {
 
             preferredClaudeModel = try container.decodeIfPresent(String.self, forKey: .preferredClaudeModel) ?? AgentModelCatalog.defaultClaudeModelID
             preferredCodexModel = try container.decodeIfPresent(String.self, forKey: .preferredCodexModel) ?? AgentModelCatalog.defaultCodexModelID
+            preferredGeminiModel = try container.decodeIfPresent(String.self, forKey: .preferredGeminiModel) ?? AgentModelCatalog.defaultGeminiModelID
+            claudeAuthMode = try container.decodeIfPresent(String.self, forKey: .claudeAuthMode) ?? AgentAuthMode.local.rawValue
+            codexAuthMode = try container.decodeIfPresent(String.self, forKey: .codexAuthMode) ?? AgentAuthMode.local.rawValue
+            geminiAuthMode = try container.decodeIfPresent(String.self, forKey: .geminiAuthMode) ?? AgentAuthMode.local.rawValue
+            claudeApiKey = try container.decodeIfPresent(String.self, forKey: .claudeApiKey) ?? ""
+            codexApiKey = try container.decodeIfPresent(String.self, forKey: .codexApiKey) ?? ""
+            geminiApiKey = try container.decodeIfPresent(String.self, forKey: .geminiApiKey) ?? ""
+            claudeEnvironment = try container.decodeIfPresent(String.self, forKey: .claudeEnvironment) ?? ""
+            codexEnvironment = try container.decodeIfPresent(String.self, forKey: .codexEnvironment) ?? ""
+            geminiEnvironment = try container.decodeIfPresent(String.self, forKey: .geminiEnvironment) ?? ""
 
             posthogApiKey = try container.decodeIfPresent(String.self, forKey: .posthogApiKey) ?? ""
             posthogProjectAPIKey = try container.decodeIfPresent(String.self, forKey: .posthogProjectAPIKey) ?? ""
@@ -146,6 +166,16 @@ enum KeychainHelper {
             try container.encode(Settings.currentSchemaVersion, forKey: .schemaVersion)
             try container.encode(preferredClaudeModel, forKey: .preferredClaudeModel)
             try container.encode(preferredCodexModel, forKey: .preferredCodexModel)
+            try container.encode(preferredGeminiModel, forKey: .preferredGeminiModel)
+            try container.encode(claudeAuthMode, forKey: .claudeAuthMode)
+            try container.encode(codexAuthMode, forKey: .codexAuthMode)
+            try container.encode(geminiAuthMode, forKey: .geminiAuthMode)
+            try container.encode(claudeApiKey, forKey: .claudeApiKey)
+            try container.encode(codexApiKey, forKey: .codexApiKey)
+            try container.encode(geminiApiKey, forKey: .geminiApiKey)
+            try container.encode(claudeEnvironment, forKey: .claudeEnvironment)
+            try container.encode(codexEnvironment, forKey: .codexEnvironment)
+            try container.encode(geminiEnvironment, forKey: .geminiEnvironment)
 
             try container.encode(posthogApiKey, forKey: .posthogApiKey)
             try container.encode(posthogProjectAPIKey, forKey: .posthogProjectAPIKey)
@@ -175,6 +205,16 @@ enum KeychainHelper {
             case schemaVersion
             case preferredClaudeModel
             case preferredCodexModel
+            case preferredGeminiModel
+            case claudeAuthMode
+            case codexAuthMode
+            case geminiAuthMode
+            case claudeApiKey
+            case codexApiKey
+            case geminiApiKey
+            case claudeEnvironment
+            case codexEnvironment
+            case geminiEnvironment
             case posthogApiKey
             case posthogProjectAPIKey
             case posthogHost
@@ -208,6 +248,13 @@ enum KeychainHelper {
                 migrated.preferredCodexModel,
                 provider: .codex
             )
+            migrated.preferredGeminiModel = AgentModelCatalog.normalizedModelID(
+                migrated.preferredGeminiModel,
+                provider: .gemini
+            )
+            migrated.claudeAuthMode = AgentAuthMode.normalized(migrated.claudeAuthMode, provider: .claude).rawValue
+            migrated.codexAuthMode = AgentAuthMode.normalized(migrated.codexAuthMode, provider: .codex).rawValue
+            migrated.geminiAuthMode = AgentAuthMode.normalized(migrated.geminiAuthMode, provider: .gemini).rawValue
             if schemaVersion < 4 && migrated.preferredCodexModel == legacyDefaultCodexModelID {
                 migrated.preferredCodexModel = AgentModelCatalog.defaultCodexModelID
             }

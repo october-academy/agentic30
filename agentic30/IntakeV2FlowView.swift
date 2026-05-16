@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 // MARK: - Intake V2 Flow — review decisions 2026-05-14
-// Boot intro → 4-step onboarding: Role → Workmode → Stuck → Folder pick
+// Boot intro → onboarding: Role → Blocker → Commitment → Evidence → Folder pick
 // then source connect → analyzing splash → first Decide card → post-onboarding Records banner
 //
 // Design decisions reflected:
@@ -156,22 +156,41 @@ struct IntakeV2Header: View {
 // MARK: - Option card
 
 struct IntakeV2OptionCard: View {
+    enum SelectionStyle {
+        case single
+        case multiple
+    }
+
     let title: String
     let description: String
     let selected: Bool
+    var selectionStyle: SelectionStyle = .single
+    var accessibilityIdentifier: String? = nil
     let onTap: () -> Void
 
     var body: some View {
         Button(action: onTap) {
             HStack(alignment: .center, spacing: 14) {
                 ZStack {
-                    Circle()
-                        .stroke(selected ? IntakeV2Color.accentBright : .white.opacity(0.22), lineWidth: 1.5)
-                        .frame(width: 14, height: 14)
-                    if selected {
+                    if selectionStyle == .single {
                         Circle()
-                            .fill(IntakeV2Color.accentBright)
-                            .frame(width: 6, height: 6)
+                            .stroke(selected ? IntakeV2Color.accentBright : .white.opacity(0.22), lineWidth: 1.5)
+                            .frame(width: 14, height: 14)
+                    } else {
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .stroke(selected ? IntakeV2Color.accentBright : .white.opacity(0.22), lineWidth: 1.5)
+                            .frame(width: 14, height: 14)
+                    }
+                    if selected {
+                        if selectionStyle == .single {
+                            Circle()
+                                .fill(IntakeV2Color.accentBright)
+                                .frame(width: 6, height: 6)
+                        } else {
+                            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                                .fill(IntakeV2Color.accentBright)
+                                .frame(width: 7, height: 7)
+                        }
                     }
                 }
                 .frame(width: 18)
@@ -209,6 +228,9 @@ struct IntakeV2OptionCard: View {
             )
         }
         .buttonStyle(.plain)
+        .ifLet(accessibilityIdentifier) { view, identifier in
+            view.accessibilityIdentifier(identifier)
+        }
     }
 }
 
@@ -349,7 +371,7 @@ enum IntakeV2Step: Int, CaseIterable {
     // OS-product intro
     case bootIntro = 1
     // Intake (user answers)
-    case role, workmode, stuck, folderPick
+    case role, stuck, commitment, evidence, folderPick
     // OS-product setup + analysis
     case connectShowcase, readyAnalyze
 
@@ -358,7 +380,7 @@ enum IntakeV2Step: Int, CaseIterable {
     }
 
     var progressTotal: Int {
-        7
+        8
     }
 }
 
@@ -380,6 +402,8 @@ struct IntakeV2FlowView: View {
     /// onComplete delivers the final store + source manager so the host can run
     /// integration logic (submit OnboardingContext, register workspace, mark intro
     /// complete) without IntakeV2 having to know about AgenticViewModel.
+    var bootLogState: IntakeV2BootLogState = .empty
+    var workspaceScanResult: AgenticViewModel.WorkspaceScanResult? = nil
     var onWorkspacePrefetchRequested: ((IntakeV2Store, IntakeV2SourceManager) -> Void)? = nil
     var onComplete: ((IntakeV2Store, IntakeV2SourceManager) -> Void)? = nil
 
@@ -409,6 +433,7 @@ struct IntakeV2FlowView: View {
                 reduceMotion: reduceMotion,
                 progressNamespace: progressNamespace
             )
+            .id("intakeV2.progress.\(step.progressCurrent)")
             .padding(.horizontal, horizontalPadding)
             .padding(.top, IntakeV2Layout.stepTopPadding)
             .frame(maxWidth: IntakeV2Layout.contentMaxWidth, alignment: .leading)
@@ -430,20 +455,27 @@ struct IntakeV2FlowView: View {
             IntakeV2RoleView(
                 store: store,
                 onBack: { navigate(to: .bootIntro) },
-                onNext: { navigate(to: .workmode) },
-                progressNamespace: progressNamespace
-            )
-        case .workmode:
-            IntakeV2WorkmodeView(
-                store: store,
-                onBack: { navigate(to: .role) },
                 onNext: { navigate(to: .stuck) },
                 progressNamespace: progressNamespace
             )
         case .stuck:
             IntakeV2StuckView(
                 store: store,
-                onBack: { navigate(to: .workmode) },
+                onBack: { navigate(to: .role) },
+                onNext: { navigate(to: .commitment) },
+                progressNamespace: progressNamespace
+            )
+        case .commitment:
+            IntakeV2CommitmentView(
+                store: store,
+                onBack: { navigate(to: .stuck) },
+                onNext: { navigate(to: .evidence) },
+                progressNamespace: progressNamespace
+            )
+        case .evidence:
+            IntakeV2EvidenceView(
+                store: store,
+                onBack: { navigate(to: .commitment) },
                 onNext: { navigate(to: .folderPick) },
                 progressNamespace: progressNamespace
             )
@@ -451,7 +483,7 @@ struct IntakeV2FlowView: View {
             IntakeV2FolderPickView(
                 store: store,
                 sources: sources,
-                onBack: { navigate(to: .stuck) },
+                onBack: { navigate(to: .evidence) },
                 onNext: {
                     store.markCompleted()
                     onWorkspacePrefetchRequested?(store, sources)
@@ -470,6 +502,8 @@ struct IntakeV2FlowView: View {
             IntakeV2ReadyAnalyzeView(
                 store: store,
                 sources: sources,
+                bootLogState: bootLogState,
+                workspaceScanResult: workspaceScanResult,
                 onBack: { navigate(to: .connectShowcase) },
                 onDone: { onComplete?(store, sources) },
                 progressNamespace: progressNamespace

@@ -99,7 +99,26 @@ struct AgenticViewModelAuthTests {
         #expect(decoded.isolationLevels == [.projectFolder, .workLog])
         #expect(decoded.assistantSystemPromptFragment.contains("project_folder,work_log"))
         #expect(decoded.assistantSystemPromptFragment.contains("프로젝트 폴더"))
-        #expect(decoded.assistantSystemPromptFragment.contains("업무 일지"))
+        #expect(decoded.assistantSystemPromptFragment.contains("프로젝트 일지"))
+    }
+
+    @Test @MainActor func onboardingContextPersistsPaymentResponsesSource() throws {
+        let context = OnboardingContext(
+            workMode: .sideProject,
+            role: .marketerBusiness,
+            projectStage: .firstUsers,
+            isolationLevel: .paymentResponses,
+            completedAt: "2026-05-08T00:00:00Z"
+        )
+
+        let data = try JSONEncoder().encode(context)
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let decoded = try JSONDecoder().decode(OnboardingContext.self, from: data)
+
+        #expect(object?["isolation_level"] as? String == "payment_responses")
+        #expect(object?["isolation_levels"] as? [String] == ["payment_responses"])
+        #expect(decoded.isolationLevel == .paymentResponses)
+        #expect(decoded.assistantSystemPromptFragment.contains("가격 제안"))
     }
 
     @Test @MainActor func onboardingContextQuestionResponsesRequireThreeDistinctAnswers() throws {
@@ -351,6 +370,7 @@ struct AgenticViewModelAuthTests {
         }
 
         let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true, activateAppForAuth: {})
+        viewModel.resetFoundationProgressForTesting()
         let context = OnboardingContext.make(
             workMode: .teamStartup,
             role: .designer,
@@ -384,6 +404,7 @@ struct AgenticViewModelAuthTests {
         }
 
         let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true, activateAppForAuth: {})
+        viewModel.resetFoundationProgressForTesting()
         let firstContext = OnboardingContext.make(
             workMode: .fullTimeSolo,
             role: .developer,
@@ -409,6 +430,51 @@ struct AgenticViewModelAuthTests {
         #expect(viewModel.isScanning == true)
     }
 
+    @Test @MainActor func intakeOnlyPreparationClearsPrefetchedWorkspaceScanState() throws {
+        let productionLegacyProvider = WorkspaceSettings.legacyWorkspaceProvider
+        WorkspaceSettings.legacyWorkspaceProvider = { "" }
+        WorkspaceSettings.clear()
+        let workspaceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-prefetch-clear-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+        defer {
+            WorkspaceSettings.clear()
+            WorkspaceSettings.legacyWorkspaceProvider = productionLegacyProvider
+            try? FileManager.default.removeItem(at: workspaceURL)
+        }
+
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true, activateAppForAuth: {})
+        viewModel.resetFoundationProgressForTesting()
+        viewModel.prefetchOnboardingWorkspace(
+            url: workspaceURL,
+            context: OnboardingContext.make(
+                workMode: .fullTimeSolo,
+                role: .developer,
+                projectStage: .building,
+                isolationLevel: .projectFolder
+            )
+        )
+
+        #expect(viewModel.workspaceRoot == workspaceURL.path)
+        #expect(viewModel.scanProgressLogs == ["Waiting for workspace connection..."])
+        #expect(WorkspaceSettings.hasExplicitWorkspace)
+
+        viewModel.prepareIntakeOnlyOnboarding(
+            context: OnboardingContext.make(
+                workMode: .sideProject,
+                role: .productManager,
+                projectStage: .ideaOnly,
+                isolationLevel: .projectFolder
+            )
+        )
+
+        #expect(viewModel.workspaceRoot.isEmpty)
+        #expect(viewModel.scanProgressLogs.isEmpty)
+        #expect(viewModel.scanResult == nil)
+        #expect(!WorkspaceSettings.hasExplicitWorkspace)
+        #expect(viewModel.onboardingContext?.workMode == .sideProject)
+    }
+
     @Test @MainActor func completingPrefetchedOnboardingOpensWorkspaceSurfaceAndAnchorsFoundation() throws {
         let workspaceURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("agentic30-prefetch-complete-\(UUID().uuidString)", isDirectory: true)
@@ -419,6 +485,7 @@ struct AgenticViewModelAuthTests {
         }
 
         let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true, activateAppForAuth: {})
+        viewModel.resetFoundationProgressForTesting()
         viewModel.prefetchOnboardingWorkspace(
             url: workspaceURL,
             context: OnboardingContext.make(
@@ -437,6 +504,121 @@ struct AgenticViewModelAuthTests {
         #expect(viewModel.requiresMacOnboarding == false)
         #expect(viewModel.activeSurface == .workspace)
         #expect(viewModel.foundationStartedAt != nil)
+    }
+
+    @Test @MainActor func intakeV2BootLogStateUsesOnlySidecarProgressEvents() {
+        let diagnostics = SidecarDiagnostics(
+            generatedAt: Date(timeIntervalSince1970: 0),
+            appSupportPath: "/tmp/app-support",
+            workspaceRoot: "/tmp/agentic30-public",
+            runtime: SidecarRuntimeDiagnostics(
+                pid: 4242,
+                platform: "darwin",
+                arch: "arm64",
+                node: "v22.0.0"
+            ),
+            storage: SidecarStorageDiagnostics(
+                sessionsSchemaVersion: 1,
+                sessionStoreWarnings: []
+            ),
+            sessions: SidecarSessionDiagnostics(
+                total: 0,
+                activeRuns: 0,
+                statuses: [:]
+            ),
+            environment: nil,
+            preflight: nil
+        )
+
+        let state = IntakeV2BootLogState(
+            isConnected: true,
+            workspaceRoot: "/tmp/agentic30-public",
+            diagnostics: diagnostics,
+            scanProgressLogs: [
+                "Preparing workspace scan...",
+                "Starting workspace scan...",
+                "Starting workspace scan...",
+                "Found 3 local candidate(s). Asking agents to verify context...",
+                "Claude Haiku 4.5 (claude-haiku-4-5): using Read: docs/ICP.md docs/SPEC.md docs/GOAL.md",
+                "GPT 5.4 Mini (gpt-5.4-mini): this is a long provider summary that should not leak raw debug text into onboarding"
+            ],
+            scanDidComplete: true,
+            scanError: nil,
+            foundArtifactCount: 3,
+            isScanning: false
+        )
+
+        #expect(state.lines.map(\.command) == [
+            "sidecar.ready",
+            "scan.local",
+            "scan.verify",
+            "scan.agent",
+            "scan.result",
+        ])
+        #expect(state.lines[0].status == "✓ · v22.0.0 · pid 4242 · agentic30-public")
+        #expect(state.lines[1].status == "checking workspace files")
+        #expect(state.lines[2].status == "3 local candidates found")
+        #expect(state.lines[3].status == "verifying context")
+        #expect(state.lines[4].status == "✓ 3 artifacts verified")
+        #expect(!state.lines.contains { $0.status == "Preparing workspace scan..." })
+        #expect(!state.lines.contains { $0.status?.contains("Claude Haiku") == true })
+        #expect(!state.lines.contains { $0.status?.contains("gpt-5.4-mini") == true })
+        #expect(state.scanDidComplete)
+        #expect(!state.scanDidFail)
+    }
+
+    @Test @MainActor func intakeV2BootLogStateKeepsPendingStateSidecarOnly() {
+        let empty = IntakeV2BootLogState.empty
+        #expect(empty.lines.isEmpty)
+        #expect(!empty.scanDidComplete)
+        #expect(!empty.scanDidFail)
+        #expect(empty.foundArtifactCount == nil)
+
+        let pending = IntakeV2BootLogState(
+            isConnected: false,
+            workspaceRoot: "",
+            diagnostics: nil,
+            scanProgressLogs: [
+                "Waiting for workspace connection...",
+                "Starting workspace scan..."
+            ],
+            scanDidComplete: false,
+            scanError: nil,
+            foundArtifactCount: nil,
+            isScanning: true
+        )
+
+        #expect(pending.lines.count == 1)
+        #expect(pending.lines[0].command == "scan.local")
+        #expect(pending.lines[0].status == "checking workspace files")
+        #expect(pending.lines[0].isActive)
+        #expect(!pending.scanDidComplete)
+        #expect(!pending.scanDidFail)
+    }
+
+    @Test @MainActor func intakeV2BootLogStateSurfacesScanFailures() {
+        let state = IntakeV2BootLogState(
+            isConnected: false,
+            workspaceRoot: "",
+            diagnostics: nil,
+            scanProgressLogs: [
+                "Waiting for workspace connection...",
+                "Starting workspace scan..."
+            ],
+            scanDidComplete: true,
+            scanError: "Workspace root is not a directory.",
+            foundArtifactCount: nil,
+            isScanning: false
+        )
+
+        #expect(state.lines.map(\.command) == [
+            "scan.local",
+            "scan.failed",
+        ])
+        #expect(state.lines.first?.status == "checking workspace files")
+        #expect(state.lines.last?.status == "✗ Workspace root is not a directory.")
+        #expect(state.scanDidComplete)
+        #expect(state.scanDidFail)
     }
 
     @Test @MainActor func startHydratesExplicitWorkspaceBeforeSidecarReady() throws {

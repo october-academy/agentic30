@@ -8,10 +8,8 @@ struct DecideNotificationItem: Identifiable, Equatable {
     let body: String
     let timeLabel: String
     let signalLabel: String?
-    let priority: String?
     let meta: String?
     let rationale: String?
-    let sources: [String]
 
     init(
         id: String,
@@ -20,10 +18,8 @@ struct DecideNotificationItem: Identifiable, Equatable {
         body: String,
         timeLabel: String,
         signalLabel: String? = nil,
-        priority: String? = nil,
         meta: String? = nil,
-        rationale: String? = nil,
-        sources: [String] = []
+        rationale: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -31,10 +27,8 @@ struct DecideNotificationItem: Identifiable, Equatable {
         self.body = body
         self.timeLabel = timeLabel
         self.signalLabel = signalLabel
-        self.priority = priority
         self.meta = meta
         self.rationale = rationale
-        self.sources = sources
     }
 }
 
@@ -389,7 +383,7 @@ struct DecideNotificationGroupView: View {
                     .lineSpacing(1.5)
                     .fixedSize(horizontal: false, vertical: true)
 
-                if !decisionMetaItems(for: item).isEmpty {
+                if !compactMetaItems(for: item).isEmpty {
                     decisionMetaRow(for: item)
                 }
 
@@ -483,7 +477,7 @@ struct DecideNotificationGroupView: View {
     private func decisionMetaRow(for item: DecideNotificationItem) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                ForEach(Array(decisionMetaItems(for: item).enumerated()), id: \.element) { index, label in
+                ForEach(Array(compactMetaItems(for: item).enumerated()), id: \.element) { index, label in
                     metaChip(label, prominent: index == 0)
                         .transition(reduceMotion ? .identity : .opacity)
                         .animation(reduceMotion ? nil : .easeInOut(duration: 0.30).delay(Double(index) * 0.018), value: items)
@@ -491,7 +485,7 @@ struct DecideNotificationGroupView: View {
             }
             .padding(.vertical, 1)
         }
-        .accessibilityLabel(decisionMetaItems(for: item).joined(separator: ", "))
+        .accessibilityLabel(compactMetaItems(for: item).joined(separator: ", "))
     }
 
     private func compactMetaItems(for item: DecideNotificationItem) -> [String] {
@@ -501,24 +495,6 @@ struct DecideNotificationGroupView: View {
         }
         if let meta = item.meta, !meta.isEmpty {
             labels.append(meta)
-        }
-        return labels
-    }
-
-    private func decisionMetaItems(for item: DecideNotificationItem) -> [String] {
-        var labels = compactMetaItems(for: item)
-        if let priority = item.priority, !priority.isEmpty {
-            labels.append(priority)
-        }
-        labels.append(contentsOf: sourceLabels(for: item))
-        return labels
-    }
-
-    private func sourceLabels(for item: DecideNotificationItem) -> [String] {
-        let visibleSources = item.sources.prefix(3)
-        var labels = visibleSources.map { "src: \($0)" }
-        if item.sources.count > visibleSources.count {
-            labels.append("+\(item.sources.count - visibleSources.count)")
         }
         return labels
     }

@@ -120,7 +120,11 @@ function checkRequiredFile(fsImpl, filePath, { id, title, recovery }) {
 }
 
 function checkProviderAvailability(environment) {
-  const available = Boolean(environment?.claude?.available || environment?.codex?.available);
+  const available = Boolean(
+    environment?.claude?.available
+      || environment?.codex?.available
+      || environment?.gemini?.available,
+  );
   if (available) {
     return {
       id: "provider-auth",
@@ -129,6 +133,7 @@ function checkProviderAvailability(environment) {
       message: [
         environment?.claude?.available ? "Claude" : null,
         environment?.codex?.available ? "Codex" : null,
+        environment?.gemini?.available ? "Gemini" : null,
       ].filter(Boolean).join(", "),
     };
   }
@@ -137,8 +142,8 @@ function checkProviderAvailability(environment) {
     id: "provider-auth",
     title: "At least one provider is authenticated",
     status: "warning",
-    message: "Claude and Codex are both unavailable.",
-    recovery: "Sign in with Claude Code/Codex or set ANTHROPIC_API_KEY / CODEX_API_KEY.",
+    message: "Claude, Codex, and Gemini are all unavailable.",
+    recovery: "Sign in with Claude Code/Codex/Gemini CLI or set ANTHROPIC_API_KEY / CODEX_API_KEY / GEMINI_API_KEY.",
   };
 }
 

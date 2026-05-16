@@ -41,7 +41,12 @@ import {
 } from "./auth-context.mjs";
 import { initiateNotionOAuth, exchangeOAuthCode, refreshAccessToken } from "./notion-oauth.mjs";
 import { buildPreflightReport } from "./preflight.mjs";
-import { getProviderAuthState, getProviderConnectionState, runProviderStream } from "./provider-runner.mjs";
+import {
+  getProviderAuthState,
+  getProviderConnectionState,
+  runProviderStream,
+  updateProviderSettings,
+} from "./provider-runner.mjs";
 import {
   extractInlineDecision,
   inferInlineDecisionFromPlainText,
@@ -210,6 +215,7 @@ const BIP_TEMPLATE_DOC_ID = process.env.AGENTIC30_BIP_TEMPLATE_DOC_ID || "1EoQIa
 const BIP_TEMPLATE_SHEET_ID = process.env.AGENTIC30_BIP_TEMPLATE_SHEET_ID || "16NkGIe8K9NZiLy4O81zyXKVeQ72nvBGSZ0YBQaBr0sA";
 const WORKSPACE_SCAN_CLAUDE_MODEL = "claude-haiku-4-5";
 const WORKSPACE_SCAN_CODEX_MODEL = "gpt-5.4-mini";
+const WORKSPACE_SCAN_GEMINI_MODEL = "gemini-2.5-flash";
 const CHAT_BIP_CONTEXT_MAX_CHARS = 60000;
 const CHAT_BIP_LOCAL_DOC_MAX_CHARS = 12000;
 const CHAT_BIP_EXTERNAL_DOC_MAX_CHARS = 12000;
@@ -1513,6 +1519,16 @@ async function handleClientMessage(socket, payload) {
     }
     case "provider_auth_login_start": {
       await startProviderAuthLogin(payload);
+      return;
+    }
+    case "provider_settings_update": {
+      updateProviderSettings(payload.providers || {});
+      const environment = getEnvironmentSummary();
+      const preflight = buildSidecarPreflight(environment);
+      send(socket, {
+        type: "diagnostics_snapshot",
+        diagnostics: buildSidecarDiagnostics(environment, preflight),
+      });
       return;
     }
     case "get_diagnostics": {
@@ -4059,7 +4075,7 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
     const coachSession = resolveBipCoachSession(sessionId);
     await clearInitialIntakeIfNeeded(coachSession);
     const preferredProvider = coachSession?.provider
-      || (provider === "claude" || provider === "codex" ? provider : state.bipCoach.config.provider);
+      || (normalizeSessionProvider(provider) === provider ? provider : state.bipCoach.config.provider);
     const providers = [
       preferredProvider,
       preferredProvider === "claude" ? "codex" : "claude",
@@ -4310,7 +4326,7 @@ async function generateBasicBipCoachMission({
     if (coachSession) {
       coachSession.messages.push(makeMessage({
         role: "assistant",
-        provider: provider === "claude" || provider === "codex" ? provider : coachSession.provider,
+        provider: normalizeSessionProvider(provider) === provider ? provider : coachSession.provider,
         content: buildMissionChoicesVisibleMessage(
           missionChoices,
           "문서 준비가 아직 끝나지 않아도 오늘 실행은 바로 시작할 수 있어요. 선택한 Day 커리큘럼만으로 15분 안에 끝낼 후보 3개를 먼저 만들었어요.",
@@ -5052,7 +5068,7 @@ function isRecoverableLegacyStaleIddSetupError(gate) {
 
 function resolveIddSessionSeed({ sessionId = "", provider = "" } = {}) {
   const requestedSession = resolveBipCoachSession(sessionId);
-  const resolvedProvider = provider === "claude" || provider === "codex"
+  const resolvedProvider = normalizeSessionProvider(provider) === provider
     ? provider
     : requestedSession?.provider || state.bipCoach?.config?.provider || "codex";
   return {
@@ -6028,6 +6044,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
         onboarding_hypothesis_confidence: localOnboardingHypothesis.confidence,
         claude_model: WORKSPACE_SCAN_CLAUDE_MODEL,
         codex_model: WORKSPACE_SCAN_CODEX_MODEL,
+        gemini_model: WORKSPACE_SCAN_GEMINI_MODEL,
         agent_result_count: 0,
         provider_verification_skipped: true,
     });
@@ -6069,6 +6086,11 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
         model: WORKSPACE_SCAN_CODEX_MODEL,
         scanRoot,
       }),
+      runWorkspaceScanAgent({
+        provider: "gemini",
+        model: WORKSPACE_SCAN_GEMINI_MODEL,
+        scanRoot,
+      }),
     ]);
     const parsedAgentResults = agentResults
       .filter((result) => result.status === "fulfilled" && result.value)
@@ -6087,6 +6109,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
       onboarding_hypothesis_confidence: onboardingHypothesis.confidence,
       claude_model: WORKSPACE_SCAN_CLAUDE_MODEL,
       codex_model: WORKSPACE_SCAN_CODEX_MODEL,
+      gemini_model: WORKSPACE_SCAN_GEMINI_MODEL,
       agent_result_count: parsedAgentResults.length,
     });
     markWorkspaceSetupScanSucceeded(scanRoot, {
@@ -6270,6 +6293,7 @@ function broadcastWorkspaceScanProgress(scanRoot, progressText) {
 function workspaceScanProviderLabel(provider, model) {
   if (provider === "claude") return `Claude Haiku 4.5 (${model})`;
   if (provider === "codex") return `GPT 5.4 Mini (${model})`;
+  if (provider === "gemini") return `Gemini 2.5 Flash (${model})`;
   return `${provider} (${model})`;
 }
 
@@ -6893,6 +6917,7 @@ function getEnvironmentSummary() {
   return {
     claude: getProviderConnectionState("claude"),
     codex: getProviderConnectionState("codex"),
+    gemini: getProviderConnectionState("gemini"),
     acp: getAcpAdapterState(),
     qmd: getQmdState({ sidecarRoot }),
   };
@@ -7174,7 +7199,7 @@ async function stopSession(sessionId) {
 }
 
 function createSession(payload) {
-  const provider = payload.provider === "claude" ? "claude" : "codex";
+  const provider = normalizeSessionProvider(payload.provider);
   const model = String(payload.model || "").trim();
   const now = new Date().toISOString();
   return {
@@ -7252,7 +7277,11 @@ function setSessionStartupTiming(
 }
 
 async function attachBootstrapIntake(session) {
-  session.title = session.provider === "claude" ? "Claude Assistant" : "Codex Assistant";
+  session.title = session.provider === "claude"
+    ? "Claude Assistant"
+    : session.provider === "gemini"
+      ? "Gemini Assistant"
+      : "Codex Assistant";
   session.pendingUserInput = await createUserInputRequest(appSupportPath, {
     sessionId: session.id,
     toolName: "initial_intake",
@@ -7261,6 +7290,12 @@ async function attachBootstrapIntake(session) {
   });
   session.status = "awaiting_input";
   touch(session);
+}
+
+function normalizeSessionProvider(provider) {
+  return provider === "claude" || provider === "codex" || provider === "gemini"
+    ? provider
+    : "codex";
 }
 
 function buildBootstrapQuestions() {
@@ -7366,6 +7401,7 @@ function buildProviderAuthActionsForFailures(failures = []) {
   const providers = [];
   if (text.includes("claude") && looksLikeProviderAuthError(text)) providers.push("claude");
   if (text.includes("codex") && looksLikeProviderAuthError(text)) providers.push("codex");
+  if (text.includes("gemini") && looksLikeProviderAuthError(text)) providers.push("gemini");
   return buildProviderAuthActions(providers);
 }
 
@@ -7386,14 +7422,20 @@ function looksLikeProviderAuthError(text) {
 
 function buildProviderAuthActions(providers = []) {
   return [...new Set(providers)]
-    .filter((provider) => provider === "claude" || provider === "codex")
+    .filter((provider) => provider === "claude" || provider === "codex" || provider === "gemini")
     .map((provider) => ({
       id: `${provider}_login`,
       provider,
-    title: provider === "claude" ? "Claude 로그인" : "Codex 로그인",
+      title: provider === "claude"
+        ? "Claude 로그인"
+        : provider === "gemini"
+          ? "Gemini 로그인"
+          : "Codex 로그인",
       detail: provider === "claude"
         ? "Claude Agent SDK의 claude auth login을 실행합니다."
-        : "Codex CLI의 codex login을 실행합니다.",
+        : provider === "gemini"
+          ? "Terminal에서 Gemini CLI 인증 흐름을 엽니다."
+          : "Codex CLI의 codex login을 실행합니다.",
     }));
 }
 
@@ -7930,7 +7972,20 @@ function readApiKey(provider) {
 }
 
 async function startProviderAuthLogin(payload = {}) {
-  const provider = payload.provider === "claude" ? "claude" : "codex";
+  const provider = payload.provider === "claude"
+    ? "claude"
+    : payload.provider === "gemini"
+      ? "gemini"
+      : "codex";
+  if (provider === "gemini") {
+    broadcast({
+      type: "provider_auth_result",
+      provider,
+      success: false,
+      error: "Open Gemini Auth from Settings so Terminal can run the interactive Gemini CLI flow.",
+    });
+    return;
+  }
   const existing = state.providerAuthRuns.get(provider);
   if (existing) {
   broadcast({

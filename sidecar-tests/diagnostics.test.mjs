@@ -28,6 +28,18 @@ test("buildDiagnosticsSnapshot redacts credential-shaped fields", () => {
           entrypointPath: "/repo/node_modules/@openai/codex/vendor/codex",
         },
       },
+      gemini: {
+        available: true,
+        source: "api-key",
+        geminiApiKey: "gemini-secret",
+        vertexToken: "vertex-secret",
+        sdk: {
+          available: true,
+          packageName: "@google/gemini-cli",
+          version: "0.42.0",
+          entrypointPath: "/repo/node_modules/@google/gemini-cli/bundle/gemini.js",
+        },
+      },
     },
     preflight: {
       status: "ok",
@@ -72,6 +84,9 @@ test("buildDiagnosticsSnapshot redacts credential-shaped fields", () => {
   assert.equal(snapshot.environment.claude.sdk.available, true);
   assert.equal(snapshot.environment.claude.sdk.packageName, "@anthropic-ai/claude-agent-sdk");
   assert.equal(snapshot.environment.codex.sdk.packageName, "@openai/codex-sdk");
+  assert.equal(snapshot.environment.gemini.geminiApiKey, "[redacted]");
+  assert.equal(snapshot.environment.gemini.vertexToken, "[redacted]");
+  assert.equal(snapshot.environment.gemini.sdk.packageName, "@google/gemini-cli");
   assert.equal(snapshot.preflight.checks[0].token, "[redacted]");
   assert.equal(snapshot.storage.sessionStoreWarnings[0].type, "session_store_corrupt");
 });

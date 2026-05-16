@@ -115,6 +115,206 @@ struct BipNotificationOpenRequest: Identifiable, Equatable, Sendable {
     }
 }
 
+struct IntakeV2BootLogState: Equatable {
+    struct Line: Identifiable, Equatable {
+        let id: String
+        let command: String
+        let status: String?
+        let isActive: Bool
+    }
+
+    let lines: [Line]
+    let scanDidComplete: Bool
+    let scanDidFail: Bool
+    let foundArtifactCount: Int?
+
+    static let empty = IntakeV2BootLogState(
+        isConnected: false,
+        workspaceRoot: "",
+        diagnostics: nil,
+        scanProgressLogs: [],
+        scanDidComplete: false,
+        scanError: nil,
+        foundArtifactCount: nil,
+        isScanning: false
+    )
+
+    init(
+        isConnected: Bool,
+        workspaceRoot: String,
+        diagnostics: SidecarDiagnostics?,
+        scanProgressLogs: [String],
+        scanDidComplete: Bool,
+        scanError: String?,
+        foundArtifactCount: Int?,
+        isScanning: Bool
+    ) {
+        var nextLines: [Line] = []
+
+        if isConnected, diagnostics != nil {
+            nextLines.append(Line(
+                id: "sidecar.ready",
+                command: "sidecar.ready",
+                status: Self.readyStatus(workspaceRoot: workspaceRoot, diagnostics: diagnostics),
+                isActive: false
+            ))
+        }
+
+        nextLines.append(contentsOf: Self.displayProgressLines(
+            scanProgressLogs,
+            isActive: isScanning && !scanDidComplete
+        ))
+
+        if scanDidComplete {
+            let trimmedError = scanError?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+            let command = trimmedError == nil ? "scan.result" : "scan.failed"
+            let status = trimmedError
+                .map { "✗ \($0)" }
+                ?? "✓ \(foundArtifactCount ?? 0) artifacts verified"
+            nextLines.append(Line(
+                id: command,
+                command: command,
+                status: status,
+                isActive: false
+            ))
+        }
+
+        lines = Array(nextLines.suffix(6))
+        self.scanDidComplete = scanDidComplete
+        self.scanDidFail = scanError?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty != nil
+        self.foundArtifactCount = foundArtifactCount
+    }
+
+    private nonisolated static func readyStatus(workspaceRoot: String, diagnostics: SidecarDiagnostics?) -> String {
+        var parts: [String] = ["✓"]
+        if let node = diagnostics?.runtime.node?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !node.isEmpty {
+            parts.append(node)
+        }
+        if let pid = diagnostics?.runtime.pid {
+            parts.append("pid \(pid)")
+        }
+        let workspaceName = (workspaceRoot as NSString).lastPathComponent
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !workspaceName.isEmpty {
+            parts.append(workspaceName)
+        }
+        if parts.count == 1 {
+            parts.append("connected")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private struct DisplayProgressLine: Equatable {
+        let command: String
+        let status: String
+    }
+
+    private nonisolated static func displayProgressLines(_ messages: [String], isActive: Bool) -> [Line] {
+        let normalized = messages.compactMap(displayProgressLine)
+        guard !normalized.isEmpty else { return [] }
+
+        var output: [Line] = []
+        var indexByCommand: [String: Int] = [:]
+        let activeNormalizedIndex = normalized.indices.last
+
+        for (index, displayLine) in normalized.enumerated() {
+            let lineIsActive = isActive && index == activeNormalizedIndex
+            if lineIsActive {
+                output = output.map {
+                    Line(id: $0.id, command: $0.command, status: $0.status, isActive: false)
+                }
+            }
+            let line = Line(
+                id: displayLine.command,
+                command: displayLine.command,
+                status: displayLine.status,
+                isActive: lineIsActive
+            )
+            if let existingIndex = indexByCommand[displayLine.command] {
+                output[existingIndex] = line
+            } else {
+                indexByCommand[displayLine.command] = output.count
+                output.append(line)
+            }
+        }
+
+        return Array(output.suffix(4))
+    }
+
+    private nonisolated static func displayProgressLine(for rawMessage: String) -> DisplayProgressLine? {
+        let message = rawMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { return nil }
+        let lowercased = message.lowercased()
+
+        if [
+            "preparing workspace scan...",
+            "waiting for workspace connection...",
+            "workspace scan complete.",
+            "workspace scan failed.",
+        ].contains(lowercased) {
+            return nil
+        }
+
+        if lowercased.contains("starting workspace scan")
+            || lowercased.contains("checking common doc filenames locally") {
+            return DisplayProgressLine(command: "scan.local", status: "checking workspace files")
+        }
+
+        if lowercased.contains("local candidate") {
+            return DisplayProgressLine(command: "scan.verify", status: localCandidateStatus(from: message))
+        }
+
+        if lowercased.contains("no exact local matches")
+            || lowercased.contains("asking agents") {
+            return DisplayProgressLine(command: "scan.verify", status: "verifying context with agents")
+        }
+
+        if lowercased.contains("using read")
+            || lowercased.contains("using grep")
+            || lowercased.contains("using glob")
+            || lowercased.contains("using ls") {
+            return DisplayProgressLine(command: "scan.agent", status: "reading files")
+        }
+
+        if lowercased.contains(" finished (") {
+            return DisplayProgressLine(command: "scan.agent", status: "agent check complete")
+        }
+
+        if lowercased.contains("scanning with")
+            || lowercased.contains("claude")
+            || lowercased.contains("codex")
+            || lowercased.contains("gpt")
+            || lowercased.contains("haiku") {
+            return DisplayProgressLine(command: "scan.agent", status: "verifying context")
+        }
+
+        return DisplayProgressLine(
+            command: "scan.verify",
+            status: truncateDisplayStatus(message)
+        )
+    }
+
+    private nonisolated static func localCandidateStatus(from message: String) -> String {
+        let pattern = #"Found\s+(\d+)\s+local candidate"#
+        if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
+            let range = NSRange(message.startIndex..<message.endIndex, in: message)
+            if let match = regex.firstMatch(in: message, range: range),
+               let countRange = Range(match.range(at: 1), in: message) {
+                return "\(message[countRange]) local candidates found"
+            }
+        }
+        return "local candidates found"
+    }
+
+    private nonisolated static func truncateDisplayStatus(_ value: String, maxLength: Int = 44) -> String {
+        let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard cleaned.count > maxLength else { return cleaned }
+        let endIndex = cleaned.index(cleaned.startIndex, offsetBy: maxLength - 1)
+        return "\(cleaned[..<endIndex])…"
+    }
+}
+
 enum Day1InterviewTutorialMode: String, Equatable, Sendable {
     case guided
     case unguided
@@ -351,6 +551,15 @@ final class AgenticViewModel: ObservableObject {
         let sheet: String?
         let onboardingHypothesis: WorkspaceOnboardingHypothesis?
         let error: String?
+
+        var foundArtifactPaths: [String] {
+            [icp, spec, values, designSystem, adr, goal, docs, sheet]
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty }
+        }
+
+        var foundArtifactCount: Int {
+            foundArtifactPaths.count
+        }
     }
 
     struct PendingPromptPreview: Identifiable, Hashable {
@@ -959,6 +1168,19 @@ final class AgenticViewModel: ObservableObject {
 
     func sidecarOutputPreview(for sessionID: String) -> [String] {
         sidecarOutputLogs[sessionID] ?? []
+    }
+
+    var intakeV2BootLogState: IntakeV2BootLogState {
+        IntakeV2BootLogState(
+            isConnected: isConnected,
+            workspaceRoot: workspaceRoot,
+            diagnostics: sidecarDiagnostics,
+            scanProgressLogs: scanProgressLogs,
+            scanDidComplete: scanResult != nil,
+            scanError: scanResult?.error,
+            foundArtifactCount: scanResult?.foundArtifactCount,
+            isScanning: isScanning
+        )
     }
 
     var visibleBipCoach: BipCoachState? {
@@ -1778,6 +2000,51 @@ final class AgenticViewModel: ObservableObject {
         ])
     }
 
+    func openGeminiAdcLoginInTerminal() {
+        providerAuthInProgress = .gemini
+        providerAuthMessage = "Google ADC 로그인을 Terminal에서 시작했습니다 (gcloud auth application-default login)."
+        lastError = nil
+
+        let root = workspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? NSHomeDirectory()
+            : workspaceRoot
+        let command = "cd \(Self.shellQuoted(root)); gcloud auth application-default login"
+        let script = """
+        tell application "Terminal"
+            activate
+            do script \(Self.appleScriptLiteral(command))
+        end tell
+        """
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+
+        do {
+            try process.run()
+            PostHogTelemetry.capture("mac_provider_auth_terminal_opened", properties: [
+                "provider": AgentProvider.gemini.rawValue,
+            ], authSession: macAuthSession)
+        } catch {
+            providerAuthInProgress = nil
+            providerAuthMessage = "Gemini auth를 열 수 없습니다: \(error.localizedDescription)"
+            lastError = providerAuthMessage
+            PostHogTelemetry.captureException(error, properties: [
+                "component": "agentic_view_model",
+                "operation": "open_gemini_auth_terminal",
+            ], authSession: macAuthSession)
+        }
+    }
+
+    func syncProviderSettingsToSidecar(_ settings: KeychainHelper.Settings? = nil) {
+        guard isConnected else { return }
+        let resolvedSettings = settings ?? KeychainHelper.loadSettings()
+        sidecar.send(payload: [
+            "type": "provider_settings_update",
+            "providers": providerSettingsPayload(from: resolvedSettings),
+        ])
+    }
+
     func requestDiagnostics() {
         PostHogTelemetry.capture("mac_diagnostics_requested", authSession: macAuthSession)
         sidecar.send(payload: ["type": "get_diagnostics"])
@@ -2165,6 +2432,35 @@ final class AgenticViewModel: ObservableObject {
 
         start(allowOnboardingPrefetch: true, anchorFoundation: false)
         scanWorkspace(root: url.path)
+    }
+
+    func prepareIntakeOnlyOnboarding(context: OnboardingContext) {
+        activeOnboardingWorkspacePrefetchFingerprint = nil
+        onboardingContext = context
+        onboardingContextStatus = .idle
+        WorkspaceSettings.clear()
+        workspaceRoot = ""
+        requestedInitialBipGate = false
+        requestedInitialBipMission = false
+        pendingWorkspaceScanRoot = nil
+        scanResult = nil
+        scanProgressMessage = ""
+        scanProgressLogs = []
+        lastError = nil
+
+        if started {
+            connectionLabel = "Choose a project workspace"
+            isConnected = false
+            selectedSessionID = nil
+            sidecar.stop()
+            started = false
+        }
+
+        PostHogTelemetry.capture("mac_onboarding_intake_only_prepared", properties: [
+            "work_mode": context.workMode.rawValue,
+            "role": context.role.rawValue,
+            "project_stage": context.projectStage.rawValue,
+        ], authSession: macAuthSession)
     }
 
     private static func onboardingWorkspacePrefetchFingerprint(
@@ -2590,6 +2886,7 @@ final class AgenticViewModel: ObservableObject {
             ensureSelection()
             recordStartupSessionAppearIfNeeded(source: "ready")
             sendAuthContextToSidecar()
+            syncProviderSettingsToSidecar()
             refreshPresentationState()
             requestCodexWarmupIfNeeded()
             requestBipReadinessCheck()
@@ -2885,6 +3182,7 @@ final class AgenticViewModel: ObservableObject {
             if event.success == true {
                 providerAuthMessage = event.provider.flatMap { AgentProvider(rawValue: $0)?.title }.map { "\($0) 로그인 완료" }
                     ?? "로그인 완료"
+                syncProviderSettingsToSidecar()
                 requestDiagnostics()
                 retryPendingBipActionAfterAuth()
             } else {
@@ -2894,6 +3192,9 @@ final class AgenticViewModel: ObservableObject {
         case "diagnostics_snapshot":
             if let diagnostics = event.diagnostics {
                 sidecarDiagnostics = diagnostics
+                if let environment = diagnostics.environment {
+                    self.environment = environment
+                }
             }
         case "rubric_quarantine_list":
             quarantineFiles = event.items ?? []
@@ -3516,7 +3817,46 @@ final class AgenticViewModel: ObservableObject {
                 return value
             }
             return KeychainHelper.loadSettings().preferredCodexModel
+        case .gemini:
+            if let value = firstNonEmptyEnvironmentValue(
+                ["AGENTIC30_GEMINI_MODEL", "GEMINI_MODEL", "GOOGLE_GENAI_MODEL"],
+                in: environment
+            ) {
+                return value
+            }
+            return KeychainHelper.loadSettings().preferredGeminiModel
         }
+    }
+
+    private func providerSettingsPayload(from settings: KeychainHelper.Settings) -> [String: Any] {
+        [
+            AgentProvider.claude.rawValue: [
+                "authMode": AgentAuthMode.normalized(settings.claudeAuthMode, provider: .claude).rawValue,
+                "apiKey": settings.claudeApiKey,
+                "environment": settings.claudeEnvironment,
+                "model": settings.preferredClaudeModel,
+            ],
+            AgentProvider.codex.rawValue: [
+                "authMode": AgentAuthMode.normalized(settings.codexAuthMode, provider: .codex).rawValue,
+                "apiKey": settings.codexApiKey,
+                "environment": settings.codexEnvironment,
+                "model": settings.preferredCodexModel,
+            ],
+            AgentProvider.gemini.rawValue: [
+                "authMode": AgentAuthMode.normalized(settings.geminiAuthMode, provider: .gemini).rawValue,
+                "apiKey": settings.geminiApiKey,
+                "environment": settings.geminiEnvironment,
+                "model": settings.preferredGeminiModel,
+            ],
+        ]
+    }
+
+    private static func shellQuoted(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+    }
+
+    private static func appleScriptLiteral(_ value: String) -> String {
+        "\"\(value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\""
     }
 
     private func firstNonEmptyEnvironmentValue(

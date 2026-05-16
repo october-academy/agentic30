@@ -3,6 +3,7 @@ import AppKit
 
 enum SettingsSection: CaseIterable, Identifiable {
     case account
+    case agents
     case adAnalytics
     case buildInPublic
     case notion
@@ -15,6 +16,7 @@ enum SettingsSection: CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .account: "Account"
+        case .agents: "Agents"
         case .adAnalytics: "Ad Analytics"
         case .buildInPublic: "Build In Public"
         case .notion: "Notion"
@@ -27,6 +29,7 @@ enum SettingsSection: CaseIterable, Identifiable {
     var sidebarTitle: String {
         switch self {
         case .account: "일반"
+        case .agents: "Agents"
         case .adAnalytics: "광고 분석"
         case .buildInPublic: "Build In Public"
         case .notion: "Notion"
@@ -39,6 +42,7 @@ enum SettingsSection: CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .account: "person.crop.circle"
+        case .agents: "pencil.and.outline"
         case .adAnalytics: "chart.bar.xaxis"
         case .buildInPublic: "hammer.fill"
         case .notion: "doc.text.fill"
@@ -51,6 +55,7 @@ enum SettingsSection: CaseIterable, Identifiable {
     var accessibilityIdentifier: String {
         switch self {
         case .account: "account"
+        case .agents: "agents"
         case .adAnalytics: "adAnalytics"
         case .buildInPublic: "buildInPublic"
         case .notion: "notion"
@@ -77,11 +82,21 @@ struct SettingsView: View {
     @State private var metaAdAccountId = ""
     @State private var adSaveMessage = ""
 
-    // MARK: - Model State
+    // MARK: - Agent Settings State
 
     @State private var claudeModelID = AgentModelCatalog.defaultClaudeModelID
     @State private var codexModelID = AgentModelCatalog.defaultCodexModelID
-    @State private var modelSaveMessage = ""
+    @State private var geminiModelID = AgentModelCatalog.defaultGeminiModelID
+    @State private var claudeAuthMode = AgentAuthMode.local.rawValue
+    @State private var codexAuthMode = AgentAuthMode.local.rawValue
+    @State private var geminiAuthMode = AgentAuthMode.local.rawValue
+    @State private var claudeApiKey = ""
+    @State private var codexApiKey = ""
+    @State private var geminiApiKey = ""
+    @State private var claudeEnvironment = ""
+    @State private var codexEnvironment = ""
+    @State private var geminiEnvironment = ""
+    @State private var agentSettingsSaveMessage = ""
 
     // MARK: - BIP State
 
@@ -337,6 +352,8 @@ struct SettingsView: View {
         switch selectedSection.wrappedValue {
         case .account:
             accountTab
+        case .agents:
+            agentsTab
         case .adAnalytics:
             adAnalyticsTab
         case .buildInPublic:
@@ -363,7 +380,6 @@ struct SettingsView: View {
             launchAtLoginSection
             appUpdatesSection
             localDataResetSection
-            agentModelsSection
         }
     }
 
@@ -508,56 +524,434 @@ struct SettingsView: View {
         .background(cardBackground)
     }
 
-    private var agentModelsSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionHeader(title: "Agent Models", configured: true)
+    // MARK: - Agents Tab
 
-            Text("Choose the default model used when a new Claude Agent SDK or Codex SDK chat starts.")
-                .font(.system(size: 13, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.48))
-
-            modelPickerRow(
+    private var agentsTab: some View {
+        settingsTabScaffold(
+            title: "Agents",
+            subtitle: "Configure Claude, Codex, and Gemini for Agentic30."
+        ) {
+            agentProviderSection(
                 provider: .claude,
-                selection: $claudeModelID
+                authMode: $claudeAuthMode,
+                apiKey: $claudeApiKey,
+                environment: $claudeEnvironment,
+                modelSelection: $claudeModelID
+            )
+
+            agentProviderSection(
+                provider: .codex,
+                authMode: $codexAuthMode,
+                apiKey: $codexApiKey,
+                environment: $codexEnvironment,
+                modelSelection: $codexModelID
+            )
+
+            agentProviderSection(
+                provider: .gemini,
+                authMode: $geminiAuthMode,
+                apiKey: $geminiApiKey,
+                environment: $geminiEnvironment,
+                modelSelection: $geminiModelID
+            )
+
+            saveAgentSettingsSection
+        }
+    }
+
+    private func agentProviderSection(
+        provider: AgentProvider,
+        authMode: Binding<String>,
+        apiKey: Binding<String>,
+        environment: Binding<String>,
+        modelSelection: Binding<String>
+    ) -> some View {
+        let mode = AgentAuthMode.normalized(authMode.wrappedValue, provider: provider)
+        let status = providerEnvironment(for: provider)
+
+        return VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .center, spacing: 14) {
+                providerIcon(provider)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(providerSettingsTitle(provider))
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.88))
+
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill((status?.available ?? false) ? Agentic30BrandColor.greenBright : Color(red: 0.96, green: 0.78, blue: 0.54))
+                            .frame(width: 7, height: 7)
+                        Text(providerStatusLabel(status))
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.54))
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Authenticate with")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.64))
+
+                authModeMenu(provider: provider, selection: authMode)
+
+                #if DEBUG
+                if Self.isUITesting {
+                    authModeUITestingShortcuts(provider: provider, selection: authMode)
+                }
+                #endif
+            }
+
+            agentAuthFields(
+                provider: provider,
+                mode: mode,
+                apiKey: apiKey,
+                environment: environment
             )
 
             modelPickerRow(
-                provider: .codex,
-                selection: $codexModelID
+                provider: provider,
+                selection: modelSelection
             )
 
             #if DEBUG
             if Self.isUITesting {
-                modelUITestingShortcuts(provider: .claude, selection: $claudeModelID)
-                modelUITestingShortcuts(provider: .codex, selection: $codexModelID)
+                modelUITestingShortcuts(provider: provider, selection: modelSelection)
             }
             #endif
 
-            HStack(spacing: 14) {
-                Button(action: saveModelValues) {
-                    Text("Save Models")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.9))
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 10)
-                        .background(Capsule().fill(Color.white.opacity(0.18)))
+            HStack(spacing: 10) {
+                if let quickstartURL = providerQuickstartURL(provider) {
+                    Link("Get started", destination: quickstartURL)
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.68))
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("settings.models.saveButton")
-
-                if !modelSaveMessage.isEmpty {
-                    Text(modelSaveMessage)
-                        .font(.system(size: 13, weight: .medium, design: .rounded))
-                        .foregroundStyle(Agentic30BrandColor.green.opacity(0.8))
-                        .transition(.opacity)
-                        .accessibilityIdentifier("settings.models.saveMessage")
+                if let configURL = providerConfigURL(provider) {
+                    Link("Configure", destination: configURL)
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.68))
                 }
-
-                Spacer()
             }
         }
         .padding(20)
         .background(cardBackground)
+    }
+
+    private var saveAgentSettingsSection: some View {
+        HStack(spacing: 14) {
+            Button(action: saveAgentSettingsValues) {
+                Text("Save Agent Settings")
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 10)
+                    .background(Capsule().fill(Color.white.opacity(0.18)))
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("settings.agents.saveButton")
+
+            if !agentSettingsSaveMessage.isEmpty {
+                Text(agentSettingsSaveMessage)
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(Agentic30BrandColor.green.opacity(0.8))
+                    .transition(.opacity)
+                    .accessibilityIdentifier("settings.agents.saveMessage")
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private func providerIcon(_ provider: AgentProvider) -> some View {
+        let symbol: String
+        switch provider {
+        case .claude:
+            symbol = "sparkle"
+        case .codex:
+            symbol = "hexagon"
+        case .gemini:
+            symbol = "diamond"
+        }
+
+        return Image(systemName: symbol)
+            .font(.system(size: 21, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.75))
+            .frame(width: 44, height: 44)
+            .background(Color.white.opacity(0.085), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func providerSettingsTitle(_ provider: AgentProvider) -> String {
+        switch provider {
+        case .claude:
+            return "Anthropic Claude Code"
+        case .codex:
+            return "OpenAI GPT Codex"
+        case .gemini:
+            return "Google Gemini"
+        }
+    }
+
+    private func providerFamilyLabel(_ provider: AgentProvider) -> String {
+        switch provider {
+        case .claude:
+            return "ANTHROPIC"
+        case .codex:
+            return "OPENAI"
+        case .gemini:
+            return "GOOGLE"
+        }
+    }
+
+    private func providerEnvironment(for provider: AgentProvider) -> SidecarProviderEnvironment? {
+        let diagnosticEnvironment = viewModel.sidecarDiagnostics?.environment
+        switch provider {
+        case .claude:
+            return diagnosticEnvironment?.claude ?? viewModel.environment.claude
+        case .codex:
+            return diagnosticEnvironment?.codex ?? viewModel.environment.codex
+        case .gemini:
+            return diagnosticEnvironment?.gemini ?? viewModel.environment.gemini
+        }
+    }
+
+    private func providerStatusLabel(_ status: SidecarProviderEnvironment?) -> String {
+        guard let status else { return "Checking local auth" }
+        return "\(status.available ? "Ready" : "Not ready") · \(status.message)"
+    }
+
+    private func authModeMenu(provider: AgentProvider, selection: Binding<String>) -> some View {
+        let selectedMode = AgentAuthMode.normalized(selection.wrappedValue, provider: provider)
+
+        return Menu {
+            ForEach(AgentAuthMode.modes(for: provider)) { mode in
+                Button {
+                    selection.wrappedValue = mode.rawValue
+                } label: {
+                    HStack {
+                        Text(authModeLabel(mode, provider: provider))
+                        if mode == selectedMode {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Text(authModeLabel(selectedMode, provider: provider))
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .lineLimit(1)
+
+                Spacer(minLength: 12)
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.42))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(fieldBackground)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("settings.\(provider.rawValue).authModePicker")
+    }
+
+    private func authModeLabel(_ mode: AgentAuthMode, provider: AgentProvider) -> String {
+        switch (provider, mode) {
+        case (.claude, .local):
+            return "Your Claude Code settings (e.g. subscription)"
+        case (.codex, .local):
+            return "Your Codex settings (e.g. subscription)"
+        case (.gemini, .local):
+            return "Your local Google credentials (gcloud ADC)"
+        default:
+            return mode.title
+        }
+    }
+
+    @ViewBuilder
+    private func agentAuthFields(
+        provider: AgentProvider,
+        mode: AgentAuthMode,
+        apiKey: Binding<String>,
+        environment: Binding<String>
+    ) -> some View {
+        switch mode {
+        case .local:
+            localAuthActions(provider)
+        case .apiKey:
+            secureAgentField(
+                label: apiKeyLabel(provider),
+                placeholder: apiKeyPlaceholder(provider),
+                text: apiKey,
+                identifier: "settings.\(provider.rawValue).apiKeyField"
+            )
+        case .bedrock, .vertex, .foundry, .custom:
+            environmentEditor(
+                label: environmentLabel(provider: provider, mode: mode),
+                text: environment,
+                identifier: "settings.\(provider.rawValue).environmentField"
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func localAuthActions(_ provider: AgentProvider) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(localAuthDescription(provider))
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.44))
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                if provider == .gemini {
+                    viewModel.openGeminiAdcLoginInTerminal()
+                } else {
+                    viewModel.startProviderLogin(provider)
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: provider == .gemini ? "terminal" : "person.crop.circle.badge.checkmark")
+                        .font(.system(size: 12, weight: .bold))
+                    Text(provider == .gemini ? "Run gcloud ADC login" : "Open \(provider.title) Auth")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                }
+                .foregroundStyle(.white.opacity(0.86))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Capsule().fill(Color.white.opacity(0.12)))
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("settings.\(provider.rawValue).openAuthButton")
+
+            if viewModel.providerAuthInProgress == provider {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(viewModel.providerAuthMessage ?? "Authenticating...")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.55))
+                }
+            }
+        }
+    }
+
+    private func localAuthDescription(_ provider: AgentProvider) -> String {
+        switch provider {
+        case .claude:
+            return "Uses the local Claude Code login and settings.json on this Mac."
+        case .codex:
+            return "Uses the local Codex login and config.toml on this Mac."
+        case .gemini:
+            return "Uses Google Application Default Credentials (`gcloud auth application-default login`) on this Mac."
+        }
+    }
+
+    private func apiKeyLabel(_ provider: AgentProvider) -> String {
+        switch provider {
+        case .claude:
+            return "ANTHROPIC_API_KEY"
+        case .codex:
+            return "CODEX_API_KEY / OPENAI_API_KEY"
+        case .gemini:
+            return "GEMINI_API_KEY"
+        }
+    }
+
+    private func apiKeyPlaceholder(_ provider: AgentProvider) -> String {
+        switch provider {
+        case .claude:
+            return "sk-ant-..."
+        case .codex:
+            return "sk-..."
+        case .gemini:
+            return "AIza..."
+        }
+    }
+
+    private func environmentLabel(provider: AgentProvider, mode: AgentAuthMode) -> String {
+        switch (provider, mode) {
+        case (.claude, .bedrock):
+            return "AWS Bedrock environment"
+        case (.claude, .vertex), (.gemini, .vertex):
+            return "Vertex AI environment"
+        case (.claude, .foundry):
+            return "Microsoft Foundry environment"
+        default:
+            return "Custom environment"
+        }
+    }
+
+    private func secureAgentField(
+        label: String,
+        placeholder: String,
+        text: Binding<String>,
+        identifier: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.6))
+            SecureField(placeholder, text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.9))
+                .padding(12)
+                .background(fieldBackground)
+                .accessibilityIdentifier(identifier)
+        }
+    }
+
+    private func environmentEditor(
+        label: String,
+        text: Binding<String>,
+        identifier: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.6))
+            TextEditor(text: text)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.9))
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 86)
+                .padding(8)
+                .background(fieldBackground)
+                .accessibilityIdentifier(identifier)
+            Text("One KEY=VALUE pair per line.")
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.36))
+        }
+    }
+
+    private func providerQuickstartURL(_ provider: AgentProvider) -> URL? {
+        switch provider {
+        case .claude:
+            return URL(string: "https://code.claude.com/docs/en/quickstart")
+        case .codex:
+            return URL(string: "https://developers.openai.com/codex/quickstart")
+        case .gemini:
+            return URL(string: "https://ai.google.dev/gemini-api/docs/quickstart")
+        }
+    }
+
+    private func providerConfigURL(_ provider: AgentProvider) -> URL? {
+        switch provider {
+        case .claude:
+            return URL(string: "https://code.claude.com/docs/en/settings")
+        case .codex:
+            return URL(string: "https://developers.openai.com/codex/config-basic")
+        case .gemini:
+            return URL(string: "https://github.com/googleapis/js-genai")
+        }
     }
 
     private func modelPickerRow(
@@ -570,7 +964,7 @@ struct SettingsView: View {
                     Text(provider.subtitle)
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.72))
-                    Text(provider == .claude ? "ANTHROPIC" : "OPENAI")
+                    Text(providerFamilyLabel(provider))
                         .font(.system(size: 10, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.34))
                 }
@@ -578,7 +972,7 @@ struct SettingsView: View {
                 Spacer(minLength: 12)
 
                 Menu {
-                    Section(provider == .claude ? "ANTHROPIC" : "OPENAI") {
+                    Section(providerFamilyLabel(provider)) {
                         ForEach(AgentModelCatalog.options(for: provider)) { option in
                             Button {
                                 selection.wrappedValue = option.id
@@ -660,7 +1054,32 @@ struct SettingsView: View {
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(Color.white.opacity(isSelected ? 0.16 : 0.06))
-        )
+            )
+    }
+
+    private func authModeUITestingShortcuts(
+        provider: AgentProvider,
+        selection: Binding<String>
+    ) -> some View {
+        HStack(spacing: 6) {
+            ForEach(AgentAuthMode.modes(for: provider)) { mode in
+                Button {
+                    selection.wrappedValue = mode.rawValue
+                } label: {
+                    Text(mode.title)
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.62))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule()
+                                .fill(Color.white.opacity(selection.wrappedValue == mode.rawValue ? 0.16 : 0.06))
+                        )
+                }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("settings.\(provider.rawValue).authModeOption.\(mode.rawValue)")
+            }
+        }
     }
     #endif
 
@@ -1731,6 +2150,19 @@ struct SettingsView: View {
             codexModelID,
             provider: .codex
         )
+        s.preferredGeminiModel = AgentModelCatalog.normalizedModelID(
+            geminiModelID,
+            provider: .gemini
+        )
+        s.claudeAuthMode = AgentAuthMode.normalized(claudeAuthMode, provider: .claude).rawValue
+        s.codexAuthMode = AgentAuthMode.normalized(codexAuthMode, provider: .codex).rawValue
+        s.geminiAuthMode = AgentAuthMode.normalized(geminiAuthMode, provider: .gemini).rawValue
+        s.claudeApiKey = claudeApiKey
+        s.codexApiKey = codexApiKey
+        s.geminiApiKey = geminiApiKey
+        s.claudeEnvironment = claudeEnvironment
+        s.codexEnvironment = codexEnvironment
+        s.geminiEnvironment = geminiEnvironment
         s.posthogApiKey = posthogApiKey
         s.posthogProjectAPIKey = posthogProjectAPIKey
         s.posthogHost = posthogHost
@@ -1758,6 +2190,10 @@ struct SettingsView: View {
         let environment = ProcessInfo.processInfo.environment
         let preferredClaudeModel = environment["AGENTIC30_UI_TEST_SETTINGS_CLAUDE_MODEL"] ?? s.preferredClaudeModel
         let preferredCodexModel = environment["AGENTIC30_UI_TEST_SETTINGS_CODEX_MODEL"] ?? s.preferredCodexModel
+        let preferredGeminiModel = environment["AGENTIC30_UI_TEST_SETTINGS_GEMINI_MODEL"] ?? s.preferredGeminiModel
+        let preferredClaudeAuthMode = environment["AGENTIC30_UI_TEST_SETTINGS_CLAUDE_AUTH_MODE"] ?? s.claudeAuthMode
+        let preferredCodexAuthMode = environment["AGENTIC30_UI_TEST_SETTINGS_CODEX_AUTH_MODE"] ?? s.codexAuthMode
+        let preferredGeminiAuthMode = environment["AGENTIC30_UI_TEST_SETTINGS_GEMINI_AUTH_MODE"] ?? s.geminiAuthMode
         claudeModelID = AgentModelCatalog.normalizedModelID(
             preferredClaudeModel,
             provider: .claude
@@ -1766,12 +2202,33 @@ struct SettingsView: View {
             preferredCodexModel,
             provider: .codex
         )
+        geminiModelID = AgentModelCatalog.normalizedModelID(
+            preferredGeminiModel,
+            provider: .gemini
+        )
+        claudeAuthMode = AgentAuthMode.normalized(preferredClaudeAuthMode, provider: .claude).rawValue
+        codexAuthMode = AgentAuthMode.normalized(preferredCodexAuthMode, provider: .codex).rawValue
+        geminiAuthMode = AgentAuthMode.normalized(preferredGeminiAuthMode, provider: .gemini).rawValue
+        claudeApiKey = s.claudeApiKey
+        codexApiKey = s.codexApiKey
+        geminiApiKey = s.geminiApiKey
+        claudeEnvironment = s.claudeEnvironment
+        codexEnvironment = s.codexEnvironment
+        geminiEnvironment = s.geminiEnvironment
         #if DEBUG
         if environment["AGENTIC30_UI_TEST_SETTINGS_CLAUDE_MODEL"] != nil
-            || environment["AGENTIC30_UI_TEST_SETTINGS_CODEX_MODEL"] != nil {
+            || environment["AGENTIC30_UI_TEST_SETTINGS_CODEX_MODEL"] != nil
+            || environment["AGENTIC30_UI_TEST_SETTINGS_GEMINI_MODEL"] != nil
+            || environment["AGENTIC30_UI_TEST_SETTINGS_CLAUDE_AUTH_MODE"] != nil
+            || environment["AGENTIC30_UI_TEST_SETTINGS_CODEX_AUTH_MODE"] != nil
+            || environment["AGENTIC30_UI_TEST_SETTINGS_GEMINI_AUTH_MODE"] != nil {
             var seededSettings = s
             seededSettings.preferredClaudeModel = AgentModelCatalog.normalizedModelID(preferredClaudeModel, provider: .claude)
             seededSettings.preferredCodexModel = AgentModelCatalog.normalizedModelID(preferredCodexModel, provider: .codex)
+            seededSettings.preferredGeminiModel = AgentModelCatalog.normalizedModelID(preferredGeminiModel, provider: .gemini)
+            seededSettings.claudeAuthMode = AgentAuthMode.normalized(preferredClaudeAuthMode, provider: .claude).rawValue
+            seededSettings.codexAuthMode = AgentAuthMode.normalized(preferredCodexAuthMode, provider: .codex).rawValue
+            seededSettings.geminiAuthMode = AgentAuthMode.normalized(preferredGeminiAuthMode, provider: .gemini).rawValue
             do {
                 try KeychainHelper.saveSettings(seededSettings)
             } catch {
@@ -1805,16 +2262,25 @@ struct SettingsView: View {
         applySettings(settings)
         bipWorkspaceRoot = WorkspaceSettings.displayPath(legacyFallback: settings.bipWorkspaceRoot)
         syncBipFieldsFromCoach(viewModel.bipCoach, persist: true)
+        viewModel.syncProviderSettingsToSidecar(settings)
     }
 
-    private func saveModelValues() {
+    private func saveAgentSettingsValues() {
         let settings = currentSettings()
         try? KeychainHelper.saveSettings(settings)
-        PostHogTelemetry.capture("mac_settings_models_saved", properties: [
+        viewModel.syncProviderSettingsToSidecar(settings)
+        PostHogTelemetry.capture("mac_settings_agents_saved", properties: [
             "claude_model": settings.preferredClaudeModel,
             "codex_model": settings.preferredCodexModel,
+            "gemini_model": settings.preferredGeminiModel,
+            "claude_auth_mode": settings.claudeAuthMode,
+            "codex_auth_mode": settings.codexAuthMode,
+            "gemini_auth_mode": settings.geminiAuthMode,
+            "claude_api_key_configured": !settings.claudeApiKey.isEmpty,
+            "codex_api_key_configured": !settings.codexApiKey.isEmpty,
+            "gemini_api_key_configured": !settings.geminiApiKey.isEmpty,
         ])
-        showMessage($modelSaveMessage, text: "Saved")
+        showMessage($agentSettingsSaveMessage, text: "Saved")
     }
 
     private func syncWorkspaceRoot(_ root: String) {

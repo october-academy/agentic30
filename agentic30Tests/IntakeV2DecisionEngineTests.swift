@@ -8,12 +8,14 @@ final class IntakeV2DecisionEngineTests: XCTestCase {
     private func makeIntake(
         stuck: OnboardingProjectStage,
         workmode: OnboardingWorkMode = .fullTimeSolo,
-        role: OnboardingRole = .developer
+        role: OnboardingRole = .developer,
+        evidenceLevels: [OnboardingIsolationLevel] = []
     ) -> IntakeSnapshot {
         IntakeSnapshot(
             workmode: workmode,
             role: role,
             stuck: stuck,
+            evidenceLevels: evidenceLevels,
             folderURL: URL(fileURLWithPath: "/tmp/proj")
         )
     }
@@ -31,6 +33,26 @@ final class IntakeV2DecisionEngineTests: XCTestCase {
         let d = engine.generate(intake: makeIntake(stuck: .firstUsers), scan: .empty)
         XCTAssertEqual(d.category, .paymentResponse)
         XCTAssertEqual(d.priority, .high)
+    }
+
+    func test_ideaOnlyWithInterviewEvidence_reusesExistingInterviewRecords() {
+        let d = engine.generate(
+            intake: makeIntake(stuck: .ideaOnly, evidenceLevels: [.occasional]),
+            scan: .empty
+        )
+        XCTAssertEqual(d.category, .interviewRequest)
+        XCTAssertEqual(d.priority, .critical)
+        XCTAssertTrue(d.body.contains("기존 인터뷰 기록"), "expected existing-interview route, got: \(d.body)")
+    }
+
+    func test_firstUsersWithPaymentEvidence_routesToPaymentEvidenceReview() {
+        let d = engine.generate(
+            intake: makeIntake(stuck: .firstUsers, evidenceLevels: [.paymentResponses]),
+            scan: .empty
+        )
+        XCTAssertEqual(d.category, .paymentResponse)
+        XCTAssertEqual(d.priority, .high)
+        XCTAssertTrue(d.body.contains("가격·결제 반응"), "expected payment evidence route, got: \(d.body)")
     }
 
     func test_stuckPreRevenue_routesToPricing() {
@@ -73,7 +95,7 @@ final class IntakeV2DecisionEngineTests: XCTestCase {
     // MARK: - Fallback
 
     func test_emptyIntakeAndScan_fallback() {
-        let intake = IntakeSnapshot(workmode: nil, role: nil, stuck: nil, folderURL: nil)
+        let intake = IntakeSnapshot(workmode: nil, role: nil, stuck: nil, evidenceLevels: [], folderURL: nil)
         let d = engine.generate(intake: intake, scan: .empty)
         XCTAssertEqual(d.category, .fallback)
         XCTAssertEqual(d.priority, .low)

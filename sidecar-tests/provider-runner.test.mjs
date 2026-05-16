@@ -5,9 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import {
   allowsProviderPermissionBypass,
+  buildGeminiEnv,
   buildClaudePetHooks,
   buildCodexConfig,
   buildCodexEnv,
+  buildProviderEnv,
   buildSystemPromptText,
   codexSandboxForExecution,
   extractClaudePartialText,
@@ -17,10 +19,14 @@ import {
   isCodexRecoverableThreadResumeError,
   isClaudeMutatingTool,
   mapCodexItemToToolEvent,
+  parseProviderEnvironment,
+  resetProviderSettingsForTest,
   resolveCodexBinaryPath,
   resolveCodexModel,
   resolveCodexReasoningEffort,
+  resolveGeminiModel,
   shouldResumeCodexThread,
+  updateProviderSettings,
 } from "../sidecar/provider-runner.mjs";
 
 test("test stub provider bypasses local provider auth checks", () => {
@@ -42,6 +48,7 @@ test("test stub provider bypasses local provider auth checks", () => {
 test("provider connection state reports SDK and CLI entrypoint health", () => {
   const claude = getProviderConnectionState("claude");
   const codex = getProviderConnectionState("codex");
+  const gemini = getProviderConnectionState("gemini");
 
   assert.equal(claude.sdk.packageName, "@anthropic-ai/claude-agent-sdk");
   assert.equal(claude.sdk.available, true);
@@ -52,6 +59,11 @@ test("provider connection state reports SDK and CLI entrypoint health", () => {
   assert.equal(codex.sdk.available, true);
   assert.match(codex.sdk.entrypointPath, /\/codex\/codex(?:\.exe)?$/);
   assert.match(codex.sdk.version, /^\d+\.\d+\.\d+/);
+
+  assert.equal(gemini.sdk.packageName, "@google/genai");
+  assert.equal(gemini.sdk.available, true);
+  assert.match(gemini.sdk.entrypointPath, /@google\/genai\/package\.json$/);
+  assert.match(gemini.sdk.version, /^\d+\.\d+\.\d+/);
 });
 
 test("Claude local login session takes precedence over ANTHROPIC_API_KEY", async () => {
@@ -74,6 +86,106 @@ test("Claude local login session takes precedence over ANTHROPIC_API_KEY", async
   } finally {
     restoreEnv("HOME", previousHome);
     restoreEnv("ANTHROPIC_API_KEY", previousApiKey);
+  }
+});
+
+test("Gemini auth state detects API key settings", () => {
+  resetProviderSettingsForTest();
+  try {
+    updateProviderSettings({
+      gemini: {
+        authMode: "api_key",
+        apiKey: "gemini-secret",
+      },
+    });
+
+    const state = getProviderAuthState("gemini");
+    const env = buildGeminiEnv({ PATH: "/usr/bin", HOME: "/tmp/home" });
+
+    assert.equal(state.available, true);
+    assert.equal(state.source, "api-key");
+    assert.equal(env.GEMINI_API_KEY, "gemini-secret");
+    assert.equal(env.GOOGLE_API_KEY, "gemini-secret");
+  } finally {
+    resetProviderSettingsForTest();
+  }
+});
+
+test("Gemini auth state detects Vertex AI environment settings", () => {
+  resetProviderSettingsForTest();
+  try {
+    updateProviderSettings({
+      gemini: {
+        authMode: "vertex",
+        environment: [
+          "GOOGLE_GENAI_USE_VERTEXAI=true",
+          "GOOGLE_CLOUD_PROJECT=agentic30-test",
+          "GOOGLE_CLOUD_LOCATION=us-central1",
+        ].join("\n"),
+      },
+    });
+
+    const state = getProviderAuthState("gemini");
+    const env = buildGeminiEnv({ PATH: "/usr/bin", HOME: "/tmp/home" });
+
+    assert.equal(state.available, true);
+    assert.equal(state.source, "vertex");
+    assert.equal(env.GOOGLE_GENAI_USE_VERTEXAI, "true");
+    assert.equal(env.GOOGLE_CLOUD_PROJECT, "agentic30-test");
+  } finally {
+    resetProviderSettingsForTest();
+  }
+});
+
+test("Gemini auth state detects local ADC credentials (gcloud)", async () => {
+  const previousHome = process.env.HOME;
+  const previousGeminiApiKey = process.env.GEMINI_API_KEY;
+  const previousGoogleApiKey = process.env.GOOGLE_API_KEY;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-gemini-home-"));
+  try {
+    resetProviderSettingsForTest();
+    process.env.HOME = dir;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.GOOGLE_API_KEY;
+    await fs.mkdir(path.join(dir, ".config", "gcloud"), { recursive: true });
+    await fs.writeFile(
+      path.join(dir, ".config", "gcloud", "application_default_credentials.json"),
+      JSON.stringify({ type: "authorized_user", refresh_token: "token" }),
+    );
+
+    const state = getProviderAuthState("gemini");
+
+    assert.equal(state.available, true);
+    assert.equal(state.source, "local-session");
+    assert.match(state.message, /Application Default Credentials/);
+  } finally {
+    resetProviderSettingsForTest();
+    restoreEnv("HOME", previousHome);
+    restoreEnv("GEMINI_API_KEY", previousGeminiApiKey);
+    restoreEnv("GOOGLE_API_KEY", previousGoogleApiKey);
+  }
+});
+
+test("Gemini auth state reports missing auth when no markers or secrets exist", async () => {
+  const previousHome = process.env.HOME;
+  const previousGeminiApiKey = process.env.GEMINI_API_KEY;
+  const previousGoogleApiKey = process.env.GOOGLE_API_KEY;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-gemini-empty-home-"));
+  try {
+    resetProviderSettingsForTest();
+    process.env.HOME = dir;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.GOOGLE_API_KEY;
+
+    const state = getProviderAuthState("gemini");
+
+    assert.equal(state.available, false);
+    assert.equal(state.source, "missing");
+  } finally {
+    resetProviderSettingsForTest();
+    restoreEnv("HOME", previousHome);
+    restoreEnv("GEMINI_API_KEY", previousGeminiApiKey);
+    restoreEnv("GOOGLE_API_KEY", previousGoogleApiKey);
   }
 });
 
@@ -242,6 +354,38 @@ test("buildCodexEnv points Codex CLI at an isolated app config home", () => {
   assert.equal(env.PATH, "/usr/bin");
   assert.equal(env.CODEX_API_KEY, "codex-key");
   assert.equal(env.OPENAI_API_KEY, "openai-key");
+});
+
+test("provider environment parser accepts KEY=VALUE lines and strips quotes", () => {
+  assert.deepEqual(
+    parseProviderEnvironment([
+      "# comment",
+      "GOOGLE_CLOUD_PROJECT=agentic30",
+      "GOOGLE_CLOUD_LOCATION=\"us-central1\"",
+      "invalid key=value",
+      "GEMINI_API_KEY='secret'",
+    ].join("\n")),
+    {
+      GOOGLE_CLOUD_PROJECT: "agentic30",
+      GOOGLE_CLOUD_LOCATION: "us-central1",
+      GEMINI_API_KEY: "secret",
+    },
+  );
+});
+
+test("Gemini model resolves from settings override", () => {
+  resetProviderSettingsForTest();
+  try {
+    updateProviderSettings({
+      gemini: {
+        model: "gemini-2.5-flash",
+      },
+    });
+
+    assert.equal(resolveGeminiModel(), "gemini-2.5-flash");
+  } finally {
+    resetProviderSettingsForTest();
+  }
 });
 
 test("resolveCodexReasoningEffort adapts to mode and prompt intent", () => {
@@ -475,8 +619,8 @@ test("buildCodexEnv injects SPAWNED_SESSION=true and MODEL_OVERLAY=codex", () =>
   assert.equal(env.MODEL_OVERLAY, "codex");
 });
 
-test("buildSystemPromptText sets Korean response language for Claude and Codex SDK runs", () => {
-  for (const provider of ["claude", "codex"]) {
+test("buildSystemPromptText sets Korean response language for provider SDK runs", () => {
+  for (const provider of ["claude", "codex", "gemini"]) {
     const prompt = buildSystemPromptText({
       provider,
       workspaceRoot: "/tmp/workspace",

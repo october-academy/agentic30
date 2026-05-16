@@ -110,6 +110,7 @@ enum OnboardingIsolationLevel: String, Codable, CaseIterable, Hashable {
     case workLog = "work_log"
     case occasional
     case weeklyLoop = "weekly_loop"
+    case paymentResponses = "payment_responses"
     case community
 
     private static let legacySoloAllRawValue = "solo_all"
@@ -142,6 +143,7 @@ enum OnboardingIsolationLevel: String, Codable, CaseIterable, Hashable {
             .workLog,
             .occasional,
             .weeklyLoop,
+            .paymentResponses,
             .community,
         ]
     }
@@ -149,9 +151,10 @@ enum OnboardingIsolationLevel: String, Codable, CaseIterable, Hashable {
     var displayTitle: String {
         switch self {
         case .projectFolder: return "프로젝트 폴더"
-        case .workLog: return "업무 일지"
+        case .workLog: return "프로젝트 일지"
         case .occasional: return "고객 대화 기록"
         case .weeklyLoop: return "공개 기록·Threads·블로그"
+        case .paymentResponses: return "가격·결제 반응"
         case .community: return "아직 기록은 없다"
         }
     }
@@ -159,9 +162,10 @@ enum OnboardingIsolationLevel: String, Codable, CaseIterable, Hashable {
     var displayDescription: String {
         switch self {
         case .projectFolder: return "코드, 문서, 설정 등 작업 중인 폴더를 읽을 수 있습니다"
-        case .workLog: return "오늘 만든 것, 막힌 것, 배운 것을 읽을 수 있습니다"
+        case .workLog: return "프로젝트에서 만든 것, 막힌 것, 배운 것을 읽을 수 있습니다"
         case .occasional: return "고객이 말한 내용이나 인터뷰 파일이 있습니다"
         case .weeklyLoop: return "공개 실행, 반응, 배움을 기록한 채널이 있습니다"
+        case .paymentResponses: return "가격 제안, 결제 거절, 환불·이탈 응답이 있습니다"
         case .community: return "오늘부터 문제 메모와 실행 기록을 만들 수 있습니다"
         }
     }
@@ -310,13 +314,16 @@ struct OnboardingContext: Codable, Hashable {
             lines.append("[R2] 프로젝트 폴더의 코드·문서·설정 상태를 근거로 오늘의 실행 과제를 구체화하세요.")
         }
         if isolationLevels.contains(.workLog) {
-            lines.append("[R2] 업무 일지에서 오늘 만든 것, 막힌 것, 배운 것을 근거로 다음 실행 과제를 구체화하세요.")
+            lines.append("[R2] 프로젝트 일지에서 오늘 만든 것, 막힌 것, 배운 것을 근거로 다음 실행 과제를 구체화하세요.")
         }
         if isolationLevels.contains(.occasional) {
             lines.append("[R2] 고객 인터뷰 원문에서 과거 행동, 현재 대안, 비용 신호를 우선 추출하세요.")
         }
         if isolationLevels.contains(.weeklyLoop) {
             lines.append("[R2] BIP (Build In Public) 반응과 공개 실행 기록을 다음 proof 목표로 연결하세요.")
+        }
+        if isolationLevels.contains(.paymentResponses) {
+            lines.append("[R2] 가격 제안, 결제 거절, 환불·이탈 응답에서 지불 의사와 막힌 이유를 우선 추출하세요.")
         }
         if isolationLevels.contains(.community) {
             lines.append("[R2] 기록이 없다는 전제로, 오늘 만들 첫 problem memo 또는 인터뷰 입력부터 요구하세요.")

@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { query, listSessions } from "@anthropic-ai/claude-agent-sdk";
+import { GoogleGenAI } from "@google/genai";
 import { buildAuthEnv } from "./auth-context.mjs";
 import { buildQmdGuidance, buildQmdMcpConfig } from "./qmd-support.mjs";
 import {
@@ -20,8 +21,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sidecarRoot = path.resolve(__dirname);
 process.env.AGENTIC30_SIDECAR_ROOT ??= sidecarRoot;
 const DEFAULT_CODEX_MODEL = "gpt-5.5";
+const DEFAULT_GEMINI_MODEL = "gemini-2.5-pro";
 const MINI_ACTION_EXECUTION_ONLY_MODE = "mini_action_execution_only";
 const CODEX_REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
+const GEMINI_CAPABLE_EXECUTION_MODES = new Set([
+  "isolated_read_only",
+  "judge_read_only",
+  "idd_question_synthesis",
+  "agentic",
+  "fast_chat",
+  "memory_chat",
+]);
 const RESPONSE_LANGUAGE_INSTRUCTION =
   "Reply in Korean (ko, 한국어) for all assistant-facing prose unless the user's prompt explicitly requests another language or an exact machine-readable output schema requires fixed tokens.";
 const appSupportPath = process.env.AGENTIC30_APP_SUPPORT_PATH
@@ -36,6 +46,65 @@ const codexHomePath = path.join(appSupportPath, "codex-home");
 const internalMcpServerName = "agentic30_sidecar";
 const notionConfigPath = path.join(appSupportPath, "notion-config.json");
 let codexSdkImportPromise = null;
+let providerSettings = {
+  claude: {},
+  codex: {},
+  gemini: {},
+};
+
+export function updateProviderSettings(nextSettings = {}) {
+  providerSettings = {
+    claude: normalizeProviderSettings(nextSettings.claude),
+    codex: normalizeProviderSettings(nextSettings.codex),
+    gemini: normalizeProviderSettings(nextSettings.gemini),
+  };
+  return getProviderSettingsSummary();
+}
+
+export function getProviderSettingsSummary() {
+  return Object.fromEntries(
+    Object.entries(providerSettings).map(([provider, settings]) => [
+      provider,
+      {
+        authMode: settings.authMode || "local",
+        hasApiKey: Boolean(settings.apiKey),
+        hasEnvironment: Boolean(settings.environment),
+        model: settings.model || "",
+      },
+    ]),
+  );
+}
+
+export function resetProviderSettingsForTest() {
+  providerSettings = {
+    claude: {},
+    codex: {},
+    gemini: {},
+  };
+}
+
+function normalizeProviderSettings(settings = {}) {
+  return {
+    authMode: normalizeAuthMode(settings.authMode),
+    apiKey: String(settings.apiKey || ""),
+    environment: String(settings.environment || ""),
+    model: String(settings.model || ""),
+  };
+}
+
+function normalizeAuthMode(authMode = "") {
+  const normalized = String(authMode || "local").trim().toLowerCase();
+  return [
+    "local",
+    "api_key",
+    "bedrock",
+    "vertex",
+    "foundry",
+    "custom",
+  ].includes(normalized)
+    ? normalized
+    : "local";
+}
 
 export async function runProviderStream({
   provider,
@@ -82,7 +151,7 @@ export async function runProviderStream({
     return { runtime: sessionRuntime };
   }
 
-  if (executionMode === "isolated_read_only") {
+  if (executionMode === "isolated_read_only" && provider !== "gemini") {
     await runTextOnlyProvider({
       provider,
       prompt,
@@ -91,6 +160,29 @@ export async function runProviderStream({
       onTextReplace,
     });
     return { runtime: sessionRuntime };
+  }
+
+  if (provider === "gemini") {
+    if (!supportsGeminiExecutionMode(executionMode)) {
+      throw new Error(
+        `Gemini provider does not support executionMode "${executionMode}". Use Claude or Codex for this workflow.`,
+      );
+    }
+    return runGeminiProvider({
+      sessionRuntime,
+      prompt,
+      model,
+      workspaceRoot,
+      abortController,
+      executionMode,
+      systemPromptOverride,
+      approvedToolExecution,
+      onTextDelta,
+      onTextReplace,
+      onToolEvent,
+      onRuntimeUpdate,
+      onRunEvent,
+    });
   }
 
   if (allowsProviderPermissionBypass({ executionMode, approvedToolExecution })) {
@@ -147,7 +239,10 @@ export function getProviderAuthState(provider) {
     };
   }
 
-  if (provider === "claude" && hasClaudeLocalSession()) {
+  const mode = providerSettings[provider]?.authMode || "local";
+  const env = buildProviderEnv(provider);
+
+  if (provider === "claude" && mode === "local" && hasClaudeLocalSession()) {
     return {
       available: true,
       source: "local-session",
@@ -155,23 +250,62 @@ export function getProviderAuthState(provider) {
     };
   }
 
-  const apiKey = readApiKey(provider);
-  if (apiKey) {
+  if (provider === "codex" && mode === "local" && hasCodexLocalSession()) {
+    return {
+      available: true,
+      source: "local-session",
+      message: "Local Codex login session",
+    };
+  }
+
+  if (provider === "gemini" && mode === "local" && hasGeminiLocalSession()) {
+    return {
+      available: true,
+      source: "local-session",
+      message: "Local Google Application Default Credentials (gcloud)",
+    };
+  }
+
+  const apiKey = readApiKey(provider, env);
+  if ((mode === "api_key" || mode === "local") && apiKey) {
     return {
       available: true,
       source: "api-key",
       message:
         provider === "claude"
           ? "API key from ANTHROPIC_API_KEY"
-          : "API key from CODEX_API_KEY / OPENAI_API_KEY",
+          : provider === "gemini"
+            ? "API key from GEMINI_API_KEY / GOOGLE_API_KEY"
+            : "API key from CODEX_API_KEY / OPENAI_API_KEY",
     };
   }
 
-  if (provider === "codex" && hasCodexLocalSession()) {
+  if (provider === "claude" && ["bedrock", "vertex", "foundry", "custom"].includes(mode) && hasConfiguredEnvironment(env, mode)) {
     return {
       available: true,
-      source: "local-session",
-      message: "Local Codex login session",
+      source: mode,
+      message: `${mode} environment configured`,
+    };
+  }
+
+  if (provider === "gemini" && mode === "vertex" && hasGeminiVertexEnv(env)) {
+    return {
+      available: true,
+      source: "vertex",
+      message: "Vertex AI environment configured",
+    };
+  }
+
+  if (mode !== "local" && apiKey) {
+    return {
+      available: true,
+      source: "api-key",
+      message:
+        provider === "gemini"
+          ? "API key from GEMINI_API_KEY / GOOGLE_API_KEY"
+          : provider === "claude"
+            ? "API key from ANTHROPIC_API_KEY"
+            : "API key from CODEX_API_KEY / OPENAI_API_KEY",
     };
   }
 
@@ -181,7 +315,9 @@ export function getProviderAuthState(provider) {
     message:
       provider === "claude"
         ? "Sign in with Claude Code or set ANTHROPIC_API_KEY"
-        : "Sign in with Codex or set CODEX_API_KEY / OPENAI_API_KEY",
+        : provider === "gemini"
+          ? "Set GEMINI_API_KEY / GOOGLE_API_KEY, run `gcloud auth application-default login`, or configure Vertex AI"
+          : "Sign in with Codex or set CODEX_API_KEY / OPENAI_API_KEY",
   };
 }
 
@@ -207,6 +343,24 @@ function getProviderSdkState(provider) {
       message: fsSync.existsSync(cliPath)
         ? "Claude Agent SDK CLI is installed"
         : "Claude Agent SDK CLI is missing",
+    };
+  }
+
+  if (provider === "gemini") {
+    const packageName = "@google/genai";
+    const packageRoot = resolveInstalledPackageRoot("@google", "genai");
+    const entrypointPath = path.join(packageRoot, "package.json");
+    const packageJson = readPackageJson(packageRoot);
+    const installed = fsSync.existsSync(entrypointPath);
+    return {
+      available: installed,
+      packageName,
+      version: packageJson?.version ?? null,
+      packageRoot,
+      entrypointPath,
+      message: installed
+        ? "Google Gen AI SDK is installed"
+        : "Google Gen AI SDK is missing",
     };
   }
 
@@ -267,13 +421,13 @@ async function runClaudeProvider({
     ...(allowsProviderPermissionBypass({ executionMode, approvedToolExecution }) ? buildNotionMcpConfig() : {}),
     ...(usesQmdMcp(executionMode) ? buildQmdMcpConfig({ sidecarRoot }) : {}),
   };
-  const apiKey = readApiKey("claude");
   const env = {
-    ...process.env,
+    ...buildProviderEnv("claude"),
     SPAWNED_SESSION: "true",
     MODEL_OVERLAY: "claude",
   };
-  if (hasClaudeLocalSession()) {
+  const apiKey = readApiKey("claude", env);
+  if ((providerSettings.claude?.authMode || "local") === "local" && hasClaudeLocalSession()) {
     delete env.ANTHROPIC_API_KEY;
   } else if (apiKey) {
     env.ANTHROPIC_API_KEY = apiKey;
@@ -685,10 +839,11 @@ async function runCodexAttempt({
     executionMode,
     systemPromptOverride,
   });
-  const apiKey = readApiKey("codex");
+  const codexEnv = buildCodexEnv();
+  const apiKey = readApiKey("codex", codexEnv);
   const codexOptions = {
     codexPathOverride: resolveCodexBinaryPath(),
-    env: buildCodexEnv(),
+    env: codexEnv,
     config: buildCodexConfig({
       systemPromptText,
       executionMode,
@@ -1060,34 +1215,120 @@ export function buildCodexConfig({
 
 export function buildCodexEnv(baseEnv = process.env) {
   ensureIsolatedCodexHome();
+  const providerEnv = buildProviderEnv("codex", baseEnv);
   const env = {
-    PATH: baseEnv.PATH || "/usr/bin:/bin:/usr/sbin:/sbin",
-    HOME: baseEnv.HOME || os.homedir(),
-    TMPDIR: baseEnv.TMPDIR || os.tmpdir(),
-    LANG: baseEnv.LANG || "en_US.UTF-8",
-    LC_ALL: baseEnv.LC_ALL,
-    SHELL: baseEnv.SHELL,
-    TERM: baseEnv.TERM,
+    PATH: providerEnv.PATH || "/usr/bin:/bin:/usr/sbin:/sbin",
+    HOME: providerEnv.HOME || os.homedir(),
+    TMPDIR: providerEnv.TMPDIR || os.tmpdir(),
+    LANG: providerEnv.LANG || "en_US.UTF-8",
+    LC_ALL: providerEnv.LC_ALL,
+    SHELL: providerEnv.SHELL,
+    TERM: providerEnv.TERM,
     CODEX_HOME: codexHomePath,
     SPAWNED_SESSION: "true",
     MODEL_OVERLAY: "codex",
     AGENTIC30_SIDECAR_ROOT: sidecarRoot,
     AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
-    AGENTIC30_CODEX_MODEL: baseEnv.AGENTIC30_CODEX_MODEL,
-    CODEX_MODEL: baseEnv.CODEX_MODEL,
-    OPENAI_MODEL: baseEnv.OPENAI_MODEL,
-    AGENTIC30_CODEX_REASONING_EFFORT: baseEnv.AGENTIC30_CODEX_REASONING_EFFORT,
-    CODEX_REASONING_EFFORT: baseEnv.CODEX_REASONING_EFFORT,
-    MODEL_REASONING_EFFORT: baseEnv.MODEL_REASONING_EFFORT,
+    AGENTIC30_CODEX_MODEL: providerEnv.AGENTIC30_CODEX_MODEL,
+    CODEX_MODEL: providerEnv.CODEX_MODEL,
+    OPENAI_MODEL: providerEnv.OPENAI_MODEL,
+    AGENTIC30_CODEX_REASONING_EFFORT: providerEnv.AGENTIC30_CODEX_REASONING_EFFORT,
+    CODEX_REASONING_EFFORT: providerEnv.CODEX_REASONING_EFFORT,
+    MODEL_REASONING_EFFORT: providerEnv.MODEL_REASONING_EFFORT,
   };
-  if (baseEnv.CODEX_API_KEY) env.CODEX_API_KEY = baseEnv.CODEX_API_KEY;
-  if (baseEnv.OPENAI_API_KEY) env.OPENAI_API_KEY = baseEnv.OPENAI_API_KEY;
+  if (providerEnv.CODEX_API_KEY) env.CODEX_API_KEY = providerEnv.CODEX_API_KEY;
+  if (providerEnv.OPENAI_API_KEY) env.OPENAI_API_KEY = providerEnv.OPENAI_API_KEY;
   for (const key of Object.keys(env)) {
     if (env[key] === undefined || env[key] === "") {
       delete env[key];
     }
   }
   return env;
+}
+
+export function buildGeminiEnv(baseEnv = process.env) {
+  const providerEnv = buildProviderEnv("gemini", baseEnv);
+  const env = {
+    PATH: providerEnv.PATH || "/usr/bin:/bin:/usr/sbin:/sbin",
+    HOME: providerEnv.HOME || os.homedir(),
+    TMPDIR: providerEnv.TMPDIR || os.tmpdir(),
+    LANG: providerEnv.LANG || "en_US.UTF-8",
+    LC_ALL: providerEnv.LC_ALL,
+    SHELL: providerEnv.SHELL,
+    TERM: providerEnv.TERM,
+    SPAWNED_SESSION: "true",
+    MODEL_OVERLAY: "gemini",
+    AGENTIC30_SIDECAR_ROOT: sidecarRoot,
+    AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+    AGENTIC30_GEMINI_MODEL: providerEnv.AGENTIC30_GEMINI_MODEL,
+    GEMINI_MODEL: providerEnv.GEMINI_MODEL,
+    GOOGLE_GENAI_MODEL: providerEnv.GOOGLE_GENAI_MODEL,
+    GEMINI_API_KEY: providerEnv.GEMINI_API_KEY,
+    GOOGLE_API_KEY: providerEnv.GOOGLE_API_KEY,
+    GOOGLE_GENAI_USE_VERTEXAI: providerEnv.GOOGLE_GENAI_USE_VERTEXAI,
+    GOOGLE_CLOUD_PROJECT: providerEnv.GOOGLE_CLOUD_PROJECT,
+    GOOGLE_CLOUD_LOCATION: providerEnv.GOOGLE_CLOUD_LOCATION,
+    GOOGLE_APPLICATION_CREDENTIALS: providerEnv.GOOGLE_APPLICATION_CREDENTIALS,
+  };
+  for (const key of Object.keys(env)) {
+    if (env[key] === undefined || env[key] === "") {
+      delete env[key];
+    }
+  }
+  return env;
+}
+
+export function buildProviderEnv(provider, baseEnv = process.env) {
+  const settings = providerSettings[provider] || {};
+  const parsed = parseProviderEnvironment(settings.environment);
+  const env = {
+    ...baseEnv,
+    ...parsed,
+  };
+  if (settings.authMode === "api_key" && settings.apiKey) {
+    if (provider === "claude") {
+      env.ANTHROPIC_API_KEY = settings.apiKey;
+    } else if (provider === "codex") {
+      env.CODEX_API_KEY = settings.apiKey;
+      env.OPENAI_API_KEY = settings.apiKey;
+    } else if (provider === "gemini") {
+      env.GEMINI_API_KEY = settings.apiKey;
+      env.GOOGLE_API_KEY = settings.apiKey;
+    }
+  }
+  if (settings.model) {
+    if (provider === "claude") {
+      env.AGENTIC30_CLAUDE_MODEL = settings.model;
+    } else if (provider === "codex") {
+      env.AGENTIC30_CODEX_MODEL = settings.model;
+    } else if (provider === "gemini") {
+      env.AGENTIC30_GEMINI_MODEL = settings.model;
+      env.GEMINI_MODEL = settings.model;
+    }
+  }
+  return env;
+}
+
+export function parseProviderEnvironment(value = "") {
+  const env = {};
+  for (const rawLine of String(value || "").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const separatorIndex = line.indexOf("=");
+    if (separatorIndex <= 0) continue;
+    const key = line.slice(0, separatorIndex).trim();
+    const rawValue = line.slice(separatorIndex + 1).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    env[key] = stripEnvQuotes(rawValue);
+  }
+  return env;
+}
+
+function stripEnvQuotes(value = "") {
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    return value.slice(1, -1);
+  }
+  return value;
 }
 
 function ensureIsolatedCodexHome() {
@@ -1142,6 +1383,22 @@ export function resolveCodexModel(model = "") {
       || process.env.OPENAI_MODEL
       || DEFAULT_CODEX_MODEL,
   ).trim();
+}
+
+export function resolveGeminiModel(model = "") {
+  const env = buildProviderEnv("gemini");
+  return String(
+    model
+      || env.AGENTIC30_GEMINI_MODEL
+      || env.GEMINI_MODEL
+      || env.GOOGLE_GENAI_MODEL
+      || providerSettings.gemini?.model
+      || DEFAULT_GEMINI_MODEL,
+  ).trim();
+}
+
+export function supportsGeminiExecutionMode(executionMode = "") {
+  return GEMINI_CAPABLE_EXECUTION_MODES.has(String(executionMode || ""));
 }
 
 export function resolveCodexReasoningEffort({ executionMode = "", prompt = "" } = {}) {
@@ -1285,6 +1542,146 @@ function extractStubContextFiles(prompt) {
   return results;
 }
 
+async function runGeminiProvider({
+  sessionRuntime,
+  prompt,
+  model,
+  workspaceRoot,
+  abortController,
+  executionMode,
+  systemPromptOverride,
+  approvedToolExecution = false,
+  onTextDelta,
+  onTextReplace,
+  onToolEvent,
+  onRuntimeUpdate,
+  onRunEvent,
+}) {
+  let runtime = { ...sessionRuntime };
+  onRunEvent?.({ phase: "provider.gemini.prepare_start" });
+  const env = buildGeminiEnv();
+  const useVertex = env.GOOGLE_GENAI_USE_VERTEXAI === "true" || env.GOOGLE_GENAI_USE_VERTEXAI === "1";
+  const apiKey = env.GEMINI_API_KEY || env.GOOGLE_API_KEY || "";
+  if (!useVertex && !apiKey) {
+    throw new Error(
+      "Gemini provider requires GOOGLE_API_KEY or GEMINI_API_KEY (or Vertex AI configuration).",
+    );
+  }
+  const systemPromptText = buildSystemPromptText({
+    provider: "gemini",
+    workspaceRoot,
+    executionMode,
+    systemPromptOverride,
+  });
+  const resolvedModel = resolveGeminiModel(model);
+  const ai = useVertex
+    ? new GoogleGenAI({
+        vertexai: true,
+        project: env.GOOGLE_CLOUD_PROJECT,
+        location: env.GOOGLE_CLOUD_LOCATION,
+      })
+    : new GoogleGenAI({ apiKey });
+  onRunEvent?.({
+    phase: "provider.gemini.client_created",
+    model: resolvedModel,
+    backend: useVertex ? "vertex" : "genai",
+    approvedToolExecution: Boolean(approvedToolExecution),
+  });
+
+  const stream = await ai.models.generateContentStream({
+    model: resolvedModel,
+    contents: prompt,
+    config: {
+      systemInstruction: systemPromptText,
+    },
+    abortSignal: abortController?.signal,
+  });
+  onRunEvent?.({
+    phase: "provider.gemini.stream_opened",
+    promptChars: String(prompt || "").length,
+  });
+
+  let accumulated = "";
+  let firstTextEmitted = false;
+  for await (const chunk of stream) {
+    if (abortController?.signal?.aborted) {
+      throw new Error("Gemini stream aborted");
+    }
+    const text = extractGeminiChunkText(chunk);
+    if (text) {
+      if (!firstTextEmitted) {
+        onRunEvent?.({ phase: "provider.gemini.first_text" });
+        firstTextEmitted = true;
+      }
+      accumulated += text;
+      onTextDelta?.(text);
+    }
+    const toolEvents = extractGeminiFunctionCalls(chunk);
+    for (const event of toolEvents) {
+      onToolEvent?.(event);
+    }
+  }
+
+  onTextReplace?.(accumulated);
+  onRunEvent?.({
+    phase: "provider.gemini.completed",
+    textLength: accumulated.length,
+  });
+  onRuntimeUpdate?.(runtime);
+  return { runtime };
+}
+
+export function extractGeminiChunkText(chunk) {
+  if (!chunk) return "";
+  if (typeof chunk.text === "string") {
+    return chunk.text;
+  }
+  if (typeof chunk.text === "function") {
+    const result = chunk.text();
+    if (typeof result === "string") return result;
+  }
+  const candidates = Array.isArray(chunk.candidates) ? chunk.candidates : [];
+  let collected = "";
+  for (const candidate of candidates) {
+    const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
+    for (const part of parts) {
+      if (typeof part?.text === "string") {
+        collected += part.text;
+      }
+    }
+  }
+  return collected;
+}
+
+export function extractGeminiFunctionCalls(chunk) {
+  if (!chunk) return [];
+  const events = [];
+  const direct = Array.isArray(chunk.functionCalls) ? chunk.functionCalls : [];
+  for (const call of direct) {
+    events.push(buildGeminiToolEvent(call));
+  }
+  const candidates = Array.isArray(chunk.candidates) ? chunk.candidates : [];
+  for (const candidate of candidates) {
+    const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
+    for (const part of parts) {
+      if (part?.functionCall) {
+        events.push(buildGeminiToolEvent(part.functionCall));
+      }
+    }
+  }
+  return events;
+}
+
+function buildGeminiToolEvent(call) {
+  const name = call?.name || "function_call";
+  return {
+    phase: "use",
+    toolName: name,
+    toolCallKey: call?.id || name,
+    payload: call?.args ?? call?.arguments ?? {},
+  };
+}
+
 async function runTextOnlyProvider({
   provider,
   prompt,
@@ -1293,7 +1690,8 @@ async function runTextOnlyProvider({
   onTextReplace,
 }) {
   if (provider === "claude") {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const env = buildProviderEnv("claude");
+    const apiKey = readApiKey("claude", env);
     if (!apiKey) {
       throw new Error("ACP Claude mode requires ANTHROPIC_API_KEY.");
     }
@@ -1306,7 +1704,7 @@ async function runTextOnlyProvider({
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: model || process.env.ANTHROPIC_MODEL || "claude-3-7-sonnet-latest",
+        model: model || env.ANTHROPIC_MODEL || "claude-3-7-sonnet-latest",
         max_tokens: 4000,
         system: RESPONSE_LANGUAGE_INSTRUCTION,
         messages: [
@@ -1335,7 +1733,8 @@ async function runTextOnlyProvider({
     return;
   }
 
-  const apiKey = process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY;
+  const env = buildProviderEnv("codex");
+  const apiKey = readApiKey("codex", env);
   if (!apiKey) {
     throw new Error("ACP Codex mode requires CODEX_API_KEY or OPENAI_API_KEY.");
   }
@@ -1347,7 +1746,7 @@ async function runTextOnlyProvider({
       authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: model || process.env.OPENAI_MODEL || DEFAULT_CODEX_MODEL,
+      model: model || env.OPENAI_MODEL || DEFAULT_CODEX_MODEL,
       instructions: RESPONSE_LANGUAGE_INSTRUCTION,
       input: prompt,
     }),
@@ -1445,11 +1844,14 @@ function buildMcpConfig(
   };
 }
 
-function readApiKey(provider) {
+function readApiKey(provider, env = buildProviderEnv(provider)) {
   if (provider === "claude") {
-    return process.env.ANTHROPIC_API_KEY || "";
+    return env.ANTHROPIC_API_KEY || "";
   }
-  return process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY || "";
+  if (provider === "gemini") {
+    return env.GEMINI_API_KEY || env.GOOGLE_API_KEY || "";
+  }
+  return env.CODEX_API_KEY || env.OPENAI_API_KEY || "";
 }
 
 function hasClaudeLocalSession() {
@@ -1460,6 +1862,46 @@ function hasClaudeLocalSession() {
 function hasCodexLocalSession() {
   const payload = readJsonFile(path.join(os.homedir(), ".codex", "auth.json"));
   return Boolean(payload?.tokens || payload?.auth_mode || payload?.OPENAI_API_KEY);
+}
+
+function hasGeminiLocalSession() {
+  const candidates = [
+    path.join(os.homedir(), ".config", "gcloud", "application_default_credentials.json"),
+  ];
+  return candidates.some((candidate) => {
+    try {
+      return fsSync.existsSync(candidate) && fsSync.statSync(candidate).size > 0;
+    } catch {
+      return false;
+    }
+  });
+}
+
+function hasConfiguredEnvironment(env = {}, mode = "custom") {
+  if (mode === "bedrock") {
+    return Boolean(env.AWS_REGION || env.AWS_DEFAULT_REGION || env.ANTHROPIC_BEDROCK_BASE_URL);
+  }
+  if (mode === "vertex") {
+    return Boolean(env.GOOGLE_CLOUD_PROJECT || env.ANTHROPIC_VERTEX_PROJECT_ID || env.CLOUD_ML_REGION);
+  }
+  if (mode === "foundry") {
+    return Boolean(env.ANTHROPIC_MODEL || env.ANTHROPIC_BASE_URL || env.ANTHROPIC_AUTH_TOKEN);
+  }
+  return Object.keys(env).some((key) => /ANTHROPIC|CLAUDE|AWS_|GOOGLE_|AZURE|FOUNDRY/i.test(key));
+}
+
+function hasGeminiVertexEnv(env = {}) {
+  return Boolean(
+    env.GOOGLE_GENAI_USE_VERTEXAI
+      || env.GOOGLE_CLOUD_PROJECT
+      || env.GOOGLE_APPLICATION_CREDENTIALS,
+  );
+}
+
+function redactProviderSecretText(text = "") {
+  return String(text || "")
+    .replace(/(api[_-]?key|token|secret|password|authorization)(["'\s:=]+)([^"'\s,}]+)/gi, "$1$2[redacted]")
+    .replace(/(sk-[A-Za-z0-9_-]{12,}|AIza[0-9A-Za-z_-]{20,})/g, "[redacted]");
 }
 
 function readJsonFile(filePath) {
@@ -1557,7 +1999,9 @@ function baseSystemPrompt(provider, workspaceRoot, executionMode) {
     "Use the agentic30 MCP server when you need app context or safe workspace inspection.",
     provider === "claude"
       ? "When you need the user's decision or missing information, use the built-in AskUserQuestion tool instead of asking in plain text."
-      : `When you need the user's decision or missing information, call the ${CODEX_STRUCTURED_INPUT_TOOL} MCP tool instead of asking in plain text.`,
+      : provider === "codex"
+        ? `When you need the user's decision or missing information, call the ${CODEX_STRUCTURED_INPUT_TOOL} MCP tool instead of asking in plain text.`
+        : "When you need the user's decision or missing information, render the inline_decision contract instead of asking as loose prose.",
     "Prefer a single focused question with 2-3 options. Enable free text only when choices are not enough.",
     "When asking a decision question in chat, render the options through the inline_decision contract below, not as prose examples or markdown bullets.",
     INLINE_DECISION_CONTRACT,

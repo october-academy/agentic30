@@ -24,6 +24,8 @@ final class IntakeV2StoreTests: XCTestCase {
         XCTAssertNil(store.workmode)
         XCTAssertNil(store.role)
         XCTAssertNil(store.stuck)
+        XCTAssertNil(store.commitmentLevel)
+        XCTAssertEqual(store.evidenceLevels, [])
         XCTAssertNil(store.folderURL)
         XCTAssertFalse(store.isFullyComplete)
         XCTAssertFalse(store.restoreFailed)
@@ -31,9 +33,11 @@ final class IntakeV2StoreTests: XCTestCase {
 
     func test_setAnswers_persistsAcrossInstances() {
         let store1 = IntakeV2Store(defaults: suiteDefaults)
-        store1.workmode = .fullTimeSolo
+        store1.selectCommitmentLevel(.fullTimeSixHours)
         store1.role = .marketerBusiness
         store1.stuck = .ideaOnly
+        store1.toggleEvidenceLevel(.workLog)
+        store1.toggleEvidenceLevel(.paymentResponses)
         store1.folderURL = URL(fileURLWithPath: "/Users/test/Projects")
         store1.persist()
         XCTAssertNotNil(suiteDefaults.data(forKey: IntakeV2Store.stateDefaultsKey))
@@ -41,8 +45,10 @@ final class IntakeV2StoreTests: XCTestCase {
 
         let store2 = IntakeV2Store(defaults: suiteDefaults)
         XCTAssertEqual(store2.workmode, .fullTimeSolo)
+        XCTAssertEqual(store2.commitmentLevel, .fullTimeSixHours)
         XCTAssertEqual(store2.role, .marketerBusiness)
         XCTAssertEqual(store2.stuck, .ideaOnly)
+        XCTAssertEqual(store2.evidenceLevels, [.workLog, .paymentResponses])
         XCTAssertEqual(store2.folderURL?.path, "/Users/test/Projects")
     }
 
@@ -57,14 +63,62 @@ final class IntakeV2StoreTests: XCTestCase {
 
     func test_stepCompletion_flags() {
         let store = IntakeV2Store(defaults: suiteDefaults)
-        XCTAssertFalse(store.isStep1Complete)
-        store.workmode = .sideProject
-        XCTAssertTrue(store.isStep1Complete)
-        XCTAssertFalse(store.isFullyComplete)
+        XCTAssertFalse(store.isRoleComplete)
         store.role = .designer
+        XCTAssertTrue(store.isRoleComplete)
+        XCTAssertFalse(store.isFullyComplete)
         store.stuck = .building
-        store.folderURL = URL(fileURLWithPath: "/tmp/work")
+        store.selectCommitmentLevel(.dailyTwoToFour)
+        store.toggleEvidenceLevel(.community)
         XCTAssertTrue(store.isFullyComplete)
+        store.folderURL = URL(fileURLWithPath: "/tmp/work")
+        XCTAssertTrue(store.isFolderComplete)
+        XCTAssertTrue(store.isFullyComplete)
+    }
+
+    func test_evidenceCommunity_isExclusive() {
+        let store = IntakeV2Store(defaults: suiteDefaults)
+        store.toggleEvidenceLevel(.workLog)
+        store.toggleEvidenceLevel(.paymentResponses)
+        XCTAssertEqual(store.evidenceLevels, [.workLog, .paymentResponses])
+
+        store.toggleEvidenceLevel(.community)
+        XCTAssertEqual(store.evidenceLevels, [.community])
+
+        store.toggleEvidenceLevel(.occasional)
+        XCTAssertEqual(store.evidenceLevels, [.occasional])
+    }
+
+    func test_onboardingContextMapper_combinesEvidenceAndFolder() {
+        let store = IntakeV2Store(defaults: suiteDefaults)
+        store.role = .developer
+        store.stuck = .firstUsers
+        store.selectCommitmentLevel(.dailyOneToTwo)
+        store.toggleEvidenceLevel(.workLog)
+        store.toggleEvidenceLevel(.paymentResponses)
+        store.folderURL = URL(fileURLWithPath: "/tmp/work")
+
+        let context = IntakeV2OnboardingContextMapper.makeContext(from: store)
+
+        XCTAssertEqual(context?.workMode, .sideProject)
+        XCTAssertEqual(context?.customWorkMode, "하루 1~2시간")
+        XCTAssertEqual(context?.isolationLevel, .projectFolder)
+        XCTAssertEqual(Set(context?.isolationLevels ?? []), Set([.projectFolder, .workLog, .paymentResponses]))
+    }
+
+    func test_onboardingContextMapper_requiresEvidenceButNotFolder() {
+        let store = IntakeV2Store(defaults: suiteDefaults)
+        store.role = .developer
+        store.stuck = .ideaOnly
+        store.selectCommitmentLevel(.irregular)
+        XCTAssertNil(IntakeV2OnboardingContextMapper.makeContext(from: store))
+
+        store.toggleEvidenceLevel(.community)
+        let context = IntakeV2OnboardingContextMapper.makeContext(from: store)
+
+        XCTAssertEqual(context?.workMode, .exploring)
+        XCTAssertEqual(context?.isolationLevel, .community)
+        XCTAssertEqual(context?.isolationLevels, [.community])
     }
 
     func test_corruptStorage_surfacesRestoreFailedFlag() {
@@ -75,6 +129,8 @@ final class IntakeV2StoreTests: XCTestCase {
         XCTAssertNil(store.workmode)
         XCTAssertNil(store.role)
         XCTAssertNil(store.stuck)
+        XCTAssertNil(store.commitmentLevel)
+        XCTAssertEqual(store.evidenceLevels, [])
     }
 
     func test_legacyStorage_migratesToAgentic30Namespace() throws {
@@ -86,6 +142,8 @@ final class IntakeV2StoreTests: XCTestCase {
         let store = IntakeV2Store(defaults: suiteDefaults)
 
         XCTAssertEqual(store.workmode, .fullTimeSolo)
+        XCTAssertNil(store.commitmentLevel)
+        XCTAssertEqual(store.evidenceLevels, [])
         XCTAssertEqual(store.role, .developer)
         XCTAssertEqual(store.stuck, .ideaOnly)
         XCTAssertEqual(store.folderURL?.path, "/tmp/legacy")
@@ -95,16 +153,21 @@ final class IntakeV2StoreTests: XCTestCase {
 
     func test_reset_clearsStateAndStorage() {
         let store = IntakeV2Store(defaults: suiteDefaults)
-        store.workmode = .teamStartup
+        store.selectCommitmentLevel(.weekendFocused)
+        store.toggleEvidenceLevel(.weeklyLoop)
         store.persist()
         suiteDefaults.set(Data([0x01]), forKey: IntakeV2Store.legacyStateDefaultsKey)
         store.reset()
         XCTAssertNil(store.workmode)
+        XCTAssertNil(store.commitmentLevel)
+        XCTAssertEqual(store.evidenceLevels, [])
         XCTAssertNil(suiteDefaults.data(forKey: IntakeV2Store.stateDefaultsKey))
         XCTAssertNil(suiteDefaults.data(forKey: IntakeV2Store.legacyStateDefaultsKey))
 
         let fresh = IntakeV2Store(defaults: suiteDefaults)
         XCTAssertNil(fresh.workmode)
+        XCTAssertNil(fresh.commitmentLevel)
+        XCTAssertEqual(fresh.evidenceLevels, [])
     }
 
     func test_markCompleted_setsTimestamp() {
@@ -113,6 +176,172 @@ final class IntakeV2StoreTests: XCTestCase {
         store.markCompleted()
         XCTAssertNotNil(store.completedAt)
         XCTAssertLessThan(abs(store.completedAt!.timeIntervalSinceNow), 5)
+    }
+}
+
+final class IntakeSourceCatalogTests: XCTestCase {
+
+    func test_addableItems_excludesBuiltInMainGridSources() {
+        let addableIDs = Set(IntakeSourceCatalog.addableItems.map(\.id))
+
+        XCTAssertTrue(
+            addableIDs.isDisjoint(with: IntakeSourceCatalog.builtInMainGridIDs),
+            "Add Source catalog candidates should not include sources already shown in the main grid."
+        )
+    }
+
+    func test_linearSource_keepsLegacyRawValueWithoutGitHubCopy() throws {
+        let data = try XCTUnwrap("\"github_issues_linear\"".data(using: .utf8))
+        let decoded = try JSONDecoder().decode(IntakeSourceID.self, from: data)
+        let item = try XCTUnwrap(IntakeSourceCatalog.item(for: .linear))
+        let searchableCopy = [
+            item.id.displayName,
+            item.kind,
+            item.why,
+            item.category.rawValue,
+        ].joined(separator: " ")
+
+        XCTAssertEqual(decoded, .linear)
+        XCTAssertEqual(IntakeSourceID.linear.rawValue, "github_issues_linear")
+        XCTAssertEqual(IntakeSourceID.linear.displayName, "Linear")
+        XCTAssertTrue(searchableCopy.localizedCaseInsensitiveContains("Linear"))
+        XCTAssertFalse(searchableCopy.localizedCaseInsensitiveContains("GitHub"))
+    }
+
+    func test_aiInfraCatalogSources_areAddableSearchableAndNotBuiltIn() throws {
+        let expectedItems: [(id: IntakeSourceID, category: IntakeSourceCatalogCategory, kind: String)] = [
+            (.jira, .core, "WORK · ROADMAP"),
+            (.confluence, .core, "DOCS · KNOWLEDGE"),
+            (.figma, .core, "DESIGN · SPEC"),
+            (.slack, .voc, "COMM · TEAM"),
+            (.sentry, .infra, "OBSERVABILITY"),
+            (.vercel, .infra, "DEPLOY · WEB"),
+            (.cloudflare, .infra, "EDGE · PLATFORM"),
+            (.neon, .infra, "DATABASE · POSTGRES"),
+        ]
+        let addableIDs = Set(IntakeSourceCatalog.addableItems.map(\.id))
+
+        for expected in expectedItems {
+            let item = try XCTUnwrap(IntakeSourceCatalog.item(for: expected.id))
+            let searchCopy = [
+                item.id.displayName,
+                item.kind,
+                item.why,
+                item.category.rawValue,
+            ].joined(separator: " ")
+
+            XCTAssertTrue(addableIDs.contains(expected.id))
+            XCTAssertFalse(IntakeSourceCatalog.builtInMainGridIDs.contains(expected.id))
+            XCTAssertEqual(item.category, expected.category)
+            XCTAssertEqual(item.kind, expected.kind)
+            XCTAssertTrue(searchCopy.localizedCaseInsensitiveContains(expected.id.displayName))
+        }
+    }
+
+    func test_geoAeoCatalogSources_areAddableSearchableAndNotBuiltIn() throws {
+        let expectedItems: [
+            (id: IntakeSourceID, displayName: String, category: IntakeSourceCatalogCategory, kind: String, searchTerms: [String])
+        ] = [
+            (
+                .googleSearchConsole,
+                "Google Search Console",
+                .analytics,
+                "SEARCH · AEO",
+                ["Google Search Console", "AEO", "Analytics"]
+            ),
+            (
+                .reddit,
+                "Reddit",
+                .public,
+                "PUBLIC · COMMUNITY",
+                ["Reddit", "PUBLIC", "Community"]
+            ),
+            (
+                .youtubeLoomDemo,
+                "YouTube",
+                .public,
+                "PUBLIC · VIDEO",
+                ["YouTube", "PUBLIC", "AI citation"]
+            ),
+        ]
+        let addableIDs = Set(IntakeSourceCatalog.addableItems.map(\.id))
+
+        for expected in expectedItems {
+            let item = try XCTUnwrap(IntakeSourceCatalog.item(for: expected.id))
+            let searchCopy = [
+                item.id.displayName,
+                item.kind,
+                item.why,
+                item.category.rawValue,
+            ].joined(separator: " ")
+
+            XCTAssertTrue(addableIDs.contains(expected.id))
+            XCTAssertFalse(IntakeSourceCatalog.builtInMainGridIDs.contains(expected.id))
+            XCTAssertEqual(item.id.displayName, expected.displayName)
+            XCTAssertEqual(item.category, expected.category)
+            XCTAssertEqual(item.kind, expected.kind)
+            for term in expected.searchTerms {
+                XCTAssertTrue(
+                    searchCopy.localizedCaseInsensitiveContains(term),
+                    "\(expected.displayName) should be searchable by \(term)"
+                )
+            }
+        }
+    }
+
+    func test_sourceIconCatalog_mapsBrandBackedSourcesToOfficialAssets() {
+        let expected: [IntakeSourceID: IntakeSourceIconKind] = [
+            .linear: .asset("BrandLinear"),
+            .jira: .asset("BrandJira"),
+            .confluence: .asset("BrandConfluence"),
+            .figma: .asset("BrandFigma"),
+            .gmailEmail: .asset("BrandGmail"),
+            .calendarCalls: .asset("BrandGoogleCalendar"),
+            .formsSurvey: .asset("BrandGoogleForms"),
+            .slack: .asset("BrandSlack"),
+            .xTwitter: .asset("BrandX"),
+            .reddit: .asset("BrandReddit"),
+            .youtubeLoomDemo: .composite(["BrandYouTube", "BrandLoom"]),
+            .metaAds: .asset("BrandMeta"),
+            .googleSearchConsole: .asset("BrandGoogleSearchConsole"),
+            .googleAnalyticsPlausible: .composite(["BrandGoogleAnalytics", "BrandPlausible"]),
+            .appStoreGooglePlay: .composite(["BrandAppStoreConnect", "BrandGooglePlay"]),
+            .sentry: .asset("BrandSentry"),
+            .vercel: .asset("BrandVercel"),
+            .cloudflare: .asset("BrandCloudflare"),
+            .neon: .asset("BrandNeon"),
+            .revenueCat: .asset("BrandRevenueCat"),
+            .lemonSqueezyPaddleGumroad: .composite(["BrandLemonSqueezy", "BrandPaddle", "BrandGumroad"]),
+        ]
+        let addableIDs = Set(IntakeSourceCatalog.addableItems.map(\.id))
+
+        for (id, expectedIcon) in expected {
+            XCTAssertTrue(addableIDs.contains(id), "\(id.rawValue) should stay available in the Add Source catalog.")
+            XCTAssertEqual(IntakeSourceIconCatalog.iconKind(for: id, fallbackSystemImage: "fallback"), expectedIcon)
+            XCTAssertTrue(IntakeSourceIconCatalog.iconKind(for: id, fallbackSystemImage: "fallback").isBrandBacked)
+        }
+    }
+
+    func test_sourceIconCatalog_keepsGenericSourcesOnSymbolFallbacks() throws {
+        let genericSourceIDs: [IntakeSourceID] = [
+            .localFolder,
+            .interviewTxt,
+            .workLogFolder,
+            .interviewTranscriptFolder,
+            .blogRss,
+            .customUrl,
+            .customLocalFileFolder,
+            .customManualNote,
+            .customCsvImport,
+        ]
+
+        for id in genericSourceIDs {
+            let item = try XCTUnwrap(IntakeSourceCatalog.item(for: id))
+            XCTAssertEqual(
+                IntakeSourceIconCatalog.iconKind(for: id, fallbackSystemImage: item.systemImage),
+                .symbol(item.systemImage)
+            )
+        }
     }
 }
 

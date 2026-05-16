@@ -3,6 +3,7 @@ import Foundation
 enum AgentProvider: String, Codable, CaseIterable, Identifiable {
     case codex
     case claude
+    case gemini
 
     var id: String { rawValue }
 
@@ -12,6 +13,8 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
             return "Codex"
         case .claude:
             return "Claude"
+        case .gemini:
+            return "Gemini"
         }
     }
 
@@ -21,6 +24,8 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
             return "OpenAI Codex SDK"
         case .claude:
             return "Claude Agent SDK"
+        case .gemini:
+            return "Google Gen AI SDK"
         }
     }
 
@@ -30,6 +35,54 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
             return "#8AE6B0"
         case .claude:
             return "#F4C68A"
+        case .gemini:
+            return "#93C5FD"
+        }
+    }
+}
+
+enum AgentAuthMode: String, Codable, CaseIterable, Identifiable {
+    case local
+    case apiKey = "api_key"
+    case bedrock
+    case vertex
+    case foundry
+    case custom
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .local:
+            return "Local CLI settings"
+        case .apiKey:
+            return "API key"
+        case .bedrock:
+            return "AWS Bedrock"
+        case .vertex:
+            return "Google Vertex"
+        case .foundry:
+            return "Microsoft Foundry"
+        case .custom:
+            return "Custom env"
+        }
+    }
+
+    static func normalized(_ rawValue: String, provider: AgentProvider) -> AgentAuthMode {
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let mode = AgentAuthMode(rawValue: value) ?? .local
+        guard modes(for: provider).contains(mode) else { return .local }
+        return mode
+    }
+
+    static func modes(for provider: AgentProvider) -> [AgentAuthMode] {
+        switch provider {
+        case .claude:
+            return [.local, .apiKey, .bedrock, .vertex, .foundry, .custom]
+        case .codex:
+            return [.local, .apiKey]
+        case .gemini:
+            return [.local, .apiKey, .vertex]
         }
     }
 }
@@ -73,8 +126,16 @@ enum AgentModelCatalog {
         AgentModelOption(id: "gpt-5.1-codex-mini", label: "GPT 5.1 Codex Mini", provider: .codex),
     ]
 
+    static let gemini: [AgentModelOption] = [
+        AgentModelOption(id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", provider: .gemini, isRecommended: true),
+        AgentModelOption(id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", provider: .gemini),
+        AgentModelOption(id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite", provider: .gemini),
+        AgentModelOption(id: "gemini-2.0-flash", label: "Gemini 2.0 Flash", provider: .gemini),
+    ]
+
     static let defaultClaudeModelID = "claude-sonnet-4-6"
     static let defaultCodexModelID = "gpt-5.5"
+    static let defaultGeminiModelID = "gemini-2.5-pro"
 
     static func options(for provider: AgentProvider) -> [AgentModelOption] {
         switch provider {
@@ -82,6 +143,8 @@ enum AgentModelCatalog {
             return claude
         case .codex:
             return codex
+        case .gemini:
+            return gemini
         }
     }
 
@@ -91,6 +154,8 @@ enum AgentModelCatalog {
             return defaultClaudeModelID
         case .codex:
             return defaultCodexModelID
+        case .gemini:
+            return defaultGeminiModelID
         }
     }
 
@@ -529,6 +594,7 @@ struct SidecarACPEnvironment: Codable, Hashable {
 struct SidecarEnvironment: Codable, Hashable {
     let claude: SidecarProviderEnvironment
     let codex: SidecarProviderEnvironment
+    let gemini: SidecarProviderEnvironment?
     let acp: SidecarACPEnvironment?
 }
 
@@ -761,6 +827,12 @@ extension SidecarEnvironment {
             message: "Checking Codex auth...",
             sdk: nil
         ),
+        gemini: SidecarProviderEnvironment(
+            available: false,
+            source: "unknown",
+            message: "Checking Gemini auth...",
+            sdk: nil
+        ),
         acp: SidecarACPEnvironment(
             available: false,
             message: "Checking ACP adapter...",
@@ -826,6 +898,12 @@ extension SidecarDiagnostics {
             lines.append("- Codex: \(environment.codex.available ? "available" : "unavailable") (\(environment.codex.source)) - \(environment.codex.message)")
             if let sdk = environment.codex.sdk {
                 lines.append("  SDK: \(sdk.available ? "available" : "unavailable") \(sdk.packageName ?? "Codex SDK") \(sdk.version ?? "") - \(sdk.entrypointPath ?? "unknown")")
+            }
+            if let gemini = environment.gemini {
+                lines.append("- Gemini: \(gemini.available ? "available" : "unavailable") (\(gemini.source)) - \(gemini.message)")
+                if let sdk = gemini.sdk {
+                    lines.append("  SDK: \(sdk.available ? "available" : "unavailable") \(sdk.packageName ?? "Google Gen AI SDK") \(sdk.version ?? "") - \(sdk.entrypointPath ?? "unknown")")
+                }
             }
             if let acp = environment.acp {
                 lines.append("- ACP: \(acp.available ? "available" : "unavailable") - \(acp.message)")

@@ -4,6 +4,14 @@ import Testing
 
 @MainActor
 struct KeychainSettingsMigrationTests {
+    @Test func geminiProviderAndModelCatalogAreNormalized() {
+        #expect(AgentProvider(rawValue: "gemini") == .gemini)
+        #expect(AgentModelCatalog.defaultModelID(for: .gemini) == AgentModelCatalog.defaultGeminiModelID)
+        #expect(AgentModelCatalog.normalizedModelID("gemini-2.5-flash", provider: .gemini) == "gemini-2.5-flash")
+        #expect(AgentModelCatalog.normalizedModelID("unknown", provider: .gemini) == AgentModelCatalog.defaultGeminiModelID)
+        #expect(AgentModelCatalog.options(for: .gemini).contains { $0.id == AgentModelCatalog.defaultGeminiModelID })
+    }
+
     @Test func decodesLegacySettingsWithoutSchemaVersion() throws {
         let legacyPayload = """
         {
@@ -31,6 +39,11 @@ struct KeychainSettingsMigrationTests {
         #expect(settings.bipSpecPath == "")
         #expect(settings.preferredClaudeModel == AgentModelCatalog.defaultClaudeModelID)
         #expect(settings.preferredCodexModel == AgentModelCatalog.defaultCodexModelID)
+        #expect(settings.preferredGeminiModel == AgentModelCatalog.defaultGeminiModelID)
+        #expect(settings.claudeAuthMode == AgentAuthMode.local.rawValue)
+        #expect(settings.codexAuthMode == AgentAuthMode.local.rawValue)
+        #expect(settings.geminiAuthMode == AgentAuthMode.local.rawValue)
+        #expect(settings.geminiApiKey == "")
         #expect(settings.notionEnabled == false)
     }
 
@@ -40,6 +53,9 @@ struct KeychainSettingsMigrationTests {
         settings.posthogProjectAPIKey = "phc-project"
         settings.preferredClaudeModel = "claude-opus-4-7"
         settings.preferredCodexModel = "gpt-5.3-codex"
+        settings.preferredGeminiModel = "gemini-2.5-flash"
+        settings.geminiAuthMode = AgentAuthMode.apiKey.rawValue
+        settings.geminiApiKey = "gemini-secret"
 
         let data = try JSONEncoder().encode(settings)
         let object = try #require(
@@ -51,6 +67,9 @@ struct KeychainSettingsMigrationTests {
         #expect(object["posthogProjectAPIKey"] as? String == "phc-project")
         #expect(object["preferredClaudeModel"] as? String == "claude-opus-4-7")
         #expect(object["preferredCodexModel"] as? String == "gpt-5.3-codex")
+        #expect(object["preferredGeminiModel"] as? String == "gemini-2.5-flash")
+        #expect(object["geminiAuthMode"] as? String == AgentAuthMode.apiKey.rawValue)
+        #expect(object["geminiApiKey"] as? String == "gemini-secret")
     }
 
     @Test func migrationRegistryAlwaysNormalizesToCurrentSchema() {
@@ -59,6 +78,8 @@ struct KeychainSettingsMigrationTests {
         oldSettings.bipSpecPath = "docs/SPEC.md"
         oldSettings.preferredClaudeModel = "unknown-claude"
         oldSettings.preferredCodexModel = "unknown-codex"
+        oldSettings.preferredGeminiModel = "unknown-gemini"
+        oldSettings.geminiAuthMode = "bedrock"
 
         let migrated = KeychainHelper.Settings.migrate(oldSettings, from: 0)
 
@@ -66,6 +87,8 @@ struct KeychainSettingsMigrationTests {
         #expect(migrated.bipSpecPath == "docs/SPEC.md")
         #expect(migrated.preferredClaudeModel == AgentModelCatalog.defaultClaudeModelID)
         #expect(migrated.preferredCodexModel == AgentModelCatalog.defaultCodexModelID)
+        #expect(migrated.preferredGeminiModel == AgentModelCatalog.defaultGeminiModelID)
+        #expect(migrated.geminiAuthMode == AgentAuthMode.local.rawValue)
     }
 
     @Test func migrationMovesLegacyCodexDefaultToGPT55() {

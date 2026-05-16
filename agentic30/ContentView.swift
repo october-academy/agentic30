@@ -8,6 +8,86 @@
 import AppKit
 import SwiftUI
 
+struct Day1IntroPromptModel: Hashable {
+    struct TodoRow: Identifiable, Hashable {
+        let id: Int
+        let title: String
+        let detail: String
+        let tag: String
+        let option: StructuredPromptOption
+    }
+
+    let title: String
+    let signalLabel: String
+    let metaLabel: String
+    let body: String
+    let helperText: String?
+    let statusLabel: String
+    let readyLine: String
+    let question: StructuredPromptQuestion
+    let rows: [TodoRow]
+    let freeTextPlaceholder: String?
+    let allowsFreeText: Bool
+
+    static func make(prompt: StructuredPromptRequest, dayNumber: Int) -> Day1IntroPromptModel? {
+        guard dayNumber == 1,
+              prompt.isAgentic30StructuredInput,
+              isIcpPrompt(prompt),
+              let question = prompt.questions.first else {
+            return nil
+        }
+
+        let rows = (question.options ?? []).enumerated().map { index, option in
+            TodoRow(
+                id: index + 1,
+                title: option.label,
+                detail: option.description,
+                tag: optionTag(for: option, index: index),
+                option: option
+            )
+        }
+        let visibleRowCount = rows.isEmpty ? 1 : rows.count
+
+        return Day1IntroPromptModel(
+            title: "첫 고객 ICP를 좁힙니다.",
+            signalLabel: question.header.nonEmpty ?? "ICP",
+            metaLabel: "Day 1",
+            body: question.question,
+            helperText: question.helperText?.nonEmpty ?? prompt.intro?.body?.nonEmpty,
+            statusLabel: "\(visibleRowCount) choices ready",
+            readyLine: rows.isEmpty ? "ready answer with context" : "ready choose an ICP path",
+            question: question,
+            rows: rows,
+            freeTextPlaceholder: question.freeTextPlaceholder?.nonEmpty,
+            allowsFreeText: question.allowFreeText == true || question.options?.isEmpty != false
+        )
+    }
+
+    static func suppressesStructuredPromptForm(prompt: StructuredPromptRequest, dayNumber: Int) -> Bool {
+        make(prompt: prompt, dayNumber: dayNumber) != nil
+    }
+
+    private static func isIcpPrompt(_ prompt: StructuredPromptRequest) -> Bool {
+        let fields = [
+            prompt.generation?.docType,
+            prompt.title,
+            prompt.questions.first?.header,
+            prompt.questions.first?.questionId,
+        ]
+            .compactMap { $0?.lowercased() }
+            .joined(separator: "\n")
+        return fields.contains("icp")
+    }
+
+    private static func optionTag(for option: StructuredPromptOption, index: Int) -> String {
+        let raw = option.nextIntent?.split(separator: "_").first.map(String.init)
+            ?? option.label.split(separator: " ").first.map(String.init)
+            ?? "OPT\(index + 1)"
+        let uppercased = raw.uppercased()
+        return String(uppercased.prefix(6))
+    }
+}
+
 struct ContentView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @ObservedObject var viewModel: AgenticViewModel
@@ -194,9 +274,14 @@ struct ContentView: View {
             Color.clear.ignoresSafeArea()
             if viewModel.requiresMacOnboarding {
                 IntakeV2FlowView(
+                    bootLogState: viewModel.intakeV2BootLogState,
+                    workspaceScanResult: viewModel.scanResult,
                     onWorkspacePrefetchRequested: { store, _ in
-                        guard let context = intakeV2OnboardingContext(from: store),
-                              let url = store.folderURL else { return }
+                        guard let context = intakeV2OnboardingContext(from: store) else { return }
+                        guard let url = store.folderURL else {
+                            viewModel.prepareIntakeOnlyOnboarding(context: context)
+                            return
+                        }
                         viewModel.prefetchOnboardingWorkspace(url: url, context: context)
                     },
                     onComplete: { store, _ in
@@ -232,16 +317,7 @@ struct ContentView: View {
     }
 
     private func intakeV2OnboardingContext(from store: IntakeV2Store) -> OnboardingContext? {
-        guard let workmode = store.workmode,
-              let role = store.role,
-              let stuck = store.stuck else { return nil }
-        return OnboardingContext.make(
-            workMode: workmode,
-            role: role,
-            projectStage: stuck,
-            isolationLevel: .projectFolder,
-            isolationLevels: [.projectFolder]
-        )
+        IntakeV2OnboardingContextMapper.makeContext(from: store)
     }
 
     @ViewBuilder
@@ -3171,7 +3247,8 @@ struct ContentView: View {
     }
 
     private func workspaceChatThread(_ session: ChatSession, day: AgenticCurriculumDay) -> some View {
-        let visibleMessages = workspaceVisibleMessages(for: session)
+        let day1IntroModel = session.pendingUserInput.flatMap { day1IntroPromptModel(for: $0, day: day) }
+        let visibleMessages = workspaceVisibleMessages(for: session, hidingDay1Intro: day1IntroModel)
         let pendingPrompts = workspacePendingPrompts(for: session)
         let showsRunningBubble = session.status == .running && workspaceNeedsRunningBubble(messages: visibleMessages)
 
@@ -3205,7 +3282,11 @@ struct ContentView: View {
                 // 채팅 surface 안에서 렌더한다. 오늘 과제는 항상 chat의 첫 어시
                 // 스턴트 카드로 등장해 컨텍스트를 고정하고, 그 다음에 sub-workflow
                 // (BIP mission), 자유 대화 (visible messages) 순으로 이어진다.
-                workspaceTodayTasksAssistantCard(day: day)
+                if let prompt = session.pendingUserInput, let day1IntroModel {
+                    workspaceDay1Intro(model: day1IntroModel, prompt: prompt)
+                } else {
+                    workspaceTodayTasksAssistantCard(day: day)
+                }
                 if workspaceShouldShowPublicExecutionCard(for: session) {
                     workspaceBipMissionAssistantCard()
                 }
@@ -3220,7 +3301,7 @@ struct ContentView: View {
                         workspaceChatBubble(message, session: session)
                     }
 
-                    if let pendingPrompt = session.pendingUserInput {
+                    if let pendingPrompt = session.pendingUserInput, day1IntroModel == nil {
                         workspaceStructuredPrompt(pendingPrompt)
                     }
 
@@ -3400,6 +3481,25 @@ struct ContentView: View {
             .filter(workspaceShouldRenderMessage)
             .suffix(8)
             .map { $0 }
+    }
+
+    private func workspaceVisibleMessages(
+        for session: ChatSession,
+        hidingDay1Intro model: Day1IntroPromptModel?
+    ) -> [ChatMessage] {
+        let messages = workspaceVisibleMessages(for: session)
+        guard let model else { return messages }
+        let hiddenSnippets = [model.body, model.question.header]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.count >= 4 }
+
+        return messages.filter { message in
+            guard message.role != .user else { return true }
+            let payload = workspaceAssistantMessagePayload(message)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !payload.isEmpty else { return true }
+            return !hiddenSnippets.contains(where: { payload == $0 || payload.contains($0) })
+        }
     }
 
     private func workspaceShouldRenderMessage(_ message: ChatMessage) -> Bool {
@@ -3978,10 +4078,14 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(actions) { action in
                 Button {
-                    viewModel.startProviderLogin(action.provider)
+                    if action.provider == .gemini {
+                        viewModel.openGeminiAdcLoginInTerminal()
+                    } else {
+                        viewModel.startProviderLogin(action.provider)
+                    }
                 } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: action.provider == .claude ? "person.crop.circle.badge.checkmark" : "sparkles")
+                        Image(systemName: providerAuthActionIcon(action.provider))
                             .font(.system(size: 12, weight: .bold))
                         VStack(alignment: .leading, spacing: 2) {
                             Text(action.title)
@@ -4253,12 +4357,16 @@ struct ContentView: View {
                 workspaceFoundationProviderRecovery(recovery, provider: provider)
             } else if let prompt = session?.pendingUserInput,
                       viewModel.isMatchingFoundationPrompt(prompt) {
-                inlineStructuredPrompt(
-                    prompt,
-                    compact: true,
-                    submissionState: submissionState(for: prompt)
-                )
-                    .accessibilityIdentifier("workspace.iddSetup.question")
+                if let model = day1IntroPromptModel(for: prompt, day: workspaceSelectedDay) {
+                    workspaceDay1Intro(model: model, prompt: prompt)
+                } else {
+                    inlineStructuredPrompt(
+                        prompt,
+                        compact: true,
+                        submissionState: submissionState(for: prompt)
+                    )
+                        .accessibilityIdentifier("workspace.iddSetup.question")
+                }
             } else if viewModel.isMismatchedFoundationPrompt(session?.pendingUserInput) {
                 workspaceFoundationPromptMismatch(session?.pendingUserInput)
                     .onAppear {
@@ -4303,6 +4411,357 @@ struct ContentView: View {
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("workspace.iddSetupSurface")
+    }
+
+    private func day1IntroPromptModel(
+        for prompt: StructuredPromptRequest,
+        day: AgenticCurriculumDay
+    ) -> Day1IntroPromptModel? {
+        Day1IntroPromptModel.make(prompt: prompt, dayNumber: day.day)
+    }
+
+    private func workspaceDay1Intro(
+        model: Day1IntroPromptModel,
+        prompt: StructuredPromptRequest
+    ) -> some View {
+        let submission = submissionState(for: prompt)
+        let isSubmitting = submission?.requestId == prompt.requestId
+
+        return VStack(alignment: .leading, spacing: 12) {
+            workspaceDay1IntroCard(
+                model: model,
+                prompt: prompt,
+                isSubmitting: isSubmitting
+            )
+
+            workspaceDay1TodoList(
+                model: model,
+                prompt: prompt,
+                isSubmitting: isSubmitting
+            )
+
+            if let submission, isSubmitting {
+                structuredPromptSubmissionReceipt(submission, compact: false)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("workspace.day1Intro")
+    }
+
+    private func workspaceDay1IntroCard(
+        model: Day1IntroPromptModel,
+        prompt: StructuredPromptRequest,
+        isSubmitting: Bool
+    ) -> some View {
+        let canSubmitPrompt = canSubmit(prompt) && !isSubmitting
+
+        return HStack(alignment: .top, spacing: 18) {
+            Image(systemName: "person.crop.circle.badge.questionmark")
+                .font(.system(size: 26, weight: .heavy))
+                .foregroundStyle(Color.black.opacity(0.78))
+                .frame(width: 54, height: 54)
+                .background(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(Color.white.opacity(0.96))
+                )
+
+            VStack(alignment: .leading, spacing: 11) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("Agentic30")
+                        .font(.system(size: 15, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.78))
+                    Text("·")
+                        .font(.system(size: 14, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.36))
+                    Text("오늘의 한 가지")
+                        .font(.system(size: 15, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.78))
+                    Spacer(minLength: 0)
+                    Text("방금")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.46))
+                }
+
+                Text(model.title)
+                    .font(.system(size: 24, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.97))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 8) {
+                    workspaceDay1IntroBadge(model.signalLabel, isPrimary: true)
+                    workspaceDay1IntroBadge(model.metaLabel, isPrimary: false)
+                }
+
+                Text(model.body)
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.68))
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(alignment: .center, spacing: 12) {
+                    if let helperText = model.helperText {
+                        Text(helperText)
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.46))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 12)
+
+                    Button {
+                        guard canSubmitPrompt else { return }
+                        submitPrompt(prompt)
+                    } label: {
+                        Label(isSubmitting ? "저장 중" : "이걸로 시작", systemImage: isSubmitting ? "hourglass" : "arrow.turn.down.left")
+                            .font(.system(size: 13, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Agentic30BrandColor.greenBright.opacity(canSubmitPrompt ? 0.94 : 0.34))
+                            .padding(.horizontal, 12)
+                            .frame(height: 34)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Agentic30BrandColor.greenBright.opacity(canSubmitPrompt ? 0.10 : 0.045))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .stroke(Agentic30BrandColor.greenBright.opacity(canSubmitPrompt ? 0.22 : 0.08), lineWidth: 1)
+                                    )
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSubmitPrompt)
+                    .accessibilityIdentifier("workspace.day1Intro.submit")
+                }
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.white.opacity(0.075))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                )
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("workspace.day1Intro.card")
+    }
+
+    private func workspaceDay1IntroBadge(_ text: String, isPrimary: Bool) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .heavy, design: .rounded))
+            .foregroundStyle(isPrimary ? Agentic30BrandColor.greenBright.opacity(0.96) : .white.opacity(0.58))
+            .padding(.horizontal, 9)
+            .frame(height: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(isPrimary ? Agentic30BrandColor.greenBright.opacity(0.12) : Color.white.opacity(0.07))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .stroke(isPrimary ? Agentic30BrandColor.greenBright.opacity(0.22) : Color.white.opacity(0.08), lineWidth: 1)
+                    )
+            )
+    }
+
+    private func workspaceDay1TodoList(
+        model: Day1IntroPromptModel,
+        prompt: StructuredPromptRequest,
+        isSubmitting: Bool
+    ) -> some View {
+        let draft = viewModel.structuredPromptDraft(for: model.question, in: prompt)
+
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Circle().fill(Color(red: 1.00, green: 0.373, blue: 0.341)).frame(width: 10, height: 10)
+                Circle().fill(Color(red: 0.996, green: 0.737, blue: 0.180)).frame(width: 10, height: 10)
+                Circle().fill(Color(red: 0.157, green: 0.784, blue: 0.251)).frame(width: 10, height: 10)
+                Text("todo.list")
+                    .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.40))
+                    .padding(.leading, 8)
+                Spacer()
+                Text(model.statusLabel)
+                    .font(.system(size: 12, weight: .heavy, design: .monospaced))
+                    .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.88))
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+            .background(Color.white.opacity(0.018))
+            .overlay(Rectangle().fill(.white.opacity(0.045)).frame(height: 1), alignment: .bottom)
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Text("ready")
+                        .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                        .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.94))
+                    Text(model.readyLine)
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.44))
+                    Spacer()
+                }
+
+                ForEach(model.rows) { row in
+                    workspaceDay1TodoRow(
+                        row,
+                        model: model,
+                        prompt: prompt,
+                        selected: draft.selectedOptions.contains(row.option.label),
+                        isSubmitting: isSubmitting
+                    )
+                }
+
+                if model.allowsFreeText {
+                    workspaceDay1IntroFreeTextField(model: model, prompt: prompt, isDisabled: isSubmitting)
+                }
+            }
+            .padding(16)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color(red: 0.038, green: 0.042, blue: 0.047))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(Agentic30BrandColor.greenBright.opacity(0.20), lineWidth: 1)
+                )
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("workspace.day1Intro.todoList")
+    }
+
+    private func workspaceDay1TodoRow(
+        _ row: Day1IntroPromptModel.TodoRow,
+        model: Day1IntroPromptModel,
+        prompt: StructuredPromptRequest,
+        selected: Bool,
+        isSubmitting: Bool
+    ) -> some View {
+        Button {
+            guard !isSubmitting else { return }
+            viewModel.toggleStructuredPromptOption(row.option.label, for: model.question, in: prompt)
+        } label: {
+            HStack(alignment: .center, spacing: 14) {
+                ZStack {
+                    Circle()
+                        .fill(Agentic30BrandColor.greenBright.opacity(selected ? 0.22 : 0.13))
+                        .overlay(
+                            Circle()
+                                .stroke(Agentic30BrandColor.greenBright.opacity(selected ? 0.78 : 0.44), lineWidth: 1.4)
+                        )
+                    Text("\(row.id)")
+                        .font(.system(size: 13, weight: .heavy, design: .monospaced))
+                        .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.96))
+                }
+                .frame(width: 34, height: 34)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(row.title)
+                        .font(.system(size: 15, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.94))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(row.detail)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.48))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 12)
+
+                Text(row.tag)
+                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                    .foregroundStyle(Agentic30BrandColor.greenBright.opacity(selected ? 0.98 : 0.78))
+                    .padding(.horizontal, 9)
+                    .frame(height: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(Agentic30BrandColor.greenBright.opacity(selected ? 0.16 : 0.08))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .stroke(Agentic30BrandColor.greenBright.opacity(selected ? 0.34 : 0.16), lineWidth: 1)
+                            )
+                    )
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 13)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(selected ? Color.white.opacity(0.060) : Color.white.opacity(0.025))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(selected ? Agentic30BrandColor.greenBright.opacity(0.26) : Color.white.opacity(0.055), lineWidth: 1)
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(isSubmitting)
+        .accessibilityElement(children: .ignore)
+        .accessibilityIdentifier("workspace.day1Intro.option.\(row.id)")
+        .accessibilityLabel(row.title)
+        .accessibilityHint(row.detail)
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+    }
+
+    @ViewBuilder
+    private func workspaceDay1IntroFreeTextField(
+        model: Day1IntroPromptModel,
+        prompt: StructuredPromptRequest,
+        isDisabled: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(model.rows.isEmpty ? "답변" : "직접 입력")
+                .font(.system(size: 11, weight: .heavy, design: .rounded))
+                .foregroundStyle(.white.opacity(0.48))
+
+            if model.question.textMode == .long {
+                TextEditor(
+                    text: Binding(
+                        get: { viewModel.structuredPromptDraft(for: model.question, in: prompt).freeText },
+                        set: { viewModel.updateStructuredPromptFreeText($0, for: model.question, in: prompt) }
+                    )
+                )
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.94))
+                .scrollContentBackground(.hidden)
+                .frame(height: 84)
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.black.opacity(0.16))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                        )
+                )
+                .disabled(isDisabled)
+                .accessibilityIdentifier("workspace.day1Intro.freeText")
+                .accessibilityLabel(model.freeTextPlaceholder ?? "직접 입력")
+            } else {
+                TextField(
+                    model.freeTextPlaceholder ?? "직접 입력",
+                    text: Binding(
+                        get: { viewModel.structuredPromptDraft(for: model.question, in: prompt).freeText },
+                        set: { viewModel.updateStructuredPromptFreeText($0, for: model.question, in: prompt) }
+                    )
+                )
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.94))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 11)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.black.opacity(0.16))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                        )
+                )
+                .disabled(isDisabled)
+                .accessibilityIdentifier("workspace.day1Intro.freeText")
+                .accessibilityLabel(model.freeTextPlaceholder ?? "직접 입력")
+            }
+        }
+        .padding(.top, 2)
     }
 
     private func workspaceFoundationSetupTitle(for docType: String?) -> String {
@@ -5254,7 +5713,8 @@ struct ContentView: View {
 
     @ViewBuilder
     private func workspaceMissionSupportThread(_ session: ChatSession) -> some View {
-        let visibleMessages = workspaceVisibleMessages(for: session)
+        let day1IntroModel = session.pendingUserInput.flatMap { day1IntroPromptModel(for: $0, day: workspaceSelectedDay) }
+        let visibleMessages = workspaceVisibleMessages(for: session, hidingDay1Intro: day1IntroModel)
         let pendingPrompts = workspacePendingPrompts(for: session)
         let supportMessages = workspaceMissionSupportMessages(
             visibleMessages,
@@ -5265,11 +5725,15 @@ struct ContentView: View {
 
         if !supportMessages.isEmpty || session.pendingUserInput != nil || !pendingPrompts.isEmpty || showsRunningBubble {
             VStack(alignment: .leading, spacing: 10) {
+                if let prompt = session.pendingUserInput, let day1IntroModel {
+                    workspaceDay1Intro(model: day1IntroModel, prompt: prompt)
+                }
+
                 ForEach(supportMessages) { message in
                     workspaceChatBubble(message, session: session)
                 }
 
-                if let pendingPrompt = session.pendingUserInput {
+                if let pendingPrompt = session.pendingUserInput, day1IntroModel == nil {
                     workspaceStructuredPrompt(pendingPrompt)
                 }
 
@@ -8275,6 +8739,19 @@ struct ContentView: View {
             return "현재 Codex 세션의 최신 답변"
         case .claude:
             return "현재 Claude 세션의 최신 답변"
+        case .gemini:
+            return "현재 Gemini 세션의 최신 답변"
+        }
+    }
+
+    private func providerAuthActionIcon(_ provider: AgentProvider) -> String {
+        switch provider {
+        case .claude:
+            return "person.crop.circle.badge.checkmark"
+        case .codex:
+            return "sparkles"
+        case .gemini:
+            return "terminal"
         }
     }
 
