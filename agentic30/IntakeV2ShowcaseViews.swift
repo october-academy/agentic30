@@ -1342,6 +1342,7 @@ private struct IntakeV2AddSourceModal: View {
     @State private var selectedCategory: IntakeSourceCatalogCategory = .core
     @State private var selectedIDs: Set<IntakeSourceID> = []
     @State private var saveError: String?
+    @FocusState private var isSearchFocused: Bool
 
     private var unavailableSourceIDs: Set<IntakeSourceID> {
         IntakeSourceCatalog.builtInMainGridIDs.union(sources.sources.map(\.id))
@@ -1379,6 +1380,7 @@ private struct IntakeV2AddSourceModal: View {
         .padding(24)
         .frame(width: 760, height: 620, alignment: .topLeading)
         .background(IntakeV2Color.bg)
+        .onAppear { isSearchFocused = true }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("intakeV2.addSource.modal")
     }
@@ -1416,6 +1418,8 @@ private struct IntakeV2AddSourceModal: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 14, weight: .medium, design: .rounded))
                     .foregroundStyle(.white)
+                    .focused($isSearchFocused)
+                    .onSubmit(selectTopFilteredItem)
                     .accessibilityIdentifier("intakeV2.addSource.search")
             }
             .padding(.horizontal, 12)
@@ -1640,6 +1644,11 @@ private struct IntakeV2AddSourceModal: View {
         guard let customURL = IntakeSourceCatalog.item(for: .customUrl),
               availableCatalogItems.contains(customURL) else { return }
         selectedIDs.insert(.customUrl)
+    }
+
+    private func selectTopFilteredItem() {
+        guard let item = filteredItems.first else { return }
+        toggle(item)
     }
 
     private func addSelectedSources() {

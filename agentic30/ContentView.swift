@@ -424,44 +424,48 @@ struct ContentView: View {
     private func workspacePreparingSurface() -> some View {
         let day = workspaceSelectedDay
 
-        let content = HStack(spacing: 0) {
-            workspaceSidebarSlot()
-
-            VStack(spacing: 0) {
-                workspacePreparingToolbar(day: day)
-                    .padding(.horizontal, 18)
-                    .frame(height: isWorkspaceWindow ? 64 : 54)
-                    .background(workspaceTopBarBackground)
-                    .zIndex(10)
-
-                Divider().opacity(0.36)
-
-                workspacePreparingMainRail(day)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-
-        if isWorkspaceWindow {
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(workspaceShellBackground)
-                .overlay(alignment: .topLeading) {
-                    workspaceTourOverlay()
-                }
-                .accessibilityIdentifier("workspace.surface")
+        if shouldUseOpenDesignDayPage(day: day) {
+            openDesignDaySurface(day: day, session: nil)
         } else {
-            content
-                .frame(width: 1136, height: 716)
-                .background(workspaceShellBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                )
-                .overlay(alignment: .topLeading) {
-                    workspaceTourOverlay()
+            let content = HStack(spacing: 0) {
+                workspaceSidebarSlot()
+
+                VStack(spacing: 0) {
+                    workspacePreparingToolbar(day: day)
+                        .padding(.horizontal, 18)
+                        .frame(height: isWorkspaceWindow ? 64 : 54)
+                        .background(workspaceTopBarBackground)
+                        .zIndex(10)
+
+                    Divider().opacity(0.36)
+
+                    workspacePreparingMainRail(day)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .accessibilityIdentifier("workspace.surface")
+            }
+
+            if isWorkspaceWindow {
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(workspaceShellBackground)
+                    .overlay(alignment: .topLeading) {
+                        workspaceTourOverlay()
+                    }
+                    .accessibilityIdentifier("workspace.surface")
+            } else {
+                content
+                    .frame(width: 1136, height: 716)
+                    .background(workspaceShellBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 28, style: .continuous)
+                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    )
+                    .overlay(alignment: .topLeading) {
+                        workspaceTourOverlay()
+                    }
+                    .accessibilityIdentifier("workspace.surface")
+            }
         }
     }
 
@@ -493,31 +497,60 @@ struct ContentView: View {
         ]
     }
 
+    private func shouldUseOpenDesignDayPage(day: AgenticCurriculumDay) -> Bool {
+        guard selectedWorkspaceSection == .curriculum,
+              day.day == 1,
+              viewModel.foundationCurriculumPresentationDestination != .graduation else {
+            return false
+        }
+        if let reviewDashboard = viewModel.reviewDayDashboardViewModel,
+           reviewDashboard.reviewDay == day.day {
+            return false
+        }
+        if isIddSetupLocked {
+            return true
+        }
+        if bipNotificationHintIntent != nil
+            || viewModel.sidecarFailureMessage != nil
+            || viewModel.bipTokenExpired != nil
+            || viewModel.isBipCoachGenerating
+            || viewModel.bipMissionProgress != nil {
+            return false
+        }
+        if let coach = viewModel.visibleBipCoach,
+           coach.currentMission != nil || !coach.pendingMissionChoices.isEmpty || coach.lastError?.nonEmpty != nil {
+            return false
+        }
+        return true
+    }
+
     @ViewBuilder
-    private func agenticWorkspace(for session: ChatSession) -> some View {
-        let day = workspaceSelectedDay
-
-        let content = HStack(spacing: 0) {
-            workspaceSidebarSlot()
-
-            VStack(spacing: 0) {
-                workspaceToolbar(for: session, day: day)
-                    .padding(.horizontal, 18)
-                    .frame(height: isWorkspaceWindow ? 64 : 54)
-                    .background(workspaceTopBarBackground)
-                    .zIndex(10)
-
-                Divider().opacity(0.36)
-
-                workspaceMainRail(day, session: session)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+    private func openDesignDaySurface(day: AgenticCurriculumDay, session: ChatSession?) -> some View {
+        let content = ZStack {
+            OpenDesignDayPageView(
+                content: viewModel.iddSetupComplete ? .day1 : .day1.lockingFutureDays,
+                openSettings: {
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                        selectedWorkspaceSection = .settings
+                    }
+                },
+                submitStructuredPromptChoice: { choice in
+                    submitOpenDesignDayChoice(choice, day: day, session: session)
+                },
+                completeDay: {
+                    if viewModel.iddSetupComplete {
+                        _ = viewModel.markFoundationDayCompleted(day.day)
+                    } else {
+                        viewModel.startBipIddQueue(docType: viewModel.iddCurrentDocType)
+                    }
+                }
+            )
         }
 
         if isWorkspaceWindow {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(workspaceShellBackground)
+                .background(OpenDesignDayColor.bg)
                 .overlay(alignment: .topLeading) {
                     workspaceTourOverlay()
                 }
@@ -525,7 +558,7 @@ struct ContentView: View {
         } else {
             content
                 .frame(width: 1136, height: 716)
-                .background(workspaceShellBackground)
+                .background(OpenDesignDayColor.bg)
                 .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 28, style: .continuous)
@@ -535,6 +568,89 @@ struct ContentView: View {
                     workspaceTourOverlay()
                 }
                 .accessibilityIdentifier("workspace.surface")
+        }
+    }
+
+    private func submitOpenDesignDayChoice(
+        _ choice: String,
+        day: AgenticCurriculumDay,
+        session: ChatSession?
+    ) {
+        guard let prompt = session?.pendingUserInput,
+              let model = day1IntroPromptModel(for: prompt, day: day) else {
+            if !viewModel.iddSetupComplete {
+                viewModel.startBipIddQueue(docType: viewModel.iddCurrentDocType)
+            }
+            return
+        }
+
+        guard let row = model.rows.first(where: { row in
+            choice.localizedCaseInsensitiveContains(row.title)
+                || row.title.localizedCaseInsensitiveContains(choice)
+                || choice.localizedCaseInsensitiveContains(row.option.label)
+                || row.option.label.localizedCaseInsensitiveContains(choice)
+        }) else {
+            if !viewModel.iddSetupComplete {
+                viewModel.startBipIddQueue(docType: viewModel.iddCurrentDocType)
+            }
+            return
+        }
+
+        let draft = viewModel.structuredPromptDraft(for: model.question, in: prompt)
+        if !draft.selectedOptions.contains(row.option.label) {
+            viewModel.toggleStructuredPromptOption(row.option.label, for: model.question, in: prompt)
+        }
+        if canSubmit(prompt) {
+            submitPrompt(prompt)
+        }
+    }
+
+    @ViewBuilder
+    private func agenticWorkspace(for session: ChatSession) -> some View {
+        let day = workspaceSelectedDay
+
+        if shouldUseOpenDesignDayPage(day: day) {
+            openDesignDaySurface(day: day, session: session)
+        } else {
+            let content = HStack(spacing: 0) {
+                workspaceSidebarSlot()
+
+                VStack(spacing: 0) {
+                    workspaceToolbar(for: session, day: day)
+                        .padding(.horizontal, 18)
+                        .frame(height: isWorkspaceWindow ? 64 : 54)
+                        .background(workspaceTopBarBackground)
+                        .zIndex(10)
+
+                    Divider().opacity(0.36)
+
+                    workspaceMainRail(day, session: session)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+
+            if isWorkspaceWindow {
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(workspaceShellBackground)
+                    .overlay(alignment: .topLeading) {
+                        workspaceTourOverlay()
+                    }
+                    .accessibilityIdentifier("workspace.surface")
+            } else {
+                content
+                    .frame(width: 1136, height: 716)
+                    .background(workspaceShellBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 28, style: .continuous)
+                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    )
+                    .overlay(alignment: .topLeading) {
+                        workspaceTourOverlay()
+                    }
+                    .accessibilityIdentifier("workspace.surface")
+            }
         }
     }
 
@@ -2709,7 +2825,7 @@ struct ContentView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
                             if isIddSetupLocked {
-                                workspaceFoundationSetupSurface(session: session)
+                                legacyFoundationSetupSurface(session: session)
                             } else if viewModel.foundationCurriculumPresentationDestination == .graduation {
                                 workspaceGraduationSurface()
                             } else if let reviewDashboard = viewModel.reviewDayDashboardViewModel,
@@ -4370,7 +4486,7 @@ struct ContentView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         if isIddSetupLocked {
-                            workspaceFoundationSetupSurface(session: nil)
+                            legacyFoundationSetupSurface(session: nil)
                         } else {
                             workspaceMissionFirstSurface(day: day, session: nil)
                         }
@@ -4402,20 +4518,23 @@ struct ContentView: View {
         coach.isConfigured && readiness.bipCoachSetupComplete && !readiness.hasBlockingBipCoachSetupIssue
     }
 
-    private func workspaceFoundationSetupSurface(session: ChatSession?) -> some View {
+    /// Backup-only copy of the pre-OpenDesign Foundation Setup surface.
+    /// Normal Day 1 routing now uses `OpenDesignDayPageView`; this remains
+    /// available for debug fallback and for non-Day-1 defensive states.
+    private func legacyFoundationSetupSurface(session: ChatSession?) -> some View {
         let previews = viewModel.iddDocPreviews
         let draftedCount = previews.filter { $0.status == "drafted" || !$0.content.isEmpty }.count
         let totalCount = max(viewModel.iddDocOrder.count, 4)
         let isPreviewReady = viewModel.iddSetupStatus == "preview_ready"
         let isSetupError = viewModel.iddSetupStatus == "error"
-        let setupTitle = isPreviewReady ? "시작 기준을 확인하세요" : workspaceFoundationSetupTitle(for: viewModel.iddCurrentDocType)
+        let setupTitle = isPreviewReady ? "시작 기준을 확인하세요" : legacyFoundationSetupTitle(for: viewModel.iddCurrentDocType)
         let setupSubtitle = isPreviewReady
             ? "확인하면 바로 오늘 할 일을 만들 수 있어요."
             : "오늘 할 일을 만들기 전에, 누구를 위해 무엇을 검증할지 먼저 정해요."
 
         return VStack(alignment: .leading, spacing: 16) {
             if let toast = viewModel.dimensionTransitionToast {
-                workspaceFoundationDimensionTransitionToast(toast)
+                legacyFoundationDimensionTransitionToast(toast)
             }
             HStack(alignment: .top, spacing: 13) {
                 Image(systemName: "doc.text.magnifyingglass")
@@ -4448,7 +4567,7 @@ struct ContentView: View {
 
             HStack(spacing: 8) {
                 ForEach(["icp", "goal", "values", "spec"], id: \.self) { docType in
-                    workspaceFoundationDocChip(docType)
+                    legacyFoundationDocChip(docType)
                 }
                 Spacer(minLength: 0)
             }
@@ -4457,7 +4576,7 @@ struct ContentView: View {
 
             if let recovery = viewModel.iddProviderRecovery,
                let provider = recovery.provider {
-                workspaceFoundationProviderRecovery(recovery, provider: provider)
+                legacyFoundationProviderRecovery(recovery, provider: provider)
             } else if let prompt = session?.pendingUserInput,
                       viewModel.isMatchingFoundationPrompt(prompt) {
                 if let model = day1IntroPromptModel(for: prompt, day: workspaceSelectedDay) {
@@ -4471,16 +4590,16 @@ struct ContentView: View {
                         .accessibilityIdentifier("workspace.iddSetup.question")
                 }
             } else if viewModel.isMismatchedFoundationPrompt(session?.pendingUserInput) {
-                workspaceFoundationPromptMismatch(session?.pendingUserInput)
+                legacyFoundationPromptMismatch(session?.pendingUserInput)
                     .onAppear {
                         viewModel.retryCurrentIddQuestion()
                     }
             } else if isPreviewReady {
-                workspaceFoundationPreview(previews)
+                legacyFoundationPreview(previews)
             } else if isSetupError {
-                workspaceFoundationSetupError(viewModel.iddSetupError)
+                legacyFoundationSetupError(viewModel.iddSetupError)
             } else {
-                workspaceFoundationWaitingState()
+                legacyFoundationWaitingState()
             }
 
             if isPreviewReady {
@@ -4517,7 +4636,7 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func workspaceFoundationDimensionTransitionToast(
+    private func legacyFoundationDimensionTransitionToast(
         _ toast: AgenticViewModel.DimensionTransitionToast
     ) -> some View {
         HStack(spacing: 10) {
@@ -4962,7 +5081,7 @@ struct ContentView: View {
         .padding(.top, 2)
     }
 
-    private func workspaceFoundationSetupTitle(for docType: String?) -> String {
+    private func legacyFoundationSetupTitle(for docType: String?) -> String {
         switch docType?.lowercased() {
         case "goal":
             return "이번 주 확인할 목표를 정해요"
@@ -4975,7 +5094,7 @@ struct ContentView: View {
         }
     }
 
-    private func workspaceFoundationDocChip(_ docType: String) -> some View {
+    private func legacyFoundationDocChip(_ docType: String) -> some View {
         let preview = viewModel.iddDocPreviews.first { $0.type == docType }
         let isDrafted = preview?.status == "drafted" || preview?.content.isEmpty == false
         let isCurrent = viewModel.iddCurrentDocType == docType && !isDrafted
@@ -4991,7 +5110,7 @@ struct ContentView: View {
             .accessibilityIdentifier("workspace.iddSetup.doc.\(docType)")
     }
 
-    private func workspaceFoundationProviderRecovery(_ recovery: IddProviderRecovery, provider: AgentProvider) -> some View {
+    private func legacyFoundationProviderRecovery(_ recovery: IddProviderRecovery, provider: AgentProvider) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(recovery.message?.nonEmpty ?? "\(provider.title) 로그인이 필요합니다.")
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
@@ -5012,7 +5131,7 @@ struct ContentView: View {
         .accessibilityIdentifier("workspace.iddSetup.providerRecovery")
     }
 
-    private func workspaceFoundationSetupError(_ error: IddSetupError?) -> some View {
+    private func legacyFoundationSetupError(_ error: IddSetupError?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("인터뷰 질문을 만들지 못했습니다.", systemImage: "exclamationmark.triangle.fill")
                 .font(.system(size: 13, weight: .heavy, design: .rounded))
@@ -5042,7 +5161,7 @@ struct ContentView: View {
         .accessibilityIdentifier("workspace.iddSetup.error")
     }
 
-    private func workspaceFoundationPromptMismatch(_ prompt: StructuredPromptRequest?) -> some View {
+    private func legacyFoundationPromptMismatch(_ prompt: StructuredPromptRequest?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("현재 단계와 질문이 맞지 않습니다.", systemImage: "arrow.triangle.2.circlepath.circle.fill")
                 .font(.system(size: 13, weight: .heavy, design: .rounded))
@@ -5078,7 +5197,7 @@ struct ContentView: View {
         .accessibilityIdentifier("workspace.iddSetup.promptMismatch")
     }
 
-    private func workspaceFoundationPreview(_ previews: [IddDocPreview]) -> some View {
+    private func legacyFoundationPreview(_ previews: [IddDocPreview]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(previews.enumerated()), id: \.element.id) { index, preview in
                 VStack(alignment: .leading, spacing: 6) {
@@ -5108,7 +5227,7 @@ struct ContentView: View {
         .accessibilityIdentifier("workspace.iddSetup.preview")
     }
 
-    private func workspaceFoundationWaitingState() -> some View {
+    private func legacyFoundationWaitingState() -> some View {
         HStack(spacing: 9) {
             ProgressView()
                 .controlSize(.small)
@@ -9349,6 +9468,7 @@ private struct WorkspaceWindowChrome: NSViewRepresentable {
 
     final class Coordinator {
         var didApplyInitialInstallMaximize = false
+        var didApplyUITestingWindowSize = false
     }
 
     func makeCoordinator() -> Coordinator {
@@ -9385,7 +9505,14 @@ private struct WorkspaceWindowChrome: NSViewRepresentable {
                 NSApp.activate(ignoringOtherApps: true)
             }
 
-            if maximizeOnInitialInstall,
+            if let testingWindowSize = Self.uiTestingWorkspaceWindowSize() {
+                if !context.coordinator.didApplyUITestingWindowSize {
+                    context.coordinator.didApplyUITestingWindowSize = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        Self.resize(window, to: testingWindowSize)
+                    }
+                }
+            } else if maximizeOnInitialInstall,
                !context.coordinator.didApplyInitialInstallMaximize {
                 context.coordinator.didApplyInitialInstallMaximize = true
                 Self.maximizeToVisibleFrame(window)
@@ -9397,6 +9524,42 @@ private struct WorkspaceWindowChrome: NSViewRepresentable {
     private static func maximizeToVisibleFrame(_ window: NSWindow) {
         guard let visibleFrame = (window.screen ?? NSScreen.main)?.visibleFrame else { return }
         window.setFrame(visibleFrame, display: true, animate: false)
+    }
+
+    private static func uiTestingWorkspaceWindowSize() -> CGSize? {
+        guard let rawValue = CommandLine.arguments
+            .first(where: { $0.hasPrefix("--ui-testing-workspace-window-size=") })?
+            .split(separator: "=", maxSplits: 1)
+            .last
+        else {
+            return nil
+        }
+
+        let parts = rawValue
+            .lowercased()
+            .split(separator: "x", maxSplits: 1)
+            .compactMap { Double(String($0).trimmingCharacters(in: .whitespacesAndNewlines)) }
+        guard parts.count == 2,
+              parts[0] >= 900,
+              parts[1] >= 720
+        else {
+            return nil
+        }
+        return CGSize(width: CGFloat(parts[0]), height: CGFloat(parts[1]))
+    }
+
+    private static func resize(_ window: NSWindow, to size: CGSize) {
+        let visibleFrame = (window.screen ?? NSScreen.main)?.visibleFrame ?? window.frame
+        let requestedContentSize = CGSize(
+            width: min(size.width, visibleFrame.width),
+            height: min(size.height, visibleFrame.height)
+        )
+        let frameSize = window.frameRect(forContentRect: CGRect(origin: .zero, size: requestedContentSize)).size
+        let origin = CGPoint(
+            x: visibleFrame.midX - frameSize.width / 2,
+            y: visibleFrame.midY - frameSize.height / 2
+        )
+        window.setFrame(CGRect(origin: origin, size: frameSize), display: true, animate: false)
     }
 }
 

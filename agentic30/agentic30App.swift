@@ -12,6 +12,7 @@ import UserNotifications
 
 extension Notification.Name {
     static let agenticCheckForUpdatesRequested = Notification.Name("agenticCheckForUpdatesRequested")
+    static let agenticOpenDesignSearchRequested = Notification.Name("agenticOpenDesignSearchRequested")
 }
 
 @main
@@ -28,7 +29,7 @@ struct agentic30App: App {
                     appDelegate.markInitialWorkspaceWindowMaximizeApplied()
                 }
             )
-            .frame(minWidth: 1180, minHeight: 740)
+            .frame(minWidth: 900, minHeight: 720)
             .tint(Agentic30BrandColor.green)
             .onAppear {
                 PostHogTelemetry.capture(
@@ -39,11 +40,16 @@ struct agentic30App: App {
         }
         .defaultSize(width: 1180, height: 760)
         .windowResizability(.contentMinSize)
+        .defaultLaunchBehavior(CommandLine.arguments.contains { $0.hasPrefix("--ui-testing") } ? .presented : .automatic)
         .commands {
             CommandGroup(after: .appSettings) {
                 Button("Check for Updates...") {
                     appDelegate.checkForUpdates(nil)
                 }
+                Button("Search") {
+                    NotificationCenter.default.post(name: .agenticOpenDesignSearchRequested, object: nil)
+                }
+                .keyboardShortcut("k", modifiers: .command)
             }
         }
 
@@ -83,6 +89,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         wasLaunchedAtLogin = LoginItemsManager.wasLaunchedAtLogin()
+        #if DEBUG
+        if Self.isUITestingLaunch() {
+            NSApp.setActivationPolicy(.regular)
+        }
+        #endif
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -123,6 +134,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if !Self.isUITestingLaunch() {
             LoginItemsManager.shared.autoEnrollIfFirstLaunch(isFirstLaunchEver: isFirstLaunchEver)
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
         }
 
         // Wire sidecar events into the desktop-pet state machine.
@@ -353,7 +366,12 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound]
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--ui-testing") }) {
+            return []
+        }
+        #endif
+        return [.banner, .list, .sound]
     }
 
     func userNotificationCenter(
