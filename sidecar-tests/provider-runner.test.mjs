@@ -6,7 +6,6 @@ import path from "node:path";
 import {
   allowsProviderPermissionBypass,
   buildGeminiEnv,
-  buildClaudePetHooks,
   buildCodexConfig,
   buildCodexEnv,
   buildProviderEnv,
@@ -187,26 +186,6 @@ test("Gemini auth state reports missing auth when no markers or secrets exist", 
     restoreEnv("GEMINI_API_KEY", previousGeminiApiKey);
     restoreEnv("GOOGLE_API_KEY", previousGoogleApiKey);
   }
-});
-
-test("buildClaudePetHooks only creates Claude lifecycle hooks when a broadcaster is provided", async () => {
-  assert.equal(buildClaudePetHooks(undefined, "session-1"), undefined);
-
-  const payloads = [];
-  const hooks = buildClaudePetHooks((payload) => payloads.push(payload), "session-1");
-
-  assert.ok(hooks.Stop);
-  assert.equal(Object.hasOwn(hooks, "PreToolUse"), false);
-
-  const result = await hooks.Stop[0].hooks[0]({ session_id: "claude-session" });
-  assert.deepEqual(result, { continue: true });
-  assert.deepEqual(payloads, [
-    {
-      type: "pet_hook",
-      message: "Stop",
-      sessionId: "session-1",
-    },
-  ]);
 });
 
 test("isCodexContextOverflowError detects Codex context exhaustion signals", () => {

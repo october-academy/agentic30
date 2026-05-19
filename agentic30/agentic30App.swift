@@ -71,8 +71,6 @@ struct agentic30App: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let viewModel = AgenticViewModel()
-    let petStateMachine = WolfStateMachine()
-    let petWindowController = PetWindowController()
 
     private let workspaceWindowTitle = "Agentic30"
     private var openWorkspaceHandler: (() -> Void)?
@@ -138,33 +136,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.activate(ignoringOtherApps: true)
         }
 
-        // Wire sidecar events into the desktop-pet state machine.
-        viewModel.onSidecarEvent = { [weak self] event, sessions in
-            self?.petStateMachine.ingest(event, sessions: sessions)
-        }
-        petWindowController.attach(stateMachine: petStateMachine)
-        if petWindowController.isEnabled {
-            petWindowController.show()
-        }
-
-        // Pet right-click menu -> AppDelegate handlers (decoupled via
-        // NotificationCenter so PetView doesn't import AppDelegate).
-        NotificationCenter.default.addObserver(
-            forName: .agenticPetHideRequested,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.petWindowController.hide()
-            }
-        }
-        NotificationCenter.default.addObserver(
-            forName: .agenticPetOpenWorkspaceRequested,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.openWorkspaceWindow()
-        }
         NotificationCenter.default.addObserver(
             forName: .agenticCheckForUpdatesRequested,
             object: nil,
@@ -305,8 +276,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = makeWorkspaceWindowKey()
 
         // `openWindow(id:)` creates/restores the SwiftUI window asynchronously.
-        // Retry after the current run loop so pet clicks and notification opens
-        // focus a newly-created workspace instead of only requesting it.
+        // Retry after the current run loop so notification opens focus a
+        // newly-created workspace instead of only requesting it.
         DispatchQueue.main.async { [weak self] in
             _ = self?.makeWorkspaceWindowKey()
         }
@@ -508,19 +479,6 @@ private struct StatusMenuContent: View {
                     .buttonStyle(.plain)
                 }
             }
-
-            Divider()
-
-            Toggle("Show Wolf Pet", isOn: Binding(
-                get: { appDelegate.petWindowController.isEnabled },
-                set: { newValue in
-                    appDelegate.petWindowController.isEnabled = newValue
-                    PostHogTelemetry.capture(
-                        newValue ? "mac_pet_shown" : "mac_pet_hidden",
-                        authSession: viewModel.macAuthSession
-                    )
-                }
-            ))
 
             Button {
                 viewModel.requestWorkspaceSettingsOpen()

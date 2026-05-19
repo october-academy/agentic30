@@ -4,7 +4,7 @@
 # agentic30Tests
 
 ## Purpose
-XCTest unit tests for the Swift macOS app. Covers view-model auth flows, BIP readiness, chat-message decoding/routing, foundation-first prompt handling, Keychain settings migration, Mac auth models, Node executable resolution, PostHog telemetry, sidecar event decoding, wolf state machine, and workspace settings.
+XCTest unit tests for the Swift macOS app. Covers view-model auth flows, BIP readiness, chat-message decoding/routing, foundation-first prompt handling, Keychain settings migration, Mac auth models, Node executable resolution, PostHog telemetry, sidecar event decoding, and workspace settings.
 
 ## Key Files
 
@@ -20,8 +20,6 @@ XCTest unit tests for the Swift macOS app. Covers view-model auth flows, BIP rea
 | `NodeExecutableResolverTests.swift` | Node binary discovery across `NODE_BINARY`, common paths, shim managers |
 | `PostHogTelemetryTests.swift` | PostHog wrapper behavior including opt-out |
 | `SidecarEventDecodingTests.swift` | Decoding the event types emitted by the sidecar over WebSocket |
-| `WolfStateMachineTests.swift` | Wolf/pet state machine transitions |
-| `WolfStateSequencePackageTests.swift` | Sequence package replay/transition coverage |
 | `WorkspaceSettingsTests.swift` | Workspace path + bookmark persistence |
 
 ## For AI Agents

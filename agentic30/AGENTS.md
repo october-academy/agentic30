@@ -4,13 +4,13 @@
 # agentic30 (Swift App)
 
 ## Purpose
-SwiftUI/AppKit source for the macOS app target. Owns the menu bar extra, workspace window, settings window, onboarding flow, pet/wolf overlay, Keychain-backed credential storage, OAuth presentation, PostHog telemetry, and the WebSocket bridge to the Node sidecar. The view model (`AgenticViewModel`) is the single source of truth that the views observe.
+SwiftUI/AppKit source for the macOS app target. Owns the menu bar extra, workspace window, settings window, onboarding flow, Keychain-backed credential storage, OAuth presentation, PostHog telemetry, and the WebSocket bridge to the Node sidecar. The view model (`AgenticViewModel`) is the single source of truth that the views observe.
 
 ## Key Files
 
 | File | Description |
 |------|-------------|
-| `agentic30App.swift` | `@main` SwiftUI app: workspace window, Settings scene, MenuBarExtra; `AppDelegate` owns `AgenticViewModel`, `WolfStateMachine`, `PetWindowController` |
+| `agentic30App.swift` | `@main` SwiftUI app: workspace window, Settings scene, MenuBarExtra; `AppDelegate` owns `AgenticViewModel` |
 | `AgenticViewModel.swift` | Central observable view model — sidecar bridge wiring, session/state, auth, provider routing, BIP coach, onboarding hypothesis (large file, treat as the central nervous system) |
 | `AgenticModels.swift` | Shared data models for messages, sessions, providers, settings |
 | `ContentView.swift` | Main workspace view tree (large file housing chat surface, panel routing, mission UI) |
@@ -33,8 +33,6 @@ SwiftUI/AppKit source for the macOS app target. Owns the menu bar extra, workspa
 
 | Directory | Purpose |
 |-----------|---------|
-| `Pet/` | Pet/wolf overlay window, state machine, sequence package (see `Pet/AGENTS.md`) |
-| `wolf/` | Sprite assets (PNG frames + GIF animations) used by `PetView` — no code, do not document with AGENTS.md |
 | `Assets.xcassets/` | Xcode asset catalog (app icon, accent color, status bar icon, profile image) |
 
 ## For AI Agents
@@ -60,7 +58,6 @@ SwiftUI/AppKit source for the macOS app target. Owns the menu bar extra, workspa
 
 ### Internal
 - The Swift target depends on the Node sidecar at runtime — see `sidecar/AGENTS.md`.
-- `Pet/WolfStateMachine.swift` consumes sidecar events surfaced through `AgenticViewModel` to drive pet state.
 
 ### External
 - SwiftUI / AppKit / UserNotifications (Apple frameworks)

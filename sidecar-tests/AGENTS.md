@@ -4,7 +4,7 @@
 # sidecar-tests
 
 ## Purpose
-`node --test` integration suite for every module in `sidecar/`. Each test file maps roughly 1:1 to a sidecar module. Covers ACP adapter, adaptive curriculum, auth context, BIP coach state, BIP readiness, BIP token expiration, BIP URL validation, BIP Google auth hang, chat route classification, Day-1 ICP conversation flow, diagnostics, dogfood eval, foundation-day, foundation-first prompts (unit + integration), foundation-summary (draft writer, evidence, integration, review loop, rule check), gws-memory, IDD doc gate, inline decision, monetization-ask (state, result, integration), office-hours-docs prompt, onboarding hypothesis, patch-gstack-skill, pet hooks, preflight, provider runner, qmd support, session store, specialist router, telemetry, user input, vendor skill loader.
+`node --test` integration suite for every module in `sidecar/`. Each test file maps roughly 1:1 to a sidecar module. Covers ACP adapter, adaptive curriculum, auth context, BIP coach state, BIP readiness, BIP token expiration, BIP URL validation, BIP Google auth hang, chat route classification, Day-1 ICP conversation flow, diagnostics, dogfood eval, foundation-day, foundation-first prompts (unit + integration), foundation-summary (draft writer, evidence, integration, review loop, rule check), gws-memory, IDD doc gate, inline decision, monetization-ask (state, result, integration), office-hours-docs prompt, onboarding hypothesis, patch-gstack-skill, preflight, provider runner, qmd support, session store, specialist router, telemetry, user input, vendor skill loader.
 
 ## Key Files
 
@@ -40,7 +40,6 @@
 | `office-hours-docs-prompt.test.mjs` | `/office-hours-docs` prompt |
 | `onboarding-hypothesis.test.mjs` | Onboarding hypothesis derivation |
 | `patch-gstack-skill.test.mjs` | Skill patcher (covers `scripts/patch-gstack-skill.mjs`) |
-| `pet-hooks.test.mjs` | Pet/wolf hook events |
 | `preflight.test.mjs` | Preflight report |
 | `provider-runner.test.mjs` | Claude + Codex provider runner |
 | `qmd-support.test.mjs` | qmd guidance + MCP config |

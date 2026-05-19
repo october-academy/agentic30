@@ -448,11 +448,6 @@ struct StartupQueuedAction: Identifiable {
 final class AgenticViewModel: ObservableObject {
     private static let macOnboardingIntroCompletedDefaultsKey = "agentic30.macOnboardingIntroCompleted"
 
-    /// Fanout for the desktop pet (and any future state-driven UI). Fires
-    /// after a sidecar event has been folded into ViewModel state, so the
-    /// `sessions` snapshot reflects the post-event world.
-    var onSidecarEvent: ((SidecarEvent, [ChatSession]) -> Void)?
-
     @Published private(set) var sessions: [ChatSession] = []
     @Published var selectedSessionID: String?
     @Published var selectedProvider: AgentProvider = .codex
@@ -3484,7 +3479,6 @@ final class AgenticViewModel: ObservableObject {
         default:
             break
         }
-        onSidecarEvent?(event, sessions)
     }
 
     var diagnosticsReport: String {

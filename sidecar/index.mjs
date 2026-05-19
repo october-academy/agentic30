@@ -22,7 +22,6 @@ import {
   getQmdState,
 } from "./qmd-support.mjs";
 import { createTelemetryClient } from "./telemetry.mjs";
-import { createPetHooks } from "./pet-hooks.mjs";
 import { getCachedBipContext } from "./context-cache.mjs";
 import { collectLocalDiscovery } from "./local-discovery.mjs";
 import { composeDay1Opening } from "./compose-day1-opening.mjs";
@@ -1830,7 +1829,6 @@ async function runPrompt(
           event.once ? { once: true, seen: seenRunPhases } : {},
         );
       },
-      onPetHookEvent: session.provider === "claude" ? broadcast : undefined,
     });
 
     session.runtime = mergeProviderRuntime(session.runtime, runtime);
@@ -2219,7 +2217,6 @@ async function runUnifiedFoundationChat(
           event.once ? { once: true, seen: seenRunPhases } : {},
         );
       },
-      onPetHookEvent: session.provider === "claude" ? broadcast : undefined,
     });
 
   session.runtime = {
@@ -2823,7 +2820,6 @@ async function runOfficeHoursDocs(session, topic, originalPrompt) {
         touch(session);
         persistSessions().catch(() => {});
       },
-      onPetHookEvent: session.provider === "claude" ? broadcast : undefined,
       systemPromptOverride: buildOfficeHoursDocsSystemPrompt(workspaceRoot, {
         provider: session.provider,
         specialistInjection: officeHoursSpecialistInjection,
@@ -3079,7 +3075,7 @@ async function runAnalyzeAds(session, targetUrl, originalPrompt) {
 
     const stream = query({
       prompt: analysisPrompt,
-      options: { ...options, hooks: createPetHooks(broadcast, { sessionId: session.id }) },
+      options,
     });
 
     state.activeRuns.get(session.id).stop = async () => {
@@ -3830,7 +3826,7 @@ async function runBipDraft(session, topic, originalPrompt) {
 
     const stream = query({
       prompt: draftPrompt,
-      options: { ...options, hooks: createPetHooks(broadcast, { sessionId: session.id }) },
+      options,
     });
 
     state.activeRuns.get(session.id).stop = async () => {
@@ -6842,7 +6838,7 @@ async function runCreateDoc(docRoot, docType) {
 
     const stream = query({
       prompt,
-      options: { ...options, hooks: createPetHooks(broadcast, { sessionId: session.id }) },
+      options,
     });
     for await (const event of stream) {
       if (event.type === "assistant" && event.message?.content) {

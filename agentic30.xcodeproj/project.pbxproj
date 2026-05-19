@@ -55,7 +55,6 @@
 			membershipExceptions = (
 				AGENTS.md,
 				Info.plist,
-				Pet/AGENTS.md,
 			);
 			target = 5966604F2F86A4900021885C /* agentic30 */;
 		};

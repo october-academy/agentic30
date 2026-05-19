@@ -12,7 +12,6 @@ import {
   deleteUserInputArtifacts,
   waitForUserInputResponse,
 } from "./user-input.mjs";
-import { createPetHooks } from "./pet-hooks.mjs";
 import {
   CODEX_STRUCTURED_INPUT_TOOL,
 } from "./structured-input-tools.mjs";
@@ -124,7 +123,6 @@ export async function runProviderStream({
   onToolEvent,
   onRuntimeUpdate,
   onRunEvent,
-  onPetHookEvent,
   stopAfterCodexThreadStarted = false,
 }) {
   onRunEvent?.({
@@ -207,7 +205,6 @@ export async function runProviderStream({
       onToolEvent,
       onRuntimeUpdate,
       onRunEvent,
-      onPetHookEvent,
     });
   }
 
@@ -407,7 +404,6 @@ async function runClaudeProvider({
   onToolEvent,
   onRuntimeUpdate,
   onRunEvent,
-  onPetHookEvent,
 }) {
   let runtime = { ...sessionRuntime };
   let sawPartialText = false;
@@ -482,10 +478,6 @@ async function runClaudeProvider({
       specialistId: claudeVendor.skillName,
       pluginRoot: claudeVendor.pluginRoot,
     });
-  }
-  const petHooks = buildClaudePetHooks(onPetHookEvent, sessionIdForMcp);
-  if (petHooks) {
-    options.hooks = petHooks;
   }
 
   if (allowsProviderPermissionBypass({ executionMode, approvedToolExecution })) {
@@ -672,11 +664,6 @@ function buildClaudeCanUseTool({
       await deleteUserInputArtifacts(appSupportPath, sessionId, request.requestId);
     }
   };
-}
-
-export function buildClaudePetHooks(onPetHookEvent, sessionIdForMcp) {
-  if (!onPetHookEvent) return undefined;
-  return createPetHooks(onPetHookEvent, { sessionId: sessionIdForMcp ?? null });
 }
 
 export function isClaudeMutatingTool(toolName = "") {

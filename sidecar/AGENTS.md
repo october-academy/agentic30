@@ -66,7 +66,6 @@ Local Node.js sidecar that the macOS app launches as a child process. Provides a
 | `diagnostics.mjs` | Builds diagnostics snapshots |
 | `preflight.mjs` | Preflight report generator |
 | `telemetry.mjs` | PostHog-style telemetry client |
-| `pet-hooks.mjs` | Hooks emitted to drive the Mac app's pet/wolf state |
 | `structured-input-tools.mjs` | Helpers for structured input parsing |
 | `user-input.mjs` | User input normalization helpers |
 
