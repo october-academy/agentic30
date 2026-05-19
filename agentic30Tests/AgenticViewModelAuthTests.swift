@@ -285,8 +285,6 @@ struct AgenticViewModelAuthTests {
 
         let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true, activateAppForAuth: {})
         viewModel.completeMacOnboardingIntro()
-        viewModel.setGuidedDay1OverlayActive(true)
-        viewModel.skipGuidedDay1Overlay()
         let prompt = StructuredPromptRequest(
             requestId: "reset-draft",
             sessionId: "reset-session",
@@ -311,28 +309,12 @@ struct AgenticViewModelAuthTests {
         viewModel.updateStructuredPromptFreeText("draft that must reset", for: prompt.questions[0], in: prompt)
 
         #expect(viewModel.needsOnboardingIntro == false)
-        #expect(viewModel.day1InterviewTutorialMode == .unguided)
         #expect(viewModel.structuredPromptDraftBySession.isEmpty == false)
 
         viewModel.resetVolatileLocalUserDataStateForTesting()
 
         #expect(viewModel.needsOnboardingIntro == true)
-        #expect(viewModel.guidedDay1OverlayActive == false)
-        #expect(viewModel.day1InterviewTutorialMode == .guided)
         #expect(viewModel.structuredPromptDraftBySession.isEmpty)
-    }
-
-    @Test @MainActor func day1OverlaySkipSwitchesToUnguidedInterviewMode() {
-        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true, activateAppForAuth: {})
-
-        viewModel.setGuidedDay1OverlayActive(true)
-        #expect(viewModel.guidedDay1OverlayActive == true)
-        #expect(viewModel.day1InterviewTutorialMode == .guided)
-
-        viewModel.skipGuidedDay1Overlay()
-
-        #expect(viewModel.guidedDay1OverlayActive == false)
-        #expect(viewModel.day1InterviewTutorialMode == .unguided)
     }
 
     @Test @MainActor func explicitWorkspaceAndLocalContextCanStartWithoutGoogleAuth() throws {

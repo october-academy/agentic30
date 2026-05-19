@@ -10,7 +10,7 @@ XCTest UI tests that drive the SwiftUI app via `XCUIApplication`. Default mode i
 
 | File | Description |
 |------|-------------|
-| `agentic30UITests.swift` | Main UI test suite — native project picker, Settings model pickers, hermetic sidecar chat flow, plus optional live canaries (~89k chars covering many flows) |
+| `agentic30UITests.swift` | Main UI test suite — current intake flow, Settings model pickers, Open Design Day workspace smoke/responsive coverage, plus optional live canaries |
 | `agentic30UITestsLaunchTests.swift` | Launch screenshot test |
 
 ## For AI Agents
@@ -21,14 +21,17 @@ XCTest UI tests that drive the SwiftUI app via `XCUIApplication`. Default mode i
   - `AGENTIC30_GOOGLE_E2E_EMAIL`, `AGENTIC30_GOOGLE_E2E_PASSWORD`, `AGENTIC30_GOOGLE_E2E_TOTP_SECRET` — credentialed Google login E2E.
   - `AGENTIC30_MAC_AUTH_BASE_URL` — staging Mac auth endpoint (defaults to `https://agentic30.app`).
 - Adding a UI test must not break hermetic determinism. New screens that gate behavior on time, locale, or network must respect the stub provider flag.
+- Do not add coverage for legacy workspace curriculum surfaces. They are deprecated; cover the Open Design Day surface instead.
 
 ### Testing Requirements
 - Run hermetic-only:
   ```bash
-  xcodebuild test -project agentic30.xcodeproj -scheme agentic30 -destination 'platform=macOS' \
-    -only-testing:agentic30UITests/agentic30UITests/testNativeProjectPickerSelectsDirectory \
-    -only-testing:agentic30UITests/agentic30UITests/testSettingsModelPickersSelectClaudeAndCodexModels \
-    -only-testing:agentic30UITests/agentic30UITests/testSidecarChatFlowHermetic
+  xcodebuild test -project agentic30.xcodeproj -scheme agentic30UITests -destination 'platform=macOS' \
+    -only-testing:agentic30UITests/agentic30UITests/testOpenDesignDayPageParitySmoke \
+    -only-testing:agentic30UITests/agentic30UITests/testOpenDesignDayHandoffFlowSmoke \
+    -only-testing:agentic30UITests/agentic30UITests/testOpenDesignDayPageResponsivePrimarySmoke \
+    -only-testing:agentic30UITests/agentic30UITests/testOpenDesignDayPageResponsiveCompactSmoke \
+    -only-testing:agentic30UITests/agentic30UITests/testWorkspaceStartupShowsOpenDesignDayAndLocksFutureNavigation
   ```
 - Live canaries should be excluded from default CI runs.
 

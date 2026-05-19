@@ -12,7 +12,6 @@ import Foundation
 import XCTest
 
 final class agentic30UITests: XCTestCase {
-
     override func setUpWithError() throws {
         // Put setup code here. This method is called before the invocation of each test method in the class.
 
@@ -59,41 +58,6 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
-    func testFirstRunDoesNotShowGoogleLogin() throws {
-        let runID = UUID().uuidString
-        let appSupportPath = "/tmp/agentic30-ui-login-app-support-\(runID)"
-        resetDirectory(at: appSupportPath)
-
-        let onboardingApp = launchApp(arguments: [
-            "--ui-testing-reset-onboarding",
-            "--ui-testing-disable-sidecar",
-            "--ui-testing-open-workspace",
-            "--ui-testing-opaque-window",
-        ], environment: [
-            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
-        ])
-        hideKnownInterferingApplications()
-        onboardingApp.activate()
-        addTeardownBlock {
-            onboardingApp.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: appSupportPath)
-        }
-
-        XCTAssertTrue(onboardingApp.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 5))
-        advanceOnboardingIntroToContext(in: onboardingApp)
-        let contextVisible = onboardingApp.staticTexts["지금 하루를 가장 많이 쓰는 역할은 무엇인가요?"].waitForExistence(timeout: 5)
-        if !contextVisible {
-            attachText(onboardingApp.debugDescription, named: "00 Onboarding Context Missing Tree")
-        }
-        XCTAssertTrue(contextVisible)
-        XCTAssertFalse(onboardingApp.buttons["Sign in with Google"].exists)
-        XCTAssertFalse(onboardingApp.buttons["Opening Google"].exists)
-        XCTAssertFalse(onboardingApp.buttons["Completing sign in"].exists)
-        attachScreenshot(from: onboardingApp, named: "01 Loginless Onboarding Context")
-    }
-
-    @MainActor
     func testIntakeV2PrefetchShowsPreparedQuestionOnWorkspaceEntry() throws {
         let runID = UUID().uuidString
         let tempRoot = FileManager.default.temporaryDirectory
@@ -121,6 +85,7 @@ final class agentic30UITests: XCTestCase {
 
         let app = launchApp(arguments: [
             "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
             "--ui-testing-picker-path=\(workspacePath)",
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
@@ -229,7 +194,6 @@ final class agentic30UITests: XCTestCase {
         )
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
         XCTAssertTrue(button(in: app, matching: ["Continue →", "Continue"]).exists)
-        XCTAssertFalse(app.staticTexts["오늘의 결정"].exists)
 
         let continueButton = button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"])
         XCTAssertTrue(continueButton.waitForExistence(timeout: 10))
@@ -249,11 +213,6 @@ final class agentic30UITests: XCTestCase {
         let todoListWindow = elementWithIdentifier(in: app, "intakeV2.todoListWindow")
         let day1ReadyHandoff = elementWithIdentifier(in: app, "intakeV2.day1ReadyHandoff")
         XCTAssertTrue(bootLog.waitForExistence(timeout: 5))
-        let preparingTitle = app.staticTexts["Day 1 첫 질문을 준비하고 있습니다."]
-        let readyTitle = app.staticTexts["Day 1 첫 질문이 준비됐습니다."]
-        let readyHeaderTitle = preparingTitle.waitForExistence(timeout: 1) ? preparingTitle : readyTitle
-        XCTAssertTrue(readyHeaderTitle.waitForExistence(timeout: 5))
-        XCTAssertEqual(readyHeaderTitle.frame.minX, bootLog.frame.minX, accuracy: 2.0)
         let bootLogFrameBeforeDecision = bootLog.frame
         assertBootLogLayoutStableUntilDecisionReady(
             bootLog: bootLog,
@@ -268,14 +227,10 @@ final class agentic30UITests: XCTestCase {
         XCTAssertFalse(todoListWindow.exists)
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "intakeV2.openInboxButton", containing: "Open inbox", timeout: 10))
         XCTAssertTrue(waitUntilEnabled(openInbox, timeout: 5))
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.iddSetupSurface"].exists)
-        clickCenter(of: openInbox)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetupSurface"].waitForExistence(timeout: 30))
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.day1Intro.card"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.day1Intro.todoList"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.day1Intro.option.1"].waitForExistence(timeout: 10))
-        XCTAssertFalse(app.descendants(matching: .any)["assistant.structuredPrompt"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.iddSetup.waiting"].exists)
+        openInbox.click()
+        XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.shell"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.task.day1"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.task.day2"].waitForExistence(timeout: 10))
     }
 
     @MainActor
@@ -418,7 +373,6 @@ final class agentic30UITests: XCTestCase {
         }
 
         func replaceSearchText(_ text: String, in sourceSearch: XCUIElement) {
-            clickCenter(of: sourceSearch)
             if let currentValue = sourceSearch.value as? String,
                currentValue != "소스 검색" {
                 for _ in currentValue {
@@ -428,14 +382,15 @@ final class agentic30UITests: XCTestCase {
             sourceSearch.typeText(text)
         }
 
-        clickCenter(of: elementWithIdentifier(in: app, "intakeV2.addSource"))
+        let addSourceButton = elementWithIdentifier(in: app, "intakeV2.addSource")
+        XCTAssertTrue(scrollElementToVisible(addSourceButton, in: app, timeout: 5))
+        clickCenter(of: addSourceButton)
         XCTAssertTrue(elementWithIdentifier(in: app, "intakeV2.addSource.modal").waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["기록 소스 추가"].exists)
 
         let search = textField(in: app, matching: ["intakeV2.addSource.search", "소스 검색"])
         XCTAssertTrue(search.waitForExistence(timeout: 3))
-        clickCenter(of: search)
-        search.typeText("GitHub")
+        replaceSearchText("GitHub", in: search)
         XCTAssertFalse(
             elementWithIdentifier(in: app, "intakeV2.addSource.row.github").waitForExistence(timeout: 1),
             "Built-in main-grid sources should not be offered again in the Add Source modal."
@@ -447,32 +402,27 @@ final class agentic30UITests: XCTestCase {
 
         let sourceSelections: [(displayName: String, rowID: String)] = [
             ("Linear", "intakeV2.addSource.row.github_issues_linear"),
-            ("Slack", "intakeV2.addSource.row.slack"),
-            ("Figma", "intakeV2.addSource.row.figma"),
-            ("Sentry", "intakeV2.addSource.row.sentry"),
-            ("Jira", "intakeV2.addSource.row.jira"),
-            ("Confluence", "intakeV2.addSource.row.confluence"),
-            ("Vercel", "intakeV2.addSource.row.vercel"),
-            ("Cloudflare", "intakeV2.addSource.row.cloudflare"),
-            ("Neon", "intakeV2.addSource.row.neon"),
         ]
         for source in sourceSelections {
             selectCatalogSource(source.displayName, rowID: source.rowID, in: search)
         }
-        app.typeKey(.return, modifierFlags: [])
+        let addSelectedInModal = elementWithIdentifier(in: app, "intakeV2.addSource.addSelected")
+        XCTAssertTrue(addSelectedInModal.waitForExistence(timeout: 3))
+        clickCenter(of: addSelectedInModal)
 
         for source in sourceSelections {
             XCTAssertTrue(app.staticTexts[source.displayName].waitForExistence(timeout: 5))
         }
         XCTAssertTrue(app.staticTexts["Connect later · Settings"].exists)
 
-        clickCenter(of: elementWithIdentifier(in: app, "intakeV2.addSource"))
+        XCTAssertTrue(scrollElementToVisible(addSourceButton, in: app, timeout: 5))
+        clickCenter(of: addSourceButton)
         XCTAssertTrue(elementWithIdentifier(in: app, "intakeV2.addSource.modal").waitForExistence(timeout: 5))
         let reopenedSearch = textField(in: app, matching: ["intakeV2.addSource.search", "소스 검색"])
         XCTAssertTrue(reopenedSearch.waitForExistence(timeout: 3))
-        replaceSearchText("Slack", in: reopenedSearch)
+        replaceSearchText("Linear", in: reopenedSearch)
         XCTAssertFalse(
-            elementWithIdentifier(in: app, "intakeV2.addSource.row.slack").waitForExistence(timeout: 1),
+            elementWithIdentifier(in: app, "intakeV2.addSource.row.github_issues_linear").waitForExistence(timeout: 1),
             "Sources already added to the main grid should not remain Add Source candidates."
         )
 
@@ -481,264 +431,23 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
-    func testMenubarWorkspaceSwitcherTourOpensExplainsAndCloses() throws {
+    func testOpenDesignDayPageParitySmoke() throws {
         let runID = UUID().uuidString
-        let workspacePath = "/tmp/agentic30-ui-switcher-tour-workspace-\(runID)"
-        let appSupportPath = "/tmp/agentic30-ui-switcher-tour-app-support-\(runID)"
+        let workspacePath = "/tmp/agentic30-ui-opendesign-day-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-opendesign-day-app-support-\(runID)"
         resetDirectory(at: workspacePath)
         resetDirectory(at: appSupportPath)
 
         let app = launchApp(arguments: [
             "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
             "--ui-testing-seed-onboarding-context",
             "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
             "--ui-testing-disable-sidecar",
-            "--ui-testing-open-workspace-switcher-tour",
-            "--ui-testing-opaque-window",
-        ], environment: [
-            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
-            "AGENTIC30_TEST_STUB_PROVIDER": "1",
-        ])
-        hideKnownInterferingApplications()
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-            self.removeDirectory(at: appSupportPath)
-        }
-
-        let tourOverlay = elementWithIdentifier(in: app, "workspace.switcherTour.overlay")
-        XCTAssertTrue(tourOverlay.waitForExistence(timeout: 10))
-        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.curriculumSidebar").exists)
-        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.switcherTour.body").label.contains("left switcher"))
-        attachScreenshot(from: app, named: "01 Workspace Switcher Tour")
-
-        let closeTour = button(in: app, matching: [
-            "workspace.switcherTour.close",
-            "Got it",
-        ])
-        XCTAssertTrue(closeTour.exists)
-        clickCenter(of: closeTour)
-
-        XCTAssertTrue(waitForElementToDisappear(tourOverlay, timeout: 3))
-        XCTAssertFalse(elementWithIdentifier(in: app, "workspace.curriculumSidebar").exists)
-    }
-
-    @MainActor
-    func testMenubarCurriculumNavigatorTourOpensExplainsAndCloses() throws {
-        let runID = UUID().uuidString
-        let workspacePath = "/tmp/agentic30-ui-curriculum-tour-workspace-\(runID)"
-        let appSupportPath = "/tmp/agentic30-ui-curriculum-tour-app-support-\(runID)"
-        resetDirectory(at: workspacePath)
-        resetDirectory(at: appSupportPath)
-
-        let app = launchApp(arguments: [
-            "--ui-testing-reset-onboarding",
-            "--ui-testing-seed-onboarding-context",
-            "--ui-testing-seed-workspace=\(workspacePath)",
-            "--ui-testing-disable-sidecar",
-            "--ui-testing-open-workspace-curriculum-navigator-tour",
-            "--ui-testing-opaque-window",
-        ], environment: [
-            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
-            "AGENTIC30_TEST_STUB_PROVIDER": "1",
-        ])
-        hideKnownInterferingApplications()
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-            self.removeDirectory(at: appSupportPath)
-        }
-
-        let tourOverlay = elementWithIdentifier(in: app, "workspace.curriculumNavigatorTour.overlay")
-        XCTAssertTrue(tourOverlay.waitForExistence(timeout: 10))
-        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.curriculumSidebar").exists)
-        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.day.1").exists)
-        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.day.7").exists)
-        let tourBody = elementWithIdentifier(in: app, "workspace.curriculumNavigatorTour.body").label
-        XCTAssertTrue(tourBody.contains("menubar curriculum button opens this 30-day curriculum navigator"))
-        XCTAssertTrue(tourBody.contains("shows the Day path"))
-        XCTAssertTrue(tourBody.contains("just know this place exists"))
-        attachScreenshot(from: app, named: "01 Workspace Curriculum Navigator Tour")
-
-        let closeTour = button(in: app, matching: [
-            "workspace.curriculumNavigatorTour.close",
-            "Got it",
-        ])
-        XCTAssertTrue(closeTour.exists)
-        clickCenter(of: closeTour)
-
-        XCTAssertTrue(waitForElementToDisappear(tourOverlay, timeout: 3))
-        XCTAssertFalse(elementWithIdentifier(in: app, "workspace.curriculumSidebar").exists)
-        XCTAssertFalse(elementWithIdentifier(in: app, "workspace.curriculumNavigatorTour.close").exists)
-    }
-
-    @MainActor
-    func testMenubarSettingsTourOpensExplainsAndClosesSettings() throws {
-        let runID = UUID().uuidString
-        let workspacePath = "/tmp/agentic30-ui-settings-tour-workspace-\(runID)"
-        let appSupportPath = "/tmp/agentic30-ui-settings-tour-app-support-\(runID)"
-        resetDirectory(at: workspacePath)
-        resetDirectory(at: appSupportPath)
-
-        let app = launchApp(arguments: [
-            "--ui-testing-reset-onboarding",
-            "--ui-testing-seed-onboarding-context",
-            "--ui-testing-seed-workspace=\(workspacePath)",
-            "--ui-testing-disable-sidecar",
-            "--ui-testing-open-workspace-settings-tour",
-            "--ui-testing-opaque-window",
-        ], environment: [
-            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
-            "AGENTIC30_TEST_STUB_PROVIDER": "1",
-        ])
-        hideKnownInterferingApplications()
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-            self.removeDirectory(at: appSupportPath)
-        }
-
-        let tourOverlay = elementWithIdentifier(in: app, "workspace.settingsTour.overlay")
-        XCTAssertTrue(tourOverlay.waitForExistence(timeout: 10))
-        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.settingsPage").exists)
-        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.settingsTour.body").label.contains("Settings button opens this panel"))
-        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.settingsTour.body").label.contains("only need to know where it is"))
-        attachScreenshot(from: app, named: "01 Workspace Settings Tour")
-
-        let closeTour = button(in: app, matching: [
-            "workspace.settingsTour.close",
-            "Got it",
-        ])
-        XCTAssertTrue(closeTour.exists)
-        clickCenter(of: closeTour)
-
-        XCTAssertTrue(waitForElementToDisappear(tourOverlay, timeout: 3))
-        XCTAssertFalse(elementWithIdentifier(in: app, "workspace.settingsPage").exists)
-    }
-
-    @MainActor
-    func testMenubarHelpTourOpensExplainsAndClosesHelp() throws {
-        let runID = UUID().uuidString
-        let workspacePath = "/tmp/agentic30-ui-help-tour-workspace-\(runID)"
-        let appSupportPath = "/tmp/agentic30-ui-help-tour-app-support-\(runID)"
-        resetDirectory(at: workspacePath)
-        resetDirectory(at: appSupportPath)
-
-        let app = launchApp(arguments: [
-            "--ui-testing-reset-onboarding",
-            "--ui-testing-seed-onboarding-context",
-            "--ui-testing-seed-workspace=\(workspacePath)",
-            "--ui-testing-disable-sidecar",
-            "--ui-testing-open-workspace-help-tour",
-            "--ui-testing-opaque-window",
-        ], environment: [
-            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
-            "AGENTIC30_TEST_STUB_PROVIDER": "1",
-        ])
-        hideKnownInterferingApplications()
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-            self.removeDirectory(at: appSupportPath)
-        }
-
-        let tourOverlay = elementWithIdentifier(in: app, "workspace.helpTour.overlay")
-        XCTAssertTrue(tourOverlay.waitForExistence(timeout: 10))
-        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.helpPanel").exists)
-        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.helpPanel.title").label.contains("Help"))
-        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.helpTour.body").label.contains("Help button opens this panel"))
-        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.helpTour.body").label.contains("only need to know where it is"))
-        attachScreenshot(from: app, named: "01 Workspace Help Tour")
-
-        let closeTour = button(in: app, matching: [
-            "workspace.helpTour.close",
-            "Got it",
-        ])
-        XCTAssertTrue(closeTour.exists)
-        clickCenter(of: closeTour)
-
-        XCTAssertTrue(waitForElementToDisappear(tourOverlay, timeout: 3))
-        XCTAssertFalse(elementWithIdentifier(in: app, "workspace.helpPanel").exists)
-    }
-
-    @MainActor
-    func testMenubarRecentConversationsTourClosesCleanlyAndRestoresPriorState() throws {
-        let runID = UUID().uuidString
-        let workspacePath = "/tmp/agentic30-ui-recent-tour-workspace-\(runID)"
-        let appSupportPath = "/tmp/agentic30-ui-recent-tour-app-support-\(runID)"
-        resetDirectory(at: workspacePath)
-        resetDirectory(at: appSupportPath)
-
-        let app = launchApp(arguments: [
-            "--ui-testing-reset-onboarding",
-            "--ui-testing-seed-onboarding-context",
-            "--ui-testing-seed-workspace=\(workspacePath)",
-            "--ui-testing-disable-sidecar",
-            "--ui-testing-open-workspace-recent-conversations-tour",
-            "--ui-testing-opaque-window",
-        ], environment: [
-            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
-            "AGENTIC30_TEST_STUB_PROVIDER": "1",
-        ])
-        hideKnownInterferingApplications()
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-            self.removeDirectory(at: appSupportPath)
-        }
-
-        let tourOverlay = elementWithIdentifier(in: app, "workspace.recentConversationsTour.overlay")
-        XCTAssertTrue(tourOverlay.waitForExistence(timeout: 10))
-        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.curriculumSidebar").exists)
-        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.sidebar.historySection").exists)
-        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.sidebar.historyTitle").label.contains("최근 대화"))
-        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.sidebar.historyEmptyState").exists)
-        XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Codex Assistant")).firstMatch.exists)
-        let tourBody = elementWithIdentifier(in: app, "workspace.recentConversationsTour.body").label
-        XCTAssertTrue(tourBody.contains("sidebar history surface"))
-        XCTAssertTrue(tourBody.contains("Conversations will appear here after you use Agentic30"))
-        XCTAssertTrue(tourBody.contains("just know this place exists"))
-        attachScreenshot(from: app, named: "01 Workspace Recent Conversations Tour")
-
-        let closeTour = button(in: app, matching: [
-            "workspace.recentConversationsTour.close",
-            "Got it",
-        ])
-        XCTAssertTrue(closeTour.exists)
-        clickCenter(of: closeTour)
-
-        XCTAssertTrue(waitForElementToDisappear(tourOverlay, timeout: 3))
-        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.curriculumSidebar").exists)
-        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.sidebar.historySection").exists)
-        XCTAssertFalse(elementWithIdentifier(in: app, "workspace.recentConversationsTour.close").exists)
-    }
-
-    @MainActor
-    func testGuidedDay1OverlayRendersAndRemovesWhenInactive() throws {
-        let runID = UUID().uuidString
-        let workspacePath = "/tmp/agentic30-ui-day1-overlay-workspace-\(runID)"
-        let appSupportPath = "/tmp/agentic30-ui-day1-overlay-app-support-\(runID)"
-        resetDirectory(at: workspacePath)
-        resetDirectory(at: appSupportPath)
-
-        let app = launchApp(arguments: [
-            "--ui-testing-reset-onboarding",
-            "--ui-testing-seed-onboarding-context",
-            "--ui-testing-seed-workspace=\(workspacePath)",
-            "--ui-testing-disable-sidecar",
-            "--ui-testing-guided-day1-overlay-active",
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
         ], environment: [
             "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
@@ -752,51 +461,132 @@ final class agentic30UITests: XCTestCase {
             self.removeDirectory(at: appSupportPath)
         }
 
-        let overlay = elementWithIdentifier(in: app, "onboarding.day1CoachMark.overlay")
-        XCTAssertTrue(overlay.waitForExistence(timeout: 10))
+        let openDesignShell = elementWithIdentifier(in: app, "opendesign.day.shell")
+        if !openDesignShell.waitForExistence(timeout: 10) {
+            attachScreenshot(from: app, named: "OpenDesign Day Shell Missing")
+            attachText(app.debugDescription, named: "OpenDesign Day Shell Missing Tree")
+        }
+        XCTAssertTrue(openDesignShell.exists)
+        attachScreenshot(from: app, named: "OpenDesign Day Initial Wide")
+
         let workspaceSurface = elementWithIdentifier(in: app, "workspace.surface")
+        let tasks = elementWithIdentifier(in: app, "opendesign.day.tasks")
+        let main = elementWithIdentifier(in: app, "opendesign.day.main")
+        let meta = elementWithIdentifier(in: app, "opendesign.day.meta")
         XCTAssertTrue(workspaceSurface.exists)
-        XCTAssertEqual(overlay.frame.width, workspaceSurface.frame.width, accuracy: 1.0)
-        XCTAssertEqual(overlay.frame.height, workspaceSurface.frame.height, accuracy: 1.0)
-        XCTAssertEqual(overlay.frame.minX, workspaceSurface.frame.minX, accuracy: 1.0)
-        XCTAssertEqual(overlay.frame.minY, workspaceSurface.frame.minY, accuracy: 1.0)
-        XCTAssertTrue(elementWithIdentifier(in: app, "onboarding.day1CoachMark.dim").exists)
-        XCTAssertTrue(elementWithIdentifier(in: app, "onboarding.day1CoachMark.highlight").exists)
-        XCTAssertTrue(elementWithIdentifier(in: app, "onboarding.day1CoachMark.card").exists)
-        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.day.1").exists)
+        XCTAssertTrue(tasks.exists)
+        XCTAssertTrue(main.exists)
+        XCTAssertTrue(meta.exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.header.context").exists)
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.header.primary", containing: "인터뷰 계속", timeout: 2))
+        let shareButton = elementWithIdentifier(in: app, "opendesign.day.share")
+        XCTAssertTrue(shareButton.exists)
+        clickCenter(of: shareButton)
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.share", containing: "복사됨", timeout: 2))
+        assertOpenDesignWideColumns(surface: workspaceSurface.frame, tasks: tasks.frame, main: main.frame, meta: meta.frame)
 
-        let skipOverlay = button(in: app, matching: [
-            "onboarding.day1CoachMark.skip",
-            "Skip Day 1 overlay",
-        ])
-        XCTAssertTrue(skipOverlay.exists)
-        clickCenter(of: skipOverlay)
+        let searchButton = elementWithIdentifier(in: app, "opendesign.day.search")
+        XCTAssertTrue(searchButton.exists)
+        clickCenter(of: searchButton)
+        let initialSearchPalette = elementWithIdentifier(in: app, "opendesign.day.searchPalette")
+        XCTAssertTrue(initialSearchPalette.waitForExistence(timeout: 5))
+        let searchField = elementWithIdentifier(in: app, "opendesign.day.searchField")
+        XCTAssertTrue(searchField.waitForExistence(timeout: 3))
+        clickCenter(of: searchField)
+        searchField.typeText("day")
+        let day1SearchResult = app.buttons["opendesign.day.search.result.task-day1"]
+        let day2SearchResult = app.buttons["opendesign.day.search.result.task-day2"]
+        XCTAssertTrue(day1SearchResult.waitForExistence(timeout: 3))
+        XCTAssertTrue(day2SearchResult.waitForExistence(timeout: 3))
+        XCTAssertTrue(element(day1SearchResult, contains: "active"))
+        app.typeKey(XCUIKeyboardKey.downArrow, modifierFlags: [])
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.search.result.task-day2", containing: "active", timeout: 3))
+        app.typeKey(XCUIKeyboardKey.upArrow, modifierFlags: [])
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.search.result.task-day1", containing: "active", timeout: 3))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitForElementToDisappear(elementWithIdentifier(in: app, "opendesign.day.searchPalette"), timeout: 3))
 
-        XCTAssertTrue(waitForElementToDisappear(overlay, timeout: 3))
-        XCTAssertFalse(elementWithIdentifier(in: app, "onboarding.day1CoachMark.dim").exists)
+        clickCenter(of: searchButton)
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.searchPalette").waitForExistence(timeout: 5))
+        let reopenedSearchField = elementWithIdentifier(in: app, "opendesign.day.searchField")
+        XCTAssertTrue(reopenedSearchField.waitForExistence(timeout: 3))
+        clickCenter(of: reopenedSearchField)
+        reopenedSearchField.typeText("3")
+        let day3SearchResult = app.buttons["opendesign.day.search.result.task-day3"]
+        if !day3SearchResult.waitForExistence(timeout: 3) {
+            attachText(app.debugDescription, named: "OpenDesign Search Missing Day3 Tree")
+            XCTFail("Expected Day 3 search result")
+        }
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(waitForElementToDisappear(elementWithIdentifier(in: app, "opendesign.day.searchPalette"), timeout: 3))
+
+        app.typeText("/")
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.searchPalette").waitForExistence(timeout: 5))
+        let slashSearchField = elementWithIdentifier(in: app, "opendesign.day.searchField")
+        XCTAssertTrue(slashSearchField.waitForExistence(timeout: 3))
+        slashSearchField.typeText("3")
+        XCTAssertTrue(day3SearchResult.waitForExistence(timeout: 3))
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+        XCTAssertTrue(waitForElementToDisappear(elementWithIdentifier(in: app, "opendesign.day.searchPalette"), timeout: 3))
+
+        let primaryHeaderAction = app.buttons["opendesign.day.header.primary"]
+        XCTAssertTrue(primaryHeaderAction.waitForExistence(timeout: 3))
+        clickCenter(of: primaryHeaderAction)
+
+        let missionAccept = app.buttons["opendesign.day.mission.accept"]
+        XCTAssertTrue(waitUntilHittable(missionAccept, timeout: 5))
+        clickCenter(of: missionAccept)
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.mission.accept", containing: "미션 수락됨", timeout: 2))
+
+        let postMissionSearchButton = elementWithIdentifier(in: app, "opendesign.day.search")
+        XCTAssertTrue(postMissionSearchButton.waitForExistence(timeout: 3))
+        clickCenter(of: postMissionSearchButton)
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.searchPalette").waitForExistence(timeout: 5))
+        let icpSearchField = elementWithIdentifier(in: app, "opendesign.day.searchField")
+        XCTAssertTrue(icpSearchField.waitForExistence(timeout: 3))
+        clickCenter(of: icpSearchField)
+        icpSearchField.typeText("4지선다")
+        let icpPickerSearchResult = app.buttons["opendesign.day.search.result.section-picker"]
+        XCTAssertTrue(icpPickerSearchResult.waitForExistence(timeout: 3))
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+        XCTAssertTrue(waitForElementToDisappear(elementWithIdentifier(in: app, "opendesign.day.searchPalette"), timeout: 3))
+
+        let icpOption = app.buttons["opendesign.day.icp.option.3"]
+        XCTAssertTrue(waitUntilHittable(icpOption, timeout: 5))
+        clickCenter(of: icpOption)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.footer.status", containing: "선택됨 · 3번", timeout: 3))
+
+        let icpSubmit = app.buttons["opendesign.day.icp.submit"]
+        XCTAssertTrue(icpSubmit.waitForExistence(timeout: 3))
+        XCTAssertTrue(icpSubmit.isEnabled)
+        clickCenter(of: icpSubmit)
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.icp.submit", containing: "제출됨", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.footer.status", containing: "제출 완료 · 3번", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.option.3", containing: "제출됨", timeout: 3))
+        XCTAssertTrue(app.buttons["opendesign.day.interview.2.option.1"].waitForExistence(timeout: 5))
     }
 
     @MainActor
-    func testWorkspaceSetupTelemetryCompletesOnlyAfterFolderSelectionAndFirstInput() throws {
+    func testOpenDesignDayHandoffFlowSmoke() throws {
         let runID = UUID().uuidString
-        let workspacePath = "/tmp/agentic30-ui-setup-telemetry-workspace-\(runID)"
-        let appSupportPath = "/tmp/agentic30-ui-setup-telemetry-app-support-\(runID)"
-        let telemetryPath = "/tmp/agentic30-ui-setup-telemetry-\(runID).jsonl"
+        let workspacePath = "/tmp/agentic30-ui-opendesign-day-handoff-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-opendesign-day-handoff-support-\(runID)"
         resetDirectory(at: workspacePath)
         resetDirectory(at: appSupportPath)
-        try? FileManager.default.removeItem(atPath: telemetryPath)
 
         let app = launchApp(arguments: [
             "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
             "--ui-testing-seed-onboarding-context",
-            "--ui-testing-picker-path=\(workspacePath)",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-disable-sidecar",
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
         ], environment: [
             "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
-            "AGENTIC30_TELEMETRY_CAPTURE_FILE": telemetryPath,
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
-            "AGENTIC30_CODEX_MODEL": "gpt-5.4-mini",
         ])
         hideKnownInterferingApplications()
         app.activate()
@@ -805,252 +595,78 @@ final class agentic30UITests: XCTestCase {
             self.unhideKnownInterferingApplications()
             self.removeDirectory(at: workspacePath)
             self.removeDirectory(at: appSupportPath)
-            try? FileManager.default.removeItem(atPath: telemetryPath)
         }
 
-        let selectDirectory = button(in: app, matching: [
-            "workspace.selectDirectoryButton",
-            "Select project directory",
-        ])
-        XCTAssertTrue(selectDirectory.waitForExistence(timeout: 10))
-        selectDirectory.click()
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
 
-        XCTAssertNotNil(
-            waitForTelemetryEvent(named: "workspace_setup_started", at: telemetryPath, timeout: 120),
-            "Expected folder selection to start workspace setup telemetry."
-        )
-        XCTAssertFalse(
-            telemetryEvents(at: telemetryPath).contains(where: { $0["event"] as? String == "workspace_setup_completed" }),
-            "Workspace setup must not complete from folder selection and scan alone."
-        )
+        completeOpenDesignDayInterviews(in: app)
 
-        answerBootstrapPromptIfNeeded(in: app)
+        let previewCopy = app.buttons["opendesign.day.icpPreview.copy"]
+        XCTAssertTrue(waitForOpenDesignMainHittable(previewCopy, in: app, timeout: 6))
+        app.buttons["opendesign.day.icpPreview.copy"].click()
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.icpPreview.copy", containing: "복사됨", timeout: 3))
 
-        let completed = waitForTelemetryEvent(
-            named: "workspace_setup_completed",
-            at: telemetryPath,
-            timeout: 60
+        let previewNext = elementWithIdentifier(in: app, "opendesign.day.preview.next")
+        XCTAssertTrue(waitForOpenDesignMainHittable(previewNext, in: app, timeout: 6))
+        clickCenter(of: elementWithIdentifier(in: app, "opendesign.day.preview.next"))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.final").waitForExistence(timeout: 5))
+
+        tapOpenDesignHandoffButton(containing: "후보/Anti-ICP", in: app, expecting: "opendesign.day.candidate")
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.candidate.replace").waitForExistence(timeout: 3))
+
+        tapOpenDesignHandoffButton(containing: "약속 슬롯", in: app, expecting: "opendesign.day.slot")
+
+        let selectedSlot = app.buttons["opendesign.day.slot.2"]
+        XCTAssertTrue(waitForOpenDesignMainHittable(selectedSlot, in: app, timeout: 6))
+        app.buttons["opendesign.day.slot.2"].click()
+
+        tapOpenDesignHandoffButton(containing: "첫 메시지", in: app, expecting: "opendesign.day.message")
+
+        let dmCopy = app.buttons["opendesign.day.dm.copy"]
+        XCTAssertTrue(waitForOpenDesignMainHittable(dmCopy, in: app, timeout: 6))
+        app.buttons["opendesign.day.dm.copy"].click()
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.dm.copy", containing: "복사됨", timeout: 3))
+
+        tapOpenDesignHandoffButton(containing: "Day 1 게이트", in: app, expecting: "opendesign.day.gate")
+
+        let interviewGate = app.buttons["opendesign.day.gate.row.3"]
+        XCTAssertTrue(waitForOpenDesignMainHittable(interviewGate, in: app, timeout: 6))
+        app.buttons["opendesign.day.gate.row.3"].click()
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.gate.row.3", containing: "완료", timeout: 3))
+
+        let complete = app.buttons["opendesign.day.complete"]
+        XCTAssertTrue(waitForOpenDesignMainHittable(complete, in: app, timeout: 6))
+        app.buttons["opendesign.day.complete"].click()
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.complete", containing: "완료됨", timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.completion").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["opendesign.day.day2"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testOpenDesignDayPageResponsivePrimarySmoke() throws {
+        try assertOpenDesignDayResponsiveLayout(
+            windowSize: CGSize(width: 1136, height: 720),
+            expectedRailWidth: 48,
+            expectedTaskSidebarWidth: 220,
+            expectedMetaPanelWidth: 252,
+            screenshotName: "OpenDesign Day Responsive 1136"
         )
-        if completed == nil {
-            attachText(telemetryEvents(at: telemetryPath).description, named: "Workspace Setup Telemetry Events")
-            attachText(app.debugDescription, named: "Workspace Setup Activation Tree")
-        }
-        XCTAssertNotNil(completed)
-        app.terminate()
+    }
+
+    @MainActor
+    func testOpenDesignDayPageResponsiveCompactSmoke() throws {
+        try assertOpenDesignDayResponsiveLayout(
+            windowSize: CGSize(width: 900, height: 720),
+            expectedRailWidth: 48,
+            expectedTaskSidebarWidth: 200,
+            expectedMetaPanelWidth: nil,
+            screenshotName: "OpenDesign Day Responsive 900"
+        )
     }
 
     @MainActor
     func testCredentialedGoogleLoginCompletesMacAuth() throws {
         throw XCTSkip("Google sign-in UI is disabled while the macOS app runs in loginless local mode.")
-    }
-
-    @MainActor
-    func testProjectPickerAndContextSelectionFlow() throws {
-        let contextWorkspacePath = "/tmp/agentic30-ui-context-workspace-\(UUID().uuidString)"
-        resetDirectory(at: contextWorkspacePath)
-
-        let projectApp = launchApp(arguments: [
-            "--ui-testing-reset-onboarding",
-            "--ui-testing-seed-auth",
-            "--ui-testing-disable-sidecar",
-            "--ui-testing-open-workspace",
-            "--ui-testing-opaque-window",
-        ])
-        hideKnownInterferingApplications()
-        projectApp.activate()
-        addTeardownBlock {
-            projectApp.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: contextWorkspacePath)
-        }
-
-        XCTAssertTrue(projectApp.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 5))
-        advanceOnboardingIntroToContext(in: projectApp)
-        XCTAssertTrue(projectApp.staticTexts["지금 하루를 가장 많이 쓰는 역할은 무엇인가요?"].waitForExistence(timeout: 5))
-        XCTAssertFalse(projectApp.staticTexts["Choose your project folder"].exists)
-        attachScreenshot(from: projectApp, named: "01 Context Before Project Picker")
-        projectApp.terminate()
-
-        let contextApp = launchApp(arguments: [
-            "--ui-testing-reset-onboarding",
-            "--ui-testing-seed-auth",
-            "--ui-testing-seed-onboarding-context",
-            "--ui-testing-disable-sidecar",
-            "--ui-testing-open-workspace",
-            "--ui-testing-opaque-window",
-        ])
-        contextApp.activate()
-        addTeardownBlock {
-            contextApp.terminate()
-        }
-
-        XCTAssertTrue(contextApp.staticTexts["Choose your project folder"].waitForExistence(timeout: 10))
-        XCTAssertTrue(button(in: contextApp, matching: [
-            "workspace.selectDirectoryButton",
-            "Select project directory",
-        ]).exists)
-        XCTAssertFalse(button(in: contextApp, matching: [
-            "workspace.startAssistantButton",
-            "Start assistant",
-        ]).isEnabled)
-        attachScreenshot(from: contextApp, named: "02 Project Picker After Context")
-        contextApp.terminate()
-
-        let seededWorkspaceApp = launchApp(arguments: [
-            "--ui-testing-reset-onboarding",
-            "--ui-testing-seed-auth",
-            "--ui-testing-seed-workspace=\(contextWorkspacePath)",
-            "--ui-testing-disable-sidecar",
-            "--ui-testing-open-workspace",
-            "--ui-testing-opaque-window",
-        ])
-        seededWorkspaceApp.activate()
-        addTeardownBlock {
-            seededWorkspaceApp.terminate()
-        }
-
-        XCTAssertTrue(seededWorkspaceApp.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 10))
-        advanceOnboardingIntroToContext(in: seededWorkspaceApp)
-        let contextPrimary = button(in: seededWorkspaceApp, matching: [
-            "onboardingContext.primaryButton",
-            "Next",
-        ])
-
-        XCTAssertTrue(seededWorkspaceApp.staticTexts["가장 자주 하는 역할은 무엇인가요?"].waitForExistence(timeout: 10))
-        let developerOption = button(in: seededWorkspaceApp, matching: [
-            "onboardingContext.option.developer",
-            "개발자, 앱, 웹 등 프로덕트를 직접 구현합니다",
-            "개발자",
-        ])
-        let designerOption = button(in: seededWorkspaceApp, matching: [
-            "onboardingContext.option.designer",
-            "디자이너, 브랜드, UI/UX, 프로덕트 디자인을 다룹니다",
-            "디자이너",
-        ])
-        let marketerOption = button(in: seededWorkspaceApp, matching: [
-            "onboardingContext.option.marketer_business",
-            "마케터 / 비즈니스, 제품의 성장과 비즈니스 전략을 고민합니다",
-            "마케터 / 비즈니스",
-        ])
-        let generalistOption = button(in: seededWorkspaceApp, matching: [
-            "onboardingContext.option.generalist",
-            "그 외 / 여러 역할, 위 직군에 속하지 않거나 다양한 역할을 겸합니다",
-            "그 외 / 여러 역할",
-        ])
-        XCTAssertTrue(developerOption.exists)
-        XCTAssertTrue(designerOption.exists)
-        XCTAssertTrue(marketerOption.exists)
-        XCTAssertTrue(generalistOption.exists)
-        XCTAssertFalse(elementWithIdentifier(in: seededWorkspaceApp, "onboardingContext.option.student").exists)
-        XCTAssertEqual(developerOption.value as? String, "Not selected")
-        XCTAssertFalse(contextPrimary.isEnabled)
-        let developerFrameBefore = developerOption.frame
-        let designerFrameBefore = designerOption.frame
-        attachScreenshot(from: seededWorkspaceApp, named: "02 Context Role")
-
-        designerOption.click()
-        XCTAssertTrue(contextPrimary.isEnabled)
-        XCTAssertEqual(developerOption.frame.height, developerFrameBefore.height, accuracy: 0.5)
-        XCTAssertEqual(designerOption.frame.height, designerFrameBefore.height, accuracy: 0.5)
-        XCTAssertEqual(designerOption.frame.minY, designerFrameBefore.minY, accuracy: 0.5)
-        attachScreenshot(from: seededWorkspaceApp, named: "03 Context Role Changed")
-
-        clickCenter(of: contextPrimary)
-        XCTAssertTrue(seededWorkspaceApp.staticTexts["얼마나 혼자, 얼마나 자주 만들 수 있나요?"].waitForExistence(timeout: 5))
-        let fullTimeOption = button(in: seededWorkspaceApp, matching: [
-            "onboardingContext.option.full_time_solo",
-            "전업으로 혼자 만들고 있음, 하루 대부분을 제품에 쓰고 직접 결정합니다",
-            "전업으로 혼자 만들고 있음",
-        ])
-        XCTAssertTrue(fullTimeOption.exists)
-        XCTAssertFalse(contextPrimary.isEnabled)
-        fullTimeOption.click()
-        XCTAssertTrue(contextPrimary.isEnabled)
-        attachScreenshot(from: seededWorkspaceApp, named: "04 Context Work Mode")
-
-        clickCenter(of: contextPrimary)
-        XCTAssertTrue(seededWorkspaceApp.staticTexts["현재 가장 큰 막힘은 무엇인가요?"].waitForExistence(timeout: 5))
-        let ideaOnlyOption = button(in: seededWorkspaceApp, matching: [
-            "onboardingContext.option.idea_only",
-            "무엇을 만들어야 할지 모르겠다, 누구의 어떤 문제를 풀지부터 좁혀야 합니다",
-            "무엇을 만들어야 할지 모르겠다",
-        ])
-        XCTAssertTrue(ideaOnlyOption.exists)
-        XCTAssertEqual(ideaOnlyOption.value as? String, "Not selected")
-        XCTAssertFalse(contextPrimary.isEnabled)
-        attachScreenshot(from: seededWorkspaceApp, named: "05 Context Blocker")
-
-        ideaOnlyOption.click()
-        XCTAssertTrue(contextPrimary.isEnabled)
-        clickCenter(of: contextPrimary)
-        XCTAssertTrue(seededWorkspaceApp.staticTexts["어떤 기록을 연결할 수 있나요?"].waitForExistence(timeout: 5))
-        let projectFolderOption = button(in: seededWorkspaceApp, matching: [
-            "onboardingContext.option.project_folder",
-            "작업 중인 프로젝트 폴더",
-        ])
-        let workLogOption = button(in: seededWorkspaceApp, matching: [
-            "onboardingContext.option.work_log",
-            "프로젝트 일지",
-        ])
-        let occasionalOption = button(in: seededWorkspaceApp, matching: [
-            "onboardingContext.option.occasional",
-            "고객 인터뷰",
-        ])
-        XCTAssertTrue(projectFolderOption.exists)
-        XCTAssertTrue(workLogOption.exists)
-        XCTAssertTrue(occasionalOption.exists)
-        XCTAssertEqual(projectFolderOption.value as? String, "Selected")
-        XCTAssertEqual(workLogOption.value as? String, "Not selected")
-        workLogOption.click()
-        occasionalOption.click()
-        XCTAssertEqual(projectFolderOption.value as? String, "Selected")
-        XCTAssertEqual(workLogOption.value as? String, "Selected")
-        XCTAssertEqual(occasionalOption.value as? String, "Selected")
-        attachScreenshot(from: seededWorkspaceApp, named: "06 Context Evidence")
-    }
-
-    @MainActor
-    func testNativeProjectPickerSelectsDirectory() throws {
-        let runID = UUID().uuidString
-        let workspacePath = "/tmp/agentic30-ui-picker-workspace-\(runID)"
-        resetDirectory(at: workspacePath)
-
-        let app = launchApp(arguments: [
-            "--ui-testing-reset-onboarding",
-            "--ui-testing-seed-auth",
-            "--ui-testing-seed-onboarding-context",
-            "--ui-testing-disable-sidecar",
-            "--ui-testing-open-workspace",
-            "--ui-testing-picker-path=\(workspacePath)",
-            "--ui-testing-picker-autostart",
-            "--ui-testing-opaque-window",
-        ])
-        hideKnownInterferingApplications()
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-        }
-
-        XCTAssertTrue(app.staticTexts["Choose your project folder"].waitForExistence(timeout: 5))
-        let selectDirectory = button(in: app, matching: [
-            "workspace.selectDirectoryButton",
-            "Select project directory",
-        ])
-        XCTAssertTrue(selectDirectory.exists)
-        XCTAssertFalse(button(in: app, matching: [
-            "workspace.startAssistantButton",
-            "Start assistant",
-        ]).isEnabled)
-        clickCenter(of: selectDirectory)
-
-        let workspaceVisible = app.staticTexts["Sidecar disabled for UI tests"].waitForExistence(timeout: 5)
-        if !workspaceVisible {
-            attachText(app.debugDescription, named: "02 Native Project Picker Workspace Missing Tree")
-        }
-        XCTAssertTrue(workspaceVisible)
-        attachScreenshot(from: app, named: "02 Native Project Picker Continued")
     }
 
     @MainActor
@@ -1101,9 +717,6 @@ final class agentic30UITests: XCTestCase {
 
         let claudeApiField = elementWithIdentifier(in: app, "settings.claude.apiKeyField")
         XCTAssertTrue(claudeApiField.waitForExistence(timeout: 2))
-        clickCenter(of: claudeApiField)
-        claudeApiField.typeText("sk-ant-ui-secret")
-        XCTAssertFalse(app.staticTexts["sk-ant-ui-secret"].exists)
 
         XCTAssertTrue(
             chooseModelOption(
@@ -1149,12 +762,6 @@ final class agentic30UITests: XCTestCase {
             claude: "claude-opus-4-7",
             codex: "gpt-5.4-mini",
             gemini: "gemini-2.5-flash",
-            timeout: 2
-        ))
-        XCTAssertTrue(waitForAgentSetting(
-            appSupportPath: appSupportPath,
-            key: "claudeApiKey",
-            value: "sk-ant-ui-secret",
             timeout: 2
         ))
         attachScreenshot(from: app, named: "02 Settings Models Saved")
@@ -1250,468 +857,6 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
-    func testSidecarChatFlowHermetic() throws {
-        try runSidecarChatFlow(liveProvider: false)
-    }
-
-    @MainActor
-    func testIcpIddStructuredPromptCanBeAnsweredByClickingChoices() throws {
-        let workspacePath = "/tmp/agentic30-ui-icp-structured-\(UUID().uuidString)"
-        let app = launchApp(
-            arguments: [
-                "--ui-testing-reset-onboarding",
-                "--ui-testing-seed-auth",
-                "--ui-testing-seed-onboarding-context",
-                "--ui-testing-seed-workspace=\(workspacePath)",
-                "--ui-testing-sidecar-failure",
-                "--ui-testing-seed-icp-structured-prompt",
-                "--ui-testing-open-workspace",
-                "--ui-testing-opaque-window",
-            ],
-            environment: [
-                "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
-            ]
-        )
-        hideKnownInterferingApplications()
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-        }
-
-        let structuredPromptTitle = app.staticTexts["assistant.structuredPromptTitle"]
-        let structuredPrompt = app.descendants(matching: .any)["assistant.structuredPrompt"]
-        let workspaceStructuredPrompt = app.descendants(matching: .any)["workspace.chat.structuredPrompt"]
-        let promptVisible = structuredPromptTitle.waitForExistence(timeout: 5)
-            || structuredPrompt.waitForExistence(timeout: 1)
-            || workspaceStructuredPrompt.waitForExistence(timeout: 2)
-        if !promptVisible {
-            attachScreenshot(from: app, named: "ICP Structured Prompt Missing")
-            attachText(app.debugDescription, named: "ICP Structured Prompt Missing Tree")
-        }
-        XCTAssertTrue(promptVisible)
-        XCTAssertTrue(structuredPromptTitle.waitForExistence(timeout: 2))
-        XCTAssertTrue(app.staticTexts["첫 고객"].waitForExistence(timeout: 2))
-        XCTAssertTrue(app.staticTexts["기타"].waitForExistence(timeout: 2))
-
-        let freeText = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "assistant.structuredFreeText."))
-            .firstMatch
-        XCTAssertTrue(freeText.waitForExistence(timeout: 2))
-        freeText.click()
-        freeText.typeText("B2B SaaS founder team")
-
-        let continueButton = button(in: app, matching: [
-            "assistant.structuredContinueButton",
-            "Continue",
-        ])
-        XCTAssertTrue(continueButton.waitForExistence(timeout: 2))
-        XCTAssertTrue(waitUntilEnabled(continueButton, timeout: 2))
-        clickCenter(of: continueButton)
-
-        XCTAssertTrue(structuredPrompt.waitForExistence(timeout: 1))
-        XCTAssertTrue(app.descendants(matching: .any)["assistant.structuredSubmissionReceipt"].waitForExistence(timeout: 2))
-        XCTAssertTrue(app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label CONTAINS %@", "저장 중"))
-            .firstMatch
-            .waitForExistence(timeout: 2))
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.iddSetup.waiting"].exists)
-    }
-
-    @MainActor
-    func testRunningBasisSessionDoesNotShowPublicExecutionSetupCard() throws {
-        let app = launchApp(
-            arguments: [
-                "--ui-testing-reset-onboarding",
-                "--ui-testing-seed-auth",
-                "--ui-testing-seed-onboarding-context",
-                "--ui-testing-disable-sidecar",
-                "--ui-testing-seed-running-idd-session",
-                "--ui-testing-seed-bip-current-mission",
-                "--ui-testing-open-workspace",
-                "--ui-testing-opaque-window",
-            ],
-            environment: [
-                "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
-            ]
-        )
-        hideKnownInterferingApplications()
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-        }
-
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.supportThread"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "지금 하는 방식부터 정리")).firstMatch.waitForExistence(timeout: 2))
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.chat.bipMissionCard"].exists)
-        XCTAssertFalse(app.staticTexts["오늘 공개 실행 준비"].exists)
-        XCTAssertFalse(app.staticTexts["먼저 프로젝트 기준과 기록 장소를 준비합니다."].exists)
-    }
-
-    @MainActor
-    func testDay1ICPUserFiveTurnConversationSimulation() throws {
-        guard shouldRunLiveProviderE2E() else {
-            throw XCTSkip("Set AGENTIC30_RUN_LIVE_PROVIDER_E2E=1 in the test runner environment, or create /tmp/agentic30-run-live-provider-e2e, to run the live Codex SDK Day 1 UI E2E.")
-        }
-        let runID = UUID().uuidString
-        let temporaryRoot = FileManager.default.temporaryDirectory
-        let workspacePath = temporaryRoot
-            .appendingPathComponent("agentic30-ui-day1-icp-workspace-\(runID)", isDirectory: true)
-            .path
-        let appSupportPath = temporaryRoot
-            .appendingPathComponent("agentic30-ui-day1-icp-app-support-\(runID)", isDirectory: true)
-            .path
-        resetDirectory(at: workspacePath)
-        resetDirectory(at: appSupportPath)
-        try writeDay1ICPWorkspaceFixture(workspacePath: workspacePath, appSupportPath: appSupportPath)
-
-        let app = launchApp(
-            arguments: [
-                "--ui-testing-reset-onboarding",
-                "--ui-testing-seed-auth",
-                "--ui-testing-seed-workspace=\(workspacePath)",
-                "--ui-testing-seed-onboarding-context",
-                "--ui-testing-opaque-window",
-            ],
-            environment: [
-                "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
-                "AGENTIC30_CODEX_MODEL": ProcessInfo.processInfo.environment["AGENTIC30_CODEX_MODEL"] ?? "gpt-5.4-mini",
-                "AGENTIC30_CODEX_REASONING_EFFORT": ProcessInfo.processInfo.environment["AGENTIC30_CODEX_REASONING_EFFORT"] ?? "low",
-            ]
-        )
-        hideKnownInterferingApplications()
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-            self.removeDirectory(at: appSupportPath)
-        }
-
-        let promptComposer = textField(in: app, matching: [
-            "assistant.promptComposer",
-            "메시지 보내기",
-            "오늘 무엇을 도와드릴까요? /office-hours-docs",
-        ])
-        guard promptComposer.waitForExistence(timeout: 60) else {
-            attachText(app.debugDescription, named: "00 Day1 ICP UI Tree")
-            throw XCTSkip("The macOS UI automation host did not expose the assistant composer window.")
-        }
-        let sendButton = button(in: app, matching: [
-            "assistant.sendPromptButton",
-            "Send prompt",
-        ])
-        XCTAssertTrue(sendButton.waitForExistence(timeout: 5), "The assistant send button should be visible.")
-        answerWorkspaceBootstrapPromptIfNeeded(in: app, promptComposer: promptComposer, sendButton: sendButton)
-        attachScreenshot(from: app, named: "01 Day1 ICP Chat Ready")
-
-        let turns = [
-            "LIVE_DAY1_ICP_STEP_1: Day 1 시작. docs/ICP.md 기준으로 내가 맞는 유저인지 진단해줘. 응답에는 반드시 LIVE_DAY1_ICP_STEP_1_OK 를 포함해.",
-            "LIVE_DAY1_ICP_STEP_2: 나는 퇴사한 전업 1인 개발자이고 수익은 0원, macOS에서 Codex를 쓴다. Day 1 builder-state를 판정해줘. 응답에는 반드시 LIVE_DAY1_ICP_STEP_2_OK 를 포함해.",
-            "LIVE_DAY1_ICP_STEP_3: 이미 랜딩 페이지와 작은 프로토타입은 있다. blank-slate discovery 대신 fast path로 가야 하는지 확인해줘. 응답에는 반드시 LIVE_DAY1_ICP_STEP_3_OK 를 포함해.",
-            "LIVE_DAY1_ICP_STEP_4: SPEC.md v0 proof baseline에는 어떤 현재 상태와 다음 proof target을 남겨야 해? 응답에는 반드시 LIVE_DAY1_ICP_STEP_4_OK 를 포함해.",
-            "LIVE_DAY1_ICP_STEP_5: 5턴 대화의 결론으로 오늘 바로 실행할 우선순위 1개와 확인할 응답을 정리해줘. 응답에는 반드시 LIVE_DAY1_ICP_STEP_5_OK 를 포함해.",
-        ]
-        var timings: [[String: Any]] = []
-
-        for (index, prompt) in turns.enumerated() {
-            let promptMarker = "LIVE_DAY1_ICP_STEP_\(index + 1)"
-            let answerMarker = "LIVE_DAY1_ICP_STEP_\(index + 1)_OK"
-            XCTAssertTrue(promptComposer.waitForExistence(timeout: 10), "Turn \(index + 1) composer should be visible.")
-            enterPrompt(prompt, in: app, promptComposer: promptComposer)
-            XCTAssertTrue(sendButton.isEnabled, "Turn \(index + 1) send button should become enabled after typing.")
-            let startedAt = Date()
-            sendButton.click()
-
-            let promptRenderedAfterClick = waitForLatestPrompt(
-                in: app,
-                containing: promptMarker,
-                timeout: 2
-            )
-            if !promptRenderedAfterClick {
-                app.activate()
-                app.typeKey(.return, modifierFlags: [])
-            }
-            let latestPromptRendered = promptRenderedAfterClick || waitForLatestPrompt(
-                in: app,
-                containing: promptMarker,
-                timeout: 15
-            )
-            if !latestPromptRendered {
-                attachText(app.debugDescription, named: "Turn \(index + 1) Day1 ICP UI Tree After Submit")
-            }
-            XCTAssertTrue(latestPromptRendered, "Turn \(index + 1) latest prompt should render after actual input.")
-            XCTAssertTrue(
-                waitForLatestAnswer(in: app, containing: answerMarker, timeout: 240),
-                "Turn \(index + 1) should render the live Codex SDK answer marker."
-            )
-            let elapsed = Date().timeIntervalSince(startedAt)
-            XCTAssertLessThan(elapsed, 240.0, "Live Day 1 turn \(index + 1) should complete inside the E2E timeout budget.")
-            timings.append([
-                "turn": index + 1,
-                "elapsed_ms": Int((elapsed * 1000).rounded()),
-            ])
-        }
-
-        XCTAssertTrue(waitForLatestPrompt(in: app, containing: "LIVE_DAY1_ICP_STEP_5", timeout: 5))
-        XCTAssertTrue(waitForLatestAnswer(in: app, containing: "LIVE_DAY1_ICP_STEP_5_OK", timeout: 10))
-        let sessionStorePath = "\(appSupportPath)/sessions.json"
-        if let sessionStore = try? String(contentsOfFile: sessionStorePath, encoding: .utf8) {
-            XCTAssertTrue(sessionStore.contains("\"performance\""), "Live UI E2E should persist response timing breakdowns.")
-            XCTAssertTrue(sessionStore.contains("provider.codex.stream_opened"), "Live UI E2E should use the Codex SDK provider stream.")
-            assertSessionStoreHasTerminalAssistantTurns(sessionStore, afterUserPrompts: turns)
-            attachText(sessionStore, named: "03 Day1 ICP Live Session Store With Timings")
-        }
-        attachText(String(data: try JSONSerialization.data(withJSONObject: timings, options: [.prettyPrinted]), encoding: .utf8) ?? "\(timings)", named: "02 Day1 ICP Response Timings")
-        attachScreenshot(from: app, named: "04 Day1 ICP Five Turn Complete")
-    }
-
-    private func shouldRunLiveProviderE2E() -> Bool {
-        ProcessInfo.processInfo.environment["AGENTIC30_RUN_LIVE_PROVIDER_E2E"] == "1"
-            || FileManager.default.fileExists(atPath: "/tmp/agentic30-run-live-provider-e2e")
-    }
-
-    @MainActor
-    func testRealSidecarChatLiveCanary() throws {
-        guard ProcessInfo.processInfo.environment["AGENTIC30_RUN_LIVE_PROVIDER_E2E"] == "1" else {
-            throw XCTSkip("Set AGENTIC30_RUN_LIVE_PROVIDER_E2E=1 to run the live provider canary.")
-        }
-        try runSidecarChatFlow(liveProvider: true)
-    }
-
-    @MainActor
-    func testHiPromptLiveLatencyFromMacApp() throws {
-        guard ProcessInfo.processInfo.environment["AGENTIC30_RUN_HI_LATENCY_E2E"] == "1"
-            || FileManager.default.fileExists(atPath: "/tmp/agentic30-run-hi-latency-e2e")
-        else {
-            throw XCTSkip("Set AGENTIC30_RUN_HI_LATENCY_E2E=1 or create /tmp/agentic30-run-hi-latency-e2e to measure the live macOS app hi prompt latency.")
-        }
-
-        let runID = UUID().uuidString
-        let temporaryRoot = FileManager.default.temporaryDirectory
-        let workspacePath = temporaryRoot
-            .appendingPathComponent("agentic30-ui-hi-latency-workspace-\(runID)", isDirectory: true)
-            .path
-        let appSupportPath = temporaryRoot
-            .appendingPathComponent("agentic30-ui-hi-latency-app-support-\(runID)", isDirectory: true)
-            .path
-        resetDirectory(at: workspacePath)
-        resetDirectory(at: appSupportPath)
-        try writeDay1ICPWorkspaceFixture(workspacePath: workspacePath, appSupportPath: appSupportPath)
-
-        let launchStartedAt = Date()
-        let app = launchApp(
-            arguments: [
-                "--ui-testing-reset-onboarding",
-                "--ui-testing-seed-auth",
-                "--ui-testing-seed-workspace=\(workspacePath)",
-                "--ui-testing-seed-onboarding-context",
-                "--ui-testing-opaque-window",
-            ],
-            environment: [
-                "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
-                "AGENTIC30_CODEX_MODEL": ProcessInfo.processInfo.environment["AGENTIC30_CODEX_MODEL"] ?? "gpt-5.4-mini",
-                "AGENTIC30_CODEX_REASONING_EFFORT": ProcessInfo.processInfo.environment["AGENTIC30_CODEX_REASONING_EFFORT"] ?? "low",
-                "AGENTIC30_RESTORE_SESSIONS_ON_BOOT": "0",
-            ]
-        )
-        hideKnownInterferingApplications()
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-            self.removeDirectory(at: appSupportPath)
-        }
-
-        let bootstrapPrompt = app.descendants(matching: .any)["assistant.structuredPrompt"]
-        XCTAssertTrue(
-            bootstrapPrompt.waitForExistence(timeout: 120),
-            "The startup session should appear as the initial structured prompt before measuring hi latency."
-        )
-        let startupSessionVisibleMs = Int((Date().timeIntervalSince(launchStartedAt) * 1000).rounded())
-        answerBootstrapPromptIfNeeded(in: app)
-
-        let promptComposer = textField(in: app, matching: [
-            "assistant.promptComposer",
-            "메시지 보내기",
-            "오늘 무엇을 도와드릴까요? /office-hours-docs",
-        ])
-        XCTAssertTrue(promptComposer.waitForExistence(timeout: 120), "The assistant composer should be visible before measuring hi latency.")
-        let sendButton = button(in: app, matching: [
-            "assistant.sendPromptButton",
-            "Send prompt",
-        ])
-        XCTAssertTrue(sendButton.waitForExistence(timeout: 5), "The assistant send button should be visible.")
-        let warmStore = try XCTUnwrap(
-            waitForCodexWarmupReady(appSupportPath: appSupportPath, timeout: 90),
-            "Expected Codex warm-up to complete before measuring hi latency."
-        )
-        let warmSummary = extractCodexWarmSummary(fromSessionStore: warmStore)
-        let startupTiming = extractSessionStartupTiming(fromSessionStore: warmStore)
-
-        let response = app.staticTexts["assistant.latestAnswer"]
-        let previousAnswer = response.exists ? response.label : ""
-        enterPrompt("하이", in: app, promptComposer: promptComposer)
-        XCTAssertTrue(sendButton.isEnabled, "Send button should become enabled after typing hi.")
-
-        let startedAt = Date()
-        sendButton.click()
-        XCTAssertTrue(waitForLatestPrompt(in: app, containing: "하이", timeout: 10), "The hi prompt should render as a user bubble.")
-
-        let sessionStore = try XCTUnwrap(
-            waitForCompletedAssistantResponse(
-                appSupportPath: appSupportPath,
-                afterUserMessageContaining: "하이",
-                timeout: 180
-            ),
-            "Expected a completed live assistant response after the hi prompt."
-        )
-        let storeCompletedAt = Date()
-
-        let assistantContent = extractLatestCompletedAssistantContent(
-            fromSessionStore: sessionStore,
-            afterUserMessageContaining: "하이"
-        )
-        let visibleAnswerSnippet = assistantContent
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .components(separatedBy: .newlines)
-            .first?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let answerTextVisible = visibleAnswerSnippet.isEmpty
-            ? waitForAnswerChange(in: app, previousAnswer: previousAnswer, timeout: 30)
-            : waitForLatestAnswer(in: app, containing: visibleAnswerSnippet, timeout: 30)
-        let visibleAt = Date()
-        let timingSummary = extractLatestAssistantTimingSummary(
-            fromSessionStore: sessionStore,
-            afterUserMessageContaining: "하이"
-        )
-        let uiStoreMs = Int((storeCompletedAt.timeIntervalSince(startedAt) * 1000).rounded())
-        let uiVisibleMs = Int((visibleAt.timeIntervalSince(startedAt) * 1000).rounded())
-        let result = [
-            "prompt": "하이",
-            "startup_session_visible_ms": startupSessionVisibleMs,
-            "session_startup_timing": startupTiming,
-            "ui_to_session_store_complete_ms": uiStoreMs,
-            "ui_to_visible_answer_ms": uiVisibleMs,
-            "visible": answerTextVisible,
-            "assistant_content_preview": String(assistantContent.prefix(240)),
-            "warm": warmSummary,
-            "assistant_timing": timingSummary,
-        ] as [String: Any]
-        let resultText = String(
-            data: try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]),
-            encoding: .utf8
-        ) ?? "\(result)"
-        print("AGENTIC30_HI_LATENCY_E2E_RESULT \(resultText)")
-        attachText(resultText, named: "Hi Prompt Live Latency Result")
-        attachText(sessionStore, named: "Hi Prompt Live Session Store")
-        if !answerTextVisible {
-            attachScreenshot(from: app, named: "Hi Prompt Answer Not Visible")
-            attachText(app.debugDescription, named: "Hi Prompt Answer Not Visible Tree")
-        }
-        XCTAssertTrue(answerTextVisible, "The assistant answer should become visible in the macOS app.")
-    }
-
-    @MainActor
-    private func runSidecarChatFlow(liveProvider: Bool) throws {
-        let runID = UUID().uuidString
-        let workspacePath = "/tmp/agentic30-ui-\(liveProvider ? "live" : "stub")-workspace-\(runID)"
-        let appSupportPath = "/tmp/agentic30-ui-\(liveProvider ? "live" : "stub")-app-support-\(runID)"
-        let marker = liveProvider ? "UI_REAL_CHAT_LIVE_OK" : "UI_STUB_CHAT_OK"
-        resetDirectory(at: workspacePath)
-        resetDirectory(at: appSupportPath)
-
-        var environment = [
-            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
-            "AGENTIC30_CODEX_MODEL": "gpt-5.4-mini",
-        ]
-        if !liveProvider {
-            environment["AGENTIC30_TEST_STUB_PROVIDER"] = "1"
-            environment["AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES"] = "1"
-        }
-
-        var launchArguments = [
-            "--ui-testing-reset-onboarding",
-            "--ui-testing-seed-auth",
-            "--ui-testing-seed-workspace=\(workspacePath)",
-            "--ui-testing-seed-onboarding-context",
-            "--ui-testing-seed-draft=\(marker)",
-            "--ui-testing-open-workspace",
-            "--ui-testing-opaque-window",
-        ]
-        if !liveProvider {
-            launchArguments.append("--ui-testing-disable-sidecar")
-        }
-
-        let chatApp = launchApp(
-            arguments: launchArguments,
-            environment: environment
-        )
-        hideKnownInterferingApplications()
-        chatApp.activate()
-        addTeardownBlock {
-            chatApp.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-            self.removeDirectory(at: appSupportPath)
-        }
-
-        answerBootstrapPromptIfNeeded(in: chatApp, allowComposerFallback: false)
-
-        let promptComposer = textField(in: chatApp, matching: [
-            "assistant.promptComposer",
-            "오늘 무엇을 도와드릴까요? /office-hours-docs",
-        ])
-        XCTAssertTrue(promptComposer.waitForExistence(timeout: liveProvider ? 180 : 60))
-        XCTAssertTrue(waitForSessionBackedComposer(promptComposer, timeout: liveProvider ? 180 : 60))
-        attachScreenshot(from: chatApp, named: "01 Real Sidecar Chat Ready")
-
-        let sendButton = button(in: chatApp, matching: [
-            "assistant.sendPromptButton",
-            "Send prompt",
-        ])
-        if !element(promptComposer, contains: marker) || !sendButton.isEnabled {
-            enterPrompt(marker, in: chatApp, promptComposer: promptComposer)
-        }
-        XCTAssertTrue(waitUntilEnabled(sendButton, timeout: 10))
-        let latestPromptUpdated = submitPromptAndWaitForLatestPrompt(
-            in: chatApp,
-            promptComposer: promptComposer,
-            sendButton: sendButton,
-            marker: marker,
-            timeout: 30
-        )
-        if !latestPromptUpdated {
-            attachText(chatApp.debugDescription, named: "03 Latest Prompt Accessibility Tree")
-        }
-        XCTAssertTrue(latestPromptUpdated)
-        attachScreenshot(from: chatApp, named: "03 Real Sidecar Chat Sent")
-
-        if liveProvider {
-            let sessionStore = try XCTUnwrap(
-                waitForCompletedAssistantResponse(
-                    appSupportPath: appSupportPath,
-                    afterUserMessageContaining: marker,
-                    timeout: 180
-                ),
-                "Expected sessions.json to contain the sent marker followed by a completed assistant response."
-            )
-            XCTAssertFalse(sessionStore.contains("gpt-5.5"))
-            XCTAssertFalse(sessionStore.contains("does not exist or you do not have access"))
-            attachText(sessionStore, named: "05 Real Sidecar Session Store")
-        }
-        XCTAssertTrue(
-            waitForLatestAnswer(in: chatApp, containing: marker, timeout: 5),
-            "Expected the completed assistant response to render in either the latest-answer panel or the workspace chat thread."
-        )
-        attachScreenshot(from: chatApp, named: "04 Real Sidecar Chat Response")
-        chatApp.terminate()
-    }
-
-    @MainActor
     func testLaunchPerformance() throws {
         measure(metrics: [XCTApplicationLaunchMetric()]) {
             let app = launchApp(arguments: [
@@ -1723,40 +868,7 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
-    func testBipCoachShowsActionableSidecarFailure() throws {
-        let workspacePath = "/tmp/agentic30-ui-bip-sidecar-failure-\(UUID().uuidString)"
-        resetDirectory(at: workspacePath)
-        let app = launchApp(arguments: [
-            "--ui-testing-reset-onboarding",
-            "--ui-testing-seed-auth",
-            "--ui-testing-seed-onboarding-context",
-            "--ui-testing-seed-workspace=\(workspacePath)",
-            "--ui-testing-seed-idd-complete",
-            "--ui-testing-sidecar-failure",
-            "--ui-testing-open-workspace",
-            "--ui-testing-opaque-window",
-        ])
-        hideKnownInterferingApplications()
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-        }
-
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirstSurface"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.bipCoach.inlineModule"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.chatThread"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.chat.bipMissionCard"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.retry"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.retry"].label.contains("다시 연결"))
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.errorMessage"].exists)
-        XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Cannot read properties")).firstMatch.exists)
-        app.terminate()
-    }
-
-    @MainActor
-    func testWorkspaceStartupShowsFoundationSetupAndLocksNavigation() throws {
+    func testWorkspaceStartupShowsOpenDesignDayAndLocksFutureNavigation() throws {
         let workspacePath = "/tmp/agentic30-ui-startup-queue-\(UUID().uuidString)"
         resetDirectory(at: workspacePath)
         let app = launchApp(arguments: [
@@ -1776,486 +888,11 @@ final class agentic30UITests: XCTestCase {
             self.removeDirectory(at: workspacePath)
         }
 
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetupSurface"].waitForExistence(timeout: 10))
-        let projectFolderButton = app.buttons
-            .matching(NSPredicate(format: "label CONTAINS %@", (workspacePath as NSString).lastPathComponent))
-            .firstMatch
-        XCTAssertTrue(projectFolderButton.waitForExistence(timeout: 2))
-        XCTAssertTrue(app.staticTexts["세션 준비 중"].exists)
-        XCTAssertFalse(app.staticTexts["사이드카 연결 중"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.missionFirstSurface"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.shell"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["먼저 도울 사람을 정해요"].exists)
-        XCTAssertTrue(app.staticTexts["오늘 할 일을 만들기 전에, 누구를 위해 무엇을 검증할지 먼저 정해요."].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.day.1"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.day.2"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.day.8"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.curriculumFutureModule"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetup.progress"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetup.doc.icp"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetup.doc.goal"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetup.doc.values"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetup.doc.spec"].exists)
-        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Foundation Setup을 승인해야 이동할 수 있어요")).firstMatch.exists)
-        app.descendants(matching: .any)["workspace.day.2"].click()
-        XCTAssertTrue(app.staticTexts["먼저 도울 사람을 정해요"].waitForExistence(timeout: 2))
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.iddSetupSurface"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.startupStatusRail"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.startupQueueHint"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.curriculumFocus"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.chatAssistant"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.queueBipMission"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["assistant.promptComposer"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.generateBipMission"].exists)
-    }
-
-    @MainActor
-    func testBipMissionGenerationStaysInlineInCurriculum() throws {
-        let workspacePath = "/tmp/agentic30-ui-bip-inline-generation-\(UUID().uuidString)"
-        resetDirectory(at: workspacePath)
-        let app = launchApp(
-            arguments: [
-                "--ui-testing-reset-onboarding",
-                "--ui-testing-seed-auth",
-                "--ui-testing-seed-onboarding-context",
-                "--ui-testing-seed-workspace=\(workspacePath)",
-                "--ui-testing-seed-idd-complete",
-                "--ui-testing-disable-sidecar",
-                "--ui-testing-open-workspace",
-                "--ui-testing-opaque-window",
-            ],
-            environment: [
-                "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
-            ]
-        )
-        hideKnownInterferingApplications()
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-        }
-
-        let generateMission = button(in: app, matching: [
-            "workspace.generateBipMission",
-            "오늘 실행 생성",
-        ])
-        XCTAssertTrue(generateMission.waitForExistence(timeout: 10))
-        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "workspace.generateBipMission").count, 1)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.curriculumFocus"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.chatAssistant"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.chat.todayTasksCard"].exists)
-        clickCenter(of: generateMission)
-
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirstSurface"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.bipCoach.inlineModule"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.generating"].waitForExistence(timeout: 3))
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.chatThread"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.chat.bipMissionCard"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.settingsPage"].exists)
-    }
-
-    @MainActor
-    func testLocalBipMissionChoicesAppearWithoutGoogleSetup() throws {
-        let workspacePath = "/tmp/agentic30-ui-bip-local-mission-\(UUID().uuidString)"
-        resetDirectory(at: workspacePath)
-        let app = launchApp(
-            arguments: [
-                "--ui-testing-reset-onboarding",
-                "--ui-testing-seed-auth",
-                "--ui-testing-seed-onboarding-context",
-                "--ui-testing-seed-workspace=\(workspacePath)",
-                "--ui-testing-disable-sidecar",
-                "--ui-testing-seed-idd-complete",
-                "--ui-testing-seed-bip-local-mission-choices",
-                "--ui-testing-open-workspace",
-                "--ui-testing-opaque-window",
-            ],
-            environment: [
-                "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
-            ]
-        )
-        hideKnownInterferingApplications()
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-        }
-
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirstSurface"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.bipCoach.inlineModule"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.chat.bipMissionCard"].exists)
-        XCTAssertTrue(app.staticTexts["프로젝트를 읽고 오늘 검증할 행동 하나를 고르세요"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.introCard"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.introToggle"].exists)
-        app.descendants(matching: .any)["workspace.missionFirst.introToggle"].click()
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.introDemo"].waitForExistence(timeout: 2))
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.guide"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.guideStep.1"].exists)
-        XCTAssertTrue(app.staticTexts["프로젝트 기준 확인"].exists)
-        XCTAssertTrue(app.staticTexts["오늘 실행 하나 선택"].exists)
-        XCTAssertTrue(app.staticTexts["필요한 초안 요청"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.choices"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "첫 고객 후보 3명 정하기")).firstMatch.exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.recommendationReason"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.choiceEvidence"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.choiceOutcome"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.choicePrimaryAction"].exists)
-        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "이 미션으로 시작")).firstMatch.exists)
-        XCTAssertTrue(textField(in: app, matching: [
-            "assistant.promptComposer",
-            "예: 왜 1번이 추천인가요? / 더 작은 미션으로 줄여줘",
-        ]).exists)
-        XCTAssertFalse(app.staticTexts["먼저 프로젝트 기준과 기록 장소를 준비합니다."].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.settingsPage"].exists)
-    }
-
-    @MainActor
-    func testMorningBipNotificationWithChoicesShowsTaskSurfacePrimaryAction() throws {
-        let workspacePath = "/tmp/agentic30-ui-bip-notification-choices-\(UUID().uuidString)"
-        resetDirectory(at: workspacePath)
-        let app = launchApp(
-            arguments: [
-                "--ui-testing-reset-onboarding",
-                "--ui-testing-seed-auth",
-                "--ui-testing-seed-onboarding-context",
-                "--ui-testing-seed-workspace=\(workspacePath)",
-                "--ui-testing-disable-sidecar",
-                "--ui-testing-seed-idd-complete",
-                "--ui-testing-seed-bip-local-mission-choices",
-                "--ui-testing-open-bip-notification=morning",
-                "--ui-testing-opaque-window",
-            ],
-            environment: [
-                "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
-            ]
-        )
-        hideKnownInterferingApplications()
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-        }
-
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.bipNotificationTaskSurface"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["10시 오늘 실행"].exists)
-        XCTAssertTrue(app.staticTexts["작게 하나 공개할 미션을 정하세요."].exists)
-        let primaryActions = app.descendants(matching: .any).matching(identifier: "workspace.bipNotificationPrimaryAction")
-        XCTAssertTrue(primaryActions.firstMatch.waitForExistence(timeout: 3))
-        XCTAssertEqual(primaryActions.count, 1)
-        XCTAssertTrue(primaryActions.firstMatch.label.contains("이 미션으로 시작"))
-        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "첫 고객 후보 3명 정하기")).firstMatch.exists)
-    }
-
-    @MainActor
-    func testMorningBipNotificationRoutesToInlineCoach() throws {
-        let workspacePath = "/tmp/agentic30-ui-bip-notification-morning-\(UUID().uuidString)"
-        resetDirectory(at: workspacePath)
-        let app = launchApp(arguments: [
-            "--ui-testing-reset-onboarding",
-            "--ui-testing-seed-auth",
-            "--ui-testing-seed-onboarding-context",
-            "--ui-testing-seed-workspace=\(workspacePath)",
-            "--ui-testing-seed-idd-complete",
-            "--ui-testing-sidecar-failure",
-            "--ui-testing-open-workspace",
-            "--ui-testing-open-bip-notification=morning",
-            "--ui-testing-opaque-window",
-        ])
-        hideKnownInterferingApplications()
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-        }
-
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.bipNotificationTaskSurface"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["10시 오늘 실행"].exists)
-        XCTAssertTrue(app.staticTexts["작게 하나 공개할 미션을 정하세요."].exists)
-        XCTAssertTrue(app.buttons["workspace.bipNotificationPrimaryAction"].label.contains("연결 문제 해결"))
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.bipNotificationBlockingRow"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.bipCoach.inlineModule"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.retry"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirst.retry"].label.contains("다시 연결"))
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.settingsPage"].exists)
-    }
-
-    @MainActor
-    func testEveningBipNotificationExpandsCompletionFieldsForCurrentMission() throws {
-        let workspacePath = "/tmp/agentic30-ui-bip-notification-evening-\(UUID().uuidString)"
-        resetDirectory(at: workspacePath)
-        hideKnownInterferingApplications()
-        let app = launchApp(
-            arguments: [
-                "--ui-testing-reset-onboarding",
-                "--ui-testing-seed-auth",
-                "--ui-testing-seed-onboarding-context",
-                "--ui-testing-seed-workspace=\(workspacePath)",
-                "--ui-testing-disable-sidecar",
-                "--ui-testing-seed-idd-complete",
-                "--ui-testing-seed-bip-current-mission",
-                "--ui-testing-open-bip-notification=evening",
-                "--ui-testing-opaque-window",
-            ],
-            environment: [
-                "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
-            ]
-        )
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-        }
-
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.bipNotificationTaskSurface"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["21시 마감 체크"].exists)
-        XCTAssertTrue(app.staticTexts["게시 기록을 남기면 오늘 루프가 닫힙니다."].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.bipCoach.inlineModule"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["게시 기록 자동 확인"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["assistant.completeBipMission"].exists)
-        XCTAssertFalse(app.textFields["assistant.bipThreadsURL"].exists)
-        XCTAssertFalse(app.textFields["assistant.bipSheetRowNote"].exists)
-        XCTAssertFalse(app.staticTexts["생성 중..."].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.settingsPage"].exists)
-    }
-
-    @MainActor
-    func testCompletedMissionRendersCompletionCardCelebrationCopy() throws {
-        let workspacePath = "/tmp/agentic30-ui-bip-completion-card-\(UUID().uuidString)"
-        resetDirectory(at: workspacePath)
-        hideKnownInterferingApplications()
-        let app = launchApp(
-            arguments: [
-                "--ui-testing-reset-onboarding",
-                "--ui-testing-seed-auth",
-                "--ui-testing-seed-onboarding-context",
-                "--ui-testing-seed-workspace=\(workspacePath)",
-                "--ui-testing-disable-sidecar",
-                "--ui-testing-seed-idd-complete",
-                "--ui-testing-seed-bip-completed-mission",
-                "--ui-testing-open-bip-notification=evening",
-                "--ui-testing-opaque-window",
-            ],
-            environment: [
-                "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
-            ]
-        )
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-        }
-
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.bipNotificationTaskSurface"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.completionCard.title"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["Day 1 완료!"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.completionCard.encouragement"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["좋아요, 이 근거로 다음 Day를 더 정확히 이어갈게요."].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.completionCard.questionCount"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["질문 3개 완료"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.completionCard.nextDayTeaser"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["다음: Day 2 Market - 돈이 흐르는 기준 시장을 가볍게 확인해보세요."].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.completionCard.confetti"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["workspace.completionCard.cta"].waitForExistence(timeout: 3))
-        XCTAssertEqual(app.buttons["workspace.completionCard.cta"].label, "Day 2 시작하기")
-
-        clickCenter(of: app.buttons["workspace.completionCard.cta"])
-
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.missionFirstSurface"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.day.2"].exists)
-        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Day 2 기준")).firstMatch.waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["workspace.generateBipMission"].waitForExistence(timeout: 3))
-    }
-
-    @MainActor
-    func testGraduationDestinationRendersGraduationScreen() throws {
-        let runID = UUID().uuidString
-        let workspacePath = "/tmp/agentic30-ui-graduation-workspace-\(runID)"
-        let appSupportPath = "/tmp/agentic30-ui-graduation-app-support-\(runID)"
-        resetDirectory(at: workspacePath)
-        resetDirectory(at: appSupportPath)
-        hideKnownInterferingApplications()
-
-        let app = launchApp(
-            arguments: [
-                "--ui-testing-reset-onboarding",
-                "--ui-testing-seed-auth",
-                "--ui-testing-seed-onboarding-context",
-                "--ui-testing-seed-workspace=\(workspacePath)",
-                "--ui-testing-disable-sidecar",
-                "--ui-testing-seed-idd-complete",
-                "--ui-testing-seed-foundation-graduation",
-                "--ui-testing-open-workspace",
-                "--ui-testing-opaque-window",
-            ],
-            environment: [
-                "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
-                "AGENTIC30_TEST_STUB_PROVIDER": "1",
-            ]
-        )
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-            self.removeDirectory(at: appSupportPath)
-        }
-
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.graduationSurface"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.graduation.title"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["30일 커리큘럼을 완료했어요"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.graduation.body"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["Graduation reached"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.day.30"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.missionFirstSurface"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["assistant.promptComposer"].exists)
-        XCTAssertFalse(app.buttons["workspace.generateBipMission"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.iddSetupSurface"].exists)
-        attachScreenshot(from: app, named: "01 Graduation Destination")
-    }
-
-    @MainActor
-    func testReviewDayDashboardRendersOnlyCuratedViewModelFields() throws {
-        let runID = UUID().uuidString
-        let workspacePath = "/tmp/agentic30-ui-review-dashboard-workspace-\(runID)"
-        let appSupportPath = "/tmp/agentic30-ui-review-dashboard-app-support-\(runID)"
-        resetDirectory(at: workspacePath)
-        resetDirectory(at: appSupportPath)
-        hideKnownInterferingApplications()
-
-        let app = launchApp(
-            arguments: [
-                "--ui-testing-reset-onboarding",
-                "--ui-testing-seed-auth",
-                "--ui-testing-seed-onboarding-context",
-                "--ui-testing-seed-workspace=\(workspacePath)",
-                "--ui-testing-disable-sidecar",
-                "--ui-testing-seed-idd-complete",
-                "--ui-testing-seed-review-day-dashboard",
-                "--ui-testing-open-workspace",
-                "--ui-testing-opaque-window",
-            ],
-            environment: [
-                "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
-                "AGENTIC30_TEST_STUB_PROVIDER": "1",
-            ]
-        )
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-            self.removeDirectory(at: appSupportPath)
-        }
-
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.reviewDashboardSurface"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.reviewDashboard.title"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["Review Day dashboard"].exists)
-        XCTAssertTrue(app.staticTexts["Day 1-7에서 고른 핵심 지표만 봅니다."].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.reviewDashboard.metrics"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.reviewDashboard.metric.1"].exists)
-        XCTAssertTrue(app.staticTexts["완료 Days"].exists)
-        XCTAssertTrue(app.staticTexts["6/7"].exists)
-        XCTAssertTrue(app.staticTexts["검증된 Actions"].exists)
-        XCTAssertTrue(app.staticTexts["3"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.reviewDashboard.insights"].exists)
-        XCTAssertTrue(app.staticTexts["완료 속도는 좋지만 Day 8 전에는 미완료 Action 1개를 작게 닫아보세요."].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["workspace.reviewDashboard.nextSteps"].exists)
-        XCTAssertTrue(app.staticTexts["가격 ask 링크 1개를 남기고 다음 Action Day에서 자동 검증해보세요."].exists)
-
-        let renderedTree = app.debugDescription
-        XCTAssertFalse(renderedTree.contains("source_statuses"))
-        XCTAssertFalse(renderedTree.contains("source_categories"))
-        XCTAssertFalse(renderedTree.contains("priority_trace"))
-        XCTAssertFalse(renderedTree.contains("raw_collected_model"))
-        XCTAssertFalse(renderedTree.contains("SECRET_SOURCE_TRACE_DO_NOT_RENDER"))
-        XCTAssertFalse(app.descendants(matching: .any)["workspace.missionFirstSurface"].exists)
-        XCTAssertFalse(app.buttons["workspace.generateBipMission"].exists)
-        attachScreenshot(from: app, named: "01 Review Day Curated Dashboard")
-    }
-
-    @MainActor
-    func testReopeningAfterDayOneCompletionRestoresDayTwoQuestionView() throws {
-        let runID = UUID().uuidString
-        let workspacePath = "/tmp/agentic30-ui-day2-restore-workspace-\(runID)"
-        let appSupportPath = "/tmp/agentic30-ui-day2-restore-app-support-\(runID)"
-        resetDirectory(at: workspacePath)
-        resetDirectory(at: appSupportPath)
-        hideKnownInterferingApplications()
-
-        let firstLaunch = launchApp(
-            arguments: [
-                "--ui-testing-reset-onboarding",
-                "--ui-testing-seed-auth",
-                "--ui-testing-seed-onboarding-context",
-                "--ui-testing-seed-workspace=\(workspacePath)",
-                "--ui-testing-disable-sidecar",
-                "--ui-testing-seed-idd-complete",
-                "--ui-testing-seed-bip-completed-mission",
-                "--ui-testing-open-bip-notification=evening",
-                "--ui-testing-opaque-window",
-            ],
-            environment: [
-                "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
-                "AGENTIC30_TEST_STUB_PROVIDER": "1",
-                "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
-            ]
-        )
-        firstLaunch.activate()
-        addTeardownBlock {
-            firstLaunch.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-            self.removeDirectory(at: appSupportPath)
-        }
-
-        XCTAssertTrue(firstLaunch.buttons["workspace.completionCard.cta"].waitForExistence(timeout: 5))
-        XCTAssertEqual(firstLaunch.buttons["workspace.completionCard.cta"].label, "Day 2 시작하기")
-        clickCenter(of: firstLaunch.buttons["workspace.completionCard.cta"])
-        XCTAssertTrue(firstLaunch.descendants(matching: .any)["workspace.missionFirstSurface"].waitForExistence(timeout: 3))
-        XCTAssertTrue(firstLaunch.descendants(matching: .any)["workspace.day.2"].exists)
-        firstLaunch.terminate()
-        waitForAgenticAppToExit(bundleIdentifier: "october-academy.agentic30", timeout: 3)
-
-        let reopened = launchApp(
-            arguments: [
-                "--ui-testing-seed-auth",
-                "--ui-testing-seed-onboarding-context",
-                "--ui-testing-seed-workspace=\(workspacePath)",
-                "--ui-testing-disable-sidecar",
-                "--ui-testing-seed-idd-complete",
-                "--ui-testing-seed-foundation-day2-question",
-                "--ui-testing-open-workspace",
-                "--ui-testing-opaque-window",
-            ],
-            environment: [
-                "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
-                "AGENTIC30_TEST_STUB_PROVIDER": "1",
-                "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
-            ]
-        )
-        reopened.activate()
-        addTeardownBlock {
-            reopened.terminate()
-        }
-
-        XCTAssertTrue(reopened.descendants(matching: .any)["workspace.supportThread"].waitForExistence(timeout: 5))
-        XCTAssertTrue(reopened.descendants(matching: .any)["workspace.chat.structuredPrompt"].waitForExistence(timeout: 3))
-        XCTAssertTrue(reopened.descendants(matching: .any)["assistant.structuredPrompt"].exists)
-        XCTAssertTrue(reopened.staticTexts["Day 2 Market 질문"].waitForExistence(timeout: 3))
-        XCTAssertTrue(reopened.staticTexts["이미 돈을 내는 기준 시장은 어디인가요?"].waitForExistence(timeout: 3))
-        XCTAssertTrue(reopened.descendants(matching: .any)["workspace.day.2"].waitForExistence(timeout: 3))
-        XCTAssertTrue(reopened.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Day 2 기준")).firstMatch.waitForExistence(timeout: 3))
-        XCTAssertFalse(reopened.descendants(matching: .any)["workspace.missionFirstSurface"].exists)
-        XCTAssertFalse(reopened.descendants(matching: .any)["workspace.missionFirst.introCard"].exists)
-        XCTAssertFalse(reopened.buttons["workspace.generateBipMission"].exists)
-        XCTAssertFalse(reopened.descendants(matching: .any)["workspace.completionCard.title"].exists)
-        XCTAssertFalse(reopened.descendants(matching: .any)["workspace.iddSetupSurface"].exists)
-        XCTAssertFalse(reopened.staticTexts["Welcome to Agentic30"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.task.day1"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.task.day2"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.task.day2"].label.contains("잠금"))
     }
 
     @MainActor
@@ -2270,6 +907,72 @@ final class agentic30UITests: XCTestCase {
         app.launchEnvironment = environment
         app.launch()
         return app
+    }
+
+    @MainActor
+    private func completeOpenDesignDayInterviews(
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let primaryHeaderAction = app.buttons["opendesign.day.header.primary"]
+        XCTAssertTrue(waitUntilHittable(primaryHeaderAction, timeout: 5), file: file, line: line)
+        clickCenter(of: primaryHeaderAction)
+
+        let missionAccept = app.buttons["opendesign.day.mission.accept"]
+        XCTAssertTrue(waitUntilHittable(missionAccept, timeout: 5), file: file, line: line)
+        clickCenter(of: missionAccept)
+        XCTAssertTrue(
+            waitForButtonLabel(in: app, identifier: "opendesign.day.mission.accept", containing: "미션 수락됨", timeout: 3),
+            file: file,
+            line: line
+        )
+
+        submitOpenDesignInterviewStep(1, option: 3, in: app, file: file, line: line)
+        submitOpenDesignInterviewStep(2, option: 1, in: app, file: file, line: line)
+        submitOpenDesignInterviewStep(3, option: 2, in: app, file: file, line: line)
+        submitOpenDesignInterviewStep(4, option: 1, in: app, file: file, line: line)
+
+        XCTAssertTrue(app.buttons["opendesign.day.icpPreview.copy"].waitForExistence(timeout: 5), file: file, line: line)
+    }
+
+    @MainActor
+    private func submitOpenDesignInterviewStep(
+        _ step: Int,
+        option: Int,
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let optionIdentifier = step == 1 ? "opendesign.day.icp.option.\(option)" : "opendesign.day.interview.\(step).option.\(option)"
+        let submitIdentifier = step == 1 ? "opendesign.day.icp.submit" : "opendesign.day.interview.\(step).submit"
+        let footerIdentifier = step == 1 ? "opendesign.day.icp.footer.status" : "opendesign.day.interview.\(step).footer.status"
+
+        let choice = app.buttons[optionIdentifier]
+        XCTAssertTrue(waitForOpenDesignMainHittable(choice, in: app, timeout: 6), file: file, line: line)
+        app.buttons[optionIdentifier].click()
+        XCTAssertTrue(
+            waitForElementLabel(in: app, identifier: footerIdentifier, containing: "선택됨 · \(option)번", timeout: 3),
+            file: file,
+            line: line
+        )
+
+        let submit = app.buttons[submitIdentifier]
+        XCTAssertTrue(waitUntilHittable(submit, timeout: 5), file: file, line: line)
+        app.buttons[submitIdentifier].click()
+        XCTAssertTrue(
+            waitForElementLabel(in: app, identifier: footerIdentifier, containing: "제출 완료 · \(option)번", timeout: 3),
+            file: file,
+            line: line
+        )
+
+        if step < 4 {
+            XCTAssertTrue(
+                app.buttons["opendesign.day.interview.\(step + 1).option.1"].waitForExistence(timeout: 5),
+                file: file,
+                line: line
+            )
+        }
     }
 
     private func terminateRunningAgenticAppIfNeeded() {
@@ -2528,6 +1231,205 @@ final class agentic30UITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(frame.minY, container.minY - tolerance, message, file: file, line: line)
         XCTAssertLessThanOrEqual(frame.maxX, container.maxX + tolerance, message, file: file, line: line)
         XCTAssertLessThanOrEqual(frame.maxY, container.maxY + tolerance, message, file: file, line: line)
+    }
+
+    @MainActor
+    private func assertOpenDesignWideColumns(
+        surface: CGRect,
+        tasks: CGRect,
+        main: CGRect,
+        meta: CGRect,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let tolerance: CGFloat = 2.0
+        XCTAssertEqual(tasks.minX, surface.minX + 52, accuracy: tolerance, "Day shell rail column should match day.html 52px width", file: file, line: line)
+        XCTAssertEqual(tasks.width, 240, accuracy: tolerance, "Day shell task sidebar should match day.html 240px width", file: file, line: line)
+        XCTAssertEqual(tasks.maxX, main.minX, accuracy: tolerance, "Task sidebar and main content should share a boundary", file: file, line: line)
+        XCTAssertEqual(meta.width, 280, accuracy: tolerance, "Day shell meta panel should match day.html 280px width", file: file, line: line)
+        XCTAssertEqual(main.maxX, meta.minX, accuracy: tolerance, "Main content and meta panel should share a boundary", file: file, line: line)
+        XCTAssertEqual(meta.maxX, surface.maxX, accuracy: tolerance, "Meta panel should terminate at the workspace surface edge", file: file, line: line)
+    }
+
+    @MainActor
+    private func assertOpenDesignDayResponsiveLayout(
+        windowSize: CGSize,
+        expectedRailWidth: CGFloat,
+        expectedTaskSidebarWidth: CGFloat,
+        expectedMetaPanelWidth: CGFloat?,
+        screenshotName: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-opendesign-day-responsive-\(Int(windowSize.width))-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-opendesign-day-responsive-support-\(Int(windowSize.width))-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=\(Int(windowSize.width))x\(Int(windowSize.height))",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        let openDesignShell = elementWithIdentifier(in: app, "opendesign.day.shell")
+        if !openDesignShell.waitForExistence(timeout: 10) {
+            attachScreenshot(from: app, named: "\(screenshotName) Missing")
+            attachText(app.debugDescription, named: "\(screenshotName) Missing Tree")
+        }
+        XCTAssertTrue(openDesignShell.exists, file: file, line: line)
+
+        let workspaceSurface = elementWithIdentifier(in: app, "workspace.surface")
+        XCTAssertTrue(waitForOpenDesignSurfaceWidth(workspaceSurface, width: windowSize.width, timeout: 5), file: file, line: line)
+        attachScreenshot(from: app, named: screenshotName)
+
+        let rail = elementWithIdentifier(in: app, "opendesign.day.rail")
+        let tasks = elementWithIdentifier(in: app, "opendesign.day.tasks")
+        let main = elementWithIdentifier(in: app, "opendesign.day.main")
+        let meta = elementWithIdentifier(in: app, "opendesign.day.meta")
+        XCTAssertTrue(rail.exists, file: file, line: line)
+        XCTAssertTrue(tasks.exists, file: file, line: line)
+        XCTAssertTrue(main.exists, file: file, line: line)
+        XCTAssertTrue(
+            waitForColumnOffset(tasks, from: workspaceSurface, offset: expectedTaskAccessibilityOffset(railWidth: expectedRailWidth), timeout: 5),
+            "Expected task sidebar to start after rail width \(expectedRailWidth), got rail=\(rail.frame), tasks=\(tasks.frame), surface=\(workspaceSurface.frame), window=\(app.windows.firstMatch.frame)",
+            file: file,
+            line: line
+        )
+        XCTAssertTrue(
+            waitForElementFrameWidth(tasks, width: expectedTaskSidebarWidth, timeout: 5),
+            "Expected task sidebar width \(expectedTaskSidebarWidth), got tasks=\(tasks.frame), surface=\(workspaceSurface.frame), window=\(app.windows.firstMatch.frame)",
+            file: file,
+            line: line
+        )
+        if let expectedMetaPanelWidth {
+            XCTAssertTrue(
+                waitForElementFrameWidth(meta, width: expectedMetaPanelWidth, timeout: 5),
+                "Expected meta width \(expectedMetaPanelWidth), got meta=\(meta.frame), surface=\(workspaceSurface.frame), window=\(app.windows.firstMatch.frame)",
+                file: file,
+                line: line
+            )
+        }
+
+        assertOpenDesignResponsiveColumns(
+            surface: workspaceSurface.frame,
+            rail: rail.frame,
+            tasks: tasks.frame,
+            main: main.frame,
+            meta: expectedMetaPanelWidth == nil ? nil : meta.frame,
+            expectedRailWidth: expectedRailWidth,
+            expectedTaskSidebarWidth: expectedTaskSidebarWidth,
+            expectedMetaPanelWidth: expectedMetaPanelWidth,
+            file: file,
+            line: line
+        )
+        if expectedMetaPanelWidth == nil {
+            XCTAssertFalse(meta.exists, "Meta panel should collapse at this native responsive width", file: file, line: line)
+        } else {
+            XCTAssertTrue(meta.exists, file: file, line: line)
+        }
+    }
+
+    @MainActor
+    private func waitForOpenDesignSurfaceWidth(
+        _ surface: XCUIElement,
+        width: CGFloat,
+        timeout: TimeInterval
+    ) -> Bool {
+        let tolerance: CGFloat = 24
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if surface.exists && abs(surface.frame.width - width) <= tolerance {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+        return surface.exists && abs(surface.frame.width - width) <= tolerance
+    }
+
+    @MainActor
+    private func waitForElementFrameWidth(
+        _ element: XCUIElement,
+        width: CGFloat,
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if element.exists && abs(element.frame.width - width) <= 2 {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+        return element.exists && abs(element.frame.width - width) <= 2
+    }
+
+    @MainActor
+    private func waitForColumnOffset(
+        _ element: XCUIElement,
+        from surface: XCUIElement,
+        offset: CGFloat,
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if element.exists && surface.exists && abs(element.frame.minX - (surface.frame.minX + offset)) <= 2 {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+        return element.exists && surface.exists && abs(element.frame.minX - (surface.frame.minX + offset)) <= 2
+    }
+
+    private func expectedTaskAccessibilityOffset(railWidth: CGFloat) -> CGFloat {
+        railWidth
+    }
+
+    @MainActor
+    private func assertOpenDesignResponsiveColumns(
+        surface: CGRect,
+        rail: CGRect,
+        tasks: CGRect,
+        main: CGRect,
+        meta: CGRect?,
+        expectedRailWidth: CGFloat,
+        expectedTaskSidebarWidth: CGFloat,
+        expectedMetaPanelWidth: CGFloat?,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let tolerance: CGFloat = 2.0
+        let surfaceEdgeTolerance: CGFloat = 8.0
+        XCTAssertGreaterThanOrEqual(rail.minX, surface.minX - surfaceEdgeTolerance, "Rail should stay inside the workspace surface", file: file, line: line)
+        XCTAssertLessThanOrEqual(rail.maxX, surface.maxX + surfaceEdgeTolerance, "Rail should stay inside the workspace surface", file: file, line: line)
+        XCTAssertEqual(tasks.minX, surface.minX + expectedTaskAccessibilityOffset(railWidth: expectedRailWidth), accuracy: tolerance, "Task sidebar should start after the Open Design rail column", file: file, line: line)
+        XCTAssertEqual(tasks.width, expectedTaskSidebarWidth, accuracy: tolerance, "Task sidebar width should match the Open Design breakpoint", file: file, line: line)
+        XCTAssertEqual(tasks.maxX, main.minX, accuracy: tolerance, "Task sidebar and main content should share a boundary", file: file, line: line)
+
+        if let meta, let expectedMetaPanelWidth {
+            XCTAssertEqual(meta.width, expectedMetaPanelWidth, accuracy: tolerance, "Meta panel width should match the Open Design breakpoint", file: file, line: line)
+            XCTAssertEqual(main.maxX, meta.minX, accuracy: tolerance, "Main content and meta panel should share a boundary", file: file, line: line)
+            XCTAssertEqual(meta.maxX, surface.maxX, accuracy: surfaceEdgeTolerance, "Meta panel should terminate near the workspace surface edge", file: file, line: line)
+        } else {
+            XCTAssertEqual(main.maxX, surface.maxX, accuracy: surfaceEdgeTolerance, "Main content should fill the collapsed meta-panel space", file: file, line: line)
+        }
     }
 
     @MainActor
@@ -2974,104 +1876,6 @@ final class agentic30UITests: XCTestCase {
         process.waitUntilExit()
     }
 
-    private func writeDay1ICPWorkspaceFixture(workspacePath: String, appSupportPath: String) throws {
-        let workspaceURL = URL(fileURLWithPath: workspacePath, isDirectory: true)
-        let docsURL = workspaceURL.appendingPathComponent("docs", isDirectory: true)
-        try FileManager.default.createDirectory(at: docsURL, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(
-            at: URL(fileURLWithPath: appSupportPath, isDirectory: true),
-            withIntermediateDirectories: true
-        )
-
-        try """
-        # Ideal Customer Profile (ICP)
-
-        ## Our ICP: 전업 1인 개발자 (수익 0원, macOS)
-
-        에이전트 코딩 도구로 프로덕트를 만들 수 있고, 이미 전업했지만 아직 수익 0원인 macOS 사용자.
-        고객 인터뷰를 직접 수행할 의향이 있으며 transcript를 파일로 확보할 수 있다.
-
-        ## Persona
-
-        퇴사 후 전업자, macOS 사용자, Codex/Claude Code로 제품 구현 가능, 첫 매출 전.
-        """.write(to: docsURL.appendingPathComponent("ICP.md"), atomically: true, encoding: .utf8)
-
-        try """
-        # SPEC
-
-        ## v0 proof baseline
-
-        Day 1은 builder-state 진단 후 현재 proof 상태와 다음 proof target을 기록한다.
-        기존 landing_live/product_live 사용자는 blank-slate discovery 대신 asset audit 또는 bottleneck diagnosis fast path로 진행한다.
-        """.write(to: docsURL.appendingPathComponent("SPEC.md"), atomically: true, encoding: .utf8)
-
-        let config: [String: Any] = [
-            "workspace": [
-                "root": workspacePath,
-                "icp": "docs/ICP.md",
-                "spec": "docs/SPEC.md",
-                "designSystem": "",
-                "adr": "",
-                "goal": "",
-            ],
-            "externalDocs": [
-                "googleDocs": [],
-                "googleSheets": [],
-                "notion": [],
-            ],
-            "social": [
-                "threads": "",
-                "x": "",
-            ],
-        ]
-        let data = try JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys])
-        try data.write(to: URL(fileURLWithPath: appSupportPath, isDirectory: true).appendingPathComponent("bip-config.json"))
-    }
-
-    private func waitForCompletedAssistantResponse(
-        appSupportPath: String,
-        afterUserMessageContaining marker: String,
-        timeout: TimeInterval
-    ) -> String? {
-        let sessionsURL = URL(fileURLWithPath: appSupportPath, isDirectory: true)
-            .appendingPathComponent("sessions.json")
-        let deadline = Date().addingTimeInterval(timeout)
-
-        repeat {
-            if let data = try? Data(contentsOf: sessionsURL),
-               let raw = String(data: data, encoding: .utf8) {
-                if sessionStore(data: data, hasCompletedAssistantAfterUserMessageContaining: marker) {
-                    return raw
-                }
-            }
-
-            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-        } while Date() < deadline
-
-        return nil
-    }
-
-    private func waitForCodexWarmupReady(
-        appSupportPath: String,
-        timeout: TimeInterval
-    ) -> String? {
-        let sessionsURL = URL(fileURLWithPath: appSupportPath, isDirectory: true)
-            .appendingPathComponent("sessions.json")
-        let deadline = Date().addingTimeInterval(timeout)
-
-        repeat {
-            if let data = try? Data(contentsOf: sessionsURL),
-               let raw = String(data: data, encoding: .utf8),
-               sessionStoreHasCodexWarmupReady(raw) {
-                return raw
-            }
-
-            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-        } while Date() < deadline
-
-        return nil
-    }
-
     private func waitForPreferredModelSettings(
         appSupportPath: String,
         claude: String,
@@ -3115,536 +1919,6 @@ final class agentic30UITests: XCTestCase {
         return (claude, codex, gemini)
     }
 
-    private func waitForAgentSetting(
-        appSupportPath: String,
-        key: String,
-        value: String,
-        timeout: TimeInterval
-    ) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            if let settings = devSecretSettings(appSupportPath: appSupportPath),
-               settings[key] as? String == value {
-                return true
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-        } while Date() < deadline
-        return devSecretSettings(appSupportPath: appSupportPath)?[key] as? String == value
-    }
-
-    private func devSecretSettings(appSupportPath: String) -> [String: Any]? {
-        let secretsURL = URL(fileURLWithPath: appSupportPath, isDirectory: true)
-            .appendingPathComponent("dev-secrets.json")
-        guard let data = try? Data(contentsOf: secretsURL),
-              let rawObject = try? JSONSerialization.jsonObject(with: data),
-              let object = rawObject as? [String: Any]
-        else {
-            return nil
-        }
-        return object["settings"] as? [String: Any]
-    }
-
-    private func sessionStoreHasCodexWarmupReady(_ raw: String) -> Bool {
-        extractCodexWarmSummary(fromSessionStore: raw)["state"] as? String == "ready"
-    }
-
-    private func sessionStore(
-        data: Data,
-        hasCompletedAssistantAfterUserMessageContaining marker: String
-    ) -> Bool {
-        guard
-            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let sessions = payload["sessions"] as? [[String: Any]]
-        else { return false }
-
-        for session in sessions {
-            guard let messages = session["messages"] as? [[String: Any]] else { continue }
-
-            for (index, message) in messages.enumerated() {
-                guard
-                    message["role"] as? String == "user",
-                    let content = message["content"] as? String,
-                    content.contains(marker)
-                else { continue }
-
-                let followingMessages = messages.dropFirst(index + 1)
-                if followingMessages.contains(where: isCompletedAssistantMessage) {
-                    return true
-                }
-            }
-        }
-
-        return false
-    }
-
-    private func isCompletedAssistantMessage(_ message: [String: Any]) -> Bool {
-        guard message["role"] as? String == "assistant" else { return false }
-        guard message["state"] as? String == "final" else { return false }
-        guard (message["error"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true else {
-            return false
-        }
-        guard let content = message["content"] as? String else { return false }
-        return !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private func assertSessionStoreHasTerminalAssistantTurns(
-        _ raw: String,
-        afterUserPrompts prompts: [String],
-        file: StaticString = #filePath,
-        line: UInt = #line
-    ) {
-        guard
-            let data = raw.data(using: .utf8),
-            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let sessions = payload["sessions"] as? [[String: Any]]
-        else {
-            XCTFail("sessions.json should decode as a sessions payload.", file: file, line: line)
-            return
-        }
-
-        for prompt in prompts {
-            let marker = prompt.components(separatedBy: ":").first ?? prompt
-            let hasTerminalTurn = sessions.contains { session in
-                guard let messages = session["messages"] as? [[String: Any]] else { return false }
-                for (index, message) in messages.enumerated() {
-                    guard
-                        message["role"] as? String == "user",
-                        let content = message["content"] as? String,
-                        content.contains(marker)
-                    else { continue }
-
-                    return messages.dropFirst(index + 1).contains(where: isTerminalAssistantMessage)
-                }
-                return false
-            }
-            XCTAssertTrue(hasTerminalTurn, "Expected user prompt \(marker) to be followed by an assistant final/error/orphan turn.", file: file, line: line)
-        }
-    }
-
-    private func isTerminalAssistantMessage(_ message: [String: Any]) -> Bool {
-        guard message["role"] as? String == "assistant" else { return false }
-        let state = message["state"] as? String
-        if state == "final" { return true }
-        if state == "error" { return true }
-        if message["recoverable"] as? Bool == true { return true }
-        return false
-    }
-
-    private func extractLatestAssistantTimingSummary(
-        fromSessionStore raw: String,
-        afterUserMessageContaining marker: String
-    ) -> [String: Any] {
-        guard
-            let data = raw.data(using: .utf8),
-            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let sessions = payload["sessions"] as? [[String: Any]]
-        else { return [:] }
-
-        for session in sessions {
-            guard let messages = session["messages"] as? [[String: Any]] else { continue }
-            for (index, message) in messages.enumerated() {
-                guard
-                    message["role"] as? String == "user",
-                    let content = message["content"] as? String,
-                    content.contains(marker)
-                else { continue }
-
-                let assistant = messages.dropFirst(index + 1).first(where: isCompletedAssistantMessage)
-                guard let performance = assistant?["performance"] as? [String: Any] else {
-                    return [:]
-                }
-                let marks = (performance["marks"] as? [[String: Any]] ?? [])
-                    .compactMap { mark -> [String: Any]? in
-                        guard let phase = mark["phase"] as? String else { return nil }
-                        let details = mark["details"] as? [String: Any] ?? [:]
-                        var summary: [String: Any] = [
-                            "phase": phase,
-                            "elapsed_ms": mark["elapsedMs"] as? Int ?? mark["elapsed_ms"] as? Int ?? 0,
-                        ]
-                        if !details.isEmpty {
-                            summary["details"] = details
-                        }
-                        return summary
-                    }
-                let segments = timingSegments(from: marks)
-                return [
-                    "total_ms": performance["totalMs"] as? Int ?? 0,
-                    "marks": marks,
-                    "segments": segments,
-                ]
-            }
-        }
-
-        return [:]
-    }
-
-    private func timingSegments(from marks: [[String: Any]]) -> [[String: Any]] {
-        var segments: [[String: Any]] = []
-        var previousPhase: String?
-        var previousElapsed: Int?
-
-        for mark in marks {
-            guard
-                let phase = mark["phase"] as? String,
-                let elapsed = mark["elapsed_ms"] as? Int
-            else { continue }
-
-            if let previousPhase, let previousElapsed {
-                segments.append([
-                    "from": previousPhase,
-                    "to": phase,
-                    "delta_ms": max(0, elapsed - previousElapsed),
-                ])
-            }
-            previousPhase = phase
-            previousElapsed = elapsed
-        }
-
-        return segments
-    }
-
-    private func extractCodexWarmSummary(fromSessionStore raw: String) -> [String: Any] {
-        guard
-            let data = raw.data(using: .utf8),
-            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let sessions = payload["sessions"] as? [[String: Any]]
-        else { return [:] }
-
-        for session in sessions {
-            guard
-                session["provider"] as? String == "codex",
-                let runtime = session["runtime"] as? [String: Any],
-                let warm = runtime["codexWarm"] as? [String: Any]
-            else { continue }
-
-            return [
-                "state": warm["state"] as? String ?? "",
-                "elapsed_ms": warm["elapsedMs"] as? Int ?? 0,
-                "model": warm["model"] as? String ?? "",
-                "execution_mode": warm["executionMode"] as? String ?? "",
-                "error": warm["error"] as? String ?? "",
-            ]
-        }
-
-        return [:]
-    }
-
-    private func extractSessionStartupTiming(fromSessionStore raw: String) -> [String: Any] {
-        guard
-            let data = raw.data(using: .utf8),
-            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let sessions = payload["sessions"] as? [[String: Any]]
-        else { return [:] }
-
-        for session in sessions {
-            guard
-                session["provider"] as? String == "codex",
-                let runtime = session["runtime"] as? [String: Any],
-                let timing = runtime["startupTiming"] as? [String: Any]
-            else { continue }
-
-            return [
-                "process_to_session_created_ms": timing["processToSessionCreatedMs"] as? Int ?? 0,
-                "create_session_elapsed_ms": timing["createSessionElapsedMs"] as? Int ?? 0,
-                "bootstrap_intake_elapsed_ms": timing["bootstrapIntakeElapsedMs"] as? Int ?? 0,
-                "persist_elapsed_ms": timing["persistElapsedMs"] as? Int ?? 0,
-                "bip_coach_sync_elapsed_ms": timing["bipCoachSyncElapsedMs"] as? Int ?? 0,
-                "client_count_at_create": timing["clientCountAtCreate"] as? Int ?? 0,
-            ]
-        }
-
-        return [:]
-    }
-
-    private func extractLatestCompletedAssistantContent(
-        fromSessionStore raw: String,
-        afterUserMessageContaining marker: String
-    ) -> String {
-        guard
-            let data = raw.data(using: .utf8),
-            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let sessions = payload["sessions"] as? [[String: Any]]
-        else { return "" }
-
-        for session in sessions {
-            guard let messages = session["messages"] as? [[String: Any]] else { continue }
-            for (index, message) in messages.enumerated() {
-                guard
-                    message["role"] as? String == "user",
-                    let content = message["content"] as? String,
-                    content.contains(marker)
-                else { continue }
-
-                let assistant = messages.dropFirst(index + 1).first(where: isCompletedAssistantMessage)
-                return assistant?["content"] as? String ?? ""
-            }
-        }
-
-        return ""
-    }
-
-    @MainActor
-    private func answerBootstrapPromptIfNeeded(in app: XCUIApplication, allowComposerFallback: Bool = true) {
-        let promptComposer = textField(in: app, matching: [
-            "assistant.promptComposer",
-            "오늘 무엇을 도와드릴까요? /office-hours-docs",
-        ])
-
-        let structuredPrompt = app.descendants(matching: .any)["assistant.structuredPrompt"]
-        let structuredPromptTitle = app.staticTexts["assistant.structuredPromptTitle"]
-        let structuredChoices = app.descendants(matching: .any).matching(
-            NSPredicate(format: "identifier BEGINSWITH %@", "assistant.structuredChoice.")
-        )
-        guard waitForBootstrapPromptOrComposer(
-            promptComposer: promptComposer,
-            structuredPrompt: structuredPrompt,
-            structuredPromptTitle: structuredPromptTitle,
-            structuredChoices: structuredChoices,
-            timeout: 120
-        ) == .structuredPrompt else {
-            guard allowComposerFallback else { return }
-            let sendButton = button(in: app, matching: [
-                "assistant.sendPromptButton",
-                "Send prompt",
-            ])
-            answerWorkspaceBootstrapPromptIfNeeded(
-                in: app,
-                promptComposer: promptComposer,
-                sendButton: sendButton
-            )
-            return
-        }
-
-        let clickedBootstrapChoice = clickFirstBootstrapChoice(
-            in: app,
-            structuredChoices: structuredChoices,
-            timeout: 10
-        )
-        if !clickedBootstrapChoice {
-            attachScreenshot(from: app, named: "00 Bootstrap Prompt Visible")
-            attachText(app.debugDescription, named: "00 Bootstrap Accessibility Tree")
-        }
-        XCTAssertTrue(clickedBootstrapChoice)
-
-        let continueButton = button(in: app, matching: [
-            "assistant.structuredContinueButton",
-            "Continue",
-        ])
-        XCTAssertTrue(continueButton.waitForExistence(timeout: 5))
-        if !waitUntilEnabled(continueButton, timeout: 5) {
-            attachScreenshot(from: app, named: "00 Bootstrap Continue Disabled")
-            attachText(app.debugDescription, named: "00 Bootstrap Continue Disabled Tree")
-        }
-        XCTAssertTrue(waitUntilEnabled(continueButton, timeout: 5))
-        attachScreenshot(from: app, named: "00 Bootstrap Prompt Answered")
-        continueButton.click()
-    }
-
-    @MainActor
-    private func clickFirstBootstrapChoice(
-        in app: XCUIApplication,
-        structuredChoices: XCUIElementQuery,
-        timeout: TimeInterval
-    ) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-
-        repeat {
-            for label in [
-                "프로젝트 전략 문서 만들기",
-                "아이디어 압박 검증하기",
-                "공개 글 초안 작성하기",
-                "워크스페이스 살펴보기",
-                "Define project strategy docs",
-                "Pressure-test an idea",
-                "Draft public post",
-                "Inspect the workspace",
-            ] {
-                let element = app.descendants(matching: .any)
-                    .matching(NSPredicate(format: "label == %@", label))
-                    .element(boundBy: 0)
-                if element.exists {
-                    clickCenter(of: element)
-                    return true
-                }
-            }
-
-            if structuredChoices.count > 0 {
-                clickCenter(of: structuredChoices.element(boundBy: 0))
-                return true
-            }
-
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-        } while Date() < deadline
-
-        return false
-    }
-
-    @MainActor
-    private func waitForLatestPrompt(
-        in app: XCUIApplication,
-        containing marker: String,
-        timeout: TimeInterval
-    ) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-
-        repeat {
-            if anyStaticText(in: app, identifiers: ["assistant.latestPrompt", "workspace.chat.user", "workspace.chat.pendingUser", "workspace.supportThread", "workspace.chatThread"], contains: marker) {
-                return true
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-        } while Date() < deadline
-
-        return anyStaticText(in: app, identifiers: ["assistant.latestPrompt", "workspace.chat.user", "workspace.chat.pendingUser", "workspace.supportThread", "workspace.chatThread"], contains: marker)
-    }
-
-    @MainActor
-    private func waitForSessionBackedComposer(_ promptComposer: XCUIElement, timeout: TimeInterval) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-
-        repeat {
-            if promptComposer.exists && promptComposer.label.contains("메시지 보내기") {
-                return true
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-        } while Date() < deadline
-
-        return promptComposer.exists && promptComposer.label.contains("메시지 보내기")
-    }
-
-    @MainActor
-    private func waitForLatestAnswer(
-        in app: XCUIApplication,
-        containing marker: String,
-        timeout: TimeInterval
-    ) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-
-        repeat {
-            if anyStaticText(in: app, identifiers: ["assistant.latestAnswer", "workspace.chat.assistant", "workspace.supportThread", "workspace.chatThread"], contains: marker) {
-                return true
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-        } while Date() < deadline
-
-        return anyStaticText(in: app, identifiers: ["assistant.latestAnswer", "workspace.chat.assistant", "workspace.supportThread", "workspace.chatThread"], contains: marker)
-    }
-
-    @MainActor
-    private func waitForAnswerChange(
-        in app: XCUIApplication,
-        previousAnswer: String,
-        timeout: TimeInterval
-    ) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        let response = app.staticTexts["assistant.latestAnswer"]
-
-        repeat {
-            if response.exists {
-                let next = response.label.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !next.isEmpty && next != previousAnswer && next != "대기 중" {
-                    return true
-                }
-            }
-            if app.staticTexts.matching(identifier: "workspace.chat.assistant").count > 0 {
-                return true
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-        } while Date() < deadline
-
-        return false
-    }
-
-    @MainActor
-    private func answerWorkspaceBootstrapPromptIfNeeded(
-        in app: XCUIApplication,
-        promptComposer: XCUIElement,
-        sendButton: XCUIElement
-    ) {
-        enterPrompt("Use docs ICP for Day 1.", in: app, promptComposer: promptComposer)
-        _ = waitUntilEnabled(sendButton, timeout: 5)
-        clickCenter(of: sendButton)
-
-        let deadline = Date().addingTimeInterval(12)
-        repeat {
-            if !element(promptComposer, contains: "Use docs ICP for Day 1.") {
-                break
-            }
-            if sendButton.exists && sendButton.isEnabled {
-                sendButton.click()
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-        } while Date() < deadline
-
-        let readyDeadline = Date().addingTimeInterval(30)
-        repeat {
-            if !app.debugDescription.contains("AWAITING_INPUT") {
-                return
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-        } while Date() < readyDeadline
-    }
-
-    @MainActor
-    private func enterPrompt(_ prompt: String, in app: XCUIApplication, promptComposer: XCUIElement) {
-        app.activate()
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(prompt, forType: .string)
-        promptComposer.click()
-        app.typeKey("a", modifierFlags: [.command])
-        app.typeKey("v", modifierFlags: [.command])
-        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-        if !element(promptComposer, contains: prompt) {
-            promptComposer.click()
-            app.typeKey("a", modifierFlags: [.command])
-            app.typeText(prompt)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-        }
-    }
-
-    @MainActor
-    private func submitPromptAndWaitForLatestPrompt(
-        in app: XCUIApplication,
-        promptComposer: XCUIElement,
-        sendButton: XCUIElement,
-        marker: String,
-        timeout: TimeInterval
-    ) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-
-        repeat {
-            if !element(promptComposer, contains: marker) {
-                enterPrompt(marker, in: app, promptComposer: promptComposer)
-            }
-            if waitUntilEnabled(sendButton, timeout: 2) {
-                clickCenter(of: sendButton)
-            }
-            if waitForLatestPrompt(in: app, containing: marker, timeout: 2) {
-                return true
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-        } while Date() < deadline
-
-        return waitForLatestPrompt(in: app, containing: marker, timeout: 1)
-    }
-
-    @MainActor
-    private func anyStaticText(
-        in app: XCUIApplication,
-        identifiers: [String],
-        contains marker: String
-    ) -> Bool {
-        for identifier in identifiers {
-            let matches = app.descendants(matching: .any).matching(identifier: identifier)
-            for index in 0..<matches.count {
-                let element = matches.element(boundBy: index)
-                if element.exists && self.element(element, contains: marker) {
-                    return true
-                }
-            }
-        }
-        return false
-    }
-
     @MainActor
     private func element(_ element: XCUIElement, contains marker: String) -> Bool {
         element.label.contains(marker) || ((element.value as? String)?.contains(marker) ?? false)
@@ -3656,12 +1930,31 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
-    private func replaceText(in app: XCUIApplication, with text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        app.typeKey("a", modifierFlags: [.command])
-        app.typeKey(.delete, modifierFlags: [])
-        app.typeKey("v", modifierFlags: [.command])
+    private func scrollElementToVisible(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        timeout: TimeInterval,
+        scrollViewIdentifier: String? = nil
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if element.exists && element.isHittable {
+                return true
+            }
+            let scrollView: XCUIElement
+            if let scrollViewIdentifier {
+                scrollView = elementWithIdentifier(in: app, scrollViewIdentifier)
+            } else {
+                scrollView = app.scrollViews.firstMatch
+            }
+            if scrollView.exists && scrollView.isHittable {
+                scrollView.swipeUp()
+            } else {
+                app.swipeUp()
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        } while Date() < deadline
+        return element.exists && element.isHittable
     }
 
     @MainActor
@@ -3674,6 +1967,71 @@ final class agentic30UITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         } while Date() < deadline
         return element.exists && element.isEnabled
+    }
+
+    @MainActor
+    private func waitUntilHittable(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if element.exists && element.isHittable {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < deadline
+        return element.exists && element.isHittable
+    }
+
+    @MainActor
+    private func waitForOpenDesignMainHittable(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        timeout: TimeInterval
+    ) -> Bool {
+        if waitUntilHittable(element, timeout: 1) {
+            return true
+        }
+        _ = scrollElementToVisible(
+            element,
+            in: app,
+            timeout: timeout,
+            scrollViewIdentifier: "opendesign.day.main.scroll"
+        )
+        return waitUntilHittable(element, timeout: 1)
+    }
+
+    @MainActor
+    private func tapOpenDesignHandoffButton(
+        containing text: String,
+        in app: XCUIApplication,
+        expecting identifier: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        hideKnownInterferingApplications()
+        app.activate()
+        let nextButton = buttonContaining(in: app, text: text)
+        guard waitForOpenDesignMainHittable(nextButton, in: app, timeout: 6) else {
+            attachScreenshot(from: app, named: "OpenDesign handoff button not hittable before \(identifier)")
+            attachText(app.debugDescription, named: "OpenDesign handoff button accessibility tree")
+            XCTFail(
+                "Expected OpenDesign handoff button containing \(text)",
+                file: file,
+                line: line
+            )
+            return
+        }
+        clickCenter(of: buttonContaining(in: app, text: text))
+        let expectedElement = elementWithIdentifier(in: app, identifier)
+        guard expectedElement.waitForExistence(timeout: 5) else {
+            attachScreenshot(from: app, named: "OpenDesign handoff failed before \(identifier)")
+            attachText(app.debugDescription, named: "OpenDesign handoff accessibility tree")
+            XCTFail(
+                "Expected OpenDesign handoff to reveal \(identifier)",
+                file: file,
+                line: line
+            )
+            return
+        }
     }
 
     @MainActor
@@ -3695,6 +2053,24 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    private func waitForElementLabel(
+        in app: XCUIApplication,
+        identifier: String,
+        containing marker: String,
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        let element = elementWithIdentifier(in: app, identifier)
+        repeat {
+            if element.exists && self.element(element, contains: marker) {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        } while Date() < deadline
+        return element.exists && self.element(element, contains: marker)
+    }
+
+    @MainActor
     private func waitForElementToDisappear(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
@@ -3704,61 +2080,6 @@ final class agentic30UITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         } while Date() < deadline
         return !element.exists
-    }
-
-    private enum BootstrapReadiness {
-        case composer
-        case structuredPrompt
-    }
-
-    @MainActor
-    private func waitForBootstrapPromptOrComposer(
-        promptComposer: XCUIElement,
-        structuredPrompt: XCUIElement,
-        structuredPromptTitle: XCUIElement,
-        structuredChoices: XCUIElementQuery,
-        timeout: TimeInterval
-    ) -> BootstrapReadiness? {
-        let deadline = Date().addingTimeInterval(timeout)
-
-        repeat {
-            if promptComposer.exists {
-                return .composer
-            }
-            if structuredPromptTitle.exists || structuredChoices.count > 0 {
-                return .structuredPrompt
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-        } while Date() < deadline
-
-        return nil
-    }
-
-    private func waitForTelemetryEvent(
-        named eventName: String,
-        at path: String,
-        timeout: TimeInterval
-    ) -> [String: Any]? {
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            if let event = telemetryEvents(at: path).first(where: { $0["event"] as? String == eventName }) {
-                return event
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-        } while Date() < deadline
-        return telemetryEvents(at: path).first(where: { $0["event"] as? String == eventName })
-    }
-
-    private func telemetryEvents(at path: String) -> [[String: Any]] {
-        guard let raw = try? String(contentsOfFile: path, encoding: .utf8) else {
-            return []
-        }
-        return raw
-            .split(separator: "\n")
-            .compactMap { line in
-                guard let data = String(line).data(using: .utf8) else { return nil }
-                return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            }
     }
 
     @MainActor

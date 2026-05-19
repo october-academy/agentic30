@@ -1,5 +1,4 @@
 import Foundation
-import Combine
 import Testing
 @testable import agentic30
 
@@ -294,36 +293,6 @@ struct StructuredPromptSubmissionStateTests {
         )
     }
 
-    private static func makeLegacyStaticPrompt(sessionId: String = "structured-session") -> StructuredPromptRequest {
-        StructuredPromptRequest(
-            requestId: "legacy-static-request",
-            sessionId: sessionId,
-            toolName: "request_user_input",
-            title: "ICP 1/4",
-            createdAt: Date(),
-            questions: [
-                StructuredPromptQuestion(
-                    header: "첫 고객",
-                    question: "이번 주 바로 인터뷰할 첫 고객은 누구인가요?",
-                    helperText: "먼저 첫 고객 후보 하나만 고릅니다.",
-                    options: [
-                        StructuredPromptOption(
-                            label: "가장 절박한 하위 ICP",
-                            description: "legacy static option",
-                            preview: nil,
-                            nextIntent: nil
-                        ),
-                    ],
-                    multiSelect: false,
-                    allowFreeText: true,
-                    requiresFreeText: nil,
-                    freeTextPlaceholder: "예: MVP는 있지만 유료 고객이 없는 macOS 1인 개발자",
-                    textMode: .short
-                ),
-            ]
-        )
-    }
-
     private static func makeIddPrompt(
         sessionId: String = "structured-session",
         docType: String,
@@ -445,137 +414,6 @@ struct StructuredPromptSubmissionStateTests {
         #expect(submissions.count == 1)
         #expect(submissions[0].selectedOptions == ["Provider"])
         #expect(submissions[0].freeText == "macOS 메뉴바 앱을 쓰는 1인 개발자")
-    }
-
-    @MainActor @Test func curriculumReframeReplacesActiveQuestionTextWithoutChangingIdentity() throws {
-        let viewModel = AgenticViewModel(activateAppForAuth: {})
-        let prompt = Self.makePrompt(questionId: "day1-question-1")
-        viewModel.replaceSessionsForTesting(
-            [Self.makeSession(pendingUserInput: prompt)],
-            selectedSessionID: prompt.sessionId
-        )
-        viewModel.synchronizeStructuredPromptDrafts(with: prompt)
-        viewModel.updateStructuredPromptFreeText(
-            "전업 전환 직전의 macOS 1인 개발자",
-            for: prompt.questions[0],
-            in: prompt
-        )
-
-        viewModel.applyCurriculumQuestionReframeForTesting(
-            sessionId: prompt.sessionId,
-            questionId: "day1-question-1",
-            reframedQuestion: "방금 실행한 증거를 기준으로 누구를 먼저 인터뷰할지 좁혀보세요."
-        )
-
-        let reframedPrompt = try #require(viewModel.selectedSession?.pendingUserInput)
-        let reframedQuestion = try #require(reframedPrompt.questions.first)
-        #expect(reframedQuestion.id == "day1-question-1")
-        #expect(reframedQuestion.question == "방금 실행한 증거를 기준으로 누구를 먼저 인터뷰할지 좁혀보세요.")
-        #expect(reframedQuestion.header == "ICP")
-
-        let persistedDraft = viewModel.structuredPromptDraft(for: reframedQuestion, in: reframedPrompt)
-        #expect(persistedDraft.freeText == "전업 전환 직전의 macOS 1인 개발자")
-    }
-
-    @MainActor @Test func curriculumReframeChangesStructuredPromptUIBindingTokenOnSameRequest() throws {
-        let viewModel = AgenticViewModel(activateAppForAuth: {})
-        let prompt = Self.makePrompt(questionId: "day1-question-1")
-        viewModel.replaceSessionsForTesting(
-            [Self.makeSession(pendingUserInput: prompt)],
-            selectedSessionID: prompt.sessionId
-        )
-
-        let initialPrompt = try #require(viewModel.pendingStructuredPrompt)
-        let initialBindingToken = initialPrompt.uiBindingToken
-        var observedChanges = 0
-        let cancellable = viewModel.objectWillChange.sink {
-            observedChanges += 1
-        }
-
-        viewModel.applyCurriculumQuestionReframeForTesting(
-            sessionId: prompt.sessionId,
-            questionId: "day1-question-1",
-            reframedQuestion: "방금 완료한 실행 결과를 기준으로 첫 인터뷰 대상을 더 좁혀보세요."
-        )
-
-        let reframedPrompt = try #require(viewModel.pendingStructuredPrompt)
-        #expect(reframedPrompt.requestId == initialPrompt.requestId)
-        #expect(reframedPrompt.questions.first?.id == initialPrompt.questions.first?.id)
-        #expect(reframedPrompt.uiBindingToken != initialBindingToken)
-        #expect(reframedPrompt.uiBindingToken.contains("방금 완료한 실행 결과"))
-        #expect(observedChanges > 0)
-        _ = cancellable
-    }
-
-    @MainActor @Test func curriculumReframeGuardKeepsLatestQuestionAcrossStaleSessionReplay() throws {
-        let viewModel = AgenticViewModel(activateAppForAuth: {})
-        let prompt = Self.makePrompt(questionId: "day1-question-1")
-        viewModel.replaceSessionsForTesting(
-            [Self.makeSession(pendingUserInput: prompt)],
-            selectedSessionID: prompt.sessionId
-        )
-
-        viewModel.applyCurriculumQuestionReframeForTesting(
-            sessionId: prompt.sessionId,
-            questionId: "day1-question-1",
-            reframedQuestion: "방금 실행한 증거를 기준으로 첫 인터뷰 대상을 좁혀보세요."
-        )
-        viewModel.applyCurriculumQuestionReframeForTesting(
-            sessionId: prompt.sessionId,
-            questionId: "day1-question-1",
-            reframedQuestion: "방금 완료한 실행 결과를 기준으로 첫 인터뷰 대상을 더 좁혀보세요."
-        )
-
-        viewModel.applySessionUpdatedForTesting(Self.makeSession(pendingUserInput: prompt))
-
-        let replayedPrompt = try #require(viewModel.selectedSession?.pendingUserInput)
-        #expect(replayedPrompt.questions.count == 1)
-        #expect(replayedPrompt.questions.first?.id == "day1-question-1")
-        #expect(replayedPrompt.questions.first?.question == "방금 완료한 실행 결과를 기준으로 첫 인터뷰 대상을 더 좁혀보세요.")
-    }
-
-    @MainActor @Test func curriculumReframeGuardCollapsesDuplicateActiveQuestionEntries() throws {
-        let viewModel = AgenticViewModel(activateAppForAuth: {})
-        let prompt = Self.makePrompt(questionId: "day1-question-1")
-        viewModel.replaceSessionsForTesting(
-            [Self.makeSession(pendingUserInput: prompt)],
-            selectedSessionID: prompt.sessionId
-        )
-
-        viewModel.applyCurriculumQuestionReframeForTesting(
-            sessionId: prompt.sessionId,
-            questionId: "day1-question-1",
-            reframedQuestion: "방금 실행한 증거를 기준으로 누구를 먼저 인터뷰할지 좁혀보세요."
-        )
-
-        let duplicatedPrompt = StructuredPromptRequest(
-            requestId: prompt.requestId,
-            sessionId: prompt.sessionId,
-            toolName: prompt.toolName,
-            title: prompt.title,
-            createdAt: prompt.createdAt,
-            intro: prompt.intro,
-            resources: prompt.resources,
-            questions: prompt.questions + prompt.questions,
-            generation: prompt.generation
-        )
-        viewModel.applySessionUpdatedForTesting(Self.makeSession(pendingUserInput: duplicatedPrompt))
-
-        let guardedPrompt = try #require(viewModel.selectedSession?.pendingUserInput)
-        #expect(guardedPrompt.questions.count == 1)
-        #expect(guardedPrompt.questions.first?.id == "day1-question-1")
-        #expect(guardedPrompt.questions.first?.question == "방금 실행한 증거를 기준으로 누구를 먼저 인터뷰할지 좁혀보세요.")
-    }
-
-    @MainActor @Test func legacyStaticIddPromptIsHiddenWhileRegenerationRuns() {
-        let viewModel = AgenticViewModel(activateAppForAuth: {})
-        let prompt = Self.makeLegacyStaticPrompt()
-
-        viewModel.applySessionUpdatedForTesting(Self.makeSession(pendingUserInput: prompt))
-
-        #expect(viewModel.selectedSession?.pendingUserInput == nil)
-        #expect(viewModel.pendingStructuredPrompt == nil)
-        #expect(viewModel.selectedSession?.status == .running)
     }
 
     @MainActor @Test func foundationPromptMatchesCurrentDocOnly() {

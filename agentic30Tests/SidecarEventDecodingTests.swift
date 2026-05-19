@@ -359,50 +359,6 @@ struct SidecarEventDecodingTests {
         #expect(event.bipCoach?.streak.current == 2)
     }
 
-    @MainActor @Test func identifiesLegacyStaticIddStructuredPromptPayload() throws {
-        let payload = """
-        {
-          "type": "session_updated",
-          "session": {
-            "id": "idd-session-legacy",
-            "title": "Foundation Setup: ICP",
-            "provider": "codex",
-            "model": "",
-            "status": "awaiting_input",
-            "createdAt": "2026-04-27T01:00:00.000Z",
-            "updatedAt": "2026-04-27T01:00:01.000Z",
-            "error": null,
-            "messages": [],
-            "pendingUserInput": {
-              "requestId": "request-static-1",
-              "sessionId": "idd-session-legacy",
-              "toolName": "request_user_input",
-              "title": "ICP 1/4",
-              "createdAt": "2026-04-27T01:00:01.000Z",
-              "questions": [
-                {
-                  "header": "첫 고객",
-                  "question": "이번 주 바로 인터뷰할 첫 고객은 누구인가요?",
-                  "options": [
-                    { "label": "가장 절박한 하위 ICP", "description": "legacy" }
-                  ],
-                  "allowFreeText": true,
-                  "freeTextPlaceholder": "예: MVP는 있지만 유료 고객이 없는 macOS 1인 개발자",
-                  "textMode": "short"
-                }
-              ]
-            },
-            "runtime": { "iddDocumentType": "icp" }
-          }
-        }
-        """
-
-        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
-
-        #expect(event.session?.pendingUserInput?.isLegacyStaticIddQuestion == true)
-        #expect(event.session?.pendingUserInput?.isProviderAdaptiveIddQuestion == false)
-    }
-
     @MainActor @Test func decodesWorkspaceScanResultWithGoal() throws {
         let payload = """
         {
