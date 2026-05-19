@@ -62,7 +62,7 @@ enum OpenDesignReferencePageKind: String, CaseIterable, Hashable, Identifiable {
         case .settings: return "워크스페이스"
         case .interviews: return "장지창 · Mom Test 1"
         case .bipLog: return "Exa ICP 리서치 · 후보 5명 · Day 1"
-        case .news: return "안 읽음 14건"
+        case .news: return "안 읽음 17건"
         case .history: return "Evidence 타임라인"
         }
     }
@@ -222,6 +222,7 @@ enum OpenDesignReferenceTone: String {
     case sky
     case violet
     case teal
+    case pink
     case muted
 
     var color: Color {
@@ -232,6 +233,7 @@ enum OpenDesignReferenceTone: String {
         case .sky: return OpenDesignDayColor.sky
         case .violet: return Color(red: 0.690, green: 0.520, blue: 0.980)
         case .teal: return Color(red: 0.230, green: 0.780, blue: 0.760)
+        case .pink: return Color(red: 0.960, green: 0.500, blue: 0.760)
         case .muted: return OpenDesignDayColor.muted
         }
     }
@@ -265,6 +267,11 @@ enum OpenDesignReferenceCatalog {
         OpenDesignReferenceSideGroup(title: "후보 · 아직 시작 안 함", count: "2", rows: [
             .init(id: "clipper", title: "ClipperOps (가제)", subtitle: "Problem memo · 인터뷰 0", badge: "D0", leading: "C?", tone: .amber, isActive: false),
             .init(id: "deck", title: "DeckTrace (가제)", subtitle: "아이디어만 있음", badge: "D0", leading: "D?", tone: .amber, isActive: false),
+        ]),
+        OpenDesignReferenceSideGroup(title: "템플릿", count: "3", rows: [
+            .init(id: "tpl-ios", title: "iOS 구독앱 30일", subtitle: "ASO · 페이월 · paid learning", badge: "템플릿", leading: "iOS", tone: .sky, isActive: false),
+            .init(id: "tpl-android", title: "Android 광고앱 30일", subtitle: "CPI · AdMob · Play Console", badge: "템플릿", leading: "AD", tone: .violet, isActive: false),
+            .init(id: "tpl-web", title: "Web SaaS 30일", subtitle: "랜딩 · waitlist · 결제", badge: "템플릿", leading: "Web", tone: .muted, isActive: false),
         ]),
     ]
 
@@ -381,70 +388,118 @@ enum OpenDesignReferenceCatalog {
             ]),
             .init(id: "workspace", title: "워크스페이스", meta: "Day 1 · 메인 프로젝트 + 기록 폴더 3개", markerTone: .accent, blocks: [
                 .init("workspace-settings", style: .settings, rows: [
-                    .init("main", title: "메인 프로젝트", subtitle: "~/code/agentic30-public · SPEC.md / ICP.md / VALUES.md와 업무 일지가 누적됩니다.", trailing: "변경…", tone: .accent),
-                    .init("iv", title: "인터뷰 transcript 폴더", subtitle: "~/Documents/agentic30/interviews · .txt · .md · .vtt · .srt", trailing: "변경…", tone: .sky),
-                    .init("log", title: "업무 일지 폴더", subtitle: "~/Documents/agentic30/log · 오늘 만든 것 · 막힌 것 · 배운 것", trailing: "변경…", tone: .teal),
-                    .init("bip", title: "BIP 폴더", subtitle: "~/Documents/agentic30/bip · 비어 있음", trailing: "변경…", tone: .amber),
-                    .init("watch", title: "파일 변경 감시", subtitle: "위 4개 경로를 FSEvents로 추적합니다.", trailing: "ON", tone: .accent),
-                    .init("ignore", title: "무시 패턴", subtitle: "node_modules · .git · dist · .next", trailing: "패턴 추가", tone: .muted),
+                    .init("main", title: "메인 프로젝트", subtitle: "Adaptive 엔진이 가장 먼저 읽는 폴더. SPEC.md / ICP.md / VALUES.md와 업무 일지가 여기에 누적됩니다.", trailing: "~/code/agentic30-public", tone: .accent),
+                    .init("iv", title: "인터뷰 transcript 폴더", subtitle: "Zoom / caret.so / 오프라인 녹음을 .txt · .md · .vtt · .srt 로 떨어뜨리는 곳. 새 파일은 자동으로 sidecar가 분석합니다.", trailing: "~/Documents/agentic30/interviews", tone: .sky),
+                    .init("log", title: "업무 일지 폴더", subtitle: "하루 1파일. 자동 템플릿은 오늘 만든 것 · 막힌 것 · 배운 것 3줄 — 그대로 다음 Day 과제의 컨텍스트가 됩니다.", trailing: "~/Documents/agentic30/log", tone: .teal),
+                    .init("bip", title: "BIP 폴더", subtitle: "Threads·블로그 초안과 발행 후 반응 캡처를 떨어뜨리는 곳. Day 18+ Launch phase에서 풀가동.", trailing: "비어 있음", tone: .amber),
+                    .init("watch", title: "파일 변경 감시", subtitle: "위 4개 경로를 FSEvents로 추적합니다. 끄면 수동 새로고침 — 배터리 5%/시간 절약.", trailing: "ON", tone: .accent),
+                    .init("ignore", title: "무시 패턴", subtitle: "node_modules · .git · dist · .next 외에 추가 패턴.", trailing: "패턴 추가", tone: .muted),
                 ]),
             ]),
             .init(id: "appearance", title: "외관 & 액센트", meta: "시스템 따름 · Emerald", markerTone: .sky, blocks: [
                 .init("appearance-settings", style: .settings, rows: [
                     .init("theme", title: "테마", subtitle: "시스템을 따르면 macOS 야간 모드 전환 시 자동으로 바뀝니다.", trailing: "System", tone: .sky),
-                    .init("accent", title: "액센트 색", subtitle: "today, progress, picker 강조색", trailing: "Emerald", tone: .accent),
+                    .init("accent", title: "액센트 색", subtitle: "today, progress, picker — 한 가지 색이 모든 강조를 통과합니다.", trailing: "Emerald", tone: .accent),
                     .init("scale", title: "글자 크기", subtitle: "메뉴바 패널 + 메인 윈도우 둘 다 같이 움직입니다.", trailing: "100%", tone: .muted),
-                    .init("motion", title: "모션 줄이기", subtitle: "prefers-reduced-motion이 켜져 있으면 강제 적용.", trailing: "OFF", tone: .amber),
+                    .init("motion", title: "모션 줄이기", subtitle: "tutor 타이핑·페이드인을 끄고 즉시 렌더. prefers-reduced-motion이 켜져 있으면 강제 적용.", trailing: "OFF", tone: .amber),
                     .init("sidebar", title: "사이드바 너비", subtitle: "30일 챌린지 리스트가 들어가는 가운데 열의 폭.", trailing: "표준 240px", tone: .muted),
+                ]),
+            ]),
+            .init(id: "menubar", title: "메뉴바 & 알림", meta: "하루 1번만 — 깊은 작업 보호", markerTone: .amber, blocks: [
+                .init("menubar-settings", style: .settings, rows: [
+                    .init("always", title: "메뉴바에 항상 표시", subtitle: "상단 우측 메뉴바에 A·30 아이콘이 떠 있게 합니다.", trailing: "ON", tone: .accent),
+                    .init("dock", title: "Dock 아이콘 숨기기", subtitle: "Dock에서 사라지고 메뉴바 전용 앱으로 동작합니다 — 1인 개발자 분들 대부분이 켜둡니다.", trailing: "ON", tone: .accent),
+                    .init("login", title: "로그인 시 자동 실행", subtitle: "macOS 로그인 항목에 추가합니다. Launch Agent — com.octobacademy.agentic30.plist.", trailing: "ON", tone: .accent),
+                    .init("daily", title: "일일 체크인 알림", subtitle: "매일 한 번, 그날의 Day 과제를 메뉴바에서 살짝 띄웁니다. 칭찬형이 아니라 \"오늘 무엇을 만들 건가요?\".", trailing: "09:00", tone: .amber),
+                    .init("rhythm", title: "알림 받을 요일", subtitle: "기본은 주 5일. 주말도 작업한다면 토·일까지 켜세요.", trailing: "월-금", tone: .sky),
+                    .init("stuck", title: "무활동 알림 (Stuck check)", subtitle: "N시간 동안 새 기록이 안 들어오면 한 번만 부드럽게 알려줍니다.", trailing: "12시간", tone: .muted),
+                    .init("sound", title: "사운드", subtitle: "모든 알림에 시스템 알림음을 추가합니다.", trailing: "OFF", tone: .muted),
+                ]),
+            ]),
+            .init(id: "shortcuts", title: "단축키", meta: "메뉴바 전용 + 글로벌 4개", markerTone: .violet, blocks: [
+                .init("shortcut-settings", style: .settings, rows: [
+                    .init("toggle", title: "메뉴바 패널 토글", subtitle: "어느 앱에서든 빠르게 오늘 과제를 엽니다.", trailing: "⌥⌘A", tone: .violet),
+                    .init("capture", title: "빠른 기록 추가", subtitle: "선택 영역 또는 클립보드를 한 줄 업무 일지로 떨굽니다.", trailing: "⌥⌘N", tone: .violet),
+                    .init("today", title: "오늘 Day 열기", subtitle: "메인 윈도우로 점프 · 현재 진행 중인 Day로 자동 스크롤.", trailing: "⌥⌘T", tone: .violet),
+                    .init("interview", title: "인터뷰 transcript 드롭", subtitle: "파일 다이얼로그를 열어 .vtt / .srt / .md 한 건을 분석 큐에 넣습니다.", trailing: "⌥⌘I", tone: .violet),
+                    .init("lock", title: "Day 진행 잠금", subtitle: "한 번 켜면 미완료 Day를 건너뛰지 않습니다. 제약이 실력이다 가치를 강제하는 옵션.", trailing: "ON", tone: .accent),
                 ]),
             ]),
             .init(id: "providers", title: "AI 프로바이더", meta: "Claude 1순위 · Codex 폴백", markerTone: .accent, blocks: [
                 .init("provider-order", style: .settings, rows: [
-                    .init("order", title: "실행 순서", subtitle: "첫 번째 프로바이더가 실패하거나 인증이 끊기면 자동 폴백합니다.", trailing: "Claude → Codex", tone: .accent),
+                    .init("order", title: "실행 순서", subtitle: "왼쪽이 1순위. 첫 번째 프로바이더가 실패하거나 인증이 끊기면 자동으로 오른쪽으로 폴백합니다.", trailing: "Claude → Codex", tone: .accent),
                 ]),
                 .init("providers", style: .cards, rows: [
-                    .init("claude", leading: "A", title: "Claude", subtitle: "Adaptive 엔진 · day-task 생성 · transcript 분석", body: "로컬 Claude Code 세션 연결됨 · claude-opus-4-7 (1M) · 월 42 호출", trailing: "연결됨", tone: .accent),
-                    .init("codex", leading: "⌥", title: "Codex", subtitle: "대체 엔진 · /analyze-ads · 비싼 모델 회피 시 사용", body: "로컬 Codex 세션 발견 안 됨 · OPENAI_API_KEY / CODEX_API_KEY 없음", trailing: "로그인", tone: .amber),
-                    .init("node", leading: "20", title: "Node 런타임", subtitle: "/usr/local/bin/node — v20.11.1", body: "NODE_BINARY → 일반 설치 → mise/asdf/Volta → 로그인 셸 PATH 순 탐색", trailing: "20+", tone: .sky),
+                    .init("claude", leading: "A", title: "Claude", subtitle: "Adaptive 엔진 · day-task 생성 · transcript 분석", body: "로컬 Claude Code 세션 연결됨 · claude-opus-4-7 (1M) · 월 42 호출 · 입력 1.6M · 출력 184K · 캐시 적중률 71%", trailing: "연결됨", tone: .accent),
+                    .init("codex", leading: "⌥", title: "Codex", subtitle: "대체 엔진 · /analyze-ads · 비싼 모델 회피 시 사용", body: "로컬 Codex 세션 발견 안 됨 · OPENAI_API_KEY / CODEX_API_KEY 없음 · 인증 후 모델 선택 가능", trailing: "로그인", tone: .amber),
+                    .init("node", leading: "20", title: "Node 런타임", subtitle: "/usr/local/bin/node — v20.11.1", body: "Sidecar가 사용하는 Node 바이너리. 20+ 필요. NODE_BINARY → 일반 설치 → mise/asdf/Volta → 로그인 셸 PATH 순으로 탐색합니다.", trailing: "20+", tone: .sky),
+                    .init("cache", leading: "24h", title: "캐시 사용", subtitle: "동일 day-task / 동일 transcript 분석 결과를 24h 캐싱합니다.", body: "끄면 매번 새로 호출 → 비용/시간이 늘어납니다. 월 비용 상한은 $30으로 알림만 보냅니다.", trailing: "ON", tone: .accent),
                 ]),
             ]),
             .init(id: "records", title: "기록 자동 수집", meta: "기본은 폴더 watch만 — API 연동은 명시적 opt-in", markerTone: .teal, blocks: [
                 .init("records", style: .rows, rows: [
-                    .init("git", leading: "⌥", title: "Git 커밋 로그", subtitle: "최근 커밋을 5분마다 읽어 업무 일지 초안으로 보냅니다.", trailing: "활성", tone: .accent),
-                    .init("rss", leading: "RSS", title: "블로그 RSS", subtitle: "발행한 글을 BIP 일지에 자동 append.", trailing: "활성", tone: .sky),
-                    .init("caret", leading: "C", title: "caret.so transcripts", subtitle: "로컬 transcript 폴더 watch.", trailing: "꺼짐", tone: .muted),
-                    .init("zoom", leading: "Z", title: "Zoom 로컬 녹화", subtitle: "~/Documents/Zoom .vtt 파일을 인터뷰 폴더로 이동.", trailing: "꺼짐", tone: .muted),
-                    .init("threads", leading: "@", title: "Threads 본인 게시글 RSS", subtitle: "공개 게시글과 반응 수치를 BIP 일지에 누적.", trailing: "꺼짐", tone: .muted),
+                    .init("git", leading: "⌥", title: "Git 커밋 로그", subtitle: "메인 프로젝트의 최근 커밋을 5분마다 읽어 업무 일지 초안으로 보냅니다.", trailing: "활성", tone: .accent),
+                    .init("rss", leading: "RSS", title: "블로그 RSS", subtitle: "발행한 글을 BIP 일지에 자동 append. https://zettalyst.bearblog.dev/feed/", trailing: "활성", tone: .sky),
+                    .init("caret", leading: "C", title: "caret.so transcripts", subtitle: "로컬 transcript 폴더 watch. iCloud 동기화 지원 안 됨 — 로컬 경로만.", trailing: "꺼짐", tone: .muted),
+                    .init("zoom", leading: "Z", title: "Zoom 로컬 녹화", subtitle: "~/Documents/Zoom 에 떨어지는 .vtt 파일을 인터뷰 폴더로 자동 이동.", trailing: "꺼짐", tone: .muted),
+                    .init("granola", leading: "G", title: "Granola", subtitle: "미팅 노트를 자동으로 인터뷰 폴더로 흘려보냅니다.", trailing: "꺼짐", tone: .muted),
+                    .init("threads-rss", leading: "@", title: "Threads 본인 게시글 RSS", subtitle: "공개 게시글과 반응 수치를 BIP 일지에 누적.", trailing: "꺼짐", tone: .muted),
                 ]),
+            ]),
+            .init(id: "integrations", title: "연동", meta: "OAuth · API 키 — Keychain 보관", markerTone: .amber, blocks: [
+                .init("integrations", style: .rows, rows: [
+                    .init("notion", leading: "N", title: "Notion", subtitle: "SPEC.md / ICP.md / VALUES.md 변경분을 지정한 페이지로 양방향 동기화.", trailing: "연결 안 됨", tone: .muted),
+                    .init("threads", leading: "@", title: "Threads (Meta)", subtitle: "Day 18+ Launch phase에서 BIP 게시 초안을 직접 보내기 위한 publishing token.", trailing: "연결 안 됨", tone: .muted),
+                    .init("meta", leading: "M", title: "Meta Ads", subtitle: "/analyze-ads · Day 5 수요 검증과 Day 25+ Grow에서 사용.", trailing: "연결 안 됨", tone: .muted),
+                ]),
+                .init("integration-note", style: .banner, title: "외부 연동은 기본 OFF입니다.", subtitle: "참고", body: "BIP 자동 게시·Meta Ads 데이터 동기화는 Foundation loop가 daily dogfood로 검증된 이후 활성화합니다.", chips: [.init("explicit opt-in", tone: .amber), .init("Keychain", tone: .accent)]),
             ]),
             .init(id: "privacy", title: "개인정보 & 진단", meta: "로컬 우선 · sanitized snapshot only", markerTone: .rose, blocks: [
                 .init("privacy", style: .settings, rows: [
-                    .init("posthog", title: "사용량 텔레메트리 (PostHog)", subtitle: "익명 이벤트. opt-in이며 KR1.1~KR4.3 측정에만 쓰입니다.", trailing: "OFF", tone: .muted),
-                    .init("crash", title: "크래시 리포트", subtitle: "stack trace만 전송. transcript / token 미포함.", trailing: "ON", tone: .accent),
-                    .init("sanitize", title: "진단 스냅샷 sanitize", subtitle: "token · path · email · 인터뷰 내용을 자동 마스킹합니다.", trailing: "강제 켜짐", tone: .amber),
-                    .init("retention", title: "세션 보관 기간", subtitle: "로컬 sessions / day-task 히스토리.", trailing: "90일", tone: .muted),
-                    .init("reset", title: "모든 로컬 데이터 삭제", subtitle: "기록 폴더 자체는 건드리지 않습니다.", trailing: "데이터 초기화…", tone: .rose),
+                    .init("posthog", title: "사용량 텔레메트리 (PostHog)", subtitle: "앱 열기 횟수, Day 도달 일자, 작업 완료/포기 같은 익명 이벤트. opt-in이며 KR1.1 ~ KR4.3 측정에만 쓰입니다.", trailing: "OFF", tone: .muted),
+                    .init("crash", title: "크래시 리포트", subtitle: "Swift 또는 Node sidecar가 죽으면 stack trace만 보냅니다. transcript / token 절대 미포함.", trailing: "ON", tone: .accent),
+                    .init("sanitize", title: "진단 스냅샷 sanitize", subtitle: "진단 export 시 token · path · email · 인터뷰 내용을 자동 마스킹합니다. 강제 켜짐.", trailing: "강제 켜짐", tone: .amber),
+                    .init("retention", title: "세션 보관 기간", subtitle: "로컬 sessions / day-task 히스토리. 초과분은 자동으로 삭제됩니다.", trailing: "90일", tone: .muted),
+                    .init("snapshot", title: "진단 스냅샷 내보내기", subtitle: "제출 전 미리보기 — ~/Library/Logs/Agentic30/diagnostic-2026-05-16.zip · 3건.", trailing: "내보내기…", tone: .amber),
+                    .init("reset", title: "모든 로컬 데이터 삭제", subtitle: "sessions, day-task 히스토리, 캐시. 기록 폴더 자체는 건드리지 않습니다.", trailing: "데이터 초기화…", tone: .rose),
+                ]),
+            ]),
+            .init(id: "updates", title: "업데이트", meta: "Sparkle appcast · Developer ID 서명", markerTone: .sky, blocks: [
+                .init("updates", style: .settings, rows: [
+                    .init("version", title: "현재 버전", subtitle: "Foundation preview — Day 0-3 loop 한정. Day 4-7은 다음 점 릴리즈 예정.", trailing: "0.4.2 · build 1042", tone: .accent),
+                    .init("auto", title: "자동 업데이트", subtitle: "Sparkle이 백그라운드에서 appcast를 확인하고 새 버전을 받아옵니다. 설치는 다음 실행 때.", trailing: "ON", tone: .accent),
+                    .init("channel", title: "채널", subtitle: "Stable은 1주 사이클 · Beta는 거의 매일. Beta는 sidecar 호환성이 깨질 수 있음.", trailing: "Stable", tone: .sky),
+                    .init("checked", title: "마지막 확인", subtitle: "appcast.xml을 마지막으로 조회한 시각. 최신 — 0.4.2.", trailing: "5분 전", tone: .muted),
+                    .init("signing", title: "서명 확인", subtitle: "notarization · Hardened Runtime · Developer ID · 모두 통과.", trailing: "검증됨", tone: .accent),
                 ]),
             ]),
             .init(id: "advanced", title: "고급 & Sidecar", meta: "stdio · local HTTP · MCP", markerTone: .muted, blocks: [
                 .init("advanced", style: .settings, rows: [
-                    .init("state", title: "Sidecar 상태", subtitle: "Node sidecar가 stdio + 로컬 HTTP 둘 다 응답 중입니다.", trailing: "실행 중", tone: .accent),
-                    .init("transport", title: "통신 채널", subtitle: "기본은 stdio. HTTP는 디버깅 용도.", trailing: "stdio", tone: .sky),
-                    .init("mcp", title: "MCP 도구 서버", subtitle: "sidecar/mcp-server.mjs · 내부 도구 28개.", trailing: "ON", tone: .accent),
-                    .init("logs", title: "상세 로그", subtitle: "평시엔 info. trace는 1일에 ~80MB까지 늘어납니다.", trailing: "info", tone: .muted),
+                    .init("state", title: "Sidecar 상태", subtitle: "Node sidecar가 살아 있고 stdio + 로컬 HTTP 둘 다 응답 중입니다.", trailing: "실행 중 · PID 47281", tone: .accent),
+                    .init("transport", title: "통신 채널", subtitle: "기본은 stdio. HTTP는 디버깅 용도로만. 두 채널 모두 켜져 있어도 sandbox 안에서만 listen.", trailing: "stdio", tone: .sky),
+                    .init("mcp", title: "MCP 도구 서버", subtitle: "sidecar/mcp-server.mjs — Adaptive 엔진이 사용할 수 있는 내부 도구 28개.", trailing: "ON", tone: .accent),
+                    .init("acp", title: "ACP 어댑터", subtitle: "Agent Client Protocol — Claude / Codex 양쪽이 같은 envelope을 받게 해주는 어댑터.", trailing: "ON", tone: .accent),
+                    .init("logs", title: "상세 로그", subtitle: "트레이스 레벨까지 기록합니다. 평시엔 끄세요 — 1일에 ~80 MB 까지 늘어납니다.", trailing: "info", tone: .muted),
+                    .init("log-folder", title: "로그 폴더", subtitle: "~/Library/Logs/Agentic30 — 회전 7개 보관.", trailing: "Finder에서 열기", tone: .muted),
+                    .init("experiments", title: "실험 기능", subtitle: "미완성 흐름을 켭니다 · 깨질 수 있음. Day 4-7 prototype, mem0 장기 기억, /bip-draft v2.", trailing: "3 / 7", tone: .amber),
                 ]),
             ]),
         ],
         meta: .init(title: "시스템 상태", cards: [
             .init("sidecar", style: .rows, rows: [
-                .init("status", title: "Sidecar", subtitle: "PID 47281 · 2d 14h · 86 MB", trailing: "실행 중", tone: .accent),
-                .init("storage", title: "스토리지", subtitle: "sessions 312KB · transcripts 6.7KB · 업무 일지 11KB", trailing: "328 KB", tone: .sky),
-                .init("version", title: "버전", subtitle: "app 0.4.2 · sidecar 0.4.2 · node v20.11.1", trailing: "arm64", tone: .muted),
+                .init("status", title: "상태", subtitle: "PID 47281 · 업타임 2d 14h · 메모리 86 MB · CPU 0.4%", trailing: "실행 중", tone: .accent),
+                .init("storage", title: "스토리지", subtitle: "sessions 312KB · transcripts 6.7KB · 업무 일지 11KB · BIP 0KB", trailing: "328 KB", tone: .sky),
+                .init("version", title: "버전", subtitle: "app 0.4.2 (1042) · sidecar 0.4.2 · node v20.11.1 · swift 5.10 · macOS 14.5", trailing: "arm64", tone: .muted),
             ]),
             .init("system-actions", style: .rows, rows: [
                 .init("diagnostics", title: "진단 스냅샷 내보내기", subtitle: "sanitize · ZIP", trailing: nil, tone: .amber),
                 .init("restart", title: "Sidecar 재시작", subtitle: "다운타임 ~1초", trailing: nil, tone: .accent),
                 .init("reindex", title: "워크스페이스 재인덱스", subtitle: "모든 path 재스캔", trailing: nil, tone: .sky),
+            ]),
+            .init("reference-docs", style: .rows, rows: [
+                .init("release", title: "release-checklist.md", subtitle: "배포 전 점검 항목", trailing: nil, tone: .muted),
+                .init("limitations", title: "known-limitations.md", subtitle: "알려진 제한사항", trailing: nil, tone: .muted),
+                .init("diagnostics-guide", title: "diagnostics-guide.md", subtitle: "진단 가이드", trailing: nil, tone: .muted),
             ]),
         ])
     )
@@ -728,6 +783,2819 @@ enum OpenDesignReferenceCatalog {
     )
 }
 
+private enum OpenDesignNewsFilter: String, CaseIterable, Identifiable {
+    case all
+    case constraint
+    case customer
+    case ship
+    case numbers
+    case alone
+    case adaptive
+    case sourceEssay
+    case sourceBook
+    case sourceTalk
+    case sourceCase
+    case saved
+    case applied
+
+    var id: String { rawValue }
+}
+
+private struct OpenDesignNewsFilterDescriptor: Identifiable {
+    let id: OpenDesignNewsFilter
+    let title: String
+    let tone: OpenDesignReferenceTone
+    let showsDot: Bool
+}
+
+private struct OpenDesignNewsStreamGroup: Identifiable {
+    let id: String
+    let title: String
+    let dynamicBadge: Bool
+    let rows: [OpenDesignNewsStreamRow]
+}
+
+private struct OpenDesignNewsStreamRow: Identifiable {
+    let id: OpenDesignNewsFilter
+    let title: String
+    let tone: OpenDesignReferenceTone
+}
+
+private struct OpenDesignNewsSection: Identifiable {
+    let id: String
+    let title: String
+    let meta: String
+    let tone: OpenDesignReferenceTone
+}
+
+private struct OpenDesignNewsArticle: Identifiable {
+    let id: String
+    let sectionID: String
+    let sourceMark: String
+    let source: String
+    let typeLabel: String
+    let time: String
+    let title: String
+    let original: String?
+    let quote: String?
+    let takeLead: String
+    let takeBody: String
+    let applyWhen: String
+    let values: Set<OpenDesignNewsFilter>
+    let type: OpenDesignNewsFilter
+    let sourceTone: OpenDesignReferenceTone
+    let isPinned: Bool
+    let isDefaultSaved: Bool
+    let isApplied: Bool
+}
+
+private struct OpenDesignNewsCoverage: Identifiable {
+    let id: OpenDesignNewsFilter
+    let title: String
+    let count: String
+    let progress: CGFloat
+    let tone: OpenDesignReferenceTone
+}
+
+private struct OpenDesignNewsRecommendation: Identifiable {
+    let id: String
+    let rank: String
+    let title: String
+    let meta: String
+    let tone: OpenDesignReferenceTone
+}
+
+private struct OpenDesignNewsSource: Identifiable {
+    let id: String
+    let mark: String
+    let title: String
+    let count: String?
+    let isSubscribed: Bool
+    let tone: OpenDesignReferenceTone
+}
+
+private enum OpenDesignBipFilter: String, CaseIterable, Identifiable {
+    case all
+    case strong
+    case indie
+    case blog
+    case needs
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: return "전체"
+        case .strong: return "강한 적합"
+        case .indie: return "Indie Hackers"
+        case .blog: return "블로그"
+        case .needs: return "워치리스트"
+        }
+    }
+
+    var tone: OpenDesignReferenceTone {
+        switch self {
+        case .all, .strong: return .accent
+        case .indie: return .sky
+        case .blog: return .violet
+        case .needs: return .amber
+        }
+    }
+}
+
+private struct OpenDesignBipSignal: Identifiable {
+    let id: String
+    let title: String
+    let subtitle: String
+    let state: String
+    let tone: OpenDesignReferenceTone
+}
+
+private struct OpenDesignBipCandidate: Identifiable {
+    let id: String
+    let matchLabel: String
+    let matchCaption: String
+    let sourceLabel: String
+    let title: String
+    let source: String
+    let date: String
+    let medium: String
+    let quote: AttributedString
+    let whyTitle: String
+    let whyBody: AttributedString
+    let usageTitle: String
+    let usageBody: String
+    let gap: AttributedString
+    let filters: Set<OpenDesignBipFilter>
+    let tags: [OpenDesignReferenceChip]
+    let sourceURL: URL?
+    let draft: String
+    let tone: OpenDesignReferenceTone
+}
+
+private enum OpenDesignBipLogCatalog {
+    static let sourceRows: [(filter: OpenDesignBipFilter, title: String, count: String, systemImage: String)] = [
+        (.all, "전체", "5", "square.grid.2x2"),
+        (.strong, "강한 적합", "3", "checkmark.circle"),
+        (.blog, "블로그", "2", "doc.richtext"),
+        (.indie, "Indie Hackers", "3", "face.smiling"),
+        (.needs, "워치리스트", "2", "exclamationmark.triangle"),
+    ]
+
+    static let signals: [OpenDesignBipSignal] = [
+        .init(id: "quit", title: "전업 / 퇴사 / 런웨이", subtitle: "긴급성 · 저축 소진", state: "seen", tone: .accent),
+        .init(id: "tools", title: "Claude Code / Cursor", subtitle: "agentic coding", state: "seen", tone: .accent),
+        .init(id: "revenue", title: "수익 0원 / 첫 매출 전", subtitle: "PMF 미확정", state: "gap", tone: .amber),
+        .init(id: "bip", title: "BIP / 주간 업데이트", subtitle: "기록 의향", state: "seen", tone: .accent),
+        .init(id: "mac", title: "macOS 증거", subtitle: "Mac · M-series · native", state: "gap", tone: .amber),
+        .init(id: "interview", title: "고객 인터뷰 의향", subtitle: "talk to users", state: "ask", tone: .amber),
+        .init(id: "workspace", title: "프로젝트 path / 기록", subtitle: "repo · PRD · logs", state: "ask", tone: .amber),
+        .init(id: "anti", title: "Anti-ICP 배제", subtitle: "팀 · 이미 매출 · 직장인", state: "ask", tone: .amber),
+    ]
+
+    static let candidates: [OpenDesignBipCandidate] = [
+        .init(
+            id: "speakmac",
+            matchLabel: "강",
+            matchCaption: "match",
+            sourceLabel: "blog",
+            title: "Speakmac founder — macOS 네이티브 앱을 Claude Code로 밀어붙이는 1인 개발자",
+            source: "Speakmac Lab",
+            date: "2024-09-24",
+            medium: "blog",
+            quote: highlighted("원문: “A recent layoff ... six-month runway and an M3 MacBook.”", highlights: ["A recent layoff", "six-month runway", "M3 MacBook"], warningHighlights: ["six-month runway"]),
+            whyTitle: "왜 ICP 증거인가",
+            whyBody: highlighted("퇴사/런웨이 + Mac 사용이 직접 드러납니다. Agentic30의 “저축 소진 중인 macOS 전업 1인 개발자” 조건과 가장 가깝습니다.", highlights: ["퇴사/런웨이 + Mac 사용"]),
+            usageTitle: "BIP 활용",
+            usageBody: "고객에게 “Mac 앱을 혼자 팔기 시작한 직후 무엇을 기록해야 하는가”를 묻는 인터뷰 후보로 전환합니다.",
+            gap: highlighted("확인 필요: 현재 매출 0원인지, BIP를 꾸준히 남길 의향이 있는지 DM에서 확인.", highlights: ["확인 필요:"]),
+            filters: [.all, .strong, .blog],
+            tags: [.init("macOS 증거"), .init("Claude Code"), .init("런웨이"), .init("매출 확인 필요", tone: .amber)],
+            sourceURL: URL(string: "https://www.speakmac.app/blog/building-speakmac-solo-developer-journey"),
+            draft: """
+            오늘 Exa로 ICP 후보를 찾다가 Speakmac founder가 가장 강하게 걸렸다.
+
+            원문 증거: "recent layoff", "six-month runway", "M3 MacBook".
+            왜 ICP인가: 퇴사/런웨이 + macOS + Claude Code 기반 1인 빌드가 동시에 보인다.
+            DM에서 확인할 것: 아직 첫 매출 전인지, BIP/업무 기록을 매일 남길 의향이 있는지.
+            """,
+            tone: .accent
+        ),
+        .init(
+            id: "kun",
+            matchLabel: "강",
+            matchCaption: "match",
+            sourceLabel: "blog",
+            title: "Kun Chen — Big Tech 퇴사 후 솔로 빌더 여정을 투명하게 공개",
+            source: "Kun Chen",
+            date: "2026-05-04",
+            medium: "Substack",
+            quote: highlighted("원문: “I just quit my big tech career ... to be a solo builder.” “doesn’t make any money.”", highlights: ["I just quit my big tech career", "to be a solo builder"], warningHighlights: ["doesn’t make any money"]),
+            whyTitle: "왜 ICP 증거인가",
+            whyBody: highlighted("퇴사, 솔로 전환, 무수익 상태가 모두 보입니다. “방법이 맞는지 모르지만 계속 빌드하는 전업자” 문제에 강하게 닿아 있습니다.", highlights: ["퇴사, 솔로 전환, 무수익 상태"]),
+            usageTitle: "BIP 활용",
+            usageBody: "공개 AMA와 월간 회고 반응을 기반으로 BIP가 실제 유입/학습 채널인지 물어볼 수 있습니다.",
+            gap: highlighted("확인 필요: 주 개발 환경이 macOS인지, Agentic30 같은 로컬 앱 설치 허들이 낮은지 확인.", highlights: ["확인 필요:"]),
+            filters: [.all, .strong, .blog],
+            tags: [.init("퇴사 완료"), .init("solo builder"), .init("BIP"), .init("macOS 확인 필요", tone: .amber)],
+            sourceURL: URL(string: "https://blog.kunchenguid.com/p/the-month-after-leaving-big-tech"),
+            draft: """
+            ICP 후보: Kun Chen.
+
+            원문 증거: big tech를 막 퇴사했고 solo builder로 전환, 아직 돈을 벌지 못한다고 썼다.
+            왜 ICP인가: 전업 전환 직후의 불확실성, 공개 기록, agentic workflow 탐색이 Agentic30 문제와 맞닿아 있다.
+            DM에서 확인할 것: macOS 로컬 앱 설치/프로젝트 path 연결이 자연스러운 작업 방식인지.
+            """,
+            tone: .accent
+        ),
+        .init(
+            id: "quiqlog",
+            matchLabel: "강",
+            matchCaption: "match",
+            sourceLabel: "indie",
+            title: "Quiqlog builder — 퇴사 후 Claude Code와 Cursor를 배워 혼자 SaaS 출시",
+            source: "Indie Hackers",
+            date: "2026-03-02",
+            medium: "post",
+            quote: highlighted("원문: “So, I left.” “I took a week to learn Claude Code and Cursor.”", highlights: ["So, I left", "I took a week to learn Claude Code and Cursor"]),
+            whyTitle: "왜 ICP 증거인가",
+            whyBody: highlighted("기술 창업보다 무엇을 만들고 어떻게 검증할지에서 막힌 전형입니다. Agentic30의 adaptive 과제 수요가 높을 수 있습니다.", highlights: ["무엇을 만들고 어떻게 검증할지"]),
+            usageTitle: "BIP 활용",
+            usageBody: "“계속 solo path를 갈지 다시 취업할지” 고민이 있어, Day 7 Go/No-Go 판단 콘텐츠로 전환하기 좋습니다.",
+            gap: highlighted("확인 필요: 아직 첫 매출 전인지, Mac에서 로컬 툴을 쓸 수 있는지 확인.", highlights: ["확인 필요:"]),
+            filters: [.all, .strong, .indie],
+            tags: [.init("퇴사"), .init("Claude Code"), .init("Cursor"), .init("매출/OS 확인 필요", tone: .amber)],
+            sourceURL: URL(string: "https://www.indiehackers.com/post/i-left-my-job-knew-nothing-about-coding-and-shipped-a-saas-in-2-weeks-here-is-the-short-story-f71873ec84"),
+            draft: """
+            ICP 후보: Quiqlog builder.
+
+            원문 증거: 퇴사 후 Claude Code와 Cursor를 배워 혼자 SaaS를 만들었다.
+            왜 ICP인가: 만들기는 되지만 검증/방향/계속할지 판단이 막혀 있다.
+            DM에서 확인할 것: 현재 수익 상태와 30일 PMF 검증 스프린트에 기록을 제출할 의향.
+            """,
+            tone: .accent
+        ),
+        .init(
+            id: "clirank",
+            matchLabel: "보류",
+            matchCaption: "watch",
+            sourceLabel: "indie",
+            title: "CLIRank builder — VC-backed 조직 이후 “나 + Claude Code”로 다시 빌드",
+            source: "Indie Hackers",
+            date: "2026-04-07",
+            medium: "post",
+            quote: highlighted("원문: “Now I build alone - just me and Claude Code.” “Zero employees. Zero funding.”", highlights: ["Now I build alone", "Claude Code", "Zero employees. Zero funding"]),
+            whyTitle: "왜 ICP 증거인가",
+            whyBody: highlighted("agentic coding으로 혼자 초기 제품을 만드는 사람입니다. 다만 이전 창업 경험이 높아 “초보 0→1”과는 다릅니다.", highlights: ["agentic coding으로 혼자 초기 제품을 만드는 사람"]),
+            usageTitle: "BIP 활용",
+            usageBody: "개발자 커뮤니티에서 어떤 API/도구 문제를 겪는지 인터뷰하면 Agentic30의 리서치 자동화 메시지에 도움됩니다.",
+            gap: highlighted("확인 필요: 매출 상태, macOS, “수익 0원 전업자” 기준에 맞는지 확인.", highlights: ["확인 필요:"]),
+            filters: [.all, .indie, .needs],
+            tags: [.init("solo"), .init("Claude Code"), .init("초기 프로젝트"), .init("개인 고객성 확인", tone: .amber)],
+            sourceURL: URL(string: "https://www.indiehackers.com/post/from-hundreds-of-employees-to-building-solo-with-claude-code-1125706926"),
+            draft: """
+            워치리스트 후보: CLIRank builder.
+
+            원문 증거: "build alone", "Claude Code", "zero employees / zero funding".
+            왜 보류인가: agentic coding 신호는 강하지만, 이전 창업 경험이 높아 Foundation ICP와 다를 수 있다.
+            DM에서 확인할 것: 매출 0원 조건과 macOS 작업 환경.
+            """,
+            tone: .amber
+        ),
+        .init(
+            id: "subkitt",
+            matchLabel: "인접",
+            matchCaption: "watch",
+            sourceLabel: "indie",
+            title: "SubKitt founder — 기술 창업자용 BIP 자동화 도구를 Day 1부터 공개",
+            source: "Indie Hackers",
+            date: "2026-04-18",
+            medium: "post",
+            quote: highlighted("원문: “$100 budget.” “Zero network, no co-founder.” “weekly updates.”", highlights: ["$100 budget", "Zero network, no co-founder"], warningHighlights: ["weekly updates"]),
+            whyTitle: "왜 ICP 증거인가",
+            whyBody: highlighted("수익 전, solo, BIP 기록 의향은 강합니다. 하지만 학생이라 “퇴사 후 전업자” 기준은 충족하지 않습니다.", highlights: ["수익 전, solo, BIP 기록 의향"]),
+            usageTitle: "BIP 활용",
+            usageBody: "주요 ICP가 아니라, BIP 자동화 문제를 겪는 인접 세그먼트로 따로 추적합니다.",
+            gap: highlighted("분류: ICP 본체보다 adjacent audience. 본 제품 메시지 검증에는 낮은 우선순위.", highlights: ["분류:"]),
+            filters: [.all, .indie, .needs],
+            tags: [.init("BIP 의향"), .init("technical solo"), .init("첫 매출 전"), .init("전업 아님", tone: .amber)],
+            sourceURL: URL(string: "https://www.indiehackers.com/post/day-1-broke-student-building-an-ai-tool-to-help-technical-founders-build-in-public-5be9e56317"),
+            draft: """
+            Adjacent 후보: SubKitt founder.
+
+            원문 증거: $100 budget, zero network, no co-founder, weekly updates.
+            왜 낮은 우선순위인가: 수익 전/BIP 의향은 강하지만 학생이라 "퇴사 후 전업자" 조건은 다르다.
+            활용: ICP 본체가 아니라 BIP 자동화 메시지의 인접 세그먼트로 추적.
+            """,
+            tone: .amber
+        ),
+    ]
+
+    static let emptyDraft = """
+    후보 카드에서 “BIP 초안에 반영”을 누르면, ICP 리서치 결과를 오늘의 공개 기록으로 바꿉니다.
+
+    형식:
+    1. 원문에서 잡은 ICP 증거
+    2. 왜 인터뷰 후보인지
+    3. DM에서 확인할 공백 1개
+    """
+
+    private static func highlighted(
+        _ text: String,
+        highlights: [String] = [],
+        warningHighlights: [String] = []
+    ) -> AttributedString {
+        var result = AttributedString(text)
+        result.foregroundColor = OpenDesignDayColor.fgSecondary
+        for highlight in highlights {
+            applyHighlight(highlight, to: &result, color: OpenDesignDayColor.fg, background: OpenDesignDayColor.accentDim)
+        }
+        for highlight in warningHighlights {
+            applyHighlight(highlight, to: &result, color: OpenDesignDayColor.fg, background: OpenDesignDayColor.amberDim)
+        }
+        return result
+    }
+
+    private static func applyHighlight(
+        _ needle: String,
+        to text: inout AttributedString,
+        color: Color,
+        background: Color
+    ) {
+        guard let range = text.range(of: needle) else { return }
+        text[range].foregroundColor = color
+        text[range].backgroundColor = background
+        text[range].font = .system(size: 13, weight: .medium)
+    }
+}
+
+private enum OpenDesignNewsCatalog {
+    static let filterDescriptors: [OpenDesignNewsFilterDescriptor] = [
+        .init(id: .all, title: "전체", tone: .accent, showsDot: false),
+        .init(id: .constraint, title: "제약", tone: .amber, showsDot: true),
+        .init(id: .customer, title: "고객", tone: .accent, showsDot: true),
+        .init(id: .ship, title: "공개", tone: .sky, showsDot: true),
+        .init(id: .numbers, title: "숫자", tone: .rose, showsDot: true),
+        .init(id: .alone, title: "고립", tone: .violet, showsDot: true),
+        .init(id: .adaptive, title: "Adaptive", tone: .teal, showsDot: true),
+    ]
+
+    static let streamGroups: [OpenDesignNewsStreamGroup] = [
+        .init(id: "inbox", title: "받은함", dynamicBadge: true, rows: [
+            .init(id: .all, title: "이번 주 큐레이션", tone: .accent),
+        ]),
+        .init(id: "values", title: "Value별", dynamicBadge: false, rows: [
+            .init(id: .constraint, title: "제약이 실력이다", tone: .amber),
+            .init(id: .customer, title: "고객이 먼저다", tone: .accent),
+            .init(id: .ship, title: "불완전해도 공개", tone: .sky),
+            .init(id: .numbers, title: "숫자로 결정", tone: .rose),
+            .init(id: .alone, title: "고립되지 마라", tone: .violet),
+            .init(id: .adaptive, title: "Adaptive over Static", tone: .teal),
+        ]),
+        .init(id: "sources", title: "출처", dynamicBadge: false, rows: [
+            .init(id: .sourceEssay, title: "에세이 · 핸드북", tone: .teal),
+            .init(id: .sourceBook, title: "책 · 챕터", tone: .amber),
+            .init(id: .sourceTalk, title: "강연 · 팟캐스트", tone: .pink),
+            .init(id: .sourceCase, title: "실전 케이스", tone: .violet),
+        ]),
+        .init(id: "collections", title: "내 컬렉션", dynamicBadge: false, rows: [
+            .init(id: .saved, title: "저장한 자료", tone: .accent),
+            .init(id: .applied, title: "프로젝트에 적용", tone: .sky),
+        ]),
+    ]
+
+    static let sections: [OpenDesignNewsSection] = [
+        .init(id: "customer", title: "고객이 먼저다", meta: "Value 2 · 6건 · ICP가 첫 매출 0원일 때 가장 자주 비는 자료", tone: .accent),
+        .init(id: "constraint", title: "제약이 실력이다", meta: "Value 1 · 4건 · 30일 안에 끝나려면 뭘 빼야 하는가", tone: .amber),
+        .init(id: "ship", title: "불완전해도 공개하라", meta: "Value 3 · 3건 · BIP 첫 포스트 전에 읽을 자료", tone: .sky),
+        .init(id: "numbers", title: "숫자로 결정하라", meta: "Value 4 · 4건 · Day 7 Go/No-Go 게이트에 쓸 기준", tone: .rose),
+        .init(id: "alone", title: "혼자지만 고립되지 마라", meta: "Value 5 · 2건 · 외부 교정 장치", tone: .violet),
+    ]
+
+    static var defaultSavedArticleIDs: Set<String> {
+        Set(articles.filter(\.isDefaultSaved).map(\.id))
+    }
+
+    static let articles: [OpenDesignNewsArticle] = [
+        .init(
+            id: "mom",
+            sectionID: "customer",
+            sourceMark: "MT",
+            source: "momtestbook.com",
+            typeLabel: "책 · Ch. 1-3",
+            time: "22분 핵심 발췌",
+            title: "The Mom Test — 엄마도 거짓말한다",
+            original: "Rob Fitzpatrick · 2013 · \"How to talk to customers when everyone is lying to you\"",
+            quote: "\"Would you buy this?\"는 최악의 질문입니다. 중요한 데이터는 그들이 문제에 대해 실제로 무엇을 했는가입니다.",
+            takeLead: "Day 1 적용",
+            takeBody: "오늘 인터뷰 4지선다 마지막에 한 번만 더 물으세요. \"지난주에 이 문제 때문에 뭘 시도했나요?\" 칭찬형 답이 사라지고, 진짜 시간을 쓴 사람만 남습니다.",
+            applyWhen: "Day 1 · Day 2 · Day 3",
+            values: [.customer, .numbers],
+            type: .sourceBook,
+            sourceTone: .accent,
+            isPinned: true,
+            isDefaultSaved: true,
+            isApplied: true
+        ),
+        .init(
+            id: "posthog-icp",
+            sectionID: "customer",
+            sourceMark: "PH",
+            source: "posthog.com/handbook",
+            typeLabel: "핸드북",
+            time: "8분",
+            title: "Your entire strategy is downstream of your ICP",
+            original: "PostHog Handbook · \"Who we build for\"",
+            quote: nil,
+            takeLead: "왜 보세요",
+            takeBody: "VALUES.md 5번 항목의 외부 교정 장치 정의가 여기서 출발합니다. ICP가 가격, 기능, 마케팅 채널, 콘텐츠 톤, UI 스타일을 결정합니다.",
+            applyWhen: "Day 1 · Day 2",
+            values: [.customer, .adaptive],
+            type: .sourceEssay,
+            sourceTone: .teal,
+            isPinned: false,
+            isDefaultSaved: false,
+            isApplied: false
+        ),
+        .init(
+            id: "pg-scale",
+            sectionID: "customer",
+            sourceMark: "PG",
+            source: "paulgraham.com",
+            typeLabel: "에세이",
+            time: "15분",
+            title: "Do Things That Don't Scale",
+            original: "Paul Graham · 2013-07 · Y Combinator",
+            quote: "Stripe의 창업자들은 한 명씩 노트북을 들고 가서 직접 설치해 줬다. 사인업 후 그 자리에서 키 발급과 API 연결을 끝냈다.",
+            takeLead: "ICP가 자주 빼먹는 것",
+            takeBody: "전업 1인 개발자는 자동화부터 만듭니다. 처음 30일은 자동화보다 1대1 손작업이 빠릅니다. 첫 5명에게 메뉴바 앱을 직접 설치해 주세요.",
+            applyWhen: "Day 8 · Day 18+",
+            values: [.customer, .constraint],
+            type: .sourceEssay,
+            sourceTone: .amber,
+            isPinned: false,
+            isDefaultSaved: false,
+            isApplied: false
+        ),
+        .init(
+            id: "yc-talk",
+            sectionID: "customer",
+            sourceMark: "YC",
+            source: "ycombinator.com · Startup School",
+            typeLabel: "강연",
+            time: "32분 · 자막",
+            title: "How to Talk to Users",
+            original: "Eric Migicovsky · Pebble 창업자 · YC Lecture #4",
+            quote: nil,
+            takeLead: "3개 질문 템플릿",
+            takeBody: "지금 가장 큰 문제 1개, 마지막 발생 시점, 그때 어떻게 해결했는가. 이 3개로 시작하면 \"아이디어 좋네요\"가 사라지고 행동 데이터만 남습니다.",
+            applyWhen: "Day 2 · Day 3",
+            values: [.customer, .numbers],
+            type: .sourceTalk,
+            sourceTone: .sky,
+            isPinned: false,
+            isDefaultSaved: true,
+            isApplied: false
+        ),
+        .init(
+            id: "ih-first-100",
+            sectionID: "customer",
+            sourceMark: "IH",
+            source: "indiehackers.com",
+            typeLabel: "케이스 · 12건",
+            time: "25분",
+            title: "How I got my first 100 customers — 12 indie hackers",
+            original: "Indie Hackers Roundup · 2024 · Courtland Allen 편",
+            quote: nil,
+            takeLead: "패턴 1개",
+            takeBody: "12명 중 11명이 인맥과 커뮤니티에서 시작했습니다. 바이럴은 거짓말이고 Product Hunt 1위도 첫 100명을 보장하지 않습니다.",
+            applyWhen: "Day 18-21",
+            values: [.customer, .ship],
+            type: .sourceCase,
+            sourceTone: .accent,
+            isPinned: false,
+            isDefaultSaved: false,
+            isApplied: false
+        ),
+        .init(
+            id: "minimalist",
+            sectionID: "customer",
+            sourceMark: "SL",
+            source: "minimalistentrepreneur.com",
+            typeLabel: "책 · Ch. 4",
+            time: "18분",
+            title: "The Minimalist Entrepreneur — 100명이 사랑하는 제품",
+            original: "Sahil Lavingia · Gumroad 창업자 · 2021",
+            quote: "100명의 사랑하는 고객은 10,000명의 가벼운 호감보다 더 가치 있습니다. Cohort 1을 잡아야 Cohort 2가 옵니다.",
+            takeLead: "PMF 정의",
+            takeBody: "VALUES.md 4번의 PMF 기준이 유저 100명과 첫 매출인 이유입니다. Day 7 Go/No-Go에서 이 숫자를 떠올리세요.",
+            applyWhen: "Day 7 · Day 22+",
+            values: [.customer, .constraint],
+            type: .sourceBook,
+            sourceTone: .pink,
+            isPinned: false,
+            isDefaultSaved: false,
+            isApplied: false
+        ),
+        .init(
+            id: "calm-company",
+            sectionID: "constraint",
+            sourceMark: "CC",
+            source: "calmcompany.fund",
+            typeLabel: "매니페스토",
+            time: "7분",
+            title: "Calm Company — VC 없이도 충분하다",
+            original: "Tyler Tringas · MicroAcquire · Earnest Capital",
+            quote: nil,
+            takeLead: "ICP에게 직접",
+            takeBody: "전업 1인 개발자는 투자 받아야 진짜라는 환각을 가집니다. 30일 목표를 투자가 아니라 첫 매출 1원으로 잡으세요.",
+            applyWhen: "Day 22+",
+            values: [.constraint, .adaptive],
+            type: .sourceEssay,
+            sourceTone: .teal,
+            isPinned: false,
+            isDefaultSaved: false,
+            isApplied: false
+        ),
+        .init(
+            id: "product-not-plan",
+            sectionID: "constraint",
+            sourceMark: "AW",
+            source: "adamwiggins.com",
+            typeLabel: "에세이",
+            time: "9분",
+            title: "Build a Product, Not a Plan",
+            original: "Adam Wiggins · Heroku 공동창업자 · 12-factor 저자",
+            quote: nil,
+            takeLead: "30일짜리 사이즈",
+            takeBody: "6개월 로드맵이 거의 다 틀리는 이유는 그동안 시장도, 본인도 바뀌기 때문입니다. 당신의 한 줄은 무엇인가요?",
+            applyWhen: "Day 1 · Day 7",
+            values: [.constraint, .adaptive],
+            type: .sourceEssay,
+            sourceTone: .violet,
+            isPinned: false,
+            isDefaultSaved: false,
+            isApplied: false
+        ),
+        .init(
+            id: "levels-sqlite",
+            sectionID: "constraint",
+            sourceMark: "LV",
+            source: "levels.io/buy/",
+            typeLabel: "실전 케이스",
+            time: "5분 · 데이터",
+            title: "Nomad List — 한 명, 단일 SQLite, $1.5M ARR",
+            original: "Pieter Levels (@levelsio) · 2014-현재 · public revenue dashboard",
+            quote: "React, Postgres, Redis, Kubernetes 없이 PHP 파일 하나와 SQLite로 혼자 $1.5M/year를 만든다는 사례입니다.",
+            takeLead: "스택은 모트가 아니다",
+            takeBody: "인프라 페티시를 버리세요. ICP인 1인 개발자가 가장 자주 잃는 시간은 올바른 스택 고민입니다. 모트는 고객과의 거리입니다.",
+            applyWhen: "Day 8-17",
+            values: [.constraint, .adaptive],
+            type: .sourceCase,
+            sourceTone: .sky,
+            isPinned: false,
+            isDefaultSaved: false,
+            isApplied: false
+        ),
+        .init(
+            id: "small-bets",
+            sectionID: "constraint",
+            sourceMark: "DV",
+            source: "dvassallo.com",
+            typeLabel: "에세이",
+            time: "11분",
+            title: "Small Bets — 큰 한 방 대신 10개의 작은 베팅",
+            original: "Daniel Vassallo · ex-AWS · Small Bets 커뮤니티",
+            quote: nil,
+            takeLead: "번호 게임",
+            takeBody: "첫 3개 프로덕트를 다 실패하는 건 정상입니다. 10개를 30일 단위로 시도하면 1개는 의외로 되는 신호가 나옵니다.",
+            applyWhen: "Day 7",
+            values: [.constraint, .adaptive, .numbers],
+            type: .sourceEssay,
+            sourceTone: .amber,
+            isPinned: false,
+            isDefaultSaved: false,
+            isApplied: false
+        ),
+        .init(
+            id: "levels-bip",
+            sectionID: "ship",
+            sourceMark: "LV",
+            source: "levels.io",
+            typeLabel: "에세이 + 강연",
+            time: "12분",
+            title: "Build in Public — 부끄러운 첫 버전이 정상이다",
+            original: "Pieter Levels · @levelsio · 2017 · \"Make the book\"",
+            quote: nil,
+            takeLead: "왜 공개하는가",
+            takeBody: "공개하면 예상치 못한 잠재 고객이 알아서 찾아옵니다. Threads 첫 포스트, 부끄러워도 오늘 올리세요.",
+            applyWhen: "Day 6 · Day 15 · Day 18+",
+            values: [.ship, .alone],
+            type: .sourceEssay,
+            sourceTone: .sky,
+            isPinned: false,
+            isDefaultSaved: false,
+            isApplied: false
+        ),
+        .init(
+            id: "naval",
+            sectionID: "ship",
+            sourceMark: "NR",
+            source: "nav.al",
+            typeLabel: "트위터 스레드 + 팟캐스트",
+            time: "30분",
+            title: "How to Get Rich (without getting lucky) — 레버리지 4가지",
+            original: "Naval Ravikant · AngelList · 2018-05-31 thread",
+            quote: nil,
+            takeLead: "1인 개발자의 레버리지",
+            takeBody: "코드와 미디어는 0의 한계비용이고, 1인 개발자가 동시에 굴릴 수 있는 유일한 두 가지입니다. BIP는 부가가 아니라 필수 레버리지입니다.",
+            applyWhen: "Day 18-30",
+            values: [.ship, .constraint],
+            type: .sourceEssay,
+            sourceTone: .muted,
+            isPinned: false,
+            isDefaultSaved: false,
+            isApplied: false
+        ),
+        .init(
+            id: "threads-challenge",
+            sectionID: "ship",
+            sourceMark: "IH",
+            source: "indiehackers.com/post",
+            typeLabel: "실전 케이스",
+            time: "9분",
+            title: "Threads BIP 30일 챌린지 — 0 follower → 첫 사용자 12명",
+            original: "Indie Hackers community submission · 2025-Q1",
+            quote: nil,
+            takeLead: "참고 곡선",
+            takeBody: "Day 1-10은 반응 0. Day 18 임팩트 포스트 1개로 첫 사용자 12명. 10일간 반응 없어도 정상이라는 외부 증거입니다.",
+            applyWhen: "Day 15 · Day 18+",
+            values: [.ship, .customer],
+            type: .sourceCase,
+            sourceTone: .accent,
+            isPinned: false,
+            isDefaultSaved: false,
+            isApplied: false
+        ),
+        .init(
+            id: "pmf-survey",
+            sectionID: "numbers",
+            sourceMark: "LR",
+            source: "lennysnewsletter.com",
+            typeLabel: "리서치",
+            time: "10분",
+            title: "Sean Ellis PMF 설문 — 40% 룰의 실제 데이터",
+            original: "Lenny Rachitsky · 2022 · 230개 스타트업 분석",
+            quote: "제품을 더 이상 쓸 수 없으면 매우 실망할 사용자가 40% 이상이면 PMF가 있다는 단일 질문 프레임입니다.",
+            takeLead: "측정 가능한 PMF",
+            takeBody: "PMF가 막연하다면 이 질문 하나로 측정하세요. Day 30 사용자 100명이면 50명에게 보내고 40% 이상이 매우 실망이면 Go.",
+            applyWhen: "Day 25-30",
+            values: [.numbers],
+            type: .sourceEssay,
+            sourceTone: .violet,
+            isPinned: false,
+            isDefaultSaved: false,
+            isApplied: false
+        ),
+        .init(
+            id: "patio11",
+            sectionID: "numbers",
+            sourceMark: "P11",
+            source: "kalzumeus.com",
+            typeLabel: "에세이",
+            time: "18분",
+            title: "Don't Call Yourself a Programmer (가격을 5x로 부르는 법)",
+            original: "Patrick McKenzie (patio11) · Stripe Atlas",
+            quote: nil,
+            takeLead: "가격은 정체성",
+            takeBody: "같은 코드를 비즈니스 결과물로 포지셔닝하면 가격 기준이 달라집니다. ICP가 저축 소진 중이라면 가격이 모든 결정의 시작입니다.",
+            applyWhen: "Day 22-24",
+            values: [.numbers, .adaptive],
+            type: .sourceEssay,
+            sourceTone: .rose,
+            isPinned: false,
+            isDefaultSaved: false,
+            isApplied: false
+        ),
+        .init(
+            id: "async-feedback",
+            sectionID: "alone",
+            sourceMark: "PH",
+            source: "posthog.com/handbook",
+            typeLabel: "핸드북",
+            time: "14분",
+            title: "How we run async feedback loops at PostHog",
+            original: "PostHog Handbook · Engineering values",
+            quote: nil,
+            takeLead: "1인이라도 가능한 교정",
+            takeBody: "팀이 없어도 내 결정을 7일 뒤에 다시 보는 의식을 만들 수 있습니다. What did I assume? What evidence did I get? What changed?",
+            applyWhen: "매주",
+            values: [.alone, .customer],
+            type: .sourceEssay,
+            sourceTone: .teal,
+            isPinned: false,
+            isDefaultSaved: false,
+            isApplied: false
+        ),
+        .init(
+            id: "founder-bias",
+            sectionID: "alone",
+            sourceMark: "YC",
+            source: "ycombinator.com",
+            typeLabel: "강연",
+            time: "22분",
+            title: "The Founder's Bias — 왜 본인 제품은 항상 좋아 보이는가",
+            original: "Michael Seibel · YC Group Partner · Startup School 2023",
+            quote: nil,
+            takeLead: "자기 진단 체크",
+            takeBody: "마지막으로 틀렸다고 인정한 때가 언제인지, 나와 다르게 생각하는 사람과 30분 통화한 게 최근 7일 안에 있었는지 확인하세요.",
+            applyWhen: "매주 회고",
+            values: [.alone, .ship],
+            type: .sourceTalk,
+            sourceTone: .sky,
+            isPinned: false,
+            isDefaultSaved: false,
+            isApplied: false
+        ),
+    ]
+
+    static let coverage: [OpenDesignNewsCoverage] = [
+        .init(id: .constraint, title: "제약이 실력이다", count: "4 / 14", progress: 0.50, tone: .amber),
+        .init(id: .customer, title: "고객이 먼저다", count: "6 / 14", progress: 0.75, tone: .accent),
+        .init(id: .ship, title: "불완전해도 공개", count: "3 / 14", progress: 0.38, tone: .sky),
+        .init(id: .numbers, title: "숫자로 결정", count: "4 / 14", progress: 0.50, tone: .rose),
+        .init(id: .alone, title: "고립되지 마라", count: "2 / 14", progress: 0.25, tone: .violet),
+        .init(id: .adaptive, title: "Adaptive over Static", count: "3 / 14", progress: 0.38, tone: .teal),
+    ]
+
+    static let recommendations: [OpenDesignNewsRecommendation] = [
+        .init(id: "r1", rank: "01", title: "The Mom Test — 엄마도 거짓말한다", meta: "고객 · 22분 · 인터뷰 직전", tone: .accent),
+        .init(id: "r2", rank: "02", title: "YC — How to Talk to Users", meta: "고객 · 32분 · 3개 질문 템플릿", tone: .sky),
+        .init(id: "r3", rank: "03", title: "PostHog — Downstream of ICP", meta: "Adaptive · 8분 · ICP 정의 직전", tone: .teal),
+    ]
+
+    static let sources: [OpenDesignNewsSource] = [
+        .init(id: "ph", mark: "PH", title: "posthog.com / handbook", count: "3", isSubscribed: false, tone: .teal),
+        .init(id: "pg", mark: "PG", title: "paulgraham.com", count: "2", isSubscribed: false, tone: .amber),
+        .init(id: "yc", mark: "YC", title: "ycombinator.com / library", count: "2", isSubscribed: false, tone: .sky),
+        .init(id: "lr", mark: "LR", title: "lennysnewsletter.com", count: "1", isSubscribed: true, tone: .violet),
+        .init(id: "ih", mark: "IH", title: "indiehackers.com", count: "2", isSubscribed: false, tone: .accent),
+        .init(id: "lv", mark: "LV", title: "levels.io", count: "2", isSubscribed: false, tone: .sky),
+        .init(id: "add", mark: "+", title: "출처 추가 (RSS · OPML)", count: nil, isSubscribed: false, tone: .accent),
+    ]
+}
+
+private struct OpenDesignBipLogShell: View {
+    let layout: OpenDesignDayLayoutMetrics
+    let openSearch: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var selectedFilter: OpenDesignBipFilter = .all
+    @State private var searchQuery = ""
+    @State private var selectedCandidateID: String? = OpenDesignBipLogCatalog.candidates.first?.id
+
+    private var visibleCandidates: [OpenDesignBipCandidate] {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return OpenDesignBipLogCatalog.candidates.filter { candidate in
+            let filterMatch = selectedFilter == .all || candidate.filters.contains(selectedFilter)
+            guard filterMatch else { return false }
+            guard !query.isEmpty else { return true }
+            return candidate.title.lowercased().contains(query)
+                || candidate.source.lowercased().contains(query)
+                || candidate.medium.lowercased().contains(query)
+                || candidate.tags.contains { $0.title.lowercased().contains(query) }
+        }
+    }
+
+    private var selectedCandidate: OpenDesignBipCandidate? {
+        guard let selectedCandidateID else { return nil }
+        return OpenDesignBipLogCatalog.candidates.first { $0.id == selectedCandidateID }
+    }
+
+    var body: some View {
+        Group {
+            if layout.showsTaskSidebar {
+                ZStack {
+                    OpenDesignBipSidebarView(
+                        selectedFilter: selectedFilter,
+                        selectFilter: selectFilter(_:)
+                    )
+                    Color.clear
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("OpenDesign BIP Log Side")
+                        .accessibilityIdentifier("opendesign.reference.bipLog.side")
+                        .allowsHitTesting(false)
+                }
+                .frame(width: layout.taskSidebarWidth)
+                .frame(maxHeight: .infinity)
+                .background(OpenDesignDayColor.bg)
+                .transition(.opacity)
+            }
+
+            ZStack {
+                OpenDesignBipMainView(
+                    layout: layout,
+                    selectedFilter: selectedFilter,
+                    searchQuery: $searchQuery,
+                    selectedCandidateID: $selectedCandidateID,
+                    selectedCandidate: selectedCandidate,
+                    visibleCandidates: visibleCandidates,
+                    count: count(for:),
+                    selectFilter: selectFilter(_:),
+                    openSearch: openSearch
+                )
+                Color.clear
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("OpenDesign BIP Log Main")
+                    .accessibilityIdentifier("opendesign.reference.bipLog.main")
+                    .allowsHitTesting(false)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(OpenDesignDayColor.bg)
+    }
+
+    private func selectFilter(_ filter: OpenDesignBipFilter) {
+        withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.12)) {
+            selectedFilter = filter
+        }
+    }
+
+    private func count(for filter: OpenDesignBipFilter) -> Int {
+        OpenDesignBipLogCatalog.candidates.filter { candidate in
+            filter == .all || candidate.filters.contains(filter)
+        }.count
+    }
+}
+
+private struct OpenDesignBipSidebarView: View {
+    let selectedFilter: OpenDesignBipFilter
+    let selectFilter: (OpenDesignBipFilter) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    OpenDesignBipSidebarSection(title: "소스", count: "\(OpenDesignBipLogCatalog.sourceRows.count)") {
+                        ForEach(OpenDesignBipLogCatalog.sourceRows, id: \.filter) { row in
+                            OpenDesignBipSourceRow(
+                                title: row.title,
+                                count: row.count,
+                                systemImage: row.systemImage,
+                                tone: row.filter.tone,
+                                isActive: selectedFilter == row.filter,
+                                action: { selectFilter(row.filter) }
+                            )
+                        }
+                    }
+
+                    OpenDesignBipSidebarSection(title: "ICP 신호", count: "\(OpenDesignBipLogCatalog.signals.count)") {
+                        ForEach(OpenDesignBipLogCatalog.signals) { signal in
+                            OpenDesignBipSignalRow(signal: signal)
+                        }
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 12)
+            }
+
+            OpenDesignBipSidebarProgress()
+        }
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .trailing)
+    }
+}
+
+private struct OpenDesignBipSidebarSection<Content: View>: View {
+    let title: String
+    let count: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(count)
+            }
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .textCase(.uppercase)
+            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+            .padding(.horizontal, 4)
+            .padding(.top, 8)
+            .padding(.bottom, 7)
+
+            content
+        }
+        .padding(.bottom, 8)
+    }
+}
+
+private struct OpenDesignBipSourceRow: View {
+    let title: String
+    let count: String
+    let systemImage: String
+    let tone: OpenDesignReferenceTone
+    let isActive: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(isActive ? tone.color : OpenDesignDayColor.muted)
+                    .frame(width: 22, height: 22)
+                    .background(referenceRounded(fill: isActive ? tone.dim : OpenDesignDayColor.surface, stroke: isActive ? tone.line : OpenDesignDayColor.borderSoft, radius: 6))
+                Text(title)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(isActive || isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                Text(count)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(isActive ? tone.color : OpenDesignDayColor.muted)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 36)
+            .background(referenceRounded(fill: isActive ? OpenDesignDayColor.selected : isHovered ? OpenDesignDayColor.surface2 : Color.clear, stroke: Color.clear, radius: 6))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityLabel(title)
+        .accessibilityValue(isActive ? "active" : "\(count)건")
+    }
+}
+
+private struct OpenDesignBipSignalRow: View {
+    let signal: OpenDesignBipSignal
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(signal.title)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                    .lineLimit(1)
+                Text(signal.subtitle)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Text(signal.state)
+                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                .textCase(.uppercase)
+                .foregroundStyle(signal.tone.color)
+                .padding(.horizontal, 7)
+                .frame(height: 19)
+                .background(Capsule().fill(signal.tone.dim).overlay(Capsule().stroke(signal.tone.line, lineWidth: 1)))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(referenceRounded(fill: isHovered ? OpenDesignDayColor.surface2 : Color.clear, stroke: Color.clear, radius: 6))
+        .onHover { isHovered = $0 }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct OpenDesignBipSidebarProgress: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("ICP 후보")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .textCase(.uppercase)
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                Spacer()
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    Text("5")
+                        .font(.system(size: 17, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                    Text("/ 18")
+                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                }
+            }
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(OpenDesignDayColor.bgDeep)
+                        .overlay(Capsule().stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+                    Capsule()
+                        .fill(OpenDesignDayColor.accent)
+                        .frame(width: max(0, proxy.size.width * 0.28))
+                }
+            }
+            .frame(height: 5)
+
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(OpenDesignDayColor.amber)
+                    .frame(width: 5, height: 5)
+                Text("다음 액션")
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                Text("상위 3명")
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                Text("· DM 후보화")
+                    .foregroundStyle(OpenDesignDayColor.muted)
+            }
+            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 14)
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
+    }
+}
+
+private struct OpenDesignBipMainView: View {
+    let layout: OpenDesignDayLayoutMetrics
+    let selectedFilter: OpenDesignBipFilter
+    @Binding var searchQuery: String
+    @Binding var selectedCandidateID: String?
+    let selectedCandidate: OpenDesignBipCandidate?
+    let visibleCandidates: [OpenDesignBipCandidate]
+    let count: (OpenDesignBipFilter) -> Int
+    let selectFilter: (OpenDesignBipFilter) -> Void
+    let openSearch: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        VStack(spacing: 0) {
+            OpenDesignBipHeaderView(
+                horizontalPadding: layout.mainHorizontalPadding,
+                openSearch: openSearch
+            )
+
+            OpenDesignBipFilterBar(
+                selectedFilter: selectedFilter,
+                searchQuery: $searchQuery,
+                horizontalPadding: layout.mainHorizontalPadding,
+                count: count,
+                selectFilter: selectFilter
+            )
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        OpenDesignBipSectionHeader(
+                            title: "ICP 리서치 큐",
+                            meta: "Exa Search · 자동 후보 발굴 · 2026-05-17",
+                            tone: .accent
+                        )
+                        .padding(.top, 4)
+                        .padding(.bottom, 14)
+
+                        OpenDesignBipBriefCard()
+                            .padding(.bottom, 14)
+                            .accessibilityIdentifier("opendesign.reference.bipLog.brief")
+
+                        HStack(alignment: .center, spacing: 10) {
+                            OpenDesignBipSectionHeader(
+                                title: "리서치된 게시글",
+                                meta: "원문 하이라이트 + ICP 근거",
+                                tone: .sky
+                            )
+                            Spacer(minLength: 10)
+                            HStack(spacing: 2) {
+                                Text("정렬")
+                                    .foregroundStyle(OpenDesignDayColor.muted)
+                                Text("ICP 적합도순")
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                            }
+                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        }
+                        .padding(.bottom, 12)
+
+                        VStack(spacing: 12) {
+                            ForEach(visibleCandidates) { candidate in
+                                OpenDesignBipCandidateCard(
+                                    candidate: candidate,
+                                    isSelected: selectedCandidateID == candidate.id,
+                                    select: {
+                                        withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.16)) {
+                                            selectedCandidateID = candidate.id
+                                            proxy.scrollTo("bip-draft", anchor: .top)
+                                        }
+                                    }
+                                )
+                                .accessibilityIdentifier("opendesign.reference.bipLog.candidate.\(candidate.id)")
+                            }
+                        }
+
+                        if visibleCandidates.isEmpty {
+                            Text("이 조건에 맞는 ICP 후보가 없습니다. 필터나 검색어를 바꿔보세요.")
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 24)
+                        }
+
+                        OpenDesignBipSectionHeader(
+                            title: "BIP 초안",
+                            meta: "선택 후보를 기반으로 자동 생성",
+                            tone: .amber
+                        )
+                        .padding(.top, 28)
+                        .padding(.bottom, 14)
+                        .id("bip-draft")
+
+                        OpenDesignBipDraftPanel(
+                            selectedCandidate: selectedCandidate,
+                            clearSelection: { selectedCandidateID = nil }
+                        )
+                        .accessibilityIdentifier("opendesign.reference.bipLog.draft")
+                    }
+                    .frame(maxWidth: 980, alignment: .leading)
+                    .padding(.horizontal, layout.mainHorizontalPadding)
+                    .padding(.top, 24)
+                    .padding(.bottom, 40)
+                    .frame(maxWidth: .infinity)
+                }
+                .background(OpenDesignDayColor.bg)
+                .accessibilityIdentifier("opendesign.reference.bipLog.main.scroll")
+            }
+        }
+        .background(OpenDesignDayColor.bg)
+    }
+}
+
+private struct OpenDesignBipHeaderView: View {
+    let horizontalPadding: CGFloat
+    let openSearch: () -> Void
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                identity
+                Spacer(minLength: 12)
+                actions
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                identity
+                actions
+            }
+        }
+        .padding(.horizontal, horizontalPadding)
+        .padding(.vertical, 12)
+        .frame(minHeight: 70)
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+
+    private var identity: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "doc.text")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.accent)
+                .frame(width: 44, height: 44)
+                .background(referenceRounded(fill: OpenDesignDayColor.accentDim, stroke: OpenDesignDayColor.accentLine, radius: 11))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("BIP 로그 · ICP 리서치")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                    .lineLimit(1)
+                FlowLayout(spacing: 8, lineSpacing: 3) {
+                    Circle()
+                        .fill(OpenDesignDayColor.accent)
+                        .frame(width: 5, height: 5)
+                    headerMeta("Exa 검색 · 5명 후보")
+                    headerSeparator
+                    headerMeta("상위 3명은 인터뷰/DM 후보")
+                }
+            }
+        }
+    }
+
+    private var actions: some View {
+        HStack(spacing: 6) {
+            OpenDesignBipHeaderButton(title: "초안", systemImage: "doc.text", tone: .ghost, action: openSearch)
+            OpenDesignBipHeaderButton(title: "다시 리서치", systemImage: "plus", tone: .accent, action: {})
+        }
+    }
+
+    private func headerMeta(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.muted)
+            .lineLimit(1)
+    }
+
+    private var headerSeparator: some View {
+        Circle()
+            .fill(OpenDesignDayColor.mutedDeep)
+            .frame(width: 4, height: 4)
+    }
+}
+
+private struct OpenDesignBipHeaderButton: View {
+    enum Tone { case ghost, accent }
+
+    let title: String
+    let systemImage: String
+    let tone: Tone
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(title)
+            }
+            .font(.system(size: 12, weight: tone == .accent ? .semibold : .medium))
+            .foregroundStyle(tone == .accent ? OpenDesignDayColor.bgDeep : isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+            .padding(.horizontal, tone == .accent ? 14 : 12)
+            .frame(height: 30)
+            .background(
+                referenceRounded(
+                    fill: tone == .accent ? (isHovered ? OpenDesignDayColor.accentStrong : OpenDesignDayColor.accent) : (isHovered ? OpenDesignDayColor.surface2 : Color.clear),
+                    stroke: tone == .accent ? OpenDesignDayColor.accent : OpenDesignDayColor.borderSoft,
+                    radius: 8
+                )
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityLabel(title)
+    }
+}
+
+private struct OpenDesignBipFilterBar: View {
+    let selectedFilter: OpenDesignBipFilter
+    @Binding var searchQuery: String
+    let horizontalPadding: CGFloat
+    let count: (OpenDesignBipFilter) -> Int
+    let selectFilter: (OpenDesignBipFilter) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(OpenDesignBipFilter.allCases) { filter in
+                    OpenDesignBipFilterButton(
+                        filter: filter,
+                        count: count(filter),
+                        isActive: selectedFilter == filter,
+                        action: { selectFilter(filter) }
+                    )
+                }
+
+                Spacer(minLength: 16)
+
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                    TextField("ICP 증거 검색", text: $searchQuery)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                        .frame(width: 150)
+                        .accessibilityIdentifier("opendesign.reference.bipLog.search")
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 6))
+            }
+            .padding(.horizontal, horizontalPadding)
+            .frame(minHeight: 52)
+        }
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+}
+
+private struct OpenDesignBipFilterButton: View {
+    let filter: OpenDesignBipFilter
+    let count: Int
+    let isActive: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(filter.title)
+                Text("\(count)")
+                    .foregroundStyle(isActive ? filter.tone.color : OpenDesignDayColor.mutedDeep)
+            }
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundStyle(isActive ? filter.tone.color : isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.muted)
+            .padding(.horizontal, 12)
+            .frame(height: 28)
+            .background(Capsule().fill(isActive ? filter.tone.dim : isHovered ? OpenDesignDayColor.surface2 : Color.clear))
+            .overlay(Capsule().stroke(isActive ? filter.tone.line : Color.clear, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityLabel(filter.title)
+        .accessibilityValue(isActive ? "active" : "\(count)건")
+    }
+}
+
+private struct OpenDesignBipSectionHeader: View {
+    let title: String
+    let meta: String
+    let tone: OpenDesignReferenceTone
+
+    var body: some View {
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(tone.color)
+                .frame(width: 4, height: 12)
+            Text(title)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .textCase(.uppercase)
+                .foregroundStyle(OpenDesignDayColor.muted)
+            Text(meta)
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                .lineLimit(1)
+            Rectangle()
+                .fill(OpenDesignDayColor.borderSoft)
+                .frame(height: 1)
+        }
+    }
+}
+
+private struct OpenDesignBipBriefCard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(alignment: .top, spacing: 18) {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("auto research run")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .textCase(.uppercase)
+                        .foregroundStyle(OpenDesignDayColor.accent)
+                    Text("전업 1인 개발자 후보를 공개 게시글에서 찾았어요.")
+                        .font(.system(size: 20, weight: .regular))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("검색 기준은 ICP 문서의 퇴사/전업, 에이전트 코딩 도구, 수익 전 또는 초기, macOS 증거, BIP 기록 의향입니다. 원문이 직접 말한 부분만 하이라이트하고, 비어 있는 항목은 확인 필요로 남겼습니다.")
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                        .lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                VStack(alignment: .trailing, spacing: 5) {
+                    Text("후보")
+                    Text("5")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                    Text("강한 적합 3 · 워치리스트 2")
+                }
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .frame(minWidth: 170, alignment: .trailing)
+            }
+
+            HStack(alignment: .top, spacing: 9) {
+                Text("exa>")
+                    .foregroundStyle(OpenDesignDayColor.accent)
+                Text("solo builder quit job no revenue Claude Code Cursor MacBook building in public first month posts")
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .lineSpacing(4)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(referenceRounded(fill: OpenDesignDayColor.bgDeep, stroke: OpenDesignDayColor.borderSoft, radius: 8))
+
+            FlowLayout(spacing: 7, lineSpacing: 7) {
+                OpenDesignBipMetricPill(title: "전업/퇴사", count: "4", tone: .accent)
+                OpenDesignBipMetricPill(title: "Claude Code / Cursor", count: "5", tone: .accent)
+                OpenDesignBipMetricPill(title: "BIP 의향", count: "4", tone: .accent)
+                OpenDesignBipMetricPill(title: "수익 전/초기", count: "3", tone: .muted)
+                OpenDesignBipMetricPill(title: "macOS 확인 필요", count: "3", tone: .amber)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(OpenDesignDayColor.surface)
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(OpenDesignDayColor.border, lineWidth: 1))
+                .overlay(alignment: .top) {
+                    LinearGradient(
+                        colors: [Color.clear, OpenDesignDayColor.accentLine, Color.clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(height: 1)
+                }
+        )
+    }
+}
+
+private struct OpenDesignBipMetricPill: View {
+    let title: String
+    let count: String
+    let tone: OpenDesignReferenceTone
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(title)
+            Text(count)
+                .fontWeight(.semibold)
+                .foregroundStyle(tone == .muted ? OpenDesignDayColor.fg : tone.color)
+        }
+        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+        .foregroundStyle(tone == .muted ? OpenDesignDayColor.fgSecondary : tone.color)
+        .padding(.horizontal, 10)
+        .frame(height: 25)
+        .background(Capsule().fill(tone == .muted ? OpenDesignDayColor.bgDeep : tone.dim))
+        .overlay(Capsule().stroke(tone == .muted ? OpenDesignDayColor.borderSoft : tone.line, lineWidth: 1))
+    }
+}
+
+private struct OpenDesignBipCandidateCard: View {
+    let candidate: OpenDesignBipCandidate
+    let isSelected: Bool
+    let select: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 14) {
+                    score
+                    titleBlock
+                    Spacer(minLength: 12)
+                    sourceBadge
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .top, spacing: 14) {
+                        score
+                        titleBlock
+                    }
+                    sourceBadge
+                }
+            }
+
+            FlowLayout(spacing: 6, lineSpacing: 6) {
+                ForEach(candidate.tags) { tag in
+                    OpenDesignReferenceChipView(chip: tag, isActive: tag.tone == .accent)
+                }
+            }
+
+            Text(candidate.quote)
+                .font(.system(size: 13, weight: .regular))
+                .lineSpacing(5)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 13)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(OpenDesignDayColor.bgDeep)
+                        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+                        .overlay(Rectangle().fill(candidate.tone.line).frame(width: 1), alignment: .leading)
+                )
+
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 10) {
+                    evidence(title: candidate.whyTitle, body: candidate.whyBody)
+                    evidence(title: candidate.usageTitle, body: AttributedString(candidate.usageBody))
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                    evidence(title: candidate.whyTitle, body: candidate.whyBody)
+                    evidence(title: candidate.usageTitle, body: AttributedString(candidate.usageBody))
+                }
+            }
+
+            Text(candidate.gap)
+                .font(.system(size: 12, weight: .regular))
+                .lineSpacing(3)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 9)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(referenceRounded(fill: OpenDesignDayColor.amberDim, stroke: OpenDesignDayColor.amberLine, radius: 8))
+
+            HStack(spacing: 8) {
+                Button(action: select) {
+                    Text(isSelected ? "초안 반영됨" : "BIP 초안에 반영")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(isSelected ? OpenDesignDayColor.bgDeep : OpenDesignDayColor.accent)
+                        .padding(.horizontal, 11)
+                        .frame(height: 28)
+                        .background(referenceRounded(fill: isSelected ? OpenDesignDayColor.accent : OpenDesignDayColor.accentDim, stroke: OpenDesignDayColor.accentLine, radius: 8))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("opendesign.reference.bipLog.candidate.\(candidate.id).select")
+
+                if let sourceURL = candidate.sourceURL {
+                    Link(destination: sourceURL) {
+                        Text("원문 열기")
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                            .padding(.horizontal, 11)
+                            .frame(height: 28)
+                            .background(referenceRounded(fill: Color.clear, stroke: OpenDesignDayColor.borderSoft, radius: 8))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("opendesign.reference.bipLog.candidate.\(candidate.id).source")
+                }
+
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(isHovered ? OpenDesignDayColor.surface2 : OpenDesignDayColor.surface)
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(isHovered ? OpenDesignDayColor.borderStrong : OpenDesignDayColor.border, lineWidth: 1))
+        )
+        .offset(y: isHovered ? -1 : 0)
+        .onHover { isHovered = $0 }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var score: some View {
+        VStack(spacing: 2) {
+            Text(candidate.matchLabel)
+                .font(.system(size: candidate.matchLabel.count > 1 ? 14 : 18, weight: .semibold, design: .monospaced))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            Text(candidate.matchCaption)
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .textCase(.uppercase)
+                .foregroundStyle(OpenDesignDayColor.muted)
+        }
+        .foregroundStyle(candidate.tone.color)
+        .frame(width: 54, height: 54)
+        .background(referenceRounded(fill: candidate.tone.dim, stroke: candidate.tone.line, radius: 14))
+    }
+
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(candidate.title)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fg)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+            FlowLayout(spacing: 7, lineSpacing: 3) {
+                Text(candidate.source)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                Text("·")
+                Text(candidate.date)
+                Text("·")
+                Text(candidate.medium)
+            }
+            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.muted)
+        }
+    }
+
+    private var sourceBadge: some View {
+        Text(candidate.sourceLabel)
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .textCase(.uppercase)
+            .foregroundStyle(OpenDesignDayColor.muted)
+            .padding(.horizontal, 9)
+            .frame(height: 24)
+            .background(Capsule().stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+    }
+
+    private func evidence(title: String, body: AttributedString) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .textCase(.uppercase)
+                .foregroundStyle(OpenDesignDayColor.muted)
+            Text(body)
+                .font(.system(size: 12.5, weight: .regular))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 10)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
+    }
+}
+
+private struct OpenDesignBipDraftPanel: View {
+    let selectedCandidate: OpenDesignBipCandidate?
+    let clearSelection: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var copied = false
+
+    private var draftText: String {
+        selectedCandidate?.draft ?? OpenDesignBipLogCatalog.emptyDraft
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(selectedCandidate.map { "\($0.source) · BIP 초안" } ?? "선택 후보 없음")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fg)
+
+            Text(draftText)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .lineSpacing(5)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 13)
+                .frame(maxWidth: .infinity, minHeight: 98, alignment: .topLeading)
+                .background(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(OpenDesignDayColor.bgDeep)
+                        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(OpenDesignDayColor.border, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                )
+
+            HStack(spacing: 8) {
+                Button(action: copyDraft) {
+                    HStack(spacing: 7) {
+                        Text(copied ? "복사됨" : "초안 복사")
+                        Text("⌘ C")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.bgDeep.opacity(0.75))
+                            .padding(.horizontal, 5)
+                            .frame(height: 16)
+                            .background(Capsule().fill(OpenDesignDayColor.bgDeep.opacity(0.22)))
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.bgDeep)
+                    .padding(.horizontal, 14)
+                    .frame(height: 30)
+                    .background(referenceRounded(fill: OpenDesignDayColor.amber, stroke: OpenDesignDayColor.amber, radius: 8))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("opendesign.reference.bipLog.draft.copy")
+
+                Button(action: clearDraft) {
+                    Text("초기화")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                        .padding(.horizontal, 12)
+                        .frame(height: 30)
+                        .background(referenceRounded(fill: Color.clear, stroke: OpenDesignDayColor.borderSoft, radius: 8))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("opendesign.reference.bipLog.draft.clear")
+
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(referenceGradientCard(stroke: OpenDesignDayColor.border))
+    }
+
+    private func copyDraft() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(draftText, forType: .string)
+        withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.12)) {
+            copied = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+            withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.12)) {
+                copied = false
+            }
+        }
+    }
+
+    private func clearDraft() {
+        clearSelection()
+        copied = false
+    }
+}
+
+private struct OpenDesignNewsShell: View {
+    let layout: OpenDesignDayLayoutMetrics
+    let openSearch: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage("agentic30.news.readArticleIDs") private var readArticleIDsRaw = ""
+    @AppStorage("agentic30.news.savedArticleIDs") private var savedArticleIDsRaw = ""
+    @State private var selectedFilter: OpenDesignNewsFilter = .all
+
+    private var readArticleIDs: Set<String> {
+        get {
+            Set(readArticleIDsRaw.split(separator: "|").map(String.init))
+        }
+        nonmutating set {
+            readArticleIDsRaw = newValue.sorted().joined(separator: "|")
+        }
+    }
+
+    private var savedArticleIDs: Set<String> {
+        get {
+            if savedArticleIDsRaw.isEmpty {
+                return OpenDesignNewsCatalog.defaultSavedArticleIDs
+            }
+            if savedArticleIDsRaw == "-" {
+                return []
+            }
+            return Set(savedArticleIDsRaw.split(separator: "|").map(String.init))
+        }
+        nonmutating set {
+            savedArticleIDsRaw = newValue.isEmpty ? "-" : newValue.sorted().joined(separator: "|")
+        }
+    }
+
+    private var visibleArticles: [OpenDesignNewsArticle] {
+        OpenDesignNewsCatalog.articles.filter { article in
+            matches(article, filter: selectedFilter)
+        }
+    }
+
+    private var unreadCount: Int {
+        OpenDesignNewsCatalog.articles.filter { !readArticleIDs.contains($0.id) }.count
+    }
+
+    var body: some View {
+        Group {
+            if layout.showsTaskSidebar {
+                ZStack {
+                    OpenDesignNewsSidebarView(
+                        selectedFilter: selectedFilter,
+                        unreadCount: unreadCount,
+                        displayCount: displayCount(for:),
+                        openSearch: openSearch,
+                        select: selectFilter(_:)
+                    )
+                    Color.clear
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("OpenDesign News Side")
+                        .accessibilityIdentifier("opendesign.reference.news.side")
+                        .allowsHitTesting(false)
+                }
+                .frame(width: layout.taskSidebarWidth)
+                .frame(maxHeight: .infinity)
+                .background(OpenDesignDayColor.bg)
+                .transition(.opacity)
+            }
+
+            ZStack {
+                OpenDesignNewsMainView(
+                    layout: layout,
+                    selectedFilter: selectedFilter,
+                    unreadCount: unreadCount,
+                    readArticleIDs: readArticleIDs,
+                    savedArticleIDs: savedArticleIDs,
+                    visibleArticles: visibleArticles,
+                    displayCount: displayCount(for:),
+                    selectFilter: selectFilter(_:),
+                    markAll: toggleAllRead,
+                    markRead: markRead(_:),
+                    toggleRead: toggleRead(_:),
+                    toggleSaved: toggleSaved(_:)
+                )
+                Color.clear
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("OpenDesign News Main")
+                    .accessibilityIdentifier("opendesign.reference.news.main")
+                    .allowsHitTesting(false)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if layout.showsMetaPanel {
+                ZStack {
+                    OpenDesignNewsMetaPanelView()
+                    Color.clear
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("OpenDesign News Meta")
+                        .accessibilityIdentifier("opendesign.reference.news.meta")
+                        .allowsHitTesting(false)
+                }
+                .frame(width: layout.metaPanelWidth)
+                .frame(maxHeight: .infinity)
+                .background(OpenDesignDayColor.bg)
+            }
+        }
+    }
+
+    private func selectFilter(_ filter: OpenDesignNewsFilter) {
+        withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.12)) {
+            selectedFilter = filter
+        }
+    }
+
+    private func markRead(_ articleID: String) {
+        guard !readArticleIDs.contains(articleID) else { return }
+        var ids = readArticleIDs
+        ids.insert(articleID)
+        readArticleIDs = ids
+    }
+
+    private func toggleRead(_ articleID: String) {
+        var ids = readArticleIDs
+        if ids.contains(articleID) {
+            ids.remove(articleID)
+        } else {
+            ids.insert(articleID)
+        }
+        readArticleIDs = ids
+    }
+
+    private func toggleSaved(_ articleID: String) {
+        var ids = savedArticleIDs
+        if ids.contains(articleID) {
+            ids.remove(articleID)
+        } else {
+            ids.insert(articleID)
+        }
+        savedArticleIDs = ids
+    }
+
+    private func toggleAllRead() {
+        if unreadCount == 0 {
+            readArticleIDs = []
+        } else {
+            readArticleIDs = Set(OpenDesignNewsCatalog.articles.map(\.id))
+        }
+    }
+
+    private func displayCount(for filter: OpenDesignNewsFilter) -> String {
+        let total = OpenDesignNewsCatalog.articles.filter { matches($0, filter: filter) }.count
+        let unread = OpenDesignNewsCatalog.articles.filter { article in
+            matches(article, filter: filter) && !readArticleIDs.contains(article.id)
+        }.count
+        return "\(unread == 0 ? total : unread)"
+    }
+
+    private func matches(_ article: OpenDesignNewsArticle, filter: OpenDesignNewsFilter) -> Bool {
+        switch filter {
+        case .all:
+            return true
+        case .constraint, .customer, .ship, .numbers, .alone, .adaptive:
+            return article.values.contains(filter)
+        case .sourceEssay, .sourceBook, .sourceTalk, .sourceCase:
+            return article.type == filter
+        case .saved:
+            return savedArticleIDs.contains(article.id)
+        case .applied:
+            return article.isApplied
+        }
+    }
+}
+
+private struct OpenDesignNewsSidebarView: View {
+    let selectedFilter: OpenDesignNewsFilter
+    let unreadCount: Int
+    let displayCount: (OpenDesignNewsFilter) -> String
+    let openSearch: () -> Void
+    let select: (OpenDesignNewsFilter) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Text("받은함")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Text("\(unreadCount)")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .padding(.horizontal, 6)
+                    .frame(height: 18)
+                    .background(Capsule().fill(OpenDesignDayColor.surface))
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 10)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+
+            Button(action: openSearch) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 10, weight: .medium))
+                    Text("뉴스 검색")
+                    Spacer()
+                    Text("⌘ K")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                }
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 6))
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 6)
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(OpenDesignNewsCatalog.streamGroups) { group in
+                        HStack {
+                            Text(group.title)
+                            Spacer()
+                            if group.dynamicBadge {
+                                Text(unreadCount == 0 ? "모두 읽음" : "\(unreadCount)건 안 읽음")
+                                    .foregroundStyle(OpenDesignDayColor.accent)
+                            }
+                        }
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .textCase(.uppercase)
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        .padding(.top, group.id == "inbox" ? 8 : 14)
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 6)
+
+                        ForEach(group.rows) { row in
+                            OpenDesignNewsStreamRowView(
+                                row: row,
+                                isActive: selectedFilter == row.id,
+                                count: displayCount(row.id),
+                                select: { select(row.id) }
+                            )
+                        }
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.bottom, 14)
+            }
+        }
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .trailing)
+    }
+}
+
+private struct OpenDesignNewsStreamRowView: View {
+    let row: OpenDesignNewsStreamRow
+    let isActive: Bool
+    let count: String
+    let select: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: select) {
+            HStack(spacing: 9) {
+                Circle()
+                    .fill(row.tone.color)
+                    .frame(width: 10, height: 10)
+                    .frame(width: 18)
+                Text(row.title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(isActive || isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                Text(count)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(isActive ? OpenDesignDayColor.accent : OpenDesignDayColor.muted)
+                    .padding(.horizontal, 6)
+                    .frame(height: 18)
+                    .background(Capsule().fill(isActive ? OpenDesignDayColor.accentDim : OpenDesignDayColor.surface))
+                    .overlay(Capsule().stroke(isActive ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, lineWidth: 1))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(referenceRounded(fill: isActive ? OpenDesignDayColor.selected : isHovered ? OpenDesignDayColor.hover : Color.clear, stroke: Color.clear, radius: 7))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityLabel(row.title)
+        .accessibilityValue("\(count)건")
+    }
+}
+
+private struct OpenDesignNewsMainView: View {
+    let layout: OpenDesignDayLayoutMetrics
+    let selectedFilter: OpenDesignNewsFilter
+    let unreadCount: Int
+    let readArticleIDs: Set<String>
+    let savedArticleIDs: Set<String>
+    let visibleArticles: [OpenDesignNewsArticle]
+    let displayCount: (OpenDesignNewsFilter) -> String
+    let selectFilter: (OpenDesignNewsFilter) -> Void
+    let markAll: () -> Void
+    let markRead: (String) -> Void
+    let toggleRead: (String) -> Void
+    let toggleSaved: (String) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            OpenDesignNewsHeaderView(
+                unreadCount: unreadCount,
+                totalCount: OpenDesignNewsCatalog.articles.count,
+                horizontalPadding: layout.mainHorizontalPadding,
+                markAll: markAll
+            )
+
+            OpenDesignNewsFilterBar(
+                selectedFilter: selectedFilter,
+                horizontalPadding: layout.mainHorizontalPadding,
+                displayCount: displayCount,
+                select: selectFilter
+            )
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    OpenDesignNewsTakeawayHero()
+                        .padding(.bottom, 18)
+
+                    ForEach(OpenDesignNewsCatalog.sections) { section in
+                        let articles = visibleArticles.filter { $0.sectionID == section.id }
+                        if !articles.isEmpty {
+                            OpenDesignNewsSectionHeader(section: section)
+                                .padding(.top, 4)
+                                .padding(.bottom, 12)
+
+                            VStack(spacing: 12) {
+                                ForEach(articles) { article in
+                                    OpenDesignNewsArticleCard(
+                                        article: article,
+                                        isRead: readArticleIDs.contains(article.id),
+                                        isSaved: savedArticleIDs.contains(article.id),
+                                        markRead: { markRead(article.id) },
+                                        toggleRead: { toggleRead(article.id) },
+                                        toggleSaved: { toggleSaved(article.id) }
+                                    )
+                                }
+                            }
+                            .padding(.bottom, 10)
+                        }
+                    }
+
+                    if visibleArticles.isEmpty {
+                        Text("이 필터에 해당하는 리서치가 없어요 — 다른 Value를 골라보세요.")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 24)
+                    }
+                }
+                .frame(maxWidth: 880, alignment: .leading)
+                .padding(.horizontal, layout.mainHorizontalPadding)
+                .padding(.top, 22)
+                .padding(.bottom, 34)
+                .frame(maxWidth: .infinity)
+            }
+            .background(OpenDesignDayColor.bg)
+        }
+        .background(OpenDesignDayColor.bg)
+    }
+}
+
+private struct OpenDesignNewsHeaderView: View {
+    let unreadCount: Int
+    let totalCount: Int
+    let horizontalPadding: CGFloat
+    let markAll: () -> Void
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                headerIdentity
+                Spacer(minLength: 12)
+                headerActions
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                headerIdentity
+                headerActions
+            }
+        }
+        .padding(.horizontal, horizontalPadding)
+        .padding(.vertical, 12)
+        .frame(minHeight: 70)
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+
+    private var headerIdentity: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "newspaper")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.accent)
+                .frame(width: 44, height: 44)
+                .background(referenceRounded(fill: OpenDesignDayColor.accentDim, stroke: OpenDesignDayColor.accentLine, radius: 11))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("뉴스")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                    .lineLimit(1)
+                FlowLayout(spacing: 8, lineSpacing: 3) {
+                    Circle()
+                        .fill(OpenDesignDayColor.accent)
+                        .frame(width: 5, height: 5)
+                    headerMeta("안 읽음 \(unreadCount)건", emphasized: true)
+                    headerSeparator
+                    headerMeta("전체 \(totalCount)건", emphasized: true)
+                    headerSeparator
+                    headerMeta("마지막 동기화 오늘 06:12", emphasized: false)
+                    headerSeparator
+                    headerMeta("출처 12개 채널", emphasized: false)
+                }
+            }
+            .frame(minWidth: 0, alignment: .leading)
+        }
+    }
+
+    private var headerActions: some View {
+        HStack(spacing: 6) {
+            OpenDesignNewsActionButton(icon: "line.3.horizontal", title: "그룹: Value별", tone: .ghost, action: {})
+            OpenDesignNewsActionButton(icon: "clock", title: "최신순", tone: .ghost, action: {})
+            OpenDesignNewsActionButton(
+                icon: unreadCount == 0 ? "arrow.counterclockwise" : "checkmark",
+                title: unreadCount == 0 ? "안 읽음으로 되돌리기" : "모두 읽음 처리",
+                tone: .accent,
+                action: markAll
+            )
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func headerMeta(_ text: String, emphasized: Bool) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundStyle(emphasized ? OpenDesignDayColor.fgSecondary : OpenDesignDayColor.muted)
+            .lineLimit(1)
+    }
+
+    private var headerSeparator: some View {
+        Text("·")
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+    }
+}
+
+private struct OpenDesignNewsFilterBar: View {
+    let selectedFilter: OpenDesignNewsFilter
+    let horizontalPadding: CGFloat
+    let displayCount: (OpenDesignNewsFilter) -> String
+    let select: (OpenDesignNewsFilter) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(OpenDesignNewsCatalog.filterDescriptors) { descriptor in
+                    OpenDesignNewsFilterChip(
+                        descriptor: descriptor,
+                        count: displayCount(descriptor.id),
+                        isActive: selectedFilter == descriptor.id,
+                        select: { select(descriptor.id) }
+                    )
+                }
+            }
+            .padding(.horizontal, horizontalPadding)
+            .frame(height: 48)
+        }
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+}
+
+private struct OpenDesignNewsFilterChip: View {
+    let descriptor: OpenDesignNewsFilterDescriptor
+    let count: String
+    let isActive: Bool
+    let select: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: select) {
+            HStack(spacing: 7) {
+                if descriptor.showsDot {
+                    Circle()
+                        .fill(descriptor.tone.color)
+                        .frame(width: 8, height: 8)
+                }
+                if descriptor.id == .all {
+                    countPill
+                    Text(descriptor.title)
+                } else {
+                    Text(descriptor.title)
+                    countPill
+                }
+            }
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(isActive ? descriptor.tone.color : isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+            .padding(.horizontal, 11)
+            .frame(height: 28)
+            .background(
+                Capsule()
+                    .fill(isActive ? descriptor.tone.dim : isHovered ? OpenDesignDayColor.hover : Color.clear)
+                    .overlay(Capsule().stroke(isActive ? descriptor.tone.line : OpenDesignDayColor.borderSoft, lineWidth: 1))
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+
+    private var countPill: some View {
+        Text(count)
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .foregroundStyle(isActive ? descriptor.tone.color : OpenDesignDayColor.muted)
+            .padding(.horizontal, 5)
+            .frame(height: 17)
+            .background(Capsule().fill(OpenDesignDayColor.bgDarker))
+    }
+}
+
+private struct OpenDesignNewsTakeawayHero: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            FlowLayout(spacing: 8, lineSpacing: 6) {
+                Text("오늘의 한 줄")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.amber)
+                    .tracking(1.2)
+                    .padding(.horizontal, 8)
+                    .frame(height: 20)
+                    .background(Capsule().fill(OpenDesignDayColor.amberDim).overlay(Capsule().stroke(OpenDesignDayColor.amberLine, lineWidth: 1)))
+                Text("DAY 1 — ICP · 첫 인터뷰를 정하는 중")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.amber)
+                    .tracking(1.2)
+            }
+            .padding(.bottom, 8)
+
+            Text(quote)
+                .lineSpacing(7)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 10)
+
+            FlowLayout(spacing: 8, lineSpacing: 4) {
+                metaText("— Rob Fitzpatrick")
+                metaSeparator
+                metaText("The Mom Test, Ch. 1", emphasized: true)
+                metaSeparator
+                metaText("22분 읽기")
+                metaSeparator
+                metaText("2026-05-13 큐레이션")
+            }
+
+            actionButtons
+                .padding(.top, 12)
+                .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
+        }
+        .padding(EdgeInsets(top: 18, leading: 20, bottom: 16, trailing: 20))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(referenceAccentEdgeCard(stroke: OpenDesignDayColor.border, accent: OpenDesignDayColor.amber))
+        .accessibilityIdentifier("opendesign.reference.news.takeaway")
+    }
+
+    private var quote: AttributedString {
+        var value = AttributedString()
+        appendQuoteRun("\"", to: &value, color: OpenDesignDayColor.fg)
+        appendQuoteRun("아이디어를 묻지 마세요.", to: &value, color: OpenDesignDayColor.amber, background: OpenDesignDayColor.amberDim)
+        appendQuoteRun(" 지난주에 이 문제 때문에 실제로 뭘 했는지 물으세요. ", to: &value, color: OpenDesignDayColor.fg)
+        appendQuoteRun("칭찬은 데이터가 아닙니다.", to: &value, color: OpenDesignDayColor.amber, background: OpenDesignDayColor.amberDim)
+        appendQuoteRun("\"", to: &value, color: OpenDesignDayColor.fg)
+        return value
+    }
+
+    private func appendQuoteRun(_ text: String, to value: inout AttributedString, color: Color, background: Color? = nil) {
+        var run = AttributedString(text)
+        run.font = .system(size: 18, weight: .medium)
+        run.foregroundColor = color
+        if let background {
+            run.backgroundColor = background
+        }
+        value += run
+    }
+
+    private var actionButtons: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) {
+                takeawayActions
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                takeawayActions
+            }
+        }
+    }
+
+    @ViewBuilder private var takeawayActions: some View {
+        OpenDesignNewsActionButton(icon: "checkmark", title: "오늘 인터뷰 질문에 반영", tone: .accent, action: {})
+        OpenDesignNewsActionButton(icon: "bookmark", title: "VALUES.md에 인용 저장", tone: .ghost, action: {})
+        OpenDesignNewsActionButton(icon: "info.circle", title: "출처 보기", tone: .ghost, action: {})
+    }
+
+    private func metaText(_ text: String, emphasized: Bool = false) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundStyle(emphasized ? OpenDesignDayColor.fgSecondary : OpenDesignDayColor.muted)
+    }
+
+    private var metaSeparator: some View {
+        Text("·")
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+    }
+}
+
+private struct OpenDesignNewsSectionHeader: View {
+    let section: OpenDesignNewsSection
+
+    var body: some View {
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(section.tone.color)
+                .frame(width: 4, height: 12)
+            Text(section.title)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .textCase(.uppercase)
+                .foregroundStyle(OpenDesignDayColor.muted)
+            Text(section.meta)
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                .lineLimit(1)
+            Rectangle()
+                .fill(OpenDesignDayColor.borderSoft)
+                .frame(height: 1)
+        }
+    }
+}
+
+private struct OpenDesignNewsArticleCard: View {
+    let article: OpenDesignNewsArticle
+    let isRead: Bool
+    let isSaved: Bool
+    let markRead: () -> Void
+    let toggleRead: () -> Void
+    let toggleSaved: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovered = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 14) {
+                Text(article.sourceMark)
+                    .font(.system(size: article.sourceMark.count > 2 ? 9.5 : 12, weight: .bold, design: .monospaced))
+                    .foregroundStyle(article.sourceTone.color)
+                    .frame(width: 36, height: 36)
+                    .background(newsSourceMarkBackground(tone: article.sourceTone))
+                    .padding(.top, 1)
+
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(article.source)
+                            .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                        Text("·")
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        Text(article.typeLabel)
+                            .foregroundStyle(OpenDesignDayColor.accent)
+                        Text("·")
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        Text(article.time)
+                            .foregroundStyle(OpenDesignDayColor.muted)
+                        Spacer(minLength: 8)
+                        if article.isPinned {
+                            HStack(spacing: 4) {
+                                Image(systemName: "pin")
+                                Text("오늘 고정")
+                            }
+                            .foregroundStyle(OpenDesignDayColor.accent)
+                        }
+                    }
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .lineLimit(1)
+
+                    Text(article.title)
+                        .font(.system(size: 15, weight: isRead ? .regular : .medium))
+                        .foregroundStyle(isRead ? OpenDesignDayColor.fgSecondary : OpenDesignDayColor.fg)
+                        .lineSpacing(2)
+                        .padding(.top, 6)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if let original = article.original {
+                        Text(original)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                            .lineLimit(2)
+                            .padding(.top, 4)
+                    }
+
+                    if let quote = article.quote {
+                        Text(quote)
+                            .font(.system(size: 12.5, weight: .regular))
+                            .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                            .lineSpacing(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.vertical, 9)
+                            .padding(.horizontal, 12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(OpenDesignDayColor.bgDeep)
+                            .overlay(alignment: .leading) {
+                                Rectangle()
+                                    .fill(OpenDesignDayColor.borderStrong)
+                                    .frame(width: 2)
+                            }
+                            .clipShape(UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 0, bottomTrailingRadius: 6, topTrailingRadius: 6, style: .continuous))
+                            .padding(.top, 8)
+                    }
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(article.takeLead.uppercased())
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.accent)
+                        Text(article.takeBody)
+                            .font(.system(size: 12.5, weight: .regular))
+                            .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                            .lineSpacing(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.top, 8)
+
+                    OpenDesignNewsArticleFooter(
+                        article: article,
+                        isRead: isRead,
+                        isSaved: isSaved,
+                        toggleRead: toggleRead,
+                        toggleSaved: toggleSaved
+                    )
+                    .padding(.top, 10)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(EdgeInsets(top: 16, leading: 22, bottom: 16, trailing: 18))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(referenceRounded(fill: isHovered ? OpenDesignDayColor.surface2 : OpenDesignDayColor.surface, stroke: article.isPinned ? OpenDesignDayColor.accentLine : isHovered ? OpenDesignDayColor.border : OpenDesignDayColor.borderSoft, radius: 12))
+        .opacity(isRead ? (isHovered ? 0.82 : 0.55) : 1)
+        .overlay(alignment: .topLeading) {
+            if !isRead {
+                Circle()
+                    .fill(OpenDesignDayColor.accent)
+                    .shadow(color: OpenDesignDayColor.accent.opacity(0.75), radius: 4)
+                    .frame(width: 7, height: 7)
+                    .padding(.leading, 8)
+                    .padding(.top, 24)
+                    .transition(reduceMotion ? .opacity : .scale.combined(with: .opacity))
+            }
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .onTapGesture(perform: markRead)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: reduceMotion ? 0 : 0.14), value: isRead)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(article.title)
+        .accessibilityValue(isRead ? "읽음" : "안 읽음")
+    }
+}
+
+private struct OpenDesignNewsArticleFooter: View {
+    let article: OpenDesignNewsArticle
+    let isRead: Bool
+    let isSaved: Bool
+    let toggleRead: () -> Void
+    let toggleSaved: () -> Void
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                tags
+                Spacer(minLength: 8)
+                applyLabel
+                footerButtons
+            }
+
+            VStack(alignment: .leading, spacing: 9) {
+                tags
+                HStack(spacing: 8) {
+                    applyLabel
+                    Spacer(minLength: 8)
+                    footerButtons
+                }
+            }
+        }
+        .padding(.top, 10)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
+    }
+
+    private var tags: some View {
+        FlowLayout(spacing: 6, lineSpacing: 6) {
+            ForEach(OpenDesignNewsCatalog.filterDescriptors.filter { descriptor in
+                descriptor.id != .all && article.values.contains(descriptor.id)
+            }) { descriptor in
+                OpenDesignNewsValueTag(descriptor: descriptor)
+            }
+        }
+    }
+
+    private var applyLabel: some View {
+        Text("적용 시점 · \(article.applyWhen)")
+            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.muted)
+            .lineLimit(1)
+    }
+
+    private var footerButtons: some View {
+        HStack(spacing: 6) {
+            OpenDesignNewsIconButton(icon: isRead ? "checkmark" : "circle.fill", title: isRead ? "안 읽음으로 표시" : "읽음으로 표시", isOn: isRead, action: toggleRead)
+            OpenDesignNewsIconButton(icon: isSaved ? "bookmark.fill" : "bookmark", title: isSaved ? "저장됨" : "저장", isOn: isSaved, action: toggleSaved)
+            OpenDesignNewsIconButton(icon: "square.and.arrow.up", title: "공유", isOn: false, action: {})
+            OpenDesignNewsIconButton(icon: "arrow.up.right", title: "원문", isOn: false, action: {})
+        }
+    }
+}
+
+private struct OpenDesignNewsValueTag: View {
+    let descriptor: OpenDesignNewsFilterDescriptor
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(descriptor.tone.color)
+                .frame(width: 6, height: 6)
+            Text(descriptor.title)
+        }
+        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+        .foregroundStyle(descriptor.tone.color)
+        .padding(.horizontal, 8)
+        .frame(height: 22)
+        .background(Capsule().fill(descriptor.tone.dim).overlay(Capsule().stroke(descriptor.tone.line, lineWidth: 1)))
+    }
+}
+
+private struct OpenDesignNewsMetaPanelView: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("왜 이 리서치인가")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .textCase(.uppercase)
+                    .foregroundStyle(OpenDesignDayColor.muted)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("VALUES.md의 6개 원칙을 외부 1차 자료로 보강했어요. 이번 주는 ICP가 Day 1-7 Foundation 단계라, 고객 인터뷰 · 첫 매출 · BIP 첫 포스트에 직접 쓸 수 있는 자료를 우선 큐레이션했습니다.")
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                        .lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Rectangle()
+                        .fill(OpenDesignDayColor.borderSoft)
+                        .frame(height: 1)
+                    Text(whyCardFooterText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(14)
+                .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+
+                sideHeader("VALUES 커버리지")
+                VStack(spacing: 6) {
+                    ForEach(OpenDesignNewsCatalog.coverage) { row in
+                        OpenDesignNewsCoverageRow(row: row)
+                    }
+                }
+
+                sideHeader("오늘 (Day 1) 추천 3건")
+                VStack(spacing: 0) {
+                    ForEach(Array(OpenDesignNewsCatalog.recommendations.enumerated()), id: \.element.id) { index, recommendation in
+                        OpenDesignNewsRecommendationRow(recommendation: recommendation, showsTopBorder: index > 0)
+                    }
+                }
+
+                sideHeader("구독 중인 출처")
+                VStack(spacing: 6) {
+                    ForEach(OpenDesignNewsCatalog.sources) { source in
+                        OpenDesignNewsSourcePill(source: source)
+                    }
+                }
+
+                sideHeader("VALUES.md 동기화")
+                Text("저장한 리서치 인용은 VALUES.md 하단 \"참고 자료\" 섹션에 자동으로 누적됩니다. 마지막 동기화 2026-05-16 23:41 · 7건 인용.")
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(14)
+                    .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+            }
+            .padding(EdgeInsets(top: 16, leading: 18, bottom: 24, trailing: 18))
+        }
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .leading)
+    }
+
+    private func sideHeader(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .textCase(.uppercase)
+            .foregroundStyle(OpenDesignDayColor.muted)
+            .padding(.top, 4)
+    }
+
+    private var whyCardFooterText: AttributedString {
+        var text = AttributedString()
+        var prefix = AttributedString("큐레이션 기준 · ")
+        var emphasis = AttributedString("VALUES.md + 현재 Day")
+        var suffix = AttributedString(" · 6 source × 14 items")
+        let footerFont = Font.system(size: 10.5, weight: .medium, design: .monospaced)
+
+        prefix.font = footerFont
+        prefix.foregroundColor = OpenDesignDayColor.mutedDeep
+        emphasis.font = footerFont
+        emphasis.foregroundColor = OpenDesignDayColor.accent
+        suffix.font = footerFont
+        suffix.foregroundColor = OpenDesignDayColor.mutedDeep
+
+        text.append(prefix)
+        text.append(emphasis)
+        text.append(suffix)
+        return text
+    }
+}
+
+private struct OpenDesignNewsCoverageRow: View {
+    let row: OpenDesignNewsCoverage
+
+    var body: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(row.tone.color)
+                    .frame(width: 8, height: 8)
+                    .frame(width: 14)
+                Text(row.title)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Text(row.count)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+            }
+
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(OpenDesignDayColor.bgDarker)
+                        .overlay(RoundedRectangle(cornerRadius: 2, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(row.tone.color)
+                        .frame(width: geometry.size.width * row.progress)
+                }
+            }
+            .frame(height: 4)
+        }
+        .padding(.bottom, 4)
+    }
+}
+
+private struct OpenDesignNewsRecommendationRow: View {
+    let recommendation: OpenDesignNewsRecommendation
+    let showsTopBorder: Bool
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Text(recommendation.rank)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.accent)
+                .frame(width: 22, alignment: .leading)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(recommendation.title)
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(recommendation.meta)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+            }
+        }
+        .padding(.vertical, 8)
+        .overlay(alignment: .top) {
+            if showsTopBorder {
+                Rectangle()
+                    .fill(OpenDesignDayColor.borderSoft)
+                    .frame(height: 1)
+            }
+        }
+        .onHover { isHovered = $0 }
+    }
+}
+
+private struct OpenDesignNewsSourcePill: View {
+    let source: OpenDesignNewsSource
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(source.mark)
+                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                .foregroundStyle(source.tone.color)
+                .frame(width: 14, height: 14)
+                .background(referenceRounded(fill: OpenDesignDayColor.bgDeep, stroke: OpenDesignDayColor.border, radius: 4))
+            Text(source.title)
+                .font(.system(size: 11.5, weight: .regular))
+                .foregroundStyle(isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+                .lineLimit(1)
+            if source.isSubscribed {
+                Text("SUB")
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.accent)
+                    .padding(.horizontal, 5)
+                    .frame(height: 16)
+                    .background(Capsule().fill(OpenDesignDayColor.accentDim).overlay(Capsule().stroke(OpenDesignDayColor.accentLine, lineWidth: 1)))
+                    .padding(.leading, 4)
+            }
+            Spacer(minLength: 4)
+            if let count = source.count {
+                Text(count)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(referenceRounded(fill: isHovered ? OpenDesignDayColor.hover : OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 8))
+        .onHover { isHovered = $0 }
+    }
+}
+
+private struct OpenDesignNewsActionButton: View {
+    enum Tone {
+        case ghost
+        case accent
+    }
+
+    let icon: String
+    let title: String
+    let tone: Tone
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(title)
+            }
+            .font(.system(size: 11.5, weight: tone == .accent ? .semibold : .medium))
+            .foregroundStyle(tone == .accent ? OpenDesignDayColor.bgDeep : isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+            .padding(.horizontal, tone == .accent ? 14 : 12)
+            .frame(height: 28)
+            .background(
+                referenceRounded(
+                    fill: tone == .accent ? (isHovered ? OpenDesignDayColor.accentStrong : OpenDesignDayColor.accent) : (isHovered ? OpenDesignDayColor.hover : Color.clear),
+                    stroke: tone == .accent ? Color.clear : OpenDesignDayColor.borderSoft,
+                    radius: 8
+                )
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityLabel(title)
+    }
+}
+
+private struct OpenDesignNewsIconButton: View {
+    let icon: String
+    let title: String
+    let isOn: Bool
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(isOn ? OpenDesignDayColor.accent : isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.muted)
+                .frame(width: 24, height: 24)
+                .background(referenceRounded(fill: isOn ? OpenDesignDayColor.accentDim : isHovered ? OpenDesignDayColor.hover : Color.clear, stroke: isOn ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, radius: 6))
+        }
+        .buttonStyle(.plain)
+        .help(title)
+        .onHover { isHovered = $0 }
+        .accessibilityLabel(title)
+    }
+}
+
+private func newsSourceMarkBackground(tone: OpenDesignReferenceTone) -> some View {
+    RoundedRectangle(cornerRadius: 9, style: .continuous)
+        .fill(
+            LinearGradient(
+                colors: [tone.dim.opacity(1.0), OpenDesignDayColor.bgDeep],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(tone.line, lineWidth: 1))
+}
+
 struct OpenDesignReferenceTitlebar: View {
     let page: OpenDesignReferencePageModel
     let openSearch: () -> Void
@@ -752,6 +3620,9 @@ struct OpenDesignReferenceTitlebar: View {
             HStack(spacing: 4) {
                 Spacer()
                 OpenDesignReferenceToolbarButton(systemImage: "magnifyingglass", label: "검색 · ⌘ K", action: openSearch)
+                if page.kind == .projects {
+                    OpenDesignReferenceToolbarButton(systemImage: "square.and.arrow.up", label: "공유", action: {})
+                }
                 if page.kind == .news || page.kind == .bipLog {
                     OpenDesignReferenceToolbarButton(systemImage: "arrow.clockwise", label: "새로고침", action: {})
                 }
@@ -777,7 +3648,17 @@ struct OpenDesignReferenceShell: View {
     }
 
     var body: some View {
-        Group {
+        if kind == .interviews {
+            OpenDesignInterviewsShell(layout: layout)
+        } else if kind == .news {
+            OpenDesignNewsShell(layout: layout, openSearch: openSearch)
+        } else if kind == .bipLog {
+            OpenDesignBipLogShell(layout: layout, openSearch: openSearch)
+        } else if kind == .history {
+            OpenDesignHistoryShell(layout: layout, openSearch: openSearch)
+        } else if kind == .projects {
+            OpenDesignProjectsShell(layout: layout, openSearch: openSearch)
+        } else {
             if layout.showsTaskSidebar {
                 OpenDesignReferenceSidebarView(page: page, openSearch: openSearch)
                     .frame(width: layout.taskSidebarWidth)
@@ -799,6 +3680,3566 @@ struct OpenDesignReferenceShell: View {
                     .accessibilityIdentifier("opendesign.reference.\(kind.rawValue).meta")
             }
         }
+    }
+}
+
+private struct OpenDesignInterviewsShell: View {
+    let layout: OpenDesignDayLayoutMetrics
+
+    var body: some View {
+        Group {
+            if layout.showsTaskSidebar {
+                ZStack {
+                    OpenDesignInterviewsSidebar()
+                    Color.clear
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("OpenDesign Interviews Side")
+                        .accessibilityIdentifier("opendesign.reference.interviews.side")
+                        .allowsHitTesting(false)
+                }
+                .frame(width: layout.taskSidebarWidth)
+                .frame(maxHeight: .infinity)
+                .background(OpenDesignDayColor.bg)
+                .transition(.opacity)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("OpenDesign Interviews Side")
+                .accessibilityIdentifier("opendesign.reference.interviews.side")
+            }
+
+            ZStack {
+                OpenDesignInterviewsMain(layout: layout)
+                Color.clear
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("OpenDesign Interviews Main")
+                    .accessibilityIdentifier("opendesign.reference.interviews.main")
+                    .allowsHitTesting(false)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("OpenDesign Interviews Main")
+            .accessibilityIdentifier("opendesign.reference.interviews.main")
+
+            if layout.showsMetaPanel {
+                ZStack {
+                    OpenDesignInterviewsMetaPanel()
+                    Color.clear
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("OpenDesign Interviews Meta")
+                        .accessibilityIdentifier("opendesign.reference.interviews.meta")
+                        .allowsHitTesting(false)
+                }
+                .frame(width: layout.metaPanelWidth)
+                .frame(maxHeight: .infinity)
+                .background(OpenDesignDayColor.bg)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("OpenDesign Interviews Meta")
+                .accessibilityIdentifier("opendesign.reference.interviews.meta")
+            }
+        }
+    }
+}
+
+private struct OpenDesignInterviewsSidebar: View {
+    @State private var selectedFilter = "전체"
+
+    private let filters: [(title: String, count: String)] = [
+        ("전체", "8"),
+        ("분석", "3"),
+        ("예정", "3"),
+    ]
+
+    private let groups: [OpenDesignInterviewGroup] = [
+        .init(id: "done", title: "분석 완료", rows: [
+            .init(id: "jc", initials: "JC", name: "장지창", status: "분석", duration: "45m", date: "04-22", badge: "8 / 10", tone: .accent, badgeTone: .accent, isActive: true),
+            .init(id: "pk", initials: "PK", name: "박노훈", status: "분석", duration: "38m", date: "04-19", badge: "7 / 10", tone: .accent, badgeTone: .accent, isActive: false),
+            .init(id: "sh", initials: "SH", name: "정세훈", status: "분석", duration: "32m", date: "04-16", badge: "5 / 10", tone: .sky, badgeTone: .amber, isActive: false),
+        ]),
+        .init(id: "waiting", title: "대기 중", rows: [
+            .init(id: "kp", initials: "KP", name: "K. Park", status: "transcribe 중", duration: nil, date: "04-26", badge: "대기", tone: .amber, badgeTone: .muted, isActive: false),
+        ]),
+        .init(id: "scheduled", title: "예정", rows: [
+            .init(id: "cy", initials: "CY", name: "최예린", status: "슬롯 확정", duration: "45m", date: "05-02", badge: "D-3", tone: .muted, badgeTone: .muted, isActive: false),
+            .init(id: "sj", initials: "SJ", name: "신지호", status: "DM 발송", duration: nil, date: "05-04", badge: "D-5", tone: .muted, badgeTone: .muted, isActive: false),
+            .init(id: "yj", initials: "YJ", name: "윤재희", status: "슬롯 후보", duration: "30m", date: "05-06", badge: "D-7", tone: .muted, badgeTone: .muted, isActive: false),
+        ]),
+    ]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    Text("인터뷰")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                    Text("8")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .padding(.horizontal, 6)
+                        .frame(height: 18)
+                        .background(Capsule().fill(OpenDesignDayColor.surface))
+                }
+
+                Spacer(minLength: 0)
+
+                OpenDesignInterviewIconButton(systemImage: "plus", label: "새 인터뷰 추가", isAccent: true)
+            }
+            .padding(.top, 12)
+            .padding(.horizontal, 14)
+            .padding(.bottom, 8)
+
+            HStack(spacing: 4) {
+                ForEach(filters, id: \.title) { filter in
+                    Button {
+                        selectedFilter = filter.title
+                    } label: {
+                        HStack(spacing: 5) {
+                            Text(filter.title)
+                                .lineLimit(1)
+                            Text(filter.count)
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundStyle(selectedFilter == filter.title ? OpenDesignDayColor.accent : OpenDesignDayColor.mutedDeep)
+                                .frame(minWidth: 16, minHeight: 16)
+                                .padding(.horizontal, 4)
+                                .background(
+                                    Capsule()
+                                        .fill(selectedFilter == filter.title ? OpenDesignDayColor.accentDim : OpenDesignDayColor.bgDarker)
+                                        .overlay(Capsule().stroke(selectedFilter == filter.title ? OpenDesignDayColor.accentLine : Color.clear, lineWidth: 1))
+                                )
+                        }
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(selectedFilter == filter.title ? OpenDesignDayColor.fg : OpenDesignDayColor.muted)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 26)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(selectedFilter == filter.title ? OpenDesignDayColor.elevated : Color.clear)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help("\(filter.title) 인터뷰 \(filter.count)개")
+                }
+            }
+            .padding(3)
+            .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 8))
+            .padding(.horizontal, 10)
+            .padding(.bottom, 10)
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(groups) { group in
+                        Text(group.title)
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .textCase(.uppercase)
+                            .tracking(1)
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                            .padding(.top, 14)
+                            .padding(.horizontal, 8)
+                            .padding(.bottom, 6)
+
+                        ForEach(group.rows) { row in
+                            OpenDesignInterviewSidebarRowView(row: row)
+                        }
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 12)
+            }
+        }
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .trailing)
+    }
+}
+
+private struct OpenDesignInterviewSidebarRowView: View {
+    let row: OpenDesignInterviewRow
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(row.initials)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(row.tone == .muted ? OpenDesignDayColor.muted : row.tone.color)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(row.tone == .muted ? OpenDesignDayColor.surface2 : row.tone.dim))
+                .overlay(Circle().stroke(row.tone == .muted ? OpenDesignDayColor.borderSoft : row.tone.line, lineWidth: 1))
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(row.name)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(row.isActive || isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+                    .lineLimit(1)
+
+                HStack(spacing: 7) {
+                    Text("● \(row.status)")
+                        .foregroundStyle(statusColor)
+                    if let duration = row.duration {
+                        Circle()
+                            .fill(OpenDesignDayColor.mutedDeep)
+                            .frame(width: 3, height: 3)
+                        Text(duration)
+                    }
+                }
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .lineLimit(1)
+            }
+            .frame(minWidth: 0, alignment: .leading)
+
+            Spacer(minLength: 6)
+
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(row.date)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                Text(row.badge)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(row.badgeTone == .muted ? OpenDesignDayColor.muted : row.badgeTone.color)
+                    .padding(.horizontal, 5)
+                    .frame(height: 16)
+                    .background(referenceRounded(fill: badgeFill, stroke: badgeStroke, radius: 4))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(row.isActive ? OpenDesignDayColor.selected : isHovered ? OpenDesignDayColor.hover : Color.clear)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .onHover { isHovered = $0 }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(row.name)
+        .accessibilityValue(row.isActive ? "active" : row.status)
+    }
+
+    private var statusColor: Color {
+        switch row.status {
+        case "분석": return OpenDesignDayColor.accent
+        case "transcribe 중": return OpenDesignDayColor.amber
+        default: return OpenDesignDayColor.muted
+        }
+    }
+
+    private var badgeFill: Color {
+        row.badgeTone == .muted ? OpenDesignDayColor.bgDarker : row.badgeTone.dim
+    }
+
+    private var badgeStroke: Color {
+        row.badgeTone == .muted ? OpenDesignDayColor.borderSoft : row.badgeTone.line
+    }
+}
+
+private struct OpenDesignInterviewsMain: View {
+    let layout: OpenDesignDayLayoutMetrics
+
+    @State private var selectedTab = "요약"
+    @State private var selectedFollowups: Set<Int> = [1, 2, 3]
+
+    private let tabs: [(title: String, count: String?)] = [
+        ("요약", nil),
+        ("인용", "12"),
+        ("후속", "7"),
+        ("Transcript", nil),
+    ]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            tabStrip
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    OpenDesignInterviewSectionHeader(title: "요약")
+                    summaryCard
+
+                    OpenDesignInterviewSectionHeader(title: "추출 신호", meta: "Mom Test · 4 카테고리")
+                    signalGrid
+
+                    OpenDesignInterviewSectionHeader(title: "Mom Test 점검")
+                    momTestCard
+
+                    OpenDesignInterviewSectionHeader(title: "핵심 인용", meta: "4 / 12")
+                    quoteList
+
+                    quoteFoot
+
+                    OpenDesignInterviewSectionHeader(title: "Day 3 후속 질문", meta: "3 필수")
+                    followupCard
+
+                    OpenDesignInterviewSectionHeader(title: "SPEC · ICP 갱신 제안")
+                    diffCard
+                }
+                .frame(maxWidth: 820, alignment: .leading)
+                .padding(.horizontal, layout.mainHorizontalPadding)
+                .padding(.top, 22)
+                .padding(.bottom, 32)
+                .frame(maxWidth: .infinity)
+            }
+            .background(OpenDesignDayColor.bg)
+        }
+        .background(OpenDesignDayColor.bg)
+    }
+
+    private var header: some View {
+        HStack(spacing: 16) {
+            HStack(spacing: 14) {
+                Text("JC")
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.accent)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(OpenDesignDayColor.accentDim))
+                    .overlay(Circle().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text("장지창")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(OpenDesignDayColor.fg)
+                            .lineLimit(1)
+                        Text("전 직장 동료")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .tracking(0.4)
+                            .foregroundStyle(OpenDesignDayColor.accent)
+                            .padding(.horizontal, 7)
+                            .frame(height: 18)
+                            .background(Capsule().fill(OpenDesignDayColor.accentDim).overlay(Capsule().stroke(OpenDesignDayColor.accentLine, lineWidth: 1)))
+                    }
+
+                    HStack(spacing: 8) {
+                        Text("2026-04-22 19:30")
+                            .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                        Text("·")
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        Text("Zoom · 45분")
+                        Text("·")
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        Text("Day 1 · 1 / 3")
+                    }
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .lineLimit(1)
+                }
+                .frame(minWidth: 0, alignment: .leading)
+            }
+
+            Spacer(minLength: 12)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    OpenDesignInterviewActionButton(title: "후속 질문 생성", tone: .ghost)
+                    OpenDesignInterviewActionButton(title: "SPEC.md에 반영", tone: .accent)
+                }
+
+                OpenDesignInterviewActionButton(title: "SPEC.md에 반영", tone: .accent)
+            }
+        }
+        .padding(.horizontal, layout.mainHorizontalPadding)
+        .frame(minHeight: 68)
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+
+    private var tabStrip: some View {
+        HStack(spacing: 0) {
+            ForEach(tabs, id: \.title) { tab in
+                Button {
+                    selectedTab = tab.title
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(tab.title)
+                        if let count = tab.count {
+                            Text(count)
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundStyle(selectedTab == tab.title ? OpenDesignDayColor.accent : OpenDesignDayColor.mutedDeep)
+                                .padding(.horizontal, 5)
+                                .frame(height: 16)
+                                .background(Capsule().fill(selectedTab == tab.title ? OpenDesignDayColor.accentDim : OpenDesignDayColor.surface))
+                        }
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(selectedTab == tab.title ? OpenDesignDayColor.fg : OpenDesignDayColor.muted)
+                    .padding(.horizontal, 14)
+                    .frame(height: 40)
+                    .overlay(alignment: .bottom) {
+                        Rectangle()
+                            .fill(selectedTab == tab.title ? OpenDesignDayColor.accent : Color.clear)
+                            .frame(height: 2)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+
+            Spacer(minLength: 12)
+
+            if layout.showsTaskSidebar {
+                Text("● 분석 완료 · 04-22 21:14")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.accent)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, layout.mainHorizontalPadding)
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+
+    private var summaryCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(openDesignInterviewSummaryText())
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fg)
+                .lineSpacing(5)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 18) {
+                summaryMetric("신호", "강 · 8/10")
+                summaryMetric("Mom Test", "4/5 통과")
+                summaryMetric("ICP 적합", "매우 높음")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 12)
+            .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(referenceAccentEdgeCard(stroke: OpenDesignDayColor.border, accent: OpenDesignDayColor.accent, cornerRadius: 12, glowOpacity: 0))
+        .padding(.bottom, 14)
+    }
+
+    private func summaryMetric(_ key: String, _ value: String) -> some View {
+        HStack(spacing: 6) {
+            Text(key)
+                .foregroundStyle(OpenDesignDayColor.mutedDeep)
+            Text(value)
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+        }
+        .font(.system(size: 11, weight: .medium, design: .monospaced))
+        .lineLimit(1)
+    }
+
+    private var signalGrid: some View {
+        LazyVGrid(columns: signalColumns, alignment: .leading, spacing: 8) {
+            OpenDesignInterviewSignalCard(title: "통증", value: "\"뭘 만들지 보다 누가 쓸지를 모른다.\"", meta: "5건 인용 · 하루 3시간 검증 회피", tone: .rose)
+            OpenDesignInterviewSignalCard(title: "현재 대안", value: "YouTube 인디해커 · Threads · ChatGPT", meta: "3건 언급 · 구조 없음", tone: .amber)
+            OpenDesignInterviewSignalCard(title: "과거 행동", value: "6개월 · 5개 출시 · 가입 11명 · 매출 0원", meta: "2건 인용 · 강력한 신호", tone: .sky)
+            OpenDesignInterviewSignalCard(title: "지불 의사", value: "Cursor $20/mo · Claude Code $200/mo", meta: "툴은 결제 · 결과는 0원", tone: .accent)
+        }
+        .padding(.bottom, 14)
+    }
+
+    private var signalColumns: [GridItem] {
+        let count = layout.showsMetaPanel ? 3 : 2
+        return Array(repeating: GridItem(.flexible(), spacing: 8), count: count)
+    }
+
+    private var momTestCard: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 14) {
+                VStack(spacing: 2) {
+                    Text("4/5")
+                        .font(.system(size: 17, weight: .bold, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.accent)
+                    Text("통과")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                }
+                .frame(width: 48, height: 48)
+                .background(Circle().fill(OpenDesignDayColor.accentDim))
+                .overlay(Circle().stroke(OpenDesignDayColor.accentLine, lineWidth: 1.5))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("품질 양호 — 한 가지 주의 항목")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                    Text("본인 솔루션을 미리 설명하는 실수 1건. 다음 인터뷰엔 가설 설명을 빼세요.")
+                        .font(.system(size: 11.5, weight: .regular))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+
+                Text("1 주의")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.amber)
+                    .padding(.horizontal, 8)
+                    .frame(height: 20)
+                    .background(Capsule().fill(OpenDesignDayColor.amberDim).overlay(Capsule().stroke(OpenDesignDayColor.amberLine, lineWidth: 1)))
+            }
+
+            VStack(spacing: 4) {
+                momRule("✓", "의견이 아니라 행동을 물었다", "7회", tone: .accent)
+                momRule("✓", "미래 약속이 아니라 과거 사실을 받았다", "4회", tone: .accent)
+                momRule("✓", "구체 수치·날짜·금액으로 답을 받아냈다", "12회", tone: .accent)
+                momRule("✓", "본인 이야기를 너무 많이 하지 않았다", "34% / 66%", tone: .accent)
+                momRule("!", "솔루션을 미리 설명하지 않았다", "06:14 · 1회", tone: .amber)
+            }
+            .padding(.top, 12)
+            .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
+        }
+        .padding(16)
+        .background(referenceCard())
+        .padding(.bottom, 14)
+    }
+
+    private func momRule(_ mark: String, _ title: String, _ tail: String, tone: OpenDesignReferenceTone) -> some View {
+        HStack(spacing: 10) {
+            Text(mark)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(tone == .accent ? OpenDesignDayColor.bgDeep : tone.color)
+                .frame(width: 14, height: 14)
+                .background(Circle().fill(tone == .accent ? tone.color : tone.dim))
+                .overlay(Circle().stroke(tone == .accent ? Color.clear : tone.line, lineWidth: 1))
+            Text(title)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Text(tail)
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(tone.color)
+                .lineLimit(1)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var quoteList: some View {
+        VStack(spacing: 8) {
+            OpenDesignInterviewQuoteRow(time: "02:18", kind: "Pain", quote: "AI로 다섯 번 만들었어요. 한 번도 안 팔렸어요. 다음엔 안 만들고 싶은데, 안 만들면 또 불안하더라구요. 그래서 그냥 또 만들어요.", speaker: "장지창", chip: "강한 통증", tone: .rose)
+            OpenDesignInterviewQuoteRow(time: "07:42", kind: "Past", quote: "지난 6개월에 다섯 개 출시. 가입 누계 11명, 매출은 다 합쳐서 0원.", speaker: "장지창", chip: "과거 행동", tone: .sky)
+            OpenDesignInterviewQuoteRow(time: "12:55", kind: "Wedge", quote: "뭘 만들지가 어려운 게 아니에요. 진짜 어려운 건 \"만들기 전에, 누가 쓸 사람인지를 모르겠다\"는 거예요.", speaker: "장지창", chip: "핵심 통증", tone: .rose)
+            OpenDesignInterviewQuoteRow(time: "28:34", kind: "Anti-pattern", quote: "Agentic30라는 30일 챌린지를 만들려고...\n오 그거 좋은데요? 저 해볼래요.", speaker: "나 / 장지창", chip: "Mom Test 위반", tone: .amber)
+        }
+        .padding(.bottom, 8)
+    }
+
+    private var quoteFoot: some View {
+        HStack(spacing: 8) {
+            Text("나머지 8개 인용 ·")
+            Text("transcript 전체 보기 (6.7KB)")
+                .foregroundStyle(OpenDesignDayColor.accent)
+        }
+        .font(.system(size: 11, weight: .medium, design: .monospaced))
+        .foregroundStyle(OpenDesignDayColor.muted)
+        .padding(.horizontal, 4)
+        .padding(.bottom, 14)
+    }
+
+    private var followupCard: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 2) {
+                followupRow(1, title: "지난 6개월에 마지막으로 출시한 프로덕트는 언제, 어떤 거였어요?", detail: "\"5번 빌드 → 0매출\" 패턴이 다른 후보에게도 나오는지 확인")
+                followupRow(2, title: "가입자 0명일 때 본인은 그 다음 주에 뭘 했어요?", detail: "실패 후 실제 행동 데이터 — 의견 아님")
+                followupRow(3, title: "\"오늘 뭘 해야 다음 주가 좋아질지\" 막힐 때 마지막으로 어디서 답을 찾았어요?", detail: "현재 대안의 구체적 행동")
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+
+            HStack(spacing: 10) {
+                Text("\(selectedFollowups.count)")
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                Text("필수 · 선택 4개 보기")
+                Spacer(minLength: 0)
+                OpenDesignInterviewMiniButton(title: "Day 3 질문지에 추가 →", tone: .accent)
+            }
+            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.muted)
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .background(OpenDesignDayColor.bgDarker)
+            .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
+        }
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.bottom, 14)
+    }
+
+    private func followupRow(_ index: Int, title: String, detail: String) -> some View {
+        Button {
+            if selectedFollowups.contains(index) {
+                selectedFollowups.remove(index)
+            } else {
+                selectedFollowups.insert(index)
+            }
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Text("\(index)")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(selectedFollowups.contains(index) ? OpenDesignDayColor.bgDeep : OpenDesignDayColor.muted)
+                    .frame(width: 16, height: 16)
+                    .background(Circle().fill(selectedFollowups.contains(index) ? OpenDesignDayColor.amber : Color.clear))
+                    .overlay(Circle().stroke(selectedFollowups.contains(index) ? OpenDesignDayColor.amber : OpenDesignDayColor.border, lineWidth: 1))
+                    .padding(.top, 1)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(detail)
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(OpenDesignInterviewHoverButtonStyle())
+    }
+
+    private var diffCard: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("ICP.md · SPEC.md §2")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                    Text("이 인터뷰가 만든 변경 — 적용 전 미리보기")
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                }
+                Spacer(minLength: 0)
+                HStack(spacing: 8) {
+                    Text("+4")
+                        .foregroundStyle(OpenDesignDayColor.diffAdd)
+                    Text("−1")
+                        .foregroundStyle(OpenDesignDayColor.diffDel)
+                }
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+
+            VStack(spacing: 0) {
+                diffLine("5", " ", "## Our ICP: 전업 1인 개발자 (수익 0원)", tone: .muted)
+                diffLine("7", "−", "에이전트 코딩 도구로 만들 수 있는, 이미 전업한 1인 개발자.", tone: .rose)
+                diffLine("7", "+", "에이전트 코딩 도구로 만들 수 있는 전업 1인 개발자. 특히 \"AI로 계속 새로 만드는데 한 번도 안 팔린\" 서브세그.", tone: .accent)
+                diffLine("8", " ", "", tone: .muted)
+                diffLine("9", "+", "### Trigger (장지창 04-22 기반)", tone: .accent)
+                diffLine("10", "+", "- 6개월에 3개+ 출시, 가입 20명 미만, 매출 0원", tone: .accent)
+                diffLine("11", "+", "- \"누가 쓸지를 모른다\" 표현을 자발적으로 사용", tone: .accent)
+            }
+            .padding(.vertical, 8)
+            .background(OpenDesignDayColor.bgDarker)
+
+            HStack(spacing: 8) {
+                Text("2 파일 · +4 / −1")
+                Spacer(minLength: 0)
+                OpenDesignInterviewMiniButton(title: "취소", tone: .ghost)
+                OpenDesignInterviewMiniButton(title: "적용 ↵", tone: .accent)
+            }
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.muted)
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
+        }
+        .background(referenceAccentEdgeCard(stroke: OpenDesignDayColor.border, accent: OpenDesignDayColor.amber, cornerRadius: 12, glowOpacity: 0))
+    }
+
+    private func diffLine(_ line: String, _ symbol: String, _ title: String, tone: OpenDesignReferenceTone) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(line)
+                .foregroundStyle(tone == .muted ? OpenDesignDayColor.mutedDeep : tone.color)
+                .frame(width: 32, alignment: .trailing)
+            Text(symbol)
+                .foregroundStyle(tone == .muted ? OpenDesignDayColor.mutedDeep : tone.color)
+                .frame(width: 14)
+            Text(title)
+                .foregroundStyle(tone == .muted ? OpenDesignDayColor.fgSecondary : (tone == .rose ? OpenDesignDayColor.diffDel : OpenDesignDayColor.diffAdd))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 2)
+        .background(tone == .accent ? OpenDesignDayColor.accentDim.opacity(0.45) : tone == .rose ? OpenDesignDayColor.roseDim.opacity(0.45) : Color.clear)
+    }
+}
+
+private struct OpenDesignInterviewsMetaPanel: View {
+    private let themes: [OpenDesignInterviewTheme] = [
+        .init(id: "who", title: "\"누가 쓸지를 모른다\"", count: "3/3", progress: 1, tone: .accent),
+        .init(id: "zero", title: "N번 빌드 → 0매출", count: "3/3", progress: 1, tone: .accent),
+        .init(id: "fit", title: "Adaptive 핏", count: "2/3", progress: 0.66, tone: .amber),
+        .init(id: "pay", title: "툴 자비 결제", count: "2/3", progress: 0.66, tone: .amber),
+    ]
+
+    private let upcoming: [OpenDesignInterviewUpcoming] = [
+        .init(id: "cy", day: "02", month: "5월", name: "최예린", meta: "14:00 · 45m", tone: .sky),
+        .init(id: "sj", day: "04", month: "5월", name: "신지호", meta: "10:00 · DM 대기", tone: .amber),
+        .init(id: "yj", day: "06", month: "5월", name: "윤재희", meta: "16:00 · 커피챗", tone: .muted),
+    ]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("요약")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+
+                progressCard
+
+                Text("반복 테마")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .tracking(1)
+                    .textCase(.uppercase)
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    .padding(.horizontal, 4)
+                    .padding(.top, 2)
+
+                VStack(spacing: 6) {
+                    ForEach(themes) { theme in
+                        OpenDesignInterviewThemeRow(theme: theme)
+                    }
+                }
+
+                Text("예정 인터뷰")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .tracking(1)
+                    .textCase(.uppercase)
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    .padding(.horizontal, 4)
+                    .padding(.top, 2)
+
+                VStack(spacing: 6) {
+                    ForEach(upcoming) { item in
+                        OpenDesignInterviewUpcomingRow(item: item)
+                    }
+                }
+            }
+            .padding(16)
+        }
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .leading)
+    }
+
+    private var progressCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(OpenDesignDayColor.accent)
+                    .frame(width: 6, height: 6)
+                    .shadow(color: OpenDesignDayColor.accent.opacity(0.45), radius: 5)
+                Text("진행 상황")
+            }
+            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+            .tracking(0.4)
+            .textCase(.uppercase)
+            .foregroundStyle(OpenDesignDayColor.muted)
+
+            HStack(spacing: 8) {
+                metaStat("3", "분석", .accent)
+                metaStat("2", "대기", .amber)
+                metaStat("3", "예정", .muted)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+    }
+
+    private func metaStat(_ value: String, _ key: String, _ tone: OpenDesignReferenceTone) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.system(size: 18, weight: .semibold, design: .monospaced))
+                .foregroundStyle(tone == .muted ? OpenDesignDayColor.fg : tone.color)
+            Text(key)
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct OpenDesignInterviewSectionHeader: View {
+    let title: String
+    var meta: String?
+
+    var body: some View {
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(OpenDesignDayColor.accent)
+                .frame(width: 3, height: 12)
+            Text(title)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .tracking(1)
+                .textCase(.uppercase)
+                .foregroundStyle(OpenDesignDayColor.muted)
+            if let meta {
+                Text(meta)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    .lineLimit(1)
+            }
+            Rectangle()
+                .fill(OpenDesignDayColor.borderSoft)
+                .frame(height: 1)
+        }
+        .padding(.top, 22)
+        .padding(.bottom, 10)
+    }
+}
+
+private struct OpenDesignInterviewSignalCard: View {
+    let title: String
+    let value: String
+    let meta: String
+    let tone: OpenDesignReferenceTone
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .tracking(0.8)
+                .textCase(.uppercase)
+                .foregroundStyle(tone.color)
+            Text(value)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fg)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(meta)
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, minHeight: 104, alignment: .topLeading)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+    }
+}
+
+private struct OpenDesignInterviewQuoteRow: View {
+    let time: String
+    let kind: String
+    let quote: String
+    let speaker: String
+    let chip: String
+    let tone: OpenDesignReferenceTone
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(time)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.accent)
+                Text(kind)
+                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                    .tracking(0.6)
+                    .textCase(.uppercase)
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+            }
+            .frame(width: 52, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(speaker)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .tracking(0.4)
+                    .textCase(.uppercase)
+                    .foregroundStyle(speaker.contains("나") ? OpenDesignDayColor.sky : OpenDesignDayColor.mutedDeep)
+                Text(quote)
+                    .font(.system(size: 12.5, weight: .regular))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 8)
+
+            Text(chip)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .tracking(0.4)
+                .foregroundStyle(tone == .muted ? OpenDesignDayColor.muted : tone.color)
+                .padding(.horizontal, 7)
+                .frame(height: 18)
+                .background(Capsule().fill(tone == .muted ? OpenDesignDayColor.bgDarker : tone.dim).overlay(Capsule().stroke(tone == .muted ? OpenDesignDayColor.borderSoft : tone.line, lineWidth: 1)))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+    }
+}
+
+private struct OpenDesignInterviewThemeRow: View {
+    let theme: OpenDesignInterviewTheme
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(theme.title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fg)
+                .lineLimit(1)
+                .layoutPriority(1)
+
+            Spacer(minLength: 10)
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(OpenDesignDayColor.bgDeep)
+                    Capsule()
+                        .fill(theme.tone.color)
+                        .frame(width: max(0, proxy.size.width * theme.progress))
+                }
+            }
+            .frame(width: 68, height: 4)
+
+            Text(theme.count)
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .frame(width: 28, alignment: .trailing)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, minHeight: 36, alignment: .center)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: isHovered ? OpenDesignDayColor.border : OpenDesignDayColor.borderSoft, radius: 8))
+        .onHover { isHovered = $0 }
+    }
+}
+
+private struct OpenDesignInterviewUpcomingRow: View {
+    let item: OpenDesignInterviewUpcoming
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(spacing: 1) {
+                Text(item.day)
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Text(item.month)
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .tracking(0.6)
+                    .textCase(.uppercase)
+                    .foregroundStyle(OpenDesignDayColor.muted)
+            }
+            .frame(width: 36, height: 36)
+            .background(referenceRounded(fill: OpenDesignDayColor.bgDeep, stroke: OpenDesignDayColor.borderSoft, radius: 6))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.name)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                    .lineLimit(1)
+                Text(item.meta)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(item.tone == .amber ? OpenDesignDayColor.amber : OpenDesignDayColor.muted)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isHovered ? OpenDesignDayColor.muted : OpenDesignDayColor.mutedDeep)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: isHovered ? OpenDesignDayColor.border : OpenDesignDayColor.borderSoft, radius: 8))
+        .onHover { isHovered = $0 }
+    }
+}
+
+private struct OpenDesignInterviewActionButton: View {
+    enum Tone { case ghost, accent }
+
+    let title: String
+    let tone: Tone
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: {}) {
+            Text(title)
+                .font(.system(size: 11.5, weight: tone == .accent ? .semibold : .medium))
+                .foregroundStyle(tone == .accent ? OpenDesignDayColor.bgDeep : (isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary))
+                .padding(.horizontal, tone == .accent ? 14 : 12)
+                .frame(height: 28)
+                .background(
+                    referenceRounded(
+                        fill: tone == .accent ? (isHovered ? OpenDesignDayColor.accentStrong : OpenDesignDayColor.accent) : (isHovered ? OpenDesignDayColor.hover : Color.clear),
+                        stroke: tone == .accent ? Color.clear : OpenDesignDayColor.borderSoft,
+                        radius: 8
+                    )
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityLabel(title)
+    }
+}
+
+private struct OpenDesignInterviewMiniButton: View {
+    enum Tone { case ghost, accent }
+
+    let title: String
+    let tone: Tone
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: {}) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(tone == .accent ? OpenDesignDayColor.bgDeep : (isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary))
+                .padding(.horizontal, 10)
+                .frame(height: 24)
+                .background(
+                    referenceRounded(
+                        fill: tone == .accent ? OpenDesignDayColor.accent : (isHovered ? OpenDesignDayColor.hover : Color.clear),
+                        stroke: tone == .accent ? Color.clear : OpenDesignDayColor.borderSoft,
+                        radius: 6
+                    )
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+}
+
+private struct OpenDesignInterviewIconButton: View {
+    let systemImage: String
+    let label: String
+    var isAccent = false
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: {}) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(isAccent ? (isHovered ? OpenDesignDayColor.bgDeep : OpenDesignDayColor.accent) : OpenDesignDayColor.muted)
+                .frame(width: 22, height: 22)
+                .background(
+                    referenceRounded(
+                        fill: isAccent ? (isHovered ? OpenDesignDayColor.accent : OpenDesignDayColor.accentDim) : Color.clear,
+                        stroke: isAccent ? OpenDesignDayColor.accentLine : Color.clear,
+                        radius: 6
+                    )
+                )
+        }
+        .buttonStyle(.plain)
+        .help(label)
+        .onHover { isHovered = $0 }
+        .accessibilityLabel(label)
+    }
+}
+
+private struct OpenDesignInterviewHoverButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(configuration.isPressed && isEnabled ? OpenDesignDayColor.hover : Color.clear)
+            )
+    }
+}
+
+private struct OpenDesignInterviewGroup: Identifiable {
+    let id: String
+    let title: String
+    let rows: [OpenDesignInterviewRow]
+}
+
+private struct OpenDesignInterviewRow: Identifiable {
+    let id: String
+    let initials: String
+    let name: String
+    let status: String
+    let duration: String?
+    let date: String
+    let badge: String
+    let tone: OpenDesignReferenceTone
+    let badgeTone: OpenDesignReferenceTone
+    let isActive: Bool
+}
+
+private struct OpenDesignInterviewTheme: Identifiable {
+    let id: String
+    let title: String
+    let count: String
+    let progress: CGFloat
+    let tone: OpenDesignReferenceTone
+}
+
+private struct OpenDesignInterviewUpcoming: Identifiable {
+    let id: String
+    let day: String
+    let month: String
+    let name: String
+    let meta: String
+    let tone: OpenDesignReferenceTone
+}
+
+private func openDesignInterviewSummaryText() -> AttributedString {
+    var text = AttributedString("5번 빌드 → 0매출 패턴을 본인이 자각했지만, \"검증 없이 또 만들 것 같다\"는 회피 신호가 강하다. 핵심 통증은 \"누가 쓸지를 모른다\"로 압축된다.")
+    text.foregroundColor = OpenDesignDayColor.fg
+
+    func apply(_ needle: String, color: Color, background: Color) {
+        var searchStart = text.startIndex
+        while searchStart < text.endIndex,
+              let range = text[searchStart...].range(of: needle) {
+            text[range].foregroundColor = color
+            text[range].backgroundColor = background
+            text[range].font = .system(size: 15, weight: .medium)
+            searchStart = range.upperBound
+        }
+    }
+
+    apply("5번 빌드 → 0매출", color: OpenDesignDayColor.accent, background: OpenDesignDayColor.accentDim)
+    apply("\"검증 없이 또 만들 것 같다\"", color: OpenDesignDayColor.amber, background: OpenDesignDayColor.amberDim)
+    apply("\"누가 쓸지를 모른다\"", color: OpenDesignDayColor.accent, background: OpenDesignDayColor.accentDim)
+
+    return text
+}
+
+private enum OpenDesignHistoryFilter: String, CaseIterable, Identifiable {
+    case all
+    case interview
+    case bip
+    case code
+    case mission
+    case curriculum
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: return "전체"
+        case .interview: return "인터뷰"
+        case .bip: return "BIP 로그"
+        case .code: return "코드 · GitHub"
+        case .mission: return "과제"
+        case .curriculum: return "커리큘럼"
+        }
+    }
+
+    var count: Int {
+        switch self {
+        case .all: return 14
+        case .interview: return 6
+        case .bip: return 0
+        case .code: return 4
+        case .mission: return 1
+        case .curriculum: return 3
+        }
+    }
+
+    var tone: OpenDesignReferenceTone {
+        switch self {
+        case .all, .interview: return .accent
+        case .bip: return .violet
+        case .code: return .sky
+        case .mission: return .amber
+        case .curriculum: return .rose
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .all: return "circle.grid.2x2"
+        case .interview: return "mic"
+        case .bip: return "doc.text"
+        case .code: return "chevron.left.forwardslash.chevron.right"
+        case .mission: return "star"
+        case .curriculum: return "checkmark.square"
+        }
+    }
+
+    func matches(_ event: OpenDesignHistoryEvent) -> Bool {
+        self == .all || event.filter == self
+    }
+}
+
+private struct OpenDesignHistorySidebarTask: Identifiable {
+    enum State { case progress, pending, locked }
+
+    let id: String
+    let title: String
+    let day: String
+    let meta: String
+    let state: State
+}
+
+private struct OpenDesignHistorySidebarGroup: Identifiable {
+    let id: String
+    let title: String
+    let meta: String
+    let tasks: [OpenDesignHistorySidebarTask]
+}
+
+private struct OpenDesignHistoryEvent: Identifiable {
+    let id: String
+    let filter: OpenDesignHistoryFilter
+    let kicker: String
+    let time: String
+    let title: String
+    let body: String
+    let tags: [OpenDesignReferenceChip]
+    let source: String?
+    let delta: String?
+    let isFuture: Bool
+
+    init(
+        id: String,
+        filter: OpenDesignHistoryFilter,
+        kicker: String,
+        time: String,
+        title: String,
+        body: String,
+        tags: [OpenDesignReferenceChip] = [],
+        source: String? = nil,
+        delta: String? = nil,
+        isFuture: Bool = false
+    ) {
+        self.id = id
+        self.filter = filter
+        self.kicker = kicker
+        self.time = time
+        self.title = title
+        self.body = body
+        self.tags = tags
+        self.source = source
+        self.delta = delta
+        self.isFuture = isFuture
+    }
+}
+
+private struct OpenDesignHistoryGroup: Identifiable {
+    enum State { case today, yesterday, past, future }
+
+    let id: String
+    let title: String
+    let iso: String
+    let count: String
+    let state: State
+    let events: [OpenDesignHistoryEvent]
+}
+
+private struct OpenDesignHistoryMetric: Identifiable {
+    let id: String
+    let label: String
+    let value: String
+    let unit: String?
+    let isAccent: Bool
+}
+
+private struct OpenDesignHistoryHeatmapDay: Identifiable {
+    let id: String
+    let level: Int
+    let count: Int
+    let label: String
+    let isToday: Bool
+    let isLocked: Bool
+}
+
+private struct OpenDesignHistorySourceBreakdown: Identifiable {
+    let id: OpenDesignHistoryFilter
+    let title: String
+    let count: Int
+}
+
+private enum OpenDesignHistoryCatalog {
+    static let sidebarGroups: [OpenDesignHistorySidebarGroup] = [
+        .init(id: "week1", title: "Week 1 — Foundation", meta: "1 / 7", tasks: [
+            .init(id: "day1", title: "먼저 도울 사람을 정해요", day: "Day 1", meta: "ICP · 인터뷰 1/3", state: .progress),
+            .init(id: "day2", title: "시장 신호 읽기", day: "Day 2", meta: "Market", state: .pending),
+            .init(id: "day3", title: "Mom Test 인터뷰 ×3", day: "Day 3", meta: "Interview", state: .pending),
+            .init(id: "day4", title: "10× 웨지 찾기", day: "Day 4", meta: "Wedge", state: .pending),
+            .init(id: "day5", title: "수요 신호 측정", day: "Day 5", meta: "Demand", state: .pending),
+            .init(id: "day6", title: "Ask 한 줄로 압축", day: "Day 6", meta: "Ask", state: .pending),
+            .init(id: "day7", title: "Go / No-Go 결정 게이트", day: "Day 7", meta: "Gate", state: .pending),
+        ]),
+        .init(id: "week2", title: "Week 2 — Build", meta: "잠금 해제 D7", tasks: [
+            .init(id: "day8", title: "MVP 코어 4시간 빌드", day: "Day 8", meta: "Build", state: .locked),
+            .init(id: "day9", title: "첫 5명 초대 초안", day: "Day 9", meta: "Outreach", state: .locked),
+            .init(id: "day10", title: "랜딩 카피 & Above-fold", day: "Day 10", meta: "Landing", state: .locked),
+        ]),
+        .init(id: "week3", title: "Week 3 — Acquire", meta: "잠금 해제 D14", tasks: [
+            .init(id: "day15", title: "BIP 채널 첫 포스트", day: "Day 15", meta: "BIP", state: .locked),
+        ]),
+        .init(id: "week4", title: "Week 4 — Revenue", meta: "잠금 해제 D22", tasks: [
+            .init(id: "day22", title: "첫 매출 ask · Pricing", day: "Day 22", meta: "Revenue", state: .locked),
+        ]),
+    ]
+
+    static let metrics: [OpenDesignHistoryMetric] = [
+        .init(id: "day", label: "완료 Day", value: "1", unit: "/ 30", isAccent: true),
+        .init(id: "evidence", label: "Evidence", value: "14", unit: nil, isAccent: false),
+        .init(id: "active", label: "활동일", value: "5", unit: "/ 15d", isAccent: false),
+    ]
+
+    static let groups: [OpenDesignHistoryGroup] = [
+        .init(id: "today", title: "오늘", iso: "2026-05-16 · 금", count: "6 events", state: .today, events: [
+            .init(id: "today-code-spec", filter: .code, kicker: "CODE · SPEC.md", time: "14:48:02", title: "후보 1명 자동 저장", body: "Day 1 인터뷰 4단계가 모두 제출되어 candidate.icp 블록이 갱신됐어요. channel=ex-colleague, tools=cursor, stuck=build-loop, last7d=restart.", tags: [.init("Day 1"), .init("+18", tone: .accent), .init("-3", tone: .rose)], source: "docs/SPEC.md", delta: "+18 / -3"),
+            .init(id: "today-interview-4", filter: .interview, kicker: "INTERVIEW 4/4 · 지난 7일", time: "14:45:21", title: "\"또 새로 시작\"", body: "\"지난 프로젝트는 절반쯤에서 멈췄고, 새 레포·새 디자인으로 또 한 번 출발했다.\" Mom Test 통과. 인터뷰 3의 빌드 루프 가설이 실제 행동으로 확정됐어요.", tags: [.init("Day 1"), .init("last7d=restart", tone: .sky)], source: "+1 evidence"),
+            .init(id: "today-interview-3", filter: .interview, kicker: "INTERVIEW 3/4 · 막힌 단계", time: "14:42:09", title: "\"빌드 단계\" · \"검증 없이 5번 빌드\"", body: "어제 Zoom 인터뷰 transcript와 정확히 일치하는 패턴을 골랐어요. wedge 후보가 \"빌드를 끝까지 끌고 가는 보조\"로 좁혀집니다.", tags: [.init("Day 1"), .init("stuck=build-loop", tone: .sky)]),
+            .init(id: "today-interview-2", filter: .interview, kicker: "INTERVIEW 2/4 · 도구", time: "14:38:33", title: "\"Cursor 메인\"", body: "매일 쓰는 도구는 Cursor. 결제 의향이 가장 안정적인 풀이고, Day 3 인터뷰 3통의 모수도 충분합니다.", tags: [.init("Day 1"), .init("tools=cursor", tone: .sky)]),
+            .init(id: "today-interview-1", filter: .interview, kicker: "INTERVIEW 1/4 · 거리", time: "14:35:11", title: "\"전 직장 출신 1인 개발자\"", body: "4지선다 3번. 관계 신뢰는 높고 Mom Test 함정도 높지만, 5명이면 인터뷰 3통은 즉시 가능합니다. 그중 \"AI로 무한 빌드 동료\"부터 시작.", tags: [.init("Day 1"), .init("channel=ex-colleague", tone: .sky)]),
+            .init(id: "today-mission", filter: .mission, kicker: "MISSION · Day 1 수락", time: "14:32:50", title: "첫 인터뷰 1통 할 사람을 한 명 고르기", body: "오리엔테이션 → 미션 수락 → 인터뷰 4단계 시퀀스 시작. 예상 3분 → 실제 16분.", tags: [.init("Day 1"), .init("STEP 2 → 3", tone: .amber)]),
+        ]),
+        .init(id: "yesterday", title: "어제", iso: "2026-05-15 · 목", count: "3 events", state: .yesterday, events: [
+            .init(id: "yesterday-code", filter: .code, kicker: "CODE · 2 files · commit a3f9c1d", time: "22:14:08", title: "SPEC.md · ALIGNMENT.md 정리", body: "\"프로젝트와 실행 기록을 연결하면, 당신을 위한 30일 커리큘럼이 나온다.\" 제품 한 줄 확정. ALIGNMENT 5축은 회사 미션 ↔ 제품 ↔ 측정으로 정리.", tags: [.init("+142", tone: .accent), .init("-87", tone: .rose)], source: "docs/SPEC.md, docs/ALIGNMENT.md", delta: "+142 / -87"),
+            .init(id: "yesterday-zoom", filter: .interview, kicker: "INTERVIEW · Zoom transcript", time: "21:30:00", title: "장지창 · 45분", body: "답변자 본인이 \"검증 없이 5번 빌드\"한 사례. sidecar가 자동 요약 + 통증 키워드 5개를 추출했어요.", tags: [.init("+5 keywords", tone: .sky)], source: "interviews/2026-05-15-zoom.md · 6.7KB · 45:02"),
+            .init(id: "yesterday-scope", filter: .curriculum, kicker: "CURRICULUM · scope-cut", time: "17:42:03", title: "Q2 wedge: Foundation Day 0-3 먼저 닫기", body: "Day 4-7 / Day 8-30은 daily dogfood 가능한 뒤 확장. /bip-draft, /analyze-ads는 regression만 방지하고 통합 우선순위는 낮춤.", source: "docs/SPEC.md §4"),
+        ]),
+        .init(id: "this-week", title: "이번 주 초", iso: "2026-05-11 → 14", count: "3 events", state: .past, events: [
+            .init(id: "week-anti-icp", filter: .interview, kicker: "INTERVIEW · Anti-ICP 신호", time: "2026-05-13 · 11:28", title: "\"언젠가 써볼게요\" · Threads DM 3건", body: "게이트가 자동으로 \"언젠가\" 패턴을 Anti-ICP로 분류하고 후속 콜드 DM 큐에서 제외했어요.", tags: [.init("3 leads", tone: .sky), .init("queue=-3", tone: .rose)]),
+            .init(id: "week-release", filter: .curriculum, kicker: "CURRICULUM · release-gate", time: "2026-05-12 · 19:55", title: "App Store 출시는 Foundation 검증 이후", body: "Hardened Runtime · Developer ID · notarization · Sparkle appcast 검증은 public distribution 직전 release blocker로 정리.", source: "docs/release-checklist.md"),
+            .init(id: "week-preflight", filter: .code, kicker: "CODE · sidecar · commit 7b1e22f", time: "2026-05-11 · 10:02", title: "sidecar preflight 통과 · provider routing 정상", body: "Claude Code 로그인 + Codex 로그인 양쪽 다 OK. NODE_BINARY는 mise 경로 우선. diagnostics snapshot이 token을 노출하지 않는지 sanitized review 통과.", tags: [.init("preflight=ok", tone: .accent)], source: "sidecar/preflight.mjs"),
+        ]),
+        .init(id: "setup", title: "설치 · Day 0", iso: "2026-05-02 · 목", count: "2 events", state: .past, events: [
+            .init(id: "setup-project", filter: .code, kicker: "CODE · 프로젝트 연결", time: "14:55:00", title: "~/code/agentic30-public 프로젝트 지정", body: "워크스페이스 watch 디렉토리: {docs, interviews, bip, work}. 첫 sidecar 부팅 3.2s, Keychain에 Anthropic 토큰 저장.", tags: [.init("v0.1.0", tone: .accent)], source: "github.com/zettalyst/agentic30-public"),
+            .init(id: "setup-curriculum", filter: .curriculum, kicker: "CURRICULUM · 30일 시작", time: "14:52:00", title: "Phase 4개 · Day 0-30 잠금 해제 룰 확정", body: "Foundation (0-7) → Build (8-17) → Launch (18-24) → Grow (25-30). 각 Day는 Adaptive 출력으로 생성됨.", tags: [.init("phase=4", tone: .rose), .init("unlock-rule=daily", tone: .rose)]),
+        ]),
+        .init(id: "future", title: "내일 — 잠금 해제 예정", iso: "2026-05-17 → Day 2 · Day 30", count: "29 locked", state: .future, events: [
+            .init(id: "future-day2", filter: .curriculum, kicker: "LOCKED · Day 2 · unlocks 00:00", time: "예정 · 30분", title: "시장 신호 읽기", body: "Day 1 ICP 후보 1명을 기준으로, sidecar가 Threads/IH 키워드 3개를 자동 추출해 검색 큐에 올립니다.", isFuture: true),
+            .init(id: "future-day3", filter: .curriculum, kicker: "LOCKED · Day 3 · ETA 5/18", time: "예정 · 60분", title: "Mom Test 인터뷰 ×3", body: "\"전 직장 출신 + Cursor + 빌드 단계에서 멈춤\" 풀 5명에서 3명에게 DM. 인터뷰 질문은 어제 transcript의 통증 키워드로 자동 생성.", isFuture: true),
+        ]),
+    ]
+
+    static let heatmapDays: [OpenDesignHistoryHeatmapDay] = {
+        let observed: [(String, Int, Int, String, Bool)] = [
+            ("2026-05-02", 2, 2, "Day 0 · 설치", false), ("2026-05-03", 0, 0, "", false), ("2026-05-04", 1, 1, "sidecar 테스트", false), ("2026-05-05", 0, 0, "", false), ("2026-05-06", 0, 0, "", false), ("2026-05-07", 1, 2, "SPEC 초안", false), ("2026-05-08", 0, 0, "", false), ("2026-05-09", 0, 0, "", false), ("2026-05-10", 0, 0, "", false), ("2026-05-11", 2, 1, "preflight 통과", false), ("2026-05-12", 1, 1, "release-gate", false), ("2026-05-13", 1, 1, "Anti-ICP 3건", false), ("2026-05-14", 0, 0, "", false), ("2026-05-15", 3, 3, "Zoom 인터뷰 + SPEC 정리", false), ("2026-05-16", 4, 6, "오늘 · Day 1 완료", true),
+        ]
+        var days = observed.map { OpenDesignHistoryHeatmapDay(id: $0.0, level: $0.1, count: $0.2, label: $0.3, isToday: $0.4, isLocked: false) }
+        for day in 17...31 {
+            days.append(.init(id: "2026-05-\(String(format: "%02d", day))", level: 0, count: 0, label: "잠금", isToday: false, isLocked: true))
+        }
+        return days
+    }()
+
+    static let sourceBreakdown: [OpenDesignHistorySourceBreakdown] = [
+        .init(id: .interview, title: "인터뷰 · transcript", count: 6),
+        .init(id: .bip, title: "BIP 로그 · 게시", count: 0),
+        .init(id: .code, title: "코드 · GitHub commit", count: 4),
+        .init(id: .mission, title: "과제 · Day 미션", count: 1),
+        .init(id: .curriculum, title: "커리큘럼 · 결정", count: 3),
+    ]
+}
+
+private struct OpenDesignHistoryShell: View {
+    let layout: OpenDesignDayLayoutMetrics
+    let openSearch: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var selectedFilter: OpenDesignHistoryFilter = .all
+
+    private var visibleGroups: [OpenDesignHistoryGroup] {
+        OpenDesignHistoryCatalog.groups.compactMap { group in
+            let events = group.events.filter(selectedFilter.matches(_:))
+            guard !events.isEmpty else { return nil }
+            return OpenDesignHistoryGroup(
+                id: group.id,
+                title: group.title,
+                iso: group.iso,
+                count: group.count,
+                state: group.state,
+                events: events
+            )
+        }
+    }
+
+    var body: some View {
+        if layout.showsTaskSidebar {
+            OpenDesignHistorySidebarView(openSearch: openSearch)
+                .frame(width: layout.taskSidebarWidth)
+                .frame(maxHeight: .infinity)
+                .background(OpenDesignDayColor.bg)
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .leading)))
+                .accessibilityIdentifier("opendesign.reference.history.side")
+        }
+
+        OpenDesignHistoryMainView(
+            layout: layout,
+            selectedFilter: $selectedFilter,
+            visibleGroups: visibleGroups
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("opendesign.reference.history.main")
+
+        if layout.showsMetaPanel {
+            OpenDesignHistoryMetaPanelView(selectedFilter: $selectedFilter)
+                .frame(width: layout.metaPanelWidth)
+                .frame(maxHeight: .infinity)
+                .background(OpenDesignDayColor.bg)
+                .accessibilityIdentifier("opendesign.reference.history.meta")
+        }
+    }
+}
+
+private struct OpenDesignHistorySidebarView: View {
+    let openSearch: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Text("30일 챌린지")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Text("1 / 30")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .padding(.horizontal, 6)
+                    .frame(height: 18)
+                    .background(Capsule().fill(OpenDesignDayColor.surface))
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 10)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+
+            Button(action: openSearch) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 10, weight: .medium))
+                    Text("과제 검색")
+                        .lineLimit(1)
+                    Spacer(minLength: 6)
+                    Text("⌘ K")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                }
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .padding(.horizontal, 10)
+                .frame(height: 32)
+                .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 6))
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 6)
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(OpenDesignHistoryCatalog.sidebarGroups) { group in
+                        HStack {
+                            Text(group.title)
+                            Spacer()
+                            Text(group.meta)
+                        }
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .textCase(.uppercase)
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        .padding(.top, group.id == "week1" ? 8 : 14)
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 6)
+
+                        ForEach(group.tasks) { task in
+                            OpenDesignHistorySidebarTaskRow(task: task)
+                        }
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.bottom, 14)
+            }
+        }
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .trailing)
+    }
+}
+
+private struct OpenDesignHistorySidebarTaskRow: View {
+    let task: OpenDesignHistorySidebarTask
+    @State private var isHovered = false
+
+    private var isLocked: Bool {
+        if case .locked = task.state { return true }
+        return false
+    }
+
+    var body: some View {
+        Button(action: {}) {
+            HStack(alignment: .top, spacing: 9) {
+                OpenDesignHistoryTaskStatusView(state: task.state)
+                    .frame(width: 18, height: 18)
+                    .padding(.top, 4)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(task.title)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(titleColor)
+                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(task.day)
+                            .foregroundStyle(isLocked ? OpenDesignDayColor.mutedDeep : OpenDesignDayColor.accent)
+                        Text("·")
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        Text(task.meta)
+                            .lineLimit(1)
+                    }
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(height: 52)
+            .background(referenceRounded(fill: isHovered && !isLocked ? OpenDesignDayColor.hover : Color.clear, stroke: Color.clear, radius: 6))
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(isLocked)
+        .onHover { isHovered = $0 }
+        .opacity(isLocked ? 0.55 : 1)
+        .accessibilityLabel("\(task.day), \(task.title), \(isLocked ? "잠김" : task.meta)")
+    }
+
+    private var titleColor: Color {
+        if isLocked { return OpenDesignDayColor.muted }
+        return isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary
+    }
+}
+
+private struct OpenDesignHistoryTaskStatusView: View {
+    let state: OpenDesignHistorySidebarTask.State
+
+    var body: some View {
+        switch state {
+        case .progress:
+            Circle()
+                .trim(from: 0.18, to: 0.86)
+                .stroke(OpenDesignDayColor.accent, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                .rotationEffect(.degrees(32))
+                .overlay(Circle().stroke(OpenDesignDayColor.muted.opacity(0.38), lineWidth: 1.2))
+        case .pending:
+            Circle()
+                .stroke(OpenDesignDayColor.mutedDeep, lineWidth: 1.5)
+                .frame(width: 10, height: 10)
+        case .locked:
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(OpenDesignDayColor.mutedDeep)
+                .frame(width: 8, height: 8)
+        }
+    }
+}
+
+private struct OpenDesignHistoryMainView: View {
+    let layout: OpenDesignDayLayoutMetrics
+    @Binding var selectedFilter: OpenDesignHistoryFilter
+    let visibleGroups: [OpenDesignHistoryGroup]
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            VStack(spacing: 0) {
+                OpenDesignHistoryHeaderView(horizontalPadding: layout.mainHorizontalPadding) {
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        proxy.scrollTo("history.group.today", anchor: .top)
+                    }
+                }
+
+                OpenDesignHistoryFilterBar(selectedFilter: $selectedFilter, horizontalPadding: layout.mainHorizontalPadding)
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        OpenDesignHistorySummaryBanner(layout: layout)
+                            .padding(.bottom, 22)
+
+                        if visibleGroups.isEmpty {
+                            OpenDesignHistoryEmptyFilterView(filter: selectedFilter)
+                                .padding(.top, 6)
+                        } else {
+                            ForEach(visibleGroups) { group in
+                                OpenDesignHistoryTimelineGroupView(group: group)
+                                    .id("history.group.\(group.id)")
+                            }
+                        }
+                    }
+                    .frame(maxWidth: 880, alignment: .leading)
+                    .padding(.horizontal, layout.mainHorizontalPadding)
+                    .padding(.top, 22)
+                    .padding(.bottom, 40)
+                    .frame(maxWidth: .infinity)
+                }
+                .background(OpenDesignDayColor.bg)
+            }
+            .background(OpenDesignDayColor.bg)
+        }
+    }
+}
+
+private struct OpenDesignHistoryHeaderView: View {
+    let horizontalPadding: CGFloat
+    let jumpToToday: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Evidence 타임라인")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                    .lineLimit(1)
+
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(OpenDesignDayColor.accent)
+                        .frame(width: 5, height: 5)
+                        .shadow(color: OpenDesignDayColor.accent.opacity(0.5), radius: 4)
+                    Text("14").foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    Text("events")
+                    Text("·").foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    Text("2026-05-02 → 오늘")
+                    Text("·").foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    Text("agentic30-public").foregroundStyle(OpenDesignDayColor.fgSecondary)
+                }
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .lineLimit(1)
+            }
+
+            Spacer(minLength: 10)
+
+            Button(action: jumpToToday) {
+                HStack(spacing: 6) {
+                    Image(systemName: "forward")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("오늘로 이동")
+                        .lineLimit(1)
+                }
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.bgDeep)
+                .padding(.horizontal, 14)
+                .frame(height: 28)
+                .background(referenceRounded(fill: isHovered ? OpenDesignDayColor.accentStrong : OpenDesignDayColor.accent, stroke: Color.clear, radius: 8))
+            }
+            .buttonStyle(.plain)
+            .onHover { isHovered = $0 }
+            .accessibilityLabel("오늘로 이동")
+        }
+        .padding(.horizontal, horizontalPadding)
+        .frame(height: 70)
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+}
+
+private struct OpenDesignHistoryFilterBar: View {
+    @Binding var selectedFilter: OpenDesignHistoryFilter
+    let horizontalPadding: CGFloat
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(OpenDesignHistoryFilter.allCases) { filter in
+                    OpenDesignHistoryFilterChip(filter: filter, isSelected: selectedFilter == filter) {
+                        selectedFilter = filter
+                    }
+                }
+            }
+            .padding(.horizontal, horizontalPadding)
+            .frame(height: 48)
+        }
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+}
+
+private struct OpenDesignHistoryFilterChip: View {
+    let filter: OpenDesignHistoryFilter
+    let isSelected: Bool
+    let select: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: select) {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(filter.tone.color)
+                    .frame(width: 6, height: 6)
+                    .shadow(color: isSelected ? filter.tone.color.opacity(0.45) : Color.clear, radius: 4)
+                Text(filter.title)
+                    .lineLimit(1)
+                Text("\(filter.count)")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(isSelected ? filter.tone.color : OpenDesignDayColor.muted)
+            }
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(isSelected ? filter.tone.color : isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+            .padding(.horizontal, 11)
+            .frame(height: 28)
+            .background(
+                Capsule()
+                    .fill(isSelected ? filter.tone.dim : isHovered ? OpenDesignDayColor.hover : OpenDesignDayColor.surface)
+                    .overlay(Capsule().stroke(isSelected ? filter.tone.line : OpenDesignDayColor.borderSoft, lineWidth: 1))
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityLabel("\(filter.title), \(filter.count)개")
+    }
+}
+
+private struct OpenDesignHistorySummaryBanner: View {
+    let layout: OpenDesignDayLayoutMetrics
+
+    var body: some View {
+        Group {
+            if layout.showsMetaPanel {
+                HStack(alignment: .center, spacing: 18) {
+                    copy
+                    Spacer(minLength: 12)
+                    metrics
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 14) {
+                    copy
+                    metrics
+                }
+            }
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 16)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(referenceAccentEdgeCard(stroke: OpenDesignDayColor.border, accent: OpenDesignDayColor.accent, cornerRadius: 12))
+    }
+
+    private var copy: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("Foundation Loop이 처음으로 닫혔어요 · Day 1 완료")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fg)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("2026-05-16 14:48 · ICP 후보 1명이 SPEC.md에 자동 저장됨 · Day 2가 곧 열립니다")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var metrics: some View {
+        HStack(spacing: 0) {
+            ForEach(OpenDesignHistoryCatalog.metrics) { metric in
+                OpenDesignHistoryMetricView(metric: metric)
+            }
+        }
+    }
+}
+
+private struct OpenDesignHistoryMetricView: View {
+    let metric: OpenDesignHistoryMetric
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(metric.label)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .textCase(.uppercase)
+                .foregroundStyle(OpenDesignDayColor.muted)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(metric.value)
+                    .font(.system(size: 16, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(metric.isAccent ? OpenDesignDayColor.accent : OpenDesignDayColor.fg)
+                if let unit = metric.unit {
+                    Text(unit)
+                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .leading)
+    }
+}
+
+private struct OpenDesignHistoryEmptyFilterView: View {
+    let filter: OpenDesignHistoryFilter
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("\(filter.title) 이벤트가 아직 없어요")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fg)
+            Text("필터를 전체로 바꾸면 Foundation Loop의 모든 evidence 흐름을 볼 수 있습니다.")
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+    }
+}
+
+private struct OpenDesignHistoryTimelineGroupView: View {
+    let group: OpenDesignHistoryGroup
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(group.state == .future ? Color.clear : OpenDesignDayColor.bg)
+                    .frame(width: 12, height: 12)
+                    .overlay(Circle().stroke(pinColor, lineWidth: 2))
+                    .shadow(color: group.state == .today ? OpenDesignDayColor.accent.opacity(0.45) : Color.clear, radius: 4)
+                    .padding(.leading, 10)
+
+                Text(group.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(group.state == .future ? OpenDesignDayColor.muted : OpenDesignDayColor.fg)
+                Text(group.iso)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(group.state == .future ? OpenDesignDayColor.mutedDeep : OpenDesignDayColor.muted)
+
+                Spacer(minLength: 8)
+
+                Text(group.count)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .padding(.horizontal, 8)
+                    .frame(height: 20)
+                    .background(Capsule().fill(OpenDesignDayColor.surface))
+                    .overlay(Capsule().stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+            }
+            .padding(.leading, 2)
+
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(group.events) { event in
+                    OpenDesignHistoryEventRowView(event: event)
+                }
+            }
+            .padding(.leading, 16)
+            .overlay(alignment: .leading) {
+                Rectangle()
+                    .fill(LinearGradient(colors: [OpenDesignDayColor.borderSoft, Color.clear], startPoint: .top, endPoint: .bottom))
+                    .frame(width: 1)
+                    .padding(.leading, 15)
+                    .padding(.vertical, 5)
+            }
+        }
+        .padding(.bottom, 28)
+    }
+
+    private var pinColor: Color {
+        switch group.state {
+        case .today: return OpenDesignDayColor.accent
+        case .yesterday: return OpenDesignDayColor.muted
+        case .past: return OpenDesignDayColor.mutedDeep
+        case .future: return OpenDesignDayColor.borderStrong
+        }
+    }
+}
+
+private struct OpenDesignHistoryEventRowView: View {
+    let event: OpenDesignHistoryEvent
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: event.isFuture ? "lock" : event.filter.systemImage)
+                .font(.system(size: event.isFuture ? 10 : 11, weight: .semibold))
+                .foregroundStyle(event.isFuture ? OpenDesignDayColor.mutedDeep : event.filter.tone.color)
+                .frame(width: 22, height: 22)
+                .background(dotBackground)
+                .zIndex(1)
+
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(event.kicker)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .textCase(.uppercase)
+                        .foregroundStyle(event.isFuture ? OpenDesignDayColor.mutedDeep : event.filter.tone.color)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text(event.time)
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .lineLimit(1)
+                }
+
+                Text(event.title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(event.isFuture ? OpenDesignDayColor.fgSecondary : OpenDesignDayColor.fg)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(event.body)
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(event.isFuture ? OpenDesignDayColor.muted : OpenDesignDayColor.fgSecondary)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if !event.tags.isEmpty || event.source != nil || event.delta != nil {
+                    FlowLayout(spacing: 6, lineSpacing: 6) {
+                        ForEach(event.tags) { tag in
+                            OpenDesignReferenceChipView(chip: tag, isActive: tag.id == "Day 1")
+                        }
+                        if let source = event.source {
+                            OpenDesignHistorySourcePill(source: source)
+                        }
+                        if let delta = event.delta {
+                            OpenDesignHistoryDeltaPill(delta: delta)
+                        }
+                    }
+                    .padding(.top, 1)
+                }
+            }
+            .padding(EdgeInsets(top: 11, leading: 14, bottom: 11, trailing: 14))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(cardBackground)
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .onHover { isHovered = $0 }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(event.kicker), \(event.title), \(event.time)")
+    }
+
+    private var dotBackground: some View {
+        Circle()
+            .fill(event.isFuture ? Color.clear : event.filter.tone.dim)
+            .overlay(
+                Circle()
+                    .stroke(
+                        event.isFuture ? OpenDesignDayColor.borderSoft : event.filter.tone.line,
+                        style: StrokeStyle(lineWidth: 1, dash: event.isFuture ? [3, 3] : [])
+                    )
+            )
+    }
+
+    private var cardBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        return shape
+            .fill(event.isFuture ? Color.clear : isHovered ? OpenDesignDayColor.elevated : OpenDesignDayColor.surface)
+            .overlay(
+                shape.stroke(
+                    isHovered && !event.isFuture ? OpenDesignDayColor.border : OpenDesignDayColor.borderSoft,
+                    style: StrokeStyle(lineWidth: 1, dash: event.isFuture ? [4, 4] : [])
+                )
+            )
+            .opacity(event.isFuture ? 0.72 : 1)
+    }
+}
+
+private struct OpenDesignHistorySourcePill: View {
+    let source: String
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "doc.text")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.muted)
+            Text(source)
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(.horizontal, 7)
+        .frame(height: 22)
+        .background(Capsule().fill(OpenDesignDayColor.bgDarker))
+        .overlay(Capsule().stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+    }
+}
+
+private struct OpenDesignHistoryDeltaPill: View {
+    let delta: String
+
+    var body: some View {
+        Text(delta)
+            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.accent)
+            .padding(.horizontal, 7)
+            .frame(height: 22)
+            .background(Capsule().fill(OpenDesignDayColor.accentDim))
+            .overlay(Capsule().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
+    }
+}
+
+private struct OpenDesignHistoryMetaPanelView: View {
+    @Binding var selectedFilter: OpenDesignHistoryFilter
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("요약")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+
+                OpenDesignHistoryHeatmapCard()
+
+                Text("Evidence 소스 · 합 14")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .textCase(.uppercase)
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    .padding(.top, 2)
+                    .padding(.horizontal, 4)
+
+                VStack(spacing: 0) {
+                    ForEach(Array(OpenDesignHistoryCatalog.sourceBreakdown.enumerated()), id: \.element.id) { index, row in
+                        OpenDesignHistoryBreakdownRow(row: row, isSelected: selectedFilter == row.id) {
+                            selectedFilter = row.id
+                        }
+                        if index < OpenDesignHistoryCatalog.sourceBreakdown.count - 1 {
+                            Rectangle()
+                                .fill(OpenDesignDayColor.borderSoft)
+                                .frame(height: 1)
+                                .padding(.leading, 38)
+                        }
+                    }
+                }
+                .padding(6)
+                .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+            }
+            .padding(16)
+        }
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .leading)
+    }
+}
+
+private struct OpenDesignHistoryHeatmapCard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("활동 · 30일")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .textCase(.uppercase)
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                Spacer()
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    Text("14")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                    Text("events")
+                        .font(.system(size: 10.5, weight: .regular, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                }
+            }
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 10), spacing: 4) {
+                ForEach(OpenDesignHistoryCatalog.heatmapDays) { day in
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(heatmapFill(day))
+                        .aspectRatio(1, contentMode: .fit)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                .stroke(
+                                    day.isToday ? OpenDesignDayColor.accent : OpenDesignDayColor.borderSoft,
+                                    style: StrokeStyle(lineWidth: day.isToday ? 1.5 : 1, dash: day.isLocked ? [3, 3] : [])
+                                )
+                        )
+                        .opacity(day.isLocked ? 0.55 : 1)
+                        .help("\(day.id) · \(day.isLocked ? "잠금" : "\(day.count)건")\(day.label.isEmpty ? "" : " · \(day.label)")")
+                }
+            }
+
+            HStack {
+                Text("적음")
+                Spacer()
+                HStack(spacing: 2) {
+                    ForEach(0...4, id: \.self) { level in
+                        RoundedRectangle(cornerRadius: 2, style: .continuous)
+                            .fill(heatmapLevelFill(level))
+                            .frame(width: 9, height: 9)
+                            .overlay(RoundedRectangle(cornerRadius: 2, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: level == 0 ? 1 : 0))
+                    }
+                }
+                Spacer()
+                Text("많음")
+            }
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+        }
+        .padding(14)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+    }
+
+    private func heatmapFill(_ day: OpenDesignHistoryHeatmapDay) -> Color {
+        day.isLocked ? OpenDesignDayColor.bgDarker : heatmapLevelFill(day.level)
+    }
+
+    private func heatmapLevelFill(_ level: Int) -> Color {
+        switch level {
+        case 1: return OpenDesignDayColor.accent.opacity(0.24)
+        case 2: return OpenDesignDayColor.accent.opacity(0.42)
+        case 3: return OpenDesignDayColor.accent.opacity(0.66)
+        case 4: return OpenDesignDayColor.accent
+        default: return OpenDesignDayColor.bgDarker
+        }
+    }
+}
+
+private struct OpenDesignHistoryBreakdownRow: View {
+    let row: OpenDesignHistorySourceBreakdown
+    let isSelected: Bool
+    let select: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: select) {
+            HStack(spacing: 10) {
+                Image(systemName: row.id.systemImage)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(row.id.tone.color)
+                    .frame(width: 14, height: 14)
+                    .background(referenceRounded(fill: row.id.tone.dim, stroke: row.id.tone.line, radius: 4))
+
+                Text(row.title)
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(isHovered || isSelected ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+                    .lineLimit(1)
+
+                Spacer(minLength: 6)
+
+                Text("\(row.count)")
+                    .font(.system(size: 11, weight: row.count == 0 ? .regular : .semibold, design: .monospaced))
+                    .foregroundStyle(row.count == 0 ? OpenDesignDayColor.mutedDeep : OpenDesignDayColor.fg)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(referenceRounded(fill: isSelected ? row.id.tone.dim : isHovered ? OpenDesignDayColor.hover : Color.clear, stroke: Color.clear, radius: 6))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityLabel("\(row.title), \(row.count)개")
+    }
+}
+
+private struct OpenDesignProjectStat: Identifiable {
+    let id: String
+    let label: String
+    let value: String
+    let suffix: String
+    let delta: String
+    let tone: OpenDesignReferenceTone
+    let isFlat: Bool
+}
+
+private struct OpenDesignProjectKV: Identifiable {
+    let id: String
+    let key: String
+    let value: String
+    let status: String
+    let tone: OpenDesignReferenceTone
+}
+
+private struct OpenDesignProjectPath: Identifiable {
+    let id: String
+    let systemImage: String
+    let name: String
+    let requirement: String
+    let path: String
+    let hint: String?
+    let statusParts: [String]
+    let isSource: Bool
+    let tone: OpenDesignReferenceTone
+}
+
+private struct OpenDesignProjectDoc: Identifiable {
+    let id: String
+    let mark: String
+    let name: String
+    let location: String
+    let subtitle: String
+    let age: String
+    let pin: String
+    let isPinned: Bool
+    let tone: OpenDesignReferenceTone
+}
+
+private struct OpenDesignProjectTimelineEvent: Identifiable {
+    let id: String
+    let title: String
+    let emphasis: String?
+    let subtitle: String
+    let time: String
+    let tone: OpenDesignReferenceTone
+}
+
+private struct OpenDesignProjectMetaRow: Identifiable {
+    let id: String
+    let systemImage: String
+    let key: String
+    let value: String
+    let tone: OpenDesignReferenceTone
+}
+
+private enum OpenDesignProjectsCatalog {
+    static let stats: [OpenDesignProjectStat] = [
+        .init(id: "days", label: "완료한 Day", value: "0", suffix: "/ 30", delta: "→ Day 1 진행 중", tone: .muted, isFlat: true),
+        .init(id: "interviews", label: "인터뷰 transcript", value: "1", suffix: "/ 5 게이트", delta: "+ 1 어제", tone: .accent, isFlat: false),
+        .init(id: "bip", label: "BIP 게시글", value: "0", suffix: "/ 14 권장", delta: "— 미시작", tone: .muted, isFlat: true),
+        .init(id: "roots", label: "소스 코드 루트", value: "3", suffix: "/ watch 활성", delta: "+ 2 보조 레포", tone: .accent, isFlat: false),
+    ]
+
+    static let basics: [OpenDesignProjectKV] = [
+        .init(id: "summary", key: "한 문장 요약", value: "전업 1인 개발자가 자기 프로젝트와 실행 기록을 근거로 30일 안에 PMF 검증 방향을 좁히도록 돕는다", status: "필수", tone: .muted),
+        .init(id: "icp", key: "타깃 사용자 (ICP)", value: "전업 1인 개발자 · macOS 사용 · 수익 0원 · 30일 스프린트 실행 의향 (상세는 ICP.md)", status: "정의됨", tone: .accent),
+        .init(id: "platform", key: "제품 플랫폼", value: "macOS 메뉴바 앱 · 커리큘럼 대상 제품 플랫폼은 iOS/Android/Web/Mac 자유", status: "macOS", tone: .accent),
+        .init(id: "hypothesis", key: "현재 가설", value: "\"만들 줄은 알지만 무엇을 만들어야 팔리는지 모르는\" 1인 개발자가, 실제 기록을 분석한 adaptive 과제가 generic 강의보다 다음 행동을 더 잘 만든다 — Day 0-3에서 검증", status: "검증 중", tone: .amber),
+        .init(id: "model", key: "수익 모델 가설", value: "— 미설정 — Foundation 통과 후 Day 8+ Build phase에서 결정", status: "대기", tone: .muted),
+        .init(id: "evidence", key: "증거 채널", value: "고객 인터뷰 · BIP (Threads) · 업무 일지 · 사용자 사용 패턴 (creator dogfood)", status: "4채널", tone: .accent),
+    ]
+
+    static let paths: [OpenDesignProjectPath] = [
+        .init(id: "app", systemImage: "folder", name: "소스 코드 경로 1 · 제품 앱", requirement: "필수", path: "~/code/agentic30-desktop", hint: "SwiftUI 메뉴바 앱 · 마지막 커밋 4분 전", statusParts: ["● 워치 활성", "312 파일", "git: main · 클린"], isSource: true, tone: .accent),
+        .init(id: "sidecar", systemImage: "chevron.left.forwardslash.chevron.right", name: "소스 코드 경로 2 · Agent sidecar", requirement: "필수", path: "~/code/agentic30-sidecar", hint: "watcher / provider adapters / local index", statusParts: ["● 워치 활성", "148 파일", "git: main · +2 unstaged"], isSource: true, tone: .accent),
+        .init(id: "public", systemImage: "globe", name: "소스 코드 경로 3 · 공개 웹/문서", requirement: "선택", path: "~/code/agentic30-public", hint: "landing / docs / preview fixtures", statusParts: ["● 워치 활성", "152 파일", "git: main · 클린"], isSource: true, tone: .sky),
+        .init(id: "interviews", systemImage: "bubble.left.and.bubble.right", name: "인터뷰 transcript 폴더", requirement: "필수", path: "~/Documents/Agentic30/agentic30/interviews", hint: ".txt / .md / .vtt / .srt", statusParts: ["● 워치 활성", "1 / 5 게이트", "최근 어제"], isSource: false, tone: .accent),
+        .init(id: "journal", systemImage: "doc.text", name: "업무 일지 / BIP 폴더", requirement: "선택", path: "~/Documents/Agentic30/agentic30/journal", hint: nil, statusParts: ["● 워치 활성", "3 파일", "오늘 만든 것 / 막힌 것 / 배운 것"], isSource: false, tone: .accent),
+    ]
+
+    static let docs: [OpenDesignProjectDoc] = [
+        .init(id: "spec", mark: "MD", name: "SPEC.md", location: "~/code/agentic30-public/docs", subtitle: "제품 한 문장 · ICP · Core Loop · MVP 스코프 · 열린 질문 · v2026-05-07", age: "방금 동기화", pin: "핀 · 컨텍스트", isPinned: true, tone: .accent),
+        .init(id: "icp", mark: "MD", name: "ICP.md", location: "~/code/agentic30-public/docs", subtitle: "타깃 고객 정의 · 전업 1인 개발자 · macOS · 수익 0원", age: "2일 전", pin: "핀 · 컨텍스트", isPinned: true, tone: .accent),
+        .init(id: "goal", mark: "MD", name: "GOAL.md", location: "~/code/agentic30-public/docs", subtitle: "2026 Q2 Product Focus · Foundation loop 동작 · 4 Objective", age: "7일 전", pin: "핀 · 컨텍스트", isPinned: true, tone: .accent),
+        .init(id: "interview", mark: "VTT", name: "2026-05-15 장지창 인터뷰", location: "~/Documents/Agentic30/agentic30/interviews", subtitle: "29분 · 한국어 · 분석 완료 · Day 1 ICP 좁히기에 반영됨", age: "어제", pin: "핀 · 컨텍스트", isPinned: true, tone: .violet),
+        .init(id: "values", mark: "MD", name: "VALUES.md", location: "~/code/agentic30-public/docs", subtitle: "행동 원칙 · adaptive 출력의 tone을 결정", age: "7일 전", pin: "핀 안 됨", isPinned: false, tone: .sky),
+    ]
+
+    static let timeline: [OpenDesignProjectTimelineEvent] = [
+        .init(id: "task", title: "Day 1 과제 생성", emphasis: "ICP 좁히기 (3개 변형)", subtitle: "provider Claude · Sonnet 4.6 · 312ms · 입력 2.1KB · 결과 도구로 전달됨", time: "4분 전", tone: .accent),
+        .init(id: "interview", title: "인터뷰 1건 추가", emphasis: "장지창 (29분)", subtitle: "파일 2026-05-15-jangjichang.vtt · 자동 분석 · 통증 후보 3개 추출", time: "어제 19:42", tone: .sky),
+        .init(id: "spec", title: "SPEC.md 갱신", emphasis: "Q2 wedge를 Day 0-3로 좁힘", subtitle: "변경 +14 / -8 · 한 문장 요약 변경 없음 · ICP 추가", time: "7일 전", tone: .violet),
+        .init(id: "journal", title: "업무 일지 작성", emphasis: "오늘 막힌 것 1건", subtitle: "~/journal/2026-05-15.md · provider 응답 latency, sub-workflow 라우팅", time: "어제 22:10", tone: .amber),
+        .init(id: "created", title: "프로젝트 생성", emphasis: nil, subtitle: "소스 코드 / 인터뷰 / 일지 path 지정 · Foundation Day 0 시작", time: "2026-05-16 09:00", tone: .accent),
+        .init(id: "more", title: "10개 더 보기 …", emphasis: nil, subtitle: "", time: "", tone: .muted),
+    ]
+
+    static let workflows: [OpenDesignProjectKV] = [
+        .init(id: "office", key: "/office-hours-docs", value: "Day 1, 3에서 사용 · 문제 정의 / spec 작성 보조", status: "활성", tone: .accent),
+        .init(id: "bip", key: "/bip-draft", value: "Day 18-24에서 사용 · 오늘 한 일을 BIP 게시글로 변환 — Foundation에서는 regression만 방지", status: "대기", tone: .muted),
+        .init(id: "ads", key: "/analyze-ads", value: "Day 5 + Day 25+에서 사용 · Meta Ads 캠페인/소재 분석 — Codex 미연결로 일부 비활성", status: "조건부", tone: .amber),
+        .init(id: "qmd", key: "/qmd-support", value: "QuickMemoDeck 학습 회상용 · 이 프로젝트와는 무관해서 오프", status: "꺼짐", tone: .muted),
+    ]
+
+    static let metaRows: [OpenDesignProjectMetaRow] = [
+        .init(id: "active", systemImage: "clock", key: "활성 프로젝트", value: "3개", tone: .accent),
+        .init(id: "phase", systemImage: "waveform.path.ecg", key: "진행 phase", value: "F2 · B1", tone: .violet),
+        .init(id: "interviews", systemImage: "bubble.left.and.bubble.right", key: "인터뷰", value: "5 / 15 게이트", tone: .amber),
+        .init(id: "roots", systemImage: "doc.text", key: "소스 루트", value: "9개 watch", tone: .accent),
+        .init(id: "calls", systemImage: "chart.line.uptrend.xyaxis", key: "오늘 호출", value: "3 · $0.04", tone: .accent),
+        .init(id: "target", systemImage: "trash", key: "D-30 목표일", value: "2026-06-15", tone: .muted),
+    ]
+
+    static let archiveRows: [OpenDesignProjectMetaRow] = [
+        .init(id: "qmd", systemImage: "checkmark", key: "qmd-support", value: "완주 28/30", tone: .accent),
+        .init(id: "meal", systemImage: "minus.circle", key: "MealMate", value: "중단 D9", tone: .muted),
+        .init(id: "avg", systemImage: "chart.line.uptrend.xyaxis", key: "평균 완주율", value: "62% (2건)", tone: .sky),
+    ]
+}
+
+private struct OpenDesignProjectsShell: View {
+    let layout: OpenDesignDayLayoutMetrics
+    let openSearch: () -> Void
+
+    var body: some View {
+        if layout.showsTaskSidebar {
+            ZStack {
+                OpenDesignProjectsSidebarView(openSearch: openSearch)
+                Color.clear
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("OpenDesign Projects Sidebar")
+                    .accessibilityIdentifier("opendesign.reference.projects.side")
+                    .allowsHitTesting(false)
+            }
+            .frame(width: layout.taskSidebarWidth)
+            .frame(maxHeight: .infinity)
+            .background(OpenDesignDayColor.bg)
+        }
+
+        ZStack {
+            OpenDesignProjectsMainView(layout: layout)
+            Color.clear
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("OpenDesign Projects Main")
+                .accessibilityIdentifier("opendesign.reference.projects.main")
+                .allowsHitTesting(false)
+        }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+        if layout.showsMetaPanel {
+            ZStack {
+                OpenDesignProjectsMetaPanelView()
+                Color.clear
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("OpenDesign Projects Meta")
+                    .accessibilityIdentifier("opendesign.reference.projects.meta")
+                    .allowsHitTesting(false)
+            }
+            .frame(width: layout.metaPanelWidth)
+            .frame(maxHeight: .infinity)
+            .background(OpenDesignDayColor.bg)
+        }
+    }
+}
+
+private struct OpenDesignProjectsSidebarView: View {
+    let openSearch: () -> Void
+    private let page = OpenDesignReferenceCatalog.page(.projects)
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Text(page.sideTitle)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Text(page.sideBadge ?? "활성 3")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.accent)
+                    .padding(.horizontal, 7)
+                    .frame(height: 18)
+                    .background(Capsule().fill(OpenDesignDayColor.accentDim))
+                    .overlay(Capsule().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 10)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+
+            Button(action: openSearch) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text(page.sideSearchPlaceholder ?? "프로젝트 검색")
+                        .lineLimit(1)
+                    Spacer(minLength: 6)
+                    Text("⌘ P")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                }
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .padding(.horizontal, 10)
+                .frame(height: 32)
+                .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 6))
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 6)
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(page.sideGroups.indices, id: \.self) { groupIndex in
+                        let group = page.sideGroups[groupIndex]
+                        HStack {
+                            Text(group.title)
+                            Spacer()
+                            if let count = group.count {
+                                Text(count)
+                            }
+                        }
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .textCase(.uppercase)
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        .padding(.top, groupIndex == 0 ? 8 : 14)
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 6)
+
+                        ForEach(group.rows) { row in
+                            OpenDesignProjectsSideRowView(row: row)
+                        }
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.bottom, 14)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(OpenDesignDayColor.accent)
+                        .frame(width: 5, height: 5)
+                        .shadow(color: OpenDesignDayColor.accent.opacity(0.45), radius: 4)
+                    Text("마지막 활동")
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    Text("4분 전")
+                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    Text("· Day 1")
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                }
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+
+                Button(action: {}) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 12, weight: .bold))
+                        Text("새 30일 프로젝트")
+                        Spacer(minLength: 4)
+                        Text("⌘ N")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .padding(.horizontal, 5)
+                            .frame(height: 18)
+                            .background(Capsule().fill(OpenDesignDayColor.bgDeep.opacity(0.36)))
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.bgDeep)
+                    .padding(.horizontal, 10)
+                    .frame(height: 30)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(OpenDesignDayColor.accent))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(12)
+            .background(OpenDesignDayColor.bg)
+            .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
+        }
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .trailing)
+    }
+}
+
+private struct OpenDesignProjectsSideRowView: View {
+    let row: OpenDesignReferenceSideRow
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(row.leading)
+                .font(.system(size: row.leading.count > 2 ? 9 : 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(row.isActive ? row.tone.color : row.tone == .muted ? OpenDesignDayColor.muted : row.tone.color)
+                .frame(width: 26, height: 26)
+                .background(referenceRounded(fill: row.isActive ? row.tone.dim : row.tone == .muted ? OpenDesignDayColor.bgDeep : row.tone.dim, stroke: row.isActive ? row.tone.line : row.tone == .muted ? OpenDesignDayColor.border : row.tone.line, radius: 7))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.title)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(row.isActive || isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+                    .lineLimit(1)
+                if let subtitle = row.subtitle {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(row.tone == .amber ? OpenDesignDayColor.amber : row.tone == .muted ? OpenDesignDayColor.mutedDeep : OpenDesignDayColor.accent)
+                            .frame(width: 4, height: 4)
+                        Text(subtitle)
+                            .lineLimit(1)
+                    }
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                }
+            }
+
+            Spacer(minLength: 6)
+
+            if let badge = row.badge {
+                Text(badge)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(row.isActive ? row.tone.color : OpenDesignDayColor.muted)
+                    .padding(.horizontal, 6)
+                    .frame(height: 18)
+                    .background(Capsule().fill(row.isActive ? row.tone.dim : OpenDesignDayColor.bgDeep))
+                    .overlay(Capsule().stroke(row.isActive ? row.tone.line : OpenDesignDayColor.borderSoft, lineWidth: 1))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(referenceRounded(fill: row.isActive ? OpenDesignDayColor.selected : isHovered ? OpenDesignDayColor.hover : Color.clear, stroke: row.isActive ? OpenDesignDayColor.borderSoft : Color.clear, radius: 7))
+        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .onHover { isHovered = $0 }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(row.title)
+    }
+}
+
+private struct OpenDesignProjectsMainView: View {
+    let layout: OpenDesignDayLayoutMetrics
+
+    var body: some View {
+        VStack(spacing: 0) {
+            OpenDesignProjectsHeaderView(horizontalPadding: layout.mainHorizontalPadding)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    OpenDesignProjectsSectionHeader(
+                        title: "개요",
+                        meta: "Day 1 of 30 · Foundation 진행 중",
+                        tone: .accent
+                    )
+                    .accessibilityIdentifier("opendesign.reference.projects.overview")
+
+                    OpenDesignProjectsOverviewCard()
+
+                    OpenDesignProjectsStatsView(stats: OpenDesignProjectsCatalog.stats)
+                        .padding(.top, 12)
+
+                    OpenDesignProjectsSectionHeader(
+                        title: "Phase 게이트",
+                        meta: "진행 통과 조건 · Q2 wedge는 Foundation",
+                        tone: .accent
+                    )
+                    OpenDesignProjectsGateList()
+
+                    OpenDesignProjectsSectionHeader(
+                        title: "프로젝트 기본 정보",
+                        meta: "사용자 입력 · 언제든 수정 가능",
+                        tone: .accent
+                    )
+                    OpenDesignProjectsBasicsCard()
+
+                    OpenDesignProjectsSectionHeader(
+                        title: "프로젝트 경로",
+                        meta: "소스 코드 3개 + 자료 폴더 2개 · 이 프로젝트에서만 watch",
+                        tone: .accent
+                    )
+                    ForEach(OpenDesignProjectsCatalog.paths) { path in
+                        OpenDesignProjectPathCard(path: path)
+                    }
+                    OpenDesignProjectPathFooter()
+
+                    OpenDesignProjectsSectionHeader(
+                        title: "핀 고정된 문서",
+                        meta: "5 / 612 파일 · 여러 소스 루트에서 컨텍스트로 자동 전달",
+                        tone: .accent
+                    )
+                    OpenDesignProjectDocList()
+
+                    OpenDesignProjectsSectionHeader(
+                        title: "최근 활동",
+                        meta: "이 프로젝트만 · 12개 항목 · 자동 기록",
+                        tone: .accent
+                    )
+                    OpenDesignProjectTimeline()
+
+                    OpenDesignProjectsSectionHeader(
+                        title: "연결된 sub-workflow",
+                        meta: "Phase별 자동 활성 / 비활성",
+                        tone: .accent
+                    )
+                    OpenDesignProjectWorkflowCard()
+
+                    OpenDesignProjectsSectionHeader(title: "위험 구역", meta: nil, tone: .rose)
+                    OpenDesignProjectDangerZone()
+                }
+                .frame(maxWidth: 860, alignment: .leading)
+                .padding(.horizontal, layout.mainHorizontalPadding)
+                .padding(.top, 22)
+                .padding(.bottom, 34)
+                .frame(maxWidth: .infinity)
+            }
+            .background(OpenDesignDayColor.bg)
+        }
+        .background(OpenDesignDayColor.bg)
+    }
+}
+
+private struct OpenDesignProjectsHeaderView: View {
+    let horizontalPadding: CGFloat
+
+    var body: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 14) {
+                Text("A3")
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.accent)
+                    .frame(width: 44, height: 44)
+                    .background(referenceRounded(fill: OpenDesignDayColor.accentDim, stroke: OpenDesignDayColor.accentLine, radius: 11))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 10) {
+                        Text("Agentic30 (creator dogfood)")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(OpenDesignDayColor.fg)
+                            .lineLimit(1)
+                        Text("활성")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.accent)
+                            .padding(.horizontal, 8)
+                            .frame(height: 20)
+                            .background(Capsule().fill(OpenDesignDayColor.accentDim))
+                            .overlay(Capsule().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
+                    }
+
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(OpenDesignDayColor.accent)
+                            .frame(width: 5, height: 5)
+                        Text("Foundation ·")
+                        Text("Day 1 / 30")
+                            .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                        Text("·")
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        Text("macOS 메뉴바 앱")
+                        Text("·")
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        Text("소스 코드")
+                        Text("3")
+                            .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                        Text("개 · 마지막 활동 4분 전")
+                    }
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .lineLimit(1)
+                }
+                .frame(minWidth: 0, alignment: .leading)
+            }
+
+            Spacer(minLength: 10)
+
+            HStack(spacing: 6) {
+                OpenDesignProjectHeaderButton(title: "프로젝트 전환", systemImage: "sidebar.left", isPrimary: false)
+                OpenDesignProjectHeaderButton(title: "오늘 화면 열기", systemImage: "chevron.right", isPrimary: true)
+            }
+        }
+        .padding(.horizontal, horizontalPadding)
+        .frame(height: 70)
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+}
+
+private struct OpenDesignProjectHeaderButton: View {
+    let title: String
+    let systemImage: String
+    let isPrimary: Bool
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: {}) {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(title)
+                    .lineLimit(1)
+            }
+            .font(.system(size: 11.5, weight: isPrimary ? .semibold : .medium))
+            .foregroundStyle(isPrimary ? OpenDesignDayColor.bgDeep : isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+            .padding(.horizontal, isPrimary ? 14 : 12)
+            .frame(height: 28)
+            .background(
+                referenceRounded(
+                    fill: isPrimary ? (isHovered ? OpenDesignDayColor.accentStrong : OpenDesignDayColor.accent) : (isHovered ? OpenDesignDayColor.hover : Color.clear),
+                    stroke: isPrimary ? Color.clear : OpenDesignDayColor.borderSoft,
+                    radius: 8
+                )
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityLabel(title)
+    }
+}
+
+private struct OpenDesignProjectsSectionHeader: View {
+    let title: String
+    let meta: String?
+    let tone: OpenDesignReferenceTone
+
+    var body: some View {
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(tone.color)
+                .frame(width: 4, height: 12)
+            Text(title)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .textCase(.uppercase)
+                .foregroundStyle(OpenDesignDayColor.muted)
+            if let meta {
+                Text(meta)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    .lineLimit(1)
+            }
+            Rectangle()
+                .fill(OpenDesignDayColor.borderSoft)
+                .frame(height: 1)
+        }
+        .padding(.top, 20)
+        .padding(.bottom, 12)
+    }
+}
+
+private struct OpenDesignProjectsOverviewCard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 16) {
+                OpenDesignProjectsProgressRing(progress: 0.033, label: "3%")
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Foundation · Day 0-7")
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.accent)
+                        .textCase(.uppercase)
+                    Text("오늘은 Day 1 · ICP 좁히기예요. 다음 게이트는 Day 3 인터뷰 5건까지 6일.")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                        .lineSpacing(2.5)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    FlowLayout(spacing: 10, lineSpacing: 6) {
+                        OpenDesignProjectsMetaToken("● 완료 0", tone: .accent)
+                        OpenDesignProjectsMetaToken("● 진행 중 1", tone: .amber)
+                        OpenDesignProjectsMetaToken("남은 일수 29", tone: .muted)
+                        OpenDesignProjectsMetaToken("인터뷰 0 / 5", tone: .muted)
+                        OpenDesignProjectsMetaToken("BIP 0 / 14", tone: .muted)
+                    }
+                }
+
+                Spacer(minLength: 10)
+
+                VStack(alignment: .trailing, spacing: 6) {
+                    Text("시작 2026-05-16 · D-30: 2026-06-15")
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        .lineLimit(1)
+                    OpenDesignProjectMiniButton(title: "플랜 편집", systemImage: "trash", tone: .muted)
+                }
+                .frame(maxWidth: 208, alignment: .trailing)
+            }
+
+            OpenDesignProjectsDayStrip()
+                .padding(.top, 14)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 18)
+        .background(referenceAccentEdgeCard(stroke: OpenDesignDayColor.border, accent: OpenDesignDayColor.accent))
+        .accessibilityIdentifier("opendesign.reference.projects.overview.card")
+    }
+}
+
+private struct OpenDesignProjectsProgressRing: View {
+    let progress: CGFloat
+    let label: String
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(OpenDesignDayColor.surface, lineWidth: 6)
+            Circle()
+                .trim(from: 0, to: progress)
+                .stroke(OpenDesignDayColor.accent, style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            Circle()
+                .fill(OpenDesignDayColor.bgDeep)
+                .padding(5)
+            Text(label)
+                .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.fg)
+        }
+        .frame(width: 56, height: 56)
+        .accessibilityLabel("진행률 \(label)")
+    }
+}
+
+private struct OpenDesignProjectsMetaToken: View {
+    let text: String
+    let tone: OpenDesignReferenceTone
+
+    init(_ text: String, tone: OpenDesignReferenceTone) {
+        self.text = text
+        self.tone = tone
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundStyle(tone == .muted ? OpenDesignDayColor.muted : tone.color)
+    }
+}
+
+private struct OpenDesignProjectsDayStrip: View {
+    private let gateDays: Set<Int> = [3, 7, 17, 24, 30]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Rectangle()
+                .fill(OpenDesignDayColor.borderSoft)
+                .frame(height: 1)
+                .padding(.bottom, 5)
+
+            HStack {
+                Text("30일 캘린더")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .textCase(.uppercase)
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                Spacer()
+                HStack(spacing: 10) {
+                    OpenDesignProjectsLegendSwatch(color: OpenDesignDayColor.accent, label: "완료")
+                    OpenDesignProjectsLegendSwatch(color: OpenDesignDayColor.accentStrong, label: "오늘")
+                    OpenDesignProjectsLegendSwatch(color: OpenDesignDayColor.amber, label: "게이트")
+                }
+            }
+
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 30), spacing: 4) {
+                ForEach(1...30, id: \.self) { day in
+                    OpenDesignProjectsDayCell(day: day, phase: phase(for: day), isToday: day == 1, isGate: gateDays.contains(day))
+                }
+            }
+
+            OpenDesignProjectsPhaseBar()
+
+            FlowLayout(spacing: 14, lineSpacing: 7) {
+                OpenDesignProjectsPhaseLegend(title: "Foundation", detail: "D0-7", tone: .accent)
+                OpenDesignProjectsPhaseLegend(title: "Build", detail: "D8-17", tone: .violet)
+                OpenDesignProjectsPhaseLegend(title: "Launch", detail: "D18-24", tone: .sky)
+                OpenDesignProjectsPhaseLegend(title: "Grow", detail: "D25-30", tone: .amber)
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    private func phase(for day: Int) -> OpenDesignReferenceTone {
+        switch day {
+        case 1...7: return .accent
+        case 8...17: return .violet
+        case 18...24: return .sky
+        default: return .amber
+        }
+    }
+}
+
+private struct OpenDesignProjectsLegendSwatch: View {
+    let color: Color
+    let label: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(color)
+                .frame(width: 8, height: 8)
+            Text(label)
+        }
+        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+    }
+}
+
+private struct OpenDesignProjectsDayCell: View {
+    let day: Int
+    let phase: OpenDesignReferenceTone
+    let isToday: Bool
+    let isGate: Bool
+    @State private var isHovered = false
+
+    var body: some View {
+        Text("\(day)")
+            .font(.system(size: 9, weight: isToday ? .bold : .medium, design: .monospaced))
+            .foregroundStyle(isToday ? OpenDesignDayColor.bgDeep : isGate ? OpenDesignDayColor.amber : OpenDesignDayColor.muted)
+            .frame(maxWidth: .infinity)
+            .aspectRatio(1, contentMode: .fit)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(isToday ? OpenDesignDayColor.accent : phase.dim.opacity(0.44))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .stroke(isToday ? OpenDesignDayColor.accentStrong : isGate ? OpenDesignDayColor.amberLine : phase.line, lineWidth: 1)
+                    )
+            )
+            .shadow(color: isToday ? OpenDesignDayColor.accent.opacity(0.22) : .clear, radius: 5)
+            .offset(y: isHovered ? -1 : 0)
+            .onHover { isHovered = $0 }
+            .accessibilityLabel("Day \(day)")
+    }
+}
+
+private struct OpenDesignProjectsPhaseBar: View {
+    private let segments: [(tone: OpenDesignReferenceTone, span: CGFloat)] = [
+        (.accent, 7), (.violet, 10), (.sky, 7), (.amber, 6)
+    ]
+
+    var body: some View {
+        GeometryReader { geometry in
+            let gap: CGFloat = 4
+            let cell = max(1, (geometry.size.width - (29 * gap)) / 30)
+            HStack(spacing: gap) {
+                ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(segment.tone.color)
+                        .frame(width: cell * segment.span + gap * (segment.span - 1), height: 4)
+                }
+            }
+        }
+        .frame(height: 4)
+        .padding(.top, 2)
+    }
+}
+
+private struct OpenDesignProjectsPhaseLegend: View {
+    let title: String
+    let detail: String
+    let tone: OpenDesignReferenceTone
+
+    var body: some View {
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(tone.color)
+                .frame(width: 8, height: 8)
+            Text("\(title) ·")
+            Text(detail)
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+        }
+        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+        .foregroundStyle(OpenDesignDayColor.muted)
+    }
+}
+
+private struct OpenDesignProjectsStatsView: View {
+    let stats: [OpenDesignProjectStat]
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 168), spacing: 8)], spacing: 8) {
+            ForEach(stats) { stat in
+                OpenDesignProjectStatCard(stat: stat)
+            }
+        }
+    }
+}
+
+private struct OpenDesignProjectStatCard: View {
+    let stat: OpenDesignProjectStat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(stat.label)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .textCase(.uppercase)
+                .foregroundStyle(OpenDesignDayColor.muted)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(stat.value)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Text(stat.suffix)
+                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+            }
+            Text(stat.delta)
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(stat.isFlat ? OpenDesignDayColor.muted : stat.tone.color)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+    }
+}
+
+private struct OpenDesignProjectsGateList: View {
+    private let rows: [(mark: String, title: String, day: String, subtitle: String, progress: CGFloat, status: String, tone: OpenDesignReferenceTone, isCurrent: Bool)] = [
+        ("F", "Foundation 게이트", "D7", "인터뷰 5건 · 통증 가설 1 · ICP 1줄 정의", 0.14, "진행 중", .accent, true),
+        ("B", "Build 게이트", "D17", "핵심 기능 1개 · 30초 첫 가치 경험 · 결제/스토어 dry run", 0, "대기", .violet, false),
+        ("L", "Launch 게이트", "D24", "60초 데모 · 첫 유료 또는 강한 의도 신호 1 · BIP 14편", 0, "대기", .sky, false),
+        ("G", "Grow 게이트", "D30", "유입/스토어 지표 · ASO/소재 1회 loop · continue/pivot/kill 판정", 0, "대기", .amber, false),
+    ]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(rows.indices, id: \.self) { index in
+                let row = rows[index]
+                HStack(spacing: 12) {
+                    Text(row.mark)
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(row.tone.color)
+                        .frame(width: 32, height: 32)
+                        .background(referenceRounded(fill: row.tone.dim, stroke: row.tone.line, radius: 8))
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 8) {
+                            Text(row.title)
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundStyle(OpenDesignDayColor.fg)
+                            Text(row.day)
+                                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                                .foregroundStyle(OpenDesignDayColor.muted)
+                                .padding(.horizontal, 6)
+                                .frame(height: 18)
+                                .background(Capsule().fill(OpenDesignDayColor.bgDeep))
+                                .overlay(Capsule().stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+                        }
+                        Text(row.subtitle)
+                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.muted)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    OpenDesignProjectsProgressBar(progress: row.progress, tone: row.tone)
+                        .frame(width: 96)
+
+                    smallPill(row.status, tone: row.isCurrent ? .accent : .muted)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(OpenDesignDayColor.surface)
+                if index != rows.indices.last {
+                    Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1)
+                }
+            }
+        }
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+private struct OpenDesignProjectsProgressBar: View {
+    let progress: CGFloat
+    let tone: OpenDesignReferenceTone
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(OpenDesignDayColor.bgDeep)
+                Capsule()
+                    .fill(tone.color)
+                    .frame(width: max(0, geometry.size.width * progress))
+            }
+        }
+        .frame(height: 4)
+    }
+}
+
+private struct OpenDesignProjectsBasicsCard: View {
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "exclamationmark.circle")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.accent)
+                    .frame(width: 24, height: 24)
+                    .background(referenceRounded(fill: OpenDesignDayColor.accentDim, stroke: OpenDesignDayColor.accentLine, radius: 7))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Agentic30 (creator dogfood)")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                    Text("local-first macOS 메뉴바 AI assistant · SwiftUI + Node sidecar")
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+                smallPill("설정 완료", tone: .accent)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .background(OpenDesignDayColor.surface2)
+            .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+
+            OpenDesignProjectKVList(rows: OpenDesignProjectsCatalog.basics)
+
+            HStack(spacing: 8) {
+                Text("한 문장과 ICP는 매주 다시 봅니다. Day 7 게이트에서 의무 갱신.")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .lineLimit(2)
+                Spacer(minLength: 8)
+                OpenDesignProjectMiniButton(title: "SPEC.md 열기", systemImage: nil, tone: .muted)
+                OpenDesignProjectMiniButton(title: "ICP.md 열기", systemImage: nil, tone: .muted)
+                OpenDesignProjectMiniButton(title: "편집", systemImage: nil, tone: .accent)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(OpenDesignDayColor.bgDeep)
+            .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
+        }
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+private struct OpenDesignProjectKVList: View {
+    let rows: [OpenDesignProjectKV]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(rows) { row in
+                HStack(alignment: .center, spacing: 14) {
+                    Text(row.key)
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .textCase(.uppercase)
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .frame(width: 132, alignment: .leading)
+                    Text(row.value)
+                        .font(.system(size: 12.5, weight: .regular))
+                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    smallPill(row.status, tone: row.tone)
+                }
+                .padding(.vertical, 9)
+                if row.id != rows.last?.id {
+                    Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1).opacity(0.72)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 4)
+    }
+}
+
+private struct OpenDesignProjectPathCard: View {
+    let path: OpenDesignProjectPath
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: path.systemImage)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(path.tone.color)
+                .frame(width: 28, height: 28)
+                .background(referenceRounded(fill: path.tone.dim, stroke: path.tone.line, radius: 7))
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 7) {
+                    Text(path.name)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                    Text(path.requirement)
+                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(path.requirement == "필수" ? OpenDesignDayColor.rose : OpenDesignDayColor.muted)
+                        .padding(.horizontal, 6)
+                        .frame(height: 18)
+                        .background(Capsule().fill(path.requirement == "필수" ? OpenDesignDayColor.roseDim : OpenDesignDayColor.bgDeep))
+                        .overlay(Capsule().stroke(path.requirement == "필수" ? OpenDesignDayColor.rose.opacity(0.36) : OpenDesignDayColor.borderSoft, lineWidth: 1))
+                }
+                HStack(spacing: 6) {
+                    Text(path.path)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(path.isSource ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if let hint = path.hint {
+                        Text("· \(hint)")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                            .lineLimit(1)
+                    }
+                }
+                FlowLayout(spacing: 10, lineSpacing: 4) {
+                    ForEach(path.statusParts, id: \.self) { part in
+                        Text(part)
+                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                            .foregroundStyle(part.contains("워치") ? OpenDesignDayColor.accent : part.contains("unstaged") ? OpenDesignDayColor.amber : OpenDesignDayColor.muted)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(alignment: .trailing, spacing: 4) {
+                OpenDesignProjectMiniButton(title: "변경", systemImage: nil, tone: .muted)
+                OpenDesignProjectMiniButton(title: "Finder", systemImage: nil, tone: .muted)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: path.isSource ? OpenDesignDayColor.accent.opacity(0.18) : OpenDesignDayColor.borderSoft, radius: 12))
+        .padding(.bottom, 8)
+    }
+}
+
+private struct OpenDesignProjectMiniButton: View {
+    let title: String
+    let systemImage: String?
+    let tone: OpenDesignReferenceTone
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: {}) {
+            HStack(spacing: 5) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                Text(title)
+                    .lineLimit(1)
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(tone == .accent ? OpenDesignDayColor.accent : tone == .amber ? OpenDesignDayColor.amber : tone == .rose ? OpenDesignDayColor.rose : isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+            .padding(.horizontal, 10)
+            .frame(height: 24)
+            .background(referenceRounded(fill: tone == .accent ? OpenDesignDayColor.accentDim : tone == .amber ? OpenDesignDayColor.amberDim : tone == .rose ? OpenDesignDayColor.roseDim : isHovered ? OpenDesignDayColor.hover : Color.clear, stroke: tone == .accent ? OpenDesignDayColor.accentLine : tone == .amber ? OpenDesignDayColor.amberLine : tone == .rose ? OpenDesignDayColor.rose.opacity(0.36) : OpenDesignDayColor.borderSoft, radius: 6))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+}
+
+private struct OpenDesignProjectPathFooter: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("코드 루트는 여러 개를 붙일 수 있고, 각 루트별로 git 상태와 변경 이벤트를 분리해서 기록합니다.")
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            OpenDesignProjectMiniButton(title: "소스 경로 추가", systemImage: nil, tone: .accent)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(referenceRounded(fill: OpenDesignDayColor.bgDeep, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+        .padding(.bottom, 12)
+    }
+}
+
+private struct OpenDesignProjectDocList: View {
+    var body: some View {
+        VStack(spacing: 8) {
+            ForEach(OpenDesignProjectsCatalog.docs) { doc in
+                OpenDesignProjectDocRow(doc: doc)
+            }
+        }
+        .padding(.bottom, 12)
+    }
+}
+
+private struct OpenDesignProjectDocRow: View {
+    let doc: OpenDesignProjectDoc
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(doc.mark)
+                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(doc.tone.color)
+                .frame(width: 30, height: 30)
+                .background(referenceRounded(fill: doc.tone.dim, stroke: doc.tone.line, radius: 8))
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 7) {
+                    Text(doc.name)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                    Text(doc.location)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.accent)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .padding(.horizontal, 6)
+                        .frame(height: 18)
+                        .background(referenceRounded(fill: OpenDesignDayColor.bgDarker, stroke: OpenDesignDayColor.borderSoft, radius: 4))
+                }
+                Text(doc.subtitle)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(doc.age)
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                .lineLimit(1)
+            smallPill(doc.pin, tone: doc.isPinned ? .accent : .muted)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+    }
+}
+
+private struct OpenDesignProjectTimeline: View {
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(OpenDesignProjectsCatalog.timeline.indices, id: \.self) { index in
+                let event = OpenDesignProjectsCatalog.timeline[index]
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(spacing: 0) {
+                        Circle()
+                            .fill(event.tone == .muted ? Color.clear : OpenDesignDayColor.bgDeep)
+                            .overlay(Circle().stroke(event.tone.color, lineWidth: 2))
+                            .frame(width: 12, height: 12)
+                            .padding(.top, 4)
+                        if index != OpenDesignProjectsCatalog.timeline.indices.last {
+                            Rectangle()
+                                .fill(OpenDesignDayColor.borderSoft)
+                                .frame(width: 1)
+                                .frame(maxHeight: .infinity)
+                        }
+                    }
+                    .frame(width: 14)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 4) {
+                            Text(event.title)
+                                .font(.system(size: 12.5, weight: event.emphasis == nil ? .regular : .medium))
+                                .foregroundStyle(event.tone == .muted ? OpenDesignDayColor.muted : OpenDesignDayColor.fg)
+                            if let emphasis = event.emphasis {
+                                Text("— \(emphasis)")
+                                    .font(.system(size: 12.5, weight: .medium))
+                                    .foregroundStyle(OpenDesignDayColor.fg)
+                                    .lineLimit(1)
+                            }
+                        }
+                        if !event.subtitle.isEmpty {
+                            Text(event.subtitle)
+                                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                                .foregroundStyle(OpenDesignDayColor.muted)
+                                .lineLimit(2)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text(event.time)
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        .lineLimit(1)
+                        .padding(.top, 3)
+                }
+                .padding(.vertical, 8)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(referenceRounded(fill: OpenDesignDayColor.bgDarker, stroke: OpenDesignDayColor.borderSoft, radius: 12))
+        .padding(.bottom, 12)
+    }
+}
+
+private struct OpenDesignProjectWorkflowCard: View {
+    var body: some View {
+        VStack(spacing: 0) {
+            OpenDesignProjectKVList(rows: OpenDesignProjectsCatalog.workflows)
+                .padding(.vertical, 4)
+
+            HStack(spacing: 8) {
+                Text("활성 sub-workflow는 Phase 전환 시 자동 갱신.")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                Spacer(minLength: 8)
+                OpenDesignProjectMiniButton(title: "전체 설정", systemImage: nil, tone: .muted)
+                OpenDesignProjectMiniButton(title: "테스트 호출", systemImage: nil, tone: .accent)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(OpenDesignDayColor.bgDeep)
+            .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
+        }
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.bottom, 12)
+    }
+}
+
+private struct OpenDesignProjectDangerZone: View {
+    private let rows: [(title: String, subtitle: String, action: String, tone: OpenDesignReferenceTone)] = [
+        ("프로젝트 일시 중지", "메뉴바 watch 중지 · 과제 생성 중단 · 기록은 보존 · 언제든 재개 가능", "일시 중지", .amber),
+        ("보관함으로 이동", "활성 프로젝트에서 제외 · 보관함에서 읽기 전용으로 조회 가능 · Day 진행 시계 멈춤", "보관함으로", .amber),
+        ("프로젝트 삭제", "앱 내 메타데이터/세션/로그만 삭제 — 소스/인터뷰/일지 파일은 보존 · 삭제 후 복원 불가", "삭제", .rose),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                Text("되돌릴 수 없는 작업")
+            }
+            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+            .textCase(.uppercase)
+            .foregroundStyle(OpenDesignDayColor.rose)
+            .padding(.bottom, 10)
+
+            ForEach(rows.indices, id: \.self) { index in
+                let row = rows[index]
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(row.title)
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(OpenDesignDayColor.fg)
+                        Text(row.subtitle)
+                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 12)
+                    OpenDesignProjectMiniButton(title: row.action, systemImage: nil, tone: row.tone)
+                }
+                .padding(.vertical, 9)
+
+                if index != rows.indices.last {
+                    Rectangle()
+                        .fill(OpenDesignDayColor.rose.opacity(0.16))
+                        .frame(height: 1)
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(referenceRounded(fill: OpenDesignDayColor.roseDim.opacity(0.42), stroke: OpenDesignDayColor.rose.opacity(0.36), radius: 12))
+    }
+}
+
+private struct OpenDesignProjectsMetaPanelView: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("프로젝트 포트폴리오")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                    .padding(.bottom, 10)
+
+                OpenDesignProjectsHealthCard()
+                    .padding(.bottom, 14)
+
+                OpenDesignProjectsMetaSection(title: "활성 프로젝트", rows: OpenDesignProjectsCatalog.metaRows)
+                OpenDesignProjectsMetaSection(title: "보관함 요약", rows: OpenDesignProjectsCatalog.archiveRows)
+
+                Text("빠른 액션")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .textCase(.uppercase)
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    .padding(.top, 14)
+                    .padding(.horizontal, 4)
+                    .padding(.bottom, 8)
+
+                OpenDesignProjectsQuickAction(systemImage: "chevron.right", title: "오늘 화면으로", subtitle: "Day 1 · ICP 좁히기", shortcut: "↵", tone: .accent)
+                OpenDesignProjectsQuickAction(systemImage: "plus", title: "새 30일 프로젝트", subtitle: "템플릿 또는 백지에서 시작", shortcut: "⌘N", tone: .sky)
+                OpenDesignProjectsQuickAction(systemImage: "sidebar.left", title: "프로젝트 전환", subtitle: "활성/보관함 가로질러 검색", shortcut: "⌘P", tone: .muted)
+                OpenDesignProjectsQuickAction(systemImage: "bubble.left.and.bubble.right", title: "인터뷰 추가", subtitle: ".vtt / .txt drop · 다음 게이트까지 4건", shortcut: "⌘I", tone: .amber)
+                OpenDesignProjectsQuickAction(systemImage: "gearshape", title: "설정 열기", subtitle: "워크스페이스 · 프로바이더 · 권한", shortcut: "⌘E", tone: .muted)
+            }
+            .padding(16)
+        }
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .leading)
+    }
+}
+
+private struct OpenDesignProjectsHealthCard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(OpenDesignDayColor.accent)
+                    .frame(width: 6, height: 6)
+                    .shadow(color: OpenDesignDayColor.accent.opacity(0.5), radius: 4)
+                Text("30일 진행률 · 모든 활성")
+            }
+            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+            .textCase(.uppercase)
+            .foregroundStyle(OpenDesignDayColor.muted)
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("14")
+                    .font(.system(size: 18, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Text("/")
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                Text("90 day")
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                Spacer()
+                Text("3 projects")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.accent)
+            }
+
+            HStack(spacing: 0) {
+                Rectangle().fill(OpenDesignDayColor.accent).frame(width: 46)
+                Rectangle().fill(OpenDesignReferenceTone.violet.color).frame(width: 28)
+                Rectangle().fill(OpenDesignDayColor.sky.opacity(0.16)).frame(width: 52)
+                Rectangle().fill(OpenDesignDayColor.amber.opacity(0.16)).frame(maxWidth: .infinity)
+            }
+            .frame(height: 3)
+            .clipShape(Capsule())
+            .background(Capsule().fill(OpenDesignDayColor.bgDeep))
+
+            HStack {
+                OpenDesignProjectsMetaToken("● F · 2", tone: .accent)
+                Spacer()
+                OpenDesignProjectsMetaToken("● B · 1", tone: .violet)
+                Spacer()
+                OpenDesignProjectsMetaToken("● L+G · 0", tone: .muted)
+            }
+            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+    }
+}
+
+private struct OpenDesignProjectsMetaSection: View {
+    let title: String
+    let rows: [OpenDesignProjectMetaRow]
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+            .textCase(.uppercase)
+            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+            .padding(.top, 14)
+            .padding(.horizontal, 4)
+            .padding(.bottom, 8)
+
+        VStack(spacing: 1) {
+            ForEach(rows) { row in
+                OpenDesignProjectsMetaRowView(row: row)
+            }
+        }
+        .padding(.bottom, 8)
+    }
+}
+
+private struct OpenDesignProjectsMetaRowView: View {
+    let row: OpenDesignProjectMetaRow
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: row.systemImage)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(isHovered ? OpenDesignDayColor.fgSecondary : OpenDesignDayColor.muted)
+                .frame(width: 22)
+            Text(row.key)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            HStack(spacing: 6) {
+                if row.id == "active" {
+                    Circle()
+                        .fill(row.tone.color)
+                        .frame(width: 9, height: 9)
+                }
+                Text(row.value)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(referenceRounded(fill: isHovered ? OpenDesignDayColor.hover : Color.clear, stroke: Color.clear, radius: 6))
+        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .onHover { isHovered = $0 }
+    }
+}
+
+private struct OpenDesignProjectsQuickAction: View {
+    let systemImage: String
+    let title: String
+    let subtitle: String
+    let shortcut: String
+    let tone: OpenDesignReferenceTone
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(tone == .muted ? OpenDesignDayColor.muted : tone.color)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Text(subtitle)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Text(shortcut)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                .padding(.horizontal, 5)
+                .frame(height: 18)
+                .background(referenceRounded(fill: Color.clear, stroke: OpenDesignDayColor.borderSoft, radius: 4))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background(referenceRounded(fill: isHovered ? OpenDesignDayColor.hover : Color.clear, stroke: Color.clear, radius: 6))
+        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .onHover { isHovered = $0 }
     }
 }
 
@@ -1195,12 +7636,7 @@ private struct OpenDesignReferenceBlockView: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(referenceGradientCard(stroke: OpenDesignDayColor.border))
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(OpenDesignDayColor.accent)
-                .frame(width: 3)
-        }
+        .background(referenceAccentEdgeCard(stroke: OpenDesignDayColor.border, accent: OpenDesignDayColor.accent))
     }
 
     private var calendar: some View {
@@ -1659,8 +8095,11 @@ private func smallPill(_ text: String, tone: OpenDesignReferenceTone) -> some Vi
     Text(text)
         .font(.system(size: 10.5, weight: .medium, design: .monospaced))
         .foregroundStyle(tone.color)
+        .lineLimit(1)
+        .truncationMode(.middle)
         .padding(.horizontal, 8)
         .frame(height: 22)
+        .frame(maxWidth: 190)
         .background(Capsule().fill(tone.dim).overlay(Capsule().stroke(tone.line, lineWidth: 1)))
 }
 
@@ -1674,6 +8113,51 @@ private func referenceGradientCard(stroke: Color) -> some View {
     RoundedRectangle(cornerRadius: 14, style: .continuous)
         .fill(LinearGradient(colors: [OpenDesignDayColor.surface, OpenDesignDayColor.surface2], startPoint: .top, endPoint: .bottom))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(stroke, lineWidth: 1))
+}
+
+private struct OpenDesignReferenceAccentEdgeCard: View {
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    let stroke: Color
+    let accent: Color
+    let cornerRadius: CGFloat
+    let edgeWidth: CGFloat
+    let glowRadius: CGFloat
+    let glowOpacity: Double
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        let lineWidth = OpenDesignAccessibilityMetrics.borderLineWidth(isIncreasedContrast: contrast == .increased)
+
+        shape
+            .fill(LinearGradient(colors: [OpenDesignDayColor.surface, OpenDesignDayColor.surface2], startPoint: .top, endPoint: .bottom))
+            .overlay(shape.stroke(stroke, lineWidth: lineWidth))
+            .overlay(alignment: .leading) {
+                Rectangle()
+                    .fill(accent)
+                    .shadow(color: accent.opacity(glowOpacity), radius: glowRadius)
+                    .frame(width: edgeWidth)
+            }
+            .clipShape(shape)
+    }
+}
+
+private func referenceAccentEdgeCard(
+    stroke: Color,
+    accent: Color,
+    cornerRadius: CGFloat = 14,
+    edgeWidth: CGFloat = 3,
+    glowRadius: CGFloat = 14,
+    glowOpacity: Double = 0.68
+) -> some View {
+    OpenDesignReferenceAccentEdgeCard(
+        stroke: stroke,
+        accent: accent,
+        cornerRadius: cornerRadius,
+        edgeWidth: edgeWidth,
+        glowRadius: glowRadius,
+        glowOpacity: glowOpacity
+    )
 }
 
 private func referenceRounded(fill: Color, stroke: Color, radius: CGFloat) -> some View {

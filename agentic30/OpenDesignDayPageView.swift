@@ -283,7 +283,7 @@ struct OpenDesignDayContent {
             SearchItem(id: "page-settings", kind: .page, title: "설정", subtitle: "워크스페이스 · 프로바이더 · 권한", day: nil, systemImage: "gearshape", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .settings),
             SearchItem(id: "page-interviews", kind: .page, title: "인터뷰", subtitle: "Mom Test · 노트", day: nil, systemImage: "bubble.left.and.bubble.right", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
             SearchItem(id: "page-bip", kind: .page, title: "BIP 로그", subtitle: "Build in Public", day: nil, systemImage: "doc.text", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
-            SearchItem(id: "page-news", kind: .page, title: "뉴스", subtitle: "안 읽음 14건 · 큐레이션", day: nil, systemImage: "newspaper", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
+            SearchItem(id: "page-news", kind: .page, title: "뉴스", subtitle: "안 읽음 17건 · 큐레이션", day: nil, systemImage: "newspaper", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
             SearchItem(id: "page-history", kind: .page, title: "히스토리 · 타임라인", subtitle: "변경 · 결정 흐름", day: nil, systemImage: "clock.arrow.circlepath", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
             SearchItem(id: "task-day1", kind: .task, title: "먼저 도울 사람을 정해요", subtitle: "ICP · 인터뷰 1/3", day: "Day 1", systemImage: "circle.dotted", isActive: true, isLocked: false, lockNote: nil, targetSectionID: "top", route: .today),
             SearchItem(id: "task-day2", kind: .task, title: "시장 신호 읽기", subtitle: "Market", day: "Day 2", systemImage: "circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
@@ -2573,13 +2573,7 @@ private struct OpenDesignMissionCard: View {
             .padding(.horizontal, 20)
             .padding(.top, 18)
             .padding(.bottom, 16)
-            .background(gradientCardBackground(cornerRadius: 14, colors: [OpenDesignDayColor.surface, OpenDesignDayColor.surface2], stroke: OpenDesignDayColor.border))
-            .overlay(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(OpenDesignDayColor.amber)
-                    .frame(width: 3)
-                    .shadow(color: OpenDesignDayColor.amber.opacity(0.45), radius: 7)
-            }
+            .background(gradientCardBackground(cornerRadius: 14, colors: [OpenDesignDayColor.surface, OpenDesignDayColor.surface2], stroke: OpenDesignDayColor.border, accent: OpenDesignDayColor.amber))
         }
     }
 
@@ -2648,23 +2642,7 @@ private struct OpenDesignInterviewStepView: View {
                 .padding(.top, 2)
             }
             .padding(18)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [OpenDesignDayColor.surface, OpenDesignDayColor.surface2],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(OpenDesignDayColor.border, lineWidth: 1))
-            )
-            .overlay(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(OpenDesignDayColor.accent)
-                    .frame(width: 3)
-                    .shadow(color: OpenDesignDayColor.accent.opacity(0.6), radius: 7)
-            }
+            .background(gradientCardBackground(cornerRadius: 14, colors: [OpenDesignDayColor.surface, OpenDesignDayColor.surface2], stroke: OpenDesignDayColor.border, accent: OpenDesignDayColor.accent))
             .padding(.bottom, 14)
 
             VStack(spacing: 0) {
@@ -3128,13 +3106,7 @@ private struct OpenDesignFinalHandoff: View {
                 }
             }
             .padding(18)
-            .background(gradientCardBackground(cornerRadius: 14, colors: [OpenDesignDayColor.surface, OpenDesignDayColor.surface2], stroke: OpenDesignDayColor.border))
-            .overlay(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(OpenDesignDayColor.accent)
-                    .frame(width: 3)
-                    .shadow(color: OpenDesignDayColor.accent.opacity(0.6), radius: 7)
-            }
+            .background(gradientCardBackground(cornerRadius: 14, colors: [OpenDesignDayColor.surface, OpenDesignDayColor.surface2], stroke: OpenDesignDayColor.border, accent: OpenDesignDayColor.accent))
             handoffButton(
                 label: "ICP 확인 → 후보/Anti-ICP 보기",
                 hint: "이 문장으로 후보 1명과 Anti-ICP 신호를 같이 확인합니다.",
@@ -4534,17 +4506,28 @@ private struct OpenDesignGradientCardBackground: View {
     let cornerRadius: CGFloat
     let colors: [Color]
     let stroke: Color
+    let accent: Color?
+    let edgeWidth: CGFloat
+    let glowRadius: CGFloat
+    let glowOpacity: Double
 
     var body: some View {
         let usesIncreasedContrast = contrast == .increased
         let lineWidth = OpenDesignAccessibilityMetrics.borderLineWidth(isIncreasedContrast: usesIncreasedContrast)
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
 
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        shape
             .fill(LinearGradient(colors: colors, startPoint: .top, endPoint: .bottom))
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(stroke, lineWidth: lineWidth)
-            )
+            .overlay(shape.stroke(stroke, lineWidth: lineWidth))
+            .overlay(alignment: .leading) {
+                if let accent {
+                    Rectangle()
+                        .fill(accent)
+                        .shadow(color: accent.opacity(glowOpacity), radius: glowRadius)
+                        .frame(width: edgeWidth)
+                }
+            }
+            .clipShape(shape)
     }
 }
 
@@ -4571,8 +4554,24 @@ private func cardBackground(cornerRadius: CGFloat, fill: Color) -> some View {
     OpenDesignCardBackground(cornerRadius: cornerRadius, fill: fill)
 }
 
-private func gradientCardBackground(cornerRadius: CGFloat, colors: [Color], stroke: Color) -> some View {
-    OpenDesignGradientCardBackground(cornerRadius: cornerRadius, colors: colors, stroke: stroke)
+private func gradientCardBackground(
+    cornerRadius: CGFloat,
+    colors: [Color],
+    stroke: Color,
+    accent: Color? = nil,
+    edgeWidth: CGFloat = 3,
+    glowRadius: CGFloat = 14,
+    glowOpacity: Double = 0.68
+) -> some View {
+    OpenDesignGradientCardBackground(
+        cornerRadius: cornerRadius,
+        colors: colors,
+        stroke: stroke,
+        accent: accent,
+        edgeWidth: edgeWidth,
+        glowRadius: glowRadius,
+        glowOpacity: glowOpacity
+    )
 }
 
 private func buttonBackground(fill: Color) -> some View {

@@ -15,26 +15,26 @@ enum SettingsSection: CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .account: "Account"
-        case .agents: "Agents"
+        case .account: "Workspace"
+        case .agents: "AI Providers"
         case .adAnalytics: "Ad Analytics"
         case .buildInPublic: "Build In Public"
         case .notion: "Notion"
-        case .developerTools: "Developer"
-        case .diagnostics: "Diagnostics"
+        case .developerTools: "Advanced"
+        case .diagnostics: "Privacy & Diagnostics"
         case .quarantineRecovery: "Quarantine Recovery"
         }
     }
 
     var sidebarTitle: String {
         switch self {
-        case .account: "일반"
-        case .agents: "Agents"
+        case .account: "워크스페이스"
+        case .agents: "AI 프로바이더"
         case .adAnalytics: "광고 분석"
         case .buildInPublic: "Build In Public"
         case .notion: "Notion"
-        case .developerTools: "개발자 도구"
-        case .diagnostics: "진단"
+        case .developerTools: "고급 & Sidecar"
+        case .diagnostics: "개인정보 & 진단"
         case .quarantineRecovery: "정직 모드 복구"
         }
     }
@@ -211,29 +211,467 @@ struct SettingsView: View {
     }
 
     private var settingsWindowContent: some View {
-        VStack(spacing: 0) {
-            settingsSectionBar
-            selectedSettingsSection
-        }
-        .background(settingsBackground)
-        .frame(width: 560, height: 720)
+        settingsDesignShell
+            .frame(width: 1080, height: 720)
     }
 
     private var workspaceSettingsPage: some View {
-        Group {
-            if showsWorkspaceSettingsSidebar {
-                HStack(spacing: 0) {
-                    workspaceSettingsSidebar
+        settingsDesignShell
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(settingsBackground)
+    }
+
+    private var settingsDesignShell: some View {
+        GeometryReader { geometry in
+            let showsNavigation = geometry.size.width >= 740
+            let showsMeta = geometry.size.width >= 1040
+
+            HStack(spacing: 0) {
+                if showsNavigation {
+                    settingsDesignSidebar
+                        .frame(width: showsMeta ? 240 : 220)
+                        .transition(.opacity)
+                }
+
+                VStack(spacing: 0) {
+                    settingsDesignHeader(showsCompactNavigation: !showsNavigation)
 
                     selectedSettingsSection
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-            } else {
-                selectedSettingsSection
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(settingsBackground)
+
+                if showsMeta {
+                    settingsMetaPanel
+                        .frame(width: 280)
+                        .transition(.opacity)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(settingsBackground)
+    }
+
+    private var settingsDesignSidebar: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Text("설정")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.94))
+                Text("\(SettingsSection.allCases.count)")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.44))
+                    .padding(.horizontal, 6)
+                    .frame(height: 18)
+                    .background(Capsule().fill(Color.white.opacity(0.055)))
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 10)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+
+            Button(action: {}) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 10, weight: .medium))
+                    Text("설정 검색")
+                    Spacer()
+                    Text("⌘ K")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.28))
+                }
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.72))
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(settingsRounded(fill: Color.white.opacity(0.045), stroke: Color.white.opacity(0.08), radius: 6))
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 6)
+            .help("검색은 워크스페이스 팔레트에서 제공됩니다")
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if returnToWorkspace != nil {
+                        settingsDesignBackButton
+                            .padding(.horizontal, 6)
+                            .padding(.bottom, 8)
+                    }
+
+                    ForEach(settingsNavigationGroups.indices, id: \.self) { index in
+                        let group = settingsNavigationGroups[index]
+                        HStack {
+                            Text(group.title)
+                            Spacer()
+                        }
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .textCase(.uppercase)
+                        .foregroundStyle(.white.opacity(0.30))
+                        .padding(.top, index == 0 && returnToWorkspace == nil ? 8 : 14)
+                        .padding(.horizontal, 8)
+                        .padding(.bottom, 6)
+
+                        ForEach(group.sections) { section in
+                            settingsDesignSidebarRow(section)
+                        }
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.bottom, 14)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(settingsBackground)
+        .overlay(Rectangle().fill(Color.white.opacity(0.08)).frame(width: 1), alignment: .trailing)
+        .accessibilityIdentifier("settings.designSidebar")
+    }
+
+    private var settingsDesignBackButton: some View {
+        Button {
+            returnToWorkspace?()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.left")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 22)
+                Text("앱으로 돌아가기")
+                    .font(.system(size: 12.2, weight: .medium))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(.white.opacity(0.66))
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .background(settingsRounded(fill: Color.white.opacity(0.0), stroke: Color.clear, radius: 7))
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("workspace.settingsBackButton")
+    }
+
+    private var settingsNavigationGroups: [(title: String, sections: [SettingsSection])] {
+        [
+            ("General", [.account, .buildInPublic]),
+            ("Agent", [.agents, .adAnalytics, .notion]),
+            ("Trust", [.diagnostics, .developerTools, .quarantineRecovery]),
+        ]
+    }
+
+    private func settingsDesignSidebarRow(_ section: SettingsSection) -> some View {
+        Button {
+            selectedSection.wrappedValue = section
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: section.systemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(section == selectedSection.wrappedValue ? settingsAccentColor : .white.opacity(0.42))
+                    .frame(width: 24, height: 24)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(section == selectedSection.wrappedValue ? settingsAccentColor.opacity(0.16) : settingsSidebarTone(section).opacity(0.10))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .stroke(section == selectedSection.wrappedValue ? settingsAccentColor.opacity(0.36) : settingsSidebarTone(section).opacity(0.14), lineWidth: 1)
+                            )
+                    )
+
+                Text(section.sidebarTitle)
+                    .font(.system(size: 12.2, weight: .medium))
+                    .foregroundStyle(section == selectedSection.wrappedValue ? .white.opacity(0.94) : .white.opacity(0.70))
+                    .lineLimit(1)
+
+                Spacer(minLength: 6)
+
+                if let badge = settingsSidebarBadge(for: section) {
+                    Text(badge)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(section == selectedSection.wrappedValue ? settingsAccentColor : .white.opacity(0.42))
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7.5)
+            .background(
+                settingsRounded(
+                    fill: section == selectedSection.wrappedValue ? Color.white.opacity(0.095) : Color.clear,
+                    stroke: Color.clear,
+                    radius: 7
+                )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("settings.section.\(section.accessibilityIdentifier)")
+    }
+
+    private func settingsDesignHeader(showsCompactNavigation: Bool) -> some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 14) {
+                Image(systemName: selectedSection.wrappedValue.systemImage)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(settingsAccentColor)
+                    .frame(width: 44, height: 44)
+                    .background(settingsRounded(fill: settingsAccentColor.opacity(0.14), stroke: settingsAccentColor.opacity(0.34), radius: 11))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("설정")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.96))
+                        .lineLimit(1)
+
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(settingsAccentColor)
+                            .frame(width: 5, height: 5)
+                            .shadow(color: settingsAccentColor.opacity(0.24), radius: 3)
+                        Text("Agentic30 · 로컬 우선")
+                        Text("·")
+                            .foregroundStyle(.white.opacity(0.22))
+                        Text(selectedSection.wrappedValue.sidebarTitle)
+                        Text("·")
+                            .foregroundStyle(.white.opacity(0.22))
+                        Text("변경 사항은 Keychain/UserDefaults에 저장")
+                    }
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.44))
+                    .lineLimit(1)
+                }
+                .frame(minWidth: 0, alignment: .leading)
+            }
+
+            Spacer(minLength: 12)
+
+            if showsCompactNavigation {
+                Menu {
+                    ForEach(SettingsSection.allCases) { section in
+                        Button(section.sidebarTitle) {
+                            selectedSection.wrappedValue = section
+                        }
+                    }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.74))
+                        .frame(width: 28, height: 28)
+                        .background(settingsRounded(fill: Color.white.opacity(0.055), stroke: Color.white.opacity(0.08), radius: 7))
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .help("설정 섹션")
+            }
+
+            Button(action: loadAllValues) {
+                Label("새로고침", systemImage: "arrow.clockwise")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.74))
+                    .padding(.horizontal, 12)
+                    .frame(height: 28)
+                    .background(settingsRounded(fill: Color.clear, stroke: Color.white.opacity(0.08), radius: 8))
+            }
+            .buttonStyle(.plain)
+
+            Button(action: saveCurrentSettingsForSelectedSection) {
+                Label("저장", systemImage: "checkmark")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(Color(red: 0.08, green: 0.12, blue: 0.11))
+                    .padding(.horizontal, 14)
+                    .frame(height: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(settingsAccentColor)
+                    )
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 28)
+        .frame(height: 70)
+        .background(settingsBackground)
+        .overlay(Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1), alignment: .bottom)
+    }
+
+    private var settingsMetaPanel: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("시스템 상태")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.94))
+
+                settingsMetaCard(label: "Sidecar", isLive: viewModel.isConnected) {
+                    settingsMetaRow("상태", viewModel.isConnected ? "실행 중" : "연결 대기")
+                    settingsMetaRow("런타임", viewModel.sidecarDiagnostics?.runtime.node ?? "unknown")
+                    settingsMetaRow("세션", "\(viewModel.sessions.count)건")
+                    settingsMetaRow("Preflight", viewModel.sidecarDiagnostics?.preflight?.status ?? "unknown")
+                }
+
+                settingsMetaCard(label: "스토리지", isLive: false) {
+                    settingsMetaRow("workspace", shortPath(bipWorkspaceRoot))
+                    settingsMetaRow("ICP", bipIcpPath.isEmpty ? "미설정" : bipIcpPath)
+                    settingsMetaRow("SPEC", bipSpecPath.isEmpty ? "미설정" : bipSpecPath)
+                    settingsMetaRow("BIP", bipThreadsHandle.isEmpty ? "0 handles" : "@\(bipThreadsHandle)")
+                }
+
+                Text("빠른 작업")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .textCase(.uppercase)
+                    .foregroundStyle(.white.opacity(0.34))
+                    .padding(.top, 2)
+
+                settingsMetaAction(title: "진단 스냅샷 내보내기", subtitle: "sanitize · copy", systemImage: "square.and.arrow.down", action: copyDiagnostics)
+                settingsMetaAction(title: "Sidecar 진단 새로고침", subtitle: "preflight · runtime", systemImage: "arrow.clockwise", action: refreshDiagnostics)
+                settingsMetaAction(title: "워크스페이스 재스캔", subtitle: "docs · path", systemImage: "folder.badge.gearshape", action: triggerScan)
+
+                Text("버전")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .textCase(.uppercase)
+                    .foregroundStyle(.white.opacity(0.34))
+                    .padding(.top, 2)
+
+                Text(settingsVersionSummary)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.46))
+                    .lineSpacing(4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 6)
+                    .padding(.bottom, 4)
+            }
+            .padding(16)
+        }
+        .background(settingsBackground)
+        .overlay(Rectangle().fill(Color.white.opacity(0.08)).frame(width: 1), alignment: .leading)
+        .accessibilityIdentifier("settings.metaPanel")
+    }
+
+    private func settingsMetaCard<Content: View>(
+        label: String,
+        isLive: Bool,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(isLive ? settingsAccentColor : Color.white.opacity(0.28))
+                    .frame(width: 6, height: 6)
+                    .shadow(color: isLive ? settingsAccentColor.opacity(0.24) : .clear, radius: 3)
+                Text(label)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .textCase(.uppercase)
+                    .foregroundStyle(.white.opacity(0.42))
+            }
+            content()
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(settingsRounded(fill: Color.white.opacity(0.055), stroke: Color.white.opacity(0.08), radius: 10))
+    }
+
+    private func settingsMetaRow(_ key: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(key)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.42))
+            Spacer(minLength: 0)
+            Text(value)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.74))
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+
+    private func settingsMetaAction(
+        title: String,
+        subtitle: String,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(settingsAccentColor)
+                    .frame(width: 26, height: 26)
+                    .background(settingsRounded(fill: settingsAccentColor.opacity(0.10), stroke: settingsAccentColor.opacity(0.18), radius: 7))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.84))
+                        .lineLimit(1)
+                    Text(subtitle)
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.38))
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(settingsRounded(fill: Color.white.opacity(0.035), stroke: Color.clear, radius: 8))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func settingsSidebarBadge(for section: SettingsSection) -> String? {
+        switch section {
+        case .account:
+            return loginItemsManager.isEnabled ? "ON" : "Local"
+        case .agents:
+            if providerEnvironment(for: .claude)?.available == true { return "Claude" }
+            if providerEnvironment(for: .codex)?.available == true { return "Codex" }
+            return "setup"
+        case .adAnalytics:
+            return (!posthogApiKey.isEmpty || !metaAccessToken.isEmpty) ? "set" : "OFF"
+        case .buildInPublic:
+            return bipWorkspaceRoot.isEmpty ? "docs" : "root"
+        case .notion:
+            return viewModel.notionConnected ? "ON" : "OAuth"
+        case .developerTools:
+            return "PID"
+        case .diagnostics:
+            return viewModel.sidecarDiagnostics?.preflight?.status ?? "copy"
+        case .quarantineRecovery:
+            return "review"
+        }
+    }
+
+    private func settingsSidebarTone(_ section: SettingsSection) -> Color {
+        switch section {
+        case .account, .agents:
+            return settingsAccentColor
+        case .adAnalytics, .notion, .developerTools:
+            return Color(red: 0.96, green: 0.78, blue: 0.54)
+        case .buildInPublic:
+            return Color(red: 0.42, green: 0.78, blue: 0.95)
+        case .diagnostics, .quarantineRecovery:
+            return Color(red: 1.0, green: 0.45, blue: 0.42)
+        }
+    }
+
+    private func settingsRounded(fill: Color, stroke: Color, radius: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: radius, style: .continuous)
+            .fill(fill)
+            .overlay(
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .stroke(stroke, lineWidth: 1)
+            )
+    }
+
+    private func shortPath(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "미설정" }
+        return (trimmed as NSString).abbreviatingWithTildeInPath
+    }
+
+    private var settingsVersionSummary: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "dev"
+        let build = info?["CFBundleVersion"] as? String ?? "local"
+        return """
+        app · \(version) (\(build))
+        sidecar · \(viewModel.sidecarDiagnostics?.preflight?.status ?? "unknown")
+        node · \(viewModel.sidecarDiagnostics?.runtime.node ?? "unknown")
+        """
     }
 
     private var workspaceSettingsSidebar: some View {
@@ -316,9 +754,7 @@ struct SettingsView: View {
     }
 
     private var settingsBackground: Color {
-        embeddedInWorkspace
-            ? Color(red: 0.105, green: 0.123, blue: 0.134).opacity(0.98)
-            : Color(red: 0.14, green: 0.16, blue: 0.19)
+        Color(red: 0.085, green: 0.095, blue: 0.105)
     }
 
     private var settingsSectionBar: some View {
@@ -1840,6 +2276,22 @@ struct SettingsView: View {
 
     // MARK: - Helpers
 
+    private func saveCurrentSettingsForSelectedSection() {
+        switch selectedSection.wrappedValue {
+        case .agents:
+            saveAgentSettingsValues()
+        case .adAnalytics:
+            saveAdValues()
+        case .buildInPublic:
+            saveBipValues()
+        default:
+            let settings = currentSettings()
+            try? KeychainHelper.saveSettings(settings)
+            KeychainHelper.syncAllConfigFiles(from: settings)
+            viewModel.syncProviderSettingsToSidecar(settings)
+        }
+    }
+
     private func settingsTabScaffold<Content: View>(
         title: String,
         subtitle: String,
@@ -1847,12 +2299,12 @@ struct SettingsView: View {
     ) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: settingsSectionSpacing) {
-                settingsPageHeader(title: title, subtitle: subtitle)
                 content()
             }
-            .frame(maxWidth: embeddedInWorkspace ? 1180 : .infinity, alignment: .leading)
-            .padding(.horizontal, embeddedInWorkspace ? 34 : 32)
-            .padding(.vertical, embeddedInWorkspace ? 28 : 32)
+            .frame(maxWidth: 820, alignment: .leading)
+            .padding(.horizontal, embeddedInWorkspace ? 28 : 28)
+            .padding(.vertical, embeddedInWorkspace ? 22 : 22)
+            .frame(maxWidth: .infinity)
         }
         .background(settingsTabBackground)
     }
@@ -2085,17 +2537,17 @@ struct SettingsView: View {
     }
 
     private var fieldBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: embeddedInWorkspace ? 14 : 12, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
         return shape
-            .fill(Color.white.opacity(embeddedInWorkspace ? 0.055 : 0.06))
-            .overlay(shape.stroke(Color.white.opacity(embeddedInWorkspace ? 0.09 : 0.08), lineWidth: 1))
+            .fill(Color.white.opacity(0.055))
+            .overlay(shape.stroke(Color.white.opacity(0.085), lineWidth: 1))
     }
 
     private var cardBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: embeddedInWorkspace ? 18 : 22, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
         return shape
-            .fill(Color.white.opacity(embeddedInWorkspace ? 0.07 : 0.06))
-            .overlay(shape.stroke(Color.white.opacity(embeddedInWorkspace ? 0.10 : 0.08), lineWidth: 1))
+            .fill(Color.white.opacity(0.060))
+            .overlay(shape.stroke(Color.white.opacity(0.085), lineWidth: 1))
     }
 
     private func pickFolder() {
