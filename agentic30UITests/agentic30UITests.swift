@@ -567,6 +567,270 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    func testOpenDesignNewsPageParitySmoke() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-opendesign-news-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-opendesign-news-app-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        let openDesignShell = elementWithIdentifier(in: app, "opendesign.day.shell")
+        if !openDesignShell.waitForExistence(timeout: 10) {
+            attachScreenshot(from: app, named: "OpenDesign News Shell Missing")
+            attachText(app.debugDescription, named: "OpenDesign News Shell Missing Tree")
+        }
+        XCTAssertTrue(openDesignShell.exists)
+
+        let workspaceSurface = elementWithIdentifier(in: app, "workspace.surface")
+        XCTAssertTrue(waitForOpenDesignSurfaceWidth(workspaceSurface, width: 1360, timeout: 5))
+
+        let newsRailItem = elementWithIdentifier(in: app, "opendesign.day.rail.item.news")
+        XCTAssertTrue(newsRailItem.exists)
+        clickCenter(of: newsRailItem)
+
+        let side = elementWithIdentifier(in: app, "opendesign.reference.news.side")
+        let main = elementWithIdentifier(in: app, "opendesign.reference.news.main")
+        let meta = elementWithIdentifier(in: app, "opendesign.reference.news.meta")
+        let takeaway = elementWithIdentifier(in: app, "opendesign.reference.news.takeaway")
+        if !main.waitForExistence(timeout: 5) || !side.exists || !meta.exists || !takeaway.exists {
+            attachScreenshot(from: app, named: "OpenDesign News Wide Missing")
+            attachText(app.debugDescription, named: "OpenDesign News Wide Missing Tree")
+        }
+        XCTAssertTrue(side.exists)
+        XCTAssertTrue(main.exists)
+        XCTAssertTrue(meta.exists)
+        XCTAssertTrue(takeaway.exists)
+
+        attachScreenshot(from: app, named: "OpenDesign News Wide")
+        assertOpenDesignWideColumns(surface: workspaceSurface.frame, tasks: side.frame, main: main.frame, meta: meta.frame)
+    }
+
+    @MainActor
+    func testOpenDesignBipLogPageParitySmoke() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-opendesign-bip-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-opendesign-bip-app-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        let openDesignShell = elementWithIdentifier(in: app, "opendesign.day.shell")
+        if !openDesignShell.waitForExistence(timeout: 10) {
+            attachScreenshot(from: app, named: "OpenDesign BIP Shell Missing")
+            attachText(app.debugDescription, named: "OpenDesign BIP Shell Missing Tree")
+        }
+        XCTAssertTrue(openDesignShell.exists)
+
+        let workspaceSurface = elementWithIdentifier(in: app, "workspace.surface")
+        XCTAssertTrue(waitForOpenDesignSurfaceWidth(workspaceSurface, width: 1360, timeout: 5))
+
+        let bipRailItem = elementWithIdentifier(in: app, "opendesign.day.rail.item.bip")
+        XCTAssertTrue(bipRailItem.exists)
+        clickCenter(of: bipRailItem)
+
+        let side = elementWithIdentifier(in: app, "opendesign.reference.bipLog.side")
+        let main = elementWithIdentifier(in: app, "opendesign.reference.bipLog.main")
+        let brief = elementWithIdentifier(in: app, "opendesign.reference.bipLog.brief")
+        let firstCandidate = elementWithIdentifier(in: app, "opendesign.reference.bipLog.candidate.speakmac")
+        if !main.waitForExistence(timeout: 5) || !side.exists || !brief.exists || !firstCandidate.exists {
+            attachScreenshot(from: app, named: "OpenDesign BIP Wide Missing")
+            attachText(app.debugDescription, named: "OpenDesign BIP Wide Missing Tree")
+        }
+        XCTAssertTrue(side.exists)
+        XCTAssertTrue(main.exists)
+        XCTAssertTrue(brief.exists)
+        XCTAssertTrue(firstCandidate.exists)
+        XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.reference.bipLog.meta").exists)
+
+        attachScreenshot(from: app, named: "OpenDesign BIP Wide")
+        assertOpenDesignBipLogWideColumns(surface: workspaceSurface.frame, side: side.frame, main: main.frame)
+
+        let selectSpeakmac = app.buttons["opendesign.reference.bipLog.candidate.speakmac.select"]
+        let draft = elementWithIdentifier(in: app, "opendesign.reference.bipLog.draft")
+        if !selectSpeakmac.exists || !draft.exists {
+            attachText(app.debugDescription, named: "OpenDesign BIP Actions Missing Tree")
+        }
+        XCTAssertTrue(selectSpeakmac.exists)
+        XCTAssertTrue(draft.exists)
+    }
+
+    @MainActor
+    func testOpenDesignInterviewsPageParitySmoke() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-opendesign-interviews-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-opendesign-interviews-app-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        let openDesignShell = elementWithIdentifier(in: app, "opendesign.day.shell")
+        if !openDesignShell.waitForExistence(timeout: 10) {
+            attachScreenshot(from: app, named: "OpenDesign Interviews Shell Missing")
+            attachText(app.debugDescription, named: "OpenDesign Interviews Shell Missing Tree")
+        }
+        XCTAssertTrue(openDesignShell.exists)
+
+        let workspaceSurface = elementWithIdentifier(in: app, "workspace.surface")
+        XCTAssertTrue(waitForOpenDesignSurfaceWidth(workspaceSurface, width: 1360, timeout: 5))
+
+        let interviewsRailItem = elementWithIdentifier(in: app, "opendesign.day.rail.item.interviews")
+        XCTAssertTrue(interviewsRailItem.exists)
+        clickCenter(of: interviewsRailItem)
+
+        let side = elementWithIdentifier(in: app, "opendesign.reference.interviews.side")
+        let main = elementWithIdentifier(in: app, "opendesign.reference.interviews.main")
+        let meta = elementWithIdentifier(in: app, "opendesign.reference.interviews.meta")
+        if !main.waitForExistence(timeout: 5) || !side.exists || !meta.exists {
+            attachScreenshot(from: app, named: "OpenDesign Interviews Wide Missing")
+            attachText(app.debugDescription, named: "OpenDesign Interviews Wide Missing Tree")
+        }
+        XCTAssertTrue(side.exists)
+        XCTAssertTrue(main.exists)
+        XCTAssertTrue(meta.exists)
+        XCTAssertTrue(app.staticTexts["장지창"].exists)
+        XCTAssertTrue(app.staticTexts["전 직장 동료"].exists)
+        XCTAssertTrue(app.staticTexts["추출 신호"].exists)
+        XCTAssertTrue(app.staticTexts["진행 상황"].exists)
+
+        attachScreenshot(from: app, named: "OpenDesign Interviews Wide")
+        assertOpenDesignWideColumns(surface: workspaceSurface.frame, tasks: side.frame, main: main.frame, meta: meta.frame)
+    }
+
+    @MainActor
+    func testOpenDesignProjectsPageParitySmoke() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-opendesign-projects-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-opendesign-projects-app-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        let openDesignShell = elementWithIdentifier(in: app, "opendesign.day.shell")
+        if !openDesignShell.waitForExistence(timeout: 10) {
+            attachScreenshot(from: app, named: "OpenDesign Projects Shell Missing")
+            attachText(app.debugDescription, named: "OpenDesign Projects Shell Missing Tree")
+        }
+        XCTAssertTrue(openDesignShell.exists)
+
+        let workspaceSurface = elementWithIdentifier(in: app, "workspace.surface")
+        XCTAssertTrue(waitForOpenDesignSurfaceWidth(workspaceSurface, width: 1360, timeout: 5))
+
+        let projectsRailItem = elementWithIdentifier(in: app, "opendesign.day.rail.item.projects")
+        XCTAssertTrue(projectsRailItem.exists)
+        clickCenter(of: projectsRailItem)
+
+        let side = elementWithIdentifier(in: app, "opendesign.reference.projects.side")
+        let main = elementWithIdentifier(in: app, "opendesign.reference.projects.main")
+        let meta = elementWithIdentifier(in: app, "opendesign.reference.projects.meta")
+        let overview = elementWithIdentifier(in: app, "opendesign.reference.projects.overview.card")
+        if !main.waitForExistence(timeout: 5) || !side.exists || !meta.exists || !overview.exists {
+            attachScreenshot(from: app, named: "OpenDesign Projects Wide Missing")
+            attachText(app.debugDescription, named: "OpenDesign Projects Wide Missing Tree")
+        }
+        XCTAssertTrue(side.exists)
+        XCTAssertTrue(main.exists)
+        XCTAssertTrue(meta.exists)
+        XCTAssertTrue(overview.exists)
+
+        attachScreenshot(from: app, named: "OpenDesign Projects Wide")
+        let tolerance: CGFloat = 2.0
+        XCTAssertEqual(side.frame.minX - workspaceSurface.frame.minX, 52, accuracy: tolerance, "Projects shell should preserve projects.html 52px rail width")
+        XCTAssertEqual(side.frame.width, 240, accuracy: tolerance, "Projects sidebar should preserve projects.html 240px width")
+        XCTAssertEqual(meta.frame.width, 280, accuracy: tolerance, "Projects meta panel should preserve projects.html 280px width")
+        XCTAssertEqual(side.frame.maxX, main.frame.minX, accuracy: tolerance, "Projects sidebar and main content should share a boundary")
+        XCTAssertEqual(main.frame.maxX, meta.frame.minX, accuracy: tolerance, "Projects main content and meta panel should share a boundary")
+    }
+
+    @MainActor
     func testOpenDesignDayHandoffFlowSmoke() throws {
         let runID = UUID().uuidString
         let workspacePath = "/tmp/agentic30-ui-opendesign-day-handoff-\(runID)"
@@ -1249,6 +1513,21 @@ final class agentic30UITests: XCTestCase {
         XCTAssertEqual(meta.width, 280, accuracy: tolerance, "Day shell meta panel should match day.html 280px width", file: file, line: line)
         XCTAssertEqual(main.maxX, meta.minX, accuracy: tolerance, "Main content and meta panel should share a boundary", file: file, line: line)
         XCTAssertEqual(meta.maxX, surface.maxX, accuracy: tolerance, "Meta panel should terminate at the workspace surface edge", file: file, line: line)
+    }
+
+    @MainActor
+    private func assertOpenDesignBipLogWideColumns(
+        surface: CGRect,
+        side: CGRect,
+        main: CGRect,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let tolerance: CGFloat = 2.0
+        XCTAssertEqual(side.minX, surface.minX + 52, accuracy: tolerance, "BIP shell rail column should match bip-log.html 52px width", file: file, line: line)
+        XCTAssertEqual(side.width, 240, accuracy: tolerance, "BIP shell side column should match bip-log.html 240px width", file: file, line: line)
+        XCTAssertEqual(side.maxX, main.minX, accuracy: tolerance, "BIP side and main content should share a boundary", file: file, line: line)
+        XCTAssertEqual(main.maxX, surface.maxX, accuracy: tolerance, "BIP main content should terminate at the workspace surface edge without a meta panel", file: file, line: line)
     }
 
     @MainActor
@@ -1947,14 +2226,21 @@ final class agentic30UITests: XCTestCase {
             } else {
                 scrollView = app.scrollViews.firstMatch
             }
-            if scrollView.exists && scrollView.isHittable {
-                scrollView.swipeUp()
+            if scrollView.exists {
+                scrollUp(in: scrollView)
             } else {
                 app.swipeUp()
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.15))
         } while Date() < deadline
         return element.exists && element.isHittable
+    }
+
+    @MainActor
+    private func scrollUp(in element: XCUIElement) {
+        let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.78))
+        let end = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.24))
+        start.press(forDuration: 0.05, thenDragTo: end)
     }
 
     @MainActor
