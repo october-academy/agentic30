@@ -42,13 +42,61 @@ fi
 if [ -n "$BREW" ]; then
   echo "ci_post_clone: brew at $BREW"
   "$BREW" --version || true
+  BREW_BIN=$(dirname "$BREW")
+  export PATH="$BREW_BIN:$PATH"
+  echo "ci_post_clone: PATH after brew discovery=$PATH"
 else
   echo "ci_post_clone: no brew found in any expected location"
 fi
 
+find_node_bin() {
+  if command -v node >/dev/null 2>&1; then
+    command -v node
+    return 0
+  fi
+
+  for c in \
+    /opt/homebrew/bin/node \
+    /usr/local/bin/node \
+    "$HOME/.local/share/mise/shims/node" \
+    "$HOME/.asdf/shims/node" \
+    "$HOME/.volta/bin/node"; do
+    if [ -x "$c" ]; then
+      printf '%s\n' "$c"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+find_npm_bin() {
+  if command -v npm >/dev/null 2>&1; then
+    command -v npm
+    return 0
+  fi
+
+  NODE_DIR=$(dirname "$NODE_BIN")
+  for c in \
+    "$NODE_DIR/npm" \
+    /opt/homebrew/bin/npm \
+    /usr/local/bin/npm \
+    "$HOME/.local/share/mise/shims/npm" \
+    "$HOME/.asdf/shims/npm" \
+    "$HOME/.volta/bin/npm"; do
+    if [ -x "$c" ]; then
+      printf '%s\n' "$c"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 # If node already present, skip install.
-if command -v node >/dev/null 2>&1; then
-  echo "ci_post_clone: node already at $(command -v node)"
+NODE_BIN=$(find_node_bin || true)
+if [ -n "$NODE_BIN" ]; then
+  echo "ci_post_clone: node already at $NODE_BIN"
 else
   if [ -z "$BREW" ]; then
     echo "ci_post_clone: cannot install node — brew is missing"
@@ -56,10 +104,11 @@ else
   fi
   echo "ci_post_clone: installing node via $BREW"
   "$BREW" install node
+  hash -r 2>/dev/null || true
+  NODE_BIN=$(find_node_bin || true)
 fi
 
 # Verify the build phase will be able to find node.
-NODE_BIN=$(command -v node || true)
 if [ -z "$NODE_BIN" ]; then
   echo "ci_post_clone: ERROR node still missing after install"
   ls -la /opt/homebrew/bin/ 2>/dev/null || true
@@ -67,8 +116,16 @@ if [ -z "$NODE_BIN" ]; then
   exit 1
 fi
 
-echo "ci_post_clone: node at $NODE_BIN ($(node --version))"
-echo "ci_post_clone: npm at $(command -v npm) ($(npm --version))"
+NPM_BIN=$(find_npm_bin || true)
+if [ -z "$NPM_BIN" ]; then
+  echo "ci_post_clone: ERROR npm still missing after node setup"
+  ls -la /opt/homebrew/bin/ 2>/dev/null || true
+  ls -la /usr/local/bin/ 2>/dev/null || true
+  exit 1
+fi
+
+echo "ci_post_clone: node at $NODE_BIN ($("$NODE_BIN" --version))"
+echo "ci_post_clone: npm at $NPM_BIN ($("$NPM_BIN" --version))"
 
 # Confirm the build phase's preferred path actually has node.
 for c in /opt/homebrew/bin/node /usr/local/bin/node; do
@@ -82,5 +139,5 @@ if [ ! -f package.json ]; then
   exit 0
 fi
 
-npm ci --no-audit --no-fund
+"$NPM_BIN" ci --no-audit --no-fund
 echo "ci_post_clone: sidecar dependencies installed"
