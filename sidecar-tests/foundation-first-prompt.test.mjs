@@ -18,7 +18,8 @@ import {
 //   and exposes it via the `foundation_first_prompt` WebSocket case. These
 //   tests pin the underlying generator's contract so the WS handler stays
 //   honest:
-//     - 8 Day templates (Day 0..7) — required by the Foundation phase span.
+//     - Day 0/2-7 templates. Day 1 uses the OpenDesign Day page instead of a
+//       chat opener.
 //     - 3-section minimal (yesterday / today / question) — Agentic30
 //       FoundationPhase ontology `first_prompt` shape.
 //     - YC 파트너 톤: 반말 어미 (~어/야) only, no 정서 sugar (좋아요/괜찮아요/etc).
@@ -28,6 +29,7 @@ import {
 
 const PERSONA = "YC 파트너 / 시니어 메이커 (직설+압박, 반말 ~어/야)";
 const MISSING = "(아직 데이터 없음)";
+const FIRST_PROMPT_DAYS = Object.freeze([0, 2, 3, 4, 5, 6, 7]);
 
 // Forbidden 정서적 지지 sugar — appearing in any first_prompt would violate
 // the YC partner tone contract (Constraints: "정서적 지지 sugar 추가 금지").
@@ -80,8 +82,8 @@ test("FOUNDATION_DAYS map exposes exactly Day 0..7 (8 days, no gaps)", () => {
   assert.deepEqual(keys, [0, 1, 2, 3, 4, 5, 6, 7]);
 });
 
-test("every Day in [0, 7] has a 3-section minimal first_prompt", () => {
-  for (let day = 0; day <= 7; day += 1) {
+test("Day 0/2-7 have a 3-section minimal first_prompt; Day 1 uses OpenDesign", () => {
+  for (const day of FIRST_PROMPT_DAYS) {
     const descriptor = getFoundationDay(day);
     assert.ok(descriptor, `Day ${day} must have a descriptor`);
     assert.ok(descriptor.first_prompt, `Day ${day} must have first_prompt`);
@@ -93,10 +95,11 @@ test("every Day in [0, 7] has a 3-section minimal first_prompt", () => {
     assert.ok(fp.today.length > 0, `Day ${day} today non-empty`);
     assert.ok(fp.question.length > 0, `Day ${day} question non-empty`);
   }
+  assert.equal(getFoundationDay(1).first_prompt, undefined);
 });
 
-test("buildFirstPromptForDay returns the canonical envelope for every Day", () => {
-  for (let day = 0; day <= 7; day += 1) {
+test("buildFirstPromptForDay returns the canonical envelope for Day 0/2-7", () => {
+  for (const day of FIRST_PROMPT_DAYS) {
     const built = buildFirstPromptForDay({ day });
     assert.ok(built, `Day ${day} must build a first prompt`);
     assert.equal(built.day, day);
@@ -137,6 +140,7 @@ test("buildFirstPromptForDay returns null for out-of-range days", () => {
   assert.equal(buildFirstPromptForDay({ day: undefined }), null);
   assert.equal(buildFirstPromptForDay({ day: "abc" }), null);
   assert.equal(buildFirstPromptForDay({}), null);
+  assert.equal(buildFirstPromptForDay({ day: 1 }), null);
 });
 
 test("buildFirstPromptForDay coerces string day inputs", () => {
@@ -146,8 +150,8 @@ test("buildFirstPromptForDay coerces string day inputs", () => {
   assert.equal(built.day, 3);
 });
 
-test("YC partner tone — no 정서적 지지 sugar across all 8 days", () => {
-  for (let day = 0; day <= 7; day += 1) {
+test("YC partner tone — no 정서적 지지 sugar across chat-opener days", () => {
+  for (const day of FIRST_PROMPT_DAYS) {
     const built = buildFirstPromptForDay({ day });
     const haystack = `${built.yesterday}\n${built.today}\n${built.question}`;
     for (const phrase of FORBIDDEN_SUGAR) {
@@ -163,7 +167,7 @@ test("YC partner tone — no 문어체/존대 어미 in any section, 반말 pres
   // Per-section: no ~습니다/~입니다/~해요/~예요/~에요 (문어체/존대).
   // Whole-prompt: at least one explicit 반말 token must appear so the YC
   // tone cannot silently flatten into a noun-only telegram.
-  for (let day = 0; day <= 7; day += 1) {
+  for (const day of FIRST_PROMPT_DAYS) {
     const built = buildFirstPromptForDay({ day });
     for (const section of ["yesterday", "today", "question"]) {
       const text = built[section];
@@ -182,7 +186,7 @@ test("YC partner tone — no 문어체/존대 어미 in any section, 반말 pres
 });
 
 test("3-section minimal — each section is a single line (no \\n inside section)", () => {
-  for (let day = 0; day <= 7; day += 1) {
+  for (const day of FIRST_PROMPT_DAYS) {
     const built = buildFirstPromptForDay({ day });
     assert.ok(!built.yesterday.includes("\n"), `Day ${day} yesterday is 1 line`);
     assert.ok(!built.today.includes("\n"), `Day ${day} today is 1 line`);
@@ -190,25 +194,14 @@ test("3-section minimal — each section is a single line (no \\n inside section
   }
 });
 
-test("Day 1 first_prompt substitutes day1_yesterday/today/question variables", () => {
-  // Stage 1 of the day1-discovery plan replaced the {runway}/{past_failures}
-  // placeholders with three body slots so a discovery-driven mapper can compose
-  // the entire Day 1 opener instead of mad-libbing two values into a fixed
-  // sentence. The YC-tone defaults live in DAY_DEFAULTS for missing inputs.
+test("Day 1 no longer builds a foundation_first_prompt", () => {
   const built = buildFirstPromptForDay({
     day: 1,
     dynamicVariables: {
-      day1_yesterday: "ICP 있고 SPEC 비어있어",
-      day1_today: "통증 1개로 SPEC.md v0 박아",
-      day1_question: "어제 결제한 사람 누구야",
+      legacy_opener: "legacy opener",
     },
   });
-  assert.equal(built.yesterday, "ICP 있고 SPEC 비어있어");
-  assert.equal(built.today, "통증 1개로 SPEC.md v0 박아");
-  assert.equal(built.question, "어제 결제한 사람 누구야");
-  assert.ok(!built.yesterday.includes("{day1_yesterday}"));
-  assert.ok(!built.today.includes("{day1_today}"));
-  assert.ok(!built.question.includes("{day1_question}"));
+  assert.equal(built, null);
 });
 
 test("Day 2 first_prompt substitutes weak_hypothesis_id", () => {
@@ -341,9 +334,6 @@ test("Missing dynamic variables fall back to placeholder (no invented values)", 
   // Sub-AC 2.2 + KR4.1/4.2: AI must not invent weak_hypothesis_id etc. when
   // data is absent. Day 2's template still uses the legacy placeholder so the
   // missing-fallback contract is exercised there.
-  // Day 1 was redesigned to lean on DAY_DEFAULTS (coach-tone fallback) so the
-  // user never sees `(아직 데이터 없음)` for the body slots — that case is
-  // covered by foundation-chat-sanitizer.test.mjs.
   const built = buildFirstPromptForDay({ day: 2, dynamicVariables: {} });
   assert.ok(built.yesterday.includes(MISSING));
   assert.ok(!built.yesterday.includes("{weak_hypothesis_id}"));
@@ -351,17 +341,16 @@ test("Missing dynamic variables fall back to placeholder (no invented values)", 
 
 test("Unknown variable keys outside the whitelist do not substitute", () => {
   const built = buildFirstPromptForDay({
-    day: 1,
-    dynamicVariables: { day1_yesterday: "5개월 left", malicious: "<script>" },
+    day: 2,
+    dynamicVariables: { weak_hypothesis_id: "H-1", malicious: "<script>" },
   });
-  assert.equal(built.yesterday, "5개월 left");
   assert.ok(!built.yesterday.includes("<script>"));
   assert.ok(!built.today.includes("<script>"));
   assert.ok(!built.question.includes("<script>"));
 });
 
 test("formatFirstPromptText fingerprint is stable + matches built.text", () => {
-  for (let day = 0; day <= 7; day += 1) {
+  for (const day of FIRST_PROMPT_DAYS) {
     const built = buildFirstPromptForDay({ day });
     const formatted = formatFirstPromptText(built);
     assert.equal(built.text, formatted);
@@ -385,7 +374,8 @@ test("Day 0 first_prompt acknowledges the start (no 'yesterday' history)", () =>
 
 test("Day -> sub_workflow mapping matches the Foundation contract", () => {
   // Locks the Phase definition so future template edits cannot silently
-  // mis-route a sub-workflow.
+  // mis-route a sub-workflow. Day 1 still has a Foundation descriptor, but no
+  // first_prompt is built for it because the OpenDesign Day page owns that UX.
   const expected = {
     0: "bip-channel-register",
     1: "office-hours-docs",
@@ -397,8 +387,8 @@ test("Day -> sub_workflow mapping matches the Foundation contract", () => {
     7: "foundation-summary",
   };
   for (const [day, sub] of Object.entries(expected)) {
-    const built = buildFirstPromptForDay({ day: Number(day) });
-    assert.equal(built.sub_workflow, sub, `Day ${day} sub_workflow`);
+    const descriptor = FOUNDATION_DAYS[day];
+    assert.equal(descriptor.sub_workflow ?? null, sub, `Day ${day} sub_workflow`);
   }
 });
 
@@ -414,15 +404,15 @@ test("Day -> spec_version mapping matches v0/v1/v2/v3 SPEC.md contract", () => {
     7: "v3",
   };
   for (const [day, ver] of Object.entries(expected)) {
-    const built = buildFirstPromptForDay({ day: Number(day) });
-    assert.equal(built.spec_version, ver, `Day ${day} spec_version`);
+    const descriptor = FOUNDATION_DAYS[day];
+    assert.equal(descriptor.spec_version ?? null, ver, `Day ${day} spec_version`);
   }
 });
 
 test("artifacts list is a defensive copy (mutating return doesn't poison map)", () => {
-  const built = buildFirstPromptForDay({ day: 1 });
+  const built = buildFirstPromptForDay({ day: 2 });
   built.artifacts.push("polluted.md");
-  const fresh = buildFirstPromptForDay({ day: 1 });
+  const fresh = buildFirstPromptForDay({ day: 2 });
   assert.ok(!fresh.artifacts.includes("polluted.md"));
 });
 
@@ -432,7 +422,7 @@ test("FOUNDATION_DAYS map + first_prompt template are frozen", () => {
   // place — buildFirstPromptForDay() then defensively copies array fields
   // (verified separately in the artifacts-mutation test).
   assert.ok(Object.isFrozen(FOUNDATION_DAYS), "FOUNDATION_DAYS map is frozen");
-  for (let day = 0; day <= 7; day += 1) {
+  for (const day of FIRST_PROMPT_DAYS) {
     assert.ok(
       Object.isFrozen(FOUNDATION_DAYS[day].first_prompt),
       `Day ${day} first_prompt is frozen`,

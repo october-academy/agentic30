@@ -24,7 +24,10 @@ import {
 import { createTelemetryClient } from "./telemetry.mjs";
 import { getCachedBipContext } from "./context-cache.mjs";
 import { collectLocalDiscovery } from "./local-discovery.mjs";
-import { composeDay1Opening } from "./compose-day1-opening.mjs";
+import {
+  composeDay1IcpPlan,
+  generateDay1IcpPlan,
+} from "./generate-day1-icp-plan.mjs";
 import {
   MINI_ACTION_EXECUTION_ONLY_INTENT,
   classifyChatExecutionRoute as classifyChatExecutionRouteWithState,
@@ -139,6 +142,12 @@ import {
   summarizeBipSetupGate,
 } from "./idd-doc-gate.mjs";
 import { buildMiniActionSessionTriggerEvent } from "./adaptive-curriculum.mjs";
+import {
+  appendCurriculumAnswer,
+  buildExaMcpConfig,
+  loadNewsMarketRadarSnapshot,
+  refreshNewsMarketRadar,
+} from "./news-market-radar.mjs";
 import { emitInlineHintTriggerForFeatureAppearance } from "./curriculum-hint-eligibility.mjs";
 import {
   CODEX_STRUCTURED_INPUT_TOOL,
@@ -246,6 +255,10 @@ const state = {
   providerAuthRuns: new Map(),
   workspaceOnboardingHypothesis: null,
   curriculumInlineHintState: {},
+  newsMarketRadarRefreshPromise: null,
+  integrationSettings: {
+    exaApiKey: "",
+  },
   workspaceSetupTelemetry: {
     root: "",
     started: false,
@@ -1031,7 +1044,7 @@ async function handleClientMessage(socket, payload) {
       return;
     }
     case "foundation_first_prompt": {
-      // AI-driven daily first prompt generator (Foundation Day 0-7).
+      // AI-driven daily first prompt generator (Foundation Day 0/2-7).
       // Returns the 3-section minimal opener (yesterday / today / question)
       // for the requested day, with dynamic variables substituted.
       // No session mutation, no provider call — pure read.
@@ -1053,6 +1066,19 @@ async function handleClientMessage(socket, payload) {
         day: dayDescriptor.day,
         dynamicVariables: payload.dynamicVariables,
     });
+      if (!firstPrompt) {
+        telemetry.captureEvent("mac_sidecar_foundation_first_prompt_rejected", {
+          reason: "unsupported_day",
+          day: dayDescriptor.day,
+          session_id: payload.sessionId || "",
+        });
+        send(socket, {
+          type: "error",
+          sessionId: payload.sessionId,
+          message: "Foundation Day 1 uses the OpenDesign Day page and does not create a chat opener.",
+        });
+        return;
+    }
       telemetry.captureEvent("mac_sidecar_foundation_first_prompt_built", {
         session_id: payload.sessionId || "",
         day: dayDescriptor.day,
@@ -1064,10 +1090,6 @@ async function handleClientMessage(socket, payload) {
         sessionId: payload.sessionId,
         day: dayDescriptor.day,
         firstPrompt,
-        // PR2 (P1a): echo richness bucket so Mac can decide whether this
-        // payload should replace an earlier inject. 0 means "no richness
-        // gating requested" — handler then uses base-key dedup.
-        richnessBucket: Number.isFinite(payload.richnessBucket) ? payload.richnessBucket : 0,
     });
       return;
     }
@@ -1368,7 +1390,55 @@ async function handleClientMessage(socket, payload) {
             specialist: continuationSelection,
           },
         );
+      }
+      return;
     }
+    case "curriculum_answer_saved": {
+      try {
+        const log = await appendCurriculumAnswer({
+          workspaceRoot,
+          answer: payload,
+        });
+        send(socket, {
+          type: "curriculum_answer_saved_result",
+          success: true,
+          day: payload.day ?? payload.dayNumber ?? null,
+          answerCount: log.records.length,
+        });
+        telemetry.captureEvent("mac_sidecar_curriculum_answer_saved", {
+          day: Number.parseInt(payload.day ?? payload.dayNumber ?? 0, 10) || 0,
+          has_freeform: Boolean(payload.freeformAnswer || payload.freeform),
+          dimension: String(payload.dimension || "").slice(0, 80),
+        });
+      } catch (error) {
+        telemetry.captureException(error, {
+          operation: "curriculum_answer_saved",
+        });
+        send(socket, {
+          type: "curriculum_answer_saved_result",
+          success: false,
+          error: formatError(error),
+        });
+      }
+      return;
+    }
+    case "news_market_radar_get": {
+      const snapshot = await loadNewsMarketRadarSnapshot({
+        workspaceRoot,
+        exaApiKey: currentExaApiKey(),
+      });
+      send(socket, {
+        type: "news_market_radar_result",
+        newsMarketRadar: snapshot,
+      });
+      return;
+    }
+    case "news_market_radar_refresh": {
+      scheduleNewsMarketRadarRefresh({
+        reason: payload.reason || "manual",
+        force: Boolean(payload.force),
+        targetSocket: socket,
+      });
       return;
     }
     case "scan_workspace": {
@@ -1400,7 +1470,7 @@ async function handleClientMessage(socket, payload) {
       broadcast({
         type: "workspace_scan_started",
         scanRoot: root,
-        progressText: "Starting workspace scan...",
+        progressText: "scan.local · Day 1 ICP 질문 신호를 읽는 중",
     });
       runWorkspaceScan(root, {
         sessionId: payload.sessionId,
@@ -1548,6 +1618,7 @@ async function handleClientMessage(socket, payload) {
     }
     case "provider_settings_update": {
       updateProviderSettings(payload.providers || {});
+      updateIntegrationSettings(payload.integrations || {});
       const environment = getEnvironmentSummary();
       const preflight = buildSidecarPreflight(environment);
       send(socket, {
@@ -5987,7 +6058,7 @@ async function startIddDocumentQueueOnce({
   try {
     await createHostIddQuestionRequest(session, nextDoc, {
       localEvidence,
-      progressText: "첫 질문 카드 준비 완료",
+      progressText: "구조화 질문 카드 준비 완료",
     });
   } catch (error) {
     state.sessions.delete(session.id);
@@ -6091,7 +6162,7 @@ async function recoverStalledIddInterviewIfNeeded(sessionId, { provider = "codex
 
 async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) {
   try {
-    broadcastWorkspaceScanProgress(scanRoot, "Checking common doc filenames locally...");
+    broadcastWorkspaceScanProgress(scanRoot, "scan.local · 로컬 문서 후보를 읽는 중");
     const localResult = await findWorkspaceDocsLocally(scanRoot);
     // Stage-3 deterministic local signals — git activity, project shape,
     // runway hints. Pure read; absorbs all errors so a non-git folder still
@@ -6118,13 +6189,19 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
         gemini_model: WORKSPACE_SCAN_GEMINI_MODEL,
         agent_result_count: 0,
         provider_verification_skipped: true,
-    });
+      });
       markWorkspaceSetupScanSucceeded(scanRoot, {
         found_count: localFoundCount,
         onboarding_hypothesis_confidence: localOnboardingHypothesis.confidence,
         agent_result_count: 0,
         provider_verification_skipped: true,
-    });
+      });
+      const day1IcpPlan = await generateDay1IcpPlan({
+        workspaceRoot: scanRoot,
+        scanResult: localResult,
+        onboardingHypothesis: localOnboardingHypothesis,
+        localDiscovery,
+      });
       broadcast({
         type: "workspace_scan_result",
         scanRoot,
@@ -6137,29 +6214,19 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
         docs: localResult.docs || null,
         sheet: localResult.sheet || null,
         onboardingHypothesis: localOnboardingHypothesis,
-        day1Context: buildWorkspaceDay1Context({
-          scanRoot,
-          hypothesis: localOnboardingHypothesis,
-          scanResult: localResult,
-          localDiscovery,
-        }),
-    });
-      triggerDay1ComposeBroadcast({
+        day1IcpPlan,
+      });
+      triggerDay1IcpPlanBroadcast({
         scanRoot,
-        day1Context: buildWorkspaceDay1Context({
-          scanRoot,
-          hypothesis: localOnboardingHypothesis,
-          scanResult: localResult,
-          localDiscovery,
-        }),
+        deterministicPlan: day1IcpPlan,
       });
       return;
     }
     broadcastWorkspaceScanProgress(
       scanRoot,
       localFoundCount > 0
-        ? `Found ${localFoundCount} local candidate(s). Asking agents to verify context...`
-        : "No exact local matches yet. Asking agents to inspect the workspace...",
+        ? `scan.verify · 로컬 후보 ${localFoundCount}개를 Day 1 ICP 근거로 검증 중`
+        : "scan.agent · 로컬 후보가 부족해 workspace 맥락을 확인 중",
     );
     const agentResults = await Promise.allSettled([
       runWorkspaceScanAgent({
@@ -6189,7 +6256,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
     state.workspaceOnboardingHypothesis = onboardingHypothesis;
     const foundCount = countWorkspaceScanResults(merged);
 
-  telemetry.captureEvent("mac_sidecar_workspace_scan_completed", {
+    telemetry.captureEvent("mac_sidecar_workspace_scan_completed", {
       scan_root: scanRoot,
       found_count: foundCount,
       onboarding_hypothesis_confidence: onboardingHypothesis.confidence,
@@ -6203,7 +6270,13 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
       onboarding_hypothesis_confidence: onboardingHypothesis.confidence,
       agent_result_count: parsedAgentResults.length,
     });
-  broadcast({
+    const day1IcpPlan = await generateDay1IcpPlan({
+      workspaceRoot: scanRoot,
+      scanResult: merged,
+      onboardingHypothesis,
+      localDiscovery,
+    });
+    broadcast({
       type: "workspace_scan_result",
       scanRoot,
       icp: merged.icp || null,
@@ -6214,30 +6287,20 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
       goal: merged.goal || null,
       docs: merged.docs || null,
       sheet: merged.sheet || null,
-    onboardingHypothesis,
-      day1Context: buildWorkspaceDay1Context({
-        scanRoot,
-        hypothesis: onboardingHypothesis,
-        scanResult: merged,
-        localDiscovery,
-      }),
+      onboardingHypothesis,
+      day1IcpPlan,
     });
-    triggerDay1ComposeBroadcast({
+    triggerDay1IcpPlanBroadcast({
       scanRoot,
-      day1Context: buildWorkspaceDay1Context({
-        scanRoot,
-        hypothesis: onboardingHypothesis,
-        scanResult: merged,
-        localDiscovery,
-      }),
+      deterministicPlan: day1IcpPlan,
     });
   } catch (error) {
-  telemetry.captureException(error, {
+    telemetry.captureException(error, {
       operation: "runWorkspaceScan",
       scan_root: scanRoot,
     });
     markWorkspaceSetupFailed(scanRoot, error);
-  broadcast({
+    broadcast({
       type: "workspace_scan_result",
       scanRoot,
       error: formatError(error),
@@ -6293,7 +6356,7 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
   const timeout = setTimeout(() => abortController.abort(), 45_000);
   let responseText = "";
   const providerLabel = workspaceScanProviderLabel(provider, model);
-  broadcastWorkspaceScanProgress(scanRoot, `Scanning with ${providerLabel}...`);
+  broadcastWorkspaceScanProgress(scanRoot, `scan.agent · ${providerLabel}가 질문 근거를 확인 중`);
   const scanPrompt = [
     "Scan the current workspace for these project documents and return only JSON.",
     "Find the best relative path for each role:",
@@ -6361,7 +6424,7 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
     const foundCount = countWorkspaceScanResults(result);
     broadcastWorkspaceScanProgress(
       scanRoot,
-      `${providerLabel} finished (${foundCount} found).`,
+      `scan.agent · ${providerLabel} 완료 (${foundCount}개 근거)`,
     );
     return result;
   } catch (error) {
@@ -6623,87 +6686,194 @@ function countWorkspaceScanResults(result) {
   ].filter(Boolean).length;
 }
 
-const WORKSPACE_DAY1_CONTEXT_SCHEMA_VERSION = 1;
-const WORKSPACE_DAY1_EXPECTED_DOCS = Object.freeze(["icp", "spec", "goal", "values"]);
-
 /**
- * Stage-2 helper: collapse the workspace-scan output + onboarding hypothesis
- * into the Day 1 context payload Mac uses to fill {day1_yesterday/today/
- * question}. No new agent calls — this is pure data shaping over fields the
- * existing scan already produces. Keeps the foundation_first_prompt path
- * stateless on the sidecar side; Mac maps this struct → dynamicVariables in
- * stage 3.
+ * LLM-enhanced ICP plan follows the same non-blocking pattern as the Day 1
+ * deterministic plan already included in workspace_scan_result. This event
+ * only refreshes the UI if a richer valid plan arrives.
  */
-/**
- * Stage-5 fire-and-forget composer trigger. Runs composeDay1Opening with the
- * SDK's `query` (or skips when in test stub mode) and emits a separate
- * `workspace_day1_compose_result` event so the initial scan broadcast is not
- * blocked by the LLM call. Web tools stay opt-in via AGENTIC30_DISCOVERY_WEB.
- */
-function triggerDay1ComposeBroadcast({ scanRoot, day1Context, deterministicVariables = {} }) {
-  if (!scanRoot || !day1Context) return;
-  // Skip the live LLM call in stubbed test runs so the WebSocket integration
-  // tests stay deterministic. The deterministic mapper already covers Day 1.
+function triggerDay1IcpPlanBroadcast({ scanRoot, deterministicPlan }) {
+  if (!scanRoot || !deterministicPlan) return;
   if (process.env.AGENTIC30_TEST_STUB_PROVIDER === "1") return;
-  const enableWeb = process.env.AGENTIC30_DISCOVERY_WEB === "1";
-  // Fire-and-forget; never let composer failures bubble into the scan path.
   Promise.resolve()
-    .then(() => composeDay1Opening({
+    .then(() => composeDay1IcpPlan({
       workspaceRoot: scanRoot,
-      context: day1Context,
-      // Sidecar doesn't keep onboarding answers; Mac's mapper handles that
-      // when it merges composedOpening with its local OnboardingContext.
-      onboarding: null,
-      deterministicVariables,
+      deterministicPlan,
       queryImpl: query,
-      enableWeb,
     }))
-    .then((result) => {
-      if (!result) return;
+    .then((plan) => {
+      if (!plan) return;
       broadcast({
-        type: "workspace_day1_compose_result",
+        type: "workspace_day1_icp_plan_result",
         scanRoot,
-        composedOpening: {
-          schemaVersion: result.schemaVersion,
-          yesterday: result.yesterday,
-          today: result.today,
-          question: result.question,
-          confidence: result.confidence,
-          source: result.source,
-          fellBackToDeterministic: result.fellBackToDeterministic,
-          webUsed: result.webUsed,
-        },
+        day1IcpPlan: plan,
       });
     })
     .catch((error) => {
       telemetry.captureException(error, {
-        operation: "triggerDay1ComposeBroadcast",
+        operation: "triggerDay1IcpPlanBroadcast",
         scan_root: scanRoot,
       });
     });
 }
 
-function buildWorkspaceDay1Context({ scanRoot, hypothesis, scanResult, localDiscovery = null }) {
-  if (!scanRoot) return null;
-  const docs = scanResult || {};
-  const h = hypothesis || {};
-  const trimmedString = (value) => {
-    if (typeof value !== "string") return null;
-    const trimmed = value.trim();
-    return trimmed === "" ? null : trimmed;
+function updateIntegrationSettings(integrations = {}) {
+  const exa = integrations?.exa && typeof integrations.exa === "object" ? integrations.exa : {};
+  state.integrationSettings = {
+    ...state.integrationSettings,
+    exaApiKey: String(exa.apiKey || exa.exaApiKey || state.integrationSettings.exaApiKey || ""),
   };
-  return {
-    schemaVersion: WORKSPACE_DAY1_CONTEXT_SCHEMA_VERSION,
-    sourceScanRoot: scanRoot,
-    confidence: trimmedString(h.confidence),
-    productName: trimmedString(h.productName),
-    targetUser: trimmedString(h.targetUser),
-    problem: trimmedString(h.problem),
-    suggestedFirstQuestion: trimmedString(h.suggestedFirstQuestion),
-    foundDocCount: countWorkspaceScanResults(docs),
-    missingExpectedDocs: WORKSPACE_DAY1_EXPECTED_DOCS.filter((key) => !docs[key]),
-    localDiscovery: localDiscovery || null,
+}
+
+function currentExaApiKey() {
+  return String(state.integrationSettings?.exaApiKey || process.env.EXA_API_KEY || "").trim();
+}
+
+function scheduleNewsMarketRadarRefresh({
+  reason = "manual",
+  force = false,
+  targetSocket = null,
+} = {}) {
+  const normalizedReason = ["daily", "manual", "day_answer", "workspace_scan"].includes(reason)
+    ? reason
+    : "manual";
+  if (state.newsMarketRadarRefreshPromise) {
+    const status = {
+      state: "refreshing",
+      stale: true,
+      error: null,
+      reason: normalizedReason,
+    };
+    send(targetSocket, { type: "news_market_radar_status", status });
+    return state.newsMarketRadarRefreshPromise;
+  }
+  const promise = runNewsMarketRadarRefresh({
+    reason: normalizedReason,
+    force,
+    targetSocket,
+  }).finally(() => {
+    state.newsMarketRadarRefreshPromise = null;
+  });
+  state.newsMarketRadarRefreshPromise = promise;
+  return promise;
+}
+
+async function runNewsMarketRadarRefresh({
+  reason = "manual",
+  force = false,
+  targetSocket = null,
+} = {}) {
+  const startedAt = Date.now();
+  const exaApiKey = currentExaApiKey();
+  broadcast({
+    type: "news_market_radar_status",
+    status: {
+      state: "refreshing",
+      stale: false,
+      error: null,
+      reason,
+    },
+  });
+  try {
+    const snapshot = await refreshNewsMarketRadar({
+      workspaceRoot,
+      exaApiKey,
+      reason,
+      force,
+      onboardingHypothesis: state.workspaceOnboardingHypothesis,
+      providerResearcher: runNewsMarketRadarProviderResearch,
+    });
+    broadcast({
+      type: "news_market_radar_result",
+      newsMarketRadar: snapshot,
+    });
+    telemetry.captureEvent("mac_sidecar_news_market_radar_refresh_completed", {
+      reason,
+      duration_ms: Date.now() - startedAt,
+      lane_count: snapshot.lanes?.length || 0,
+      card_count: (snapshot.lanes || []).reduce((sum, lane) => sum + (lane.cards?.length || 0), 0),
+      exa_configured: Boolean(exaApiKey),
+      status: snapshot.status?.state || "",
+    });
+    return snapshot;
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "news_market_radar_refresh",
+      reason,
+      exa_configured: Boolean(exaApiKey),
+    });
+    const cached = await loadNewsMarketRadarSnapshot({
+      workspaceRoot,
+      exaApiKey,
+    });
+    const failed = {
+      ...cached,
+      status: {
+        state: "failed",
+        lastSuccessAt: cached.status?.lastSuccessAt || null,
+        stale: Boolean(cached.generatedAt),
+        error: formatError(error),
+        reason,
+      },
+    };
+    const payload = {
+      type: "news_market_radar_result",
+      newsMarketRadar: failed,
+    };
+    if (targetSocket) send(targetSocket, payload);
+    else broadcast(payload);
+    return failed;
+  }
+}
+
+async function runNewsMarketRadarProviderResearch({
+  prompt,
+  exaMcpConfig,
+} = {}) {
+  const authState = getProviderAuthState("claude");
+  if (!authState.available) {
+    throw new Error(`Claude provider is not available for Exa research. ${authState.message || authState.source || ""}`.trim());
+  }
+  const packagePath = resolveInstalledPackageRoot("@anthropic-ai", "claude-agent-sdk");
+  const cliPath = path.join(packagePath, "cli.js");
+  const env = buildClaudeAgentEnv();
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), 90_000);
+  const options = {
+    pathToClaudeCodeExecutable: cliPath,
+    executable: process.execPath,
+    env,
+    cwd: workspaceRoot,
+    maxTurns: 10,
+    includePartialMessages: false,
+    mcpServers: {
+      exa: exaMcpConfig || buildExaMcpConfig(currentExaApiKey()),
+    },
+    abortController,
+    systemPrompt: [
+      "You are a market research JSON generator for Agentic30.",
+      "Use Exa MCP tools only for web research. Do not mutate files.",
+      "Return strict JSON only.",
+    ].join("\n"),
   };
+  let text = "";
+  try {
+    const stream = query({ prompt, options });
+    for await (const event of stream) {
+      if (event.type === "assistant" && event.message?.content) {
+        for (const content of event.message.content) {
+          if (content.type === "text" && content.text) {
+            text += content.text;
+          }
+        }
+      }
+      if (event.type === "result" && event.result) {
+        text += `\n${event.result}`;
+      }
+    }
+    return text;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function runCreateDoc(docRoot, docType) {

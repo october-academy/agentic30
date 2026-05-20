@@ -6,8 +6,10 @@ import {
   extractGeminiFunctionCalls,
   getProviderAuthState,
   getProviderConnectionState,
+  resetProviderSettingsForTest,
   resolveGeminiModel,
   supportsGeminiExecutionMode,
+  updateProviderSettings,
 } from "../sidecar/provider-runner.mjs";
 
 function restoreEnv(name, value) {
@@ -22,10 +24,12 @@ test("Gemini auth state reports missing key when no Google secret is set", () =>
   const previousStub = process.env.AGENTIC30_TEST_STUB_PROVIDER;
   const previousGoogle = process.env.GOOGLE_API_KEY;
   const previousGemini = process.env.GEMINI_API_KEY;
+  resetProviderSettingsForTest();
   try {
     delete process.env.AGENTIC30_TEST_STUB_PROVIDER;
     delete process.env.GOOGLE_API_KEY;
     delete process.env.GEMINI_API_KEY;
+    updateProviderSettings({ gemini: { authMode: "api_key" } });
     const state = getProviderAuthState("gemini");
     assert.equal(state.available, false);
     assert.equal(state.source, "missing");
@@ -34,6 +38,7 @@ test("Gemini auth state reports missing key when no Google secret is set", () =>
     restoreEnv("AGENTIC30_TEST_STUB_PROVIDER", previousStub);
     restoreEnv("GOOGLE_API_KEY", previousGoogle);
     restoreEnv("GEMINI_API_KEY", previousGemini);
+    resetProviderSettingsForTest();
   }
 });
 
@@ -41,10 +46,12 @@ test("Gemini auth state accepts GOOGLE_API_KEY or GEMINI_API_KEY", () => {
   const previousStub = process.env.AGENTIC30_TEST_STUB_PROVIDER;
   const previousGoogle = process.env.GOOGLE_API_KEY;
   const previousGemini = process.env.GEMINI_API_KEY;
+  resetProviderSettingsForTest();
   try {
     delete process.env.AGENTIC30_TEST_STUB_PROVIDER;
     delete process.env.GOOGLE_API_KEY;
     process.env.GEMINI_API_KEY = "fake-key-for-test";
+    updateProviderSettings({ gemini: { authMode: "api_key" } });
     const state = getProviderAuthState("gemini");
     assert.equal(state.available, true);
     assert.equal(state.source, "api-key");
@@ -53,6 +60,7 @@ test("Gemini auth state accepts GOOGLE_API_KEY or GEMINI_API_KEY", () => {
     restoreEnv("AGENTIC30_TEST_STUB_PROVIDER", previousStub);
     restoreEnv("GOOGLE_API_KEY", previousGoogle);
     restoreEnv("GEMINI_API_KEY", previousGemini);
+    resetProviderSettingsForTest();
   }
 });
 

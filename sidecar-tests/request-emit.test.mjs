@@ -30,7 +30,16 @@ test("workspace setup request_emit envelopes are host-routed and completion wait
     );
     assertRequestEmitEnvelope(started, "workspace_setup_started");
 
-    await waitForEvent(ws.events, (event) => event.type === "workspace_scan_result");
+    const scanResult = await waitForEvent(ws.events, (event) => event.type === "workspace_scan_result");
+    assert.equal(scanResult.day1Context, undefined);
+    assert.equal(scanResult.composedOpening, undefined);
+    assert.equal(scanResult.day1IcpPlan?.schemaVersion, 1);
+    assert.ok(Array.isArray(scanResult.day1IcpPlan?.questions));
+    assert.equal(
+      ws.events.some((event) => event.type === "workspace_day1_compose_result"),
+      false,
+      "scan_workspace must not emit the legacy Day 1 compose event",
+    );
     assert.equal(
       ws.events.some((event) =>
         event.type === "request_emit" && event.event === "workspace_setup_completed",

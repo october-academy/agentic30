@@ -2,10 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  buildComposeDay1CanUseTool,
+  buildReadOnlyWorkspaceCanUseTool,
   isPrivateOrMetadataUrl,
   sanitizeWebSearchQuery,
-} from "../sidecar/compose-day1-opening.mjs";
+} from "../sidecar/read-only-workspace-tool-policy.mjs";
 
 const ROOT = "/Users/test/myapp";
 
@@ -14,7 +14,7 @@ const ROOT = "/Users/test/myapp";
 // be scrubbed of secret-shaped tokens before it leaves the host.
 
 test("WebFetch / WebSearch are denied when enableWeb is false (default)", async () => {
-  const cb = buildComposeDay1CanUseTool({ workspaceRoot: ROOT });
+  const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: ROOT });
   const fetch = await cb("WebFetch", { url: "https://example.com" });
   const search = await cb("WebSearch", { query: "anything" });
   assert.equal(fetch.behavior, "deny");
@@ -23,13 +23,13 @@ test("WebFetch / WebSearch are denied when enableWeb is false (default)", async 
 });
 
 test("WebFetch is allowed for a public URL only when enableWeb is true", async () => {
-  const cb = buildComposeDay1CanUseTool({ workspaceRoot: ROOT, enableWeb: true });
+  const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: ROOT, enableWeb: true });
   const ok = await cb("WebFetch", { url: "https://example.com" });
   assert.equal(ok.behavior, "allow");
 });
 
 test("WebFetch is denied for localhost / 127.0.0.1 / private CIDR even when enabled", async () => {
-  const cb = buildComposeDay1CanUseTool({ workspaceRoot: ROOT, enableWeb: true });
+  const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: ROOT, enableWeb: true });
   for (const url of [
     "http://localhost/x",
     "http://127.0.0.1/x",
@@ -47,7 +47,7 @@ test("WebFetch is denied for localhost / 127.0.0.1 / private CIDR even when enab
 });
 
 test("WebFetch is denied for non-http(s) protocols", async () => {
-  const cb = buildComposeDay1CanUseTool({ workspaceRoot: ROOT, enableWeb: true });
+  const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: ROOT, enableWeb: true });
   for (const url of [
     "file:///etc/passwd",
     "ftp://example.com",
@@ -67,25 +67,28 @@ test("isPrivateOrMetadataUrl returns true for invalid URLs (fail closed)", () =>
 
 test("WebSearch query is sanitized before reaching the tool", async () => {
   const seen = [];
-  const cb = buildComposeDay1CanUseTool({
+  const cb = buildReadOnlyWorkspaceCanUseTool({
     workspaceRoot: ROOT,
     enableWeb: true,
     onDecision: (d) => seen.push(d),
   });
+  const openAiToken = "sk-" + "ABCDEFGHIJKLMNOPQRSTUVWX";
   await cb("WebSearch", {
-    query: "find docs sk-ABCDEFGHIJKLMNOPQRSTUVWX about onboarding",
+    query: `find docs ${openAiToken} about onboarding`,
   });
   assert.equal(seen.length, 1);
   assert.equal(seen[0].decision.allowed, true);
   // Original token must be redacted in the input the tool actually receives.
-  assert.ok(!seen[0].input.query.includes("sk-ABCDEFGHIJKLMNOPQRSTUVWX"));
+  assert.ok(!seen[0].input.query.includes(openAiToken));
   assert.ok(seen[0].input.query.includes("[REDACTED_TOKEN]"));
 });
 
 test("sanitizeWebSearchQuery scrubs common secret shapes", () => {
-  const cleaned = sanitizeWebSearchQuery("AKIAIOSFODNN7EXAMPLE plus AIzaSy_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-  assert.ok(!cleaned.includes("AKIAIOSFODNN7EXAMPLE"));
-  assert.ok(!cleaned.includes("AIzaSy_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
+  const awsAccessKey = "AKIA" + "IOSFODNN7EXAMPLE";
+  const googleApiKey = "AIzaSy_" + "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  const cleaned = sanitizeWebSearchQuery(`${awsAccessKey} plus ${googleApiKey}`);
+  assert.ok(!cleaned.includes(awsAccessKey));
+  assert.ok(!cleaned.includes(googleApiKey));
 });
 
 test("sanitizeWebSearchQuery caps query length at 256 chars", () => {
@@ -95,14 +98,14 @@ test("sanitizeWebSearchQuery caps query length at 256 chars", () => {
 
 // PR3 (P1b): IPv6 / trailing-dot SSRF gaps closed.
 test("WebFetch denies IPv4-mapped IPv6 localhost ([::ffff:127.0.0.1])", async () => {
-  const cb = buildComposeDay1CanUseTool({ workspaceRoot: ROOT, enableWeb: true });
+  const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: ROOT, enableWeb: true });
   const verdict = await cb("WebFetch", { url: "http://[::ffff:127.0.0.1]/x" });
   assert.equal(verdict.behavior, "deny");
   assert.match(verdict.message, /url_private_or_metadata/);
 });
 
 test("WebFetch denies trailing-dot localhost (localhost.)", async () => {
-  const cb = buildComposeDay1CanUseTool({ workspaceRoot: ROOT, enableWeb: true });
+  const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: ROOT, enableWeb: true });
   const verdict = await cb("WebFetch", { url: "http://localhost./x" });
   assert.equal(verdict.behavior, "deny");
 });
@@ -113,7 +116,7 @@ test("isPrivateOrMetadataUrl handles IPv4-mapped IPv6 in raw helper", () => {
 });
 
 test("Bash / Edit / Write stay denied even with enableWeb=true", async () => {
-  const cb = buildComposeDay1CanUseTool({ workspaceRoot: ROOT, enableWeb: true });
+  const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: ROOT, enableWeb: true });
   for (const tool of ["Bash", "Edit", "Write", "Task"]) {
     const verdict = await cb(tool, { file_path: ROOT + "/x.ts" });
     assert.equal(verdict.behavior, "deny", `${tool} must be denied even with web enabled`);

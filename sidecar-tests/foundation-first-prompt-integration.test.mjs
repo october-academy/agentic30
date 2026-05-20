@@ -1,5 +1,5 @@
 /**
- * Sub-AC 4 (AC 1.4) — Foundation Day 0–7 first-prompt INTEGRATION test.
+ * Sub-AC 4 (AC 1.4) — Foundation first-prompt integration test.
  *
  * Existing peers cover narrower contracts:
  *   • sidecar-tests/foundation-first-prompt.test.mjs
@@ -8,17 +8,18 @@
  *     → Swift-side decoder + idempotency keys for the seeded chat message.
  *
  * What was missing — and what this file pins down — is the end-to-end glue:
- * for every Day 0..7 the Mac host can request `foundation_first_prompt` over
- * the actual sidecar WebSocket transport and receive a fully-formed envelope
- * that the Swift decoder + chat surface can render WITHOUT additional work.
+ * for every remaining chat-opener day (Day 0/2-7) the Mac host can request
+ * `foundation_first_prompt` over the actual sidecar WebSocket transport and
+ * receive a fully-formed envelope that the Swift decoder + chat surface can
+ * render WITHOUT additional work. Day 1 now rejects this route because its
+ * normal surface is the OpenDesign Day page.
  *
- * Verification surface, per Sub-AC 4 ("8개 Day 각각에 대해 첫 프롬프트가
- * 올바르게 생성·표시되는지 검증하는 통합 테스트"):
+ * Verification surface:
  *   1. The sidecar boots in a hermetic temp workspace + app-support dir
  *      (no real Library writes, no network).
  *   2. A WebSocket client mimicking AgenticViewModel.requestFoundationFirstPrompt
  *      sends `{type: "foundation_first_prompt", sessionId, day}` for each
- *      Day 0..7 (8 round-trips on a single connection).
+ *      Day 0/2-7.
  *   3. The response envelope passes the SAME contract the Swift handler in
  *      `handleFoundationFirstPromptEvent` reads:
  *        - type === "foundation_first_prompt"
@@ -29,18 +30,15 @@
  *   4. The `firstPrompt.text` field — the field the chat surface displays —
  *      is the canonical "어제: …\n오늘: …\nQ: …" 3-line layout.
  *   5. Day → sub_workflow / spec_version mapping matches the Foundation
- *      contract (Day 0 bip-channel-register, Day 1 office-hours-docs/v0,
- *      Day 3 office-hours-docs/v1, Day 5 analyze-ads/v2, Day 6
+ *      contract (Day 0 bip-channel-register, Day 3 office-hours-docs/v1,
+ *      Day 5 analyze-ads/v2, Day 6
  *      monetization-ask, Day 7 foundation-summary/v3).
  *   6. YC partner tone preserved over the wire — no 정서 sugar, at least
  *      one 반말 token, no 문어체/존대 어미. (Same forbidden sets as the
  *      pure-builder test so a transport-layer regression is visible.)
- *   7. Out-of-range days fail closed (no firstPrompt, sidecar emits an
- *      `error` envelope with the canonical 0-7 range message).
- *   8. dynamicVariables flow through transport — Day 1 with runway +
- *      past_failures substitutes the placeholders end-to-end; Day 1 with
- *      no variables surfaces the "(아직 데이터 없음)" placeholder so the
- *      AI cannot invent runway numbers (KR4.1/4.2 evidence integrity).
+ *   7. Out-of-range days and Day 1 fail closed (no firstPrompt, sidecar emits
+ *      an `error` envelope).
+ *   8. dynamicVariables flow through transport for the remaining opener days.
  *
  * Note on test scope: we DO spawn the real `sidecar/index.mjs` process so
  * the WebSocket router, telemetry capture, and JSON envelope serialization
@@ -119,8 +117,9 @@ const EXPECTED_DAY_CONTRACT = {
 };
 
 const PERSONA = "YC 파트너 / 시니어 메이커 (직설+압박, 반말 ~어/야)";
+const FIRST_PROMPT_DAYS = Object.freeze([0, 2, 3, 4, 5, 6, 7]);
 
-test("Sub-AC 4 :: every Day 0..7 round-trips a valid foundation_first_prompt envelope over WebSocket", async () => {
+test("Sub-AC 4 :: Day 0/2-7 round-trip valid foundation_first_prompt envelopes over WebSocket", async () => {
   const harness = await spawnSidecar();
   let ws;
   try {
@@ -128,7 +127,7 @@ test("Sub-AC 4 :: every Day 0..7 round-trips a valid foundation_first_prompt env
     const events = [];
     ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
 
-    for (let day = 0; day <= 7; day += 1) {
+    for (const day of FIRST_PROMPT_DAYS) {
       const sessionId = `integ-foundation-day-${day}`;
       ws.send(
         JSON.stringify({
@@ -351,7 +350,7 @@ test("Sub-AC 4 :: out-of-range days fail closed with an error envelope (no first
   }
 });
 
-test("Sub-AC 4 :: dynamicVariables flow through transport (Day 1 substitution + missing-variable fallback)", async () => {
+test("Sub-AC 4 :: Day 1 foundation_first_prompt requests are rejected", async () => {
   const harness = await spawnSidecar();
   let ws;
   try {
@@ -359,83 +358,38 @@ test("Sub-AC 4 :: dynamicVariables flow through transport (Day 1 substitution + 
     const events = [];
     ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
 
-    // ── With variables: day1_yesterday/today/question substitute end-to-end ──
-    const variablesSessionId = "integ-vars-day-1-with";
+    const sessionId = "integ-day-1-rejected";
     ws.send(
       JSON.stringify({
         type: "foundation_first_prompt",
-        sessionId: variablesSessionId,
+        sessionId,
         day: 1,
-        dynamicVariables: {
-          day1_yesterday: "최근 7일 6주차, 코드 12커밋·문서 0커밋",
-          day1_today: "통증 1개로 SPEC.md v0 박아",
-          day1_question: "어제 결제한 사람 누구야",
-        },
       }),
     );
-    const withVars = await waitForEvent(
+    const response = await waitForEvent(
       events,
       (event) =>
-        event.type === "foundation_first_prompt"
-        && event.sessionId === variablesSessionId,
+        event.type === "error"
+        && event.sessionId === sessionId,
     );
+    assert.match(response.message, /OpenDesign Day page/);
     assert.equal(
-      withVars.firstPrompt.yesterday,
-      "최근 7일 6주차, 코드 12커밋·문서 0커밋",
-      "day1_yesterday must render verbatim",
+      events.some((event) => event.type === "foundation_first_prompt" && event.sessionId === sessionId),
+      false,
     );
-    assert.equal(
-      withVars.firstPrompt.today,
-      "통증 1개로 SPEC.md v0 박아",
-      "day1_today must render verbatim",
-    );
-    assert.equal(
-      withVars.firstPrompt.question,
-      "어제 결제한 사람 누구야",
-      "day1_question must render verbatim",
-    );
-    assert.ok(
-      !withVars.firstPrompt.yesterday.includes("{day1_yesterday}"),
-      "{day1_yesterday} placeholder must be fully consumed",
-    );
-    assert.ok(
-      !withVars.firstPrompt.yesterday.includes("아직 데이터 없음"),
-      "MISSING placeholder must NOT appear when variables provided",
-    );
+  } finally {
+    await closeWebSocket(ws);
+    await harness.dispose();
+  }
+});
 
-    // ── Without variables: Day 1 falls back to coach-tone defaults (DAY_DEFAULTS) ──
-    const fallbackSessionId = "integ-vars-day-1-without";
-    ws.send(
-      JSON.stringify({
-        type: "foundation_first_prompt",
-        sessionId: fallbackSessionId,
-        day: 1,
-      }),
-    );
-    const noVars = await waitForEvent(
-      events,
-      (event) =>
-        event.type === "foundation_first_prompt"
-        && event.sessionId === fallbackSessionId,
-    );
-    assert.ok(
-      !noVars.firstPrompt.yesterday.includes("(아직 데이터 없음)"),
-      "Day 1 must use DAY_DEFAULTS coach fallback, not the MISSING placeholder",
-    );
-    assert.match(
-      noVars.firstPrompt.today,
-      /SPEC\.md/,
-      "Day 1 today default must mention SPEC.md",
-    );
-    assert.match(
-      noVars.firstPrompt.question,
-      /고통/,
-      "Day 1 question default must press on the pain dimension",
-    );
-    assert.ok(
-      !noVars.firstPrompt.yesterday.includes("{day1_yesterday}"),
-      "{day1_yesterday} placeholder must be replaced even with empty vars",
-    );
+test("Sub-AC 4 :: dynamicVariables flow through transport for remaining first_prompt days", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    ws = await connectAndAwaitReady(harness);
+    const events = [];
+    ws.on("message", (raw) => events.push(JSON.parse(String(raw))));
 
     // ── Day 5 ad-metric variables flow through to `today` line ──
     const adsSessionId = "integ-vars-day-5";

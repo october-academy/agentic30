@@ -5,10 +5,10 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  buildComposeDay1CanUseTool,
-  COMPOSE_DAY1_ALLOWED_TOOLS,
-  COMPOSE_DAY1_DEFAULT_TOOL_CAPS,
-} from "../sidecar/compose-day1-opening.mjs";
+  buildReadOnlyWorkspaceCanUseTool,
+  READ_ONLY_WORKSPACE_ALLOWED_TOOLS,
+  READ_ONLY_WORKSPACE_DEFAULT_TOOL_CAPS,
+} from "../sidecar/read-only-workspace-tool-policy.mjs";
 
 const ROOT = "/Users/test/myapp";
 
@@ -17,41 +17,41 @@ async function decision(canUseTool, toolName, input) {
 }
 
 test("Read inside the workspace is allowed", async () => {
-  const cb = buildComposeDay1CanUseTool({ workspaceRoot: ROOT });
+  const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: ROOT });
   const verdict = await decision(cb, "Read", { file_path: path.join(ROOT, "src", "a.ts") });
   assert.equal(verdict.behavior, "allow");
 });
 
 test("Read outside the workspace is denied", async () => {
-  const cb = buildComposeDay1CanUseTool({ workspaceRoot: ROOT });
+  const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: ROOT });
   const verdict = await decision(cb, "Read", { file_path: "/etc/passwd" });
   assert.equal(verdict.behavior, "deny");
   assert.match(verdict.message, /path_outside_workspace/);
 });
 
 test("Read .env is denied even inside the workspace", async () => {
-  const cb = buildComposeDay1CanUseTool({ workspaceRoot: ROOT });
+  const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: ROOT });
   const verdict = await decision(cb, "Read", { file_path: path.join(ROOT, ".env") });
   assert.equal(verdict.behavior, "deny");
   assert.match(verdict.message, /denied_segment/);
 });
 
 test("Read inside .git is denied", async () => {
-  const cb = buildComposeDay1CanUseTool({ workspaceRoot: ROOT });
+  const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: ROOT });
   const verdict = await decision(cb, "Read", { file_path: path.join(ROOT, ".git", "HEAD") });
   assert.equal(verdict.behavior, "deny");
   assert.match(verdict.message, /denied_segment:\.git/);
 });
 
 test("Read inside node_modules is denied", async () => {
-  const cb = buildComposeDay1CanUseTool({ workspaceRoot: ROOT });
+  const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: ROOT });
   const verdict = await decision(cb, "Read", { file_path: path.join(ROOT, "node_modules", "lodash", "index.js") });
   assert.equal(verdict.behavior, "deny");
 });
 
 test("Bash / Edit / Write / Task / WebFetch / WebSearch are all denied", async () => {
   for (const tool of ["Bash", "Edit", "Write", "Task", "WebFetch", "WebSearch", "AskUserQuestion"]) {
-    const cb = buildComposeDay1CanUseTool({ workspaceRoot: ROOT });
+    const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: ROOT });
     const verdict = await decision(cb, tool, { file_path: path.join(ROOT, "x.ts") });
     assert.equal(verdict.behavior, "deny", `${tool} must be denied`);
     assert.match(verdict.message, /tool_not_allowed/);
@@ -59,29 +59,29 @@ test("Bash / Edit / Write / Task / WebFetch / WebSearch are all denied", async (
 });
 
 test("path traversal via .. is normalized then denied if it escapes", async () => {
-  const cb = buildComposeDay1CanUseTool({ workspaceRoot: ROOT });
+  const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: ROOT });
   const verdict = await decision(cb, "Read", { file_path: path.join(ROOT, "..", "..", "etc", "shadow") });
   assert.equal(verdict.behavior, "deny");
   assert.match(verdict.message, /path_outside_workspace/);
 });
 
 test("Glob within the workspace is allowed", async () => {
-  const cb = buildComposeDay1CanUseTool({ workspaceRoot: ROOT });
+  const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: ROOT });
   const verdict = await decision(cb, "Glob", { pattern: path.join(ROOT, "src", "**/*.ts") });
   assert.equal(verdict.behavior, "allow");
 });
 
 test("Glob whose literal prefix escapes the workspace is denied", async () => {
-  const cb = buildComposeDay1CanUseTool({ workspaceRoot: ROOT });
+  const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: ROOT });
   const verdict = await decision(cb, "Glob", { pattern: "/tmp/**/*" });
   assert.equal(verdict.behavior, "deny");
   assert.match(verdict.message, /path_outside_workspace/);
 });
 
 test("per-tool caps stop further calls once exceeded", async () => {
-  const cb = buildComposeDay1CanUseTool({
+  const cb = buildReadOnlyWorkspaceCanUseTool({
     workspaceRoot: ROOT,
-    toolCaps: { ...COMPOSE_DAY1_DEFAULT_TOOL_CAPS, Read: 2 },
+    toolCaps: { ...READ_ONLY_WORKSPACE_DEFAULT_TOOL_CAPS, Read: 2 },
   });
   await decision(cb, "Read", { file_path: path.join(ROOT, "a.ts") });
   await decision(cb, "Read", { file_path: path.join(ROOT, "b.ts") });
@@ -91,12 +91,12 @@ test("per-tool caps stop further calls once exceeded", async () => {
 });
 
 test("only the documented allowlist is allowed", () => {
-  assert.deepEqual(COMPOSE_DAY1_ALLOWED_TOOLS, ["Read", "Glob", "Grep"]);
+  assert.deepEqual(READ_ONLY_WORKSPACE_ALLOWED_TOOLS, ["Read", "Glob", "Grep"]);
 });
 
 test("decisions are logged via onDecision hook for audit/test inspection", async () => {
   const log = [];
-  const cb = buildComposeDay1CanUseTool({
+  const cb = buildReadOnlyWorkspaceCanUseTool({
     workspaceRoot: ROOT,
     onDecision: (d) => log.push(d),
   });
@@ -124,7 +124,7 @@ test("symlink inside workspace pointing outside (e.g. /etc) is denied", async ()
   await withTmpWorkspace(async (root) => {
     const linkPath = path.join(root, "secrets-link");
     await fs.symlink("/etc", linkPath);
-    const cb = buildComposeDay1CanUseTool({ workspaceRoot: root });
+    const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: root });
     const verdict = await decision(cb, "Read", { file_path: path.join(linkPath, "passwd") });
     assert.equal(verdict.behavior, "deny");
     assert.match(verdict.message, /path_outside_workspace|denied_segment/);
@@ -138,7 +138,7 @@ test("valid symlink that points inside the workspace stays allowed", async () =>
     await fs.writeFile(path.join(realDir, "a.ts"), "// hi");
     const linkPath = path.join(root, "alias");
     await fs.symlink(realDir, linkPath);
-    const cb = buildComposeDay1CanUseTool({ workspaceRoot: root });
+    const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: root });
     const verdict = await decision(cb, "Read", { file_path: path.join(linkPath, "a.ts") });
     assert.equal(verdict.behavior, "allow");
   });
@@ -146,7 +146,7 @@ test("valid symlink that points inside the workspace stays allowed", async () =>
 
 test("Glob with embedded .. traversal is denied even if literal prefix looks safe", async () => {
   await withTmpWorkspace(async (root) => {
-    const cb = buildComposeDay1CanUseTool({ workspaceRoot: root });
+    const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: root });
     // Build the pattern manually so path.join doesn't normalize `..` away
     // before the policy ever sees it — Claude's Glob input arrives as a raw
     // string with the `..` segments still intact.
@@ -160,7 +160,7 @@ test("Glob with embedded .. traversal is denied even if literal prefix looks saf
 
 test("Glob with leading .. escape is denied", async () => {
   await withTmpWorkspace(async (root) => {
-    const cb = buildComposeDay1CanUseTool({ workspaceRoot: root });
+    const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: root });
     const verdict = await decision(cb, "Glob", { pattern: "../**/secret" });
     assert.equal(verdict.behavior, "deny");
   });
@@ -168,7 +168,7 @@ test("Glob with leading .. escape is denied", async () => {
 
 test("deeply nested .. that normalizes outside the root is denied", async () => {
   await withTmpWorkspace(async (root) => {
-    const cb = buildComposeDay1CanUseTool({ workspaceRoot: root });
+    const cb = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot: root });
     const verdict = await decision(cb, "Grep", {
       pattern: `${root}/a/b/../../../etc/shadow`,
     });

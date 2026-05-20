@@ -13,10 +13,10 @@ import {
   LOCAL_DISCOVERY_SCHEMA_VERSION,
 } from "../sidecar/local-discovery.mjs";
 
-// Stage 3 of the day1-discovery plan: deterministic git/manifest signals
-// that get folded into Day 1 first_prompt without any LLM call. These tests
-// exercise the function via real git CLI in a tmp repo so we don't accidentally
-// regress the spawn-based reader (timeout / error path / non-git folder).
+// Deterministic git/manifest signals that feed Day1IcpPlan without any LLM
+// call. These tests exercise the function via real git CLI in a tmp repo so
+// we don't accidentally regress the spawn-based reader (timeout / error path /
+// non-git folder).
 
 async function makeTmpDir() {
   return fs.mkdtemp(path.join(os.tmpdir(), "agentic30-local-discovery-"));

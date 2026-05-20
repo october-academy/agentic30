@@ -3,10 +3,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 /**
- * Stage 3 of the day1-discovery plan: deterministic local signals from a
- * project folder, computed without any LLM call. Output is a flat object the
- * Mac-side WorkspaceDay1Mapper folds into Day 1 first_prompt variables and
- * the LLM composer (stage 4) treats as ground truth.
+ * Deterministic Day1IcpPlan signal source from a project folder, computed
+ * without any LLM call. `scan_workspace` uses this data to shape adaptive
+ * Day 1 ICP questions and to give the plan composer read-only ground truth.
  *
  * No write side effects. No network. Read-only git CLI commands plus a
  * one-shot stat/read of well-known manifest files. All errors are absorbed
@@ -101,9 +100,8 @@ export async function summarizeGitActivity(workspaceRoot, { now = new Date() } =
   const dirtyRaw = await runGit(workspaceRoot, ["status", "--porcelain"]);
   const dirty = dirtyRaw === null ? null : dirtyRaw.length > 0;
   const branch = await runGit(workspaceRoot, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  // PR3 (P1b): expose current HEAD sha so compose-day1-opening's cacheKey
-  // invalidates when HEAD advances (the legacy firstCommitAt only changes
-  // when the project birth date moves, which is essentially never).
+  // Expose current HEAD sha so downstream plan/cache logic can detect when
+  // the workspace context changed after the project birth date.
   const head = await runGit(workspaceRoot, ["rev-parse", "HEAD"]);
   return {
     isGitRepo: true,
@@ -169,9 +167,8 @@ export function inferRunwayHints(gitSummary, { now = new Date() } = {}) {
 }
 
 /**
- * One-shot collector that bundles git + manifest signals into the shape the
- * day1Context payload mixes in. Pure data — no side effects on the
- * workspace or sidecar state.
+ * One-shot collector that bundles git + manifest signals for Day1IcpPlan.
+ * Pure data — no side effects on the workspace or sidecar state.
  */
 export async function collectLocalDiscovery(workspaceRoot, options = {}) {
   if (!workspaceRoot) {

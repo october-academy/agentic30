@@ -12,7 +12,8 @@ import { getFoundationValueContract } from "./foundation-contracts.mjs";
  * - spec_version: which SPEC.md vN this day produces (or null)
  * - artifacts: .md files written under workspace/.agentic30/foundation/
  * - value_contract: daily value/evidence/pass gate for hard dogfood
- * - first_prompt: AI-driven daily opener in 3-section minimal template
+ * - first_prompt: AI-driven daily opener in 3-section minimal template for
+ *   days that still use chat openers (Day 1 uses the OpenDesign Day page)
  *     {yesterday: 1줄, today: 1줄, question: 1줄}
  *     Dynamic variables are written as `{var_name}` and replaced at runtime
  *     by buildFirstPromptForDay(). Tone: YC 파트너 / 시니어 메이커
@@ -43,11 +44,6 @@ export const FOUNDATION_DAYS = Object.freeze({
     sub_workflow: "office-hours-docs",
     spec_version: "v0",
     artifacts: ["SPEC.md", "day-1-pain-summary.md"],
-    first_prompt: Object.freeze({
-      yesterday: "{day1_yesterday}",
-      today: "{day1_today}",
-      question: "{day1_question}",
-    }),
   },
   2: {
     day: 2,
@@ -249,9 +245,8 @@ function normalizeFoundationTimestampMs(value) {
  * Each entry pins a length cap so renderTemplate output stays inside the
  * 3-section minimal contract (one line each) regardless of upstream payload.
  *
- * Day 2-7 keys mirror the Agentic30FoundationPhase ontology. Day 1 keys hold
- * the full opener body (yesterday/today/question) since Day 1's template was
- * redesigned to consume composed strings end-to-end (see CCG plan stage 1).
+ * Day 2-7 keys mirror the Agentic30FoundationPhase ontology. Day 1 no longer
+ * uses chat opener variables; its normal surface is the OpenDesign Day page.
  */
 const FIRST_PROMPT_VAR_SCHEMA = Object.freeze({
   runway:               { maxLen: 80 },
@@ -267,26 +262,15 @@ const FIRST_PROMPT_VAR_SCHEMA = Object.freeze({
   signal_strength:      { maxLen: 40 },
   strong_section:       { maxLen: 80 },
   weak_section_v3:      { maxLen: 80 },
-  day1_yesterday:       { maxLen: 240 },
-  day1_today:           { maxLen: 240 },
-  day1_question:        { maxLen: 200 },
 });
 
 const ALLOWED_DYNAMIC_VARS = Object.freeze(Object.keys(FIRST_PROMPT_VAR_SCHEMA));
 
 /**
- * Default fallback values per Foundation day. Used by renderTemplate when a
- * variable is unset/empty so the user never sees `(아직 데이터 없음)` for
- * Day 1's body slots. Day 2-7 still fall through to MISSING_VAR_PLACEHOLDER
- * because their placeholders mark genuine evidence gaps the AI must press on.
+ * Default fallback values per Foundation day. Day 1 uses the OpenDesign Day
+ * page, so first_prompt fallback values are intentionally empty.
  */
-const DAY_DEFAULTS = Object.freeze({
-  1: Object.freeze({
-    day1_yesterday: "폴더 신호가 조용하네. 기록이 없으면 오늘 만드는 게 곧 역사가 돼.",
-    day1_today: "고객의 어제 행동에서 가장 압축된 통증 1개만 뽑아 SPEC.md v0 박아.",
-    day1_question: "지금 이 제품이 없어서 가장 고통받는 사람이 구체적으로 누구야? 가정 말고 행동으로.",
-  }),
-});
+const DAY_DEFAULTS = Object.freeze({});
 
 /**
  * Fallback rendered when a `{var}` placeholder is missing in dynamicVariables
@@ -639,7 +623,7 @@ function sanitizeDynamicVariables(input) {
   const out = {};
   for (const key of ALLOWED_DYNAMIC_VARS) {
     // Object.hasOwn guards against prototype-pollution payloads that set
-    // `__proto__.day1_today` etc. via JSON.parse-of-attacker-controlled-input.
+    // allowed keys via JSON.parse-of-attacker-controlled-input.
     if (!Object.hasOwn(input, key)) continue;
     const sanitized = sanitizeVarValue(input[key], FIRST_PROMPT_VAR_SCHEMA[key]);
     if (sanitized !== null) out[key] = sanitized;
