@@ -1668,7 +1668,7 @@ struct OpenDesignDayPageView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var interaction = OpenDesignDayInteractionState()
-    @State private var selectedReferencePage: OpenDesignReferencePageKind?
+    @Binding private var selectedReferencePage: OpenDesignReferencePageKind?
     @State private var isSearchPresented = false
     @State private var searchQuery = ""
     @State private var selectedSearchIndex = 0
@@ -1680,6 +1680,7 @@ struct OpenDesignDayPageView: View {
 
     init(
         content: OpenDesignDayContent = .day1,
+        selectedReferencePage: Binding<OpenDesignReferencePageKind?> = .constant(nil),
         openSettings: @escaping () -> Void,
         submitStructuredPromptChoice: @escaping (OpenDesignDayAnswerSubmission) -> Void = { _ in },
         newsMarketRadar: NewsMarketRadarSnapshot = .empty,
@@ -1689,6 +1690,7 @@ struct OpenDesignDayPageView: View {
         completeDay: @escaping () -> Void = {}
     ) {
         self.content = content
+        _selectedReferencePage = selectedReferencePage
         self.openSettings = openSettings
         self.submitStructuredPromptChoice = submitStructuredPromptChoice
         self.newsMarketRadar = newsMarketRadar
@@ -1897,6 +1899,7 @@ struct OpenDesignDayPageView: View {
         switch item.route {
         case .settings:
             closeSearch()
+            selectedReferencePage = nil
             openSettings()
         case .search:
             openSearch()
@@ -1945,10 +1948,12 @@ struct OpenDesignDayPageView: View {
 
         switch item.route {
         case .settings:
+            selectedReferencePage = nil
             openSettings()
         case .search:
             openSearch()
         case .today:
+            selectedReferencePage = nil
             requestScroll(to: .top)
         case .inert:
             break

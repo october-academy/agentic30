@@ -571,6 +571,123 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    func testOpenDesignReferenceRailItemsRemainActiveWhenSelected() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-opendesign-reference-route-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-opendesign-reference-route-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        let openDesignShell = elementWithIdentifier(in: app, "opendesign.day.shell")
+        if !openDesignShell.waitForExistence(timeout: 10) {
+            attachScreenshot(from: app, named: "OpenDesign Reference Route Shell Missing")
+            attachText(app.debugDescription, named: "OpenDesign Reference Route Shell Missing Tree")
+        }
+        XCTAssertTrue(openDesignShell.exists)
+
+        let referenceTargets: [(railID: String, mainID: String)] = [
+            ("projects", "opendesign.reference.projects.main"),
+            ("settings", "opendesign.reference.settings.main"),
+            ("interviews", "opendesign.reference.interviews.main"),
+            ("bip", "opendesign.reference.bipLog.main"),
+            ("news", "opendesign.reference.news.main"),
+            ("history", "opendesign.reference.history.main"),
+        ]
+
+        for target in referenceTargets {
+            let railItemID = "opendesign.day.rail.item.\(target.railID)"
+            let railItem = elementWithIdentifier(in: app, railItemID)
+            XCTAssertTrue(railItem.waitForExistence(timeout: 3))
+            clickCenter(of: railItem)
+
+            let main = elementWithIdentifier(in: app, target.mainID)
+            if !main.waitForExistence(timeout: 5) {
+                attachScreenshot(from: app, named: "OpenDesign \(target.railID) Reference Main Missing")
+                attachText(app.debugDescription, named: "OpenDesign \(target.railID) Reference Main Missing Tree")
+            }
+            XCTAssertTrue(main.exists)
+            XCTAssertTrue(waitForElementLabel(in: app, identifier: railItemID, containing: "active", timeout: 3))
+        }
+
+        let todayRailItem = elementWithIdentifier(in: app, "opendesign.day.rail.item.today")
+        XCTAssertTrue(todayRailItem.waitForExistence(timeout: 3))
+        clickCenter(of: todayRailItem)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.today", containing: "active", timeout: 3))
+    }
+
+    @MainActor
+    func testOpenDesignNewsRailRemainsActiveAfterRadarStatusAndResultEvents() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-opendesign-news-route-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-opendesign-news-route-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+            "--ui-testing-stub-news-market-radar-events",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        let openDesignShell = elementWithIdentifier(in: app, "opendesign.day.shell")
+        if !openDesignShell.waitForExistence(timeout: 10) {
+            attachScreenshot(from: app, named: "OpenDesign News Route Shell Missing")
+            attachText(app.debugDescription, named: "OpenDesign News Route Shell Missing Tree")
+        }
+        XCTAssertTrue(openDesignShell.exists)
+
+        let newsRailItem = elementWithIdentifier(in: app, "opendesign.day.rail.item.news")
+        XCTAssertTrue(newsRailItem.waitForExistence(timeout: 3))
+        clickCenter(of: newsRailItem)
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.reference.news.main").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["UI 테스트 리서치 결과"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["일부 가정 리서치 실패: 문제"].waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.news", containing: "active", timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.reference.news.main").exists)
+    }
+
+    @MainActor
     func testOpenDesignNewsPageParitySmoke() throws {
         let runID = UUID().uuidString
         let workspacePath = "/tmp/agentic30-ui-opendesign-news-workspace-\(runID)"

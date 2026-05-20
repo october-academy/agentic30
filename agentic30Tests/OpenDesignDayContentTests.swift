@@ -459,6 +459,36 @@ struct OpenDesignDayContentTests {
         #expect(OpenDesignReferenceCatalog.page(.history).sections.contains { $0.id == "today" })
     }
 
+    @Test func referenceRoutePolicyKeepsReferencePagesAcrossTransientWorkspaceState() {
+        for kind in OpenDesignReferencePageKind.allCases {
+            #expect(shouldUseOpenDesignRoute(selectedReferencePage: kind, isBipCoachGenerating: true))
+            #expect(shouldUseOpenDesignRoute(selectedReferencePage: kind, hasBipMissionProgress: true))
+            #expect(shouldUseOpenDesignRoute(selectedReferencePage: kind, hasCurrentMission: true))
+            #expect(shouldUseOpenDesignRoute(selectedReferencePage: kind, hasPendingMissionChoices: true))
+            #expect(shouldUseOpenDesignRoute(selectedReferencePage: kind, hasBipCoachError: true))
+            #expect(shouldUseOpenDesignRoute(selectedReferencePage: kind, hasSidecarFailure: true))
+            #expect(shouldUseOpenDesignRoute(selectedReferencePage: kind, hasBipTokenExpired: true))
+        }
+    }
+
+    @Test func referenceRoutePolicyStillClearsForNonOpenDesignDestinations() {
+        for kind in OpenDesignReferencePageKind.allCases {
+            #expect(!shouldUseOpenDesignRoute(dayNumber: 3, selectedReferencePage: kind))
+            #expect(!shouldUseOpenDesignRoute(isGraduation: true, selectedReferencePage: kind))
+            #expect(!shouldUseOpenDesignRoute(workspaceSectionIsCurriculum: false, selectedReferencePage: kind))
+            #expect(!shouldUseOpenDesignRoute(reviewDashboardMatchesDay: true, selectedReferencePage: kind))
+        }
+    }
+
+    @Test func transientWorkspaceStateWithoutReferencePageStillUsesFallbackSurfaces() {
+        #expect(shouldUseOpenDesignRoute())
+        #expect(!shouldUseOpenDesignRoute(isBipCoachGenerating: true))
+        #expect(!shouldUseOpenDesignRoute(hasBipMissionProgress: true))
+        #expect(!shouldUseOpenDesignRoute(hasCurrentMission: true))
+        #expect(!shouldUseOpenDesignRoute(hasPendingMissionChoices: true))
+        #expect(!shouldUseOpenDesignRoute(hasBipCoachError: true))
+    }
+
     private func makePlan(questionCount: Int) -> Day1IcpPlan {
         let dimensions = ["must_have", "core_need", "current_alternative", "bad_fit_boundary", "reference_customer"]
         let questions = dimensions.prefix(questionCount).enumerated().map { index, dimension in
@@ -517,6 +547,40 @@ struct OpenDesignDayContentTests {
                 bodyTemplate: "안녕하세요 {name}님, SupportLens ICP 인터뷰를 부탁드려요.",
                 questions: ["최근 사건?"]
             )
+        )
+    }
+
+    private func shouldUseOpenDesignRoute(
+        dayNumber: Int = 1,
+        workspaceSectionIsCurriculum: Bool = true,
+        isGraduation: Bool = false,
+        reviewDashboardMatchesDay: Bool = false,
+        isIddSetupLocked: Bool = false,
+        selectedReferencePage: OpenDesignReferencePageKind? = nil,
+        hasBipNotificationHint: Bool = false,
+        hasSidecarFailure: Bool = false,
+        hasBipTokenExpired: Bool = false,
+        isBipCoachGenerating: Bool = false,
+        hasBipMissionProgress: Bool = false,
+        hasCurrentMission: Bool = false,
+        hasPendingMissionChoices: Bool = false,
+        hasBipCoachError: Bool = false
+    ) -> Bool {
+        OpenDesignReferenceRoutePolicy.shouldUseOpenDesignDayPage(
+            dayNumber: dayNumber,
+            workspaceSectionIsCurriculum: workspaceSectionIsCurriculum,
+            isGraduation: isGraduation,
+            reviewDashboardMatchesDay: reviewDashboardMatchesDay,
+            isIddSetupLocked: isIddSetupLocked,
+            selectedReferencePage: selectedReferencePage,
+            hasBipNotificationHint: hasBipNotificationHint,
+            hasSidecarFailure: hasSidecarFailure,
+            hasBipTokenExpired: hasBipTokenExpired,
+            isBipCoachGenerating: isBipCoachGenerating,
+            hasBipMissionProgress: hasBipMissionProgress,
+            hasCurrentMission: hasCurrentMission,
+            hasPendingMissionChoices: hasPendingMissionChoices,
+            hasBipCoachError: hasBipCoachError
         )
     }
 }

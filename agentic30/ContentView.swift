@@ -30,6 +30,7 @@ struct ContentView: View {
     @State private var showsInlineBipReadinessSetup = false
     @State private var showsWorkspaceEvidenceDetails = false
     @State private var selectedWorkspaceSection: WorkspaceSection = .curriculum
+    @State private var selectedOpenDesignReferencePage: OpenDesignReferencePageKind?
     @State private var selectedCurriculumDetail: WorkspaceCurriculumDetail = .tasks
     @State private var selectedSettingsSection: SettingsSection = .account
     @State private var handledWorkspaceSettingsOpenRequest = 0
@@ -152,6 +153,19 @@ struct ContentView: View {
             }
             .onChange(of: currentBipCompletionConfettiMissionID) { _, _ in
                 triggerWorkspaceCompletionConfettiIfNeeded()
+            }
+            .onChange(of: selectedWorkspaceSection) { _, section in
+                if section != .curriculum {
+                    clearOpenDesignReferenceRoute()
+                }
+            }
+            .onChange(of: viewModel.selectedFoundationDay) { _, day in
+                clearOpenDesignReferenceRouteIfUnsupported(dayNumber: day)
+            }
+            .onChange(of: viewModel.foundationCurriculumPresentationDestination) { _, destination in
+                if destination == .graduation {
+                    clearOpenDesignReferenceRoute()
+                }
             }
             .overlay {
                 if workspaceCompletionConfettiTrigger > 0 {
@@ -340,30 +354,24 @@ struct ContentView: View {
     }
 
     private func shouldUseOpenDesignDayPage(day: AgenticCurriculumDay) -> Bool {
-        guard selectedWorkspaceSection == .curriculum,
-              (day.day == 1 || day.day == 2),
-              viewModel.foundationCurriculumPresentationDestination != .graduation else {
-            return false
-        }
-        if let reviewDashboard = viewModel.reviewDayDashboardViewModel,
-           reviewDashboard.reviewDay == day.day {
-            return false
-        }
-        if isIddSetupLocked {
-            return true
-        }
-        if bipNotificationHintIntent != nil
-            || viewModel.sidecarFailureMessage != nil
-            || viewModel.bipTokenExpired != nil
-            || viewModel.isBipCoachGenerating
-            || viewModel.bipMissionProgress != nil {
-            return false
-        }
-        if let coach = viewModel.visibleBipCoach,
-           coach.currentMission != nil || !coach.pendingMissionChoices.isEmpty || coach.lastError?.nonEmpty != nil {
-            return false
-        }
-        return true
+        let visibleCoach = viewModel.visibleBipCoach
+        let reviewDashboardMatchesDay = viewModel.reviewDayDashboardViewModel?.reviewDay == day.day
+        return OpenDesignReferenceRoutePolicy.shouldUseOpenDesignDayPage(
+            dayNumber: day.day,
+            workspaceSectionIsCurriculum: selectedWorkspaceSection == .curriculum,
+            isGraduation: viewModel.foundationCurriculumPresentationDestination == .graduation,
+            reviewDashboardMatchesDay: reviewDashboardMatchesDay,
+            isIddSetupLocked: isIddSetupLocked,
+            selectedReferencePage: selectedOpenDesignReferencePage,
+            hasBipNotificationHint: bipNotificationHintIntent != nil,
+            hasSidecarFailure: viewModel.sidecarFailureMessage != nil,
+            hasBipTokenExpired: viewModel.bipTokenExpired != nil,
+            isBipCoachGenerating: viewModel.isBipCoachGenerating,
+            hasBipMissionProgress: viewModel.bipMissionProgress != nil,
+            hasCurrentMission: visibleCoach?.currentMission != nil,
+            hasPendingMissionChoices: visibleCoach?.pendingMissionChoices.isEmpty == false,
+            hasBipCoachError: visibleCoach?.lastError?.nonEmpty != nil
+        )
     }
 
     @ViewBuilder
@@ -373,8 +381,10 @@ struct ContentView: View {
         let content = ZStack {
             OpenDesignDayPageView(
                 content: viewModel.iddSetupComplete ? resolvedContent : day1Content.lockingFutureDays,
+                selectedReferencePage: $selectedOpenDesignReferencePage,
                 openSettings: {
                     withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                        clearOpenDesignReferenceRoute()
                         selectedWorkspaceSection = .settings
                     }
                 },
@@ -390,6 +400,7 @@ struct ContentView: View {
                 },
                 openNewsSettings: {
                     withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                        clearOpenDesignReferenceRoute()
                         selectedWorkspaceSection = .settings
                         selectedSettingsSection = .agents
                     }
@@ -425,6 +436,16 @@ struct ContentView: View {
                     workspaceTourOverlay()
                 }
                 .accessibilityIdentifier("workspace.surface")
+        }
+    }
+
+    private func clearOpenDesignReferenceRoute() {
+        selectedOpenDesignReferencePage = nil
+    }
+
+    private func clearOpenDesignReferenceRouteIfUnsupported(dayNumber: Int) {
+        if !OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: dayNumber) {
+            clearOpenDesignReferenceRoute()
         }
     }
 
@@ -8536,6 +8557,55 @@ private struct BipReadinessGroup: Identifiable, Hashable {
     let ids: [BipReadinessRowId]
 
     var id: String { title }
+}
+
+struct OpenDesignReferenceRoutePolicy {
+    static func supportsOpenDesignDay(dayNumber: Int) -> Bool {
+        dayNumber == 1 || dayNumber == 2
+    }
+
+    static func shouldUseOpenDesignDayPage(
+        dayNumber: Int,
+        workspaceSectionIsCurriculum: Bool,
+        isGraduation: Bool,
+        reviewDashboardMatchesDay: Bool,
+        isIddSetupLocked: Bool,
+        selectedReferencePage: OpenDesignReferencePageKind?,
+        hasBipNotificationHint: Bool,
+        hasSidecarFailure: Bool,
+        hasBipTokenExpired: Bool,
+        isBipCoachGenerating: Bool,
+        hasBipMissionProgress: Bool,
+        hasCurrentMission: Bool,
+        hasPendingMissionChoices: Bool,
+        hasBipCoachError: Bool
+    ) -> Bool {
+        guard workspaceSectionIsCurriculum,
+              supportsOpenDesignDay(dayNumber: dayNumber),
+              !isGraduation else {
+            return false
+        }
+        if reviewDashboardMatchesDay {
+            return false
+        }
+        if isIddSetupLocked {
+            return true
+        }
+        if selectedReferencePage != nil {
+            return true
+        }
+        if hasBipNotificationHint
+            || hasSidecarFailure
+            || hasBipTokenExpired
+            || isBipCoachGenerating
+            || hasBipMissionProgress {
+            return false
+        }
+        if hasCurrentMission || hasPendingMissionChoices || hasBipCoachError {
+            return false
+        }
+        return true
+    }
 }
 
 private enum DisplayMode {
