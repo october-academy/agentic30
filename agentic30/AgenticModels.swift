@@ -954,7 +954,13 @@ struct NewsMarketRadarSnapshot: Codable, Hashable {
             stale: false,
             error: nil,
             reason: nil,
-            researchSource: nil
+            researchSource: nil,
+            stage: nil,
+            progressText: nil,
+            elapsedMs: nil,
+            stepIndex: nil,
+            stepCount: nil,
+            partialFailures: nil
         ),
         workspaceEvidenceRefs: [],
         lanes: NewsMarketRadarLane.defaultLanes
@@ -982,6 +988,22 @@ struct NewsMarketRadarStatus: Codable, Hashable {
     let error: String?
     let reason: String?
     let researchSource: String?
+    let stage: String?
+    let progressText: String?
+    let elapsedMs: Int?
+    let stepIndex: Int?
+    let stepCount: Int?
+    let partialFailures: [NewsMarketRadarPartialFailure]?
+}
+
+struct NewsMarketRadarPartialFailure: Codable, Hashable, Identifiable {
+    let laneId: String
+    let laneTitle: String
+    let error: String
+
+    var id: String {
+        laneId
+    }
 }
 
 struct NewsMarketRadarLane: Codable, Hashable, Identifiable {

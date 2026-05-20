@@ -596,6 +596,9 @@ final class AgenticViewModel: ObservableObject {
     private var replacementSessionCreateInFlight = false
     private var latestCurriculumQuestionReframesByKey: [String: CurriculumQuestionReframeRecord] = [:]
     private var lastNewsMarketRadarViewedAt: Date?
+    #if DEBUG
+    private var didEmitUITestingNewsMarketRadarEvents = false
+    #endif
     /// Idempotency guard for the AI-driven Foundation Day 0/2-7 first prompt.
     /// Keyed by `"<sessionId>:day-<day>"` so the same opener is never injected
     /// twice for the same (session, day) pair, even if the sidecar replays
@@ -2152,17 +2155,233 @@ final class AgenticViewModel: ObservableObject {
 
     func prepareNewsMarketRadarForDisplay() {
         lastNewsMarketRadarViewedAt = Date()
+        #if DEBUG
+        if emitUITestingNewsMarketRadarEventsIfRequested() { return }
+        #endif
         requestNewsMarketRadar()
         guard shouldRefreshNewsMarketRadarForDisplay else { return }
         refreshNewsMarketRadar(reason: "daily", force: false)
     }
 
-    private var shouldRefreshNewsMarketRadarForDisplay: Bool {
-        if newsMarketRadar.status.state == "refreshing" { return false }
-        if newsMarketRadar.status.state == "failed",
-           ["exa_api_key_missing", "exa_mcp_missing"].contains(newsMarketRadar.status.reason ?? "") {
+    #if DEBUG
+    private func emitUITestingNewsMarketRadarEventsIfRequested() -> Bool {
+        guard CommandLine.arguments.contains("--ui-testing-stub-news-market-radar-events") else {
             return false
         }
+        guard !didEmitUITestingNewsMarketRadarEvents else {
+            return true
+        }
+        didEmitUITestingNewsMarketRadarEvents = true
+        let now = Date(timeIntervalSince1970: 1_779_238_800)
+        let later = now.addingTimeInterval(24 * 60 * 60)
+        let status = NewsMarketRadarStatus(
+            state: "refreshing",
+            lastSuccessAt: nil,
+            stale: false,
+            error: nil,
+            reason: "daily",
+            researchSource: "Codex Exa MCP",
+            stage: "running_provider_research",
+            progressText: "UI 테스트 리서치 갱신 중",
+            elapsedMs: 120,
+            stepIndex: 4,
+            stepCount: 6,
+            partialFailures: nil
+        )
+        handle(SidecarEvent(
+            type: "news_market_radar_status",
+            message: nil,
+            sessionId: nil,
+            messageId: nil,
+            delta: nil,
+            content: nil,
+            workspaceRoot: nil,
+            session: nil,
+            sessions: nil,
+            environment: nil,
+            diagnostics: nil,
+            bipCoach: nil,
+            bipSetupReady: nil,
+            day: nil,
+            firstPrompt: nil,
+            missingLocalDocs: nil,
+            missingExternalRequirements: nil,
+            nextIddDocumentType: nil,
+            nextIddDocumentTitle: nil,
+            bipSetupGateMessage: nil,
+            scanRoot: nil,
+            icp: nil,
+            spec: nil,
+            values: nil,
+            designSystem: nil,
+            adr: nil,
+            goal: nil,
+            docs: nil,
+            sheet: nil,
+            onboardingHypothesis: nil,
+            error: nil,
+            docType: nil,
+            docPath: nil,
+            progressText: nil,
+            notionConnected: nil,
+            success: nil,
+            disconnected: nil,
+            authUrl: nil,
+            rowId: nil,
+            status: nil,
+            detail: nil,
+            log: nil,
+            readinessError: nil,
+            bipTokenExpiredMessage: nil,
+            resourceName: nil,
+            resourceUrl: nil,
+            stage: nil,
+            provider: nil,
+            sheetRowsRead: nil,
+            docCharsRead: nil,
+            elapsedMs: nil,
+            phase: nil,
+            toolName: nil,
+            summary: nil,
+            items: nil,
+            result: nil,
+            weeklyRitualPrompt: nil,
+            requestEmit: nil,
+            newsMarketRadarStatus: status
+        ))
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            self.handle(SidecarEvent(
+                type: "news_market_radar_result",
+                message: nil,
+                sessionId: nil,
+                messageId: nil,
+                delta: nil,
+                content: nil,
+                workspaceRoot: nil,
+                session: nil,
+                sessions: nil,
+                environment: nil,
+                diagnostics: nil,
+                bipCoach: nil,
+                bipSetupReady: nil,
+                day: nil,
+                firstPrompt: nil,
+                missingLocalDocs: nil,
+                missingExternalRequirements: nil,
+                nextIddDocumentType: nil,
+                nextIddDocumentTitle: nil,
+                bipSetupGateMessage: nil,
+                scanRoot: nil,
+                icp: nil,
+                spec: nil,
+                values: nil,
+                designSystem: nil,
+                adr: nil,
+                goal: nil,
+                docs: nil,
+                sheet: nil,
+                onboardingHypothesis: nil,
+                error: nil,
+                docType: nil,
+                docPath: nil,
+                progressText: nil,
+                notionConnected: nil,
+                success: nil,
+                disconnected: nil,
+                authUrl: nil,
+                rowId: nil,
+                status: nil,
+                detail: nil,
+                log: nil,
+                readinessError: nil,
+                bipTokenExpiredMessage: nil,
+                resourceName: nil,
+                resourceUrl: nil,
+                stage: nil,
+                provider: nil,
+                sheetRowsRead: nil,
+                docCharsRead: nil,
+                elapsedMs: nil,
+                phase: nil,
+                toolName: nil,
+                summary: nil,
+                items: nil,
+                result: nil,
+                weeklyRitualPrompt: nil,
+                requestEmit: nil,
+                newsMarketRadar: NewsMarketRadarSnapshot(
+                    schemaVersion: 1,
+                    generatedAt: now,
+                    nextRefreshAfter: later,
+                    status: NewsMarketRadarStatus(
+                        state: "ready",
+                        lastSuccessAt: now,
+                        stale: false,
+                        error: nil,
+                        reason: "daily",
+                        researchSource: "Codex Exa MCP",
+                        stage: "saving_results",
+                        progressText: "UI 테스트 리서치 준비 완료",
+                        elapsedMs: 240,
+                        stepIndex: 6,
+                        stepCount: 6,
+                        partialFailures: [
+                            NewsMarketRadarPartialFailure(
+                                laneId: "problem",
+                                laneTitle: "문제",
+                                error: "UI 테스트 부분 실패"
+                            )
+                        ]
+                    ),
+                    workspaceEvidenceRefs: [],
+                    lanes: [
+                        NewsMarketRadarLane(
+                            id: "alternatives_pricing",
+                            title: "대안/가격",
+                            hypothesis: "이미 돈을 쓰는 대안과 가격 기준은 무엇인가",
+                            impact: "strengthens",
+                            confidence: "strong",
+                            cards: [
+                                NewsMarketRadarCard(
+                                    id: "ui-test-card",
+                                    title: "UI 테스트 리서치 결과",
+                                    summary: "뉴스 레퍼런스 화면이 열린 상태에서도 리서치 결과가 유지됩니다.",
+                                    impact: "strengthens",
+                                    confidence: "strong",
+                                    whyItMatters: "리서치 갱신 후에도 선택한 뉴스 라우트가 유지되는지 확인합니다.",
+                                    suggestedHypothesisUpdate: nil,
+                                    suggestedDocTargets: ["ICP.md"],
+                                    relatedDays: [2, 5],
+                                    relatedAnswerIds: ["ui-test-answer"],
+                                    sourceRefs: [
+                                        NewsMarketRadarSourceRef(
+                                            id: "ui-test-source",
+                                            sourceType: "web",
+                                            title: "Codex Exa MCP",
+                                            url: "https://example.com/radar",
+                                            domain: "example.com",
+                                            path: nil,
+                                            publishedAt: nil,
+                                            excerpt: "UI 테스트 출처"
+                                        ),
+                                    ],
+                                    evidenceStrength: "strong"
+                                ),
+                            ]
+                        ),
+                    ]
+                )
+            ))
+        }
+        return true
+    }
+    #endif
+
+    private var shouldRefreshNewsMarketRadarForDisplay: Bool {
+        if newsMarketRadar.status.state == "refreshing" { return false }
+        if newsMarketRadar.status.state == "stale" { return true }
+        if newsMarketRadar.status.state == "failed" { return true }
         guard let generatedAt = newsMarketRadar.generatedAt else { return true }
         return Date().timeIntervalSince(generatedAt) >= 24 * 60 * 60
     }
@@ -3234,7 +3453,13 @@ final class AgenticViewModel: ObservableObject {
                         stale: status.stale ?? newsMarketRadar.status.stale,
                         error: status.error ?? newsMarketRadar.status.error,
                         reason: status.reason,
-                        researchSource: status.researchSource ?? newsMarketRadar.status.researchSource
+                        researchSource: status.researchSource ?? newsMarketRadar.status.researchSource,
+                        stage: status.stage ?? newsMarketRadar.status.stage,
+                        progressText: status.progressText ?? newsMarketRadar.status.progressText,
+                        elapsedMs: status.elapsedMs ?? newsMarketRadar.status.elapsedMs,
+                        stepIndex: status.stepIndex ?? newsMarketRadar.status.stepIndex,
+                        stepCount: status.stepCount ?? newsMarketRadar.status.stepCount,
+                        partialFailures: status.partialFailures ?? newsMarketRadar.status.partialFailures
                     ),
                     workspaceEvidenceRefs: newsMarketRadar.workspaceEvidenceRefs,
                     lanes: newsMarketRadar.lanes

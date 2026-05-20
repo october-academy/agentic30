@@ -153,7 +153,10 @@ import { buildMiniActionSessionTriggerEvent } from "./adaptive-curriculum.mjs";
 import {
   appendCurriculumAnswer,
   buildExaMcpConfig,
+  buildNewsMarketRadarProgressStatus,
+  formatNewsMarketRadarProviderTimeout,
   loadNewsMarketRadarSnapshot,
+  normalizeNewsMarketRadarProviderTimeout,
   refreshNewsMarketRadar,
 } from "./news-market-radar.mjs";
 import {
@@ -248,6 +251,9 @@ const CHAT_BIP_EXTERNAL_DOC_MAX_CHARS = 12000;
 const CHAT_BIP_SHEET_MAX_ROWS = 25;
 const CHAT_BIP_EXTERNAL_CACHE_TTL_MS = 5 * 60 * 1000;
 const INSTANT_CHAT_COMPLETE_SLO_MS = 1_000;
+const NEWS_MARKET_RADAR_PROVIDER_TIMEOUT_MS = normalizeNewsMarketRadarProviderTimeout(
+  process.env.AGENTIC30_NEWS_MARKET_RADAR_PROVIDER_TIMEOUT_MS,
+);
 const REQUEST_EMIT_SCHEMA_VERSION = 1;
 const ALLOWED_REQUEST_EMIT_EVENTS = new Set([
   "workspace_setup_started",
@@ -270,6 +276,8 @@ const state = {
   workspaceOnboardingHypothesis: null,
   curriculumInlineHintState: {},
   newsMarketRadarRefreshPromise: null,
+  newsMarketRadarProgress: null,
+  newsMarketRadarProgressStartedAt: null,
   integrationSettings: {
     exaApiKey: "",
   },
@@ -1444,11 +1452,18 @@ async function handleClientMessage(socket, payload) {
         workspaceRoot,
         exaApiKey: currentExaApiKey(),
         exaConfigured: exaRoutes.length > 0,
+        exaResearchSource: exaRoutes[0]?.label || null,
       });
       send(socket, {
         type: "news_market_radar_result",
         newsMarketRadar: snapshot,
       });
+      if (state.newsMarketRadarRefreshPromise && state.newsMarketRadarProgress) {
+        send(socket, {
+          type: "news_market_radar_status",
+          status: state.newsMarketRadarProgress,
+        });
+      }
       return;
     }
     case "news_market_radar_refresh": {
@@ -6778,6 +6793,17 @@ function normalizeProviderName(value = "") {
   return ["claude", "codex", "gemini"].includes(provider) ? provider : "";
 }
 
+function newsMarketRadarProviderTimeoutError() {
+  return new Error(
+    `공개 근거 검색이 ${formatNewsMarketRadarProviderTimeout(NEWS_MARKET_RADAR_PROVIDER_TIMEOUT_MS)} 안에 끝나지 않았습니다`,
+  );
+}
+
+function isAbortLikeError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return error?.name === "AbortError" || message.includes("aborted") || message.includes("abort");
+}
+
 function scheduleNewsMarketRadarRefresh({
   reason = "manual",
   force = false,
@@ -6788,12 +6814,16 @@ function scheduleNewsMarketRadarRefresh({
     ? reason
     : "manual";
   if (state.newsMarketRadarRefreshPromise) {
-    const status = {
-      state: "refreshing",
-      stale: true,
-      error: null,
-      reason: normalizedReason,
-    };
+    const status = buildNewsMarketRadarProgressStatus(
+      state.newsMarketRadarProgress || { stale: true },
+      {
+        reason: normalizedReason,
+        stale: true,
+        startedAt: state.newsMarketRadarProgressStartedAt,
+        researchSource: state.newsMarketRadarProgress?.researchSource || null,
+      },
+    );
+    state.newsMarketRadarProgress = status;
     send(targetSocket, { type: "news_market_radar_status", status });
     return state.newsMarketRadarRefreshPromise;
   }
@@ -6804,6 +6834,8 @@ function scheduleNewsMarketRadarRefresh({
     targetSocket,
   }).finally(() => {
     state.newsMarketRadarRefreshPromise = null;
+    state.newsMarketRadarProgress = null;
+    state.newsMarketRadarProgressStartedAt = null;
   });
   state.newsMarketRadarRefreshPromise = promise;
   return promise;
@@ -6816,18 +6848,36 @@ async function runNewsMarketRadarRefresh({
   targetSocket = null,
 } = {}) {
   const startedAt = Date.now();
+  state.newsMarketRadarProgressStartedAt = startedAt;
   const exaApiKey = currentExaApiKey();
   const exaResearchRoutes = resolveNewsMarketRadarExaRoutes({ preferredProvider });
-  broadcast({
-    type: "news_market_radar_status",
-    status: {
-      state: "refreshing",
-      stale: false,
-      error: null,
+  const emitProgress = (progress = {}) => {
+    const status = buildNewsMarketRadarProgressStatus(progress, {
       reason,
+      startedAt,
       researchSource: exaResearchRoutes[0]?.label || null,
-    },
-  });
+    });
+    state.newsMarketRadarProgress = status;
+    broadcast({
+      type: "news_market_radar_status",
+      status,
+    });
+    return status;
+  };
+  const progressHeartbeat = setInterval(() => {
+    if (!state.newsMarketRadarProgress) return;
+    const status = buildNewsMarketRadarProgressStatus(state.newsMarketRadarProgress, {
+      reason,
+      startedAt,
+      researchSource: exaResearchRoutes[0]?.label || null,
+    });
+    state.newsMarketRadarProgress = status;
+    broadcast({
+      type: "news_market_radar_status",
+      status,
+    });
+  }, 1_000);
+  progressHeartbeat.unref?.();
   try {
     const snapshot = await refreshNewsMarketRadar({
       workspaceRoot,
@@ -6836,7 +6886,15 @@ async function runNewsMarketRadarRefresh({
       reason,
       force,
       onboardingHypothesis: state.workspaceOnboardingHypothesis,
-      providerResearcher: runNewsMarketRadarProviderResearch,
+      providerResearcher: (args) => runNewsMarketRadarProviderResearch({
+        ...args,
+        onProgress: emitProgress,
+      }),
+      providerSynthesizer: (args) => runNewsMarketRadarProviderSynthesis({
+        ...args,
+        preferredProvider,
+      }),
+      onProgress: emitProgress,
     });
     broadcast({
       type: "news_market_radar_result",
@@ -6862,7 +6920,9 @@ async function runNewsMarketRadarRefresh({
       workspaceRoot,
       exaApiKey,
       exaConfigured: exaResearchRoutes.length > 0,
+      exaResearchSource: exaResearchRoutes[0]?.label || null,
     });
+    const progress = state.newsMarketRadarProgress || {};
     const failed = {
       ...cached,
       status: {
@@ -6872,6 +6932,11 @@ async function runNewsMarketRadarRefresh({
         error: formatError(error),
         reason,
         researchSource: cached.status?.researchSource || exaResearchRoutes[0]?.label || null,
+        stage: progress.stage || null,
+        progressText: progress.progressText || null,
+        elapsedMs: Math.max(progress.elapsedMs || 0, Date.now() - startedAt),
+        stepIndex: progress.stepIndex || null,
+        stepCount: progress.stepCount || null,
       },
     };
     const payload = {
@@ -6881,6 +6946,8 @@ async function runNewsMarketRadarRefresh({
     if (targetSocket) send(targetSocket, payload);
     else broadcast(payload);
     return failed;
+  } finally {
+    clearInterval(progressHeartbeat);
   }
 }
 
@@ -6889,6 +6956,7 @@ async function runNewsMarketRadarProviderResearch({
   exaMcpConfig,
   exaResearchRoute,
   exaResearchRoutes = [],
+  onProgress = null,
 } = {}) {
   const providerErrors = [];
   const routes = normalizeNewsMarketRadarProviderRoutes({
@@ -6896,16 +6964,24 @@ async function runNewsMarketRadarProviderResearch({
     exaResearchRoute,
     exaResearchRoutes,
   });
-  for (const route of routes) {
+  for (const [routeIndex, route] of routes.entries()) {
     const provider = normalizeProviderName(route.provider);
     if (!provider) {
-      providerErrors.push(`${route.label || "Exa MCP"} unavailable: provider is not configured`);
+      providerErrors.push(`${route.label || "Exa MCP"} 사용 불가: provider가 설정되지 않았습니다`);
       continue;
     }
     const authState = getProviderAuthState(provider);
     if (!authState.available) {
-      providerErrors.push(`${providerLabel(provider)} unavailable: ${authState.message || authState.source || "not configured"}`);
+      providerErrors.push(`${providerLabel(provider)} 사용 불가: ${authState.message || authState.source || "설정되지 않음"}`);
       continue;
+    }
+    const routeLabel = route.label || `${providerLabel(provider)} Exa MCP`;
+    if (typeof onProgress === "function") {
+      onProgress({
+        stage: "running_provider_research",
+        progressText: `${routeLabel}로 공개 근거를 검색하는 중`,
+        researchSource: routeLabel,
+      });
     }
     try {
       const text = provider === "claude"
@@ -6920,11 +6996,53 @@ async function runNewsMarketRadarProviderResearch({
         exaResearchRoute: redactExaResearchRoute(route),
       };
     } catch (error) {
-      providerErrors.push(`${providerLabel(provider)} ${route.label || "Exa MCP"}: ${formatError(error)}`);
+      const formattedError = formatError(error);
+      providerErrors.push(`${routeLabel}: ${formattedError}`);
+      if (typeof onProgress === "function") {
+        const hasNextRoute = routeIndex < routes.length - 1;
+        onProgress({
+          stage: "running_provider_research",
+          progressText: hasNextRoute
+            ? `${routeLabel} 실패: ${formattedError}. 다음 Exa MCP 제공자를 확인하는 중`
+            : `${routeLabel} 실패: ${formattedError}`,
+          researchSource: routeLabel,
+        });
+      }
     }
   }
 
-  throw new Error(`No provider could complete Exa MCP research. ${providerErrors.join(" | ")}`);
+  throw new Error(`Exa MCP 리서치를 완료한 provider가 없습니다. ${providerErrors.join(" | ")}`);
+}
+
+async function runNewsMarketRadarProviderSynthesis({
+  prompt,
+  provider = "",
+  preferredProvider = "",
+} = {}) {
+  const preferred = normalizeProviderName(provider) || normalizeProviderName(preferredProvider);
+  const providerErrors = [];
+  for (const candidate of providerPriority(preferred)) {
+    const authState = getProviderAuthState(candidate);
+    if (!authState.available) {
+      providerErrors.push(`${providerLabel(candidate)} 합성 사용 불가: ${authState.message || authState.source || "설정되지 않음"}`);
+      continue;
+    }
+    try {
+      const text = candidate === "claude"
+        ? await runNewsMarketRadarClaudeSynthesis({ prompt })
+        : candidate === "gemini"
+          ? await runNewsMarketRadarGeminiSynthesis({ prompt })
+          : await runNewsMarketRadarCodexSynthesis({ prompt });
+      return {
+        text,
+        provider: candidate,
+        researchSource: `${providerLabel(candidate)} synthesis`,
+      };
+    } catch (error) {
+      providerErrors.push(`${providerLabel(candidate)} 합성 실패: ${formatError(error)}`);
+    }
+  }
+  throw new Error(`Market Radar 최종 합성을 완료한 provider가 없습니다. ${providerErrors.join(" | ")}`);
 }
 
 function normalizeNewsMarketRadarProviderRoutes({
@@ -6967,7 +7085,11 @@ async function runNewsMarketRadarClaudeResearch({
   const cliPath = path.join(packagePath, "cli.js");
   const env = buildClaudeAgentEnv();
   const abortController = new AbortController();
-  const timeout = setTimeout(() => abortController.abort(), 90_000);
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    abortController.abort();
+  }, NEWS_MARKET_RADAR_PROVIDER_TIMEOUT_MS);
   const options = {
     pathToClaudeCodeExecutable: cliPath,
     executable: process.execPath,
@@ -6982,6 +7104,7 @@ async function runNewsMarketRadarClaudeResearch({
     systemPrompt: [
       "You are a market research JSON generator for Agentic30.",
       "Use Exa MCP tools only for web research. Do not mutate files.",
+      "Write every user-facing JSON string in Korean unless it is a fixed enum/id/key, URL, domain, product name, plan name, or official source title.",
       "Return strict JSON only.",
     ].join("\n"),
   };
@@ -7001,6 +7124,64 @@ async function runNewsMarketRadarClaudeResearch({
       }
     }
     return text;
+  } catch (error) {
+    if (timedOut && isAbortLikeError(error)) {
+      throw newsMarketRadarProviderTimeoutError();
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function runNewsMarketRadarClaudeSynthesis({
+  prompt,
+} = {}) {
+  const packagePath = resolveInstalledPackageRoot("@anthropic-ai", "claude-agent-sdk");
+  const cliPath = path.join(packagePath, "cli.js");
+  const env = buildClaudeAgentEnv();
+  const abortController = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    abortController.abort();
+  }, NEWS_MARKET_RADAR_PROVIDER_TIMEOUT_MS);
+  const options = {
+    pathToClaudeCodeExecutable: cliPath,
+    executable: process.execPath,
+    env,
+    cwd: workspaceRoot,
+    maxTurns: 4,
+    includePartialMessages: false,
+    abortController,
+    systemPrompt: [
+      "You are a market research synthesis JSON generator for Agentic30.",
+      "Do not browse, search, fetch, call web tools, or mutate files.",
+      "Write every user-facing JSON string in Korean unless it is a fixed enum/id/key, URL, domain, product name, plan name, or official source title.",
+      "Return strict JSON only.",
+    ].join("\n"),
+  };
+  let text = "";
+  try {
+    const stream = query({ prompt, options });
+    for await (const event of stream) {
+      if (event.type === "assistant" && event.message?.content) {
+        for (const content of event.message.content) {
+          if (content.type === "text" && content.text) {
+            text += content.text;
+          }
+        }
+      }
+      if (event.type === "result" && event.result) {
+        text += `\n${event.result}`;
+      }
+    }
+    return text;
+  } catch (error) {
+    if (timedOut && isAbortLikeError(error)) {
+      throw newsMarketRadarProviderTimeoutError();
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
@@ -7011,7 +7192,11 @@ async function runNewsMarketRadarCodexResearch({
   exaMcpConfig,
 } = {}) {
   const abortController = new AbortController();
-  const timeout = setTimeout(() => abortController.abort(), 90_000);
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    abortController.abort();
+  }, NEWS_MARKET_RADAR_PROVIDER_TIMEOUT_MS);
   const codexEnv = buildCodexEnv();
   const apiKey = codexEnv.CODEX_API_KEY || codexEnv.OPENAI_API_KEY || "";
   const { Codex } = await import("@openai/codex-sdk");
@@ -7023,6 +7208,7 @@ async function runNewsMarketRadarCodexResearch({
       developer_instructions: [
         "You are a market research JSON generator for Agentic30.",
         "Use Exa MCP tools only for web research. Do not mutate files.",
+        "Write every user-facing JSON string in Korean unless it is a fixed enum/id/key, URL, domain, product name, plan name, or official source title.",
         "Return strict JSON only.",
       ].join("\n"),
       notify: [],
@@ -7062,6 +7248,78 @@ async function runNewsMarketRadarCodexResearch({
       }
     }
     return text;
+  } catch (error) {
+    if (timedOut && isAbortLikeError(error)) {
+      throw newsMarketRadarProviderTimeoutError();
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function runNewsMarketRadarCodexSynthesis({
+  prompt,
+} = {}) {
+  const abortController = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    abortController.abort();
+  }, NEWS_MARKET_RADAR_PROVIDER_TIMEOUT_MS);
+  const codexEnv = buildCodexEnv();
+  const apiKey = codexEnv.CODEX_API_KEY || codexEnv.OPENAI_API_KEY || "";
+  const { Codex } = await import("@openai/codex-sdk");
+  const codex = new Codex({
+    codexPathOverride: resolveCodexBinaryPath(),
+    env: codexEnv,
+    ...(apiKey ? { apiKey } : {}),
+    config: {
+      developer_instructions: [
+        "You are a market research synthesis JSON generator for Agentic30.",
+        "Do not browse, search, fetch, call web tools, or mutate files.",
+        "Write every user-facing JSON string in Korean unless it is a fixed enum/id/key, URL, domain, product name, plan name, or official source title.",
+        "Return strict JSON only.",
+      ].join("\n"),
+      notify: [],
+      features: {
+        computer_use: false,
+      },
+    },
+  });
+  const thread = codex.startThread({
+    model: resolveCodexModel(),
+    skipGitRepoCheck: true,
+    workingDirectory: workspaceRoot,
+    webSearchEnabled: false,
+    sandboxMode: "read-only",
+    approvalPolicy: "never",
+    modelReasoningEffort: "medium",
+  });
+  let text = "";
+  try {
+    const { events } = await thread.runStreamed(prompt, {
+      signal: abortController.signal,
+    });
+    for await (const event of events) {
+      if (
+        (event.type === "item.started" || event.type === "item.updated" || event.type === "item.completed")
+        && event.item?.type === "agent_message"
+        && typeof event.item.text === "string"
+      ) {
+        text = event.item.text;
+      } else if (event.type === "turn.failed") {
+        throw new Error(event.error?.message || "Codex SDK synthesis turn failed.");
+      } else if (event.type === "error") {
+        throw new Error(event.message || "Codex SDK emitted an error.");
+      }
+    }
+    return text;
+  } catch (error) {
+    if (timedOut && isAbortLikeError(error)) {
+      throw newsMarketRadarProviderTimeoutError();
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
@@ -7083,7 +7341,11 @@ async function runNewsMarketRadarGeminiResearch({
   });
   const transport = buildMcpClientTransport(exaMcpConfig);
   const abortController = new AbortController();
-  const timeout = setTimeout(() => abortController.abort(), 90_000);
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    abortController.abort();
+  }, NEWS_MARKET_RADAR_PROVIDER_TIMEOUT_MS);
   try {
     await client.connect(transport);
     const ai = useVertex
@@ -7100,6 +7362,7 @@ async function runNewsMarketRadarGeminiResearch({
         systemInstruction: [
           "You are a market research JSON generator for Agentic30.",
           "Use Exa MCP tools only for web research. Do not mutate files.",
+          "Write every user-facing JSON string in Korean unless it is a fixed enum/id/key, URL, domain, product name, plan name, or official source title.",
           "Return strict JSON only.",
         ].join("\n"),
         tools: [mcpToTool(client)],
@@ -7107,9 +7370,61 @@ async function runNewsMarketRadarGeminiResearch({
       abortSignal: abortController.signal,
     });
     return extractGeminiResponseText(response);
+  } catch (error) {
+    if (timedOut && isAbortLikeError(error)) {
+      throw newsMarketRadarProviderTimeoutError();
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
     await client.close().catch(() => {});
+  }
+}
+
+async function runNewsMarketRadarGeminiSynthesis({
+  prompt,
+} = {}) {
+  const env = buildGeminiEnv();
+  const useVertex = env.GOOGLE_GENAI_USE_VERTEXAI === "true" || env.GOOGLE_GENAI_USE_VERTEXAI === "1";
+  const apiKey = env.GEMINI_API_KEY || env.GOOGLE_API_KEY || "";
+  if (!useVertex && !apiKey) {
+    throw new Error("Gemini provider requires GOOGLE_API_KEY or GEMINI_API_KEY (or Vertex AI configuration).");
+  }
+  const abortController = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    abortController.abort();
+  }, NEWS_MARKET_RADAR_PROVIDER_TIMEOUT_MS);
+  try {
+    const ai = useVertex
+      ? new GoogleGenAI({
+          vertexai: true,
+          project: env.GOOGLE_CLOUD_PROJECT,
+          location: env.GOOGLE_CLOUD_LOCATION,
+        })
+      : new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: resolveGeminiModel(WORKSPACE_SCAN_GEMINI_MODEL),
+      contents: prompt,
+      config: {
+        systemInstruction: [
+          "You are a market research synthesis JSON generator for Agentic30.",
+          "Do not browse, search, fetch, call web tools, or mutate files.",
+          "Write every user-facing JSON string in Korean unless it is a fixed enum/id/key, URL, domain, product name, plan name, or official source title.",
+          "Return strict JSON only.",
+        ].join("\n"),
+      },
+      abortSignal: abortController.signal,
+    });
+    return extractGeminiResponseText(response);
+  } catch (error) {
+    if (timedOut && isAbortLikeError(error)) {
+      throw newsMarketRadarProviderTimeoutError();
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -7399,6 +7714,10 @@ function resolveCodexPlatformPackageName(targetTriple) {
 }
 
 function resolveInstalledPackageRoot(...segments) {
+  const bundledPath = path.resolve(sidecarRoot, "node_modules", ...segments);
+  if (fsSync.existsSync(bundledPath)) {
+    return bundledPath;
+  }
   return path.resolve(sidecarRoot, "..", "node_modules", ...segments);
 }
 

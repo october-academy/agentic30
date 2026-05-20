@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 
 export const EXA_MCP_PROVIDERS = Object.freeze(["codex", "claude", "gemini"]);
-export const EXA_MCP_URL = "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa";
+export const EXA_MCP_TOOLS = Object.freeze([
+  "web_search_advanced_exa",
+  "web_fetch_exa",
+]);
+export const EXA_MCP_URL = exaMcpUrlWithTools("https://mcp.exa.ai/mcp");
 
 const PROVIDER_LABELS = Object.freeze({
   codex: "Codex",
@@ -205,7 +209,7 @@ function normalizeMcpServerConfig(config = {}) {
     normalized.type = typeof config.type === "string" && config.type.trim()
       ? config.type.trim()
       : "http";
-    normalized.url = config.url.trim();
+    normalized.url = exaMcpUrlWithTools(config.url.trim());
   }
   if (typeof config.command === "string" && config.command.trim()) {
     if (typeof config.type === "string" && config.type.trim()) {
@@ -368,5 +372,22 @@ function hostFromUrl(rawUrl = "") {
     return rawUrl ? new URL(rawUrl).host : "";
   } catch {
     return "";
+  }
+}
+
+function exaMcpUrlWithTools(rawUrl = "") {
+  try {
+    const parsed = new URL(String(rawUrl || ""));
+    if (parsed.hostname.replace(/^www\./, "").toLowerCase() !== "mcp.exa.ai") return String(rawUrl || "");
+    if (parsed.pathname.replace(/\/+$/, "") !== "/mcp") return String(rawUrl || "");
+    const existingTools = (parsed.searchParams.get("tools") || "")
+      .split(",")
+      .map((tool) => tool.trim())
+      .filter(Boolean);
+    const tools = [...new Set([...existingTools, ...EXA_MCP_TOOLS])];
+    parsed.searchParams.set("tools", tools.join(","));
+    return parsed.toString().replace(/%2C/g, ",");
+  } catch {
+    return String(rawUrl || "");
   }
 }

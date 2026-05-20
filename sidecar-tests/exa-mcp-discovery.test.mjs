@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  EXA_MCP_URL,
   buildExaApiKeyRoute,
   discoverExaMcpRoutes,
   orderExaMcpRoutes,
@@ -56,7 +57,16 @@ test("discovers Exa MCP from Codex TOML, Claude JSON, and Gemini JSON", async ()
     assert.deepEqual(routes.map((route) => route.provider).sort(), ["claude", "codex", "gemini"]);
     assert.equal(routes.find((route) => route.provider === "codex").mcpConfig.headers["x-api-key"], "codex-secret");
     assert.equal(routes.find((route) => route.provider === "gemini").mcpConfig.env.EXA_API_KEY, "gemini-secret");
+    assert.match(routes.find((route) => route.provider === "codex").mcpConfig.url, /web_search_advanced_exa/);
+    assert.match(routes.find((route) => route.provider === "codex").mcpConfig.url, /web_fetch_exa/);
   });
+});
+
+test("EXA_API_KEY fallback enables advanced search and fetch tools", () => {
+  const route = buildExaApiKeyRoute({ apiKey: "exa_secret", provider: "codex" });
+  assert.equal(route.mcpConfig.url, EXA_MCP_URL);
+  assert.match(route.mcpConfig.url, /web_search_advanced_exa/);
+  assert.match(route.mcpConfig.url, /web_fetch_exa/);
 });
 
 test("orders discovered Exa routes by preferred provider", () => {

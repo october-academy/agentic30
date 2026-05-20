@@ -2578,9 +2578,11 @@ private struct NewsMarketRadarSidebarView: View {
                     .font(.system(size: 12, weight: .bold, design: .monospaced))
                     .foregroundStyle(OpenDesignDayColor.fg)
                 Spacer(minLength: 0)
-                Text(snapshot.statusLabel)
+                Text(newsStatusDisplayLabel(snapshot))
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundStyle(newsStatusTone(snapshot.status).color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
             }
 
             Button(action: openSearch) {
@@ -2683,29 +2685,35 @@ private struct NewsMarketRadarMainView: View {
                    snapshot.status.needsExaConfiguration,
                    snapshot.cardCount == 0 {
                     NewsMarketRadarNoExaRouteState(openSettings: openSettings)
-                } else if selectedLane.cards.isEmpty {
-                    NewsMarketRadarEmptyLane(lane: selectedLane, refresh: refresh)
                 } else {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack(spacing: 8) {
-                            Text(selectedLane.title)
-                                .font(.system(size: 18, weight: .bold, design: .rounded))
-                                .foregroundStyle(OpenDesignDayColor.fg)
-                            Text(selectedLane.confidence.uppercased())
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundStyle(newsConfidenceTone(selectedLane.confidence).color)
-                                .padding(.horizontal, 7)
-                                .frame(height: 20)
-                                .background(Capsule().fill(newsConfidenceTone(selectedLane.confidence).dim))
-                            Spacer(minLength: 0)
-                        }
-                        Text(selectedLane.hypothesis)
-                            .font(.system(size: 12.5, weight: .medium))
-                            .foregroundStyle(OpenDesignDayColor.muted)
-                            .fixedSize(horizontal: false, vertical: true)
+                    if snapshot.status.isRefreshing {
+                        NewsMarketRadarProgressState(snapshot: snapshot)
+                    }
 
-                        ForEach(selectedLane.cards) { card in
-                            NewsMarketRadarCardView(card: card)
+                    if !snapshot.status.isRefreshing, selectedLane.cards.isEmpty {
+                        NewsMarketRadarEmptyLane(lane: selectedLane, refresh: refresh)
+                    } else if !selectedLane.cards.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack(spacing: 8) {
+                                Text(selectedLane.title)
+                                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                                    .foregroundStyle(OpenDesignDayColor.fg)
+                                Text(newsConfidenceLabel(selectedLane.confidence))
+                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(newsConfidenceTone(selectedLane.confidence).color)
+                                    .padding(.horizontal, 7)
+                                    .frame(height: 20)
+                                    .background(Capsule().fill(newsConfidenceTone(selectedLane.confidence).dim))
+                                Spacer(minLength: 0)
+                            }
+                            Text(selectedLane.hypothesis)
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundStyle(OpenDesignDayColor.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            ForEach(selectedLane.cards) { card in
+                                NewsMarketRadarCardView(card: card)
+                            }
                         }
                     }
                 }
@@ -2727,19 +2735,28 @@ private struct NewsMarketRadarHeader: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("News Market Radar")
+                    Text("시장 리서치 레이더")
                         .font(.system(size: 26, weight: .bold, design: .rounded))
                         .foregroundStyle(OpenDesignDayColor.fg)
-                    Text("workspace evidence와 Day 답변을 기준으로 public market evidence를 묶어 보여줍니다.")
+                    Text("워크스페이스 근거와 일차 답변을 기준으로 공개 시장 근거를 묶어 보여줍니다.")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(OpenDesignDayColor.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
                 VStack(alignment: .trailing, spacing: 8) {
-                    newsPill(snapshot.statusLabel, tone: newsStatusTone(snapshot.status))
+                    newsPill(newsStatusDisplayLabel(snapshot), tone: newsStatusTone(snapshot.status))
                     HStack(spacing: 8) {
-                        OpenDesignNewsActionButton(icon: "arrow.clockwise", title: "새로고침", tone: .ghost, action: refresh)
+                        if snapshot.status.isRefreshing {
+                            NewsMarketRadarRunningIndicator(status: snapshot.status)
+                        } else {
+                            OpenDesignNewsActionButton(
+                                icon: "arrow.clockwise",
+                                title: "새로고침",
+                                tone: .ghost,
+                                action: refresh
+                            )
+                        }
                         if snapshot.status.needsExaConfiguration {
                             OpenDesignNewsActionButton(icon: "key.fill", title: "Exa 설정", tone: .accent, action: openSettings)
                         }
@@ -2748,13 +2765,35 @@ private struct NewsMarketRadarHeader: View {
             }
 
             HStack(spacing: 10) {
-                newsMetric("\(snapshot.cardCount)", "cards", tone: .accent)
-                newsMetric("\(snapshot.lanes.filter { !$0.cards.isEmpty }.count)", "lanes", tone: .sky)
-                newsMetric(snapshot.generatedAt.map(relativeNewsDate(_:)) ?? "never", "updated", tone: .muted)
+                newsMetric("\(snapshot.cardCount)", "카드", tone: .accent)
+                newsMetric("\(snapshot.lanes.filter { !$0.cards.isEmpty }.count)", "가정", tone: .sky)
+                newsMetric(snapshot.generatedAt.map(relativeNewsDate(_:)) ?? "없음", "갱신", tone: .muted)
             }
         }
         .padding(18)
         .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+    }
+}
+
+private struct NewsMarketRadarRunningIndicator: View {
+    let status: NewsMarketRadarStatus
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "play.circle.fill")
+                .font(.system(size: 11, weight: .bold))
+            Text("리서치 진행 중")
+            if let ordinal = status.progressOrdinal {
+                Text(ordinal)
+                    .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+            }
+        }
+        .font(.system(size: 11.5, weight: .bold))
+        .foregroundStyle(OpenDesignDayColor.sky)
+        .padding(.horizontal, 10)
+        .frame(height: 28)
+        .background(referenceRounded(fill: OpenDesignReferenceTone.sky.dim, stroke: OpenDesignReferenceTone.sky.line, radius: 8))
+        .accessibilityLabel("리서치 진행 중")
     }
 }
 
@@ -2769,7 +2808,7 @@ private struct NewsMarketRadarNoExaRouteState: View {
             Text("Exa MCP 연결이 필요합니다")
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundStyle(OpenDesignDayColor.fg)
-            Text("Market Radar는 Codex, Claude Code, Gemini에 연결된 Exa MCP를 우선 사용합니다. 없을 때만 Settings의 EXA_API_KEY fallback을 사용합니다.")
+            Text("리서치 레이더는 Codex, Claude Code, Gemini에 연결된 Exa MCP를 우선 사용합니다. 없을 때만 설정의 EXA_API_KEY 대체 경로를 사용합니다.")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(OpenDesignDayColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -2789,14 +2828,94 @@ private struct NewsMarketRadarEmptyLane: View {
             Text(lane.title)
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundStyle(OpenDesignDayColor.fg)
-            Text("아직 이 가정에 연결된 카드가 없습니다. 새로고침하면 workspace evidence와 Day 답변을 기준으로 Exa 리서치를 다시 실행합니다.")
+            Text("아직 이 가정에 연결된 카드가 없습니다. 새로고침하면 워크스페이스 근거와 일차 답변을 기준으로 Exa 리서치를 다시 실행합니다.")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(OpenDesignDayColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
-            OpenDesignNewsActionButton(icon: "arrow.clockwise", title: "리서치 실행", tone: .ghost, action: refresh)
+            OpenDesignNewsActionButton(icon: "play.fill", title: "리서치 실행", tone: .ghost, action: refresh)
         }
         .padding(18)
         .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+    }
+}
+
+private struct NewsMarketRadarProgressState: View {
+    let snapshot: NewsMarketRadarSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "play.circle.fill")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(OpenDesignDayColor.sky)
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 8) {
+                        Text(snapshot.status.progressTitle)
+                            .font(.system(size: 17, weight: .bold, design: .rounded))
+                            .foregroundStyle(OpenDesignDayColor.fg)
+                        if let ordinal = snapshot.status.progressOrdinal {
+                            newsPill(ordinal, tone: .sky)
+                        }
+                    }
+                    Text(snapshot.status.progressDetail)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                VStack(alignment: .trailing, spacing: 5) {
+                    if let elapsed = snapshot.status.elapsedLabel {
+                        newsPill(elapsed, tone: .muted)
+                    }
+                    if let researchSource = snapshot.status.researchSource?.nonEmpty {
+                        Text(researchSource)
+                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.sky)
+                            .lineLimit(1)
+                    }
+                }
+            }
+
+            NewsMarketRadarProgressChecklist(status: snapshot.status)
+        }
+        .padding(18)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.sky.opacity(0.36), radius: 10))
+    }
+}
+
+private struct NewsMarketRadarProgressChecklist: View {
+    let status: NewsMarketRadarStatus
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(newsMarketRadarProgressSteps) { step in
+                HStack(spacing: 8) {
+                    Image(systemName: icon(for: step))
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(tone(for: step).color)
+                        .frame(width: 16)
+                    Text(step.title)
+                        .font(.system(size: 11.5, weight: step.isCurrent(status) ? .bold : .medium))
+                        .foregroundStyle(step.isPending(status) ? OpenDesignDayColor.muted : OpenDesignDayColor.fgSecondary)
+                    Spacer(minLength: 0)
+                }
+                .frame(height: 22)
+            }
+        }
+        .padding(10)
+        .background(referenceRounded(fill: OpenDesignDayColor.bgDeep, stroke: OpenDesignDayColor.borderSoft, radius: 8))
+    }
+
+    private func icon(for step: NewsMarketRadarProgressStep) -> String {
+        if step.isComplete(status) { return "checkmark.circle.fill" }
+        if step.isCurrent(status) { return "play.circle.fill" }
+        return "circle"
+    }
+
+    private func tone(for step: NewsMarketRadarProgressStep) -> OpenDesignReferenceTone {
+        if step.isComplete(status) { return .accent }
+        if step.isCurrent(status) { return .sky }
+        return .muted
     }
 }
 
@@ -2821,7 +2940,7 @@ private struct NewsMarketRadarCardView: View {
                 Spacer(minLength: 10)
                 VStack(alignment: .trailing, spacing: 6) {
                     newsPill(newsImpactLabel(card.impact), tone: newsImpactTone(card.impact))
-                    newsPill(card.confidence.uppercased(), tone: newsConfidenceTone(card.confidence))
+                    newsPill(newsConfidenceLabel(card.confidence), tone: newsConfidenceTone(card.confidence))
                 }
             }
 
@@ -2834,9 +2953,9 @@ private struct NewsMarketRadarCardView: View {
 
             HStack(spacing: 6) {
                 ForEach((card.relatedDays ?? []).prefix(5), id: \.self) { day in
-                    newsPill("Day \(day)", tone: .sky)
+                    newsPill("\(day)일차", tone: .sky)
                 }
-                newsPill("\(card.sourceRefs.count) sources", tone: .muted)
+                newsPill("출처 \(card.sourceRefs.count)", tone: .muted)
                 Spacer(minLength: 0)
             }
 
@@ -2926,7 +3045,10 @@ private struct NewsMarketRadarMetaPanelView: View {
             VStack(alignment: .leading, spacing: 14) {
                 newsMetaTitle("Radar 상태")
                 VStack(alignment: .leading, spacing: 8) {
-                    newsMetaRow("상태", snapshot.statusLabel, tone: newsStatusTone(snapshot.status))
+                    newsMetaRow("상태", newsStatusDisplayLabel(snapshot), tone: newsStatusTone(snapshot.status))
+                    if snapshot.status.isRefreshing {
+                        NewsMarketRadarMetaProgress(status: snapshot.status)
+                    }
                     newsMetaRow("카드", "\(snapshot.cardCount)", tone: .accent)
                     newsMetaRow("마지막 성공", snapshot.status.lastSuccessAt.map(relativeNewsDate(_:)) ?? "없음", tone: .muted)
                     if let researchSource = snapshot.status.researchSource?.nonEmpty {
@@ -2934,6 +3056,15 @@ private struct NewsMarketRadarMetaPanelView: View {
                     }
                     if let error = snapshot.status.error?.nonEmpty {
                         Text(error)
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(OpenDesignDayColor.amber)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(10)
+                            .background(referenceRounded(fill: OpenDesignDayColor.amberDim, stroke: OpenDesignDayColor.amberLine, radius: 8))
+                    }
+                    if let partialFailures = snapshot.status.partialFailures,
+                       partialFailures.isEmpty == false {
+                        Text("일부 가정 리서치 실패: \(partialFailures.map(\.laneTitle).joined(separator: ", "))")
                             .font(.system(size: 11.5, weight: .medium))
                             .foregroundStyle(OpenDesignDayColor.amber)
                             .fixedSize(horizontal: false, vertical: true)
@@ -2961,6 +3092,37 @@ private struct NewsMarketRadarMetaPanelView: View {
             }
             .padding(14)
         }
+    }
+}
+
+private struct NewsMarketRadarMetaProgress: View {
+    let status: NewsMarketRadarStatus
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(status.progressTitle)
+                    .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Text(status.progressOrdinal ?? "진행 중")
+                    .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.sky)
+            }
+            Text(status.progressDetail)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            if let elapsed = status.elapsedLabel {
+                Text(elapsed)
+                    .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+            }
+            NewsMarketRadarProgressChecklist(status: status)
+        }
+        .padding(10)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.sky.opacity(0.36), radius: 8))
     }
 }
 
@@ -3009,6 +3171,44 @@ private func newsPill(_ text: String, tone: OpenDesignReferenceTone) -> some Vie
         .background(Capsule().fill(tone.dim).overlay(Capsule().stroke(tone.line, lineWidth: 1)))
 }
 
+private struct NewsMarketRadarProgressStep: Identifiable {
+    let id: String
+    let order: Int
+    let title: String
+    let fallbackDetail: String
+
+    func isCurrent(_ status: NewsMarketRadarStatus) -> Bool {
+        status.resolvedProgressStepIndex == order
+    }
+
+    func isComplete(_ status: NewsMarketRadarStatus) -> Bool {
+        guard let current = status.resolvedProgressStepIndex else { return false }
+        return order < current
+    }
+
+    func isPending(_ status: NewsMarketRadarStatus) -> Bool {
+        guard let current = status.resolvedProgressStepIndex else { return true }
+        return order > current
+    }
+}
+
+private let newsMarketRadarProgressSteps: [NewsMarketRadarProgressStep] = [
+    .init(id: "checking_exa_route", order: 1, title: "연결 확인", fallbackDetail: "Exa MCP 연결을 확인하는 중"),
+    .init(id: "loading_workspace_evidence", order: 2, title: "근거 수집", fallbackDetail: "워크스페이스 근거와 일차 답변을 읽는 중"),
+    .init(id: "building_research_prompt", order: 3, title: "질문 구성", fallbackDetail: "리서치 질문을 구성하는 중"),
+    .init(id: "running_provider_research", order: 4, title: "Exa 검색", fallbackDetail: "프로바이더 Exa MCP로 공개 근거를 검색하는 중"),
+    .init(id: "normalizing_cards", order: 5, title: "카드 정리", fallbackDetail: "근거를 가정별 카드로 정리하는 중"),
+    .init(id: "saving_results", order: 6, title: "저장", fallbackDetail: "리서치 결과를 로컬 캐시에 저장하는 중"),
+]
+
+private func newsStatusDisplayLabel(_ snapshot: NewsMarketRadarSnapshot) -> String {
+    guard snapshot.status.isRefreshing else { return snapshot.statusLabel }
+    if let ordinal = snapshot.status.progressOrdinal {
+        return "\(ordinal) \(snapshot.status.progressTitle)"
+    }
+    return "리서치 중"
+}
+
 private func newsImpactLabel(_ impact: String) -> String {
     switch impact {
     case "strengthens": return "강화"
@@ -3024,6 +3224,14 @@ private func newsImpactTone(_ impact: String) -> OpenDesignReferenceTone {
     case "weakens": return .rose
     case "mixed": return .amber
     default: return .muted
+    }
+}
+
+private func newsConfidenceLabel(_ confidence: String) -> String {
+    switch confidence {
+    case "strong": return "강함"
+    case "medium": return "보통"
+    default: return "약함"
     }
 }
 
@@ -3053,6 +3261,17 @@ private func relativeNewsDate(_ date: Date) -> String {
     return "\(Int(elapsed / 86_400))d"
 }
 
+private func newsElapsedLabel(_ elapsedMs: Int) -> String {
+    let seconds = max(0, elapsedMs / 1000)
+    if seconds < 60 { return "\(seconds)초 경과" }
+    let minutes = seconds / 60
+    let remainder = seconds % 60
+    if minutes < 60 {
+        return remainder == 0 ? "\(minutes)분 경과" : "\(minutes)분 \(remainder)초 경과"
+    }
+    return "\(minutes / 60)시간 경과"
+}
+
 private extension String {
     var nonEmpty: String? {
         trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : self
@@ -3060,8 +3279,52 @@ private extension String {
 }
 
 private extension NewsMarketRadarStatus {
+    var isRefreshing: Bool {
+        state == "refreshing"
+    }
+
     var needsExaConfiguration: Bool {
         ["exa_api_key_missing", "exa_mcp_missing"].contains(reason ?? "")
+    }
+
+    var resolvedProgressStep: NewsMarketRadarProgressStep? {
+        if let stage = stage?.nonEmpty,
+           let step = newsMarketRadarProgressSteps.first(where: { $0.id == stage }) {
+            return step
+        }
+        guard let index = resolvedProgressStepIndex else { return nil }
+        return newsMarketRadarProgressSteps.first(where: { $0.order == index })
+    }
+
+    var resolvedProgressStepIndex: Int? {
+        if let stepIndex,
+           stepIndex > 0 {
+            return stepIndex
+        }
+        guard let stage = stage?.nonEmpty else { return nil }
+        return newsMarketRadarProgressSteps.first(where: { $0.id == stage })?.order
+    }
+
+    var progressOrdinal: String? {
+        guard isRefreshing else { return nil }
+        let count = stepCount ?? newsMarketRadarProgressSteps.count
+        guard let index = resolvedProgressStepIndex,
+              count > 0
+        else { return nil }
+        return "\(index)/\(count)"
+    }
+
+    var progressTitle: String {
+        resolvedProgressStep?.title ?? "리서치 준비"
+    }
+
+    var progressDetail: String {
+        progressText?.nonEmpty ?? resolvedProgressStep?.fallbackDetail ?? "Market Radar 리서치를 준비하는 중"
+    }
+
+    var elapsedLabel: String? {
+        guard let elapsedMs else { return nil }
+        return newsElapsedLabel(elapsedMs)
     }
 }
 
@@ -3945,8 +4208,17 @@ private struct OpenDesignNewsActionButton: View {
     let icon: String
     let title: String
     let tone: Tone
+    let isDisabled: Bool
     let action: () -> Void
     @State private var isHovered = false
+
+    init(icon: String, title: String, tone: Tone, isDisabled: Bool = false, action: @escaping () -> Void) {
+        self.icon = icon
+        self.title = title
+        self.tone = tone
+        self.isDisabled = isDisabled
+        self.action = action
+    }
 
     var body: some View {
         Button(action: action) {
@@ -3956,20 +4228,35 @@ private struct OpenDesignNewsActionButton: View {
                 Text(title)
             }
             .font(.system(size: 11.5, weight: tone == .accent ? .semibold : .medium))
-            .foregroundStyle(tone == .accent ? OpenDesignDayColor.bgDeep : isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+            .foregroundStyle(foreground)
             .padding(.horizontal, tone == .accent ? 14 : 12)
             .frame(height: 28)
             .background(
                 referenceRounded(
-                    fill: tone == .accent ? (isHovered ? OpenDesignDayColor.accentStrong : OpenDesignDayColor.accent) : (isHovered ? OpenDesignDayColor.hover : Color.clear),
+                    fill: fill,
                     stroke: tone == .accent ? Color.clear : OpenDesignDayColor.borderSoft,
                     radius: 8
                 )
             )
         }
         .buttonStyle(.plain)
+        .disabled(isDisabled)
         .onHover { isHovered = $0 }
         .accessibilityLabel(title)
+    }
+
+    private var foreground: Color {
+        if isDisabled { return OpenDesignDayColor.mutedDeep }
+        if tone == .accent { return OpenDesignDayColor.bgDeep }
+        return isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary
+    }
+
+    private var fill: Color {
+        if isDisabled { return OpenDesignDayColor.bgDeep }
+        if tone == .accent {
+            return isHovered ? OpenDesignDayColor.accentStrong : OpenDesignDayColor.accent
+        }
+        return isHovered ? OpenDesignDayColor.hover : Color.clear
     }
 }
 

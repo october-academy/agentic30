@@ -5,16 +5,33 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  NEWS_MARKET_RADAR_LANE_CONCURRENCY,
+  NEWS_MARKET_RADAR_PROGRESS_STEPS,
+  NEWS_MARKET_RADAR_PROMPT_PROFILE,
   appendCurriculumAnswer,
+  buildMarketRadarResearchContext,
+  buildMarketRadarLaneResearchContext,
+  buildMarketRadarLaneProviderPrompt,
+  buildMarketRadarProviderPrompt,
+  canonicalMarketRadarSourceKey,
   buildExaMcpConfig,
+  buildNewsMarketRadarProgressStatus,
   collectWorkspaceEvidence,
+  formatNewsMarketRadarProviderTimeout,
   loadCurriculumAnswerLog,
+  loadNewsMarketRadarSnapshot,
+  normalizeNewsMarketRadarProviderTimeout,
   normalizeNewsMarketRadarSnapshot,
   rankAnswersForMarketRadar,
   refreshNewsMarketRadar,
   resolveCurriculumAnswerLogPath,
   resolveNewsMarketRadarCachePath,
 } from "../sidecar/news-market-radar.mjs";
+import {
+  MARKET_RADAR_TRUSTED_SOURCE_CATALOG,
+  annotateMarketRadarSourceTrust,
+  trustedSourcesForMarketRadarPrompt,
+} from "../sidecar/market-radar-source-catalog.mjs";
 
 async function withTmpWorkspace(fn) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-news-"));
@@ -23,6 +40,10 @@ async function withTmpWorkspace(fn) {
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
+}
+
+function countCards(snapshot) {
+  return (snapshot.lanes || []).reduce((sum, lane) => sum + (lane.cards || []).length, 0);
 }
 
 test("curriculum answer log stores Day 1-30 raw answers with 0o600 mode and prunes old records", async () => {
@@ -110,8 +131,228 @@ test("Exa MCP config is BYOK and redacts diagnostics by construction", () => {
   const config = buildExaMcpConfig("exa_test_key");
   assert.equal(config.type, "http");
   assert.match(config.url, /mcp\.exa\.ai/);
+  assert.match(config.url, /web_search_advanced_exa/);
+  assert.match(config.url, /web_fetch_exa/);
   assert.deepEqual(Object.keys(config.headers), ["x-api-key"]);
   assert.equal(config.headers["x-api-key"], "exa_test_key");
+});
+
+test("trusted source catalog includes required builder sources with lane fit and trust tiers", () => {
+  const requiredSources = [
+    ["posthog.com", "/handbook", "primary"],
+    ["paulgraham.com", "", "primary"],
+    ["ycombinator.com", "/library", "primary"],
+    ["lennysnewsletter.com", "", "practitioner"],
+    ["indiehackers.com", "", "community"],
+    ["levels.io", "", "primary"],
+  ];
+  for (const [domain, pathPrefix, trustTier] of requiredSources) {
+    const entry = MARKET_RADAR_TRUSTED_SOURCE_CATALOG.find((source) => (
+      source.domain === domain && source.pathPrefix === pathPrefix
+    ));
+    assert.ok(entry, `${domain}${pathPrefix} is present`);
+    assert.equal(entry.trustTier, trustTier);
+    assert.ok(entry.lanes.length > 0);
+  }
+
+  assert.equal(
+    annotateMarketRadarSourceTrust({ url: "https://posthog.com/handbook/strategy" }).trustTier,
+    "primary",
+  );
+  assert.equal(
+    annotateMarketRadarSourceTrust({ url: "https://indiehackers.com/post/pricing-test" }).trustTier,
+    "community",
+  );
+  assert.equal(
+    trustedSourcesForMarketRadarPrompt("channel").some((source) => source.domain === "producthunt.com"),
+    true,
+  );
+});
+
+test("provider prompt requires Korean user-facing Market Radar copy", () => {
+  const prompt = buildMarketRadarProviderPrompt({
+    productName: "AcmePilot",
+    selfReferenceProfile: {
+      productName: "AcmePilot",
+      terms: ["acmepilot"],
+      ownedDomains: ["acmepilot.io"],
+      githubRepoSlugs: ["example/acmepilot"],
+    },
+    searchExclusions: {
+      excludeDomains: ["acmepilot.io"],
+      excludeText: ["acmepilot"],
+      additionalQueries: ["AI customer discovery tools pricing"],
+    },
+    targetUser: "한국 1인 개발자",
+    lanes: [],
+  });
+
+  assert.match(prompt, /All user-facing prose in the JSON must be Korean/);
+  assert.match(prompt, /card title, summary, whyItMatters, suggestedHypothesisUpdate, and sourceRefs\.excerpt in Korean/);
+  assert.match(prompt, /짧은 한국어 신호 제목/);
+  assert.match(prompt, new RegExp(NEWS_MARKET_RADAR_PROMPT_PROFILE));
+  assert.match(prompt, /Self-source exclusion/);
+  assert.match(prompt, /web_search_advanced_exa/);
+  assert.match(prompt, /Context\.searchExclusions/);
+  assert.match(prompt, /excludeDomains/);
+  assert.match(prompt, /excludeText/);
+  assert.match(prompt, /additionalQueries/);
+  assert.match(prompt, /Do not search for the current product name/);
+  assert.match(prompt, /Context\.selfReferenceProfile/);
+  assert.match(prompt, /Trusted source policy/);
+  assert.match(prompt, /priority starting points, not a mandatory citation list or hard whitelist/);
+  assert.match(prompt, /Community-only sources/);
+  assert.match(prompt, /Subscription or paywalled sources/);
+  assert.doesNotMatch(prompt, /short signal title/);
+  assert.doesNotMatch(prompt, /1-3 sentence synthesis/);
+
+  const lanePrompt = buildMarketRadarLaneProviderPrompt({
+    lane: {
+      id: "alternatives_pricing",
+      title: "대안/가격",
+      hypothesis: "이미 돈을 쓰는 대안과 가격 기준은 무엇인가",
+    },
+  });
+  assert.match(lanePrompt, /Research only the single lane/);
+  assert.match(lanePrompt, /Never return more than 6 cards/);
+  assert.match(lanePrompt, /Self-source exclusion/);
+  assert.match(lanePrompt, /Context\.trustedSourceHints/);
+  assert.match(lanePrompt, /cannot make confidence strong/);
+});
+
+test("research context keeps the product name out of query seeds and records it as self-reference", () => {
+  const context = buildMarketRadarResearchContext({
+    workspaceRoot: "/tmp/acmepilot-public",
+    workspaceEvidence: {
+      onboardingHypothesis: {
+        productName: "AcmePilot",
+        targetUser: "한국 1인 개발자",
+      },
+      evidence: [{
+        id: "readme:README.md",
+        role: "readme",
+        path: "README.md",
+        title: "README.md",
+        excerpt: [
+          "# AcmePilot",
+          "AI customer discovery workspace.",
+          "Homepage: https://acmepilot.io",
+          "Repository: https://github.com/example/acmepilot",
+        ].join("\n"),
+      }],
+    },
+    answers: [{
+      id: "pricing",
+      day: 27,
+      dimension: "pricing",
+      questionTitle: "가격 기준",
+      answerTitle: "ShipFast, Agentfounder 같은 유료 대안",
+      freeformAnswer: "AcmePilot 자체 가격이 아니라 외부 대안 가격을 봅니다.",
+      occurredAt: "2026-05-20T00:00:00.000Z",
+      marketRadarWeight: 4,
+    }],
+    now: new Date("2026-05-20T00:00:00.000Z"),
+  });
+
+  assert.equal(context.productName, "AcmePilot");
+  assert.ok(context.selfReferenceProfile.terms.includes("acmepilot"));
+  assert.ok(context.selfReferenceProfile.ownedDomains.includes("acmepilot.io"));
+  assert.ok(context.selfReferenceProfile.githubRepoSlugs.includes("example/acmepilot"));
+  assert.doesNotMatch(context.querySeeds.join(" "), /AcmePilot/i);
+  assert.deepEqual(context.searchExclusions.excludeDomains, ["acmepilot.io"]);
+  assert.equal(context.searchExclusions.excludeText.length, 1);
+  assert.match(context.searchExclusions.excludeText[0], /acmepilot/i);
+  assert.doesNotMatch(context.searchExclusions.additionalQueries.join(" "), /AcmePilot/i);
+});
+
+test("trusted source hints are lane-specific and still respect self-source exclusion", () => {
+  const context = buildMarketRadarResearchContext({
+    workspaceRoot: "/tmp/acmepilot-public",
+    workspaceEvidence: {
+      onboardingHypothesis: {
+        productName: "AcmePilot",
+        targetUser: "한국 1인 개발자",
+      },
+      evidence: [{
+        id: "readme:README.md",
+        role: "readme",
+        path: "README.md",
+        title: "README.md",
+        excerpt: "# AcmePilot\nHomepage: https://acmepilot.io",
+      }],
+    },
+    answers: [{
+      id: "icp",
+      day: 1,
+      dimension: "icp",
+      questionTitle: "누가 절박한가",
+      answerTitle: "AcmePilot을 만드는 한국 1인 개발자가 아니라, 유료 AI 도구를 이미 쓰는 1인 빌더",
+      occurredAt: "2026-05-20T00:00:00.000Z",
+      marketRadarWeight: 4,
+    }],
+    now: new Date("2026-05-20T00:00:00.000Z"),
+  });
+  const laneContext = buildMarketRadarLaneResearchContext(context, "channel");
+
+  assert.equal(laneContext.trustedSourceHints.mode, "priority_seed_not_whitelist");
+  assert.equal(
+    laneContext.trustedSourceHints.sources.some((source) => (
+      source.domain === "ycombinator.com" && source.pathPrefix === "/library"
+    )),
+    true,
+  );
+  assert.equal(
+    laneContext.trustedSourceHints.sources.some((source) => source.domain === "paulgraham.com"),
+    true,
+  );
+  assert.equal(
+    laneContext.trustedSourceHints.sources.some((source) => source.domain === "lennysnewsletter.com"),
+    true,
+  );
+  assert.ok(laneContext.trustedSourceHints.queries.some((query) => /site:ycombinator\.com\/library/.test(query)));
+  assert.doesNotMatch(laneContext.trustedSourceHints.queries.join(" "), /AcmePilot/i);
+  assert.doesNotMatch(laneContext.searchExclusions.additionalQueries.join(" "), /AcmePilot/i);
+
+  const prompt = buildMarketRadarLaneProviderPrompt(laneContext);
+  assert.match(prompt, /posthog\.com/);
+  assert.match(prompt, /paulgraham\.com/);
+  assert.match(prompt, /ycombinator\.com/);
+  assert.match(prompt, /lennysnewsletter\.com/);
+  assert.match(prompt, /indiehackers\.com/);
+  assert.match(prompt, /levels\.io/);
+});
+
+test("news market radar self-source logic does not hard-code dogfood product literals", async () => {
+  const source = await fs.readFile(new URL("../sidecar/news-market-radar.mjs", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /agentic30\.app/i);
+  assert.doesNotMatch(source, /october-academy\/agentic30/i);
+  assert.doesNotMatch(source, /selfReferenceTermsMatch\(["']agentic30/i);
+});
+
+test("provider timeout is long enough for Exa research and has a user-readable label", () => {
+  assert.equal(normalizeNewsMarketRadarProviderTimeout(""), 240_000);
+  assert.equal(normalizeNewsMarketRadarProviderTimeout("1000"), 30_000);
+  assert.equal(normalizeNewsMarketRadarProviderTimeout("900000"), 600_000);
+  assert.equal(formatNewsMarketRadarProviderTimeout(240_000), "4m");
+  assert.equal(formatNewsMarketRadarProviderTimeout(45_000), "45s");
+});
+
+test("progress status recomputes elapsed from refresh start for heartbeat updates", () => {
+  const status = buildNewsMarketRadarProgressStatus({
+    stage: "running_provider_research",
+    progressText: "Codex Exa MCP로 공개 근거를 검색하는 중",
+    elapsedMs: 0,
+    researchSource: "Codex Exa MCP",
+  }, {
+    reason: "manual",
+    startedAt: 1_000,
+    nowMs: 12_500,
+  });
+
+  assert.equal(status.elapsedMs, 11_500);
+  assert.equal(status.stepIndex, 4);
+  assert.equal(status.stepCount, NEWS_MARKET_RADAR_PROGRESS_STEPS.length);
+  assert.equal(status.researchSource, "Codex Exa MCP");
 });
 
 test("snapshot normalization requires two independent domains for strong evidence", () => {
@@ -149,6 +390,279 @@ test("snapshot normalization requires two independent domains for strong evidenc
   assert.equal(twoSources.lanes.find((lane) => lane.id === "alternatives_pricing").cards[0].confidence, "strong");
 });
 
+test("community-only evidence cannot produce strong confidence", () => {
+  const snapshot = normalizeNewsMarketRadarSnapshot({
+    generatedAt: "2026-05-20T00:00:00.000Z",
+    lanes: [{
+      id: "channel",
+      cards: [{
+        id: "community-only",
+        title: "커뮤니티 반응만으로는 강한 근거가 아닙니다",
+        summary: "두 커뮤니티 출처가 있어도 보강 근거가 필요합니다.",
+        impact: "strengthens",
+        confidence: "strong",
+        sourceRefs: [
+          { url: "https://indiehackers.com/post/pricing-test", title: "Pricing test" },
+          { url: "https://news.ycombinator.com/show/item?id=1", title: "Show HN" },
+        ],
+      }],
+    }],
+  }, { now: new Date("2026-05-20T00:00:00.000Z") });
+
+  assert.equal(snapshot.lanes.find((lane) => lane.id === "channel").cards[0].confidence, "medium");
+});
+
+test("trusted-source reranking prefers primary corroborated evidence over generic sources", () => {
+  const snapshot = normalizeNewsMarketRadarSnapshot({
+    generatedAt: "2026-05-20T00:00:00.000Z",
+    lanes: [{
+      id: "alternatives_pricing",
+      cards: [
+        {
+          id: "generic",
+          title: "일반 블로그 가격 글",
+          summary: "일반 출처의 가격 글입니다.",
+          impact: "strengthens",
+          sourceRefs: [
+            { url: "https://random-seo.example/pricing-tools", title: "Pricing tools" },
+            { url: "https://another-random.example/reviews", title: "Reviews" },
+          ],
+        },
+        {
+          id: "trusted",
+          title: "신뢰 출처가 가격 기준을 보강합니다",
+          summary: "공신력 있는 SaaS 벤치마크와 운영 글이 함께 가격 기준을 보여줍니다.",
+          impact: "strengthens",
+          sourceRefs: [
+            {
+              url: "https://posthog.com/handbook/strategy/pricing",
+              title: "PostHog pricing strategy",
+              publishedAt: "2026-01-01T00:00:00.000Z",
+            },
+            {
+              url: "https://chartmogul.com/insights/saas-pricing",
+              title: "SaaS pricing benchmarks",
+              publishedAt: "2026-02-01T00:00:00.000Z",
+            },
+          ],
+        },
+      ],
+    }],
+  }, { now: new Date("2026-05-20T00:00:00.000Z") });
+
+  const cards = snapshot.lanes.find((lane) => lane.id === "alternatives_pricing").cards;
+  assert.equal(cards[0].id, "trusted");
+  assert.equal(cards[0].confidence, "strong");
+});
+
+test("snapshot normalization removes dynamic self-sources and drops self-only cards", () => {
+  const snapshot = normalizeNewsMarketRadarSnapshot({
+    generatedAt: "2026-05-20T00:00:00.000Z",
+    lanes: [{
+      id: "alternatives_pricing",
+      cards: [
+        {
+          id: "self-home",
+          title: "AcmePilot 홈페이지는 시장 근거가 아닙니다",
+          summary: "자기 제품 페이지입니다.",
+          impact: "unknown",
+          sourceRefs: [{
+            url: "https://acmepilot.io",
+            title: "AcmePilot - AI customer discovery workspace",
+            excerpt: "AcmePilot은 AI customer discovery workspace입니다.",
+          }],
+        },
+        {
+          id: "self-github",
+          title: "GitHub 자기 저장소도 제외합니다",
+          summary: "자기 제품 저장소입니다.",
+          impact: "unknown",
+          sourceRefs: [{
+            url: "https://github.com/example/acmepilot",
+            title: "GitHub - example/acmepilot",
+            excerpt: "AcmePilot repository.",
+          }],
+        },
+        {
+          id: "self-listing",
+          title: "외부 listing의 자기 제품도 제외합니다",
+          summary: "자기 제품 listing입니다.",
+          impact: "unknown",
+          sourceRefs: [{
+            url: "https://launchlist.dev/products/acmepilot",
+            title: "AcmePilot | LaunchList",
+            excerpt: "LaunchList에는 AcmePilot 가격이 Subscription $99/month로 표시되어 있습니다.",
+          }],
+        },
+        {
+          id: "mixed-one",
+          title: "외부 대안 하나만 남으면 약한 근거입니다",
+          summary: "Self-source 제거 후 독립 도메인이 하나만 남습니다.",
+          impact: "strengthens",
+          confidence: "strong",
+          sourceRefs: [
+            {
+              url: "https://launchlist.dev/products/acmepilot",
+              title: "AcmePilot | LaunchList",
+              excerpt: "AcmePilot 가격 페이지입니다.",
+            },
+            {
+              url: "https://shipfa.st",
+              title: "Launch Your Startup in Days, Not Weeks | ShipFast",
+              excerpt: "ShipFast는 Starter $199, All-in $249를 전면에 둡니다.",
+            },
+          ],
+        },
+        {
+          id: "mixed-two",
+          title: "외부 대안 두 개는 유지합니다",
+          summary: "Self-source 제거 후에도 두 독립 도메인이 남습니다.",
+          impact: "strengthens",
+          confidence: "strong",
+          sourceRefs: [
+            {
+              url: "https://acmepilot.io/pricing",
+              title: "AcmePilot pricing",
+              excerpt: "AcmePilot 자기 가격입니다.",
+            },
+            {
+              url: "https://agentfounder.ai/pricing",
+              title: "Pricing - Agentfounder",
+              excerpt: "Agentfounder는 $299/month 또는 $2,399/year를 제시합니다.",
+            },
+            {
+              url: "https://custdev.app",
+              title: "CustDev.app - AI Agent Swarm for Customer Discovery",
+              excerpt: "CustDev.app은 solo founders용 $49/month와 teams용 $199/month를 제시합니다.",
+            },
+          ],
+        },
+      ],
+    }],
+  }, {
+    now: new Date("2026-05-20T00:00:00.000Z"),
+    selfReferenceProfile: {
+      productName: "AcmePilot",
+      workspaceBasename: "acmepilot-public",
+      ownedDomains: ["acmepilot.io"],
+      githubRepoSlugs: ["example/acmepilot"],
+    },
+  });
+
+  const cards = snapshot.lanes.find((lane) => lane.id === "alternatives_pricing").cards;
+  assert.deepEqual(cards.map((card) => card.id).sort(), ["mixed-one", "mixed-two"]);
+  const mixedOne = cards.find((card) => card.id === "mixed-one");
+  const mixedTwo = cards.find((card) => card.id === "mixed-two");
+  assert.deepEqual(mixedOne.sourceRefs.map((source) => source.domain), ["shipfa.st"]);
+  assert.equal(mixedOne.confidence, "weak");
+  assert.deepEqual(mixedTwo.sourceRefs.map((source) => source.domain), ["agentfounder.ai", "custdev.app"]);
+  assert.equal(mixedTwo.confidence, "strong");
+  assert.equal(
+    cards.some((card) => card.sourceRefs.some((source) => ["acmepilot.io", "github.com", "launchlist.dev"].includes(source.domain))),
+    false,
+  );
+});
+
+test("legacy EXA_API_KEY missing cache is non-blocking when provider Exa MCP exists", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.dirname(resolveNewsMarketRadarCachePath(root)), { recursive: true });
+    await fs.writeFile(resolveNewsMarketRadarCachePath(root), JSON.stringify({
+      schemaVersion: 1,
+      updatedAt: "2026-05-20T00:00:00.000Z",
+      snapshot: {
+        schemaVersion: 1,
+        generatedAt: "2026-05-20T00:00:00.000Z",
+        nextRefreshAfter: "2026-05-21T00:00:00.000Z",
+        status: {
+          state: "failed",
+          lastSuccessAt: null,
+          stale: true,
+          error: "EXA_API_KEY is not configured.",
+          reason: "exa_api_key_missing",
+        },
+        lanes: [{
+          id: "icp",
+          cards: [{
+            id: "legacy-card",
+            title: "Legacy card",
+            summary: "Old cache content is preserved while the status is normalized.",
+            impact: "unknown",
+            sourceRefs: [{ url: "https://example.com/old", title: "Old" }],
+          }],
+        }],
+      },
+    }));
+
+    const withProviderMcp = await loadNewsMarketRadarSnapshot({
+      workspaceRoot: root,
+      exaConfigured: true,
+      exaResearchSource: "Codex Exa MCP",
+      now: new Date("2026-05-20T01:00:00.000Z"),
+    });
+    assert.equal(withProviderMcp.status.state, "stale");
+    assert.equal(withProviderMcp.status.reason, "prompt_profile_changed");
+    assert.equal(withProviderMcp.status.error, null);
+    assert.equal(withProviderMcp.status.researchSource, "Codex Exa MCP");
+    assert.equal(withProviderMcp.lanes.find((lane) => lane.id === "icp").cards.length, 1);
+
+    const withoutRoute = await loadNewsMarketRadarSnapshot({
+      workspaceRoot: root,
+      now: new Date("2026-05-20T01:00:00.000Z"),
+    });
+    assert.equal(withoutRoute.status.state, "failed");
+    assert.equal(withoutRoute.status.reason, "exa_mcp_missing");
+    assert.equal(withoutRoute.status.error, "Exa MCP is not configured.");
+    assert.equal(withoutRoute.status.researchSource, null);
+  });
+});
+
+test("old Market Radar prompt profile cache is marked stale when Exa is configured", async () => {
+  await withTmpWorkspace(async (root) => {
+    assert.equal(NEWS_MARKET_RADAR_PROMPT_PROFILE, "ko_market_radar_v4_trusted_sources_no_self_sources");
+    await fs.mkdir(path.dirname(resolveNewsMarketRadarCachePath(root)), { recursive: true });
+    await fs.writeFile(resolveNewsMarketRadarCachePath(root), JSON.stringify({
+      schemaVersion: 1,
+      updatedAt: "2026-05-20T00:00:00.000Z",
+      snapshot: {
+        schemaVersion: 1,
+        promptProfile: "ko_market_radar_v3_dynamic_no_self_sources",
+        generatedAt: "2026-05-20T00:00:00.000Z",
+        nextRefreshAfter: "2026-05-21T00:00:00.000Z",
+        status: {
+          state: "ready",
+          lastSuccessAt: "2026-05-20T00:00:00.000Z",
+          stale: false,
+          reason: "manual",
+        },
+        lanes: [{
+          id: "problem",
+          cards: [{
+            id: "old-profile",
+            title: "Old profile card",
+            summary: "Old profile cache should be refreshed.",
+            impact: "strengthens",
+            sourceRefs: [
+              { url: "https://example.com/a", title: "A" },
+              { url: "https://other.example/b", title: "B" },
+            ],
+          }],
+        }],
+      },
+    }));
+
+    const snapshot = await loadNewsMarketRadarSnapshot({
+      workspaceRoot: root,
+      exaConfigured: true,
+      exaResearchSource: "Codex Exa MCP",
+      now: new Date("2026-05-20T01:00:00.000Z"),
+    });
+
+    assert.equal(snapshot.status.state, "stale");
+    assert.equal(snapshot.status.reason, "prompt_profile_changed");
+    assert.equal(snapshot.status.error, null);
+  });
+});
+
 test("refresh persists provider result and missing Exa route returns stale cached state", async () => {
   await withTmpWorkspace(async (root) => {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
@@ -164,8 +678,8 @@ test("refresh persists provider result and missing Exa route returns stale cache
           id: "icp",
           cards: [{
             id: "card-1",
-            title: "Paid tool spend",
-            summary: "Solo developers pay for coding tools.",
+            title: "1인 개발자는 이미 코딩 도구에 돈을 씁니다",
+            summary: "코딩 도구 결제가 대안 가격 기준을 만듭니다.",
             impact: "strengthens",
             sourceRefs: [
               { url: "https://example.com/pricing", title: "Pricing" },
@@ -201,6 +715,7 @@ test("refresh uses provider Exa MCP route without requiring EXA_API_KEY", async 
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
     await fs.writeFile(path.join(root, "docs", "ICP.md"), "# ICP\nsolo devs");
     let observedRoute = null;
+    const progressStages = [];
     const snapshot = await refreshNewsMarketRadar({
       workspaceRoot: root,
       force: true,
@@ -234,13 +749,251 @@ test("refresh uses provider Exa MCP route without requiring EXA_API_KEY", async 
           }],
         };
       },
+      onProgress: (progress) => {
+        progressStages.push(progress.stage);
+      },
     });
 
     assert.equal(observedRoute.exaApiKeyConfigured, false);
-    assert.equal(observedRoute.exaMcpConfig.url, "https://mcp.exa.ai/mcp");
+    assert.match(observedRoute.exaMcpConfig.url, /web_search_advanced_exa/);
+    assert.match(observedRoute.exaMcpConfig.url, /web_fetch_exa/);
     assert.equal(observedRoute.exaResearchRoute.label, "Codex Exa MCP");
     assert.equal(snapshot.status.state, "ready");
     assert.equal(snapshot.status.researchSource, "Codex Exa MCP");
     assert.equal(snapshot.lanes.find((lane) => lane.id === "icp").cards.length, 1);
+    assert.ok(progressStages.includes("running_provider_research"));
+  });
+});
+
+test("refresh runs five Market Radar lane jobs concurrently", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, "docs", "ICP.md"), "# ICP\nsolo devs");
+    let active = 0;
+    let maxActive = 0;
+    const startedLaneIds = [];
+    const snapshot = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      force: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [{
+        provider: "codex",
+        source: "provider_mcp",
+        label: "Codex Exa MCP",
+        serverName: "exa",
+        mcpConfig: {
+          type: "http",
+          url: "https://mcp.exa.ai/mcp",
+        },
+      }],
+      providerResearcher: async ({ laneId }) => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        startedLaneIds.push(laneId);
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        active -= 1;
+        return {
+          lane: {
+            id: laneId,
+            cards: [{
+              id: `${laneId}-card`,
+              title: `${laneId} 한국어 신호`,
+              summary: "병렬 리서치 결과입니다.",
+              impact: "strengthens",
+              sourceRefs: [
+                { url: `https://example.com/${laneId}`, title: "A" },
+                { url: `https://other.example/${laneId}`, title: "B" },
+              ],
+            }],
+          },
+        };
+      },
+      providerSynthesizer: async ({ candidateSnapshot }) => candidateSnapshot,
+    });
+
+    assert.equal(maxActive, NEWS_MARKET_RADAR_LANE_CONCURRENCY);
+    assert.equal(new Set(startedLaneIds).size, NEWS_MARKET_RADAR_LANE_CONCURRENCY);
+    assert.equal(snapshot.status.state, "ready");
+    assert.equal(countCards(snapshot), NEWS_MARKET_RADAR_LANE_CONCURRENCY);
+  });
+});
+
+test("refresh keeps successful lanes ready when some lane research fails", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, "docs", "ICP.md"), "# ICP\nsolo devs");
+    const failingLaneIds = new Set(["problem", "channel"]);
+    const snapshot = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      force: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [{
+        provider: "codex",
+        source: "provider_mcp",
+        label: "Codex Exa MCP",
+        serverName: "exa",
+        mcpConfig: {
+          type: "http",
+          url: "https://mcp.exa.ai/mcp",
+        },
+      }],
+      providerResearcher: async ({ laneId }) => {
+        if (failingLaneIds.has(laneId)) throw new Error(`${laneId} failed`);
+        return {
+          lane: {
+            id: laneId,
+            cards: [{
+              id: `${laneId}-card`,
+              title: `${laneId} 한국어 신호`,
+              summary: "성공한 가설 리서치 결과입니다.",
+              impact: "strengthens",
+              sourceRefs: [
+                { url: `https://example.com/${laneId}`, title: "A" },
+                { url: `https://other.example/${laneId}`, title: "B" },
+              ],
+            }],
+          },
+        };
+      },
+      providerSynthesizer: async ({ candidateSnapshot }) => candidateSnapshot,
+    });
+
+    assert.equal(snapshot.status.state, "ready");
+    assert.equal(snapshot.status.partialFailures.length, 2);
+    assert.deepEqual(snapshot.status.partialFailures.map((failure) => failure.laneId).sort(), ["channel", "problem"]);
+    assert.equal(snapshot.lanes.find((lane) => lane.id === "problem").cards.length, 0);
+    assert.equal(snapshot.lanes.find((lane) => lane.id === "icp").cards.length, 1);
+  });
+});
+
+test("snapshot normalization dedupes cards by canonical source URL", () => {
+  assert.equal(
+    canonicalMarketRadarSourceKey({ url: "https://Example.com/pricing/?utm_source=x&ref=y#plans" }),
+    canonicalMarketRadarSourceKey({ url: "https://example.com/pricing" }),
+  );
+  const snapshot = normalizeNewsMarketRadarSnapshot({
+    generatedAt: "2026-05-20T00:00:00.000Z",
+    lanes: [{
+      id: "alternatives_pricing",
+      cards: [
+        {
+          id: "a",
+          title: "가격 기준이 이미 있습니다",
+          summary: "첫 번째 카드입니다.",
+          impact: "strengthens",
+          sourceRefs: [{ url: "https://example.com/pricing?utm_source=test#plans", title: "Pricing" }],
+        },
+        {
+          id: "b",
+          title: "가격 기준이 이미 있습니다",
+          summary: "두 번째 카드가 같은 URL 근거를 보강합니다.",
+          impact: "strengthens",
+          sourceRefs: [{ url: "https://example.com/pricing", title: "Pricing" }],
+        },
+      ],
+    }],
+  }, { now: new Date("2026-05-20T00:00:00.000Z") });
+
+  const cards = snapshot.lanes.find((lane) => lane.id === "alternatives_pricing").cards;
+  assert.equal(cards.length, 1);
+  assert.match(cards[0].summary, /두 번째/);
+  assert.equal(cards[0].sourceRefs.length, 1);
+});
+
+test("refresh falls back to deterministic merge when final synthesis fails", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, "docs", "ICP.md"), "# ICP\nsolo devs");
+    const snapshot = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      force: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [{
+        provider: "codex",
+        source: "provider_mcp",
+        label: "Codex Exa MCP",
+        serverName: "exa",
+        mcpConfig: {
+          type: "http",
+          url: "https://mcp.exa.ai/mcp",
+        },
+      }],
+      providerResearcher: async ({ laneId }) => ({
+        lane: {
+          id: laneId,
+          cards: [{
+            id: `${laneId}-card`,
+            title: `${laneId} fallback 신호`,
+            summary: "합성이 실패해도 deterministic merge가 저장됩니다.",
+            impact: "strengthens",
+            sourceRefs: [
+              { url: `https://example.com/${laneId}`, title: "A" },
+              { url: `https://other.example/${laneId}`, title: "B" },
+            ],
+          }],
+        },
+      }),
+      providerSynthesizer: async () => {
+        throw new Error("synthesis failed");
+      },
+    });
+
+    assert.equal(snapshot.status.state, "ready");
+    assert.equal(countCards(snapshot), NEWS_MARKET_RADAR_LANE_CONCURRENCY);
+    assert.equal(snapshot.lanes.find((lane) => lane.id === "platform").cards.length, 1);
+  });
+});
+
+test("refresh emits real progress stages for the Market Radar UI", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, "docs", "ICP.md"), "# ICP\nsolo devs");
+    const progressEvents = [];
+    await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      force: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [{
+        provider: "codex",
+        source: "provider_mcp",
+        label: "Codex Exa MCP",
+        serverName: "exa",
+        mcpConfig: {
+          type: "http",
+          url: "https://mcp.exa.ai/mcp",
+        },
+      }],
+      providerResearcher: async () => ({
+        researchSource: "Codex Exa MCP",
+        lanes: [{
+          id: "alternatives_pricing",
+          cards: [{
+            id: "card-1",
+            title: "Progress-backed research",
+            summary: "The UI can display each refresh step.",
+            impact: "strengthens",
+            sourceRefs: [
+              { url: "https://example.com/a", title: "A" },
+              { url: "https://other.example/b", title: "B" },
+            ],
+          }],
+        }],
+      }),
+      onProgress: (progress) => {
+        progressEvents.push(progress);
+      },
+    });
+
+    for (const step of NEWS_MARKET_RADAR_PROGRESS_STEPS) {
+      assert.ok(progressEvents.some((event) => event.stage === step.stage));
+      assert.ok(progressEvents.some((event) => event.stepIndex === step.stepIndex));
+    }
+    assert.equal(
+      progressEvents.every((event) => event.stepCount === NEWS_MARKET_RADAR_PROGRESS_STEPS.length),
+      true,
+    );
+    assert.equal(progressEvents[0].researchSource, "Codex Exa MCP");
+    assert.ok(progressEvents.some((event) => /5개 가설을 병렬 리서치하는 중/.test(event.progressText || "")));
+    assert.ok(progressEvents.some((event) => /5개 중 5개 완료/.test(event.progressText || "")));
   });
 });

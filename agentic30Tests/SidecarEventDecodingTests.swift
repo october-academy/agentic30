@@ -810,7 +810,14 @@ struct SidecarEventDecodingTests {
               "stale": false,
               "error": null,
               "reason": "manual",
-              "researchSource": "Codex Exa MCP"
+              "researchSource": "Codex Exa MCP",
+              "partialFailures": [
+                {
+                  "laneId": "channel",
+                  "laneTitle": "채널",
+                  "error": "채널 리서치 provider timeout"
+                }
+              ]
             },
             "workspaceEvidenceRefs": [],
             "lanes": [
@@ -823,8 +830,8 @@ struct SidecarEventDecodingTests {
                 "cards": [
                   {
                     "id": "card-1",
-                    "title": "Paid tool spend",
-                    "summary": "Solo developers already pay for coding tools.",
+                    "title": "1인 개발자는 이미 코딩 도구에 돈을 씁니다",
+                    "summary": "Cursor, Claude 같은 도구 결제가 이미 대안 지출 기준을 만듭니다.",
                     "impact": "strengthens",
                     "confidence": "strong",
                     "whyItMatters": "가격 ask 기준이 생깁니다.",
@@ -840,7 +847,7 @@ struct SidecarEventDecodingTests {
                         "url": "https://example.com/pricing",
                         "domain": "example.com",
                         "publishedAt": "",
-                        "excerpt": "$20/mo"
+                        "excerpt": "월 $20 가격대"
                       }
                     ],
                     "evidenceStrength": "strong"
@@ -857,6 +864,8 @@ struct SidecarEventDecodingTests {
         #expect(event.type == "news_market_radar_result")
         #expect(event.newsMarketRadar?.status.state == "ready")
         #expect(event.newsMarketRadar?.status.researchSource == "Codex Exa MCP")
+        #expect(event.newsMarketRadar?.status.partialFailures?.first?.laneId == "channel")
+        #expect(event.newsMarketRadar?.status.partialFailures?.first?.laneTitle == "채널")
         #expect(event.newsMarketRadar?.lanes.first?.id == "alternatives_pricing")
         #expect(event.newsMarketRadar?.lanes.first?.cards.first?.relatedDays == [2, 5, 27])
         #expect(event.newsMarketRadar?.lanes.first?.cards.first?.sourceRefs.first?.domain == "example.com")
@@ -872,7 +881,19 @@ struct SidecarEventDecodingTests {
             "stale": false,
             "error": null,
             "reason": "daily",
-            "researchSource": "Gemini Exa MCP"
+            "researchSource": "Gemini Exa MCP",
+            "stage": "running_provider_research",
+            "progressText": "Gemini Exa MCP로 공개 근거를 검색하는 중",
+            "elapsedMs": 4210,
+            "stepIndex": 4,
+            "stepCount": 6,
+            "partialFailures": [
+              {
+                "laneId": "problem",
+                "laneTitle": "문제",
+                "error": "문제 리서치 실패"
+              }
+            ]
           }
         }
         """
@@ -884,6 +905,12 @@ struct SidecarEventDecodingTests {
         #expect(event.newsMarketRadarStatus?.state == "refreshing")
         #expect(event.newsMarketRadarStatus?.reason == "daily")
         #expect(event.newsMarketRadarStatus?.researchSource == "Gemini Exa MCP")
+        #expect(event.newsMarketRadarStatus?.stage == "running_provider_research")
+        #expect(event.newsMarketRadarStatus?.progressText == "Gemini Exa MCP로 공개 근거를 검색하는 중")
+        #expect(event.newsMarketRadarStatus?.elapsedMs == 4210)
+        #expect(event.newsMarketRadarStatus?.stepIndex == 4)
+        #expect(event.newsMarketRadarStatus?.stepCount == 6)
+        #expect(event.newsMarketRadarStatus?.partialFailures?.first?.laneId == "problem")
     }
 
     private var decoder: JSONDecoder {
