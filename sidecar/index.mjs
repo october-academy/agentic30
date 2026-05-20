@@ -46,6 +46,8 @@ import {
 import { initiateNotionOAuth, exchangeOAuthCode, refreshAccessToken } from "./notion-oauth.mjs";
 import { buildPreflightReport } from "./preflight.mjs";
 import {
+  buildCodexEnv,
+  resolveCodexModel,
   getProviderAuthState,
   getProviderConnectionState,
   runProviderStream,
@@ -6829,10 +6831,37 @@ async function runNewsMarketRadarProviderResearch({
   prompt,
   exaMcpConfig,
 } = {}) {
+  const exaConfig = exaMcpConfig || buildExaMcpConfig(currentExaApiKey());
+  const providerErrors = [];
   const authState = getProviderAuthState("claude");
-  if (!authState.available) {
-    throw new Error(`Claude provider is not available for Exa research. ${authState.message || authState.source || ""}`.trim());
+  if (authState.available) {
+    try {
+      return await runNewsMarketRadarClaudeResearch({ prompt, exaMcpConfig: exaConfig });
+    } catch (error) {
+      providerErrors.push(`Claude: ${formatError(error)}`);
+    }
+  } else {
+    providerErrors.push(`Claude unavailable: ${authState.message || authState.source || "not configured"}`);
   }
+
+  const codexAuthState = getProviderAuthState("codex");
+  if (codexAuthState.available) {
+    try {
+      return await runNewsMarketRadarCodexResearch({ prompt, exaMcpConfig: exaConfig });
+    } catch (error) {
+      providerErrors.push(`Codex: ${formatError(error)}`);
+    }
+  } else {
+    providerErrors.push(`Codex unavailable: ${codexAuthState.message || codexAuthState.source || "not configured"}`);
+  }
+
+  throw new Error(`No Claude or Codex provider could complete Exa research. ${providerErrors.join(" | ")}`);
+}
+
+async function runNewsMarketRadarClaudeResearch({
+  prompt,
+  exaMcpConfig,
+} = {}) {
   const packagePath = resolveInstalledPackageRoot("@anthropic-ai", "claude-agent-sdk");
   const cliPath = path.join(packagePath, "cli.js");
   const env = buildClaudeAgentEnv();
@@ -6868,6 +6897,67 @@ async function runNewsMarketRadarProviderResearch({
       }
       if (event.type === "result" && event.result) {
         text += `\n${event.result}`;
+      }
+    }
+    return text;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function runNewsMarketRadarCodexResearch({
+  prompt,
+  exaMcpConfig,
+} = {}) {
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), 90_000);
+  const codexEnv = buildCodexEnv();
+  const apiKey = codexEnv.CODEX_API_KEY || codexEnv.OPENAI_API_KEY || "";
+  const { Codex } = await import("@openai/codex-sdk");
+  const codex = new Codex({
+    codexPathOverride: resolveCodexBinaryPath(),
+    env: codexEnv,
+    ...(apiKey ? { apiKey } : {}),
+    config: {
+      developer_instructions: [
+        "You are a market research JSON generator for Agentic30.",
+        "Use Exa MCP tools only for web research. Do not mutate files.",
+        "Return strict JSON only.",
+      ].join("\n"),
+      notify: [],
+      features: {
+        computer_use: false,
+      },
+      mcp_servers: {
+        exa: exaMcpConfig || buildExaMcpConfig(currentExaApiKey()),
+      },
+    },
+  });
+  const thread = codex.startThread({
+    model: resolveCodexModel(),
+    skipGitRepoCheck: true,
+    workingDirectory: workspaceRoot,
+    webSearchEnabled: false,
+    sandboxMode: "read-only",
+    approvalPolicy: "never",
+    modelReasoningEffort: "medium",
+  });
+  let text = "";
+  try {
+    const { events } = await thread.runStreamed(prompt, {
+      signal: abortController.signal,
+    });
+    for await (const event of events) {
+      if (
+        (event.type === "item.started" || event.type === "item.updated" || event.type === "item.completed")
+        && event.item?.type === "agent_message"
+        && typeof event.item.text === "string"
+      ) {
+        text = event.item.text;
+      } else if (event.type === "turn.failed") {
+        throw new Error(event.error?.message || "Codex SDK turn failed.");
+      } else if (event.type === "error") {
+        throw new Error(event.message || "Codex SDK emitted an error.");
       }
     }
     return text;
