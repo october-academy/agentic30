@@ -96,6 +96,7 @@ struct SettingsView: View {
     @State private var claudeEnvironment = ""
     @State private var codexEnvironment = ""
     @State private var geminiEnvironment = ""
+    @State private var exaApiKey = ""
     @State private var agentSettingsSaveMessage = ""
 
     // MARK: - BIP State
@@ -118,6 +119,8 @@ struct SettingsView: View {
     @State private var scanMessage = ""
     @State private var diagnosticsMessage = ""
     @State private var developerToolsMessage = ""
+    @State private var confettiTestRunID = 0
+    @State private var confettiTestMessage = ""
     @State private var resetLocalDataMessage = ""
     @State private var showsResetLocalDataConfirmation = false
     @State private var localSelectedSection: SettingsSection = .account
@@ -198,6 +201,14 @@ struct SettingsView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("This clears Agentic30 settings, Keychain entries, local sessions, caches, onboarding state, and the selected workspace's .agentic30 setup/interview data. Other project files are not deleted.")
+            }
+            .overlay {
+                if confettiTestRunID > 0 {
+                    RealisticConfettiBurst(trigger: confettiTestRunID)
+                        .id(confettiTestRunID)
+                        .allowsHitTesting(false)
+                        .accessibilityIdentifier("settings.developerTools.confettiOverlay")
+                }
             }
     }
 
@@ -991,8 +1002,47 @@ struct SettingsView: View {
                 modelSelection: $geminiModelID
             )
 
+            exaResearchSection
+
             saveAgentSettingsSection
         }
+    }
+
+    private var exaResearchSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 14) {
+                Image(systemName: "newspaper.fill")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Agentic30BrandColor.green.opacity(0.92))
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(Agentic30BrandColor.green.opacity(0.16)))
+                    .overlay(Circle().stroke(Agentic30BrandColor.green.opacity(0.25), lineWidth: 1))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Exa Market Research")
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.88))
+                    Text(exaApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "News Market Radar is disabled until a key is saved." : "News Market Radar can refresh with Exa MCP.")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.52))
+                }
+                Spacer(minLength: 0)
+            }
+
+            secureAgentField(
+                label: "EXA_API_KEY",
+                placeholder: "exa_...",
+                text: $exaApiKey,
+                identifier: "settings.exa.apiKeyField"
+            )
+
+            Text("Used only by the News tab's Market Radar. Queries may include the product name, public URL, and explicit competitors; raw Day answers and local excerpts stay on this Mac.")
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.44))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(20)
+        .background(cardBackground)
     }
 
     private func agentProviderSection(
@@ -1740,6 +1790,7 @@ struct SettingsView: View {
             subtitle: "Trigger local app flows without waiting for scheduled automation."
         ) {
             notificationTestSection
+            confettiTestSection
         }
     }
 
@@ -1781,6 +1832,41 @@ struct SettingsView: View {
         }
         .padding(20)
         .background(cardBackground)
+    }
+
+    private var confettiTestSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            sectionHeader(title: "UI Motion Test", configured: confettiTestRunID > 0)
+            confettiTestControls
+        }
+        .padding(20)
+        .background(cardBackground)
+    }
+
+    private var confettiTestControls: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("앱 화면 전체에 realistic confetti burst를 재생합니다.")
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.50))
+                .fixedSize(horizontal: false, vertical: true)
+
+            developerToolButton(
+                title: "Confetti 테스트",
+                systemImage: "sparkles",
+                identifier: "settings.developerTools.confettiTestButton"
+            ) {
+                playConfettiTest()
+            }
+
+            if !confettiTestMessage.isEmpty {
+                Text(confettiTestMessage)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Agentic30BrandColor.green.opacity(0.82))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.opacity)
+                    .accessibilityIdentifier("settings.developerTools.confettiTestMessage")
+            }
+        }
     }
 
     private func developerToolButton(
@@ -2591,6 +2677,13 @@ struct SettingsView: View {
         }
     }
 
+    private func playConfettiTest() {
+        withAnimation(.easeOut(duration: 0.12)) {
+            confettiTestRunID += 1
+        }
+        showMessage($confettiTestMessage, text: "Confetti 테스트를 재생했습니다.")
+    }
+
     private func applyDocCreated(type: String, path: String) {
         switch type {
         case "icp": bipIcpPath = path
@@ -2684,6 +2777,7 @@ struct SettingsView: View {
         s.claudeEnvironment = claudeEnvironment
         s.codexEnvironment = codexEnvironment
         s.geminiEnvironment = geminiEnvironment
+        s.exaApiKey = exaApiKey
         s.posthogApiKey = posthogApiKey
         s.posthogProjectAPIKey = posthogProjectAPIKey
         s.posthogHost = posthogHost
@@ -2736,6 +2830,7 @@ struct SettingsView: View {
         claudeEnvironment = s.claudeEnvironment
         codexEnvironment = s.codexEnvironment
         geminiEnvironment = s.geminiEnvironment
+        exaApiKey = s.exaApiKey
         #if DEBUG
         if environment["AGENTIC30_UI_TEST_SETTINGS_CLAUDE_MODEL"] != nil
             || environment["AGENTIC30_UI_TEST_SETTINGS_CODEX_MODEL"] != nil
@@ -2800,6 +2895,7 @@ struct SettingsView: View {
             "claude_api_key_configured": !settings.claudeApiKey.isEmpty,
             "codex_api_key_configured": !settings.codexApiKey.isEmpty,
             "gemini_api_key_configured": !settings.geminiApiKey.isEmpty,
+            "exa_api_key_configured": !settings.exaApiKey.isEmpty,
         ])
         showMessage($agentSettingsSaveMessage, text: "Saved")
     }

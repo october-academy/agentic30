@@ -568,88 +568,89 @@ struct WorkspaceOnboardingHypothesis: Codable, Hashable {
     let suggestedFirstQuestion: String?
 }
 
-/// Stage-2 payload bundled into every `workspace_scan_result` so Day 1's
-/// first_prompt mapper can reach scan-derived signals without re-querying the
-/// sidecar. Mirrors `buildWorkspaceDay1Context` in sidecar/index.mjs.
-///
-/// All fields are nullable: the sidecar omits them when the underlying scan
-/// produced nothing, and forwards-compat lets us add fields later without a
-/// schema bump on the wire (Mac just sees them as `nil`).
-struct WorkspaceDay1Context: Codable, Hashable {
+/// Adaptive Day 1 ICP plan generated during onboarding workspace scan. This is
+/// intentionally project-shaped rather than hardcoding the old
+/// distance/tools/stuck/last-7-days axes.
+struct Day1IcpPlan: Codable, Hashable {
     let schemaVersion: Int
-    let sourceScanRoot: String
-    let confidence: String?
+    let source: String?
+    let generatedAt: String?
+    let confidence: Double?
+    let fellBackToDeterministic: Bool?
+    let mission: String
+    let signals: Day1IcpSignals
+    let questions: [Day1IcpQuestion]
+    let icpDraft: IcpDraft
+    let antiIcp: Day1AntiIcp
+    let firstInterviewMessage: FirstInterviewMessage
+}
+
+struct Day1IcpSignals: Codable, Hashable {
     let productName: String?
-    let targetUser: String?
+    let currentIcpGuess: String?
+    let likelyUsers: [String]
     let problem: String?
-    let suggestedFirstQuestion: String?
-    let foundDocCount: Int?
-    let missingExpectedDocs: [String]?
-    let localDiscovery: WorkspaceLocalDiscovery?
+    let currentAlternatives: [String]
+    let evidenceRefs: [Day1IcpEvidenceRef]
+    let missingAssumptions: [String]
+    let confidence: String?
 }
 
-/// Stage-3 deterministic signals from the project folder. Mirrors the
-/// `localDiscovery` block in sidecar/local-discovery.mjs. Pure data — used
-/// by WorkspaceDay1Mapper to fill Day 1 first_prompt slots without an LLM.
-struct WorkspaceLocalDiscovery: Codable, Hashable {
-    let schemaVersion: Int
-    let git: WorkspaceGitSummary
-    let project: WorkspaceProjectShape
-    let runway: WorkspaceRunwayHints
+struct Day1IcpEvidenceRef: Codable, Hashable {
+    let path: String
+    let reason: String?
+    let quote: String?
 }
 
-struct WorkspaceGitSummary: Codable, Hashable {
-    let isGitRepo: Bool
-    let head: String?
-    let firstCommitAt: String?
-    let last7DaysCommitCount: Int
-    let dirty: Bool?
-    let branch: String?
-
-    // Hand-written init so test fixtures and forwards-compat sidecar payloads
-    // can omit `head` (added in PR3). The Codable synthesised init/decoder
-    // still gets a String? optional for the wire field.
-    init(
-        isGitRepo: Bool,
-        head: String? = nil,
-        firstCommitAt: String?,
-        last7DaysCommitCount: Int,
-        dirty: Bool?,
-        branch: String?
-    ) {
-        self.isGitRepo = isGitRepo
-        self.head = head
-        self.firstCommitAt = firstCommitAt
-        self.last7DaysCommitCount = last7DaysCommitCount
-        self.dirty = dirty
-        self.branch = branch
-    }
+struct Day1IcpQuestion: Codable, Hashable {
+    let id: String
+    let dimension: String
+    let title: String
+    let prompt: String
+    let helperText: String?
+    let options: [Day1IcpQuestionOption]
+    let allowFreeText: Bool?
+    let freeTextPlaceholder: String?
 }
 
-struct WorkspaceProjectShape: Codable, Hashable {
-    let stacks: [String]
-    let hasReadme: Bool
-    let manifestPaths: [String]
+struct Day1IcpQuestionOption: Codable, Hashable {
+    let id: String
+    let label: String
+    let description: String
+    let preview: String?
+    let antiSignal: Bool?
 }
 
-struct WorkspaceRunwayHints: Codable, Hashable {
-    let projectAgeDays: Int?
-    let recentlyActive: Bool?
+struct IcpDraft: Codable, Hashable {
+    let description: String
+    let criteria: [String]
+    let whyTheyMatter: [String]
+    let needs: [String]
+    let haves: [String]
+    let dontNeeds: [String]
+    let evidence: [String]
+    let referenceCustomersToFind: [String]
 }
 
-/// Stage-4/5 LLM-composed Day 1 opener. Arrives via the
-/// `workspace_day1_compose_result` event after the initial
-/// `workspace_scan_result`, so the user's first message can refresh from
-/// deterministic-only to LLM-quality once the composer returns.
-struct ComposedDay1Opening: Codable, Hashable {
-    let schemaVersion: Int
-    let yesterday: String
-    let today: String
-    let question: String
-    let confidence: Double
-    let source: String
-    let fellBackToDeterministic: Bool
-    let webUsed: Bool
+struct Day1AntiIcp: Codable, Hashable {
+    let summary: String
+    let rules: [AntiIcpRule]
+    let politeInterestGuardrails: [String]
+}
+
+struct AntiIcpRule: Codable, Hashable {
+    let id: String
+    let label: String
+    let reason: String
+    let evidenceRef: String?
+}
+
+struct FirstInterviewMessage: Codable, Hashable {
+    let channel: String
+    let recipientPlaceholder: String
+    let subject: String?
+    let bodyTemplate: String
+    let questions: [String]
 }
 
 struct IddDocPreview: Identifiable, Codable, Hashable {
@@ -933,6 +934,122 @@ struct ReviewDayDashboardMetric: Codable, Hashable, Identifiable {
     var id: String {
         [label, value, trend, intent, status].joined(separator: "|")
     }
+}
+
+struct NewsMarketRadarSnapshot: Codable, Hashable {
+    let schemaVersion: Int
+    let generatedAt: Date?
+    let nextRefreshAfter: Date?
+    let status: NewsMarketRadarStatus
+    let workspaceEvidenceRefs: [NewsMarketRadarSourceRef]?
+    let lanes: [NewsMarketRadarLane]
+
+    static let empty = NewsMarketRadarSnapshot(
+        schemaVersion: 1,
+        generatedAt: nil,
+        nextRefreshAfter: nil,
+        status: NewsMarketRadarStatus(
+            state: "idle",
+            lastSuccessAt: nil,
+            stale: false,
+            error: nil,
+            reason: nil
+        ),
+        workspaceEvidenceRefs: [],
+        lanes: NewsMarketRadarLane.defaultLanes
+    )
+
+    var cardCount: Int {
+        lanes.reduce(0) { $0 + $1.cards.count }
+    }
+
+    var statusLabel: String {
+        switch status.state {
+        case "refreshing": return "리서치 중"
+        case "ready": return status.stale == true ? "캐시됨" : "최신"
+        case "failed": return "설정 필요"
+        case "stale": return "오래됨"
+        default: return "대기"
+        }
+    }
+}
+
+struct NewsMarketRadarStatus: Codable, Hashable {
+    let state: String
+    let lastSuccessAt: Date?
+    let stale: Bool?
+    let error: String?
+    let reason: String?
+}
+
+struct NewsMarketRadarLane: Codable, Hashable, Identifiable {
+    let id: String
+    let title: String
+    let hypothesis: String
+    let impact: String
+    let confidence: String
+    let cards: [NewsMarketRadarCard]
+
+    static let defaultLanes: [NewsMarketRadarLane] = [
+        .empty(id: "icp", title: "ICP", hypothesis: "누가 가장 절박한 사용자인가"),
+        .empty(id: "problem", title: "문제", hypothesis: "그들이 실제로 겪는 비용/마찰은 무엇인가"),
+        .empty(id: "alternatives_pricing", title: "대안/가격", hypothesis: "이미 돈을 쓰는 대안과 가격 기준은 무엇인가"),
+        .empty(id: "channel", title: "채널", hypothesis: "어디서 발견하고 설득할 수 있는가"),
+        .empty(id: "platform", title: "플랫폼", hypothesis: "어떤 제품/스토어/배포 제약이 있는가"),
+    ]
+
+    private static func empty(id: String, title: String, hypothesis: String) -> NewsMarketRadarLane {
+        NewsMarketRadarLane(
+            id: id,
+            title: title,
+            hypothesis: hypothesis,
+            impact: "unknown",
+            confidence: "weak",
+            cards: []
+        )
+    }
+}
+
+struct NewsMarketRadarCard: Codable, Hashable, Identifiable {
+    let id: String
+    let title: String
+    let summary: String
+    let impact: String
+    let confidence: String
+    let whyItMatters: String?
+    let suggestedHypothesisUpdate: String?
+    let suggestedDocTargets: [String]?
+    let relatedDays: [Int]?
+    let relatedAnswerIds: [String]?
+    let sourceRefs: [NewsMarketRadarSourceRef]
+    let evidenceStrength: String?
+}
+
+struct NewsMarketRadarSourceRef: Codable, Hashable, Identifiable {
+    let id: String?
+    let sourceType: String
+    let title: String
+    let url: String?
+    let domain: String?
+    let path: String?
+    let publishedAt: String?
+    let excerpt: String?
+
+    var stableID: String {
+        id ?? url ?? path ?? title
+    }
+}
+
+struct OpenDesignDayAnswerSubmission: Hashable {
+    let questionId: String
+    let dimension: String
+    let questionTitle: String
+    let questionPrompt: String
+    let answerId: String
+    let answerTitle: String
+    let answerDetail: String
+    let freeformAnswer: String
+    let isAntiSignal: Bool
 }
 
 struct BipCoachStreak: Codable, Hashable {

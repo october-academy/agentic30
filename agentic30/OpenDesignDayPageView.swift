@@ -33,6 +33,7 @@ struct OpenDesignDayContent {
         let state: State
 
         enum State: Hashable {
+            case done
             case active
             case pending
             case locked
@@ -41,6 +42,7 @@ struct OpenDesignDayContent {
 
     struct InterviewStep: Identifiable, Hashable {
         let id: Int
+        let dimension: String
         let title: String
         let meta: String
         let label: String
@@ -53,6 +55,47 @@ struct OpenDesignDayContent {
         let progressLabel: String
         let submitLabel: String
         let options: [InterviewOption]
+        let allowsFreeform: Bool
+        let freeformLabel: String
+        let freeformPlaceholder: String
+
+        init(
+            id: Int,
+            dimension: String = "",
+            title: String,
+            meta: String,
+            label: String,
+            score: String,
+            statementPrefix: String,
+            markedStatement: String,
+            statementSuffix: String,
+            criteria: [String],
+            prompt: String,
+            progressLabel: String,
+            submitLabel: String,
+            options: [InterviewOption],
+            allowsFreeform: Bool = false,
+            freeformLabel: String = "직접 답하기 — 위 선택지에 없으면 한 줄로 적어도 돼요",
+            freeformPlaceholder: String = "예: 이 프로젝트에서 가장 먼저 검증할 고객 조건"
+        ) {
+            self.id = id
+            self.dimension = dimension
+            self.title = title
+            self.meta = meta
+            self.label = label
+            self.score = score
+            self.statementPrefix = statementPrefix
+            self.markedStatement = markedStatement
+            self.statementSuffix = statementSuffix
+            self.criteria = criteria
+            self.prompt = prompt
+            self.progressLabel = progressLabel
+            self.submitLabel = submitLabel
+            self.options = options
+            self.allowsFreeform = allowsFreeform
+            self.freeformLabel = freeformLabel
+            self.freeformPlaceholder = freeformPlaceholder
+        }
     }
 
     struct InterviewOption: Identifiable, Hashable {
@@ -60,6 +103,144 @@ struct OpenDesignDayContent {
         let title: String
         let detail: String
         let tail: String
+        let isAntiSignal: Bool
+
+        init(id: Int, title: String, detail: String, tail: String, isAntiSignal: Bool = false) {
+            self.id = id
+            self.title = title
+            self.detail = detail
+            self.tail = tail
+            self.isAntiSignal = isAntiSignal
+        }
+    }
+
+    struct Mission: Hashable {
+        let markedTitle: String
+        let titleSuffix: String
+        let body: String
+        let rules: [String]
+        let footnote: String
+        let acceptLabel: String
+        let acceptedLabel: String
+    }
+
+    struct Market: Hashable {
+        let dayNumber: Int
+        let title: String
+        let titlebarTitle: String
+        let titlebarDetail: String
+        let subtitleParts: [String]
+        let primaryActionTitle: String
+        let sourceTabs: [MarketSourceTab]
+        let keywordMeta: String
+        let keywords: [MarketKeyword]
+        let signalCards: [MarketSignalCard]
+        let alternatives: [MarketAlternative]
+        let gapHypothesis: MarketGapHypothesis
+        let posts: [MarketPost]
+        let signalStrength: MarketSignalStrength
+        let lockedKeywords: [MarketMiniMetric]
+        let topAlternatives: [MarketMiniMetric]
+        let nextDay: MarketNextDay
+    }
+
+    struct MarketSourceTab: Identifiable, Hashable {
+        let id: String
+        let title: String
+        let count: String
+    }
+
+    struct MarketKeyword: Identifiable, Hashable {
+        enum Heat: Hashable {
+            case hot
+            case warm
+            case mid
+            case cool
+            case cold
+        }
+
+        let id: String
+        let title: String
+        let count: String
+        let size: CGFloat
+        let heat: Heat
+    }
+
+    struct MarketSignalCard: Identifiable, Hashable {
+        let id: String
+        let title: String
+        let detail: String
+        let value: String
+        let unit: String
+        let delta: String
+        let deltaIsPositive: Bool
+        let footerLeft: String
+        let footerRight: String
+        let sparkline: [CGFloat]
+        let tone: OpenDesignReferenceTone
+    }
+
+    struct MarketAlternative: Identifiable, Hashable {
+        let id: String
+        let initials: String
+        let name: String
+        let kind: String
+        let fit: Int
+        let strengths: [String]
+        let gaps: [String]
+        let monthlyCost: String
+    }
+
+    struct MarketGapHypothesis: Hashable {
+        let label: String
+        let segments: [OpenDesignInlineSegment]
+        let criteria: [MarketCriterion]
+    }
+
+    struct MarketCriterion: Identifiable, Hashable {
+        let id: String
+        let key: String
+        let value: String
+    }
+
+    struct MarketPost: Identifiable, Hashable {
+        let id: String
+        let source: String
+        let author: String
+        let age: String
+        let bodySegments: [OpenDesignInlineSegment]
+        let engagement: String
+        let comments: String
+        let strength: String
+        let initials: String
+        let tone: OpenDesignReferenceTone
+    }
+
+    struct MarketSignalStrength: Hashable {
+        let score: String
+        let total: String
+        let tag: String
+        let rows: [MarketScoreRow]
+    }
+
+    struct MarketScoreRow: Identifiable, Hashable {
+        let id: String
+        let title: String
+        let fraction: Double
+        let value: String
+    }
+
+    struct MarketMiniMetric: Identifiable, Hashable {
+        let id: String
+        let label: String
+        let value: String
+        let isLeader: Bool
+    }
+
+    struct MarketNextDay: Hashable {
+        let badge: String
+        let title: String
+        let subtitle: String
     }
 
     struct SearchItem: Identifiable, Hashable {
@@ -94,8 +275,13 @@ struct OpenDesignDayContent {
 
     let railItems: [RailItem]
     let taskGroups: [TaskGroup]
+    let contextTitle: String
+    let contextBody: String
+    let mission: Mission
     let interviewSteps: [InterviewStep]
     let searchItems: [SearchItem]
+    let plan: Day1IcpPlan?
+    var market: Market? = nil
 
     var lockingFutureDays: OpenDesignDayContent {
         OpenDesignDayContent(
@@ -117,6 +303,9 @@ struct OpenDesignDayContent {
                     }
                 )
             },
+            contextTitle: contextTitle,
+            contextBody: contextBody,
+            mission: mission,
             interviewSteps: interviewSteps,
             searchItems: searchItems.map { item in
                 guard item.kind == .task, item.id != "task-day1" else { return item }
@@ -133,7 +322,8 @@ struct OpenDesignDayContent {
                     targetSectionID: item.targetSectionID,
                     route: item.route
                 )
-            }
+            },
+            plan: plan
         )
     }
 
@@ -190,6 +380,21 @@ struct OpenDesignDayContent {
                 ]
             ),
         ],
+        contextTitle: "오늘은 첫 고객 1명을 정하는 게 목표예요.",
+        contextBody: "30일 챌린지의 첫 결과는 \"유저 100명 + 첫 매출\"이지만, Day 1은 그보다 더 좁은 문제부터 풉니다. 이번 주에 진짜로 인터뷰 한 통을 할 만큼 가까운 1명이 누구인지 정하는 것. 이 한 명이 ICP의 후보가 되고, 이번 주 인터뷰·랜딩·웨지의 기준점이 됩니다.",
+        mission: Mission(
+            markedTitle: "한 명",
+            titleSuffix: "만 골라요.",
+            body: "다짜고짜 \"ICP가 누구냐\"고 묻는 건 어려우니, 4지선다 → 짧은 인터뷰 3번 → 한 명으로 좁히기 순서로 진행할게요. 다 끝나면 docs/ICP.md에 쓸 문서 초안을 먼저 보여줘요.",
+            rules: [
+                "만나러 갈 수 있어야 해요 — 이번 주 안에 메시지 1통.",
+                "칭찬형 답이 아니라 진짜 시간을 쓰는 사람이어야 해요 — Mom Test 기준.",
+                "한 줄로 묘사할 수 있어야 해요 — \"AI로 빌드하는 사람\"은 너무 넓어요.",
+            ],
+            footnote: "수락하면 4지선다 인터뷰가 열려요 · 약 3분",
+            acceptLabel: "미션 수락하고 인터뷰 시작 ↵",
+            acceptedLabel: "미션 수락됨 ✓"
+        ),
         interviewSteps: [
             InterviewStep(
                 id: 1,
@@ -268,12 +473,298 @@ struct OpenDesignDayContent {
                     InterviewOption(id: 1, title: "새 프로젝트를 또 시작했다", detail: "지난 프로젝트는 절반쯤에서 멈췄고, 새 레포·새 디자인·새 아이디어로 또 한 번 출발했습니다.", tail: "빌드 루프"),
                     InterviewOption(id: 2, title: "실사용자 1명을 만났다", detail: "인터뷰·콜·DM 등으로 실제 사람의 답을 들었습니다. 가장 강한 신호.", tail: "진짜 신호 ↑"),
                     InterviewOption(id: 3, title: "출시를 시도했다", detail: "포스트·결제 링크·랜딩 등 사람들에게 보여지는 행동을 1건 이상 했습니다.", tail: "wedge 검증"),
-                    InterviewOption(id: 4, title: "아무 행동도 안 했다", detail: "계획·고민만 7일을 보냈습니다. 솔직한 답 — Anti-ICP 게이트의 출발점이 됩니다.", tail: "Anti-ICP"),
+                    InterviewOption(id: 4, title: "아무 행동도 안 했다", detail: "계획·고민만 7일을 보냈습니다. 솔직한 답 — Anti-ICP 게이트의 출발점이 됩니다.", tail: "Anti-ICP", isAntiSignal: true),
                 ]
             ),
         ],
-        searchItems: OpenDesignDayContent.makeSearchItems()
+        searchItems: OpenDesignDayContent.makeSearchItems(),
+        plan: nil
     )
+
+    static let day2 = OpenDesignDayContent(
+        railItems: [
+            RailItem(id: "today", title: "오늘 · Day 2", systemImage: "calendar", isActive: true, hasNewDot: false, route: .today),
+            RailItem(id: "search", title: "검색", systemImage: "magnifyingglass", isActive: false, hasNewDot: false, route: .search),
+            RailItem(id: "projects", title: "프로젝트", systemImage: "folder", isActive: false, hasNewDot: false, route: .inert),
+            RailItem(id: "settings", title: "설정", systemImage: "gearshape", isActive: false, hasNewDot: false, route: .settings),
+            RailItem(id: "interviews", title: "인터뷰", systemImage: "bubble.left.and.bubble.right", isActive: false, hasNewDot: false, route: .inert),
+            RailItem(id: "bip", title: "BIP 로그", systemImage: "doc.text", isActive: false, hasNewDot: false, route: .inert),
+            RailItem(id: "news", title: "뉴스", systemImage: "newspaper", isActive: false, hasNewDot: true, route: .inert),
+            RailItem(id: "history", title: "히스토리", systemImage: "clock.arrow.circlepath", isActive: false, hasNewDot: false, route: .inert),
+        ],
+        taskGroups: [
+            TaskGroup(
+                id: "week1",
+                title: "Week 1 — Foundation",
+                meta: "2 / 7",
+                tasks: [
+                    TaskItem(id: "day1", title: "먼저 도울 사람을 정해요", day: "Day 1", meta: "ICP", state: .done),
+                    TaskItem(id: "day2", title: "시장 신호 읽기", day: "Day 2", meta: "Market · +8", state: .active),
+                    TaskItem(id: "day3", title: "Mom Test 인터뷰 ×3", day: "Day 3", meta: "Interview", state: .pending),
+                    TaskItem(id: "day4", title: "10× 웨지 찾기", day: "Day 4", meta: "Wedge", state: .pending),
+                    TaskItem(id: "day5", title: "수요 신호 측정", day: "Day 5", meta: "Demand", state: .pending),
+                    TaskItem(id: "day6", title: "Ask 한 줄로 압축", day: "Day 6", meta: "Ask", state: .pending),
+                    TaskItem(id: "day7", title: "Go / No-Go 결정 게이트", day: "Day 7", meta: "Gate", state: .pending),
+                ]
+            ),
+            TaskGroup(
+                id: "week2",
+                title: "Week 2 — Build",
+                meta: "잠금 해제 D7",
+                tasks: [
+                    TaskItem(id: "day8", title: "MVP 코어 4시간 빌드", day: "Day 8", meta: "Build", state: .locked),
+                    TaskItem(id: "day9", title: "첫 5명 초대 초안", day: "Day 9", meta: "Outreach", state: .locked),
+                    TaskItem(id: "day10", title: "랜딩 카피 & Above-fold", day: "Day 10", meta: "Landing", state: .locked),
+                ]
+            ),
+            TaskGroup(
+                id: "week3",
+                title: "Week 3 — Acquire",
+                meta: "잠금 해제 D14",
+                tasks: [
+                    TaskItem(id: "day15", title: "BIP 채널 첫 포스트", day: "Day 15", meta: "BIP", state: .locked),
+                ]
+            ),
+            TaskGroup(
+                id: "week4",
+                title: "Week 4 — Revenue",
+                meta: "잠금 해제 D22",
+                tasks: [
+                    TaskItem(id: "day22", title: "첫 매출 ask · Pricing", day: "Day 22", meta: "Revenue", state: .locked),
+                ]
+            ),
+        ],
+        contextTitle: "오늘은 Day 1 ICP 후보가 실제 시장 신호를 갖는지 확인합니다.",
+        contextBody: "키워드 빈도, 대안 갭, 인용 가능한 게시물을 함께 보고 내일 Mom Test 인터뷰 질문으로 이어질 시장 빈 자리를 잠급니다.",
+        mission: Mission(
+            markedTitle: "키워드 3개",
+            titleSuffix: "를 잠가요.",
+            body: "Threads, Indie Hackers, X/Twitter, Reddit, 블로그 RSS에서 지난 30일의 신호를 훑고 \"이게 팔릴까\" 단계의 반복 표현과 현재 대안을 비교합니다.",
+            rules: [
+                "키워드 3개는 Day 3 질문의 기준으로 이어져야 합니다.",
+                "대안은 무료/강의/커뮤니티/도구를 섞어 실제 선택지를 봅니다.",
+                "강한 인용은 원문 뉘앙스를 보존해 인터뷰 질문으로 바꿉니다.",
+            ],
+            footnote: "Day 2 마무리 시 Day 3 Mom Test 인터뷰로 이동",
+            acceptLabel: "시장 신호 보기",
+            acceptedLabel: "시장 신호 확인됨"
+        ),
+        interviewSteps: [],
+        searchItems: OpenDesignDayContent.makeMarketSearchItems(),
+        plan: nil,
+        market: Market(
+            dayNumber: 2,
+            title: "시장 신호 읽기",
+            titlebarTitle: "Day 2 · Foundation",
+            titlebarDetail: "Market Signals",
+            subtitleParts: ["Market · Day 2", "키워드 3개 잠금", "크롤 12분 전 갱신"],
+            primaryActionTitle: "Day 2 마무리",
+            sourceTabs: [
+                MarketSourceTab(id: "threads", title: "Threads", count: "142"),
+                MarketSourceTab(id: "indie", title: "Indie Hackers", count: "31"),
+                MarketSourceTab(id: "x", title: "X / Twitter", count: "88"),
+                MarketSourceTab(id: "reddit", title: "Reddit", count: "17"),
+                MarketSourceTab(id: "rss", title: "블로그·RSS", count: "9"),
+            ],
+            keywordMeta: "총 287 멘션 · 12회 / 시간",
+            keywords: [
+                MarketKeyword(id: "sell", title: "팔릴까", count: "68", size: 32, heat: .hot),
+                MarketKeyword(id: "validate", title: "검증", count: "54", size: 28, heat: .hot),
+                MarketKeyword(id: "drift", title: "표류", count: "42", size: 24, heat: .warm),
+                MarketKeyword(id: "rewrite", title: "또 갈아엎음", count: "31", size: 22, heat: .warm),
+                MarketKeyword(id: "agent-code", title: "에이전트 코딩", count: "26", size: 18, heat: .mid),
+                MarketKeyword(id: "monetize", title: "수익화", count: "24", size: 18, heat: .mid),
+                MarketKeyword(id: "landing-copy", title: "랜딩 카피", count: "19", size: 16, heat: .mid),
+                MarketKeyword(id: "burnout", title: "번아웃", count: "18", size: 16, heat: .mid),
+                MarketKeyword(id: "macos", title: "macOS · M3", count: "14", size: 15, heat: .cool),
+                MarketKeyword(id: "claude", title: "Claude Code", count: "14", size: 15, heat: .cool),
+                MarketKeyword(id: "pmf", title: "PMF", count: "12", size: 14, heat: .cool),
+                MarketKeyword(id: "interview", title: "고객 인터뷰", count: "12", size: 14, heat: .cool),
+                MarketKeyword(id: "funding", title: "투자", count: "9", size: 13, heat: .cold),
+                MarketKeyword(id: "saas-template", title: "SaaS 템플릿", count: "7", size: 13, heat: .cold),
+                MarketKeyword(id: "team", title: "팀빌딩", count: "5", size: 13, heat: .cold),
+            ],
+            signalCards: [
+                MarketSignalCard(id: "threads", title: "Threads", detail: "/agent30", value: "142", unit: "/30일", delta: "▲ 2.3×", deltaIsPositive: true, footerLeft: "대화율 31%", footerRight: "+47 신규", sparkline: [0.88, 0.75, 0.68, 0.50, 0.56, 0.38, 0.31, 0.28, 0.19, 0.22, 0.10, 0.03], tone: .accent),
+                MarketSignalCard(id: "indie", title: "Indie Hackers", detail: "#solo", value: "31", unit: "/30일", delta: "▲ 1.4×", deltaIsPositive: true, footerLeft: "업보트 92", footerRight: "장문 비율 64%", sparkline: [0.81, 0.69, 0.75, 0.63, 0.50, 0.56, 0.44, 0.38, 0.47, 0.34, 0.28, 0.22], tone: .violet),
+                MarketSignalCard(id: "x", title: "X / Twitter", detail: "한국어", value: "88", unit: "/30일", delta: "▼ 0.8×", deltaIsPositive: false, footerLeft: "RT 비율 71%", footerRight: "독자형 ↓", sparkline: [0.16, 0.28, 0.22, 0.41, 0.34, 0.53, 0.47, 0.59, 0.56, 0.66, 0.59, 0.78], tone: .sky),
+            ],
+            alternatives: [
+                MarketAlternative(id: "ph", initials: "PH", name: "Product Hunt 런칭", kind: "1회성", fit: 22, strengths: ["큰 노출", "PR"], gaps: ["검증 X", "1회성"], monthlyCost: "$0"),
+                MarketAlternative(id: "lean", initials: "LE", name: "Lean Canvas + 멘토링", kind: "온라인 코스", fit: 48, strengths: ["프레임워크", "동료"], gaps: ["실행 미흡"], monthlyCost: "$49"),
+                MarketAlternative(id: "mom", initials: "MT", name: "Mom Test 책 + 노션", kind: "스스로", fit: 54, strengths: ["질문 품질"], gaps: ["혼자 함", "강제 X"], monthlyCost: "$15"),
+                MarketAlternative(id: "ih", initials: "IH", name: "Indie Hackers 그룹", kind: "커뮤니티", fit: 42, strengths: ["동료 압력"], gaps: ["한국 X", "시차"], monthlyCost: "$0"),
+                MarketAlternative(id: "cc", initials: "CC", name: "Claude Code · Cursor", kind: "도구", fit: 18, strengths: ["빌드 속도"], gaps: ["고객 X", "검증 X"], monthlyCost: "$60"),
+                MarketAlternative(id: "yc", initials: "YC", name: "YC Startup School", kind: "강의·과제", fit: 62, strengths: ["강제 과제"], gaps: ["영어", "팀 가정"], monthlyCost: "$0"),
+                MarketAlternative(id: "dv", initials: "DV", name: "데브 유튜브 강의", kind: "구독", fit: 14, strengths: ["싸다"], gaps: ["시청만"], monthlyCost: "$10"),
+            ],
+            gapHypothesis: MarketGapHypothesis(
+                label: "시장 빈 자리 — 가설",
+                segments: [
+                    .body("전업 1인 개발자에게는 "),
+                    .strong("한국어 + 30일 강제 과제 + 매일 인터뷰 1건"),
+                    .body("이 합쳐진 도구가 없다. 가장 가까운 대안 YC Startup School은 영어·팀 가정·일간 리듬 부재. "),
+                    .mark("Mom Test 책 + 일일 캐리"),
+                    .body("를 한 묶음으로 묶으면 1인 솔로 시장의 정중앙이 비어 있다."),
+                ],
+                criteria: [
+                    MarketCriterion(id: "best", key: "최고 매칭률", value: "62% (YC)"),
+                    MarketCriterion(id: "gap", key: "남은 갭", value: "38%p"),
+                    MarketCriterion(id: "kr", key: "한국어 시장", value: "0개 대안"),
+                    MarketCriterion(id: "arpu", key: "월 ARPU 추정", value: "$19-29"),
+                ]
+            ),
+            posts: [
+                MarketPost(id: "kn", source: "Threads", author: "@knot.indie", age: "3일 전", bodySegments: [.body("\"새 프로젝트만 4번째인데, 이번에도 "), .mark("'팔릴까?'"), .body(" 단계에서 또 닫음. 검증을 누가 시켜줬으면 좋겠다.\"")], engagement: "▲ 142", comments: "댓글 38", strength: "신호 강", initials: "@kn", tone: .accent),
+                MarketPost(id: "jay", source: "Indie Hackers", author: "jay.solo", age: "1주 전", bodySegments: [.body("\"YC Startup School은 좋은데 팀 가정이 너무 강해서, "), .mark("전업 1인"), .body("한테는 안 맞음. 일간 과제만 똑같이 받고 싶다.\"")], engagement: "▲ 92", comments: "댓글 24", strength: "신호 강", initials: "jay", tone: .violet),
+                MarketPost(id: "hy", source: "Threads", author: "@hyemin.dev", age: "5일 전", bodySegments: [.body("\"퇴사하고 5개월. "), .mark("수익 0원"), .body("인 동료 모아 인터뷰 강제 챌린지 같이 해보고 싶음. 한국어로.\"")], engagement: "▲ 78", comments: "댓글 31", strength: "신호 강", initials: "@hy", tone: .accent),
+                MarketPost(id: "cm", source: "X / Twitter", author: "@cmoon.indie", age: "4일 전", bodySegments: [.body("\"Mom Test 책 5번 읽었는데 혼자 하면 결국 변명함. "), .mark("30분 매일 강제"), .body("되는 환경이 필요해.\"")], engagement: "▲ 64", comments: "댓글 18", strength: "신호 강", initials: "@cm", tone: .sky),
+                MarketPost(id: "yj", source: "Threads", author: "@yujin.makes", age: "2일 전", bodySegments: [.body("\"AI 코딩으로 새 프로젝트 시작은 3시간이면 됨. 근데 거기서 끝남. 다음 단계 가는 동료가 필요함.\"")], engagement: "▲ 51", comments: "댓글 14", strength: "신호 중", initials: "@yj", tone: .accent),
+            ],
+            signalStrength: MarketSignalStrength(
+                score: "7.4",
+                total: "/ 10",
+                tag: "PASS",
+                rows: [
+                    MarketScoreRow(id: "keyword", title: "키워드 빈도", fraction: 0.84, value: "8.4"),
+                    MarketScoreRow(id: "gap", title: "대안 갭", fraction: 0.78, value: "7.8"),
+                    MarketScoreRow(id: "korean", title: "한국어 시장", fraction: 0.92, value: "9.2"),
+                    MarketScoreRow(id: "wedge", title: "웨지 신호", fraction: 0.54, value: "5.4"),
+                    MarketScoreRow(id: "pricing", title: "가격대 명확", fraction: 0.62, value: "6.2"),
+                ]
+            ),
+            lockedKeywords: [
+                MarketMiniMetric(id: "sell", label: "팔릴까", value: "23.7%", isLeader: true),
+                MarketMiniMetric(id: "validate", label: "검증", value: "18.8%", isLeader: false),
+                MarketMiniMetric(id: "drift", label: "표류", value: "14.6%", isLeader: false),
+            ],
+            topAlternatives: [
+                MarketMiniMetric(id: "yc", label: "YC Startup School", value: "62%", isLeader: true),
+                MarketMiniMetric(id: "mom", label: "Mom Test 책", value: "54%", isLeader: false),
+                MarketMiniMetric(id: "lean", label: "Lean Canvas 멘토링", value: "48%", isLeader: false),
+                MarketMiniMetric(id: "ih", label: "IH 그룹", value: "42%", isLeader: false),
+                MarketMiniMetric(id: "ph", label: "PH 런칭", value: "22%", isLeader: false),
+            ],
+            nextDay: MarketNextDay(badge: "03", title: "Mom Test 인터뷰 ×3", subtitle: "박주영 + 2명 후보 · 질문 5개")
+        )
+    )
+
+    static func personalized(from plan: Day1IcpPlan?) -> OpenDesignDayContent {
+        guard let plan,
+              (3...5).contains(plan.questions.count)
+        else {
+            return .day1
+        }
+
+        let steps = interviewSteps(from: plan)
+        let productName = cleanNonEmpty(plan.signals.productName) ?? "이 프로젝트"
+        let problem = cleanNonEmpty(plan.signals.problem) ?? "scan에서 보이는 핵심 문제"
+        let target = cleanNonEmpty(plan.signals.currentIcpGuess) ?? "잠재 고객"
+
+        return OpenDesignDayContent(
+            railItems: day1.railItems,
+            taskGroups: day1.taskGroups.map { group in
+                TaskGroup(
+                    id: group.id,
+                    title: group.title,
+                    meta: group.meta,
+                    tasks: group.tasks.map { task in
+                        guard task.id == "day1" else { return task }
+                        return TaskItem(
+                            id: task.id,
+                            title: "ICP v0 질문을 정해요",
+                            day: task.day,
+                            meta: "ICP · adaptive \(steps.count)Q",
+                            state: task.state
+                        )
+                    }
+                )
+            },
+            contextTitle: "\(productName)의 ICP v0를 scan 결과로 만듭니다.",
+            contextBody: "Day 1은 첫 후보를 감으로 고정하는 화면이 아니라, \(target) 가설을 \(problem) 기준으로 검증 가능한 ICP 문서와 Anti-ICP 경계, 첫 인터뷰 메시지까지 만드는 단계입니다.",
+            mission: Mission(
+                markedTitle: "ICP v0",
+                titleSuffix: "를 검증 가능하게 좁혀요.",
+                body: plan.mission,
+                rules: [
+                    "좋은 고객의 need / have / don't need를 분리합니다.",
+                    "산업·직함보다 현재 대안, 반복 행동, 비용 신호를 우선합니다.",
+                    "마지막에는 docs/ICP.md preview와 첫 인터뷰 메시지를 확인합니다.",
+                ],
+                footnote: "수락하면 scan 기반 adaptive 질문 \(steps.count)개가 열려요 · 약 3분",
+                acceptLabel: "미션 수락하고 ICP 질문 시작 ↵",
+                acceptedLabel: "미션 수락됨 ✓"
+            ),
+            interviewSteps: steps,
+            searchItems: makePersonalizedSearchItems(plan: plan, steps: steps),
+            plan: plan
+        )
+    }
+
+    private static func interviewSteps(from plan: Day1IcpPlan) -> [InterviewStep] {
+        let total = min(max(plan.questions.count, 3), 5)
+        return plan.questions.prefix(total).enumerated().map { index, question in
+            let stepID = index + 1
+            let dimensionTitle = dimensionDisplayName(question.dimension)
+            let criteria = [
+                question.helperText,
+                plan.signals.evidenceRefs.first.map { "scan evidence: \($0.path)" },
+                "PostHog ICP: need / have / don't need 기준",
+            ].compactMap(cleanNonEmpty)
+            return InterviewStep(
+                id: stepID,
+                dimension: question.dimension,
+                title: "질문 \(stepID) — \(dimensionTitle)",
+                meta: "adaptive · \(dimensionTitle)",
+                label: "질문 · 프로젝트 scan 기반",
+                score: "\(stepID) / \(total)",
+                statementPrefix: "",
+                markedStatement: question.prompt,
+                statementSuffix: "",
+                criteria: Array(criteria.prefix(3)),
+                prompt: question.title,
+                progressLabel: dimensionTitle,
+                submitLabel: "이 답으로 제출",
+                options: question.options.enumerated().map { optionIndex, option in
+                    InterviewOption(
+                        id: optionIndex + 1,
+                        title: option.label,
+                        detail: option.description,
+                        tail: shortTail(option.preview ?? dimensionTitle),
+                        isAntiSignal: option.antiSignal == true
+                    )
+                },
+                allowsFreeform: question.allowFreeText ?? true,
+                freeformLabel: "직접 답하기 — scan 선택지보다 정확하면 한 줄로 적어도 돼요",
+                freeformPlaceholder: question.freeTextPlaceholder ?? "예: 지금 가장 먼저 검증할 좋은 고객 조건"
+            )
+        }
+    }
+
+    static func dimensionDisplayName(_ dimension: String) -> String {
+        switch dimension {
+        case "must_have": return "Must-have"
+        case "core_need": return "Core need"
+        case "current_alternative": return "현재 대안"
+        case "buyer_user": return "사용자/구매자"
+        case "activation_or_success_signal": return "성공 신호"
+        case "willingness_to_pay": return "지불 의향"
+        case "bad_fit_boundary": return "Anti-ICP"
+        case "reference_customer": return "Reference customer"
+        default: return "ICP 조건"
+        }
+    }
+
+    private static func shortTail(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > 14 else { return trimmed }
+        return String(trimmed.prefix(13)) + "…"
+    }
+
+    nonisolated private static func cleanNonEmpty(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
 
     static func makeSearchItems() -> [SearchItem] {
         [
@@ -307,8 +798,151 @@ struct OpenDesignDayContent {
             SearchItem(id: "section-slot", kind: .section, title: "인터뷰 약속 슬롯", subtitle: "Mon-Wed 중 1건", day: nil, systemImage: "clock", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "slot", route: .today),
             SearchItem(id: "section-message", kind: .section, title: "첫 메시지 초안", subtitle: "Twitter DM 검토", day: nil, systemImage: "paperplane", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "message", route: .today),
             SearchItem(id: "section-gate", kind: .section, title: "Day 1 게이트 조건", subtitle: "완료 전 체크리스트", day: nil, systemImage: "checkmark.seal", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "gate", route: .today),
-            SearchItem(id: "section-tutor", kind: .section, title: "tutor 명령 · docH1", subtitle: "튜토리얼 시작", day: nil, systemImage: "sparkles", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "top", route: .today),
+            SearchItem(id: "section-guide", kind: .section, title: "진행 가이드", subtitle: "Day 1 흐름 보기", day: nil, systemImage: "sparkles", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "top", route: .today),
         ]
+    }
+
+    static func makeMarketSearchItems() -> [SearchItem] {
+        var items = makeSearchItems()
+            .filter { $0.kind != .section }
+            .map { item -> SearchItem in
+                switch item.id {
+                case "page-today":
+                    return SearchItem(id: item.id, kind: item.kind, title: "오늘 · Day 2", subtitle: "Market Signals", day: nil, systemImage: "scope", isActive: true, isLocked: false, lockNote: nil, targetSectionID: "top", route: .today)
+                case "task-day1":
+                    return SearchItem(id: item.id, kind: item.kind, title: item.title, subtitle: "ICP · 완료", day: item.day, systemImage: "checkmark.circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert)
+                case "task-day2":
+                    return SearchItem(id: item.id, kind: item.kind, title: item.title, subtitle: "Market · +8", day: item.day, systemImage: "circle.dotted", isActive: true, isLocked: false, lockNote: nil, targetSectionID: "top", route: .today)
+                default:
+                    return item
+                }
+            }
+
+        items.append(contentsOf: [
+            SearchItem(id: "section-market-keywords", kind: .section, title: "지난 30일 키워드", subtitle: "ICP 코호트 · 총 287 멘션", day: nil, systemImage: "text.magnifyingglass", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "market-keywords", route: .today),
+            SearchItem(id: "section-market-sources", kind: .section, title: "소스별 신호", subtitle: "Threads · IH · X", day: nil, systemImage: "chart.line.uptrend.xyaxis", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "market-sources", route: .today),
+            SearchItem(id: "section-market-alternatives", kind: .section, title: "대안 비교 매트릭스", subtitle: "7개 대안 · 갭 비교", day: nil, systemImage: "tablecells", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "market-alternatives", route: .today),
+            SearchItem(id: "section-market-gap", kind: .section, title: "시장 빈 자리", subtitle: "한국어 + 30일 강제 과제", day: nil, systemImage: "scope", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "market-gap", route: .today),
+            SearchItem(id: "section-market-posts", kind: .section, title: "인용 좋은 게시물", subtitle: "상위 5개", day: nil, systemImage: "quote.bubble", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "market-posts", route: .today),
+        ])
+
+        return items
+    }
+
+    private static func makePersonalizedSearchItems(plan: Day1IcpPlan, steps: [InterviewStep]) -> [SearchItem] {
+        let productName = cleanNonEmpty(plan.signals.productName) ?? "이 프로젝트"
+        var items: [SearchItem] = []
+
+        for item in makeSearchItems() {
+            switch item.id {
+            case "task-day1":
+                items.append(SearchItem(
+                    id: item.id,
+                    kind: item.kind,
+                    title: "ICP v0 질문을 정해요",
+                    subtitle: "ICP · adaptive \(steps.count)Q",
+                    day: item.day,
+                    systemImage: item.systemImage,
+                    isActive: item.isActive,
+                    isLocked: item.isLocked,
+                    lockNote: item.lockNote,
+                    targetSectionID: item.targetSectionID,
+                    route: item.route
+                ))
+            case "section-signals":
+                items.append(SearchItem(
+                    id: item.id,
+                    kind: item.kind,
+                    title: "scan 시그널",
+                    subtitle: productName,
+                    day: item.day,
+                    systemImage: item.systemImage,
+                    isActive: item.isActive,
+                    isLocked: item.isLocked,
+                    lockNote: item.lockNote,
+                    targetSectionID: item.targetSectionID,
+                    route: item.route
+                ))
+            case "section-interview1":
+                for step in steps {
+                    items.append(SearchItem(
+                        id: "section-interview\(step.id)",
+                        kind: .section,
+                        title: step.title,
+                        subtitle: step.meta,
+                        day: nil,
+                        systemImage: "questionmark.bubble",
+                        isActive: false,
+                        isLocked: false,
+                        lockNote: nil,
+                        targetSectionID: "interview\(step.id)",
+                        route: .today
+                    ))
+                }
+            case "section-picker":
+                continue
+            case "section-preview":
+                items.append(SearchItem(
+                    id: item.id,
+                    kind: item.kind,
+                    title: "ICP.md preview",
+                    subtitle: "Description · Criteria · Evidence",
+                    day: item.day,
+                    systemImage: item.systemImage,
+                    isActive: item.isActive,
+                    isLocked: item.isLocked,
+                    lockNote: item.lockNote,
+                    targetSectionID: item.targetSectionID,
+                    route: item.route
+                ))
+            case "section-final":
+                items.append(SearchItem(
+                    id: item.id,
+                    kind: item.kind,
+                    title: "ICP v0 한 문장",
+                    subtitle: "선택 답변 반영",
+                    day: item.day,
+                    systemImage: item.systemImage,
+                    isActive: item.isActive,
+                    isLocked: item.isLocked,
+                    lockNote: item.lockNote,
+                    targetSectionID: item.targetSectionID,
+                    route: item.route
+                ))
+            case "section-candidate":
+                items.append(SearchItem(
+                    id: item.id,
+                    kind: item.kind,
+                    title: "Reference customer 후보",
+                    subtitle: "첫 인터뷰 대상",
+                    day: item.day,
+                    systemImage: item.systemImage,
+                    isActive: item.isActive,
+                    isLocked: item.isLocked,
+                    lockNote: item.lockNote,
+                    targetSectionID: item.targetSectionID,
+                    route: item.route
+                ))
+            case "section-message":
+                items.append(SearchItem(
+                    id: item.id,
+                    kind: item.kind,
+                    title: "첫 인터뷰 메시지",
+                    subtitle: plan.firstInterviewMessage.channel,
+                    day: item.day,
+                    systemImage: item.systemImage,
+                    isActive: item.isActive,
+                    isLocked: item.isLocked,
+                    lockNote: item.lockNote,
+                    targetSectionID: item.targetSectionID,
+                    route: item.route
+                ))
+            default:
+                items.append(item)
+            }
+        }
+
+        return items
     }
 
     func rankedSearchItems(query rawQuery: String) -> [SearchItem] {
@@ -365,11 +999,25 @@ struct OpenDesignDayContent {
     }
 
     func draft(for interaction: OpenDesignDayInteractionState) -> OpenDesignDayDraft {
-        OpenDesignDayDraft(
+        let answers = interviewSteps.compactMap { step -> OpenDesignDaySelectedAnswer? in
+            guard let selectedID = interaction.selectedChoices[step.id],
+                  let option = step.options.first(where: { $0.id == selectedID }) else {
+                return nil
+            }
+            return OpenDesignDaySelectedAnswer(
+                dimension: step.dimension.isEmpty ? step.title : step.dimension,
+                title: step.title,
+                value: option.title,
+                isAntiSignal: option.isAntiSignal
+            )
+        }
+        return OpenDesignDayDraft(
             distance: selectedLabel(stepID: 1, in: interaction, fallback: "이번 주 바로 연락 가능한 1인 개발자"),
             tool: selectedLabel(stepID: 2, in: interaction),
             stuck: selectedLabel(stepID: 3, in: interaction),
-            action: selectedLabel(stepID: 4, in: interaction)
+            action: selectedLabel(stepID: 4, in: interaction),
+            selectedAnswers: answers,
+            plan: plan
         )
     }
 }
@@ -396,23 +1044,131 @@ enum OpenDesignSectionAnchor: String, CaseIterable, Hashable {
     case top
     case signals
     case mission
+    case missionAction = "mission-action"
     case interview1
     case interview1Options = "interview1-options"
+    case interview2
+    case interview2Options = "interview2-options"
+    case interview3
+    case interview3Options = "interview3-options"
+    case interview4
+    case interview4Options = "interview4-options"
+    case interview5
+    case interview5Options = "interview5-options"
     case icpPreview = "icp-preview"
+    case icpPreviewAction = "icp-preview-action"
     case finalIcp = "final-icp"
+    case finalIcpAction = "final-icp-action"
     case candidate
+    case candidateAction = "candidate-action"
     case slot
+    case slotAction = "slot-action"
     case message
     case gate
+    case gateAction = "gate-action"
     case completion
+    case marketKeywords = "market-keywords"
+    case marketSources = "market-sources"
+    case marketAlternatives = "market-alternatives"
+    case marketGap = "market-gap"
+    case marketPosts = "market-posts"
+
+    static func interview(stepID: Int, placement: OpenDesignScrollPlacement = .sectionContext) -> OpenDesignSectionAnchor {
+        let boundedStepID = min(max(stepID, 1), 5)
+        let suffix = placement == .nextAction ? "-options" : ""
+        return OpenDesignSectionAnchor(rawValue: "interview\(boundedStepID)\(suffix)") ?? .interview1
+    }
+}
+
+enum OpenDesignScrollPlacement: Equatable {
+    case sectionContext
+    case nextAction
+
+    var anchor: UnitPoint {
+        switch self {
+        case .sectionContext, .nextAction:
+            return .top
+        }
+    }
+}
+
+struct OpenDesignScrollRequest: Equatable {
+    let target: OpenDesignSectionAnchor
+    let placement: OpenDesignScrollPlacement
+    let token: UUID
+
+    var resolvedTarget: OpenDesignSectionAnchor {
+        switch (target, placement) {
+        case (.mission, .nextAction):
+            return .missionAction
+        case (.icpPreview, .nextAction):
+            return .icpPreviewAction
+        case (.finalIcp, .nextAction):
+            return .finalIcpAction
+        case (.candidate, .nextAction):
+            return .candidateAction
+        case (.slot, .nextAction):
+            return .slotAction
+        case (.gate, .nextAction):
+            return .gateAction
+        default:
+            return target
+        }
+    }
+
+    var anchor: UnitPoint {
+        return placement.anchor
+    }
+
+    init(
+        target: OpenDesignSectionAnchor,
+        placement: OpenDesignScrollPlacement = .sectionContext,
+        token: UUID = UUID()
+    ) {
+        self.target = target
+        self.placement = placement
+        self.token = token
+    }
+}
+
+enum OpenDesignIntroStage: Int, Comparable {
+    case context
+    case signals
+    case mission
+
+    static func < (lhs: OpenDesignIntroStage, rhs: OpenDesignIntroStage) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+
+    var revealsSignals: Bool {
+        self >= .signals
+    }
+
+    var revealsMission: Bool {
+        self >= .mission
+    }
+
+    var nextButtonTitle: String? {
+        switch self {
+        case .context:
+            return "시그널 보기"
+        case .signals:
+            return "오늘 미션 보기"
+        case .mission:
+            return nil
+        }
+    }
 }
 
 struct OpenDesignDayInteractionState: Equatable {
+    var totalInterviewSteps = 4
+    var introStage: OpenDesignIntroStage = .context
     var missionAccepted = false
     var selectedChoices: [Int: Int] = [:]
     var submittedChoices: [Int: Int] = [:]
     var submittedSteps: Set<Int> = []
     var freeformAnswer = ""
+    var freeformAnswers: [Int: String] = [:]
     var handoffIndex = 0
     var selectedSlot = 2
     var completedGateRows: Set<Int> = [1, 2, 4]
@@ -421,22 +1177,26 @@ struct OpenDesignDayInteractionState: Equatable {
 
     var highestVisibleInterviewStep: Int {
         var highest = 1
-        for step in 1...3 where submittedSteps.contains(step) {
+        guard totalInterviewSteps > 1 else { return highest }
+        for step in 1..<totalInterviewSteps where submittedSteps.contains(step) {
             highest = step + 1
         }
-        return highest
+        return min(highest, totalInterviewSteps)
     }
 
     var allInterviewsSubmitted: Bool {
-        submittedSteps.isSuperset(of: Set(1...4))
+        guard totalInterviewSteps > 0 else { return true }
+        return submittedSteps.isSuperset(of: Set(1...totalInterviewSteps))
     }
 
     var progressPercent: Int {
         if dayCompleted { return 100 }
         if allInterviewsSubmitted { return 75 }
-        if submittedSteps.contains(3) { return 70 }
-        if submittedSteps.contains(2) { return 64 }
-        if submittedSteps.contains(1) { return 58 }
+        let completed = min(submittedSteps.count, max(totalInterviewSteps, 1))
+        if completed > 0 {
+            let span = 25.0 * Double(completed) / Double(max(totalInterviewSteps - 1, 1))
+            return min(72, 50 + Int(span.rounded()))
+        }
         return 50
     }
 
@@ -445,25 +1205,28 @@ struct OpenDesignDayInteractionState: Equatable {
         return 2
     }
 
-    var currentProgressScrollTarget: String {
-        if !missionAccepted { return "mission" }
-        if !allInterviewsSubmitted { return "interview\(highestVisibleInterviewStep)" }
-        if handoffIndex == 0 { return "icp-preview" }
-        return handoffScrollTarget ?? "icp-preview"
+    var currentProgressScrollTarget: OpenDesignSectionAnchor {
+        if !introStage.revealsSignals { return .top }
+        if !introStage.revealsMission { return .signals }
+        if !missionAccepted { return .mission }
+        if !allInterviewsSubmitted { return .interview(stepID: highestVisibleInterviewStep) }
+        if handoffIndex == 0 { return .icpPreview }
+        return handoffScrollTarget ?? .icpPreview
     }
 
-    func stepperScrollTarget(for index: Int) -> String {
+    func stepperScrollTarget(for index: Int) -> OpenDesignSectionAnchor {
         switch index {
         case 0:
-            return "top"
+            return .top
         case 1:
-            return "mission"
+            return .signals
         case 2:
-            return missionAccepted ? "interview\(highestVisibleInterviewStep)" : "mission"
+            return missionAccepted ? .interview(stepID: highestVisibleInterviewStep) : .mission
         case 3:
-            return allInterviewsSubmitted ? currentProgressScrollTarget : "interview\(highestVisibleInterviewStep)"
+            if !introStage.revealsMission || !missionAccepted { return .mission }
+            return allInterviewsSubmitted ? currentProgressScrollTarget : .interview(stepID: highestVisibleInterviewStep)
         default:
-            return "top"
+            return .top
         }
     }
 
@@ -475,39 +1238,53 @@ struct OpenDesignDayInteractionState: Equatable {
         }
 
         switch anchor {
-        case .top, .signals, .mission:
+        case .top, .signals, .mission, .missionAction, .marketKeywords, .marketSources, .marketAlternatives, .marketGap, .marketPosts:
             return true
         case .interview1, .interview1Options:
-            // `day.html` keeps the first interview block mounted behind the
-            // mission-accept gate, so its search entries are indexed before it
-            // is visible. Later handoff sections are injected only after their
-            // preceding state exists.
-            return true
-        case .icpPreview:
+            return missionAccepted
+        case .interview2, .interview2Options:
+            return highestVisibleInterviewStep >= 2
+        case .interview3, .interview3Options:
+            return highestVisibleInterviewStep >= 3
+        case .interview4, .interview4Options:
+            return highestVisibleInterviewStep >= 4
+        case .interview5, .interview5Options:
+            return highestVisibleInterviewStep >= 5
+        case .icpPreview, .icpPreviewAction:
             return allInterviewsSubmitted
-        case .finalIcp:
+        case .finalIcp, .finalIcpAction:
             return allInterviewsSubmitted && handoffIndex >= 1
-        case .candidate:
+        case .candidate, .candidateAction:
             return allInterviewsSubmitted && handoffIndex >= 2
-        case .slot:
+        case .slot, .slotAction:
             return allInterviewsSubmitted && handoffIndex >= 3
         case .message:
             return allInterviewsSubmitted && handoffIndex >= 4
-        case .gate:
+        case .gate, .gateAction:
             return allInterviewsSubmitted && handoffIndex >= 5
         case .completion:
             return dayCompleted
         }
     }
 
-    var handoffScrollTarget: String? {
-        ["", "final-icp", "candidate", "slot", "message", "gate"][safe: handoffIndex]
+    var handoffScrollTarget: OpenDesignSectionAnchor? {
+        let targets: [OpenDesignSectionAnchor?] = [nil, .finalIcp, .candidate, .slot, .message, .gate]
+        return targets[safe: handoffIndex] ?? nil
+    }
+
+    var handoffScrollPlacement: OpenDesignScrollPlacement {
+        switch handoffIndex {
+        case 1, 2, 3, 5:
+            return .nextAction
+        default:
+            return .sectionContext
+        }
     }
 
     mutating func recordSubmittedChoice(stepID: Int, choiceID: Int) {
         _ = submittedSteps.insert(stepID)
         submittedChoices[stepID] = choiceID
-        if stepID == 4 {
+        if stepID == totalInterviewSteps {
             if choiceID == 4 {
                 completedGateRows.remove(4)
             } else {
@@ -538,14 +1315,23 @@ struct OpenDesignDayInteractionState: Equatable {
     }
 }
 
+struct OpenDesignDaySelectedAnswer: Equatable {
+    let dimension: String
+    let title: String
+    let value: String
+    let isAntiSignal: Bool
+}
+
 struct OpenDesignDayDraft: Equatable {
     let distance: String
     let tool: String
     let stuck: String
     let action: String
+    var selectedAnswers: [OpenDesignDaySelectedAnswer] = []
+    var plan: Day1IcpPlan? = nil
 
     var isAntiSignal: Bool {
-        action.contains("아무 행동")
+        selectedAnswers.contains(where: \.isAntiSignal) || action.contains("아무 행동")
     }
 
     var recommendation: String {
@@ -556,7 +1342,10 @@ struct OpenDesignDayDraft: Equatable {
     }
 
     var markdown: String {
-        """
+        if let plan {
+            return personalizedMarkdown(plan: plan)
+        }
+        return """
         # Ideal Customer Profile
 
         > Write target: docs/ICP.md
@@ -581,14 +1370,104 @@ struct OpenDesignDayDraft: Equatable {
     }
 
     var finalIcpStatement: String {
-        "\(distance) 중, \(tool)를 매일 쓰고 \(stuck)에서 멈췄으며 지난 7일 행동이 \(action)으로 확인된 macOS 1인 개발자."
+        if let plan {
+            let selected = selectedAnswers.map(\.value).prefix(3).joined(separator: " · ")
+            if selected.isEmpty {
+                return plan.icpDraft.description
+            }
+            return "\(plan.icpDraft.description) 선택된 Day 1 조건: \(selected)."
+        }
+        return "\(distance) 중, \(tool)를 매일 쓰고 \(stuck)에서 멈췄으며 지난 7일 행동이 \(action)으로 확인된 macOS 1인 개발자."
     }
 
     var antiIcpBody: String {
+        if let plan {
+            let firstRule = plan.antiIcp.rules.first?.label ?? "최근 사건과 현재 대안이 없는 후보"
+            if isAntiSignal {
+                return "선택한 답변이 Anti-ICP 경계에 걸립니다. \(plan.antiIcp.summary) \(firstRule)을 확인하고, 실제 need/have/behavior가 없으면 Day 3 인터뷰에서 제외하세요."
+            }
+            return "\(plan.antiIcp.summary) 첫 guardrail: \(firstRule)"
+        }
         if isAntiSignal {
             return "지난 7일 행동 없음 신호가 있어 Day 3 인터뷰 전에 실제 사건을 한 번 더 확인하세요. 박주영이 \"언젠가 해볼게요\" 또는 \"좋은 아이디어네요\"로 답하면 후보 교체. Mom Test 기준 그대로."
         }
         return "좋은 신호는 지난주에 같은 문제로 시간을 쓴 사건입니다. 박주영이 \"언젠가 해볼게요\" 또는 \"좋은 아이디어네요\"로 답하면 후보 교체. Mom Test 기준 그대로."
+    }
+
+    var firstMessage: String {
+        guard let plan else { return legacyMessage }
+        var message = plan.firstInterviewMessage.bodyTemplate
+        let selected = selectedAnswers.map(\.value).prefix(3).joined(separator: " / ")
+        if !selected.isEmpty {
+            message += "\n\nDay 1 선택 조건: \(selected)"
+        }
+        return message
+    }
+
+    private var legacyMessage: String {
+        """
+        # to: @joopark.dev — Twitter DM
+        안녕하세요 주영님, 코워킹에서 몇 번 뵈었어요.
+        요즘 "\(stuck)" 쪽에서 또 멈추셨다는 얘기를 봤는데,
+        제가 지금 "\(tool)"를 매일 쓰는 1인 개발자분들의 첫 고객 검증 과정을 정리하고 있어요.
+
+        이번 화요일 11시에 30분 Zoom 가능하세요?
+        질문은 3개만 드릴게요:
+          1) 지난 7일에 실제로 한 행동이 무엇이었는지
+          2) 그때 막힌 정확한 지점은 뭐였는지
+          3) 지금 그 문제 해결에 시간이나 돈을 얼마나 쓰고 있는지
+
+        답이 어려우시면 "패스"만 답주셔도 괜찮습니다. — Z
+        """
+    }
+
+    private func personalizedMarkdown(plan: Day1IcpPlan) -> String {
+        let selectedLines = selectedAnswers.isEmpty
+            ? ["- 아직 선택된 답변 없음"]
+            : selectedAnswers.map { "- \($0.title): \($0.value)" }
+        return """
+        # Ideal Customer Profile
+
+        > Write target: docs/ICP.md
+        > Source: Day 1 adaptive scan plan
+
+        ## Description
+        \(plan.icpDraft.description)
+
+        ## Criteria
+        \(markdownList(plan.icpDraft.criteria))
+
+        ## Why they matter
+        \(markdownList(plan.icpDraft.whyTheyMatter))
+
+        ## Needs
+        \(markdownList(plan.icpDraft.needs))
+
+        ## Haves
+        \(markdownList(plan.icpDraft.haves))
+
+        ## Don't needs
+        \(markdownList(plan.icpDraft.dontNeeds))
+
+        ## Day 1 selections
+        \(selectedLines.joined(separator: "\n"))
+
+        ## Evidence
+        \(markdownList(plan.icpDraft.evidence))
+
+        ## Reference customers to find
+        \(markdownList(plan.icpDraft.referenceCustomersToFind))
+
+        ## Anti-ICP guardrail
+        \(plan.antiIcp.summary)
+        \(markdownList(plan.antiIcp.rules.map { "\($0.label) — \($0.reason)" }))
+        """
+    }
+
+    private func markdownList(_ values: [String]) -> String {
+        let clean = values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        guard !clean.isEmpty else { return "- TBD" }
+        return clean.map { "- \($0)" }.joined(separator: "\n")
     }
 }
 
@@ -626,61 +1505,6 @@ enum OpenDesignDayColor {
 enum OpenDesignAccessibilityMetrics {
     static func borderLineWidth(isIncreasedContrast: Bool) -> CGFloat {
         isIncreasedContrast ? 1.5 : 1
-    }
-}
-
-struct OpenDesignCompletionBurstParticle: Identifiable, Equatable {
-    static let originYRatio: CGFloat = 0.72
-    static let duration: TimeInterval = 1.50
-    static let reference: [OpenDesignCompletionBurstParticle] = makeReferenceParticles()
-
-    let id: Int
-    let x: CGFloat
-    let y: CGFloat
-    let width: CGFloat
-    let height: CGFloat
-    let startRotation: Double
-    let endRotation: Double
-    let delay: TimeInterval
-    let paletteIndex: Int
-
-    var color: Color {
-        switch paletteIndex % 5 {
-        case 0: return OpenDesignDayColor.accent
-        case 1: return OpenDesignDayColor.accentStrong
-        case 2: return OpenDesignDayColor.amber
-        case 3: return OpenDesignDayColor.sky
-        default: return OpenDesignDayColor.fg
-        }
-    }
-
-    private static func makeReferenceParticles() -> [OpenDesignCompletionBurstParticle] {
-        (0..<100).map { index in
-            let cluster = index % 5
-            let lane = index / 5
-            let spread: Double = [26, 60, 100, 120, 120][cluster]
-            let velocity: Double = [55, 45, 36, 25, 45][cluster]
-            let scalar: CGFloat = [1.0, 1.0, 0.8, 1.2, 1.0][cluster]
-            let normalizedLane = Double(lane % 20) / 19.0
-            let jitter = Double((index * 37) % 17) / 16.0 - 0.5
-            let angle = (-90 + (normalizedLane - 0.5) * spread + jitter * 8) * .pi / 180
-            let distance = velocity * (2.1 + Double((index * 11) % 9) * 0.12)
-            let x = cos(angle) * distance
-            let lift = sin(angle) * distance
-            let fall = Double((index * 7) % 11) * 5.5
-
-            return OpenDesignCompletionBurstParticle(
-                id: index,
-                x: CGFloat(x),
-                y: CGFloat(lift + fall),
-                width: (5 + CGFloat((index * 3) % 7)) * scalar,
-                height: (8 + CGFloat((index * 5) % 10)) * scalar,
-                startRotation: Double((index * 29) % 180),
-                endRotation: Double((index * 29) % 180) + 220 + Double((index * 13) % 160),
-                delay: Double(index % 12) * 0.006,
-                paletteIndex: index + cluster
-            )
-        }
     }
 }
 
@@ -798,58 +1622,6 @@ private struct OpenDesignStagedRevealModifier: ViewModifier {
     }
 }
 
-private struct OpenDesignCompletionBurstView: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    let trigger: Int
-    @State private var isExpanded = false
-
-    var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                ForEach(OpenDesignCompletionBurstParticle.reference) { particle in
-                    RoundedRectangle(cornerRadius: 1.6, style: .continuous)
-                        .fill(particle.color)
-                        .frame(width: particle.width, height: particle.height)
-                        .rotationEffect(.degrees(isExpanded ? particle.endRotation : particle.startRotation))
-                        .offset(
-                            x: isExpanded ? particle.x : 0,
-                            y: isExpanded ? particle.y : 0
-                        )
-                        .opacity(isExpanded ? 0 : 1)
-                        .animation(
-                            .easeOut(duration: OpenDesignCompletionBurstParticle.duration)
-                                .delay(particle.delay),
-                            value: isExpanded
-                        )
-                }
-            }
-            .position(
-                x: geometry.size.width * 0.5,
-                y: geometry.size.height * OpenDesignCompletionBurstParticle.originYRatio
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-        .accessibilityIdentifier("opendesign.day.confetti")
-        .onAppear {
-            guard !reduceMotion else { return }
-            isExpanded = false
-            DispatchQueue.main.async {
-                isExpanded = true
-            }
-        }
-        .onChange(of: trigger) { _, _ in
-            guard !reduceMotion else { return }
-            isExpanded = false
-            DispatchQueue.main.async {
-                isExpanded = true
-            }
-        }
-    }
-}
-
 private extension View {
     func openDesignHoverRow(
         isHovered: Bool,
@@ -896,9 +1668,10 @@ struct OpenDesignDayPageView: View {
     @State private var isSearchPresented = false
     @State private var searchQuery = ""
     @State private var selectedSearchIndex = 0
-    @State private var pendingScrollTarget: String?
+    @State private var pendingScrollRequest: OpenDesignScrollRequest?
     @State private var searchPulseTarget: String?
     @State private var completionBurstID = 0
+    @State private var requestedDayCompletionID: String?
     @State private var keyboardMonitor: Any?
 
     init(
@@ -911,6 +1684,7 @@ struct OpenDesignDayPageView: View {
         self.openSettings = openSettings
         self.submitStructuredPromptChoice = submitStructuredPromptChoice
         self.completeDay = completeDay
+        _interaction = State(initialValue: OpenDesignDayInteractionState(totalInterviewSteps: content.interviewSteps.count))
     }
 
     private var searchResults: [OpenDesignDayContent.SearchItem] {
@@ -929,7 +1703,7 @@ struct OpenDesignDayPageView: View {
                     content: content,
                     interaction: $interaction,
                     selectedReferencePage: selectedReferencePage,
-                    pendingScrollTarget: $pendingScrollTarget,
+                    pendingScrollRequest: $pendingScrollRequest,
                     searchPulseTarget: $searchPulseTarget,
                     layout: layout,
                     openSearch: openSearch,
@@ -939,7 +1713,7 @@ struct OpenDesignDayPageView: View {
                     acceptMission: acceptMission,
                     advanceHandoff: advanceHandoff,
                     completeDayAction: completeDayAction,
-                    advanceToNextDay: completeDay,
+                    advanceToNextDay: requestDayCompletionOnce,
                     shareSummary: dayShareSummary,
                     focusContextOverview: focusContextOverview,
                     focusCurrentProgress: focusCurrentProgress
@@ -965,8 +1739,9 @@ struct OpenDesignDayPageView: View {
                 }
 
                 if completionBurstID > 0 {
-                    OpenDesignCompletionBurstView(trigger: completionBurstID)
+                    RealisticConfettiBurst(trigger: completionBurstID)
                         .id(completionBurstID)
+                        .accessibilityIdentifier("opendesign.day.confetti")
                         .transition(.opacity)
                         .zIndex(15)
                 }
@@ -1112,9 +1887,10 @@ struct OpenDesignDayPageView: View {
         case .today, .inert:
             closeSearch()
             selectedReferencePage = nil
-            let target = item.targetSectionID ?? "top"
-            pendingScrollTarget = target
-            pulseSearchTarget(target)
+            let target = OpenDesignSectionAnchor(rawValue: item.targetSectionID ?? "") ?? .top
+            revealIntroIfNeeded(for: target)
+            requestScroll(to: target)
+            pulseSearchTarget(target.rawValue)
         }
     }
 
@@ -1142,7 +1918,7 @@ struct OpenDesignDayPageView: View {
     private func activateRailItem(_ item: OpenDesignDayContent.RailItem) {
         if item.id == "today" {
             selectedReferencePage = nil
-            pendingScrollTarget = "top"
+            requestScroll(to: .top)
             return
         }
 
@@ -1157,7 +1933,7 @@ struct OpenDesignDayPageView: View {
         case .search:
             openSearch()
         case .today:
-            pendingScrollTarget = "top"
+            requestScroll(to: .top)
         case .inert:
             break
         }
@@ -1166,9 +1942,10 @@ struct OpenDesignDayPageView: View {
     private func acceptMission() {
         guard !interaction.missionAccepted else { return }
         withAnimation(.spring(response: reduceMotion ? 0 : 0.26, dampingFraction: 0.90)) {
+            interaction.introStage = .mission
             interaction.missionAccepted = true
         }
-        pendingScrollTarget = "interview1"
+        requestScroll(to: .interview(stepID: 1, placement: .nextAction), placement: .nextAction)
     }
 
     private func submitStep(_ step: OpenDesignDayContent.InterviewStep) {
@@ -1176,14 +1953,28 @@ struct OpenDesignDayPageView: View {
         guard interaction.submittedChoices[step.id] != selectedChoiceID else { return }
         withAnimation(.spring(response: reduceMotion ? 0 : 0.28, dampingFraction: 0.90)) {
             interaction.recordSubmittedChoice(stepID: step.id, choiceID: selectedChoiceID)
+            if let option = step.options.first(where: { $0.id == selectedChoiceID }) {
+                if option.isAntiSignal {
+                    interaction.completedGateRows.remove(4)
+                } else if step.dimension == "bad_fit_boundary" {
+                    interaction.completedGateRows.insert(4)
+                }
+            }
         }
         if let selectedTitle = selectedTitle(for: step.id) {
             submitStructuredPromptChoice(selectedTitle)
         }
-        pendingScrollTarget = step.id < 4 ? "interview\(step.id + 1)" : "icp-preview"
+        if step.id < content.interviewSteps.count {
+            requestScroll(to: .interview(stepID: step.id + 1, placement: .nextAction), placement: .nextAction)
+        } else {
+            requestScroll(to: .icpPreview, placement: .nextAction)
+        }
     }
 
     private func submitActiveStep() {
+        if advanceIntroIfNeeded() {
+            return
+        }
         if !interaction.missionAccepted {
             acceptMission()
             return
@@ -1202,17 +1993,60 @@ struct OpenDesignDayPageView: View {
             } else if !interaction.dayCompleted {
                 completeDayAction()
             } else {
-                completeDay()
+                requestDayCompletionOnce()
             }
         }
     }
 
     private func focusCurrentProgress() {
-        pendingScrollTarget = interaction.currentProgressScrollTarget
+        if advanceIntroIfNeeded() {
+            return
+        }
+        requestScroll(to: interaction.currentProgressScrollTarget)
     }
 
     private func focusContextOverview() {
-        pendingScrollTarget = "top"
+        requestScroll(to: .top)
+    }
+
+    private func advanceIntroIfNeeded() -> Bool {
+        switch interaction.introStage {
+        case .context:
+            revealIntroStage(.signals)
+            requestScroll(to: .signals)
+            return true
+        case .signals:
+            revealIntroStage(.mission)
+            requestScroll(to: .mission, placement: .nextAction)
+            return true
+        case .mission:
+            return false
+        }
+    }
+
+    private func revealIntroIfNeeded(for target: OpenDesignSectionAnchor) {
+        switch target {
+        case .top:
+            break
+        case .signals:
+            revealIntroStage(.signals)
+        default:
+            revealIntroStage(.mission)
+        }
+    }
+
+    private func requestScroll(
+        to target: OpenDesignSectionAnchor,
+        placement: OpenDesignScrollPlacement = .sectionContext
+    ) {
+        pendingScrollRequest = OpenDesignScrollRequest(target: target, placement: placement)
+    }
+
+    private func revealIntroStage(_ stage: OpenDesignIntroStage) {
+        guard interaction.introStage < stage else { return }
+        withAnimation(.spring(response: reduceMotion ? 0 : 0.24, dampingFraction: 0.92)) {
+            interaction.introStage = stage
+        }
     }
 
     private func advanceHandoff() {
@@ -1220,10 +2054,20 @@ struct OpenDesignDayPageView: View {
         withAnimation(.spring(response: reduceMotion ? 0 : 0.28, dampingFraction: 0.88)) {
             interaction.handoffIndex += 1
         }
-        pendingScrollTarget = interaction.handoffScrollTarget
+        if let target = interaction.handoffScrollTarget {
+            let placement = interaction.handoffScrollPlacement
+            DispatchQueue.main.async {
+                requestScroll(to: target, placement: placement)
+            }
+        }
     }
 
     private func completeDayAction() {
+        completeDayLocally()
+        requestDayCompletionOnce()
+    }
+
+    private func completeDayLocally() {
         let shouldRunBurst = !interaction.dayCompleted && !reduceMotion
         withAnimation(.spring(response: reduceMotion ? 0 : 0.30, dampingFraction: 0.88)) {
             interaction.dayCompleted = true
@@ -1232,13 +2076,20 @@ struct OpenDesignDayPageView: View {
         if shouldRunBurst {
             runCompletionBurst()
         }
-        pendingScrollTarget = "completion"
+        requestScroll(to: .completion)
+    }
+
+    private func requestDayCompletionOnce() {
+        let completionID = content.market.map { "day-\($0.dayNumber)" } ?? "day-1"
+        guard requestedDayCompletionID != completionID else { return }
+        requestedDayCompletionID = completionID
+        completeDay()
     }
 
     private func runCompletionBurst() {
         completionBurstID += 1
         let currentID = completionBurstID
-        DispatchQueue.main.asyncAfter(deadline: .now() + OpenDesignCompletionBurstParticle.duration + 0.25) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + RealisticConfettiRecipe.cleanupDelay + 0.15) {
             if completionBurstID == currentID {
                 withAnimation(.easeOut(duration: 0.16)) {
                     completionBurstID = 0
@@ -1248,13 +2099,29 @@ struct OpenDesignDayPageView: View {
     }
 
     private var dayShareSummary: String {
+        if let market = content.market {
+            let keywords = market.lockedKeywords.map { "- \($0.label): \($0.value)" }.joined(separator: "\n")
+            let alternatives = market.topAlternatives.prefix(3).map { "- \($0.label): \($0.value)" }.joined(separator: "\n")
+            return """
+            Agentic30 Day \(market.dayNumber) · Foundation / Market Signals
+            \(market.title)
+            시장 신호 강도: \(market.signalStrength.score) \(market.signalStrength.total) · \(market.signalStrength.tag)
+
+            잠긴 키워드
+            \(keywords)
+
+            상위 대안
+            \(alternatives)
+            """
+        }
+
         let progress: String
         if interaction.dayCompleted {
             progress = "Day 1 완료"
         } else if interaction.allInterviewsSubmitted {
             progress = "STEP 4 / 4 · docs/ICP.md 초안"
         } else {
-            progress = "STEP 3 / 4 · 인터뷰 \(interaction.highestVisibleInterviewStep) / 4"
+            progress = "STEP 3 / 4 · 질문 \(interaction.highestVisibleInterviewStep) / \(content.interviewSteps.count)"
         }
 
         let choiceLines = content.interviewSteps.map { step -> String in
@@ -1285,7 +2152,7 @@ struct OpenDesignDayShell: View {
     let content: OpenDesignDayContent
     @Binding var interaction: OpenDesignDayInteractionState
     let selectedReferencePage: OpenDesignReferencePageKind?
-    @Binding var pendingScrollTarget: String?
+    @Binding var pendingScrollRequest: OpenDesignScrollRequest?
     @Binding var searchPulseTarget: String?
     let layout: OpenDesignDayLayoutMetrics
     let openSearch: () -> Void
@@ -1308,6 +2175,12 @@ struct OpenDesignDayShell: View {
                 OpenDesignReferenceTitlebar(
                     page: OpenDesignReferenceCatalog.page(selectedReferencePage),
                     openSearch: toggleSearch
+                )
+            } else if let market = content.market {
+                OpenDesignMarketTitlebar(
+                    market: market,
+                    openSearch: toggleSearch,
+                    shareSummary: shareSummary
                 )
             } else {
                 OpenDesignDayTitlebar(
@@ -1356,25 +2229,40 @@ struct OpenDesignDayShell: View {
                         .transition(reduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
                     }
 
-                    OpenDesignDayMainView(
-                        content: content,
-                        interaction: $interaction,
-                        pendingScrollTarget: $pendingScrollTarget,
-                        searchPulseTarget: $searchPulseTarget,
-                        submitStep: submitStep,
-                        acceptMission: acceptMission,
-                        advanceHandoff: advanceHandoff,
-                        completeDayAction: completeDayAction,
-                        advanceToNextDay: advanceToNextDay,
-                        focusContextOverview: focusContextOverview,
-                        focusCurrentProgress: focusCurrentProgress,
-                        layout: layout
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    if let market = content.market {
+                        OpenDesignMarketMainView(
+                            market: market,
+                            pendingScrollRequest: $pendingScrollRequest,
+                            searchPulseTarget: $searchPulseTarget,
+                            completeDay: advanceToNextDay,
+                            layout: layout
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        OpenDesignDayMainView(
+                            content: content,
+                            interaction: $interaction,
+                            pendingScrollRequest: $pendingScrollRequest,
+                            searchPulseTarget: $searchPulseTarget,
+                            submitStep: submitStep,
+                            acceptMission: acceptMission,
+                            advanceHandoff: advanceHandoff,
+                            completeDayAction: completeDayAction,
+                            advanceToNextDay: advanceToNextDay,
+                            focusContextOverview: focusContextOverview,
+                            focusCurrentProgress: focusCurrentProgress,
+                            layout: layout
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
 
                     if layout.showsMetaPanel {
                         ZStack {
-                            OpenDesignMetaPanelView(content: content, interaction: $interaction)
+                            if let market = content.market {
+                                OpenDesignMarketMetaPanelView(market: market)
+                            } else {
+                                OpenDesignMetaPanelView(content: content, interaction: $interaction)
+                            }
                             Color.clear
                                 .accessibilityElement(children: .ignore)
                                 .accessibilityLabel("OpenDesign Day Meta")
@@ -1393,6 +2281,64 @@ struct OpenDesignDayShell: View {
         .background(OpenDesignDayColor.bg)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("opendesign.day.shell")
+    }
+}
+
+private struct OpenDesignMarketTitlebar: View {
+    let market: OpenDesignDayContent.Market
+    let openSearch: () -> Void
+    let shareSummary: String
+
+    @State private var didCopyShare = false
+
+    var body: some View {
+        ZStack {
+            HStack(spacing: 8) {
+                Spacer(minLength: 82)
+                Text(market.titlebarTitle)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Text("/")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                Text(market.titlebarDetail)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 4) {
+                Spacer()
+                OpenDesignToolbarButton(
+                    systemImage: "magnifyingglass",
+                    label: "검색 · ⌘ K",
+                    keyboardKey: "k",
+                    accessibilityIdentifier: "opendesign.day2.search",
+                    action: openSearch
+                )
+                OpenDesignToolbarButton(
+                    systemImage: "square.and.arrow.up",
+                    label: didCopyShare ? "공유 복사됨 ✓" : "공유 · ⌘ ⇧ S",
+                    keyboardKey: "s",
+                    keyboardModifiers: [.command, .shift],
+                    accessibilityIdentifier: "opendesign.day2.share",
+                    action: copyShareSummary
+                )
+                OpenDesignToolbarButton(systemImage: "sidebar.right", label: "Day 2 정보", isOn: true, action: {})
+            }
+            .padding(.trailing, 12)
+        }
+        .frame(height: 36)
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+
+    private func copyShareSummary() {
+        copyToPasteboard(shareSummary)
+        didCopyShare = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+            didCopyShare = false
+        }
     }
 }
 
@@ -1640,7 +2586,7 @@ private struct OpenDesignTaskSidebarView: View {
                     Text("30일 챌린지")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(OpenDesignDayColor.fg)
-                    Text("1 / 30")
+                    Text(content.market.map { "\($0.dayNumber) / 30" } ?? "1 / 30")
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(OpenDesignDayColor.muted)
                         .padding(.horizontal, 6)
@@ -1729,6 +2675,7 @@ private struct OpenDesignTaskRow: View {
 
     private var foreground: Color {
         switch task.state {
+        case .done: return OpenDesignDayColor.muted
         case .active: return OpenDesignDayColor.fg
         case .pending: return OpenDesignDayColor.fgSecondary
         case .locked: return OpenDesignDayColor.fgSecondary.opacity(0.55)
@@ -1738,21 +2685,23 @@ private struct OpenDesignTaskRow: View {
     var body: some View {
         let isLocked = task.state == .locked
         let isActive = task.state == .active
+        let isDone = task.state == .done
         let isInteractiveHover = isHovered && !isLocked
 
         HStack(alignment: .top, spacing: 9) {
             statusIcon
                 .frame(width: 18, height: 18)
                 .padding(.top, 2)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(task.title)
                     .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(isLocked ? foreground : isActive || isInteractiveHover ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+                    .foregroundStyle(isDone ? OpenDesignDayColor.muted : isLocked ? foreground : isActive || isInteractiveHover ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
                     .lineLimit(1)
                 HStack(spacing: 6) {
                     Text(task.day)
-                        .foregroundStyle(task.state == .locked ? OpenDesignDayColor.mutedDeep : OpenDesignDayColor.accent)
+                        .foregroundStyle(task.state == .locked ? OpenDesignDayColor.mutedDeep : isDone ? OpenDesignDayColor.muted : OpenDesignDayColor.accent)
                     Text("·")
                         .foregroundStyle(OpenDesignDayColor.mutedDeep)
                     Text(task.meta)
@@ -1776,14 +2725,20 @@ private struct OpenDesignTaskRow: View {
         .opacity(isLocked ? 0.66 : 1)
         .onHover { isHovered = $0 }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(isLocked ? "\(task.day) \(task.title), 잠금" : "\(task.day) \(task.title)")
-        .accessibilityValue(isLocked ? "locked" : isActive || isInteractiveHover ? "active" : "inactive")
+        .accessibilityLabel(isLocked ? "\(task.day) \(task.title), 잠금" : isDone ? "\(task.day) \(task.title), 완료" : "\(task.day) \(task.title)")
+        .accessibilityValue(isLocked ? "locked" : isDone ? "done" : isActive || isInteractiveHover ? "active" : "inactive")
         .accessibilityIdentifier("opendesign.day.task.\(task.id)")
     }
 
     @ViewBuilder
     private var statusIcon: some View {
         switch task.state {
+        case .done:
+            Text("✓")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.bgDeep)
+                .frame(width: 14, height: 14)
+                .background(Circle().fill(OpenDesignDayColor.accent))
         case .active:
             ProgressView()
                 .controlSize(.small)
@@ -1800,7 +2755,7 @@ private struct OpenDesignTaskRow: View {
     }
 }
 
-private struct OpenDesignInlineSegment: Hashable {
+struct OpenDesignInlineSegment: Hashable {
     enum Style: Hashable {
         case body
         case strong
@@ -1891,12 +2846,848 @@ private struct OpenDesignSignalSegment: Hashable {
     }
 }
 
+private struct OpenDesignMarketMainView: View {
+    let market: OpenDesignDayContent.Market
+    @Binding var pendingScrollRequest: OpenDesignScrollRequest?
+    @Binding var searchPulseTarget: String?
+    let completeDay: () -> Void
+    let layout: OpenDesignDayLayoutMetrics
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var selectedSourceID = "threads"
+    @State private var didRecrawl = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            OpenDesignMarketHeader(
+                market: market,
+                didRecrawl: didRecrawl,
+                recrawl: recrawl,
+                completeDay: completeDay,
+                horizontalPadding: layout.mainHorizontalPadding
+            )
+
+            OpenDesignMarketSourceTabs(
+                tabs: market.sourceTabs,
+                selectedID: $selectedSourceID,
+                horizontalPadding: layout.mainHorizontalPadding
+            )
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        OpenDesignSectionHeader(title: "지난 30일 키워드 — ICP \"전업 1인 개발자\" 코호트", meta: market.keywordMeta)
+                            .openDesignSearchPulse(id: "market-keywords", isActive: isSearchPulseActive("market-keywords"))
+                            .id("market-keywords")
+
+                        OpenDesignMarketKeywordCloud(keywords: market.keywords)
+                            .padding(.bottom, 18)
+
+                        OpenDesignMarketSignalGrid(
+                            cards: market.signalCards,
+                            columns: layout.showsMetaPanel ? 3 : 1
+                        )
+                        .openDesignSearchPulse(id: "market-sources", isActive: isSearchPulseActive("market-sources"))
+                        .id("market-sources")
+                        .padding(.bottom, 20)
+
+                        OpenDesignSectionHeader(title: "대안 비교 매트릭스", meta: "\"이게 팔릴까\" 단계에서 쓰는 7개")
+                            .openDesignSearchPulse(id: "market-alternatives", isActive: isSearchPulseActive("market-alternatives"))
+                            .id("market-alternatives")
+
+                        OpenDesignMarketAlternativeMatrix(alternatives: market.alternatives)
+                            .padding(.bottom, 18)
+
+                        OpenDesignMarketGapCard(gap: market.gapHypothesis)
+                            .openDesignSearchPulse(id: "market-gap", isActive: isSearchPulseActive("market-gap"))
+                            .id("market-gap")
+                            .padding(.bottom, 18)
+
+                        OpenDesignSectionHeader(title: "인용 좋은 게시물 — 상위 5개")
+                            .openDesignSearchPulse(id: "market-posts", isActive: isSearchPulseActive("market-posts"))
+                            .id("market-posts")
+
+                        OpenDesignMarketPostFeed(posts: market.posts)
+                    }
+                    .frame(maxWidth: 820, alignment: .leading)
+                    .padding(.horizontal, layout.mainHorizontalPadding)
+                    .padding(.top, 22)
+                    .padding(.bottom, 32)
+                    .frame(maxWidth: .infinity)
+                }
+                .background(OpenDesignDayColor.bg)
+                .accessibilityIdentifier("opendesign.day2.main.scroll")
+                .onChange(of: pendingScrollRequest) { _, request in
+                    guard let request else { return }
+                    let token = request.token
+                    DispatchQueue.main.async {
+                        guard pendingScrollRequest?.token == token else { return }
+                        withAnimation(.easeInOut(duration: reduceMotion ? 0 : 0.22)) {
+                            proxy.scrollTo(request.resolvedTarget.rawValue, anchor: request.anchor)
+                        }
+                        DispatchQueue.main.async {
+                            if pendingScrollRequest?.token == token {
+                                pendingScrollRequest = nil
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .background(OpenDesignDayColor.bg)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("opendesign.day2.main")
+    }
+
+    private func recrawl() {
+        didRecrawl = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+            didRecrawl = false
+        }
+    }
+
+    private func isSearchPulseActive(_ id: String) -> Bool {
+        searchPulseTarget == id
+    }
+}
+
+private struct OpenDesignMarketHeader: View {
+    let market: OpenDesignDayContent.Market
+    let didRecrawl: Bool
+    let recrawl: () -> Void
+    let completeDay: () -> Void
+    let horizontalPadding: CGFloat
+
+    var body: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 14) {
+                Text(String(format: "%02d", market.dayNumber))
+                    .font(.system(size: 17, weight: .bold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.accent)
+                    .frame(width: 44, height: 44)
+                    .background(
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            .fill(OpenDesignDayColor.accentDim)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .stroke(OpenDesignDayColor.accentLine, lineWidth: 1)
+                            )
+                    )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(market.title)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                        .lineLimit(1)
+
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(OpenDesignDayColor.accent)
+                            .frame(width: 5, height: 5)
+                            .shadow(color: OpenDesignDayColor.accentDim, radius: 3)
+
+                        ForEach(Array(market.subtitleParts.enumerated()), id: \.offset) { index, part in
+                            if index > 0 {
+                                Text("·")
+                                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                            }
+                            Text(didRecrawl && index == market.subtitleParts.count - 1 ? "방금 갱신" : part)
+                                .foregroundStyle(index == 1 ? OpenDesignDayColor.fgSecondary : OpenDesignDayColor.muted)
+                        }
+                    }
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .lineLimit(1)
+                }
+                .frame(minWidth: 0, alignment: .leading)
+            }
+
+            Spacer(minLength: 12)
+
+            OpenDesignHeaderActionButton(
+                title: didRecrawl ? "갱신됨" : "재크롤",
+                systemImage: "arrow.clockwise",
+                tone: .ghost,
+                accessibilityIdentifier: "opendesign.day2.header.recrawl",
+                action: recrawl
+            )
+
+            OpenDesignHeaderActionButton(
+                title: market.primaryActionTitle,
+                systemImage: nil,
+                tone: .accent,
+                accessibilityIdentifier: "opendesign.day2.header.primary",
+                action: completeDay
+            )
+        }
+        .padding(.horizontal, horizontalPadding)
+        .frame(height: 70)
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+}
+
+private struct OpenDesignMarketSourceTabs: View {
+    let tabs: [OpenDesignDayContent.MarketSourceTab]
+    @Binding var selectedID: String
+    let horizontalPadding: CGFloat
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 2) {
+                ForEach(tabs) { tab in
+                    OpenDesignMarketSourceTab(tab: tab, isSelected: selectedID == tab.id) {
+                        selectedID = tab.id
+                    }
+                }
+
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(OpenDesignDayColor.accent)
+                        .frame(width: 5, height: 5)
+                        .shadow(color: OpenDesignDayColor.accentDim, radius: 3)
+                    Text("실시간 · 다음 갱신 18분 후")
+                }
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .padding(.leading, 12)
+            }
+            .padding(.horizontal, horizontalPadding)
+            .frame(height: 38)
+        }
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+}
+
+private struct OpenDesignMarketSourceTab: View {
+    let tab: OpenDesignDayContent.MarketSourceTab
+    let isSelected: Bool
+    let select: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: select) {
+            HStack(spacing: 8) {
+                Text(tab.title)
+                Text(tab.count)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(isSelected ? OpenDesignDayColor.accent : OpenDesignDayColor.muted)
+                    .padding(.horizontal, 5)
+                    .frame(height: 18)
+                    .background(Capsule().fill(isSelected ? OpenDesignDayColor.accentDim : OpenDesignDayColor.surface))
+                    .overlay(Capsule().stroke(isSelected ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, lineWidth: 1))
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(isSelected || isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.muted)
+            .frame(height: 38)
+            .padding(.horizontal, 12)
+            .overlay(alignment: .bottom) {
+                if isSelected {
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(OpenDesignDayColor.accent)
+                        .frame(height: 2)
+                        .padding(.horizontal, 8)
+                }
+            }
+        }
+        .buttonStyle(OpenDesignInteractiveButtonStyle())
+        .onHover { isHovered = $0 }
+        .accessibilityValue(isSelected ? "active" : "inactive")
+    }
+}
+
+private struct OpenDesignMarketKeywordCloud: View {
+    let keywords: [OpenDesignDayContent.MarketKeyword]
+
+    var body: some View {
+        OpenDesignFlowLayout(spacing: 14, lineSpacing: 8) {
+            ForEach(keywords) { keyword in
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(keyword.title)
+                        .font(.system(size: keyword.size, weight: .medium, design: .monospaced))
+                    Text(keyword.count)
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .baselineOffset(keyword.size * 0.22)
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                }
+                .foregroundStyle(keyword.heat.color)
+                .padding(.vertical, 4)
+                .help("\(keyword.title) \(keyword.count) mentions")
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(cardBackground(cornerRadius: 14, fill: OpenDesignDayColor.surface))
+        .accessibilityIdentifier("opendesign.day2.keywordCloud")
+    }
+}
+
+private struct OpenDesignMarketSignalGrid: View {
+    let cards: [OpenDesignDayContent.MarketSignalCard]
+    let columns: Int
+
+    var body: some View {
+        LazyVGrid(columns: openDesignGridColumns(columns, spacing: 12), spacing: 12) {
+            ForEach(cards) { card in
+                OpenDesignMarketSignalCardView(card: card)
+            }
+        }
+    }
+}
+
+private struct OpenDesignMarketSignalCardView: View {
+    let card: OpenDesignDayContent.MarketSignalCard
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(headerText)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .textCase(.uppercase)
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                Spacer(minLength: 8)
+                Text(card.delta)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(card.deltaIsPositive ? OpenDesignDayColor.diffAdd : OpenDesignDayColor.diffDel)
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(card.value)
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Text(card.unit)
+                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+            }
+
+            OpenDesignMarketSparkline(points: card.sparkline, color: card.tone.color)
+                .frame(height: 34)
+
+            HStack {
+                Text(card.footerLeft)
+                Spacer(minLength: 8)
+                Text(card.footerRight)
+            }
+            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.muted)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(OpenDesignDayColor.surface)
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+        )
+        .overlay(Rectangle().fill(card.tone.color).frame(width: 2), alignment: .leading)
+    }
+
+    private var headerText: AttributedString {
+        var text = AttributedString("\(card.title) · \(card.detail)")
+        if let range = text.range(of: card.title) {
+            text[range].foregroundColor = card.tone.color
+        }
+        return text
+    }
+}
+
+private struct OpenDesignMarketSparkline: View {
+    let points: [CGFloat]
+    let color: Color
+
+    var body: some View {
+        GeometryReader { geometry in
+            Path { path in
+                guard let first = points.first else { return }
+                let step = points.count > 1 ? geometry.size.width / CGFloat(points.count - 1) : 0
+                path.move(to: CGPoint(x: 0, y: y(for: first, in: geometry.size.height)))
+                for (index, point) in points.enumerated().dropFirst() {
+                    path.addLine(to: CGPoint(x: CGFloat(index) * step, y: y(for: point, in: geometry.size.height)))
+                }
+            }
+            .stroke(color, style: StrokeStyle(lineWidth: 1.7, lineCap: .round, lineJoin: .round))
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func y(for value: CGFloat, in height: CGFloat) -> CGFloat {
+        min(max(value, 0), 1) * height
+    }
+}
+
+private struct OpenDesignMarketAlternativeMatrix: View {
+    let alternatives: [OpenDesignDayContent.MarketAlternative]
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            VStack(spacing: 0) {
+                OpenDesignMarketAlternativeHeader()
+                ForEach(alternatives) { alternative in
+                    OpenDesignMarketAlternativeRow(alternative: alternative)
+                }
+            }
+            .frame(minWidth: 760)
+        }
+        .background(cardBackground(cornerRadius: 14, fill: OpenDesignDayColor.surface))
+        .accessibilityIdentifier("opendesign.day2.alternatives")
+    }
+}
+
+private struct OpenDesignMarketAlternativeHeader: View {
+    var body: some View {
+        HStack(spacing: 14) {
+            Text("대안").frame(width: 250, alignment: .leading)
+            Text("해결 정도").frame(width: 190, alignment: .leading)
+            Text("강점").frame(width: 138, alignment: .leading)
+            Text("빈 자리").frame(width: 138, alignment: .leading)
+            Text("월비용").frame(width: 58, alignment: .trailing)
+        }
+        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+        .textCase(.uppercase)
+        .foregroundStyle(OpenDesignDayColor.muted)
+        .padding(.horizontal, 14)
+        .frame(height: 40)
+        .background(OpenDesignDayColor.surface2)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+}
+
+private struct OpenDesignMarketAlternativeRow: View {
+    let alternative: OpenDesignDayContent.MarketAlternative
+
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 14) {
+            HStack(spacing: 10) {
+                Text(alternative.initials)
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    .frame(width: 28, height: 28)
+                    .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(OpenDesignDayColor.bgDarker))
+                    .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(alternative.name)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                    Text(alternative.kind)
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(width: 250, alignment: .leading)
+
+            OpenDesignMarketFitBar(value: alternative.fit)
+                .frame(width: 190, alignment: .leading)
+
+            OpenDesignMarketTagGroup(tags: alternative.strengths, isStrong: false)
+                .frame(width: 138, alignment: .leading)
+            OpenDesignMarketTagGroup(tags: alternative.gaps, isStrong: true)
+                .frame(width: 138, alignment: .leading)
+
+            Text(alternative.monthlyCost)
+                .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .frame(width: 58, alignment: .trailing)
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 60)
+        .background(isHovered ? OpenDesignDayColor.hover : OpenDesignDayColor.surface)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+        .onHover { isHovered = $0 }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct OpenDesignMarketFitBar: View {
+    let value: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            GeometryReader { proxy in
+                RoundedRectangle(cornerRadius: 99, style: .continuous)
+                    .fill(OpenDesignDayColor.bgDarker)
+                    .overlay(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 99, style: .continuous)
+                            .fill(fillColor)
+                            .frame(width: proxy.size.width * CGFloat(value) / 100)
+                    }
+            }
+            .frame(width: 80, height: 5)
+
+            Text("\(value)%")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+        }
+    }
+
+    private var fillColor: Color {
+        if value < 30 { return OpenDesignDayColor.rose }
+        if value < 60 { return OpenDesignDayColor.amber }
+        return OpenDesignDayColor.accent
+    }
+}
+
+private struct OpenDesignMarketTagGroup: View {
+    let tags: [String]
+    let isStrong: Bool
+
+    var body: some View {
+        OpenDesignFlowLayout(spacing: 4, lineSpacing: 4) {
+            ForEach(tags, id: \.self) { tag in
+                Text(tag)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(isStrong ? OpenDesignDayColor.accent : OpenDesignDayColor.muted)
+                    .padding(.horizontal, 7)
+                    .frame(height: 20)
+                    .background(Capsule().fill(isStrong ? OpenDesignDayColor.accentDim : OpenDesignDayColor.bgDarker))
+                    .overlay(Capsule().stroke(isStrong ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, lineWidth: 1))
+            }
+        }
+    }
+}
+
+private struct OpenDesignMarketGapCard: View {
+    let gap: OpenDesignDayContent.MarketGapHypothesis
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(gap.label)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .textCase(.uppercase)
+                .foregroundStyle(OpenDesignDayColor.accent)
+
+            Text(openDesignAttributedText(gap.segments, bodySize: 14, bodyColor: OpenDesignDayColor.fg))
+                .lineSpacing(4)
+
+            OpenDesignFlowLayout(spacing: 22, lineSpacing: 8) {
+                ForEach(gap.criteria) { criterion in
+                    HStack(spacing: 6) {
+                        Text(criterion.key)
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        Text(criterion.value)
+                            .foregroundStyle(OpenDesignDayColor.fg)
+                    }
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                }
+            }
+            .padding(.top, 12)
+            .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 18)
+        .background(gradientCardBackground(cornerRadius: 14, colors: [OpenDesignDayColor.surface, OpenDesignDayColor.surface2], stroke: OpenDesignDayColor.border, accent: OpenDesignDayColor.accent))
+    }
+}
+
+private struct OpenDesignMarketPostFeed: View {
+    let posts: [OpenDesignDayContent.MarketPost]
+
+    var body: some View {
+        VStack(spacing: 8) {
+            ForEach(posts) { post in
+                OpenDesignMarketPostRow(post: post)
+            }
+        }
+    }
+}
+
+private struct OpenDesignMarketPostRow: View {
+    let post: OpenDesignDayContent.MarketPost
+
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Text(post.initials)
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .foregroundStyle(post.tone.color)
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(post.tone.dim))
+                .overlay(Circle().stroke(post.tone.line, lineWidth: 1))
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(post.source)
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(post.tone.color)
+                        .padding(.horizontal, 6)
+                        .frame(height: 18)
+                        .background(Capsule().fill(post.tone.dim))
+                        .overlay(Capsule().stroke(post.tone.line, lineWidth: 1))
+                    Text(post.author)
+                    Text("·").foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    Text(post.age)
+                }
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.muted)
+
+                Text(openDesignAttributedText(post.bodySegments, bodySize: 13, bodyColor: OpenDesignDayColor.fg))
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 8)
+
+            VStack(alignment: .trailing, spacing: 3) {
+                Text(post.engagement)
+                    .foregroundStyle(OpenDesignDayColor.accent)
+                Text(post.comments)
+                Text(post.strength)
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+            }
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.muted)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(cardBackground(cornerRadius: 12, fill: isHovered ? OpenDesignDayColor.surface2 : OpenDesignDayColor.surface))
+        .onHover { isHovered = $0 }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct OpenDesignMarketMetaPanelView: View {
+    let market: OpenDesignDayContent.Market
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Day 2 정보")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+
+                signalStrength
+
+                metaTitle("잠긴 키워드 3")
+                VStack(spacing: 6) {
+                    ForEach(Array(market.lockedKeywords.enumerated()), id: \.element.id) { index, metric in
+                        OpenDesignMarketMiniMetricRow(metric: metric, index: "\(index + 1)")
+                    }
+                }
+
+                metaTitle("상위 대안 5")
+                VStack(spacing: 6) {
+                    ForEach(Array(market.topAlternatives.enumerated()), id: \.element.id) { index, metric in
+                        OpenDesignMarketMiniMetricRow(metric: metric, index: ["A", "B", "C", "D", "E"][safe: index] ?? "\(index + 1)")
+                    }
+                }
+
+                metaTitle("내일 미리보기")
+                nextDayCard
+                    .padding(.bottom, 14)
+            }
+            .padding(16)
+        }
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("opendesign.day2.meta")
+    }
+
+    private var signalStrength: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("시장 신호 강도")
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .textCase(.uppercase)
+                .foregroundStyle(OpenDesignDayColor.muted)
+
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text(market.signalStrength.score)
+                    .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Text(market.signalStrength.total)
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                Spacer(minLength: 8)
+                Text(market.signalStrength.tag)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.accent)
+                    .padding(.horizontal, 8)
+                    .frame(height: 20)
+                    .background(Capsule().fill(OpenDesignDayColor.accentDim))
+                    .overlay(Capsule().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
+            }
+
+            VStack(spacing: 5) {
+                ForEach(market.signalStrength.rows) { row in
+                    HStack(spacing: 8) {
+                        Text(row.title)
+                            .frame(width: 80, alignment: .leading)
+                        GeometryReader { proxy in
+                            RoundedRectangle(cornerRadius: 99, style: .continuous)
+                                .fill(OpenDesignDayColor.bgDarker)
+                                .overlay(alignment: .leading) {
+                                    RoundedRectangle(cornerRadius: 99, style: .continuous)
+                                        .fill(OpenDesignDayColor.accent)
+                                        .frame(width: proxy.size.width * CGFloat(row.fraction))
+                                }
+                        }
+                        .frame(height: 4)
+                        Text(row.value)
+                            .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                            .frame(width: 30, alignment: .trailing)
+                    }
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                }
+            }
+            .padding(.top, 2)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .background(cardBackground(cornerRadius: 10, fill: OpenDesignDayColor.surface))
+    }
+
+    private var nextDayCard: some View {
+        HStack(spacing: 12) {
+            Text(market.nextDay.badge)
+                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.accent)
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(OpenDesignDayColor.accentDim))
+                .overlay(Circle().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(market.nextDay.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Text(market.nextDay.subtitle)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.muted)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(cardBackground(cornerRadius: 10, fill: OpenDesignDayColor.surface))
+    }
+
+    private func metaTitle(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .textCase(.uppercase)
+            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+            .padding(.top, 4)
+    }
+}
+
+private struct OpenDesignMarketMiniMetricRow: View {
+    let metric: OpenDesignDayContent.MarketMiniMetric
+    let index: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(index)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(metric.isLeader ? OpenDesignDayColor.accent : OpenDesignDayColor.muted)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(metric.isLeader ? OpenDesignDayColor.accentDim : OpenDesignDayColor.bgDarker))
+                .overlay(Circle().stroke(metric.isLeader ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, lineWidth: 1))
+            Text(metric.label)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Text(metric.value)
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(metric.isLeader ? OpenDesignDayColor.accent : OpenDesignDayColor.muted)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 34)
+        .background(cardBackground(cornerRadius: 8, fill: metric.isLeader ? OpenDesignDayColor.accentDim : OpenDesignDayColor.surface))
+    }
+}
+
+private extension OpenDesignDayContent.MarketKeyword.Heat {
+    var color: Color {
+        switch self {
+        case .hot: return OpenDesignDayColor.accent
+        case .warm: return OpenDesignDayColor.amber
+        case .mid: return OpenDesignDayColor.fgSecondary
+        case .cool: return OpenDesignDayColor.muted
+        case .cold: return OpenDesignDayColor.mutedDeep
+        }
+    }
+}
+
+private struct OpenDesignFlowLayout: Layout {
+    var spacing: CGFloat
+    var lineSpacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 0
+        let rows = rows(for: subviews, proposalWidth: width)
+        return CGSize(
+            width: width,
+            height: rows.reduce(CGFloat(0)) { $0 + $1.height } + CGFloat(max(0, rows.count - 1)) * lineSpacing
+        )
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let rows = rows(for: subviews, proposalWidth: bounds.width)
+        var y = bounds.minY
+        for row in rows {
+            var x = bounds.minX
+            for item in row.items {
+                item.subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(item.size))
+                x += item.size.width + spacing
+            }
+            y += row.height + lineSpacing
+        }
+    }
+
+    private func rows(for subviews: Subviews, proposalWidth: CGFloat) -> [FlowRow] {
+        var rows: [FlowRow] = []
+        var current: [FlowItem] = []
+        var currentWidth: CGFloat = 0
+        var currentHeight: CGFloat = 0
+        let maxWidth = max(proposalWidth, 1)
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            let nextWidth = current.isEmpty ? size.width : currentWidth + spacing + size.width
+            if nextWidth > maxWidth, !current.isEmpty {
+                rows.append(FlowRow(items: current, height: currentHeight))
+                current = [FlowItem(subview: subview, size: size)]
+                currentWidth = size.width
+                currentHeight = size.height
+            } else {
+                current.append(FlowItem(subview: subview, size: size))
+                currentWidth = nextWidth
+                currentHeight = max(currentHeight, size.height)
+            }
+        }
+
+        if !current.isEmpty {
+            rows.append(FlowRow(items: current, height: currentHeight))
+        }
+        return rows
+    }
+
+    private struct FlowRow {
+        let items: [FlowItem]
+        let height: CGFloat
+    }
+
+    private struct FlowItem {
+        let subview: LayoutSubview
+        let size: CGSize
+    }
+}
+
 private struct OpenDesignDayMainView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let content: OpenDesignDayContent
     @Binding var interaction: OpenDesignDayInteractionState
-    @Binding var pendingScrollTarget: String?
+    @Binding var pendingScrollRequest: OpenDesignScrollRequest?
     @Binding var searchPulseTarget: String?
     let submitStep: (OpenDesignDayContent.InterviewStep) -> Void
     let acceptMission: () -> Void
@@ -1912,16 +3703,20 @@ private struct OpenDesignDayMainView: View {
     var body: some View {
         VStack(spacing: 0) {
             OpenDesignDayHeader(
+                content: content,
                 interaction: $interaction,
                 focusContextOverview: focusContextOverview,
                 focusCurrentProgress: focusCurrentProgress,
                 horizontalPadding: layout.mainHorizontalPadding
             )
             OpenDesignStepper(
+                content: content,
                 interaction: interaction,
                 horizontalPadding: layout.mainHorizontalPadding,
                 focusStep: { index in
-                    pendingScrollTarget = interaction.stepperScrollTarget(for: index)
+                    let target = interaction.stepperScrollTarget(for: index)
+                    revealIntroIfNeeded(for: target)
+                    pendingScrollRequest = OpenDesignScrollRequest(target: target)
                 }
             )
 
@@ -1935,13 +3730,16 @@ private struct OpenDesignDayMainView: View {
 
                         contextSection
 
-                        OpenDesignMissionCard(
-                            accepted: interaction.missionAccepted,
-                            acceptMission: acceptMission
-                        )
-                        .openDesignStagedReveal(isVisible: introRevealStage >= 3)
-                        .openDesignSearchPulse(id: "mission", isActive: isSearchPulseActive("mission"))
-                        .id("mission")
+                        if interaction.introStage.revealsMission {
+                            OpenDesignMissionCard(
+                                mission: content.mission,
+                                accepted: interaction.missionAccepted,
+                                acceptMission: acceptMission
+                            )
+                            .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+                            .openDesignSearchPulse(id: "mission", isActive: isSearchPulseActive("mission"))
+                            .id("mission")
+                        }
 
                         if interaction.missionAccepted {
                             ForEach(content.interviewSteps.filter { $0.id <= interaction.highestVisibleInterviewStep }) { step in
@@ -1952,7 +3750,15 @@ private struct OpenDesignDayMainView: View {
                                         set: { interaction.selectedChoices[step.id] = $0 }
                                     ),
                                     submittedChoice: interaction.submittedChoices[step.id],
-                                    freeformAnswer: $interaction.freeformAnswer,
+                                    freeformAnswer: Binding(
+                                        get: { interaction.freeformAnswers[step.id] ?? (step.id == 1 ? interaction.freeformAnswer : "") },
+                                        set: { value in
+                                            interaction.freeformAnswers[step.id] = value
+                                            if step.id == 1 {
+                                                interaction.freeformAnswer = value
+                                            }
+                                        }
+                                    ),
                                     submit: { submitStep(step) }
                                 )
                                 .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
@@ -1993,14 +3799,17 @@ private struct OpenDesignDayMainView: View {
                 .background(OpenDesignDayColor.bg)
                 .accessibilityIdentifier("opendesign.day.main.scroll")
                 .onAppear(perform: startIntroReveal)
-                .onChange(of: pendingScrollTarget) { _, target in
-                    guard let target else { return }
-                    withAnimation(.easeInOut(duration: 0.22)) {
-                        proxy.scrollTo(target, anchor: .top)
+                .onChange(of: pendingScrollRequest) { _, request in
+                    guard let request else { return }
+                    performScroll(request, proxy: proxy)
+                }
+                .onChange(of: interaction.introStage) { _, stage in
+                    guard stage == .mission,
+                          let request = pendingScrollRequest,
+                          request.target == .mission else {
+                        return
                     }
-                    DispatchQueue.main.async {
-                        pendingScrollTarget = nil
-                    }
+                    performScroll(request, proxy: proxy)
                 }
             }
         }
@@ -2012,15 +3821,11 @@ private struct OpenDesignDayMainView: View {
     private func startIntroReveal() {
         guard introRevealStage == 0 else { return }
         if reduceMotion {
-            introRevealStage = 3
+            introRevealStage = 1
             return
         }
 
-        let delays: [(stage: Int, delay: Double)] = [
-            (1, 0.04),
-            (2, 0.18),
-            (3, 0.34),
-        ]
+        let delays: [(stage: Int, delay: Double)] = [(1, 0.04)]
         for item in delays {
             DispatchQueue.main.asyncAfter(deadline: .now() + item.delay) {
                 withAnimation(.easeOut(duration: 0.18)) {
@@ -2030,59 +3835,112 @@ private struct OpenDesignDayMainView: View {
         }
     }
 
+    private func performScroll(_ request: OpenDesignScrollRequest, proxy: ScrollViewProxy) {
+        let token = request.token
+        DispatchQueue.main.asyncAfter(deadline: .now() + (reduceMotion ? 0 : 0.08)) {
+            guard pendingScrollRequest?.token == token else { return }
+            withAnimation(.easeInOut(duration: reduceMotion ? 0 : 0.22)) {
+                proxy.scrollTo(request.resolvedTarget.rawValue, anchor: request.anchor)
+            }
+            DispatchQueue.main.async {
+                if pendingScrollRequest?.token == token {
+                    pendingScrollRequest = nil
+                }
+            }
+        }
+    }
+
     private var contextSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("오늘은 첫 고객 1명을 정하는 게 목표예요.")
+            Text(content.contextTitle)
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(OpenDesignDayColor.fg)
                 .padding(.bottom, 6)
 
-            Text(
-                openDesignAttributedText(
-                    [
-                        .body("30일 챌린지의 첫 결과는 "),
-                        .strong("\"유저 100명 + 첫 매출\""),
-                        .body("이지만, Day 1은 그보다 더 좁은 문제부터 풉니다. "),
-                        .strong("이번 주에 진짜로 인터뷰 한 통을 할 만큼 가까운 1명"),
-                        .body("이 누구인지 정하는 것. 이 한 명이 ICP의 후보가 되고, 이번 주 인터뷰·랜딩·웨지의 기준점이 됩니다."),
-                    ],
-                    bodySize: 13.5
-                )
-            )
+            Text(content.contextBody)
+                .font(.system(size: 13.5, weight: .regular))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
                 .lineSpacing(3)
                 .padding(.bottom, 22)
 
-            OpenDesignSectionHeader(title: "지금까지 시그널", meta: "workspace + interviews + BIP")
-                .openDesignSearchPulse(id: "signals", isActive: isSearchPulseActive("signals"))
-                .id("signals")
+            if !interaction.introStage.revealsSignals {
+                introAdvanceFooter
+            }
 
-            VStack(spacing: 1) {
-                ForEach(signalRows.indices, id: \.self) { index in
-                    let item = signalRows[index]
-                    signalRow(key: item.key, value: item.value)
+            if interaction.introStage.revealsSignals {
+                OpenDesignSectionHeader(title: "지금까지 시그널", meta: "workspace + interviews + BIP")
+                    .openDesignSearchPulse(id: "signals", isActive: isSearchPulseActive("signals"))
+                    .id("signals")
+
+                VStack(spacing: 1) {
+                    ForEach(signalRows.indices, id: \.self) { index in
+                        let item = signalRows[index]
+                        signalRow(key: item.key, value: item.value)
+                    }
+                }
+                .background(OpenDesignDayColor.borderSoft)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(OpenDesignDayColor.borderSoft, lineWidth: 1)
+                )
+                .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+                .padding(.bottom, 16)
+
+                Text(signalSummary)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    .lineSpacing(3)
+                    .padding(.bottom, 8)
+
+                if !interaction.introStage.revealsMission {
+                    introAdvanceFooter
                 }
             }
-            .background(OpenDesignDayColor.borderSoft)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(OpenDesignDayColor.borderSoft, lineWidth: 1)
-            )
-            .openDesignStagedReveal(isVisible: introRevealStage >= 2)
-            .padding(.bottom, 16)
+        }
+    }
 
-            Text(
-                openDesignAttributedText(
-                    [
-                        .body("어제 정리한 SPEC을 보면 "),
-                        .strong("\"AI로 빌드하는 사람\""),
-                        .body("이라는 큰 범주는 있는데, 그 안에서 누구를 먼저 도울지가 비어 있어요. 큰 범주에 메시지를 던지면 누구도 안 답합니다. 그래서 오늘은 ICP 한 명 — 이번 주 안에 진짜로 한 통 연락할 수 있는 1명을 같이 정해봅시다."),
-                    ],
-                    bodySize: 13
-                )
+    private var introAdvanceFooter: some View {
+        HStack(spacing: 12) {
+            Spacer(minLength: 0)
+            OpenDesignHandoffActionButton(
+                label: interaction.introStage.nextButtonTitle ?? "계속",
+                accessibilityIdentifier: "opendesign.day.intro.next",
+                action: advanceIntro
             )
-                .lineSpacing(3)
-                .padding(.bottom, 8)
+        }
+        .padding(.top, 2)
+        .padding(.bottom, 18)
+    }
+
+    private func advanceIntro() {
+        switch interaction.introStage {
+        case .context:
+            revealIntroStage(.signals)
+            pendingScrollRequest = OpenDesignScrollRequest(target: .signals)
+        case .signals:
+            revealIntroStage(.mission)
+            pendingScrollRequest = OpenDesignScrollRequest(target: .mission, placement: .nextAction)
+        case .mission:
+            break
+        }
+    }
+
+    private func revealIntroIfNeeded(for target: OpenDesignSectionAnchor) {
+        switch target {
+        case .top:
+            break
+        case .signals:
+            revealIntroStage(.signals)
+        default:
+            revealIntroStage(.mission)
+        }
+    }
+
+    private func revealIntroStage(_ stage: OpenDesignIntroStage) {
+        guard interaction.introStage < stage else { return }
+        withAnimation(.spring(response: reduceMotion ? 0 : 0.24, dampingFraction: 0.92)) {
+            interaction.introStage = stage
         }
     }
 
@@ -2090,8 +3948,28 @@ private struct OpenDesignDayMainView: View {
         searchPulseTarget == id
     }
 
+    private var signalSummary: String {
+        if let plan = content.plan {
+            let product = plan.signals.productName ?? "이 프로젝트"
+            let target = plan.signals.currentIcpGuess ?? "잠재 고객"
+            let problem = plan.signals.problem ?? "핵심 문제"
+            return "\(product) scan은 \(target) 가설과 \(problem)을 보여줍니다. 이제 고정 질문이 아니라 evidence가 약한 ICP 항목부터 답해서 Description, Criteria, Anti-ICP, 첫 메시지까지 이어갑니다."
+        }
+        return "어제 정리한 SPEC을 보면 \"AI로 빌드하는 사람\"이라는 큰 범주는 있는데, 그 안에서 누구를 먼저 도울지가 비어 있어요. 큰 범주에 메시지를 던지면 누구도 안 답합니다. 그래서 오늘은 ICP 한 명 — 이번 주 안에 진짜로 한 통 연락할 수 있는 1명을 같이 정해봅시다."
+    }
+
     private var signalRows: [(key: String, value: [OpenDesignSignalSegment])] {
-        [
+        if let plan = content.plan {
+            let refs = plan.signals.evidenceRefs.map(\.path).prefix(2).joined(separator: ", ")
+            let missing = plan.signals.missingAssumptions.prefix(2).joined(separator: ", ")
+            return [
+                ("프로젝트", [.strong(plan.signals.productName ?? "이 프로젝트"), .body(" · scan confidence "), .code(plan.signals.confidence ?? "low")]),
+                ("ICP 가설", [.body(plan.signals.currentIcpGuess ?? "아직 없음")]),
+                ("핵심 문제", [.mark(plan.signals.problem ?? "가설 필요")]),
+                ("근거/빈칸", [.code(refs.isEmpty ? "evidence 없음" : refs), .body(missing.isEmpty ? "" : " · missing \(missing)")]),
+            ]
+        }
+        return [
             (
                 "프로젝트",
                 [
@@ -2186,6 +4064,7 @@ private struct OpenDesignDayMainView: View {
 }
 
 private struct OpenDesignDayHeader: View {
+    let content: OpenDesignDayContent
     @Binding var interaction: OpenDesignDayInteractionState
     let focusContextOverview: () -> Void
     let focusCurrentProgress: () -> Void
@@ -2210,7 +4089,7 @@ private struct OpenDesignDayHeader: View {
                 )
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("먼저 도울 사람을 정해요")
+                    Text(content.plan == nil ? "먼저 도울 사람을 정해요" : "ICP v0 질문을 정해요")
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(OpenDesignDayColor.fg)
                     HStack(spacing: 8) {
@@ -2221,11 +4100,11 @@ private struct OpenDesignDayHeader: View {
                         Text("Day 1 · 오리엔테이션 → 인터뷰")
                         Text("·")
                             .foregroundStyle(OpenDesignDayColor.mutedDeep)
-                        Text(interaction.allInterviewsSubmitted ? "STEP 4 / 4" : "STEP 3 / 4")
+                        Text(progressStepLabel)
                             .foregroundStyle(OpenDesignDayColor.fgSecondary)
                         Text("·")
                             .foregroundStyle(OpenDesignDayColor.mutedDeep)
-                        Text(interaction.allInterviewsSubmitted ? "docs/ICP.md 초안" : "인터뷰 1 / 3")
+                        Text(progressDetailLabel)
                         Text("·")
                             .foregroundStyle(OpenDesignDayColor.mutedDeep)
                         Text("남은 시간 29d 14h")
@@ -2262,6 +4141,12 @@ private struct OpenDesignDayHeader: View {
     }
 
     private var primaryActionTitle: String {
+        if !interaction.introStage.revealsSignals {
+            return "시그널 보기"
+        }
+        if !interaction.introStage.revealsMission {
+            return "오늘 미션 보기"
+        }
         if interaction.dayCompleted {
             return "Day 1 완료"
         }
@@ -2275,6 +4160,35 @@ private struct OpenDesignDayHeader: View {
             return "ICP 초안 확인"
         }
         return "인터뷰 계속"
+    }
+
+    private var progressStepLabel: String {
+        if interaction.dayCompleted || interaction.allInterviewsSubmitted {
+            return "STEP 4 / 4"
+        }
+        if !interaction.introStage.revealsSignals {
+            return "STEP 1 / 4"
+        }
+        if !interaction.introStage.revealsMission || !interaction.missionAccepted {
+            return "STEP 2 / 4"
+        }
+        return "STEP 3 / 4"
+    }
+
+    private var progressDetailLabel: String {
+        if interaction.allInterviewsSubmitted {
+            return "docs/ICP.md 초안"
+        }
+        if !interaction.introStage.revealsSignals {
+            return "오늘 목표"
+        }
+        if !interaction.introStage.revealsMission {
+            return "시그널 확인"
+        }
+        if !interaction.missionAccepted {
+            return "미션 수락 전"
+        }
+        return "질문 \(interaction.highestVisibleInterviewStep) / \(content.interviewSteps.count)"
     }
 }
 
@@ -2334,15 +4248,16 @@ private struct OpenDesignHeaderActionButton: View {
 }
 
 private struct OpenDesignStepper: View {
+    let content: OpenDesignDayContent
     let interaction: OpenDesignDayInteractionState
     let horizontalPadding: CGFloat
     let focusStep: (Int) -> Void
 
     private var steps: [(String, Bool, Bool)] {
         [
-            ("맥락 · 오늘의 목표", true, false),
-            ("미션 · 한 명 정하기", true, false),
-            (interaction.allInterviewsSubmitted ? "인터뷰 · ICP 좁히기 완료" : "인터뷰 · ICP 좁히기 (1 / 3)", interaction.allInterviewsSubmitted, !interaction.allInterviewsSubmitted),
+            ("맥락 · 오늘의 목표", interaction.introStage.revealsSignals, !interaction.introStage.revealsSignals),
+            ("시그널 · 근거 확인", interaction.introStage.revealsMission, interaction.introStage.revealsSignals && !interaction.introStage.revealsMission),
+            (interaction.allInterviewsSubmitted ? "질문 · ICP v0 완료" : "질문 · ICP v0 (\(interaction.highestVisibleInterviewStep) / \(content.interviewSteps.count))", interaction.allInterviewsSubmitted, interaction.introStage.revealsMission && !interaction.allInterviewsSubmitted),
             ("ICP · docs/ICP.md 미리보기", false, interaction.allInterviewsSubmitted),
         ]
     }
@@ -2470,6 +4385,7 @@ private struct OpenDesignSectionHeader: View {
 }
 
 private struct OpenDesignMissionCard: View {
+    let mission: OpenDesignDayContent.Mission
     let accepted: Bool
     let acceptMission: () -> Void
 
@@ -2491,9 +4407,9 @@ private struct OpenDesignMissionCard: View {
                     Text(
                         openDesignAttributedText(
                             [
-                                .body("첫 인터뷰 1통을 할 사람을 "),
-                                .mark("한 명"),
-                                .body("만 골라요."),
+                                .body("오늘은 "),
+                                .mark(mission.markedTitle),
+                                .body(mission.titleSuffix),
                             ],
                             bodySize: 17,
                             bodyWeight: .medium,
@@ -2508,11 +4424,7 @@ private struct OpenDesignMissionCard: View {
                 Text(
                     openDesignAttributedText(
                         [
-                            .body("다짜고짜 \"ICP가 누구냐\"고 묻는 건 어려우니, "),
-                            .strong("4지선다 → 짧은 인터뷰 3번 → 한 명으로 좁히기"),
-                            .body(" 순서로 진행할게요. 다 끝나면 "),
-                            .code("docs/ICP.md"),
-                            .body("에 쓸 문서 초안을 먼저 보여줘요."),
+                            .body(mission.body),
                         ],
                         bodySize: 13
                     )
@@ -2520,18 +4432,9 @@ private struct OpenDesignMissionCard: View {
                     .lineSpacing(3)
 
                 VStack(alignment: .leading, spacing: 8) {
-                    missionRule("1", [
-                        .strong("만나러 갈 수 있어야"),
-                        .body(" 해요 — 이번 주 안에 메시지 1통."),
-                    ])
-                    missionRule("2", [
-                        .strong("칭찬형 답이 아니라"),
-                        .body(" 진짜 시간을 쓰는 사람이어야 해요 — Mom Test 기준."),
-                    ])
-                    missionRule("3", [
-                        .strong("한 줄로 묘사"),
-                        .body("할 수 있어야 해요 — \"AI로 빌드하는 사람\"은 너무 넓어요."),
-                    ])
+                    ForEach(Array(mission.rules.prefix(3).enumerated()), id: \.offset) { index, rule in
+                        missionRule("\(index + 1)", [.body(rule)])
+                    }
                 }
                 .padding(.top, 12)
                 .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
@@ -2541,12 +4444,12 @@ private struct OpenDesignMissionCard: View {
                         .fill(OpenDesignDayColor.amber)
                         .frame(width: 6, height: 6)
                         .shadow(color: OpenDesignDayColor.amberDim, radius: 3)
-                    Text("수락하면 4지선다 인터뷰가 열려요 · 약 3분")
+                    Text(mission.footnote)
                         .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(OpenDesignDayColor.muted)
                     Spacer(minLength: 0)
                     Button(action: acceptMission) {
-                        Text(accepted ? "미션 수락됨 ✓" : "미션 수락하고 인터뷰 시작 ↵")
+                        Text(accepted ? mission.acceptedLabel : mission.acceptLabel)
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(accepted ? OpenDesignDayColor.amber : OpenDesignDayColor.bgDeep)
                             .padding(.horizontal, 16)
@@ -2566,6 +4469,7 @@ private struct OpenDesignMissionCard: View {
                     .onHover { isAcceptHovered = $0 }
                     .accessibilityIdentifier("opendesign.day.mission.accept")
                     .accessibilityValue(accepted ? "locked" : isAcceptHovered ? "active" : "inactive")
+                    .id("mission-action")
                 }
                 .padding(.top, 12)
                 .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
@@ -2602,7 +4506,7 @@ private struct OpenDesignInterviewStepView: View {
     @State private var hidesTip = false
 
     var body: some View {
-        let hasFreeformAnswer = step.id == 1 && !freeformAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasFreeformAnswer = step.allowsFreeform && !freeformAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasSubmitted = submittedChoice != nil
         let selectedIsSubmitted = selectedChoice != nil && selectedChoice == submittedChoice
         let submitDisabled = selectedChoice == nil || selectedIsSubmitted
@@ -2678,10 +4582,10 @@ private struct OpenDesignInterviewStepView: View {
                 }
                 .padding(6)
 
-                if step.id == 1 && !hasSubmitted {
+                if step.allowsFreeform && !hasSubmitted {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text("직접 답하기 — 위 4개에 없으면 한 줄로 묘사해도 돼요")
+                            Text(step.freeformLabel)
                             Spacer(minLength: 0)
                             Text("Enter 로 전송")
                                 .foregroundStyle(OpenDesignDayColor.mutedDeep)
@@ -2689,7 +4593,7 @@ private struct OpenDesignInterviewStepView: View {
                         .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(OpenDesignDayColor.muted)
 
-                        TextField("예: \"전 동료 중 Cursor로 매주 새 프로젝트 만드는 사람\"", text: $freeformAnswer)
+                        TextField(step.freeformPlaceholder, text: $freeformAnswer)
                             .textFieldStyle(.plain)
                             .font(.system(size: 12.5, weight: .medium))
                             .foregroundStyle(OpenDesignDayColor.fg)
@@ -2698,11 +4602,11 @@ private struct OpenDesignInterviewStepView: View {
                                 freeformAnswer = ""
                             }
                             .onChange(of: freeformAnswer) { _, value in
-                                if step.id == 1, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                if !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                     hidesTip = true
                                 }
                             }
-                            .accessibilityIdentifier("opendesign.day.icp.freeform")
+                            .accessibilityIdentifier(step.id == 1 ? "opendesign.day.icp.freeform" : "opendesign.day.interview.\(step.id).freeform")
                             .padding(.leading, 2)
                             .overlay(alignment: .leading) {
                                 Text("›")
@@ -2779,7 +4683,7 @@ private struct OpenDesignInterviewStepView: View {
             .padding(.bottom, 14)
             .id(step.id == 1 ? "interview1-options" : "interview\(step.id)-options")
 
-            if step.id == 1 && selectedChoice == nil && !hasSubmitted && !hidesTip {
+            if selectedChoice == nil && !hasSubmitted && !hidesTip {
                 Text(tipText)
                     .font(.system(size: 13, weight: .regular))
                     .lineSpacing(3)
@@ -2791,9 +4695,9 @@ private struct OpenDesignInterviewStepView: View {
     }
 
     private var tipText: AttributedString {
-        var text = AttributedString("팁 · 정답을 고르는 게 아니라, 이번 주에 진짜로 메시지 보낼 수 있는 쪽을 직감으로 골라주세요. 고르면 인터뷰 2 — 도구와 인터뷰 3 — 막힌 단계로 더 좁혀갑니다.")
+        var text = AttributedString("팁 · 정답을 고르는 게 아니라, 이 프로젝트의 ICP v0를 검증 가능하게 만드는 쪽을 고릅니다. scan 선택지가 빗나갔으면 직접 답하기에 더 정확한 조건을 적어도 됩니다.")
         text.foregroundColor = OpenDesignDayColor.muted
-        for marker in ["팁", "인터뷰 2 — 도구", "인터뷰 3 — 막힌 단계"] {
+        for marker in ["팁", "ICP v0", "직접 답하기"] {
             if let range = text.range(of: marker) {
                 text[range].foregroundColor = OpenDesignDayColor.fgSecondary
             }
@@ -2948,10 +4852,16 @@ private struct OpenDesignIcpPreview: View {
 
                 VStack(alignment: .leading, spacing: 12) {
                     LazyVGrid(columns: openDesignGridColumns(layout.openDesignGridColumnCount), alignment: .leading, spacing: 8) {
-                        chip("Distance", draft.distance)
-                        chip("Tool", draft.tool)
-                        chip("Stuck", draft.stuck)
-                        chip("Last 7d", draft.action)
+                        if draft.plan != nil {
+                            ForEach(Array(draft.selectedAnswers.prefix(5).enumerated()), id: \.offset) { _, answer in
+                                chip(OpenDesignDayContent.dimensionDisplayName(answer.dimension), answer.value)
+                            }
+                        } else {
+                            chip("Distance", draft.distance)
+                            chip("Tool", draft.tool)
+                            chip("Stuck", draft.stuck)
+                            chip("Last 7d", draft.action)
+                        }
                     }
 
                     Text(previewMarkdownAttributed)
@@ -2979,6 +4889,7 @@ private struct OpenDesignIcpPreview: View {
                 accessibilityIdentifier: "opendesign.day.preview.next",
                 action: advanceHandoff
             )
+            .id("icp-preview-action")
         }
         .padding(.top, 6)
     }
@@ -2995,7 +4906,7 @@ private struct OpenDesignIcpPreview: View {
                 text[range].foregroundColor = OpenDesignDayColor.fg
             }
         }
-        for key in ["## Our ICP", "## Evidence from Day 1", "## Anti-ICP guardrail", "## Next action"] {
+        for key in ["## Our ICP", "## Evidence from Day 1", "## Anti-ICP guardrail", "## Next action", "## Description", "## Criteria", "## Why they matter", "## Needs", "## Haves", "## Don't needs", "## Day 1 selections", "## Evidence", "## Reference customers to find"] {
             if let range = text.range(of: key) {
                 text[range].foregroundColor = OpenDesignDayColor.amber
             }
@@ -3040,12 +4951,54 @@ private struct OpenDesignFinalHandoff: View {
     private var finalIcpStatementText: Text {
         var text = AttributedString(draft.finalIcpStatement)
         text.foregroundColor = OpenDesignDayColor.fg
-        for marked in [draft.distance, draft.tool, draft.stuck, draft.action] where !marked.isEmpty {
+        let marks = draft.plan == nil
+            ? [draft.distance, draft.tool, draft.stuck, draft.action]
+            : draft.selectedAnswers.map(\.value)
+        for marked in marks where !marked.isEmpty {
             if let range = text.range(of: marked) {
                 text[range].foregroundColor = OpenDesignDayColor.accent
             }
         }
         return Text(text)
+    }
+
+    private var finalIcpBadges: [String] {
+        if draft.plan != nil {
+            return draft.selectedAnswers.prefix(4).map { OpenDesignDayContent.dimensionDisplayName($0.dimension) }
+        }
+        return ["이번 주 연락 가능", "도구 사용 빈도 확인", "막힌 단계 명확", "최근 행동 기준"]
+    }
+
+    private var candidateName: String {
+        draft.plan == nil ? "박주영" : "Reference customer"
+    }
+
+    private var candidateInitial: String {
+        draft.plan == nil ? "박" : "R"
+    }
+
+    private var candidateSubtitle: String {
+        if let plan = draft.plan {
+            let channel = plan.firstInterviewMessage.channel
+            let target = plan.signals.currentIcpGuess ?? "ICP v0 후보"
+            return "\(channel) · \(target) · 이번 주 인터뷰 요청"
+        }
+        return "@joopark.dev · 서울 · 퇴사 5개월차 · 가까움 0.82"
+    }
+
+    private var candidateFacts: [(key: String, value: String)] {
+        if draft.plan != nil {
+            let facts = draft.selectedAnswers.prefix(4).map { answer in
+                (key: OpenDesignDayContent.dimensionDisplayName(answer.dimension), value: answer.value)
+            }
+            return facts.isEmpty ? [("ICP", draft.finalIcpStatement)] : facts
+        }
+        return [
+            ("거리", label(1)),
+            ("도구", label(2)),
+            ("막힌 곳", label(3)),
+            ("지난 7일", label(4)),
+        ]
     }
 
     var body: some View {
@@ -3080,7 +5033,7 @@ private struct OpenDesignFinalHandoff: View {
     private var finalIcp: some View {
         VStack(alignment: .leading, spacing: 12) {
             guide(title: "ICP 한 문장으로 좁혀요.", body: "좋아요. 이제 네 번의 선택을 한 문장으로 압축합니다. 이 문장은 Day 3 인터뷰 대상을 고르는 기준선이고, 이후 랜딩·웨지·첫 메시지가 흔들리지 않게 잡아주는 작은 계약입니다.")
-            OpenDesignSectionHeader(title: "ICP 한 문장", meta: "인터뷰 4개 답변 기준 · 좁힘 점수 8.2")
+            OpenDesignSectionHeader(title: "ICP 한 문장", meta: draft.plan == nil ? "인터뷰 4개 답변 기준 · 좁힘 점수 8.2" : "adaptive scan 질문 기준 · ICP v0")
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Text("ICP · 최종 후보 문장")
@@ -3088,7 +5041,7 @@ private struct OpenDesignFinalHandoff: View {
                         .textCase(.uppercase)
                         .foregroundStyle(OpenDesignDayColor.accent)
                     Spacer()
-                    Text("8.2 / 10")
+                    Text(draft.plan?.confidence.map { String(format: "%.2f", $0) } ?? "8.2 / 10")
                         .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                         .foregroundStyle(OpenDesignDayColor.accent)
                         .padding(.horizontal, 8)
@@ -3098,7 +5051,7 @@ private struct OpenDesignFinalHandoff: View {
                     .font(.system(size: 17, weight: .medium))
                     .lineSpacing(4)
                 HStack(spacing: 14) {
-                    ForEach(["이번 주 연락 가능", "도구 사용 빈도 확인", "막힌 단계 명확", "최근 행동 기준"], id: \.self) { text in
+                    ForEach(finalIcpBadges, id: \.self) { text in
                         Label(text, systemImage: "checkmark")
                             .font(.system(size: 11, weight: .medium, design: .monospaced))
                             .foregroundStyle(OpenDesignDayColor.muted)
@@ -3115,6 +5068,7 @@ private struct OpenDesignFinalHandoff: View {
                 accessibilityIdentifier: "opendesign.day.final.next",
                 action: advanceHandoff
             )
+            .id("final-icp-action")
         }
         .overlay(alignment: .topLeading) {
             openDesignAccessibilityAnchor("opendesign.day.final", label: "OpenDesign Day Final ICP")
@@ -3126,7 +5080,7 @@ private struct OpenDesignFinalHandoff: View {
             guide(title: "후보와 Anti-ICP를 함께 봐요.", body: "문장이 정해졌으니 추상적인 ICP를 실제 연락 가능한 한 사람으로 바꿉니다. 동시에 \"좋네요\"만 말하고 최근 행동이 없는 사람은 제외하도록 Anti-ICP 신호도 같이 잠급니다.")
             OpenDesignSectionHeader(title: "후보 1명", meta: "SPEC 입력용 · Day 3 첫 인터뷰 대상")
             HStack(alignment: .top, spacing: 16) {
-                Text("박")
+                Text(candidateInitial)
                     .font(.system(size: 19, weight: .bold, design: .monospaced))
                     .foregroundStyle(OpenDesignDayColor.accent)
                     .frame(width: 56, height: 56)
@@ -3135,7 +5089,7 @@ private struct OpenDesignFinalHandoff: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 8) {
-                        Text("박주영")
+                        Text(candidateName)
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(OpenDesignDayColor.fg)
                         Text("CANDIDATE 01")
@@ -3144,14 +5098,13 @@ private struct OpenDesignFinalHandoff: View {
                             .padding(.horizontal, 7)
                             .background(Capsule().fill(OpenDesignDayColor.accentDim))
                     }
-                    Text("@joopark.dev · 서울 · 퇴사 5개월차 · 가까움 0.82")
+                    Text(candidateSubtitle)
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(OpenDesignDayColor.muted)
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 10) {
-                        personFact("거리", label(1))
-                        personFact("도구", label(2))
-                        personFact("막힌 곳", label(3))
-                        personFact("지난 7일", label(4))
+                        ForEach(candidateFacts, id: \.key) { fact in
+                            personFact(fact.key, fact.value)
+                        }
                     }
                 }
                 Spacer(minLength: 0)
@@ -3204,6 +5157,7 @@ private struct OpenDesignFinalHandoff: View {
                 accessibilityIdentifier: "opendesign.day.candidate.next",
                 action: advanceHandoff
             )
+            .id("candidate-action")
         }
         .overlay(alignment: .topLeading) {
             openDesignAccessibilityAnchor("opendesign.day.candidate", label: "OpenDesign Day Candidate")
@@ -3214,6 +5168,10 @@ private struct OpenDesignFinalHandoff: View {
         VStack(alignment: .leading, spacing: 12) {
             guide(title: "일정 선택지를 하나로 줄여요.", body: "후보가 살아 있으면 다음 병목은 일정입니다. 많은 선택지를 열지 말고 Mon-Wed 중 실제로 보낼 수 있는 30분 슬롯 하나만 고릅니다. 오늘의 결과는 문서가 아니라 잡을 수 있는 인터뷰예요.")
             OpenDesignSectionHeader(title: "인터뷰 약속 슬롯", meta: "Mon-Wed 중 1건만 잡기")
+            Color.clear
+                .frame(height: 1)
+                .id("slot-action")
+                .accessibilityHidden(true)
             LazyVGrid(columns: openDesignGridColumns(layout.openDesignGridColumnCount), spacing: 8) {
                 ForEach(Array(slotData.enumerated()), id: \.offset) { index, slot in
                     OpenDesignSlotButton(
@@ -3275,9 +5233,10 @@ private struct OpenDesignFinalHandoff: View {
             guide(title: "Day 1 게이트를 닫아요.", body: "마지막으로 게이트를 확인합니다. Day 1은 문서가 예쁜지가 아니라, 내일 실제 인터뷰로 이어질 조건이 채워졌는지로 끝납니다. 체크가 남아 있으면 다음 날로 넘기지 말고 여기서 닫습니다.")
             OpenDesignSectionHeader(title: "Day 1 게이트 조건", meta: nil)
             VStack(spacing: 8) {
-                gateRow(1, "ICP 한 문장 (좁힘 점수 ≥ 7)", completedTag: "완료 · 8.2")
-                gateRow(2, "후보 1명 — distance · tools · stuck · last7d 모두 채움", completedTag: "완료")
+                gateRow(1, draft.plan == nil ? "ICP 한 문장 (좁힘 점수 ≥ 7)" : "docs/ICP.md preview — Description / Criteria / Evidence 확인", completedTag: draft.plan == nil ? "완료 · 8.2" : "완료")
+                gateRow(2, draft.plan == nil ? "후보 1명 — distance · tools · stuck · last7d 모두 채움" : "adaptive ICP 질문 \(content.interviewSteps.count)개 모두 제출", completedTag: "완료")
                 gateRow(3, "인터뷰 약속 1건 — 슬롯 확정 + DM 보냄", completedTag: "완료", pendingTag: "슬롯 선택됨")
+                    .id("gate-action")
                 gateRow(4, "Anti-ICP 체크리스트 동의", completedTag: "완료", pendingTag: draft.isAntiSignal ? "재확인" : "대기")
             }
             .padding(.horizontal, 16)
@@ -3375,23 +5334,23 @@ private struct OpenDesignFinalHandoff: View {
     }
 
     private var messageDraft: String {
-        """
-        # to: @joopark.dev — Twitter DM
-        안녕하세요 주영님, 코워킹에서 몇 번 뵈었어요.
-        요즘 "\(label(3))" 쪽에서 또 멈추셨다는 얘기를 봤는데,
-        제가 지금 "\(label(2))"를 매일 쓰는 1인 개발자분들의 첫 고객 검증 과정을 정리하고 있어요.
-
-        이번 화요일 11시에 30분 Zoom 가능하세요?
-        질문은 3개만 드릴게요:
-          1) 지난 7일에 실제로 한 행동이 무엇이었는지
-          2) 그때 막힌 정확한 지점은 뭐였는지
-          3) 지금 그 문제 해결에 시간이나 돈을 얼마나 쓰고 있는지
-
-        답이 어려우시면 "패스"만 답주셔도 괜찮습니다. — Z
-        """
+        draft.firstMessage
     }
 
     private var antiIcpAttributedBody: AttributedString {
+        if draft.plan != nil {
+            let body = draft.antiIcpBody
+            let segments: [OpenDesignInlineSegment] = draft.isAntiSignal
+                ? [.strong("Anti-ICP 경계"), .body(" · \(body)")]
+                : [.body(body)]
+            return openDesignAttributedText(
+                segments,
+                bodySize: 12.5,
+                markColor: OpenDesignDayColor.rose,
+                markBackground: OpenDesignDayColor.roseDim,
+                codeColor: OpenDesignDayColor.rose
+            )
+        }
         let segments: [OpenDesignInlineSegment]
         if draft.isAntiSignal {
             segments = [
@@ -3431,18 +5390,26 @@ private struct OpenDesignFinalHandoff: View {
         text.foregroundColor = OpenDesignDayColor.fgSecondary
 
         func apply(_ needle: String, color: Color) {
+            guard !needle.isEmpty else { return }
             if let range = text.range(of: needle) {
                 text[range].foregroundColor = color
             }
         }
 
-        apply("# to: @joopark.dev — Twitter DM", color: OpenDesignDayColor.mutedDeep)
-        apply("안녕하세요 주영님", color: OpenDesignDayColor.accent)
-        apply("\"\(label(3))\"", color: OpenDesignDayColor.fg)
-        apply("\"\(label(2))\"", color: OpenDesignDayColor.amber)
-        apply("30분 Zoom", color: OpenDesignDayColor.amber)
-        apply("질문은 3개만", color: OpenDesignDayColor.fg)
-        apply("\"패스\"", color: OpenDesignDayColor.mutedDeep)
+        if let plan = draft.plan {
+            apply(plan.signals.productName ?? "", color: OpenDesignDayColor.accent)
+            apply(plan.signals.problem ?? "", color: OpenDesignDayColor.amber)
+            apply("질문은 세 가지만", color: OpenDesignDayColor.fg)
+            apply("Day 1 선택 조건", color: OpenDesignDayColor.mutedDeep)
+        } else {
+            apply("# to: @joopark.dev — Twitter DM", color: OpenDesignDayColor.mutedDeep)
+            apply("안녕하세요 주영님", color: OpenDesignDayColor.accent)
+            apply("\"\(label(3))\"", color: OpenDesignDayColor.fg)
+            apply("\"\(label(2))\"", color: OpenDesignDayColor.amber)
+            apply("30분 Zoom", color: OpenDesignDayColor.amber)
+            apply("질문은 3개만", color: OpenDesignDayColor.fg)
+            apply("\"패스\"", color: OpenDesignDayColor.mutedDeep)
+        }
         return text
     }
 
@@ -3650,7 +5617,7 @@ private struct OpenDesignMetaPanelView: View {
                             }
                     }
                     .frame(height: 3)
-                    Text("● 맥락    ● 미션    \(interaction.allInterviewsSubmitted ? "●" : "○") 인터뷰    \(interaction.allInterviewsSubmitted ? "●" : "○") ICP")
+                    Text("● 맥락    ● 미션    \(interaction.allInterviewsSubmitted ? "●" : "○") 질문    \(interaction.allInterviewsSubmitted ? "●" : "○") ICP")
                         .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(OpenDesignDayColor.muted)
                 }
@@ -3659,19 +5626,19 @@ private struct OpenDesignMetaPanelView: View {
                 .background(cardBackground(cornerRadius: 10, fill: OpenDesignDayColor.surface))
 
                 VStack(spacing: 1) {
-                    metaRow("cube.box", "프로젝트", "agentic30-public")
+                    metaRow("cube.box", "프로젝트", content.plan?.signals.productName ?? "agentic30-public")
                     metaRow("point.topleft.down.curvedto.point.bottomright.up", "브랜치", "main", swatch: OpenDesignDayColor.accent)
                     metaRow("person.crop.circle", "사용자", "zettalyst", swatch: OpenDesignDayColor.accent)
                     metaRow("clock", "남은 시간", "29d 14h", swatch: OpenDesignDayColor.amber)
-                    metaRow("chart.line.uptrend.xyaxis", "현재 신호", "유저 0 · 매출 0")
-                    metaRow("book.closed", "참고 자료", "SPEC.md, ICP.md")
+                    metaRow("chart.line.uptrend.xyaxis", "현재 신호", content.plan?.signals.confidence ?? "유저 0 · 매출 0")
+                    metaRow("book.closed", "참고 자료", content.plan?.signals.evidenceRefs.map(\.path).prefix(2).joined(separator: ", ") ?? "SPEC.md, ICP.md")
                 }
                 .padding(.horizontal, -4)
                 .padding(.bottom, 8)
 
                 metaTitle("이번 단계")
                 VStack(spacing: 0) {
-                    ForEach(1...4, id: \.self) { step in
+                    ForEach(content.interviewSteps) { step in
                         followupRow(step: step)
                     }
                 }
@@ -3733,24 +5700,13 @@ private struct OpenDesignMetaPanelView: View {
             .padding(.top, 4)
     }
 
-    private func followupRow(step: Int) -> some View {
-        let titles = [
-            1: "인터뷰 1 — 거리",
-            2: "인터뷰 2 — 도구",
-            3: "인터뷰 3 — 막힌 단계",
-            4: "인터뷰 4 — 지난 7일 행동",
-        ]
-        let locked = [
-            2: "잠금 · Cursor / Claude Code / 둘 다 / 비코딩",
-            3: "잠금 · 아이디어 / 빌드 / 검증 / 출시",
-            4: "잠금 · 새 시작 / 사용자 만남 / 출시 / 멈춤",
-        ]
-        let done = interaction.submittedSteps.contains(step)
-        let active = step == interaction.highestVisibleInterviewStep && !done
-        let subtitle = done ? "완료 · 제출됨" : active ? "지금 진행 중 · 4지선다에서 한 명 선택" : locked[step] ?? "지금 진행 중 · 4지선다에서 한 명 선택"
+    private func followupRow(step: OpenDesignDayContent.InterviewStep) -> some View {
+        let done = interaction.submittedSteps.contains(step.id)
+        let active = step.id == interaction.highestVisibleInterviewStep && !done
+        let subtitle = done ? "완료 · 제출됨" : active ? "지금 진행 중 · 선택지에서 하나 선택" : "잠금 · \(step.options.prefix(3).map(\.title).joined(separator: " / "))"
         return followupStatic(
             done ? "checkmark.circle" : active ? "record.circle" : "lock",
-            titles[step] ?? "인터뷰",
+            step.title,
             subtitle,
             tint: done ? OpenDesignDayColor.accent : active ? OpenDesignDayColor.amber : OpenDesignDayColor.muted,
             usesAccentSubtitle: done

@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import agentic30
 
-/// Sub-AC 2.4 (AC 104): unit coverage for the AI-driven Foundation Day 0-7
+/// Sub-AC 2.4 (AC 104): unit coverage for the AI-driven Foundation Day 0/2-7
 /// first-prompt receive + inject pipeline on `AgenticViewModel`. Locks down:
 ///   1. The `FoundationFirstPrompt` decoder (snake_case JSON ↔ camelCase Swift,
 ///      fallback text rendering when sidecar omits the pre-formatted `text`).

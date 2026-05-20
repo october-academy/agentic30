@@ -1884,9 +1884,9 @@ struct IntakeV2ReadyAnalyzeView: View {
         guard authorized else { return }
 
         let content = UNMutableNotificationContent()
-        content.title = "Day 1 첫 질문이 준비됐어요"
+        content.title = "Day 1 ICP 질문 세트가 준비됐어요"
         if store.folderURL == nil {
-            content.body = "intake 답변만으로 첫 ICP 질문을 준비했어요. Open inbox로 이어가세요."
+            content.body = "intake 답변만으로 ICP 질문 플랜을 준비했어요. Open inbox로 이어가세요."
         } else if bootLogState.scanDidFail {
             content.body = "scan 신호를 못 찾아 intake 답변만으로 준비했어요. Open inbox로 이어가세요."
         } else {
@@ -1906,25 +1906,25 @@ struct IntakeV2ReadyAnalyzeView: View {
 
     private var readyTitle: String {
         if store.folderURL == nil || bootLogState.scanDidFail {
-            return "Day 1 첫 질문이 준비됐습니다."
+            return "Day 1 ICP 질문 세트가 준비됐습니다."
         }
         if analysisReady {
-            return "Day 1 첫 질문이 준비됐습니다."
+            return "Day 1 ICP 질문 세트가 준비됐습니다."
         }
-        return "Day 1 첫 질문을 준비하고 있습니다."
+        return "Day 1 ICP 질문 세트를 준비하고 있습니다."
     }
 
     private var readySubtitle: String {
         if store.folderURL == nil {
-            return "폴더 없이 시작합니다. intake 답변만으로 첫 ICP 질문을 준비합니다."
+            return "폴더 없이 시작합니다. intake 답변만으로 ICP 질문 플랜을 준비합니다."
         }
         if bootLogState.scanDidFail {
-            return "Sidecar scan에서 충분한 신호를 못 찾았어요. intake 답변만으로 첫 ICP 질문을 준비했습니다."
+            return "Sidecar scan에서 충분한 신호를 못 찾았어요. intake 답변만으로 ICP 질문 플랜을 준비했습니다."
         }
         if workspaceScanResult == nil {
-            return "선택한 폴더를 읽고, Day 1 첫 질문에 쓸 신호만 추리고 있습니다."
+            return "선택한 폴더를 읽고, Day 1 ICP 질문 세트에 쓸 신호만 추리고 있습니다."
         }
-        return "선택한 폴더를 읽고 신호를 추출했습니다. Day 1 첫 질문으로 이어갑니다."
+        return "선택한 폴더를 읽고 신호를 추출했습니다. Day 1 ICP 질문 세트로 이어갑니다."
     }
 
     private var intakeReadyHandoff: some View {
@@ -1938,7 +1938,7 @@ struct IntakeV2ReadyAnalyzeView: View {
                 Text("오늘의 한 가지와 todo.list는 Day 1에서 시작합니다.")
                     .font(.system(size: 16, weight: .bold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.94))
-                Text("Open inbox를 누르면 첫 ICP 질문 앞에서 바로 선택하고 답할 수 있습니다.")
+                Text("Open inbox를 누르면 Day 1 ICP 질문 세트 앞에서 바로 선택하고 답할 수 있습니다.")
                     .font(.system(size: 13, weight: .medium, design: .rounded))
                     .foregroundStyle(IntakeV2Color.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)

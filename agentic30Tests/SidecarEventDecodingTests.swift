@@ -402,44 +402,85 @@ struct SidecarEventDecodingTests {
         #expect(event.error == nil)
     }
 
-    @MainActor @Test func decodesWorkspaceScanResultWithDay1Context() throws {
-        // Stage 2 of the day1-discovery plan attaches a `day1Context` payload
-        // to every workspace_scan_result so Day 1 first_prompt mappers can
-        // reach scan-derived signals without re-querying the sidecar.
+    @MainActor @Test func decodesWorkspaceScanResultWithDay1IcpPlan() throws {
         let payload = """
         {
           "type": "workspace_scan_result",
           "scanRoot": "/Users/october/prj/myapp",
-          "icp": "docs/ICP.md",
-          "spec": null,
-          "values": null,
-          "designSystem": null,
-          "adr": null,
-          "goal": null,
-          "docs": null,
-          "sheet": null,
-          "onboardingHypothesis": {
-            "productName": "Agentic30",
-            "projectKind": "mac_app",
-            "targetUser": "전업 1인 개발자",
-            "problem": "무엇을 만들지 모름",
-            "purpose": null,
-            "likelyUsers": [],
-            "stage": "prototype",
-            "evidence": [],
-            "confidence": "medium",
-            "suggestedFirstQuestion": "이번 주 인터뷰할 첫 고객은?"
-          },
-          "day1Context": {
+          "day1IcpPlan": {
             "schemaVersion": 1,
-            "sourceScanRoot": "/Users/october/prj/myapp",
-            "confidence": "medium",
-            "productName": "Agentic30",
-            "targetUser": "전업 1인 개발자",
-            "problem": "무엇을 만들지 모름",
-            "suggestedFirstQuestion": "이번 주 인터뷰할 첫 고객은?",
-            "foundDocCount": 1,
-            "missingExpectedDocs": ["spec", "goal", "values"]
+            "source": "deterministic",
+            "generatedAt": "2026-05-20T00:00:00.000Z",
+            "confidence": 0.66,
+            "fellBackToDeterministic": false,
+            "mission": "MyApp의 ICP v0를 검증 가능하게 좁힙니다.",
+            "signals": {
+              "productName": "MyApp",
+              "currentIcpGuess": "support lead",
+              "likelyUsers": ["support lead"],
+              "problem": "Slack escalation을 놓침",
+              "currentAlternatives": ["Slack 수동 확인"],
+              "evidenceRefs": [{ "path": "README.md", "reason": "README", "quote": "# MyApp" }],
+              "missingAssumptions": ["reference_customer"],
+              "confidence": "medium"
+            },
+            "questions": [
+              {
+                "id": "q1_must_have",
+                "dimension": "must_have",
+                "title": "질문 1",
+                "prompt": "좋은 고객의 필수 조건은?",
+                "helperText": "need/have 중심",
+                "options": [
+                  { "id": "o1", "label": "대안이 있음", "description": "이미 비용을 씀", "preview": "Have", "antiSignal": false },
+                  { "id": "o2", "label": "관심만 있음", "description": "최근 사건 없음", "preview": "Weak", "antiSignal": true }
+                ],
+                "allowFreeText": true,
+                "freeTextPlaceholder": "직접 입력"
+              },
+              {
+                "id": "q2_core_need",
+                "dimension": "core_need",
+                "title": "질문 2",
+                "prompt": "핵심 need는?",
+                "options": [
+                  { "id": "o1", "label": "시간 절약", "description": "반복 업무" },
+                  { "id": "o2", "label": "리스크 감소", "description": "누락 방지" }
+                ]
+              },
+              {
+                "id": "q3_reference_customer",
+                "dimension": "reference_customer",
+                "title": "질문 3",
+                "prompt": "누구에게 검증?",
+                "options": [
+                  { "id": "o1", "label": "warm intro", "description": "이번 주 가능" },
+                  { "id": "o2", "label": "cold outbound", "description": "공개 문제 언급" }
+                ]
+              }
+            ],
+            "icpDraft": {
+              "description": "support lead 중 Slack escalation을 놓치는 팀",
+              "criteria": ["현재 대안이 있다"],
+              "whyTheyMatter": ["짧은 sales cycle"],
+              "needs": ["누락 방지"],
+              "haves": ["Slack"],
+              "dontNeeds": ["관심만 있음"],
+              "evidence": ["README.md: README"],
+              "referenceCustomersToFind": ["support lead 1명"]
+            },
+            "antiIcp": {
+              "summary": "최근 사건이 없으면 제외",
+              "rules": [{ "id": "polite", "label": "흥미롭네요만 말함", "reason": "polite interest", "evidenceRef": null }],
+              "politeInterestGuardrails": ["최근 7일 사건 묻기"]
+            },
+            "firstInterviewMessage": {
+              "channel": "DM/email/Slack",
+              "recipientPlaceholder": "{name}",
+              "subject": "ICP 인터뷰",
+              "bodyTemplate": "안녕하세요 {name}님",
+              "questions": ["최근 사건?"]
+            }
           }
         }
         """
@@ -447,32 +488,11 @@ struct SidecarEventDecodingTests {
         let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
 
         #expect(event.type == "workspace_scan_result")
-        #expect(event.day1Context != nil)
-        #expect(event.day1Context?.schemaVersion == 1)
-        #expect(event.day1Context?.sourceScanRoot == "/Users/october/prj/myapp")
-        #expect(event.day1Context?.confidence == "medium")
-        #expect(event.day1Context?.productName == "Agentic30")
-        #expect(event.day1Context?.targetUser == "전업 1인 개발자")
-        #expect(event.day1Context?.suggestedFirstQuestion == "이번 주 인터뷰할 첫 고객은?")
-        #expect(event.day1Context?.foundDocCount == 1)
-        #expect(event.day1Context?.missingExpectedDocs == ["spec", "goal", "values"])
-    }
-
-    @MainActor @Test func decodesWorkspaceScanResultWithoutDay1ContextIsNil() throws {
-        // Backwards compat: older sidecars (and the error path) omit the
-        // day1Context field. The decoder must keep it nil rather than throwing.
-        let payload = """
-        {
-          "type": "workspace_scan_result",
-          "scanRoot": "/Users/october/prj/myapp",
-          "icp": null
-        }
-        """
-
-        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
-
-        #expect(event.type == "workspace_scan_result")
-        #expect(event.day1Context == nil)
+        #expect(event.day1IcpPlan?.schemaVersion == 1)
+        #expect(event.day1IcpPlan?.questions.count == 3)
+        #expect(event.day1IcpPlan?.questions.first?.options.last?.antiSignal == true)
+        #expect(event.day1IcpPlan?.icpDraft.description.contains("support lead") == true)
+        #expect(event.day1IcpPlan?.antiIcp.rules.first?.label == "흥미롭네요만 말함")
     }
 
     @MainActor @Test func decodesWorkspaceScanResultWithError() throws {

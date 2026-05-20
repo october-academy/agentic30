@@ -8,185 +8,6 @@
 import AppKit
 import SwiftUI
 
-struct Day1IntroPromptModel: Hashable {
-    struct TodoRow: Identifiable, Hashable {
-        let id: Int
-        let title: String
-        let detail: String
-        let tag: String
-        let option: StructuredPromptOption
-    }
-
-    enum DimensionDotState: Hashable { case passed, current, upcoming }
-
-    struct DimensionDot: Identifiable, Hashable {
-        let index: Int
-        let state: DimensionDotState
-        var id: Int { index }
-    }
-
-    let title: String
-    let signalLabel: String
-    let metaLabel: String
-    let contextLabel: String
-    let ctaLabel: String
-    let body: String
-    let helperText: String?
-    let statusLabel: String
-    let readyLine: String
-    let question: StructuredPromptQuestion
-    let rows: [TodoRow]
-    let freeTextPlaceholder: String?
-    let allowsFreeText: Bool
-    let previousAnswerChip: String?
-    let dimensionBreadcrumb: [DimensionDot]
-
-    static func make(prompt: StructuredPromptRequest, dayNumber: Int) -> Day1IntroPromptModel? {
-        guard dayNumber == 1,
-              prompt.isAgentic30StructuredInput,
-              isIcpPrompt(prompt),
-              let question = prompt.questions.first else {
-            return nil
-        }
-
-        let rows = (question.options ?? []).enumerated().map { index, option in
-            TodoRow(
-                id: index + 1,
-                title: option.label,
-                detail: option.description,
-                tag: optionTag(for: option, index: index),
-                option: option
-            )
-        }
-        let visibleRowCount = rows.isEmpty ? 1 : rows.count
-        let isFollowUp = (prompt.title?.contains(" · ") ?? false)
-        // F2: when the rubric reports the user is on the last missing signal
-        // for this doc, swap the CTA to a milestone ("ICP 정의 완료") so the
-        // user sees the wrap-up coming. Otherwise follow-up cards say "다음"
-        // and only the first card says "이걸로 시작".
-        let isLastCard = prompt.generation?.isLastSignalForDoc == true
-        let ctaLabel: String = {
-            if isLastCard { return "ICP 정의 완료" }
-            if isFollowUp { return "다음" }
-            return "이걸로 시작"
-        }()
-        let contextLabel: String = {
-            if isLastCard { return "마지막 단계" }
-            if isFollowUp { return "ICP 좁히기" }
-            return "오늘의 한 가지"
-        }()
-
-        // PR1: surface the user's previous selection as a chip so each
-        // follow-up card carries forward what was already decided. Sidecar
-        // sends previousAnswerLabel (22-char slice of the response) when
-        // the rubric transitions dimensions; fall back to previousSignalLabel
-        // when the response text is empty (e.g. inline choice with no free
-        // text).
-        let previousAnswerChip: String? = {
-            let chipText = prompt.generation?.previousAnswerLabel?.nonEmpty
-                ?? prompt.generation?.previousSignalLabel?.nonEmpty
-            return chipText.map { "← \($0)" }
-        }()
-
-        // PR1: 4-dot dimension breadcrumb derived from sidecar rubric step
-        // index. Empty when sidecar didn't ship the step indices (legacy
-        // host fallback or non-ICP doc), so existing first-card flow stays
-        // untouched.
-        let dimensionBreadcrumb: [DimensionDot] = {
-            guard let total = prompt.generation?.dimensionTotal, total > 0,
-                  let current = prompt.generation?.dimensionStepIndex, current >= 1 else {
-                return []
-            }
-            return (1...total).map { idx in
-                let state: DimensionDotState
-                if idx < current { state = .passed }
-                else if idx == current { state = .current }
-                else { state = .upcoming }
-                return DimensionDot(index: idx, state: state)
-            }
-        }()
-
-        // PR1: status label gains "n/total · 차원명" when sidecar provides
-        // the dimension step indices. Without them we keep the legacy
-        // "N개 중 1개 선택" copy so the first ICP card and other docs
-        // continue to read the same way.
-        let statusLabel: String = {
-            if let total = prompt.generation?.dimensionTotal, total > 0,
-               let current = prompt.generation?.dimensionStepIndex, current >= 1 {
-                if let signalLabel = prompt.generation?.signalLabel?.nonEmpty {
-                    return "\(current)/\(total) · \(signalLabel)"
-                }
-                return "\(current)/\(total) 단계"
-            }
-            return "\(visibleRowCount)개 중 1개 선택"
-        }()
-
-        return Day1IntroPromptModel(
-            title: derivedIntroTitle(prompt: prompt, question: question),
-            signalLabel: question.header.nonEmpty ?? "ICP",
-            metaLabel: "Day 1",
-            contextLabel: contextLabel,
-            ctaLabel: ctaLabel,
-            body: question.question,
-            helperText: question.helperText?.nonEmpty ?? prompt.intro?.body?.nonEmpty,
-            statusLabel: statusLabel,
-            readyLine: rows.isEmpty ? "ready answer with context" : "ready choose an ICP path",
-            question: question,
-            rows: rows,
-            freeTextPlaceholder: question.freeTextPlaceholder?.nonEmpty,
-            allowsFreeText: question.allowFreeText == true || question.options?.isEmpty != false,
-            previousAnswerChip: previousAnswerChip,
-            dimensionBreadcrumb: dimensionBreadcrumb
-        )
-    }
-
-    private static func derivedIntroTitle(
-        prompt: StructuredPromptRequest,
-        question: StructuredPromptQuestion
-    ) -> String {
-        // Sidecar follow-up cards now ship "ICP · 직접 만날 사람" /
-        // "ICP · 기존의 방식" / "ICP · 고통과 시급성" titles so the user can tell
-        // which rubric dimension each card targets. Pick that up when present so
-        // the intro card title reflects the actual question instead of always
-        // saying "좁힙니다".
-        if let title = prompt.title?.nonEmpty, title.contains(" · ") {
-            return title
-        }
-        return "첫 고객 ICP를 좁힙니다."
-    }
-
-    static func suppressesStructuredPromptForm(prompt: StructuredPromptRequest, dayNumber: Int) -> Bool {
-        make(prompt: prompt, dayNumber: dayNumber) != nil
-    }
-
-    private static func isIcpPrompt(_ prompt: StructuredPromptRequest) -> Bool {
-        let fields = [
-            prompt.generation?.docType,
-            prompt.title,
-            prompt.questions.first?.header,
-            prompt.questions.first?.questionId,
-        ]
-            .compactMap { $0?.lowercased() }
-            .joined(separator: "\n")
-        return fields.contains("icp")
-    }
-
-    private static func optionTag(for option: StructuredPromptOption, index: Int) -> String {
-        // Pure-ASCII chips like "AGENT" / "REPEAT" / "LANDIN" are truncated
-        // nextIntent tokens that carry no information for Korean users. Suppress
-        // them so the row chip stays empty (and the chip view hides) unless the
-        // upstream tag is a meaningful Korean glyph.
-        let raw = option.nextIntent?.split(separator: "_").first.map(String.init)
-            ?? option.label.split(separator: " ").first.map(String.init)
-            ?? ""
-        let trimmed = raw.trimmingCharacters(in: .whitespaces)
-        if trimmed.isEmpty || trimmed.unicodeScalars.allSatisfy({ $0.isASCII }) {
-            return ""
-        }
-        return String(trimmed.prefix(6))
-    }
-}
-
 struct ContentView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -244,6 +65,8 @@ struct ContentView: View {
     // 해당 섹션이나 signOutMacAuth() 같은 액션으로 분기시킨다.
     @State private var showsSidebarSettingsMenu = false
     @State private var hoveredSidebarSettingsMenuItem: SidebarSettingsMenuItem?
+    @State private var workspaceCompletionConfettiTrigger = 0
+    @State private var lastWorkspaceCompletionConfettiMissionID: String?
 
     @MainActor
     init(
@@ -327,6 +150,17 @@ struct ContentView: View {
                     showsBipCompletionFields = false
                 }
             }
+            .onChange(of: currentBipCompletionConfettiMissionID) { _, _ in
+                triggerWorkspaceCompletionConfettiIfNeeded()
+            }
+            .overlay {
+                if workspaceCompletionConfettiTrigger > 0 {
+                    RealisticConfettiBurst(trigger: workspaceCompletionConfettiTrigger)
+                        .id(workspaceCompletionConfettiTrigger)
+                        .allowsHitTesting(false)
+                        .accessibilityIdentifier("workspace.realisticConfetti")
+                }
+            }
 
         if isWorkspaceWindow {
             content
@@ -342,6 +176,14 @@ struct ContentView: View {
 
     private var activeSurface: AgenticSurface {
         surfaceOverride ?? viewModel.activeSurface
+    }
+
+    private var currentBipCompletionConfettiMissionID: String? {
+        guard let mission = viewModel.visibleBipCoach?.currentMission,
+              mission.status == "completed" else {
+            return nil
+        }
+        return mission.id
     }
 
     private enum WorkspaceMissionFirstPhase: Equatable {
@@ -499,7 +341,7 @@ struct ContentView: View {
 
     private func shouldUseOpenDesignDayPage(day: AgenticCurriculumDay) -> Bool {
         guard selectedWorkspaceSection == .curriculum,
-              day.day == 1,
+              (day.day == 1 || day.day == 2),
               viewModel.foundationCurriculumPresentationDestination != .graduation else {
             return false
         }
@@ -526,9 +368,11 @@ struct ContentView: View {
 
     @ViewBuilder
     private func openDesignDaySurface(day: AgenticCurriculumDay, session: ChatSession?) -> some View {
+        let day1Content = OpenDesignDayContent.personalized(from: viewModel.scanResult?.day1IcpPlan)
+        let resolvedContent = day.day == 2 ? OpenDesignDayContent.day2 : day1Content
         let content = ZStack {
             OpenDesignDayPageView(
-                content: viewModel.iddSetupComplete ? .day1 : .day1.lockingFutureDays,
+                content: viewModel.iddSetupComplete ? resolvedContent : day1Content.lockingFutureDays,
                 openSettings: {
                     withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
                         selectedWorkspaceSection = .settings
@@ -576,32 +420,8 @@ struct ContentView: View {
         day: AgenticCurriculumDay,
         session: ChatSession?
     ) {
-        guard let prompt = session?.pendingUserInput,
-              let model = day1IntroPromptModel(for: prompt, day: day) else {
-            if !viewModel.iddSetupComplete {
-                viewModel.startBipIddQueue(docType: viewModel.iddCurrentDocType)
-            }
-            return
-        }
-
-        guard let row = model.rows.first(where: { row in
-            choice.localizedCaseInsensitiveContains(row.title)
-                || row.title.localizedCaseInsensitiveContains(choice)
-                || choice.localizedCaseInsensitiveContains(row.option.label)
-                || row.option.label.localizedCaseInsensitiveContains(choice)
-        }) else {
-            if !viewModel.iddSetupComplete {
-                viewModel.startBipIddQueue(docType: viewModel.iddCurrentDocType)
-            }
-            return
-        }
-
-        let draft = viewModel.structuredPromptDraft(for: model.question, in: prompt)
-        if !draft.selectedOptions.contains(row.option.label) {
-            viewModel.toggleStructuredPromptOption(row.option.label, for: model.question, in: prompt)
-        }
-        if canSubmit(prompt) {
-            submitPrompt(prompt)
+        if !viewModel.iddSetupComplete {
+            viewModel.startBipIddQueue(docType: viewModel.iddCurrentDocType)
         }
     }
 
@@ -2050,7 +1870,6 @@ struct ContentView: View {
         workspaceSettingsTourOverlay()
         workspaceHelpTourOverlay()
         workspaceRecentConversationsTourOverlay()
-        guidedDay1CoachMarkOverlay()
     }
 
     @ViewBuilder
@@ -2508,83 +2327,6 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder
-    private func guidedDay1CoachMarkOverlay() -> some View {
-        if viewModel.guidedDay1OverlayActive {
-            ZStack(alignment: .topLeading) {
-                Color.black.opacity(0.54)
-                    .ignoresSafeArea()
-                    .accessibilityIdentifier("onboarding.day1CoachMark.dim")
-
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color.white.opacity(0.88), lineWidth: 2)
-                    .frame(width: isWorkspaceWindow ? 292 : 250, height: 48)
-                    .padding(.leading, isWorkspaceWindow ? 14 : 24)
-                    .padding(.top, isWorkspaceWindow ? 196 : 206)
-                    .shadow(color: Color.white.opacity(0.20), radius: 18)
-                    .allowsHitTesting(false)
-                    .accessibilityIdentifier("onboarding.day1CoachMark.highlight")
-
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 9) {
-                        Image(systemName: "target")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(Color.black.opacity(0.78))
-                            .frame(width: 28, height: 28)
-                            .background(Circle().fill(Color.white.opacity(0.96)))
-
-                        Text("Day 1 tutorial")
-                            .font(.system(size: 17, weight: .heavy, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.96))
-                    }
-
-                    Text("먼저 Day 1 카드를 열고 첫 질문에 답해보세요. 이 답변은 연습이 아니라 30일 커리큘럼의 실제 데이터로 저장됩니다.")
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.74))
-                        .lineSpacing(2)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    Button {
-                        withAnimation(.spring(response: 0.22, dampingFraction: 0.92)) {
-                            viewModel.skipGuidedDay1Overlay()
-                        }
-                    } label: {
-                        Text("Overlay skip")
-                            .font(.system(size: 13, weight: .heavy, design: .rounded))
-                            .foregroundStyle(Color.black.opacity(0.84))
-                            .frame(height: 34)
-                            .frame(maxWidth: .infinity)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(Color.white.opacity(0.94))
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("onboarding.day1CoachMark.skip")
-                    .accessibilityLabel("Skip Day 1 overlay")
-                }
-                .padding(16)
-                .frame(width: 336, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color(red: 0.12, green: 0.13, blue: 0.15).opacity(0.98))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                        )
-                )
-                .shadow(color: .black.opacity(0.34), radius: 22, x: 0, y: 12)
-                .padding(.leading, isWorkspaceWindow ? 330 : 302)
-                .padding(.top, isWorkspaceWindow ? 178 : 170)
-                .accessibilityIdentifier("onboarding.day1CoachMark.card")
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .transition(.opacity)
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("onboarding.day1CoachMark.overlay")
-        }
-    }
-
     private func handleBipNotificationOpenRequest() {
         guard isWorkspaceWindow,
               let request = viewModel.bipNotificationOpenRequest,
@@ -2825,7 +2567,7 @@ struct ContentView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
                             if isIddSetupLocked {
-                                legacyFoundationSetupSurface(session: session)
+                                foundationSetupFallbackSurface(session: session)
                             } else if viewModel.foundationCurriculumPresentationDestination == .graduation {
                                 workspaceGraduationSurface()
                             } else if let reviewDashboard = viewModel.reviewDayDashboardViewModel,
@@ -3378,6 +3120,27 @@ struct ContentView: View {
         selectedWorkspaceSection = .curriculum
     }
 
+    private func triggerWorkspaceCompletionConfettiIfNeeded() {
+        guard let missionID = currentBipCompletionConfettiMissionID,
+              lastWorkspaceCompletionConfettiMissionID != missionID else {
+            return
+        }
+
+        lastWorkspaceCompletionConfettiMissionID = missionID
+        guard !reduceMotion,
+              !RealisticConfettiBurst.isProcessDisabled else {
+            return
+        }
+
+        workspaceCompletionConfettiTrigger += 1
+        let currentTrigger = workspaceCompletionConfettiTrigger
+        DispatchQueue.main.asyncAfter(deadline: .now() + RealisticConfettiRecipe.cleanupDelay + 0.15) {
+            if workspaceCompletionConfettiTrigger == currentTrigger {
+                workspaceCompletionConfettiTrigger = 0
+            }
+        }
+    }
+
     private func bipCompletionCard(mission: BipCoachMission, isCompact: Bool = false) -> some View {
         return ZStack(alignment: .topTrailing) {
             VStack(alignment: .leading, spacing: isCompact ? 6 : 9) {
@@ -3440,12 +3203,6 @@ struct ContentView: View {
                 }
             }
 
-            if !isCompact {
-                BipCompletionConfettiBurst()
-                    .frame(width: 190, height: 128)
-                    .allowsHitTesting(false)
-                    .accessibilityIdentifier("workspace.completionCard.confetti")
-            }
         }
         .padding(isCompact ? 0 : 12)
         .background {
@@ -3463,8 +3220,7 @@ struct ContentView: View {
     }
 
     private func workspaceChatThread(_ session: ChatSession, day: AgenticCurriculumDay) -> some View {
-        let day1IntroModel = session.pendingUserInput.flatMap { day1IntroPromptModel(for: $0, day: day) }
-        let visibleMessages = workspaceVisibleMessages(for: session, hidingDay1Intro: day1IntroModel)
+        let visibleMessages = workspaceVisibleMessages(for: session)
         let pendingPrompts = workspacePendingPrompts(for: session)
         let showsRunningBubble = session.status == .running && workspaceNeedsRunningBubble(messages: visibleMessages)
 
@@ -3498,11 +3254,7 @@ struct ContentView: View {
                 // 채팅 surface 안에서 렌더한다. 오늘 과제는 항상 chat의 첫 어시
                 // 스턴트 카드로 등장해 컨텍스트를 고정하고, 그 다음에 sub-workflow
                 // (BIP mission), 자유 대화 (visible messages) 순으로 이어진다.
-                if let prompt = session.pendingUserInput, let day1IntroModel {
-                    workspaceDay1Intro(model: day1IntroModel, prompt: prompt)
-                } else {
-                    workspaceTodayTasksAssistantCard(day: day)
-                }
+                workspaceTodayTasksAssistantCard(day: day)
                 if workspaceShouldShowPublicExecutionCard(for: session) {
                     workspaceBipMissionAssistantCard()
                 }
@@ -3517,7 +3269,7 @@ struct ContentView: View {
                         workspaceChatBubble(message, session: session)
                     }
 
-                    if let pendingPrompt = session.pendingUserInput, day1IntroModel == nil {
+                    if let pendingPrompt = session.pendingUserInput {
                         workspaceStructuredPrompt(pendingPrompt)
                     }
 
@@ -3697,25 +3449,6 @@ struct ContentView: View {
             .filter(workspaceShouldRenderMessage)
             .suffix(8)
             .map { $0 }
-    }
-
-    private func workspaceVisibleMessages(
-        for session: ChatSession,
-        hidingDay1Intro model: Day1IntroPromptModel?
-    ) -> [ChatMessage] {
-        let messages = workspaceVisibleMessages(for: session)
-        guard let model else { return messages }
-        let hiddenSnippets = [model.body, model.question.header]
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { $0.count >= 4 }
-
-        return messages.filter { message in
-            guard message.role != .user else { return true }
-            let payload = workspaceAssistantMessagePayload(message)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !payload.isEmpty else { return true }
-            return !hiddenSnippets.contains(where: { payload == $0 || payload.contains($0) })
-        }
     }
 
     private func workspaceShouldRenderMessage(_ message: ChatMessage) -> Bool {
@@ -4486,7 +4219,7 @@ struct ContentView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         if isIddSetupLocked {
-                            legacyFoundationSetupSurface(session: nil)
+                            foundationSetupFallbackSurface(session: nil)
                         } else {
                             workspaceMissionFirstSurface(day: day, session: nil)
                         }
@@ -4518,10 +4251,9 @@ struct ContentView: View {
         coach.isConfigured && readiness.bipCoachSetupComplete && !readiness.hasBlockingBipCoachSetupIssue
     }
 
-    /// Backup-only copy of the pre-OpenDesign Foundation Setup surface.
-    /// Normal Day 1 routing now uses `OpenDesignDayPageView`; this remains
-    /// available for debug fallback and for non-Day-1 defensive states.
-    private func legacyFoundationSetupSurface(session: ChatSession?) -> some View {
+    /// Defensive/debug Foundation Setup fallback outside the normal OpenDesign Day 1 route.
+    /// Do not add Day 1 ICP cards here; `OpenDesignDayPageView` owns that flow.
+    private func foundationSetupFallbackSurface(session: ChatSession?) -> some View {
         let previews = viewModel.iddDocPreviews
         let draftedCount = previews.filter { $0.status == "drafted" || !$0.content.isEmpty }.count
         let totalCount = max(viewModel.iddDocOrder.count, 4)
@@ -4579,16 +4311,12 @@ struct ContentView: View {
                 legacyFoundationProviderRecovery(recovery, provider: provider)
             } else if let prompt = session?.pendingUserInput,
                       viewModel.isMatchingFoundationPrompt(prompt) {
-                if let model = day1IntroPromptModel(for: prompt, day: workspaceSelectedDay) {
-                    workspaceDay1Intro(model: model, prompt: prompt)
-                } else {
-                    inlineStructuredPrompt(
-                        prompt,
-                        compact: true,
-                        submissionState: submissionState(for: prompt)
-                    )
-                        .accessibilityIdentifier("workspace.iddSetup.question")
-                }
+                inlineStructuredPrompt(
+                    prompt,
+                    compact: true,
+                    submissionState: submissionState(for: prompt)
+                )
+                    .accessibilityIdentifier("workspace.iddSetup.question")
             } else if viewModel.isMismatchedFoundationPrompt(session?.pendingUserInput) {
                 legacyFoundationPromptMismatch(session?.pendingUserInput)
                     .onAppear {
@@ -4669,416 +4397,6 @@ struct ContentView: View {
         )
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("workspace.iddSetup.dimensionTransitionToast")
-    }
-
-    private func day1IntroPromptModel(
-        for prompt: StructuredPromptRequest,
-        day: AgenticCurriculumDay
-    ) -> Day1IntroPromptModel? {
-        Day1IntroPromptModel.make(prompt: prompt, dayNumber: day.day)
-    }
-
-    private func workspaceDay1Intro(
-        model: Day1IntroPromptModel,
-        prompt: StructuredPromptRequest
-    ) -> some View {
-        let submission = submissionState(for: prompt)
-        let isSubmitting = submission?.requestId == prompt.requestId
-
-        return VStack(alignment: .leading, spacing: 12) {
-            workspaceDay1IntroCard(model: model)
-
-            workspaceDay1TodoList(
-                model: model,
-                prompt: prompt,
-                isSubmitting: isSubmitting
-            )
-
-            if let submission, isSubmitting {
-                structuredPromptSubmissionReceipt(submission, compact: false)
-            }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("workspace.day1Intro")
-    }
-
-    private func workspaceDay1IntroCard(
-        model: Day1IntroPromptModel
-    ) -> some View {
-        HStack(alignment: .top, spacing: 18) {
-            Image(systemName: "person.crop.circle.badge.questionmark")
-                .font(.system(size: 26, weight: .heavy))
-                .foregroundStyle(Color.black.opacity(0.78))
-                .frame(width: 54, height: 54)
-                .background(
-                    RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .fill(Color.white.opacity(0.96))
-                )
-
-            VStack(alignment: .leading, spacing: 11) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("Agentic30")
-                        .font(.system(size: 15, weight: .heavy, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.78))
-                    Text("·")
-                        .font(.system(size: 14, weight: .heavy, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.36))
-                    Text(model.contextLabel)
-                        .font(.system(size: 15, weight: .heavy, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.78))
-                    Spacer(minLength: 0)
-                    Text("방금")
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.46))
-                }
-
-                if let chip = model.previousAnswerChip {
-                    workspaceDay1IntroPreviousChip(chip)
-                }
-
-                Text(model.title)
-                    .font(.system(size: 24, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.97))
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack(spacing: 8) {
-                    workspaceDay1IntroBadge(model.signalLabel, isPrimary: true)
-                    workspaceDay1IntroBadge(model.metaLabel, isPrimary: false)
-                    if !model.dimensionBreadcrumb.isEmpty {
-                        workspaceDay1IntroBreadcrumb(model.dimensionBreadcrumb)
-                    }
-                }
-
-                Text(model.body)
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.68))
-                    .lineSpacing(2)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if let helperText = model.helperText {
-                    Text(helperText)
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.46))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.white.opacity(0.075))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
-                )
-        )
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("workspace.day1Intro.card")
-    }
-
-    private func workspaceDay1IntroPreviousChip(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 12, weight: .heavy, design: .rounded))
-            .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.92))
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .padding(.horizontal, 10)
-            .frame(height: 24)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Agentic30BrandColor.greenBright.opacity(0.10))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(Agentic30BrandColor.greenBright.opacity(0.24), lineWidth: 1)
-                    )
-            )
-            .accessibilityIdentifier("workspace.day1Intro.previousChip")
-    }
-
-    private func workspaceDay1IntroBreadcrumb(_ dots: [Day1IntroPromptModel.DimensionDot]) -> some View {
-        HStack(spacing: 5) {
-            ForEach(dots) { dot in
-                Circle()
-                    .fill(dotFill(for: dot.state))
-                    .overlay(
-                        Circle().stroke(dotStroke(for: dot.state), lineWidth: 1)
-                    )
-                    .frame(width: dot.state == .current ? 9 : 7,
-                           height: dot.state == .current ? 9 : 7)
-            }
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 26)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color.white.opacity(0.04))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                )
-        )
-        .accessibilityIdentifier("workspace.day1Intro.breadcrumb")
-    }
-
-    private func dotFill(for state: Day1IntroPromptModel.DimensionDotState) -> Color {
-        switch state {
-        case .passed:   return Agentic30BrandColor.greenBright.opacity(0.74)
-        case .current:  return Agentic30BrandColor.greenBright.opacity(0.96)
-        case .upcoming: return Color.white.opacity(0.10)
-        }
-    }
-
-    private func dotStroke(for state: Day1IntroPromptModel.DimensionDotState) -> Color {
-        switch state {
-        case .passed:   return Agentic30BrandColor.greenBright.opacity(0.30)
-        case .current:  return Agentic30BrandColor.greenBright.opacity(0.45)
-        case .upcoming: return Color.white.opacity(0.14)
-        }
-    }
-
-    private func workspaceDay1IntroBadge(_ text: String, isPrimary: Bool) -> some View {
-        Text(text)
-            .font(.system(size: 11, weight: .heavy, design: .rounded))
-            .foregroundStyle(isPrimary ? Agentic30BrandColor.greenBright.opacity(0.96) : .white.opacity(0.58))
-            .padding(.horizontal, 9)
-            .frame(height: 26)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(isPrimary ? Agentic30BrandColor.greenBright.opacity(0.12) : Color.white.opacity(0.07))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .stroke(isPrimary ? Agentic30BrandColor.greenBright.opacity(0.22) : Color.white.opacity(0.08), lineWidth: 1)
-                    )
-            )
-    }
-
-    private func workspaceDay1TodoList(
-        model: Day1IntroPromptModel,
-        prompt: StructuredPromptRequest,
-        isSubmitting: Bool
-    ) -> some View {
-        let draft = viewModel.structuredPromptDraft(for: model.question, in: prompt)
-        let hasAnswer = canSubmit(prompt)
-        let canSubmitPrompt = hasAnswer && !isSubmitting
-
-        return VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Text("이 중에서 골라요")
-                    .font(.system(size: 13, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.80))
-                Spacer()
-                Text(model.statusLabel)
-                    .font(.system(size: 12, weight: .heavy, design: .rounded))
-                    .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.88))
-            }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 14)
-            .background(Color.white.opacity(0.025))
-            .overlay(Rectangle().fill(.white.opacity(0.06)).frame(height: 1), alignment: .bottom)
-
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(model.rows) { row in
-                    workspaceDay1TodoRow(
-                        row,
-                        model: model,
-                        prompt: prompt,
-                        selected: draft.selectedOptions.contains(row.option.label),
-                        isSubmitting: isSubmitting
-                    )
-                }
-
-                if model.allowsFreeText {
-                    workspaceDay1IntroFreeTextField(model: model, prompt: prompt, isDisabled: isSubmitting)
-                }
-            }
-            .padding(16)
-
-            HStack(spacing: 10) {
-                Spacer(minLength: 0)
-                Button {
-                    guard canSubmitPrompt else { return }
-                    submitPrompt(prompt)
-                } label: {
-                    Group {
-                        if isSubmitting {
-                            Label("저장 중", systemImage: "hourglass")
-                        } else if hasAnswer {
-                            Label(model.ctaLabel, systemImage: "arrow.turn.down.left")
-                        } else {
-                            Text("옵션을 골라 주세요")
-                        }
-                    }
-                    .font(.system(size: 13, weight: .heavy, design: .rounded))
-                    .foregroundStyle(Agentic30BrandColor.greenBright.opacity(canSubmitPrompt ? 0.94 : 0.34))
-                    .padding(.horizontal, 14)
-                    .frame(height: 36)
-                    .background(
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(Agentic30BrandColor.greenBright.opacity(canSubmitPrompt ? 0.10 : 0.045))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                    .stroke(Agentic30BrandColor.greenBright.opacity(canSubmitPrompt ? 0.22 : 0.08), lineWidth: 1)
-                            )
-                    )
-                }
-                .buttonStyle(.plain)
-                .disabled(!canSubmitPrompt)
-                .accessibilityIdentifier("workspace.day1Intro.submit")
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .overlay(Rectangle().fill(.white.opacity(0.06)).frame(height: 1), alignment: .top)
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.white.opacity(0.075))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Agentic30BrandColor.greenBright.opacity(0.20), lineWidth: 1)
-                )
-        )
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("workspace.day1Intro.todoList")
-    }
-
-    private func workspaceDay1TodoRow(
-        _ row: Day1IntroPromptModel.TodoRow,
-        model: Day1IntroPromptModel,
-        prompt: StructuredPromptRequest,
-        selected: Bool,
-        isSubmitting: Bool
-    ) -> some View {
-        Button {
-            guard !isSubmitting else { return }
-            viewModel.toggleStructuredPromptOption(row.option.label, for: model.question, in: prompt)
-        } label: {
-            HStack(alignment: .center, spacing: 14) {
-                ZStack {
-                    Circle()
-                        .fill(Agentic30BrandColor.greenBright.opacity(selected ? 0.22 : 0.13))
-                        .overlay(
-                            Circle()
-                                .stroke(Agentic30BrandColor.greenBright.opacity(selected ? 0.78 : 0.44), lineWidth: 1.4)
-                        )
-                    Text("\(row.id)")
-                        .font(.system(size: 13, weight: .heavy, design: .monospaced))
-                        .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.96))
-                }
-                .frame(width: 34, height: 34)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(row.title)
-                        .font(.system(size: 15, weight: .heavy, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.94))
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text(row.detail)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.48))
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 12)
-
-                if !row.tag.isEmpty {
-                    Text(row.tag)
-                        .font(.system(size: 11, weight: .heavy, design: .monospaced))
-                        .foregroundStyle(Agentic30BrandColor.greenBright.opacity(selected ? 0.98 : 0.78))
-                        .padding(.horizontal, 9)
-                        .frame(height: 28)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(Agentic30BrandColor.greenBright.opacity(selected ? 0.16 : 0.08))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                        .stroke(Agentic30BrandColor.greenBright.opacity(selected ? 0.34 : 0.16), lineWidth: 1)
-                                )
-                        )
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 13)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(selected ? Color.white.opacity(0.060) : Color.white.opacity(0.025))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(selected ? Agentic30BrandColor.greenBright.opacity(0.26) : Color.white.opacity(0.055), lineWidth: 1)
-                    )
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .disabled(isSubmitting)
-        .accessibilityElement(children: .ignore)
-        .accessibilityIdentifier("workspace.day1Intro.option.\(row.id)")
-        .accessibilityLabel(row.title)
-        .accessibilityHint(row.detail)
-        .accessibilityValue(selected ? "Selected" : "Not selected")
-    }
-
-    @ViewBuilder
-    private func workspaceDay1IntroFreeTextField(
-        model: Day1IntroPromptModel,
-        prompt: StructuredPromptRequest,
-        isDisabled: Bool
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(model.rows.isEmpty ? "답변" : "직접 입력")
-                .font(.system(size: 11, weight: .heavy, design: .rounded))
-                .foregroundStyle(.white.opacity(0.48))
-
-            if model.question.textMode == .long {
-                TextEditor(
-                    text: Binding(
-                        get: { viewModel.structuredPromptDraft(for: model.question, in: prompt).freeText },
-                        set: { viewModel.updateStructuredPromptFreeText($0, for: model.question, in: prompt) }
-                    )
-                )
-                .font(.system(size: 13, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.94))
-                .scrollContentBackground(.hidden)
-                .frame(height: 84)
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.black.opacity(0.16))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(Color.white.opacity(0.06), lineWidth: 1)
-                        )
-                )
-                .disabled(isDisabled)
-                .accessibilityIdentifier("workspace.day1Intro.freeText")
-                .accessibilityLabel(model.freeTextPlaceholder ?? "직접 입력")
-            } else {
-                TextField(
-                    model.freeTextPlaceholder ?? "직접 입력",
-                    text: Binding(
-                        get: { viewModel.structuredPromptDraft(for: model.question, in: prompt).freeText },
-                        set: { viewModel.updateStructuredPromptFreeText($0, for: model.question, in: prompt) }
-                    )
-                )
-                .textFieldStyle(.plain)
-                .font(.system(size: 13, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.94))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 11)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.black.opacity(0.16))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(Color.white.opacity(0.06), lineWidth: 1)
-                        )
-                )
-                .disabled(isDisabled)
-                .accessibilityIdentifier("workspace.day1Intro.freeText")
-                .accessibilityLabel(model.freeTextPlaceholder ?? "직접 입력")
-            }
-        }
-        .padding(.top, 2)
     }
 
     private func legacyFoundationSetupTitle(for docType: String?) -> String {
@@ -6030,8 +5348,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private func workspaceMissionSupportThread(_ session: ChatSession) -> some View {
-        let day1IntroModel = session.pendingUserInput.flatMap { day1IntroPromptModel(for: $0, day: workspaceSelectedDay) }
-        let visibleMessages = workspaceVisibleMessages(for: session, hidingDay1Intro: day1IntroModel)
+        let visibleMessages = workspaceVisibleMessages(for: session)
         let pendingPrompts = workspacePendingPrompts(for: session)
         let supportMessages = workspaceMissionSupportMessages(
             visibleMessages,
@@ -6042,15 +5359,11 @@ struct ContentView: View {
 
         if !supportMessages.isEmpty || session.pendingUserInput != nil || !pendingPrompts.isEmpty || showsRunningBubble {
             VStack(alignment: .leading, spacing: 10) {
-                if let prompt = session.pendingUserInput, let day1IntroModel {
-                    workspaceDay1Intro(model: day1IntroModel, prompt: prompt)
-                }
-
                 ForEach(supportMessages) { message in
                     workspaceChatBubble(message, session: session)
                 }
 
-                if let pendingPrompt = session.pendingUserInput, day1IntroModel == nil {
+                if let pendingPrompt = session.pendingUserInput {
                     workspaceStructuredPrompt(pendingPrompt)
                 }
 
@@ -9370,58 +8683,385 @@ private enum SidebarSettingsMenuItem: Hashable {
     ContentView(viewModel: AgenticViewModel())
 }
 
-private struct BipCompletionConfettiBurst: View {
+struct RealisticConfettiBurst: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isReleased = false
+    let trigger: Int
 
-    private let particles: [ConfettiParticle] = [
-        ConfettiParticle(id: 0, x: 10, y: 18, endX: -6, endY: 92, rotation: -36, color: Agentic30BrandColor.greenBright, delay: 0.00),
-        ConfettiParticle(id: 1, x: 30, y: 8, endX: 14, endY: 112, rotation: 42, color: Color(red: 1.00, green: 0.78, blue: 0.34), delay: 0.04),
-        ConfettiParticle(id: 2, x: 52, y: 20, endX: 42, endY: 102, rotation: -64, color: Color(red: 0.53, green: 0.77, blue: 1.00), delay: 0.08),
-        ConfettiParticle(id: 3, x: 78, y: 10, endX: 72, endY: 118, rotation: 78, color: Color(red: 1.00, green: 0.48, blue: 0.58), delay: 0.02),
-        ConfettiParticle(id: 4, x: 104, y: 24, endX: 112, endY: 100, rotation: -52, color: Color(red: 0.74, green: 0.64, blue: 1.00), delay: 0.10),
-        ConfettiParticle(id: 5, x: 132, y: 12, endX: 146, endY: 110, rotation: 58, color: Color(red: 0.91, green: 0.98, blue: 0.52), delay: 0.06),
-        ConfettiParticle(id: 6, x: 158, y: 26, endX: 178, endY: 96, rotation: -30, color: Color(red: 0.52, green: 0.94, blue: 0.88), delay: 0.12),
-    ]
+    init(trigger: Int) {
+        self.trigger = trigger
+    }
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            ForEach(particles) { particle in
-                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                    .fill(particle.color)
-                    .frame(width: 6, height: 12)
-                    .rotationEffect(.degrees(isReleased ? particle.rotation : 0))
-                    .offset(
-                        x: isReleased ? particle.endX : particle.x,
-                        y: isReleased ? particle.endY : particle.y
-                    )
-                    .opacity(isReleased ? 0.92 : 0.0)
-                    .animation(
-                        reduceMotion
-                            ? nil
-                            : .spring(response: 0.72, dampingFraction: 0.72)
-                                .delay(particle.delay),
-                        value: isReleased
-                    )
+        Group {
+            if isDisabled {
+                Color.clear
+            } else {
+                RealisticConfettiHost(trigger: trigger)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+
+    static var isProcessDisabled: Bool {
+        ProcessInfo.processInfo.environment["AGENTIC30_TEST_STUB_PROVIDER"] == "1"
+    }
+
+    private var isDisabled: Bool {
+        reduceMotion || Self.isProcessDisabled
+    }
+}
+
+struct RealisticConfettiRecipe: Equatable, Identifiable {
+    static let origin = CGPoint(x: 0.5, y: 0.70)
+    static let cleanupDelay: TimeInterval = 2.20
+    static let ticksPerSecond: Double = 60
+    static let canvasGravity: Double = 3
+    static let demoPaletteHexes = RealisticConfettiPaletteColor.demoLike.map(\.hex)
+    static let realistic: [RealisticConfettiRecipe] = [
+        .init(name: "core", particleCount: 50, spreadDegrees: 26, startVelocity: 55, decay: 0.90, scalar: 1.0),
+        .init(name: "body", particleCount: 40, spreadDegrees: 60, startVelocity: 45, decay: 0.90, scalar: 1.0),
+        .init(name: "dust", particleCount: 70, spreadDegrees: 100, startVelocity: 45, decay: 0.91, scalar: 0.8),
+        .init(name: "slowRibbon", particleCount: 20, spreadDegrees: 120, startVelocity: 25, decay: 0.92, scalar: 1.2),
+        .init(name: "outer", particleCount: 20, spreadDegrees: 120, startVelocity: 45, decay: 0.90, scalar: 1.0)
+    ]
+
+    let name: String
+    let particleCount: Int
+    let spreadDegrees: Double
+    let startVelocity: Double
+    let decay: Double
+    let scalar: Double
+    let drift: Double = 0
+
+    var id: String { name }
+
+    static var totalParticleCount: Int {
+        realistic.reduce(0) { $0 + $1.particleCount }
+    }
+
+    static var totalTicks: Double {
+        cleanupDelay * ticksPerSecond
+    }
+
+    static func pointScale(for size: CGSize) -> CGFloat {
+        let heightScale = size.height / 720
+        return min(max(heightScale, 0.72), 1.18)
+    }
+}
+
+private struct RealisticConfettiHost: View {
+    let trigger: Int
+    @State private var particles: [RealisticConfettiParticle] = []
+    @State private var startedAt = Date()
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / RealisticConfettiRecipe.ticksPerSecond)) { timeline in
+            Canvas(opaque: false, colorMode: .linear, rendersAsynchronously: true) { context, size in
+                let elapsed = timeline.date.timeIntervalSince(startedAt)
+                guard elapsed >= 0,
+                      elapsed <= RealisticConfettiRecipe.cleanupDelay else {
+                    return
+                }
+
+                let tick = elapsed * RealisticConfettiRecipe.ticksPerSecond
+                for particle in particles {
+                    particle.draw(in: &context, size: size, tick: tick)
+                }
+            }
+        }
         .onAppear {
-            // Skip animation under hermetic UI tests so screenshots stay pixel-stable.
-            guard ProcessInfo.processInfo.environment["AGENTIC30_TEST_STUB_PROVIDER"] != "1" else { return }
-            isReleased = true
+            restart()
+        }
+        .onChange(of: trigger) { _, _ in
+            restart()
         }
     }
 
-    private struct ConfettiParticle: Identifiable {
-        let id: Int
-        let x: CGFloat
-        let y: CGFloat
-        let endX: CGFloat
-        let endY: CGFloat
-        let rotation: Double
-        let color: Color
-        let delay: Double
+    private func restart() {
+        startedAt = Date()
+        particles = RealisticConfettiParticle.makeParticles(trigger: trigger)
+    }
+}
+
+private struct RealisticConfettiParticle: Identifiable {
+    let id: Int
+    let angle2D: Double
+    let startVelocity: Double
+    let decay: Double
+    let drift: Double
+    let wobble: Double
+    let wobbleSpeed: Double
+    let tiltAngle: Double
+    let scalar: Double
+    let random: Double
+    let shape: RealisticConfettiParticleShape
+    let color: RealisticConfettiPaletteColor
+
+    static func makeParticles(trigger: Int) -> [RealisticConfettiParticle] {
+        var generator = RealisticConfettiRandomGenerator(seed: UInt64(max(trigger, 1)))
+        var particles: [RealisticConfettiParticle] = []
+        particles.reserveCapacity(RealisticConfettiRecipe.totalParticleCount)
+
+        for recipe in RealisticConfettiRecipe.realistic {
+            let radAngle = Double.pi / 2
+            let radSpread = recipe.spreadDegrees * Double.pi / 180
+
+            for _ in 0..<recipe.particleCount {
+                let angle2D = -radAngle + ((0.5 * radSpread) - (generator.nextUnit() * radSpread))
+                let velocity = (recipe.startVelocity * 0.5) + (generator.nextUnit() * recipe.startVelocity)
+                let wobbleSpeed = min(0.11, generator.nextUnit() * 0.1 + 0.05)
+                let tiltAngle = (generator.nextUnit() * 0.5 + 0.25) * Double.pi
+
+                particles.append(
+                    RealisticConfettiParticle(
+                        id: particles.count,
+                        angle2D: angle2D,
+                        startVelocity: velocity,
+                        decay: recipe.decay,
+                        drift: recipe.drift,
+                        wobble: generator.nextUnit() * 10,
+                        wobbleSpeed: wobbleSpeed,
+                        tiltAngle: tiltAngle,
+                        scalar: recipe.scalar,
+                        random: generator.nextUnit() + 2,
+                        shape: RealisticConfettiParticleShape.random(using: &generator),
+                        color: RealisticConfettiPaletteColor.random(using: &generator)
+                    )
+                )
+            }
+        }
+
+        return particles
+    }
+
+    func draw(in context: inout GraphicsContext, size: CGSize, tick: Double) {
+        guard let frame = frame(in: size, tick: tick) else { return }
+        context.fill(
+            shape.path(
+                center: frame.center,
+                scalar: CGFloat(scalar),
+                tilt: frame.tilt,
+                random: random,
+                pointScale: frame.pointScale
+            ),
+            with: .color(color.color.opacity(frame.opacity))
+        )
+    }
+
+    private func frame(in size: CGSize, tick: Double) -> RealisticConfettiParticleFrame? {
+        guard tick < RealisticConfettiRecipe.totalTicks else { return nil }
+
+        let pointScale = RealisticConfettiRecipe.pointScale(for: size)
+        let scaledDistance = geometricDistance(at: tick) * Double(pointScale)
+        let origin = CGPoint(
+            x: size.width * RealisticConfettiRecipe.origin.x,
+            y: size.height * RealisticConfettiRecipe.origin.y
+        )
+        let wobblePhase = wobble + wobbleSpeed * tick
+        let wobbleRadius = 10 * scalar * Double(pointScale)
+        let x = origin.x
+            + CGFloat((cos(angle2D) * scaledDistance) + (drift * tick * Double(pointScale)))
+            + CGFloat(wobbleRadius * cos(wobblePhase))
+        let y = origin.y
+            + CGFloat((sin(angle2D) * scaledDistance) + (RealisticConfettiRecipe.canvasGravity * tick * Double(pointScale)))
+            + CGFloat(wobbleRadius * sin(wobblePhase))
+        let progress = min(max(tick / RealisticConfettiRecipe.totalTicks, 0), 1)
+        let opacity = pow(1 - progress, 1.1)
+
+        return RealisticConfettiParticleFrame(
+            center: CGPoint(x: x, y: y),
+            opacity: opacity,
+            tilt: tiltAngle + (0.1 * tick),
+            pointScale: pointScale
+        )
+    }
+
+    private func geometricDistance(at tick: Double) -> Double {
+        guard decay != 1 else {
+            return startVelocity * tick
+        }
+        return startVelocity * (1 - pow(decay, tick)) / (1 - decay)
+    }
+}
+
+private struct RealisticConfettiParticleFrame {
+    let center: CGPoint
+    let opacity: Double
+    let tilt: Double
+    let pointScale: CGFloat
+}
+
+private enum RealisticConfettiParticleShape {
+    case square
+    case rectangle
+    case circle
+
+    static func random(using generator: inout RealisticConfettiRandomGenerator) -> RealisticConfettiParticleShape {
+        let roll = generator.nextUnit()
+        if roll < 0.58 {
+            return .square
+        }
+        if roll < 0.82 {
+            return .circle
+        }
+        return .rectangle
+    }
+
+    func path(
+        center: CGPoint,
+        scalar: CGFloat,
+        tilt: Double,
+        random: Double,
+        pointScale: CGFloat
+    ) -> Path {
+        switch self {
+        case .square:
+            return quadPath(
+                center: center,
+                width: 8 * scalar * pointScale,
+                height: 8 * scalar * pointScale,
+                tilt: tilt,
+                random: random
+            )
+        case .rectangle:
+            return quadPath(
+                center: center,
+                width: 13 * scalar * pointScale,
+                height: 5 * scalar * pointScale,
+                tilt: tilt,
+                random: random
+            )
+        case .circle:
+            let width = 8 * scalar * pointScale
+            let height = width * CGFloat(0.64 + 0.24 * abs(sin(tilt)))
+            return Path(
+                ellipseIn: CGRect(
+                    x: center.x - width / 2,
+                    y: center.y - height / 2,
+                    width: width,
+                    height: height
+                )
+            )
+        }
+    }
+
+    private func quadPath(center: CGPoint, width: CGFloat, height: CGFloat, tilt: Double, random: Double) -> Path {
+        let rotation = tilt + (random * 0.18)
+        let cosRotation = CGFloat(cos(rotation))
+        let sinRotation = CGFloat(sin(rotation))
+        let halfWidth = width / 2
+        let halfHeight = height / 2
+        let corners = [
+            CGPoint(x: -halfWidth, y: -halfHeight),
+            CGPoint(x: halfWidth, y: -halfHeight),
+            CGPoint(x: halfWidth, y: halfHeight),
+            CGPoint(x: -halfWidth, y: halfHeight)
+        ].map { point in
+            CGPoint(
+                x: center.x + point.x * cosRotation - point.y * sinRotation,
+                y: center.y + point.x * sinRotation + point.y * cosRotation
+            )
+        }
+
+        var path = Path()
+        path.move(to: corners[0])
+        path.addLine(to: corners[1])
+        path.addLine(to: corners[2])
+        path.addLine(to: corners[3])
+        path.closeSubpath()
+        return path
+    }
+}
+
+private enum RealisticConfettiPaletteColor {
+    case cyan
+    case purple
+    case pink
+    case lime
+    case yellow
+    case orange
+    case magenta
+    case brandGreen
+
+    static let demoLike: [RealisticConfettiPaletteColor] = [
+        .cyan,
+        .purple,
+        .pink,
+        .lime,
+        .yellow,
+        .orange,
+        .magenta,
+        .brandGreen
+    ]
+
+    static func random(using generator: inout RealisticConfettiRandomGenerator) -> RealisticConfettiPaletteColor {
+        demoLike[generator.nextInt(upperBound: demoLike.count)]
+    }
+
+    var hex: String {
+        switch self {
+        case .cyan:
+            return "#26CCFF"
+        case .purple:
+            return "#A25AFD"
+        case .pink:
+            return "#FF5E7E"
+        case .lime:
+            return "#88FF5A"
+        case .yellow:
+            return "#FCFF42"
+        case .orange:
+            return "#FFA62D"
+        case .magenta:
+            return "#FF36FF"
+        case .brandGreen:
+            return "#4BDE80"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .cyan:
+            return Color(red: 0.149, green: 0.800, blue: 1.000)
+        case .purple:
+            return Color(red: 0.635, green: 0.353, blue: 0.992)
+        case .pink:
+            return Color(red: 1.000, green: 0.369, blue: 0.494)
+        case .lime:
+            return Color(red: 0.533, green: 1.000, blue: 0.353)
+        case .yellow:
+            return Color(red: 0.988, green: 1.000, blue: 0.259)
+        case .orange:
+            return Color(red: 1.000, green: 0.651, blue: 0.176)
+        case .magenta:
+            return Color(red: 1.000, green: 0.212, blue: 1.000)
+        case .brandGreen:
+            return Color(red: 0.294, green: 0.871, blue: 0.502)
+        }
+    }
+}
+
+private struct RealisticConfettiRandomGenerator: RandomNumberGenerator {
+    private var state: UInt64
+
+    init(seed: UInt64) {
+        state = seed ^ 0x9E3779B97F4A7C15
+    }
+
+    mutating func next() -> UInt64 {
+        state = state &* 6364136223846793005 &+ 1442695040888963407
+        return state
+    }
+
+    mutating func nextUnit() -> Double {
+        Double(next() >> 11) / Double(UInt64(1) << 53)
+    }
+
+    mutating func nextInt(upperBound: Int) -> Int {
+        guard upperBound > 0 else { return 0 }
+        return Int(next() % UInt64(upperBound))
     }
 }
 

@@ -315,11 +315,6 @@ struct IntakeV2BootLogState: Equatable {
     }
 }
 
-enum Day1InterviewTutorialMode: String, Equatable, Sendable {
-    case guided
-    case unguided
-}
-
 /// Routing classification for chat input. All three branches funnel into the
 /// same `send_prompt` sidecar message — Sub-AC 2's contract is that the
 /// chat is a *single* AI interaction surface, so daily-task, sub-workflow,
@@ -330,7 +325,7 @@ enum Day1InterviewTutorialMode: String, Equatable, Sendable {
 /// and attach `mode` + `foundationDay` metadata so the sidecar runner can
 /// dispatch to the correct sub-workflow prompt without a second channel.
 enum ChatMessageRoute: Equatable {
-    /// First user response in a Foundation Day 0-7 session — the AI-driven
+    /// First user response in a Foundation Day 0/2-7 session — the AI-driven
     /// daily first prompt has been answered. Carries the 1-based foundation
     /// day so the sidecar can pick the matching `daily-task-{day}` prompt.
     case dailyTask(foundationDay: Int)
@@ -464,11 +459,6 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var scanProgressMessage = ""
     @Published private(set) var scanProgressLogs: [String] = []
     @Published var scanResult: WorkspaceScanResult?
-    /// Stage-4/5 LLM-composed Day 1 opener delivered separately from the
-    /// initial workspace_scan_result so the user's first message can refresh
-    /// once the composer returns. WorkspaceDay1Mapper prefers this over the
-    /// deterministic mapper output when it carries higher confidence.
-    @Published var composedDay1Opening: ComposedDay1Opening?
     @Published private(set) var isCreatingDoc: String?
     @Published private(set) var docCreationLogs: [String] = []
     @Published var lastDocCreated: (type: String, path: String)?
@@ -522,12 +512,11 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var workspaceSettingsTourOpenRequest = 0
     @Published private(set) var workspaceHelpTourOpenRequest = 0
     @Published private(set) var workspaceRecentConversationsTourOpenRequest = 0
-    @Published private(set) var guidedDay1OverlayActive = false
-    @Published private(set) var day1InterviewTutorialMode: Day1InterviewTutorialMode = .guided
     @Published private(set) var bipNotificationOpenRequest: BipNotificationOpenRequest?
     @Published private(set) var startupQueuedAction: StartupQueuedAction?
     @Published private(set) var startupSessionAppearElapsedMs: Int?
     @Published private(set) var reviewDayDashboardViewModel: ReviewDayDashboardViewModel?
+    @Published private(set) var newsMarketRadar: NewsMarketRadarSnapshot = .empty
     /// First-launch wall-clock timestamp that anchors the Foundation phase
     /// Day N/30 counter. The value is mirrored from `foundationProgressState`,
     /// which is persisted per workspace/app-support rather than globally.
@@ -556,7 +545,7 @@ final class AgenticViewModel: ObservableObject {
         let docs: String?
         let sheet: String?
         let onboardingHypothesis: WorkspaceOnboardingHypothesis?
-        let day1Context: WorkspaceDay1Context?
+        let day1IcpPlan: Day1IcpPlan?
         let error: String?
 
         var foundArtifactPaths: [String] {
@@ -566,6 +555,22 @@ final class AgenticViewModel: ObservableObject {
 
         var foundArtifactCount: Int {
             foundArtifactPaths.count
+        }
+
+        func replacing(day1IcpPlan: Day1IcpPlan?) -> WorkspaceScanResult {
+            WorkspaceScanResult(
+                icp: icp,
+                spec: spec,
+                values: values,
+                designSystem: designSystem,
+                adr: adr,
+                goal: goal,
+                docs: docs,
+                sheet: sheet,
+                onboardingHypothesis: onboardingHypothesis,
+                day1IcpPlan: day1IcpPlan,
+                error: error
+            )
         }
     }
 
@@ -590,7 +595,7 @@ final class AgenticViewModel: ObservableObject {
     private var activeOnboardingWorkspacePrefetchFingerprint: String?
     private var replacementSessionCreateInFlight = false
     private var latestCurriculumQuestionReframesByKey: [String: CurriculumQuestionReframeRecord] = [:]
-    /// Idempotency guard for the AI-driven Foundation Day 0-7 first prompt.
+    /// Idempotency guard for the AI-driven Foundation Day 0/2-7 first prompt.
     /// Keyed by `"<sessionId>:day-<day>"` so the same opener is never injected
     /// twice for the same (session, day) pair, even if the sidecar replays
     /// `foundation_first_prompt` after a reconnect or queued send.
@@ -603,14 +608,6 @@ final class AgenticViewModel: ObservableObject {
     /// Keys mirror `injectedFoundationFirstPromptKeys` so the request side and
     /// the inject side share a single naming convention.
     private var pendingFoundationFirstPromptKeys = Set<String>()
-    /// PR2 (P1a): per-session record of the richest Day 1 opener we have
-    /// already injected. Lets a later richer payload (LLM compose result,
-    /// freshly populated day1Context) supersede an earlier deterministic-only
-    /// inject by reusing the stable deterministic messageId. Key shape:
-    /// "<sessionId>:day-1". Values are richness buckets (already debounced
-    /// at the request side, see WorkspaceDay1Mapper.richnessScore).
-    private var lastInjectedDay1RichnessBucket: [String: Int] = [:]
-
     private enum BipRequestedAction: Hashable {
         case refreshEvidence
         case generateMission(compact: Bool)
@@ -712,56 +709,10 @@ final class AgenticViewModel: ObservableObject {
             return nil
         }
         let result = markFoundationDayCompleted(completedDay)
-        if result.unlockedDay == 1 {
-            maybeRequestDay1FirstPrompt(trigger: .dayUnlocked)
-        } else if result.unlockedDay == 2 {
+        if result.unlockedDay == 2 {
             requestFoundationFirstPrompt(day: 2)
         }
         return result
-    }
-
-    /// Stage-5 trigger gate. Multiple events can ask Day 1's first prompt to
-    /// be (re-)broadcast — Day 0 completion, workspace_scan_result arrival,
-    /// workspace_day1_compose_result arrival, session_created, ready. The
-    /// gate computes the current richness, debounces by bucket, and lets the
-    /// `requestFoundationFirstPrompt` key suffix decide whether the call goes
-    /// through or short-circuits via `pending/injected` sets.
-    enum Day1FirstPromptTrigger: String {
-        case dayUnlocked
-        case workspaceScanResult
-        case workspaceDay1ComposeResult
-        case sessionCreated
-        case ready
-    }
-
-    func maybeRequestDay1FirstPrompt(trigger: Day1FirstPromptTrigger) {
-        let vars = WorkspaceDay1Mapper.dynamicVariables(
-            scanResult: scanResult,
-            composedOpening: composedDay1Opening,
-            onboarding: onboardingContext
-        )
-        let richness = WorkspaceDay1Mapper.richnessScore(
-            scanResult: scanResult,
-            composedOpening: composedDay1Opening
-        )
-        // Bucket by 25 so small score drift across triggers doesn't churn keys.
-        let bucket = (richness / 25) * 25
-        requestFoundationFirstPrompt(
-            day: 1,
-            dynamicVariables: vars.isEmpty ? nil : vars,
-            richnessBucket: bucket
-        )
-        PostHogTelemetry.capture(
-            "mac_day1_first_prompt_trigger",
-            properties: [
-                "trigger": trigger.rawValue,
-                "richness": richness,
-                "bucket": bucket,
-                "has_composed_opening": composedDay1Opening != nil,
-                "has_day1_context": scanResult?.day1Context != nil,
-            ],
-            authSession: macAuthSession
-        )
     }
 
     init(
@@ -803,10 +754,6 @@ final class AgenticViewModel: ObservableObject {
             applyUITestingIddSetupSeeds(arguments: arguments)
             if let seededDraft = Self.uiTestingArgumentValue("--ui-testing-seed-draft", arguments: arguments) {
                 draft = seededDraft
-            }
-            if arguments.contains("--ui-testing-guided-day1-overlay-active") {
-                guidedDay1OverlayActive = true
-                day1InterviewTutorialMode = .guided
             }
             // R6-P3F: load quarantine fixture during init so the surface is
             // ready before SwiftUI subscribes — start() may not run when the
@@ -1101,26 +1048,6 @@ final class AgenticViewModel: ObservableObject {
 
     func requestWorkspaceRecentConversationsTourOpen() {
         workspaceRecentConversationsTourOpenRequest += 1
-    }
-
-    func setGuidedDay1OverlayActive(_ active: Bool) {
-        guidedDay1OverlayActive = active
-        if active {
-            day1InterviewTutorialMode = .guided
-        }
-        PostHogTelemetry.capture("mac_guided_day1_overlay_state_changed", properties: [
-            "active": active,
-            "interviewMode": day1InterviewTutorialMode.rawValue,
-        ], authSession: macAuthSession)
-    }
-
-    func skipGuidedDay1Overlay() {
-        guidedDay1OverlayActive = false
-        day1InterviewTutorialMode = .unguided
-        PostHogTelemetry.capture("mac_guided_day1_overlay_skipped", properties: [
-            "interviewMode": day1InterviewTutorialMode.rawValue,
-            "overlayActive": guidedDay1OverlayActive,
-        ], authSession: macAuthSession)
     }
 
     func requestBipNotificationOpen(
@@ -1568,7 +1495,7 @@ final class AgenticViewModel: ObservableObject {
     /// shows *"오늘 과제"* vs. *"sub-workflow"*), and to keep `sendPrompt`
     /// declarative. The order of checks is significant:
     ///   1. Slash-commands always win (sub-workflow tag).
-    ///   2. The first user message inside a Foundation Day 0-7 session is
+    ///   2. The first user message inside a Foundation Day 0/2-7 session is
     ///      the daily-task response.
     ///   3. Everything else is free-chat.
     ///
@@ -1698,16 +1625,7 @@ final class AgenticViewModel: ObservableObject {
     /// idempotency invariant ("one first-prompt per session-day pair") is
     /// expressed in one place. Pure function, exposed `internal` for tests.
     ///
-    /// Stage-5 richness suffix: when `richnessBucket > 0` the key encodes the
-    /// bucket so a richer payload (LLM compose result, freshly populated
-    /// day1Context) is treated as a *new* request and bypasses the early
-    /// pending/injected guard. Buckets stay coarse (25-pt steps) so small
-    /// score wobble does not churn the key.
-    static func foundationFirstPromptKey(sessionId: String, day: Int, richnessBucket: Int = 0) -> String {
-        let bucket = max(0, richnessBucket)
-        if bucket > 0 {
-            return "\(sessionId):day-\(day):rich-\(bucket)"
-        }
+    static func foundationFirstPromptKey(sessionId: String, day: Int) -> String {
         return "\(sessionId):day-\(day)"
     }
 
@@ -1729,7 +1647,7 @@ final class AgenticViewModel: ObservableObject {
     /// the provider stream, not the deterministic opener).
     static let foundationFirstPromptMessageIdPrefix = "foundation-first-prompt-"
 
-    /// Sub-AC 2.4 — request the AI-driven Foundation Day 0-7 first prompt
+    /// Sub-AC 2.4 — request the AI-driven Foundation Day 0/2-7 first prompt
     /// from the sidecar and inject it into the chat surface as the seeded
     /// assistant opener. The unified single AI interaction surface contract:
     /// one channel, day-aware, no second transport.
@@ -1745,30 +1663,25 @@ final class AgenticViewModel: ObservableObject {
     func requestFoundationFirstPrompt(
         day: Int,
         sessionId: String? = nil,
-        dynamicVariables: [String: Any]? = nil,
-        richnessBucket: Int = 0
+        dynamicVariables: [String: Any]? = nil
     ) {
         let resolvedSessionId = sessionId ?? currentBipCoachSessionID()
         guard let resolvedSessionId, !resolvedSessionId.isEmpty else { return }
         guard isConnected else { return }
-        guard (0...7).contains(day) else {
+        guard (0...7).contains(day), day != 1 else {
             PostHogTelemetry.capture(
                 "mac_foundation_first_prompt_request_rejected",
                 properties: [
                     "session_id": resolvedSessionId,
                     "day": day,
-                    "reason": "day_out_of_range",
+                    "reason": day == 1 ? "day1_opendesign_surface" : "day_out_of_range",
                 ],
                 authSession: macAuthSession
             )
             return
         }
 
-        let key = Self.foundationFirstPromptKey(
-            sessionId: resolvedSessionId,
-            day: day,
-            richnessBucket: richnessBucket
-        )
+        let key = Self.foundationFirstPromptKey(sessionId: resolvedSessionId, day: day)
         if injectedFoundationFirstPromptKeys.contains(key) { return }
         if pendingFoundationFirstPromptKeys.contains(key) { return }
 
@@ -1778,9 +1691,6 @@ final class AgenticViewModel: ObservableObject {
             "type": "foundation_first_prompt",
             "sessionId": resolvedSessionId,
             "day": day,
-            // PR2 (P1a): echo the bucket so the response handler can compare
-            // arriving richness against what we last injected for this day.
-            "richnessBucket": richnessBucket,
         ]
         if let dynamicVariables, !dynamicVariables.isEmpty {
             payload["dynamicVariables"] = dynamicVariables
@@ -1813,17 +1723,8 @@ final class AgenticViewModel: ObservableObject {
         guard let day = event.day, (0...7).contains(day) else { return }
         guard let firstPrompt = event.firstPrompt else { return }
 
-        let bucket = event.richnessBucket ?? 0
-        // Pending-key throttle was keyed by richness on the send side; the
-        // base key still gates inject-side dedup so the deterministic
-        // messageId stays the single source of truth.
-        let pendingKey = Self.foundationFirstPromptKey(
-            sessionId: sessionId,
-            day: day,
-            richnessBucket: bucket
-        )
-        pendingFoundationFirstPromptKeys.remove(pendingKey)
-        let baseKey = Self.foundationFirstPromptKey(sessionId: sessionId, day: day)
+        let key = Self.foundationFirstPromptKey(sessionId: sessionId, day: day)
+        pendingFoundationFirstPromptKeys.remove(key)
 
         guard let sessionIndex = sessions.firstIndex(where: { $0.id == sessionId }) else {
             // Session not yet present in the local snapshot — drop, the next
@@ -1835,17 +1736,10 @@ final class AgenticViewModel: ObservableObject {
         let messageId = Self.foundationFirstPromptMessageId(sessionId: sessionId, day: day)
         let existingIndex = sessions[sessionIndex].messages.firstIndex(where: { $0.id == messageId })
 
-        // PR2 (P1a): for Day 1, a strictly richer arrival replaces the
-        // already-injected opener in place (same messageId → preserves
-        // mergeSessionSnapshot's preservation rule). Other days keep the
-        // first-write-wins contract because they have no compose pipeline.
-        let lastBucket = day == 1 ? (lastInjectedDay1RichnessBucket[sessionId] ?? 0) : 0
-        let shouldReplaceExisting = existingIndex != nil && day == 1 && bucket > lastBucket
-
-        if existingIndex != nil && !shouldReplaceExisting {
+        if existingIndex != nil {
             // Already injected and not a richer payload — keep guard, bail
             // without telemetry noise.
-            injectedFoundationFirstPromptKeys.insert(baseKey)
+            injectedFoundationFirstPromptKeys.insert(key)
             return
         }
 
@@ -1866,19 +1760,10 @@ final class AgenticViewModel: ObservableObject {
             providerAuthActions: nil
         )
 
-        if let existing = existingIndex {
-            // In-place replace preserves scroll position and message order.
-            sessions[sessionIndex].messages[existing] = seededMessage
-        } else {
-            // Insert at the head so the opener anchors the chat surface —
-            // Foundation Day 0-7 contract: the AI speaks first.
-            sessions[sessionIndex].messages.insert(seededMessage, at: 0)
-        }
+        // Insert at the head so the opener anchors the chat surface.
+        sessions[sessionIndex].messages.insert(seededMessage, at: 0)
         sessions[sessionIndex].updatedAt = now
-        injectedFoundationFirstPromptKeys.insert(baseKey)
-        if day == 1 {
-            lastInjectedDay1RichnessBucket[sessionId] = bucket
-        }
+        injectedFoundationFirstPromptKeys.insert(key)
 
         PostHogTelemetry.capture(
             "mac_foundation_first_prompt_injected",
@@ -1889,8 +1774,7 @@ final class AgenticViewModel: ObservableObject {
                 "sub_workflow": firstPrompt.subWorkflow ?? "",
                 "artifact_count": firstPrompt.artifacts.count,
                 "text_length": displayText.count,
-                "richness_bucket": bucket,
-                "replaced_existing": shouldReplaceExisting,
+                "replaced_existing": false,
             ],
             authSession: macAuthSession
         )
@@ -2229,12 +2113,86 @@ final class AgenticViewModel: ObservableObject {
         sidecar.send(payload: [
             "type": "provider_settings_update",
             "providers": providerSettingsPayload(from: resolvedSettings),
+            "integrations": [
+                "exa": [
+                    "apiKey": resolvedSettings.exaApiKey,
+                ],
+            ],
         ])
     }
 
     func requestDiagnostics() {
         PostHogTelemetry.capture("mac_diagnostics_requested", authSession: macAuthSession)
         sidecar.send(payload: ["type": "get_diagnostics"])
+    }
+
+    func requestNewsMarketRadar() {
+        guard isConnected else { return }
+        sidecar.send(payload: ["type": "news_market_radar_get"])
+    }
+
+    func refreshNewsMarketRadar(reason: String = "manual", force: Bool = false) {
+        guard isConnected else { return }
+        PostHogTelemetry.capture("mac_news_market_radar_refresh_requested", properties: [
+            "reason": reason,
+            "force": force,
+        ], authSession: macAuthSession)
+        sidecar.send(payload: [
+            "type": "news_market_radar_refresh",
+            "reason": reason,
+            "force": force,
+        ])
+    }
+
+    func prepareNewsMarketRadarForDisplay() {
+        requestNewsMarketRadar()
+        guard shouldRefreshNewsMarketRadarForDisplay else { return }
+        refreshNewsMarketRadar(reason: "daily", force: false)
+    }
+
+    private var shouldRefreshNewsMarketRadarForDisplay: Bool {
+        if newsMarketRadar.status.state == "refreshing" { return false }
+        if newsMarketRadar.status.state == "failed",
+           newsMarketRadar.status.reason == "exa_api_key_missing" {
+            return false
+        }
+        guard let generatedAt = newsMarketRadar.generatedAt else { return true }
+        return Date().timeIntervalSince(generatedAt) >= 24 * 60 * 60
+    }
+
+    func recordOpenDesignDayAnswer(
+        _ answer: OpenDesignDayAnswerSubmission,
+        day: Int,
+        dayType: String
+    ) {
+        guard isConnected else { return }
+        let occurredAt = Self.iso8601String(Date())
+        sidecar.send(payload: [
+            "type": "curriculum_answer_saved",
+            "day": day,
+            "dayType": dayType,
+            "questionId": answer.questionId,
+            "question": [
+                "id": answer.questionId,
+                "dimension": answer.dimension,
+                "title": answer.questionTitle,
+                "prompt": answer.questionPrompt,
+            ],
+            "dimension": answer.dimension,
+            "answerId": answer.answerId,
+            "answer": [
+                "id": answer.answerId,
+                "title": answer.answerTitle,
+                "detail": answer.answerDetail,
+                "freeform": answer.freeformAnswer,
+                "isAntiSignal": answer.isAntiSignal,
+            ],
+            "answerTitle": answer.answerTitle,
+            "answerDetail": answer.answerDetail,
+            "freeformAnswer": answer.freeformAnswer,
+            "isAntiSignal": answer.isAntiSignal,
+            "occurredAt": occurredAt,
+        ])
     }
 
     // R4 — quarantine surface. Both methods are no-ops when offline; the
@@ -3130,7 +3088,6 @@ final class AgenticViewModel: ObservableObject {
             let prefix = "\(sessionID):day-"
             injectedFoundationFirstPromptKeys = injectedFoundationFirstPromptKeys.filter { !$0.hasPrefix(prefix) }
             pendingFoundationFirstPromptKeys = pendingFoundationFirstPromptKeys.filter { !$0.hasPrefix(prefix) }
-            lastInjectedDay1RichnessBucket.removeValue(forKey: sessionID)
             if selectedSessionID == sessionID {
                 selectedSessionID = sessions.first(where: { $0.archivedAt == nil })?.id
             }
@@ -3155,7 +3112,7 @@ final class AgenticViewModel: ObservableObject {
             }
             refreshPresentationState()
         case "foundation_first_prompt":
-            // Sub-AC 2.4: AI-driven Foundation Day 0-7 first prompt arrives
+            // Sub-AC 2.4: AI-driven Foundation Day 0/2-7 first prompt arrives
             // here; inject as the seeded assistant opener for the matching
             // session. Idempotent + persistence-safe via deterministic ID.
             handleFoundationFirstPromptEvent(event)
@@ -3187,46 +3144,10 @@ final class AgenticViewModel: ObservableObject {
                 docs: event.docs,
                 sheet: event.sheet,
                 onboardingHypothesis: event.onboardingHypothesis,
-                day1Context: event.day1Context,
+                day1IcpPlan: event.day1IcpPlan,
                 error: event.error
             )
             persistWorkspaceScanResult(event)
-            // Stage-5 state-machine trigger: scan result is one of the five
-            // events that can refresh Day 1's opener with richer dynamic vars.
-            maybeRequestDay1FirstPrompt(trigger: .workspaceScanResult)
-        case "workspace_day1_compose_result":
-            // Stage-4/5: LLM-composed opener arrives separately from the
-            // initial scan broadcast. Store it and re-evaluate Day 1's first
-            // prompt — the richness suffix lets a higher-confidence payload
-            // overwrite an earlier deterministic-only send.
-            if let composed = event.composedOpening {
-                composedDay1Opening = composed
-                maybeRequestDay1FirstPrompt(trigger: .workspaceDay1ComposeResult)
-            }
-            if let error = event.error {
-                PostHogTelemetry.captureException(
-                    NSError(domain: "WorkspaceScan", code: -1, userInfo: [NSLocalizedDescriptionKey: error]),
-                    properties: [
-                        "component": "agentic_view_model",
-                        "operation": "workspace_scan",
-                        "scan_root": event.scanRoot ?? "",
-                    ],
-                    authSession: macAuthSession
-                )
-            } else {
-                markWorkspaceSetupScanSucceeded()
-                PostHogTelemetry.capture("mac_workspace_scan_completed", properties: [
-                    "scan_root": event.scanRoot ?? "",
-                    "found_icp": event.icp != nil,
-                    "found_spec": event.spec != nil,
-                    "found_values": event.values != nil,
-                    "found_design_system": event.designSystem != nil,
-                    "found_adr": event.adr != nil,
-                    "found_goal": event.goal != nil,
-                    "found_docs": event.docs != nil,
-                    "found_sheet": event.sheet != nil,
-                ], authSession: macAuthSession)
-            }
         case "doc_creation_started":
             isCreatingDoc = event.docType
             docCreationLogs = []
@@ -3254,6 +3175,41 @@ final class AgenticViewModel: ObservableObject {
                         "doc_type": event.docType ?? "",
                     ],
                     authSession: macAuthSession
+                )
+            }
+        case "workspace_day1_icp_plan_result":
+            if let day1IcpPlan = event.day1IcpPlan {
+                if let current = scanResult {
+                    scanResult = current.replacing(day1IcpPlan: day1IcpPlan)
+                } else {
+                    scanResult = WorkspaceScanResult(
+                        icp: nil,
+                        spec: nil,
+                        values: nil,
+                        designSystem: nil,
+                        adr: nil,
+                        goal: nil,
+                        docs: nil,
+                        sheet: nil,
+                        onboardingHypothesis: nil,
+                        day1IcpPlan: day1IcpPlan,
+                        error: nil
+                    )
+                }
+            }
+        case "news_market_radar_result":
+            if let snapshot = event.newsMarketRadar {
+                newsMarketRadar = snapshot
+            }
+        case "news_market_radar_status":
+            if let status = event.newsMarketRadarStatus {
+                newsMarketRadar = NewsMarketRadarSnapshot(
+                    schemaVersion: newsMarketRadar.schemaVersion,
+                    generatedAt: newsMarketRadar.generatedAt,
+                    nextRefreshAfter: newsMarketRadar.nextRefreshAfter,
+                    status: status,
+                    workspaceEvidenceRefs: newsMarketRadar.workspaceEvidenceRefs,
+                    lanes: newsMarketRadar.lanes
                 )
             }
         case "bip_coach_state":
@@ -4533,7 +4489,7 @@ final class AgenticViewModel: ObservableObject {
         let currentMessagesByID = Dictionary(uniqueKeysWithValues: current.messages.map { ($0.id, $0) })
         let incomingMessageIDs = Set(incoming.messages.map { $0.id })
         // Preserve client-only seeded messages (currently the Foundation
-        // Day 0-7 first prompt opener — see Sub-AC 2.4) when the sidecar
+        // Day 0/2-7 first prompt opener — see Sub-AC 2.4) when the sidecar
         // pushes a `session_updated` snapshot that does not include them.
         // The sidecar deliberately does NOT persist the AI-driven first
         // prompt because `buildFirstPromptForDay` is deterministic; without
@@ -5338,12 +5294,11 @@ private extension AgenticViewModel {
         submittedStructuredPromptBySession = [:]
         structuredPromptDraftBySession = [:]
         sidecarOutputLogs = [:]
-        guidedDay1OverlayActive = false
-        day1InterviewTutorialMode = .guided
         bipNotificationOpenRequest = nil
         startupQueuedAction = nil
         startupSessionAppearElapsedMs = nil
         reviewDayDashboardViewModel = nil
+        newsMarketRadar = .empty
         foundationStartedAt = nil
         foundationProgressState = FoundationProgressSnapshot(workspaceRoot: WorkspaceSettings.resolvedURL().path)
         notionConnected = false
@@ -5366,7 +5321,6 @@ private extension AgenticViewModel {
         latestCurriculumQuestionReframesByKey = [:]
         injectedFoundationFirstPromptKeys = []
         pendingFoundationFirstPromptKeys = []
-        lastInjectedDay1RichnessBucket = [:]
         startupSessionAppearStartedAt = nil
         didRecordStartupSessionAppear = false
         foundationProgressStore = nil
@@ -5494,7 +5448,7 @@ private class AuthPresentationContext: NSObject, ASWebAuthenticationPresentation
     }
 }
 
-/// Decoded shape of the AI-driven Foundation Day 0-7 first prompt that the
+/// Decoded shape of the AI-driven Foundation Day 0/2-7 first prompt that the
 /// sidecar emits in response to a `foundation_first_prompt` request. Mirrors
 /// the JS-side `buildFirstPromptForDay()` return value documented in
 /// `packages/mac/agentic30/sidecar/foundation-chat.mjs` (3-section minimal:
@@ -5656,13 +5610,7 @@ struct SidecarEvent: Decodable {
     let docs: String?
     let sheet: String?
     let onboardingHypothesis: WorkspaceOnboardingHypothesis?
-    let day1Context: WorkspaceDay1Context?
-    let composedOpening: ComposedDay1Opening?
-    /// PR2: richness bucket echoed by the sidecar on foundation_first_prompt
-    /// payloads so the inject-side handler can decide whether the arriving
-    /// opener should replace a previously seeded one. nil/0 means "no
-    /// richness gating".
-    let richnessBucket: Int?
+    let day1IcpPlan: Day1IcpPlan?
     let error: String?
 
     // Document creation fields
@@ -5707,6 +5655,8 @@ struct SidecarEvent: Decodable {
     let questionId: String?
     let originalQuestion: String?
     let reframedQuestion: String?
+    let newsMarketRadar: NewsMarketRadarSnapshot?
+    let newsMarketRadarStatus: NewsMarketRadarStatus?
 
     init(
         type: String,
@@ -5749,9 +5699,7 @@ struct SidecarEvent: Decodable {
         docs: String?,
         sheet: String?,
         onboardingHypothesis: WorkspaceOnboardingHypothesis?,
-        day1Context: WorkspaceDay1Context? = nil,
-        composedOpening: ComposedDay1Opening? = nil,
-        richnessBucket: Int? = nil,
+        day1IcpPlan: Day1IcpPlan? = nil,
         error: String?,
         docType: String?,
         docPath: String?,
@@ -5782,7 +5730,9 @@ struct SidecarEvent: Decodable {
         requestEmit: SidecarRequestEmit?,
         questionId: String? = nil,
         originalQuestion: String? = nil,
-        reframedQuestion: String? = nil
+        reframedQuestion: String? = nil,
+        newsMarketRadar: NewsMarketRadarSnapshot? = nil,
+        newsMarketRadarStatus: NewsMarketRadarStatus? = nil
     ) {
         self.type = type
         self.message = message
@@ -5824,9 +5774,7 @@ struct SidecarEvent: Decodable {
         self.docs = docs
         self.sheet = sheet
         self.onboardingHypothesis = onboardingHypothesis
-        self.day1Context = day1Context
-        self.composedOpening = composedOpening
-        self.richnessBucket = richnessBucket
+        self.day1IcpPlan = day1IcpPlan
         self.error = error
         self.docType = docType
         self.docPath = docPath
@@ -5858,6 +5806,8 @@ struct SidecarEvent: Decodable {
         self.questionId = questionId
         self.originalQuestion = originalQuestion
         self.reframedQuestion = reframedQuestion
+        self.newsMarketRadar = newsMarketRadar
+        self.newsMarketRadarStatus = newsMarketRadarStatus
     }
 
     var bipMissionProgress: BipMissionProgress? {
@@ -6174,9 +6124,7 @@ extension SidecarEvent {
         case docs
         case sheet
         case onboardingHypothesis
-        case day1Context
-        case composedOpening
-        case richnessBucket
+        case day1IcpPlan
         case error
         case docType
         case docPath
@@ -6218,6 +6166,7 @@ extension SidecarEvent {
         case reframedQuestionID = "reframed_question"
         case reframedVariant
         case reframedVariantID = "reframed_variant"
+        case newsMarketRadar
     }
 
     init(from decoder: Decoder) throws {
@@ -6263,9 +6212,7 @@ extension SidecarEvent {
         docs = Self.decodeIfPresent(String.self, from: container, forKey: .docs)
         sheet = Self.decodeIfPresent(String.self, from: container, forKey: .sheet)
         onboardingHypothesis = Self.decodeIfPresent(WorkspaceOnboardingHypothesis.self, from: container, forKey: .onboardingHypothesis)
-        day1Context = Self.decodeIfPresent(WorkspaceDay1Context.self, from: container, forKey: .day1Context)
-        composedOpening = Self.decodeIfPresent(ComposedDay1Opening.self, from: container, forKey: .composedOpening)
-        richnessBucket = Self.decodeIfPresent(Int.self, from: container, forKey: .richnessBucket)
+        day1IcpPlan = Self.decodeIfPresent(Day1IcpPlan.self, from: container, forKey: .day1IcpPlan)
 
         let stringError = Self.decodeIfPresent(String.self, from: container, forKey: .error)
         let structuredError = Self.decodeIfPresent(BipReadinessError.self, from: container, forKey: .error)
@@ -6310,6 +6257,8 @@ extension SidecarEvent {
             ?? Self.decodeIfPresent(String.self, from: container, forKey: .reframedQuestionID)
             ?? Self.decodeIfPresent(String.self, from: container, forKey: .reframedVariant)
             ?? Self.decodeIfPresent(String.self, from: container, forKey: .reframedVariantID)
+        newsMarketRadar = Self.decodeIfPresent(NewsMarketRadarSnapshot.self, from: container, forKey: .newsMarketRadar)
+        newsMarketRadarStatus = Self.decodeIfPresent(NewsMarketRadarStatus.self, from: container, forKey: .status)
     }
 
     private static func decodeIfPresent<T: Decodable>(

@@ -64,6 +64,89 @@ struct OpenDesignDayContentTests {
         #expect(content.interviewSteps.first?.options.count == 4)
     }
 
+    @Test func day2MarketFixtureMatchesOpenDesignDashboard() {
+        let content = OpenDesignDayContent.day2
+        let market = content.market
+        let week1Tasks = content.taskGroups.first?.tasks ?? []
+
+        let day1IsDone: Bool
+        if case .done? = week1Tasks.first(where: { $0.id == "day1" })?.state {
+            day1IsDone = true
+        } else {
+            day1IsDone = false
+        }
+
+        let day2IsActive: Bool
+        if case .active? = week1Tasks.first(where: { $0.id == "day2" })?.state {
+            day2IsActive = true
+        } else {
+            day2IsActive = false
+        }
+
+        #expect(day1IsDone)
+        #expect(day2IsActive)
+        #expect(market?.dayNumber == 2)
+        #expect(market?.title == "시장 신호 읽기")
+        #expect(market?.sourceTabs.map(\.title) == ["Threads", "Indie Hackers", "X / Twitter", "Reddit", "블로그·RSS"])
+        #expect(market?.keywords.first?.title == "팔릴까")
+        #expect(market?.signalCards.count == 3)
+        #expect(market?.alternatives.count == 7)
+        #expect(market?.posts.count == 5)
+        #expect(content.rankedSearchItems(query: "시장 빈 자리").first?.targetSectionID == "market-gap")
+    }
+
+    @Test func dayInteractionStartsWithContextOnlyBeforeProgressiveReveal() {
+        let state = OpenDesignDayInteractionState()
+
+        #expect(state.introStage == .context)
+        #expect(!state.introStage.revealsSignals)
+        #expect(!state.introStage.revealsMission)
+        #expect(state.currentProgressScrollTarget == .top)
+        #expect(state.stepperScrollTarget(for: 1) == .signals)
+    }
+
+    @Test func dayInteractionProgressTargetFollowsIntroRevealStage() {
+        var state = OpenDesignDayInteractionState()
+
+        state.introStage = .signals
+        #expect(state.currentProgressScrollTarget == .signals)
+
+        state.introStage = .mission
+        #expect(state.currentProgressScrollTarget == .mission)
+
+        state.missionAccepted = true
+        #expect(state.currentProgressScrollTarget == .interview1)
+    }
+
+    @Test func personalizedDay1RendersAdaptiveQuestionCounts() {
+        for count in [3, 4, 5] {
+            let content = OpenDesignDayContent.personalized(from: makePlan(questionCount: count))
+
+            #expect(content.interviewSteps.count == count)
+            #expect(content.interviewSteps.first?.title.contains("Must-have") == true)
+            #expect(content.taskGroups.first?.tasks.first?.meta == "ICP · adaptive \(count)Q")
+            #expect(content.plan?.signals.productName == "SupportLens")
+            #expect(!content.searchItems.contains { $0.title.contains("거리") || $0.subtitle.contains("1/3") })
+        }
+    }
+
+    @Test func personalizedDraftReflectsSelectionsInIcpAntiIcpAndMessage() throws {
+        let content = OpenDesignDayContent.personalized(from: makePlan(questionCount: 4))
+        var state = OpenDesignDayInteractionState(totalInterviewSteps: content.interviewSteps.count)
+        state.selectedChoices = [1: 1, 2: 1, 3: 1, 4: 2]
+        for step in content.interviewSteps {
+            state.recordSubmittedChoice(stepID: step.id, choiceID: state.selectedChoices[step.id] ?? 1)
+        }
+
+        let draft = content.draft(for: state)
+
+        #expect(draft.markdown.contains("Day 1 selections"))
+        #expect(draft.markdown.contains("Slack 수동 확인"))
+        #expect(draft.antiIcpBody.contains("최근 사건이 없으면 제외"))
+        #expect(draft.firstMessage.contains("SupportLens"))
+        #expect(!draft.finalIcpStatement.contains("macOS 1인 개발자"))
+    }
+
     @Test func searchTargetsUseDeclaredSectionAnchors() {
         let content = OpenDesignDayContent.day1
         let knownAnchors = Set(OpenDesignSectionAnchor.allCases.map(\.rawValue))
@@ -117,10 +200,10 @@ struct OpenDesignDayContentTests {
 
         #expect(availableIDs.contains("section-signals"))
         #expect(availableIDs.contains("section-mission"))
-        #expect(availableIDs.contains("section-tutor"))
+        #expect(availableIDs.contains("section-guide"))
         #expect(availableIDs.contains("task-day3"))
-        #expect(availableIDs.contains("section-interview1"))
-        #expect(availableIDs.contains("section-picker"))
+        #expect(!availableIDs.contains("section-interview1"))
+        #expect(!availableIDs.contains("section-picker"))
         #expect(!availableIDs.contains("section-preview"))
         #expect(!availableIDs.contains("section-final"))
         #expect(!availableIDs.contains("section-candidate"))
@@ -158,16 +241,30 @@ struct OpenDesignDayContentTests {
         #expect(availableIDs.contains("section-gate"))
     }
 
-    @Test func completionBurstMatchesOpenDesignConfettiTimingAndOrigin() {
-        let particles = OpenDesignCompletionBurstParticle.reference
+    @Test func realisticConfettiRecipeMatchesCanvasRealisticReference() {
+        let recipes = RealisticConfettiRecipe.realistic
 
-        #expect(OpenDesignCompletionBurstParticle.originYRatio == 0.72)
-        #expect(OpenDesignCompletionBurstParticle.duration == 1.50)
-        #expect(particles.count == 100)
-        #expect(Set(particles.map(\.paletteIndex).map { $0 % 5 }).count == 5)
-        #expect(particles.allSatisfy { $0.width >= 4 && $0.height >= 6 })
-        #expect(particles.contains { abs($0.x) > 60 })
-        #expect(particles.contains { $0.y < -90 })
+        #expect(RealisticConfettiRecipe.origin == CGPoint(x: 0.5, y: 0.70))
+        #expect(RealisticConfettiRecipe.cleanupDelay == 2.20)
+        #expect(recipes.count == 5)
+        #expect(RealisticConfettiRecipe.totalParticleCount == 200)
+        #expect(recipes.map(\.particleCount) == [50, 40, 70, 20, 20])
+        #expect(recipes.map(\.spreadDegrees) == [26, 60, 100, 120, 120])
+        #expect(recipes.map(\.startVelocity) == [55, 45, 45, 25, 45])
+        #expect(recipes.map(\.decay) == [0.90, 0.90, 0.91, 0.92, 0.90])
+        #expect(recipes.map(\.scalar).contains(0.8))
+        #expect(recipes.map(\.scalar).contains(1.2))
+        #expect(recipes.allSatisfy { $0.drift == 0 })
+        #expect(RealisticConfettiRecipe.demoPaletteHexes == [
+            "#26CCFF",
+            "#A25AFD",
+            "#FF5E7E",
+            "#88FF5A",
+            "#FCFF42",
+            "#FFA62D",
+            "#FF36FF",
+            "#4BDE80"
+        ])
     }
 
     @Test func lockedFutureVariantKeepsDay1OpenAndLocksLaterDays() {
@@ -282,21 +379,53 @@ struct OpenDesignDayContentTests {
     @Test func stepperScrollTargetsFollowCurrentDayState() {
         var state = OpenDesignDayInteractionState()
 
-        #expect(state.stepperScrollTarget(for: 0) == "top")
-        #expect(state.stepperScrollTarget(for: 1) == "mission")
-        #expect(state.stepperScrollTarget(for: 2) == "mission")
-        #expect(state.stepperScrollTarget(for: 3) == "interview1")
+        #expect(state.stepperScrollTarget(for: 0) == .top)
+        #expect(state.stepperScrollTarget(for: 1) == .signals)
+        #expect(state.stepperScrollTarget(for: 2) == .mission)
+        #expect(state.stepperScrollTarget(for: 3) == .mission)
 
+        state.introStage = .mission
         state.missionAccepted = true
         state.submittedSteps.insert(1)
-        #expect(state.stepperScrollTarget(for: 2) == "interview2")
+        #expect(state.stepperScrollTarget(for: 2) == .interview2)
 
         state.submittedSteps.formUnion([2, 3, 4])
-        #expect(state.stepperScrollTarget(for: 3) == "icp-preview")
+        #expect(state.stepperScrollTarget(for: 3) == .icpPreview)
 
         state.handoffIndex = 3
-        #expect(state.currentProgressScrollTarget == "slot")
-        #expect(state.stepperScrollTarget(for: 3) == "slot")
+        #expect(state.currentProgressScrollTarget == .slot)
+        #expect(state.stepperScrollTarget(for: 3) == .slot)
+    }
+
+    @Test func interviewScrollRequestsPreferNextActionAnchors() {
+        #expect(OpenDesignSectionAnchor.interview(stepID: 1, placement: .sectionContext) == .interview1)
+        #expect(OpenDesignSectionAnchor.interview(stepID: 1, placement: .nextAction) == .interview1Options)
+        #expect(OpenDesignSectionAnchor.interview(stepID: 4, placement: .nextAction) == .interview4Options)
+
+        let request = OpenDesignScrollRequest(
+            target: .interview(stepID: 2, placement: .nextAction),
+            placement: .nextAction
+        )
+
+        #expect(request.target == .interview2Options)
+        #expect(request.target.rawValue == "interview2-options")
+        #expect(request.placement == .nextAction)
+
+        let previewRequest = OpenDesignScrollRequest(target: .icpPreview, placement: .nextAction)
+        #expect(previewRequest.resolvedTarget == .icpPreviewAction)
+        #expect(previewRequest.resolvedTarget.rawValue == "icp-preview-action")
+
+        let finalRequest = OpenDesignScrollRequest(target: .finalIcp, placement: .nextAction)
+        #expect(finalRequest.resolvedTarget == .finalIcpAction)
+
+        let candidateRequest = OpenDesignScrollRequest(target: .candidate, placement: .nextAction)
+        #expect(candidateRequest.resolvedTarget == .candidateAction)
+
+        let slotRequest = OpenDesignScrollRequest(target: .slot, placement: .nextAction)
+        #expect(slotRequest.resolvedTarget == .slotAction)
+
+        let gateRequest = OpenDesignScrollRequest(target: .gate, placement: .nextAction)
+        #expect(gateRequest.resolvedTarget == .gateAction)
     }
 
     @Test func referencePagesCoverOpenDesignTargetScreens() {
@@ -328,5 +457,66 @@ struct OpenDesignDayContentTests {
         #expect(OpenDesignReferenceCatalog.page(.bipLog).sections.contains { $0.id == "draft" })
         #expect(OpenDesignReferenceCatalog.page(.news).sections.contains { $0.id == "customer" })
         #expect(OpenDesignReferenceCatalog.page(.history).sections.contains { $0.id == "today" })
+    }
+
+    private func makePlan(questionCount: Int) -> Day1IcpPlan {
+        let dimensions = ["must_have", "core_need", "current_alternative", "bad_fit_boundary", "reference_customer"]
+        let questions = dimensions.prefix(questionCount).enumerated().map { index, dimension in
+            Day1IcpQuestion(
+                id: "q\(index + 1)_\(dimension)",
+                dimension: dimension,
+                title: "질문 \(index + 1)",
+                prompt: "\(dimension) prompt?",
+                helperText: "scan 기반 질문",
+                options: [
+                    Day1IcpQuestionOption(id: "o1", label: index == 2 ? "Slack 수동 확인" : "좋은 조건 \(index + 1)", description: "현재 행동이 있음", preview: "Have", antiSignal: false),
+                    Day1IcpQuestionOption(id: "o2", label: "관심만 있음", description: "최근 사건 없음", preview: "Weak", antiSignal: dimension == "bad_fit_boundary"),
+                ],
+                allowFreeText: true,
+                freeTextPlaceholder: "직접 입력"
+            )
+        }
+
+        return Day1IcpPlan(
+            schemaVersion: 1,
+            source: "deterministic",
+            generatedAt: "2026-05-20T00:00:00.000Z",
+            confidence: 0.66,
+            fellBackToDeterministic: false,
+            mission: "SupportLens의 ICP v0를 좁힙니다.",
+            signals: Day1IcpSignals(
+                productName: "SupportLens",
+                currentIcpGuess: "B2B SaaS support lead",
+                likelyUsers: ["support lead"],
+                problem: "urgent Slack escalation을 놓침",
+                currentAlternatives: ["Slack 수동 확인"],
+                evidenceRefs: [Day1IcpEvidenceRef(path: "README.md", reason: "README", quote: "# SupportLens")],
+                missingAssumptions: ["reference_customer"],
+                confidence: "medium"
+            ),
+            questions: Array(questions),
+            icpDraft: IcpDraft(
+                description: "B2B SaaS support lead 중 urgent Slack escalation을 놓치는 팀.",
+                criteria: ["현재 대안이 있다"],
+                whyTheyMatter: ["짧은 sales cycle"],
+                needs: ["누락 방지"],
+                haves: ["Slack"],
+                dontNeeds: ["관심만 있음"],
+                evidence: ["README.md: README"],
+                referenceCustomersToFind: ["support lead 1명"]
+            ),
+            antiIcp: Day1AntiIcp(
+                summary: "최근 사건이 없으면 제외",
+                rules: [AntiIcpRule(id: "polite", label: "흥미롭네요만 말함", reason: "polite interest", evidenceRef: nil)],
+                politeInterestGuardrails: ["최근 7일 사건 묻기"]
+            ),
+            firstInterviewMessage: FirstInterviewMessage(
+                channel: "DM/email/Slack",
+                recipientPlaceholder: "{name}",
+                subject: "ICP 인터뷰",
+                bodyTemplate: "안녕하세요 {name}님, SupportLens ICP 인터뷰를 부탁드려요.",
+                questions: ["최근 사건?"]
+            )
+        )
     }
 }

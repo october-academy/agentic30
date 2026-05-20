@@ -69,7 +69,7 @@ enum KeychainHelper {
     // MARK: - Single-Blob Settings
 
     struct Settings: Codable {
-        static let currentSchemaVersion = 5
+        static let currentSchemaVersion = 6
         static let legacyDefaultCodexModelID = "gpt-5.4"
 
         var schemaVersion: Int = Settings.currentSchemaVersion
@@ -87,6 +87,7 @@ enum KeychainHelper {
         var claudeEnvironment: String = ""
         var codexEnvironment: String = ""
         var geminiEnvironment: String = ""
+        var exaApiKey: String = ""
 
         // Ad Analytics
         var posthogApiKey: String = ""
@@ -133,6 +134,7 @@ enum KeychainHelper {
             claudeEnvironment = try container.decodeIfPresent(String.self, forKey: .claudeEnvironment) ?? ""
             codexEnvironment = try container.decodeIfPresent(String.self, forKey: .codexEnvironment) ?? ""
             geminiEnvironment = try container.decodeIfPresent(String.self, forKey: .geminiEnvironment) ?? ""
+            exaApiKey = try container.decodeIfPresent(String.self, forKey: .exaApiKey) ?? ""
 
             posthogApiKey = try container.decodeIfPresent(String.self, forKey: .posthogApiKey) ?? ""
             posthogProjectAPIKey = try container.decodeIfPresent(String.self, forKey: .posthogProjectAPIKey) ?? ""
@@ -176,6 +178,7 @@ enum KeychainHelper {
             try container.encode(claudeEnvironment, forKey: .claudeEnvironment)
             try container.encode(codexEnvironment, forKey: .codexEnvironment)
             try container.encode(geminiEnvironment, forKey: .geminiEnvironment)
+            try container.encode(exaApiKey, forKey: .exaApiKey)
 
             try container.encode(posthogApiKey, forKey: .posthogApiKey)
             try container.encode(posthogProjectAPIKey, forKey: .posthogProjectAPIKey)
@@ -215,6 +218,7 @@ enum KeychainHelper {
             case claudeEnvironment
             case codexEnvironment
             case geminiEnvironment
+            case exaApiKey
             case posthogApiKey
             case posthogProjectAPIKey
             case posthogHost

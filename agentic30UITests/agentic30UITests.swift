@@ -478,7 +478,8 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(main.exists)
         XCTAssertTrue(meta.exists)
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.header.context").exists)
-        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.header.primary", containing: "인터뷰 계속", timeout: 2))
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.header.primary", containing: "시그널 보기", timeout: 2))
+        XCTAssertFalse(app.buttons["opendesign.day.mission.accept"].exists)
         let shareButton = elementWithIdentifier(in: app, "opendesign.day.share")
         XCTAssertTrue(shareButton.exists)
         clickCenter(of: shareButton)
@@ -532,11 +533,14 @@ final class agentic30UITests: XCTestCase {
         let primaryHeaderAction = app.buttons["opendesign.day.header.primary"]
         XCTAssertTrue(primaryHeaderAction.waitForExistence(timeout: 3))
         clickCenter(of: primaryHeaderAction)
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.header.primary", containing: "오늘 미션 보기", timeout: 2))
+        clickCenter(of: primaryHeaderAction)
 
         let missionAccept = app.buttons["opendesign.day.mission.accept"]
         XCTAssertTrue(waitUntilHittable(missionAccept, timeout: 5))
         clickCenter(of: missionAccept)
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.mission.accept", containing: "미션 수락됨", timeout: 2))
+        XCTAssertTrue(waitUntilHittable(app.buttons["opendesign.day.icp.option.1"], timeout: 5))
 
         let postMissionSearchButton = elementWithIdentifier(in: app, "opendesign.day.search")
         XCTAssertTrue(postMissionSearchButton.waitForExistence(timeout: 3))
@@ -563,7 +567,7 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.icp.submit", containing: "제출됨", timeout: 3))
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.footer.status", containing: "제출 완료 · 3번", timeout: 3))
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.option.3", containing: "제출됨", timeout: 3))
-        XCTAssertTrue(app.buttons["opendesign.day.interview.2.option.1"].waitForExistence(timeout: 5))
+        XCTAssertTrue(waitUntilHittable(app.buttons["opendesign.day.interview.2.option.1"], timeout: 5))
     }
 
     @MainActor
@@ -873,25 +877,25 @@ final class agentic30UITests: XCTestCase {
         let previewNext = elementWithIdentifier(in: app, "opendesign.day.preview.next")
         XCTAssertTrue(waitForOpenDesignMainHittable(previewNext, in: app, timeout: 6))
         clickCenter(of: elementWithIdentifier(in: app, "opendesign.day.preview.next"))
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.final").waitForExistence(timeout: 5))
+        XCTAssertTrue(waitUntilHittable(elementWithIdentifier(in: app, "opendesign.day.final.next"), timeout: 5))
 
-        tapOpenDesignHandoffButton(containing: "후보/Anti-ICP", in: app, expecting: "opendesign.day.candidate")
+        tapOpenDesignHandoffButton(containing: "후보/Anti-ICP", in: app, expecting: "opendesign.day.candidate.replace")
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.candidate.replace").waitForExistence(timeout: 3))
 
-        tapOpenDesignHandoffButton(containing: "약속 슬롯", in: app, expecting: "opendesign.day.slot")
+        tapOpenDesignHandoffButton(containing: "약속 슬롯", in: app, expecting: "opendesign.day.slot.2")
 
         let selectedSlot = app.buttons["opendesign.day.slot.2"]
         XCTAssertTrue(waitForOpenDesignMainHittable(selectedSlot, in: app, timeout: 6))
         app.buttons["opendesign.day.slot.2"].click()
 
-        tapOpenDesignHandoffButton(containing: "첫 메시지", in: app, expecting: "opendesign.day.message")
+        tapOpenDesignHandoffButton(containing: "첫 메시지", in: app, expecting: "opendesign.day.dm.copy")
 
         let dmCopy = app.buttons["opendesign.day.dm.copy"]
         XCTAssertTrue(waitForOpenDesignMainHittable(dmCopy, in: app, timeout: 6))
         app.buttons["opendesign.day.dm.copy"].click()
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.dm.copy", containing: "복사됨", timeout: 3))
 
-        tapOpenDesignHandoffButton(containing: "Day 1 게이트", in: app, expecting: "opendesign.day.gate")
+        tapOpenDesignHandoffButton(containing: "Day 1 게이트", in: app, expecting: "opendesign.day.gate.row.3")
 
         let interviewGate = app.buttons["opendesign.day.gate.row.3"]
         XCTAssertTrue(waitForOpenDesignMainHittable(interviewGate, in: app, timeout: 6))
@@ -901,9 +905,15 @@ final class agentic30UITests: XCTestCase {
         let complete = app.buttons["opendesign.day.complete"]
         XCTAssertTrue(waitForOpenDesignMainHittable(complete, in: app, timeout: 6))
         app.buttons["opendesign.day.complete"].click()
-        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.complete", containing: "완료됨", timeout: 3))
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.completion").waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["opendesign.day.day2"].waitForExistence(timeout: 5))
+        let day2Main = elementWithIdentifier(in: app, "opendesign.day2.main")
+        if !day2Main.waitForExistence(timeout: 5) {
+            attachScreenshot(from: app, named: "OpenDesign Day2 Missing After Completion")
+            attachText(app.debugDescription, named: "OpenDesign Day2 Missing Tree")
+        }
+        XCTAssertTrue(day2Main.exists)
+        XCTAssertTrue(app.staticTexts["시장 신호 읽기"].waitForExistence(timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.task.day1", containing: "done", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.task.day2", containing: "active", timeout: 3))
     }
 
     @MainActor
@@ -1182,6 +1192,8 @@ final class agentic30UITests: XCTestCase {
         let primaryHeaderAction = app.buttons["opendesign.day.header.primary"]
         XCTAssertTrue(waitUntilHittable(primaryHeaderAction, timeout: 5), file: file, line: line)
         clickCenter(of: primaryHeaderAction)
+        XCTAssertTrue(waitUntilHittable(primaryHeaderAction, timeout: 5), file: file, line: line)
+        clickCenter(of: primaryHeaderAction)
 
         let missionAccept = app.buttons["opendesign.day.mission.accept"]
         XCTAssertTrue(waitUntilHittable(missionAccept, timeout: 5), file: file, line: line)
@@ -1191,13 +1203,14 @@ final class agentic30UITests: XCTestCase {
             file: file,
             line: line
         )
+        XCTAssertTrue(waitUntilHittable(app.buttons["opendesign.day.icp.option.1"], timeout: 5), file: file, line: line)
 
         submitOpenDesignInterviewStep(1, option: 3, in: app, file: file, line: line)
         submitOpenDesignInterviewStep(2, option: 1, in: app, file: file, line: line)
         submitOpenDesignInterviewStep(3, option: 2, in: app, file: file, line: line)
         submitOpenDesignInterviewStep(4, option: 1, in: app, file: file, line: line)
 
-        XCTAssertTrue(app.buttons["opendesign.day.icpPreview.copy"].waitForExistence(timeout: 5), file: file, line: line)
+        XCTAssertTrue(waitUntilHittable(app.buttons["opendesign.day.preview.next"], timeout: 5), file: file, line: line)
     }
 
     @MainActor
@@ -1232,7 +1245,7 @@ final class agentic30UITests: XCTestCase {
 
         if step < 4 {
             XCTAssertTrue(
-                app.buttons["opendesign.day.interview.\(step + 1).option.1"].waitForExistence(timeout: 5),
+                waitUntilHittable(app.buttons["opendesign.day.interview.\(step + 1).option.1"], timeout: 5),
                 file: file,
                 line: line
             )
@@ -2306,9 +2319,9 @@ final class agentic30UITests: XCTestCase {
             )
             return
         }
-        clickCenter(of: buttonContaining(in: app, text: text))
+        clickCenter(of: nextButton)
         let expectedElement = elementWithIdentifier(in: app, identifier)
-        guard expectedElement.waitForExistence(timeout: 5) else {
+        guard waitForOpenDesignMainHittable(expectedElement, in: app, timeout: 8) else {
             attachScreenshot(from: app, named: "OpenDesign handoff failed before \(identifier)")
             attachText(app.debugDescription, named: "OpenDesign handoff accessibility tree")
             XCTFail(
