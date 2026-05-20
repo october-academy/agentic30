@@ -78,6 +78,7 @@ struct SettingsView: View {
     @State private var posthogApiKey = ""
     @State private var posthogProjectAPIKey = ""
     @State private var posthogHost = ""
+    @State private var telemetryDisabled = PostHogTelemetry.isTelemetryDisabledByUser
     @State private var metaAccessToken = ""
     @State private var metaAdAccountId = ""
     @State private var adSaveMessage = ""
@@ -2070,14 +2071,48 @@ struct SettingsView: View {
                     .background(fieldBackground)
             }
 
-            Text("`phx_` key는 MCP/조회용이고, 앱/sidecar 이벤트 수집은 `phc_` project key를 사용합니다.")
+            Text("`phx_` key는 MCP/조회용이고, 앱/sidecar 이벤트 수집은 `phc_` project key를 사용합니다. 빈 칸이면 배포 빌드에 임베드된 기본 키를 사용합니다.")
                 .font(.system(size: 12, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(0.44))
 
             if !posthogApiKey.isEmpty && posthogProjectAPIKey.isEmpty {
-                Text("MCP/조회는 설정되었지만 앱 이벤트 수집은 아직 비활성 상태입니다. `phc_` project key를 추가해야 telemetry가 전송됩니다.")
+                Text("MCP/조회는 설정되었지만 앱 이벤트 수집은 아직 비활성 상태입니다. `phc_` project key를 추가하거나, 비워두면 빌드 기본값을 사용합니다.")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(.orange.opacity(0.78))
+            }
+
+            Divider().padding(.vertical, 4)
+
+            Toggle(isOn: $telemetryDisabled) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("이 디바이스에서 telemetry 비활성화")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.86))
+                    Text("켜면 PostHog 이벤트 전송이 즉시 중단됩니다. distinct_id는 보존되어 재활성화 시 동일 사용자로 묶입니다.")
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.switch)
+            .tint(Agentic30BrandColor.green)
+            .onChange(of: telemetryDisabled) { _, newValue in
+                // When user is DISABLING, fire the event first (and block briefly)
+                // while telemetry is still enabled, otherwise loadConfig() returns
+                // nil and we'd lose the opt-out signal entirely.
+                if newValue {
+                    PostHogTelemetry.captureBlocking(
+                        "mac_settings_telemetry_pref_changed",
+                        properties: ["disabled": true]
+                    )
+                    PostHogTelemetry.setTelemetryDisabledByUser(true)
+                } else {
+                    PostHogTelemetry.setTelemetryDisabledByUser(false)
+                    PostHogTelemetry.capture(
+                        "mac_settings_telemetry_pref_changed",
+                        properties: ["disabled": false]
+                    )
+                }
             }
         }
         .padding(20)

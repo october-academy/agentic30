@@ -169,6 +169,9 @@ enum PostHogHostResolver {
 enum PostHogTelemetry {
     typealias Sender = (URL, [String: Any], @escaping (Bool) -> Void) -> Void
 
+    static let telemetryDisabledDefaultsKey = "agentic30.posthog.telemetryDisabled"
+    static let bundleProjectAPIKeyInfoPlistKey = "Agentic30PostHogProjectAPIKey"
+    static let bundleHostInfoPlistKey = "Agentic30PostHogHost"
     private static let distinctIDDefaultsKey = "agentic30.posthog.distinctId"
     private static let captureOnceDefaultsPrefix = "agentic30.posthog.once."
     private static let pendingOnceDefaultsPrefix = "agentic30.posthog.once.pending."
@@ -203,6 +206,60 @@ enum PostHogTelemetry {
         captureOnceLock.lock()
         pendingOnceInFlight.removeAll()
         captureOnceLock.unlock()
+    }
+
+    /// Fires an event and blocks the caller until the HTTP send completes or
+    /// `timeout` elapses. Use for terminate-time captures (e.g.
+    /// `mac_app_terminating`) — the default async path uses
+    /// `URLSession.shared.dataTask`, which the OS cancels on process exit and
+    /// would otherwise lose the event.
+    @discardableResult
+    static func captureBlocking(
+        _ event: String,
+        properties: [String: Any] = [:],
+        authSession: MacAuthSession? = nil,
+        timeout: TimeInterval = 1.5
+    ) -> Bool {
+        let extra = eventProperties(properties)
+
+        if emitToConfiguredSink(
+            event: event,
+            extra: extra,
+            authSession: authSession,
+            isException: false
+        ) {
+            return true
+        }
+
+        guard let config = loadConfig(),
+              let ingestBaseURL = PostHogHostResolver.ingestBaseURL(for: config.host),
+              let url = URL(string: "i/v0/e/", relativeTo: ingestBaseURL)
+        else { return false }
+
+        let resolvedDistinctID = distinctID(for: authSession)
+        let payload: [String: Any] = [
+            "api_key": config.projectAPIKey,
+            "event": event,
+            "distinct_id": resolvedDistinctID,
+            "uuid": UUID().uuidString,
+            "properties": baseProperties(
+                extra: extra,
+                authSession: authSession,
+                distinctID: resolvedDistinctID
+            ),
+            "timestamp": ISO8601DateFormatter().string(from: Date()),
+        ]
+
+        guard JSONSerialization.isValidJSONObject(payload) else { return false }
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var didSucceed = false
+        sender(url, payload) { success in
+            didSucceed = success
+            semaphore.signal()
+        }
+        _ = semaphore.wait(timeout: .now() + timeout)
+        return didSucceed
     }
 
     @discardableResult
@@ -517,6 +574,14 @@ enum PostHogTelemetry {
         send(url: url, payload: payload)
     }
 
+    static var isTelemetryDisabledByUser: Bool {
+        UserDefaults.standard.bool(forKey: telemetryDisabledDefaultsKey)
+    }
+
+    static func setTelemetryDisabledByUser(_ disabled: Bool) {
+        UserDefaults.standard.set(disabled, forKey: telemetryDisabledDefaultsKey)
+    }
+
     private static func loadConfig() -> PostHogTelemetryConfig? {
         if let configurationProvider {
             return configurationProvider()
@@ -530,6 +595,7 @@ enum PostHogTelemetry {
             ?? ProcessInfo.processInfo.environment["POSTHOG_PROJECT_TOKEN"]?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .nonEmpty
+            ?? bundleProjectAPIKey
 
         guard let projectAPIKey = resolvedProjectKey, !projectAPIKey.isEmpty else {
             return nil
@@ -539,12 +605,35 @@ enum PostHogTelemetry {
             ?? ProcessInfo.processInfo.environment["POSTHOG_HOST"]?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .nonEmpty
+            ?? bundleHost
             ?? "https://us.posthog.com"
         return PostHogTelemetryConfig(projectAPIKey: projectAPIKey, host: host)
     }
 
+    /// Build-time embedded fallbacks. Distribution builds inject
+    /// `Agentic30PostHogProjectAPIKey` / `Agentic30PostHogHost` into Info.plist
+    /// via xcconfig so every install reports telemetry by default. The user can
+    /// override per-install via Settings (Keychain) or disable globally via the
+    /// Settings opt-out toggle. Builds without the xcconfig values leave the
+    /// raw `$(...)` placeholder in Info.plist — guarded here.
+    private static var bundleProjectAPIKey: String? {
+        guard let raw = (Bundle.main.object(forInfoDictionaryKey: bundleProjectAPIKeyInfoPlistKey) as? String)?.nonEmpty,
+              !raw.contains("$("),
+              raw.hasPrefix("phc_")
+        else { return nil }
+        return raw
+    }
+
+    private static var bundleHost: String? {
+        guard let raw = (Bundle.main.object(forInfoDictionaryKey: bundleHostInfoPlistKey) as? String)?.nonEmpty,
+              !raw.contains("$(")
+        else { return nil }
+        return raw
+    }
+
     private static var isDisabledForCurrentProcess: Bool {
         ProcessInfo.processInfo.environment["AGENTIC30_DISABLE_TELEMETRY"] == "1"
+            || isTelemetryDisabledByUser
             || CommandLine.arguments.contains(where: { $0.hasPrefix("--ui-testing-") })
             || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
             || CommandLine.arguments.contains(where: { $0.contains(".xctest") })

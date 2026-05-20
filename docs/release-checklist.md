@@ -24,6 +24,7 @@ This checklist is for local dogfood releases of the macOS menu bar app. Public D
 
 ## Launch Funnel Telemetry
 
+- Set `POSTHOG_PROJECT_API_KEY` (and optionally `POSTHOG_HOST`) as build settings before archiving so Info.plist embeds the project token (`Agentic30PostHogProjectAPIKey` / `Agentic30PostHogHost`). Without this, distribution builds report telemetry only for users who manually paste a `phc_…` key into Settings. The Settings opt-out toggle (`agentic30.posthog.telemetryDisabled` UserDefault) lets end users disable per-device.
 - Use a `go.agentic30.app` short URL for the Threads launch link so PostHog receives `short_link_click` from the URL shortener.
 - After uploading the PKG and DMG to GitHub Releases, run `npm run track:release-funnel -- --repo october-academy/agentic30-private --tag <release-tag>` on a short interval during launch day. The script polls `gh api` release asset `download_count` and emits one `installer_downloaded` event per new PKG/DMG download.
 - Confirm the signed app emits `mac_install_completed` once on first launch, gated on a fresh `agentic30.posthog.distinctId` so existing users who upgrade to this build do not fire the install event. The legacy `dmg_install_completed` event is still emitted for old dashboards.

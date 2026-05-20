@@ -219,11 +219,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        PostHogTelemetry.capture("mac_app_terminating")
+        // Block briefly so the terminate event actually reaches PostHog. The
+        // default async sender uses URLSession.shared, which the OS cancels on
+        // process exit and would otherwise drop the event.
+        PostHogTelemetry.captureBlocking(
+            "mac_app_terminating",
+            authSession: viewModel.macAuthSession
+        )
         viewModel.stop()
     }
 
     @objc func checkForUpdates(_ sender: Any?) {
+        let updaterAvailable = updaterController != nil
+        PostHogTelemetry.capture(
+            "mac_update_check_requested",
+            properties: [
+                "updater_available": updaterAvailable,
+                "source": sender is NSMenuItem ? "menu" : "programmatic",
+            ],
+            authSession: viewModel.macAuthSession
+        )
         guard let updaterController else {
             let alert = NSAlert()
             alert.messageText = "Updates are not configured for this build."
@@ -400,47 +415,65 @@ private struct StatusMenuContent: View {
             Divider()
 
             Button("Open Workspace") {
+                PostHogTelemetry.capture(
+                    "mac_menu_bar_action",
+                    properties: ["action": "open_workspace"],
+                    authSession: viewModel.macAuthSession
+                )
                 openWorkspaceWindow()
             }
 
             Button("Workspace Switcher Tour") {
-                viewModel.requestWorkspaceSwitcherTourOpen()
-                openWorkspaceWindow()
+                requestTour("workspace_switcher") {
+                    viewModel.requestWorkspaceSwitcherTourOpen()
+                }
             }
 
             Button("Curriculum Navigator Tour") {
-                viewModel.requestWorkspaceCurriculumNavigatorTourOpen()
-                openWorkspaceWindow()
+                requestTour("curriculum_navigator") {
+                    viewModel.requestWorkspaceCurriculumNavigatorTourOpen()
+                }
             }
 
             Button("Settings Tour") {
-                viewModel.requestWorkspaceSettingsTourOpen()
-                openWorkspaceWindow()
+                requestTour("settings") {
+                    viewModel.requestWorkspaceSettingsTourOpen()
+                }
             }
 
             Button("Help Tour") {
-                viewModel.requestWorkspaceHelpTourOpen()
-                openWorkspaceWindow()
+                requestTour("help") {
+                    viewModel.requestWorkspaceHelpTourOpen()
+                }
             }
 
             Button("Recent Conversations Tour") {
-                viewModel.requestWorkspaceRecentConversationsTourOpen()
-                openWorkspaceWindow()
+                requestTour("recent_conversations") {
+                    viewModel.requestWorkspaceRecentConversationsTourOpen()
+                }
             }
 
             Button("New Codex Chat") {
-                viewModel.createSession(provider: .codex)
+                viewModel.createSession(provider: .codex, source: "menu_bar")
                 openWorkspaceWindow()
             }
 
             Button("New Claude Chat") {
-                viewModel.createSession(provider: .claude)
+                viewModel.createSession(provider: .claude, source: "menu_bar")
                 openWorkspaceWindow()
             }
 
             if let selectedSession = viewModel.selectedSession,
                selectedSession.status == .running || selectedSession.status == .awaitingInput {
                 Button("Stop Current Session") {
+                    PostHogTelemetry.capture(
+                        "mac_menu_bar_action",
+                        properties: [
+                            "action": "stop_session",
+                            "session_id": selectedSession.id,
+                        ],
+                        authSession: viewModel.macAuthSession
+                    )
                     viewModel.stopSelectedSession()
                 }
             }
@@ -455,6 +488,15 @@ private struct StatusMenuContent: View {
 
                 ForEach(visibleSessions.prefix(6)) { session in
                     Button {
+                        PostHogTelemetry.capture(
+                            "mac_menu_bar_action",
+                            properties: [
+                                "action": "select_session",
+                                "session_id": session.id,
+                                "provider": session.provider.rawValue,
+                            ],
+                            authSession: viewModel.macAuthSession
+                        )
                         viewModel.selectSession(session.id)
                         openWorkspaceWindow()
                     } label: {
@@ -481,6 +523,11 @@ private struct StatusMenuContent: View {
             }
 
             Button {
+                PostHogTelemetry.capture(
+                    "mac_menu_bar_action",
+                    properties: ["action": "open_settings"],
+                    authSession: viewModel.macAuthSession
+                )
                 viewModel.requestWorkspaceSettingsOpen()
                 openWorkspaceWindow()
             } label: {
@@ -488,6 +535,11 @@ private struct StatusMenuContent: View {
             }
 
             Button("Quit") {
+                PostHogTelemetry.captureBlocking(
+                    "mac_menu_bar_action",
+                    properties: ["action": "quit"],
+                    authSession: viewModel.macAuthSession
+                )
                 NSApplication.shared.terminate(nil)
             }
         }
@@ -496,6 +548,19 @@ private struct StatusMenuContent: View {
             installWorkspaceOpenHandler()
             viewModel.start()
         }
+    }
+
+    private func requestTour(_ tour: String, body: () -> Void) {
+        PostHogTelemetry.capture(
+            "mac_menu_bar_action",
+            properties: [
+                "action": "tour_requested",
+                "tour": tour,
+            ],
+            authSession: viewModel.macAuthSession
+        )
+        body()
+        openWorkspaceWindow()
     }
 
     private func openWorkspaceWindow() {

@@ -51,5 +51,9 @@
 	<true/>
 	<key>SUVerifyUpdateBeforeExtraction</key>
 	<true/>
+	<key>Agentic30PostHogProjectAPIKey</key>
+	<string>$(POSTHOG_PROJECT_API_KEY)</string>
+	<key>Agentic30PostHogHost</key>
+	<string>$(POSTHOG_HOST)</string>
 </dict>
 </plist>

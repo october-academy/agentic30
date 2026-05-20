@@ -176,6 +176,50 @@ final class PostHogTelemetryTests: XCTestCase {
         XCTAssertEqual(UserDefaults.standard.string(forKey: distinctIDKey), distinctIDBefore)
     }
 
+    func testTelemetryDisabledByUserBlocksCapture() {
+        let originalDisabled = PostHogTelemetry.isTelemetryDisabledByUser
+        defer {
+            PostHogTelemetry.setTelemetryDisabledByUser(originalDisabled)
+            PostHogTelemetry.resetTestingHooks()
+        }
+
+        PostHogTelemetry.setTelemetryDisabledByUser(true)
+        // configurationProvider intentionally NOT set so loadConfig() exercises
+        // the disabled-by-user gate.
+        var didSend = false
+        PostHogTelemetry.sender = { _, _, completion in
+            didSend = true
+            completion(true)
+        }
+
+        let captured = PostHogTelemetry.capture("mac_disabled_probe")
+        XCTAssertFalse(captured, "capture should fail when user disabled telemetry")
+        XCTAssertFalse(didSend, "sender must not be invoked while opt-out is active")
+    }
+
+    func testCaptureBlockingDeliversBeforeTimeout() {
+        PostHogTelemetry.configurationProvider = {
+            PostHogTelemetryConfig(projectAPIKey: "phc_test", host: "https://us.posthog.com")
+        }
+        defer { PostHogTelemetry.resetTestingHooks() }
+
+        var sentEvents: [String] = []
+        PostHogTelemetry.sender = { _, payload, completion in
+            if let event = payload["event"] as? String {
+                sentEvents.append(event)
+            }
+            completion(true)
+        }
+
+        let success = PostHogTelemetry.captureBlocking(
+            "mac_app_terminating",
+            timeout: 0.5
+        )
+
+        XCTAssertTrue(success)
+        XCTAssertEqual(sentEvents, ["mac_app_terminating"])
+    }
+
     private static func clearCaptureOnceState(defaultsKey: String, pendingKey: String) {
         UserDefaults.standard.removeObject(forKey: defaultsKey)
         UserDefaults.standard.removeObject(forKey: pendingKey)
