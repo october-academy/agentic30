@@ -381,6 +381,19 @@ struct ContentView: View {
                 submitStructuredPromptChoice: { choice in
                     submitOpenDesignDayChoice(choice, day: day, session: session)
                 },
+                newsMarketRadar: viewModel.newsMarketRadar,
+                refreshNewsMarketRadar: {
+                    viewModel.refreshNewsMarketRadar(reason: "manual", force: true)
+                },
+                prepareNewsMarketRadar: {
+                    viewModel.prepareNewsMarketRadarForDisplay()
+                },
+                openNewsSettings: {
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                        selectedWorkspaceSection = .settings
+                        selectedSettingsSection = .agents
+                    }
+                },
                 completeDay: {
                     if viewModel.iddSetupComplete {
                         _ = viewModel.markFoundationDayCompleted(day.day)
@@ -416,10 +429,15 @@ struct ContentView: View {
     }
 
     private func submitOpenDesignDayChoice(
-        _ choice: String,
+        _ choice: OpenDesignDayAnswerSubmission,
         day: AgenticCurriculumDay,
         session: ChatSession?
     ) {
+        viewModel.recordOpenDesignDayAnswer(
+            choice,
+            day: day.day,
+            dayType: day.phase.rawValue
+        )
         if !viewModel.iddSetupComplete {
             viewModel.startBipIddQueue(docType: viewModel.iddCurrentDocType)
         }

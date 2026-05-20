@@ -796,6 +796,92 @@ struct SidecarEventDecodingTests {
         #expect(event.elapsedMs == 132)
     }
 
+    @MainActor @Test func decodesNewsMarketRadarResult() throws {
+        let payload = """
+        {
+          "type": "news_market_radar_result",
+          "newsMarketRadar": {
+            "schemaVersion": 1,
+            "generatedAt": "2026-05-20T00:00:00.000Z",
+            "nextRefreshAfter": "2026-05-21T00:00:00.000Z",
+            "status": {
+              "state": "ready",
+              "lastSuccessAt": "2026-05-20T00:00:00.000Z",
+              "stale": false,
+              "error": null,
+              "reason": "manual"
+            },
+            "workspaceEvidenceRefs": [],
+            "lanes": [
+              {
+                "id": "alternatives_pricing",
+                "title": "대안/가격",
+                "hypothesis": "이미 돈을 쓰는 대안과 가격 기준은 무엇인가",
+                "impact": "strengthens",
+                "confidence": "strong",
+                "cards": [
+                  {
+                    "id": "card-1",
+                    "title": "Paid tool spend",
+                    "summary": "Solo developers already pay for coding tools.",
+                    "impact": "strengthens",
+                    "confidence": "strong",
+                    "whyItMatters": "가격 ask 기준이 생깁니다.",
+                    "suggestedHypothesisUpdate": "ICP에 paid tool spend를 추가",
+                    "suggestedDocTargets": ["ICP.md", "SPEC.md"],
+                    "relatedDays": [2, 5, 27],
+                    "relatedAnswerIds": ["answer-1"],
+                    "sourceRefs": [
+                      {
+                        "id": "src-1",
+                        "sourceType": "web",
+                        "title": "Pricing",
+                        "url": "https://example.com/pricing",
+                        "domain": "example.com",
+                        "publishedAt": "",
+                        "excerpt": "$20/mo"
+                      }
+                    ],
+                    "evidenceStrength": "strong"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "news_market_radar_result")
+        #expect(event.newsMarketRadar?.status.state == "ready")
+        #expect(event.newsMarketRadar?.lanes.first?.id == "alternatives_pricing")
+        #expect(event.newsMarketRadar?.lanes.first?.cards.first?.relatedDays == [2, 5, 27])
+        #expect(event.newsMarketRadar?.lanes.first?.cards.first?.sourceRefs.first?.domain == "example.com")
+    }
+
+    @MainActor @Test func decodesNewsMarketRadarStatusObject() throws {
+        let payload = """
+        {
+          "type": "news_market_radar_status",
+          "status": {
+            "state": "refreshing",
+            "lastSuccessAt": null,
+            "stale": false,
+            "error": null,
+            "reason": "daily"
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "news_market_radar_status")
+        #expect(event.status == nil)
+        #expect(event.newsMarketRadarStatus?.state == "refreshing")
+        #expect(event.newsMarketRadarStatus?.reason == "daily")
+    }
+
     private var decoder: JSONDecoder {
         let decoder = JSONDecoder()
         let formatter = ISO8601DateFormatter()

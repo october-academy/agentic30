@@ -2487,56 +2487,28 @@ private struct OpenDesignBipDraftPanel: View {
 private struct OpenDesignNewsShell: View {
     let layout: OpenDesignDayLayoutMetrics
     let openSearch: () -> Void
+    let snapshot: NewsMarketRadarSnapshot
+    let refresh: () -> Void
+    let prepare: () -> Void
+    let openSettings: () -> Void
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage("agentic30.news.readArticleIDs") private var readArticleIDsRaw = ""
-    @AppStorage("agentic30.news.savedArticleIDs") private var savedArticleIDsRaw = ""
-    @State private var selectedFilter: OpenDesignNewsFilter = .all
+    @State private var selectedLaneID = "alternatives_pricing"
 
-    private var readArticleIDs: Set<String> {
-        get {
-            Set(readArticleIDsRaw.split(separator: "|").map(String.init))
-        }
-        nonmutating set {
-            readArticleIDsRaw = newValue.sorted().joined(separator: "|")
-        }
-    }
-
-    private var savedArticleIDs: Set<String> {
-        get {
-            if savedArticleIDsRaw.isEmpty {
-                return OpenDesignNewsCatalog.defaultSavedArticleIDs
-            }
-            if savedArticleIDsRaw == "-" {
-                return []
-            }
-            return Set(savedArticleIDsRaw.split(separator: "|").map(String.init))
-        }
-        nonmutating set {
-            savedArticleIDsRaw = newValue.isEmpty ? "-" : newValue.sorted().joined(separator: "|")
-        }
-    }
-
-    private var visibleArticles: [OpenDesignNewsArticle] {
-        OpenDesignNewsCatalog.articles.filter { article in
-            matches(article, filter: selectedFilter)
-        }
-    }
-
-    private var unreadCount: Int {
-        OpenDesignNewsCatalog.articles.filter { !readArticleIDs.contains($0.id) }.count
+    private var selectedLane: NewsMarketRadarLane {
+        snapshot.lanes.first(where: { $0.id == selectedLaneID })
+            ?? snapshot.lanes.first
+            ?? NewsMarketRadarLane.defaultLanes[0]
     }
 
     var body: some View {
         Group {
             if layout.showsTaskSidebar {
                 ZStack {
-                    OpenDesignNewsSidebarView(
-                        selectedFilter: selectedFilter,
-                        unreadCount: unreadCount,
-                        displayCount: displayCount(for:),
+                    NewsMarketRadarSidebarView(
+                        snapshot: snapshot,
+                        selectedLaneID: selectedLaneID,
                         openSearch: openSearch,
-                        select: selectFilter(_:)
+                        selectLane: { selectedLaneID = $0 }
                     )
                     Color.clear
                         .accessibilityElement(children: .ignore)
@@ -2551,19 +2523,13 @@ private struct OpenDesignNewsShell: View {
             }
 
             ZStack {
-                OpenDesignNewsMainView(
+                NewsMarketRadarMainView(
                     layout: layout,
-                    selectedFilter: selectedFilter,
-                    unreadCount: unreadCount,
-                    readArticleIDs: readArticleIDs,
-                    savedArticleIDs: savedArticleIDs,
-                    visibleArticles: visibleArticles,
-                    displayCount: displayCount(for:),
-                    selectFilter: selectFilter(_:),
-                    markAll: toggleAllRead,
-                    markRead: markRead(_:),
-                    toggleRead: toggleRead(_:),
-                    toggleSaved: toggleSaved(_:)
+                    snapshot: snapshot,
+                    selectedLane: selectedLane,
+                    selectedLaneID: $selectedLaneID,
+                    refresh: refresh,
+                    openSettings: openSettings
                 )
                 Color.clear
                     .accessibilityElement(children: .ignore)
@@ -2575,7 +2541,7 @@ private struct OpenDesignNewsShell: View {
 
             if layout.showsMetaPanel {
                 ZStack {
-                    OpenDesignNewsMetaPanelView()
+                    NewsMarketRadarMetaPanelView(snapshot: snapshot)
                     Color.clear
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel("OpenDesign News Meta")
@@ -2587,70 +2553,506 @@ private struct OpenDesignNewsShell: View {
                 .background(OpenDesignDayColor.bg)
             }
         }
-    }
-
-    private func selectFilter(_ filter: OpenDesignNewsFilter) {
-        withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.12)) {
-            selectedFilter = filter
+        .onAppear(perform: prepare)
+        .onChange(of: snapshot.lanes.map(\.id)) { _, laneIDs in
+            if !laneIDs.contains(selectedLaneID) {
+                selectedLaneID = laneIDs.first ?? "icp"
+            }
         }
     }
+}
 
-    private func markRead(_ articleID: String) {
-        guard !readArticleIDs.contains(articleID) else { return }
-        var ids = readArticleIDs
-        ids.insert(articleID)
-        readArticleIDs = ids
-    }
+private struct NewsMarketRadarSidebarView: View {
+    let snapshot: NewsMarketRadarSnapshot
+    let selectedLaneID: String
+    let openSearch: () -> Void
+    let selectLane: (String) -> Void
 
-    private func toggleRead(_ articleID: String) {
-        var ids = readArticleIDs
-        if ids.contains(articleID) {
-            ids.remove(articleID)
-        } else {
-            ids.insert(articleID)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Image(systemName: "newspaper")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(OpenDesignDayColor.accent)
+                Text("Market Radar")
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Spacer(minLength: 0)
+                Text(snapshot.statusLabel)
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(newsStatusTone(snapshot.status).color)
+            }
+
+            Button(action: openSearch) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                    Text("뉴스·가정 검색")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 32)
+                .background(referenceRounded(fill: OpenDesignDayColor.bgDeep, stroke: OpenDesignDayColor.borderSoft, radius: 8))
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(snapshot.lanes) { lane in
+                    NewsMarketRadarLaneButton(
+                        lane: lane,
+                        isSelected: lane.id == selectedLaneID,
+                        action: { selectLane(lane.id) }
+                    )
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("로컬 보관")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                Text("Day 답변과 snippets는 workspace의 .agentic30/news에 30일 동안만 남습니다.")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(10)
+            .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 8))
         }
-        readArticleIDs = ids
+        .padding(.horizontal, 12)
+        .padding(.vertical, 14)
     }
+}
 
-    private func toggleSaved(_ articleID: String) {
-        var ids = savedArticleIDs
-        if ids.contains(articleID) {
-            ids.remove(articleID)
-        } else {
-            ids.insert(articleID)
+private struct NewsMarketRadarLaneButton: View {
+    let lane: NewsMarketRadarLane
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                Circle()
+                    .fill(newsImpactTone(lane.impact).color)
+                    .frame(width: 7, height: 7)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(lane.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                        .lineLimit(1)
+                    Text(lane.hypothesis)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 6)
+                Text("\(lane.cards.count)")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(isSelected ? OpenDesignDayColor.accent : OpenDesignDayColor.muted)
+                    .frame(minWidth: 18)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .background(referenceRounded(fill: isSelected || isHovered ? OpenDesignDayColor.hover : Color.clear, stroke: isSelected ? OpenDesignDayColor.accentLine : Color.clear, radius: 8))
         }
-        savedArticleIDs = ids
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
     }
+}
 
-    private func toggleAllRead() {
-        if unreadCount == 0 {
-            readArticleIDs = []
-        } else {
-            readArticleIDs = Set(OpenDesignNewsCatalog.articles.map(\.id))
+private struct NewsMarketRadarMainView: View {
+    let layout: OpenDesignDayLayoutMetrics
+    let snapshot: NewsMarketRadarSnapshot
+    let selectedLane: NewsMarketRadarLane
+    @Binding var selectedLaneID: String
+    let refresh: () -> Void
+    let openSettings: () -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                NewsMarketRadarHeader(snapshot: snapshot, refresh: refresh, openSettings: openSettings)
+
+                if snapshot.status.state == "failed",
+                   snapshot.status.reason == "exa_api_key_missing",
+                   snapshot.cardCount == 0 {
+                    NewsMarketRadarNoKeyState(openSettings: openSettings)
+                } else if selectedLane.cards.isEmpty {
+                    NewsMarketRadarEmptyLane(lane: selectedLane, refresh: refresh)
+                } else {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 8) {
+                            Text(selectedLane.title)
+                                .font(.system(size: 18, weight: .bold, design: .rounded))
+                                .foregroundStyle(OpenDesignDayColor.fg)
+                            Text(selectedLane.confidence.uppercased())
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundStyle(newsConfidenceTone(selectedLane.confidence).color)
+                                .padding(.horizontal, 7)
+                                .frame(height: 20)
+                                .background(Capsule().fill(newsConfidenceTone(selectedLane.confidence).dim))
+                            Spacer(minLength: 0)
+                        }
+                        Text(selectedLane.hypothesis)
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(OpenDesignDayColor.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        ForEach(selectedLane.cards) { card in
+                            NewsMarketRadarCardView(card: card)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: 820, alignment: .leading)
+            .padding(.horizontal, layout.mainHorizontalPadding)
+            .padding(.top, 24)
+            .padding(.bottom, 42)
         }
     }
+}
 
-    private func displayCount(for filter: OpenDesignNewsFilter) -> String {
-        let total = OpenDesignNewsCatalog.articles.filter { matches($0, filter: filter) }.count
-        let unread = OpenDesignNewsCatalog.articles.filter { article in
-            matches(article, filter: filter) && !readArticleIDs.contains(article.id)
-        }.count
-        return "\(unread == 0 ? total : unread)"
-    }
+private struct NewsMarketRadarHeader: View {
+    let snapshot: NewsMarketRadarSnapshot
+    let refresh: () -> Void
+    let openSettings: () -> Void
 
-    private func matches(_ article: OpenDesignNewsArticle, filter: OpenDesignNewsFilter) -> Bool {
-        switch filter {
-        case .all:
-            return true
-        case .constraint, .customer, .ship, .numbers, .alone, .adaptive:
-            return article.values.contains(filter)
-        case .sourceEssay, .sourceBook, .sourceTalk, .sourceCase:
-            return article.type == filter
-        case .saved:
-            return savedArticleIDs.contains(article.id)
-        case .applied:
-            return article.isApplied
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("News Market Radar")
+                        .font(.system(size: 26, weight: .bold, design: .rounded))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                    Text("workspace evidence와 Day 답변을 기준으로 public market evidence를 묶어 보여줍니다.")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                VStack(alignment: .trailing, spacing: 8) {
+                    newsPill(snapshot.statusLabel, tone: newsStatusTone(snapshot.status))
+                    HStack(spacing: 8) {
+                        OpenDesignNewsActionButton(icon: "arrow.clockwise", title: "새로고침", tone: .ghost, action: refresh)
+                        if snapshot.status.reason == "exa_api_key_missing" {
+                            OpenDesignNewsActionButton(icon: "key.fill", title: "Exa 설정", tone: .accent, action: openSettings)
+                        }
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                newsMetric("\(snapshot.cardCount)", "cards", tone: .accent)
+                newsMetric("\(snapshot.lanes.filter { !$0.cards.isEmpty }.count)", "lanes", tone: .sky)
+                newsMetric(snapshot.generatedAt.map(relativeNewsDate(_:)) ?? "never", "updated", tone: .muted)
+            }
         }
+        .padding(18)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+    }
+}
+
+private struct NewsMarketRadarNoKeyState: View {
+    let openSettings: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Image(systemName: "key.slash")
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(OpenDesignDayColor.amber)
+            Text("Exa API key가 필요합니다")
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundStyle(OpenDesignDayColor.fg)
+            Text("Market Radar는 public web research를 Exa MCP로 수행합니다. Settings에서 EXA_API_KEY를 저장하면 하루 1회 자동으로 새로고침됩니다.")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            OpenDesignNewsActionButton(icon: "key.fill", title: "Exa 설정 열기", tone: .accent, action: openSettings)
+        }
+        .padding(18)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.amberLine, radius: 10))
+    }
+}
+
+private struct NewsMarketRadarEmptyLane: View {
+    let lane: NewsMarketRadarLane
+    let refresh: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(lane.title)
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundStyle(OpenDesignDayColor.fg)
+            Text("아직 이 가정에 연결된 카드가 없습니다. 새로고침하면 workspace evidence와 Day 답변을 기준으로 Exa 리서치를 다시 실행합니다.")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            OpenDesignNewsActionButton(icon: "arrow.clockwise", title: "리서치 실행", tone: .ghost, action: refresh)
+        }
+        .padding(18)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+    }
+}
+
+private struct NewsMarketRadarCardView: View {
+    let card: NewsMarketRadarCard
+    @State private var showsUpdate = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(card.title)
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(card.summary)
+                        .font(.system(size: 13, weight: .medium))
+                        .lineSpacing(3)
+                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 10)
+                VStack(alignment: .trailing, spacing: 6) {
+                    newsPill(newsImpactLabel(card.impact), tone: newsImpactTone(card.impact))
+                    newsPill(card.confidence.uppercased(), tone: newsConfidenceTone(card.confidence))
+                }
+            }
+
+            if let why = card.whyItMatters?.nonEmpty {
+                Text(why)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 6) {
+                ForEach((card.relatedDays ?? []).prefix(5), id: \.self) { day in
+                    newsPill("Day \(day)", tone: .sky)
+                }
+                newsPill("\(card.sourceRefs.count) sources", tone: .muted)
+                Spacer(minLength: 0)
+            }
+
+            if let update = card.suggestedHypothesisUpdate?.nonEmpty {
+                Button {
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        showsUpdate.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: showsUpdate ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 10, weight: .bold))
+                        Text("가설 갱신 제안")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(OpenDesignDayColor.accent)
+                }
+                .buttonStyle(.plain)
+
+                if showsUpdate {
+                    Text(update)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(12)
+                        .background(referenceRounded(fill: OpenDesignDayColor.bgDeep, stroke: OpenDesignDayColor.accentLine, radius: 8))
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(card.sourceRefs.prefix(4), id: \.stableID) { source in
+                    NewsMarketRadarSourceRow(source: source)
+                }
+            }
+        }
+        .padding(16)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+    }
+}
+
+private struct NewsMarketRadarSourceRow: View {
+    let source: NewsMarketRadarSourceRef
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: source.url == nil ? "doc.text" : "link")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(source.title)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    .lineLimit(1)
+                Text(source.domain ?? source.path ?? source.sourceType)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    .lineLimit(1)
+                if let excerpt = source.excerpt?.nonEmpty {
+                    Text(excerpt)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .lineLimit(2)
+                }
+            }
+            Spacer(minLength: 0)
+            if let url = source.url, let destination = URL(string: url) {
+                Link(destination: destination) {
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                }
+            }
+        }
+        .padding(10)
+        .background(referenceRounded(fill: OpenDesignDayColor.bgDeep, stroke: OpenDesignDayColor.borderSoft, radius: 8))
+    }
+}
+
+private struct NewsMarketRadarMetaPanelView: View {
+    let snapshot: NewsMarketRadarSnapshot
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                newsMetaTitle("Radar 상태")
+                VStack(alignment: .leading, spacing: 8) {
+                    newsMetaRow("상태", snapshot.statusLabel, tone: newsStatusTone(snapshot.status))
+                    newsMetaRow("카드", "\(snapshot.cardCount)", tone: .accent)
+                    newsMetaRow("마지막 성공", snapshot.status.lastSuccessAt.map(relativeNewsDate(_:)) ?? "없음", tone: .muted)
+                    if let error = snapshot.status.error?.nonEmpty {
+                        Text(error)
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(OpenDesignDayColor.amber)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(10)
+                            .background(referenceRounded(fill: OpenDesignDayColor.amberDim, stroke: OpenDesignDayColor.amberLine, radius: 8))
+                    }
+                }
+
+                newsMetaTitle("가정 커버리지")
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(snapshot.lanes) { lane in
+                        HStack(spacing: 8) {
+                            Text(lane.title)
+                                .font(.system(size: 11.5, weight: .semibold))
+                                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                            Spacer(minLength: 0)
+                            Text("\(lane.cards.count)")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundStyle(newsImpactTone(lane.impact).color)
+                        }
+                        .padding(10)
+                        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 8))
+                    }
+                }
+            }
+            .padding(14)
+        }
+    }
+}
+
+private func newsMetaTitle(_ title: String) -> some View {
+    Text(title)
+        .font(.system(size: 10, weight: .medium, design: .monospaced))
+        .textCase(.uppercase)
+        .foregroundStyle(OpenDesignDayColor.muted)
+}
+
+private func newsMetric(_ value: String, _ label: String, tone: OpenDesignReferenceTone) -> some View {
+    VStack(alignment: .leading, spacing: 2) {
+        Text(value)
+            .font(.system(size: 15, weight: .bold, design: .monospaced))
+            .foregroundStyle(tone.color)
+        Text(label)
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.muted)
+    }
+    .padding(.horizontal, 10)
+    .padding(.vertical, 8)
+    .background(referenceRounded(fill: tone.dim, stroke: tone.line, radius: 8))
+}
+
+private func newsMetaRow(_ label: String, _ value: String, tone: OpenDesignReferenceTone) -> some View {
+    HStack(spacing: 8) {
+        Text(label)
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.muted)
+        Spacer(minLength: 0)
+        Text(value)
+            .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+            .foregroundStyle(tone.color)
+            .lineLimit(1)
+    }
+    .padding(10)
+    .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 8))
+}
+
+private func newsPill(_ text: String, tone: OpenDesignReferenceTone) -> some View {
+    Text(text)
+        .font(.system(size: 10, weight: .bold, design: .monospaced))
+        .foregroundStyle(tone.color)
+        .padding(.horizontal, 7)
+        .frame(height: 20)
+        .background(Capsule().fill(tone.dim).overlay(Capsule().stroke(tone.line, lineWidth: 1)))
+}
+
+private func newsImpactLabel(_ impact: String) -> String {
+    switch impact {
+    case "strengthens": return "강화"
+    case "weakens": return "약화"
+    case "mixed": return "상충"
+    default: return "불확실"
+    }
+}
+
+private func newsImpactTone(_ impact: String) -> OpenDesignReferenceTone {
+    switch impact {
+    case "strengthens": return .accent
+    case "weakens": return .rose
+    case "mixed": return .amber
+    default: return .muted
+    }
+}
+
+private func newsConfidenceTone(_ confidence: String) -> OpenDesignReferenceTone {
+    switch confidence {
+    case "strong": return .accent
+    case "medium": return .sky
+    default: return .muted
+    }
+}
+
+private func newsStatusTone(_ status: NewsMarketRadarStatus) -> OpenDesignReferenceTone {
+    switch status.state {
+    case "ready": return status.stale == true ? .amber : .accent
+    case "refreshing": return .sky
+    case "failed": return .amber
+    case "stale": return .amber
+    default: return .muted
+    }
+}
+
+private func relativeNewsDate(_ date: Date) -> String {
+    let elapsed = max(0, Date().timeIntervalSince(date))
+    if elapsed < 60 { return "방금" }
+    if elapsed < 3600 { return "\(Int(elapsed / 60))m" }
+    if elapsed < 86_400 { return "\(Int(elapsed / 3600))h" }
+    return "\(Int(elapsed / 86_400))d"
+}
+
+private extension String {
+    var nonEmpty: String? {
+        trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : self
     }
 }
 
@@ -3599,6 +4001,7 @@ private func newsSourceMarkBackground(tone: OpenDesignReferenceTone) -> some Vie
 struct OpenDesignReferenceTitlebar: View {
     let page: OpenDesignReferencePageModel
     let openSearch: () -> Void
+    var refreshAction: (() -> Void)? = nil
 
     var body: some View {
         ZStack {
@@ -3624,7 +4027,7 @@ struct OpenDesignReferenceTitlebar: View {
                     OpenDesignReferenceToolbarButton(systemImage: "square.and.arrow.up", label: "공유", action: {})
                 }
                 if page.kind == .news || page.kind == .bipLog {
-                    OpenDesignReferenceToolbarButton(systemImage: "arrow.clockwise", label: "새로고침", action: {})
+                    OpenDesignReferenceToolbarButton(systemImage: "arrow.clockwise", label: "새로고침", action: refreshAction ?? {})
                 }
                 if page.kind == .projects || page.kind == .settings || page.kind == .interviews || page.kind == .history || page.kind == .news {
                     OpenDesignReferenceToolbarButton(systemImage: "sidebar.right", label: "우측 패널", isOn: true, action: {})
@@ -3642,6 +4045,10 @@ struct OpenDesignReferenceShell: View {
     let kind: OpenDesignReferencePageKind
     let layout: OpenDesignDayLayoutMetrics
     let openSearch: () -> Void
+    var newsMarketRadar: NewsMarketRadarSnapshot = .empty
+    var refreshNewsMarketRadar: () -> Void = {}
+    var prepareNewsMarketRadar: () -> Void = {}
+    var openNewsSettings: () -> Void = {}
 
     private var page: OpenDesignReferencePageModel {
         OpenDesignReferenceCatalog.page(kind)
@@ -3651,7 +4058,14 @@ struct OpenDesignReferenceShell: View {
         if kind == .interviews {
             OpenDesignInterviewsShell(layout: layout)
         } else if kind == .news {
-            OpenDesignNewsShell(layout: layout, openSearch: openSearch)
+            OpenDesignNewsShell(
+                layout: layout,
+                openSearch: openSearch,
+                snapshot: newsMarketRadar,
+                refresh: refreshNewsMarketRadar,
+                prepare: prepareNewsMarketRadar,
+                openSettings: openNewsSettings
+            )
         } else if kind == .bipLog {
             OpenDesignBipLogShell(layout: layout, openSearch: openSearch)
         } else if kind == .history {

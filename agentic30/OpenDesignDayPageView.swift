@@ -1659,7 +1659,11 @@ private extension View {
 struct OpenDesignDayPageView: View {
     let content: OpenDesignDayContent
     let openSettings: () -> Void
-    let submitStructuredPromptChoice: (String) -> Void
+    let submitStructuredPromptChoice: (OpenDesignDayAnswerSubmission) -> Void
+    let newsMarketRadar: NewsMarketRadarSnapshot
+    let refreshNewsMarketRadar: () -> Void
+    let prepareNewsMarketRadar: () -> Void
+    let openNewsSettings: () -> Void
     let completeDay: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1677,12 +1681,20 @@ struct OpenDesignDayPageView: View {
     init(
         content: OpenDesignDayContent = .day1,
         openSettings: @escaping () -> Void,
-        submitStructuredPromptChoice: @escaping (String) -> Void = { _ in },
+        submitStructuredPromptChoice: @escaping (OpenDesignDayAnswerSubmission) -> Void = { _ in },
+        newsMarketRadar: NewsMarketRadarSnapshot = .empty,
+        refreshNewsMarketRadar: @escaping () -> Void = {},
+        prepareNewsMarketRadar: @escaping () -> Void = {},
+        openNewsSettings: @escaping () -> Void = {},
         completeDay: @escaping () -> Void = {}
     ) {
         self.content = content
         self.openSettings = openSettings
         self.submitStructuredPromptChoice = submitStructuredPromptChoice
+        self.newsMarketRadar = newsMarketRadar
+        self.refreshNewsMarketRadar = refreshNewsMarketRadar
+        self.prepareNewsMarketRadar = prepareNewsMarketRadar
+        self.openNewsSettings = openNewsSettings
         self.completeDay = completeDay
         _interaction = State(initialValue: OpenDesignDayInteractionState(totalInterviewSteps: content.interviewSteps.count))
     }
@@ -1709,6 +1721,10 @@ struct OpenDesignDayPageView: View {
                     openSearch: openSearch,
                     toggleSearch: toggleSearch,
                     activateRailItem: activateRailItem,
+                    newsMarketRadar: newsMarketRadar,
+                    refreshNewsMarketRadar: refreshNewsMarketRadar,
+                    prepareNewsMarketRadar: prepareNewsMarketRadar,
+                    openNewsSettings: openNewsSettings,
                     submitStep: submitStep,
                     acceptMission: acceptMission,
                     advanceHandoff: advanceHandoff,
@@ -1961,8 +1977,8 @@ struct OpenDesignDayPageView: View {
                 }
             }
         }
-        if let selectedTitle = selectedTitle(for: step.id) {
-            submitStructuredPromptChoice(selectedTitle)
+        if let submission = answerSubmission(for: step, selectedChoiceID: selectedChoiceID) {
+            submitStructuredPromptChoice(submission)
         }
         if step.id < content.interviewSteps.count {
             requestScroll(to: .interview(stepID: step.id + 1, placement: .nextAction), placement: .nextAction)
@@ -2146,6 +2162,27 @@ struct OpenDesignDayPageView: View {
         }
         return option.title
     }
+
+    private func answerSubmission(
+        for step: OpenDesignDayContent.InterviewStep,
+        selectedChoiceID: Int
+    ) -> OpenDesignDayAnswerSubmission? {
+        guard let option = step.options.first(where: { $0.id == selectedChoiceID }) else {
+            return nil
+        }
+        let freeform = interaction.freeformAnswers[step.id] ?? (step.id == 1 ? interaction.freeformAnswer : "")
+        return OpenDesignDayAnswerSubmission(
+            questionId: "day-step-\(step.id)",
+            dimension: step.dimension,
+            questionTitle: step.title,
+            questionPrompt: step.prompt,
+            answerId: "\(option.id)",
+            answerTitle: option.title,
+            answerDetail: option.detail,
+            freeformAnswer: freeform,
+            isAntiSignal: option.isAntiSignal
+        )
+    }
 }
 
 struct OpenDesignDayShell: View {
@@ -2158,6 +2195,10 @@ struct OpenDesignDayShell: View {
     let openSearch: () -> Void
     let toggleSearch: () -> Void
     let activateRailItem: (OpenDesignDayContent.RailItem) -> Void
+    let newsMarketRadar: NewsMarketRadarSnapshot
+    let refreshNewsMarketRadar: () -> Void
+    let prepareNewsMarketRadar: () -> Void
+    let openNewsSettings: () -> Void
     let submitStep: (OpenDesignDayContent.InterviewStep) -> Void
     let acceptMission: () -> Void
     let advanceHandoff: () -> Void
@@ -2174,7 +2215,8 @@ struct OpenDesignDayShell: View {
             if let selectedReferencePage {
                 OpenDesignReferenceTitlebar(
                     page: OpenDesignReferenceCatalog.page(selectedReferencePage),
-                    openSearch: toggleSearch
+                    openSearch: toggleSearch,
+                    refreshAction: selectedReferencePage == .news ? refreshNewsMarketRadar : nil
                 )
             } else if let market = content.market {
                 OpenDesignMarketTitlebar(
@@ -2210,7 +2252,11 @@ struct OpenDesignDayShell: View {
                     OpenDesignReferenceShell(
                         kind: selectedReferencePage,
                         layout: layout,
-                        openSearch: openSearch
+                        openSearch: openSearch,
+                        newsMarketRadar: newsMarketRadar,
+                        refreshNewsMarketRadar: refreshNewsMarketRadar,
+                        prepareNewsMarketRadar: prepareNewsMarketRadar,
+                        openNewsSettings: openNewsSettings
                     )
                     .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.995)))
                 } else {

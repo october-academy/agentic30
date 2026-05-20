@@ -595,6 +595,7 @@ final class AgenticViewModel: ObservableObject {
     private var activeOnboardingWorkspacePrefetchFingerprint: String?
     private var replacementSessionCreateInFlight = false
     private var latestCurriculumQuestionReframesByKey: [String: CurriculumQuestionReframeRecord] = [:]
+    private var lastNewsMarketRadarViewedAt: Date?
     /// Idempotency guard for the AI-driven Foundation Day 0/2-7 first prompt.
     /// Keyed by `"<sessionId>:day-<day>"` so the same opener is never injected
     /// twice for the same (session, day) pair, even if the sidecar replays
@@ -699,6 +700,7 @@ final class AgenticViewModel: ObservableObject {
         foundationProgressState = result.snapshot
         foundationStartedAt = result.snapshot.startedAt
         _ = foundationCurriculumLifecycleController.enterCompletedState(result.snapshot)
+        recordNewsMarketRadarDayCompletionHelpIfNeeded(day)
         return result
     }
 
@@ -2145,6 +2147,7 @@ final class AgenticViewModel: ObservableObject {
     }
 
     func prepareNewsMarketRadarForDisplay() {
+        lastNewsMarketRadarViewedAt = Date()
         requestNewsMarketRadar()
         guard shouldRefreshNewsMarketRadarForDisplay else { return }
         refreshNewsMarketRadar(reason: "daily", force: false)
@@ -2193,6 +2196,19 @@ final class AgenticViewModel: ObservableObject {
             "isAntiSignal": answer.isAntiSignal,
             "occurredAt": occurredAt,
         ])
+    }
+
+    private func recordNewsMarketRadarDayCompletionHelpIfNeeded(_ day: Int) {
+        guard [2, 5, 27].contains(day),
+              let viewedAt = lastNewsMarketRadarViewedAt,
+              Date().timeIntervalSince(viewedAt) <= 24 * 60 * 60 else {
+            return
+        }
+        PostHogTelemetry.capture("mac_news_market_radar_day_completion_helped", properties: [
+            "day": day,
+            "card_count": newsMarketRadar.cardCount,
+            "lane_count": newsMarketRadar.lanes.count,
+        ], authSession: macAuthSession)
     }
 
     // R4 — quarantine surface. Both methods are no-ops when offline; the
@@ -3032,6 +3048,7 @@ final class AgenticViewModel: ObservableObject {
             recordStartupSessionAppearIfNeeded(source: "ready")
             sendAuthContextToSidecar()
             syncProviderSettingsToSidecar()
+            prepareNewsMarketRadarForDisplay()
             refreshPresentationState()
             requestCodexWarmupIfNeeded()
             requestBipReadinessCheck()
@@ -3207,7 +3224,13 @@ final class AgenticViewModel: ObservableObject {
                     schemaVersion: newsMarketRadar.schemaVersion,
                     generatedAt: newsMarketRadar.generatedAt,
                     nextRefreshAfter: newsMarketRadar.nextRefreshAfter,
-                    status: status,
+                    status: NewsMarketRadarStatus(
+                        state: status.state,
+                        lastSuccessAt: status.lastSuccessAt ?? newsMarketRadar.status.lastSuccessAt,
+                        stale: status.stale ?? newsMarketRadar.status.stale,
+                        error: status.error ?? newsMarketRadar.status.error,
+                        reason: status.reason
+                    ),
                     workspaceEvidenceRefs: newsMarketRadar.workspaceEvidenceRefs,
                     lanes: newsMarketRadar.lanes
                 )
@@ -5319,6 +5342,7 @@ private extension AgenticViewModel {
         activeOnboardingWorkspacePrefetchFingerprint = nil
         replacementSessionCreateInFlight = false
         latestCurriculumQuestionReframesByKey = [:]
+        lastNewsMarketRadarViewedAt = nil
         injectedFoundationFirstPromptKeys = []
         pendingFoundationFirstPromptKeys = []
         startupSessionAppearStartedAt = nil
