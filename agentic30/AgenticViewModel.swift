@@ -2166,7 +2166,7 @@ final class AgenticViewModel: ObservableObject {
         dayType: String
     ) {
         guard isConnected else { return }
-        let occurredAt = Self.iso8601String(Date())
+        let occurredAt = Self.sidecarDateString(from: Date())
         sidecar.send(payload: [
             "type": "curriculum_answer_saved",
             "day": day,
