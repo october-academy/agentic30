@@ -2130,7 +2130,10 @@ final class AgenticViewModel: ObservableObject {
 
     func requestNewsMarketRadar() {
         guard isConnected else { return }
-        sidecar.send(payload: ["type": "news_market_radar_get"])
+        sidecar.send(payload: [
+            "type": "news_market_radar_get",
+            "preferredProvider": selectedProvider.rawValue,
+        ])
     }
 
     func refreshNewsMarketRadar(reason: String = "manual", force: Bool = false) {
@@ -2143,6 +2146,7 @@ final class AgenticViewModel: ObservableObject {
             "type": "news_market_radar_refresh",
             "reason": reason,
             "force": force,
+            "preferredProvider": selectedProvider.rawValue,
         ])
     }
 
@@ -2156,7 +2160,7 @@ final class AgenticViewModel: ObservableObject {
     private var shouldRefreshNewsMarketRadarForDisplay: Bool {
         if newsMarketRadar.status.state == "refreshing" { return false }
         if newsMarketRadar.status.state == "failed",
-           newsMarketRadar.status.reason == "exa_api_key_missing" {
+           ["exa_api_key_missing", "exa_mcp_missing"].contains(newsMarketRadar.status.reason ?? "") {
             return false
         }
         guard let generatedAt = newsMarketRadar.generatedAt else { return true }
@@ -3229,7 +3233,8 @@ final class AgenticViewModel: ObservableObject {
                         lastSuccessAt: status.lastSuccessAt ?? newsMarketRadar.status.lastSuccessAt,
                         stale: status.stale ?? newsMarketRadar.status.stale,
                         error: status.error ?? newsMarketRadar.status.error,
-                        reason: status.reason
+                        reason: status.reason,
+                        researchSource: status.researchSource ?? newsMarketRadar.status.researchSource
                     ),
                     workspaceEvidenceRefs: newsMarketRadar.workspaceEvidenceRefs,
                     lanes: newsMarketRadar.lanes

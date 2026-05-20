@@ -149,7 +149,7 @@ test("snapshot normalization requires two independent domains for strong evidenc
   assert.equal(twoSources.lanes.find((lane) => lane.id === "alternatives_pricing").cards[0].confidence, "strong");
 });
 
-test("refresh persists provider result and no-key refresh returns stale cached state", async () => {
+test("refresh persists provider result and missing Exa route returns stale cached state", async () => {
   await withTmpWorkspace(async (root) => {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
     await fs.writeFile(path.join(root, "docs", "ICP.md"), "# ICP\nsolo devs");
@@ -176,6 +176,7 @@ test("refresh persists provider result and no-key refresh returns stale cached s
       }),
     });
     assert.equal(snapshot.status.state, "ready");
+    assert.equal(snapshot.status.researchSource, "EXA_API_KEY fallback");
     assert.equal(snapshot.lanes.find((lane) => lane.id === "icp").cards.length, 1);
     const stat = await fs.stat(resolveNewsMarketRadarCachePath(root));
     assert.equal(stat.mode & 0o777, 0o600);
@@ -189,8 +190,57 @@ test("refresh persists provider result and no-key refresh returns stale cached s
       },
     });
     assert.equal(noKey.status.state, "failed");
-    assert.equal(noKey.status.reason, "exa_api_key_missing");
+    assert.equal(noKey.status.reason, "exa_mcp_missing");
     assert.equal(noKey.status.stale, true);
     assert.equal(noKey.lanes.find((lane) => lane.id === "icp").cards.length, 1);
+  });
+});
+
+test("refresh uses provider Exa MCP route without requiring EXA_API_KEY", async () => {
+  await withTmpWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.writeFile(path.join(root, "docs", "ICP.md"), "# ICP\nsolo devs");
+    let observedRoute = null;
+    const snapshot = await refreshNewsMarketRadar({
+      workspaceRoot: root,
+      force: true,
+      now: new Date("2026-05-20T00:00:00.000Z"),
+      exaResearchRoutes: [{
+        provider: "codex",
+        source: "provider_mcp",
+        label: "Codex Exa MCP",
+        serverName: "exa",
+        mcpConfig: {
+          type: "http",
+          url: "https://mcp.exa.ai/mcp",
+        },
+      }],
+      providerResearcher: async ({ exaMcpConfig, exaResearchRoute, exaApiKeyConfigured }) => {
+        observedRoute = { exaMcpConfig, exaResearchRoute, exaApiKeyConfigured };
+        return {
+          researchSource: "Codex Exa MCP",
+          lanes: [{
+            id: "icp",
+            cards: [{
+              id: "card-1",
+              title: "MCP-backed research",
+              summary: "Research ran through provider MCP.",
+              impact: "strengthens",
+              sourceRefs: [
+                { url: "https://example.com/a", title: "A" },
+                { url: "https://other.example/b", title: "B" },
+              ],
+            }],
+          }],
+        };
+      },
+    });
+
+    assert.equal(observedRoute.exaApiKeyConfigured, false);
+    assert.equal(observedRoute.exaMcpConfig.url, "https://mcp.exa.ai/mcp");
+    assert.equal(observedRoute.exaResearchRoute.label, "Codex Exa MCP");
+    assert.equal(snapshot.status.state, "ready");
+    assert.equal(snapshot.status.researchSource, "Codex Exa MCP");
+    assert.equal(snapshot.lanes.find((lane) => lane.id === "icp").cards.length, 1);
   });
 });

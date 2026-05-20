@@ -2680,9 +2680,9 @@ private struct NewsMarketRadarMainView: View {
                 NewsMarketRadarHeader(snapshot: snapshot, refresh: refresh, openSettings: openSettings)
 
                 if snapshot.status.state == "failed",
-                   snapshot.status.reason == "exa_api_key_missing",
+                   snapshot.status.needsExaConfiguration,
                    snapshot.cardCount == 0 {
-                    NewsMarketRadarNoKeyState(openSettings: openSettings)
+                    NewsMarketRadarNoExaRouteState(openSettings: openSettings)
                 } else if selectedLane.cards.isEmpty {
                     NewsMarketRadarEmptyLane(lane: selectedLane, refresh: refresh)
                 } else {
@@ -2740,7 +2740,7 @@ private struct NewsMarketRadarHeader: View {
                     newsPill(snapshot.statusLabel, tone: newsStatusTone(snapshot.status))
                     HStack(spacing: 8) {
                         OpenDesignNewsActionButton(icon: "arrow.clockwise", title: "새로고침", tone: .ghost, action: refresh)
-                        if snapshot.status.reason == "exa_api_key_missing" {
+                        if snapshot.status.needsExaConfiguration {
                             OpenDesignNewsActionButton(icon: "key.fill", title: "Exa 설정", tone: .accent, action: openSettings)
                         }
                     }
@@ -2758,7 +2758,7 @@ private struct NewsMarketRadarHeader: View {
     }
 }
 
-private struct NewsMarketRadarNoKeyState: View {
+private struct NewsMarketRadarNoExaRouteState: View {
     let openSettings: () -> Void
 
     var body: some View {
@@ -2766,10 +2766,10 @@ private struct NewsMarketRadarNoKeyState: View {
             Image(systemName: "key.slash")
                 .font(.system(size: 20, weight: .bold))
                 .foregroundStyle(OpenDesignDayColor.amber)
-            Text("Exa API key가 필요합니다")
+            Text("Exa MCP 연결이 필요합니다")
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundStyle(OpenDesignDayColor.fg)
-            Text("Market Radar는 public web research를 Exa MCP로 수행합니다. Settings에서 EXA_API_KEY를 저장하면 하루 1회 자동으로 새로고침됩니다.")
+            Text("Market Radar는 Codex, Claude Code, Gemini에 연결된 Exa MCP를 우선 사용합니다. 없을 때만 Settings의 EXA_API_KEY fallback을 사용합니다.")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(OpenDesignDayColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -2929,6 +2929,9 @@ private struct NewsMarketRadarMetaPanelView: View {
                     newsMetaRow("상태", snapshot.statusLabel, tone: newsStatusTone(snapshot.status))
                     newsMetaRow("카드", "\(snapshot.cardCount)", tone: .accent)
                     newsMetaRow("마지막 성공", snapshot.status.lastSuccessAt.map(relativeNewsDate(_:)) ?? "없음", tone: .muted)
+                    if let researchSource = snapshot.status.researchSource?.nonEmpty {
+                        newsMetaRow("소스", researchSource, tone: .sky)
+                    }
                     if let error = snapshot.status.error?.nonEmpty {
                         Text(error)
                             .font(.system(size: 11.5, weight: .medium))
@@ -3053,6 +3056,12 @@ private func relativeNewsDate(_ date: Date) -> String {
 private extension String {
     var nonEmpty: String? {
         trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : self
+    }
+}
+
+private extension NewsMarketRadarStatus {
+    var needsExaConfiguration: Bool {
+        ["exa_api_key_missing", "exa_mcp_missing"].contains(reason ?? "")
     }
 }
 

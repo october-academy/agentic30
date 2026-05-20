@@ -276,6 +276,7 @@ export async function loadNewsMarketRadarSnapshot({
   now = new Date(),
   fsImpl = fs,
   exaApiKey = "",
+  exaConfigured = false,
 } = {}) {
   const cachePath = resolveNewsMarketRadarCachePath(workspaceRoot);
   const raw = await readJsonFile(cachePath, fsImpl);
@@ -285,11 +286,12 @@ export async function loadNewsMarketRadarSnapshot({
       fallbackStatus: statusForSnapshot(raw.snapshot.status, now),
     });
   }
+  const configured = exaConfigured || Boolean(String(exaApiKey || "").trim());
   return makeEmptyNewsMarketRadarSnapshot({
     now,
-    status: exaApiKey ? "idle" : "failed",
-    error: exaApiKey ? null : "EXA_API_KEY is not configured.",
-    reason: exaApiKey ? "not_loaded" : "exa_api_key_missing",
+    status: configured ? "idle" : "failed",
+    error: configured ? null : "Exa MCP is not configured.",
+    reason: configured ? "not_loaded" : "exa_mcp_missing",
   });
 }
 
@@ -349,6 +351,9 @@ export async function pruneNewsMarketRadarRuns({
 export async function refreshNewsMarketRadar({
   workspaceRoot,
   exaApiKey = "",
+  exaMcpConfig = null,
+  exaResearchRoute = null,
+  exaResearchRoutes = [],
   reason = "manual",
   force = false,
   providerResearcher,
@@ -358,19 +363,33 @@ export async function refreshNewsMarketRadar({
   fsImpl = fs,
 } = {}) {
   const key = String(exaApiKey || "").trim();
-  const previous = await loadNewsMarketRadarSnapshot({ workspaceRoot, now, fsImpl, exaApiKey: key });
-  if (!key) {
-    const noKey = {
+  const routes = normalizeExaResearchRoutes({
+    exaApiKey: key,
+    exaMcpConfig,
+    exaResearchRoute,
+    exaResearchRoutes,
+  });
+  const primaryRoute = routes[0] || null;
+  const previous = await loadNewsMarketRadarSnapshot({
+    workspaceRoot,
+    now,
+    fsImpl,
+    exaApiKey: key,
+    exaConfigured: routes.length > 0,
+  });
+  if (routes.length === 0) {
+    const noExaRoute = {
       ...previous,
       status: {
         state: "failed",
         lastSuccessAt: previous.status?.lastSuccessAt || null,
         stale: Boolean(previous.generatedAt),
-        error: "EXA_API_KEY is not configured.",
-        reason: "exa_api_key_missing",
+        error: "Exa MCP is not configured.",
+        reason: "exa_mcp_missing",
+        researchSource: null,
       },
     };
-    return persistNewsMarketRadarSnapshot({ workspaceRoot, snapshot: noKey, now });
+    return persistNewsMarketRadarSnapshot({ workspaceRoot, snapshot: noExaRoute, now });
   }
   if (!force && previous.status?.state === "ready" && previous.generatedAt) {
     const ageMs = now.getTime() - Date.parse(previous.generatedAt);
@@ -396,10 +415,20 @@ export async function refreshNewsMarketRadar({
   const rawProviderResult = await providerResearcher({
     context,
     prompt: buildMarketRadarProviderPrompt(context),
-    exaMcpConfig: buildExaMcpConfig(key),
-    exaApiKeyConfigured: true,
+    exaMcpConfig: primaryRoute.mcpConfig,
+    exaResearchRoute: summarizeExaResearchRoute(primaryRoute),
+    exaResearchRoutes: routes,
+    exaApiKeyConfigured: Boolean(key),
     reason,
   });
+  const researchSource = cleanString(
+    rawProviderResult?.researchSource
+      || rawProviderResult?.research_source
+      || rawProviderResult?.exaResearchSource
+      || primaryRoute.label
+      || "",
+    160,
+  ) || null;
   const providerSnapshot = extractProviderSnapshot(rawProviderResult);
   const normalized = normalizeNewsMarketRadarSnapshot(providerSnapshot, {
     now,
@@ -411,6 +440,7 @@ export async function refreshNewsMarketRadar({
       stale: false,
       error: null,
       reason,
+      researchSource,
     },
   });
   return persistNewsMarketRadarSnapshot({
@@ -522,7 +552,10 @@ export function normalizeNewsMarketRadarSnapshot(
     fallbackStatus = null,
   } = {},
 ) {
-  const status = statusForSnapshot(value.status || fallbackStatus, now);
+  const status = statusForSnapshot({
+    ...(fallbackStatus || {}),
+    ...(value.status || {}),
+  }, now);
   const lanesById = new Map();
   for (const lane of Array.isArray(value.lanes) ? value.lanes : []) {
     const normalizedLane = normalizeLane(lane, { now, rankedAnswers });
@@ -662,6 +695,62 @@ function statusForSnapshot(value = {}, now = new Date()) {
     stale: Boolean(value?.stale || state === "stale"),
     error: cleanString(value?.error || "", 1_000) || null,
     reason: cleanString(value?.reason || "", 120) || null,
+    researchSource: cleanString(value?.researchSource || value?.research_source || "", 160) || null,
+  };
+}
+
+function normalizeExaResearchRoutes({
+  exaApiKey = "",
+  exaMcpConfig = null,
+  exaResearchRoute = null,
+  exaResearchRoutes = [],
+} = {}) {
+  const routes = Array.isArray(exaResearchRoutes)
+    ? exaResearchRoutes
+    : [];
+  const normalized = routes
+    .map(normalizeExaResearchRoute)
+    .filter(Boolean);
+  if (normalized.length > 0) return normalized;
+  const single = normalizeExaResearchRoute({
+    ...(exaResearchRoute || {}),
+    mcpConfig: exaMcpConfig,
+  });
+  if (single) return [single];
+  const key = String(exaApiKey || "").trim();
+  if (!key) return [];
+  return [{
+    provider: "",
+    source: "api_key",
+    label: "EXA_API_KEY fallback",
+    mcpConfig: buildExaMcpConfig(key),
+  }];
+}
+
+function normalizeExaResearchRoute(route = {}) {
+  if (!route || typeof route !== "object") return null;
+  const mcpConfig = route.mcpConfig && typeof route.mcpConfig === "object"
+    ? route.mcpConfig
+    : null;
+  if (!mcpConfig) return null;
+  return {
+    provider: cleanString(route.provider || "", 80),
+    source: cleanString(route.source || "", 80),
+    label: cleanString(route.label || "", 160) || "Exa MCP",
+    serverName: cleanString(route.serverName || "", 120),
+    configPath: route.configPath ? cleanString(route.configPath, 1_000) : null,
+    mcpConfig,
+  };
+}
+
+function summarizeExaResearchRoute(route = {}) {
+  if (!route) return null;
+  return {
+    provider: route.provider || "",
+    source: route.source || "",
+    label: route.label || "",
+    serverName: route.serverName || "",
+    configPath: route.configPath || null,
   };
 }
 

@@ -809,7 +809,8 @@ struct SidecarEventDecodingTests {
               "lastSuccessAt": "2026-05-20T00:00:00.000Z",
               "stale": false,
               "error": null,
-              "reason": "manual"
+              "reason": "manual",
+              "researchSource": "Codex Exa MCP"
             },
             "workspaceEvidenceRefs": [],
             "lanes": [
@@ -855,6 +856,7 @@ struct SidecarEventDecodingTests {
 
         #expect(event.type == "news_market_radar_result")
         #expect(event.newsMarketRadar?.status.state == "ready")
+        #expect(event.newsMarketRadar?.status.researchSource == "Codex Exa MCP")
         #expect(event.newsMarketRadar?.lanes.first?.id == "alternatives_pricing")
         #expect(event.newsMarketRadar?.lanes.first?.cards.first?.relatedDays == [2, 5, 27])
         #expect(event.newsMarketRadar?.lanes.first?.cards.first?.sourceRefs.first?.domain == "example.com")
@@ -869,7 +871,8 @@ struct SidecarEventDecodingTests {
             "lastSuccessAt": null,
             "stale": false,
             "error": null,
-            "reason": "daily"
+            "reason": "daily",
+            "researchSource": "Gemini Exa MCP"
           }
         }
         """
@@ -880,6 +883,7 @@ struct SidecarEventDecodingTests {
         #expect(event.status == nil)
         #expect(event.newsMarketRadarStatus?.state == "refreshing")
         #expect(event.newsMarketRadarStatus?.reason == "daily")
+        #expect(event.newsMarketRadarStatus?.researchSource == "Gemini Exa MCP")
     }
 
     private var decoder: JSONDecoder {

@@ -1023,7 +1023,7 @@ struct SettingsView: View {
                     Text("Exa Market Research")
                         .font(.system(size: 18, weight: .bold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.88))
-                    Text(exaApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "News Market Radar is disabled until a key is saved." : "News Market Radar can refresh with Exa MCP.")
+                    Text(exaApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Provider Exa MCP is used first. Add this only as a fallback." : "News Market Radar can fall back to this Exa API key.")
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.52))
                 }
@@ -1037,7 +1037,7 @@ struct SettingsView: View {
                 identifier: "settings.exa.apiKeyField"
             )
 
-            Text("Used only by the News tab's Market Radar. Queries may include the product name, public URL, and explicit competitors; raw Day answers and local excerpts stay on this Mac.")
+            Text("Fallback only for the News tab's Market Radar when Codex, Claude Code, or Gemini does not already expose Exa MCP. Queries may include the product name, public URL, and explicit competitors; raw Day answers and local excerpts stay on this Mac.")
                 .font(.system(size: 12, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(0.44))
                 .fixedSize(horizontal: false, vertical: true)

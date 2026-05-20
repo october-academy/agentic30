@@ -953,7 +953,8 @@ struct NewsMarketRadarSnapshot: Codable, Hashable {
             lastSuccessAt: nil,
             stale: false,
             error: nil,
-            reason: nil
+            reason: nil,
+            researchSource: nil
         ),
         workspaceEvidenceRefs: [],
         lanes: NewsMarketRadarLane.defaultLanes
@@ -980,6 +981,7 @@ struct NewsMarketRadarStatus: Codable, Hashable {
     let stale: Bool?
     let error: String?
     let reason: String?
+    let researchSource: String?
 }
 
 struct NewsMarketRadarLane: Codable, Hashable, Identifiable {

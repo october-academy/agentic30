@@ -8,6 +8,10 @@ import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { WebSocket, WebSocketServer } from "ws";
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { GoogleGenAI, mcpToTool } from "@google/genai";
+import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { MetaAdsClient } from "./meta-ads.mjs";
 import { buildAdStrategyPrompt } from "./ad-strategy-prompt.mjs";
 import { buildBipPrompt } from "./bip-prompt.mjs";
@@ -47,7 +51,9 @@ import { initiateNotionOAuth, exchangeOAuthCode, refreshAccessToken } from "./no
 import { buildPreflightReport } from "./preflight.mjs";
 import {
   buildCodexEnv,
+  buildGeminiEnv,
   resolveCodexModel,
+  resolveGeminiModel,
   getProviderAuthState,
   getProviderConnectionState,
   runProviderStream,
@@ -150,6 +156,12 @@ import {
   loadNewsMarketRadarSnapshot,
   refreshNewsMarketRadar,
 } from "./news-market-radar.mjs";
+import {
+  buildExaApiKeyRoute,
+  discoverExaMcpRoutes,
+  orderExaMcpRoutes,
+  redactExaResearchRoute,
+} from "./exa-mcp-discovery.mjs";
 import { emitInlineHintTriggerForFeatureAppearance } from "./curriculum-hint-eligibility.mjs";
 import {
   CODEX_STRUCTURED_INPUT_TOOL,
@@ -1425,9 +1437,13 @@ async function handleClientMessage(socket, payload) {
       return;
     }
     case "news_market_radar_get": {
+      const exaRoutes = resolveNewsMarketRadarExaRoutes({
+        preferredProvider: payload.preferredProvider,
+      });
       const snapshot = await loadNewsMarketRadarSnapshot({
         workspaceRoot,
         exaApiKey: currentExaApiKey(),
+        exaConfigured: exaRoutes.length > 0,
       });
       send(socket, {
         type: "news_market_radar_result",
@@ -1439,6 +1455,7 @@ async function handleClientMessage(socket, payload) {
       scheduleNewsMarketRadarRefresh({
         reason: payload.reason || "manual",
         force: Boolean(payload.force),
+        preferredProvider: payload.preferredProvider,
         targetSocket: socket,
       });
       return;
@@ -6730,9 +6747,41 @@ function currentExaApiKey() {
   return String(state.integrationSettings?.exaApiKey || process.env.EXA_API_KEY || "").trim();
 }
 
+function resolveNewsMarketRadarExaRoutes({
+  preferredProvider = "",
+} = {}) {
+  const discovered = orderExaMcpRoutes(discoverExaMcpRoutes(), { preferredProvider });
+  const routes = [...discovered];
+  const apiKey = currentExaApiKey();
+  if (apiKey) {
+    const provider = firstAvailableProvider(preferredProvider) || normalizeProviderName(preferredProvider) || "claude";
+    const apiKeyRoute = buildExaApiKeyRoute({ apiKey, provider });
+    if (apiKeyRoute) routes.push(apiKeyRoute);
+  }
+  return routes;
+}
+
+function firstAvailableProvider(preferredProvider = "") {
+  return providerPriority(preferredProvider).find((provider) => getProviderAuthState(provider).available) || "";
+}
+
+function providerPriority(preferredProvider = "") {
+  const preferred = normalizeProviderName(preferredProvider);
+  return [
+    ...(preferred ? [preferred] : []),
+    ...["codex", "claude", "gemini"].filter((provider) => provider !== preferred),
+  ];
+}
+
+function normalizeProviderName(value = "") {
+  const provider = String(value || "").trim().toLowerCase();
+  return ["claude", "codex", "gemini"].includes(provider) ? provider : "";
+}
+
 function scheduleNewsMarketRadarRefresh({
   reason = "manual",
   force = false,
+  preferredProvider = "",
   targetSocket = null,
 } = {}) {
   const normalizedReason = ["daily", "manual", "day_answer", "workspace_scan"].includes(reason)
@@ -6751,6 +6800,7 @@ function scheduleNewsMarketRadarRefresh({
   const promise = runNewsMarketRadarRefresh({
     reason: normalizedReason,
     force,
+    preferredProvider,
     targetSocket,
   }).finally(() => {
     state.newsMarketRadarRefreshPromise = null;
@@ -6762,10 +6812,12 @@ function scheduleNewsMarketRadarRefresh({
 async function runNewsMarketRadarRefresh({
   reason = "manual",
   force = false,
+  preferredProvider = "",
   targetSocket = null,
 } = {}) {
   const startedAt = Date.now();
   const exaApiKey = currentExaApiKey();
+  const exaResearchRoutes = resolveNewsMarketRadarExaRoutes({ preferredProvider });
   broadcast({
     type: "news_market_radar_status",
     status: {
@@ -6773,12 +6825,14 @@ async function runNewsMarketRadarRefresh({
       stale: false,
       error: null,
       reason,
+      researchSource: exaResearchRoutes[0]?.label || null,
     },
   });
   try {
     const snapshot = await refreshNewsMarketRadar({
       workspaceRoot,
       exaApiKey,
+      exaResearchRoutes,
       reason,
       force,
       onboardingHypothesis: state.workspaceOnboardingHypothesis,
@@ -6793,7 +6847,8 @@ async function runNewsMarketRadarRefresh({
       duration_ms: Date.now() - startedAt,
       lane_count: snapshot.lanes?.length || 0,
       card_count: (snapshot.lanes || []).reduce((sum, lane) => sum + (lane.cards?.length || 0), 0),
-      exa_configured: Boolean(exaApiKey),
+      exa_configured: exaResearchRoutes.length > 0,
+      exa_research_source: snapshot.status?.researchSource || exaResearchRoutes[0]?.label || "",
       status: snapshot.status?.state || "",
     });
     return snapshot;
@@ -6801,11 +6856,12 @@ async function runNewsMarketRadarRefresh({
     telemetry.captureException(error, {
       operation: "news_market_radar_refresh",
       reason,
-      exa_configured: Boolean(exaApiKey),
+      exa_configured: exaResearchRoutes.length > 0,
     });
     const cached = await loadNewsMarketRadarSnapshot({
       workspaceRoot,
       exaApiKey,
+      exaConfigured: exaResearchRoutes.length > 0,
     });
     const failed = {
       ...cached,
@@ -6815,6 +6871,7 @@ async function runNewsMarketRadarRefresh({
         stale: Boolean(cached.generatedAt),
         error: formatError(error),
         reason,
+        researchSource: cached.status?.researchSource || exaResearchRoutes[0]?.label || null,
       },
     };
     const payload = {
@@ -6830,32 +6887,76 @@ async function runNewsMarketRadarRefresh({
 async function runNewsMarketRadarProviderResearch({
   prompt,
   exaMcpConfig,
+  exaResearchRoute,
+  exaResearchRoutes = [],
 } = {}) {
-  const exaConfig = exaMcpConfig || buildExaMcpConfig(currentExaApiKey());
   const providerErrors = [];
-  const authState = getProviderAuthState("claude");
-  if (authState.available) {
-    try {
-      return await runNewsMarketRadarClaudeResearch({ prompt, exaMcpConfig: exaConfig });
-    } catch (error) {
-      providerErrors.push(`Claude: ${formatError(error)}`);
+  const routes = normalizeNewsMarketRadarProviderRoutes({
+    exaMcpConfig,
+    exaResearchRoute,
+    exaResearchRoutes,
+  });
+  for (const route of routes) {
+    const provider = normalizeProviderName(route.provider);
+    if (!provider) {
+      providerErrors.push(`${route.label || "Exa MCP"} unavailable: provider is not configured`);
+      continue;
     }
-  } else {
-    providerErrors.push(`Claude unavailable: ${authState.message || authState.source || "not configured"}`);
+    const authState = getProviderAuthState(provider);
+    if (!authState.available) {
+      providerErrors.push(`${providerLabel(provider)} unavailable: ${authState.message || authState.source || "not configured"}`);
+      continue;
+    }
+    try {
+      const text = provider === "claude"
+        ? await runNewsMarketRadarClaudeResearch({ prompt, exaMcpConfig: route.mcpConfig })
+        : provider === "gemini"
+          ? await runNewsMarketRadarGeminiResearch({ prompt, exaMcpConfig: route.mcpConfig })
+          : await runNewsMarketRadarCodexResearch({ prompt, exaMcpConfig: route.mcpConfig });
+      return {
+        text,
+        provider,
+        researchSource: route.label || `${providerLabel(provider)} Exa MCP`,
+        exaResearchRoute: redactExaResearchRoute(route),
+      };
+    } catch (error) {
+      providerErrors.push(`${providerLabel(provider)} ${route.label || "Exa MCP"}: ${formatError(error)}`);
+    }
   }
 
-  const codexAuthState = getProviderAuthState("codex");
-  if (codexAuthState.available) {
-    try {
-      return await runNewsMarketRadarCodexResearch({ prompt, exaMcpConfig: exaConfig });
-    } catch (error) {
-      providerErrors.push(`Codex: ${formatError(error)}`);
-    }
-  } else {
-    providerErrors.push(`Codex unavailable: ${codexAuthState.message || codexAuthState.source || "not configured"}`);
-  }
+  throw new Error(`No provider could complete Exa MCP research. ${providerErrors.join(" | ")}`);
+}
 
-  throw new Error(`No Claude or Codex provider could complete Exa research. ${providerErrors.join(" | ")}`);
+function normalizeNewsMarketRadarProviderRoutes({
+  exaMcpConfig,
+  exaResearchRoute,
+  exaResearchRoutes = [],
+} = {}) {
+  const routes = Array.isArray(exaResearchRoutes) && exaResearchRoutes.length
+    ? exaResearchRoutes
+    : [{
+        ...(exaResearchRoute || {}),
+        mcpConfig: exaMcpConfig || buildExaMcpConfig(currentExaApiKey()),
+      }];
+  return routes
+    .filter((route) => route?.mcpConfig)
+    .map((route) => ({
+      provider: normalizeProviderName(route.provider),
+      source: String(route.source || ""),
+      label: String(route.label || ""),
+      serverName: String(route.serverName || ""),
+      configPath: route.configPath || null,
+      mcpConfig: route.mcpConfig,
+    }));
+}
+
+function providerLabel(provider) {
+  switch (provider) {
+  case "claude": return "Claude";
+  case "gemini": return "Gemini";
+  case "codex": return "Codex";
+  default: return "Provider";
+  }
 }
 
 async function runNewsMarketRadarClaudeResearch({
@@ -6964,6 +7065,92 @@ async function runNewsMarketRadarCodexResearch({
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function runNewsMarketRadarGeminiResearch({
+  prompt,
+  exaMcpConfig,
+} = {}) {
+  const env = buildGeminiEnv();
+  const useVertex = env.GOOGLE_GENAI_USE_VERTEXAI === "true" || env.GOOGLE_GENAI_USE_VERTEXAI === "1";
+  const apiKey = env.GEMINI_API_KEY || env.GOOGLE_API_KEY || "";
+  if (!useVertex && !apiKey) {
+    throw new Error("Gemini provider requires GOOGLE_API_KEY or GEMINI_API_KEY (or Vertex AI configuration).");
+  }
+  const client = new McpClient({
+    name: "agentic30-market-radar",
+    version: "1.0.0",
+  });
+  const transport = buildMcpClientTransport(exaMcpConfig);
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), 90_000);
+  try {
+    await client.connect(transport);
+    const ai = useVertex
+      ? new GoogleGenAI({
+          vertexai: true,
+          project: env.GOOGLE_CLOUD_PROJECT,
+          location: env.GOOGLE_CLOUD_LOCATION,
+        })
+      : new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: resolveGeminiModel(WORKSPACE_SCAN_GEMINI_MODEL),
+      contents: prompt,
+      config: {
+        systemInstruction: [
+          "You are a market research JSON generator for Agentic30.",
+          "Use Exa MCP tools only for web research. Do not mutate files.",
+          "Return strict JSON only.",
+        ].join("\n"),
+        tools: [mcpToTool(client)],
+      },
+      abortSignal: abortController.signal,
+    });
+    return extractGeminiResponseText(response);
+  } finally {
+    clearTimeout(timeout);
+    await client.close().catch(() => {});
+  }
+}
+
+function buildMcpClientTransport(config = {}) {
+  if (config?.url) {
+    const headers = config.headers && typeof config.headers === "object"
+      ? Object.fromEntries(Object.entries(config.headers).map(([key, value]) => [key, String(value)]))
+      : {};
+    return new StreamableHTTPClientTransport(new URL(config.url), {
+      requestInit: Object.keys(headers).length ? { headers } : undefined,
+    });
+  }
+  if (config?.command) {
+    return new StdioClientTransport({
+      command: config.command,
+      args: Array.isArray(config.args) ? config.args.map(String) : [],
+      env: {
+        ...process.env,
+        ...(config.env && typeof config.env === "object" ? config.env : {}),
+      },
+    });
+  }
+  throw new Error("Exa MCP route is missing url or command.");
+}
+
+function extractGeminiResponseText(response) {
+  if (!response) return "";
+  if (typeof response.text === "string") return response.text;
+  if (typeof response.text === "function") {
+    const text = response.text();
+    if (typeof text === "string") return text;
+  }
+  const candidates = Array.isArray(response.candidates) ? response.candidates : [];
+  let text = "";
+  for (const candidate of candidates) {
+    const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
+    for (const part of parts) {
+      if (typeof part?.text === "string") text += part.text;
+    }
+  }
+  return text;
 }
 
 async function runCreateDoc(docRoot, docType) {
