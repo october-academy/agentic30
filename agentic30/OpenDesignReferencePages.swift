@@ -3658,6 +3658,8 @@ struct OpenDesignReferenceShell: View {
             OpenDesignHistoryShell(layout: layout, openSearch: openSearch)
         } else if kind == .projects {
             OpenDesignProjectsShell(layout: layout, openSearch: openSearch)
+        } else if kind == .settings {
+            OpenDesignSettingsReferenceShell(page: page, layout: layout, openSearch: openSearch)
         } else {
             if layout.showsTaskSidebar {
                 OpenDesignReferenceSidebarView(page: page, openSearch: openSearch)
@@ -3679,6 +3681,940 @@ struct OpenDesignReferenceShell: View {
                     .background(OpenDesignDayColor.bg)
                     .accessibilityIdentifier("opendesign.reference.\(kind.rawValue).meta")
             }
+        }
+    }
+}
+
+private struct OpenDesignSettingsReferenceShell: View {
+    let page: OpenDesignReferencePageModel
+    let layout: OpenDesignDayLayoutMetrics
+    let openSearch: () -> Void
+
+    var body: some View {
+        Group {
+            if layout.showsTaskSidebar {
+                OpenDesignSettingsSidebarView(page: page, openSearch: openSearch)
+                    .frame(width: layout.taskSidebarWidth)
+                    .frame(maxHeight: .infinity)
+                    .background(OpenDesignDayColor.bg)
+                    .transition(.opacity)
+                    .accessibilityIdentifier("opendesign.reference.settings.side")
+            }
+
+            OpenDesignSettingsMainView(page: page, layout: layout)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityIdentifier("opendesign.reference.settings.main")
+
+            if layout.showsMetaPanel {
+                OpenDesignSettingsMetaPanelView()
+                    .frame(width: layout.metaPanelWidth)
+                    .frame(maxHeight: .infinity)
+                    .background(OpenDesignDayColor.bg)
+                    .accessibilityIdentifier("opendesign.reference.settings.meta")
+            }
+        }
+    }
+}
+
+private struct OpenDesignSettingsSidebarView: View {
+    let page: OpenDesignReferencePageModel
+    let openSearch: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Text(page.sideTitle)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                if let sideBadge = page.sideBadge {
+                    Text(sideBadge)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .padding(.horizontal, 6)
+                        .frame(height: 18)
+                        .background(Capsule().fill(OpenDesignDayColor.surface))
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 10)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+
+            Button(action: openSearch) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 10, weight: .medium))
+                    Text(page.sideSearchPlaceholder ?? "설정 검색")
+                    Spacer(minLength: 6)
+                    Text("⌘ K")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                }
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 6))
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 6)
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(page.sideGroups.indices, id: \.self) { groupIndex in
+                        let group = page.sideGroups[groupIndex]
+                        Text(group.title)
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .textCase(.uppercase)
+                            .tracking(1)
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                            .padding(.top, groupIndex == 0 ? 8 : 14)
+                            .padding(.horizontal, 8)
+                            .padding(.bottom, 6)
+
+                        ForEach(group.rows) { row in
+                            OpenDesignSettingsSideRowView(row: row)
+                        }
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.bottom, 14)
+            }
+        }
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .trailing)
+    }
+}
+
+private struct OpenDesignSettingsSideRowView: View {
+    let row: OpenDesignReferenceSideRow
+    @State private var isHovered = false
+
+    private var systemImage: String {
+        switch row.id {
+        case "workspace": return "folder"
+        case "appearance": return "circle.lefthalf.filled"
+        case "menubar": return "bell"
+        case "shortcuts": return "command"
+        case "providers": return "chevron.left.forwardslash.chevron.right"
+        case "records": return "smallcircle.circle"
+        case "integrations": return "link"
+        case "privacy": return "shield"
+        case "updates": return "arrow.triangle.2.circlepath"
+        case "advanced": return "terminal"
+        default: return "circle"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12.2, weight: .medium))
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(row.isActive ? row.tone.color : OpenDesignDayColor.muted)
+                .frame(width: 22, height: 22)
+
+            Text(row.title)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(row.isActive || isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+                .lineLimit(1)
+
+            Spacer(minLength: 6)
+
+            if let badge = row.badge {
+                Text(badge)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(settingsBadgeForeground(row: row))
+                    .lineLimit(1)
+                    .padding(.horizontal, settingsBadgeHasCapsule(row: row) ? 6 : 0)
+                    .frame(height: settingsBadgeHasCapsule(row: row) ? 20 : nil)
+                    .background {
+                        if settingsBadgeHasCapsule(row: row) {
+                            Capsule()
+                                .fill(settingsBadgeFill(row: row))
+                                .overlay(Capsule().stroke(settingsBadgeStroke(row: row), lineWidth: 1))
+                        }
+                    }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(referenceRounded(fill: row.isActive ? OpenDesignDayColor.selected : isHovered ? OpenDesignDayColor.hover : Color.clear, stroke: Color.clear, radius: 6))
+        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .onHover { isHovered = $0 }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(row.title)
+        .accessibilityValue(row.isActive ? "active" : "inactive")
+    }
+}
+
+private struct OpenDesignSettingsMainView: View {
+    let page: OpenDesignReferencePageModel
+    let layout: OpenDesignDayLayoutMetrics
+
+    private var bannerBlock: OpenDesignReferenceBlock? {
+        page.sections.first(where: { $0.id == "banner" })?.blocks.first
+    }
+
+    private var contentSections: [OpenDesignReferenceSectionModel] {
+        page.sections.filter { $0.id != "banner" }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            OpenDesignSettingsHeaderView(header: page.header, horizontalPadding: layout.mainHorizontalPadding)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if let bannerBlock {
+                        OpenDesignSettingsWarningBanner(block: bannerBlock)
+                            .padding(.bottom, 22)
+                    }
+
+                    ForEach(contentSections.indices, id: \.self) { index in
+                        OpenDesignSettingsSectionView(section: contentSections[index], isFirstContentSection: index == 0)
+                    }
+                }
+                .frame(maxWidth: 820, alignment: .leading)
+                .padding(.horizontal, layout.mainHorizontalPadding)
+                .padding(.top, 22)
+                .padding(.bottom, 60)
+                .frame(maxWidth: .infinity)
+            }
+            .background(OpenDesignDayColor.bg)
+        }
+        .background(OpenDesignDayColor.bg)
+    }
+}
+
+private struct OpenDesignSettingsHeaderView: View {
+    let header: OpenDesignReferenceHeaderModel
+    let horizontalPadding: CGFloat
+
+    var body: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 14) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    .frame(width: 44, height: 44)
+                    .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.border, radius: 11))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(header.title)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                        .lineLimit(1)
+
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(OpenDesignDayColor.accent)
+                            .frame(width: 5, height: 5)
+                            .shadow(color: OpenDesignDayColor.accentDim, radius: 3)
+                        ForEach(Array(header.subtitleParts.enumerated()), id: \.offset) { index, part in
+                            if index > 0 {
+                                Text("·")
+                                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                            }
+                            Text(part)
+                                .lineLimit(1)
+                        }
+                    }
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                }
+                .frame(minWidth: 0, alignment: .leading)
+            }
+
+            Spacer(minLength: 12)
+
+            ForEach(header.actions) { action in
+                OpenDesignReferenceActionButton(action: action)
+            }
+        }
+        .padding(.horizontal, horizontalPadding)
+        .frame(height: 70)
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+}
+
+private struct OpenDesignSettingsWarningBanner: View {
+    let block: OpenDesignReferenceBlock
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "exclamationmark.circle")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.amber)
+                .frame(width: 22, height: 22)
+                .padding(.top, 1)
+
+            Text(bannerText)
+                .font(.system(size: 12.5, weight: .regular))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 8)
+
+            Button("닫기", action: {})
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.amber)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(referenceRounded(fill: OpenDesignDayColor.amberDim, stroke: OpenDesignDayColor.amberLine, radius: 10))
+    }
+
+    private var bannerText: AttributedString {
+        var text = AttributedString("\(block.title ?? "") \(block.body ?? "")")
+        if let range = text.range(of: block.title ?? "") {
+            text[range].foregroundColor = OpenDesignDayColor.fg
+            text[range].font = .system(size: 12.5, weight: .semibold)
+        }
+        if let pathRange = text.range(of: "~/Library/Application Support/Agentic30") {
+            text[pathRange].foregroundColor = OpenDesignDayColor.amber
+            text[pathRange].font = .system(size: 12.5, weight: .medium, design: .monospaced)
+            text[pathRange].backgroundColor = OpenDesignDayColor.bgDarker
+        }
+        return text
+    }
+}
+
+private struct OpenDesignSettingsSectionView: View {
+    let section: OpenDesignReferenceSectionModel
+    let isFirstContentSection: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(section.markerTone.color)
+                    .frame(width: 4, height: 12)
+                Text(section.title)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .textCase(.uppercase)
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                if let meta = section.meta {
+                    Text(meta)
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        .lineLimit(1)
+                }
+                Rectangle()
+                    .fill(OpenDesignDayColor.borderSoft)
+                    .frame(height: 1)
+            }
+            .padding(.top, isFirstContentSection ? 10 : 26)
+
+            ForEach(section.blocks) { block in
+                OpenDesignSettingsBlockView(sectionID: section.id, block: block)
+            }
+        }
+    }
+}
+
+private struct OpenDesignSettingsBlockView: View {
+    let sectionID: String
+    let block: OpenDesignReferenceBlock
+
+    var body: some View {
+        switch block.style {
+        case .settings:
+            OpenDesignSettingsRowsCard(sectionID: sectionID, rows: block.rows)
+        case .cards where sectionID == "providers":
+            OpenDesignSettingsProviderList(rows: block.rows)
+        case .rows where sectionID == "records" || sectionID == "integrations":
+            OpenDesignSettingsIntegrationCard(sectionID: sectionID, rows: block.rows)
+        case .banner where sectionID == "integrations":
+            OpenDesignSettingsNote(block: block)
+        default:
+            OpenDesignReferenceBlockView(block: block, layout: OpenDesignDayLayoutMetrics(width: 1180))
+        }
+    }
+}
+
+private struct OpenDesignSettingsRowsCard: View {
+    let sectionID: String
+    let rows: [OpenDesignReferenceRow]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(rows) { row in
+                OpenDesignSettingsRowView(sectionID: sectionID, row: row)
+                if row.id != rows.last?.id {
+                    Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1)
+                }
+            }
+        }
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+private struct OpenDesignSettingsRowView: View {
+    let sectionID: String
+    let row: OpenDesignReferenceRow
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(row.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                if let subtitle = row.subtitle {
+                    Text(settingsInlineText(subtitle))
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .lineSpacing(2.5)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(minWidth: 0, alignment: .leading)
+
+            Spacer(minLength: 12)
+
+            trailingControl
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    @ViewBuilder
+    private var trailingControl: some View {
+        if sectionID == "workspace" {
+            workspaceControl
+        } else if sectionID == "appearance" {
+            appearanceControl
+        } else if sectionID == "menubar" {
+            menubarControl
+        } else if sectionID == "shortcuts" {
+            shortcutControl
+        } else if sectionID == "providers" && row.id == "order" {
+            OpenDesignSettingsSegmented(values: ["Claude", "Codex"], active: "Claude")
+        } else if sectionID == "privacy" {
+            privacyControl
+        } else if sectionID == "updates" {
+            updatesControl
+        } else if sectionID == "advanced" {
+            advancedControl
+        } else if let trailing = row.trailing {
+            settingsStatusPill(trailing, tone: row.tone)
+        }
+    }
+
+    @ViewBuilder
+    private var workspaceControl: some View {
+        switch row.id {
+        case "main", "iv", "log", "bip":
+            HStack(spacing: 8) {
+                OpenDesignSettingsPathPill(
+                    text: row.trailing ?? "비어 있음",
+                    tone: row.id == "bip" ? .amber : row.tone,
+                    isStale: row.id == "bip"
+                )
+                settingsGhostButton("변경...", width: 70)
+            }
+        case "watch":
+            OpenDesignSettingsToggle(isOn: true)
+        case "ignore":
+            HStack(spacing: 8) {
+                OpenDesignSettingsIgnorePatternChips()
+                settingsGhostButton("+  패턴 추가", width: 112)
+            }
+        default:
+            if let trailing = row.trailing {
+                settingsStatusPill(trailing, tone: row.tone)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var appearanceControl: some View {
+        switch row.id {
+        case "theme":
+            OpenDesignSettingsSegmented(values: ["System"], active: "System", tone: .sky)
+        case "accent":
+            OpenDesignSettingsSegmented(values: ["Emerald"], active: "Emerald")
+        case "scale":
+            settingsNeutralPill("100%")
+        case "motion":
+            OpenDesignSettingsToggle(isOn: false, tone: .amber)
+        default:
+            settingsNeutralPill(row.trailing ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private var menubarControl: some View {
+        switch row.id {
+        case "always", "dock", "login":
+            OpenDesignSettingsToggle(isOn: true)
+        case "daily":
+            settingsTimePill("09:00")
+        case "rhythm":
+            OpenDesignSettingsRhythmDays()
+        case "sound":
+            OpenDesignSettingsToggle(isOn: false)
+        default:
+            settingsNeutralPill(row.trailing ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private var shortcutControl: some View {
+        if row.id == "lock" {
+            OpenDesignSettingsToggle(isOn: true)
+        } else {
+            HStack(spacing: 8) {
+                OpenDesignShortcutDisplay(value: row.trailing ?? "")
+                settingsGhostButton("변경...", width: 70)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var privacyControl: some View {
+        switch row.id {
+        case "posthog":
+            OpenDesignSettingsToggle(isOn: false)
+        case "crash", "sanitize":
+            OpenDesignSettingsToggle(isOn: true, locked: row.id == "sanitize")
+        case "retention":
+            settingsSelectPill(row.trailing ?? "90일")
+        case "reset":
+            settingsGhostButton(row.trailing ?? "데이터 초기화...", width: 118, tone: .rose)
+        default:
+            settingsGhostButton(row.trailing ?? "내보내기...", width: 104)
+        }
+    }
+
+    @ViewBuilder
+    private var updatesControl: some View {
+        switch row.id {
+        case "version":
+            HStack(spacing: 8) {
+                settingsStatusPill("0.4.2", tone: .accent)
+                Text("build 1042 · arm64")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+            }
+        case "auto":
+            OpenDesignSettingsToggle(isOn: true)
+        case "channel":
+            OpenDesignSettingsSegmented(values: ["Stable", "Beta"], active: "Stable", tone: .sky)
+        case "checked":
+            HStack(spacing: 8) {
+                Text("5분 전")
+                    .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                settingsGhostButton("지금 확인", systemImage: "arrow.clockwise", width: 88)
+            }
+        default:
+            settingsStatusPill(row.trailing ?? "검증됨", tone: .accent)
+        }
+    }
+
+    @ViewBuilder
+    private var advancedControl: some View {
+        switch row.id {
+        case "state":
+            HStack(spacing: 8) {
+                settingsStatusPill("실행 중", tone: .accent)
+                Text("PID 47281 · 86 MB · v0.4.2")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                settingsGhostButton("재시작", width: 64)
+            }
+        case "transport":
+            OpenDesignSettingsSegmented(values: ["stdio", "HTTP 127.0.0.1:0", "둘 다"], active: "stdio", tone: .sky)
+        case "mcp", "acp":
+            OpenDesignSettingsToggle(isOn: true)
+        case "logs":
+            settingsSelectPill("info")
+        case "log-folder":
+            settingsGhostButton("Finder에서 열기", systemImage: "arrow.up.right.square", width: 124)
+        case "experiments":
+            HStack(spacing: 8) {
+                settingsStatusPill("3 / 7", tone: .amber)
+                settingsGhostButton("목록...", width: 66)
+            }
+        default:
+            if let trailing = row.trailing {
+                settingsStatusPill(trailing, tone: row.tone)
+            }
+        }
+    }
+}
+
+private struct OpenDesignSettingsProviderList: View {
+    let rows: [OpenDesignReferenceRow]
+
+    var body: some View {
+        VStack(spacing: 8) {
+            ForEach(rows) { row in
+                VStack(spacing: 0) {
+                    HStack(spacing: 10) {
+                        Text(row.leading ?? providerInitial(row.title))
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                            .foregroundStyle(providerLogoForeground(row))
+                            .frame(width: 26, height: 26)
+                            .background(providerLogoBackground(row))
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.title)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(OpenDesignDayColor.fg)
+                            if let subtitle = row.subtitle {
+                                Text(subtitle)
+                                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(OpenDesignDayColor.muted)
+                                    .lineLimit(1)
+                            }
+                        }
+
+                        Spacer(minLength: 10)
+
+                        if let trailing = row.trailing {
+                            settingsStatusPill(trailing, tone: row.tone)
+                        }
+
+                        if row.id == "codex" {
+                            settingsGhostButton("로그인", width: 62)
+                        } else if row.id == "cache" {
+                            OpenDesignSettingsToggle(isOn: true)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(OpenDesignDayColor.surface)
+                    .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+
+                    VStack(spacing: 0) {
+                        providerDetailRow(label: "상태", value: row.body ?? row.subtitle ?? "확인 중")
+                        providerDetailRow(label: "정책", value: row.id == "claude" ? "1순위 · 실패 시 Codex 폴백" : row.id == "codex" ? "폴백 · 분석 전용" : "로컬 런타임")
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                }
+                .background(referenceRounded(fill: OpenDesignDayColor.bgDarker, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+            }
+        }
+    }
+
+    private func providerDetailRow(label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 14) {
+            Text(label)
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .textCase(.uppercase)
+                .tracking(0.6)
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .frame(width: 58, alignment: .leading)
+            Text(value)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .lineLimit(2)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+    }
+}
+
+private struct OpenDesignSettingsIntegrationCard: View {
+    let sectionID: String
+    let rows: [OpenDesignReferenceRow]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(rows) { row in
+                HStack(spacing: 12) {
+                    Text(row.leading ?? "")
+                        .font(.system(size: (row.leading ?? "").count > 2 ? 9.5 : 11, weight: .bold, design: .monospaced))
+                        .foregroundStyle(row.tone == .muted ? OpenDesignDayColor.fgSecondary : row.tone.color)
+                        .frame(width: 28, height: 28)
+                        .background(referenceRounded(fill: integrationLogoFill(row), stroke: integrationLogoStroke(row), radius: 7))
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(row.title)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(OpenDesignDayColor.fg)
+                        if let subtitle = row.subtitle {
+                            Text(subtitle)
+                                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                                .foregroundStyle(OpenDesignDayColor.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Spacer(minLength: 12)
+
+                    if sectionID == "records" {
+                        settingsStatusPill(row.trailing ?? "꺼짐", tone: row.tone)
+                        if row.tone == .muted {
+                            settingsGhostButton("켜기", width: 54)
+                        } else {
+                            OpenDesignSettingsToggle(isOn: true)
+                        }
+                    } else {
+                        settingsStatusPill(row.trailing ?? "연결 안 됨", tone: .muted)
+                        settingsGhostButton("연결", width: 54)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+
+                if row.id != rows.last?.id {
+                    Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1)
+                }
+            }
+        }
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+private struct OpenDesignSettingsNote: View {
+    let block: OpenDesignReferenceBlock
+
+    var body: some View {
+        Text("\(block.subtitle ?? "참고") — \(block.body ?? "")")
+            .font(.system(size: 11.5, weight: .regular))
+            .foregroundStyle(OpenDesignDayColor.muted)
+            .lineSpacing(3)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 4)
+            .padding(.top, -4)
+            .padding(.bottom, 2)
+    }
+}
+
+private struct OpenDesignSettingsPathPill: View {
+    let text: String
+    let tone: OpenDesignReferenceTone
+    let isStale: Bool
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: isStale ? "exclamationmark.circle" : "folder")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(isStale ? OpenDesignDayColor.amber : OpenDesignDayColor.muted)
+            Text(text)
+                .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(isStale ? OpenDesignDayColor.amber : OpenDesignDayColor.fgSecondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(.horizontal, 9)
+        .frame(width: 280, height: 30, alignment: .leading)
+        .background(referenceRounded(fill: isStale ? OpenDesignDayColor.amberDim : OpenDesignDayColor.bgDarker, stroke: isStale ? OpenDesignDayColor.amberLine : OpenDesignDayColor.borderSoft, radius: 7))
+    }
+}
+
+private struct OpenDesignSettingsToggle: View {
+    let isOn: Bool
+    var tone: OpenDesignReferenceTone = .accent
+    var locked: Bool = false
+
+    var body: some View {
+        ZStack(alignment: isOn ? .trailing : .leading) {
+            Capsule()
+                .fill(isOn ? tone.color : OpenDesignDayColor.surface2)
+                .overlay(Capsule().stroke(isOn ? tone.color : OpenDesignDayColor.border, lineWidth: 1))
+                .frame(width: 32, height: 18)
+            Circle()
+                .fill(isOn ? OpenDesignDayColor.bgDeep : OpenDesignDayColor.muted)
+                .frame(width: 12, height: 12)
+                .padding(.horizontal, 3)
+        }
+        .opacity(locked ? 0.6 : 1)
+        .accessibilityLabel(isOn ? "켜짐" : "꺼짐")
+    }
+}
+
+private struct OpenDesignSettingsSegmented: View {
+    let values: [String]
+    let active: String
+    var tone: OpenDesignReferenceTone = .accent
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(values, id: \.self) { value in
+                Text(value)
+                    .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(value == active ? tone.color : OpenDesignDayColor.muted)
+                    .padding(.horizontal, 11)
+                    .frame(height: 24)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(value == active ? tone.dim : Color.clear))
+            }
+        }
+        .padding(2)
+        .background(referenceRounded(fill: OpenDesignDayColor.bgDarker, stroke: OpenDesignDayColor.borderSoft, radius: 8))
+    }
+}
+
+private struct OpenDesignSettingsIgnorePatternChips: View {
+    private let patterns = ["node_modules", ".git", "dist", ".next"]
+
+    var body: some View {
+        HStack(spacing: 5) {
+            ForEach(patterns, id: \.self) { pattern in
+                Text(pattern)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.accent)
+                    .padding(.horizontal, 5)
+                    .frame(height: 20)
+                    .background(referenceRounded(fill: OpenDesignDayColor.bgDarker, stroke: OpenDesignDayColor.borderSoft, radius: 4))
+            }
+        }
+    }
+}
+
+private struct OpenDesignSettingsRhythmDays: View {
+    private let days = ["월", "화", "수", "목", "금", "토", "일"]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(days.indices, id: \.self) { index in
+                Text(days[index])
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(index < 5 ? OpenDesignDayColor.accent : OpenDesignDayColor.muted)
+                    .frame(width: 26, height: 26)
+                    .background(referenceRounded(fill: index < 5 ? OpenDesignDayColor.accentDim : OpenDesignDayColor.bgDarker, stroke: index < 5 ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, radius: 6))
+            }
+        }
+    }
+}
+
+private struct OpenDesignShortcutDisplay: View {
+    let value: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(Array(value.map(String.init).enumerated()), id: \.offset) { _, key in
+                Text(key)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                    .frame(minWidth: 22)
+                    .frame(height: 22)
+                    .padding(.horizontal, key.count > 1 ? 4 : 0)
+                    .background(referenceRounded(fill: OpenDesignDayColor.bgDarker, stroke: OpenDesignDayColor.border, radius: 5))
+            }
+        }
+    }
+}
+
+private struct OpenDesignSettingsMetaPanelView: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("시스템 상태")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                    .padding(.bottom, 10)
+
+                OpenDesignSettingsMetaCard(label: "Sidecar", isLive: true) {
+                    settingsMetaKeyValue("상태", "실행 중", strong: true)
+                    settingsMetaKeyValue("PID", "47281")
+                    settingsMetaKeyValue("업타임", "2d 14h")
+                    settingsMetaKeyValue("메모리", "86 MB")
+                    settingsMetaKeyValue("CPU (5m avg)", "0.4%")
+                    HStack {
+                        Text("최근 5분 CPU")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.muted)
+                        Spacer()
+                        OpenDesignSettingsSparkline()
+                            .frame(width: 64, height: 16)
+                    }
+                    .padding(.top, 4)
+                }
+                .padding(.bottom, 12)
+
+                OpenDesignSettingsMetaCard(label: "스토리지", isLive: false) {
+                    settingsMetaKeyValue("sessions", "312 KB · 24 건")
+                    settingsMetaKeyValue("transcripts", "6.7 KB · 1 건")
+                    settingsMetaKeyValue("업무 일지", "11 KB · 4 건")
+                    settingsMetaKeyValue("BIP", "0 KB · 0 건")
+                    settingsMetaKeyValue("총합", "328 KB", strong: true)
+                }
+                .padding(.bottom, 26)
+
+                settingsMetaHeading("빠른 작업")
+                settingsMetaAction("진단 스냅샷 내보내기", subtitle: "sanitize · ZIP", systemImage: "square.and.arrow.down")
+                settingsMetaAction("Sidecar 재시작", subtitle: "다운타임 ~ 1초", systemImage: "arrow.clockwise")
+                settingsMetaAction("워크스페이스 재인덱스", subtitle: "모든 path 재스캔", systemImage: "clock.arrow.circlepath")
+
+                settingsMetaHeading("참고 문서")
+                    .padding(.top, 18)
+                settingsMetaAction("release-checklist.md", subtitle: "배포 전 점검 항목", systemImage: "doc")
+                settingsMetaAction("known-limitations.md", subtitle: "알려진 제한사항", systemImage: "doc")
+                settingsMetaAction("diagnostics-guide.md", subtitle: "진단 가이드", systemImage: "doc")
+
+                settingsMetaHeading("버전")
+                    .padding(.top, 18)
+                Text("""
+                app · 0.4.2 (1042) · arm64
+                sidecar · 0.4.2
+                node · v20.11.1
+                swift · 5.10
+                macOS · 14.5
+                """)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .lineSpacing(4)
+                .padding(.horizontal, 6)
+            }
+            .padding(16)
+        }
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .leading)
+    }
+}
+
+private struct OpenDesignSettingsMetaCard<Content: View>: View {
+    let label: String
+    let isLive: Bool
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(isLive ? OpenDesignDayColor.accent : OpenDesignDayColor.mutedDeep)
+                    .frame(width: 6, height: 6)
+                    .shadow(color: isLive ? OpenDesignDayColor.accentDim : .clear, radius: 3)
+                Text(label)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .textCase(.uppercase)
+                    .foregroundStyle(OpenDesignDayColor.muted)
+            }
+            content()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+    }
+}
+
+private struct OpenDesignSettingsSparkline: View {
+    private let values: [CGFloat] = [12, 11, 12, 10, 11, 8, 9, 6, 7, 4, 5, 3]
+
+    var body: some View {
+        GeometryReader { proxy in
+            Path { path in
+                guard let first = values.first else { return }
+                let step = proxy.size.width / CGFloat(max(values.count - 1, 1))
+                path.move(to: CGPoint(x: 0, y: first / 16 * proxy.size.height))
+                for (index, value) in values.enumerated().dropFirst() {
+                    path.addLine(to: CGPoint(x: CGFloat(index) * step, y: value / 16 * proxy.size.height))
+                }
+            }
+            .stroke(OpenDesignDayColor.accent, style: StrokeStyle(lineWidth: 1.2, lineJoin: .round))
         }
     }
 }
@@ -8089,6 +9025,191 @@ private struct OpenDesignReferenceChipView: View {
                     .overlay(Capsule().stroke(isActive ? chip.tone.line : OpenDesignDayColor.borderSoft, lineWidth: 1))
             )
     }
+}
+
+private func settingsBadgeForeground(row: OpenDesignReferenceSideRow) -> Color {
+    if row.isActive || row.tone != .muted {
+        return row.tone.color
+    }
+    return OpenDesignDayColor.muted
+}
+
+private func settingsBadgeHasCapsule(row: OpenDesignReferenceSideRow) -> Bool {
+    row.badge != nil
+}
+
+private func settingsBadgeFill(row: OpenDesignReferenceSideRow) -> Color {
+    if row.isActive || row.tone == .accent || row.tone == .amber || row.tone == .sky {
+        return row.tone.dim
+    }
+    return OpenDesignDayColor.bgDarker
+}
+
+private func settingsBadgeStroke(row: OpenDesignReferenceSideRow) -> Color {
+    if row.isActive || row.tone == .accent || row.tone == .amber || row.tone == .sky {
+        return row.tone.line
+    }
+    return OpenDesignDayColor.borderSoft
+}
+
+private func settingsInlineText(_ text: String) -> String {
+    text
+}
+
+private func settingsStatusPill(_ text: String, tone: OpenDesignReferenceTone) -> some View {
+    HStack(spacing: 5) {
+        Circle()
+            .fill(tone == .muted ? OpenDesignDayColor.mutedDeep : tone.color)
+            .frame(width: 6, height: 6)
+        Text(text)
+            .lineLimit(1)
+            .truncationMode(.middle)
+    }
+    .font(.system(size: 10, weight: .medium, design: .monospaced))
+    .foregroundStyle(tone == .muted ? OpenDesignDayColor.muted : tone.color)
+    .padding(.horizontal, 8)
+    .frame(height: 22)
+    .background(Capsule().fill(tone == .muted ? OpenDesignDayColor.bgDarker : tone.dim))
+    .overlay(Capsule().stroke(tone == .muted ? OpenDesignDayColor.borderSoft : tone.line, lineWidth: 1))
+}
+
+private func settingsNeutralPill(_ text: String) -> some View {
+    Text(text)
+        .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+        .foregroundStyle(OpenDesignDayColor.muted)
+        .lineLimit(1)
+        .padding(.horizontal, 12)
+        .frame(minWidth: 118, minHeight: 26)
+        .background(Capsule().fill(OpenDesignDayColor.surface2))
+        .overlay(Capsule().stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+}
+
+private func settingsTimePill(_ text: String) -> some View {
+    Text(text)
+        .font(.system(size: 13, weight: .medium, design: .monospaced))
+        .foregroundStyle(OpenDesignDayColor.fg)
+        .padding(.horizontal, 10)
+        .frame(minWidth: 64, minHeight: 28)
+        .background(referenceRounded(fill: OpenDesignDayColor.bgDarker, stroke: OpenDesignDayColor.borderSoft, radius: 7))
+}
+
+private func settingsSelectPill(_ text: String) -> some View {
+    HStack(spacing: 8) {
+        Text(text)
+        Image(systemName: "chevron.up.chevron.down")
+            .font(.system(size: 8, weight: .semibold))
+            .foregroundStyle(OpenDesignDayColor.muted)
+    }
+    .font(.system(size: 12, weight: .medium, design: .monospaced))
+    .foregroundStyle(OpenDesignDayColor.fg)
+    .padding(.horizontal, 12)
+    .frame(minWidth: 82, minHeight: 28)
+    .background(referenceRounded(fill: OpenDesignDayColor.bgDarker, stroke: OpenDesignDayColor.borderSoft, radius: 7))
+}
+
+private func settingsGhostButton(
+    _ title: String,
+    systemImage: String? = nil,
+    width: CGFloat? = nil,
+    tone: OpenDesignReferenceTone = .muted
+) -> some View {
+    HStack(spacing: 6) {
+        if let systemImage {
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .semibold))
+        }
+        Text(title)
+            .lineLimit(1)
+    }
+    .font(.system(size: 11.5, weight: .medium))
+    .foregroundStyle(tone == .rose ? OpenDesignDayColor.rose : OpenDesignDayColor.fgSecondary)
+    .padding(.horizontal, 12)
+    .frame(width: width, height: 28)
+    .background(referenceRounded(fill: tone == .rose ? OpenDesignDayColor.roseDim : Color.clear, stroke: tone == .rose ? OpenDesignDayColor.rose.opacity(0.36) : OpenDesignDayColor.borderSoft, radius: 8))
+}
+
+private func providerInitial(_ title: String) -> String {
+    title.first.map(String.init) ?? "A"
+}
+
+private func providerLogoForeground(_ row: OpenDesignReferenceRow) -> Color {
+    switch row.id {
+    case "claude", "codex", "node":
+        return OpenDesignDayColor.bgDeep
+    default:
+        return row.tone.color
+    }
+}
+
+private func providerLogoBackground(_ row: OpenDesignReferenceRow) -> Color {
+    switch row.id {
+    case "claude":
+        return OpenDesignDayColor.amber
+    case "codex":
+        return OpenDesignDayColor.fgSecondary
+    case "node":
+        return OpenDesignDayColor.sky
+    default:
+        return row.tone.dim
+    }
+}
+
+private func integrationLogoFill(_ row: OpenDesignReferenceRow) -> Color {
+    row.tone == .muted ? OpenDesignDayColor.bgDarker : row.tone.dim
+}
+
+private func integrationLogoStroke(_ row: OpenDesignReferenceRow) -> Color {
+    row.tone == .muted ? OpenDesignDayColor.border : row.tone.line
+}
+
+private func settingsMetaKeyValue(_ key: String, _ value: String, strong: Bool = false) -> some View {
+    HStack(alignment: .firstTextBaseline, spacing: 8) {
+        Text(key)
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.muted)
+        Spacer(minLength: 8)
+        Text(value)
+            .font(.system(size: 11, weight: strong ? .semibold : .medium, design: .monospaced))
+            .foregroundStyle(strong ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+    }
+    .padding(.vertical, 1)
+}
+
+private func settingsMetaHeading(_ title: String) -> some View {
+    Text(title)
+        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+        .textCase(.uppercase)
+        .tracking(1)
+        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+        .padding(.horizontal, 4)
+        .padding(.bottom, 8)
+}
+
+private func settingsMetaAction(_ title: String, subtitle: String, systemImage: String) -> some View {
+    HStack(alignment: .top, spacing: 12) {
+        Image(systemName: systemImage)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(OpenDesignDayColor.muted)
+            .frame(width: 22, height: 22)
+
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .underline()
+                .lineLimit(1)
+            Text(subtitle)
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .lineLimit(1)
+        }
+        Spacer(minLength: 0)
+    }
+    .padding(.horizontal, 6)
+    .padding(.vertical, 9)
+    .contentShape(Rectangle())
 }
 
 private func smallPill(_ text: String, tone: OpenDesignReferenceTone) -> some View {
