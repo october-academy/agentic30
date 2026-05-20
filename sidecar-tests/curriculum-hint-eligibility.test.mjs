@@ -14,39 +14,13 @@ import {
   resolveInlineHintContentForTriggeredFeature,
   resolveInlineHintTooltipPresentation,
 } from "../sidecar/curriculum-hint-eligibility.mjs";
-import {
-  DAY1_TUTORIAL_TARGETS,
-  buildDay1TutorialCoachMarkModel,
-} from "../sidecar/day1-tutorial-coach-marks.mjs";
-
-const DAY_1_SPEC = {
-  day_id: 1,
-  day_goal: "고객의 어제 행동에서 통증 1개를 압축한다",
-  key_questions_with_intent: [
-    {
-      question: "그 통증, 누가 어제 어떤 행동으로 보여줬나요?",
-      intent: "상상한 페르소나가 아니라 실제 관찰된 행동을 확보한다.",
-    },
-    {
-      question: "현재 대안은 무엇이고 비용은 어느 정도인가요?",
-      intent: "status quo와 전환 비용을 확인한다.",
-    },
-  ],
-};
-
-test("hint eligibility marks features not covered in Day 1 as requiring inline hints", () => {
-  const day1TutorialModel = buildDay1TutorialCoachMarkModel({ daySpec: DAY_1_SPEC });
+test("hint eligibility marks features not covered in OpenDesign Day as requiring inline hints", () => {
   const eligibility = resolveCurriculumHintEligibility({
-    day1TutorialModel,
     now: "2026-05-14T09:10:00.000Z",
   });
 
   assert.equal(eligibility.schemaVersion, CURRICULUM_HINT_ELIGIBILITY_SCHEMA_VERSION);
   assert.equal(eligibility.evaluatedAt, "2026-05-14T09:10:00.000Z");
-  assert.equal(
-    eligibility.day1Coverage.coveredTargetElementIds.includes(DAY1_TUTORIAL_TARGETS.structuredPrompt),
-    true,
-  );
   assert.equal(
     eligibility.day1Coverage.coveredFeatureIds.includes("chat.structured_prompt"),
     true,
@@ -81,7 +55,7 @@ test("hint eligibility marks features not covered in Day 1 as requiring inline h
   );
 });
 
-test("Day 1 feature coverage combines explicit flags and tutorial target matches", () => {
+test("Day 1 feature coverage combines explicit flags and OpenDesign target matches", () => {
   const coverage = resolveDay1FeatureCoverage({
     features: [
       {
@@ -106,13 +80,7 @@ test("Day 1 feature coverage combines explicit flags and tutorial target matches
         label: "Future feature",
       },
     ],
-    day1TutorialModel: {
-      steps: [
-        {
-          targetElementId: "workspace.chat.structuredPrompt",
-        },
-      ],
-    },
+    day1CoveredTargetElementIds: ["workspace.chat.structuredPrompt"],
     day1CoveredFeatureIds: ["covered.by.explicit.id"],
   });
 

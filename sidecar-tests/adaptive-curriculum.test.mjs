@@ -827,162 +827,11 @@ test("adaptive curriculum is grounded in direction doc north star and selected d
   ]);
 });
 
-test("Day 1 tutorial start and session initialization persist lifecycle state without completion", async () => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-progress-"));
-  const filePath = path.join(dir, "curriculum-progress.json");
-  const started = applyCurriculumProgressEvent(
-    makeDefaultCurriculumProgressState(new Date("2026-05-14T08:59:00.000Z")),
-    {
-      type: CURRICULUM_PROGRESS_EVENT_TYPES.day1TutorialStarted,
-      day: 1,
-      dayType: "interview",
-      completed: true,
-      completionConfirmed: true,
-      occurredAt: "2026-05-14T09:00:00.000Z",
-    },
-  );
-  const initialized = applyCurriculumProgressEvent(
-    started,
-    {
-      event_type: CURRICULUM_PROGRESS_EVENT_TYPES.day1SessionInitialized,
-      day_id: 1,
-      completed: true,
-      completion_confirmed: true,
-      occurred_at: "2026-05-14T09:00:05.000Z",
-    },
-  );
-
-  assert.equal(initialized.dayRecords.length, 1);
-  assert.equal(initialized.dayRecords[0].day, 1);
-  assert.equal(initialized.dayRecords[0].dayType, "interview");
-  assert.equal(initialized.dayRecords[0].completed, false);
-  assert.equal(initialized.dayRecords[0].completionConfirmed, false);
-  assert.equal(initialized.dayRecords[0].completedAt, "");
-  assert.equal(initialized.dayRecords[0].tutorialConfig.overlayActive, true);
-  assert.equal(initialized.dayRecords[0].tutorialConfig.startedAt, "2026-05-14T09:00:00.000Z");
-  assert.equal(initialized.dayRecords[0].tutorialConfig.sessionInitializedAt, "2026-05-14T09:00:05.000Z");
-  assert.deepEqual(
-    initialized.dayRecords[0].lifecycleEvents.map((event) => [event.type, event.completionDriver]),
-    [
-      [CURRICULUM_PROGRESS_EVENT_TYPES.day1TutorialStarted, false],
-      [CURRICULUM_PROGRESS_EVENT_TYPES.day1SessionInitialized, false],
-    ],
-  );
-
-  await persistCurriculumProgressState(filePath, initialized, {
-    now: () => new Date("2026-05-14T09:00:06.000Z"),
-  });
-  const loaded = await loadCurriculumProgressState(filePath);
-  assert.equal(loaded.dayRecords[0].completionConfirmed, false);
-  assert.equal(loaded.dayRecords[0].completion_confirmed, false);
-  assert.equal(loaded.dayRecords[0].completed, false);
-});
-
-test("Day 1 tutorial skip event persists unguided interview flow without completion", async () => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-tutorial-skip-"));
-  const filePath = path.join(dir, "curriculum-progress.json");
-  const started = applyCurriculumProgressEvent(
-    makeDefaultCurriculumProgressState(new Date("2026-05-14T08:59:00.000Z")),
-    {
-      type: CURRICULUM_PROGRESS_EVENT_TYPES.day1TutorialStarted,
-      day: 1,
-      dayType: "interview",
-      occurredAt: "2026-05-14T09:00:00.000Z",
-    },
-  );
-  const skipped = applyCurriculumProgressEvent(
-    started,
-    {
-      type: CURRICULUM_PROGRESS_EVENT_TYPES.day1TutorialSkipped,
-      day: 1,
-      dayType: "interview",
-      completed: true,
-      completionConfirmed: true,
-      questionRecords: [
-        {
-          id: "day1-question-1",
-          question: "누가 어제 어떤 행동으로 통증을 보여줬나요?",
-          intent: "실제 관찰 행동을 Day 1 데이터로 남긴다.",
-        },
-        {
-          id: "day1-question-2",
-          question: "현재 대안과 비용은 무엇인가요?",
-          intent: "status quo를 기록한다.",
-        },
-        {
-          id: "day1-question-3",
-          question: "그 사람이 마지막으로 시도한 해결 방법은 무엇인가요?",
-          intent: "최근 해결 시도에서 실제 강도를 확인한다.",
-        },
-        {
-          id: "day1-question-4",
-          question: "오늘 바로 다시 물어볼 수 있는 사람은 누구인가요?",
-          intent: "다음 실행으로 이어질 실제 대상을 남긴다.",
-        },
-      ],
-      occurredAt: "2026-05-14T09:01:00.000Z",
-    },
-  );
-
-  assert.equal(skipped.dayRecords[0].completed, false);
-  assert.equal(skipped.dayRecords[0].completionConfirmed, false);
-  assert.equal(skipped.dayRecords[0].tutorialConfig.overlayActive, false);
-  assert.equal(skipped.dayRecords[0].tutorialConfig.skipActivated, true);
-  assert.equal(skipped.dayRecords[0].tutorialConfig.flowMode, "unguided");
-  assert.equal(skipped.dayRecords[0].tutorialConfig.flow_mode, "unguided");
-  assert.equal(skipped.dayRecords[0].tutorialConfig.interviewFlowMode, "unguided");
-  assert.equal(skipped.dayRecords[0].tutorialConfig.interview_flow_mode, "unguided");
-  assert.equal(skipped.dayRecords[0].tutorialConfig.guidanceMode, "unguided_chat");
-  assert.equal(skipped.dayRecords[0].tutorialConfig.overlaySuppressedReason, "user_skipped_overlay");
-  assert.deepEqual(
-    skipped.dayRecords[0].questionProgress.map((question) => [
-      question.questionId,
-      question.answer,
-      question.status,
-      question.answeredAt,
-      question.updatedAt,
-    ]),
-    [
-      ["day1-question-1", "", "pending", "", "2026-05-14T09:01:00.000Z"],
-      ["day1-question-2", "", "pending", "", "2026-05-14T09:01:00.000Z"],
-      ["day1-question-3", "", "pending", "", "2026-05-14T09:01:00.000Z"],
-      ["day1-question-4", "", "pending", "", "2026-05-14T09:01:00.000Z"],
-    ],
-  );
-  assert.equal(skipped.dayRecords[0].questionProgress.every((question) => question.status !== "answered"), true);
-  assert.deepEqual(
-    skipped.dayRecords[0].lifecycleEvents.map((event) => [event.type, event.completionDriver]),
-    [
-      [CURRICULUM_PROGRESS_EVENT_TYPES.day1TutorialStarted, false],
-      [CURRICULUM_PROGRESS_EVENT_TYPES.day1TutorialSkipped, false],
-    ],
-  );
-
-  await persistCurriculumProgressState(filePath, skipped, {
-    now: () => new Date("2026-05-14T09:01:01.000Z"),
-  });
-  const loaded = await loadCurriculumProgressState(filePath);
-  assert.equal(loaded.dayRecords[0].completed, false);
-  assert.equal(loaded.dayRecords[0].tutorialConfig.skipActivated, true);
-  assert.equal(loaded.dayRecords[0].tutorialConfig.flowMode, "unguided");
-  assert.equal(loaded.dayRecords[0].tutorialConfig.interviewFlowMode, "unguided");
-  assert.equal(loaded.dayRecords[0].tutorialConfig.guidanceMode, "unguided_chat");
-  assert.deepEqual(
-    loaded.dayRecords[0].questionProgress.map((question) => [question.questionId, question.status]),
-    [
-      ["day1-question-1", "pending"],
-      ["day1-question-2", "pending"],
-      ["day1-question-3", "pending"],
-      ["day1-question-4", "pending"],
-    ],
-  );
-});
-
 test("Day 1 completion persists only after explicit completion confirmation event", () => {
   const lifecycleOnly = applyCurriculumProgressEvent(
     {},
     {
-      type: CURRICULUM_PROGRESS_EVENT_TYPES.day1SessionInitialized,
+      type: "day_started",
       day: 1,
       occurredAt: "2026-05-14T09:01:00.000Z",
     },
@@ -1003,7 +852,7 @@ test("Day 1 completion persists only after explicit completion confirmation even
   assert.deepEqual(
     confirmed.dayRecords[0].lifecycleEvents.map((event) => [event.type, event.completionDriver]),
     [
-      [CURRICULUM_PROGRESS_EVENT_TYPES.day1SessionInitialized, false],
+      ["day_started", false],
       [CURRICULUM_PROGRESS_EVENT_TYPES.dayCompletionConfirmed, true],
     ],
   );
@@ -3202,7 +3051,12 @@ test("detectTooFastProgression combines timing, skipped steps, and minimum engag
           startedAt: "2026-05-04T09:00:00.000Z",
           completedAt: "2026-05-04T09:03:00.000Z",
           completionConfirmed: true,
-          tutorialConfig: { skipActivated: true },
+          lifecycleEvents: [
+            {
+              type: "day_step_skipped",
+              occurredAt: "2026-05-04T09:01:00.000Z",
+            },
+          ],
           questionProgress: [
             { questionId: "day-1-q1", answer: "ok", status: "answered" },
           ],
@@ -3420,7 +3274,12 @@ test("classifyRushingRisk combines normalized too-fast and low-quality signals w
           startedAt: "2026-05-04T09:00:00.000Z",
           completedAt: "2026-05-04T09:02:00.000Z",
           completionConfirmed: true,
-          tutorialConfig: { skipActivated: true },
+          lifecycleEvents: [
+            {
+              type: "day_step_skipped",
+              occurredAt: "2026-05-04T09:01:00.000Z",
+            },
+          ],
           questionProgress: [
             { questionId: "day-1-q1", answer: "ok", status: "answered" },
           ],
@@ -3529,7 +3388,12 @@ test("buildPrerequisiteRequirementsFromTooFastProgression raises non-blocking qu
           startedAt: "2026-05-04T09:00:00.000Z",
           completedAt: "2026-05-04T09:02:00.000Z",
           completionConfirmed: true,
-          tutorialConfig: { skipActivated: true },
+          lifecycleEvents: [
+            {
+              type: "day_step_skipped",
+              occurredAt: "2026-05-04T09:01:00.000Z",
+            },
+          ],
         },
         {
           day: 2,
@@ -3636,7 +3500,12 @@ test("buildAdaptiveCurriculum merges too-fast progression into selected Day prer
           startedAt: "2026-05-04T09:00:00.000Z",
           completedAt: "2026-05-04T09:03:00.000Z",
           completionConfirmed: true,
-          tutorialConfig: { skipActivated: true },
+          lifecycleEvents: [
+            {
+              type: "day_step_skipped",
+              occurredAt: "2026-05-04T09:01:00.000Z",
+            },
+          ],
           questionProgress: [
             { questionId: "day-1-q1", answer: "ok", status: "answered" },
           ],
@@ -3679,7 +3548,12 @@ test("buildAdaptiveCurriculum attaches rushing prerequisite action requirements 
           startedAt: "2026-05-04T09:00:00.000Z",
           completedAt: "2026-05-04T09:02:00.000Z",
           completionConfirmed: true,
-          tutorialConfig: { skipActivated: true },
+          lifecycleEvents: [
+            {
+              type: "day_step_skipped",
+              occurredAt: "2026-05-04T09:01:00.000Z",
+            },
+          ],
           questionProgress: [
             { questionId: "day-1-q1", answer: "ok", status: "answered" },
           ],

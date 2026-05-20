@@ -41,9 +41,6 @@ export const CURRICULUM_DAY_TYPE_FIRST_ENCOUNTER_TYPES = Object.freeze([
   CURRICULUM_DAY_TYPES.education,
 ]);
 export const CURRICULUM_PROGRESS_EVENT_TYPES = Object.freeze({
-  day1TutorialStarted: "day1_tutorial_started",
-  day1TutorialSkipped: "day1_tutorial_skipped",
-  day1SessionInitialized: "day1_session_initialized",
   day1DraftAnswerSaved: "day1_draft_answer_saved",
   day1IncompleteActionRecorded: "day1_incomplete_action_recorded",
   day1VerificationFailed: "day1_verification_failed",
@@ -1275,8 +1272,7 @@ export function applyCurriculumProgressEvent(
       })
     : null;
   const completionBlockedByGate = progressionGate?.blocked === true;
-  const lifecycleOnlyEvent = isDay1TutorialStartOrSessionInitializationEvent({ dayId, eventType })
-    || partialDay1TaskProgressEvent;
+  const lifecycleOnlyEvent = partialDay1TaskProgressEvent;
   const completionConfirmed = lifecycleOnlyEvent
     ? existingCompletionConfirmed
     : existingCompletionConfirmed || (completionEvent && !completionBlockedByGate);
@@ -1352,13 +1348,6 @@ export function applyCurriculumProgressEvent(
           question_progress: questionProgress,
         }
       : {}),
-    tutorialConfig: dayId === 1
-      ? normalizeDay1TutorialProgressConfig({
-          ...existing?.tutorialConfig,
-          ...existing?.tutorial_config,
-          ...day1TutorialLifecyclePatch({ eventType, timestamp }),
-        })
-      : existing?.tutorialConfig,
   });
   const dayRecords = records
     .filter((record) => record.day !== dayId)
@@ -3595,10 +3584,6 @@ function summarizeCompletionTimingForTooFastDetection(records = [], thresholds =
 function summarizeSkippedStepsForTooFastDetection(records = []) {
   const skippedRecords = [];
   for (const record of records) {
-    const tutorialConfig = objectOrEmpty(record.tutorialConfig ?? record.tutorial_config);
-    if (tutorialConfig.skipActivated === true || tutorialConfig.skip_activated === true) {
-      skippedRecords.push({ day: record.day, step: "tutorial_overlay", reason: "tutorial_skip_activated" });
-    }
     for (const event of normalizeDayLifecycleEvents(record.lifecycleEvents ?? record.lifecycle_events)) {
       const eventType = normalizeProgressEventType(event.type);
       if (eventType.includes("skipped") || eventType.includes("skip")) {
@@ -5242,6 +5227,9 @@ function hasPrerequisiteRequirementEntries(value) {
 function normalizeDayProgressRecord(value) {
   const raw = objectOrEmpty(value);
   if (!Object.keys(raw).length) return null;
+  const normalizedRaw = Object.fromEntries(
+    Object.entries(raw).filter(([key]) => !["tutorial" + "Config", "tutorial" + "_config"].includes(key)),
+  );
   const day = normalizeOptionalDayNumber(raw.day ?? raw.dayId ?? raw.day_id);
   if (!day) return null;
   const completionConfirmed = raw.completionConfirmed === true || raw.completion_confirmed === true;
@@ -5249,11 +5237,8 @@ function normalizeDayProgressRecord(value) {
   const lifecycleEvents = normalizeDayLifecycleEvents(raw.lifecycleEvents ?? raw.lifecycle_events);
   const questionProgress = normalizeDayQuestionProgress(raw.questionProgress ?? raw.question_progress);
   const carryOverQueue = normalizeCarryOverQueue(raw.carryOverQueue ?? raw.carry_over_queue);
-  const tutorialConfig = raw.tutorialConfig || raw.tutorial_config
-    ? normalizeDay1TutorialProgressConfig(raw.tutorialConfig ?? raw.tutorial_config)
-    : null;
   return {
-    ...raw,
+    ...normalizedRaw,
     day,
     dayId: day,
     day_id: day,
@@ -5272,7 +5257,6 @@ function normalizeDayProgressRecord(value) {
     question_progress: questionProgress,
     carryOverQueue,
     carry_over_queue: carryOverQueue,
-    ...(tutorialConfig ? { tutorialConfig, tutorial_config: tutorialConfig } : {}),
   };
 }
 
@@ -5435,15 +5419,7 @@ function buildDayQuestionProgressPatches({
   eventType,
   event,
   timestamp,
-  existingQuestionProgress = [],
 } = {}) {
-  if (dayId === 1 && isDay1TutorialSkipEventType(eventType)) {
-    return buildDay1TutorialSkipQuestionProgressPatches({
-      event,
-      timestamp,
-      existingQuestionProgress,
-    });
-  }
   const patch = buildDayQuestionProgressPatch({
     dayId,
     eventType,
@@ -5497,70 +5473,6 @@ function buildDayQuestionProgressPatch({
     answeredAt: status === "answered" || status === "complete" || status === "completed" ? timestamp : "",
     updatedAt: timestamp,
   });
-}
-
-function buildDay1TutorialSkipQuestionProgressPatches({
-  event,
-  timestamp,
-  existingQuestionProgress = [],
-} = {}) {
-  const existingIds = new Set(
-    normalizeDayQuestionProgress(existingQuestionProgress).map((record) => record.questionId),
-  );
-  return extractDay1TutorialSkipQuestionRecords(event)
-    .map((entry, index) => normalizeDay1TutorialSkipQuestionRecord(entry, index, timestamp))
-    .filter((record) => record && !existingIds.has(record.questionId));
-}
-
-function extractDay1TutorialSkipQuestionRecords(event) {
-  const payload = objectOrEmpty(event);
-  const metadata = objectOrEmpty(payload.metadata);
-  const candidates = [
-    payload.interviewQuestionRecords,
-    payload.interview_question_records,
-    payload.questionRecords,
-    payload.question_records,
-    payload.questions,
-    payload.keyQuestions,
-    payload.key_questions,
-    payload.keyQuestionsWithIntent,
-    payload.key_questions_with_intent,
-    metadata.interviewQuestionRecords,
-    metadata.interview_question_records,
-    metadata.questionRecords,
-    metadata.question_records,
-    metadata.questions,
-    metadata.keyQuestions,
-    metadata.key_questions,
-    metadata.keyQuestionsWithIntent,
-    metadata.key_questions_with_intent,
-  ];
-  return candidates.find((candidate) => Array.isArray(candidate)) ?? [];
-}
-
-function normalizeDay1TutorialSkipQuestionRecord(entry, index, timestamp) {
-  const question = normalizeDayKeyQuestion(entry, index);
-  if (!question) return null;
-  return normalizeDayQuestionProgressRecord({
-    questionId: question.id,
-    question: question.question,
-    intent: question.intent,
-    answer: "",
-    status: "pending",
-    answeredAt: "",
-    updatedAt: timestamp,
-  });
-}
-
-function isDay1TutorialSkipEventType(eventType) {
-  return new Set([
-    CURRICULUM_PROGRESS_EVENT_TYPES.day1TutorialSkipped,
-    "tutorial_skipped",
-    "tutorial_skip",
-    "day1_tutorial_skip",
-    "day1_overlay_skipped",
-    "overlay_skipped",
-  ]).has(eventType);
 }
 
 function isDayQuestionProgressEvent(eventType) {
@@ -5620,10 +5532,6 @@ function isDayStartEvent(eventType) {
   return new Set([
     "day_started",
     "day_start",
-    "tutorial_started",
-    "day1_tutorial_started",
-    CURRICULUM_PROGRESS_EVENT_TYPES.day1TutorialStarted,
-    CURRICULUM_PROGRESS_EVENT_TYPES.day1SessionInitialized,
   ]).has(eventType);
 }
 
@@ -5638,31 +5546,6 @@ function isDayCompletionConfirmationEvent({ dayId, eventType }) {
     "completion_confirmed",
     "completion_card_confirmed",
     CURRICULUM_PROGRESS_EVENT_TYPES.dayCompletionConfirmed,
-  ]).has(eventType);
-}
-
-function isDay1TutorialStartOrSessionInitializationEvent({ dayId, eventType }) {
-  if (dayId !== 1) return false;
-  return new Set([
-    "tutorial_started",
-    "tutorial_start",
-    "day1_tutorial_started",
-    "day1_tutorial_start",
-    "tutorial_session_initialized",
-    "tutorial_session_initialization",
-    "session_initialized",
-    "session_initialization",
-    "day1_session_initialized",
-    "day1_session_initialization",
-    "tutorial_skipped",
-    "tutorial_skip",
-    "day1_tutorial_skipped",
-    "day1_tutorial_skip",
-    "day1_overlay_skipped",
-    "overlay_skipped",
-    CURRICULUM_PROGRESS_EVENT_TYPES.day1TutorialStarted,
-    CURRICULUM_PROGRESS_EVENT_TYPES.day1TutorialSkipped,
-    CURRICULUM_PROGRESS_EVENT_TYPES.day1SessionInitialized,
   ]).has(eventType);
 }
 
@@ -5746,104 +5629,6 @@ function isKnownPartialDay1TaskProgressEventType(eventType) {
     CURRICULUM_PROGRESS_EVENT_TYPES.day1IncompleteActionRecorded,
     CURRICULUM_PROGRESS_EVENT_TYPES.day1VerificationFailed,
   ]).has(eventType);
-}
-
-function normalizeDay1TutorialProgressConfig(value) {
-  const raw = objectOrEmpty(value);
-  const overlayActive = raw.overlayActive === true || raw.overlay_active === true;
-  const skipActivated = raw.skipActivated === true || raw.skip_activated === true;
-  const flowMode = normalizeDay1TutorialFlowMode(raw.flowMode ?? raw.flow_mode, {
-    fallback: skipActivated ? "unguided" : "guided",
-  });
-  const interviewFlowMode = normalizeDay1TutorialFlowMode(
-    raw.interviewFlowMode ?? raw.interview_flow_mode,
-    { fallback: flowMode },
-  );
-  const guidanceMode = stringOrDefault(
-    raw.guidanceMode ?? raw.guidance_mode,
-    interviewFlowMode === "unguided" ? "unguided_chat" : "blocking_coach_mark",
-  );
-  return {
-    overlayActive,
-    overlay_active: overlayActive,
-    skipActivated,
-    skip_activated: skipActivated,
-    flowMode,
-    flow_mode: flowMode,
-    interviewFlowMode,
-    interview_flow_mode: interviewFlowMode,
-    guidanceMode,
-    guidance_mode: guidanceMode,
-    overlaySuppressedReason: stringOrDefault(
-      raw.overlaySuppressedReason ?? raw.overlay_suppressed_reason,
-      "",
-    ),
-    overlay_suppressed_reason: stringOrDefault(
-      raw.overlaySuppressedReason ?? raw.overlay_suppressed_reason,
-      "",
-    ),
-    startedAt: stringOrDefault(raw.startedAt ?? raw.started_at, ""),
-    started_at: stringOrDefault(raw.startedAt ?? raw.started_at, ""),
-    sessionInitializedAt: stringOrDefault(raw.sessionInitializedAt ?? raw.session_initialized_at, ""),
-    session_initialized_at: stringOrDefault(raw.sessionInitializedAt ?? raw.session_initialized_at, ""),
-  };
-}
-
-function day1TutorialLifecyclePatch({ eventType, timestamp }) {
-  if (["day1_tutorial_started", "tutorial_started", "tutorial_start", "day1_tutorial_start"].includes(eventType)) {
-    return {
-      overlayActive: true,
-      overlay_active: true,
-      startedAt: timestamp,
-      started_at: timestamp,
-    };
-  }
-  if ([
-    "day1_session_initialized",
-    "day1_session_initialization",
-    "session_initialized",
-    "session_initialization",
-    "tutorial_session_initialized",
-    "tutorial_session_initialization",
-  ].includes(eventType)) {
-    return {
-      sessionInitializedAt: timestamp,
-      session_initialized_at: timestamp,
-    };
-  }
-  if ([
-    CURRICULUM_PROGRESS_EVENT_TYPES.day1TutorialSkipped,
-    "tutorial_skipped",
-    "tutorial_skip",
-    "day1_tutorial_skip",
-    "day1_overlay_skipped",
-    "overlay_skipped",
-  ].includes(eventType)) {
-    return {
-      overlayActive: false,
-      overlay_active: false,
-      skipActivated: true,
-      skip_activated: true,
-      flowMode: "unguided",
-      flow_mode: "unguided",
-      interviewFlowMode: "unguided",
-      interview_flow_mode: "unguided",
-      guidanceMode: "unguided_chat",
-      guidance_mode: "unguided_chat",
-      overlaySuppressedReason: "user_skipped_overlay",
-      overlay_suppressed_reason: "user_skipped_overlay",
-    };
-  }
-  return {};
-}
-
-function normalizeDay1TutorialFlowMode(value, { fallback } = {}) {
-  const normalized = String(value ?? "")
-    .normalize("NFKC")
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, "_");
-  return ["guided", "unguided"].includes(normalized) ? normalized : fallback;
 }
 
 function normalizeCurrentWeekRawAnswers({

@@ -133,7 +133,6 @@ export function resolveCurriculumHintEligibility({
   configured_onboarding_feature_ids = undefined,
   onboardingFeatureIds = undefined,
   onboarding_feature_ids = undefined,
-  day1TutorialModel = null,
   day1CoveredFeatureIds = [],
   day1CoveredTargetElementIds = [],
   state = {},
@@ -150,7 +149,6 @@ export function resolveCurriculumHintEligibility({
   });
   const coverage = resolveDay1FeatureCoverage({
     features: normalizedFeatures,
-    day1TutorialModel,
     day1CoveredFeatureIds,
     day1CoveredTargetElementIds,
   });
@@ -449,20 +447,12 @@ export function resolveInlineHintTooltipPresentation(input = {}) {
 
 export function resolveDay1FeatureCoverage({
   features = CURRICULUM_FEATURE_HINTS,
-  day1TutorialModel = null,
   day1CoveredFeatureIds = [],
   day1CoveredTargetElementIds = [],
 } = {}) {
   const normalizedFeatures = normalizeFeatureHints(features);
-  const coveredTargetElementIds = new Set([
-    ...normalizeStringArray(day1CoveredTargetElementIds),
-    ...extractDay1TutorialTargetElementIds(day1TutorialModel),
-  ]);
-  const explicitCoveredFeatureIds = new Set([
-    ...normalizeStringArray(day1CoveredFeatureIds),
-    ...normalizeStringArray(day1TutorialModel?.day1CoveredFeatureIds),
-    ...normalizeStringArray(day1TutorialModel?.day1_covered_feature_ids),
-  ]);
+  const coveredTargetElementIds = new Set(normalizeStringArray(day1CoveredTargetElementIds));
+  const explicitCoveredFeatureIds = new Set(normalizeStringArray(day1CoveredFeatureIds));
   const coveredFeatureIds = normalizedFeatures
     .filter((feature) =>
       feature.day1Covered
@@ -472,7 +462,7 @@ export function resolveDay1FeatureCoverage({
     .map((feature) => feature.featureId);
 
   return {
-    source: "day1_tutorial_and_explicit_feature_coverage",
+    source: "opendesign_day_and_explicit_feature_coverage",
     coveredFeatureIds,
     covered_feature_ids: coveredFeatureIds,
     coveredTargetElementIds: [...coveredTargetElementIds].sort(),
@@ -781,18 +771,6 @@ function normalizeFeatureHints(value) {
       };
     })
     .filter(Boolean);
-}
-
-function extractDay1TutorialTargetElementIds(day1TutorialModel) {
-  const raw = objectOrEmpty(day1TutorialModel);
-  const stepTargets = Array.isArray(raw.steps)
-    ? raw.steps.map((step) => objectOrEmpty(step).targetElementId ?? objectOrEmpty(step).target_element_id)
-    : [];
-  const explicitTargets = [
-    ...(Array.isArray(raw.day1CoveredTargetElementIds) ? raw.day1CoveredTargetElementIds : []),
-    ...(Array.isArray(raw.day1_covered_target_element_ids) ? raw.day1_covered_target_element_ids : []),
-  ];
-  return normalizeStringArray([...stepTargets, ...explicitTargets]);
 }
 
 function resolveSeenInlineHintFeatureIds(state) {

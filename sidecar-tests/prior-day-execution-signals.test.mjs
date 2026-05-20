@@ -244,7 +244,7 @@ test("normalizePriorDayOutcome derives execution timing from lifecycle events", 
     completed: true,
     lifecycleEvents: [
       {
-        type: "day1_session_initialized",
+        type: "day_started",
         occurredAt: "2026-05-06T09:00:00.000Z",
       },
       {
