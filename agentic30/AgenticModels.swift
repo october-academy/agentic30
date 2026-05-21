@@ -1060,7 +1060,7 @@ struct NewsMarketRadarSourceRef: Codable, Hashable, Identifiable {
     let excerpt: String?
 
     var stableID: String {
-        id ?? url ?? path ?? title
+        url ?? path ?? id ?? title
     }
 }
 

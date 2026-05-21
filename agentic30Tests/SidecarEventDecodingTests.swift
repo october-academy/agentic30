@@ -871,6 +871,70 @@ struct SidecarEventDecodingTests {
         #expect(event.newsMarketRadar?.lanes.first?.cards.first?.sourceRefs.first?.domain == "example.com")
     }
 
+    @MainActor @Test func newsMarketRadarSourceStableIDPrefersURLOverDuplicateSourceID() throws {
+        let payload = """
+        {
+          "type": "news_market_radar_result",
+          "newsMarketRadar": {
+            "schemaVersion": 1,
+            "generatedAt": "2026-05-20T00:00:00.000Z",
+            "nextRefreshAfter": "2026-05-21T00:00:00.000Z",
+            "status": {
+              "state": "ready",
+              "lastSuccessAt": "2026-05-20T00:00:00.000Z",
+              "stale": false,
+              "error": null,
+              "reason": "manual"
+            },
+            "workspaceEvidenceRefs": [],
+            "lanes": [
+              {
+                "id": "platform",
+                "title": "플랫폼",
+                "hypothesis": "플랫폼 요구사항",
+                "impact": "strengthens",
+                "confidence": "medium",
+                "cards": [
+                  {
+                    "id": "card-1",
+                    "title": "Anthropic 문서 출처",
+                    "summary": "같은 도메인의 다른 문서를 구분합니다.",
+                    "impact": "strengthens",
+                    "confidence": "medium",
+                    "sourceRefs": [
+                      {
+                        "id": "web-docs.anthropic.com",
+                        "sourceType": "web",
+                        "title": "Overview",
+                        "url": "https://docs.anthropic.com/en/docs/claude-code/overview",
+                        "domain": "docs.anthropic.com"
+                      },
+                      {
+                        "id": "web-docs.anthropic.com",
+                        "sourceType": "web",
+                        "title": "Settings",
+                        "url": "https://docs.anthropic.com/en/docs/claude-code/settings",
+                        "domain": "docs.anthropic.com"
+                      }
+                    ],
+                    "evidenceStrength": "medium"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        let sourceRefs = try #require(event.newsMarketRadar?.lanes.first?.cards.first?.sourceRefs)
+
+        #expect(sourceRefs.count == 2)
+        #expect(sourceRefs[0].id == sourceRefs[1].id)
+        #expect(sourceRefs[0].stableID != sourceRefs[1].stableID)
+        #expect(sourceRefs[0].stableID == "https://docs.anthropic.com/en/docs/claude-code/overview")
+    }
+
     @MainActor @Test func decodesNewsMarketRadarStatusObject() throws {
         let payload = """
         {

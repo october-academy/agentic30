@@ -2923,6 +2923,12 @@ private struct NewsMarketRadarCardView: View {
     let card: NewsMarketRadarCard
     @State private var showsUpdate = false
 
+    private var visibleSourceRefs: [NewsMarketRadarSourceDisplayRef] {
+        card.sourceRefs.prefix(4).enumerated().map { index, source in
+            NewsMarketRadarSourceDisplayRef(index: index, source: source)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 10) {
@@ -2988,13 +2994,23 @@ private struct NewsMarketRadarCardView: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                ForEach(card.sourceRefs.prefix(4), id: \.stableID) { source in
-                    NewsMarketRadarSourceRow(source: source)
+                ForEach(visibleSourceRefs) { sourceRef in
+                    NewsMarketRadarSourceRow(source: sourceRef.source)
                 }
             }
         }
         .padding(16)
         .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+    }
+}
+
+private struct NewsMarketRadarSourceDisplayRef: Identifiable {
+    let id: String
+    let source: NewsMarketRadarSourceRef
+
+    init(index: Int, source: NewsMarketRadarSourceRef) {
+        self.id = "\(index)-\(source.stableID)"
+        self.source = source
     }
 }
 
