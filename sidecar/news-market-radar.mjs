@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -1666,20 +1667,51 @@ function normalizeSourceRefs(value, { selfReferenceProfile = null } = {}) {
       const domain = cleanString(source.domain || domainFromUrl(url), 160);
       const pathValue = cleanString(source.path || source.filePath || "", 500);
       const sourceType = cleanString(source.sourceType || source.type || (url ? "web" : "workspace"), 80);
+      const publishedAt = cleanString(source.publishedAt || source.published_at || "", 80);
+      const excerpt = cleanString(source.excerpt || source.quote || "", 700);
       return {
-        id: cleanString(source.id || `${sourceType}-${domain || pathValue || index}`, 220),
+        id: cleanString(
+          source.id || fallbackMarketRadarSourceRefId({
+            sourceType,
+            domain,
+            pathValue,
+            url,
+            excerpt,
+            index,
+          }),
+          220,
+        ),
         sourceType,
         title: cleanString(source.title || domain || pathValue || "source", 220),
         url,
         domain,
         path: pathValue,
-        publishedAt: cleanString(source.publishedAt || source.published_at || "", 80),
-        excerpt: cleanString(source.excerpt || source.quote || "", 700),
+        publishedAt,
+        excerpt,
       };
     })
     .filter((source) => source.url || source.path || source.excerpt)
     .filter((source) => !isSelfReferenceSource(source, normalizedSelfReferenceProfile));
   return dedupeSourceRefs(normalized).slice(0, 12);
+}
+
+function fallbackMarketRadarSourceRefId({
+  sourceType = "source",
+  domain = "",
+  pathValue = "",
+  url = "",
+  excerpt = "",
+  index = 0,
+} = {}) {
+  const sourceKey = canonicalMarketRadarSourceKey({ url, path: pathValue, excerpt });
+  if (sourceKey) {
+    return `${sourceType}-${domain || "source"}-${shortStableHash(sourceKey)}`;
+  }
+  return `${sourceType}-${domain || pathValue || index}`;
+}
+
+function shortStableHash(value = "") {
+  return createHash("sha256").update(String(value)).digest("hex").slice(0, 16);
 }
 
 function normalizeWorkspaceRefs(value, workspaceEvidence) {

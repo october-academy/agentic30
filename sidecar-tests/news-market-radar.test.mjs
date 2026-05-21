@@ -900,6 +900,31 @@ test("snapshot normalization dedupes cards by canonical source URL", () => {
   assert.equal(cards[0].sourceRefs.length, 1);
 });
 
+test("snapshot normalization generates unique source ids for same-domain URLs", () => {
+  const snapshot = normalizeNewsMarketRadarSnapshot({
+    generatedAt: "2026-05-20T00:00:00.000Z",
+    lanes: [{
+      id: "platform",
+      cards: [{
+        id: "same-domain-sources",
+        title: "같은 도메인의 다른 문서를 구분합니다",
+        summary: "동일한 출처 도메인 안에서도 문서별 근거가 유지됩니다.",
+        impact: "strengthens",
+        sourceRefs: [
+          { url: "https://docs.anthropic.com/en/docs/claude-code/overview", title: "Claude Code overview" },
+          { url: "https://docs.anthropic.com/en/docs/claude-code/settings", title: "Claude Code settings" },
+        ],
+      }],
+    }],
+  }, { now: new Date("2026-05-20T00:00:00.000Z") });
+
+  const sourceRefs = snapshot.lanes.find((lane) => lane.id === "platform").cards[0].sourceRefs;
+  const ids = sourceRefs.map((source) => source.id);
+  assert.equal(sourceRefs.length, 2);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.ok(ids.every((id) => id.startsWith("web-docs.anthropic.com-")));
+});
+
 test("refresh falls back to deterministic merge when final synthesis fails", async () => {
   await withTmpWorkspace(async (root) => {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
