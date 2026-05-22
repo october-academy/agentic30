@@ -432,8 +432,8 @@ struct SidecarEventDecodingTests {
                 "prompt": "좋은 고객의 필수 조건은?",
                 "helperText": "need/have 중심",
                 "options": [
-                  { "id": "o1", "label": "대안이 있음", "description": "이미 비용을 씀", "preview": "Have", "antiSignal": false },
-                  { "id": "o2", "label": "관심만 있음", "description": "최근 사건 없음", "preview": "Weak", "antiSignal": true }
+                  { "id": "o1", "label": "대안이 있음", "description": "이미 비용을 씀 · 근거: README.md", "preview": "Have", "antiSignal": false, "evidenceLabel": "근거: README.md", "evidenceLimited": false },
+                  { "id": "o2", "label": "관심만 있음", "description": "근거 부족: 최근 사건 없음", "preview": "Weak", "antiSignal": true, "evidenceLabel": "근거 부족", "evidenceLimited": true }
                 ],
                 "allowFreeText": true,
                 "freeTextPlaceholder": "직접 입력"
@@ -491,11 +491,27 @@ struct SidecarEventDecodingTests {
         #expect(event.day1IcpPlan?.schemaVersion == 1)
         #expect(event.day1IcpPlan?.questions.count == 3)
         #expect(event.day1IcpPlan?.questions.first?.options.last?.antiSignal == true)
+        #expect(event.day1IcpPlan?.questions.first?.options.first?.evidenceLabel == "근거: README.md")
+        #expect(event.day1IcpPlan?.questions.first?.options.last?.evidenceLimited == true)
         #expect(event.day1IcpPlan?.icpDraft.description.contains("support lead") == true)
         #expect(event.day1IcpPlan?.antiIcp.rules.first?.label == "흥미롭네요만 말함")
     }
 
     @MainActor @Test func decodesWorkspaceScanResultWithDay1AlignmentPlan() throws {
+        let signalDigestBlock = """
+            "signalDigest": {
+              "schemaVersion": 1,
+              "rows": [
+                { "key": "project", "label": "프로젝트", "value": "SupportLens", "tone": "strong" },
+                { "key": "goal", "label": "목표", "value": "유료 support lead 후보 1명을 검증한다", "tone": "body" },
+                { "key": "icp", "label": "ICP", "value": "B2B SaaS support lead", "tone": "body" },
+                { "key": "pain", "label": "Pain", "value": "urgent Slack escalation을 놓침", "tone": "mark" },
+                { "key": "outcome", "label": "Outcome", "value": "계정 리스크 escalation을 더 빨리 판단한다", "tone": "strong" },
+                { "key": "evidence", "label": "근거", "value": "docs/GOAL.md, docs/ICP.md", "tone": "code" }
+              ],
+              "summary": "SupportLens는 support lead의 Slack escalation 누락을 Day 2에서 검증한다."
+            },
+        """
         let payload = """
         {
           "type": "workspace_scan_result",
@@ -571,7 +587,7 @@ struct SidecarEventDecodingTests {
               "threshold": 7.0,
               "passed": true,
               "label": "PASS",
-              "passGate": "정렬문이 7.0/10 이상",
+              "passGate": "핵심 가설이 7.0/10 이상",
               "failGate": "목표, 고객, 통증, 결과 중 하나가 비어 있음",
               "criteria": [
                 { "id": "project_goal", "label": "Project goal", "score": 2.0, "maxScore": 2.0, "passed": true, "detail": "명확함" }
@@ -580,12 +596,13 @@ struct SidecarEventDecodingTests {
             "firstInterviewMessage": {
               "channel": "DM/email/Slack",
               "recipientPlaceholder": "{name}",
-              "subject": "정렬문 인터뷰",
+              "subject": "핵심 가설 인터뷰",
               "bodyTemplate": "안녕하세요 {name}님",
               "questions": ["최근 사건?"]
             },
+        \(signalDigestBlock)
             "day2Handoff": {
-              "title": "Day 2 시장 신호로 넘길 정렬문",
+              "title": "Day 2 시장 신호로 넘길 핵심 가설",
               "body": "Day 2에서 유료 대체재를 확인합니다.",
               "focus": "목표: SupportLens...",
               "nextDayPrompt": "유료 대체재 5개를 찾는다.",
@@ -604,6 +621,13 @@ struct SidecarEventDecodingTests {
         #expect(event.day1AlignmentPlan?.components.outcome.options.last?.antiSignal == true)
         #expect(event.day1AlignmentPlan?.qualityGate.score == 8.4)
         #expect(event.day1AlignmentPlan?.day2Handoff.qualityGateLabel == "PASS 8.4/10")
+        #expect(event.day1AlignmentPlan?.signalDigest?.rows.map(\.key) == ["project", "goal", "icp", "pain", "outcome", "evidence"])
+        #expect(event.day1AlignmentPlan?.signalDigest?.summary.contains("Day 2") == true)
+
+        let legacyPayload = payload.replacingOccurrences(of: "\"signalDigest\"", with: "\"legacySignalDigest\"")
+        let legacyEvent = try decoder.decode(SidecarEvent.self, from: Data(legacyPayload.utf8))
+        #expect(legacyEvent.day1AlignmentPlan?.signalDigest == nil)
+        #expect(legacyEvent.day1AlignmentPlan?.qualityGate.score == 8.4)
     }
 
     @MainActor @Test func decodesWorkspaceScanResultWithError() throws {

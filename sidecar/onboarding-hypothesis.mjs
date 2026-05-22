@@ -122,6 +122,19 @@ export async function deriveWorkspaceOnboardingHypothesisLocally(scanRoot, { doc
   return normalizeWorkspaceOnboardingHypothesis(hypothesis);
 }
 
+export function normalizeProductName(value) {
+  const text = cleanProductNameText(value);
+  if (!text) return "";
+  const comparable = text
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (/^agentic\s*30(?:\s+(?:macos\s+app|mac\s+app|mac|sidecar|public))*$/i.test(comparable)) {
+    return "Agentic30";
+  }
+  return cleanText(text);
+}
+
 export function normalizeWorkspaceOnboardingHypothesis(value) {
   if (!value || typeof value !== "object") return fallbackHypothesis();
   const likelyUsersSource = value.likelyUsers || value.likely_users;
@@ -133,13 +146,13 @@ export function normalizeWorkspaceOnboardingHypothesis(value) {
     ? evidenceSource.map(cleanText).filter(Boolean)
     : [];
   const confidence = normalizeConfidence(value.confidence);
-  const productName = cleanText(value.productName || value.product_name);
+  const productName = normalizeProductName(value.productName || value.product_name);
   const projectKind = cleanToken(value.projectKind || value.project_kind) || "unknown";
-  const targetUser = cleanText(value.targetUser || value.target_user);
-  const problem = cleanText(value.problem);
-  const purpose = cleanText(value.purpose);
-  const goal = cleanText(value.goal);
-  const values = cleanText(value.values);
+  const targetUser = cleanSemanticText(value.targetUser || value.target_user);
+  const problem = cleanSemanticText(value.problem);
+  const purpose = cleanSemanticText(value.purpose);
+  const goal = cleanSemanticText(value.goal);
+  const values = cleanSemanticText(value.values);
   const stage = cleanToken(value.stage) || "unknown";
   const normalized = {
     productName,
@@ -317,48 +330,52 @@ function inferLikelyUsers(context, packageJson) {
 
 function inferProductName({ rootReadme, packageJson, root }) {
   const heading = firstMarkdownHeading(rootReadme?.content || "");
-  if (heading) return cleanText(heading);
+  if (heading) return normalizeProductName(heading);
   const packageName = stringValue(packageJson?.name);
-  if (packageName) return cleanText(packageName.replace(/[-_](sidecar|app|web|api)$/i, ""));
-  return cleanText(path.basename(root || ""));
+  if (packageName) return normalizeProductName(packageName);
+  return normalizeProductName(path.basename(root || ""));
 }
 
 function inferProductBrief({ context, productName = "" }) {
-  const targetUser = firstMatch(context, [
-    /\*\*(?:타깃 유저|타겟 사용자|target user)\s*:\*\*\s*([^\n]+)/i,
-    /(?:타깃 유저|타겟 사용자|target user)\s*[:\-]\s*([^\n]+)/i,
-    /요약하면\s*([^\n.]+?)(?:\.|\n)/,
-    /##\s+Our ICP:\s*([^\n]+)/i,
-    /###\s+Primary[^\n]*\n+\s*[-*]?\s*\*\*프로필:\*\*\s*([^\n]+)/i,
+  const targetUser = firstSemanticMatch(context, [
+    /^[ \t]*(?:[-*][ \t]*)?\*\*(?:타깃 유저|타깃 사용자|타겟 사용자|target user)[ \t]*[:：]\*\*[ \t]*([^\n]+)/im,
+    /^[ \t]*(?:(?:\/\/|#)[ \t]*)?(?:[-*][ \t]*)?(?:타깃 유저|타깃 사용자|타겟 사용자|target user)[ \t]*[:：-][ \t]*([^\n]+)/im,
+    /^##[ \t]+Our ICP:[ \t]*([^\n]+)/im,
+    /^##[ \t]+(?:타깃|타겟)[ \t]*사용자[^\n]*\n(?:[ \t]*\n|[^\n]*ICP[^\n]*\n){0,3}[ \t]*[-*][ \t]+([^\n]+)/im,
+    /요약하면[ \t]*([^\n.]+?)(?:\.|\n)/,
+    /^###[ \t]+Primary[^\n]*\n+[ \t]*[-*]?[ \t]*\*\*프로필:\*\*[ \t]*([^\n]+)/im,
   ]);
-  const problem = firstMatch(context, [
-    /핵심 가설:\s*이 유저는\s*"([^"]+)"/,
-    /\*\*핵심 고민:\*\*\s*"([^"]+)"/,
-    /\*\*설명\*\*\s*\|\s*([^|\n]*?모른다[^|\n]*)/,
-    /(?:problem|pain)\s*[:\-]\s*([^\n]+)/i,
+  const problem = firstSemanticMatch(context, [
+    /^[ \t]*핵심 가설:[ \t]*이 유저는[ \t]*"([^"]+)"/im,
+    /^[ \t]*핵심 문제는[ \t]*[“"]([^”"]+)[”"]/im,
+    /^[ \t]*\*\*핵심 고민:\*\*[ \t]*"([^"]+)"/im,
+    /^[ \t]*\*\*설명\*\*[ \t]*\|[ \t]*([^|\n]*?모른다[^|\n]*)/im,
+    /^##[ \t]+제품 한 문장[^\n]*\n+\*\*([^*\n]+)\*\*/im,
+    /^###[ \t]+설명[^\n]*\n+([^\n]*?(?:모른다|막혀 있다)[^\n]*)/im,
+    /^[ \t]*(?:(?:\/\/|#)[ \t]*)?(?:problem|pain)[ \t]*[:：-][ \t]*([^\n]+)/im,
   ]);
-  const purpose = firstMatch(context, [
+  const purpose = firstSemanticMatch(context, [
     /^>\s*([^\n]*?돕는[^\n]*?(?:assistant|어시스턴트|앱|도구)[^\n]*)/mi,
-    /\*\*미션:\*\*\s*([^\n]+)/,
-    /##\s+프로젝트 미션\s*\n+\s*([^\n]+)/,
-    /\*\*핵심 가치:\*\*\s*([^\n]+)/,
+    /^[ \t]*\*\*미션:\*\*[ \t]*([^\n]+)/im,
+    /^##[ \t]+프로젝트 미션[^\n]*\n+[ \t]*([^\n]+)/im,
+    /^[ \t]*\*\*핵심 가치:\*\*[ \t]*([^\n]+)/im,
   ]);
-  const goal = firstMatch(context, [
-    /\*\*(?:목표|goal)\s*:\*\*\s*([^\n]+)/i,
-    /(?:목표|goal)\s*[:\-]\s*([^\n]+)/i,
-    /##\s+(?:목표|Goal)\s*\n+\s*([^\n]+)/i,
+  const goal = firstSemanticMatch(context, [
+    /^[ \t]*\*\*(?:목표|goal)[ \t]*[:：]\*\*[ \t]*([^\n]+)/im,
+    /^[ \t]*(?:(?:\/\/|#)[ \t]*)?(?:목표|goal)[ \t]*[:：-][ \t]*([^\n]+)/im,
+    /^##[ \t]+(?:목표|Goal)[^\n]*\n+[ \t]*([^\n]+)/im,
   ]);
-  const values = firstMatch(context, [
-    /\*\*(?:가치|values?)\s*:\*\*\s*([^\n]+)/i,
-    /(?:핵심 가치|values?)\s*[:\-]\s*([^\n]+)/i,
-    /##\s+(?:가치|Values?)\s*\n+\s*([^\n]+)/i,
+  const values = firstSemanticMatch(context, [
+    /^[ \t]*\*\*(?:가치|values?)[ \t]*[:：]\*\*[ \t]*([^\n]+)/im,
+    /^[ \t]*(?:(?:\/\/|#)[ \t]*)?(?:핵심 가치|values?)[ \t]*[:：-][ \t]*([^\n]+)/im,
+    /^##[ \t]+(?:가치|Values?)[^\n]*\n+[ \t]*([^\n]+)/im,
   ]);
   return {
-    targetUser: cleanText(targetUser || ""),
-    problem: cleanText(problem || ""),
-    purpose: cleanText(purpose || productPurposeFallback({ productName, targetUser, problem })),
-    goal: cleanText(goal || ""),
-    values: cleanText(values || ""),
+    targetUser,
+    problem,
+    purpose: purpose || cleanSemanticText(productPurposeFallback({ productName, targetUser, problem })),
+    goal,
+    values,
   };
 }
 
@@ -374,9 +391,37 @@ function firstMatch(text, patterns) {
   const source = String(text || "");
   for (const pattern of patterns) {
     const match = source.match(pattern);
-    if (match?.[1]) return match[1].trim();
+    const candidate = cleanBriefMatch(match?.[1]);
+    if (candidate) return candidate;
   }
   return "";
+}
+
+function firstSemanticMatch(text, patterns) {
+  return firstMatch(text, patterns);
+}
+
+function cleanSemanticText(value) {
+  return cleanBriefMatch(value);
+}
+
+function cleanBriefMatch(value) {
+  let text = cleanText(value)
+    .replace(/^[-*]\s*/, "")
+    .replace(/^["“]+|["”]+$/g, "")
+    .replace(/\s+[—–-]\s*$/, "")
+    .trim();
+  if (!text || looksLikeBriefDocumentPointer(text)) return "";
+  if (/^(상세는|참고|관련 문서)\b/.test(text)) return "";
+  return text;
+}
+
+function looksLikeBriefDocumentPointer(value) {
+  const text = cleanText(value);
+  const lower = text.toLowerCase();
+  return /\.md\b/.test(lower)
+    || /\[[^\]]+\]\([^)]+\)/.test(text)
+    || /(?:docs\/|참고 문서|제품 명세와 타겟 사용자|제품 명세와 타깃 사용자|회사 미션|제품 매핑|루브릭|mapping|alignment)/i.test(text);
 }
 
 function cleanSuggestedFirstQuestion(value) {
@@ -655,6 +700,17 @@ function cleanText(value) {
 function cleanSentenceFragment(value) {
   return String(value || "")
     .replace(/[`*_]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[.。．]+$/u, "");
+}
+
+function cleanProductNameText(value) {
+  return String(value || "")
+    .replace(/^#+\s*/, "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
     .replace(/\s+/g, " ")
     .trim()
     .replace(/[.。．]+$/u, "");

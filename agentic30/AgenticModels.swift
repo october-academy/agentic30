@@ -621,6 +621,26 @@ struct Day1IcpQuestionOption: Codable, Hashable {
     let description: String
     let preview: String?
     let antiSignal: Bool?
+    let evidenceLabel: String?
+    let evidenceLimited: Bool?
+
+    init(
+        id: String,
+        label: String,
+        description: String,
+        preview: String? = nil,
+        antiSignal: Bool? = nil,
+        evidenceLabel: String? = nil,
+        evidenceLimited: Bool? = nil
+    ) {
+        self.id = id
+        self.label = label
+        self.description = description
+        self.preview = preview
+        self.antiSignal = antiSignal
+        self.evidenceLabel = evidenceLabel
+        self.evidenceLimited = evidenceLimited
+    }
 }
 
 struct IcpDraft: Codable, Hashable {
@@ -672,6 +692,52 @@ struct Day1AlignmentPlan: Codable, Hashable {
     let qualityGate: Day1AlignmentQualityGate
     let firstInterviewMessage: FirstInterviewMessage
     let day2Handoff: Day1Day2Handoff
+    let signalDigest: Day1SignalDigest?
+
+    init(
+        schemaVersion: Int,
+        source: String? = nil,
+        generatedAt: String? = nil,
+        confidence: Double? = nil,
+        fellBackToDeterministic: Bool? = nil,
+        projectGoal: String,
+        mission: String,
+        signals: Day1IcpSignals,
+        components: Day1AlignmentComponents,
+        alignmentStatement: Day1AlignmentStatement,
+        qualityGate: Day1AlignmentQualityGate,
+        firstInterviewMessage: FirstInterviewMessage,
+        day2Handoff: Day1Day2Handoff,
+        signalDigest: Day1SignalDigest? = nil
+    ) {
+        self.schemaVersion = schemaVersion
+        self.source = source
+        self.generatedAt = generatedAt
+        self.confidence = confidence
+        self.fellBackToDeterministic = fellBackToDeterministic
+        self.projectGoal = projectGoal
+        self.mission = mission
+        self.signals = signals
+        self.components = components
+        self.alignmentStatement = alignmentStatement
+        self.qualityGate = qualityGate
+        self.firstInterviewMessage = firstInterviewMessage
+        self.day2Handoff = day2Handoff
+        self.signalDigest = signalDigest
+    }
+}
+
+struct Day1SignalDigest: Codable, Hashable {
+    let schemaVersion: Int
+    let rows: [Day1SignalDigestRow]
+    let summary: String
+}
+
+struct Day1SignalDigestRow: Codable, Hashable {
+    let key: String
+    let label: String
+    let value: String
+    let tone: String?
 }
 
 struct Day1AlignmentComponents: Codable, Hashable {

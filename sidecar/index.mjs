@@ -6597,7 +6597,7 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
     "- sheet: SHEET.md, SHEETS.md, or BIP_SHEET.md",
     "",
     "Also infer an onboardingHypothesis for the first user-facing question:",
-    "- productName: exact product/project name visible in README/docs/package",
+    '- productName: display product/project name without platform/form-factor suffixes; for example README "# agentic30 Mac" should return "Agentic30"',
     "- projectKind: short snake_case product type such as mac_app, web_app, developer_tool, node_app, strategy_docs, or unknown",
     "- targetUser: the current customer/ICP definition visible from docs, in Korean when possible",
     "- problem: the concrete user pain/problem the product claims to solve; do not infer from tech stack alone",

@@ -6,6 +6,7 @@ import fs from "node:fs/promises";
 import {
   deriveWorkspaceOnboardingHypothesisLocally,
   mergeWorkspaceOnboardingHypotheses,
+  normalizeProductName,
   normalizeWorkspaceOnboardingHypothesis,
 } from "../sidecar/onboarding-hypothesis.mjs";
 
@@ -24,7 +25,7 @@ test("deriveWorkspaceOnboardingHypothesisLocally infers project context from REA
     await fs.writeFile(
       path.join(root, "README.md"),
       [
-        "# Agentic30",
+        "# agentic30 Mac",
         "",
         "A macOS app for developers using Codex and Claude coding agents.",
         "**타깃 유저:** 전업 1인 개발자, 수익 0원, macOS 사용자",
@@ -57,6 +58,110 @@ test("deriveWorkspaceOnboardingHypothesisLocally infers project context from REA
     assert.ok(hypothesis.likelyUsers.includes("AI 코딩 도구를 쓰는 개발자"));
     assert.match(hypothesis.suggestedFirstQuestion, /가장 먼저 인터뷰할 1인 개발자 유형/);
     assert.ok(hypothesis.evidence.some((item) => item.includes("README")));
+  });
+});
+
+test("deriveWorkspaceOnboardingHypothesisLocally ignores markdown reference bullets when extracting target user", async () => {
+  await withTempWorkspace(async (root) => {
+    await fs.writeFile(path.join(root, "README.md"), "# agentic30 Mac\n");
+    await fs.writeFile(
+      path.join(root, "docs", "ICP.md"),
+      [
+        "# Ideal Customer Profile",
+        "",
+        "## Our ICP: 전업 1인 개발자 (수익 0원, macOS)",
+        "",
+        "### 설명",
+        "퇴사 후 전업했지만 수익은 0원이다. 제품은 만들 수 있으나 무엇을 팔아야 할지, 누구에게 팔아야 할지, 어떻게 첫 사용자를 데려올지 막혀 있다.",
+        "",
+        "## 참고 문서",
+        "- [SPEC.md](./SPEC.md) — 제품 명세와 타겟 사용자",
+        "- [VALUES.md](./VALUES.md) — 제품 가치",
+      ].join("\n"),
+    );
+    await fs.writeFile(
+      path.join(root, "docs", "SPEC.md"),
+      [
+        "# Agentic30 Product Spec",
+        "",
+        "핵심 문제는 “만들 줄은 알지만 무엇을 팔아야 하는지, 어떻게 사람을 데려와야 하는지, 오늘 무엇을 검증해야 하는지 모른다”는 것이다.",
+      ].join("\n"),
+    );
+    await fs.writeFile(
+      path.join(root, "docs", "GOAL.md"),
+      "# Agentic30 목표\n\nAgentic30은 전업 1인 개발자를 위한 30일 부트캠프다. 사용자 100명과 첫 매출 달성을 목표로 한다.\n",
+    );
+
+    const hypothesis = await deriveWorkspaceOnboardingHypothesisLocally(root, {
+      docPaths: { icp: "docs/ICP.md", spec: "docs/SPEC.md", goal: "docs/GOAL.md" },
+    });
+
+    assert.match(hypothesis.targetUser, /전업 1인 개발자/);
+    assert.doesNotMatch(hypothesis.targetUser, /\.md|VALUES|제품 명세와 타겟 사용자/);
+    assert.match(hypothesis.problem, /무엇을 팔아야|누구에게 팔아야|오늘 무엇을 검증/);
+    assert.doesNotMatch(JSON.stringify(hypothesis), /\[VALUES\.md\]|\[SPEC\.md\]/);
+  });
+});
+
+test("normalizeProductName canonicalizes Agentic30 display variants only", () => {
+  assert.equal(normalizeProductName("agentic30"), "Agentic30");
+  assert.equal(normalizeProductName("Agentic30"), "Agentic30");
+  assert.equal(normalizeProductName("agentic30 Mac"), "Agentic30");
+  assert.equal(normalizeProductName("Agentic30 macOS app"), "Agentic30");
+  assert.equal(normalizeProductName("agentic30-sidecar"), "Agentic30");
+  assert.equal(normalizeProductName("agentic30-public"), "Agentic30");
+  assert.equal(normalizeProductName("**agentic30 Mac**"), "Agentic30");
+  assert.equal(normalizeProductName("RevenuePilot Mac"), "RevenuePilot Mac");
+});
+
+test("deriveWorkspaceOnboardingHypothesisLocally normalizes package-only Agentic30 names", async () => {
+  await withTempWorkspace(async (root) => {
+    await fs.writeFile(
+      path.join(root, "package.json"),
+      JSON.stringify({
+        name: "agentic30-sidecar",
+        description: "Codex assistant sidecar",
+      }),
+    );
+
+    const hypothesis = await deriveWorkspaceOnboardingHypothesisLocally(root);
+
+    assert.equal(hypothesis.productName, "Agentic30");
+  });
+});
+
+test("deriveWorkspaceOnboardingHypothesisLocally ignores reference links when extracting ICP", async () => {
+  await withTempWorkspace(async (root) => {
+    await fs.writeFile(
+      path.join(root, "README.md"),
+      [
+        "# agentic30 Mac",
+        "",
+        "Native macOS assistant for founders using AI coding agents.",
+      ].join("\n"),
+    );
+    await fs.writeFile(
+      path.join(root, "docs", "ICP.md"),
+      [
+        "# Ideal Customer Profile (ICP)",
+        "",
+        "## Our ICP: 전업 1인 개발자 (수익 0원, macOS)",
+        "",
+        "퇴사 후 전업했지만 수익은 0원이다.",
+        "",
+        "## 참고 자료",
+        "",
+        "- [SPEC.md](./SPEC.md) — 제품 명세와 타겟 사용자",
+        "- [VALUES.md](./VALUES.md) — 제품 가치",
+      ].join("\n"),
+    );
+
+    const hypothesis = await deriveWorkspaceOnboardingHypothesisLocally(root, {
+      docPaths: { icp: "docs/ICP.md" },
+    });
+
+    assert.match(hypothesis.targetUser, /전업 1인 개발자/);
+    assert.doesNotMatch(hypothesis.targetUser, /VALUES\.md|SPEC\.md/);
   });
 });
 
@@ -114,7 +219,7 @@ test("normalizeWorkspaceOnboardingHypothesis keeps malformed provider output saf
 
 test("normalizeWorkspaceOnboardingHypothesis accepts provider snake_case fields", () => {
   const hypothesis = normalizeWorkspaceOnboardingHypothesis({
-    product_name: "Agentic30",
+    product_name: "agentic30 Mac",
     project_kind: "mac_app",
     target_user: "전업 1인 개발자",
     problem: "무엇을 만들어야 팔리는지 모른다",

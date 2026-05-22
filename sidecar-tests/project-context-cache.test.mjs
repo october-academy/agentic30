@@ -61,6 +61,43 @@ test("project context cache is written with compact workspace scan fields", asyn
   });
 });
 
+test("project context cache refresh rewrites stale Agentic30 product names", async () => {
+  await withTempWorkspace(async (root) => {
+    const cachePath = resolveProjectContextCachePath(root);
+    await fs.mkdir(path.dirname(cachePath), { recursive: true });
+    await fs.writeFile(
+      cachePath,
+      JSON.stringify({
+        schemaVersion: 1,
+        schema: PROJECT_CONTEXT_SCHEMA,
+        productName: "agentic30 Mac",
+        targetUser: "전업 1인 개발자",
+        problem: "무엇을 만들어야 팔리는지 모른다",
+        evidenceRefs: ["README: agentic30 Mac"],
+        confidence: "high",
+        updatedAt: "2026-05-19T00:00:00.000Z",
+      }),
+    );
+
+    const cache = await refreshProjectContextCache({
+      workspaceRoot: root,
+      reason: "workspace_scan",
+      onboardingHypothesis: {
+        productName: "agentic30 Mac",
+        targetUser: "전업 1인 개발자",
+        problem: "무엇을 만들어야 팔리는지 모른다",
+        evidence: ["README: agentic30 Mac"],
+        confidence: "high",
+      },
+      now: new Date("2026-05-20T00:00:00.000Z"),
+    });
+
+    assert.equal(cache.productName, "Agentic30");
+    const persistedRaw = JSON.parse(await fs.readFile(cachePath, "utf8"));
+    assert.equal(persistedRaw.productName, "Agentic30");
+  });
+});
+
 test("day completion refresh updates completed day and answer-log evidence", async () => {
   await withTempWorkspace(async (root) => {
     await refreshProjectContextCache({
