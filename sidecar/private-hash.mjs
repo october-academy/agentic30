@@ -9,8 +9,7 @@ import crypto from "node:crypto";
 // "hash → original keyword" reverse path.
 //
 // Operational rules + rotation policy live in
-// `docs/private/alignment/HMAC-PEPPER-ADR.md` (gitignored). The public
-// referrer is in `docs/ALIGNMENT.md`.
+// `docs/private/alignment/HMAC-PEPPER-ADR.md` (gitignored).
 
 const ENV_KEY = "AGENTIC30_LEDGER_PEPPER";
 
@@ -34,7 +33,7 @@ export function hashPrivateExcerpt(input) {
     // illusion (CCG/Codex HIGH). Forcing the operator to set the env var
     // makes the assumption visible.
     throw new Error(
-      `${ENV_KEY} is not set; refusing to hash private excerpt without a pepper. See docs/ALIGNMENT.md "운영 참고".`,
+      `${ENV_KEY} is not set; refusing to hash private excerpt without a pepper.`,
     );
   }
   if (pepper.startsWith("dev-only-") && !warnedOnce) {

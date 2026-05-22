@@ -575,7 +575,7 @@ function renderSpecMdV3Draft(evidence) {
     lines.push(`- Day ${day.day} → SPEC ${day.spec_version}: ${status}`);
   }
   lines.push("");
-  lines.push("## 목표 정렬문 (Day 1)");
+  lines.push("## 핵심 가설 (Day 1)");
   appendDayExcerpt(lines, evidence, 1, "day-1-alignment-statement.md");
   lines.push("");
   lines.push("## 인터뷰 검증/반증 (Day 3)");

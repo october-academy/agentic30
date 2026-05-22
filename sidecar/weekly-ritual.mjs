@@ -1,6 +1,6 @@
 // Weekly ritual triggers for the alignment runtime.
 //
-// The 5축 RUBRIC.md anchors describe Day 0 / Day 30 endpoints; the in-between
+// The sidecar anchors describe Day 0 / Day 30 endpoints; the in-between
 // rhythm is unforced unless the user crosses Day 7, 14, or 21 boundaries.
 // 21 is the last ritual: Day 30 is the closing assessment, not another
 // midpoint check (Gemini UX: "30일 결판"의 긴장감 보존).
@@ -24,7 +24,7 @@ export function detectRitualBoundary({ curriculumDay, lastRitualDayObserved = 0 
 }
 
 const RITUAL_FOCUS = Object.freeze({
-  // Each ritual reuses the closest two RUBRIC.md axes so the question stays
+  // Each ritual reuses the closest two assessment axes so the question stays
   // a *single* decision (one question = one decision, per inline_decision
   // contract). Day 7 leans on Definition+Command (early problem framing);
   // Day 14 on Clout+Responsibility (first signals + commitments); Day 21 on

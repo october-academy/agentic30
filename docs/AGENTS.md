@@ -20,8 +20,6 @@ Product and operations documentation. Includes the canonical product source-of-t
 | `qmd-advice-setup.md` | qmd memory setup instructions for the assistant |
 | `response-time-improvement-plan.md` | Response-time tracking plan (used by `scripts/report-response-timings.mjs`) |
 | `productization-benchmark.md` | Productization benchmark notes |
-| `AGENTIC30-DIRECTION.md` | Alignment boundary, source-of-truth links, sync workflow (private/public split) |
-| `ALIGNMENT.md` | Mission ↔ product ↔ measurement mapping; 5-axis rubric; No-Go gating philosophy |
 
 ## For AI Agents
 
@@ -29,7 +27,6 @@ Product and operations documentation. Includes the canonical product source-of-t
 - `ICP.md`, `GOAL.md`, `VALUES.md`, `SPEC.md` are the canonical project-shape documents. Update them via the `/office-hours-docs` assistant command rather than ad-hoc edits, so the office-hours interview output stays in sync.
 - The sidecar reads these files at runtime to ground prompts (`sidecar/office-hours-docs-prompt.mjs`, `sidecar/foundation-summary/`). Schema-breaking changes (heading restructure, section removal) must be paired with prompt updates.
 - Operational docs (`release-checklist.md`, `known-limitations.md`, `diagnostics-guide.md`) are referenced from the README — keep cross-links live.
-- `AGENTIC30-DIRECTION.md` is the alignment-boundary source; `ALIGNMENT.md` is the mission-to-measurement mapping. Edit by hand (not via `/office-hours-docs`). Anything that references the 5-axis rubric or No-Go framing should link `ALIGNMENT.md`.
 
 ### Testing Requirements
 - No direct tests; verify renderability and link integrity manually.

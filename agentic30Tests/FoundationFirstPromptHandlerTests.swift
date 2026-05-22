@@ -37,19 +37,19 @@ struct FoundationFirstPromptHandlerTests {
           "persona": "YC 파트너 / 시니어 메이커 (직설+압박, 반말)",
           "template": "3-section minimal",
           "yesterday": "어제 채널 등록 끝냈어. runway 6주, 과거 실패 2건 — 이거 잊지 마.",
-          "today": "프로젝트 목표와 ICP/Pain Point/Outcome 정렬문을 SPEC.md v0 기준으로 박아.",
-          "question": "그 정렬문에서 Day 2가 확인할 시장 신호는 뭐야?",
-          "core_question": "프로젝트 목표와 ICP, Pain Point, Outcome 정렬문이 뭐야?",
+          "today": "프로젝트 목표와 ICP/Pain Point/Outcome이 담긴 핵심 가설을 SPEC.md v0 기준으로 박아.",
+          "question": "그 핵심 가설에서 Day 2가 확인할 시장 신호는 뭐야?",
+          "core_question": "프로젝트 목표와 ICP, Pain Point, Outcome이 담긴 핵심 가설이 뭐야?",
           "spec_version": "v0",
           "sub_workflow": "office-hours-docs",
           "artifacts": ["SPEC.md", "day-1-alignment-statement.md"],
-          "text": "어제: 어제 채널 등록 끝냈어. runway 6주, 과거 실패 2건 — 이거 잊지 마.\\n오늘: 프로젝트 목표와 ICP/Pain Point/Outcome 정렬문을 SPEC.md v0 기준으로 박아.\\nQ: 그 정렬문에서 Day 2가 확인할 시장 신호는 뭐야?"
+          "text": "어제: 어제 채널 등록 끝냈어. runway 6주, 과거 실패 2건 — 이거 잊지 마.\\n오늘: 프로젝트 목표와 ICP/Pain Point/Outcome이 담긴 핵심 가설을 SPEC.md v0 기준으로 박아.\\nQ: 그 핵심 가설에서 Day 2가 확인할 시장 신호는 뭐야?"
         }
         """.data(using: .utf8)!
 
         let prompt = try Self.makeDecoder().decode(FoundationFirstPrompt.self, from: payload)
         #expect(prompt.day == 1)
-        #expect(prompt.coreQuestion == "프로젝트 목표와 ICP, Pain Point, Outcome 정렬문이 뭐야?")
+        #expect(prompt.coreQuestion == "프로젝트 목표와 ICP, Pain Point, Outcome이 담긴 핵심 가설이 뭐야?")
         #expect(prompt.specVersion == "v0")
         #expect(prompt.subWorkflow == "office-hours-docs")
         #expect(prompt.artifacts == ["SPEC.md", "day-1-alignment-statement.md"])

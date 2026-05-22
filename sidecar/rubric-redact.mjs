@@ -1,7 +1,7 @@
 // Round 6 / CCG-Codex Privacy 권고: get_rubric_status가 raw evidence/notes/
 // anchor_text/no_evidence_reason을 그대로 응답으로 흘려보내면 결과가 caller
-// (Claude/Codex provider)의 context로 들어간다. docs/RUBRIC.md Privacy 약속
-// ("scores·anchor·evidence·notes는 local-only")과 정면 충돌하므로 redact form만
+// (Claude/Codex provider)의 context로 들어간다. local-only privacy contract와
+// 정면 충돌하므로 redact form만
 // 반환한다. raw record는 사용자가 직접 `<workspace>/.agentic30/rubric-assessments.json`
 // 에서 읽도록 안내.
 //

@@ -185,7 +185,7 @@ test("collectFoundationEvidence recommends restart when monetization=no_reply", 
 
 test("buildFoundationSummaryDraftV1 produces three labelled markdown bodies", async () => {
   await withTempWorkspace(async (root) => {
-    await writeArtifact(root, "day-1-alignment-statement.md", "## 목표 정렬문\nProject Goal + ICP + Pain Point + Outcome.");
+    await writeArtifact(root, "day-1-alignment-statement.md", "## 핵심 가설\nProject Goal + ICP + Pain Point + Outcome.");
     await writeArtifact(root, "SPEC.md", "# SPEC\n## SPEC v0");
     await writeArtifact(
       root,
@@ -197,7 +197,7 @@ test("buildFoundationSummaryDraftV1 produces three labelled markdown bodies", as
 
     assert.equal(draft.schema_version, 1);
     assert.match(draft.spec_md_v3, /# SPEC v3 \(draft\.v1\)/);
-    assert.match(draft.spec_md_v3, /목표 정렬문/);
+    assert.match(draft.spec_md_v3, /핵심 가설/);
     assert.match(draft.go_no_go_md, /# go-no-go\.md \(draft\.v1\)/);
     assert.match(draft.go_no_go_md, /계속 \(Build phase 진입\)/);
     assert.match(draft.foundation_summary_md, /# foundation-summary\.md \(draft\.v1\)/);

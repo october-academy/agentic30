@@ -772,7 +772,7 @@ test("adaptive Foundation days mirror Foundation chat day semantics", () => {
     [...docPaths].sort(),
     ["docs/GOAL.md", "docs/ICP.md", "docs/SPEC.md", "docs/VALUES.md"].sort(),
   );
-  assert.match(foundationDays[0].title, /목표와 고객 정렬문/);
+  assert.match(foundationDays[0].title, /목표와 고객 핵심 가설/);
   assert.match(FOUNDATION_DAYS[1].core_question, /ICP, Pain Point, Outcome/);
   assert.match(foundationDays[1].title, /돈이 흐르는 기준 시장/);
   assert.match(FOUNDATION_DAYS[2].core_question, /시장·고객 데이터/);
@@ -806,14 +806,14 @@ test("base curriculum carries cross-platform app monetization lessons", () => {
   assert.ok(day28.tasks.some((task) => /App Store\/Google Play/.test(task)));
 });
 
-test("adaptive curriculum is grounded in direction doc north star and selected day", () => {
+test("adaptive curriculum is grounded in product spec north star and selected day", () => {
   const plan = buildAdaptiveCurriculum({
     selectedDay: { day: 12, title: "Static day title" },
     state: {},
     now: new Date("2026-05-07T00:00:00.000Z"),
   });
 
-  assert.equal(plan.source, "docs/AGENTIC30-DIRECTION.md");
+  assert.equal(plan.source, "docs/SPEC.md");
   assert.match(plan.strategy.northStar, /IDD Engine/);
   assert.match(plan.strategy.p0, /folder watch/);
   assert.equal(plan.days.length, 30);

@@ -114,7 +114,7 @@ async function main() {
     "utf8",
   );
 
-  console.log(`Synced private alignment sources into ${path.relative(repoRoot, outputRoot)}`);
+  console.log(`Synced private source snapshots into ${path.relative(repoRoot, outputRoot)}`);
   console.log("Review that cache locally, then update public docs with sanitized product implications only.");
 }
 

@@ -805,10 +805,10 @@ const rubricEvidenceRefSchema = z.object({
 server.tool(
   "record_rubric_assessment",
   [
-    "Record a Day 0 or Day 30 5-axis (Definition/Command/Clout/Responsibility/Adaptability) self-assessment for the current workspace. Hydrates anchor_text from docs/RUBRIC.md and persists.",
+    "Record a Day 0 or Day 30 5-axis (Definition/Command/Clout/Responsibility/Adaptability) self-assessment for the current workspace. Hydrates anchor_text from the sidecar anchor schema and persists.",
     "",
     "Workflow:",
-    "1. Ask the user each axis score 1-5 with the anchor text from docs/RUBRIC.md.",
+    "1. Ask the user each axis score 1-5 with the built-in anchor text.",
     "2. For any axis with score >= 3, scan recent session messages, project doc changes, and BIP entries for 1-3 candidate evidence_refs and surface them to the user as \"이 내용을 근거로 활용할까요?\" rather than asking them to type evidence from scratch.",
     "3. For Day 30, every axis needs either evidence_refs or a no_evidence_reason explaining why the user can't cite evidence (Day 0 baseline is allowed loose).",
     "4. Persist via this tool.",

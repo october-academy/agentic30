@@ -439,7 +439,7 @@ test("buildSpecialistInjection({provider:'claude'}) falls back when only codex v
 });
 
 test("buildDay30NoGoPrompt uses 지속/전환/중단 (Korean coaching tone), not Go/Kill/Pivot", () => {
-  // Gemini UX: "Go/Kill/Pivot"은 한국어 사용자에게 공격적. RUBRIC.md Command 5점
+  // Gemini UX: "Go/Kill/Pivot"은 한국어 사용자에게 공격적. Command 5점
   // anchor와 일치시키되 톤은 코칭으로 바꾼다.
   const prompt = buildDay30NoGoPrompt({
     rubricStatus: {

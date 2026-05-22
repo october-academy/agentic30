@@ -37,8 +37,8 @@ export function buildPrompt({ doc = null, observations = "", lastAnswer = "" } =
   ].join("\n");
 }
 
-// Day 30 결산 prompt. RUBRIC.md의 Command 5점 anchor("매주 단호한 Go/Kill/Pivot
-// 결정")가 specialist 코드와 어긋나 있던 문제를 닫는다. 톤은 코칭 — 한국어
+// Day 30 결산 prompt. Command 5점 anchor("매주 단호한 Go/Kill/Pivot
+// 결정")와 specialist 코드가 어긋나 있던 문제를 닫는다. 톤은 코칭 — 한국어
 // 사용자에게 "Go/Kill/Pivot"이 공격적이라는 Gemini 권고를 받아
 // "지속/전환/중단"으로 옮긴다. Decision 직후의 "공백" UX 위험을 차단하기 위해
 // 각 옵션이 다음 한 줄 행동(nextAction hint)도 함께 요청하게 한다.

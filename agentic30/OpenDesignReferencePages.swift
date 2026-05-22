@@ -753,7 +753,7 @@ enum OpenDesignReferenceCatalog {
             ]),
             .init(id: "yesterday", title: "어제", meta: "2026-05-15 · 목 · 3 events", markerTone: .sky, blocks: [
                 .init("yesterday-events", style: .timeline, rows: [
-                    .init("spec", leading: "22:14:08", title: "SPEC.md · ALIGNMENT.md 정리", subtitle: "제품 한 줄 확정 · +142 / -87", tone: .accent),
+                    .init("spec", leading: "22:14:08", title: "SPEC.md · ICP.md 정리", subtitle: "제품 한 줄 확정 · +142 / -87", tone: .accent),
                     .init("zoom", leading: "21:30:00", title: "장지창 · 45분", subtitle: "Zoom transcript · 검증 없이 5번 빌드", tone: .sky),
                     .init("scope", leading: "17:42:03", title: "Q2 wedge: Foundation Day 0-3 먼저 닫기", subtitle: "Day 4-7 / Day 8-30은 dogfood 이후 확장", tone: .teal),
                 ]),
@@ -6826,7 +6826,7 @@ private enum OpenDesignHistoryCatalog {
             .init(id: "today-mission", filter: .mission, kicker: "MISSION · Day 1 수락", time: "14:32:50", title: "첫 인터뷰 1통 할 사람을 한 명 고르기", body: "오리엔테이션 → 미션 수락 → 인터뷰 4단계 시퀀스 시작. 예상 3분 → 실제 16분.", tags: [.init("Day 1"), .init("STEP 2 → 3", tone: .amber)]),
         ]),
         .init(id: "yesterday", title: "어제", iso: "2026-05-15 · 목", count: "3 events", state: .yesterday, events: [
-            .init(id: "yesterday-code", filter: .code, kicker: "CODE · 2 files · commit a3f9c1d", time: "22:14:08", title: "SPEC.md · ALIGNMENT.md 정리", body: "\"프로젝트와 실행 기록을 연결하면, 당신을 위한 30일 커리큘럼이 나온다.\" 제품 한 줄 확정. ALIGNMENT 5축은 회사 미션 ↔ 제품 ↔ 측정으로 정리.", tags: [.init("+142", tone: .accent), .init("-87", tone: .rose)], source: "docs/SPEC.md, docs/ALIGNMENT.md", delta: "+142 / -87"),
+            .init(id: "yesterday-code", filter: .code, kicker: "CODE · 2 files · commit a3f9c1d", time: "22:14:08", title: "SPEC.md · ICP.md 정리", body: "\"프로젝트와 실행 기록을 연결하면, 당신을 위한 30일 커리큘럼이 나온다.\" 제품 한 줄과 핵심 고객 가설을 정리.", tags: [.init("+142", tone: .accent), .init("-87", tone: .rose)], source: "docs/SPEC.md, docs/ICP.md", delta: "+142 / -87"),
             .init(id: "yesterday-zoom", filter: .interview, kicker: "INTERVIEW · Zoom transcript", time: "21:30:00", title: "장지창 · 45분", body: "답변자 본인이 \"검증 없이 5번 빌드\"한 사례. sidecar가 자동 요약 + 통증 키워드 5개를 추출했어요.", tags: [.init("+5 keywords", tone: .sky)], source: "interviews/2026-05-15-zoom.md · 6.7KB · 45:02"),
             .init(id: "yesterday-scope", filter: .curriculum, kicker: "CURRICULUM · scope-cut", time: "17:42:03", title: "Q2 wedge: Foundation Day 0-3 먼저 닫기", body: "Day 4-7 / Day 8-30은 daily dogfood 가능한 뒤 확장. /bip-draft, /analyze-ads는 regression만 방지하고 통합 우선순위는 낮춤.", source: "docs/SPEC.md §4"),
         ]),

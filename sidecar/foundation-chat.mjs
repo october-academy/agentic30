@@ -39,7 +39,7 @@ export const FOUNDATION_DAYS = Object.freeze({
   },
   1: {
     day: 1,
-    core_question: "프로젝트 목표와 ICP, Pain Point, Outcome 정렬문이 뭐야?",
+    core_question: "프로젝트 목표와 ICP, Pain Point, Outcome이 담긴 핵심 가설이 뭐야?",
     input_sources: ["path", "work_log", "interview", "bip"],
     sub_workflow: "office-hours-docs",
     spec_version: "v0",

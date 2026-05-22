@@ -7,8 +7,8 @@ import {
 } from "../sidecar/rubric-redact.mjs";
 
 // R6-P1A / CCG-Codex: get_rubric_status가 raw evidence/notes/anchor_text/
-// no_evidence_reason을 provider context로 흘려보내면 docs/RUBRIC.md "local-only"
-// 약속과 충돌. redact form만 응답에 들어가는지 검증.
+// no_evidence_reason을 provider context로 흘려보내면 local-only privacy
+// contract와 충돌. redact form만 응답에 들어가는지 검증.
 
 function fullDay30Record() {
   return {
