@@ -1,7 +1,16 @@
 import Darwin
 import Foundation
 
-final class SidecarBridge {
+protocol SidecarTransport: AnyObject {
+    var onEvent: ((SidecarEvent) -> Void)? { get set }
+
+    func start()
+    func stop()
+    @discardableResult
+    func send(payload: [String: Any]) -> Bool
+}
+
+final class SidecarBridge: SidecarTransport {
     var onEvent: ((SidecarEvent) -> Void)?
 
     private let decoder: JSONDecoder = {

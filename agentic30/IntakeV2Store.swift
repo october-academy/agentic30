@@ -31,16 +31,22 @@ enum IntakeSourceID: String, Codable, CaseIterable, Hashable {
     case jira
     case confluence
     case figma
+    case cursor
+    case claudeCode = "claude_code"
+    case codex
+    case nativeNotes = "native_notes"
     case slack
     case sentry
     case vercel
     case cloudflare
     case neon
+    case aws
     case gmailEmail = "gmail_email"
     case calendarCalls = "calendar_calls"
     case formsSurvey = "forms_survey"
     case blogRss = "blog_rss"
     case xTwitter = "x_twitter"
+    case instagram
     case youtubeLoomDemo = "youtube_loom_demo"
     case metaAds = "meta_ads"
     case googleSearchConsole = "google_search_console"
@@ -48,6 +54,9 @@ enum IntakeSourceID: String, Codable, CaseIterable, Hashable {
     case appStoreGooglePlay = "app_store_google_play"
     case reddit
     case revenueCat = "revenue_cat"
+    case lemonSqueezy = "lemon_squeezy"
+    case paddle
+    case gumroad
     case lemonSqueezyPaddleGumroad = "lemon_squeezy_paddle_gumroad"
     case customUrl = "custom_url"
     case customLocalFileFolder = "custom_local_file_folder"
@@ -73,16 +82,22 @@ enum IntakeSourceID: String, Codable, CaseIterable, Hashable {
         case .jira: return "Jira"
         case .confluence: return "Confluence"
         case .figma: return "Figma"
+        case .cursor: return "Cursor"
+        case .claudeCode: return "Claude Code"
+        case .codex: return "Codex"
+        case .nativeNotes: return "iOS/macOS Native / Notes"
         case .slack: return "Slack"
         case .sentry: return "Sentry"
         case .vercel: return "Vercel"
         case .cloudflare: return "Cloudflare"
         case .neon: return "Neon"
+        case .aws: return "AWS"
         case .gmailEmail: return "Gmail / Email"
         case .calendarCalls: return "Calendar / Calls"
         case .formsSurvey: return "Forms / Survey"
         case .blogRss: return "Blog / RSS"
         case .xTwitter: return "X / Twitter"
+        case .instagram: return "Instagram"
         case .youtubeLoomDemo: return "YouTube"
         case .metaAds: return "Meta Ads"
         case .googleSearchConsole: return "Google Search Console"
@@ -90,6 +105,9 @@ enum IntakeSourceID: String, Codable, CaseIterable, Hashable {
         case .appStoreGooglePlay: return "App Store Connect / Google Play"
         case .reddit: return "Reddit"
         case .revenueCat: return "RevenueCat"
+        case .lemonSqueezy: return "Lemon Squeezy"
+        case .paddle: return "Paddle"
+        case .gumroad: return "Gumroad"
         case .lemonSqueezyPaddleGumroad: return "Lemon Squeezy / Paddle / Gumroad"
         case .customUrl: return "Custom URL"
         case .customLocalFileFolder: return "Local file/folder"
@@ -147,9 +165,14 @@ enum IntakeSourceIconKind: Hashable {
 }
 
 enum IntakeSourceCatalog {
-    static let builtInMainGridIDs: Set<IntakeSourceID> = [
+    static let mainGridIDs: [IntakeSourceID] = [
         .localFolder,
         .github,
+        .figma,
+        .cursor,
+        .claudeCode,
+        .codex,
+        .nativeNotes,
         .googleDocs,
         .googleSheets,
         .notion,
@@ -158,8 +181,14 @@ enum IntakeSourceCatalog {
         .toss,
         .stripe,
         .threads,
+        .xTwitter,
+        .instagram,
+        .googleSearchConsole,
+        .aws,
         .interviewTxt,
     ]
+
+    static let builtInMainGridIDs = Set(mainGridIDs)
 
     static var addableItems: [SourceCatalogItem] {
         items.filter { !builtInMainGridIDs.contains($0.id) }
@@ -174,6 +203,10 @@ enum IntakeSourceCatalog {
         .init(id: .github, category: .core, kind: "REPO · CODE", why: "커밋과 코드 구조로 현재 제품 상태를 봅니다.", systemImage: "chevron.left.forwardslash.chevron.right"),
         .init(id: .confluence, category: .core, kind: "DOCS · KNOWLEDGE", why: "PRD, 회의록, 결정 문서, 팀 지식을 문서 맥락으로 읽습니다.", systemImage: "doc.text.fill"),
         .init(id: .figma, category: .core, kind: "DESIGN · SPEC", why: "디자인 스펙, Dev Mode, 구현-ready 변경점을 제품 맥락으로 읽습니다.", systemImage: "paintpalette.fill"),
+        .init(id: .cursor, category: .core, kind: "AI · EDITOR", why: "Cursor 에디터 작업 흐름, composer 변경, 코드 맥락을 실행 기록으로 둡니다.", systemImage: "cursorarrow.click.2"),
+        .init(id: .claudeCode, category: .core, kind: "AI · CODE", why: "Claude Code 세션과 터미널 중심 변경 흐름을 구현 맥락으로 읽습니다.", systemImage: "terminal.fill"),
+        .init(id: .codex, category: .core, kind: "AI · CODE", why: "Codex 작업, 리뷰, 에이전트 실행 기록을 코드 결정 맥락으로 둡니다.", systemImage: "curlybraces.square.fill"),
+        .init(id: .nativeNotes, category: .core, kind: "NATIVE · NOTES", why: "iOS/macOS 기본 메모 앱에 남긴 아이디어, 고객 메모, 실행 기록을 표시합니다.", systemImage: "apple.logo"),
         .init(id: .interviewTxt, category: .voc, kind: "FILES · VOC", why: "단일 인터뷰 텍스트를 Foundation 질문 생성에 씁니다.", systemImage: "doc.plaintext.fill"),
         .init(id: .gmailEmail, category: .voc, kind: "COMM · VOC", why: "고객 답장, 가격 ask, waitlist 대화를 증거로 남깁니다.", systemImage: "envelope.fill"),
         .init(id: .calendarCalls, category: .voc, kind: "COMM · INTERVIEWS", why: "고객 미팅 일정과 콜 기록으로 실행 여부를 확인합니다.", systemImage: "calendar"),
@@ -183,6 +216,7 @@ enum IntakeSourceCatalog {
         .init(id: .threads, category: .public, kind: "PUBLIC · VOC", why: "BIP 게시와 반응을 공개 실행 증거로 씁니다.", systemImage: "at"),
         .init(id: .blogRss, category: .public, kind: "PUBLIC · BIP", why: "블로그와 RSS 기록으로 공개 학습 흐름을 읽습니다.", systemImage: "dot.radiowaves.left.and.right"),
         .init(id: .xTwitter, category: .public, kind: "PUBLIC · VOC", why: "X/Twitter 반응과 공개 질문을 Launch 증거로 씁니다.", systemImage: "text.bubble.fill"),
+        .init(id: .instagram, category: .public, kind: "PUBLIC · VOC", why: "Instagram 게시, 댓글, DM 반응을 공개 실행 증거와 고객 언어로 둡니다.", systemImage: "camera.fill"),
         .init(id: .reddit, category: .public, kind: "PUBLIC · COMMUNITY", why: "Reddit 토론, 추천, 비교 글에서 제3자 언급과 고객 언어를 찾습니다.", systemImage: "bubble.left.and.bubble.right.fill"),
         .init(id: .youtubeLoomDemo, category: .public, kind: "PUBLIC · VIDEO", why: "데모와 튜토리얼 transcript를 AI citation과 첫 가치 경험 증거로 둡니다.", systemImage: "play.rectangle.fill"),
         .init(id: .posthog, category: .analytics, kind: "ANALYTICS", why: "사용, 전환, 퍼널 데이터를 Grow 판단에 씁니다.", systemImage: "chart.xyaxis.line"),
@@ -194,13 +228,16 @@ enum IntakeSourceCatalog {
         .init(id: .vercel, category: .infra, kind: "DEPLOY · WEB", why: "배포, 함수, edge request, AI Gateway/observability 신호를 웹 런타임 맥락으로 읽습니다.", systemImage: "triangle.fill"),
         .init(id: .cloudflare, category: .infra, kind: "EDGE · PLATFORM", why: "Workers, edge, AI/agent 배포, 네트워크/보안 신호를 플랫폼 맥락으로 읽습니다.", systemImage: "cloud.fill"),
         .init(id: .neon, category: .infra, kind: "DATABASE · POSTGRES", why: "Postgres schema, branches, migration, database state를 데이터 맥락으로 읽습니다.", systemImage: "cylinder.fill"),
+        .init(id: .aws, category: .infra, kind: "CLOUD · AWS", why: "AWS 배포, 인프라, 로그, 비용 신호를 런타임 맥락으로 읽습니다.", systemImage: "cloud.fill"),
         .init(id: .googleDocs, category: .core, kind: "CLOUD · DOCS", why: "업무일지와 프로젝트 문서를 코치 문맥에 넣습니다.", systemImage: "doc.text.fill"),
         .init(id: .googleSheets, category: .analytics, kind: "CLOUD · DATA", why: "일별 공개 기록과 지표를 표 형태로 누적합니다.", systemImage: "tablecells.fill"),
         .init(id: .notion, category: .core, kind: "CLOUD · NOTES", why: "노트와 문서 데이터베이스를 프로젝트 맥락으로 씁니다.", systemImage: "doc.richtext.fill"),
         .init(id: .stripe, category: .revenue, kind: "PAYMENT", why: "결제와 가격 ask 결과를 수익 증거로 봅니다.", systemImage: "creditcard.fill"),
         .init(id: .toss, category: .revenue, kind: "PAYMENT", why: "한국 결제 경로의 실제 구매 신호를 기록합니다.", systemImage: "wonsign.circle.fill"),
         .init(id: .revenueCat, category: .revenue, kind: "PAYMENT · MOBILE", why: "모바일 구독 전환과 paywall 실험을 추적합니다.", systemImage: "crown.fill"),
-        .init(id: .lemonSqueezyPaddleGumroad, category: .revenue, kind: "PAYMENT", why: "1인 개발자 결제 채널의 첫 매출 신호를 둡니다.", systemImage: "cart.fill"),
+        .init(id: .lemonSqueezy, category: .revenue, kind: "PAYMENT", why: "Lemon Squeezy 결제와 첫 매출 신호를 둡니다.", systemImage: "cart.fill"),
+        .init(id: .paddle, category: .revenue, kind: "PAYMENT", why: "Paddle 결제와 구독 매출 신호를 둡니다.", systemImage: "cart.fill"),
+        .init(id: .gumroad, category: .revenue, kind: "PAYMENT", why: "Gumroad 판매와 첫 매출 신호를 둡니다.", systemImage: "cart.fill"),
         .init(id: .customUrl, category: .custom, kind: "CUSTOM · URL", why: "아직 catalog에 없는 웹 기록 위치를 직접 남깁니다.", systemImage: "link"),
         .init(id: .customLocalFileFolder, category: .custom, kind: "CUSTOM · FILES", why: "특정 파일이나 폴더를 source 후보로 표시합니다.", systemImage: "folder.badge.plus"),
         .init(id: .customManualNote, category: .custom, kind: "CUSTOM · NOTE", why: "수동으로 남긴 기록 위치나 설명을 추가합니다.", systemImage: "note.text"),
@@ -241,6 +278,12 @@ enum IntakeSourceIconCatalog {
             return .asset("BrandConfluence")
         case .figma:
             return .asset("BrandFigma")
+        case .cursor:
+            return .asset("BrandCursor")
+        case .claudeCode:
+            return .asset("BrandClaude")
+        case .codex:
+            return .asset("BrandOpenAI")
         case .gmailEmail:
             return .asset("BrandGmail")
         case .calendarCalls:
@@ -251,6 +294,8 @@ enum IntakeSourceIconCatalog {
             return .asset("BrandSlack")
         case .xTwitter:
             return .asset("BrandX")
+        case .instagram:
+            return .asset("BrandInstagram")
         case .youtubeLoomDemo:
             return .composite(["BrandYouTube", "BrandLoom"])
         case .metaAds:
@@ -271,11 +316,20 @@ enum IntakeSourceIconCatalog {
             return .asset("BrandCloudflare")
         case .neon:
             return .asset("BrandNeon")
+        case .aws:
+            return .asset("BrandAWS")
         case .revenueCat:
             return .asset("BrandRevenueCat")
+        case .lemonSqueezy:
+            return .asset("BrandLemonSqueezy")
+        case .paddle:
+            return .asset("BrandPaddle")
+        case .gumroad:
+            return .asset("BrandGumroad")
         case .lemonSqueezyPaddleGumroad:
             return .composite(["BrandLemonSqueezy", "BrandPaddle", "BrandGumroad"])
         case .localFolder,
+             .nativeNotes,
              .interviewTxt,
              .workLogFolder,
              .interviewTranscriptFolder,
@@ -586,16 +640,47 @@ final class IntakeV2SourceManager: ObservableObject {
         for key in [Self.sourcesDefaultsKey, Self.legacySourcesDefaultsKey] {
             guard let data = defaults.data(forKey: key) else { continue }
             if let decoded = try? JSONDecoder().decode([IntakeSourceState].self, from: data) {
-                self.sources = decoded
-                if key != Self.sourcesDefaultsKey {
-                    defaults.set(data, forKey: Self.sourcesDefaultsKey)
-                    defaults.removeObject(forKey: key)
+                let migrated = Self.migrateLegacyPaymentBundle(in: decoded)
+                self.sources = migrated.sources
+                if key != Self.sourcesDefaultsKey || migrated.didMigrate {
+                    persist()
                 }
                 return
             } else {
                 defaults.removeObject(forKey: key)
             }
         }
+    }
+
+    private static func migrateLegacyPaymentBundle(
+        in decoded: [IntakeSourceState]
+    ) -> (sources: [IntakeSourceState], didMigrate: Bool) {
+        let replacementIDs: [IntakeSourceID] = [.lemonSqueezy, .paddle, .gumroad]
+        var didMigrate = false
+        var seen = Set<IntakeSourceID>()
+        var migrated: [IntakeSourceState] = []
+
+        for source in decoded {
+            if source.id == .lemonSqueezyPaddleGumroad {
+                didMigrate = true
+                for id in replacementIDs where !seen.contains(id) {
+                    migrated.append(
+                        IntakeSourceState(
+                            id: id,
+                            status: source.status,
+                            path: source.path,
+                            detail: source.detail
+                        )
+                    )
+                    seen.insert(id)
+                }
+            } else if !seen.contains(source.id) {
+                migrated.append(source)
+                seen.insert(source.id)
+            }
+        }
+
+        return (migrated, didMigrate)
     }
 
     @discardableResult

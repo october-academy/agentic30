@@ -184,6 +184,16 @@ final class IntakeSourceCatalogTests: XCTestCase {
     func test_addableItems_excludesBuiltInMainGridSources() {
         let addableIDs = Set(IntakeSourceCatalog.addableItems.map(\.id))
 
+        XCTAssertEqual(
+            Set(IntakeSourceCatalog.mainGridIDs),
+            IntakeSourceCatalog.builtInMainGridIDs,
+            "The built-in set should be derived from the ordered main grid source list."
+        )
+        XCTAssertEqual(
+            IntakeSourceCatalog.mainGridIDs.count,
+            IntakeSourceCatalog.builtInMainGridIDs.count,
+            "Main grid source order should not contain duplicates."
+        )
         XCTAssertTrue(
             addableIDs.isDisjoint(with: IntakeSourceCatalog.builtInMainGridIDs),
             "Add Source catalog candidates should not include sources already shown in the main grid."
@@ -212,7 +222,6 @@ final class IntakeSourceCatalogTests: XCTestCase {
         let expectedItems: [(id: IntakeSourceID, category: IntakeSourceCatalogCategory, kind: String)] = [
             (.jira, .core, "WORK · ROADMAP"),
             (.confluence, .core, "DOCS · KNOWLEDGE"),
-            (.figma, .core, "DESIGN · SPEC"),
             (.slack, .voc, "COMM · TEAM"),
             (.sentry, .infra, "OBSERVABILITY"),
             (.vercel, .infra, "DEPLOY · WEB"),
@@ -238,17 +247,50 @@ final class IntakeSourceCatalogTests: XCTestCase {
         }
     }
 
+    func test_mainGridToolSources_areSearchableAndExcludedFromAddSourceCatalog() throws {
+        let expectedItems: [
+            (id: IntakeSourceID, displayName: String, category: IntakeSourceCatalogCategory, kind: String, searchTerms: [String])
+        ] = [
+            (.figma, "Figma", .core, "DESIGN · SPEC", ["Figma", "DESIGN", "Dev Mode"]),
+            (.cursor, "Cursor", .core, "AI · EDITOR", ["Cursor", "AI", "EDITOR"]),
+            (.claudeCode, "Claude Code", .core, "AI · CODE", ["Claude Code", "AI", "CODE"]),
+            (.codex, "Codex", .core, "AI · CODE", ["Codex", "AI", "CODE"]),
+            (.nativeNotes, "iOS/macOS Native / Notes", .core, "NATIVE · NOTES", ["iOS", "macOS", "Notes"]),
+            (.xTwitter, "X / Twitter", .public, "PUBLIC · VOC", ["X/Twitter", "PUBLIC", "Launch"]),
+            (.instagram, "Instagram", .public, "PUBLIC · VOC", ["Instagram", "PUBLIC", "VOC"]),
+            (.googleSearchConsole, "Google Search Console", .analytics, "SEARCH · AEO", ["Google Search Console", "AEO", "Analytics"]),
+            (.aws, "AWS", .infra, "CLOUD · AWS", ["AWS", "CLOUD", "Infra"]),
+        ]
+        let addableIDs = Set(IntakeSourceCatalog.addableItems.map(\.id))
+        let mainGridIDs = Set(IntakeSourceCatalog.mainGridIDs)
+
+        for expected in expectedItems {
+            let item = try XCTUnwrap(IntakeSourceCatalog.item(for: expected.id))
+            let searchCopy = [
+                item.id.displayName,
+                item.kind,
+                item.why,
+                item.category.rawValue,
+            ].joined(separator: " ")
+
+            XCTAssertTrue(mainGridIDs.contains(expected.id))
+            XCTAssertFalse(addableIDs.contains(expected.id))
+            XCTAssertEqual(item.id.displayName, expected.displayName)
+            XCTAssertEqual(item.category, expected.category)
+            XCTAssertEqual(item.kind, expected.kind)
+            for term in expected.searchTerms {
+                XCTAssertTrue(
+                    searchCopy.localizedCaseInsensitiveContains(term),
+                    "\(expected.displayName) should be searchable by \(term)"
+                )
+            }
+        }
+    }
+
     func test_geoAeoCatalogSources_areAddableSearchableAndNotBuiltIn() throws {
         let expectedItems: [
             (id: IntakeSourceID, displayName: String, category: IntakeSourceCatalogCategory, kind: String, searchTerms: [String])
         ] = [
-            (
-                .googleSearchConsole,
-                "Google Search Console",
-                .analytics,
-                "SEARCH · AEO",
-                ["Google Search Console", "AEO", "Analytics"]
-            ),
             (
                 .reddit,
                 "Reddit",
@@ -289,17 +331,59 @@ final class IntakeSourceCatalogTests: XCTestCase {
         }
     }
 
+    func test_revenuePaymentCatalogSources_areSeparatedAddableAndSearchable() throws {
+        let expectedItems: [
+            (id: IntakeSourceID, displayName: String, category: IntakeSourceCatalogCategory, kind: String, searchTerms: [String])
+        ] = [
+            (.lemonSqueezy, "Lemon Squeezy", .revenue, "PAYMENT", ["Lemon Squeezy", "Revenue", "PAYMENT"]),
+            (.paddle, "Paddle", .revenue, "PAYMENT", ["Paddle", "Revenue", "PAYMENT"]),
+            (.gumroad, "Gumroad", .revenue, "PAYMENT", ["Gumroad", "Revenue", "PAYMENT"]),
+        ]
+        let addableIDs = Set(IntakeSourceCatalog.addableItems.map(\.id))
+
+        XCTAssertNil(
+            IntakeSourceCatalog.item(for: .lemonSqueezyPaddleGumroad),
+            "The legacy bundled payment source should not be shown in the catalog."
+        )
+
+        for expected in expectedItems {
+            let item = try XCTUnwrap(IntakeSourceCatalog.item(for: expected.id))
+            let searchCopy = [
+                item.id.displayName,
+                item.kind,
+                item.why,
+                item.category.rawValue,
+            ].joined(separator: " ")
+
+            XCTAssertTrue(addableIDs.contains(expected.id))
+            XCTAssertFalse(IntakeSourceCatalog.builtInMainGridIDs.contains(expected.id))
+            XCTAssertEqual(item.id.displayName, expected.displayName)
+            XCTAssertEqual(item.category, expected.category)
+            XCTAssertEqual(item.kind, expected.kind)
+            for term in expected.searchTerms {
+                XCTAssertTrue(
+                    searchCopy.localizedCaseInsensitiveContains(term),
+                    "\(expected.displayName) should be searchable by \(term)"
+                )
+            }
+        }
+    }
+
     func test_sourceIconCatalog_mapsBrandBackedSourcesToOfficialAssets() {
         let expected: [IntakeSourceID: IntakeSourceIconKind] = [
             .linear: .asset("BrandLinear"),
             .jira: .asset("BrandJira"),
             .confluence: .asset("BrandConfluence"),
             .figma: .asset("BrandFigma"),
+            .cursor: .asset("BrandCursor"),
+            .claudeCode: .asset("BrandClaude"),
+            .codex: .asset("BrandOpenAI"),
             .gmailEmail: .asset("BrandGmail"),
             .calendarCalls: .asset("BrandGoogleCalendar"),
             .formsSurvey: .asset("BrandGoogleForms"),
             .slack: .asset("BrandSlack"),
             .xTwitter: .asset("BrandX"),
+            .instagram: .asset("BrandInstagram"),
             .reddit: .asset("BrandReddit"),
             .youtubeLoomDemo: .composite(["BrandYouTube", "BrandLoom"]),
             .metaAds: .asset("BrandMeta"),
@@ -310,13 +394,16 @@ final class IntakeSourceCatalogTests: XCTestCase {
             .vercel: .asset("BrandVercel"),
             .cloudflare: .asset("BrandCloudflare"),
             .neon: .asset("BrandNeon"),
+            .aws: .asset("BrandAWS"),
             .revenueCat: .asset("BrandRevenueCat"),
-            .lemonSqueezyPaddleGumroad: .composite(["BrandLemonSqueezy", "BrandPaddle", "BrandGumroad"]),
+            .lemonSqueezy: .asset("BrandLemonSqueezy"),
+            .paddle: .asset("BrandPaddle"),
+            .gumroad: .asset("BrandGumroad"),
         ]
-        let addableIDs = Set(IntakeSourceCatalog.addableItems.map(\.id))
+        let catalogIDs = Set(IntakeSourceCatalog.items.map(\.id))
 
         for (id, expectedIcon) in expected {
-            XCTAssertTrue(addableIDs.contains(id), "\(id.rawValue) should stay available in the Add Source catalog.")
+            XCTAssertTrue(catalogIDs.contains(id), "\(id.rawValue) should stay in the source catalog.")
             XCTAssertEqual(IntakeSourceIconCatalog.iconKind(for: id, fallbackSystemImage: "fallback"), expectedIcon)
             XCTAssertTrue(IntakeSourceIconCatalog.iconKind(for: id, fallbackSystemImage: "fallback").isBrandBacked)
         }
@@ -325,6 +412,7 @@ final class IntakeSourceCatalogTests: XCTestCase {
     func test_sourceIconCatalog_keepsGenericSourcesOnSymbolFallbacks() throws {
         let genericSourceIDs: [IntakeSourceID] = [
             .localFolder,
+            .nativeNotes,
             .interviewTxt,
             .workLogFolder,
             .interviewTranscriptFolder,
@@ -456,6 +544,25 @@ final class IntakeV2SourceManagerTests: XCTestCase {
         XCTAssertEqual(mgr.sources.first?.path, "/tmp/legacy")
         XCTAssertNotNil(suiteDefaults.data(forKey: IntakeV2SourceManager.sourcesDefaultsKey))
         XCTAssertNil(suiteDefaults.data(forKey: IntakeV2SourceManager.legacySourcesDefaultsKey))
+    }
+
+    func test_legacyBundledPaymentSource_migratesToSeparatedPaymentSources() throws {
+        let data = try XCTUnwrap("""
+        [{"id":"lemon_squeezy_paddle_gumroad","status":"disabled","path":"/tmp/payments","detail":"old bundle"}]
+        """.data(using: .utf8))
+        suiteDefaults.set(data, forKey: IntakeV2SourceManager.sourcesDefaultsKey)
+
+        let mgr = IntakeV2SourceManager(defaults: suiteDefaults)
+
+        XCTAssertEqual(mgr.status(of: .lemonSqueezy), .disabled)
+        XCTAssertEqual(mgr.status(of: .paddle), .disabled)
+        XCTAssertEqual(mgr.status(of: .gumroad), .disabled)
+        XCTAssertEqual(mgr.status(of: .lemonSqueezyPaddleGumroad), .notConnected)
+        XCTAssertEqual(
+            mgr.sources.filter { [.lemonSqueezy, .paddle, .gumroad].contains($0.id) }.map(\.path),
+            ["/tmp/payments", "/tmp/payments", "/tmp/payments"]
+        )
+        XCTAssertNotNil(suiteDefaults.data(forKey: IntakeV2SourceManager.sourcesDefaultsKey))
     }
 
     func test_remove_clearsEntry() {

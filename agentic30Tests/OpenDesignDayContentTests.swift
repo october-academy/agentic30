@@ -4,6 +4,43 @@ import Testing
 @testable import agentic30
 
 struct OpenDesignDayContentTests {
+    @Test func inlineMarkdownEmphasisParserSplitsSingleRun() {
+        #expect(openDesignInlineMarkdownEmphasisRuns(in: "a **b** c") == [
+            OpenDesignInlineMarkdownEmphasisRun(text: "a ", isEmphasized: false),
+            OpenDesignInlineMarkdownEmphasisRun(text: "b", isEmphasized: true),
+            OpenDesignInlineMarkdownEmphasisRun(text: " c", isEmphasized: false),
+        ])
+    }
+
+    @Test func inlineMarkdownEmphasisParserSupportsMultipleRuns() {
+        #expect(openDesignInlineMarkdownEmphasisRuns(in: "**first** and **second**") == [
+            OpenDesignInlineMarkdownEmphasisRun(text: "first", isEmphasized: true),
+            OpenDesignInlineMarkdownEmphasisRun(text: " and ", isEmphasized: false),
+            OpenDesignInlineMarkdownEmphasisRun(text: "second", isEmphasized: true),
+        ])
+    }
+
+    @Test func inlineMarkdownEmphasisParserSupportsKoreanAndEnglishText() {
+        #expect(openDesignInlineMarkdownEmphasisRuns(in: "돕는 **local-first macOS 메뉴바 AI assistant** 입니다") == [
+            OpenDesignInlineMarkdownEmphasisRun(text: "돕는 ", isEmphasized: false),
+            OpenDesignInlineMarkdownEmphasisRun(text: "local-first macOS 메뉴바 AI assistant", isEmphasized: true),
+            OpenDesignInlineMarkdownEmphasisRun(text: " 입니다", isEmphasized: false),
+        ])
+    }
+
+    @Test func inlineMarkdownEmphasisParserKeepsUnmatchedDelimiterLiteral() {
+        #expect(openDesignInlineMarkdownEmphasisRuns(in: "a **b c") == [
+            OpenDesignInlineMarkdownEmphasisRun(text: "a **b c", isEmphasized: false),
+        ])
+    }
+
+    @Test func inlineMarkdownEmphasisParserKeepsEmptyDelimiterPairLiteral() {
+        #expect(openDesignInlineMarkdownEmphasisRuns(in: "a **** c") == [
+            OpenDesignInlineMarkdownEmphasisRun(text: "a ****", isEmphasized: false),
+            OpenDesignInlineMarkdownEmphasisRun(text: " c", isEmphasized: false),
+        ])
+    }
+
     @Test func layoutMetricsFollowOpenDesignBreakpointsAndNativeCompactCollapse() {
         let wide = OpenDesignDayLayoutMetrics(width: 1360)
         #expect(wide.railWidth == 52)
@@ -128,6 +165,50 @@ struct OpenDesignDayContentTests {
             #expect(content.plan?.signals.productName == "SupportLens")
             #expect(!content.searchItems.contains { $0.title.contains("거리") || $0.subtitle.contains("1/3") })
         }
+    }
+
+    @Test func personalizedDay1PrefersAlignmentPlanAndBuildsGoalComponents() {
+        let content = OpenDesignDayContent.personalized(
+            from: makeAlignmentPlan(),
+            fallback: makePlan(questionCount: 4)
+        )
+
+        #expect(content.alignmentPlan?.projectGoal.contains("SupportLens") == true)
+        #expect(content.interviewSteps.map(\.dimension) == ["icp", "pain_point", "outcome"])
+        #expect(content.interviewSteps.map(\.title).contains { $0.contains("Pain Point") })
+        #expect(content.taskGroups.first?.tasks.first?.title == "목표 정렬문을 만들어요")
+        #expect(content.taskGroups.first?.tasks.first?.meta == "Alignment · goal + 3 parts")
+        #expect(content.contextTitle.contains("목표 정렬문"))
+    }
+
+    @Test func alignmentDraftCarriesQualityGateAndDay2Handoff() {
+        let content = OpenDesignDayContent.personalized(from: makeAlignmentPlan(), fallback: nil)
+        var state = OpenDesignDayInteractionState(totalInterviewSteps: content.interviewSteps.count)
+        state.selectedChoices = [1: 1, 2: 1, 3: 1]
+        for step in content.interviewSteps {
+            state.recordSubmittedChoice(stepID: step.id, choiceID: 1)
+        }
+
+        let draft = content.draft(for: state)
+
+        #expect(draft.markdown.contains("Day 1 Alignment Statement"))
+        #expect(draft.markdown.contains("Quality Gate"))
+        #expect(draft.finalIcpStatement.contains("Pain Point"))
+        #expect(draft.antiIcpBody.contains("8.4/10"))
+        #expect(draft.firstMessage.contains("Day 2 handoff"))
+        #expect(draft.recommendation.contains("유료 대체재"))
+    }
+
+    @Test func personalizedDay1FallsBackToLegacyIcpPlanWhenAlignmentPlanIsMissing() {
+        let content = OpenDesignDayContent.personalized(
+            from: nil,
+            fallback: makePlan(questionCount: 4)
+        )
+
+        #expect(content.alignmentPlan == nil)
+        #expect(content.plan?.signals.productName == "SupportLens")
+        #expect(content.interviewSteps.count == 4)
+        #expect(content.taskGroups.first?.tasks.first?.title == "ICP v0 질문을 정해요")
     }
 
     @Test func personalizedDraftReflectsSelectionsInIcpAntiIcpAndMessage() throws {
@@ -459,6 +540,40 @@ struct OpenDesignDayContentTests {
         #expect(OpenDesignReferenceCatalog.page(.history).sections.contains { $0.id == "today" })
     }
 
+    @Test func bipResearchLoadingEmptyHidesResultLikeSections() {
+        let snapshot = bipResearchSnapshot(state: "refreshing")
+        let visibility = openDesignBipVisibility(for: snapshot)
+        let mainLabels = bipMainLabels(for: visibility)
+        let sidebarFallbackLabels = bipSidebarFallbackLabels(for: visibility)
+
+        #expect(visibility.isLoadingEmpty)
+        #expect(!visibility.showsFilterBar)
+        #expect(!visibility.showsResearchSection)
+        #expect(!visibility.showsDraftSection)
+        #expect(!visibility.showsSidebarSourceFilters)
+        #expect(!visibility.showsFallbackSignals)
+        #expect(!visibility.showsSidebarSignalSection)
+        #expect(!mainLabels.contains("리서치된 게시글"))
+        #expect(!mainLabels.contains("BIP 초안"))
+        #expect(!mainLabels.contains("선택 후보 없음"))
+        #expect(!sidebarFallbackLabels.contains("X/Threads 공개 기록"))
+        #expect(!sidebarFallbackLabels.contains("확인할 공백"))
+    }
+
+    @Test func bipResearchRefreshingWithCachedCandidatesKeepsResultSections() throws {
+        let snapshot = bipResearchSnapshot(
+            state: "refreshing",
+            candidates: [try bipResearchCandidateFixture()]
+        )
+        let visibility = openDesignBipVisibility(for: snapshot)
+
+        #expect(!visibility.isLoadingEmpty)
+        #expect(visibility.showsFilterBar)
+        #expect(visibility.showsResearchSection)
+        #expect(visibility.showsDraftSection)
+        #expect(visibility.showsSidebarSourceFilters)
+    }
+
     @Test func referenceRoutePolicyKeepsReferencePagesAcrossTransientWorkspaceState() {
         for kind in OpenDesignReferencePageKind.allCases {
             #expect(shouldUseOpenDesignRoute(selectedReferencePage: kind, isBipCoachGenerating: true))
@@ -487,6 +602,203 @@ struct OpenDesignDayContentTests {
         #expect(!shouldUseOpenDesignRoute(hasCurrentMission: true))
         #expect(!shouldUseOpenDesignRoute(hasPendingMissionChoices: true))
         #expect(!shouldUseOpenDesignRoute(hasBipCoachError: true))
+    }
+
+    private func bipResearchSnapshot(
+        state: String,
+        candidates: [BipResearchCandidate] = [],
+        signals: [BipResearchSignal] = []
+    ) -> BipResearchSnapshot {
+        BipResearchSnapshot(
+            schemaVersion: 1,
+            contentLocale: "ko-KR",
+            promptProfile: "test",
+            contextFingerprint: "test",
+            generatedAt: nil,
+            nextRefreshAfter: nil,
+            dayNumber: 1,
+            dayTitle: "Day 1",
+            dayPhase: "foundation",
+            status: bipResearchStatus(state: state),
+            briefTitle: "Day 1 기준 X/Threads 공개 게시글에서 ICP 신호를 찾습니다.",
+            briefBody: "Exa Search 결과를 Web Fetch로 다시 읽습니다.",
+            querySummary: "site:x.com OR site:threads.net ICP",
+            candidateTargetCount: 18,
+            workspaceEvidenceRefs: [],
+            signals: signals,
+            candidates: candidates
+        )
+    }
+
+    private func bipResearchStatus(state: String) -> BipResearchStatus {
+        BipResearchStatus(
+            state: state,
+            lastSuccessAt: nil,
+            stale: false,
+            error: nil,
+            reason: "daily",
+            researchSource: "Codex Exa MCP",
+            stage: "running_provider_research",
+            progressText: "Codex Exa MCP로 공개 근거를 검색하는 중",
+            elapsedMs: nil,
+            stepIndex: 4,
+            stepCount: 6,
+            partialFailures: nil
+        )
+    }
+
+    private func bipResearchCandidateFixture() throws -> BipResearchCandidate {
+        let payload = """
+        {
+          "id": "candidate-1",
+          "title": "Builder — Claude Code BIP 후보",
+          "sourceLabel": "x",
+          "source": "@builder",
+          "sourceType": "x",
+          "medium": "X thread",
+          "date": "2026-05-21",
+          "matchLabel": "강",
+          "matchCaption": "match",
+          "quote": "Claude Code로 빌드 과정을 공개합니다.",
+          "whyTitle": "왜 ICP 증거인가",
+          "whyBody": "macOS agentic coding 워크플로와 맞습니다.",
+          "usageTitle": "BIP 활용",
+          "usageBody": "DM 후보로 저장합니다.",
+          "gap": "전업 여부 확인",
+          "tags": [
+            { "title": "X", "tone": "sky" }
+          ],
+          "sourceRefs": [
+            {
+              "id": "src-1",
+              "sourceType": "x",
+              "platform": "x",
+              "title": "Fetched post",
+              "url": "https://x.com/builder/status/1",
+              "domain": "x.com",
+              "publishedAt": "2026-05-21",
+              "fetchedAt": "2026-05-21T00:00:00.000Z",
+              "excerpt": "Fetched excerpt"
+            }
+          ],
+          "draft": "오늘 BIP 초안",
+          "evidenceStrength": "strong"
+        }
+        """
+
+        return try JSONDecoder().decode(BipResearchCandidate.self, from: Data(payload.utf8))
+    }
+
+    private func bipMainLabels(for visibility: OpenDesignBipVisibility) -> Set<String> {
+        var labels: Set<String> = ["ICP 리서치 큐"]
+        if visibility.showsResearchSection {
+            labels.insert("리서치된 게시글")
+        }
+        if visibility.showsDraftSection {
+            labels.insert("BIP 초안")
+            labels.insert("선택 후보 없음")
+        }
+        return labels
+    }
+
+    private func bipSidebarFallbackLabels(for visibility: OpenDesignBipVisibility) -> Set<String> {
+        guard visibility.showsFallbackSignals else { return [] }
+        return ["X/Threads 공개 기록", "확인할 공백"]
+    }
+
+    private func makeAlignmentPlan() -> Day1AlignmentPlan {
+        let signals = Day1IcpSignals(
+            productName: "SupportLens",
+            currentIcpGuess: "B2B SaaS support lead",
+            likelyUsers: ["support lead"],
+            problem: "urgent Slack escalation을 놓침",
+            currentAlternatives: ["Slack 수동 확인"],
+            evidenceRefs: [Day1IcpEvidenceRef(path: "README.md", reason: "README", quote: "# SupportLens")],
+            missingAssumptions: [],
+            confidence: "high"
+        )
+        let icp = Day1AlignmentComponent(
+            id: "icp",
+            title: "ICP",
+            prompt: "먼저 검증할 고객은?",
+            helperText: "고객 조건",
+            statement: "B2B SaaS support lead",
+            evidence: ["README.md: README"],
+            missingAssumptions: [],
+            options: [
+                Day1IcpQuestionOption(id: "o1", label: "support lead", description: "현재 고객", preview: "ICP", antiSignal: false),
+                Day1IcpQuestionOption(id: "o2", label: "관심만 있음", description: "최근 사건 없음", preview: "Weak", antiSignal: true),
+            ]
+        )
+        let pain = Day1AlignmentComponent(
+            id: "pain_point",
+            title: "Pain Point",
+            prompt: "압축된 통증은?",
+            helperText: "비용 신호",
+            statement: "urgent Slack escalation을 놓침",
+            evidence: ["docs/SPEC.md"],
+            missingAssumptions: [],
+            options: [
+                Day1IcpQuestionOption(id: "o1", label: "Slack 누락", description: "반복됨", preview: "Pain", antiSignal: false),
+                Day1IcpQuestionOption(id: "o2", label: "불편만 있음", description: "행동 없음", preview: "Weak", antiSignal: true),
+            ]
+        )
+        let outcome = Day1AlignmentComponent(
+            id: "outcome",
+            title: "Outcome",
+            prompt: "고객 결과는?",
+            helperText: "Day 2 기준",
+            statement: "계정 리스크 escalation을 더 빨리 판단한다",
+            evidence: ["docs/GOAL.md"],
+            missingAssumptions: [],
+            options: [
+                Day1IcpQuestionOption(id: "o1", label: "빠른 판단", description: "결과", preview: "Outcome", antiSignal: false),
+                Day1IcpQuestionOption(id: "o2", label: "기능 추가", description: "빌드 도피", preview: "Anti", antiSignal: true),
+            ]
+        )
+        return Day1AlignmentPlan(
+            schemaVersion: 1,
+            source: "deterministic",
+            generatedAt: "2026-05-20T00:00:00.000Z",
+            confidence: 0.82,
+            fellBackToDeterministic: false,
+            projectGoal: "SupportLens가 유료 support lead 후보 1명을 검증한다",
+            mission: "Goal, ICP, Pain Point, Outcome을 정렬합니다.",
+            signals: signals,
+            components: Day1AlignmentComponents(icp: icp, painPoint: pain, outcome: outcome),
+            alignmentStatement: Day1AlignmentStatement(
+                statement: "목표: SupportLens가 유료 support lead 후보 1명을 검증한다 / ICP: B2B SaaS support lead / Pain Point: urgent Slack escalation을 놓침 / Outcome: 계정 리스크 escalation을 더 빨리 판단한다",
+                projectGoal: "SupportLens가 유료 support lead 후보 1명을 검증한다",
+                icp: "B2B SaaS support lead",
+                painPoint: "urgent Slack escalation을 놓침",
+                outcome: "계정 리스크 escalation을 더 빨리 판단한다"
+            ),
+            qualityGate: Day1AlignmentQualityGate(
+                score: 8.4,
+                threshold: 7.0,
+                passed: true,
+                label: "PASS",
+                passGate: "정렬문이 7.0/10 이상",
+                failGate: "목표, 고객, 통증, 결과 중 하나가 비어 있음",
+                criteria: [
+                    Day1AlignmentQualityCriterion(id: "project_goal", label: "Project goal", score: 2.0, maxScore: 2.0, passed: true, detail: "명확함")
+                ]
+            ),
+            firstInterviewMessage: FirstInterviewMessage(
+                channel: "DM/email/Slack",
+                recipientPlaceholder: "{name}",
+                subject: "정렬문 인터뷰",
+                bodyTemplate: "안녕하세요 {name}님, SupportLens 정렬문을 확인하고 있습니다.",
+                questions: ["최근 사건?"]
+            ),
+            day2Handoff: Day1Day2Handoff(
+                title: "Day 2 시장 신호로 넘길 정렬문",
+                body: "Day 2에서 유료 대체재를 확인합니다.",
+                focus: "목표: SupportLens...",
+                nextDayPrompt: "유료 대체재 5개를 찾는다.",
+                qualityGateLabel: "PASS 8.4/10"
+            )
+        )
     }
 
     private func makePlan(questionCount: Int) -> Day1IcpPlan {
@@ -555,7 +867,6 @@ struct OpenDesignDayContentTests {
         workspaceSectionIsCurriculum: Bool = true,
         isGraduation: Bool = false,
         reviewDashboardMatchesDay: Bool = false,
-        isIddSetupLocked: Bool = false,
         selectedReferencePage: OpenDesignReferencePageKind? = nil,
         hasBipNotificationHint: Bool = false,
         hasSidecarFailure: Bool = false,
@@ -571,7 +882,6 @@ struct OpenDesignDayContentTests {
             workspaceSectionIsCurriculum: workspaceSectionIsCurriculum,
             isGraduation: isGraduation,
             reviewDashboardMatchesDay: reviewDashboardMatchesDay,
-            isIddSetupLocked: isIddSetupLocked,
             selectedReferencePage: selectedReferencePage,
             hasBipNotificationHint: hasBipNotificationHint,
             hasSidecarFailure: hasSidecarFailure,

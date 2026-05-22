@@ -517,6 +517,7 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var startupSessionAppearElapsedMs: Int?
     @Published private(set) var reviewDayDashboardViewModel: ReviewDayDashboardViewModel?
     @Published private(set) var newsMarketRadar: NewsMarketRadarSnapshot = .empty
+    @Published private(set) var bipResearch: BipResearchSnapshot = .empty
     /// First-launch wall-clock timestamp that anchors the Foundation phase
     /// Day N/30 counter. The value is mirrored from `foundationProgressState`,
     /// which is persisted per workspace/app-support rather than globally.
@@ -545,6 +546,7 @@ final class AgenticViewModel: ObservableObject {
         let docs: String?
         let sheet: String?
         let onboardingHypothesis: WorkspaceOnboardingHypothesis?
+        let day1AlignmentPlan: Day1AlignmentPlan?
         let day1IcpPlan: Day1IcpPlan?
         let error: String?
 
@@ -557,7 +559,10 @@ final class AgenticViewModel: ObservableObject {
             foundArtifactPaths.count
         }
 
-        func replacing(day1IcpPlan: Day1IcpPlan?) -> WorkspaceScanResult {
+        func replacing(
+            day1AlignmentPlan: Day1AlignmentPlan? = nil,
+            day1IcpPlan: Day1IcpPlan? = nil
+        ) -> WorkspaceScanResult {
             WorkspaceScanResult(
                 icp: icp,
                 spec: spec,
@@ -568,7 +573,8 @@ final class AgenticViewModel: ObservableObject {
                 docs: docs,
                 sheet: sheet,
                 onboardingHypothesis: onboardingHypothesis,
-                day1IcpPlan: day1IcpPlan,
+                day1AlignmentPlan: day1AlignmentPlan ?? self.day1AlignmentPlan,
+                day1IcpPlan: day1IcpPlan ?? self.day1IcpPlan,
                 error: error
             )
         }
@@ -580,7 +586,7 @@ final class AgenticViewModel: ObservableObject {
         let createdAt: Date
     }
 
-    private var sidecar = SidecarBridge()
+    private let sidecar: any SidecarTransport
     private var started = false
     private var revealWorkItem: DispatchWorkItem?
     private var activePresentationSessionID: String?
@@ -588,6 +594,7 @@ final class AgenticViewModel: ObservableObject {
     private var lastBipRequestedAction: BipRequestedAction?
     private var pendingBipAuthRetry: BipRequestedAction?
     private var pendingWorkspaceScanRoot: String?
+    private var pendingProjectContextRefresh: PendingProjectContextRefresh?
     private var workspaceSetupTelemetryGate = WorkspaceSetupTelemetryGate()
     private var requestedWarmSessionIDs = Set<String>()
     private var requestedInitialBipGate = false
@@ -596,6 +603,7 @@ final class AgenticViewModel: ObservableObject {
     private var replacementSessionCreateInFlight = false
     private var latestCurriculumQuestionReframesByKey: [String: CurriculumQuestionReframeRecord] = [:]
     private var lastNewsMarketRadarViewedAt: Date?
+    private var lastBipResearchViewedAt: Date?
     #if DEBUG
     private var didEmitUITestingNewsMarketRadarEvents = false
     #endif
@@ -615,6 +623,12 @@ final class AgenticViewModel: ObservableObject {
     private enum BipRequestedAction: Hashable {
         case refreshEvidence
         case generateMission(compact: Bool)
+    }
+
+    private struct PendingProjectContextRefresh: Hashable {
+        let completedDay: Int
+        let unlockedDay: Int
+        let workspaceRoot: String
     }
 
     /// Legacy global key used before the progress state became workspace-scoped.
@@ -694,6 +708,8 @@ final class AgenticViewModel: ObservableObject {
     @discardableResult
     func markFoundationDayCompleted(_ day: Int) -> FoundationDayCompletionSaveResult {
         ensureFoundationProgressStore()
+        let normalizedDay = max(1, min(day, 30))
+        let wasAlreadyCompleted = foundationProgressState.completedDays.contains(normalizedDay)
         let handler = FoundationDayCompletionSaveHandler(store: foundationProgressStore)
         let result = handler.saveDayCompletion(
             day,
@@ -703,7 +719,10 @@ final class AgenticViewModel: ObservableObject {
         foundationProgressState = result.snapshot
         foundationStartedAt = result.snapshot.startedAt
         _ = foundationCurriculumLifecycleController.enterCompletedState(result.snapshot)
-        recordNewsMarketRadarDayCompletionHelpIfNeeded(day)
+        recordNewsMarketRadarDayCompletionHelpIfNeeded(normalizedDay)
+        if !wasAlreadyCompleted {
+            enqueueProjectContextRefreshForCompletedDay(result)
+        }
         return result
     }
 
@@ -720,11 +739,43 @@ final class AgenticViewModel: ObservableObject {
         return result
     }
 
+    private func enqueueProjectContextRefreshForCompletedDay(_ result: FoundationDayCompletionSaveResult) {
+        let root = WorkspaceSettings.resolvedURL().path
+        let refresh = PendingProjectContextRefresh(
+            completedDay: result.completedDay,
+            unlockedDay: result.unlockedDay,
+            workspaceRoot: root
+        )
+        if !sendProjectContextRefresh(refresh) {
+            pendingProjectContextRefresh = refresh
+        }
+    }
+
+    @discardableResult
+    private func sendProjectContextRefresh(_ refresh: PendingProjectContextRefresh) -> Bool {
+        guard isConnected else { return false }
+        return sidecar.send(payload: [
+            "type": "project_context_refresh",
+            "reason": "day_completed",
+            "completedDay": refresh.completedDay,
+            "unlockedDay": refresh.unlockedDay,
+            "workspaceRoot": refresh.workspaceRoot,
+        ])
+    }
+
+    private func flushPendingProjectContextRefreshIfNeeded() {
+        guard let refresh = pendingProjectContextRefresh else { return }
+        if sendProjectContextRefresh(refresh) {
+            pendingProjectContextRefresh = nil
+        }
+    }
+
     init(
         authSessionFactory: WebAuthenticationSessionFactory? = nil,
         onboardingContextOverride: OnboardingContext? = nil,
         disablesSidecarStartForTesting: Bool = false,
         foundationCurriculumLifecycleController: FoundationCurriculumLifecycleController? = nil,
+        sidecar: (any SidecarTransport)? = nil,
         activateAppForAuth: @escaping @MainActor () -> Void = {
             NSApplication.shared.activate(ignoringOtherApps: true)
         }
@@ -741,6 +792,7 @@ final class AgenticViewModel: ObservableObject {
         self.activateAppForAuth = activateAppForAuth
         self.disablesSidecarStartForTesting = disablesSidecarStartForTesting
         self.foundationCurriculumLifecycleController = foundationCurriculumLifecycleController ?? FoundationCurriculumLifecycleController()
+        self.sidecar = sidecar ?? SidecarBridge()
 
         let arguments = CommandLine.arguments
 
@@ -2163,6 +2215,53 @@ final class AgenticViewModel: ObservableObject {
         refreshNewsMarketRadar(reason: "daily", force: false)
     }
 
+    func requestBipResearch(dayNumber: Int? = nil, curriculumDay: [String: Any]? = nil) {
+        guard isConnected else { return }
+        var payload: [String: Any] = [
+            "type": "bip_research_get",
+            "preferredProvider": selectedProvider.rawValue,
+            "dayNumber": resolvedBipResearchDayNumber(dayNumber),
+        ]
+        if let curriculumDay {
+            payload["curriculumDay"] = curriculumDay
+        }
+        sidecar.send(payload: payload)
+    }
+
+    func refreshBipResearch(
+        reason: String = "manual",
+        force: Bool = false,
+        dayNumber: Int? = nil,
+        curriculumDay: [String: Any]? = nil
+    ) {
+        guard isConnected else { return }
+        let resolvedDayNumber = resolvedBipResearchDayNumber(dayNumber)
+        PostHogTelemetry.capture("mac_bip_research_refresh_requested", properties: [
+            "reason": reason,
+            "force": force,
+            "day_number": resolvedDayNumber,
+        ], authSession: macAuthSession)
+        var payload: [String: Any] = [
+            "type": "bip_research_refresh",
+            "reason": reason,
+            "force": force,
+            "preferredProvider": selectedProvider.rawValue,
+            "dayNumber": resolvedDayNumber,
+        ]
+        if let curriculumDay {
+            payload["curriculumDay"] = curriculumDay
+        }
+        sidecar.send(payload: payload)
+    }
+
+    func prepareBipResearchForDisplay(curriculumDay: [String: Any]? = nil) {
+        lastBipResearchViewedAt = Date()
+        let dayNumber = resolvedBipResearchDayNumber(nil)
+        requestBipResearch(dayNumber: dayNumber, curriculumDay: curriculumDay)
+        guard shouldRefreshBipResearchForDisplay else { return }
+        refreshBipResearch(reason: "daily", force: false, dayNumber: dayNumber, curriculumDay: curriculumDay)
+    }
+
     #if DEBUG
     private func emitUITestingNewsMarketRadarEventsIfRequested() -> Bool {
         guard CommandLine.arguments.contains("--ui-testing-stub-news-market-radar-events") else {
@@ -2383,6 +2482,20 @@ final class AgenticViewModel: ObservableObject {
         if newsMarketRadar.status.state == "stale" { return true }
         if newsMarketRadar.status.state == "failed" { return true }
         guard let generatedAt = newsMarketRadar.generatedAt else { return true }
+        return Date().timeIntervalSince(generatedAt) >= 24 * 60 * 60
+    }
+
+    private func resolvedBipResearchDayNumber(_ explicitDayNumber: Int?) -> Int {
+        let day = explicitDayNumber ?? foundationProgressState.currentDayNumber() ?? 1
+        return max(1, min(day, 30))
+    }
+
+    private var shouldRefreshBipResearchForDisplay: Bool {
+        if bipResearch.status.state == "refreshing" { return false }
+        if bipResearch.status.state == "stale" { return true }
+        if bipResearch.status.state == "failed" { return true }
+        if bipResearch.dayNumber != resolvedBipResearchDayNumber(nil) { return true }
+        guard let generatedAt = bipResearch.generatedAt else { return true }
         return Date().timeIntervalSince(generatedAt) >= 24 * 60 * 60
     }
 
@@ -3271,6 +3384,7 @@ final class AgenticViewModel: ObservableObject {
             recordStartupSessionAppearIfNeeded(source: "ready")
             sendAuthContextToSidecar()
             syncProviderSettingsToSidecar()
+            flushPendingProjectContextRefreshIfNeeded()
             prepareNewsMarketRadarForDisplay()
             refreshPresentationState()
             requestCodexWarmupIfNeeded()
@@ -3384,6 +3498,7 @@ final class AgenticViewModel: ObservableObject {
                 docs: event.docs,
                 sheet: event.sheet,
                 onboardingHypothesis: event.onboardingHypothesis,
+                day1AlignmentPlan: event.day1AlignmentPlan,
                 day1IcpPlan: event.day1IcpPlan,
                 error: event.error
             )
@@ -3417,10 +3532,13 @@ final class AgenticViewModel: ObservableObject {
                     authSession: macAuthSession
                 )
             }
-        case "workspace_day1_icp_plan_result":
-            if let day1IcpPlan = event.day1IcpPlan {
+        case "workspace_day1_alignment_plan_result", "workspace_day1_icp_plan_result":
+            if event.day1AlignmentPlan != nil || event.day1IcpPlan != nil {
                 if let current = scanResult {
-                    scanResult = current.replacing(day1IcpPlan: day1IcpPlan)
+                    scanResult = current.replacing(
+                        day1AlignmentPlan: event.day1AlignmentPlan,
+                        day1IcpPlan: event.day1IcpPlan
+                    )
                 } else {
                     scanResult = WorkspaceScanResult(
                         icp: nil,
@@ -3432,7 +3550,8 @@ final class AgenticViewModel: ObservableObject {
                         docs: nil,
                         sheet: nil,
                         onboardingHypothesis: nil,
-                        day1IcpPlan: day1IcpPlan,
+                        day1AlignmentPlan: event.day1AlignmentPlan,
+                        day1IcpPlan: event.day1IcpPlan,
                         error: nil
                     )
                 }
@@ -3463,6 +3582,45 @@ final class AgenticViewModel: ObservableObject {
                     ),
                     workspaceEvidenceRefs: newsMarketRadar.workspaceEvidenceRefs,
                     lanes: newsMarketRadar.lanes
+                )
+            }
+        case "bip_research_result":
+            if let snapshot = event.bipResearch {
+                bipResearch = snapshot
+            }
+        case "bip_research_status":
+            if let status = event.bipResearchStatus {
+                bipResearch = BipResearchSnapshot(
+                    schemaVersion: bipResearch.schemaVersion,
+                    contentLocale: bipResearch.contentLocale,
+                    promptProfile: bipResearch.promptProfile,
+                    contextFingerprint: bipResearch.contextFingerprint,
+                    generatedAt: bipResearch.generatedAt,
+                    nextRefreshAfter: bipResearch.nextRefreshAfter,
+                    dayNumber: bipResearch.dayNumber,
+                    dayTitle: bipResearch.dayTitle,
+                    dayPhase: bipResearch.dayPhase,
+                    status: BipResearchStatus(
+                        state: status.state,
+                        lastSuccessAt: status.lastSuccessAt ?? bipResearch.status.lastSuccessAt,
+                        stale: status.stale ?? bipResearch.status.stale,
+                        error: status.error ?? bipResearch.status.error,
+                        reason: status.reason,
+                        researchSource: status.researchSource ?? bipResearch.status.researchSource,
+                        stage: status.stage ?? bipResearch.status.stage,
+                        progressText: status.progressText ?? bipResearch.status.progressText,
+                        elapsedMs: status.elapsedMs ?? bipResearch.status.elapsedMs,
+                        stepIndex: status.stepIndex ?? bipResearch.status.stepIndex,
+                        stepCount: status.stepCount ?? bipResearch.status.stepCount,
+                        partialFailures: status.partialFailures ?? bipResearch.status.partialFailures
+                    ),
+                    briefTitle: bipResearch.briefTitle,
+                    briefBody: bipResearch.briefBody,
+                    querySummary: bipResearch.querySummary,
+                    candidateTargetCount: bipResearch.candidateTargetCount,
+                    workspaceEvidenceRefs: bipResearch.workspaceEvidenceRefs,
+                    signals: bipResearch.signals,
+                    candidates: bipResearch.candidates
                 )
             }
         case "bip_coach_state":
@@ -3715,7 +3873,7 @@ final class AgenticViewModel: ObservableObject {
     private func requestInitialBipGateIfNeeded() {
         guard isConnected, !requestedInitialBipGate else { return }
         requestedInitialBipGate = true
-        requestBipSetupGate(autoStart: true)
+        requestBipSetupGate(autoStart: false)
     }
 
     private func updateBipSetupGate(from event: SidecarEvent) {
@@ -4288,6 +4446,13 @@ final class AgenticViewModel: ObservableObject {
     func replaceSessionsForTesting(_ sessions: [ChatSession], selectedSessionID: String? = nil) {
         self.sessions = sessions
         self.selectedSessionID = selectedSessionID ?? sessions.first?.id
+    }
+
+    func markSidecarConnectedForTesting(workspaceRoot: String) {
+        self.workspaceRoot = workspaceRoot
+        connectionLabel = "Connected"
+        isConnected = true
+        flushPendingProjectContextRefreshIfNeeded()
     }
 
     func applySessionUpdatedForTesting(_ session: ChatSession) {
@@ -5207,6 +5372,7 @@ struct FoundationProgressSnapshot: Codable, Hashable {
 
     func isUnlocked(_ day: Int) -> Bool {
         if day <= 1 { return true }
+        if day <= 7 { return true }
         return completedDays.contains(day - 1)
     }
 
@@ -5520,6 +5686,7 @@ private extension AgenticViewModel {
         onboardingContext = nil
         onboardingContextStatus = .idle
         bipCoach = nil
+        bipResearch = .empty
         isBipCoachRefreshing = false
         isBipCoachGenerating = false
         isBipCoachCompleting = false
@@ -5864,6 +6031,7 @@ struct SidecarEvent: Decodable {
     let docs: String?
     let sheet: String?
     let onboardingHypothesis: WorkspaceOnboardingHypothesis?
+    let day1AlignmentPlan: Day1AlignmentPlan?
     let day1IcpPlan: Day1IcpPlan?
     let error: String?
 
@@ -5911,6 +6079,8 @@ struct SidecarEvent: Decodable {
     let reframedQuestion: String?
     let newsMarketRadar: NewsMarketRadarSnapshot?
     let newsMarketRadarStatus: NewsMarketRadarStatus?
+    let bipResearch: BipResearchSnapshot?
+    let bipResearchStatus: BipResearchStatus?
 
     init(
         type: String,
@@ -5953,6 +6123,7 @@ struct SidecarEvent: Decodable {
         docs: String?,
         sheet: String?,
         onboardingHypothesis: WorkspaceOnboardingHypothesis?,
+        day1AlignmentPlan: Day1AlignmentPlan? = nil,
         day1IcpPlan: Day1IcpPlan? = nil,
         error: String?,
         docType: String?,
@@ -5986,7 +6157,9 @@ struct SidecarEvent: Decodable {
         originalQuestion: String? = nil,
         reframedQuestion: String? = nil,
         newsMarketRadar: NewsMarketRadarSnapshot? = nil,
-        newsMarketRadarStatus: NewsMarketRadarStatus? = nil
+        newsMarketRadarStatus: NewsMarketRadarStatus? = nil,
+        bipResearch: BipResearchSnapshot? = nil,
+        bipResearchStatus: BipResearchStatus? = nil
     ) {
         self.type = type
         self.message = message
@@ -6028,6 +6201,7 @@ struct SidecarEvent: Decodable {
         self.docs = docs
         self.sheet = sheet
         self.onboardingHypothesis = onboardingHypothesis
+        self.day1AlignmentPlan = day1AlignmentPlan
         self.day1IcpPlan = day1IcpPlan
         self.error = error
         self.docType = docType
@@ -6062,6 +6236,8 @@ struct SidecarEvent: Decodable {
         self.reframedQuestion = reframedQuestion
         self.newsMarketRadar = newsMarketRadar
         self.newsMarketRadarStatus = newsMarketRadarStatus
+        self.bipResearch = bipResearch
+        self.bipResearchStatus = bipResearchStatus
     }
 
     var bipMissionProgress: BipMissionProgress? {
@@ -6378,6 +6554,7 @@ extension SidecarEvent {
         case docs
         case sheet
         case onboardingHypothesis
+        case day1AlignmentPlan
         case day1IcpPlan
         case error
         case docType
@@ -6421,6 +6598,7 @@ extension SidecarEvent {
         case reframedVariant
         case reframedVariantID = "reframed_variant"
         case newsMarketRadar
+        case bipResearch
     }
 
     init(from decoder: Decoder) throws {
@@ -6466,6 +6644,7 @@ extension SidecarEvent {
         docs = Self.decodeIfPresent(String.self, from: container, forKey: .docs)
         sheet = Self.decodeIfPresent(String.self, from: container, forKey: .sheet)
         onboardingHypothesis = Self.decodeIfPresent(WorkspaceOnboardingHypothesis.self, from: container, forKey: .onboardingHypothesis)
+        day1AlignmentPlan = Self.decodeIfPresent(Day1AlignmentPlan.self, from: container, forKey: .day1AlignmentPlan)
         day1IcpPlan = Self.decodeIfPresent(Day1IcpPlan.self, from: container, forKey: .day1IcpPlan)
 
         let stringError = Self.decodeIfPresent(String.self, from: container, forKey: .error)
@@ -6513,6 +6692,8 @@ extension SidecarEvent {
             ?? Self.decodeIfPresent(String.self, from: container, forKey: .reframedVariantID)
         newsMarketRadar = Self.decodeIfPresent(NewsMarketRadarSnapshot.self, from: container, forKey: .newsMarketRadar)
         newsMarketRadarStatus = Self.decodeIfPresent(NewsMarketRadarStatus.self, from: container, forKey: .status)
+        bipResearch = Self.decodeIfPresent(BipResearchSnapshot.self, from: container, forKey: .bipResearch)
+        bipResearchStatus = Self.decodeIfPresent(BipResearchStatus.self, from: container, forKey: .status)
     }
 
     private static func decodeIfPresent<T: Decodable>(

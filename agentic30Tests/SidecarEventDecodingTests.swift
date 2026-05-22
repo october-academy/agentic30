@@ -495,6 +495,117 @@ struct SidecarEventDecodingTests {
         #expect(event.day1IcpPlan?.antiIcp.rules.first?.label == "흥미롭네요만 말함")
     }
 
+    @MainActor @Test func decodesWorkspaceScanResultWithDay1AlignmentPlan() throws {
+        let payload = """
+        {
+          "type": "workspace_scan_result",
+          "scanRoot": "/Users/october/prj/myapp",
+          "day1AlignmentPlan": {
+            "schemaVersion": 1,
+            "source": "deterministic",
+            "generatedAt": "2026-05-20T00:00:00.000Z",
+            "confidence": 0.82,
+            "fellBackToDeterministic": false,
+            "projectGoal": "SupportLens가 유료 support lead 후보 1명을 검증한다",
+            "mission": "Goal, ICP, Pain Point, Outcome을 정렬합니다.",
+            "signals": {
+              "productName": "SupportLens",
+              "currentIcpGuess": "B2B SaaS support lead",
+              "likelyUsers": ["support lead"],
+              "problem": "urgent Slack escalation을 놓침",
+              "currentAlternatives": ["Slack 수동 확인"],
+              "evidenceRefs": [{ "path": "README.md", "reason": "README", "quote": "# SupportLens" }],
+              "missingAssumptions": [],
+              "confidence": "high"
+            },
+            "components": {
+              "icp": {
+                "id": "icp",
+                "title": "ICP",
+                "prompt": "먼저 검증할 고객은?",
+                "helperText": "고객 조건",
+                "statement": "B2B SaaS support lead",
+                "evidence": ["README.md: README"],
+                "missingAssumptions": [],
+                "options": [
+                  { "id": "o1", "label": "support lead", "description": "현재 고객", "preview": "ICP", "antiSignal": false },
+                  { "id": "o2", "label": "관심만 있음", "description": "최근 사건 없음", "preview": "Weak", "antiSignal": true }
+                ]
+              },
+              "painPoint": {
+                "id": "pain_point",
+                "title": "Pain Point",
+                "prompt": "압축된 통증은?",
+                "helperText": "비용 신호",
+                "statement": "urgent Slack escalation을 놓침",
+                "evidence": ["docs/SPEC.md"],
+                "missingAssumptions": [],
+                "options": [
+                  { "id": "o1", "label": "Slack 누락", "description": "반복됨", "preview": "Pain" },
+                  { "id": "o2", "label": "불편만 있음", "description": "행동 없음", "preview": "Weak", "antiSignal": true }
+                ]
+              },
+              "outcome": {
+                "id": "outcome",
+                "title": "Outcome",
+                "prompt": "고객 결과는?",
+                "helperText": "Day 2 기준",
+                "statement": "계정 리스크 escalation을 더 빨리 판단한다",
+                "evidence": ["docs/GOAL.md"],
+                "missingAssumptions": [],
+                "options": [
+                  { "id": "o1", "label": "빠른 판단", "description": "결과", "preview": "Outcome" },
+                  { "id": "o2", "label": "기능 추가", "description": "빌드 도피", "preview": "Anti", "antiSignal": true }
+                ]
+              }
+            },
+            "alignmentStatement": {
+              "statement": "목표: SupportLens가 유료 support lead 후보 1명을 검증한다 / ICP: B2B SaaS support lead / Pain Point: urgent Slack escalation을 놓침 / Outcome: 계정 리스크 escalation을 더 빨리 판단한다",
+              "projectGoal": "SupportLens가 유료 support lead 후보 1명을 검증한다",
+              "icp": "B2B SaaS support lead",
+              "painPoint": "urgent Slack escalation을 놓침",
+              "outcome": "계정 리스크 escalation을 더 빨리 판단한다"
+            },
+            "qualityGate": {
+              "score": 8.4,
+              "threshold": 7.0,
+              "passed": true,
+              "label": "PASS",
+              "passGate": "정렬문이 7.0/10 이상",
+              "failGate": "목표, 고객, 통증, 결과 중 하나가 비어 있음",
+              "criteria": [
+                { "id": "project_goal", "label": "Project goal", "score": 2.0, "maxScore": 2.0, "passed": true, "detail": "명확함" }
+              ]
+            },
+            "firstInterviewMessage": {
+              "channel": "DM/email/Slack",
+              "recipientPlaceholder": "{name}",
+              "subject": "정렬문 인터뷰",
+              "bodyTemplate": "안녕하세요 {name}님",
+              "questions": ["최근 사건?"]
+            },
+            "day2Handoff": {
+              "title": "Day 2 시장 신호로 넘길 정렬문",
+              "body": "Day 2에서 유료 대체재를 확인합니다.",
+              "focus": "목표: SupportLens...",
+              "nextDayPrompt": "유료 대체재 5개를 찾는다.",
+              "qualityGateLabel": "PASS 8.4/10"
+            }
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "workspace_scan_result")
+        #expect(event.day1AlignmentPlan?.schemaVersion == 1)
+        #expect(event.day1AlignmentPlan?.projectGoal.contains("SupportLens") == true)
+        #expect(event.day1AlignmentPlan?.components.painPoint.statement.contains("Slack") == true)
+        #expect(event.day1AlignmentPlan?.components.outcome.options.last?.antiSignal == true)
+        #expect(event.day1AlignmentPlan?.qualityGate.score == 8.4)
+        #expect(event.day1AlignmentPlan?.day2Handoff.qualityGateLabel == "PASS 8.4/10")
+    }
+
     @MainActor @Test func decodesWorkspaceScanResultWithError() throws {
         let payload = """
         {
@@ -975,6 +1086,132 @@ struct SidecarEventDecodingTests {
         #expect(event.newsMarketRadarStatus?.stepIndex == 4)
         #expect(event.newsMarketRadarStatus?.stepCount == 6)
         #expect(event.newsMarketRadarStatus?.partialFailures?.first?.laneId == "problem")
+    }
+
+    @MainActor @Test func decodesBipResearchResult() throws {
+        let payload = """
+        {
+          "type": "bip_research_result",
+          "bipResearch": {
+            "schemaVersion": 1,
+            "contentLocale": "ko-KR",
+            "promptProfile": "ko_bip_research_v1_x_threads_dynamic",
+            "contextFingerprint": "abc123",
+            "generatedAt": "2026-05-21T00:00:00.000Z",
+            "nextRefreshAfter": "2026-05-22T00:00:00.000Z",
+            "dayNumber": 8,
+            "dayTitle": "MVP를 핵심 기능 1개로 자른다",
+            "dayPhase": "build",
+            "status": {
+              "state": "ready",
+              "lastSuccessAt": "2026-05-21T00:00:00.000Z",
+              "stale": false,
+              "error": null,
+              "reason": "manual",
+              "researchSource": "Codex Exa MCP"
+            },
+            "briefTitle": "Day 8 기준 X/Threads 후보",
+            "briefBody": "실제 fetch 결과만 표시합니다.",
+            "querySummary": "site:x.com Claude Code",
+            "candidateTargetCount": 18,
+            "workspaceEvidenceRefs": [],
+            "signals": [
+              {
+                "id": "social",
+                "title": "X/Threads 공개 기록",
+                "subtitle": "X 1",
+                "state": "seen",
+                "tone": "accent"
+              }
+            ],
+            "candidates": [
+              {
+                "id": "candidate-1",
+                "title": "Builder — Claude Code BIP 후보",
+                "sourceLabel": "x",
+                "source": "@builder",
+                "sourceType": "x",
+                "medium": "X thread",
+                "date": "2026-05-21",
+                "matchLabel": "강",
+                "matchCaption": "match",
+                "quote": "Claude Code로 빌드 과정을 공개합니다.",
+                "whyTitle": "왜 ICP 증거인가",
+                "whyBody": "macOS agentic coding 워크플로와 맞습니다.",
+                "usageTitle": "BIP 활용",
+                "usageBody": "DM 후보로 저장합니다.",
+                "gap": "전업 여부 확인",
+                "tags": [
+                  { "title": "X", "tone": "sky" }
+                ],
+                "sourceRefs": [
+                  {
+                    "id": "src-1",
+                    "sourceType": "x",
+                    "platform": "x",
+                    "title": "Fetched post",
+                    "url": "https://x.com/builder/status/1",
+                    "domain": "x.com",
+                    "publishedAt": "2026-05-21",
+                    "fetchedAt": "2026-05-21T00:00:00.000Z",
+                    "excerpt": "Fetched excerpt"
+                  }
+                ],
+                "draft": "오늘 BIP 초안",
+                "evidenceStrength": "strong"
+              }
+            ]
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "bip_research_result")
+        #expect(event.bipResearch?.dayNumber == 8)
+        #expect(event.bipResearch?.status.state == "ready")
+        #expect(event.bipResearch?.signals.first?.id == "social")
+        #expect(event.bipResearch?.candidates.first?.sourceRefs.first?.url == "https://x.com/builder/status/1")
+        #expect(event.bipResearch?.candidates.first?.tags.first?.title == "X")
+    }
+
+    @MainActor @Test func decodesBipResearchStatusObject() throws {
+        let payload = """
+        {
+          "type": "bip_research_status",
+          "status": {
+            "state": "refreshing",
+            "lastSuccessAt": null,
+            "stale": false,
+            "error": null,
+            "reason": "daily",
+            "researchSource": "Codex Exa MCP",
+            "stage": "running_provider_research",
+            "progressText": "X/Threads ICP 후보를 검색하는 중",
+            "elapsedMs": 3100,
+            "stepIndex": 4,
+            "stepCount": 6,
+            "partialFailures": [
+              {
+                "laneId": "bip",
+                "laneTitle": "BIP 리서치",
+                "error": "provider timeout"
+              }
+            ]
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "bip_research_status")
+        #expect(event.status == nil)
+        #expect(event.bipResearchStatus?.state == "refreshing")
+        #expect(event.bipResearchStatus?.reason == "daily")
+        #expect(event.bipResearchStatus?.researchSource == "Codex Exa MCP")
+        #expect(event.bipResearchStatus?.stage == "running_provider_research")
+        #expect(event.bipResearchStatus?.stepIndex == 4)
+        #expect(event.bipResearchStatus?.partialFailures?.first?.laneId == "bip")
     }
 
     private var decoder: JSONDecoder {

@@ -162,7 +162,7 @@ final class WorkspaceSettingsTests: XCTestCase {
         XCTAssertNil(storeB.load())
     }
 
-    func testFoundationProgressSnapshotUnlocksNextDayAfterCompletion() {
+    func testFoundationProgressSnapshotUnlocksFoundationWeekAndNextPhaseAfterCompletion() {
         let startedAt = Date(timeIntervalSince1970: 1_777_000_000)
         var snapshot = FoundationProgressSnapshot(
             workspaceRoot: "/tmp/project",
@@ -173,12 +173,14 @@ final class WorkspaceSettingsTests: XCTestCase {
 
         XCTAssertEqual(snapshot.currentDayNumber(now: startedAt.addingTimeInterval(25 * 60 * 60)), 2)
         XCTAssertTrue(snapshot.isUnlocked(1))
-        XCTAssertFalse(snapshot.isUnlocked(2))
-
-        snapshot.completedDays.insert(1)
-
         XCTAssertTrue(snapshot.isUnlocked(2))
-        XCTAssertFalse(snapshot.isUnlocked(3))
+        XCTAssertTrue(snapshot.isUnlocked(7))
+        XCTAssertFalse(snapshot.isUnlocked(8))
+
+        snapshot.completedDays.insert(7)
+
+        XCTAssertTrue(snapshot.isUnlocked(8))
+        XCTAssertFalse(snapshot.isUnlocked(9))
     }
 
     func testDayOneCompletionSaveHandlerPersistsDoneStateAndUnlocksDayTwo() {

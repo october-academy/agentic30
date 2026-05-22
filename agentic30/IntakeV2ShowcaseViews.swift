@@ -1014,14 +1014,11 @@ struct IntakeV2ConnectShowcaseView: View {
     let onNext: () -> Void
     var progressNamespace: Namespace.ID? = nil
 
-    @State private var selection: Set<BrandIcon> = []
-    @State private var errorTiles: Set<BrandIcon> = []
+    @State private var selection: Set<IntakeSourceID> = []
+    @State private var errorTiles: Set<IntakeSourceID> = []
     @State private var showingAddSourceModal = false
 
-    private let allSources: [BrandIcon] = [
-        .folder, .github, .gdocs, .gsheets, .notion, .discord, .posthog,
-        .toss, .stripe, .threads, .txt
-    ]
+    private let allSources = IntakeSourceCatalog.mainGridIDs
 
     private var addedCatalogSources: [SourceCatalogItem] {
         sources.sources.compactMap { source in
@@ -1031,7 +1028,7 @@ struct IntakeV2ConnectShowcaseView: View {
     }
 
     var body: some View {
-        IntakeV2PinnedStepScaffold { _ in
+        IntakeV2PinnedStepScaffold { isNarrow in
             VStack(alignment: .leading, spacing: 22) {
                 IntakeV2ProgressReservedSpace()
                 IntakeV2Header(
@@ -1039,7 +1036,8 @@ struct IntakeV2ConnectShowcaseView: View {
                     subtitle: "지금은 연결할 기록을 표시만 합니다. 실제 인증과 권한 연결은 나중에 Settings에서 직접 완료합니다."
                 )
 
-                let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
+                let columnCount = isNarrow ? 3 : 5
+                let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: columnCount)
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(allSources, id: \.self) { src in
                         sourceCard(src)
@@ -1104,31 +1102,43 @@ struct IntakeV2ConnectShowcaseView: View {
     }
 
     private var requestedSelectionCount: Int {
-        let requestedBuiltIns = selection.filter { sourceConnectionState(for: $0) == .requested }.count
-        let persistedRequested = sources.sources.filter { $0.status == .disabled }.count
-        return requestedBuiltIns + persistedRequested
+        let requestedBuiltIns = Set(selection.filter { sourceConnectionState(for: $0) == .requested })
+        let persistedRequested = Set(sources.sources.filter { $0.status == .disabled }.map(\.id))
+        return requestedBuiltIns.union(persistedRequested).count
     }
 
     @ViewBuilder
-    private func sourceCard(_ src: BrandIcon) -> some View {
+    private func sourceCard(_ src: IntakeSourceID) -> some View {
+        if let item = IntakeSourceCatalog.item(for: src) {
+            sourceCard(item)
+        }
+    }
+
+    @ViewBuilder
+    private func sourceCard(_ item: SourceCatalogItem) -> some View {
+        let src = item.id
         let isOn = selection.contains(src)
         let isError = errorTiles.contains(src)
         let connectionState = sourceConnectionState(for: src)
         Button(action: { toggle(src) }) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top) {
-                    BrandIconTile(icon: src)
+                    IntakeSourceIconTile(id: item.id, fallbackSystemImage: item.systemImage, size: 44, corner: 10)
                     Spacer()
                     togglePill(on: isOn)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(src.name)
+                    Text(item.id.displayName)
                         .font(.system(size: 14, weight: .bold))
                         .foregroundStyle(.white)
-                    Text(src.kind)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.82)
+                    Text(item.kind)
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(IntakeV2Color.textTertiary)
                         .tracking(0.6)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.78)
                 }
                 Spacer(minLength: 4)
                 HStack(spacing: 5) {
@@ -1139,6 +1149,8 @@ struct IntakeV2ConnectShowcaseView: View {
                     Text(statusText(src, isOn: isOn, isError: isError, state: connectionState))
                         .font(.system(size: 11))
                         .foregroundStyle(statusTextColor(isError: isError, state: connectionState))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
                 }
             }
             .padding(16)
@@ -1155,6 +1167,7 @@ struct IntakeV2ConnectShowcaseView: View {
             .shadow(color: isOn ? IntakeV2Color.accent.opacity(0.08) : .clear, radius: 12)
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("intakeV2.source.\(src.rawValue)")
     }
 
     @ViewBuilder
@@ -1249,7 +1262,7 @@ struct IntakeV2ConnectShowcaseView: View {
         case connected
     }
 
-    private func statusText(_ src: BrandIcon, isOn: Bool, isError: Bool, state: SourceConnectionState) -> String {
+    private func statusText(_ src: IntakeSourceID, isOn: Bool, isError: Bool, state: SourceConnectionState) -> String {
         if isError { return "folder empty" }
         if !isOn { return "Not connected" }
         switch state {
@@ -1262,9 +1275,9 @@ struct IntakeV2ConnectShowcaseView: View {
         }
     }
 
-    private func sourceConnectionState(for src: BrandIcon) -> SourceConnectionState {
+    private func sourceConnectionState(for src: IntakeSourceID) -> SourceConnectionState {
         guard selection.contains(src) else { return .disconnected }
-        if src == .folder, sources.status(of: .localFolder) == .connected {
+        if src == .localFolder, sources.status(of: .localFolder) == .connected {
             return .connected
         }
         return .requested
@@ -1296,22 +1309,17 @@ struct IntakeV2ConnectShowcaseView: View {
         }
     }
 
-    private func toggle(_ src: BrandIcon) {
+    private func toggle(_ src: IntakeSourceID) {
         if errorTiles.contains(src) { errorTiles.remove(src) }
         if selection.contains(src) { selection.remove(src) } else { selection.insert(src) }
     }
 
     private func commitSelectionToManager() {
-        let mapping: [BrandIcon: IntakeSourceID] = [
-            .github: .github, .gdocs: .googleDocs, .gsheets: .googleSheets,
-            .notion: .notion, .discord: .discord, .posthog: .posthog,
-            .toss: .toss, .stripe: .stripe, .threads: .threads, .txt: .interviewTxt
-        ]
-        if !selection.contains(.folder) {
+        if !selection.contains(.localFolder) {
             sources.remove(.localFolder)
         }
-        for (icon, id) in mapping {
-            if selection.contains(icon) {
+        for id in IntakeSourceCatalog.mainGridIDs where id != .localFolder {
+            if selection.contains(id) {
                 sources.toggle(id, to: .disabled) // marked as "user wanted but not yet connected"
             } else {
                 sources.remove(id)
@@ -1320,7 +1328,7 @@ struct IntakeV2ConnectShowcaseView: View {
     }
 
     private func syncSelectionWithRegisteredSources() {
-        selection = sources.status(of: .localFolder) == .connected ? [.folder] : []
+        selection = Set(IntakeSourceCatalog.mainGridIDs.filter { sources.status(of: $0) != .notConnected })
         errorTiles = []
     }
 
@@ -1744,6 +1752,14 @@ private struct IntakeSourceIconTile: View {
             return Color(red: 0.000, green: 0.392, blue: 1.000)
         case "BrandStripe":
             return Color(red: 0.388, green: 0.357, blue: 1.000)
+        case "BrandCursor":
+            return Color(red: 0.051, green: 0.051, blue: 0.055)
+        case "BrandClaude":
+            return Color(red: 0.871, green: 0.792, blue: 0.671)
+        case "BrandAWS":
+            return Color(red: 0.091, green: 0.137, blue: 0.190)
+        case "BrandInstagram":
+            return Color(red: 0.051, green: 0.051, blue: 0.055)
         case "BrandThreads", "BrandPaddle":
             return .black
         default:
@@ -1761,6 +1777,16 @@ private struct IntakeSourceIconTile: View {
             return inComposite ? 0.70 : 0.74
         case "BrandStripe":
             return inComposite ? 0.66 : 0.68
+        case "BrandCursor":
+            return inComposite ? 0.72 : 0.78
+        case "BrandClaude":
+            return inComposite ? 0.72 : 0.76
+        case "BrandOpenAI":
+            return inComposite ? 0.70 : 0.74
+        case "BrandInstagram":
+            return inComposite ? 0.72 : 0.78
+        case "BrandAWS":
+            return inComposite ? 0.78 : 0.82
         case "BrandGoogleDocs", "BrandGoogleSheets", "BrandGmail", "BrandGoogleCalendar", "BrandGoogleForms":
             return inComposite ? 0.76 : 0.82
         case "BrandPaddle":

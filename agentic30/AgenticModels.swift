@@ -561,6 +561,8 @@ struct WorkspaceOnboardingHypothesis: Codable, Hashable {
     let targetUser: String?
     let problem: String?
     let purpose: String?
+    let goal: String?
+    let values: String?
     let likelyUsers: [String]?
     let stage: String?
     let evidence: [String]?
@@ -651,6 +653,77 @@ struct FirstInterviewMessage: Codable, Hashable {
     let subject: String?
     let bodyTemplate: String
     let questions: [String]
+}
+
+/// Primary Day 1 payload. The sidecar emits this next to the legacy
+/// `day1IcpPlan`; hosts should prefer this shape and fall back to the legacy
+/// payload for older cached scans.
+struct Day1AlignmentPlan: Codable, Hashable {
+    let schemaVersion: Int
+    let source: String?
+    let generatedAt: String?
+    let confidence: Double?
+    let fellBackToDeterministic: Bool?
+    let projectGoal: String
+    let mission: String
+    let signals: Day1IcpSignals
+    let components: Day1AlignmentComponents
+    let alignmentStatement: Day1AlignmentStatement
+    let qualityGate: Day1AlignmentQualityGate
+    let firstInterviewMessage: FirstInterviewMessage
+    let day2Handoff: Day1Day2Handoff
+}
+
+struct Day1AlignmentComponents: Codable, Hashable {
+    let icp: Day1AlignmentComponent
+    let painPoint: Day1AlignmentComponent
+    let outcome: Day1AlignmentComponent
+}
+
+struct Day1AlignmentComponent: Codable, Hashable {
+    let id: String
+    let title: String
+    let prompt: String
+    let helperText: String?
+    let statement: String
+    let evidence: [String]
+    let missingAssumptions: [String]
+    let options: [Day1IcpQuestionOption]
+}
+
+struct Day1AlignmentStatement: Codable, Hashable {
+    let statement: String
+    let projectGoal: String
+    let icp: String
+    let painPoint: String
+    let outcome: String
+}
+
+struct Day1AlignmentQualityGate: Codable, Hashable {
+    let score: Double
+    let threshold: Double
+    let passed: Bool
+    let label: String
+    let passGate: String
+    let failGate: String
+    let criteria: [Day1AlignmentQualityCriterion]
+}
+
+struct Day1AlignmentQualityCriterion: Codable, Hashable {
+    let id: String
+    let label: String
+    let score: Double
+    let maxScore: Double
+    let passed: Bool
+    let detail: String
+}
+
+struct Day1Day2Handoff: Codable, Hashable {
+    let title: String
+    let body: String
+    let focus: String
+    let nextDayPrompt: String
+    let qualityGateLabel: String?
 }
 
 struct IddDocPreview: Identifiable, Codable, Hashable {
@@ -1057,6 +1130,278 @@ struct NewsMarketRadarSourceRef: Codable, Hashable, Identifiable {
     let domain: String?
     let path: String?
     let publishedAt: String?
+    let excerpt: String?
+
+    var stableID: String {
+        url ?? path ?? id ?? title
+    }
+}
+
+struct BipResearchSnapshot: Codable, Hashable {
+    let schemaVersion: Int
+    let contentLocale: String?
+    let promptProfile: String?
+    let contextFingerprint: String?
+    let generatedAt: Date?
+    let nextRefreshAfter: Date?
+    let dayNumber: Int
+    let dayTitle: String?
+    let dayPhase: String?
+    let status: BipResearchStatus
+    let briefTitle: String?
+    let briefBody: String?
+    let querySummary: String?
+    let candidateTargetCount: Int?
+    let workspaceEvidenceRefs: [BipResearchSourceRef]
+    let signals: [BipResearchSignal]
+    let candidates: [BipResearchCandidate]
+
+    static let empty = BipResearchSnapshot(
+        schemaVersion: 1,
+        contentLocale: "ko-KR",
+        promptProfile: nil,
+        contextFingerprint: nil,
+        generatedAt: nil,
+        nextRefreshAfter: nil,
+        dayNumber: 1,
+        dayTitle: nil,
+        dayPhase: nil,
+        status: BipResearchStatus(
+            state: "idle",
+            lastSuccessAt: nil,
+            stale: false,
+            error: nil,
+            reason: nil,
+            researchSource: nil,
+            stage: nil,
+            progressText: nil,
+            elapsedMs: nil,
+            stepIndex: nil,
+            stepCount: nil,
+            partialFailures: nil
+        ),
+        briefTitle: nil,
+        briefBody: nil,
+        querySummary: nil,
+        candidateTargetCount: 18,
+        workspaceEvidenceRefs: [],
+        signals: [],
+        candidates: []
+    )
+
+    var candidateCount: Int {
+        candidates.count
+    }
+
+    var statusLabel: String {
+        switch status.state {
+        case "refreshing": return "리서치 중"
+        case "ready": return status.stale == true ? "캐시됨" : "최신"
+        case "failed": return "설정 필요"
+        case "stale": return "오래됨"
+        default: return "대기"
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case contentLocale
+        case promptProfile
+        case contextFingerprint
+        case generatedAt
+        case nextRefreshAfter
+        case dayNumber
+        case dayTitle
+        case dayPhase
+        case status
+        case briefTitle
+        case briefBody
+        case querySummary
+        case candidateTargetCount
+        case workspaceEvidenceRefs
+        case signals
+        case candidates
+    }
+
+    init(
+        schemaVersion: Int,
+        contentLocale: String?,
+        promptProfile: String?,
+        contextFingerprint: String?,
+        generatedAt: Date?,
+        nextRefreshAfter: Date?,
+        dayNumber: Int,
+        dayTitle: String?,
+        dayPhase: String?,
+        status: BipResearchStatus,
+        briefTitle: String?,
+        briefBody: String?,
+        querySummary: String?,
+        candidateTargetCount: Int?,
+        workspaceEvidenceRefs: [BipResearchSourceRef],
+        signals: [BipResearchSignal],
+        candidates: [BipResearchCandidate]
+    ) {
+        self.schemaVersion = schemaVersion
+        self.contentLocale = contentLocale
+        self.promptProfile = promptProfile
+        self.contextFingerprint = contextFingerprint
+        self.generatedAt = generatedAt
+        self.nextRefreshAfter = nextRefreshAfter
+        self.dayNumber = dayNumber
+        self.dayTitle = dayTitle
+        self.dayPhase = dayPhase
+        self.status = status
+        self.briefTitle = briefTitle
+        self.briefBody = briefBody
+        self.querySummary = querySummary
+        self.candidateTargetCount = candidateTargetCount
+        self.workspaceEvidenceRefs = workspaceEvidenceRefs
+        self.signals = signals
+        self.candidates = candidates
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        contentLocale = try container.decodeIfPresent(String.self, forKey: .contentLocale)
+        promptProfile = try container.decodeIfPresent(String.self, forKey: .promptProfile)
+        contextFingerprint = try container.decodeIfPresent(String.self, forKey: .contextFingerprint)
+        generatedAt = try container.decodeIfPresent(Date.self, forKey: .generatedAt)
+        nextRefreshAfter = try container.decodeIfPresent(Date.self, forKey: .nextRefreshAfter)
+        dayNumber = try container.decodeIfPresent(Int.self, forKey: .dayNumber) ?? 1
+        dayTitle = try container.decodeIfPresent(String.self, forKey: .dayTitle)
+        dayPhase = try container.decodeIfPresent(String.self, forKey: .dayPhase)
+        status = try container.decodeIfPresent(BipResearchStatus.self, forKey: .status) ?? Self.empty.status
+        briefTitle = try container.decodeIfPresent(String.self, forKey: .briefTitle)
+        briefBody = try container.decodeIfPresent(String.self, forKey: .briefBody)
+        querySummary = try container.decodeIfPresent(String.self, forKey: .querySummary)
+        candidateTargetCount = try container.decodeIfPresent(Int.self, forKey: .candidateTargetCount)
+        workspaceEvidenceRefs = try container.decodeIfPresent([BipResearchSourceRef].self, forKey: .workspaceEvidenceRefs) ?? []
+        signals = try container.decodeIfPresent([BipResearchSignal].self, forKey: .signals) ?? []
+        candidates = try container.decodeIfPresent([BipResearchCandidate].self, forKey: .candidates) ?? []
+    }
+}
+
+struct BipResearchStatus: Codable, Hashable {
+    let state: String
+    let lastSuccessAt: Date?
+    let stale: Bool?
+    let error: String?
+    let reason: String?
+    let researchSource: String?
+    let stage: String?
+    let progressText: String?
+    let elapsedMs: Int?
+    let stepIndex: Int?
+    let stepCount: Int?
+    let partialFailures: [BipResearchPartialFailure]?
+}
+
+struct BipResearchPartialFailure: Codable, Hashable, Identifiable {
+    let laneId: String
+    let laneTitle: String
+    let error: String
+
+    var id: String {
+        laneId
+    }
+}
+
+struct BipResearchSignal: Codable, Hashable, Identifiable {
+    let id: String
+    let title: String
+    let subtitle: String?
+    let state: String?
+    let tone: String?
+}
+
+struct BipResearchTag: Codable, Hashable, Identifiable {
+    let title: String
+    let tone: String?
+
+    var id: String {
+        title
+    }
+}
+
+struct BipResearchCandidate: Codable, Hashable, Identifiable {
+    let id: String
+    let title: String
+    let sourceLabel: String?
+    let source: String?
+    let sourceType: String?
+    let medium: String?
+    let date: String?
+    let matchLabel: String?
+    let matchCaption: String?
+    let quote: String?
+    let whyTitle: String?
+    let whyBody: String?
+    let usageTitle: String?
+    let usageBody: String?
+    let gap: String?
+    let tags: [BipResearchTag]
+    let sourceRefs: [BipResearchSourceRef]
+    let draft: String?
+    let evidenceStrength: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case sourceLabel
+        case source
+        case sourceType
+        case medium
+        case date
+        case matchLabel
+        case matchCaption
+        case quote
+        case whyTitle
+        case whyBody
+        case usageTitle
+        case usageBody
+        case gap
+        case tags
+        case sourceRefs
+        case draft
+        case evidenceStrength
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? "BIP ICP 후보"
+        sourceLabel = try container.decodeIfPresent(String.self, forKey: .sourceLabel)
+        source = try container.decodeIfPresent(String.self, forKey: .source)
+        sourceType = try container.decodeIfPresent(String.self, forKey: .sourceType)
+        medium = try container.decodeIfPresent(String.self, forKey: .medium)
+        date = try container.decodeIfPresent(String.self, forKey: .date)
+        matchLabel = try container.decodeIfPresent(String.self, forKey: .matchLabel)
+        matchCaption = try container.decodeIfPresent(String.self, forKey: .matchCaption)
+        quote = try container.decodeIfPresent(String.self, forKey: .quote)
+        whyTitle = try container.decodeIfPresent(String.self, forKey: .whyTitle)
+        whyBody = try container.decodeIfPresent(String.self, forKey: .whyBody)
+        usageTitle = try container.decodeIfPresent(String.self, forKey: .usageTitle)
+        usageBody = try container.decodeIfPresent(String.self, forKey: .usageBody)
+        gap = try container.decodeIfPresent(String.self, forKey: .gap)
+        tags = try container.decodeIfPresent([BipResearchTag].self, forKey: .tags) ?? []
+        sourceRefs = try container.decodeIfPresent([BipResearchSourceRef].self, forKey: .sourceRefs) ?? []
+        draft = try container.decodeIfPresent(String.self, forKey: .draft)
+        evidenceStrength = try container.decodeIfPresent(String.self, forKey: .evidenceStrength)
+    }
+}
+
+struct BipResearchSourceRef: Codable, Hashable, Identifiable {
+    let id: String?
+    let sourceType: String
+    let platform: String?
+    let title: String
+    let url: String?
+    let domain: String?
+    let path: String?
+    let publishedAt: String?
+    let fetchedAt: String?
     let excerpt: String?
 
     var stableID: String {

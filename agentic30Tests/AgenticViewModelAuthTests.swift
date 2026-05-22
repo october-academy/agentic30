@@ -19,6 +19,38 @@ private final class FakeWebAuthenticationSessionHandle: WebAuthenticationSession
     func cancel() {}
 }
 
+private final class FakeSidecarTransport: SidecarTransport {
+    var onEvent: ((SidecarEvent) -> Void)?
+    private(set) var sentPayloads: [[String: Any]] = []
+
+    private let workspaceRoot: String
+
+    init(workspaceRoot: String) {
+        self.workspaceRoot = workspaceRoot
+    }
+
+    func start() {}
+
+    func stop() {}
+
+    @discardableResult
+    func send(payload: [String: Any]) -> Bool {
+        sentPayloads.append(payload)
+        return true
+    }
+
+    func resetSentPayloads() {
+        sentPayloads.removeAll()
+    }
+
+    @MainActor
+    func emit(_ json: String) throws {
+        let data = try #require(json.data(using: .utf8))
+        let event = try JSONDecoder().decode(SidecarEvent.self, from: data)
+        onEvent?(event)
+    }
+}
+
 @Suite(.serialized)
 struct AgenticViewModelAuthTests {
     @Test @MainActor func onboardingContextMigratesLegacySoloAllValue() throws {
@@ -277,6 +309,157 @@ struct AgenticViewModelAuthTests {
 
         #expect(viewModel.connectionLabel == "Complete local setup")
         #expect(viewModel.isConnected == false)
+    }
+
+    @Test @MainActor func bipResearchPrepareRequestsCacheThenDailyRefreshWhenStale() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 2
+        )
+
+        try sidecar.emit("""
+        {
+          "type": "bip_research_result",
+          "bipResearch": {
+            "schemaVersion": 1,
+            "dayNumber": 2,
+            "status": {
+              "state": "stale",
+              "stale": true
+            },
+            "candidates": []
+          }
+        }
+        """)
+        sidecar.resetSentPayloads()
+
+        viewModel.prepareBipResearchForDisplay(curriculumDay: [
+            "day": 2,
+            "title": "시장 신호 읽기",
+        ])
+
+        let bipPayloads = sidecar.sentPayloads.filter {
+            ($0["type"] as? String)?.hasPrefix("bip_research_") == true
+        }
+        try #require(bipPayloads.count == 2)
+        #expect(bipPayloads[0]["type"] as? String == "bip_research_get")
+        #expect(bipPayloads[0]["dayNumber"] as? Int == 2)
+        #expect((bipPayloads[0]["curriculumDay"] as? [String: Any])?["title"] as? String == "시장 신호 읽기")
+        #expect(bipPayloads[1]["type"] as? String == "bip_research_refresh")
+        #expect(bipPayloads[1]["reason"] as? String == "daily")
+        #expect(bipPayloads[1]["force"] as? Bool == false)
+        #expect(bipPayloads[1]["dayNumber"] as? Int == 2)
+    }
+
+    @Test @MainActor func bipResearchManualRefreshSendsForceManualPayload() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 3
+        )
+        sidecar.resetSentPayloads()
+
+        viewModel.refreshBipResearch(reason: "manual", force: true, curriculumDay: [
+            "day": 3,
+            "title": "고객 후보 좁히기",
+        ])
+
+        let payload = try #require(sidecar.sentPayloads.first)
+        #expect(payload["type"] as? String == "bip_research_refresh")
+        #expect(payload["reason"] as? String == "manual")
+        #expect(payload["force"] as? Bool == true)
+        #expect(payload["dayNumber"] as? Int == 3)
+        #expect(payload["preferredProvider"] as? String == "codex")
+        #expect((payload["curriculumDay"] as? [String: Any])?["title"] as? String == "고객 후보 좁히기")
+    }
+
+    @Test @MainActor func bipResearchUsesCurrentFoundationDayInsteadOfSelectedDay() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 4,
+            selectedDay: 9
+        )
+        sidecar.resetSentPayloads()
+
+        #expect(viewModel.selectedFoundationDay == 9)
+        viewModel.prepareBipResearchForDisplay()
+
+        let bipPayloads = sidecar.sentPayloads.filter {
+            ($0["type"] as? String)?.hasPrefix("bip_research_") == true
+        }
+        try #require(bipPayloads.count == 2)
+        #expect(bipPayloads.map { $0["dayNumber"] as? Int } == [4, 4])
+    }
+
+    @Test @MainActor func markFoundationDayCompletedEmitsProjectContextRefresh() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 1
+        )
+
+        let result = viewModel.markFoundationDayCompleted(1)
+        let refreshPayloads = sidecar.sentPayloads.filter { $0["type"] as? String == "project_context_refresh" }
+
+        try #require(refreshPayloads.count == 1)
+        #expect(result.completedDay == 1)
+        #expect(refreshPayloads[0]["reason"] as? String == "day_completed")
+        #expect(refreshPayloads[0]["completedDay"] as? Int == 1)
+        #expect(refreshPayloads[0]["unlockedDay"] as? Int == 2)
+        #expect(refreshPayloads[0]["workspaceRoot"] as? String == workspace.path)
+    }
+
+    @Test @MainActor func bipMissionCompletionDoesNotEmitDuplicateProjectContextRefresh() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 1
+        )
+        viewModel.resetFoundationProgressForTesting()
+        sidecar.resetSentPayloads()
+
+        let mission = BipCoachMission(
+            id: "mission-day-1",
+            date: nil,
+            provider: "codex",
+            status: "completed",
+            compact: nil,
+            title: "Day 1 mission",
+            angle: nil,
+            mission: nil,
+            curriculumDay: BipCoachCurriculumDay(day: 1),
+            drafts: nil,
+            eveningChecklist: nil,
+            evidenceRefs: nil,
+            generatedAt: nil,
+            completedAt: nil,
+            completedQuestionCount: nil,
+            threadsUrl: nil,
+            sheetRowNote: nil
+        )
+        _ = viewModel.advanceFromCompletedMission(mission)
+        _ = viewModel.advanceFromCompletedMission(mission)
+
+        let refreshPayloads = sidecar.sentPayloads.filter { $0["type"] as? String == "project_context_refresh" }
+        try #require(refreshPayloads.count == 1)
+        #expect(refreshPayloads[0]["completedDay"] as? Int == 1)
     }
 
     @Test @MainActor func volatileLocalDataResetRestoresFirstRunIntroGate() {
@@ -758,5 +941,59 @@ struct AgenticViewModelAuthTests {
 
         #expect(fakeSession.startCallCount == 1)
         #expect(viewModel.macOnboardingStatus == .signingIn)
+    }
+
+    private static func installTemporaryWorkspace() throws -> (URL, () -> Void) {
+        let productionLegacyProvider = WorkspaceSettings.legacyWorkspaceProvider
+        WorkspaceSettings.legacyWorkspaceProvider = { "" }
+        let workspace = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "agentic30-bip-research-viewmodel-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        WorkspaceSettings.store(workspace)
+        return (workspace, {
+            WorkspaceSettings.clear()
+            WorkspaceSettings.legacyWorkspaceProvider = productionLegacyProvider
+            try? FileManager.default.removeItem(at: workspace)
+        })
+    }
+
+    @MainActor
+    private static func makeStartedViewModel(
+        sidecar: FakeSidecarTransport,
+        workspace: URL,
+        currentDay: Int,
+        selectedDay: Int? = nil
+    ) -> AgenticViewModel {
+        let viewModel = AgenticViewModel(
+            onboardingContextOverride: OnboardingContext(
+                businessDescription: "Agentic30",
+                currentStage: "building",
+                goal: "Find ICP",
+                workMode: .fullTimeSolo,
+                role: .developer,
+                projectStage: .building,
+                isolationLevel: .projectFolder,
+                completedAt: "2026-05-08T00:00:00Z"
+            ),
+            sidecar: sidecar,
+            activateAppForAuth: {}
+        )
+        let dayOffset = max(0, currentDay - 1)
+        viewModel.ensureFoundationStarted(
+            now: Date().addingTimeInterval(-Double(dayOffset) * 86_400 - 60)
+        )
+        if let selectedDay, selectedDay > 1 {
+            for day in 1..<selectedDay {
+                _ = viewModel.markFoundationDayCompleted(day)
+            }
+            viewModel.selectFoundationDay(selectedDay)
+        }
+        viewModel.start()
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: workspace.path)
+        sidecar.resetSentPayloads()
+        #expect(viewModel.workspaceRoot == workspace.path)
+        return viewModel
     }
 }

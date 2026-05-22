@@ -61,7 +61,7 @@ enum OpenDesignReferencePageKind: String, CaseIterable, Hashable, Identifiable {
         case .projects: return "포트폴리오 + 소스 루트"
         case .settings: return "워크스페이스"
         case .interviews: return "장지창 · Mom Test 1"
-        case .bipLog: return "Exa ICP 리서치 · 후보 5명 · Day 1"
+        case .bipLog: return "Exa X/Twitter · Threads(Meta) 동적 리서치"
         case .news: return "안 읽음 17건"
         case .history: return "Evidence 타임라인"
         }
@@ -605,48 +605,43 @@ enum OpenDesignReferenceCatalog {
         sideBadge: nil,
         sideSearchPlaceholder: nil,
         sideGroups: [
-            .init(title: "소스", count: "4", rows: [
-                .init(id: "all", title: "전체", subtitle: nil, badge: "5", leading: "▣", tone: .accent, isActive: true),
-                .init(id: "strong", title: "강한 적합", subtitle: nil, badge: "3", leading: "✓", tone: .accent, isActive: false),
-                .init(id: "indie", title: "Indie Hackers", subtitle: nil, badge: "3", leading: "IH", tone: .sky, isActive: false),
-                .init(id: "needs", title: "워치리스트", subtitle: nil, badge: "2", leading: "!", tone: .amber, isActive: false),
+            .init(title: "소스", count: "5", rows: [
+                .init(id: "all", title: "전체", subtitle: nil, badge: "0", leading: "▣", tone: .accent, isActive: true),
+                .init(id: "strong", title: "강한 적합", subtitle: nil, badge: "0", leading: "✓", tone: .accent, isActive: false),
+                .init(id: "x", title: "X / Twitter", subtitle: nil, badge: "0", leading: "X", tone: .sky, isActive: false),
+                .init(id: "threads", title: "Threads (Meta)", subtitle: nil, badge: "0", leading: "@", tone: .violet, isActive: false),
+                .init(id: "needs", title: "워치리스트", subtitle: nil, badge: "0", leading: "!", tone: .amber, isActive: false),
             ]),
-            .init(title: "ICP 신호", count: "8", rows: [
-                .init(id: "quit", title: "전업 / 퇴사 / 런웨이", subtitle: "긴급성 · 저축 소진", badge: "seen", leading: "01", tone: .accent, isActive: false),
-                .init(id: "tools", title: "Claude Code / Cursor", subtitle: "agentic coding", badge: "seen", leading: "02", tone: .accent, isActive: false),
-                .init(id: "revenue", title: "수익 0원 / 첫 매출 전", subtitle: "PMF 미확정", badge: "gap", leading: "03", tone: .amber, isActive: false),
-                .init(id: "mac", title: "macOS 증거", subtitle: "Mac · M-series · native", badge: "gap", leading: "04", tone: .amber, isActive: false),
+            .init(title: "ICP 신호", count: "3", rows: [
+                .init(id: "social", title: "X/Threads 공개 기록", subtitle: "fetch 기반", badge: "live", leading: "01", tone: .accent, isActive: false),
+                .init(id: "day", title: "오늘 Day 커리큘럼", subtitle: "Day 1-30", badge: "live", leading: "02", tone: .sky, isActive: false),
+                .init(id: "gap", title: "확인할 공백", subtitle: "전업 · 매출 · 인터뷰", badge: "ask", leading: "03", tone: .amber, isActive: false),
             ]),
         ],
         header: .init(
             badge: "BIP",
             systemImage: "doc.text",
             title: "BIP 로그 · ICP 리서치",
-            subtitleParts: ["Exa 검색 · 5명 후보", "상위 3명은 인터뷰/DM 후보"],
+            subtitleParts: ["Exa Search + Web Fetch", "오늘 Day와 프로젝트 설정 기준"],
             actions: [
                 .init(id: "draft", title: "초안", systemImage: "doc.text", tone: .ghost),
-                .init(id: "research", title: "다시 리서치", systemImage: "plus", tone: .accent),
+                .init(id: "research", title: "다시 리서치", systemImage: "arrow.clockwise", tone: .accent),
             ]
         ),
-        filters: [.init("전체 5"), .init("강한 적합 3", tone: .accent), .init("Indie Hackers 3", tone: .sky), .init("블로그 2", tone: .violet), .init("워치리스트 2", tone: .amber)],
+        filters: [.init("전체 0"), .init("강한 적합 0", tone: .accent), .init("X 0", tone: .sky), .init("Threads(Meta) 0", tone: .violet), .init("워치리스트 0", tone: .amber)],
         sections: [
-            .init(id: "brief", title: "ICP 리서치 큐", meta: "Exa Search · 자동 후보 발굴 · 2026-05-17", markerTone: .accent, blocks: [
-                .init("research-brief", style: .banner, title: "전업 1인 개발자 후보를 공개 게시글에서 찾았어요.", subtitle: "auto research run", body: "검색 기준은 ICP 문서의 퇴사/전업, 에이전트 코딩 도구, 수익 전 또는 초기, macOS 증거, BIP 기록 의향입니다.", chips: [.init("후보 5"), .init("강한 적합 3", tone: .accent), .init("macOS 확인 필요 3", tone: .amber)]),
+            .init(id: "brief", title: "ICP 리서치 큐", meta: "Exa Search + Web Fetch · X/Threads", markerTone: .accent, blocks: [
+                .init("research-brief", style: .banner, title: "X와 Threads 공개 게시글에서 ICP 신호를 찾습니다.", subtitle: "auto research run", body: "검색 기준은 사용자가 설정한 프로젝트 문서와 오늘 진행 Day입니다.", chips: [.init("리서치 대기"), .init("실제 URL 필요", tone: .accent), .init("설정 필요", tone: .amber)]),
             ]),
             .init(id: "research", title: "리서치된 게시글", meta: "원문 하이라이트 + ICP 근거", markerTone: .sky, blocks: [
-                .init("research-list", style: .articles, rows: [
-                    .init("speakmac", leading: "강", title: "Speakmac founder — macOS 네이티브 앱을 Claude Code로 밀어붙이는 1인 개발자", subtitle: "Speakmac Lab · 2024-09-24 · blog", body: "원문 증거: recent layoff, six-month runway, M3 MacBook. 퇴사/런웨이 + Mac 사용이 직접 드러납니다.", trailing: "BIP 초안에 반영", tone: .accent, chips: [.init("macOS 증거"), .init("Claude Code"), .init("매출 확인 필요", tone: .amber)]),
-                    .init("kun", leading: "강", title: "Kun Chen — Big Tech 퇴사 후 솔로 빌더 여정을 공개", subtitle: "Kun Chen · 2026-05-04 · Substack", body: "퇴사, 솔로 전환, 무수익 상태가 모두 보입니다. macOS 로컬 앱 설치 허들을 확인해야 합니다.", trailing: "BIP 초안에 반영", tone: .accent, chips: [.init("퇴사 완료"), .init("solo builder"), .init("macOS 확인 필요", tone: .amber)]),
-                    .init("quiq", leading: "강", title: "Quiqlog builder — Claude Code와 Cursor를 배워 혼자 SaaS 출시", subtitle: "Indie Hackers · 2026-03-02 · post", body: "만들기는 되지만 검증/방향/계속할지 판단이 막힌 전형입니다.", trailing: "BIP 초안에 반영", tone: .accent, chips: [.init("퇴사"), .init("Claude Code"), .init("Cursor")]),
-                    .init("clirank", leading: "보류", title: "CLIRank builder — 나 + Claude Code로 다시 빌드", subtitle: "Indie Hackers · 2026-04-07 · post", body: "agentic coding 신호는 강하지만 이전 창업 경험이 높아 Foundation ICP와 다를 수 있습니다.", trailing: "워치", tone: .amber, chips: [.init("solo"), .init("Claude Code"), .init("매출 확인", tone: .amber)]),
-                ]),
+                .init("research-list", style: .articles, rows: []),
             ]),
             .init(id: "draft", title: "BIP 초안", meta: "선택 후보를 기반으로 자동 생성", markerTone: .amber, blocks: [
-                .init("draft", style: .draft, title: "선택 후보 없음", body: "후보 카드에서 “BIP 초안에 반영”을 누르면, ICP 리서치 결과를 오늘의 공개 기록으로 바꿉니다.\n\n형식:\n1. 원문에서 잡은 ICP 증거\n2. 왜 인터뷰 후보인지\n3. DM에서 확인할 공백 1개"),
+                .init("draft", style: .draft, title: "선택 후보 없음", body: "후보 카드에서 “BIP 초안에 반영”을 누르면, 실제 X/Threads 리서치 결과를 오늘의 공개 기록으로 바꿉니다.\n\n형식:\n1. 원문에서 잡은 ICP 증거\n2. 왜 인터뷰 후보인지\n3. DM에서 확인할 공백 1개"),
             ]),
         ],
         meta: .init(title: "ICP 후보", cards: [
-            .init("candidate-progress", style: .banner, title: "5 / 18 후보", subtitle: "다음 액션 · 상위 3명 DM 후보화", body: "수익 0원, macOS, 인터뷰 의향 공백을 확인하면 Day 3 인터뷰 큐로 승격합니다.", chips: [.init("seen 4", tone: .accent), .init("gap 3", tone: .amber), .init("ask 3", tone: .sky)]),
+            .init("candidate-progress", style: .banner, title: "0 / 18 후보", subtitle: "다음 액션 · Exa 리서치 실행", body: "수익 상태, 전업 여부, 인터뷰 의향 공백을 확인하면 인터뷰 큐로 승격합니다.", chips: [.init("live", tone: .accent), .init("gap", tone: .amber), .init("ask", tone: .sky)]),
         ])
     )
 
@@ -877,8 +872,9 @@ private struct OpenDesignNewsSource: Identifiable {
 private enum OpenDesignBipFilter: String, CaseIterable, Identifiable {
     case all
     case strong
-    case indie
-    case blog
+    case x
+    case threads
+    case instagram
     case needs
 
     var id: String { rawValue }
@@ -887,8 +883,9 @@ private enum OpenDesignBipFilter: String, CaseIterable, Identifiable {
         switch self {
         case .all: return "전체"
         case .strong: return "강한 적합"
-        case .indie: return "Indie Hackers"
-        case .blog: return "블로그"
+        case .x: return "X"
+        case .threads: return "Threads(Meta)"
+        case .instagram: return "Instagram"
         case .needs: return "워치리스트"
         }
     }
@@ -896,8 +893,9 @@ private enum OpenDesignBipFilter: String, CaseIterable, Identifiable {
     var tone: OpenDesignReferenceTone {
         switch self {
         case .all, .strong: return .accent
-        case .indie: return .sky
-        case .blog: return .violet
+        case .x: return .sky
+        case .threads: return .violet
+        case .instagram: return .pink
         case .needs: return .amber
         }
     }
@@ -933,200 +931,126 @@ private struct OpenDesignBipCandidate: Identifiable {
     let tone: OpenDesignReferenceTone
 }
 
-private enum OpenDesignBipLogCatalog {
-    static let sourceRows: [(filter: OpenDesignBipFilter, title: String, count: String, systemImage: String)] = [
-        (.all, "전체", "5", "square.grid.2x2"),
-        (.strong, "강한 적합", "3", "checkmark.circle"),
-        (.blog, "블로그", "2", "doc.richtext"),
-        (.indie, "Indie Hackers", "3", "face.smiling"),
-        (.needs, "워치리스트", "2", "exclamationmark.triangle"),
-    ]
+private extension OpenDesignBipSignal {
+    init(researchSignal: BipResearchSignal) {
+        self.init(
+            id: researchSignal.id,
+            title: researchSignal.title,
+            subtitle: researchSignal.subtitle ?? "",
+            state: researchSignal.state ?? "seen",
+            tone: OpenDesignReferenceTone(bipTone: researchSignal.tone ?? researchSignal.state)
+        )
+    }
+}
 
-    static let signals: [OpenDesignBipSignal] = [
-        .init(id: "quit", title: "전업 / 퇴사 / 런웨이", subtitle: "긴급성 · 저축 소진", state: "seen", tone: .accent),
-        .init(id: "tools", title: "Claude Code / Cursor", subtitle: "agentic coding", state: "seen", tone: .accent),
-        .init(id: "revenue", title: "수익 0원 / 첫 매출 전", subtitle: "PMF 미확정", state: "gap", tone: .amber),
-        .init(id: "bip", title: "BIP / 주간 업데이트", subtitle: "기록 의향", state: "seen", tone: .accent),
-        .init(id: "mac", title: "macOS 증거", subtitle: "Mac · M-series · native", state: "gap", tone: .amber),
-        .init(id: "interview", title: "고객 인터뷰 의향", subtitle: "talk to users", state: "ask", tone: .amber),
-        .init(id: "workspace", title: "프로젝트 path / 기록", subtitle: "repo · PRD · logs", state: "ask", tone: .amber),
-        .init(id: "anti", title: "Anti-ICP 배제", subtitle: "팀 · 이미 매출 · 직장인", state: "ask", tone: .amber),
-    ]
+private extension OpenDesignBipCandidate {
+    init(researchCandidate: BipResearchCandidate) {
+        let sourceType = (researchCandidate.sourceType ?? "").lowercased()
+        let sourceTone = OpenDesignReferenceTone.bipSourceTone(sourceType)
+        let evidenceTone = OpenDesignReferenceTone.bipEvidenceTone(researchCandidate.evidenceStrength)
+        let filters = OpenDesignBipFilter.filters(
+            sourceType: sourceType,
+            evidenceStrength: researchCandidate.evidenceStrength
+        )
+        let tags = researchCandidate.tags.isEmpty
+            ? [OpenDesignReferenceChip(researchCandidate.sourceLabel ?? "BIP", tone: sourceTone)]
+            : researchCandidate.tags.map { tag in
+                OpenDesignReferenceChip(
+                    tag.title,
+                    tone: OpenDesignReferenceTone(bipTone: tag.tone),
+                    id: "\(researchCandidate.id)-\(tag.title)"
+                )
+            }
+        let sourceURL = researchCandidate.sourceRefs.compactMap { source -> URL? in
+            guard let url = source.url else { return nil }
+            return URL(string: url)
+        }.first
+        self.init(
+            id: researchCandidate.id,
+            matchLabel: researchCandidate.matchLabel ?? OpenDesignBipFilter.matchLabel(for: researchCandidate.evidenceStrength),
+            matchCaption: researchCandidate.matchCaption ?? "match",
+            sourceLabel: researchCandidate.sourceLabel ?? sourceType.uppercased(),
+            title: researchCandidate.title,
+            source: researchCandidate.source ?? researchCandidate.sourceRefs.first?.title ?? "공개 게시글",
+            date: researchCandidate.date ?? researchCandidate.sourceRefs.first?.publishedAt ?? "날짜 미상",
+            medium: researchCandidate.medium ?? OpenDesignBipFilter.defaultMedium(for: sourceType),
+            quote: openDesignBipAttributed(researchCandidate.quote ?? researchCandidate.sourceRefs.first?.excerpt ?? "원문 excerpt가 비어 있습니다."),
+            whyTitle: researchCandidate.whyTitle ?? "왜 ICP 증거인가",
+            whyBody: openDesignBipAttributed(researchCandidate.whyBody ?? "프로젝트 기준과 오늘 Day에 맞는 공개 신호입니다."),
+            usageTitle: researchCandidate.usageTitle ?? "BIP 활용",
+            usageBody: researchCandidate.usageBody ?? "오늘의 공개 기록 또는 DM 후보로 전환합니다.",
+            gap: openDesignBipAttributed(researchCandidate.gap ?? "확인 필요: 전업 여부, 수익 상태, 인터뷰 의향."),
+            filters: filters,
+            tags: tags,
+            sourceURL: sourceURL,
+            draft: researchCandidate.draft ?? "",
+            tone: evidenceTone
+        )
+    }
+}
 
-    static let candidates: [OpenDesignBipCandidate] = [
-        .init(
-            id: "speakmac",
-            matchLabel: "강",
-            matchCaption: "match",
-            sourceLabel: "blog",
-            title: "Speakmac founder — macOS 네이티브 앱을 Claude Code로 밀어붙이는 1인 개발자",
-            source: "Speakmac Lab",
-            date: "2024-09-24",
-            medium: "blog",
-            quote: highlighted("원문: “A recent layoff ... six-month runway and an M3 MacBook.”", highlights: ["A recent layoff", "six-month runway", "M3 MacBook"], warningHighlights: ["six-month runway"]),
-            whyTitle: "왜 ICP 증거인가",
-            whyBody: highlighted("퇴사/런웨이 + Mac 사용이 직접 드러납니다. Agentic30의 “저축 소진 중인 macOS 전업 1인 개발자” 조건과 가장 가깝습니다.", highlights: ["퇴사/런웨이 + Mac 사용"]),
-            usageTitle: "BIP 활용",
-            usageBody: "고객에게 “Mac 앱을 혼자 팔기 시작한 직후 무엇을 기록해야 하는가”를 묻는 인터뷰 후보로 전환합니다.",
-            gap: highlighted("확인 필요: 현재 매출 0원인지, BIP를 꾸준히 남길 의향이 있는지 DM에서 확인.", highlights: ["확인 필요:"]),
-            filters: [.all, .strong, .blog],
-            tags: [.init("macOS 증거"), .init("Claude Code"), .init("런웨이"), .init("매출 확인 필요", tone: .amber)],
-            sourceURL: URL(string: "https://www.speakmac.app/blog/building-speakmac-solo-developer-journey"),
-            draft: """
-            오늘 Exa로 ICP 후보를 찾다가 Speakmac founder가 가장 강하게 걸렸다.
-
-            원문 증거: "recent layoff", "six-month runway", "M3 MacBook".
-            왜 ICP인가: 퇴사/런웨이 + macOS + Claude Code 기반 1인 빌드가 동시에 보인다.
-            DM에서 확인할 것: 아직 첫 매출 전인지, BIP/업무 기록을 매일 남길 의향이 있는지.
-            """,
-            tone: .accent
-        ),
-        .init(
-            id: "kun",
-            matchLabel: "강",
-            matchCaption: "match",
-            sourceLabel: "blog",
-            title: "Kun Chen — Big Tech 퇴사 후 솔로 빌더 여정을 투명하게 공개",
-            source: "Kun Chen",
-            date: "2026-05-04",
-            medium: "Substack",
-            quote: highlighted("원문: “I just quit my big tech career ... to be a solo builder.” “doesn’t make any money.”", highlights: ["I just quit my big tech career", "to be a solo builder"], warningHighlights: ["doesn’t make any money"]),
-            whyTitle: "왜 ICP 증거인가",
-            whyBody: highlighted("퇴사, 솔로 전환, 무수익 상태가 모두 보입니다. “방법이 맞는지 모르지만 계속 빌드하는 전업자” 문제에 강하게 닿아 있습니다.", highlights: ["퇴사, 솔로 전환, 무수익 상태"]),
-            usageTitle: "BIP 활용",
-            usageBody: "공개 AMA와 월간 회고 반응을 기반으로 BIP가 실제 유입/학습 채널인지 물어볼 수 있습니다.",
-            gap: highlighted("확인 필요: 주 개발 환경이 macOS인지, Agentic30 같은 로컬 앱 설치 허들이 낮은지 확인.", highlights: ["확인 필요:"]),
-            filters: [.all, .strong, .blog],
-            tags: [.init("퇴사 완료"), .init("solo builder"), .init("BIP"), .init("macOS 확인 필요", tone: .amber)],
-            sourceURL: URL(string: "https://blog.kunchenguid.com/p/the-month-after-leaving-big-tech"),
-            draft: """
-            ICP 후보: Kun Chen.
-
-            원문 증거: big tech를 막 퇴사했고 solo builder로 전환, 아직 돈을 벌지 못한다고 썼다.
-            왜 ICP인가: 전업 전환 직후의 불확실성, 공개 기록, agentic workflow 탐색이 Agentic30 문제와 맞닿아 있다.
-            DM에서 확인할 것: macOS 로컬 앱 설치/프로젝트 path 연결이 자연스러운 작업 방식인지.
-            """,
-            tone: .accent
-        ),
-        .init(
-            id: "quiqlog",
-            matchLabel: "강",
-            matchCaption: "match",
-            sourceLabel: "indie",
-            title: "Quiqlog builder — 퇴사 후 Claude Code와 Cursor를 배워 혼자 SaaS 출시",
-            source: "Indie Hackers",
-            date: "2026-03-02",
-            medium: "post",
-            quote: highlighted("원문: “So, I left.” “I took a week to learn Claude Code and Cursor.”", highlights: ["So, I left", "I took a week to learn Claude Code and Cursor"]),
-            whyTitle: "왜 ICP 증거인가",
-            whyBody: highlighted("기술 창업보다 무엇을 만들고 어떻게 검증할지에서 막힌 전형입니다. Agentic30의 adaptive 과제 수요가 높을 수 있습니다.", highlights: ["무엇을 만들고 어떻게 검증할지"]),
-            usageTitle: "BIP 활용",
-            usageBody: "“계속 solo path를 갈지 다시 취업할지” 고민이 있어, Day 7 Go/No-Go 판단 콘텐츠로 전환하기 좋습니다.",
-            gap: highlighted("확인 필요: 아직 첫 매출 전인지, Mac에서 로컬 툴을 쓸 수 있는지 확인.", highlights: ["확인 필요:"]),
-            filters: [.all, .strong, .indie],
-            tags: [.init("퇴사"), .init("Claude Code"), .init("Cursor"), .init("매출/OS 확인 필요", tone: .amber)],
-            sourceURL: URL(string: "https://www.indiehackers.com/post/i-left-my-job-knew-nothing-about-coding-and-shipped-a-saas-in-2-weeks-here-is-the-short-story-f71873ec84"),
-            draft: """
-            ICP 후보: Quiqlog builder.
-
-            원문 증거: 퇴사 후 Claude Code와 Cursor를 배워 혼자 SaaS를 만들었다.
-            왜 ICP인가: 만들기는 되지만 검증/방향/계속할지 판단이 막혀 있다.
-            DM에서 확인할 것: 현재 수익 상태와 30일 PMF 검증 스프린트에 기록을 제출할 의향.
-            """,
-            tone: .accent
-        ),
-        .init(
-            id: "clirank",
-            matchLabel: "보류",
-            matchCaption: "watch",
-            sourceLabel: "indie",
-            title: "CLIRank builder — VC-backed 조직 이후 “나 + Claude Code”로 다시 빌드",
-            source: "Indie Hackers",
-            date: "2026-04-07",
-            medium: "post",
-            quote: highlighted("원문: “Now I build alone - just me and Claude Code.” “Zero employees. Zero funding.”", highlights: ["Now I build alone", "Claude Code", "Zero employees. Zero funding"]),
-            whyTitle: "왜 ICP 증거인가",
-            whyBody: highlighted("agentic coding으로 혼자 초기 제품을 만드는 사람입니다. 다만 이전 창업 경험이 높아 “초보 0→1”과는 다릅니다.", highlights: ["agentic coding으로 혼자 초기 제품을 만드는 사람"]),
-            usageTitle: "BIP 활용",
-            usageBody: "개발자 커뮤니티에서 어떤 API/도구 문제를 겪는지 인터뷰하면 Agentic30의 리서치 자동화 메시지에 도움됩니다.",
-            gap: highlighted("확인 필요: 매출 상태, macOS, “수익 0원 전업자” 기준에 맞는지 확인.", highlights: ["확인 필요:"]),
-            filters: [.all, .indie, .needs],
-            tags: [.init("solo"), .init("Claude Code"), .init("초기 프로젝트"), .init("개인 고객성 확인", tone: .amber)],
-            sourceURL: URL(string: "https://www.indiehackers.com/post/from-hundreds-of-employees-to-building-solo-with-claude-code-1125706926"),
-            draft: """
-            워치리스트 후보: CLIRank builder.
-
-            원문 증거: "build alone", "Claude Code", "zero employees / zero funding".
-            왜 보류인가: agentic coding 신호는 강하지만, 이전 창업 경험이 높아 Foundation ICP와 다를 수 있다.
-            DM에서 확인할 것: 매출 0원 조건과 macOS 작업 환경.
-            """,
-            tone: .amber
-        ),
-        .init(
-            id: "subkitt",
-            matchLabel: "인접",
-            matchCaption: "watch",
-            sourceLabel: "indie",
-            title: "SubKitt founder — 기술 창업자용 BIP 자동화 도구를 Day 1부터 공개",
-            source: "Indie Hackers",
-            date: "2026-04-18",
-            medium: "post",
-            quote: highlighted("원문: “$100 budget.” “Zero network, no co-founder.” “weekly updates.”", highlights: ["$100 budget", "Zero network, no co-founder"], warningHighlights: ["weekly updates"]),
-            whyTitle: "왜 ICP 증거인가",
-            whyBody: highlighted("수익 전, solo, BIP 기록 의향은 강합니다. 하지만 학생이라 “퇴사 후 전업자” 기준은 충족하지 않습니다.", highlights: ["수익 전, solo, BIP 기록 의향"]),
-            usageTitle: "BIP 활용",
-            usageBody: "주요 ICP가 아니라, BIP 자동화 문제를 겪는 인접 세그먼트로 따로 추적합니다.",
-            gap: highlighted("분류: ICP 본체보다 adjacent audience. 본 제품 메시지 검증에는 낮은 우선순위.", highlights: ["분류:"]),
-            filters: [.all, .indie, .needs],
-            tags: [.init("BIP 의향"), .init("technical solo"), .init("첫 매출 전"), .init("전업 아님", tone: .amber)],
-            sourceURL: URL(string: "https://www.indiehackers.com/post/day-1-broke-student-building-an-ai-tool-to-help-technical-founders-build-in-public-5be9e56317"),
-            draft: """
-            Adjacent 후보: SubKitt founder.
-
-            원문 증거: $100 budget, zero network, no co-founder, weekly updates.
-            왜 낮은 우선순위인가: 수익 전/BIP 의향은 강하지만 학생이라 "퇴사 후 전업자" 조건은 다르다.
-            활용: ICP 본체가 아니라 BIP 자동화 메시지의 인접 세그먼트로 추적.
-            """,
-            tone: .amber
-        ),
-    ]
-
-    static let emptyDraft = """
-    후보 카드에서 “BIP 초안에 반영”을 누르면, ICP 리서치 결과를 오늘의 공개 기록으로 바꿉니다.
-
-    형식:
-    1. 원문에서 잡은 ICP 증거
-    2. 왜 인터뷰 후보인지
-    3. DM에서 확인할 공백 1개
-    """
-
-    private static func highlighted(
-        _ text: String,
-        highlights: [String] = [],
-        warningHighlights: [String] = []
-    ) -> AttributedString {
-        var result = AttributedString(text)
-        result.foregroundColor = OpenDesignDayColor.fgSecondary
-        for highlight in highlights {
-            applyHighlight(highlight, to: &result, color: OpenDesignDayColor.fg, background: OpenDesignDayColor.accentDim)
+private extension OpenDesignBipFilter {
+    static func filters(sourceType: String, evidenceStrength: String?) -> Set<OpenDesignBipFilter> {
+        var filters: Set<OpenDesignBipFilter> = [.all]
+        let normalizedStrength = (evidenceStrength ?? "").lowercased()
+        if normalizedStrength == "strong" {
+            filters.insert(.strong)
+        } else {
+            filters.insert(.needs)
         }
-        for highlight in warningHighlights {
-            applyHighlight(highlight, to: &result, color: OpenDesignDayColor.fg, background: OpenDesignDayColor.amberDim)
+        if sourceType == "threads" {
+            filters.insert(.threads)
+        } else if sourceType == "instagram" {
+            filters.insert(.instagram)
+        } else {
+            filters.insert(.x)
         }
-        return result
+        return filters
     }
 
-    private static func applyHighlight(
-        _ needle: String,
-        to text: inout AttributedString,
-        color: Color,
-        background: Color
-    ) {
-        guard let range = text.range(of: needle) else { return }
-        text[range].foregroundColor = color
-        text[range].backgroundColor = background
-        text[range].font = .system(size: 13, weight: .medium)
+    static func defaultMedium(for sourceType: String) -> String {
+        switch sourceType {
+        case "threads": return "Threads post"
+        case "instagram": return "Instagram post"
+        default: return "X/Twitter post"
+        }
     }
+
+    static func matchLabel(for evidenceStrength: String?) -> String {
+        switch (evidenceStrength ?? "").lowercased() {
+        case "strong": return "강"
+        case "weak": return "보류"
+        default: return "중"
+        }
+    }
+}
+
+private extension OpenDesignReferenceTone {
+    init(bipTone: String?) {
+        self = OpenDesignReferenceTone(rawValue: (bipTone ?? "").lowercased()) ?? .accent
+    }
+
+    static func bipSourceTone(_ sourceType: String) -> OpenDesignReferenceTone {
+        switch sourceType {
+        case "threads": return .violet
+        case "instagram": return .pink
+        default: return .sky
+        }
+    }
+
+    static func bipEvidenceTone(_ evidenceStrength: String?) -> OpenDesignReferenceTone {
+        switch (evidenceStrength ?? "").lowercased() {
+        case "strong": return .accent
+        case "weak": return .amber
+        default: return .sky
+        }
+    }
+}
+
+private func openDesignBipAttributed(_ text: String) -> AttributedString {
+    var result = AttributedString(text)
+    result.foregroundColor = OpenDesignDayColor.fgSecondary
+    return result
 }
 
 private enum OpenDesignNewsCatalog {
@@ -1548,15 +1472,23 @@ private enum OpenDesignNewsCatalog {
 private struct OpenDesignBipLogShell: View {
     let layout: OpenDesignDayLayoutMetrics
     let openSearch: () -> Void
+    let snapshot: BipResearchSnapshot
+    let refresh: () -> Void
+    let prepare: () -> Void
+    let openSettings: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedFilter: OpenDesignBipFilter = .all
     @State private var searchQuery = ""
-    @State private var selectedCandidateID: String? = OpenDesignBipLogCatalog.candidates.first?.id
+    @State private var selectedCandidateID: String?
+
+    private var candidates: [OpenDesignBipCandidate] {
+        snapshot.candidates.map { OpenDesignBipCandidate(researchCandidate: $0) }
+    }
 
     private var visibleCandidates: [OpenDesignBipCandidate] {
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return OpenDesignBipLogCatalog.candidates.filter { candidate in
+        return candidates.filter { candidate in
             let filterMatch = selectedFilter == .all || candidate.filters.contains(selectedFilter)
             guard filterMatch else { return false }
             guard !query.isEmpty else { return true }
@@ -1569,7 +1501,7 @@ private struct OpenDesignBipLogShell: View {
 
     private var selectedCandidate: OpenDesignBipCandidate? {
         guard let selectedCandidateID else { return nil }
-        return OpenDesignBipLogCatalog.candidates.first { $0.id == selectedCandidateID }
+        return candidates.first { $0.id == selectedCandidateID }
     }
 
     var body: some View {
@@ -1577,7 +1509,10 @@ private struct OpenDesignBipLogShell: View {
             if layout.showsTaskSidebar {
                 ZStack {
                     OpenDesignBipSidebarView(
+                        snapshot: snapshot,
+                        candidates: candidates,
                         selectedFilter: selectedFilter,
+                        count: count(for:),
                         selectFilter: selectFilter(_:)
                     )
                     Color.clear
@@ -1595,6 +1530,7 @@ private struct OpenDesignBipLogShell: View {
             ZStack {
                 OpenDesignBipMainView(
                     layout: layout,
+                    snapshot: snapshot,
                     selectedFilter: selectedFilter,
                     searchQuery: $searchQuery,
                     selectedCandidateID: $selectedCandidateID,
@@ -1602,7 +1538,9 @@ private struct OpenDesignBipLogShell: View {
                     visibleCandidates: visibleCandidates,
                     count: count(for:),
                     selectFilter: selectFilter(_:),
-                    openSearch: openSearch
+                    openSearch: openSearch,
+                    refresh: refresh,
+                    openSettings: openSettings
                 )
                 Color.clear
                     .accessibilityElement(children: .ignore)
@@ -1613,6 +1551,14 @@ private struct OpenDesignBipLogShell: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(OpenDesignDayColor.bg)
+        .onAppear(perform: prepare)
+        .onChange(of: snapshot.candidates.map(\.id)) { _, ids in
+            if let selectedCandidateID,
+               ids.contains(selectedCandidateID) {
+                return
+            }
+            selectedCandidateID = ids.first
+        }
     }
 
     private func selectFilter(_ filter: OpenDesignBipFilter) {
@@ -1622,36 +1568,95 @@ private struct OpenDesignBipLogShell: View {
     }
 
     private func count(for filter: OpenDesignBipFilter) -> Int {
-        OpenDesignBipLogCatalog.candidates.filter { candidate in
+        candidates.filter { candidate in
             filter == .all || candidate.filters.contains(filter)
         }.count
     }
 }
 
+struct OpenDesignBipVisibility: Equatable {
+    let isLoadingEmpty: Bool
+    let showsFilterBar: Bool
+    let showsResearchSection: Bool
+    let showsDraftSection: Bool
+    let showsSidebarSourceFilters: Bool
+    let showsFallbackSignals: Bool
+    let showsSidebarSignalSection: Bool
+}
+
+func openDesignBipVisibility(for snapshot: BipResearchSnapshot) -> OpenDesignBipVisibility {
+    let isLoadingEmpty = snapshot.status.isRefreshing && snapshot.candidates.isEmpty
+    let hasActualSignals = !snapshot.signals.isEmpty
+    let showsFallbackSignals = !hasActualSignals && !isLoadingEmpty
+
+    return OpenDesignBipVisibility(
+        isLoadingEmpty: isLoadingEmpty,
+        showsFilterBar: !isLoadingEmpty,
+        showsResearchSection: !isLoadingEmpty,
+        showsDraftSection: !isLoadingEmpty,
+        showsSidebarSourceFilters: !isLoadingEmpty,
+        showsFallbackSignals: showsFallbackSignals,
+        showsSidebarSignalSection: hasActualSignals || showsFallbackSignals
+    )
+}
+
 private struct OpenDesignBipSidebarView: View {
+    let snapshot: BipResearchSnapshot
+    let candidates: [OpenDesignBipCandidate]
     let selectedFilter: OpenDesignBipFilter
+    let count: (OpenDesignBipFilter) -> Int
     let selectFilter: (OpenDesignBipFilter) -> Void
+
+    private var visibility: OpenDesignBipVisibility {
+        openDesignBipVisibility(for: snapshot)
+    }
+
+    private var sourceRows: [(filter: OpenDesignBipFilter, title: String, count: String, systemImage: String)] {
+        [
+            (.all, "전체", "\(count(.all))", "square.grid.2x2"),
+            (.strong, "강한 적합", "\(count(.strong))", "checkmark.circle"),
+            (.x, "X / Twitter", "\(count(.x))", "xmark"),
+            (.threads, "Threads (Meta)", "\(count(.threads))", "at"),
+            (.instagram, "Instagram", "\(count(.instagram))", "camera"),
+            (.needs, "워치리스트", "\(count(.needs))", "exclamationmark.triangle"),
+        ]
+    }
+
+    private var signals: [OpenDesignBipSignal] {
+        if !snapshot.signals.isEmpty {
+            return snapshot.signals.map { OpenDesignBipSignal(researchSignal: $0) }
+        }
+        guard visibility.showsFallbackSignals else { return [] }
+        return [
+            .init(id: "social", title: "공개 소셜 기록", subtitle: "리서치 대기", state: "idle", tone: .muted),
+            .init(id: "gap", title: "확인할 공백", subtitle: "전업 · 매출 · 인터뷰", state: "ask", tone: .amber),
+        ]
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    OpenDesignBipSidebarSection(title: "소스", count: "\(OpenDesignBipLogCatalog.sourceRows.count)") {
-                        ForEach(OpenDesignBipLogCatalog.sourceRows, id: \.filter) { row in
-                            OpenDesignBipSourceRow(
-                                title: row.title,
-                                count: row.count,
-                                systemImage: row.systemImage,
-                                tone: row.filter.tone,
-                                isActive: selectedFilter == row.filter,
-                                action: { selectFilter(row.filter) }
-                            )
+                    if visibility.showsSidebarSourceFilters {
+                        OpenDesignBipSidebarSection(title: "소스", count: "\(sourceRows.count)") {
+                            ForEach(sourceRows, id: \.filter) { row in
+                                OpenDesignBipSourceRow(
+                                    title: row.title,
+                                    count: row.count,
+                                    systemImage: row.systemImage,
+                                    tone: row.filter.tone,
+                                    isActive: selectedFilter == row.filter,
+                                    action: { selectFilter(row.filter) }
+                                )
+                            }
                         }
                     }
 
-                    OpenDesignBipSidebarSection(title: "ICP 신호", count: "\(OpenDesignBipLogCatalog.signals.count)") {
-                        ForEach(OpenDesignBipLogCatalog.signals) { signal in
-                            OpenDesignBipSignalRow(signal: signal)
+                    if visibility.showsSidebarSignalSection {
+                        OpenDesignBipSidebarSection(title: "ICP 신호", count: "\(signals.count)") {
+                            ForEach(signals) { signal in
+                                OpenDesignBipSignalRow(signal: signal)
+                            }
                         }
                     }
                 }
@@ -1659,7 +1664,10 @@ private struct OpenDesignBipSidebarView: View {
                 .padding(.vertical, 12)
             }
 
-            OpenDesignBipSidebarProgress()
+            OpenDesignBipSidebarProgress(
+                candidateCount: candidates.count,
+                targetCount: snapshot.candidateTargetCount ?? 18
+            )
         }
         .background(OpenDesignDayColor.bg)
         .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .trailing)
@@ -1763,6 +1771,14 @@ private struct OpenDesignBipSignalRow: View {
 }
 
 private struct OpenDesignBipSidebarProgress: View {
+    let candidateCount: Int
+    let targetCount: Int
+
+    private var progress: CGFloat {
+        guard targetCount > 0 else { return 0 }
+        return min(1, CGFloat(candidateCount) / CGFloat(targetCount))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .firstTextBaseline) {
@@ -1772,10 +1788,10 @@ private struct OpenDesignBipSidebarProgress: View {
                     .foregroundStyle(OpenDesignDayColor.muted)
                 Spacer()
                 HStack(alignment: .firstTextBaseline, spacing: 2) {
-                    Text("5")
+                    Text("\(candidateCount)")
                         .font(.system(size: 17, weight: .semibold, design: .monospaced))
                         .foregroundStyle(OpenDesignDayColor.fg)
-                    Text("/ 18")
+                    Text("/ \(max(targetCount, 1))")
                         .font(.system(size: 11, weight: .regular, design: .monospaced))
                         .foregroundStyle(OpenDesignDayColor.mutedDeep)
                 }
@@ -1788,7 +1804,7 @@ private struct OpenDesignBipSidebarProgress: View {
                         .overlay(Capsule().stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
                     Capsule()
                         .fill(OpenDesignDayColor.accent)
-                        .frame(width: max(0, proxy.size.width * 0.28))
+                        .frame(width: max(0, proxy.size.width * progress))
                 }
             }
             .frame(height: 5)
@@ -1799,9 +1815,9 @@ private struct OpenDesignBipSidebarProgress: View {
                     .frame(width: 5, height: 5)
                 Text("다음 액션")
                     .foregroundStyle(OpenDesignDayColor.muted)
-                Text("상위 3명")
+                Text(candidateCount > 0 ? "상위 후보" : "리서치 대기")
                     .foregroundStyle(OpenDesignDayColor.fgSecondary)
-                Text("· DM 후보화")
+                Text(candidateCount > 0 ? "· DM 후보화" : "· Exa 필요")
                     .foregroundStyle(OpenDesignDayColor.muted)
             }
             .font(.system(size: 10.5, weight: .medium, design: .monospaced))
@@ -1816,6 +1832,7 @@ private struct OpenDesignBipSidebarProgress: View {
 
 private struct OpenDesignBipMainView: View {
     let layout: OpenDesignDayLayoutMetrics
+    let snapshot: BipResearchSnapshot
     let selectedFilter: OpenDesignBipFilter
     @Binding var searchQuery: String
     @Binding var selectedCandidateID: String?
@@ -1824,95 +1841,118 @@ private struct OpenDesignBipMainView: View {
     let count: (OpenDesignBipFilter) -> Int
     let selectFilter: (OpenDesignBipFilter) -> Void
     let openSearch: () -> Void
+    let refresh: () -> Void
+    let openSettings: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var visibility: OpenDesignBipVisibility {
+        openDesignBipVisibility(for: snapshot)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             OpenDesignBipHeaderView(
                 horizontalPadding: layout.mainHorizontalPadding,
-                openSearch: openSearch
+                snapshot: snapshot,
+                openSearch: openSearch,
+                refresh: refresh
             )
 
-            OpenDesignBipFilterBar(
-                selectedFilter: selectedFilter,
-                searchQuery: $searchQuery,
-                horizontalPadding: layout.mainHorizontalPadding,
-                count: count,
-                selectFilter: selectFilter
-            )
+            if visibility.showsFilterBar {
+                OpenDesignBipFilterBar(
+                    selectedFilter: selectedFilter,
+                    searchQuery: $searchQuery,
+                    horizontalPadding: layout.mainHorizontalPadding,
+                    count: count,
+                    selectFilter: selectFilter
+                )
+            }
 
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         OpenDesignBipSectionHeader(
                             title: "ICP 리서치 큐",
-                            meta: "Exa Search · 자동 후보 발굴 · 2026-05-17",
+                            meta: "Day \(snapshot.dayNumber) · \(snapshot.statusLabel)",
                             tone: .accent
                         )
                         .padding(.top, 4)
                         .padding(.bottom, 14)
 
-                        OpenDesignBipBriefCard()
+                        OpenDesignBipBriefCard(snapshot: snapshot)
                             .padding(.bottom, 14)
                             .accessibilityIdentifier("opendesign.reference.bipLog.brief")
 
-                        HStack(alignment: .center, spacing: 10) {
-                            OpenDesignBipSectionHeader(
-                                title: "리서치된 게시글",
-                                meta: "원문 하이라이트 + ICP 근거",
-                                tone: .sky
-                            )
-                            Spacer(minLength: 10)
-                            HStack(spacing: 2) {
-                                Text("정렬")
-                                    .foregroundStyle(OpenDesignDayColor.muted)
-                                Text("ICP 적합도순")
-                                    .fontWeight(.semibold)
-                                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
-                            }
-                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        if snapshot.status.isRefreshing {
+                            OpenDesignBipProgressState(status: snapshot.status)
+                                .padding(.bottom, 14)
                         }
-                        .padding(.bottom, 12)
 
-                        VStack(spacing: 12) {
-                            ForEach(visibleCandidates) { candidate in
-                                OpenDesignBipCandidateCard(
-                                    candidate: candidate,
-                                    isSelected: selectedCandidateID == candidate.id,
-                                    select: {
-                                        withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.16)) {
-                                            selectedCandidateID = candidate.id
-                                            proxy.scrollTo("bip-draft", anchor: .top)
-                                        }
-                                    }
+                        if snapshot.status.needsExaConfiguration,
+                           snapshot.candidates.isEmpty {
+                            OpenDesignBipNoExaRouteState(openSettings: openSettings)
+                                .padding(.bottom, 14)
+                        }
+
+                        if visibility.showsResearchSection {
+                            HStack(alignment: .center, spacing: 10) {
+                                OpenDesignBipSectionHeader(
+                                    title: "리서치된 게시글",
+                                    meta: "원문 하이라이트 + ICP 근거",
+                                    tone: .sky
                                 )
-                                .accessibilityIdentifier("opendesign.reference.bipLog.candidate.\(candidate.id)")
+                                Spacer(minLength: 10)
+                                HStack(spacing: 2) {
+                                    Text("정렬")
+                                        .foregroundStyle(OpenDesignDayColor.muted)
+                                    Text("ICP 적합도순")
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                                }
+                                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                            }
+                            .padding(.bottom, 12)
+
+                            VStack(spacing: 12) {
+                                ForEach(visibleCandidates) { candidate in
+                                    OpenDesignBipCandidateCard(
+                                        candidate: candidate,
+                                        isSelected: selectedCandidateID == candidate.id,
+                                        select: {
+                                            withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.16)) {
+                                                selectedCandidateID = candidate.id
+                                                proxy.scrollTo("bip-draft", anchor: .top)
+                                            }
+                                        }
+                                    )
+                                    .accessibilityIdentifier("opendesign.reference.bipLog.candidate.\(candidate.id)")
+                                }
+                            }
+
+                            if visibleCandidates.isEmpty,
+                               !snapshot.status.isRefreshing,
+                               !snapshot.status.needsExaConfiguration {
+                                OpenDesignBipEmptyState(refresh: refresh)
                             }
                         }
 
-                        if visibleCandidates.isEmpty {
-                            Text("이 조건에 맞는 ICP 후보가 없습니다. 필터나 검색어를 바꿔보세요.")
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundStyle(OpenDesignDayColor.mutedDeep)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 24)
+                        if visibility.showsDraftSection {
+                            OpenDesignBipSectionHeader(
+                                title: "BIP 초안",
+                                meta: "선택 후보를 기반으로 자동 생성",
+                                tone: .amber
+                            )
+                            .padding(.top, 28)
+                            .padding(.bottom, 14)
+                            .id("bip-draft")
+
+                            OpenDesignBipDraftPanel(
+                                selectedCandidate: selectedCandidate,
+                                clearSelection: { selectedCandidateID = nil }
+                            )
+                            .accessibilityIdentifier("opendesign.reference.bipLog.draft")
                         }
-
-                        OpenDesignBipSectionHeader(
-                            title: "BIP 초안",
-                            meta: "선택 후보를 기반으로 자동 생성",
-                            tone: .amber
-                        )
-                        .padding(.top, 28)
-                        .padding(.bottom, 14)
-                        .id("bip-draft")
-
-                        OpenDesignBipDraftPanel(
-                            selectedCandidate: selectedCandidate,
-                            clearSelection: { selectedCandidateID = nil }
-                        )
-                        .accessibilityIdentifier("opendesign.reference.bipLog.draft")
                     }
                     .frame(maxWidth: 980, alignment: .leading)
                     .padding(.horizontal, layout.mainHorizontalPadding)
@@ -1930,7 +1970,9 @@ private struct OpenDesignBipMainView: View {
 
 private struct OpenDesignBipHeaderView: View {
     let horizontalPadding: CGFloat
+    let snapshot: BipResearchSnapshot
     let openSearch: () -> Void
+    let refresh: () -> Void
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -1969,9 +2011,9 @@ private struct OpenDesignBipHeaderView: View {
                     Circle()
                         .fill(OpenDesignDayColor.accent)
                         .frame(width: 5, height: 5)
-                    headerMeta("Exa 검색 · 5명 후보")
+                    headerMeta("Exa Search + Web Fetch · 후보 \(snapshot.candidateCount)명")
                     headerSeparator
-                    headerMeta("상위 3명은 인터뷰/DM 후보")
+                    headerMeta("Day \(snapshot.dayNumber) · \(snapshot.status.researchSource ?? snapshot.statusLabel)")
                 }
             }
         }
@@ -1980,7 +2022,7 @@ private struct OpenDesignBipHeaderView: View {
     private var actions: some View {
         HStack(spacing: 6) {
             OpenDesignBipHeaderButton(title: "초안", systemImage: "doc.text", tone: .ghost, action: openSearch)
-            OpenDesignBipHeaderButton(title: "다시 리서치", systemImage: "plus", tone: .accent, action: {})
+            OpenDesignBipHeaderButton(title: "다시 리서치", systemImage: "arrow.clockwise", tone: .accent, action: refresh)
         }
     }
 
@@ -2132,6 +2174,28 @@ private struct OpenDesignBipSectionHeader: View {
 }
 
 private struct OpenDesignBipBriefCard: View {
+    let snapshot: BipResearchSnapshot
+
+    private var strongCount: Int {
+        snapshot.candidates.filter { $0.evidenceStrength == "strong" }.count
+    }
+
+    private var watchCount: Int {
+        max(0, snapshot.candidates.count - strongCount)
+    }
+
+    private var xCount: Int {
+        snapshot.candidates.filter { ["x", "twitter"].contains(($0.sourceType ?? "").lowercased()) }.count
+    }
+
+    private var threadsCount: Int {
+        snapshot.candidates.filter { ($0.sourceType ?? "").lowercased() == "threads" }.count
+    }
+
+    private var instagramCount: Int {
+        snapshot.candidates.filter { ($0.sourceType ?? "").lowercased() == "instagram" }.count
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
             HStack(alignment: .top, spacing: 18) {
@@ -2140,12 +2204,12 @@ private struct OpenDesignBipBriefCard: View {
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .textCase(.uppercase)
                         .foregroundStyle(OpenDesignDayColor.accent)
-                    Text("전업 1인 개발자 후보를 공개 게시글에서 찾았어요.")
+                    Text(snapshot.briefTitle ?? "공개 소셜 게시글에서 ICP 신호를 찾습니다.")
                         .font(.system(size: 20, weight: .regular))
                         .foregroundStyle(OpenDesignDayColor.fg)
                         .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("검색 기준은 ICP 문서의 퇴사/전업, 에이전트 코딩 도구, 수익 전 또는 초기, macOS 증거, BIP 기록 의향입니다. 원문이 직접 말한 부분만 하이라이트하고, 비어 있는 항목은 확인 필요로 남겼습니다.")
+                    Text(snapshot.briefBody ?? "Exa Search 결과를 Web Fetch로 다시 읽고, 실제 원문 URL이 있는 후보만 표시합니다.")
                         .font(.system(size: 13, weight: .regular))
                         .foregroundStyle(OpenDesignDayColor.fgSecondary)
                         .lineSpacing(4)
@@ -2154,10 +2218,10 @@ private struct OpenDesignBipBriefCard: View {
 
                 VStack(alignment: .trailing, spacing: 5) {
                     Text("후보")
-                    Text("5")
+                    Text("\(snapshot.candidateCount)")
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(OpenDesignDayColor.fg)
-                    Text("강한 적합 3 · 워치리스트 2")
+                    Text("강한 적합 \(strongCount) · 워치리스트 \(watchCount)")
                 }
                 .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                 .foregroundStyle(OpenDesignDayColor.muted)
@@ -2167,7 +2231,7 @@ private struct OpenDesignBipBriefCard: View {
             HStack(alignment: .top, spacing: 9) {
                 Text("exa>")
                     .foregroundStyle(OpenDesignDayColor.accent)
-                Text("solo builder quit job no revenue Claude Code Cursor MacBook building in public first month posts")
+                Text(snapshot.querySummary?.isEmpty == false ? snapshot.querySummary! : "adaptive social research query")
                     .foregroundStyle(OpenDesignDayColor.fgSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -2179,11 +2243,12 @@ private struct OpenDesignBipBriefCard: View {
             .background(referenceRounded(fill: OpenDesignDayColor.bgDeep, stroke: OpenDesignDayColor.borderSoft, radius: 8))
 
             FlowLayout(spacing: 7, lineSpacing: 7) {
-                OpenDesignBipMetricPill(title: "전업/퇴사", count: "4", tone: .accent)
-                OpenDesignBipMetricPill(title: "Claude Code / Cursor", count: "5", tone: .accent)
-                OpenDesignBipMetricPill(title: "BIP 의향", count: "4", tone: .accent)
-                OpenDesignBipMetricPill(title: "수익 전/초기", count: "3", tone: .muted)
-                OpenDesignBipMetricPill(title: "macOS 확인 필요", count: "3", tone: .amber)
+                OpenDesignBipMetricPill(title: "X 원문", count: "\(xCount)", tone: .sky)
+                OpenDesignBipMetricPill(title: "Threads(Meta) 원문", count: "\(threadsCount)", tone: .violet)
+                OpenDesignBipMetricPill(title: "Instagram 원문", count: "\(instagramCount)", tone: .pink)
+                OpenDesignBipMetricPill(title: "강한 적합", count: "\(strongCount)", tone: .accent)
+                OpenDesignBipMetricPill(title: "확인 필요", count: "\(watchCount)", tone: .amber)
+                OpenDesignBipMetricPill(title: "Day", count: "\(snapshot.dayNumber)", tone: .muted)
             }
         }
         .padding(.horizontal, 20)
@@ -2223,6 +2288,91 @@ private struct OpenDesignBipMetricPill: View {
         .frame(height: 25)
         .background(Capsule().fill(tone == .muted ? OpenDesignDayColor.bgDeep : tone.dim))
         .overlay(Capsule().stroke(tone == .muted ? OpenDesignDayColor.borderSoft : tone.line, lineWidth: 1))
+    }
+}
+
+private struct OpenDesignBipProgressState: View {
+    let status: BipResearchStatus
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            ProgressView()
+                .controlSize(.small)
+                .tint(OpenDesignDayColor.accent)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(status.progressText ?? "X/Threads 공개 게시글을 검색하는 중")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Text(progressMeta)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(referenceRounded(fill: OpenDesignDayColor.accentDim, stroke: OpenDesignDayColor.accentLine, radius: 10))
+    }
+
+    private var progressMeta: String {
+        let step = status.stepIndex.map { "\($0)" } ?? "?"
+        let count = status.stepCount.map { "\($0)" } ?? "?"
+        return "\(status.researchSource ?? "Exa MCP") · \(step)/\(count)"
+    }
+}
+
+private struct OpenDesignBipNoExaRouteState: View {
+    let openSettings: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Exa MCP 설정이 필요합니다.")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fg)
+            Text("BIP 리서치는 실제 X/Threads 검색과 fetch 결과만 표시합니다. Codex/Claude/Gemini의 Exa MCP 또는 Settings의 Exa fallback key를 설정하세요.")
+                .font(.system(size: 12.5, weight: .regular))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .lineSpacing(4)
+            Button(action: openSettings) {
+                Text("Settings 열기")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.bgDeep)
+                    .padding(.horizontal, 12)
+                    .frame(height: 30)
+                    .background(referenceRounded(fill: OpenDesignDayColor.accent, stroke: OpenDesignDayColor.accent, radius: 8))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.border, radius: 12))
+    }
+}
+
+private struct OpenDesignBipEmptyState: View {
+    let refresh: () -> Void
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Text("아직 표시할 BIP 후보가 없습니다.")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fg)
+            Text("다시 리서치를 실행하면 오늘 Day와 프로젝트 문서 기준으로 X/Threads 후보를 새로 찾습니다.")
+                .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .multilineTextAlignment(.center)
+            Button(action: refresh) {
+                Text("다시 리서치")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.accent)
+                    .padding(.horizontal, 12)
+                    .frame(height: 30)
+                    .background(referenceRounded(fill: OpenDesignDayColor.accentDim, stroke: OpenDesignDayColor.accentLine, radius: 8))
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 26)
     }
 }
 
@@ -2402,7 +2552,14 @@ private struct OpenDesignBipDraftPanel: View {
     @State private var copied = false
 
     private var draftText: String {
-        selectedCandidate?.draft ?? OpenDesignBipLogCatalog.emptyDraft
+        selectedCandidate?.draft ?? """
+        후보 카드에서 “BIP 초안에 반영”을 누르면, 실제 X/Threads 리서치 결과를 오늘의 공개 기록으로 바꿉니다.
+
+        형식:
+        1. 원문에서 잡은 ICP 증거
+        2. 왜 인터뷰 후보인지
+        3. DM에서 확인할 공백 1개
+        """
     }
 
     var body: some View {
@@ -3341,6 +3498,16 @@ private extension NewsMarketRadarStatus {
     var elapsedLabel: String? {
         guard let elapsedMs else { return nil }
         return newsElapsedLabel(elapsedMs)
+    }
+}
+
+private extension BipResearchStatus {
+    var isRefreshing: Bool {
+        state == "refreshing"
+    }
+
+    var needsExaConfiguration: Bool {
+        ["exa_api_key_missing", "exa_mcp_missing"].contains(reason ?? "")
     }
 }
 
@@ -4360,6 +4527,9 @@ struct OpenDesignReferenceShell: View {
     var newsMarketRadar: NewsMarketRadarSnapshot = .empty
     var refreshNewsMarketRadar: () -> Void = {}
     var prepareNewsMarketRadar: () -> Void = {}
+    var bipResearch: BipResearchSnapshot = .empty
+    var refreshBipResearch: () -> Void = {}
+    var prepareBipResearch: () -> Void = {}
     var openNewsSettings: () -> Void = {}
 
     private var page: OpenDesignReferencePageModel {
@@ -4379,7 +4549,14 @@ struct OpenDesignReferenceShell: View {
                 openSettings: openNewsSettings
             )
         } else if kind == .bipLog {
-            OpenDesignBipLogShell(layout: layout, openSearch: openSearch)
+            OpenDesignBipLogShell(
+                layout: layout,
+                openSearch: openSearch,
+                snapshot: bipResearch,
+                refresh: refreshBipResearch,
+                prepare: prepareBipResearch,
+                openSettings: openNewsSettings
+            )
         } else if kind == .history {
             OpenDesignHistoryShell(layout: layout, openSearch: openSearch)
         } else if kind == .projects {
