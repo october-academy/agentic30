@@ -6,6 +6,34 @@ import { spawn } from "node:child_process";
 const MAX_CONTEXT_CHARS = 24_000;
 const MAX_EVIDENCE = 5;
 const MAX_USERS = 4;
+const MAX_SOURCE_FILES = 10;
+const MAX_SOURCE_FILE_CHARS = 4_000;
+
+const SOURCE_EXTENSIONS = new Set([
+  ".swift",
+  ".ts",
+  ".tsx",
+  ".js",
+  ".mjs",
+  ".jsx",
+  ".py",
+  ".rs",
+  ".go",
+]);
+
+const SOURCE_SIGNAL_PATTERN = /(customer|user|problem|mission|goal|value|pricing|onboarding|landing|persona|audience|pain|purpose|고객|사용자|문제|목표|가치|미션|가격|온보딩|랜딩|페르소나)/i;
+const SOURCE_DENY_SEGMENTS = new Set([
+  ".git",
+  ".build",
+  ".next",
+  ".turbo",
+  "build",
+  "dist",
+  "DerivedData",
+  "node_modules",
+  "vendor",
+  "coverage",
+]);
 
 const confidenceRank = {
   low: 0,
@@ -56,6 +84,10 @@ export async function deriveWorkspaceOnboardingHypothesisLocally(scanRoot, { doc
     contextParts.push(recentFiles.join("\n"));
   }
 
+  const sourceEvidence = await collectSourceCodeEvidence(root, recentFiles);
+  evidence.push(...sourceEvidence.evidence);
+  contextParts.push(...sourceEvidence.contextParts);
+
   const context = contextParts.join("\n\n").slice(0, MAX_CONTEXT_CHARS);
   const projectKind = inferProjectKind({ root, packageJson, context, recentFiles });
   const productName = inferProductName({ rootReadme, packageJson, root });
@@ -70,6 +102,8 @@ export async function deriveWorkspaceOnboardingHypothesisLocally(scanRoot, { doc
     targetUser: productBrief.targetUser,
     problem: productBrief.problem,
     purpose: productBrief.purpose,
+    goal: productBrief.goal,
+    values: productBrief.values,
     likelyUsers: likelyUsers.slice(0, MAX_USERS),
     stage,
     evidence: compactEvidence,
@@ -104,6 +138,8 @@ export function normalizeWorkspaceOnboardingHypothesis(value) {
   const targetUser = cleanText(value.targetUser || value.target_user);
   const problem = cleanText(value.problem);
   const purpose = cleanText(value.purpose);
+  const goal = cleanText(value.goal);
+  const values = cleanText(value.values);
   const stage = cleanToken(value.stage) || "unknown";
   const normalized = {
     productName,
@@ -111,6 +147,8 @@ export function normalizeWorkspaceOnboardingHypothesis(value) {
     targetUser,
     problem,
     purpose,
+    goal,
+    values,
     likelyUsers: uniqueCompact(likelyUsers).slice(0, MAX_USERS),
     stage,
     evidence: uniqueCompact(evidence).slice(0, MAX_EVIDENCE),
@@ -142,6 +180,8 @@ export function mergeWorkspaceOnboardingHypotheses(...hypotheses) {
   const targetUser = best.targetUser || normalized.find((item) => item.targetUser)?.targetUser || "";
   const problem = best.problem || normalized.find((item) => item.problem)?.problem || "";
   const purpose = best.purpose || normalized.find((item) => item.purpose)?.purpose || "";
+  const goal = best.goal || normalized.find((item) => item.goal)?.goal || "";
+  const values = best.values || normalized.find((item) => item.values)?.values || "";
   const stage = best.stage !== "unknown"
     ? best.stage
     : normalized.find((item) => item.stage !== "unknown")?.stage || "unknown";
@@ -152,6 +192,8 @@ export function mergeWorkspaceOnboardingHypotheses(...hypotheses) {
     targetUser,
     problem,
     purpose,
+    goal,
+    values,
     likelyUsers,
     stage,
     evidence,
@@ -167,6 +209,8 @@ function fallbackHypothesis() {
     targetUser: "",
     problem: "",
     purpose: "",
+    goal: "",
+    values: "",
     likelyUsers: [],
     stage: "unknown",
     evidence: [],
@@ -282,6 +326,7 @@ function inferProductName({ rootReadme, packageJson, root }) {
 function inferProductBrief({ context, productName = "" }) {
   const targetUser = firstMatch(context, [
     /\*\*(?:타깃 유저|타겟 사용자|target user)\s*:\*\*\s*([^\n]+)/i,
+    /(?:타깃 유저|타겟 사용자|target user)\s*[:\-]\s*([^\n]+)/i,
     /요약하면\s*([^\n.]+?)(?:\.|\n)/,
     /##\s+Our ICP:\s*([^\n]+)/i,
     /###\s+Primary[^\n]*\n+\s*[-*]?\s*\*\*프로필:\*\*\s*([^\n]+)/i,
@@ -298,10 +343,22 @@ function inferProductBrief({ context, productName = "" }) {
     /##\s+프로젝트 미션\s*\n+\s*([^\n]+)/,
     /\*\*핵심 가치:\*\*\s*([^\n]+)/,
   ]);
+  const goal = firstMatch(context, [
+    /\*\*(?:목표|goal)\s*:\*\*\s*([^\n]+)/i,
+    /(?:목표|goal)\s*[:\-]\s*([^\n]+)/i,
+    /##\s+(?:목표|Goal)\s*\n+\s*([^\n]+)/i,
+  ]);
+  const values = firstMatch(context, [
+    /\*\*(?:가치|values?)\s*:\*\*\s*([^\n]+)/i,
+    /(?:핵심 가치|values?)\s*[:\-]\s*([^\n]+)/i,
+    /##\s+(?:가치|Values?)\s*\n+\s*([^\n]+)/i,
+  ]);
   return {
     targetUser: cleanText(targetUser || ""),
     problem: cleanText(problem || ""),
     purpose: cleanText(purpose || productPurposeFallback({ productName, targetUser, problem })),
+    goal: cleanText(goal || ""),
+    values: cleanText(values || ""),
   };
 }
 
@@ -371,6 +428,88 @@ async function collectManifestEvidence(root) {
     contextParts.push(loaded.content);
   }
   return { evidence, contextParts };
+}
+
+async function collectSourceCodeEvidence(root, recentFiles = []) {
+  const candidates = uniqueCompact([
+    ...recentFiles,
+    ...await listSourceCandidates(root),
+  ])
+    .filter((relativePath) => isSourceEvidenceCandidate(relativePath))
+    .slice(0, MAX_SOURCE_FILES * 4);
+  const scored = [];
+  for (const relativePath of candidates) {
+    const loaded = await readWorkspaceFile(root, relativePath, MAX_SOURCE_FILE_CHARS);
+    if (!loaded) continue;
+    const score = scoreSourceEvidence(relativePath, loaded.content);
+    if (score <= 0) continue;
+    scored.push({ ...loaded, score });
+  }
+  scored.sort((a, b) => b.score - a.score || a.relativePath.localeCompare(b.relativePath));
+  const selected = scored.slice(0, MAX_SOURCE_FILES);
+  return {
+    evidence: selected.map((item) => `source:${item.relativePath}`),
+    contextParts: selected.map((item) => [
+      `Source file: ${item.relativePath}`,
+      extractSourceSignalLines(item.content).join("\n") || item.content.slice(0, 1200),
+    ].join("\n")),
+  };
+}
+
+async function listSourceCandidates(root) {
+  const results = [];
+  await collectSourceCandidatesInDir(root, root, results, 0);
+  return results;
+}
+
+async function collectSourceCandidatesInDir(root, dirPath, results, depth) {
+  if (depth > 4 || results.length >= 80) return;
+  const entries = await fs.readdir(dirPath, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (entry.name.startsWith(".") && entry.name !== ".agentic30") continue;
+    if (SOURCE_DENY_SEGMENTS.has(entry.name)) continue;
+    const entryPath = path.join(dirPath, entry.name);
+    if (!isPathInside(entryPath, root)) continue;
+    if (entry.isDirectory()) {
+      await collectSourceCandidatesInDir(root, entryPath, results, depth + 1);
+    } else if (entry.isFile()) {
+      const relativePath = path.relative(root, entryPath).split(path.sep).join(path.posix.sep);
+      if (isSourceEvidenceCandidate(relativePath)) {
+        results.push(relativePath);
+        if (results.length >= 80) return;
+      }
+    }
+  }
+}
+
+function isSourceEvidenceCandidate(relativePath) {
+  const normalized = String(relativePath || "");
+  if (!normalized || normalized.includes("\0")) return false;
+  const parts = normalized.split(/[\\/]+/);
+  if (parts.some((part) => SOURCE_DENY_SEGMENTS.has(part))) return false;
+  if (parts.some((part) => /(^|[._-])(secret|token|credential|password|key)([._-]|$)/i.test(part))) return false;
+  if (/\.(test|spec)\.[A-Za-z0-9]+$/i.test(normalized)) return false;
+  if (/(^|[\\/])(__tests__|tests?|fixtures?)([\\/]|$)/i.test(normalized)) return false;
+  return SOURCE_EXTENSIONS.has(path.extname(normalized));
+}
+
+function scoreSourceEvidence(relativePath, content) {
+  const haystack = `${relativePath}\n${content}`;
+  let score = 0;
+  const matches = haystack.match(new RegExp(SOURCE_SIGNAL_PATTERN.source, "gi"));
+  score += Math.min(matches?.length || 0, 12);
+  if (/onboarding|landing|marketing|pricing|customer|user|goal|values?|mission|icp|persona/i.test(relativePath)) score += 4;
+  if (/README|SPEC|ICP|GOAL|VALUES/i.test(content)) score += 2;
+  return score;
+}
+
+function extractSourceSignalLines(content) {
+  return String(content || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && SOURCE_SIGNAL_PATTERN.test(line))
+    .slice(0, 30)
+    .map((line) => line.slice(0, 260));
 }
 
 async function readFirstExisting(root, candidates) {

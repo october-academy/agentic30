@@ -772,8 +772,8 @@ test("adaptive Foundation days mirror Foundation chat day semantics", () => {
     [...docPaths].sort(),
     ["docs/GOAL.md", "docs/ICP.md", "docs/SPEC.md", "docs/VALUES.md"].sort(),
   );
-  assert.match(foundationDays[0].title, /고객의 어제 행동/);
-  assert.match(FOUNDATION_DAYS[1].core_question, /압축된 통증/);
+  assert.match(foundationDays[0].title, /목표와 고객 정렬문/);
+  assert.match(FOUNDATION_DAYS[1].core_question, /ICP, Pain Point, Outcome/);
   assert.match(foundationDays[1].title, /돈이 흐르는 기준 시장/);
   assert.match(FOUNDATION_DAYS[2].core_question, /시장·고객 데이터/);
   assert.match(foundationDays[2].title, /Mom Test/);

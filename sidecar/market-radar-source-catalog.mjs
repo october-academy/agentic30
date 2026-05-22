@@ -14,7 +14,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "company_handbook",
     trustTier: "primary",
     lanes: ["icp", "problem", "channel", "platform"],
-    queryHints: ["product strategy", "startup handbook", "product analytics", "go to market"],
     allowedUse: "Evergreen product and company-building practice; corroborate live market claims with current evidence.",
   },
   {
@@ -25,7 +24,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "founder_essay",
     trustTier: "primary",
     lanes: ["icp", "problem", "channel"],
-    queryHints: ["startup ideas", "founder market", "do things that don't scale", "startup growth"],
     allowedUse: "Founder principles and interpretation; not sufficient alone for current market trend claims.",
   },
   {
@@ -36,7 +34,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "accelerator_library",
     trustTier: "primary",
     lanes: ["icp", "problem", "alternatives_pricing", "channel"],
-    queryHints: ["startup advice", "customer discovery", "pricing", "sales", "launch"],
     allowedUse: "Startup operating guidance and repeatable founder patterns.",
   },
   {
@@ -47,7 +44,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "newsletter",
     trustTier: "practitioner",
     lanes: ["icp", "problem", "alternatives_pricing", "channel"],
-    queryHints: ["growth", "product market fit", "pricing", "activation", "distribution"],
     allowedUse: "Product and growth operator synthesis; cite only publicly accessible metadata or excerpts.",
   },
   {
@@ -58,7 +54,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "community",
     trustTier: "community",
     lanes: ["icp", "alternatives_pricing", "channel"],
-    queryHints: ["pricing", "bootstrapped saas", "launch", "revenue", "solo founder"],
     allowedUse: "Community demand, founder anecdotes, and pricing signals; never enough alone for strong confidence.",
   },
   {
@@ -69,7 +64,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "builder_blog",
     trustTier: "primary",
     lanes: ["problem", "alternatives_pricing", "channel", "platform"],
-    queryHints: ["solo founder", "launch", "distribution", "pricing", "nomad list"],
     allowedUse: "First-person single-builder operating lessons and constraints.",
   },
   {
@@ -80,7 +74,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "pmf_playbook",
     trustTier: "primary",
     lanes: ["icp", "problem", "alternatives_pricing", "channel"],
-    queryHints: ["positioning", "pricing", "product market fit", "bootstrapping"],
     allowedUse: "Evergreen SaaS strategy, pricing, and positioning patterns.",
   },
   {
@@ -91,7 +84,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "operator_interview",
     trustTier: "practitioner",
     lanes: ["icp", "problem", "channel"],
-    queryHints: ["founder led sales", "product market fit", "customer discovery", "growth"],
     allowedUse: "Operator interviews and startup execution playbooks.",
   },
   {
@@ -102,7 +94,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "customer_discovery",
     trustTier: "primary",
     lanes: ["icp", "problem"],
-    queryHints: ["customer conversations", "customer discovery", "interviews"],
     allowedUse: "Customer interview principles and evidence-quality checks.",
   },
   {
@@ -113,7 +104,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "customer_discovery",
     trustTier: "primary",
     lanes: ["icp", "problem", "alternatives_pricing"],
-    queryHints: ["jobs to be done", "switching behavior", "customer demand"],
     allowedUse: "Demand and switching-behavior framing.",
   },
   {
@@ -124,7 +114,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "customer_discovery",
     trustTier: "primary",
     lanes: ["icp", "problem", "alternatives_pricing"],
-    queryHints: ["jobs to be done", "switch interview", "customer progress"],
     allowedUse: "JTBD interview method and switching-buyer analysis.",
   },
   {
@@ -135,7 +124,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "positioning_growth",
     trustTier: "practitioner",
     lanes: ["icp", "problem", "channel"],
-    queryHints: ["positioning", "category", "sales narrative", "b2b"],
     allowedUse: "Positioning and category-design guidance.",
   },
   {
@@ -146,7 +134,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "positioning_growth",
     trustTier: "practitioner",
     lanes: ["channel", "alternatives_pricing", "icp"],
-    queryHints: ["growth", "landing page", "acquisition", "copywriting"],
     allowedUse: "Growth tactics and acquisition-channel patterns.",
   },
   {
@@ -157,7 +144,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "positioning_growth",
     trustTier: "practitioner",
     lanes: ["problem", "channel"],
-    queryHints: ["conversion copy", "landing page", "messaging", "pain points"],
     allowedUse: "Conversion copy and customer-language patterns.",
   },
   {
@@ -168,7 +154,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "ux_case_study",
     trustTier: "practitioner",
     lanes: ["problem", "channel", "platform"],
-    queryHints: ["onboarding", "activation", "conversion", "case study"],
     allowedUse: "UX and onboarding case studies; corroborate market claims separately.",
   },
   {
@@ -179,7 +164,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "product_process",
     trustTier: "primary",
     lanes: ["problem", "platform"],
-    queryHints: ["product shaping", "small team", "cycle", "scope"],
     allowedUse: "Small-team product process and scoping principles.",
   },
   {
@@ -190,7 +174,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "company_handbook",
     trustTier: "primary",
     lanes: ["problem", "channel", "platform"],
-    queryHints: ["bootstrapped", "small business", "pricing", "product"],
     allowedUse: "Bootstrapped company operating principles and product tradeoffs.",
   },
   {
@@ -201,7 +184,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "newsletter",
     trustTier: "practitioner",
     lanes: ["icp", "alternatives_pricing", "channel"],
-    queryHints: ["audience", "bootstrapping", "pricing", "community"],
     allowedUse: "Bootstrapped founder lessons and audience-building patterns.",
   },
   {
@@ -212,7 +194,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "operator_interview",
     trustTier: "practitioner",
     lanes: ["icp", "alternatives_pricing", "channel"],
-    queryHints: ["micro saas", "pricing", "bootstrapped", "acquisition"],
     allowedUse: "Bootstrapped SaaS operator interviews and examples.",
   },
   {
@@ -223,7 +204,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "operator_interview",
     trustTier: "practitioner",
     lanes: ["icp", "alternatives_pricing", "channel"],
-    queryHints: ["micro saas", "pricing", "sales", "bootstrapped"],
     allowedUse: "Bootstrapped SaaS talks, examples, and operator guidance.",
   },
   {
@@ -234,7 +214,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "builder_blog",
     trustTier: "primary",
     lanes: ["icp", "problem", "channel"],
-    queryHints: ["audience", "saas", "product market fit", "transistor"],
     allowedUse: "Founder-owned SaaS and audience-building lessons.",
   },
   {
@@ -245,7 +224,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "builder_blog",
     trustTier: "primary",
     lanes: ["problem", "alternatives_pricing", "channel", "platform"],
-    queryHints: ["solo founder", "bootstrapped", "product", "launch"],
     allowedUse: "Transparent solo-builder retrospectives and product experiments.",
   },
   {
@@ -256,7 +234,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "company_handbook",
     trustTier: "primary",
     lanes: ["problem", "channel", "platform"],
-    queryHints: ["product management", "customer support", "bootstrapped", "ux"],
     allowedUse: "Long-running bootstrapped product company lessons.",
   },
   {
@@ -267,7 +244,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "metrics_benchmark",
     trustTier: "primary",
     lanes: ["alternatives_pricing", "icp"],
-    queryHints: ["saas pricing", "subscription metrics", "churn", "arr"],
     allowedUse: "SaaS pricing, subscription metrics, and benchmark evidence.",
   },
   {
@@ -278,7 +254,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "startup_operations",
     trustTier: "primary",
     lanes: ["alternatives_pricing", "platform"],
-    queryHints: ["pricing", "startup operations", "payments", "incorporation"],
     allowedUse: "Startup operations, payments, and pricing fundamentals.",
   },
   {
@@ -289,7 +264,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "launch_channel",
     trustTier: "community",
     lanes: ["channel", "alternatives_pricing", "icp"],
-    queryHints: ["launch", "product", "reviews", "alternatives"],
     allowedUse: "Launch visibility and competitive surface; not sufficient alone for strong confidence.",
   },
   {
@@ -300,7 +274,6 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     category: "launch_channel",
     trustTier: "community",
     lanes: ["channel", "problem", "platform"],
-    queryHints: ["Show HN", "developer tools", "launch", "feedback"],
     allowedUse: "Developer launch feedback and community reactions; not sufficient alone for strong confidence.",
   },
   {
@@ -308,32 +281,32 @@ export const MARKET_RADAR_TRUSTED_SOURCE_CATALOG = deepFreeze([
     domain: "disquiet.io",
     pathPrefix: "",
     label: "Disquiet",
-    category: "korea_channel",
+    category: "korea_first_channel",
     trustTier: "community",
     lanes: ["channel", "icp"],
-    queryHints: ["Korean startup", "community", "launch", "founder"],
-    allowedUse: "Korean startup community signal; not sufficient alone for strong confidence.",
+    allowedUse: "Korean-first startup and maker community signal; not sufficient alone for strong confidence.",
   },
   {
     key: "eopla",
     domain: "eopla.net",
     pathPrefix: "",
     label: "EO Planet",
-    category: "korea_channel",
+    category: "korea_first_channel",
     trustTier: "community",
     lanes: ["channel", "icp"],
-    queryHints: ["Korean startup", "product launch", "founder", "community"],
-    allowedUse: "Korean product/startup community signal; not sufficient alone for strong confidence.",
+    allowedUse: "Korean-first product/startup community signal; not sufficient alone for strong confidence.",
   },
 ]);
 
-export function trustedSourcesForLane(laneId = "") {
-  if (!laneId) return MARKET_RADAR_TRUSTED_SOURCE_CATALOG;
-  return MARKET_RADAR_TRUSTED_SOURCE_CATALOG.filter((source) => source.lanes.includes(laneId));
+export function trustedSourcesForLane(laneId = "", { localeProfile = null } = {}) {
+  const sources = !laneId
+    ? MARKET_RADAR_TRUSTED_SOURCE_CATALOG
+    : MARKET_RADAR_TRUSTED_SOURCE_CATALOG.filter((source) => source.lanes.includes(laneId));
+  return orderTrustedSourcesForLocale(sources, localeProfile);
 }
 
-export function trustedSourcesForMarketRadarPrompt(laneId = "") {
-  return trustedSourcesForLane(laneId).map((source) => ({
+export function trustedSourcesForMarketRadarPrompt(laneId = "", { localeProfile = null } = {}) {
+  return trustedSourcesForLane(laneId, { localeProfile }).map((source) => ({
     key: source.key,
     label: source.label,
     domain: source.domain,
@@ -341,7 +314,6 @@ export function trustedSourcesForMarketRadarPrompt(laneId = "") {
     category: source.category,
     trustTier: source.trustTier,
     lanes: source.lanes,
-    queryHints: source.queryHints,
     allowedUse: source.allowedUse,
   }));
 }
@@ -349,22 +321,43 @@ export function trustedSourcesForMarketRadarPrompt(laneId = "") {
 export function buildTrustedSourceQueriesForLane({
   laneId = "",
   querySeeds = [],
+  localeProfile = null,
   maxQueries = 12,
 } = {}) {
-  const sources = trustedSourcesForLane(laneId);
+  const sources = trustedSourcesForLane(laneId, { localeProfile });
   const seeds = normalizeQuerySeeds(querySeeds).slice(0, 3);
   const queries = [];
+  if (seeds.length === 0) return queries;
   for (const source of sources) {
     const site = source.pathPrefix ? `site:${source.domain}${source.pathPrefix}` : `site:${source.domain}`;
-    const hints = [...source.queryHints, ...seeds].filter(Boolean);
-    for (const hint of hints.slice(0, 3)) {
-      const query = normalizeQuery(`${site} ${hint}`);
+    for (const seed of seeds) {
+      const query = normalizeQuery(`${site} ${seed}`);
       if (!query || queries.includes(query)) continue;
       queries.push(query);
       if (queries.length >= maxQueries) return queries;
     }
   }
   return queries;
+}
+
+function orderTrustedSourcesForLocale(sources = [], localeProfile = null) {
+  const primaryLanguage = String(localeProfile?.primaryLanguage || localeProfile?.primary_language || "").toLowerCase();
+  if (primaryLanguage !== "ko") {
+    return [...sources].sort((a, b) => (
+      MARKET_RADAR_TRUSTED_SOURCE_CATALOG.indexOf(a) - MARKET_RADAR_TRUSTED_SOURCE_CATALOG.indexOf(b)
+    ));
+  }
+  return [...sources].sort((a, b) => {
+    const koreanDelta = Number(isKoreanFirstTrustedSource(b)) - Number(isKoreanFirstTrustedSource(a));
+    if (koreanDelta !== 0) return koreanDelta;
+    return MARKET_RADAR_TRUSTED_SOURCE_CATALOG.indexOf(a) - MARKET_RADAR_TRUSTED_SOURCE_CATALOG.indexOf(b);
+  });
+}
+
+function isKoreanFirstTrustedSource(source = {}) {
+  return source.category === "korea_first_channel"
+    || source.key === "disquiet"
+    || source.key === "eopla";
 }
 
 export function annotateMarketRadarSourceTrust(source = {}) {

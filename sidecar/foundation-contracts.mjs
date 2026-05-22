@@ -21,14 +21,15 @@ export function buildFoundationAntiDisplacementGate({
 
 export const FOUNDATION_VALUE_CONTRACTS = Object.freeze({
   1: contract({
-    value: "고객의 과거 행동에서 통증 1개만 압축해 PMF 판단의 기준점을 만든다.",
-    evidenceArtifact: "docs/ICP.md, docs/SPEC.md v0, day-1-pain-summary.md",
+    value: "프로젝트 목표를 ICP, Pain Point, Outcome 정렬문으로 압축해 Day 2 시장 검증 기준점을 만든다.",
+    evidenceArtifact: "docs/GOAL.md, docs/ICP.md, docs/SPEC.md v0, day-1-alignment-statement.md",
     canonicalDocs: [
-      doc("docs/ICP.md", "target segment, anti-ICP, status quo, buying trigger가 실제 행동 근거로 좁혀졌는지"),
-      doc("docs/SPEC.md", "압축된 통증 1개와 그 통증을 보여준 과거 행동 1개가 SPEC v0 baseline으로 박혔는지"),
+      doc("docs/GOAL.md", "Day 1 project goal이 첫 고객 검증 목표로 한 문장에 고정됐는지"),
+      doc("docs/ICP.md", "ICP/Pain Point/Outcome 정렬문과 anti-ICP 경계가 실제 행동 근거로 좁혀졌는지"),
+      doc("docs/SPEC.md", "정렬문이 SPEC v0 baseline과 Day 2 시장 신호 확인 기준으로 들어갔는지"),
     ],
-    passGate: "통증 1개 + 실제 행동 근거 1개가 있다.",
-    failGate: "통증이 2개 이상이거나 행동 근거 없이 founder 추측만 있다.",
+    passGate: "Project Goal + ICP + Pain Point + Outcome 정렬문이 7.0/10 이상이고 Day 2에서 검증할 시장 신호 기준이 있다.",
+    failGate: "목표, 고객, 통증, 결과 중 하나가 비어 있거나 founder 추측만 있고 Day 2로 넘길 검증 기준이 없다.",
   }),
   2: contract({
     value: "이미 돈이 흐르는 기준 시장을 찾아 이 문제가 지불 행동과 닿아 있는지 확인한다.",

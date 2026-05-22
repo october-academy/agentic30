@@ -29,6 +29,8 @@ test("deriveWorkspaceOnboardingHypothesisLocally infers project context from REA
         "A macOS app for developers using Codex and Claude coding agents.",
         "**타깃 유저:** 전업 1인 개발자, 수익 0원, macOS 사용자",
         "핵심 가설: 이 유저는 \"만들 줄은 있지만 무엇을 만들어야 팔리는지 모른다\"는 고통을 겪고 있다.",
+        "Goal: 첫 고객 인터뷰 증거를 만든다.",
+        "Values: 근거 없는 자동화를 거절하고 사용자 결정 증거를 우선한다.",
         "It helps indie founders build in public and find first users.",
       ].join("\n"),
     );
@@ -49,10 +51,38 @@ test("deriveWorkspaceOnboardingHypothesisLocally infers project context from REA
     assert.equal(hypothesis.confidence, "high");
     assert.equal(hypothesis.productName, "Agentic30");
     assert.match(hypothesis.targetUser, /전업 1인 개발자|developers using Codex/i);
+    assert.match(hypothesis.goal, /첫 고객 인터뷰/);
+    assert.match(hypothesis.values, /사용자 결정 증거/);
     assert.equal(hypothesis.stage, "first_users");
     assert.ok(hypothesis.likelyUsers.includes("AI 코딩 도구를 쓰는 개발자"));
     assert.match(hypothesis.suggestedFirstQuestion, /가장 먼저 인터뷰할 1인 개발자 유형/);
     assert.ok(hypothesis.evidence.some((item) => item.includes("README")));
+  });
+});
+
+test("deriveWorkspaceOnboardingHypothesisLocally includes source-derived project signals", async () => {
+  await withTempWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, "src"), { recursive: true });
+    await fs.writeFile(path.join(root, "README.md"), "# RevenuePilot\n");
+    await fs.writeFile(
+      path.join(root, "src", "ProductContext.ts"),
+      [
+        "// target user: 한국 B2B SaaS 창업자",
+        "// problem: 첫 세일즈 콜에서 어떤 메시지가 팔리는지 모른다",
+        "// goal: 10개 유료 상담 예약",
+        "// values: 자동화보다 고객 대화 증거를 우선한다",
+        "export const productContext = true;",
+      ].join("\n"),
+    );
+
+    const hypothesis = await deriveWorkspaceOnboardingHypothesisLocally(root);
+
+    assert.equal(hypothesis.productName, "RevenuePilot");
+    assert.match(hypothesis.targetUser, /한국 B2B SaaS 창업자/);
+    assert.match(hypothesis.problem, /세일즈 콜/);
+    assert.match(hypothesis.goal, /10개 유료 상담/);
+    assert.match(hypothesis.values, /고객 대화 증거/);
+    assert.ok(hypothesis.evidence.some((item) => item.includes("source:src/ProductContext.ts")));
   });
 });
 
@@ -71,6 +101,8 @@ test("normalizeWorkspaceOnboardingHypothesis keeps malformed provider output saf
       targetUser: "",
       problem: "",
       purpose: "",
+      goal: "",
+      values: "",
       likelyUsers: ["개발자"],
       stage: "prototype",
       evidence: ["README"],
@@ -87,6 +119,8 @@ test("normalizeWorkspaceOnboardingHypothesis accepts provider snake_case fields"
     target_user: "전업 1인 개발자",
     problem: "무엇을 만들어야 팔리는지 모른다",
     purpose: "30일 안에 PMF 검증 방향을 좁힌다",
+    goal: "첫 유료 고객 증거",
+    values: "작게 검증하고 근거 없는 확장을 거절한다",
     likely_users: ["AI 코딩 도구를 쓰는 개발자"],
     stage: "prototype",
     evidence: ["README"],
@@ -99,6 +133,8 @@ test("normalizeWorkspaceOnboardingHypothesis accepts provider snake_case fields"
   assert.equal(hypothesis.targetUser, "전업 1인 개발자");
   assert.equal(hypothesis.problem, "무엇을 만들어야 팔리는지 모른다");
   assert.equal(hypothesis.purpose, "30일 안에 PMF 검증 방향을 좁힌다");
+  assert.equal(hypothesis.goal, "첫 유료 고객 증거");
+  assert.equal(hypothesis.values, "작게 검증하고 근거 없는 확장을 거절한다");
   assert.deepEqual(hypothesis.likelyUsers, ["AI 코딩 도구를 쓰는 개발자"]);
   assert.match(hypothesis.suggestedFirstQuestion, /1인 개발자/);
   assert.match(hypothesis.suggestedFirstQuestion, /가장 먼저 인터뷰/);
@@ -119,6 +155,8 @@ test("mergeWorkspaceOnboardingHypotheses combines local and provider evidence", 
       targetUser: "전업 1인 개발자",
       problem: "무엇을 만들어야 팔리는지 모른다",
       purpose: "30일 안에 PMF 검증 방향을 좁힌다",
+      goal: "첫 유료 고객 증거",
+      values: "작게 검증하고 근거 없는 확장을 거절한다",
       likelyUsers: ["AI 코딩 도구를 쓰는 개발자"],
       stage: "prototype",
       evidence: ["package.json"],
@@ -129,6 +167,8 @@ test("mergeWorkspaceOnboardingHypotheses combines local and provider evidence", 
   assert.equal(merged.productName, "Agentic30");
   assert.equal(merged.projectKind, "mac_app");
   assert.equal(merged.targetUser, "전업 1인 개발자");
+  assert.equal(merged.goal, "첫 유료 고객 증거");
+  assert.equal(merged.values, "작게 검증하고 근거 없는 확장을 거절한다");
   assert.equal(merged.confidence, "high");
   assert.deepEqual(merged.likelyUsers, ["개발자", "AI 코딩 도구를 쓰는 개발자"]);
   assert.deepEqual(merged.evidence, ["README", "package.json"]);

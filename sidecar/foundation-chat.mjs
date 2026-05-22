@@ -39,11 +39,11 @@ export const FOUNDATION_DAYS = Object.freeze({
   },
   1: {
     day: 1,
-    core_question: "고객의 어제 행동에서 가장 압축된 통증 1개는 뭐야?",
+    core_question: "프로젝트 목표와 ICP, Pain Point, Outcome 정렬문이 뭐야?",
     input_sources: ["path", "work_log", "interview", "bip"],
     sub_workflow: "office-hours-docs",
     spec_version: "v0",
-    artifacts: ["SPEC.md", "day-1-pain-summary.md"],
+    artifacts: ["SPEC.md", "day-1-alignment-statement.md"],
   },
   2: {
     day: 2,

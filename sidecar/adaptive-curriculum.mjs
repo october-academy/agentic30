@@ -180,7 +180,7 @@ export const AGENTIC30_THREE_LAYERS = Object.freeze({
 });
 
 export const IDD_BASE_CURRICULUM = Object.freeze([
-  day(1, "foundation", "고객의 어제 행동에서 통증 1개를 압축한다", "Pain", "4종 인풋에서 가장 압축된 고객 통증 1개를 뽑고 SPEC.md v0의 기준으로 둔다.", ["고객 발화 또는 문제 메모에서 과거 행동 1개 고르기", "status quo와 비용/시간/실수 단위로 적기", "SPEC.md v0에 통증 1개와 근거 1개 기록"], "SPEC.md v0, pain quote, status quo"),
+  day(1, "foundation", "목표와 고객 정렬문을 만든다", "Alignment", "프로젝트 목표를 ICP, Pain Point, Outcome 세 문장으로 압축하고 Day 2 시장 신호 검증 기준으로 둔다.", ["프로젝트 목표 한 문장 고정하기", "ICP / Pain Point / Outcome 세 컴포넌트 작성하기", "품질 게이트 7.0/10 이상인지 확인하고 Day 2 handoff 기록"], "day-1-alignment-statement.md, docs/GOAL.md, docs/ICP.md, docs/SPEC.md v0"),
   day(2, "foundation", "돈이 흐르는 기준 시장을 고른다", "Market", "어제 통증과 가까운 iOS/Android/Web/Mac 앱·도구 시장에서 이미 지불 행동이 있는지 확인한다.", ["카테고리 1-2개 고르기", "작은 팀/개인이 만든 유료 앱·광고 앱 5개 찾기", "가격·리뷰·ASO·광고/콘텐츠 흔적을 day-2-evidence-log.md에 기록"], "day-2-evidence-log.md"),
   day(3, "foundation", "Mom Test 인터뷰 질문을 만든다", "Mom Test", "약한 가설을 검증/반증할 5문장 인터뷰 질문을 만들고 미래 의향 질문을 제거한다.", ["과거 행동 질문 3개 이상 쓰기", "미래 의향/칭찬 유도 질문 제거", "다음 인터뷰 대상 1명과 질문 5개 확정"], "day-3-interview-script.md"),
   day(4, "foundation", "10배 wedge로 약한 섹션을 다시 쓴다", "10x Wedge", "경쟁 앱을 베끼지 않고 더 좁은 페르소나나 더 빠른 결과로 SPEC.md의 약한 섹션을 다시 쓴다.", ["원조/대체재의 핵심 흐름 1개 고르기", "가격·속도·UX·페르소나 중 10배 wedge 1개 선택", "SPEC.md 같은 파일에서 약한 섹션 다시 쓰기"], "day-4-rewrite-decision.md"),

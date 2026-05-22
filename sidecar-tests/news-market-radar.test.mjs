@@ -30,6 +30,7 @@ import {
 import {
   MARKET_RADAR_TRUSTED_SOURCE_CATALOG,
   annotateMarketRadarSourceTrust,
+  buildTrustedSourceQueriesForLane,
   trustedSourcesForMarketRadarPrompt,
 } from "../sidecar/market-radar-source-catalog.mjs";
 
@@ -189,6 +190,9 @@ test("provider prompt requires Korean user-facing Market Radar copy", () => {
 
   assert.match(prompt, /All user-facing prose in the JSON must be Korean/);
   assert.match(prompt, /card title, summary, whyItMatters, suggestedHypothesisUpdate, and sourceRefs\.excerpt in Korean/);
+  assert.match(prompt, /Adaptive source policy/);
+  assert.match(prompt, /Context\.adaptiveProfile\.querySeeds/);
+  assert.match(prompt, /fixed persona, geography, tool-stack, or platform assumptions/);
   assert.match(prompt, /짧은 한국어 신호 제목/);
   assert.match(prompt, new RegExp(NEWS_MARKET_RADAR_PROMPT_PROFILE));
   assert.match(prompt, /Self-source exclusion/);
@@ -215,9 +219,35 @@ test("provider prompt requires Korean user-facing Market Radar copy", () => {
   });
   assert.match(lanePrompt, /Research only the single lane/);
   assert.match(lanePrompt, /Never return more than 6 cards/);
+  assert.match(lanePrompt, /Adaptive source policy/);
+  assert.match(lanePrompt, /Context\.adaptiveProfile\.localeProfile/);
   assert.match(lanePrompt, /Self-source exclusion/);
   assert.match(lanePrompt, /Context\.trustedSourceHints/);
   assert.match(lanePrompt, /cannot make confidence strong/);
+});
+
+test("trusted source queries use adaptive seeds instead of catalog hardcoded hints", () => {
+  const queries = buildTrustedSourceQueriesForLane({
+    laneId: "channel",
+    querySeeds: ["AI customer discovery pricing"],
+    maxQueries: 12,
+  });
+
+  assert.ok(queries.length > 0);
+  assert.ok(queries.every((query) => /AI customer discovery pricing/.test(query)));
+  assert.doesNotMatch(queries.join("\n"), /한국 1인 개발자|사이드프로젝트|빌드인퍼블릭|한국 스타트업|초기 유저|제품 출시/);
+});
+
+test("trusted source queries order Korean community sources only for Korean context", () => {
+  const queries = buildTrustedSourceQueriesForLane({
+    laneId: "channel",
+    querySeeds: ["한국 B2B SaaS 창업자 첫 상담 예약"],
+    localeProfile: { primaryLanguage: "ko" },
+    maxQueries: 4,
+  });
+
+  assert.match(queries[0], /site:disquiet\.io|site:eopla\.net/);
+  assert.ok(queries.every((query) => /한국 B2B SaaS 창업자 첫 상담 예약/.test(query)));
 });
 
 test("research context keeps the product name out of query seeds and records it as self-reference", () => {
@@ -259,6 +289,7 @@ test("research context keeps the product name out of query seeds and records it 
   assert.ok(context.selfReferenceProfile.ownedDomains.includes("acmepilot.io"));
   assert.ok(context.selfReferenceProfile.githubRepoSlugs.includes("example/acmepilot"));
   assert.doesNotMatch(context.querySeeds.join(" "), /AcmePilot/i);
+  assert.ok(context.adaptiveProfile.querySeeds.some((seed) => /한국 1인 개발자/.test(seed)));
   assert.deepEqual(context.searchExclusions.excludeDomains, ["acmepilot.io"]);
   assert.equal(context.searchExclusions.excludeText.length, 1);
   assert.match(context.searchExclusions.excludeText[0], /acmepilot/i);
@@ -309,7 +340,8 @@ test("trusted source hints are lane-specific and still respect self-source exclu
     laneContext.trustedSourceHints.sources.some((source) => source.domain === "lennysnewsletter.com"),
     true,
   );
-  assert.ok(laneContext.trustedSourceHints.queries.some((query) => /site:ycombinator\.com\/library/.test(query)));
+  assert.ok(laneContext.trustedSourceHints.queries.length > 0);
+  assert.ok(laneContext.trustedSourceHints.queries.some((query) => /유료 AI 도구|한국 1인 개발자|Find public communities/.test(query)));
   assert.doesNotMatch(laneContext.trustedSourceHints.queries.join(" "), /AcmePilot/i);
   assert.doesNotMatch(laneContext.searchExclusions.additionalQueries.join(" "), /AcmePilot/i);
 
@@ -453,6 +485,56 @@ test("trusted-source reranking prefers primary corroborated evidence over generi
   const cards = snapshot.lanes.find((lane) => lane.id === "alternatives_pricing").cards;
   assert.equal(cards[0].id, "trusted");
   assert.equal(cards[0].confidence, "strong");
+});
+
+test("locale reranking prefers Korean market sources only for Korean context", () => {
+  const rawSnapshot = {
+    generatedAt: "2026-05-20T00:00:00.000Z",
+    lanes: [{
+      id: "channel",
+      cards: [
+        {
+          id: "generic-english",
+          title: "Generic English launch advice",
+          summary: "Two generic English domains discuss launch advice.",
+          impact: "strengthens",
+          confidence: "strong",
+          sourceRefs: [
+            { url: "https://random-saas.example/launch", title: "Launch advice", excerpt: "Launch to founders." },
+            { url: "https://another-saas.example/community", title: "Community", excerpt: "Find a community." },
+          ],
+        },
+        {
+          id: "korean-first",
+          title: "한국 1인 개발자는 커뮤니티 공개 기록에 반응합니다",
+          summary: "디스콰이엇과 EO Planet의 한국어 공개 글은 국내 초기 유저 탐색 맥락을 더 직접적으로 보여줍니다.",
+          impact: "strengthens",
+          confidence: "strong",
+          sourceRefs: [
+            { url: "https://disquiet.io/product/example", title: "디스콰이엇 공개", excerpt: "한국 1인 개발자 사이드프로젝트 공개 글입니다." },
+            { url: "https://eopla.net/magazines/example", title: "EO Planet", excerpt: "한국 스타트업 초기 유저와 고객 인터뷰 맥락입니다." },
+          ],
+        },
+      ],
+    }],
+  };
+
+  const withoutLocaleContext = normalizeNewsMarketRadarSnapshot(rawSnapshot, {
+    now: new Date("2026-05-20T00:00:00.000Z"),
+  });
+  assert.equal(withoutLocaleContext.lanes.find((lane) => lane.id === "channel").cards[0].id, "generic-english");
+
+  const snapshot = normalizeNewsMarketRadarSnapshot(rawSnapshot, {
+    now: new Date("2026-05-20T00:00:00.000Z"),
+    adaptiveProfile: {
+      localeProfile: { primaryLanguage: "ko" },
+      relevanceTerms: ["한국 1인 개발자", "초기 유저", "고객 인터뷰"],
+    },
+  });
+
+  const cards = snapshot.lanes.find((lane) => lane.id === "channel").cards;
+  assert.equal(cards[0].id, "korean-first");
+  assert.equal(cards[0].confidence, "medium");
 });
 
 test("snapshot normalization removes dynamic self-sources and drops self-only cards", () => {
@@ -618,7 +700,7 @@ test("legacy EXA_API_KEY missing cache is non-blocking when provider Exa MCP exi
 
 test("old Market Radar prompt profile cache is marked stale when Exa is configured", async () => {
   await withTmpWorkspace(async (root) => {
-    assert.equal(NEWS_MARKET_RADAR_PROMPT_PROFILE, "ko_market_radar_v4_trusted_sources_no_self_sources");
+    assert.equal(NEWS_MARKET_RADAR_PROMPT_PROFILE, "ko_market_radar_v6_adaptive_context_trusted_sources_no_self_sources");
     await fs.mkdir(path.dirname(resolveNewsMarketRadarCachePath(root)), { recursive: true });
     await fs.writeFile(resolveNewsMarketRadarCachePath(root), JSON.stringify({
       schemaVersion: 1,

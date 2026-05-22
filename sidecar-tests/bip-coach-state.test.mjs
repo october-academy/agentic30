@@ -385,6 +385,39 @@ test("builds local-first fallback missions without Google proof sinks", () => {
   assert.doesNotMatch(text, /Threads URL|Sheet 오늘 행|Sheet에 URL|Threads에 올리고/);
 });
 
+test("builds fallback missions from cached project context without local scan evidence", () => {
+  const choices = buildFallbackBipMissionChoices({
+    today: "2026-05-21",
+    now: new Date("2026-05-21T01:00:00.000Z"),
+    curriculumDay: {
+      day: 8,
+      title: "MVP를 핵심 기능 1개로 자른다",
+      output: "핵심 기능 한 줄",
+    },
+    state: {
+      config: {},
+      evidence: {
+        projectContextCache: "ready",
+        projectContext: {
+          productName: "RevenuePilot",
+          targetUser: "한국 B2B SaaS 창업자",
+          problem: "첫 세일즈 콜 메시지가 팔리는지 모른다",
+          purpose: "상담 예약으로 세일즈 메시지를 검증한다",
+          goal: "10개 유료 상담 예약",
+          values: "자동화보다 고객 대화 증거를 우선한다",
+        },
+      },
+    },
+    localEvidence: null,
+  });
+
+  const text = JSON.stringify(choices);
+  assert.equal(choices.length, 3);
+  assert.match(text, /한국 B2B SaaS 창업자/);
+  assert.match(text, /10개 유료 상담 예약|세일즈 콜/);
+  assert.match(text, /프로젝트 컨텍스트 캐시: RevenuePilot/);
+});
+
 test("parses three mission choices from provider JSON", () => {
   const choices = parseMissionChoicesResponse(
     JSON.stringify({

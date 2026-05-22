@@ -57,10 +57,13 @@ export function buildBipPrompt(bipConfig, topic) {
   lines.push("");
   lines.push("## Instructions");
   lines.push(
-    "1. First, use the MCP tools (`read_project_doc`) to read the ICP, SPEC, and Goal documents to understand the product vision, target audience, and current objectives.",
+    "0. Use the Source-Derived Project Context block, when present, as the canonical summary of customer, goal, purpose, problem, and values. Do not scan source code to infer those fields during this BIP run.",
   );
   lines.push(
-    "2. Use workspace tools (`search_workspace`, `list_workspace_files`) to check recent activity — look at recently modified files, README, CHANGELOG, etc.",
+    "1. Use the MCP tools (`read_project_doc`) to read configured ICP, SPEC, and Goal documents only when you need more detail than the cached project context provides.",
+  );
+  lines.push(
+    "2. Use workspace tools (`search_workspace`, `list_workspace_files`) only for concrete recent activity or changed artifact details, not to rebuild customer/goal/value context.",
   );
   lines.push(
     "3. If external document URLs are provided above, reference them as additional context the developer maintains.",

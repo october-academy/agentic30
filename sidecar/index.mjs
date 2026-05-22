@@ -29,7 +29,8 @@ import { createTelemetryClient } from "./telemetry.mjs";
 import { getCachedBipContext } from "./context-cache.mjs";
 import { collectLocalDiscovery } from "./local-discovery.mjs";
 import {
-  composeDay1IcpPlan,
+  composeDay1AlignmentPlan,
+  generateDay1AlignmentPlan,
   generateDay1IcpPlan,
 } from "./generate-day1-icp-plan.mjs";
 import {
@@ -41,6 +42,11 @@ import {
   mergeWorkspaceOnboardingHypotheses,
   normalizeWorkspaceOnboardingHypothesis,
 } from "./onboarding-hypothesis.mjs";
+import {
+  formatProjectContextForPrompt,
+  loadProjectContextCache,
+  refreshProjectContextCache,
+} from "./project-context-cache.mjs";
 import {
   buildAuthEnv,
   clearAuthContext,
@@ -160,6 +166,11 @@ import {
   refreshNewsMarketRadar,
 } from "./news-market-radar.mjs";
 import {
+  buildBipResearchProgressStatus,
+  loadBipResearchSnapshot,
+  refreshBipResearch,
+} from "./bip-research-radar.mjs";
+import {
   buildExaApiKeyRoute,
   discoverExaMcpRoutes,
   orderExaMcpRoutes,
@@ -278,6 +289,9 @@ const state = {
   newsMarketRadarRefreshPromise: null,
   newsMarketRadarProgress: null,
   newsMarketRadarProgressStartedAt: null,
+  bipResearchRefreshPromise: null,
+  bipResearchProgress: null,
+  bipResearchProgressStartedAt: null,
   integrationSettings: {
     exaApiKey: "",
   },
@@ -1444,6 +1458,17 @@ async function handleClientMessage(socket, payload) {
       }
       return;
     }
+    case "project_context_refresh": {
+      fireAndForget(
+        "project_context_refresh",
+        refreshProjectContextFromRequest(payload),
+        {
+          reason: payload.reason || "",
+          completed_day: payload.completedDay ?? payload.completed_day ?? null,
+        },
+      );
+      return;
+    }
     case "news_market_radar_get": {
       const exaRoutes = resolveNewsMarketRadarExaRoutes({
         preferredProvider: payload.preferredProvider,
@@ -1471,6 +1496,44 @@ async function handleClientMessage(socket, payload) {
         reason: payload.reason || "manual",
         force: Boolean(payload.force),
         preferredProvider: payload.preferredProvider,
+        targetSocket: socket,
+      });
+      return;
+    }
+    case "bip_research_get": {
+      const dayNumber = Number.parseInt(payload.dayNumber ?? payload.day ?? 1, 10) || 1;
+      const exaRoutes = resolveNewsMarketRadarExaRoutes({
+        preferredProvider: payload.preferredProvider,
+      });
+      const snapshot = await loadBipResearchSnapshot({
+        workspaceRoot,
+        dayNumber,
+        curriculumDay: payload.curriculumDay,
+        bipConfig: currentBipConfig(),
+        onboardingHypothesis: state.workspaceOnboardingHypothesis,
+        exaApiKey: currentExaApiKey(),
+        exaConfigured: exaRoutes.length > 0,
+        exaResearchSource: exaRoutes[0]?.label || null,
+      });
+      send(socket, {
+        type: "bip_research_result",
+        bipResearch: snapshot,
+      });
+      if (state.bipResearchRefreshPromise && state.bipResearchProgress) {
+        send(socket, {
+          type: "bip_research_status",
+          status: state.bipResearchProgress,
+        });
+      }
+      return;
+    }
+    case "bip_research_refresh": {
+      scheduleBipResearchRefresh({
+        reason: payload.reason || "manual",
+        force: Boolean(payload.force),
+        preferredProvider: payload.preferredProvider,
+        dayNumber: payload.dayNumber ?? payload.day ?? 1,
+        curriculumDay: payload.curriculumDay,
         targetSocket: socket,
       });
       return;
@@ -3244,12 +3307,17 @@ async function buildPromptWithBipContext(prompt, route = classifyChatExecutionRo
   const bipManifest = buildChatBipManifest();
   const qmdState = getQmdState({ sidecarRoot });
   if (qmdState.available) {
-    return bipManifest
+    const projectContextBlock = await buildChatProjectContextBlock().catch((error) => {
+      telemetry.captureException(error, { operation: "buildChatProjectContextBlock" });
+      return "";
+    });
+    return bipManifest || projectContextBlock
       ? [
           bipManifest,
+          projectContextBlock,
           "## User Message",
           prompt,
-        ].join("\n\n")
+        ].filter(Boolean).join("\n\n")
       : prompt;
   }
   const bipContext = await buildChatBipContext().catch((error) => {
@@ -3591,6 +3659,8 @@ async function buildChatBipContext() {
     remainingChars -= next.length;
   };
 
+  appendSection(await buildChatProjectContextBlock(root));
+
   for (const item of await collectChatBipLocalDocs(bipConfig, root)) {
     appendSection(formatChatBipDocumentSection(item));
   }
@@ -3609,6 +3679,15 @@ async function buildChatBipContext() {
   }
 
   return sections.length > 3 ? sections.join("\n\n") : "";
+}
+
+async function buildChatProjectContextBlock(root = "") {
+  const configuredRoot = String(root || readJsonFile(path.join(appSupportPath, "bip-config.json"))?.workspace?.root || "").trim();
+  if (!configuredRoot) return "";
+  const projectContext = await loadProjectContextCache({ workspaceRoot: path.resolve(configuredRoot) });
+  return formatProjectContextForPrompt(projectContext, {
+    missing: "## Source-Derived Project Context\nProject context cache is missing. Use configured docs and Google BIP evidence; do not scan source code during this BIP request.",
+  });
 }
 
 function buildChatBipManifest() {
@@ -3885,8 +3964,14 @@ async function runBipDraft(session, topic, originalPrompt) {
   try {
     appendAssistantText(session, assistantMessage.id, "Reading project context...\n\n");
 
+    const projectContext = await loadProjectContextCache({
+      workspaceRoot: bipConfig.workspace.root || workspaceRoot,
+    });
     const bipPrompt = [
       buildBipPrompt(bipConfig, topic),
+      formatProjectContextForPrompt(projectContext, {
+        missing: "## Source-Derived Project Context\nProject context cache is missing. Do not scan source code during this BIP draft run; rely on configured docs, external docs, and recent activity tools.",
+      }),
       buildQmdGuidance(bipConfig.workspace.root || workspaceRoot, { appSupportPath, sidecarRoot }),
     ].filter(Boolean).join("\n\n");
 
@@ -4137,6 +4222,7 @@ async function readBipCoachEvidenceBundle({ onProgress } = {}) {
     payload: docPayload,
   }).catch(() => {});
   const docFullText = extractGoogleDocPlainText(docPayload);
+  const projectContext = await loadProjectContextCache({ workspaceRoot });
   const now = new Date().toISOString();
   return {
     config,
@@ -4158,6 +4244,8 @@ async function readBipCoachEvidenceBundle({ onProgress } = {}) {
       docCharsRead: docFullText.length,
       docCharsTotal: docFullText.length,
       docWasTruncated: false,
+      projectContext: projectContext || null,
+      projectContextCache: projectContext ? "ready" : "missing",
       error: null,
     },
   };
@@ -4307,7 +4395,7 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
         state: state.bipCoach,
         compact,
         curriculumDay,
-        localEvidence,
+        localEvidence: null,
         today,
         now,
     });
@@ -4411,13 +4499,22 @@ async function generateBasicBipCoachMission({
 
     const missingLocalDocs = (gate?.missingLocalDocs || []).map((doc) => doc.title || doc.type).filter(Boolean);
     const missingExternal = (gate?.missingExternalRequirements || []).map((item) => item.title || item.id).filter(Boolean);
+    const projectContext = await loadProjectContextCache({ workspaceRoot });
+    const missionState = normalizeBipCoachState({
+      ...state.bipCoach,
+      evidence: {
+        ...(state.bipCoach?.evidence || {}),
+        projectContext: projectContext || null,
+        projectContextCache: projectContext ? "ready" : "missing",
+      },
+    });
     const missionChoices = buildFallbackBipMissionChoices({
-      state: state.bipCoach,
+      state: missionState,
       compact,
       curriculumDay,
       today,
       provider: "local",
-      localEvidence,
+      localEvidence: null,
     });
     const now = new Date();
     state.bipCoach = normalizeBipCoachState({
@@ -4428,10 +4525,12 @@ async function generateBasicBipCoachMission({
         source: "partial_workspace",
         provider: "local",
         fallbackUsed: true,
-        summary: localEvidence
-          ? "프로젝트 폴더와 온보딩 기록 선택을 기준으로 오늘 실행 후보를 만들었습니다."
-          : "프로젝트 문서나 Google 기록이 아직 준비되지 않아 선택한 Day 커리큘럼만으로 오늘 실행 후보를 만들었습니다.",
-        localEvidence,
+        summary: projectContext
+          ? "캐시된 프로젝트 맥락과 선택한 Day 커리큘럼을 기준으로 오늘 실행 후보를 만들었습니다."
+          : "프로젝트 문서나 Google 기록이 아직 준비되지 않아 캐시된 프로젝트 맥락과 선택한 Day 커리큘럼만으로 오늘 실행 후보를 만들었습니다.",
+        localEvidence: null,
+        projectContext: projectContext || null,
+        projectContextCache: projectContext ? "ready" : "missing",
         sheetTitle: "",
         sheetTabName: "",
         allRows: [],
@@ -5960,6 +6059,58 @@ function scheduleWorkspaceOnboardingHypothesisWarmup() {
     });
 }
 
+async function refreshProjectContextFromRequest(payload = {}) {
+  const requestedRoot = String(payload.workspaceRoot || payload.workspace_root || workspaceRoot || "").trim();
+  const root = requestedRoot ? path.resolve(requestedRoot) : workspaceRoot;
+  const reason = String(payload.reason || "manual").trim() || "manual";
+  const completedDay = payload.completedDay ?? payload.completed_day ?? null;
+  let scanResult = await findWorkspaceDocsLocally(root).catch(() => null);
+  let onboardingHypothesis = await deriveWorkspaceOnboardingHypothesisLocally(root, {
+    docPaths: scanResult || currentBipConfig()?.workspace || {},
+  }).catch(() => null);
+
+  if (reason === "day_completed") {
+    const agentResults = await Promise.allSettled([
+      runWorkspaceScanAgent({ provider: "claude", model: WORKSPACE_SCAN_CLAUDE_MODEL, scanRoot: root }),
+      runWorkspaceScanAgent({ provider: "codex", model: WORKSPACE_SCAN_CODEX_MODEL, scanRoot: root }),
+      runWorkspaceScanAgent({ provider: "gemini", model: WORKSPACE_SCAN_GEMINI_MODEL, scanRoot: root }),
+    ]);
+    const parsedAgentResults = agentResults
+      .filter((result) => result.status === "fulfilled" && result.value)
+      .map((result) => result.value);
+    if (parsedAgentResults.length) {
+      scanResult = mergeWorkspaceScanResults(scanResult, ...parsedAgentResults);
+      onboardingHypothesis = mergeWorkspaceOnboardingHypotheses(
+        onboardingHypothesis,
+        ...parsedAgentResults.map((result) => result.onboardingHypothesis),
+      );
+    }
+  }
+
+  const projectContext = await refreshProjectContextCache({
+    workspaceRoot: root,
+    reason,
+    scanResult,
+    onboardingHypothesis,
+    completedDay,
+    docPaths: currentBipConfig()?.workspace || {},
+  });
+  state.workspaceOnboardingHypothesis = normalizeWorkspaceOnboardingHypothesis(projectContext);
+  broadcast({
+    type: "project_context_updated",
+    workspaceRoot: root,
+    reason,
+    completedDay: projectContext.lastCompletedDay,
+    projectContext,
+  });
+  telemetry.captureEvent("mac_sidecar_project_context_updated", {
+    reason,
+    completed_day: projectContext.lastCompletedDay || 0,
+    confidence: projectContext.confidence,
+  });
+  return projectContext;
+}
+
 function cachedWorkspaceOnboardingHypothesisForIddDoc(doc) {
   if (doc?.type !== "icp") {
     return null;
@@ -6230,11 +6381,30 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
         agent_result_count: 0,
         provider_verification_skipped: true,
       });
+      const day1AlignmentPlan = await generateDay1AlignmentPlan({
+        workspaceRoot: scanRoot,
+        scanResult: localResult,
+        onboardingHypothesis: localOnboardingHypothesis,
+        localDiscovery,
+      });
       const day1IcpPlan = await generateDay1IcpPlan({
         workspaceRoot: scanRoot,
         scanResult: localResult,
         onboardingHypothesis: localOnboardingHypothesis,
         localDiscovery,
+      });
+      const projectContext = await refreshProjectContextCache({
+        workspaceRoot: scanRoot,
+        reason: "workspace_scan",
+        scanResult: localResult,
+        onboardingHypothesis: localOnboardingHypothesis,
+      });
+      broadcast({
+        type: "project_context_updated",
+        workspaceRoot: scanRoot,
+        reason: "workspace_scan",
+        completedDay: projectContext.lastCompletedDay,
+        projectContext,
       });
       broadcast({
         type: "workspace_scan_result",
@@ -6248,11 +6418,13 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
         docs: localResult.docs || null,
         sheet: localResult.sheet || null,
         onboardingHypothesis: localOnboardingHypothesis,
+        day1AlignmentPlan,
         day1IcpPlan,
       });
-      triggerDay1IcpPlanBroadcast({
+      triggerDay1AlignmentPlanBroadcast({
         scanRoot,
-        deterministicPlan: day1IcpPlan,
+        deterministicPlan: day1AlignmentPlan,
+        compatibilityIcpPlan: day1IcpPlan,
       });
       return;
     }
@@ -6304,11 +6476,30 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
       onboarding_hypothesis_confidence: onboardingHypothesis.confidence,
       agent_result_count: parsedAgentResults.length,
     });
+    const day1AlignmentPlan = await generateDay1AlignmentPlan({
+      workspaceRoot: scanRoot,
+      scanResult: merged,
+      onboardingHypothesis,
+      localDiscovery,
+    });
     const day1IcpPlan = await generateDay1IcpPlan({
       workspaceRoot: scanRoot,
       scanResult: merged,
       onboardingHypothesis,
       localDiscovery,
+    });
+    const projectContext = await refreshProjectContextCache({
+      workspaceRoot: scanRoot,
+      reason: "workspace_scan",
+      scanResult: merged,
+      onboardingHypothesis,
+    });
+    broadcast({
+      type: "project_context_updated",
+      workspaceRoot: scanRoot,
+      reason: "workspace_scan",
+      completedDay: projectContext.lastCompletedDay,
+      projectContext,
     });
     broadcast({
       type: "workspace_scan_result",
@@ -6322,11 +6513,13 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
       docs: merged.docs || null,
       sheet: merged.sheet || null,
       onboardingHypothesis,
+      day1AlignmentPlan,
       day1IcpPlan,
     });
-    triggerDay1IcpPlanBroadcast({
+    triggerDay1AlignmentPlanBroadcast({
       scanRoot,
-      deterministicPlan: day1IcpPlan,
+      deterministicPlan: day1AlignmentPlan,
+      compatibilityIcpPlan: day1IcpPlan,
     });
   } catch (error) {
     telemetry.captureException(error, {
@@ -6409,6 +6602,8 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
     "- targetUser: the current customer/ICP definition visible from docs, in Korean when possible",
     "- problem: the concrete user pain/problem the product claims to solve; do not infer from tech stack alone",
     "- purpose: the product's stated purpose/outcome; prefer README/docs mission/spec wording",
+    "- goal: the concrete business/product goal or proof target visible in docs/source signals",
+    "- values: compact product values, principles, or tradeoff rules visible in docs/source signals",
     "- likelyUsers: 1-4 concrete Korean user segments visible from repository evidence",
     "- stage: idea, prototype, first_users, pre_revenue, post_revenue, or unknown",
     "- evidence: 1-5 short facts from README/docs/package/config/recent files",
@@ -6417,7 +6612,7 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
     "",
     "Prefer exact filenames under docs/. If exact files are absent, use the closest matching project document.",
     "Return paths relative to the workspace root. Use null when not found.",
-    '{"icp": null, "spec": null, "values": null, "designSystem": null, "adr": null, "goal": null, "docs": null, "sheet": null, "onboardingHypothesis": {"productName": "", "projectKind": "unknown", "targetUser": "", "problem": "", "purpose": "", "likelyUsers": [], "stage": "unknown", "evidence": [], "confidence": "low", "suggestedFirstQuestion": ""}}',
+    '{"icp": null, "spec": null, "values": null, "designSystem": null, "adr": null, "goal": null, "docs": null, "sheet": null, "onboardingHypothesis": {"productName": "", "projectKind": "unknown", "targetUser": "", "problem": "", "purpose": "", "goal": "", "values": "", "likelyUsers": [], "stage": "unknown", "evidence": [], "confidence": "low", "suggestedFirstQuestion": ""}}',
   ].join("\n");
   const systemPromptOverride = [
     "You are a fast read-only workspace document scanner.",
@@ -6721,15 +6916,16 @@ function countWorkspaceScanResults(result) {
 }
 
 /**
- * LLM-enhanced ICP plan follows the same non-blocking pattern as the Day 1
- * deterministic plan already included in workspace_scan_result. This event
- * only refreshes the UI if a richer valid plan arrives.
+ * LLM-enhanced alignment plan follows the same non-blocking pattern as the
+ * Day 1 deterministic plan already included in workspace_scan_result. This
+ * event only refreshes the UI if a richer valid plan arrives; the legacy
+ * day1IcpPlan remains attached as a compatibility fallback.
  */
-function triggerDay1IcpPlanBroadcast({ scanRoot, deterministicPlan }) {
+function triggerDay1AlignmentPlanBroadcast({ scanRoot, deterministicPlan, compatibilityIcpPlan = null }) {
   if (!scanRoot || !deterministicPlan) return;
   if (process.env.AGENTIC30_TEST_STUB_PROVIDER === "1") return;
   Promise.resolve()
-    .then(() => composeDay1IcpPlan({
+    .then(() => composeDay1AlignmentPlan({
       workspaceRoot: scanRoot,
       deterministicPlan,
       queryImpl: query,
@@ -6737,14 +6933,15 @@ function triggerDay1IcpPlanBroadcast({ scanRoot, deterministicPlan }) {
     .then((plan) => {
       if (!plan) return;
       broadcast({
-        type: "workspace_day1_icp_plan_result",
+        type: "workspace_day1_alignment_plan_result",
         scanRoot,
-        day1IcpPlan: plan,
+        day1AlignmentPlan: plan,
+        day1IcpPlan: compatibilityIcpPlan,
       });
     })
     .catch((error) => {
       telemetry.captureException(error, {
-        operation: "triggerDay1IcpPlanBroadcast",
+        operation: "triggerDay1AlignmentPlanBroadcast",
         scan_root: scanRoot,
       });
     });
@@ -6946,6 +7143,157 @@ async function runNewsMarketRadarRefresh({
     if (targetSocket) send(targetSocket, payload);
     else broadcast(payload);
     return failed;
+  } finally {
+    clearInterval(progressHeartbeat);
+  }
+}
+
+function scheduleBipResearchRefresh({
+  reason = "manual",
+  force = false,
+  preferredProvider = "",
+  dayNumber = 1,
+  curriculumDay = null,
+  targetSocket = null,
+} = {}) {
+  const normalizedReason = ["daily", "manual", "day_answer", "workspace_scan"].includes(reason)
+    ? reason
+    : "manual";
+  if (state.bipResearchRefreshPromise) {
+    const status = buildBipResearchProgressStatus(
+      state.bipResearchProgress || { stale: true },
+      {
+        reason: normalizedReason,
+        stale: true,
+        startedAt: state.bipResearchProgressStartedAt,
+        researchSource: state.bipResearchProgress?.researchSource || null,
+      },
+    );
+    state.bipResearchProgress = status;
+    send(targetSocket, { type: "bip_research_status", status });
+    return state.bipResearchRefreshPromise;
+  }
+  const promise = runBipResearchRefresh({
+    reason: normalizedReason,
+    force,
+    preferredProvider,
+    dayNumber,
+    curriculumDay,
+    targetSocket,
+  }).finally(() => {
+    state.bipResearchRefreshPromise = null;
+    state.bipResearchProgress = null;
+    state.bipResearchProgressStartedAt = null;
+  });
+  state.bipResearchRefreshPromise = promise;
+  return promise;
+}
+
+async function runBipResearchRefresh({
+  reason = "manual",
+  force = false,
+  preferredProvider = "",
+  dayNumber = 1,
+  curriculumDay = null,
+  targetSocket = null,
+} = {}) {
+  const startedAt = Date.now();
+  state.bipResearchProgressStartedAt = startedAt;
+  const exaApiKey = currentExaApiKey();
+  const exaResearchRoutes = resolveNewsMarketRadarExaRoutes({ preferredProvider });
+  const emitProgress = (progress = {}) => {
+    const status = buildBipResearchProgressStatus(progress, {
+      reason,
+      startedAt,
+      researchSource: exaResearchRoutes[0]?.label || null,
+    });
+    state.bipResearchProgress = status;
+    broadcast({
+      type: "bip_research_status",
+      status,
+    });
+    return status;
+  };
+  const progressHeartbeat = setInterval(() => {
+    if (!state.bipResearchProgress) return;
+    const status = buildBipResearchProgressStatus(state.bipResearchProgress, {
+      reason,
+      startedAt,
+      researchSource: exaResearchRoutes[0]?.label || null,
+    });
+    state.bipResearchProgress = status;
+    broadcast({
+      type: "bip_research_status",
+      status,
+    });
+  }, 1_000);
+  progressHeartbeat.unref?.();
+  try {
+    const snapshot = await refreshBipResearch({
+      workspaceRoot,
+      dayNumber,
+      curriculumDay,
+      bipConfig: currentBipConfig(),
+      onboardingHypothesis: state.workspaceOnboardingHypothesis,
+      exaApiKey,
+      exaResearchRoutes,
+      reason,
+      force,
+      providerResearcher: (args) => runNewsMarketRadarProviderResearch({
+        ...args,
+        onProgress: emitProgress,
+      }),
+      onProgress: emitProgress,
+    });
+    broadcast({
+      type: "bip_research_result",
+      bipResearch: snapshot,
+    });
+    telemetry.captureEvent("mac_sidecar_bip_research_refresh_completed", {
+      reason,
+      day_number: snapshot.dayNumber || Number.parseInt(dayNumber, 10) || 1,
+      duration_ms: Date.now() - startedAt,
+      candidate_count: snapshot.candidates?.length || 0,
+      exa_configured: exaResearchRoutes.length > 0,
+      exa_research_source: snapshot.status?.researchSource || exaResearchRoutes[0]?.label || "",
+    });
+    return snapshot;
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "bip_research_refresh",
+      reason,
+      exa_configured: exaResearchRoutes.length > 0,
+    });
+    const cached = await loadBipResearchSnapshot({
+      workspaceRoot,
+      dayNumber,
+      curriculumDay,
+      bipConfig: currentBipConfig(),
+      onboardingHypothesis: state.workspaceOnboardingHypothesis,
+      exaApiKey,
+      exaConfigured: exaResearchRoutes.length > 0,
+      exaResearchSource: exaResearchRoutes[0]?.label || null,
+    });
+    const failedSnapshot = {
+      ...cached,
+      status: {
+        state: "failed",
+        lastSuccessAt: cached.status?.lastSuccessAt || null,
+        stale: cached.candidates?.length > 0,
+        error: formatError(error),
+        reason,
+        researchSource: cached.status?.researchSource || exaResearchRoutes[0]?.label || null,
+      },
+    };
+    broadcast({
+      type: "bip_research_result",
+      bipResearch: failedSnapshot,
+    });
+    send(targetSocket, {
+      type: "bip_research_status",
+      status: failedSnapshot.status,
+    });
+    return failedSnapshot;
   } finally {
     clearInterval(progressHeartbeat);
   }

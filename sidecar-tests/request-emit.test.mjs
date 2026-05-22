@@ -33,6 +33,10 @@ test("workspace setup request_emit envelopes are host-routed and completion wait
     const scanResult = await waitForEvent(ws.events, (event) => event.type === "workspace_scan_result");
     assert.equal(scanResult.day1Context, undefined);
     assert.equal(scanResult.composedOpening, undefined);
+    assert.equal(scanResult.day1AlignmentPlan?.schemaVersion, 1);
+    assert.equal(scanResult.day1AlignmentPlan?.components?.icp?.title, "ICP");
+    assert.equal(scanResult.day1AlignmentPlan?.components?.painPoint?.title, "Pain Point");
+    assert.equal(typeof scanResult.day1AlignmentPlan?.qualityGate?.score, "number");
     assert.equal(scanResult.day1IcpPlan?.schemaVersion, 1);
     assert.ok(Array.isArray(scanResult.day1IcpPlan?.questions));
     assert.equal(

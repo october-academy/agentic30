@@ -7,7 +7,9 @@ import {
 } from "./read-only-workspace-tool-policy.mjs";
 
 export const DAY1_ICP_PLAN_SCHEMA_VERSION = 1;
+export const DAY1_ALIGNMENT_PLAN_SCHEMA_VERSION = 1;
 export const DAY1_ICP_PLAN_MIN_CONFIDENCE = 0.35;
+export const DAY1_ALIGNMENT_PLAN_MIN_CONFIDENCE = 0.35;
 export const DAY1_ICP_PLAN_DEFAULT_TIMEOUT_MS = 30_000;
 
 const QUESTION_DIMENSIONS = Object.freeze([
@@ -24,6 +26,7 @@ const QUESTION_DIMENSIONS = Object.freeze([
 const MAX_EVIDENCE_REFS = 8;
 const MAX_DOC_CHARS = 8_000;
 const MAX_CONTEXT_CHARS = 28_000;
+const DAY1_ALIGNMENT_QUALITY_GATE_THRESHOLD = 7.0;
 
 export async function generateDay1IcpPlan({
   workspaceRoot,
@@ -60,6 +63,71 @@ export async function generateDay1IcpPlan({
     firstInterviewMessage: buildFirstInterviewMessage(signals, questions),
   };
   return normalizeDay1IcpPlan(plan) || fallbackDay1IcpPlan({ workspaceRoot, now });
+}
+
+export async function generateDay1AlignmentPlan({
+  workspaceRoot,
+  scanResult = {},
+  onboardingHypothesis = null,
+  localDiscovery = null,
+  now = new Date(),
+  fsImpl = fs,
+} = {}) {
+  const evidence = await collectDay1IcpEvidence({
+    workspaceRoot,
+    scanResult,
+    fsImpl,
+  });
+  const signals = buildDay1IcpSignals({
+    workspaceRoot,
+    scanResult,
+    onboardingHypothesis,
+    localDiscovery,
+    evidence,
+  });
+  const projectGoal = buildProjectGoal({
+    signals,
+    onboardingHypothesis,
+    evidence,
+  });
+  const components = buildAlignmentComponents({
+    signals,
+    projectGoal,
+  });
+  const alignmentStatement = buildAlignmentStatement({
+    projectGoal,
+    components,
+  });
+  const qualityGate = buildAlignmentQualityGate({
+    projectGoal,
+    signals,
+    components,
+    evidence,
+  });
+  const plan = {
+    schemaVersion: DAY1_ALIGNMENT_PLAN_SCHEMA_VERSION,
+    source: "deterministic",
+    generatedAt: toIso(now),
+    confidence: confidenceScore(signals.confidence, evidence.length, Object.keys(components).length),
+    fellBackToDeterministic: false,
+    projectGoal,
+    mission: buildAlignmentMission({ signals, projectGoal }),
+    signals,
+    components,
+    alignmentStatement,
+    qualityGate,
+    firstInterviewMessage: buildFirstInterviewMessage(
+      signals,
+      alignmentComponentsAsQuestions(components),
+    ),
+    day2Handoff: buildDay2Handoff({
+      signals,
+      projectGoal,
+      alignmentStatement,
+      qualityGate,
+    }),
+  };
+  return normalizeDay1AlignmentPlan(plan) || fallbackDay1AlignmentPlan({ workspaceRoot, now });
 }
 
 export async function composeDay1IcpPlan({
@@ -112,6 +180,56 @@ export async function composeDay1IcpPlan({
   };
 }
 
+export async function composeDay1AlignmentPlan({
+  workspaceRoot,
+  deterministicPlan,
+  queryImpl,
+  now = new Date(),
+  timeoutMs = DAY1_ICP_PLAN_DEFAULT_TIMEOUT_MS,
+} = {}) {
+  const fallback = normalizeDay1AlignmentPlan(deterministicPlan)
+    || fallbackDay1AlignmentPlan({ workspaceRoot, now });
+
+  if (typeof queryImpl !== "function") {
+    return {
+      ...fallback,
+      source: "deterministic",
+      fellBackToDeterministic: true,
+    };
+  }
+
+  let composed = null;
+  try {
+    const canUseTool = buildReadOnlyWorkspaceCanUseTool({ workspaceRoot });
+    const text = await runPlanComposerWithTimeout({
+      queryImpl,
+      prompt: buildDay1AlignmentComposerPrompt(fallback),
+      workspaceRoot,
+      canUseTool,
+      timeoutMs,
+    });
+    composed = parseDay1IcpPlanText(text);
+  } catch {
+    composed = null;
+  }
+
+  const normalized = normalizeDay1AlignmentPlan(composed);
+  if (!normalized || (normalized.confidence ?? 0) < DAY1_ALIGNMENT_PLAN_MIN_CONFIDENCE) {
+    return {
+      ...fallback,
+      source: "deterministic",
+      fellBackToDeterministic: true,
+    };
+  }
+
+  return {
+    ...normalized,
+    source: "llm",
+    generatedAt: normalized.generatedAt || toIso(now),
+    fellBackToDeterministic: false,
+  };
+}
+
 export function parseDay1IcpPlanText(text) {
   const raw = String(text || "").trim();
   if (!raw) return null;
@@ -122,6 +240,45 @@ export function parseDay1IcpPlanText(text) {
   } catch {
     return null;
   }
+}
+
+export function normalizeDay1AlignmentPlan(value) {
+  if (!value || typeof value !== "object") return null;
+
+  const signals = normalizeSignals(value.signals);
+  const projectGoal = cleanText(value.projectGoal || value.project_goal);
+  const mission = cleanText(value.mission);
+  const components = normalizeAlignmentComponents(value.components);
+  const alignmentStatement = normalizeAlignmentStatement(
+    value.alignmentStatement || value.alignment_statement,
+    { projectGoal, components },
+  );
+  const qualityGate = normalizeAlignmentQualityGate(
+    value.qualityGate || value.quality_gate,
+  );
+  const firstInterviewMessage = normalizeFirstInterviewMessage(
+    value.firstInterviewMessage || value.first_interview_message,
+  );
+  const day2Handoff = normalizeDay2Handoff(value.day2Handoff || value.day2_handoff);
+
+  if (!signals || !projectGoal || !mission || !components || !alignmentStatement) return null;
+  if (!qualityGate || !firstInterviewMessage || !day2Handoff) return null;
+
+  return {
+    schemaVersion: DAY1_ALIGNMENT_PLAN_SCHEMA_VERSION,
+    source: cleanToken(value.source) || "deterministic",
+    generatedAt: cleanText(value.generatedAt || value.generated_at),
+    confidence: clampNumber(value.confidence, 0, 1, 0.5),
+    fellBackToDeterministic: Boolean(value.fellBackToDeterministic || value.fell_back_to_deterministic),
+    projectGoal,
+    mission,
+    signals,
+    components,
+    alignmentStatement,
+    qualityGate,
+    firstInterviewMessage,
+    day2Handoff,
+  };
 }
 
 export function normalizeDay1IcpPlan(value) {
@@ -270,6 +427,199 @@ function buildMission(signals) {
   const target = signals.currentIcpGuess || "잠재 고객";
   const problem = signals.problem || "scan에서 보이는 핵심 문제";
   return `${product}의 ICP v0를 PostHog식으로 좁힙니다. ${target}라는 가설을 need / have / don't need 기준으로 검증 가능하게 만들고, "${problem}"을 실제로 겪는 reference customer를 찾을 질문과 docs/ICP.md 초안을 만듭니다.`;
+}
+
+function buildProjectGoal({ signals, onboardingHypothesis, evidence }) {
+  const h = onboardingHypothesis || {};
+  const explicitGoal = cleanText(h.goal || h.purpose || h.businessGoal || h.business_goal);
+  if (explicitGoal) return explicitGoal;
+
+  const product = signals.productName || "이 프로젝트";
+  const problem = signals.problem || "현재 가장 큰 고객 문제";
+  const target = signals.currentIcpGuess || signals.likelyUsers?.[0] || "첫 고객 후보";
+  const evidenceHint = evidence?.[0]?.path ? ` (${evidence[0].path} 근거)` : "";
+  return `${product}가 ${target}의 "${problem}" 해결을 Day 7까지 검증할 수 있는 첫 고객 증거를 만든다${evidenceHint}.`;
+}
+
+function buildAlignmentMission({ signals, projectGoal }) {
+  const product = signals.productName || "이 프로젝트";
+  return `${product}의 Day 1은 고정 ICP 질문지가 아니라 목표 정렬문을 만드는 날입니다. 프로젝트 목표 "${projectGoal}"를 기준으로 ICP, Pain Point, Outcome을 각각 한 문장으로 압축하고 Day 2 시장 신호 검증에 넘길 품질 게이트를 확인합니다.`;
+}
+
+function buildAlignmentComponents({ signals, projectGoal }) {
+  const product = signals.productName || "이 프로젝트";
+  const target = signals.currentIcpGuess || signals.likelyUsers?.[0] || "아직 좁히는 중인 첫 고객 후보";
+  const problem = signals.problem || "scan에서 확인한 핵심 문제";
+  const outcome = buildOutcomeStatement({ signals, projectGoal });
+  const firstAlternative = signals.currentAlternatives?.[0] || "현재 대안 확인 필요";
+  const evidence = (signals.evidenceRefs || []).map((ref) => `${ref.path}: ${ref.reason || "workspace evidence"}`);
+
+  return {
+    icp: {
+      id: "icp",
+      title: "ICP",
+      prompt: "이 목표를 위해 Day 2에서 먼저 검증할 고객은 누구인가요?",
+      helperText: "직함보다 지금 같은 문제를 겪고, 이번 주에 실제로 물어볼 수 있는 고객 조건을 고릅니다.",
+      statement: `${target} 중 ${problem}을 지금 해결하려는 고객.`,
+      evidence,
+      missingAssumptions: signals.currentIcpGuess ? [] : ["current_icp"],
+      options: [
+        alignmentOption("o1", target, "현재 scan과 onboarding 답변에서 가장 강한 고객 가설입니다.", "ICP"),
+        alignmentOption("o2", `${target} 중 ${firstAlternative}을 이미 쓰는 사람/팀`, "현재 대안이 있어 가격과 wedge를 배울 수 있습니다.", "Have"),
+        alignmentOption("o3", "최근 사건 없이 관심만 보이는 사람", "polite interest는 Day 2 시장 신호 기준으로 약합니다.", "Anti", true),
+      ],
+    },
+    painPoint: {
+      id: "pain_point",
+      title: "Pain Point",
+      prompt: "이 고객이 지금 겪는 가장 압축된 통증은 무엇인가요?",
+      helperText: "좋으면 쓰는 문제가 아니라 시간, 돈, 리스크, 반복 행동으로 이미 비용이 나는 문제여야 합니다.",
+      statement: problem,
+      evidence,
+      missingAssumptions: signals.problem ? [] : ["pain_point"],
+      options: [
+        alignmentOption("o1", problem, "scan에서 확인한 핵심 문제를 그대로 검증합니다.", "Pain"),
+        alignmentOption("o2", `${firstAlternative}로 버티느라 시간이 든다`, "대체재와 비용을 함께 확인합니다.", "Status quo"),
+        alignmentOption("o3", "불편하지만 최근 행동이나 비용은 없다", "Day 2로 넘기기 전에 실제 행동 증거가 더 필요합니다.", "Weak", true),
+      ],
+    },
+    outcome: {
+      id: "outcome",
+      title: "Outcome",
+      prompt: "Day 2 시장 신호가 확인해야 할 고객 결과는 무엇인가요?",
+      helperText: "제품 기능이 아니라 고객이 얻는 결과와 다음 검증 행동을 씁니다.",
+      statement: outcome,
+      evidence,
+      missingAssumptions: outcome ? [] : ["outcome"],
+      options: [
+        alignmentOption("o1", outcome, "목표, 고객, 통증을 결과 문장으로 연결합니다.", "Outcome"),
+        alignmentOption("o2", "Day 2에서 유료 대체재와 반복 표현을 찾는다", "시장 신호 검증에 바로 이어지는 결과입니다.", "Day 2"),
+        alignmentOption("o3", "기능을 더 만드는 것으로 해결한다", "고객 결과가 아니라 빌드 도피일 수 있습니다.", "Anti", true),
+      ],
+    },
+  };
+}
+
+function buildOutcomeStatement({ signals, projectGoal }) {
+  const target = signals.currentIcpGuess || signals.likelyUsers?.[0] || "첫 고객 후보";
+  const problem = signals.problem || "핵심 문제";
+  if (projectGoal && projectGoal !== "이 프로젝트") {
+    return `${target}가 ${problem}을 더 빠르게 판단하고, ${projectGoal}에 필요한 첫 검증 행동으로 이어진다.`;
+  }
+  return `${target}가 ${problem}을 더 빠르게 판단하고 이번 주 인터뷰/시장 검증 행동으로 이어진다.`;
+}
+
+function buildAlignmentStatement({ projectGoal, components }) {
+  const icp = components.icp.statement;
+  const painPoint = components.painPoint.statement;
+  const outcome = components.outcome.statement;
+  return {
+    statement: `목표: ${projectGoal} / ICP: ${icp} / Pain Point: ${painPoint} / Outcome: ${outcome}`,
+    projectGoal,
+    icp,
+    painPoint,
+    outcome,
+  };
+}
+
+function buildAlignmentQualityGate({ projectGoal, signals, components, evidence }) {
+  const criteria = [
+    qualityCriterion({
+      id: "project_goal",
+      label: "Project goal",
+      maxScore: 2,
+      score: projectGoal && !isGenericAlignmentText(projectGoal) ? 2 : 0.8,
+      detail: projectGoal || "프로젝트 목표가 비어 있습니다.",
+    }),
+    qualityCriterion({
+      id: "icp",
+      label: "ICP specificity",
+      maxScore: 2.5,
+      score: signals.currentIcpGuess ? 2.5 : signals.likelyUsers?.length ? 1.5 : 0.5,
+      detail: components.icp.statement,
+    }),
+    qualityCriterion({
+      id: "pain_point",
+      label: "Pain point",
+      maxScore: 2,
+      score: signals.problem ? 2 : 0.6,
+      detail: components.painPoint.statement,
+    }),
+    qualityCriterion({
+      id: "outcome",
+      label: "Outcome",
+      maxScore: 2,
+      score: components.outcome.statement && !isGenericAlignmentText(components.outcome.statement) ? 2 : 0.8,
+      detail: components.outcome.statement,
+    }),
+    qualityCriterion({
+      id: "evidence",
+      label: "Workspace evidence",
+      maxScore: 1.5,
+      score: Math.min(1.5, Math.max(0.4, (evidence?.length || 0) * 0.45)),
+      detail: evidence?.length
+        ? evidence.map((item) => item.path).slice(0, 3).join(", ")
+        : "근거 문서를 찾지 못했습니다.",
+    }),
+  ];
+  const score = roundNumber(criteria.reduce((sum, item) => sum + item.score, 0), 1);
+  const passed = score >= DAY1_ALIGNMENT_QUALITY_GATE_THRESHOLD;
+  return {
+    score,
+    threshold: DAY1_ALIGNMENT_QUALITY_GATE_THRESHOLD,
+    passed,
+    label: passed ? "PASS" : "REWORK",
+    passGate: "Project Goal + ICP + Pain Point + Outcome 정렬문이 7.0/10 이상이고 Day 2 시장 신호로 넘길 한 문장이 있다.",
+    failGate: "목표, 고객, 통증, 결과 중 하나가 비어 있거나 founder 추측만 있고 Day 2에서 확인할 시장 신호가 없다.",
+    criteria,
+  };
+}
+
+function qualityCriterion({ id, label, score, maxScore, detail }) {
+  const normalizedScore = roundNumber(clampNumber(score, 0, maxScore, 0), 1);
+  const normalizedMax = roundNumber(maxScore, 1);
+  return {
+    id,
+    label,
+    score: normalizedScore,
+    maxScore: normalizedMax,
+    passed: normalizedScore >= normalizedMax * 0.7,
+    detail: cleanText(detail),
+  };
+}
+
+function buildDay2Handoff({ signals, projectGoal, alignmentStatement, qualityGate }) {
+  const product = signals.productName || "이 프로젝트";
+  return {
+    title: "Day 2 시장 신호로 넘길 정렬문",
+    body: `${product}의 Day 2는 이 정렬문을 기준으로 유료 대체재, 반복 표현, 반증 신호를 찾습니다.`,
+    focus: alignmentStatement.statement,
+    nextDayPrompt: `${projectGoal} 목표에 맞춰 "${signals.problem || "핵심 문제"}"가 실제 시장에서 돈/시간을 쓰는 문제인지 확인한다.`,
+    qualityGateLabel: `${qualityGate.label} ${qualityGate.score}/10`,
+  };
+}
+
+function alignmentComponentsAsQuestions(components) {
+  return [
+    components.icp,
+    components.painPoint,
+    components.outcome,
+  ].map((component) => ({
+    id: component.id,
+    dimension: component.id,
+    title: component.title,
+    prompt: component.prompt,
+  }));
+}
+
+function alignmentOption(id, label, description, preview, antiSignal = false) {
+  return {
+    id,
+    label,
+    description,
+    preview,
+    antiSignal,
+  };
 }
 
 function buildAdaptiveQuestions(signals) {
@@ -609,6 +959,18 @@ function buildDay1IcpComposerPrompt(plan) {
   ].join("\n");
 }
 
+function buildDay1AlignmentComposerPrompt(plan) {
+  return [
+    "You are improving a Day 1 startup onboarding alignment plan.",
+    "The new Day 1 contract is not an ICP questionnaire. It must produce one project goal and a structured alignment statement with exactly three components: ICP, Pain Point, and Outcome.",
+    "Use workspace evidence. Keep the plan actionable for Day 2 market-signal validation. Do not edit files. Do not run commands.",
+    "Return one JSON object matching the provided schema. Preserve projectGoal, components.icp, components.painPoint, components.outcome, alignmentStatement, qualityGate, firstInterviewMessage, and day2Handoff. The quality gate is a 0-10 score and should pass at 7.0+ only when the statement is specific enough for Day 2.",
+    "",
+    "DETERMINISTIC_ALIGNMENT_PLAN_JSON:",
+    JSON.stringify(plan, null, 2).slice(0, MAX_CONTEXT_CHARS),
+  ].join("\n");
+}
+
 async function runPlanComposerWithTimeout({ queryImpl, prompt, workspaceRoot, canUseTool, timeoutMs }) {
   const abortController = new AbortController();
   const llmCall = Promise.resolve(queryImpl({
@@ -661,6 +1023,171 @@ function fallbackDay1IcpPlan({ workspaceRoot, now = new Date() } = {}) {
     antiIcp: buildAntiIcp(signals),
     firstInterviewMessage: buildFirstInterviewMessage(signals, questions),
   };
+}
+
+function fallbackDay1AlignmentPlan({ workspaceRoot, now = new Date() } = {}) {
+  const legacyPlan = fallbackDay1IcpPlan({ workspaceRoot, now });
+  const projectGoal = buildProjectGoal({
+    signals: legacyPlan.signals,
+    onboardingHypothesis: null,
+    evidence: [],
+  });
+  const components = buildAlignmentComponents({
+    signals: legacyPlan.signals,
+    projectGoal,
+  });
+  const alignmentStatement = buildAlignmentStatement({ projectGoal, components });
+  const qualityGate = buildAlignmentQualityGate({
+    projectGoal,
+    signals: legacyPlan.signals,
+    components,
+    evidence: [],
+  });
+  return {
+    schemaVersion: DAY1_ALIGNMENT_PLAN_SCHEMA_VERSION,
+    source: "deterministic",
+    generatedAt: toIso(now),
+    confidence: 0.32,
+    fellBackToDeterministic: true,
+    projectGoal,
+    mission: buildAlignmentMission({
+      signals: legacyPlan.signals,
+      projectGoal,
+    }),
+    signals: legacyPlan.signals,
+    components,
+    alignmentStatement,
+    qualityGate,
+    firstInterviewMessage: buildFirstInterviewMessage(
+      legacyPlan.signals,
+      alignmentComponentsAsQuestions(components),
+    ),
+    day2Handoff: buildDay2Handoff({
+      signals: legacyPlan.signals,
+      projectGoal,
+      alignmentStatement,
+      qualityGate,
+    }),
+  };
+}
+
+function normalizeAlignmentComponents(value) {
+  if (!value || typeof value !== "object") return null;
+  const icp = normalizeAlignmentComponent(value.icp, "icp");
+  const painPoint = normalizeAlignmentComponent(value.painPoint || value.pain_point, "pain_point");
+  const outcome = normalizeAlignmentComponent(value.outcome, "outcome");
+  if (!icp || !painPoint || !outcome) return null;
+  return { icp, painPoint, outcome };
+}
+
+function normalizeAlignmentComponent(value, fallbackId) {
+  if (!value || typeof value !== "object") return null;
+  const id = cleanToken(value.id) || fallbackId;
+  const title = cleanText(value.title) || alignmentComponentTitle(id);
+  const prompt = cleanText(value.prompt || value.question);
+  const statement = cleanText(value.statement || value.value);
+  const options = Array.isArray(value.options)
+    ? value.options.map((optionValue, optionIndex) =>
+      normalizeQuestionOption(optionValue, optionIndex)
+    ).filter(Boolean).slice(0, 5)
+    : [];
+  if (!prompt || !statement || options.length < 2) return null;
+  return {
+    id,
+    title,
+    prompt,
+    helperText: cleanText(value.helperText || value.helper_text),
+    statement,
+    evidence: normalizeStringArray(value.evidence).slice(0, 8),
+    missingAssumptions: normalizeStringArray(value.missingAssumptions || value.missing_assumptions).slice(0, 6),
+    options,
+  };
+}
+
+function normalizeAlignmentStatement(value, { projectGoal, components } = {}) {
+  const raw = value && typeof value === "object" ? value : {};
+  const icp = cleanText(raw.icp) || components?.icp?.statement || "";
+  const painPoint = cleanText(raw.painPoint || raw.pain_point) || components?.painPoint?.statement || "";
+  const outcome = cleanText(raw.outcome) || components?.outcome?.statement || "";
+  const resolvedProjectGoal = cleanText(raw.projectGoal || raw.project_goal) || projectGoal || "";
+  const statement = cleanText(raw.statement)
+    || (resolvedProjectGoal && icp && painPoint && outcome
+      ? `목표: ${resolvedProjectGoal} / ICP: ${icp} / Pain Point: ${painPoint} / Outcome: ${outcome}`
+      : "");
+  if (!statement || !resolvedProjectGoal || !icp || !painPoint || !outcome) return null;
+  return {
+    statement,
+    projectGoal: resolvedProjectGoal,
+    icp,
+    painPoint,
+    outcome,
+  };
+}
+
+function normalizeAlignmentQualityGate(value) {
+  if (!value || typeof value !== "object") return null;
+  const score = clampNumber(value.score, 0, 10, NaN);
+  const threshold = clampNumber(value.threshold, 0, 10, DAY1_ALIGNMENT_QUALITY_GATE_THRESHOLD);
+  if (!Number.isFinite(score)) return null;
+  const criteria = Array.isArray(value.criteria)
+    ? value.criteria.map(normalizeQualityCriterion).filter(Boolean).slice(0, 8)
+    : [];
+  if (criteria.length === 0) return null;
+  return {
+    score: roundNumber(score, 1),
+    threshold: roundNumber(threshold, 1),
+    passed: value.passed === undefined ? score >= threshold : Boolean(value.passed),
+    label: cleanText(value.label) || (score >= threshold ? "PASS" : "REWORK"),
+    passGate: cleanText(value.passGate || value.pass_gate),
+    failGate: cleanText(value.failGate || value.fail_gate),
+    criteria,
+  };
+}
+
+function normalizeQualityCriterion(value) {
+  if (!value || typeof value !== "object") return null;
+  const id = cleanToken(value.id);
+  const label = cleanText(value.label || value.title);
+  const maxScore = clampNumber(value.maxScore || value.max_score, 0.1, 10, 1);
+  const score = clampNumber(value.score, 0, maxScore, 0);
+  if (!id || !label) return null;
+  return {
+    id,
+    label,
+    score: roundNumber(score, 1),
+    maxScore: roundNumber(maxScore, 1),
+    passed: value.passed === undefined ? score >= maxScore * 0.7 : Boolean(value.passed),
+    detail: cleanText(value.detail || value.description),
+  };
+}
+
+function normalizeDay2Handoff(value) {
+  if (!value || typeof value !== "object") return null;
+  const title = cleanText(value.title);
+  const body = cleanText(value.body);
+  const focus = cleanText(value.focus);
+  const nextDayPrompt = cleanText(value.nextDayPrompt || value.next_day_prompt);
+  if (!title || !body || !focus || !nextDayPrompt) return null;
+  return {
+    title,
+    body,
+    focus,
+    nextDayPrompt,
+    qualityGateLabel: cleanText(value.qualityGateLabel || value.quality_gate_label),
+  };
+}
+
+function alignmentComponentTitle(id) {
+  switch (id) {
+  case "icp":
+    return "ICP";
+  case "pain_point":
+    return "Pain Point";
+  case "outcome":
+    return "Outcome";
+  default:
+    return "Alignment";
+  }
 }
 
 function normalizeSignals(value) {
@@ -844,6 +1371,20 @@ function cleanToken(value) {
     .replace(/^_+|_+$/g, "");
 }
 
+function isGenericAlignmentText(value) {
+  const text = cleanText(value).toLowerCase();
+  if (!text) return true;
+  return [
+    "이 프로젝트",
+    "핵심 문제",
+    "잠재 고객",
+    "첫 고객 후보",
+    "current user",
+    "target user",
+    "core problem",
+  ].some((marker) => text === marker || text.includes(`"${marker}"`));
+}
+
 function normalizeStringArray(value) {
   if (!Array.isArray(value)) return [];
   return uniqueBy(value.map(cleanText).filter(Boolean), (item) => item);
@@ -865,6 +1406,13 @@ function clampNumber(value, min, max, fallback) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
   return Math.max(min, Math.min(max, number));
+}
+
+function roundNumber(value, digits = 0) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  const multiplier = 10 ** Math.max(0, Number(digits) || 0);
+  return Math.round(number * multiplier) / multiplier;
 }
 
 function toIso(value) {

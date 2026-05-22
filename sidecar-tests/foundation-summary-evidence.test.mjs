@@ -56,9 +56,9 @@ test("collectFoundationEvidence enumerates Day 0-7 expected artifacts", async ()
 
     // Day 0: day-0-channel-setup.md
     assert.deepEqual(evidence.days[0].artifacts_expected, ["day-0-channel-setup.md"]);
-    // Day 1: SPEC.md + day-1-pain-summary.md
+    // Day 1: SPEC.md + day-1-alignment-statement.md
     assert.ok(evidence.days[1].artifacts_expected.includes("SPEC.md"));
-    assert.ok(evidence.days[1].artifacts_expected.includes("day-1-pain-summary.md"));
+    assert.ok(evidence.days[1].artifacts_expected.includes("day-1-alignment-statement.md"));
     // Day 6: monetization-ask-result.md
     assert.deepEqual(evidence.days[6].artifacts_expected, ["monetization-ask-result.md"]);
 
@@ -74,17 +74,17 @@ test("collectFoundationEvidence enumerates Day 0-7 expected artifacts", async ()
 
 test("collectFoundationEvidence reads artifact bodies and reports excerpts + size", async () => {
   await withTempWorkspace(async (root) => {
-    const body = "# Day 1 통증\n\n과거 행동 1건: 사용자 X가 어제 ...";
-    await writeArtifact(root, "day-1-pain-summary.md", body);
+    const body = "# Day 1 Alignment Statement\n\nProject Goal + ICP + Pain Point + Outcome.";
+    await writeArtifact(root, "day-1-alignment-statement.md", body);
     await writeArtifact(root, "SPEC.md", "# SPEC\n\n## SPEC v0\n\n약한 가설 H1.");
 
     const evidence = await collectFoundationEvidence({ workspaceRoot: root });
     const day1 = evidence.days[1];
-    const pain = day1.artifacts_found.find((a) => a.file === "day-1-pain-summary.md");
-    assert.ok(pain);
-    assert.equal(pain.exists, true);
-    assert.ok(pain.size > 0);
-    assert.ok(pain.excerpt.startsWith("# Day 1 통증"));
+    const alignment = day1.artifacts_found.find((a) => a.file === "day-1-alignment-statement.md");
+    assert.ok(alignment);
+    assert.equal(alignment.exists, true);
+    assert.ok(alignment.size > 0);
+    assert.ok(alignment.excerpt.startsWith("# Day 1 Alignment Statement"));
     assert.ok(day1.missing.length === 0);
     assert.equal(evidence.spec_md.present, true);
     assert.ok(evidence.spec_md.headings.length >= 1);
@@ -150,7 +150,7 @@ test("collectFoundationEvidence recommends pivot when monetization=no AND mostly
     // Mostly complete: Day 0,1,2,3,4,5,6 artifacts present.
     await writeArtifact(root, "day-0-channel-setup.md", "ok");
     await writeArtifact(root, "SPEC.md", "# SPEC\n## SPEC v0\n## SPEC v1\n## SPEC v2");
-    await writeArtifact(root, "day-1-pain-summary.md", "pain");
+    await writeArtifact(root, "day-1-alignment-statement.md", "alignment");
     await writeArtifact(root, "day-2-evidence-log.md", "ev");
     await writeArtifact(root, "day-3-interview-script.md", "iv");
     await writeArtifact(root, "day-4-rewrite-decision.md", "rw");
@@ -185,7 +185,7 @@ test("collectFoundationEvidence recommends restart when monetization=no_reply", 
 
 test("buildFoundationSummaryDraftV1 produces three labelled markdown bodies", async () => {
   await withTempWorkspace(async (root) => {
-    await writeArtifact(root, "day-1-pain-summary.md", "## 핵심 통증\n사용자 X가 어제 매뉴얼 작업.");
+    await writeArtifact(root, "day-1-alignment-statement.md", "## 목표 정렬문\nProject Goal + ICP + Pain Point + Outcome.");
     await writeArtifact(root, "SPEC.md", "# SPEC\n## SPEC v0");
     await writeArtifact(
       root,
@@ -197,7 +197,7 @@ test("buildFoundationSummaryDraftV1 produces three labelled markdown bodies", as
 
     assert.equal(draft.schema_version, 1);
     assert.match(draft.spec_md_v3, /# SPEC v3 \(draft\.v1\)/);
-    assert.match(draft.spec_md_v3, /핵심 통증/);
+    assert.match(draft.spec_md_v3, /목표 정렬문/);
     assert.match(draft.go_no_go_md, /# go-no-go\.md \(draft\.v1\)/);
     assert.match(draft.go_no_go_md, /계속 \(Build phase 진입\)/);
     assert.match(draft.foundation_summary_md, /# foundation-summary\.md \(draft\.v1\)/);
@@ -213,7 +213,7 @@ test("buildFoundationSummaryDraftV1 marks missing day-files honestly", async () 
   await withTempWorkspace(async (root) => {
     const evidence = await collectFoundationEvidence({ workspaceRoot: root });
     const draft = buildFoundationSummaryDraftV1(evidence);
-    assert.match(draft.spec_md_v3, /day-1-pain-summary\.md 없음 — 채워서 다시 와/);
+    assert.match(draft.spec_md_v3, /day-1-alignment-statement\.md 없음 — 채워서 다시 와/);
     assert.match(draft.go_no_go_md, /재시작/);
   });
 });

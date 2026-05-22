@@ -140,6 +140,9 @@ function normalizeBipCoachEvidence(evidence) {
   if (!evidence || typeof evidence !== "object") {
     return null;
   }
+  if (evidence.projectContext || evidence.projectContextCache) {
+    return evidence;
+  }
   if (evidence.fullRead === true) {
     return evidence;
   }
@@ -474,6 +477,8 @@ export function buildBipCoachMissionPromptFromEvidence({
         title: evidence.docTitle || "",
         text: evidence.docText || "",
       },
+      projectContextCache: evidence.projectContextCache || (evidence.projectContext ? "ready" : "missing"),
+      projectContext: evidence.projectContext || null,
       threadsHandle: config.threadsHandle,
       streak: normalized.streak,
       currentMission: normalized.currentMission,
@@ -608,6 +613,9 @@ export function buildFallbackBipMissionChoices({
     : null;
   const workspaceScan = normalizedLocalEvidence?.workspaceScan || {};
   const onboardingContext = normalizedLocalEvidence?.onboardingContext || {};
+  const projectContext = evidence.projectContext && typeof evidence.projectContext === "object"
+    ? evidence.projectContext
+    : {};
   const rows = Array.isArray(evidence.allRows) ? evidence.allRows.filter((row) => row?.hasContent !== false) : [];
   const recentRows = Array.isArray(evidence.recentRows) && evidence.recentRows.length
     ? evidence.recentRows
@@ -615,6 +623,12 @@ export function buildFallbackBipMissionChoices({
   const latest = [...recentRows].reverse().find((row) => row?.date || row?.posts?.length || row?.insights || row?.notes) || {};
   const previous = recentRows.length > 1 ? recentRows[recentRows.length - 2] : null;
   const localDocText = [
+    projectContext.targetUser,
+    projectContext.problem,
+    projectContext.purpose,
+    projectContext.goal,
+    projectContext.values,
+    Array.isArray(projectContext.likelyUsers) ? projectContext.likelyUsers.join(" ") : "",
     workspaceScan.icp,
     workspaceScan.spec,
     workspaceScan.goal,
@@ -653,7 +667,9 @@ export function buildFallbackBipMissionChoices({
     : [];
   const localSourceLabel = selectedRecordSources.length
     ? selectedRecordSources.join(", ")
-    : "프로젝트 폴더";
+    : projectContext.productName
+      ? `프로젝트 컨텍스트 캐시: ${projectContext.productName}`
+      : "프로젝트 폴더";
   const proofAction = hasGoogleProofSink
     ? "Threads에 쓰고 Sheet 오늘 행에 URL과 반응을 기록한다"
     : "프로젝트 폴더의 로컬 markdown 실행 로그에 한 줄로 남긴다";
