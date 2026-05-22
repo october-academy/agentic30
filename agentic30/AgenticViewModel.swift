@@ -536,7 +536,7 @@ final class AgenticViewModel: ObservableObject {
     private var startupSessionAppearStartedAt: Date?
     private var didRecordStartupSessionAppear = false
 
-    struct WorkspaceScanResult: Equatable {
+    struct WorkspaceScanResult: Codable, Equatable {
         let icp: String?
         let spec: String?
         let values: String?
@@ -595,6 +595,10 @@ final class AgenticViewModel: ObservableObject {
     private var pendingBipAuthRetry: BipRequestedAction?
     private var pendingWorkspaceScanRoot: String?
     private var pendingProjectContextRefresh: PendingProjectContextRefresh?
+    private var attemptedStartupWorkspaceScanRecoveryRoots = Set<String>()
+    #if DEBUG
+    static var workspaceScanResultAppSupportURLOverrideForTesting: URL?
+    #endif
     private var workspaceSetupTelemetryGate = WorkspaceSetupTelemetryGate()
     private var requestedWarmSessionIDs = Set<String>()
     private var requestedInitialBipGate = false
@@ -861,6 +865,7 @@ final class AgenticViewModel: ObservableObject {
         }
 
         restoreFoundationProgress(arguments: arguments)
+        hydrateWorkspaceScanResultFromCacheIfAvailable()
     }
 
     struct StructuredPromptSubmission: Hashable {
@@ -1323,6 +1328,7 @@ final class AgenticViewModel: ObservableObject {
             return
         }
         hydrateWorkspaceRootFromSettingsIfAvailable()
+        hydrateWorkspaceScanResultFromCacheIfAvailable()
         started = true
         PostHogTelemetry.capture("mac_view_model_started", authSession: macAuthSession)
 
@@ -1927,6 +1933,49 @@ final class AgenticViewModel: ObservableObject {
             "type": "scan_workspace",
             "root": root,
         ])
+    }
+
+    private var scanResultHasDay1Plan: Bool {
+        scanResult?.day1AlignmentPlan != nil || scanResult?.day1IcpPlan != nil
+    }
+
+    private func workspaceScanResultStore(for root: String) -> WorkspaceScanResultStore {
+        #if DEBUG
+        if let appSupportURL = Self.workspaceScanResultAppSupportURLOverrideForTesting {
+            return WorkspaceScanResultStore(workspaceRoot: root, appSupportURL: appSupportURL)
+        }
+        #endif
+        return WorkspaceScanResultStore(workspaceRoot: root)
+    }
+
+    private func hydrateWorkspaceScanResultFromCacheIfAvailable() {
+        guard !requiresMacOnboarding, WorkspaceSettings.hasExplicitWorkspace else { return }
+        let root = WorkspaceSettings.resolvedURL().path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !root.isEmpty else { return }
+        guard let cached = workspaceScanResultStore(for: root).load() else { return }
+        workspaceRoot = root
+        scanResult = cached
+    }
+
+    private func persistWorkspaceScanResultCache(_ result: WorkspaceScanResult, root explicitRoot: String? = nil) {
+        guard result.error == nil else { return }
+        let root = (explicitRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !root.isEmpty else { return }
+        workspaceScanResultStore(for: root).save(result)
+    }
+
+    private func requestWorkspaceScanRecoveryIfNeeded() {
+        guard !requiresMacOnboarding,
+              WorkspaceSettings.hasExplicitWorkspace,
+              selectedFoundationDay == 1,
+              !isScanning,
+              !scanResultHasDay1Plan else {
+            return
+        }
+        let root = WorkspaceSettings.resolvedURL().path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !root.isEmpty, !attemptedStartupWorkspaceScanRecoveryRoots.contains(root) else { return }
+        attemptedStartupWorkspaceScanRecoveryRoots.insert(root)
+        scanWorkspace(root: root)
     }
 
     private func persistWorkspaceScanResult(_ event: SidecarEvent) {
@@ -2882,6 +2931,7 @@ final class AgenticViewModel: ObservableObject {
         foundationProgressStore = nil
         restoreFoundationProgress(arguments: CommandLine.arguments)
         workspaceRoot = url.path
+        attemptedStartupWorkspaceScanRecoveryRoots.removeAll()
         PostHogTelemetry.capture("mac_project_workspace_selected", properties: [
             "workspace_basename": url.lastPathComponent,
         ], authSession: macAuthSession)
@@ -2909,6 +2959,7 @@ final class AgenticViewModel: ObservableObject {
         requestedInitialBipGate = false
         requestedInitialBipMission = false
         pendingWorkspaceScanRoot = nil
+        attemptedStartupWorkspaceScanRecoveryRoots.removeAll()
         scanResult = nil
         lastError = nil
 
@@ -2940,6 +2991,7 @@ final class AgenticViewModel: ObservableObject {
         requestedInitialBipGate = false
         requestedInitialBipMission = false
         pendingWorkspaceScanRoot = nil
+        attemptedStartupWorkspaceScanRecoveryRoots.removeAll()
         scanResult = nil
         scanProgressMessage = ""
         scanProgressLogs = []
@@ -3394,6 +3446,8 @@ final class AgenticViewModel: ObservableObject {
             if let root = pendingWorkspaceScanRoot {
                 pendingWorkspaceScanRoot = nil
                 sendWorkspaceScan(root: root)
+            } else {
+                requestWorkspaceScanRecoveryIfNeeded()
             }
         case "sessions_snapshot":
             if let sessions = event.sessions {
@@ -3488,7 +3542,7 @@ final class AgenticViewModel: ObservableObject {
         case "workspace_scan_result":
             isScanning = false
             setScanProgress(event.error == nil ? "Workspace scan complete." : "Workspace scan failed.")
-            scanResult = WorkspaceScanResult(
+            let result = WorkspaceScanResult(
                 icp: event.icp,
                 spec: event.spec,
                 values: event.values,
@@ -3502,7 +3556,9 @@ final class AgenticViewModel: ObservableObject {
                 day1IcpPlan: event.day1IcpPlan,
                 error: event.error
             )
+            scanResult = result
             persistWorkspaceScanResult(event)
+            persistWorkspaceScanResultCache(result, root: event.scanRoot)
         case "doc_creation_started":
             isCreatingDoc = event.docType
             docCreationLogs = []
@@ -3534,13 +3590,14 @@ final class AgenticViewModel: ObservableObject {
             }
         case "workspace_day1_alignment_plan_result", "workspace_day1_icp_plan_result":
             if event.day1AlignmentPlan != nil || event.day1IcpPlan != nil {
+                let result: WorkspaceScanResult
                 if let current = scanResult {
-                    scanResult = current.replacing(
+                    result = current.replacing(
                         day1AlignmentPlan: event.day1AlignmentPlan,
                         day1IcpPlan: event.day1IcpPlan
                     )
                 } else {
-                    scanResult = WorkspaceScanResult(
+                    result = WorkspaceScanResult(
                         icp: nil,
                         spec: nil,
                         values: nil,
@@ -3555,6 +3612,8 @@ final class AgenticViewModel: ObservableObject {
                         error: nil
                     )
                 }
+                scanResult = result
+                persistWorkspaceScanResultCache(result, root: event.scanRoot)
             }
         case "news_market_radar_result":
             if let snapshot = event.newsMarketRadar {
@@ -5330,7 +5389,236 @@ final class AgenticViewModel: ObservableObject {
                 attributes: nil
             )
             WorkspaceSettings.store(url)
+            if arguments.contains("--ui-testing-disable-sidecar") || arguments.contains("--ui-testing-seed-workspace-scan-cache") {
+                WorkspaceScanResultStore(workspaceRoot: workspacePath).save(makeUITestingWorkspaceScanResult(arguments: arguments))
+            }
         }
+    }
+
+    private static func makeUITestingWorkspaceScanResult(arguments: [String]) -> WorkspaceScanResult {
+        let usesAlignmentPlan = arguments.contains("--ui-testing-seed-day1-alignment-plan")
+        return WorkspaceScanResult(
+            icp: "docs/ICP.md",
+            spec: "docs/SPEC.md",
+            values: "docs/VALUES.md",
+            designSystem: nil,
+            adr: nil,
+            goal: "docs/GOAL.md",
+            docs: "README.md",
+            sheet: nil,
+            onboardingHypothesis: WorkspaceOnboardingHypothesis(
+                productName: "Agentic30",
+                projectKind: "mac_app",
+                targetUser: "1인 빌더",
+                problem: "첫 고객 기준이 흔들림",
+                purpose: "Day 1 ICP 검증",
+                goal: "인터뷰할 고객 후보 1명을 고정",
+                values: nil,
+                likelyUsers: ["1인 빌더", "macOS AI 도구 사용자"],
+                stage: "first_users",
+                evidence: ["README.md", "docs/ICP.md"],
+                confidence: "high",
+                suggestedFirstQuestion: nil
+            ),
+            day1AlignmentPlan: usesAlignmentPlan ? makeUITestingDay1AlignmentPlan() : nil,
+            day1IcpPlan: makeUITestingDay1IcpPlan(),
+            error: nil
+        )
+    }
+
+    private static func makeUITestingDay1AlignmentPlan() -> Day1AlignmentPlan {
+        let documentPointer = "[ALIGNMENT.md](./ALIGNMENT.md) — 회사 미션 ↔ 제품 매핑, 5축 루브릭"
+        let signals = Day1IcpSignals(
+            productName: "Agentic30",
+            currentIcpGuess: "AI 코딩 도구를 쓰는 개발자",
+            likelyUsers: ["AI 코딩 도구를 쓰는 개발자", "macOS AI 도구 사용자"],
+            problem: "무엇을 팔아야 할지 모른다",
+            currentAlternatives: ["수동 문서 정리", "임시 스크립트"],
+            evidenceRefs: [
+                Day1IcpEvidenceRef(path: "README.md", reason: "앱 목적", quote: "Native macOS menu bar assistant"),
+                Day1IcpEvidenceRef(path: "docs/ICP.md", reason: "고객 가설", quote: "AI 코딩 도구를 쓰는 개발자"),
+            ],
+            missingAssumptions: ["지불 의향", "첫 사용자 획득 채널"],
+            confidence: "high"
+        )
+        let icp = Day1AlignmentComponent(
+            id: "icp",
+            title: "ICP",
+            prompt: "이 목표를 위해 Day 2에서 먼저 검증할 고객은 누구인가요?",
+            helperText: "이번 주에 실제로 물어볼 수 있는 고객 조건을 고릅니다.",
+            statement: documentPointer,
+            evidence: ["docs/ICP.md"],
+            missingAssumptions: [],
+            options: [
+                Day1IcpQuestionOption(id: "dev-tool-user", label: "AI 코딩 도구를 쓰는 개발자", description: "이번 주 직접 대화 가능한 사용자입니다. · 근거: docs/ICP.md", preview: "ICP", antiSignal: false, evidenceLabel: "근거: docs/ICP.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "solo-builder", label: "1인 빌더", description: "구매자와 사용자가 같은 후보입니다. · 근거: README.md", preview: "ICP", antiSignal: false, evidenceLabel: "근거: README.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "curious-only", label: "관심만 있음", description: "최근 행동이 없어 Day 2 신호로 약합니다.", preview: "Weak", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
+            ]
+        )
+        let pain = Day1AlignmentComponent(
+            id: "pain_point",
+            title: "Pain Point",
+            prompt: "이 고객이 지금 겪는 가장 압축된 통증은 무엇인가요?",
+            helperText: "시간, 돈, 리스크, 반복 행동으로 이미 비용이 나는 문제를 고릅니다.",
+            statement: "무엇을 팔아야 할지 모른다",
+            evidence: ["docs/SPEC.md"],
+            missingAssumptions: [],
+            options: [
+                Day1IcpQuestionOption(id: "what-to-sell", label: "무엇을 팔아야 할지 모름", description: "검증 없이 빌드가 반복됩니다. · 근거: docs/SPEC.md", preview: "Pain", antiSignal: false, evidenceLabel: "근거: docs/SPEC.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "first-user", label: "첫 사용자를 어디서 데려올지 모름", description: "Day 2 시장 신호로 이어집니다. · 근거: docs/GOAL.md", preview: "Pain", antiSignal: false, evidenceLabel: "근거: docs/GOAL.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "nice-to-have", label: "있으면 좋음", description: "오늘 비용이 확인되지 않습니다.", preview: "Weak", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
+            ]
+        )
+        let outcome = Day1AlignmentComponent(
+            id: "outcome",
+            title: "Outcome",
+            prompt: "Day 2 시장 신호가 확인해야 할 고객 결과는 무엇인가요?",
+            helperText: "제품 기능이 아니라 고객이 얻는 결과와 다음 검증 행동을 씁니다.",
+            statement: "첫 대화에서 지불 의향과 현재 대안을 확인한다",
+            evidence: ["docs/GOAL.md"],
+            missingAssumptions: [],
+            options: [
+                Day1IcpQuestionOption(id: "paid-alternative", label: "첫 대화에서 지불 의향과 대안을 확인한다", description: "Day 2에서 바로 검증할 수 있습니다. · 근거: docs/GOAL.md", preview: "Outcome", antiSignal: false, evidenceLabel: "근거: docs/GOAL.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "market-signal", label: "시장 신호로 첫 사용자 획득 행동을 확인한다", description: "채널과 행동이 함께 남습니다. · 근거: docs/SPEC.md", preview: "Outcome", antiSignal: false, evidenceLabel: "근거: docs/SPEC.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "ship-feature", label: "기능을 더 만든다", description: "고객 결과가 아니라 빌드 도피입니다.", preview: "Anti", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
+            ]
+        )
+        let projectGoal = "30일 안에 사용자 100명과 첫 매출 가능성을 검증한다"
+        return Day1AlignmentPlan(
+            schemaVersion: 1,
+            source: "ui-test",
+            generatedAt: "2026-05-22T00:00:00.000Z",
+            confidence: 0.86,
+            fellBackToDeterministic: false,
+            projectGoal: projectGoal,
+            mission: "Goal, ICP, Pain Point, Outcome을 정렬합니다.",
+            signals: signals,
+            components: Day1AlignmentComponents(icp: icp, painPoint: pain, outcome: outcome),
+            alignmentStatement: Day1AlignmentStatement(
+                statement: "목표: \(projectGoal) / ICP: \(documentPointer) / Pain Point: 무엇을 팔아야 할지 모른다 / Outcome: 첫 대화에서 지불 의향과 현재 대안을 확인한다",
+                projectGoal: projectGoal,
+                icp: documentPointer,
+                painPoint: "무엇을 팔아야 할지 모른다",
+                outcome: "첫 대화에서 지불 의향과 현재 대안을 확인한다"
+            ),
+            qualityGate: Day1AlignmentQualityGate(
+                score: 8.6,
+                threshold: 7.0,
+                passed: true,
+                label: "PASS",
+                passGate: "Project Goal + ICP + Pain Point + Outcome이 담긴 핵심 가설이 7.0/10 이상입니다.",
+                failGate: "목표, 고객, 통증, 결과 중 하나가 비어 있습니다.",
+                criteria: [
+                    Day1AlignmentQualityCriterion(id: "project_goal", label: "Project goal", score: 2.0, maxScore: 2.0, passed: true, detail: "명확함"),
+                    Day1AlignmentQualityCriterion(id: "icp", label: "ICP", score: 2.2, maxScore: 2.5, passed: true, detail: documentPointer),
+                ]
+            ),
+            firstInterviewMessage: FirstInterviewMessage(
+                channel: "DM",
+                recipientPlaceholder: "{name}",
+                subject: "핵심 가설 인터뷰",
+                bodyTemplate: "안녕하세요 {name}님, AI 코딩 도구로 첫 고객 검증을 확인하고 있습니다.",
+                questions: ["최근 사건은 무엇이었나요?", "현재 대안은 무엇인가요?"]
+            ),
+            day2Handoff: Day1Day2Handoff(
+                title: "Day 2 시장 신호로 넘길 핵심 가설",
+                body: "유료 대체재와 첫 사용자 획득 행동을 확인합니다.",
+                focus: "지불 의향과 현재 대안",
+                nextDayPrompt: "유료 대체재 5개와 실제 대화 후보를 확인한다.",
+                qualityGateLabel: "PASS 8.6/10"
+            ),
+            signalDigest: nil
+        )
+    }
+
+    private static func makeUITestingDay1IcpPlan() -> Day1IcpPlan {
+        let optionSets: [[Day1IcpQuestionOption]] = [
+            [
+                Day1IcpQuestionOption(id: "solo-builder", label: "전업 1인 빌더", description: "이번 주 실제 고객 인터뷰를 잡아야 합니다. · 근거: docs/ICP.md", preview: "ICP", antiSignal: false, evidenceLabel: "근거: docs/ICP.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "tool-switcher", label: "AI 도구 전환 사용자", description: "Codex와 Claude 전환에서 인증/실행 마찰을 겪습니다. · 근거: README.md", preview: "Have", antiSignal: false, evidenceLabel: "근거: README.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "curious-only", label: "관심만 있음", description: "최근 7일 안에 직접 시도한 사건이 없습니다.", preview: "Anti", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
+            ],
+            [
+                Day1IcpQuestionOption(id: "stuck-loop", label: "빌드 루프에 막힘", description: "검증 없이 새 기능을 반복해서 만들고 있습니다. · 근거: docs/GOAL.md", preview: "Pain", antiSignal: false, evidenceLabel: "근거: docs/GOAL.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "auth-friction", label: "provider 인증 실패", description: "local sidecar와 provider auth 사이에서 진행이 멈춥니다. · 근거: README.md", preview: "Pain", antiSignal: false, evidenceLabel: "근거: README.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "nice-to-have", label: "있으면 좋음", description: "돈이나 시간을 이미 쓰는 대안이 없습니다.", preview: "Weak", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
+            ],
+            [
+                Day1IcpQuestionOption(id: "manual-notes", label: "수동 노트/스크립트", description: "현재는 문서와 임시 스크립트로 Day 진행을 관리합니다. · 근거: docs/SPEC.md", preview: "Have", antiSignal: false, evidenceLabel: "근거: docs/SPEC.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "codex-menu-bar", label: "macOS 메뉴바 앱", description: "반복 실행과 재시작 복원이 필요한 작업 흐름입니다. · 근거: README.md", preview: "Have", antiSignal: false, evidenceLabel: "근거: README.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "blank-slate", label: "아직 프로젝트 없음", description: "선택한 workspace에 실제 검증 대상이 없습니다.", preview: "Anti", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
+            ],
+            [
+                Day1IcpQuestionOption(id: "schedule-call", label: "24시간 안에 인터뷰 요청", description: "오늘 바로 연락 가능한 후보가 있습니다. · 근거: docs/ICP.md", preview: "Outcome", antiSignal: false, evidenceLabel: "근거: docs/ICP.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "capture-proof", label: "첫 반응 캡처", description: "대화 결과를 SPEC/ICP에 바로 남길 수 있습니다. · 근거: docs/SPEC.md", preview: "Outcome", antiSignal: false, evidenceLabel: "근거: docs/SPEC.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "wait-for-launch", label: "출시 후에 보기", description: "오늘 검증할 행동이 없어 Day 1 게이트를 닫을 수 없습니다.", preview: "Anti", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
+            ],
+        ]
+        let dimensions = [
+            ("icp", "먼저 도울 사람", "이번 주 인터뷰할 고객 후보는 누구인가요?"),
+            ("pain_point", "반복되는 막힘", "최근 실제로 멈춘 문제는 무엇인가요?"),
+            ("current_alternative", "현재 대안", "지금은 어떤 방식으로 버티고 있나요?"),
+            ("outcome", "내일 확인할 결과", "Day 2로 넘길 검증 가능한 결과는 무엇인가요?"),
+        ]
+        let questions = dimensions.enumerated().map { index, item in
+            Day1IcpQuestion(
+                id: "ui_test_\(item.0)",
+                dimension: item.0,
+                title: item.1,
+                prompt: item.2,
+                helperText: "UI test scan cache fixture",
+                options: optionSets[index],
+                allowFreeText: true,
+                freeTextPlaceholder: "직접 입력"
+            )
+        }
+        return Day1IcpPlan(
+            schemaVersion: 1,
+            source: "ui-test",
+            generatedAt: "2026-05-22T00:00:00.000Z",
+            confidence: 0.87,
+            fellBackToDeterministic: false,
+            mission: "Day 1에서 실제 인터뷰로 이어질 ICP v0를 고정합니다.",
+            signals: Day1IcpSignals(
+                productName: "Agentic30",
+                currentIcpGuess: "첫 고객을 정해야 하는 1인 빌더",
+                likelyUsers: ["1인 빌더", "macOS AI 도구 사용자"],
+                problem: "첫 고객 기준이 재시작 후 사라짐",
+                currentAlternatives: ["수동 문서 정리", "임시 스크립트"],
+                evidenceRefs: [
+                    Day1IcpEvidenceRef(path: "README.md", reason: "앱 목적", quote: "Native macOS menu bar assistant"),
+                    Day1IcpEvidenceRef(path: "docs/ICP.md", reason: "고객 가설", quote: "1인 빌더"),
+                ],
+                missingAssumptions: ["유료 의향", "반복 빈도"],
+                confidence: "high"
+            ),
+            questions: questions,
+            icpDraft: IcpDraft(
+                description: "첫 고객을 정해야 하는 1인 빌더",
+                criteria: ["이번 주 인터뷰 가능", "이미 대안을 쓰고 있음", "최근 막힌 사건이 있음"],
+                whyTheyMatter: ["Day 2 시장 신호와 Day 3 Mom Test 질문으로 이어집니다."],
+                needs: ["재시작 후에도 Day 1 계획이 유지되어야 함"],
+                haves: ["macOS workspace", "AI coding assistant 사용 경험"],
+                dontNeeds: ["관심만 있음", "출시 후 검증하겠다는 후보"],
+                evidence: ["README.md", "docs/ICP.md"],
+                referenceCustomersToFind: ["전업 1인 빌더 1명"]
+            ),
+            antiIcp: Day1AntiIcp(
+                summary: "최근 사건과 현재 대안이 없는 후보는 Day 1에서 제외합니다.",
+                rules: [
+                    AntiIcpRule(id: "curious-only", label: "관심만 있음", reason: "최근 7일 행동 신호가 없습니다.", evidenceRef: nil),
+                    AntiIcpRule(id: "wait-for-launch", label: "출시 후에 보기", reason: "오늘 인터뷰로 검증할 수 없습니다.", evidenceRef: nil),
+                ],
+                politeInterestGuardrails: ["좋네요만 말하면 ICP 후보로 보지 않습니다."]
+            ),
+            firstInterviewMessage: FirstInterviewMessage(
+                channel: "DM",
+                recipientPlaceholder: "{name}",
+                subject: nil,
+                bodyTemplate: "최근 AI 도구로 프로젝트를 진행하다가 멈춘 순간이 있었나요?",
+                questions: ["최근 사건은 무엇이었나요?", "지금은 무엇으로 대체하고 있나요?"]
+            )
+        )
     }
 
     private static func uiTestingArgumentValue(_ name: String, arguments: [String]) -> String? {
@@ -5614,6 +5902,75 @@ struct FoundationProgressStore {
     }
 }
 
+struct WorkspaceScanResultStore {
+    let workspaceRoot: String
+    let appSupportURL: URL
+
+    init(
+        workspaceRoot: String,
+        appSupportURL: URL = FoundationProgressStore.defaultAppSupportURL()
+    ) {
+        self.workspaceRoot = Self.normalizeWorkspaceRoot(workspaceRoot)
+        self.appSupportURL = appSupportURL
+    }
+
+    var fileURL: URL {
+        appSupportURL
+            .appendingPathComponent("workspace-scan-results", isDirectory: true)
+            .appendingPathComponent("\(FoundationProgressStore.stableWorkspaceID(workspaceRoot)).json")
+    }
+
+    func load() -> AgenticViewModel.WorkspaceScanResult? {
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let payload = try? decoder.decode(Payload.self, from: data),
+              payload.schemaVersion == Self.schemaVersion,
+              Self.normalizeWorkspaceRoot(payload.workspaceRoot) == workspaceRoot,
+              payload.scanResult.error == nil else {
+            return nil
+        }
+        return payload.scanResult
+    }
+
+    func save(_ scanResult: AgenticViewModel.WorkspaceScanResult, now: Date = Date()) {
+        guard scanResult.error == nil else { return }
+        let payload = Payload(
+            schemaVersion: Self.schemaVersion,
+            workspaceRoot: workspaceRoot,
+            savedAt: now,
+            scanResult: scanResult
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(payload) else { return }
+        try? FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? data.write(to: fileURL, options: [.atomic])
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+    }
+
+    func clear() {
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+
+    private static let schemaVersion = 1
+
+    private struct Payload: Codable {
+        let schemaVersion: Int
+        let workspaceRoot: String
+        let savedAt: Date
+        let scanResult: AgenticViewModel.WorkspaceScanResult
+    }
+
+    private static func normalizeWorkspaceRoot(_ root: String) -> String {
+        URL(fileURLWithPath: root, isDirectory: true).standardizedFileURL.path
+    }
+}
+
 struct FoundationDayCompletionSaveResult: Hashable {
     let completedDay: Int
     let unlockedDay: Int
@@ -5677,6 +6034,7 @@ private extension AgenticViewModel {
         scanProgressMessage = ""
         scanProgressLogs = []
         scanResult = nil
+        attemptedStartupWorkspaceScanRecoveryRoots = []
         isCreatingDoc = nil
         docCreationLogs = []
         lastDocCreated = nil

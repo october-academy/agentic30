@@ -539,9 +539,9 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.searchPalette").waitForExistence(timeout: 5))
         let slashSearchField = elementWithIdentifier(in: app, "opendesign.day.searchField")
         XCTAssertTrue(slashSearchField.waitForExistence(timeout: 3))
-        slashSearchField.typeText("3")
-        XCTAssertTrue(day3SearchResult.waitForExistence(timeout: 3))
-        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+        slashSearchField.typeText("1")
+        XCTAssertTrue(day1SearchResult.waitForExistence(timeout: 3))
+        app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(waitForElementToDisappear(elementWithIdentifier(in: app, "opendesign.day.searchPalette"), timeout: 3))
 
         let primaryHeaderAction = app.buttons["opendesign.day.header.primary"]
@@ -556,19 +556,6 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.mission.accept", containing: "미션 수락됨", timeout: 2))
         XCTAssertTrue(waitUntilHittable(app.buttons["opendesign.day.icp.option.1"], timeout: 5))
 
-        let postMissionSearchButton = elementWithIdentifier(in: app, "opendesign.day.search")
-        XCTAssertTrue(postMissionSearchButton.waitForExistence(timeout: 3))
-        clickCenter(of: postMissionSearchButton)
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.searchPalette").waitForExistence(timeout: 5))
-        let icpSearchField = elementWithIdentifier(in: app, "opendesign.day.searchField")
-        XCTAssertTrue(icpSearchField.waitForExistence(timeout: 3))
-        clickCenter(of: icpSearchField)
-        icpSearchField.typeText("4지선다")
-        let icpPickerSearchResult = app.buttons["opendesign.day.search.result.section-picker"]
-        XCTAssertTrue(icpPickerSearchResult.waitForExistence(timeout: 3))
-        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
-        XCTAssertTrue(waitForElementToDisappear(elementWithIdentifier(in: app, "opendesign.day.searchPalette"), timeout: 3))
-
         let icpOption = app.buttons["opendesign.day.icp.option.3"]
         XCTAssertTrue(waitUntilHittable(icpOption, timeout: 5))
         clickCenter(of: icpOption)
@@ -582,6 +569,66 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.footer.status", containing: "제출 완료 · 3번", timeout: 3))
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.option.3", containing: "제출됨", timeout: 3))
         XCTAssertTrue(waitUntilHittable(app.buttons["opendesign.day.interview.2.option.1"], timeout: 5))
+    }
+
+    @MainActor
+    func testOpenDesignDayRestoresCachedScanResultAfterRelaunch() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-day1-relaunch-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-day1-relaunch-app-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        var launchedApps: [XCUIApplication] = []
+        hideKnownInterferingApplications()
+        addTeardownBlock {
+            launchedApps.forEach { $0.terminate() }
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        let environment = [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ]
+        let firstLaunch = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+        ], environment: environment)
+        launchedApps.append(firstLaunch)
+        firstLaunch.activate()
+
+        XCTAssertTrue(elementWithIdentifier(in: firstLaunch, "opendesign.day.shell").waitForExistence(timeout: 10))
+        XCTAssertFalse(elementWithIdentifier(in: firstLaunch, "opendesign.day.planPreparing").exists)
+
+        firstLaunch.terminate()
+        waitForAgenticAppToExit(bundleIdentifier: "october-academy.agentic30", timeout: 3)
+
+        let relaunched = launchApp(arguments: [
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+        ], environment: environment)
+        launchedApps.append(relaunched)
+        relaunched.activate()
+
+        let shell = elementWithIdentifier(in: relaunched, "opendesign.day.shell")
+        if !shell.waitForExistence(timeout: 10) {
+            attachScreenshot(from: relaunched, named: "OpenDesign Day Relaunch Shell Missing")
+            attachText(relaunched.debugDescription, named: "OpenDesign Day Relaunch Tree")
+        }
+        XCTAssertTrue(shell.exists)
+        XCTAssertFalse(elementWithIdentifier(in: relaunched, "opendesign.day.planPreparing").exists)
     }
 
     @MainActor
@@ -999,11 +1046,6 @@ final class agentic30UITests: XCTestCase {
 
         completeOpenDesignDayInterviews(in: app)
 
-        let previewCopy = app.buttons["opendesign.day.icpPreview.copy"]
-        XCTAssertTrue(waitForOpenDesignMainHittable(previewCopy, in: app, timeout: 6))
-        app.buttons["opendesign.day.icpPreview.copy"].click()
-        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.icpPreview.copy", containing: "복사됨", timeout: 3))
-
         let previewNext = elementWithIdentifier(in: app, "opendesign.day.preview.next")
         XCTAssertTrue(waitForOpenDesignMainHittable(previewNext, in: app, timeout: 6))
         clickCenter(of: elementWithIdentifier(in: app, "opendesign.day.preview.next"))
@@ -1022,6 +1064,53 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["시장 신호 읽기"].waitForExistence(timeout: 3))
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.task.day1", containing: "done", timeout: 3))
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.task.day2", containing: "active", timeout: 3))
+    }
+
+    @MainActor
+    func testOpenDesignDayAlignmentFinalCardRendersStructuredRows() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-opendesign-day-alignment-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-opendesign-day-alignment-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-day1-alignment-plan",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1136x720",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
+        completeOpenDesignDayAlignmentInterviews(in: app)
+
+        let previewNext = elementWithIdentifier(in: app, "opendesign.day.preview.next")
+        XCTAssertTrue(waitForOpenDesignMainHittable(previewNext, in: app, timeout: 6))
+        clickCenter(of: previewNext)
+
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.final.row.goal", containing: "30일 안에 사용자", timeout: 5))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.final.row.icp", containing: "AI 코딩 도구를 쓰는 개발자", timeout: 5))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.final.row.pain", containing: "무엇을 팔아야", timeout: 5))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.final.row.outcome", containing: "지불 의향", timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.final.row.selected").exists)
+        XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.day.final.row.icp").label.contains("ALIGNMENT.md"))
+        attachScreenshot(from: app, named: "OpenDesign Day Alignment Final Structured Rows")
     }
 
     @MainActor
@@ -1322,7 +1411,7 @@ final class agentic30UITests: XCTestCase {
         }
 
         XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.shell"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["먼저 도울 사람을 정해요"].exists)
+        XCTAssertTrue(app.staticTexts["ICP v0 질문을 정해요"].exists)
         let day1Task = app.descendants(matching: .any)["opendesign.day.task.day1"]
         let day2Task = app.descendants(matching: .any)["opendesign.day.task.day2"]
         let day7Task = app.descendants(matching: .any)["opendesign.day.task.day7"]
@@ -1384,10 +1473,39 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    private func completeOpenDesignDayAlignmentInterviews(
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let primaryHeaderAction = app.buttons["opendesign.day.header.primary"]
+        XCTAssertTrue(waitUntilHittable(primaryHeaderAction, timeout: 5), file: file, line: line)
+        clickCenter(of: primaryHeaderAction)
+        XCTAssertTrue(waitUntilHittable(primaryHeaderAction, timeout: 5), file: file, line: line)
+        clickCenter(of: primaryHeaderAction)
+
+        let missionAccept = app.buttons["opendesign.day.mission.accept"]
+        XCTAssertTrue(waitUntilHittable(missionAccept, timeout: 5), file: file, line: line)
+        clickCenter(of: missionAccept)
+        XCTAssertTrue(
+            waitForButtonLabel(in: app, identifier: "opendesign.day.mission.accept", containing: "미션 수락됨", timeout: 3),
+            file: file,
+            line: line
+        )
+
+        submitOpenDesignInterviewStep(1, option: 1, in: app, file: file, line: line)
+        submitOpenDesignInterviewStep(2, option: 1, in: app, file: file, line: line)
+        submitOpenDesignInterviewStep(3, option: 1, in: app, waitForNextStep: false, file: file, line: line)
+
+        XCTAssertTrue(waitUntilHittable(app.buttons["opendesign.day.preview.next"], timeout: 5), file: file, line: line)
+    }
+
+    @MainActor
     private func submitOpenDesignInterviewStep(
         _ step: Int,
         option: Int,
         in app: XCUIApplication,
+        waitForNextStep: Bool = true,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
@@ -1397,7 +1515,7 @@ final class agentic30UITests: XCTestCase {
 
         let choice = app.buttons[optionIdentifier]
         XCTAssertTrue(waitForOpenDesignMainHittable(choice, in: app, timeout: 6), file: file, line: line)
-        app.buttons[optionIdentifier].click()
+        clickCenter(of: choice)
         XCTAssertTrue(
             waitForElementLabel(in: app, identifier: footerIdentifier, containing: "선택됨 · \(option)번", timeout: 3),
             file: file,
@@ -1413,7 +1531,7 @@ final class agentic30UITests: XCTestCase {
             line: line
         )
 
-        if step < 4 {
+        if waitForNextStep && step < 4 {
             XCTAssertTrue(
                 waitUntilHittable(app.buttons["opendesign.day.interview.\(step + 1).option.1"], timeout: 5),
                 file: file,

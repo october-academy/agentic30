@@ -423,6 +423,95 @@ struct AgenticViewModelAuthTests {
         #expect(refreshPayloads[0]["workspaceRoot"] as? String == workspace.path)
     }
 
+    @Test @MainActor func workspaceScanResultPersistsAndHydratesDay1PlanAcrossLaunches() async throws {
+        let (workspace, cleanupWorkspace) = try Self.installTemporaryWorkspace()
+        let appSupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-viewmodel-scan-cache-\(UUID().uuidString)", isDirectory: true)
+        let previousAppSupportPath = ProcessInfo.processInfo.environment["AGENTIC30_APP_SUPPORT_PATH"]
+        setenv("AGENTIC30_APP_SUPPORT_PATH", appSupport.path, 1)
+        KeychainHelper.deleteSettings()
+        AgenticViewModel.workspaceScanResultAppSupportURLOverrideForTesting = appSupport
+        defer {
+            KeychainHelper.deleteSettings()
+            if let previousAppSupportPath {
+                setenv("AGENTIC30_APP_SUPPORT_PATH", previousAppSupportPath, 1)
+            } else {
+                unsetenv("AGENTIC30_APP_SUPPORT_PATH")
+            }
+            AgenticViewModel.workspaceScanResultAppSupportURLOverrideForTesting = nil
+            cleanupWorkspace()
+            try? FileManager.default.removeItem(at: appSupport)
+        }
+
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let firstLaunch = AgenticViewModel(
+            onboardingContextOverride: Self.makeOnboardingContext(),
+            sidecar: sidecar,
+            activateAppForAuth: {}
+        )
+        firstLaunch.start()
+        firstLaunch.markSidecarConnectedForTesting(workspaceRoot: workspace.path)
+        try sidecar.emit(Self.workspaceScanResultPayload(workspaceRoot: workspace.path))
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        #expect(firstLaunch.scanResult?.day1IcpPlan?.questions.count == 3)
+
+        let restored = AgenticViewModel(
+            onboardingContextOverride: Self.makeOnboardingContext(),
+            sidecar: FakeSidecarTransport(workspaceRoot: workspace.path),
+            activateAppForAuth: {}
+        )
+
+        #expect(restored.workspaceRoot == workspace.path)
+        #expect(restored.scanResult?.icp == "docs/ICP.md")
+        #expect(restored.scanResult?.day1IcpPlan?.questions.count == 3)
+    }
+
+    @Test @MainActor func readyRequestsStartupWorkspaceScanOnceWhenCachedDay1PlanIsMissing() async throws {
+        let (workspace, cleanupWorkspace) = try Self.installTemporaryWorkspace()
+        let appSupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-viewmodel-scan-recovery-\(UUID().uuidString)", isDirectory: true)
+        let previousAppSupportPath = ProcessInfo.processInfo.environment["AGENTIC30_APP_SUPPORT_PATH"]
+        setenv("AGENTIC30_APP_SUPPORT_PATH", appSupport.path, 1)
+        KeychainHelper.deleteSettings()
+        AgenticViewModel.workspaceScanResultAppSupportURLOverrideForTesting = appSupport
+        defer {
+            KeychainHelper.deleteSettings()
+            if let previousAppSupportPath {
+                setenv("AGENTIC30_APP_SUPPORT_PATH", previousAppSupportPath, 1)
+            } else {
+                unsetenv("AGENTIC30_APP_SUPPORT_PATH")
+            }
+            AgenticViewModel.workspaceScanResultAppSupportURLOverrideForTesting = nil
+            cleanupWorkspace()
+            try? FileManager.default.removeItem(at: appSupport)
+        }
+
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = AgenticViewModel(
+            onboardingContextOverride: Self.makeOnboardingContext(),
+            sidecar: sidecar,
+            activateAppForAuth: {}
+        )
+        viewModel.start()
+
+        let readyPayload = """
+        {
+          "type": "ready",
+          "sessions": [],
+          "workspaceRoot": "\(workspace.path)",
+          "notionConnected": false
+        }
+        """
+        try sidecar.emit(readyPayload)
+        try sidecar.emit(readyPayload)
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        let scanPayloads = sidecar.sentPayloads.filter { $0["type"] as? String == "scan_workspace" }
+        try #require(scanPayloads.count == 1)
+        #expect(scanPayloads[0]["root"] as? String == workspace.path)
+    }
+
     @Test @MainActor func bipMissionCompletionDoesNotEmitDuplicateProjectContextRefresh() throws {
         let (workspace, cleanup) = try Self.installTemporaryWorkspace()
         defer { cleanup() }
@@ -941,6 +1030,130 @@ struct AgenticViewModelAuthTests {
 
         #expect(fakeSession.startCallCount == 1)
         #expect(viewModel.macOnboardingStatus == .signingIn)
+    }
+
+    private static func makeOnboardingContext() -> OnboardingContext {
+        OnboardingContext(
+            businessDescription: "Agentic30",
+            currentStage: "building",
+            goal: "Find ICP",
+            workMode: .fullTimeSolo,
+            role: .developer,
+            projectStage: .building,
+            isolationLevel: .projectFolder,
+            completedAt: "2026-05-08T00:00:00Z"
+        )
+    }
+
+    private static func workspaceScanResultPayload(workspaceRoot: String) throws -> String {
+        let encoder = JSONEncoder()
+        let planData = try encoder.encode(makeDay1IcpPlan())
+        let planJSON = try #require(String(data: planData, encoding: .utf8))
+        return """
+        {
+          "type": "workspace_scan_result",
+          "scanRoot": "\(workspaceRoot)",
+          "icp": "docs/ICP.md",
+          "spec": "docs/SPEC.md",
+          "values": "docs/VALUES.md",
+          "goal": "docs/GOAL.md",
+          "docs": "README.md",
+          "onboardingHypothesis": {
+            "productName": "SupportLens",
+            "projectKind": "saas",
+            "targetUser": "B2B SaaS support lead",
+            "problem": "Slack escalation을 놓침",
+            "purpose": "Escalation triage",
+            "goal": "유료 후보 1명 검증",
+            "likelyUsers": ["support lead"],
+            "stage": "first_users",
+            "evidence": ["README.md"],
+            "confidence": "high"
+          },
+          "day1IcpPlan": \(planJSON)
+        }
+        """
+    }
+
+    private static func makeDay1IcpPlan() -> Day1IcpPlan {
+        let options = [
+            Day1IcpQuestionOption(
+                id: "support-lead",
+                label: "support lead",
+                description: "Slack escalation을 매일 처리합니다.",
+                preview: "ICP",
+                antiSignal: false
+            ),
+            Day1IcpQuestionOption(
+                id: "curious-only",
+                label: "관심만 있음",
+                description: "최근 사건이 없습니다.",
+                preview: "Anti",
+                antiSignal: true
+            ),
+        ]
+        let questions = ["icp", "pain_point", "outcome"].map { dimension in
+            Day1IcpQuestion(
+                id: dimension,
+                dimension: dimension,
+                title: dimension,
+                prompt: "\(dimension) 질문",
+                helperText: nil,
+                options: options,
+                allowFreeText: true,
+                freeTextPlaceholder: "직접 입력"
+            )
+        }
+        return Day1IcpPlan(
+            schemaVersion: 1,
+            source: "test",
+            generatedAt: "2026-05-22T00:00:00.000Z",
+            confidence: 0.8,
+            fellBackToDeterministic: false,
+            mission: "Day 1 ICP를 좁힙니다.",
+            signals: Day1IcpSignals(
+                productName: "SupportLens",
+                currentIcpGuess: "B2B SaaS support lead",
+                likelyUsers: ["support lead"],
+                problem: "Slack escalation을 놓침",
+                currentAlternatives: ["수동 Slack 확인"],
+                evidenceRefs: [
+                    Day1IcpEvidenceRef(path: "README.md", reason: "README", quote: "# SupportLens"),
+                ],
+                missingAssumptions: [],
+                confidence: "high"
+            ),
+            questions: questions,
+            icpDraft: IcpDraft(
+                description: "B2B SaaS support lead",
+                criteria: ["Slack escalation을 다룸"],
+                whyTheyMatter: ["매일 반복되는 통증"],
+                needs: ["빠른 triage"],
+                haves: ["Slack"],
+                dontNeeds: ["관심만 있음"],
+                evidence: ["README.md"],
+                referenceCustomersToFind: ["support lead 1명"]
+            ),
+            antiIcp: Day1AntiIcp(
+                summary: "관심만 있고 최근 사건이 없는 후보는 제외합니다.",
+                rules: [
+                    AntiIcpRule(
+                        id: "curious-only",
+                        label: "관심만 있음",
+                        reason: "최근 행동 신호가 없습니다.",
+                        evidenceRef: nil
+                    ),
+                ],
+                politeInterestGuardrails: ["좋네요만 말하면 제외"]
+            ),
+            firstInterviewMessage: FirstInterviewMessage(
+                channel: "DM",
+                recipientPlaceholder: "{name}",
+                subject: nil,
+                bodyTemplate: "최근 Slack escalation을 놓친 적이 있나요?",
+                questions: ["최근 사건은?", "현재 대안은?"]
+            )
+        )
     }
 
     private static func installTemporaryWorkspace() throws -> (URL, () -> Void) {

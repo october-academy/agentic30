@@ -366,6 +366,72 @@ final class WorkspaceSettingsTests: XCTestCase {
         XCTAssertEqual(unregisterRequests, 0)
     }
 
+    func testWorkspaceScanResultStorePersistsDay1PlanByWorkspace() {
+        let appSupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-scan-support-\(UUID().uuidString)", isDirectory: true)
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-scan-workspace-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: appSupport)
+            try? FileManager.default.removeItem(at: workspace)
+        }
+
+        let store = WorkspaceScanResultStore(workspaceRoot: workspace.path, appSupportURL: appSupport)
+        store.save(makeWorkspaceScanResult(), now: Date(timeIntervalSince1970: 1_777_000_000))
+
+        let loaded = store.load()
+        XCTAssertEqual(loaded?.icp, "docs/ICP.md")
+        XCTAssertEqual(loaded?.day1IcpPlan?.schemaVersion, 1)
+        XCTAssertEqual(loaded?.day1IcpPlan?.questions.count, 3)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.fileURL.path))
+    }
+
+    func testWorkspaceScanResultStoreDoesNotInheritAcrossWorkspaces() {
+        let appSupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-scan-isolation-\(UUID().uuidString)", isDirectory: true)
+        let workspaceA = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-scan-a-\(UUID().uuidString)", isDirectory: true)
+        let workspaceB = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-scan-b-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: workspaceA, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: workspaceB, withIntermediateDirectories: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: appSupport)
+            try? FileManager.default.removeItem(at: workspaceA)
+            try? FileManager.default.removeItem(at: workspaceB)
+        }
+
+        let storeA = WorkspaceScanResultStore(workspaceRoot: workspaceA.path, appSupportURL: appSupport)
+        let storeB = WorkspaceScanResultStore(workspaceRoot: workspaceB.path, appSupportURL: appSupport)
+        storeA.save(makeWorkspaceScanResult())
+
+        XCTAssertNotEqual(storeA.fileURL, storeB.fileURL)
+        XCTAssertNotNil(storeA.load())
+        XCTAssertNil(storeB.load())
+    }
+
+    func testWorkspaceScanResultStoreIgnoresCorruptCache() {
+        let appSupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-scan-corrupt-\(UUID().uuidString)", isDirectory: true)
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-scan-corrupt-workspace-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: appSupport)
+            try? FileManager.default.removeItem(at: workspace)
+        }
+
+        let store = WorkspaceScanResultStore(workspaceRoot: workspace.path, appSupportURL: appSupport)
+        try? FileManager.default.createDirectory(
+            at: store.fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? Data("{not-json".utf8).write(to: store.fileURL)
+
+        XCTAssertNil(store.load())
+    }
+
     private func makeCompletedMission(completedQuestionCount: Int?) -> BipCoachMission {
         BipCoachMission(
             id: "mission-\(completedQuestionCount.map(String.init) ?? "none")",
@@ -385,6 +451,117 @@ final class WorkspaceSettingsTests: XCTestCase {
             completedQuestionCount: completedQuestionCount,
             threadsUrl: nil,
             sheetRowNote: nil
+        )
+    }
+
+    private func makeWorkspaceScanResult() -> AgenticViewModel.WorkspaceScanResult {
+        AgenticViewModel.WorkspaceScanResult(
+            icp: "docs/ICP.md",
+            spec: "docs/SPEC.md",
+            values: "docs/VALUES.md",
+            designSystem: nil,
+            adr: nil,
+            goal: "docs/GOAL.md",
+            docs: "README.md",
+            sheet: nil,
+            onboardingHypothesis: WorkspaceOnboardingHypothesis(
+                productName: "SupportLens",
+                projectKind: "saas",
+                targetUser: "B2B SaaS support lead",
+                problem: "Slack escalation을 놓침",
+                purpose: "Escalation triage",
+                goal: "유료 후보 1명 검증",
+                values: nil,
+                likelyUsers: ["support lead"],
+                stage: "first_users",
+                evidence: ["README.md"],
+                confidence: "high",
+                suggestedFirstQuestion: nil
+            ),
+            day1AlignmentPlan: nil,
+            day1IcpPlan: makeDay1IcpPlan(),
+            error: nil
+        )
+    }
+
+    private func makeDay1IcpPlan() -> Day1IcpPlan {
+        let options = [
+            Day1IcpQuestionOption(
+                id: "support-lead",
+                label: "support lead",
+                description: "Slack escalation을 매일 처리합니다.",
+                preview: "ICP",
+                antiSignal: false
+            ),
+            Day1IcpQuestionOption(
+                id: "curious-only",
+                label: "관심만 있음",
+                description: "최근 사건이 없습니다.",
+                preview: "Anti",
+                antiSignal: true
+            ),
+        ]
+        let questions = ["icp", "pain_point", "outcome"].map { dimension in
+            Day1IcpQuestion(
+                id: dimension,
+                dimension: dimension,
+                title: dimension,
+                prompt: "\(dimension) 질문",
+                helperText: nil,
+                options: options,
+                allowFreeText: true,
+                freeTextPlaceholder: "직접 입력"
+            )
+        }
+        return Day1IcpPlan(
+            schemaVersion: 1,
+            source: "test",
+            generatedAt: "2026-05-22T00:00:00.000Z",
+            confidence: 0.8,
+            fellBackToDeterministic: false,
+            mission: "Day 1 ICP를 좁힙니다.",
+            signals: Day1IcpSignals(
+                productName: "SupportLens",
+                currentIcpGuess: "B2B SaaS support lead",
+                likelyUsers: ["support lead"],
+                problem: "Slack escalation을 놓침",
+                currentAlternatives: ["수동 Slack 확인"],
+                evidenceRefs: [
+                    Day1IcpEvidenceRef(path: "README.md", reason: "README", quote: "# SupportLens"),
+                ],
+                missingAssumptions: [],
+                confidence: "high"
+            ),
+            questions: questions,
+            icpDraft: IcpDraft(
+                description: "B2B SaaS support lead",
+                criteria: ["Slack escalation을 다룸"],
+                whyTheyMatter: ["매일 반복되는 통증"],
+                needs: ["빠른 triage"],
+                haves: ["Slack"],
+                dontNeeds: ["관심만 있음"],
+                evidence: ["README.md"],
+                referenceCustomersToFind: ["support lead 1명"]
+            ),
+            antiIcp: Day1AntiIcp(
+                summary: "관심만 있고 최근 사건이 없는 후보는 제외합니다.",
+                rules: [
+                    AntiIcpRule(
+                        id: "curious-only",
+                        label: "관심만 있음",
+                        reason: "최근 행동 신호가 없습니다.",
+                        evidenceRef: nil
+                    ),
+                ],
+                politeInterestGuardrails: ["좋네요만 말하면 제외"]
+            ),
+            firstInterviewMessage: FirstInterviewMessage(
+                channel: "DM",
+                recipientPlaceholder: "{name}",
+                subject: nil,
+                bodyTemplate: "최근 Slack escalation을 놓친 적이 있나요?",
+                questions: ["최근 사건은?", "현재 대안은?"]
+            )
         )
     }
 }
