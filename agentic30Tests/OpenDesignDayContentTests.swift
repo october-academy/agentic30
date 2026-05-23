@@ -159,7 +159,7 @@ struct OpenDesignDayContentTests {
         state.introStage = .mission
         #expect(state.currentProgressScrollTarget == .mission)
 
-        state.missionAccepted = true
+        state.acceptMissionForStepFlow()
         #expect(state.currentProgressScrollTarget == .interview1)
     }
 
@@ -619,20 +619,28 @@ struct OpenDesignDayContentTests {
         var state = OpenDesignDayInteractionState()
 
         #expect(!state.missionAccepted)
+        #expect(state.normalizedActiveStepID == 0)
+        #expect(state.maxReachableStepID == 0)
         #expect(state.highestVisibleInterviewStep == 1)
         #expect(state.progressStepCount == 1)
         #expect(state.progressPercent == 0)
 
-        state.missionAccepted = true
-        state.selectedChoices[1] = 3
+        state.acceptMissionForStepFlow()
+        #expect(state.normalizedActiveStepID == 1)
+        #expect(state.maxReachableStepID == 1)
+        state.selectChoice(stepID: 1, choiceID: 3)
         state.recordSubmittedChoice(stepID: 1, choiceID: 3)
+        #expect(state.normalizedActiveStepID == 2)
+        #expect(state.maxReachableStepID == 2)
         #expect(state.highestVisibleInterviewStep == 2)
         #expect(state.progressPercent == 47)
         #expect(state.submittedChoices[1] == 3)
         #expect(state.isCurrentSelectionSubmitted(stepID: 1))
 
-        state.selectedChoices[1] = 2
+        state.selectChoice(stepID: 1, choiceID: 2)
         #expect(!state.isCurrentSelectionSubmitted(stepID: 1))
+        #expect(state.submittedChoices[1] == nil)
+        #expect(state.revisionSteps.contains(1))
         state.recordSubmittedChoice(stepID: 1, choiceID: 2)
         #expect(state.submittedChoices[1] == 2)
         #expect(state.isCurrentSelectionSubmitted(stepID: 1))
@@ -646,14 +654,157 @@ struct OpenDesignDayContentTests {
         #expect(state.progressPercent == 100)
     }
 
-    @Test func freeformAnswerCanHoldManualICPInputWithoutSubmittingCardChoice() {
+    @Test func stepWorkflowSupportsFocusBackAdvanceAndReset() {
+        var state = OpenDesignDayInteractionState(totalInterviewSteps: 3)
+
+        #expect(state.workflowStepCount == 5)
+        #expect(state.workflowNavigationDirection == .neutral)
+        #expect(state.isWorkflowStepUnlocked(0))
+        #expect(!state.isWorkflowStepUnlocked(1))
+
+        state.acceptMissionForStepFlow()
+        #expect(state.workflowNavigationDirection == .forward)
+        #expect(state.activeInterviewStepID == 1)
+        #expect(state.isWorkflowStepUnlocked(1))
+        #expect(!state.isWorkflowStepUnlocked(2))
+
+        state.selectChoice(stepID: 1, choiceID: 2)
+        state.recordSubmittedChoice(stepID: 1, choiceID: 2)
+        #expect(state.workflowNavigationDirection == .forward)
+        #expect(state.activeInterviewStepID == 2)
+        #expect(state.isWorkflowStepUnlocked(2))
+
+        state.moveToPreviousWorkflowStep()
+        #expect(state.workflowNavigationDirection == .backward)
+        #expect(state.activeInterviewStepID == 1)
+
+        state.focusWorkflowStep(2)
+        #expect(state.workflowNavigationDirection == .forward)
+        #expect(state.activeInterviewStepID == 2)
+        state.focusWorkflowStep(3)
+        #expect(state.activeInterviewStepID == 2)
+
+        state.recordSubmittedChoice(stepID: 2, choiceID: 1)
+        state.recordSubmittedChoice(stepID: 3, choiceID: 1)
+        #expect(state.workflowNavigationDirection == .forward)
+        #expect(state.normalizedActiveStepID == state.finalStepID)
+        #expect(state.isWorkflowStepUnlocked(state.finalStepID))
+
+        state.resetStepFlow()
+        #expect(!state.missionAccepted)
+        #expect(state.normalizedActiveStepID == 0)
+        #expect(state.selectedChoices.isEmpty)
+        #expect(state.submittedChoices.isEmpty)
+        #expect(state.progressPercent == 0)
+        #expect(state.workflowNavigationDirection == .neutral)
+    }
+
+    @Test func previousFromFirstQuestionReturnsToStartPhaseWithoutResettingFlow() {
+        var state = OpenDesignDayInteractionState(totalInterviewSteps: 3)
+
+        state.acceptMissionForStepFlow()
+        state.selectChoice(stepID: 1, choiceID: 2)
+        state.recordSubmittedChoice(stepID: 1, choiceID: 2)
+        state.focusWorkflowStep(1)
+
+        state.moveToPreviousWorkflowStep()
+
+        #expect(state.workflowNavigationDirection == .backward)
+        #expect(state.normalizedActiveStepID == 0)
+        #expect(state.activeInterviewStepID == nil)
+        #expect(state.missionAccepted)
+        #expect(state.selectedChoices[1] == 2)
+        #expect(state.submittedChoices[1] == 2)
+        #expect(state.isWorkflowStepUnlocked(1))
+        #expect(state.isWorkflowStepUnlocked(2))
+    }
+
+    @Test func resumeFromStartPhaseReturnsToCurrentInterviewWithoutResettingFlow() {
+        var state = OpenDesignDayInteractionState(totalInterviewSteps: 3)
+
+        state.acceptMissionForStepFlow()
+        state.selectChoice(stepID: 1, choiceID: 2)
+        state.moveToPreviousWorkflowStep()
+
+        #expect(state.normalizedActiveStepID == 0)
+        #expect(state.activeInterviewStepID == nil)
+
+        state.resumeWorkflowFromStartPhase()
+
+        #expect(state.normalizedActiveStepID == 1)
+        #expect(state.activeInterviewStepID == 1)
+        #expect(state.missionAccepted)
+        #expect(state.selectedChoices[1] == 2)
+        #expect(state.submittedChoices.isEmpty)
+        #expect(state.isWorkflowStepUnlocked(1))
+    }
+
+    @Test func workflowNavigationDirectionTracksStepperMovement() {
+        var state = OpenDesignDayInteractionState(totalInterviewSteps: 3)
+        state.acceptMissionForStepFlow()
+        state.recordSubmittedChoice(stepID: 1, choiceID: 1)
+        state.recordSubmittedChoice(stepID: 2, choiceID: 1)
+        #expect(state.normalizedActiveStepID == 3)
+
+        state.focusWorkflowStep(1)
+        #expect(state.normalizedActiveStepID == 1)
+        #expect(state.workflowNavigationDirection == .backward)
+
+        state.focusWorkflowStep(3)
+        #expect(state.normalizedActiveStepID == 3)
+        #expect(state.workflowNavigationDirection == .forward)
+
+        state.focusWorkflowStep(3)
+        #expect(state.workflowNavigationDirection == .neutral)
+    }
+
+    @Test func changingSubmittedChoiceClearsCurrentAndDownstreamSubmissions() {
+        var state = OpenDesignDayInteractionState(totalInterviewSteps: 3)
+        state.acceptMissionForStepFlow()
+        state.selectChoice(stepID: 1, choiceID: 1)
+        state.recordSubmittedChoice(stepID: 1, choiceID: 1)
+        state.selectChoice(stepID: 2, choiceID: 2)
+        state.recordSubmittedChoice(stepID: 2, choiceID: 2)
+
+        state.focusWorkflowStep(1)
+        state.selectChoice(stepID: 1, choiceID: 3)
+
+        #expect(state.selectedChoices[1] == 3)
+        #expect(state.submittedChoices[1] == nil)
+        #expect(state.submittedChoices[2] == nil)
+        #expect(state.selectedChoices[2] == nil)
+        #expect(state.submittedSteps.isEmpty)
+        #expect(state.revisionSteps == [1])
+        #expect(state.activeInterviewStepID == 1)
+        #expect(!state.isWorkflowStepUnlocked(2))
+    }
+
+    @Test func alreadySubmittedChoiceCanAdvanceWithoutResubmitting() {
+        var state = OpenDesignDayInteractionState(totalInterviewSteps: 3)
+        state.acceptMissionForStepFlow()
+        state.selectChoice(stepID: 1, choiceID: 2)
+        state.recordSubmittedChoice(stepID: 1, choiceID: 2)
+        state.focusWorkflowStep(1)
+
+        state.advancePastSubmittedChoice(stepID: 1)
+
+        #expect(state.activeInterviewStepID == 2)
+        #expect(state.submittedChoices[1] == 2)
+        #expect(state.selectedChoices[1] == 2)
+    }
+
+    @Test func freeformAnswerActsAsSingleManualChoice() {
         var state = OpenDesignDayInteractionState()
 
-        state.freeformAnswer = "former teammate shipping weekly Cursor projects"
+        state.setFreeformAnswer(stepID: 1, value: "former teammate shipping weekly Cursor projects")
 
-        #expect(state.selectedChoices[1] == nil)
+        #expect(state.selectedChoices[1] == OpenDesignDayInteractionState.freeformChoiceID)
         #expect(state.submittedChoices[1] == nil)
         #expect(!state.freeformAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+        state.selectChoice(stepID: 1, choiceID: 2)
+        #expect(state.selectedChoices[1] == 2)
+        #expect(state.freeformAnswer.isEmpty)
     }
 
     @Test func dayDraftMatchesOpenDesignPreviewCopy() {
