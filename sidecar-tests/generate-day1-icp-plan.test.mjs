@@ -200,6 +200,32 @@ test("Agentic30 public docs produce customer-outcome choices instead of business
   }
 });
 
+test("Day 1 alignment digest hides ephemeral workspace basename when evidence is missing", async () => {
+  const root = path.join(
+    os.tmpdir(),
+    "agentic30-ui-opendesign-day-handoff-7BC22624-F1F9-4569-B4EB-884798290B65",
+  );
+  await fs.rm(root, { recursive: true, force: true });
+  await fs.mkdir(root, { recursive: true });
+  try {
+    const plan = await generateDay1AlignmentPlan({
+      workspaceRoot: root,
+      scanResult: {},
+      onboardingHypothesis: { confidence: "low" },
+      localDiscovery: { project: { stacks: [], manifestPaths: [] } },
+    });
+
+    assertConciseSignalDigest(plan.signalDigest);
+    const rows = Object.fromEntries(plan.signalDigest.rows.map((row) => [row.key, row.value]));
+    assert.equal(rows.project, "이 프로젝트");
+    assert.equal(rows.pain, "핵심 통증 확인 필요");
+    assert.doesNotMatch(JSON.stringify(plan.signalDigest), /agentic30-ui-opendesign-day-handoff/i);
+    assert.doesNotMatch(JSON.stringify(plan.signalDigest), /scan에서 확인한 핵심 문제/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Day 1 alignment composer accepts zod-validated concise SDK signal digest", async () => {
   const root = await tempWorkspace();
   try {

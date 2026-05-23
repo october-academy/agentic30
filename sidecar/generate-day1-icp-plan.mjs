@@ -40,6 +40,9 @@ const SIGNAL_DIGEST_VALUE_LIMITS = Object.freeze({
   outcome: 110,
   evidence: 120,
 });
+const USER_FACING_GENERIC_PROJECT_NAME = "이 프로젝트";
+const USER_FACING_GENERIC_PAIN_POINT = "핵심 통증 확인 필요";
+const USER_FACING_GENERIC_PROBLEM = "핵심 문제 확인 필요";
 
 const SignalDigestRowSchema = z.object({
   key: z.enum(SIGNAL_DIGEST_ROW_ORDER),
@@ -545,7 +548,7 @@ function buildDay1IcpSignals({
   evidence,
 }) {
   const h = onboardingHypothesis || {};
-  const productName = normalizeProductName(h.productName) || inferProductName(workspaceRoot, evidence);
+  const productName = normalizeUserFacingProjectName(h.productName) || inferProductName(workspaceRoot, evidence);
   const likelyUsers = normalizeStringArray(h.likelyUsers).slice(0, 5);
   const problem = cleanCandidateText(h.problem);
   const currentIcpGuess = cleanCandidateText(h.targetUser) || likelyUsers[0] || "";
@@ -906,7 +909,7 @@ function scanEvidenceLabel(ref) {
 function buildMission(signals) {
   const product = signals.productName || "이 프로젝트";
   const target = signals.currentIcpGuess || "잠재 고객";
-  const problem = signals.problem || "scan에서 보이는 핵심 문제";
+  const problem = signals.problem || USER_FACING_GENERIC_PROBLEM;
   return `${product}의 ICP v0를 PostHog식으로 좁힙니다. ${target}라는 가설을 need / have / don't need 기준으로 검증 가능하게 만들고, "${problem}"을 실제로 겪는 reference customer를 찾을 질문과 docs/ICP.md 초안을 만듭니다.`;
 }
 
@@ -916,6 +919,11 @@ function buildProjectGoal({ signals, onboardingHypothesis, evidence }) {
   if (explicitGoal) return explicitGoal;
 
   const product = signals.productName || "이 프로젝트";
+  const hasSpecificTarget = Boolean(signals.currentIcpGuess || signals.likelyUsers?.[0]);
+  const hasSpecificProblem = Boolean(signals.problem);
+  if (!hasSpecificTarget && !hasSpecificProblem && !(evidence?.length)) {
+    return "Day 7까지 검증할 첫 고객 증거를 만든다.";
+  }
   const problem = signals.problem || "현재 가장 큰 고객 문제";
   const target = signals.currentIcpGuess || signals.likelyUsers?.[0] || "첫 고객 후보";
   const evidenceHint = evidence?.[0]?.path ? ` (${evidence[0].path} 근거)` : "";
@@ -929,7 +937,8 @@ function buildAlignmentMission({ signals, projectGoal }) {
 
 function buildAlignmentComponents({ signals, projectGoal }) {
   const target = signals.currentIcpGuess || signals.likelyUsers?.[0] || "아직 좁히는 중인 첫 고객 후보";
-  const problem = signals.problem || "scan에서 확인한 핵심 문제";
+  const hasSpecificProblem = Boolean(signals.problem);
+  const problem = signals.problem || USER_FACING_GENERIC_PAIN_POINT;
   const outcome = buildOutcomeStatement({ signals, projectGoal });
   const evidence = (signals.evidenceRefs || []).map((ref) => `${ref.path}: ${ref.reason || "workspace evidence"}`);
   const bank = scanEvidenceBankForSignals(signals);
@@ -940,7 +949,9 @@ function buildAlignmentComponents({ signals, projectGoal }) {
       title: "ICP",
       prompt: "이 목표를 위해 Day 2에서 먼저 검증할 고객은 누구인가요?",
       helperText: "직함보다 지금 같은 문제를 겪고, 이번 주에 실제로 물어볼 수 있는 고객 조건을 고릅니다.",
-      statement: `${target} 중 ${problem}을 지금 해결하려는 고객.`,
+      statement: hasSpecificProblem
+        ? `${target} 중 ${problem}을 지금 해결하려는 고객.`
+        : `${target} 중 Day 2에서 먼저 검증할 고객.`,
       evidence,
       missingAssumptions: signals.currentIcpGuess ? [] : ["current_icp"],
       options: buildAlignmentIcpOptions(bank),
@@ -973,6 +984,9 @@ function buildOutcomeStatement({ signals, projectGoal }) {
   const problem = outcomeProblemFragment(signals.problem || "");
   if (problem) {
     return `${target}가 ${problem}을 이번 주 고객 대화와 시장 신호로 확인한다.`;
+  }
+  if (!signals.currentIcpGuess && !(signals.likelyUsers?.length)) {
+    return `${target}가 Day 2에서 검증할 고객 행동과 시장 신호를 정한다.`;
   }
   const goalFocus = outcomeGoalFragment(projectGoal);
   if (goalFocus) {
@@ -1141,7 +1155,8 @@ function sanitizeSignalDigestRowValue(key, value, plan = null) {
   }
   const cleaned = cleanDigestDisplayText(value);
   if (cleaned && !looksLikeSignalDigestDocumentReference(value, cleaned)) {
-    return conciseSignalDigestValue(key, cleaned);
+    const normalized = conciseSignalDigestValue(key, cleaned);
+    if (normalized) return normalized;
   }
   return fallbackSignalDigestValue(key, plan);
 }
@@ -1176,7 +1191,8 @@ function firstUsableSignalDigestValue(key, candidates = []) {
   for (const candidate of candidates) {
     const cleaned = cleanDigestDisplayText(candidate);
     if (!cleaned || looksLikeSignalDigestDocumentReference(candidate, cleaned)) continue;
-    return conciseSignalDigestValue(key, cleaned);
+    const normalized = conciseSignalDigestValue(key, cleaned);
+    if (normalized) return normalized;
   }
   return conciseSignalDigestValue(key, key === "project" ? "이 프로젝트" : "확인 필요");
 }
@@ -1207,7 +1223,7 @@ function normalizeProjectDigestValue(value) {
   const text = cleanDigestDisplayText(value);
   const parts = text.split(/\s+·\s+/);
   const product = parts.find((part) => !/^quality\b/i.test(part.trim())) || parts[0] || text;
-  return normalizeProductName(product) || cleanText(product);
+  return normalizeUserFacingProjectName(product);
 }
 
 function conciseOutcome({ signals, alignmentStatement } = {}) {
@@ -1625,7 +1641,7 @@ function referenceCustomerOptions(signals, user, bank = scanEvidenceBankForSigna
 
 function buildIcpDraft(signals, questions) {
   const target = signals.currentIcpGuess || signals.likelyUsers?.[0] || "아직 좁히는 중인 잠재 고객";
-  const problem = signals.problem || "scan에서 확인한 핵심 문제";
+  const problem = signals.problem || USER_FACING_GENERIC_PROBLEM;
   return {
     description: `${target} 중 ${problem}을 지금 해결하려는 고객.`,
     criteria: [
@@ -2083,7 +2099,7 @@ function normalizeSignals(value) {
   if (!value || typeof value !== "object") return null;
   const confidence = cleanToken(value.confidence) || "low";
   return {
-    productName: normalizeProductName(value.productName || value.product_name),
+    productName: normalizeUserFacingProjectName(value.productName || value.product_name),
     currentIcpGuess: cleanText(value.currentIcpGuess || value.current_icp_guess),
     likelyUsers: normalizeStringArray(value.likelyUsers || value.likely_users).slice(0, 6),
     problem: cleanText(value.problem),
@@ -2217,9 +2233,55 @@ function inferProductName(workspaceRoot, evidence) {
   const readmeHeading = evidence
     .map((item) => item.quote)
     .find((quote) => /^#\s+/.test(quote || ""));
-  if (readmeHeading) return normalizeProductName(readmeHeading.replace(/^#+\s*/, ""));
+  const evidenceName = normalizeUserFacingProjectName(readmeHeading?.replace(/^#+\s*/, ""))
+    || evidence
+      .map((item) => packageNameFromEvidence(item))
+      .map(normalizeUserFacingProjectName)
+      .find(Boolean);
+  if (evidenceName) return evidenceName;
   const base = workspaceRoot ? path.basename(path.resolve(workspaceRoot)) : "";
-  return base && !/^workspace-[a-z0-9]+$/i.test(base) ? normalizeProductName(base) : "이 프로젝트";
+  return normalizeUserFacingProjectName(base) || USER_FACING_GENERIC_PROJECT_NAME;
+}
+
+function packageNameFromEvidence(item = {}) {
+  if (!/package\.json$/i.test(cleanText(item.path))) return "";
+  const quote = cleanText(item.quote);
+  const match = quote.match(/"name"\s*:\s*"([^"]+)"/);
+  return match?.[1] || "";
+}
+
+function normalizeUserFacingProjectName(value) {
+  const text = cleanDigestDisplayText(value);
+  if (!text) return "";
+  const normalized = normalizeProductName(text) || cleanText(text);
+  if (!normalized) return "";
+  return isUserFacingProjectName(normalized) ? normalized : "";
+}
+
+function isUserFacingProjectName(value) {
+  const text = cleanText(value);
+  if (!text) return false;
+  if (text === USER_FACING_GENERIC_PROJECT_NAME) return true;
+  return !looksLikeEphemeralWorkspaceName(text);
+}
+
+function looksLikeEphemeralWorkspaceName(value) {
+  const text = cleanText(value);
+  if (!text) return true;
+  const comparable = text
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-");
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(comparable)) {
+    return true;
+  }
+  if (/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i.test(comparable)) {
+    return true;
+  }
+  if (/^workspace-[a-z0-9]+$/i.test(comparable)) return true;
+  if (/^(?:tmp|temp|test)(?:[-_.]|$)/i.test(comparable)) return true;
+  if (/(?:^|[-_.])(?:tmp|temp|test|ui-test|ui-testing)(?:[-_.]|$)/i.test(comparable)) return true;
+  if (/^agentic30-ui(?:[-_.]|$)/i.test(comparable)) return true;
+  return false;
 }
 
 function evidenceContext(evidence) {
