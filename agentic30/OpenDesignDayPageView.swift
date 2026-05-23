@@ -1348,25 +1348,23 @@ struct OpenDesignDayContent {
     }
 
     func selectedLabel(stepID: Int, in interaction: OpenDesignDayInteractionState, fallback: String = "미선택") -> String {
-        guard let selectedID = interaction.selectedChoices[stepID],
-              let step = interviewSteps.first(where: { $0.id == stepID }),
-              let option = step.options.first(where: { $0.id == selectedID }) else {
+        guard let step = interviewSteps.first(where: { $0.id == stepID }),
+              let title = step.selectedAnswerTitle(in: interaction) else {
             return fallback
         }
-        return option.title
+        return title
     }
 
     func draft(for interaction: OpenDesignDayInteractionState) -> OpenDesignDayDraft {
         let answers = interviewSteps.compactMap { step -> OpenDesignDaySelectedAnswer? in
-            guard let selectedID = interaction.selectedChoices[step.id],
-                  let option = step.options.first(where: { $0.id == selectedID }) else {
+            guard let value = step.selectedAnswerTitle(in: interaction) else {
                 return nil
             }
             return OpenDesignDaySelectedAnswer(
                 dimension: step.dimension.isEmpty ? step.title : step.dimension,
                 title: step.title,
-                value: option.title,
-                isAntiSignal: option.isAntiSignal
+                value: value,
+                isAntiSignal: step.selectedAnswerIsAntiSignal(in: interaction)
             )
         }
         return OpenDesignDayDraft(
@@ -1378,6 +1376,42 @@ struct OpenDesignDayContent {
             plan: plan,
             alignmentPlan: alignmentPlan
         )
+    }
+}
+
+private extension OpenDesignDayContent.InterviewStep {
+    func selectedAnswerTitle(in interaction: OpenDesignDayInteractionState) -> String? {
+        guard let selectedID = interaction.selectedChoices[id] else { return nil }
+        if selectedID == OpenDesignDayInteractionState.freeformChoiceID {
+            let freeform = interaction.trimmedFreeformAnswer(stepID: id)
+            return freeform.isEmpty ? nil : freeform
+        }
+        return options.first(where: { $0.id == selectedID })?.title
+    }
+
+    func selectedAnswerDetail(in interaction: OpenDesignDayInteractionState) -> String? {
+        guard let selectedID = interaction.selectedChoices[id] else { return nil }
+        if selectedID == OpenDesignDayInteractionState.freeformChoiceID {
+            return "직접 입력"
+        }
+        return options.first(where: { $0.id == selectedID })?.detail
+    }
+
+    func selectedAnswerIsAntiSignal(in interaction: OpenDesignDayInteractionState) -> Bool {
+        guard let selectedID = interaction.selectedChoices[id],
+              selectedID != OpenDesignDayInteractionState.freeformChoiceID else {
+            return false
+        }
+        return options.first(where: { $0.id == selectedID })?.isAntiSignal == true
+    }
+}
+
+private extension OpenDesignDayContent.InterviewOption {
+    var isScanWarningOnly: Bool {
+        guard evidenceLimited else { return false }
+        let title = title.lowercased()
+        let detail = detail.lowercased()
+        return title.contains("scan") && (title.contains("근거") || detail.contains("근거 부족"))
     }
 }
 
@@ -1530,16 +1564,63 @@ enum OpenDesignIntroStage: Int, Comparable {
     }
 }
 
+enum OpenDesignWorkflowNavigationDirection: Equatable {
+    case forward
+    case backward
+    case neutral
+
+    static func direction(from currentStepID: Int, to targetStepID: Int) -> OpenDesignWorkflowNavigationDirection {
+        if targetStepID > currentStepID { return .forward }
+        if targetStepID < currentStepID { return .backward }
+        return .neutral
+    }
+}
+
 struct OpenDesignDayInteractionState: Equatable {
+    static let freeformChoiceID = -1
+
     var totalInterviewSteps = 4
     var introStage: OpenDesignIntroStage = .context
     var missionAccepted = false
+    var activeStepID = 0
+    var maxUnlockedStepID = 0
+    var workflowNavigationDirection: OpenDesignWorkflowNavigationDirection = .neutral
     var selectedChoices: [Int: Int] = [:]
     var submittedChoices: [Int: Int] = [:]
     var submittedSteps: Set<Int> = []
+    var revisionSteps: Set<Int> = []
     var freeformAnswer = ""
     var freeformAnswers: [Int: String] = [:]
     var dayCompleted = false
+
+    var finalStepID: Int {
+        totalInterviewSteps + 1
+    }
+
+    var workflowStepCount: Int {
+        totalInterviewSteps + 2
+    }
+
+    var normalizedActiveStepID: Int {
+        if dayCompleted || allInterviewsSubmitted {
+            return min(max(activeStepID, finalStepID), finalStepID)
+        }
+        if !missionAccepted { return 0 }
+        if activeStepID <= 0 { return 0 }
+        return min(max(activeStepID, 1), maxReachableStepID)
+    }
+
+    var maxReachableStepID: Int {
+        if dayCompleted || allInterviewsSubmitted { return finalStepID }
+        if !missionAccepted { return 0 }
+        return min(max(maxUnlockedStepID, highestVisibleInterviewStep), totalInterviewSteps)
+    }
+
+    var activeInterviewStepID: Int? {
+        let active = normalizedActiveStepID
+        guard (1...totalInterviewSteps).contains(active) else { return nil }
+        return active
+    }
 
     var highestVisibleInterviewStep: Int {
         var highest = 1
@@ -1577,6 +1658,8 @@ struct OpenDesignDayInteractionState: Equatable {
         if dayCompleted { return .completion }
         if !introStage.revealsSignals { return .top }
         if !missionAccepted { return .mission }
+        if normalizedActiveStepID == 0 { return .mission }
+        if let activeInterviewStepID { return .interview(stepID: activeInterviewStepID) }
         if !allInterviewsSubmitted { return .interview(stepID: highestVisibleInterviewStep) }
         return .finalIcp
     }
@@ -1628,8 +1711,82 @@ struct OpenDesignDayInteractionState: Equatable {
     }
 
     mutating func recordSubmittedChoice(stepID: Int, choiceID: Int) {
+        let currentStepID = normalizedActiveStepID
+        selectedChoices[stepID] = choiceID
         _ = submittedSteps.insert(stepID)
         submittedChoices[stepID] = choiceID
+        revisionSteps.remove(stepID)
+        let nextStep = stepID < totalInterviewSteps ? stepID + 1 : finalStepID
+        workflowNavigationDirection = OpenDesignWorkflowNavigationDirection.direction(from: currentStepID, to: nextStep)
+        maxUnlockedStepID = max(maxUnlockedStepID, nextStep)
+        if activeStepID == stepID || activeStepID == 0 {
+            activeStepID = nextStep
+        }
+    }
+
+    mutating func advancePastSubmittedChoice(stepID: Int) {
+        guard submittedSteps.contains(stepID),
+              submittedChoices[stepID] == selectedChoices[stepID] else {
+            return
+        }
+        let currentStepID = normalizedActiveStepID
+        let nextStep = stepID < totalInterviewSteps ? stepID + 1 : finalStepID
+        workflowNavigationDirection = OpenDesignWorkflowNavigationDirection.direction(from: currentStepID, to: nextStep)
+        maxUnlockedStepID = max(maxUnlockedStepID, nextStep)
+        activeStepID = nextStep
+    }
+
+    mutating func selectChoice(stepID: Int, choiceID: Int?) {
+        guard (1...totalInterviewSteps).contains(stepID),
+              selectedChoices[stepID] != choiceID else {
+            return
+        }
+
+        let previousSubmittedChoice = submittedChoices[stepID]
+        if let choiceID {
+            selectedChoices[stepID] = choiceID
+        } else {
+            selectedChoices.removeValue(forKey: stepID)
+        }
+
+        if choiceID != Self.freeformChoiceID {
+            clearFreeformAnswer(stepID: stepID)
+        }
+
+        if previousSubmittedChoice != nil || hasDownstreamState(after: stepID) || dayCompleted {
+            invalidateStepAndFollowing(from: stepID)
+            if previousSubmittedChoice != nil, previousSubmittedChoice != choiceID, choiceID != nil {
+                revisionSteps.insert(stepID)
+            }
+        }
+    }
+
+    mutating func setFreeformAnswer(stepID: Int, value: String) {
+        guard (1...totalInterviewSteps).contains(stepID) else { return }
+        let previousFreeform = trimmedFreeformAnswer(stepID: stepID)
+        freeformAnswers[stepID] = value
+        if stepID == 1 {
+            freeformAnswer = value
+        }
+
+        let currentFreeform = trimmedFreeformAnswer(stepID: stepID)
+        if currentFreeform.isEmpty {
+            if selectedChoices[stepID] == Self.freeformChoiceID {
+                selectChoice(stepID: stepID, choiceID: nil)
+            }
+        } else if selectedChoices[stepID] == Self.freeformChoiceID,
+                  previousFreeform != currentFreeform,
+                  submittedChoices[stepID] == Self.freeformChoiceID {
+            invalidateStepAndFollowing(from: stepID)
+            revisionSteps.insert(stepID)
+        } else {
+            selectChoice(stepID: stepID, choiceID: Self.freeformChoiceID)
+        }
+    }
+
+    func trimmedFreeformAnswer(stepID: Int) -> String {
+        let value = freeformAnswers[stepID] ?? (stepID == 1 ? freeformAnswer : "")
+        return value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func isCurrentSelectionSubmitted(stepID: Int) -> Bool {
@@ -1637,6 +1794,91 @@ struct OpenDesignDayInteractionState: Equatable {
         return submittedChoices[stepID] == selectedChoice
     }
 
+    mutating func acceptMissionForStepFlow() {
+        let currentStepID = normalizedActiveStepID
+        introStage = max(introStage, .mission)
+        missionAccepted = true
+        workflowNavigationDirection = OpenDesignWorkflowNavigationDirection.direction(from: currentStepID, to: 1)
+        activeStepID = max(activeStepID, 1)
+        maxUnlockedStepID = max(maxUnlockedStepID, 1)
+    }
+
+    mutating func focusWorkflowStep(_ stepID: Int) {
+        let bounded = min(max(stepID, 0), finalStepID)
+        guard isWorkflowStepUnlocked(bounded) else { return }
+        workflowNavigationDirection = OpenDesignWorkflowNavigationDirection.direction(from: normalizedActiveStepID, to: bounded)
+        activeStepID = bounded
+    }
+
+    mutating func resumeWorkflowFromStartPhase() {
+        guard missionAccepted, !dayCompleted, !allInterviewsSubmitted else { return }
+        let target = min(max(highestVisibleInterviewStep, 1), maxReachableStepID)
+        focusWorkflowStep(target)
+    }
+
+    mutating func moveToPreviousWorkflowStep() {
+        let current = normalizedActiveStepID
+        guard current > 0 else { return }
+        workflowNavigationDirection = .backward
+        activeStepID = current - 1
+    }
+
+    mutating func resetStepFlow() {
+        introStage = .context
+        missionAccepted = false
+        activeStepID = 0
+        maxUnlockedStepID = 0
+        selectedChoices = [:]
+        submittedChoices = [:]
+        submittedSteps = []
+        revisionSteps = []
+        freeformAnswer = ""
+        freeformAnswers = [:]
+        dayCompleted = false
+        workflowNavigationDirection = .neutral
+    }
+
+    func isWorkflowStepUnlocked(_ stepID: Int) -> Bool {
+        if stepID == 0 { return true }
+        if stepID == finalStepID { return allInterviewsSubmitted || dayCompleted }
+        guard (1...totalInterviewSteps).contains(stepID) else { return false }
+        return missionAccepted && stepID <= maxReachableStepID
+    }
+
+    private func hasDownstreamState(after stepID: Int) -> Bool {
+        guard stepID < totalInterviewSteps else { return false }
+        return ((stepID + 1)...totalInterviewSteps).contains { id in
+            selectedChoices[id] != nil
+                || submittedChoices[id] != nil
+                || submittedSteps.contains(id)
+                || !trimmedFreeformAnswer(stepID: id).isEmpty
+        }
+    }
+
+    private mutating func invalidateStepAndFollowing(from stepID: Int) {
+        for id in stepID...totalInterviewSteps {
+            submittedChoices.removeValue(forKey: id)
+            submittedSteps.remove(id)
+            revisionSteps.remove(id)
+            if id > stepID {
+                selectedChoices.removeValue(forKey: id)
+                clearFreeformAnswer(stepID: id)
+            }
+        }
+        if dayCompleted {
+            dayCompleted = false
+        }
+        activeStepID = stepID
+        maxUnlockedStepID = missionAccepted ? max(1, stepID) : 0
+        workflowNavigationDirection = .backward
+    }
+
+    private mutating func clearFreeformAnswer(stepID: Int) {
+        freeformAnswers.removeValue(forKey: stepID)
+        if stepID == 1 {
+            freeformAnswer = ""
+        }
+    }
 }
 
 struct OpenDesignDaySelectedAnswer: Equatable {
@@ -2296,7 +2538,8 @@ struct OpenDesignDayPageView: View {
             selectedReferencePage = nil
             let target = OpenDesignSectionAnchor(rawValue: item.targetSectionID ?? "") ?? .top
             revealIntroIfNeeded(for: target)
-            requestScroll(to: target)
+            focusWorkflowStepIfNeeded(for: target)
+            requestScroll(to: target == .top || target == .signals || target == .mission ? target : .top)
             pulseSearchTarget(target.rawValue)
         }
     }
@@ -2351,26 +2594,31 @@ struct OpenDesignDayPageView: View {
     private func acceptMission() {
         guard !interaction.missionAccepted else { return }
         withAnimation(.spring(response: reduceMotion ? 0 : 0.26, dampingFraction: 0.90)) {
-            interaction.introStage = .mission
-            interaction.missionAccepted = true
+            interaction.acceptMissionForStepFlow()
         }
-        requestScroll(to: .interview(stepID: 1, placement: .nextAction), placement: .nextAction)
+        requestScroll(to: .top)
     }
 
     private func submitStep(_ step: OpenDesignDayContent.InterviewStep, selectedChoiceID: Int) {
-        guard interaction.submittedChoices[step.id] != selectedChoiceID else { return }
+        if selectedChoiceID == OpenDesignDayInteractionState.freeformChoiceID,
+           interaction.trimmedFreeformAnswer(stepID: step.id).isEmpty {
+            return
+        }
+        if interaction.submittedChoices[step.id] == selectedChoiceID {
+            withAnimation(.spring(response: reduceMotion ? 0 : 0.28, dampingFraction: 0.90)) {
+                interaction.advancePastSubmittedChoice(stepID: step.id)
+            }
+            requestScroll(to: .top)
+            return
+        }
         withAnimation(.spring(response: reduceMotion ? 0 : 0.28, dampingFraction: 0.90)) {
-            interaction.selectedChoices[step.id] = selectedChoiceID
+            interaction.selectChoice(stepID: step.id, choiceID: selectedChoiceID)
             interaction.recordSubmittedChoice(stepID: step.id, choiceID: selectedChoiceID)
         }
         if let submission = answerSubmission(for: step, selectedChoiceID: selectedChoiceID) {
             submitStructuredPromptChoice(submission)
         }
-        if step.id < content.interviewSteps.count {
-            requestScroll(to: .interview(stepID: step.id + 1, placement: .nextAction), placement: .nextAction)
-        } else {
-            requestScroll(to: .finalIcp, placement: .nextAction)
-        }
+        requestScroll(to: .top)
     }
 
     private func submitActiveStep() {
@@ -2379,6 +2627,12 @@ struct OpenDesignDayPageView: View {
         }
         if !interaction.missionAccepted {
             acceptMission()
+            return
+        }
+        if let stepID = interaction.activeInterviewStepID,
+           let step = content.interviewSteps.first(where: { $0.id == stepID }),
+           let selectedChoice = interaction.selectedChoices[step.id] {
+            submitStep(step, selectedChoiceID: selectedChoice)
             return
         }
         let visibleSteps = content.interviewSteps.filter { $0.id <= interaction.highestVisibleInterviewStep }
@@ -2408,6 +2662,9 @@ struct OpenDesignDayPageView: View {
         if !interaction.missionAccepted {
             acceptMission()
             return
+        }
+        withAnimation(.spring(response: reduceMotion ? 0 : 0.24, dampingFraction: 0.90)) {
+            interaction.focusWorkflowStep(interaction.normalizedActiveStepID)
         }
         requestScroll(to: interaction.currentProgressScrollTarget)
     }
@@ -2441,6 +2698,33 @@ struct OpenDesignDayPageView: View {
         }
     }
 
+    private func focusWorkflowStepIfNeeded(for target: OpenDesignSectionAnchor) {
+        let stepID: Int?
+        switch target {
+        case .mission, .missionAction:
+            stepID = 0
+        case .interview1, .interview1Options:
+            stepID = 1
+        case .interview2, .interview2Options:
+            stepID = 2
+        case .interview3, .interview3Options:
+            stepID = 3
+        case .interview4, .interview4Options:
+            stepID = 4
+        case .interview5, .interview5Options:
+            stepID = 5
+        case .finalIcp, .finalIcpAction:
+            stepID = interaction.finalStepID
+        default:
+            stepID = nil
+        }
+
+        guard let stepID else { return }
+        withAnimation(.spring(response: reduceMotion ? 0 : 0.24, dampingFraction: 0.90)) {
+            interaction.focusWorkflowStep(stepID)
+        }
+    }
+
     private func requestScroll(
         to target: OpenDesignSectionAnchor,
         placement: OpenDesignScrollPlacement = .sectionContext
@@ -2464,6 +2748,8 @@ struct OpenDesignDayPageView: View {
         let shouldRunBurst = !interaction.dayCompleted && !reduceMotion
         withAnimation(.spring(response: reduceMotion ? 0 : 0.30, dampingFraction: 0.88)) {
             interaction.dayCompleted = true
+            interaction.activeStepID = interaction.finalStepID
+            interaction.maxUnlockedStepID = interaction.finalStepID
         }
         if shouldRunBurst {
             runCompletionBurst()
@@ -2531,18 +2817,28 @@ struct OpenDesignDayPageView: View {
     }
 
     private func selectedTitle(for stepID: Int) -> String? {
-        guard let selectedID = interaction.selectedChoices[stepID],
-              let step = content.interviewSteps.first(where: { $0.id == stepID }),
-              let option = step.options.first(where: { $0.id == selectedID }) else {
-            return nil
-        }
-        return option.title
+        content.interviewSteps.first(where: { $0.id == stepID })?.selectedAnswerTitle(in: interaction)
     }
 
     private func answerSubmission(
         for step: OpenDesignDayContent.InterviewStep,
         selectedChoiceID: Int
     ) -> OpenDesignDayAnswerSubmission? {
+        if selectedChoiceID == OpenDesignDayInteractionState.freeformChoiceID {
+            let freeform = interaction.trimmedFreeformAnswer(stepID: step.id)
+            guard !freeform.isEmpty else { return nil }
+            return OpenDesignDayAnswerSubmission(
+                questionId: "day-step-\(step.id)",
+                dimension: step.dimension,
+                questionTitle: step.title,
+                questionPrompt: step.prompt,
+                answerId: "freeform",
+                answerTitle: freeform,
+                answerDetail: "직접 입력",
+                freeformAnswer: freeform,
+                isAntiSignal: false
+            )
+        }
         guard let option = step.options.first(where: { $0.id == selectedChoiceID }) else {
             return nil
         }
@@ -4568,10 +4864,11 @@ private struct OpenDesignDayMainView: View {
                 content: content,
                 interaction: interaction,
                 horizontalPadding: layout.mainHorizontalPadding,
-                focusStep: { index in
-                    let target = interaction.stepperScrollTarget(for: index)
-                    revealIntroIfNeeded(for: target)
-                    pendingScrollRequest = OpenDesignScrollRequest(target: target)
+                focusStep: { stepID in
+                    withAnimation(.spring(response: reduceMotion ? 0 : 0.24, dampingFraction: 0.90)) {
+                        interaction.focusWorkflowStep(stepID)
+                    }
+                    pendingScrollRequest = OpenDesignScrollRequest(target: .top)
                 }
             )
             OpenDesignHypothesisStrip(
@@ -4583,50 +4880,21 @@ private struct OpenDesignDayMainView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        actionSection
-                            .openDesignStagedReveal(isVisible: introRevealStage >= 1)
-                            .openDesignSearchPulse(id: "top", isActive: isSearchPulseActive("top"))
-                            .id("top")
-
-                        if interaction.missionAccepted {
-                            ForEach(content.interviewSteps.filter { $0.id <= interaction.highestVisibleInterviewStep }) { step in
-                                OpenDesignInterviewStepView(
-                                    step: step,
-                                    selectedChoice: Binding(
-                                        get: { interaction.selectedChoices[step.id] },
-                                        set: { interaction.selectedChoices[step.id] = $0 }
-                                    ),
-                                    submittedChoice: interaction.submittedChoices[step.id],
-                                    freeformAnswer: Binding(
-                                        get: { interaction.freeformAnswers[step.id] ?? (step.id == 1 ? interaction.freeformAnswer : "") },
-                                        set: { value in
-                                            interaction.freeformAnswers[step.id] = value
-                                            if step.id == 1 {
-                                                interaction.freeformAnswer = value
-                                            }
-                                        }
-                                    ),
-                                    submit: { choiceID in submitStep(step, choiceID) }
-                                )
-                                .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
-                                .openDesignSearchPulse(
-                                    id: "interview\(step.id)",
-                                    isActive: isSearchPulseActive("interview\(step.id)") || isSearchPulseActive("interview\(step.id)-options")
-                                )
-                                .id("interview\(step.id)")
-                            }
-                        }
-
-                        if interaction.allInterviewsSubmitted {
-                            OpenDesignHypothesisConfirmationCard(
-                                content: content,
-                                interaction: $interaction,
-                                completeDayAction: completeDayAction,
-                                advanceToNextDay: advanceToNextDay
-                            )
-                            .openDesignSearchPulse(id: "final-icp", isActive: isSearchPulseActive("final-icp"))
-                            .id("final-icp")
-                        }
+                        OpenDesignDayStepWorkspaceView(
+                            content: content,
+                            interaction: $interaction,
+                            activeInterviewStep: activeInterviewStep,
+                            actionSection: AnyView(actionSection),
+                            selectedChoice: selectedChoiceBinding(for: activeInterviewStep),
+                            freeformAnswer: freeformBinding(for: activeInterviewStep),
+                            completeDayAction: completeDayAction,
+                            advanceToNextDay: advanceToNextDay,
+                            previousAction: previousWorkflowStep,
+                            nextAction: advanceWorkflowStep
+                        )
+                        .openDesignStagedReveal(isVisible: introRevealStage >= 1)
+                        .openDesignSearchPulse(id: "top", isActive: isSearchPulseActive("top"))
+                        .id("top")
                     }
                     .frame(maxWidth: 820, alignment: .leading)
                     .padding(.horizontal, layout.mainHorizontalPadding)
@@ -4654,6 +4922,81 @@ private struct OpenDesignDayMainView: View {
         .background(OpenDesignDayColor.bg)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("opendesign.day.main")
+    }
+
+    private var activeInterviewStep: OpenDesignDayContent.InterviewStep? {
+        guard let stepID = interaction.activeInterviewStepID else { return nil }
+        return content.interviewSteps.first(where: { $0.id == stepID })
+    }
+
+    private var startPhaseResumeLabel: String {
+        let target = min(max(interaction.highestVisibleInterviewStep, 1), interaction.maxReachableStepID)
+        return target > 1 ? "진행 단계로 돌아가기" : "ICP로 돌아가기"
+    }
+
+    private func selectedChoiceBinding(
+        for step: OpenDesignDayContent.InterviewStep?
+    ) -> Binding<Int?> {
+        Binding(
+            get: {
+                guard let step else { return nil }
+                return interaction.selectedChoices[step.id]
+            },
+            set: { value in
+                guard let step else { return }
+                interaction.selectChoice(stepID: step.id, choiceID: value)
+            }
+        )
+    }
+
+    private func freeformBinding(
+        for step: OpenDesignDayContent.InterviewStep?
+    ) -> Binding<String> {
+        Binding(
+            get: {
+                guard let step else { return "" }
+                return interaction.freeformAnswers[step.id] ?? (step.id == 1 ? interaction.freeformAnswer : "")
+            },
+            set: { value in
+                guard let step else { return }
+                interaction.setFreeformAnswer(stepID: step.id, value: value)
+            }
+        )
+    }
+
+    private func previousWorkflowStep() {
+        withAnimation(.spring(response: reduceMotion ? 0 : 0.24, dampingFraction: 0.90)) {
+            interaction.moveToPreviousWorkflowStep()
+        }
+        pendingScrollRequest = OpenDesignScrollRequest(target: .top)
+    }
+
+    private func resumeWorkflowFromStartPhase() {
+        withAnimation(.spring(response: reduceMotion ? 0 : 0.24, dampingFraction: 0.90)) {
+            interaction.resumeWorkflowFromStartPhase()
+        }
+        pendingScrollRequest = OpenDesignScrollRequest(target: .top)
+    }
+
+    private func advanceWorkflowStep() {
+        if !interaction.missionAccepted {
+            acceptMission()
+            return
+        }
+
+        if let step = activeInterviewStep {
+            guard let selectedChoice = interaction.selectedChoices[step.id] else { return }
+            submitStep(step, selectedChoice)
+            return
+        }
+
+        if interaction.allInterviewsSubmitted {
+            if !interaction.dayCompleted {
+                completeDayAction()
+            } else {
+                advanceToNextDay()
+            }
+        }
     }
 
     private func startIntroReveal() {
@@ -4713,7 +5056,19 @@ private struct OpenDesignDayMainView: View {
 
                     Spacer(minLength: 0)
 
-                    if interaction.missionAccepted {
+                    if !interaction.missionAccepted {
+                        OpenDesignHandoffActionButton(
+                            label: "가설 확정 시작",
+                            accessibilityIdentifier: "opendesign.day.start",
+                            action: acceptMission
+                        )
+                    } else if interaction.normalizedActiveStepID == 0 && !interaction.allInterviewsSubmitted {
+                        OpenDesignHandoffActionButton(
+                            label: startPhaseResumeLabel,
+                            accessibilityIdentifier: "opendesign.day.start.resume",
+                            action: resumeWorkflowFromStartPhase
+                        )
+                    } else {
                         Text(interaction.allInterviewsSubmitted ? "가설 준비됨" : "진행 중")
                             .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                             .foregroundStyle(OpenDesignDayColor.accent)
@@ -4721,12 +5076,6 @@ private struct OpenDesignDayMainView: View {
                             .frame(height: 24)
                             .background(Capsule().fill(OpenDesignDayColor.accentDim))
                             .overlay(Capsule().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
-                    } else {
-                        OpenDesignHandoffActionButton(
-                            label: "가설 확정 시작",
-                            accessibilityIdentifier: "opendesign.day.start",
-                            action: acceptMission
-                        )
                     }
                 }
 
@@ -4769,6 +5118,8 @@ private struct OpenDesignDayMainView: View {
             .background(gradientCardBackground(cornerRadius: 14, colors: [OpenDesignDayColor.surface, OpenDesignDayColor.surface2], stroke: OpenDesignDayColor.border, accent: OpenDesignDayColor.accent))
         }
         .padding(.bottom, 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("opendesign.day.start.phase")
     }
 
     private func revealIntroIfNeeded(for target: OpenDesignSectionAnchor) {
@@ -4987,6 +5338,173 @@ private struct OpenDesignDayMainView: View {
     }
 }
 
+private struct OpenDesignDayStepWorkspaceView: View {
+    let content: OpenDesignDayContent
+    @Binding var interaction: OpenDesignDayInteractionState
+    let activeInterviewStep: OpenDesignDayContent.InterviewStep?
+    let actionSection: AnyView
+    @Binding var selectedChoice: Int?
+    @Binding var freeformAnswer: String
+    let completeDayAction: () -> Void
+    let advanceToNextDay: () -> Void
+    let previousAction: () -> Void
+    let nextAction: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if !interaction.missionAccepted || interaction.normalizedActiveStepID == 0 {
+                actionSection
+                    .transition(workflowPhaseTransition)
+                    .overlay(alignment: .topLeading) {
+                        activeStepAnchor
+                    }
+                    .id("active-step-start")
+            } else if let activeInterviewStep {
+                VStack(alignment: .leading, spacing: 0) {
+                    OpenDesignInterviewStepView(
+                        step: activeInterviewStep,
+                        selectedChoice: $selectedChoice,
+                        submittedChoice: interaction.submittedChoices[activeInterviewStep.id],
+                        isRevisionStep: interaction.revisionSteps.contains(activeInterviewStep.id),
+                        freeformAnswer: $freeformAnswer
+                    )
+                    OpenDesignStepFooter(
+                        content: content,
+                        interaction: interaction,
+                        activeInterviewStep: activeInterviewStep,
+                        selectedChoice: selectedChoice,
+                        isRevisionStep: interaction.revisionSteps.contains(activeInterviewStep.id),
+                        previousAction: previousAction,
+                        nextAction: nextAction
+                    )
+                }
+                .background(cardBackground(cornerRadius: 12, fill: OpenDesignDayColor.surface))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .transition(workflowPhaseTransition)
+                .accessibilityElement(children: .contain)
+                .overlay(alignment: .topLeading) {
+                    activeStepAnchor
+                }
+                .id("active-step-\(activeInterviewStep.id)")
+            } else if interaction.allInterviewsSubmitted {
+                OpenDesignHypothesisConfirmationCard(
+                    content: content,
+                    interaction: $interaction,
+                    completeDayAction: completeDayAction,
+                    advanceToNextDay: advanceToNextDay
+                )
+                .transition(workflowPhaseTransition)
+                .overlay(alignment: .topLeading) {
+                    activeStepAnchor
+                }
+                .id("active-step-final")
+            }
+        }
+        .animation(.spring(response: reduceMotion ? 0 : 0.28, dampingFraction: 0.90), value: interaction.normalizedActiveStepID)
+    }
+
+    private var workflowPhaseTransition: AnyTransition {
+        AnyTransition.openDesignWorkflowPhase(
+            direction: reduceMotion ? .neutral : interaction.workflowNavigationDirection
+        )
+    }
+
+    private var activeStepAnchor: some View {
+        openDesignAccessibilityAnchor("opendesign.day.activeStep.card", label: "OpenDesign Day Active Step")
+    }
+}
+
+private extension AnyTransition {
+    static func openDesignWorkflowPhase(direction: OpenDesignWorkflowNavigationDirection) -> AnyTransition {
+        let offset: CGFloat = 24
+        switch direction {
+        case .forward:
+            return .asymmetric(
+                insertion: .offset(x: offset, y: 0).combined(with: .opacity),
+                removal: .offset(x: -offset, y: 0).combined(with: .opacity)
+            )
+        case .backward:
+            return .asymmetric(
+                insertion: .offset(x: -offset, y: 0).combined(with: .opacity),
+                removal: .offset(x: offset, y: 0).combined(with: .opacity)
+            )
+        case .neutral:
+            return .opacity
+        }
+    }
+}
+
+private struct OpenDesignStepFooter: View {
+    let content: OpenDesignDayContent
+    let interaction: OpenDesignDayInteractionState
+    let activeInterviewStep: OpenDesignDayContent.InterviewStep
+    let selectedChoice: Int?
+    let isRevisionStep: Bool
+    let previousAction: () -> Void
+    let nextAction: () -> Void
+
+    private var canAdvance: Bool {
+        selectedChoice != nil
+    }
+
+    private var canGoBack: Bool {
+        interaction.normalizedActiveStepID > 0
+    }
+
+    private var nextLabel: String {
+        guard canAdvance else { return "선택 필요" }
+        return activeInterviewStep.id == content.interviewSteps.count ? "확정 보기" : "다음"
+    }
+
+    private var statusText: String {
+        if let submitted = interaction.submittedChoices[activeInterviewStep.id],
+           submitted == selectedChoice {
+            let savedLabel = submitted == OpenDesignDayInteractionState.freeformChoiceID ? "직접 입력" : "\(submitted)번"
+            return "저장 완료 · \(savedLabel)"
+        }
+        if isRevisionStep {
+            return "수정 필요. \(nextLabel)을 눌러 다시 저장하세요."
+        }
+        if selectedChoice != nil {
+            return "선택 완료. \(nextLabel)을 눌러 진행하세요."
+        }
+        return "하나를 선택하면 다음 버튼이 활성화됩니다."
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(statusText)
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(canAdvance ? OpenDesignDayColor.accent : OpenDesignDayColor.muted)
+                .lineLimit(1)
+                .accessibilityIdentifier("opendesign.day.step.footer.status")
+
+            Spacer(minLength: 0)
+
+            OpenDesignGhostActionButton(
+                label: "이전",
+                systemImage: "chevron.left",
+                accessibilityIdentifier: "opendesign.day.step.previous",
+                isDisabled: !canGoBack,
+                action: previousAction
+            )
+
+            OpenDesignHandoffActionButton(
+                label: nextLabel,
+                accessibilityIdentifier: "opendesign.day.step.next",
+                isDisabled: !canAdvance,
+                action: nextAction
+            )
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 48)
+        .background(OpenDesignDayColor.bgDeep)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
+    }
+}
+
 private struct OpenDesignHypothesisStrip: View {
     let content: OpenDesignDayContent
     let interaction: OpenDesignDayInteractionState
@@ -5095,12 +5613,12 @@ private struct OpenDesignDayHeader: View {
 
     private var progressStepLabel: String {
         if interaction.dayCompleted || interaction.allInterviewsSubmitted {
-            return "STEP 3 / 3"
+            return "STEP \(interaction.workflowStepCount) / \(interaction.workflowStepCount)"
         }
         if interaction.missionAccepted {
-            return "STEP 2 / 3"
+            return "STEP \(interaction.normalizedActiveStepID + 1) / \(interaction.workflowStepCount)"
         }
-        return "STEP 1 / 3"
+        return "STEP 1 / \(interaction.workflowStepCount)"
     }
 
     private var progressDetailLabel: String {
@@ -5108,7 +5626,8 @@ private struct OpenDesignDayHeader: View {
             return "확정 대기"
         }
         if !interaction.missionAccepted { return "시작 전" }
-        return "질문 \(interaction.highestVisibleInterviewStep) / \(content.interviewSteps.count)"
+        if interaction.normalizedActiveStepID == 0 { return "시작" }
+        return "질문 \(interaction.activeInterviewStepID ?? interaction.highestVisibleInterviewStep) / \(content.interviewSteps.count)"
     }
 }
 
@@ -5122,6 +5641,7 @@ private struct OpenDesignHeaderActionButton: View {
     let systemImage: String?
     let tone: Tone
     var accessibilityIdentifier: String?
+    var isDisabled = false
     let action: () -> Void
 
     @State private var isHovered = false
@@ -5135,16 +5655,18 @@ private struct OpenDesignHeaderActionButton: View {
                 .frame(height: 28)
                 .openDesignHoverRow(
                     isHovered: isHovered,
+                    isDisabled: isDisabled,
                     cornerRadius: 8,
-                    fill: tone == .accent ? OpenDesignDayColor.accent : Color.clear,
+                    fill: isDisabled ? OpenDesignDayColor.surface2 : tone == .accent ? OpenDesignDayColor.accent : Color.clear,
                     hoverFill: tone == .accent ? OpenDesignDayColor.accentStrong : OpenDesignDayColor.hover,
-                    border: tone == .accent ? Color.clear : OpenDesignDayColor.borderSoft,
+                    border: isDisabled ? OpenDesignDayColor.borderSoft : tone == .accent ? Color.clear : OpenDesignDayColor.borderSoft,
                     hoverBorder: tone == .accent ? Color.clear : OpenDesignDayColor.border
                 )
         }
-        .buttonStyle(OpenDesignInteractiveButtonStyle())
+        .buttonStyle(OpenDesignInteractiveButtonStyle(isDisabled: isDisabled))
+        .disabled(isDisabled)
         .onHover { isHovered = $0 }
-        .accessibilityValue(isHovered ? "active" : "inactive")
+        .accessibilityValue(isDisabled ? "locked" : isHovered ? "active" : "inactive")
         .accessibilityIdentifier(accessibilityIdentifier ?? title)
     }
 
@@ -5158,6 +5680,9 @@ private struct OpenDesignHeaderActionButton: View {
     }
 
     private var foreground: Color {
+        if isDisabled {
+            return OpenDesignDayColor.mutedDeep
+        }
         switch tone {
         case .ghost:
             return isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary
@@ -5173,24 +5698,52 @@ private struct OpenDesignStepper: View {
     let horizontalPadding: CGFloat
     let focusStep: (Int) -> Void
 
-    private var steps: [(String, Bool, Bool)] {
-        [
-            ("시작", interaction.missionAccepted, !interaction.missionAccepted),
-            ("질문 \(min(interaction.submittedSteps.count, content.interviewSteps.count)) / \(content.interviewSteps.count)", interaction.allInterviewsSubmitted, interaction.missionAccepted && !interaction.allInterviewsSubmitted),
-            ("확정", interaction.dayCompleted, interaction.allInterviewsSubmitted),
-        ]
+    private struct StepItem: Identifiable {
+        let id: Int
+        let title: String
+        let isDone: Bool
+        let isCurrent: Bool
+        let isUnlocked: Bool
+    }
+
+    private var steps: [StepItem] {
+        let start = StepItem(
+            id: 0,
+            title: "시작",
+            isDone: interaction.missionAccepted,
+            isCurrent: interaction.normalizedActiveStepID == 0,
+            isUnlocked: true
+        )
+        let questions = content.interviewSteps.map { step in
+            StepItem(
+                id: step.id,
+                title: step.progressLabel,
+                isDone: interaction.submittedSteps.contains(step.id),
+                isCurrent: interaction.normalizedActiveStepID == step.id,
+                isUnlocked: interaction.isWorkflowStepUnlocked(step.id)
+            )
+        }
+        let final = StepItem(
+            id: interaction.finalStepID,
+            title: "확정",
+            isDone: interaction.dayCompleted,
+            isCurrent: interaction.normalizedActiveStepID == interaction.finalStepID,
+            isUnlocked: interaction.isWorkflowStepUnlocked(interaction.finalStepID)
+        )
+        return [start] + questions + [final]
     }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 0) {
-                ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
                     OpenDesignStepperChip(
                         index: index,
-                        title: step.0,
-                        isDone: step.1,
-                        isCurrent: step.2,
-                        action: { focusStep(index) }
+                        title: step.title,
+                        isDone: step.isDone,
+                        isCurrent: step.isCurrent,
+                        isUnlocked: step.isUnlocked,
+                        action: { focusStep(step.id) }
                     )
 
                     if index < steps.count - 1 {
@@ -5214,6 +5767,7 @@ private struct OpenDesignStepperChip: View {
     let title: String
     let isDone: Bool
     let isCurrent: Bool
+    let isUnlocked: Bool
     let action: () -> Void
 
     @State private var isHovered = false
@@ -5223,19 +5777,20 @@ private struct OpenDesignStepperChip: View {
             HStack(spacing: 8) {
                 Text(isDone ? "✓" : "\(index + 1)")
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(isDone ? OpenDesignDayColor.bgDeep : isCurrent || isHovered ? OpenDesignDayColor.accent : OpenDesignDayColor.muted)
+                    .foregroundStyle(isDone ? OpenDesignDayColor.bgDeep : isCurrent || isHovered ? OpenDesignDayColor.accent : isUnlocked ? OpenDesignDayColor.muted : OpenDesignDayColor.mutedDeep)
                     .frame(width: 18, height: 18)
                     .background(Circle().fill(isDone ? OpenDesignDayColor.accent : Color.clear))
                     .overlay(Circle().stroke(isCurrent || isDone || isHovered ? OpenDesignDayColor.accent : OpenDesignDayColor.mutedDeep, lineWidth: 1.5))
                 Text(title)
             }
             .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-            .foregroundStyle(isCurrent || isHovered ? OpenDesignDayColor.accent : isDone ? OpenDesignDayColor.fgSecondary : OpenDesignDayColor.muted)
+            .foregroundStyle(isCurrent || isHovered ? OpenDesignDayColor.accent : isDone ? OpenDesignDayColor.fgSecondary : isUnlocked ? OpenDesignDayColor.muted : OpenDesignDayColor.mutedDeep)
             .padding(.horizontal, 12)
             .frame(height: 30)
             .openDesignHoverRow(
                 isHovered: isHovered,
                 isActive: isCurrent,
+                isDisabled: !isUnlocked,
                 cornerRadius: 15,
                 hoverFill: OpenDesignDayColor.accentDim,
                 activeFill: OpenDesignDayColor.accentDim,
@@ -5243,9 +5798,10 @@ private struct OpenDesignStepperChip: View {
                 activeBorder: OpenDesignDayColor.accentLine
             )
         }
-        .buttonStyle(OpenDesignInteractiveButtonStyle())
+        .buttonStyle(OpenDesignInteractiveButtonStyle(isDisabled: !isUnlocked))
+        .disabled(!isUnlocked)
         .onHover { isHovered = $0 }
-        .accessibilityValue(isCurrent ? "active" : "inactive")
+        .accessibilityValue(isUnlocked ? isCurrent ? "active" : "inactive" : "locked")
     }
 }
 
@@ -5280,174 +5836,234 @@ private struct OpenDesignInterviewStepView: View {
     let step: OpenDesignDayContent.InterviewStep
     @Binding var selectedChoice: Int?
     let submittedChoice: Int?
+    let isRevisionStep: Bool
     @Binding var freeformAnswer: String
-    let submit: (Int) -> Void
 
     @State private var hidesTip = false
 
     var body: some View {
-        let hasFreeformAnswer = step.allowsFreeform && !freeformAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasSubmitted = submittedChoice != nil
 
         VStack(alignment: .leading, spacing: 0) {
-            OpenDesignSectionHeader(title: step.title, meta: step.meta)
-
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 11) {
                 HStack {
-                    Text(step.label)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .textCase(.uppercase)
-                        .foregroundStyle(OpenDesignDayColor.accent)
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(OpenDesignDayColor.accent)
+                            .frame(width: 6, height: 6)
+                            .shadow(color: OpenDesignDayColor.accentDim, radius: 4)
+                        Text("STEP \(step.id) · \(step.progressLabel)")
+                    }
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .textCase(.uppercase)
+                    .foregroundStyle(OpenDesignDayColor.accent)
+
                     Spacer(minLength: 0)
+
                     Text(step.score)
                         .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                         .foregroundStyle(OpenDesignDayColor.accent)
                         .padding(.horizontal, 8)
-                        .padding(.vertical, 1)
+                        .frame(height: 22)
                         .background(Capsule().fill(OpenDesignDayColor.accentDim))
                         .overlay(Capsule().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
                 }
 
-                highlightedStatementText
-                    .font(.system(size: 17, weight: .medium))
-                    .lineSpacing(4)
+                Text(questionTitleText)
+                    .font(.system(size: 22, weight: .semibold))
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(questionHint)
+                    .font(.system(size: 12.5, weight: .regular))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(18)
-            .background(gradientCardBackground(cornerRadius: 14, colors: [OpenDesignDayColor.surface, OpenDesignDayColor.surface2], stroke: OpenDesignDayColor.border, accent: OpenDesignDayColor.accent))
-            .padding(.bottom, 14)
+            .padding(.horizontal, 18)
+            .padding(.top, 18)
+            .padding(.bottom, 16)
+            .background(
+                LinearGradient(
+                    colors: [OpenDesignDayColor.surface2, OpenDesignDayColor.surface],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
 
-            VStack(spacing: 0) {
-                HStack {
-                    HStack(spacing: 8) {
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(OpenDesignDayColor.accent)
-                            .frame(width: 4, height: 14)
-                        Text(step.prompt)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(OpenDesignDayColor.fg)
-                    }
-                    Spacer(minLength: 0)
-                    Text("\(selectedChoice == nil ? 0 : 1) / 1 · \(step.progressLabel)")
-                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                        .foregroundStyle(OpenDesignDayColor.muted)
+            HStack {
+                HStack(spacing: 8) {
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(OpenDesignDayColor.accent)
+                        .frame(width: 4, height: 14)
+                    Text(step.prompt)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                        .lineLimit(1)
                 }
-                .padding(.horizontal, 14)
-                .frame(height: 42)
-                .background(OpenDesignDayColor.surface2)
-                .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
-
-                VStack(spacing: 2) {
-                    ForEach(step.options) { option in
-                        OpenDesignOptionRow(
-                            option: option,
-                            isPicked: selectedChoice == option.id,
-                            isSubmitted: submittedChoice == option.id,
-                            hasSubmittedStep: hasSubmitted,
-                            select: {
-                                selectedChoice = option.id
-                                submit(option.id)
-                            }
-                        )
-                        .accessibilityIdentifier(step.id == 1 ? "opendesign.day.icp.option.\(option.id)" : "opendesign.day.interview.\(step.id).option.\(option.id)")
-                    }
-                }
-                .padding(6)
-
-                if step.allowsFreeform && !hasSubmitted {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(step.freeformLabel)
-                            Spacer(minLength: 0)
-                            Text("Enter 로 전송")
-                                .foregroundStyle(OpenDesignDayColor.mutedDeep)
-                        }
-                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                        .foregroundStyle(OpenDesignDayColor.muted)
-
-                        TextField(step.freeformPlaceholder, text: $freeformAnswer)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 12.5, weight: .medium))
-                            .foregroundStyle(OpenDesignDayColor.fg)
-                            .onSubmit {
-                                hidesTip = true
-                                freeformAnswer = ""
-                            }
-                            .onChange(of: freeformAnswer) { _, value in
-                                if !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                    hidesTip = true
-                                }
-                            }
-                            .accessibilityIdentifier(step.id == 1 ? "opendesign.day.icp.freeform" : "opendesign.day.interview.\(step.id).freeform")
-                            .padding(.leading, 2)
-                            .overlay(alignment: .leading) {
-                                Text("›")
-                                    .font(.system(size: 16, weight: .semibold, design: .monospaced))
-                                    .foregroundStyle(OpenDesignDayColor.accent)
-                                    .offset(x: -14)
-                                    .accessibilityHidden(true)
-                            }
-                            .padding(.leading, 20)
-                            .padding(.trailing, 12)
-                            .frame(height: 34)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(OpenDesignDayColor.surface)
-                                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
-                            )
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 11)
-                    .background(OpenDesignDayColor.bgDeep)
-                    .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
-                }
-
-                HStack(spacing: 12) {
-                    if let submittedChoice {
-                        Text("저장 완료 · \(submittedChoice)번")
-                            .foregroundStyle(OpenDesignDayColor.accent)
-                            .accessibilityIdentifier(step.id == 1 ? "opendesign.day.icp.footer.status" : "opendesign.day.interview.\(step.id).footer.status")
-                        if let title = step.options.first(where: { $0.id == submittedChoice })?.title {
-                            Text("— \(title)")
-                                .foregroundStyle(OpenDesignDayColor.accent)
-                        }
-                        Text("다른 선택지를 클릭하면 변경")
-                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
-                    } else if let selectedChoice {
-                        Text("선택 중 · \(selectedChoice)번")
-                            .foregroundStyle(OpenDesignDayColor.muted)
-                            .accessibilityIdentifier(step.id == 1 ? "opendesign.day.icp.footer.status" : "opendesign.day.interview.\(step.id).footer.status")
-                    } else if hasFreeformAnswer {
-                        Text("직접 입력 중")
-                            .foregroundStyle(OpenDesignDayColor.muted)
-                            .accessibilityIdentifier(step.id == 1 ? "opendesign.day.icp.footer.status" : "opendesign.day.interview.\(step.id).footer.status")
-                    } else {
-                        Text("선택 안 됨")
-                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
-                            .accessibilityIdentifier(step.id == 1 ? "opendesign.day.icp.footer.status" : "opendesign.day.interview.\(step.id).footer.status")
-                    }
-
-                    Spacer(minLength: 0)
-                }
-                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                .padding(.horizontal, 14)
-                .frame(height: 52)
-                .background(OpenDesignDayColor.bgDeep)
-                .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
+                Spacer(minLength: 0)
+                Text(selectedChoice == nil ? "선택 대기 · \(step.progressLabel)" : "선택 1개 · \(step.progressLabel)")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
             }
-            .background(cardBackground(cornerRadius: 12, fill: OpenDesignDayColor.surface))
-            .padding(.bottom, 14)
-            .id(step.id == 1 ? "interview1-options" : "interview\(step.id)-options")
+            .padding(.horizontal, 14)
+            .frame(height: 42)
+            .background(OpenDesignDayColor.surface2)
+            .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+
+            if !selectableOptions.isEmpty {
+                OpenDesignQuestionOptionGrid(
+                    stepID: step.id,
+                    options: selectableOptions,
+                    selectedChoice: $selectedChoice,
+                    submittedChoice: submittedChoice,
+                    hasSubmittedStep: hasSubmitted,
+                    isRevisionStep: isRevisionStep
+                )
+                .id(step.id == 1 ? "interview1-options" : "interview\(step.id)-options")
+            }
+
+            if let scanWarningOption {
+                OpenDesignScanWarningCard(
+                    stepID: step.id,
+                    option: scanWarningOption
+                )
+            }
+
+            if step.allowsFreeform {
+                freeformRow
+            }
 
             if selectedChoice == nil && !hasSubmitted && !hidesTip {
                 Text(tipText)
-                    .font(.system(size: 13, weight: .regular))
+                    .font(.system(size: 12.5, weight: .regular))
                     .lineSpacing(3)
                     .foregroundStyle(OpenDesignDayColor.muted)
-                    .padding(.bottom, 14)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(OpenDesignDayColor.bgDeep)
+                    .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
                     .accessibilityIdentifier("opendesign.day.icp.tip")
             }
         }
+    }
+
+    private var selectableOptions: [OpenDesignDayContent.InterviewOption] {
+        step.options.filter { !$0.isScanWarningOnly }
+    }
+
+    private var scanWarningOption: OpenDesignDayContent.InterviewOption? {
+        step.options.first(where: \.isScanWarningOnly)
+    }
+
+    private var questionStatement: String {
+        let statement = step.statementPrefix + step.markedStatement + step.statementSuffix
+        let trimmed = statement.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? step.prompt : trimmed
+    }
+
+    private var questionTitleText: AttributedString {
+        var statement = AttributedString(questionStatement)
+        statement.foregroundColor = OpenDesignDayColor.fg
+        if !step.markedStatement.isEmpty, let range = statement.range(of: step.markedStatement) {
+            statement[range].foregroundColor = OpenDesignDayColor.accent
+        }
+        return statement
+    }
+
+    private var questionHint: String {
+        let prompt = step.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = step.label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let criteria = step.criteria
+            .prefix(2)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+        let base = prompt.isEmpty || prompt == questionStatement ? label : prompt
+
+        if base.isEmpty { return criteria }
+        if criteria.isEmpty { return base }
+        return "\(base) · \(criteria)"
+    }
+
+    private var freeformRow: some View {
+        let isPicked = selectedChoice == OpenDesignDayInteractionState.freeformChoiceID
+        let isSubmitted = submittedChoice == OpenDesignDayInteractionState.freeformChoiceID && isPicked
+        return HStack(alignment: .top, spacing: 11) {
+            Text(isSubmitted ? "✓" : "›")
+                .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                .foregroundStyle(isPicked ? OpenDesignDayColor.bgDeep : OpenDesignDayColor.accent)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(isPicked ? OpenDesignDayColor.accent : OpenDesignDayColor.bgDeep))
+                .overlay(Circle().stroke(isPicked ? OpenDesignDayColor.accent : OpenDesignDayColor.border, lineWidth: 1))
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(step.freeformLabel)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                    if isSubmitted {
+                        Text("확정됨")
+                            .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.bgDeep)
+                            .padding(.horizontal, 7)
+                            .frame(height: 17)
+                            .background(Capsule().fill(OpenDesignDayColor.accent))
+                    } else if isRevisionStep && isPicked {
+                        Text("수정 필요")
+                            .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.bgDeep)
+                            .padding(.horizontal, 7)
+                            .frame(height: 17)
+                            .background(Capsule().fill(OpenDesignDayColor.amber))
+                    }
+                    Spacer(minLength: 0)
+                    Text("직접 입력")
+                        .font(.system(size: 9.8, weight: .medium, design: .monospaced))
+                        .foregroundStyle(isPicked ? OpenDesignDayColor.accent : OpenDesignDayColor.mutedDeep)
+                        .padding(.horizontal, 7)
+                        .frame(height: 18)
+                        .background(Capsule().fill(isPicked ? OpenDesignDayColor.accentDim : OpenDesignDayColor.bgDeep))
+                        .overlay(Capsule().stroke(isPicked ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, lineWidth: 1))
+                }
+
+                TextField(step.freeformPlaceholder, text: $freeformAnswer)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                    .onSubmit {
+                        hidesTip = true
+                    }
+                    .onChange(of: freeformAnswer) { _, value in
+                        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if trimmed.isEmpty {
+                            if selectedChoice == OpenDesignDayInteractionState.freeformChoiceID {
+                                selectedChoice = nil
+                            }
+                        } else {
+                            selectedChoice = OpenDesignDayInteractionState.freeformChoiceID
+                            hidesTip = true
+                        }
+                    }
+                    .accessibilityIdentifier(step.id == 1 ? "opendesign.day.icp.freeform" : "opendesign.day.interview.\(step.id).freeform")
+                    .padding(.horizontal, 11)
+                    .frame(height: 34)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(OpenDesignDayColor.bgDeep)
+                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(isPicked ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, lineWidth: 1))
+                    )
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(isPicked ? OpenDesignDayColor.accent.opacity(0.08) : OpenDesignDayColor.surface)
+        .overlay(Rectangle().stroke(isPicked ? OpenDesignDayColor.accentLine : Color.clear, lineWidth: 1))
+        .accessibilityElement(children: .contain)
+        .accessibilityValue(isSubmitted || isPicked ? "active" : "inactive")
+        .accessibilityIdentifier(step.id == 1 ? "opendesign.day.icp.freeform.card" : "opendesign.day.interview.\(step.id).freeform.card")
     }
 
     private var tipText: AttributedString {
@@ -5460,93 +6076,245 @@ private struct OpenDesignInterviewStepView: View {
         }
         return text
     }
+}
 
-    private var highlightedStatementText: Text {
-        var statement = AttributedString(step.statementPrefix + step.markedStatement + step.statementSuffix)
-        statement.foregroundColor = OpenDesignDayColor.fg
-        if let range = statement.range(of: step.markedStatement) {
-            statement[range].foregroundColor = OpenDesignDayColor.accent
+private struct OpenDesignQuestionGridWidthPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        let next = nextValue()
+        if next > 0 {
+            value = next
         }
-        return Text(statement)
     }
 }
 
-private struct OpenDesignOptionRow: View {
+private struct OpenDesignQuestionOptionGrid: View {
+    let stepID: Int
+    let options: [OpenDesignDayContent.InterviewOption]
+    @Binding var selectedChoice: Int?
+    let submittedChoice: Int?
+    let hasSubmittedStep: Bool
+    let isRevisionStep: Bool
+
+    @State private var availableWidth: CGFloat = 0
+
+    private var usesTwoColumns: Bool {
+        availableWidth >= 620
+    }
+
+    private var rows: [[OpenDesignDayContent.InterviewOption]] {
+        if !usesTwoColumns {
+            return options.map { [$0] }
+        }
+        return stride(from: 0, to: options.count, by: 2).map { index in
+            Array(options[index..<min(index + 2, options.count)])
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 1) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                HStack(alignment: .top, spacing: 1) {
+                    ForEach(row) { option in
+                        OpenDesignQuestionOptionTile(
+                            option: option,
+                            isPicked: selectedChoice == option.id,
+                            isSubmitted: submittedChoice == option.id,
+                            hasSubmittedStep: hasSubmittedStep,
+                            isRevisionStep: isRevisionStep,
+                            select: { selectedChoice = option.id }
+                        )
+                        .accessibilityIdentifier(accessibilityIdentifier(for: option))
+                    }
+                }
+            }
+        }
+        .padding(1)
+        .background(OpenDesignDayColor.borderSoft)
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: OpenDesignQuestionGridWidthPreferenceKey.self, value: proxy.size.width)
+            }
+        )
+        .onPreferenceChange(OpenDesignQuestionGridWidthPreferenceKey.self) { width in
+            availableWidth = width
+        }
+    }
+
+    private func accessibilityIdentifier(for option: OpenDesignDayContent.InterviewOption) -> String {
+        stepID == 1 ? "opendesign.day.icp.option.\(option.id)" : "opendesign.day.interview.\(stepID).option.\(option.id)"
+    }
+}
+
+private struct OpenDesignScanWarningCard: View {
+    let stepID: Int
+    let option: OpenDesignDayContent.InterviewOption
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 11) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.bgDeep)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(OpenDesignDayColor.amber))
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(option.title)
+                        .font(.system(size: 12.8, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("scan 필요")
+                        .font(.system(size: 9.8, weight: .bold, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.bgDeep)
+                        .padding(.horizontal, 7)
+                        .frame(height: 18)
+                        .background(Capsule().fill(OpenDesignDayColor.amber))
+                }
+
+                Text(option.detail)
+                    .font(.system(size: 11.6, weight: .regular))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .lineSpacing(2)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(OpenDesignDayColor.amber.opacity(0.10))
+        .overlay(Rectangle().stroke(OpenDesignDayColor.amber.opacity(0.46), lineWidth: 1))
+        .accessibilityElement(children: .combine)
+        .accessibilityValue("scan-needed")
+        .accessibilityIdentifier(stepID == 1 ? "opendesign.day.icp.scanWarning" : "opendesign.day.interview.\(stepID).scanWarning")
+    }
+}
+
+private struct OpenDesignQuestionOptionTile: View {
     let option: OpenDesignDayContent.InterviewOption
     let isPicked: Bool
     let isSubmitted: Bool
     let hasSubmittedStep: Bool
+    let isRevisionStep: Bool
     let select: () -> Void
 
     @State private var isHovered = false
 
     private var isActive: Bool {
-        isPicked || isHovered
+        isPicked || isSubmitted
+    }
+
+    private var tone: Color {
+        if option.evidenceLimited {
+            return OpenDesignDayColor.amber
+        }
+        if option.isAntiSignal {
+            return OpenDesignDayColor.rose
+        }
+        return OpenDesignDayColor.accent
+    }
+
+    private var fill: Color {
+        if isActive {
+            return tone.opacity(0.10)
+        }
+        if isHovered {
+            return OpenDesignDayColor.hover
+        }
+        return OpenDesignDayColor.surface
+    }
+
+    private var stroke: Color {
+        if isActive {
+            return tone.opacity(0.48)
+        }
+        if isHovered {
+            return OpenDesignDayColor.borderStrong
+        }
+        return Color.clear
     }
 
     var body: some View {
         Button(action: select) {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: 11) {
                 Text(isSubmitted ? "✓" : "\(option.id)")
-                    .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(isPicked || isSubmitted ? OpenDesignDayColor.bgDeep : isHovered ? OpenDesignDayColor.fgSecondary : OpenDesignDayColor.muted)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(isActive ? OpenDesignDayColor.bgDeep : isHovered ? OpenDesignDayColor.fgSecondary : OpenDesignDayColor.muted)
                     .frame(width: 24, height: 24)
-                    .background(Circle().fill(isPicked || isSubmitted ? OpenDesignDayColor.accent : OpenDesignDayColor.bgDeep))
-                    .overlay(Circle().stroke(isPicked || isSubmitted ? OpenDesignDayColor.accent : isHovered ? OpenDesignDayColor.borderStrong : OpenDesignDayColor.border, lineWidth: 1))
+                    .background(Circle().fill(isActive ? tone : OpenDesignDayColor.bgDeep))
+                    .overlay(Circle().stroke(isActive ? tone : isHovered ? OpenDesignDayColor.borderStrong : OpenDesignDayColor.border, lineWidth: 1))
                     .padding(.top, 1)
 
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(option.title)
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 13.5, weight: .semibold))
                             .foregroundStyle(OpenDesignDayColor.fg)
+                            .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        if isSubmitted {
-                            Text("확정됨")
+                        if let badgeText {
+                            Text(badgeText)
                                 .font(.system(size: 9.5, weight: .bold, design: .monospaced))
                                 .foregroundStyle(OpenDesignDayColor.bgDeep)
                                 .padding(.horizontal, 7)
                                 .frame(height: 17)
-                                .background(Capsule().fill(OpenDesignDayColor.accent))
+                                .background(Capsule().fill(badgeFill))
                                 .alignmentGuide(.firstTextBaseline) { dimension in
                                     dimension[VerticalAlignment.center] + 2
                                 }
                         }
                     }
+
+                    Text(option.detail)
+                        .font(.system(size: 11.8, weight: .regular))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .lineSpacing(2)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text(optionTail)
+                        .font(.system(size: 9.8, weight: .medium, design: .monospaced))
+                        .foregroundStyle(isActive ? tone : isHovered ? OpenDesignDayColor.fgSecondary : OpenDesignDayColor.mutedDeep)
+                        .lineLimit(1)
+                        .padding(.horizontal, 7)
+                        .frame(height: 18)
+                        .background(Capsule().fill(isActive ? tone.opacity(0.12) : OpenDesignDayColor.bgDeep))
+                        .overlay(Capsule().stroke(isActive ? tone.opacity(0.36) : OpenDesignDayColor.borderSoft, lineWidth: 1))
                 }
-
-                Spacer(minLength: 8)
-
-                Text(optionTail)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .frame(minWidth: 76, alignment: .trailing)
-                    .padding(.top, 4)
-                    .foregroundStyle(isPicked || isSubmitted ? OpenDesignDayColor.accent : isHovered ? OpenDesignDayColor.fgSecondary : OpenDesignDayColor.mutedDeep)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 11)
-            .openDesignHoverRow(
-                isHovered: isHovered,
-                isActive: isPicked,
-                cornerRadius: 8,
-                activeFill: OpenDesignDayColor.accentDim,
-                hoverBorder: OpenDesignDayColor.borderSoft,
-                activeBorder: OpenDesignDayColor.accentLine
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, minHeight: 104, alignment: .topLeading)
+            .background(fill)
+            .overlay(Rectangle().stroke(stroke, lineWidth: 1))
+            .contentShape(Rectangle())
         }
         .buttonStyle(OpenDesignInteractiveButtonStyle())
-        .simultaneousGesture(TapGesture().onEnded(select))
         .onHover { isHovered = $0 }
         .accessibilityElement(children: .combine)
-        .accessibilityValue(isSubmitted || isPicked || isHovered ? "active" : "inactive")
+        .accessibilityValue(isSubmitted || isPicked ? "active" : "inactive")
+    }
+
+    private var badgeText: String? {
+        if isSubmitted { return "확정됨" }
+        if isRevisionStep && isPicked { return "수정 필요" }
+        return nil
+    }
+
+    private var badgeFill: Color {
+        isSubmitted ? OpenDesignDayColor.accent : OpenDesignDayColor.amber
     }
 
     private var optionTail: String {
         if isSubmitted { return "확정됨" }
+        if isRevisionStep && isPicked { return "수정 필요" }
         if hasSubmittedStep { return "변경" }
-        if isHovered { return "왜?" }
         return option.tail
     }
 }
@@ -5716,13 +6484,7 @@ private struct OpenDesignHypothesisConfirmationCard: View {
     }
 
     private func selectedOptionTitle(stepID: Int) -> String? {
-        let selectedID = interaction.submittedChoices[stepID] ?? interaction.selectedChoices[stepID]
-        guard let selectedID,
-              let step = content.interviewSteps.first(where: { $0.id == stepID }),
-              let option = step.options.first(where: { $0.id == selectedID }) else {
-            return nil
-        }
-        return option.title
+        content.interviewSteps.first(where: { $0.id == stepID })?.selectedAnswerTitle(in: interaction)
     }
 
     private var completion: some View {
@@ -5762,9 +6524,11 @@ private struct OpenDesignMetaPanelView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Day 1 정보")
+                Text("내 선택")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(OpenDesignDayColor.fg)
+
+                OpenDesignChoiceSummaryPanel(content: content, interaction: interaction)
 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
@@ -5783,7 +6547,7 @@ private struct OpenDesignMetaPanelView: View {
                         Text("/")
                             .font(.system(size: 13, weight: .medium, design: .monospaced))
                             .foregroundStyle(OpenDesignDayColor.mutedDeep)
-                        Text("3 STEP")
+                        Text("\(interaction.workflowStepCount) STEP")
                             .font(.system(size: 13, weight: .medium, design: .monospaced))
                             .foregroundStyle(OpenDesignDayColor.muted)
                         Spacer()
@@ -5809,28 +6573,14 @@ private struct OpenDesignMetaPanelView: View {
                 .padding(.vertical, 12)
                 .background(cardBackground(cornerRadius: 10, fill: OpenDesignDayColor.surface))
 
-                VStack(spacing: 1) {
-                    metaRow("cube.box", "프로젝트", content.plan?.signals.productName ?? "agentic30-public")
-                    metaRow("point.topleft.down.curvedto.point.bottomright.up", "브랜치", "main", swatch: OpenDesignDayColor.accent)
-                    metaRow("person.crop.circle", "사용자", "zettalyst", swatch: OpenDesignDayColor.accent)
-                    metaRow("clock", "남은 시간", "29d 14h", swatch: OpenDesignDayColor.amber)
-                    metaRow("chart.line.uptrend.xyaxis", "현재 신호", content.plan?.signals.confidence ?? "유저 0 · 매출 0")
-                    metaRow("book.closed", "참고 자료", content.plan?.signals.evidenceRefs.map(\.path).prefix(2).joined(separator: ", ") ?? "SPEC.md, ICP.md")
-                }
-                .padding(.horizontal, -4)
-                .padding(.bottom, 8)
+                metaTitle("완료 조건")
+                OpenDesignCompletionChecklist(content: content, interaction: interaction)
 
-                metaTitle("이번 단계")
+                metaTitle("단계별 선택")
                 VStack(spacing: 0) {
                     ForEach(content.interviewSteps) { step in
-                        followupRow(step: step)
+                        choiceRow(step: step)
                     }
-                }
-
-                metaTitle("참고")
-                VStack(spacing: 0) {
-                    followupStatic("doc.text", "어제의 인터뷰 transcript", "2026-05-15-zoom.md · 6.7KB · \"검증 없이 5번 빌드\"")
-                    followupStatic("exclamationmark.circle", "Anti-ICP 체크리스트", "\"언젠가\" / \"좋네요\" 신호 — 인터뷰 끝나면 발동")
                 }
 
                 metaTitle("내일 미리보기")
@@ -5886,7 +6636,7 @@ private struct OpenDesignMetaPanelView: View {
 
     private func followupRow(step: OpenDesignDayContent.InterviewStep) -> some View {
         let done = interaction.submittedSteps.contains(step.id)
-        let active = step.id == interaction.highestVisibleInterviewStep && !done
+        let active = step.id == interaction.activeInterviewStepID && !done
         let subtitle = done ? "완료 · 저장됨" : active ? "지금 진행 중 · 선택지에서 하나 선택" : "잠금 · \(step.options.prefix(3).map(\.title).joined(separator: " / "))"
         return followupStatic(
             done ? "checkmark.circle" : active ? "record.circle" : "lock",
@@ -5911,6 +6661,130 @@ private struct OpenDesignMetaPanelView: View {
             tint: tint,
             usesAccentSubtitle: usesAccentSubtitle
         )
+    }
+
+    private func choiceRow(step: OpenDesignDayContent.InterviewStep) -> some View {
+        let submitted = interaction.submittedSteps.contains(step.id)
+        let selectedTitle = step.selectedAnswerTitle(in: interaction)
+        let active = step.id == interaction.activeInterviewStepID && !submitted
+        return followupStatic(
+            submitted ? "checkmark.circle" : active ? "record.circle" : "circle",
+            step.progressLabel,
+            selectedTitle ?? (active ? "선택 대기" : "아직 비어 있음"),
+            tint: submitted ? OpenDesignDayColor.accent : active ? OpenDesignDayColor.amber : OpenDesignDayColor.muted,
+            usesAccentSubtitle: submitted || active
+        )
+    }
+}
+
+private struct OpenDesignChoiceSummaryPanel: View {
+    let content: OpenDesignDayContent
+    let interaction: OpenDesignDayInteractionState
+
+    private var draft: OpenDesignDayDraft {
+        content.draft(for: interaction)
+    }
+
+    private var filledCount: Int {
+        content.interviewSteps.filter { interaction.selectedChoices[$0.id] != nil }.count
+    }
+
+    private var conclusion: String {
+        if interaction.allInterviewsSubmitted {
+            return draft.finalIcpStatement
+        }
+        if filledCount == 0 {
+            return "아직 비어 있습니다. 현재 STEP에서 하나를 고르면 여기부터 쌓입니다."
+        }
+        return "현재 \(filledCount)/\(content.interviewSteps.count)개 선택됨 · 남은 질문을 고르면 Day 2 검증 기준으로 압축됩니다."
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("현재 결론")
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .textCase(.uppercase)
+                .foregroundStyle(OpenDesignDayColor.accent)
+            Text(conclusion)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(interaction.allInterviewsSubmitted ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("opendesign.day.meta.currentConclusion")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            gradientCardBackground(
+                cornerRadius: 10,
+                colors: [OpenDesignDayColor.surface2, OpenDesignDayColor.surface],
+                stroke: interaction.allInterviewsSubmitted ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft
+            )
+        )
+    }
+}
+
+private struct OpenDesignCompletionChecklist: View {
+    let content: OpenDesignDayContent
+    let interaction: OpenDesignDayInteractionState
+
+    var body: some View {
+        VStack(spacing: 0) {
+            checklistRow(
+                title: "시작",
+                detail: "Day 1 핵심 가설 작업 시작",
+                isDone: interaction.missionAccepted,
+                isActive: !interaction.missionAccepted
+            )
+            ForEach(content.interviewSteps) { step in
+                checklistRow(
+                    title: step.progressLabel,
+                    detail: selectedTitle(for: step) ?? "필수 선택",
+                    isDone: interaction.submittedSteps.contains(step.id),
+                    isActive: interaction.activeInterviewStepID == step.id
+                )
+            }
+            checklistRow(
+                title: "확정",
+                detail: "Day 2 시장 신호 검증으로 넘김",
+                isDone: interaction.dayCompleted,
+                isActive: interaction.allInterviewsSubmitted && !interaction.dayCompleted
+            )
+        }
+        .background(cardBackground(cornerRadius: 10, fill: OpenDesignDayColor.surface))
+    }
+
+    private func selectedTitle(for step: OpenDesignDayContent.InterviewStep) -> String? {
+        step.selectedAnswerTitle(in: interaction)
+    }
+
+    private func checklistRow(
+        title: String,
+        detail: String,
+        isDone: Bool,
+        isActive: Bool
+    ) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: isDone ? "checkmark.circle.fill" : isActive ? "record.circle" : "circle")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(isDone ? OpenDesignDayColor.accent : isActive ? OpenDesignDayColor.amber : OpenDesignDayColor.mutedDeep)
+                .frame(width: 18)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                    .lineLimit(1)
+                Text(detail)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(isDone || isActive ? OpenDesignDayColor.accent : OpenDesignDayColor.muted)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
     }
 }
 
@@ -6545,6 +7419,7 @@ private struct OpenDesignGhostActionButton: View {
     var systemImage: String? = nil
     var isIconOnly = false
     var accessibilityIdentifier: String? = nil
+    var isDisabled = false
     let action: () -> Void
 
     @State private var isHovered = false
@@ -6561,22 +7436,24 @@ private struct OpenDesignGhostActionButton: View {
                 }
             }
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+                .foregroundStyle(isDisabled ? OpenDesignDayColor.mutedDeep : isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
                 .padding(.horizontal, isIconOnly ? 0 : 10)
                 .frame(minWidth: 28, minHeight: 28)
                 .openDesignHoverRow(
                     isHovered: isHovered,
+                    isDisabled: isDisabled,
                     cornerRadius: 8,
-                    fill: Color.clear,
+                    fill: isDisabled ? OpenDesignDayColor.surface2 : Color.clear,
                     hoverFill: OpenDesignDayColor.hover,
                     border: OpenDesignDayColor.borderSoft,
                     hoverBorder: OpenDesignDayColor.border
                 )
         }
-        .buttonStyle(OpenDesignInteractiveButtonStyle())
+        .buttonStyle(OpenDesignInteractiveButtonStyle(isDisabled: isDisabled))
+        .disabled(isDisabled)
         .onHover { isHovered = $0 }
         .accessibilityLabel(label)
-        .accessibilityValue(isHovered ? "active" : "inactive")
+        .accessibilityValue(isDisabled ? "locked" : isHovered ? "active" : "inactive")
         .accessibilityIdentifier(accessibilityIdentifier ?? label)
     }
 }
