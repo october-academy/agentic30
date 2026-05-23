@@ -179,8 +179,24 @@ final class WorkspaceSettingsTests: XCTestCase {
 
         snapshot.completedDays.insert(7)
 
+        XCTAssertFalse(snapshot.isUnlocked(8))
+
+        snapshot.completedDays = Set(1...7)
+
         XCTAssertTrue(snapshot.isUnlocked(8))
-        XCTAssertFalse(snapshot.isUnlocked(9))
+        XCTAssertTrue(snapshot.isUnlocked(14))
+        XCTAssertFalse(snapshot.isUnlocked(15))
+
+        snapshot.completedDays = Set(1...14)
+
+        XCTAssertTrue(snapshot.isUnlocked(15))
+        XCTAssertTrue(snapshot.isUnlocked(21))
+        XCTAssertFalse(snapshot.isUnlocked(22))
+
+        snapshot.completedDays = Set(1...21)
+
+        XCTAssertTrue(snapshot.isUnlocked(22))
+        XCTAssertTrue(snapshot.isUnlocked(30))
     }
 
     func testDayOneCompletionSaveHandlerPersistsDoneStateAndUnlocksDayTwo() {
@@ -218,6 +234,44 @@ final class WorkspaceSettingsTests: XCTestCase {
         XCTAssertEqual(loaded?.completedDays, Set([1]))
         XCTAssertEqual(loaded?.selectedDay, 2)
         XCTAssertEqual(loaded?.startedAt, startedAt)
+    }
+
+    func testCompletionSaveHandlerDoesNotJumpIntoLockedFutureWeek() {
+        let handler = FoundationDayCompletionSaveHandler(store: nil)
+        let result = handler.saveDayCompletion(
+            7,
+            snapshot: FoundationProgressSnapshot(
+                workspaceRoot: "/tmp/project",
+                startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+                selectedDay: 7,
+                completedDays: Set(1...5)
+            ),
+            workspaceRoot: "/tmp/project"
+        )
+
+        XCTAssertEqual(result.completedDay, 7)
+        XCTAssertEqual(result.snapshot.completedDays, Set([1, 2, 3, 4, 5, 7]))
+        XCTAssertEqual(result.unlockedDay, 6)
+        XCTAssertFalse(result.snapshot.isUnlocked(8))
+    }
+
+    func testCompletionSaveHandlerAdvancesToNextWeekAfterPreviousWeekComplete() {
+        let handler = FoundationDayCompletionSaveHandler(store: nil)
+        let result = handler.saveDayCompletion(
+            7,
+            snapshot: FoundationProgressSnapshot(
+                workspaceRoot: "/tmp/project",
+                startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+                selectedDay: 7,
+                completedDays: Set(1...6)
+            ),
+            workspaceRoot: "/tmp/project"
+        )
+
+        XCTAssertEqual(result.unlockedDay, 8)
+        XCTAssertTrue(result.snapshot.isUnlocked(8))
+        XCTAssertTrue(result.snapshot.isUnlocked(14))
+        XCTAssertFalse(result.snapshot.isUnlocked(15))
     }
 
     func testDayOneCompletionIncludesDayTwoTopicTeaser() {

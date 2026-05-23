@@ -506,12 +506,6 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var submittedStructuredPromptBySession: [String: StructuredPromptSubmissionState] = [:]
     @Published private(set) var structuredPromptDraftBySession: [String: StructuredPromptDraftState] = [:]
     @Published private(set) var sidecarOutputLogs: [String: [String]] = [:]
-    @Published private(set) var workspaceSettingsOpenRequest = 0
-    @Published private(set) var workspaceSwitcherTourOpenRequest = 0
-    @Published private(set) var workspaceCurriculumNavigatorTourOpenRequest = 0
-    @Published private(set) var workspaceSettingsTourOpenRequest = 0
-    @Published private(set) var workspaceHelpTourOpenRequest = 0
-    @Published private(set) var workspaceRecentConversationsTourOpenRequest = 0
     @Published private(set) var bipNotificationOpenRequest: BipNotificationOpenRequest?
     @Published private(set) var startupQueuedAction: StartupQueuedAction?
     @Published private(set) var startupSessionAppearElapsedMs: Int?
@@ -1086,30 +1080,6 @@ final class AgenticViewModel: ObservableObject {
         defaults.removeObject(forKey: IntakeV2SourceManager.sourcesDefaultsKey)
         defaults.removeObject(forKey: IntakeV2SourceManager.legacySourcesDefaultsKey)
         defaults.synchronize()
-    }
-
-    func requestWorkspaceSettingsOpen() {
-        workspaceSettingsOpenRequest += 1
-    }
-
-    func requestWorkspaceSwitcherTourOpen() {
-        workspaceSwitcherTourOpenRequest += 1
-    }
-
-    func requestWorkspaceCurriculumNavigatorTourOpen() {
-        workspaceCurriculumNavigatorTourOpenRequest += 1
-    }
-
-    func requestWorkspaceSettingsTourOpen() {
-        workspaceSettingsTourOpenRequest += 1
-    }
-
-    func requestWorkspaceHelpTourOpen() {
-        workspaceHelpTourOpenRequest += 1
-    }
-
-    func requestWorkspaceRecentConversationsTourOpen() {
-        workspaceRecentConversationsTourOpenRequest += 1
     }
 
     func requestBipNotificationOpen(
@@ -5659,9 +5629,58 @@ struct FoundationProgressSnapshot: Codable, Hashable {
     }
 
     func isUnlocked(_ day: Int) -> Bool {
-        if day <= 1 { return true }
-        if day <= 7 { return true }
-        return completedDays.contains(day - 1)
+        let clamped = max(1, min(day, 30))
+        return hasCompletedDays(through: Self.requiredCompletionDayForUnlocking(day: clamped))
+    }
+
+    func isWeekUnlocked(_ week: Int) -> Bool {
+        hasCompletedDays(through: Self.requiredCompletionDayForWeek(week))
+    }
+
+    func unlockRequirementLabel(forWeek week: Int) -> String? {
+        let requiredDay = Self.requiredCompletionDayForWeek(week)
+        guard requiredDay > 0 else { return nil }
+        return "D\(requiredDay)"
+    }
+
+    func nextUnlockedIncompleteDay(after day: Int) -> Int? {
+        let clamped = max(1, min(day, 30))
+        let laterDays = clamped < 30 ? Array((clamped + 1)...30) : []
+        let earlierDays = Array(1...clamped)
+        return (laterDays + earlierDays).first { candidate in
+            isUnlocked(candidate) && !completedDays.contains(candidate)
+        }
+    }
+
+    private func hasCompletedDays(through requiredDay: Int) -> Bool {
+        guard requiredDay > 0 else { return true }
+        return (1...requiredDay).allSatisfy { completedDays.contains($0) }
+    }
+
+    private static func requiredCompletionDayForUnlocking(day: Int) -> Int {
+        switch day {
+        case 1...7:
+            return 0
+        case 8...14:
+            return 7
+        case 15...21:
+            return 14
+        default:
+            return 21
+        }
+    }
+
+    private static func requiredCompletionDayForWeek(_ week: Int) -> Int {
+        switch week {
+        case ...1:
+            return 0
+        case 2:
+            return 7
+        case 3:
+            return 14
+        default:
+            return 21
+        }
     }
 
     var presentationDestination: FoundationCurriculumPresentationDestination {
@@ -5989,10 +6008,7 @@ struct FoundationDayCompletionSaveHandler {
         var next = snapshot
         next.workspaceRoot = workspaceRoot
         next.completedDays.insert(completedDay)
-        next.selectedDay = min(max(next.selectedDay, completedDay + 1), 30)
-        if !next.isUnlocked(next.selectedDay) {
-            next.selectedDay = 1
-        }
+        next.selectedDay = next.nextUnlockedIncompleteDay(after: completedDay) ?? completedDay
         store?.save(next)
         return FoundationDayCompletionSaveResult(
             completedDay: completedDay,

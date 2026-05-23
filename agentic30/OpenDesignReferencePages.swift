@@ -4480,6 +4480,8 @@ private func newsSourceMarkBackground(tone: OpenDesignReferenceTone) -> some Vie
 struct OpenDesignReferenceTitlebar: View {
     let page: OpenDesignReferencePageModel
     let openSearch: () -> Void
+    let isRightSidebarVisible: Bool
+    let toggleRightSidebar: () -> Void
     var refreshAction: (() -> Void)? = nil
 
     var body: some View {
@@ -4509,7 +4511,13 @@ struct OpenDesignReferenceTitlebar: View {
                     OpenDesignReferenceToolbarButton(systemImage: "arrow.clockwise", label: "새로고침", action: refreshAction ?? {})
                 }
                 if page.kind == .projects || page.kind == .settings || page.kind == .interviews || page.kind == .history || page.kind == .news {
-                    OpenDesignReferenceToolbarButton(systemImage: "sidebar.right", label: "우측 패널", isOn: true, action: {})
+                    OpenDesignReferenceToolbarButton(
+                        systemImage: "sidebar.right",
+                        label: isRightSidebarVisible ? "우측 사이드바 닫기" : "우측 사이드바 열기",
+                        isOn: isRightSidebarVisible,
+                        accessibilityIdentifier: "opendesign.reference.meta.toggle",
+                        action: toggleRightSidebar
+                    )
                 }
             }
             .padding(.trailing, 12)
@@ -6805,7 +6813,7 @@ private enum OpenDesignHistoryCatalog {
         .init(id: "week3", title: "Week 3 — Acquire", meta: "잠금 해제 D14", tasks: [
             .init(id: "day15", title: "BIP 채널 첫 포스트", day: "Day 15", meta: "BIP", state: .locked),
         ]),
-        .init(id: "week4", title: "Week 4 — Revenue", meta: "잠금 해제 D22", tasks: [
+        .init(id: "week4", title: "Week 4 — Revenue", meta: "잠금 해제 D21", tasks: [
             .init(id: "day22", title: "첫 매출 ask · Pricing", day: "Day 22", meta: "Revenue", state: .locked),
         ]),
     ]
@@ -9086,6 +9094,7 @@ private struct OpenDesignReferenceToolbarButton: View {
     let systemImage: String
     let label: String
     var isOn = false
+    var accessibilityIdentifier: String? = nil
     let action: () -> Void
     @State private var isHovered = false
 
@@ -9108,6 +9117,8 @@ private struct OpenDesignReferenceToolbarButton: View {
         .help(label)
         .onHover { isHovered = $0 }
         .accessibilityLabel(label)
+        .accessibilityValue(isOn ? "active" : "inactive")
+        .accessibilityIdentifier(accessibilityIdentifier ?? label)
     }
 }
 

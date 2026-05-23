@@ -41,6 +41,14 @@ struct OpenDesignDayContentTests {
         ])
     }
 
+    @Test func displayProjectDigestHidesEphemeralWorkspaceSlugs() {
+        let slug = "agentic30-ui-opendesign-day-handoff-7BC22624-F1F9-4569-B4EB-884798290B65"
+
+        #expect(openDesignDisplayProjectDigestValue(slug) == "이 프로젝트")
+        #expect(openDesignDisplayProductName(slug) == nil)
+        #expect(openDesignDisplayProductName("agentic30-public") == "Agentic30")
+    }
+
     @Test func layoutMetricsFollowOpenDesignBreakpointsAndNativeCompactCollapse() {
         let wide = OpenDesignDayLayoutMetrics(width: 1360)
         #expect(wide.railWidth == 52)
@@ -139,14 +147,14 @@ struct OpenDesignDayContentTests {
         #expect(!state.introStage.revealsSignals)
         #expect(!state.introStage.revealsMission)
         #expect(state.currentProgressScrollTarget == .top)
-        #expect(state.stepperScrollTarget(for: 1) == .signals)
+        #expect(state.stepperScrollTarget(for: 1) == .mission)
     }
 
     @Test func dayInteractionProgressTargetFollowsIntroRevealStage() {
         var state = OpenDesignDayInteractionState()
 
         state.introStage = .signals
-        #expect(state.currentProgressScrollTarget == .signals)
+        #expect(state.currentProgressScrollTarget == .mission)
 
         state.introStage = .mission
         #expect(state.currentProgressScrollTarget == .mission)
@@ -176,6 +184,7 @@ struct OpenDesignDayContentTests {
         #expect(content.alignmentPlan?.projectGoal.contains("SupportLens") == true)
         #expect(content.interviewSteps.map(\.dimension) == ["icp", "pain_point", "outcome"])
         #expect(content.interviewSteps.map(\.title).contains { $0.contains("Pain Point") })
+        #expect(content.interviewSteps.allSatisfy { $0.criteria.isEmpty })
         #expect(content.taskGroups.first?.tasks.first?.title == "30일 목표와 방향을 정해요")
         #expect(content.taskGroups.first?.tasks.first?.meta == "Alignment · goal + 3 parts")
         #expect(content.contextTitle.contains("핵심 가설"))
@@ -207,6 +216,7 @@ struct OpenDesignDayContentTests {
         #expect(content.alignmentPlan == nil)
         #expect(content.plan?.signals.productName == "SupportLens")
         #expect(content.interviewSteps.count == 4)
+        #expect(content.interviewSteps.allSatisfy { $0.criteria.isEmpty })
         #expect(content.taskGroups.first?.tasks.first?.title == "ICP v0 질문을 정해요")
     }
 
@@ -323,8 +333,9 @@ struct OpenDesignDayContentTests {
         let searchItems: [OpenDesignSearchItem] = content.searchItems
 
         #expect(searchItems.compactMap(\.targetSectionID).allSatisfy { knownAnchors.contains($0) })
-        #expect(knownAnchors.contains(OpenDesignSectionAnchor.icpPreview.rawValue))
         #expect(knownAnchors.contains(OpenDesignSectionAnchor.finalIcp.rawValue))
+        #expect(!searchItems.contains { $0.id == "section-preview" })
+        #expect(!searchItems.contains { $0.id == "section-gate" })
     }
 
     @Test func searchRankingMatchesDayAliasesAndSections() {
@@ -332,7 +343,7 @@ struct OpenDesignDayContentTests {
 
         #expect(content.rankedSearchItems(query: "day3").first?.title == "Mom Test 인터뷰 ×3")
         #expect(content.rankedSearchItems(query: "3").first?.title == "Mom Test 인터뷰 ×3")
-        #expect(content.rankedSearchItems(query: "문서 미리보기").first?.kind == .section)
+        #expect(content.rankedSearchItems(query: "핵심 가설").first?.id == "section-final")
         #expect(content.rankedSearchItems(query: "settings").isEmpty)
         #expect(content.rankedSearchItems(query: "설정").first?.title == "설정")
         #expect(content.rankedSearchItems(query: "day8").first?.id == "task-day8")
@@ -374,12 +385,12 @@ struct OpenDesignDayContentTests {
         #expect(availableIDs.contains("task-day3"))
         #expect(!content.searchItems.contains { $0.id == "section-slot" })
         #expect(!content.searchItems.contains { $0.id == "section-message" })
+        #expect(!content.searchItems.contains { $0.id == "section-preview" })
+        #expect(!content.searchItems.contains { $0.id == "section-candidate" })
+        #expect(!content.searchItems.contains { $0.id == "section-gate" })
         #expect(!availableIDs.contains("section-interview1"))
         #expect(!availableIDs.contains("section-picker"))
-        #expect(!availableIDs.contains("section-preview"))
         #expect(!availableIDs.contains("section-final"))
-        #expect(!availableIDs.contains("section-candidate"))
-        #expect(!availableIDs.contains("section-gate"))
     }
 
     @Test func searchAvailabilityAdvancesWithOpenDesignDayFlow() {
@@ -390,22 +401,11 @@ struct OpenDesignDayContentTests {
 
         #expect(availableIDs.contains("section-interview1"))
         #expect(availableIDs.contains("section-picker"))
-        #expect(!availableIDs.contains("section-preview"))
+        #expect(!availableIDs.contains("section-final"))
 
         state.submittedSteps.formUnion([1, 2, 3, 4])
         availableIDs = Set(content.searchItems.filter(state.isSearchItemAvailable).map(\.id))
-        #expect(availableIDs.contains("section-preview"))
-        #expect(!availableIDs.contains("section-final"))
-
-        state.handoffIndex = 2
-        availableIDs = Set(content.searchItems.filter(state.isSearchItemAvailable).map(\.id))
         #expect(availableIDs.contains("section-final"))
-        #expect(availableIDs.contains("section-candidate"))
-        #expect(!availableIDs.contains("section-gate"))
-
-        state.handoffIndex = OpenDesignDayInteractionState.completedHandoffIndex
-        availableIDs = Set(content.searchItems.filter(state.isSearchItemAvailable).map(\.id))
-        #expect(availableIDs.contains("section-gate"))
     }
 
     @Test func realisticConfettiRecipeMatchesCanvasRealisticReference() {
@@ -457,19 +457,177 @@ struct OpenDesignDayContentTests {
         #expect(content.rankedSearchItems(query: "day2").first?.isLocked == true)
     }
 
+    @Test func postDay2LockingKeepsDay1AndDay2OpenThenLocksLaterDays() {
+        let content = OpenDesignDayContent.day1.lockingDaysAfterSecond
+        let week1Tasks = content.taskGroups.first?.tasks ?? []
+
+        let day1IsActive: Bool
+        if case .active? = week1Tasks.first(where: { $0.id == "day1" })?.state {
+            day1IsActive = true
+        } else {
+            day1IsActive = false
+        }
+
+        let day2IsPending: Bool
+        if case .pending? = week1Tasks.first(where: { $0.id == "day2" })?.state {
+            day2IsPending = true
+        } else {
+            day2IsPending = false
+        }
+
+        let lockedFutureIDs = ["day3", "day4", "day5", "day6", "day7"].filter { id in
+            if case .locked? = week1Tasks.first(where: { $0.id == id })?.state {
+                return true
+            }
+            return false
+        }
+
+        #expect(day1IsActive)
+        #expect(day2IsPending)
+        #expect(lockedFutureIDs == ["day3", "day4", "day5", "day6", "day7"])
+        #expect(content.rankedSearchItems(query: "day2").first?.isLocked == false)
+        #expect(content.rankedSearchItems(query: "day3").first?.isLocked == true)
+        #expect(content.rankedSearchItems(query: "day7").first?.isLocked == true)
+    }
+
+    @Test func postDay2LockingAppliesAfterProgressProjection() {
+        let snapshot = FoundationProgressSnapshot(
+            workspaceRoot: "/tmp/project",
+            startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+            selectedDay: 2,
+            completedDays: [1]
+        )
+        let content = OpenDesignDayContent.day2
+            .applyingFoundationProgress(snapshot, selectedDay: 2)
+            .lockingDaysAfterSecond
+        let week1Tasks = content.taskGroups.first?.tasks ?? []
+
+        let day2IsActive: Bool
+        if case .active? = week1Tasks.first(where: { $0.id == "day2" })?.state {
+            day2IsActive = true
+        } else {
+            day2IsActive = false
+        }
+
+        let day3IsLocked: Bool
+        if case .locked? = week1Tasks.first(where: { $0.id == "day3" })?.state {
+            day3IsLocked = true
+        } else {
+            day3IsLocked = false
+        }
+        let day3Search = content.rankedSearchItems(query: "day3").first
+
+        #expect(day2IsActive)
+        #expect(day3IsLocked)
+        #expect(day3Search?.isActive == false)
+        #expect(day3Search?.isLocked == true)
+        #expect(day3Search?.targetSectionID == nil)
+        #expect(day3Search?.route == .inert)
+    }
+
+    @Test func openDesignRoutePolicySupportsOnlyFirstTwoDays() {
+        #expect(OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 1))
+        #expect(OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 2))
+        #expect(!OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 3))
+        #expect(!OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 8))
+        #expect(!OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: 30))
+    }
+
+    @Test func weekProgressLocksFutureWeeksCollapsedByDefault() {
+        let snapshot = FoundationProgressSnapshot(
+            workspaceRoot: "/tmp/project",
+            startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+            selectedDay: 1,
+            completedDays: []
+        )
+        let content = OpenDesignDayContent.day1.applyingFoundationProgress(snapshot, selectedDay: 1)
+        let week1 = content.taskGroups.first(where: { $0.id == "week1" })
+        let week2 = content.taskGroups.first(where: { $0.id == "week2" })
+        let week3 = content.taskGroups.first(where: { $0.id == "week3" })
+        let week4 = content.taskGroups.first(where: { $0.id == "week4" })
+
+        #expect(week1?.isExpandedByDefault == true)
+        #expect(week2?.isExpandedByDefault == false)
+        #expect(week2?.isLocked == true)
+        #expect(week2?.tasks.count == 7)
+        #expect(week3?.isLocked == true)
+        #expect(week4?.isLocked == true)
+        #expect(content.rankedSearchItems(query: "day30").first?.isLocked == true)
+
+        let day8IsLocked: Bool
+        if case .locked? = week2?.tasks.first(where: { $0.id == "day8" })?.state {
+            day8IsLocked = true
+        } else {
+            day8IsLocked = false
+        }
+        #expect(day8IsLocked)
+    }
+
+    @Test func weekProgressUnlocksOnlyAfterPreviousWeeksAreComplete() {
+        let partialWeek1 = FoundationProgressSnapshot(
+            workspaceRoot: "/tmp/project",
+            startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+            selectedDay: 7,
+            completedDays: Set(1...6)
+        )
+        let partialContent = OpenDesignDayContent.day1.applyingFoundationProgress(partialWeek1, selectedDay: 7)
+        #expect(partialContent.taskGroups.first(where: { $0.id == "week2" })?.isLocked == true)
+
+        let week2Snapshot = FoundationProgressSnapshot(
+            workspaceRoot: "/tmp/project",
+            startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+            selectedDay: 8,
+            completedDays: Set(1...7)
+        )
+        let week2Content = OpenDesignDayContent.day1.applyingFoundationProgress(week2Snapshot, selectedDay: 8)
+        let week2 = week2Content.taskGroups.first(where: { $0.id == "week2" })
+
+        #expect(week2?.isLocked == false)
+        #expect(week2?.isExpandedByDefault == true)
+        #expect(week2?.tasks.count == 7)
+        let day8IsActive: Bool
+        if case .active? = week2?.tasks.first(where: { $0.id == "day8" })?.state {
+            day8IsActive = true
+        } else {
+            day8IsActive = false
+        }
+        #expect(day8IsActive)
+        #expect(week2Content.taskGroups.first(where: { $0.id == "week3" })?.isLocked == true)
+
+        let week3Snapshot = FoundationProgressSnapshot(
+            workspaceRoot: "/tmp/project",
+            startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+            selectedDay: 15,
+            completedDays: Set(1...14)
+        )
+        let week3Content = OpenDesignDayContent.day1.applyingFoundationProgress(week3Snapshot, selectedDay: 15)
+        #expect(week3Content.taskGroups.first(where: { $0.id == "week3" })?.isLocked == false)
+        #expect(week3Content.taskGroups.first(where: { $0.id == "week4" })?.isLocked == true)
+
+        let week4Snapshot = FoundationProgressSnapshot(
+            workspaceRoot: "/tmp/project",
+            startedAt: Date(timeIntervalSince1970: 1_777_000_000),
+            selectedDay: 22,
+            completedDays: Set(1...21)
+        )
+        let week4Content = OpenDesignDayContent.day1.applyingFoundationProgress(week4Snapshot, selectedDay: 22)
+        #expect(week4Content.taskGroups.first(where: { $0.id == "week4" })?.isLocked == false)
+        #expect(week4Content.taskGroups.first(where: { $0.id == "week4" })?.tasks.count == 9)
+    }
+
     @Test func interactionProgressFollowsOpenDesignDayFlow() {
         var state = OpenDesignDayInteractionState()
 
         #expect(!state.missionAccepted)
         #expect(state.highestVisibleInterviewStep == 1)
-        #expect(state.progressStepCount == 2)
-        #expect(state.progressPercent == 50)
+        #expect(state.progressStepCount == 1)
+        #expect(state.progressPercent == 0)
 
         state.missionAccepted = true
         state.selectedChoices[1] = 3
         state.recordSubmittedChoice(stepID: 1, choiceID: 3)
         #expect(state.highestVisibleInterviewStep == 2)
-        #expect(state.progressPercent == 58)
+        #expect(state.progressPercent == 47)
         #expect(state.submittedChoices[1] == 3)
         #expect(state.isCurrentSelectionSubmitted(stepID: 1))
 
@@ -481,8 +639,8 @@ struct OpenDesignDayContentTests {
 
         state.submittedSteps.formUnion([2, 3, 4])
         #expect(state.allInterviewsSubmitted)
-        #expect(state.progressStepCount == 4)
-        #expect(state.progressPercent == 75)
+        #expect(state.progressStepCount == 3)
+        #expect(state.progressPercent == 90)
 
         state.dayCompleted = true
         #expect(state.progressPercent == 100)
@@ -510,7 +668,7 @@ struct OpenDesignDayContentTests {
         #expect(!draft.isAntiSignal)
     }
 
-    @Test func antiSignalChoiceUpdatesDraftAndGateState() {
+    @Test func antiSignalChoiceUpdatesDraftBoundaryCopy() {
         let content = OpenDesignDayContent.day1
         var state = OpenDesignDayInteractionState()
         state.selectedChoices = [1: 1, 2: 1, 3: 2, 4: 4]
@@ -520,48 +678,23 @@ struct OpenDesignDayContentTests {
 
         #expect(draft.isAntiSignal)
         #expect(draft.antiIcpBody.contains("지난 7일 행동 없음"))
-        #expect(!state.completedGateRows.contains(4))
-        #expect(state.gateTag(id: 4, completedTag: "완료", initialPendingTag: "재확인") == "재확인")
-    }
-
-    @Test func gateRowsKeepInitialTagsThenFollowOpenDesignToggleCopy() {
-        var state = OpenDesignDayInteractionState()
-
-        #expect(state.gateTag(id: 1, completedTag: "완료 · 8.2", initialPendingTag: "대기") == "완료 · 8.2")
-        #expect(state.gateTag(id: 3, completedTag: "완료", initialPendingTag: "확인 필요") == "확인 필요")
-
-        state.toggleGateRow(3)
-        #expect(state.gateTag(id: 3, completedTag: "완료", initialPendingTag: "확인 필요") == "완료")
-
-        state.toggleGateRow(3)
-        #expect(state.gateTag(id: 3, completedTag: "완료", initialPendingTag: "확인 필요") == "대기")
-
-        state.toggleGateRow(1)
-        #expect(state.gateTag(id: 1, completedTag: "완료 · 8.2", initialPendingTag: "대기") == "대기")
-
-        state.toggleGateRow(1)
-        #expect(state.gateTag(id: 1, completedTag: "완료 · 8.2", initialPendingTag: "대기") == "완료")
     }
 
     @Test func stepperScrollTargetsFollowCurrentDayState() {
         var state = OpenDesignDayInteractionState()
 
         #expect(state.stepperScrollTarget(for: 0) == .top)
-        #expect(state.stepperScrollTarget(for: 1) == .signals)
+        #expect(state.stepperScrollTarget(for: 1) == .mission)
         #expect(state.stepperScrollTarget(for: 2) == .mission)
-        #expect(state.stepperScrollTarget(for: 3) == .mission)
 
         state.introStage = .mission
         state.missionAccepted = true
         state.submittedSteps.insert(1)
-        #expect(state.stepperScrollTarget(for: 2) == .interview2)
+        #expect(state.stepperScrollTarget(for: 1) == .interview2)
 
         state.submittedSteps.formUnion([2, 3, 4])
-        #expect(state.stepperScrollTarget(for: 3) == .icpPreview)
-
-        state.handoffIndex = OpenDesignDayInteractionState.completedHandoffIndex
-        #expect(state.currentProgressScrollTarget == .gate)
-        #expect(state.stepperScrollTarget(for: 3) == .gate)
+        #expect(state.currentProgressScrollTarget == .finalIcp)
+        #expect(state.stepperScrollTarget(for: 2) == .finalIcp)
     }
 
     @Test func interviewScrollRequestsPreferNextActionAnchors() {
@@ -655,36 +788,6 @@ struct OpenDesignDayContentTests {
         #expect(visibility.showsResearchSection)
         #expect(visibility.showsDraftSection)
         #expect(visibility.showsSidebarSourceFilters)
-    }
-
-    @Test func referenceRoutePolicyKeepsReferencePagesAcrossTransientWorkspaceState() {
-        for kind in OpenDesignReferencePageKind.allCases {
-            #expect(shouldUseOpenDesignRoute(selectedReferencePage: kind, isBipCoachGenerating: true))
-            #expect(shouldUseOpenDesignRoute(selectedReferencePage: kind, hasBipMissionProgress: true))
-            #expect(shouldUseOpenDesignRoute(selectedReferencePage: kind, hasCurrentMission: true))
-            #expect(shouldUseOpenDesignRoute(selectedReferencePage: kind, hasPendingMissionChoices: true))
-            #expect(shouldUseOpenDesignRoute(selectedReferencePage: kind, hasBipCoachError: true))
-            #expect(shouldUseOpenDesignRoute(selectedReferencePage: kind, hasSidecarFailure: true))
-            #expect(shouldUseOpenDesignRoute(selectedReferencePage: kind, hasBipTokenExpired: true))
-        }
-    }
-
-    @Test func referenceRoutePolicyStillClearsForNonOpenDesignDestinations() {
-        for kind in OpenDesignReferencePageKind.allCases {
-            #expect(!shouldUseOpenDesignRoute(dayNumber: 3, selectedReferencePage: kind))
-            #expect(!shouldUseOpenDesignRoute(isGraduation: true, selectedReferencePage: kind))
-            #expect(!shouldUseOpenDesignRoute(workspaceSectionIsCurriculum: false, selectedReferencePage: kind))
-            #expect(!shouldUseOpenDesignRoute(reviewDashboardMatchesDay: true, selectedReferencePage: kind))
-        }
-    }
-
-    @Test func transientWorkspaceStateWithoutReferencePageStillUsesFallbackSurfaces() {
-        #expect(shouldUseOpenDesignRoute())
-        #expect(!shouldUseOpenDesignRoute(isBipCoachGenerating: true))
-        #expect(!shouldUseOpenDesignRoute(hasBipMissionProgress: true))
-        #expect(!shouldUseOpenDesignRoute(hasCurrentMission: true))
-        #expect(!shouldUseOpenDesignRoute(hasPendingMissionChoices: true))
-        #expect(!shouldUseOpenDesignRoute(hasBipCoachError: true))
     }
 
     private func bipResearchSnapshot(
@@ -950,35 +1053,4 @@ struct OpenDesignDayContentTests {
         )
     }
 
-    private func shouldUseOpenDesignRoute(
-        dayNumber: Int = 1,
-        workspaceSectionIsCurriculum: Bool = true,
-        isGraduation: Bool = false,
-        reviewDashboardMatchesDay: Bool = false,
-        selectedReferencePage: OpenDesignReferencePageKind? = nil,
-        hasBipNotificationHint: Bool = false,
-        hasSidecarFailure: Bool = false,
-        hasBipTokenExpired: Bool = false,
-        isBipCoachGenerating: Bool = false,
-        hasBipMissionProgress: Bool = false,
-        hasCurrentMission: Bool = false,
-        hasPendingMissionChoices: Bool = false,
-        hasBipCoachError: Bool = false
-    ) -> Bool {
-        OpenDesignReferenceRoutePolicy.shouldUseOpenDesignDayPage(
-            dayNumber: dayNumber,
-            workspaceSectionIsCurriculum: workspaceSectionIsCurriculum,
-            isGraduation: isGraduation,
-            reviewDashboardMatchesDay: reviewDashboardMatchesDay,
-            selectedReferencePage: selectedReferencePage,
-            hasBipNotificationHint: hasBipNotificationHint,
-            hasSidecarFailure: hasSidecarFailure,
-            hasBipTokenExpired: hasBipTokenExpired,
-            isBipCoachGenerating: isBipCoachGenerating,
-            hasBipMissionProgress: hasBipMissionProgress,
-            hasCurrentMission: hasCurrentMission,
-            hasPendingMissionChoices: hasPendingMissionChoices,
-            hasBipCoachError: hasBipCoachError
-        )
-    }
 }

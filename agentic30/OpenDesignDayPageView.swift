@@ -23,6 +23,27 @@ struct OpenDesignDayContent {
         let title: String
         let meta: String
         let tasks: [TaskItem]
+        let isExpandedByDefault: Bool
+        let isLocked: Bool
+        let lockNote: String?
+
+        init(
+            id: String,
+            title: String,
+            meta: String,
+            tasks: [TaskItem],
+            isExpandedByDefault: Bool = true,
+            isLocked: Bool = false,
+            lockNote: String? = nil
+        ) {
+            self.id = id
+            self.title = title
+            self.meta = meta
+            self.tasks = tasks
+            self.isExpandedByDefault = isExpandedByDefault
+            self.isLocked = isLocked
+            self.lockNote = lockNote
+        }
     }
 
     struct TaskItem: Identifiable, Hashable {
@@ -296,6 +317,11 @@ struct OpenDesignDayContent {
     var alignmentPlan: Day1AlignmentPlan? = nil
     var market: Market? = nil
 
+    private struct TaskCopy: Hashable {
+        let title: String
+        let meta: String
+    }
+
     var lockingFutureDays: OpenDesignDayContent {
         OpenDesignDayContent(
             railItems: railItems,
@@ -337,8 +363,253 @@ struct OpenDesignDayContent {
                 )
             },
             plan: plan,
-            alignmentPlan: alignmentPlan
+            alignmentPlan: alignmentPlan,
+            market: market
         )
+    }
+
+    var lockingDaysAfterSecond: OpenDesignDayContent {
+        OpenDesignDayContent(
+            railItems: railItems,
+            taskGroups: taskGroups.map { group in
+                TaskGroup(
+                    id: group.id,
+                    title: group.title,
+                    meta: group.meta,
+                    tasks: group.tasks.map { task in
+                        guard let dayNumber = openDesignFoundationDayNumber(taskID: task.id),
+                              dayNumber > 2 else {
+                            return task
+                        }
+                        return TaskItem(
+                            id: task.id,
+                            title: task.title,
+                            day: task.day,
+                            meta: task.meta,
+                            state: .locked
+                        )
+                    },
+                    isExpandedByDefault: group.isExpandedByDefault,
+                    isLocked: group.isLocked,
+                    lockNote: group.lockNote
+                )
+            },
+            contextTitle: contextTitle,
+            contextBody: contextBody,
+            mission: mission,
+            interviewSteps: interviewSteps,
+            searchItems: searchItems.map { item in
+                guard item.kind == .task,
+                      let dayNumber = openDesignFoundationDayNumber(taskID: item.id),
+                      dayNumber > 2 else {
+                    return item
+                }
+                return SearchItem(
+                    id: item.id,
+                    kind: item.kind,
+                    title: item.title,
+                    subtitle: item.subtitle,
+                    day: item.day,
+                    systemImage: "lock",
+                    isActive: false,
+                    isLocked: true,
+                    lockNote: item.lockNote ?? "준비 중",
+                    targetSectionID: nil,
+                    route: .inert
+                )
+            },
+            plan: plan,
+            alignmentPlan: alignmentPlan,
+            market: market
+        )
+    }
+
+    func applyingFoundationProgress(
+        _ snapshot: FoundationProgressSnapshot,
+        selectedDay: Int
+    ) -> OpenDesignDayContent {
+        let overrides = taskCopyOverrides()
+        return OpenDesignDayContent(
+            railItems: railItems,
+            taskGroups: Self.weekTaskGroups(
+                snapshot: snapshot,
+                selectedDay: selectedDay,
+                overrides: overrides
+            ),
+            contextTitle: contextTitle,
+            contextBody: contextBody,
+            mission: mission,
+            interviewSteps: interviewSteps,
+            searchItems: Self.weekSearchItems(
+                baseItems: searchItems,
+                snapshot: snapshot,
+                selectedDay: selectedDay,
+                overrides: overrides
+            ),
+            plan: plan,
+            alignmentPlan: alignmentPlan,
+            market: market
+        )
+    }
+
+    private func taskCopyOverrides() -> [Int: TaskCopy] {
+        var overrides: [Int: TaskCopy] = [:]
+        for task in taskGroups.flatMap(\.tasks) {
+            guard let day = openDesignFoundationDayNumber(taskID: task.id) else { continue }
+            overrides[day] = TaskCopy(title: task.title, meta: task.meta)
+        }
+        return overrides
+    }
+
+    private struct WeekTaskSpec {
+        let id: String
+        let title: String
+        let week: Int
+        let days: ClosedRange<Int>
+    }
+
+    private static let taskWeekSpecs: [WeekTaskSpec] = [
+        WeekTaskSpec(id: "week1", title: "Week 1 — Foundation", week: 1, days: 1...7),
+        WeekTaskSpec(id: "week2", title: "Week 2 — Build", week: 2, days: 8...14),
+        WeekTaskSpec(id: "week3", title: "Week 3 — Acquire", week: 3, days: 15...21),
+        WeekTaskSpec(id: "week4", title: "Week 4 — Revenue", week: 4, days: 22...30),
+    ]
+
+    private static func weekTaskGroups(
+        snapshot: FoundationProgressSnapshot,
+        selectedDay: Int,
+        overrides: [Int: TaskCopy]
+    ) -> [TaskGroup] {
+        taskWeekSpecs.map { spec in
+            let isUnlocked = snapshot.isWeekUnlocked(spec.week)
+            return TaskGroup(
+                id: spec.id,
+                title: spec.title,
+                meta: weekMeta(spec: spec, snapshot: snapshot, selectedDay: selectedDay),
+                tasks: spec.days.map { day in
+                    taskItem(day: day, snapshot: snapshot, selectedDay: selectedDay, overrides: overrides)
+                },
+                isExpandedByDefault: isUnlocked,
+                isLocked: !isUnlocked,
+                lockNote: isUnlocked ? nil : unlockNote(forWeek: spec.week)
+            )
+        }
+    }
+
+    private static func weekSearchItems(
+        baseItems: [SearchItem],
+        snapshot: FoundationProgressSnapshot,
+        selectedDay: Int,
+        overrides: [Int: TaskCopy]
+    ) -> [SearchItem] {
+        let taskItems = (1...30).map { day -> SearchItem in
+            let state = taskState(day: day, snapshot: snapshot, selectedDay: selectedDay)
+            let copy = taskCopy(day: day, overrides: overrides)
+            return SearchItem(
+                id: "task-day\(day)",
+                kind: .task,
+                title: copy.title,
+                subtitle: copy.meta,
+                day: "Day \(day)",
+                systemImage: taskSearchSystemImage(for: state),
+                isActive: state == .active,
+                isLocked: state == .locked,
+                lockNote: state == .locked ? unlockNote(forDay: day) : nil,
+                targetSectionID: state == .active ? "top" : nil,
+                route: state == .active ? .today : .inert
+            )
+        }
+        return taskItems + baseItems.filter { $0.kind != .task }
+    }
+
+    private static func weekMeta(
+        spec: WeekTaskSpec,
+        snapshot: FoundationProgressSnapshot,
+        selectedDay: Int
+    ) -> String {
+        guard snapshot.isWeekUnlocked(spec.week) else {
+            return unlockNote(forWeek: spec.week) ?? ""
+        }
+        let days = Array(spec.days)
+        let completedCount = days.filter { snapshot.completedDays.contains($0) }.count
+        let selectedOrdinal = days.firstIndex(of: selectedDay).map { $0 + 1 } ?? 0
+        return "\(max(completedCount, selectedOrdinal)) / \(days.count)"
+    }
+
+    private static func taskItem(
+        day: Int,
+        snapshot: FoundationProgressSnapshot,
+        selectedDay: Int,
+        overrides: [Int: TaskCopy]
+    ) -> TaskItem {
+        let copy = taskCopy(day: day, overrides: overrides)
+        return TaskItem(
+            id: "day\(day)",
+            title: copy.title,
+            day: "Day \(day)",
+            meta: copy.meta,
+            state: taskState(day: day, snapshot: snapshot, selectedDay: selectedDay)
+        )
+    }
+
+    private static func taskCopy(day: Int, overrides: [Int: TaskCopy]) -> TaskCopy {
+        if let override = overrides[day] {
+            return override
+        }
+        if let curriculumDay = AgenticCurriculumDay.days.first(where: { $0.day == day }) {
+            return TaskCopy(title: curriculumDay.title, meta: curriculumDay.shortTitle)
+        }
+        return TaskCopy(title: "Day \(day)", meta: "Task")
+    }
+
+    private static func taskState(
+        day: Int,
+        snapshot: FoundationProgressSnapshot,
+        selectedDay: Int
+    ) -> TaskItem.State {
+        guard snapshot.isUnlocked(day) else { return .locked }
+        if snapshot.completedDays.contains(day) { return .done }
+        if day == selectedDay { return .active }
+        return .pending
+    }
+
+    private static func taskSearchSystemImage(for state: TaskItem.State) -> String {
+        switch state {
+        case .done:
+            return "checkmark.circle"
+        case .active:
+            return "circle.dotted"
+        case .pending:
+            return "circle"
+        case .locked:
+            return "lock"
+        }
+    }
+
+    private static func unlockNote(forDay day: Int) -> String? {
+        switch day {
+        case 8...14:
+            return "D7 해제"
+        case 15...21:
+            return "D14 해제"
+        case 22...30:
+            return "D21 해제"
+        default:
+            return nil
+        }
+    }
+
+    private static func unlockNote(forWeek week: Int) -> String? {
+        switch week {
+        case 2:
+            return "잠금 해제 D7"
+        case 3:
+            return "잠금 해제 D14"
+        case 4:
+            return "잠금 해제 D21"
+        default:
+            return nil
+        }
     }
 
     static let day1 = OpenDesignDayContent(
@@ -388,7 +659,7 @@ struct OpenDesignDayContent {
             TaskGroup(
                 id: "week4",
                 title: "Week 4 — Revenue",
-                meta: "잠금 해제 D22",
+                meta: "잠금 해제 D21",
                 tasks: [
                     TaskItem(id: "day22", title: "첫 매출 ask · Pricing", day: "Day 22", meta: "Revenue", state: .locked),
                 ]
@@ -542,7 +813,7 @@ struct OpenDesignDayContent {
             TaskGroup(
                 id: "week4",
                 title: "Week 4 — Revenue",
-                meta: "잠금 해제 D22",
+                meta: "잠금 해제 D21",
                 tasks: [
                     TaskItem(id: "day22", title: "첫 매출 ask · Pricing", day: "Day 22", meta: "Revenue", state: .locked),
                 ]
@@ -831,11 +1102,6 @@ struct OpenDesignDayContent {
         return plan.questions.prefix(total).enumerated().map { index, question in
             let stepID = index + 1
             let dimensionTitle = dimensionDisplayName(question.dimension)
-            let criteria = [
-                question.helperText,
-                plan.signals.evidenceRefs.first.map { "scan evidence: \($0.path)" },
-                "PostHog ICP: need / have / don't need 기준",
-            ].compactMap(cleanNonEmpty)
             return InterviewStep(
                 id: stepID,
                 dimension: question.dimension,
@@ -846,7 +1112,7 @@ struct OpenDesignDayContent {
                 statementPrefix: "",
                 markedStatement: question.prompt,
                 statementSuffix: "",
-                criteria: Array(criteria.prefix(3)),
+                criteria: [],
                 prompt: question.title,
                 progressLabel: dimensionTitle,
                 submitLabel: "이 답으로 제출",
@@ -926,15 +1192,12 @@ struct OpenDesignDayContent {
             SearchItem(id: "task-day9", kind: .task, title: "첫 5명 초대 초안", subtitle: "Outreach", day: "Day 9", systemImage: "lock", isActive: false, isLocked: true, lockNote: "D7 해제", targetSectionID: nil, route: .inert),
             SearchItem(id: "task-day10", kind: .task, title: "랜딩 카피 & Above-fold", subtitle: "Landing", day: "Day 10", systemImage: "lock", isActive: false, isLocked: true, lockNote: "D7 해제", targetSectionID: nil, route: .inert),
             SearchItem(id: "task-day15", kind: .task, title: "BIP 채널 첫 포스트", subtitle: "BIP", day: "Day 15", systemImage: "lock", isActive: false, isLocked: true, lockNote: "D14 해제", targetSectionID: nil, route: .inert),
-            SearchItem(id: "task-day22", kind: .task, title: "첫 매출 ask · Pricing", subtitle: "Revenue", day: "Day 22", systemImage: "lock", isActive: false, isLocked: true, lockNote: "D22 해제", targetSectionID: nil, route: .inert),
-            SearchItem(id: "section-signals", kind: .section, title: "지금까지 시그널", subtitle: "workspace · interviews · BIP", day: nil, systemImage: "waveform.path.ecg", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "signals", route: .today),
-            SearchItem(id: "section-mission", kind: .section, title: "오늘의 미션", subtitle: "Mission · 1 of 1", day: nil, systemImage: "flag", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "mission", route: .today),
+            SearchItem(id: "task-day22", kind: .task, title: "첫 매출 ask · Pricing", subtitle: "Revenue", day: "Day 22", systemImage: "lock", isActive: false, isLocked: true, lockNote: "D21 해제", targetSectionID: nil, route: .inert),
+            SearchItem(id: "section-signals", kind: .section, title: "근거 보기", subtitle: "workspace · interviews · BIP", day: nil, systemImage: "waveform.path.ecg", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "signals", route: .today),
+            SearchItem(id: "section-mission", kind: .section, title: "오늘 할 액션", subtitle: "가설 확정 시작", day: nil, systemImage: "flag", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "mission", route: .today),
             SearchItem(id: "section-interview1", kind: .section, title: "인터뷰 1 — 거리", subtitle: "3분 · 직감 OK · 바꿀 수 있음", day: nil, systemImage: "bubble.left", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "interview1", route: .today),
             SearchItem(id: "section-picker", kind: .section, title: "ICP 4지선다", subtitle: "직접 만날 사람 후보", day: nil, systemImage: "scope", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "interview1-options", route: .today),
-            SearchItem(id: "section-preview", kind: .section, title: "문서 미리보기", subtitle: "docs/ICP.md draft", day: nil, systemImage: "doc.text", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "icp-preview", route: .today),
-            SearchItem(id: "section-final", kind: .section, title: "ICP 한 문장", subtitle: "Day 1 최종 후보 문장", day: nil, systemImage: "target", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "final-icp", route: .today),
-            SearchItem(id: "section-candidate", kind: .section, title: "후보 1명", subtitle: "SPEC 입력용 후보 카드", day: nil, systemImage: "person.crop.circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "candidate", route: .today),
-            SearchItem(id: "section-gate", kind: .section, title: "Day 1 게이트 조건", subtitle: "완료 전 체크리스트", day: nil, systemImage: "checkmark.seal", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "gate", route: .today),
+            SearchItem(id: "section-final", kind: .section, title: "핵심 가설 확정", subtitle: "Day 2 handoff", day: nil, systemImage: "target", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "final-icp", route: .today),
             SearchItem(id: "section-guide", kind: .section, title: "진행 가이드", subtitle: "Day 1 흐름 보기", day: nil, systemImage: "sparkles", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "top", route: .today),
         ]
     }
@@ -1018,40 +1281,12 @@ struct OpenDesignDayContent {
                 }
             case "section-picker":
                 continue
-            case "section-preview":
-                items.append(SearchItem(
-                    id: item.id,
-                    kind: item.kind,
-                    title: "ICP.md preview",
-                    subtitle: "Description · Criteria · Evidence",
-                    day: item.day,
-                    systemImage: item.systemImage,
-                    isActive: item.isActive,
-                    isLocked: item.isLocked,
-                    lockNote: item.lockNote,
-                    targetSectionID: item.targetSectionID,
-                    route: item.route
-                ))
             case "section-final":
                 items.append(SearchItem(
                     id: item.id,
                     kind: item.kind,
-                    title: "ICP v0 한 문장",
-                    subtitle: "선택 답변 반영",
-                    day: item.day,
-                    systemImage: item.systemImage,
-                    isActive: item.isActive,
-                    isLocked: item.isLocked,
-                    lockNote: item.lockNote,
-                    targetSectionID: item.targetSectionID,
-                    route: item.route
-                ))
-            case "section-candidate":
-                items.append(SearchItem(
-                    id: item.id,
-                    kind: item.kind,
-                    title: "Reference customer 후보",
-                    subtitle: "첫 인터뷰 대상",
+                    title: "핵심 가설 확정",
+                    subtitle: "Day 2 handoff",
                     day: item.day,
                     systemImage: item.systemImage,
                     isActive: item.isActive,
@@ -1159,7 +1394,7 @@ private func openDesignFoundationDayNumber(taskID: String) -> Int? {
         return nil
     }
     guard let day = Int(taskID.dropFirst(prefix.count)),
-          (1...7).contains(day) else {
+          (1...30).contains(day) else {
         return nil
     }
     return day
@@ -1286,9 +1521,9 @@ enum OpenDesignIntroStage: Int, Comparable {
     var nextButtonTitle: String? {
         switch self {
         case .context:
-            return "시그널 보기"
+            return "가설 확정 시작"
         case .signals:
-            return "오늘 미션 보기"
+            return "가설 확정 시작"
         case .mission:
             return nil
         }
@@ -1296,8 +1531,6 @@ enum OpenDesignIntroStage: Int, Comparable {
 }
 
 struct OpenDesignDayInteractionState: Equatable {
-    static let completedHandoffIndex = 3
-
     var totalInterviewSteps = 4
     var introStage: OpenDesignIntroStage = .context
     var missionAccepted = false
@@ -1306,9 +1539,6 @@ struct OpenDesignDayInteractionState: Equatable {
     var submittedSteps: Set<Int> = []
     var freeformAnswer = ""
     var freeformAnswers: [Int: String] = [:]
-    var handoffIndex = 0
-    var completedGateRows: Set<Int> = [1, 2, 4]
-    var touchedGateRows: Set<Int> = []
     var dayCompleted = false
 
     var highestVisibleInterviewStep: Int {
@@ -1327,27 +1557,28 @@ struct OpenDesignDayInteractionState: Equatable {
 
     var progressPercent: Int {
         if dayCompleted { return 100 }
-        if allInterviewsSubmitted { return 75 }
+        if allInterviewsSubmitted { return 90 }
+        if !missionAccepted { return 0 }
         let completed = min(submittedSteps.count, max(totalInterviewSteps, 1))
         if completed > 0 {
-            let span = 25.0 * Double(completed) / Double(max(totalInterviewSteps - 1, 1))
-            return min(72, 50 + Int(span.rounded()))
+            let span = 52.0 * Double(completed) / Double(max(totalInterviewSteps, 1))
+            return min(86, 34 + Int(span.rounded()))
         }
-        return 50
+        return 34
     }
 
     var progressStepCount: Int {
-        if allInterviewsSubmitted { return 4 }
-        return 2
+        if allInterviewsSubmitted || dayCompleted { return 3 }
+        if missionAccepted { return 2 }
+        return 1
     }
 
     var currentProgressScrollTarget: OpenDesignSectionAnchor {
+        if dayCompleted { return .completion }
         if !introStage.revealsSignals { return .top }
-        if !introStage.revealsMission { return .signals }
         if !missionAccepted { return .mission }
         if !allInterviewsSubmitted { return .interview(stepID: highestVisibleInterviewStep) }
-        if handoffIndex == 0 { return .icpPreview }
-        return handoffScrollTarget ?? .icpPreview
+        return .finalIcp
     }
 
     func stepperScrollTarget(for index: Int) -> OpenDesignSectionAnchor {
@@ -1355,12 +1586,9 @@ struct OpenDesignDayInteractionState: Equatable {
         case 0:
             return .top
         case 1:
-            return .signals
-        case 2:
             return missionAccepted ? .interview(stepID: highestVisibleInterviewStep) : .mission
-        case 3:
-            if !introStage.revealsMission || !missionAccepted { return .mission }
-            return allInterviewsSubmitted ? currentProgressScrollTarget : .interview(stepID: highestVisibleInterviewStep)
+        case 2:
+            return allInterviewsSubmitted ? .finalIcp : (missionAccepted ? .interview(stepID: highestVisibleInterviewStep) : .mission)
         default:
             return .top
         }
@@ -1387,42 +1615,21 @@ struct OpenDesignDayInteractionState: Equatable {
         case .interview5, .interview5Options:
             return highestVisibleInterviewStep >= 5
         case .icpPreview, .icpPreviewAction:
-            return allInterviewsSubmitted
+            return false
         case .finalIcp, .finalIcpAction:
-            return allInterviewsSubmitted && handoffIndex >= 1
+            return allInterviewsSubmitted
         case .candidate, .candidateAction:
-            return allInterviewsSubmitted && handoffIndex >= 2
+            return false
         case .gate, .gateAction:
-            return allInterviewsSubmitted && handoffIndex >= Self.completedHandoffIndex
+            return false
         case .completion:
             return dayCompleted
-        }
-    }
-
-    var handoffScrollTarget: OpenDesignSectionAnchor? {
-        let targets: [OpenDesignSectionAnchor?] = [nil, .finalIcp, .candidate, .gate]
-        return targets[safe: handoffIndex] ?? nil
-    }
-
-    var handoffScrollPlacement: OpenDesignScrollPlacement {
-        switch handoffIndex {
-        case 1, 2, Self.completedHandoffIndex:
-            return .nextAction
-        default:
-            return .sectionContext
         }
     }
 
     mutating func recordSubmittedChoice(stepID: Int, choiceID: Int) {
         _ = submittedSteps.insert(stepID)
         submittedChoices[stepID] = choiceID
-        if stepID == totalInterviewSteps {
-            if choiceID == 4 {
-                completedGateRows.remove(4)
-            } else {
-                completedGateRows.insert(4)
-            }
-        }
     }
 
     func isCurrentSelectionSubmitted(stepID: Int) -> Bool {
@@ -1430,21 +1637,6 @@ struct OpenDesignDayInteractionState: Equatable {
         return submittedChoices[stepID] == selectedChoice
     }
 
-    mutating func toggleGateRow(_ id: Int) {
-        touchedGateRows.insert(id)
-        if completedGateRows.contains(id) {
-            completedGateRows.remove(id)
-        } else {
-            completedGateRows.insert(id)
-        }
-    }
-
-    func gateTag(id: Int, completedTag: String, initialPendingTag: String) -> String {
-        if completedGateRows.contains(id) {
-            return touchedGateRows.contains(id) ? "완료" : completedTag
-        }
-        return touchedGateRows.contains(id) ? "대기" : initialPendingTag
-    }
 }
 
 struct OpenDesignDaySelectedAnswer: Equatable {
@@ -1680,38 +1872,40 @@ struct OpenDesignDayLayoutMetrics: Equatable {
     let metaPanelWidth: CGFloat
     let mainHorizontalPadding: CGFloat
     let showsTaskSidebar: Bool
+    let supportsMetaPanel: Bool
     let showsMetaPanel: Bool
 
-    init(width: CGFloat) {
+    init(width: CGFloat, isMetaPanelExpanded: Bool = true) {
         if width <= 860 {
             railWidth = 48
             taskSidebarWidth = 0
             metaPanelWidth = 0
             mainHorizontalPadding = 24
             showsTaskSidebar = false
-            showsMetaPanel = false
+            supportsMetaPanel = false
         } else if width <= 1100 {
             railWidth = 48
             taskSidebarWidth = 200
             metaPanelWidth = 0
             mainHorizontalPadding = 24
             showsTaskSidebar = true
-            showsMetaPanel = false
+            supportsMetaPanel = false
         } else if width <= 1280 {
             railWidth = 48
             taskSidebarWidth = 220
             metaPanelWidth = 252
             mainHorizontalPadding = 24
             showsTaskSidebar = true
-            showsMetaPanel = true
+            supportsMetaPanel = true
         } else {
             railWidth = 52
             taskSidebarWidth = 240
             metaPanelWidth = 280
             mainHorizontalPadding = 28
             showsTaskSidebar = true
-            showsMetaPanel = true
+            supportsMetaPanel = true
         }
+        showsMetaPanel = supportsMetaPanel && isMetaPanelExpanded
     }
 
     var openDesignGridColumnCount: Int {
@@ -1848,6 +2042,7 @@ struct OpenDesignDayPageView: View {
     @State private var completionBurstID = 0
     @State private var requestedDayCompletionID: String?
     @State private var keyboardMonitor: Any?
+    @State private var isRightSidebarExpanded = false
 
     init(
         content: OpenDesignDayContent = .day1,
@@ -1891,7 +2086,10 @@ struct OpenDesignDayPageView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let layout = OpenDesignDayLayoutMetrics(width: geometry.size.width)
+            let layout = OpenDesignDayLayoutMetrics(
+                width: geometry.size.width,
+                isMetaPanelExpanded: isRightSidebarExpanded
+            )
 
             ZStack {
                 OpenDesignDayShell(
@@ -1913,13 +2111,11 @@ struct OpenDesignDayPageView: View {
                     openNewsSettings: openNewsSettings,
                     submitStep: submitStep,
                     acceptMission: acceptMission,
-                    advanceHandoff: advanceHandoff,
                     completeDayAction: completeDayAction,
                     advanceToNextDay: advanceToNextDay,
                     selectDay: selectDay,
                     shareSummary: dayShareSummary,
-                    focusContextOverview: focusContextOverview,
-                    focusCurrentProgress: focusCurrentProgress
+                    toggleRightSidebar: toggleRightSidebar
                 )
 
                 Color.clear
@@ -2161,18 +2357,11 @@ struct OpenDesignDayPageView: View {
         requestScroll(to: .interview(stepID: 1, placement: .nextAction), placement: .nextAction)
     }
 
-    private func submitStep(_ step: OpenDesignDayContent.InterviewStep) {
-        guard let selectedChoiceID = interaction.selectedChoices[step.id] else { return }
+    private func submitStep(_ step: OpenDesignDayContent.InterviewStep, selectedChoiceID: Int) {
         guard interaction.submittedChoices[step.id] != selectedChoiceID else { return }
         withAnimation(.spring(response: reduceMotion ? 0 : 0.28, dampingFraction: 0.90)) {
+            interaction.selectedChoices[step.id] = selectedChoiceID
             interaction.recordSubmittedChoice(stepID: step.id, choiceID: selectedChoiceID)
-            if let option = step.options.first(where: { $0.id == selectedChoiceID }) {
-                if option.isAntiSignal {
-                    interaction.completedGateRows.remove(4)
-                } else if step.dimension == "bad_fit_boundary" {
-                    interaction.completedGateRows.insert(4)
-                }
-            }
         }
         if let submission = answerSubmission(for: step, selectedChoiceID: selectedChoiceID) {
             submitStructuredPromptChoice(submission)
@@ -2180,7 +2369,7 @@ struct OpenDesignDayPageView: View {
         if step.id < content.interviewSteps.count {
             requestScroll(to: .interview(stepID: step.id + 1, placement: .nextAction), placement: .nextAction)
         } else {
-            requestScroll(to: .icpPreview, placement: .nextAction)
+            requestScroll(to: .finalIcp, placement: .nextAction)
         }
     }
 
@@ -2197,13 +2386,13 @@ struct OpenDesignDayPageView: View {
             guard let selectedChoice = interaction.selectedChoices[step.id] else { return false }
             return interaction.submittedChoices[step.id] != selectedChoice
         }) {
-            submitStep(step)
+            if let selectedChoice = interaction.selectedChoices[step.id] {
+                submitStep(step, selectedChoiceID: selectedChoice)
+            }
             return
         }
         if interaction.allInterviewsSubmitted {
-            if interaction.handoffIndex < OpenDesignDayInteractionState.completedHandoffIndex {
-                advanceHandoff()
-            } else if !interaction.dayCompleted {
+            if !interaction.dayCompleted {
                 completeDayAction()
             } else {
                 advanceToNextDay()
@@ -2212,29 +2401,33 @@ struct OpenDesignDayPageView: View {
     }
 
     private func focusCurrentProgress() {
-        if advanceIntroIfNeeded() {
+        if interaction.dayCompleted {
+            advanceToNextDay()
+            return
+        }
+        if !interaction.missionAccepted {
+            acceptMission()
             return
         }
         requestScroll(to: interaction.currentProgressScrollTarget)
     }
 
-    private func focusContextOverview() {
-        requestScroll(to: .top)
+    private func toggleRightSidebar() {
+        if reduceMotion {
+            isRightSidebarExpanded.toggle()
+        } else {
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                isRightSidebarExpanded.toggle()
+            }
+        }
     }
 
     private func advanceIntroIfNeeded() -> Bool {
-        switch interaction.introStage {
-        case .context:
-            revealIntroStage(.signals)
-            requestScroll(to: .signals)
+        if !interaction.missionAccepted {
+            acceptMission()
             return true
-        case .signals:
-            revealIntroStage(.mission)
-            requestScroll(to: .mission, placement: .nextAction)
-            return true
-        case .mission:
-            return false
         }
+        return false
     }
 
     private func revealIntroIfNeeded(for target: OpenDesignSectionAnchor) {
@@ -2262,21 +2455,6 @@ struct OpenDesignDayPageView: View {
         }
     }
 
-    private func advanceHandoff() {
-        guard interaction.allInterviewsSubmitted,
-              interaction.handoffIndex < OpenDesignDayInteractionState.completedHandoffIndex
-        else { return }
-        withAnimation(.spring(response: reduceMotion ? 0 : 0.28, dampingFraction: 0.88)) {
-            interaction.handoffIndex += 1
-        }
-        if let target = interaction.handoffScrollTarget {
-            let placement = interaction.handoffScrollPlacement
-            DispatchQueue.main.async {
-                requestScroll(to: target, placement: placement)
-            }
-        }
-    }
-
     private func completeDayAction() {
         completeDayLocally()
         requestDayCompletionOnce()
@@ -2286,7 +2464,6 @@ struct OpenDesignDayPageView: View {
         let shouldRunBurst = !interaction.dayCompleted && !reduceMotion
         withAnimation(.spring(response: reduceMotion ? 0 : 0.30, dampingFraction: 0.88)) {
             interaction.dayCompleted = true
-            interaction.handoffIndex = OpenDesignDayInteractionState.completedHandoffIndex
         }
         if shouldRunBurst {
             runCompletionBurst()
@@ -2334,9 +2511,9 @@ struct OpenDesignDayPageView: View {
         if interaction.dayCompleted {
             progress = "Day 1 완료"
         } else if interaction.allInterviewsSubmitted {
-            progress = "STEP 4 / 4 · docs/ICP.md 초안"
+            progress = "STEP 3 / 3 · 핵심 가설 확정 대기"
         } else {
-            progress = "STEP 3 / 4 · 질문 \(interaction.highestVisibleInterviewStep) / \(content.interviewSteps.count)"
+            progress = "STEP 2 / 3 · 질문 \(interaction.highestVisibleInterviewStep) / \(content.interviewSteps.count)"
         }
 
         let choiceLines = content.interviewSteps.map { step -> String in
@@ -2347,7 +2524,7 @@ struct OpenDesignDayPageView: View {
         return """
         Agentic30 Day 1 · Foundation / ICP 좁히기
         먼저 도울 사람을 정해요
-        진행: \(progress) · \(interaction.progressStepCount)/4 · \(interaction.progressPercent)%
+        진행: \(progress) · \(interaction.progressStepCount)/3 · \(interaction.progressPercent)%
 
         \(choiceLines)
         """
@@ -2401,15 +2578,13 @@ struct OpenDesignDayShell: View {
     let refreshBipResearch: () -> Void
     let prepareBipResearch: () -> Void
     let openNewsSettings: () -> Void
-    let submitStep: (OpenDesignDayContent.InterviewStep) -> Void
+    let submitStep: (OpenDesignDayContent.InterviewStep, Int) -> Void
     let acceptMission: () -> Void
-    let advanceHandoff: () -> Void
     let completeDayAction: () -> Void
     let advanceToNextDay: () -> Void
     let selectDay: (Int) -> Void
     let shareSummary: String
-    let focusContextOverview: () -> Void
-    let focusCurrentProgress: () -> Void
+    let toggleRightSidebar: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -2419,6 +2594,8 @@ struct OpenDesignDayShell: View {
                 OpenDesignReferenceTitlebar(
                     page: OpenDesignReferenceCatalog.page(selectedReferencePage),
                     openSearch: toggleSearch,
+                    isRightSidebarVisible: layout.showsMetaPanel,
+                    toggleRightSidebar: toggleRightSidebar,
                     refreshAction: selectedReferencePage == .news
                         ? refreshNewsMarketRadar
                         : selectedReferencePage == .bipLog ? refreshBipResearch : nil
@@ -2427,13 +2604,16 @@ struct OpenDesignDayShell: View {
                 OpenDesignMarketTitlebar(
                     market: market,
                     openSearch: toggleSearch,
-                    shareSummary: shareSummary
+                    shareSummary: shareSummary,
+                    isRightSidebarVisible: layout.showsMetaPanel,
+                    toggleRightSidebar: toggleRightSidebar
                 )
             } else {
                 OpenDesignDayTitlebar(
                     openSearch: toggleSearch,
                     shareSummary: shareSummary,
-                    focusCurrentProgress: focusCurrentProgress
+                    isRightSidebarVisible: layout.showsMetaPanel,
+                    toggleRightSidebar: toggleRightSidebar
                 )
             }
 
@@ -2504,11 +2684,8 @@ struct OpenDesignDayShell: View {
                             searchPulseTarget: $searchPulseTarget,
                             submitStep: submitStep,
                             acceptMission: acceptMission,
-                            advanceHandoff: advanceHandoff,
                             completeDayAction: completeDayAction,
                             advanceToNextDay: advanceToNextDay,
-                            focusContextOverview: focusContextOverview,
-                            focusCurrentProgress: focusCurrentProgress,
                             layout: layout
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2546,6 +2723,8 @@ private struct OpenDesignMarketTitlebar: View {
     let market: OpenDesignDayContent.Market
     let openSearch: () -> Void
     let shareSummary: String
+    let isRightSidebarVisible: Bool
+    let toggleRightSidebar: () -> Void
 
     @State private var didCopyShare = false
 
@@ -2582,7 +2761,13 @@ private struct OpenDesignMarketTitlebar: View {
                     accessibilityIdentifier: "opendesign.day2.share",
                     action: copyShareSummary
                 )
-                OpenDesignToolbarButton(systemImage: "sidebar.right", label: "Day 2 정보", isOn: true, action: {})
+                OpenDesignToolbarButton(
+                    systemImage: "sidebar.right",
+                    label: isRightSidebarVisible ? "우측 사이드바 닫기" : "우측 사이드바 열기",
+                    isOn: isRightSidebarVisible,
+                    accessibilityIdentifier: "opendesign.day2.meta.toggle",
+                    action: toggleRightSidebar
+                )
             }
             .padding(.trailing, 12)
         }
@@ -2603,7 +2788,8 @@ private struct OpenDesignMarketTitlebar: View {
 private struct OpenDesignDayTitlebar: View {
     let openSearch: () -> Void
     let shareSummary: String
-    let focusCurrentProgress: () -> Void
+    let isRightSidebarVisible: Bool
+    let toggleRightSidebar: () -> Void
 
     @State private var didCopyShare = false
 
@@ -2640,7 +2826,13 @@ private struct OpenDesignDayTitlebar: View {
                     accessibilityIdentifier: "opendesign.day.share",
                     action: copyShareSummary
                 )
-                OpenDesignToolbarButton(systemImage: "sidebar.right", label: "현재 진행 위치", isOn: true, action: focusCurrentProgress)
+                OpenDesignToolbarButton(
+                    systemImage: "sidebar.right",
+                    label: isRightSidebarVisible ? "우측 사이드바 닫기" : "우측 사이드바 열기",
+                    isOn: isRightSidebarVisible,
+                    accessibilityIdentifier: "opendesign.day.meta.toggle",
+                    action: toggleRightSidebar
+                )
             }
             .padding(.trailing, 12)
         }
@@ -2838,6 +3030,18 @@ private struct OpenDesignTaskSidebarView: View {
     let openSearch: () -> Void
     let selectDay: (Int) -> Void
 
+    @State private var expandedGroupIDs: Set<String> = []
+
+    private var expansionSignature: String {
+        content.taskGroups
+            .map { "\($0.id):\($0.isExpandedByDefault):\($0.isLocked)" }
+            .joined(separator: "|")
+    }
+
+    private var defaultExpandedGroupIDs: Set<String> {
+        Set(content.taskGroups.filter(\.isExpandedByDefault).map(\.id))
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -2866,20 +3070,19 @@ private struct OpenDesignTaskSidebarView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(content.taskGroups) { group in
-                        HStack {
-                            Text(group.title)
-                            Spacer(minLength: 6)
-                            Text(group.meta)
-                        }
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .textCase(.uppercase)
-                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
-                        .padding(.top, 14)
-                        .padding(.horizontal, 8)
-                        .padding(.bottom, 6)
+                        let isExpanded = expandedGroupIDs.contains(group.id)
 
-                        ForEach(group.tasks) { task in
-                            OpenDesignTaskRow(task: task, selectDay: selectDay)
+                        OpenDesignTaskGroupHeader(
+                            group: group,
+                            isExpanded: isExpanded,
+                            toggle: { toggleGroup(group) }
+                        )
+                        .padding(.top, group.id == "week1" ? 10 : 14)
+
+                        if isExpanded {
+                            ForEach(group.tasks) { task in
+                                OpenDesignTaskRow(task: task, selectDay: selectDay)
+                            }
                         }
                     }
                 }
@@ -2890,6 +3093,79 @@ private struct OpenDesignTaskSidebarView: View {
         .background(OpenDesignDayColor.bg)
         .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .trailing)
         .accessibilityElement(children: .contain)
+        .onAppear {
+            expandedGroupIDs = defaultExpandedGroupIDs
+        }
+        .onChange(of: expansionSignature) { _, _ in
+            expandedGroupIDs = defaultExpandedGroupIDs
+        }
+    }
+
+    private func toggleGroup(_ group: OpenDesignDayContent.TaskGroup) {
+        if expandedGroupIDs.contains(group.id) {
+            expandedGroupIDs.remove(group.id)
+        } else {
+            expandedGroupIDs.insert(group.id)
+        }
+    }
+}
+
+private struct OpenDesignTaskGroupHeader: View {
+    let group: OpenDesignDayContent.TaskGroup
+    let isExpanded: Bool
+    let toggle: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(spacing: 6) {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(isHovered ? OpenDesignDayColor.muted : OpenDesignDayColor.mutedDeep)
+                    .frame(width: 10)
+
+                Text(group.title)
+                    .lineLimit(1)
+
+                Spacer(minLength: 6)
+
+                if group.isLocked {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        .accessibilityHidden(true)
+                }
+
+                Text(group.meta)
+                    .lineLimit(1)
+            }
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .textCase(.uppercase)
+            .foregroundStyle(isHovered ? OpenDesignDayColor.muted : OpenDesignDayColor.mutedDeep)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .openDesignHoverRow(
+                isHovered: isHovered,
+                cornerRadius: 6,
+                fill: Color.clear,
+                hoverFill: OpenDesignDayColor.hover,
+                border: Color.clear,
+                hoverBorder: Color.clear
+            )
+        }
+        .buttonStyle(OpenDesignInteractiveButtonStyle())
+        .onHover { isHovered = $0 }
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(isExpanded ? "expanded" : "collapsed")
+        .accessibilityIdentifier("opendesign.day.taskGroup.\(group.id)")
+    }
+
+    private var accessibilityLabel: String {
+        if let lockNote = group.lockNote {
+            return "\(group.title), \(lockNote)"
+        }
+        return group.title
     }
 }
 
@@ -3180,7 +3456,7 @@ func openDesignDisplayProjectDigestValue(_ value: String) -> String {
         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         .filter { !$0.isEmpty }
     let product = parts.first { !$0.lowercased().hasPrefix("quality") } ?? parts.first ?? value
-    return openDesignDisplayProductName(product) ?? product
+    return openDesignDisplayProductName(product) ?? "이 프로젝트"
 }
 
 func openDesignDisplayProductName(_ value: String?) -> String? {
@@ -3197,10 +3473,40 @@ func openDesignDisplayProductName(_ value: String?) -> String? {
     if comparable.range(
         of: #"^agentic\s*30(?:\s+(?:macos\s+app|mac\s+app|mac|sidecar|public))*$"#,
         options: [.regularExpression, .caseInsensitive]
-    ) != nil {
+        ) != nil {
         return "Agentic30"
     }
+    if openDesignLooksLikeEphemeralWorkspaceName(trimmed) {
+        return nil
+    }
     return trimmed
+}
+
+func openDesignLooksLikeEphemeralWorkspaceName(_ value: String) -> Bool {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return true }
+    let comparable = trimmed
+        .lowercased()
+        .replacingOccurrences(of: #"[_\s]+"#, with: "-", options: .regularExpression)
+    if comparable.range(
+        of: #"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"#,
+        options: [.regularExpression, .caseInsensitive]
+    ) != nil {
+        return true
+    }
+    if comparable.range(of: #"^workspace-[a-z0-9]+$"#, options: [.regularExpression, .caseInsensitive]) != nil {
+        return true
+    }
+    if comparable.range(of: #"^(?:tmp|temp|test)(?:[-_.]|$)"#, options: [.regularExpression, .caseInsensitive]) != nil {
+        return true
+    }
+    if comparable.range(of: #"(?:^|[-_.])(?:tmp|temp|test|ui-test|ui-testing)(?:[-_.]|$)"#, options: [.regularExpression, .caseInsensitive]) != nil {
+        return true
+    }
+    if comparable.range(of: #"^agentic30-ui(?:[-_.]|$)"#, options: [.regularExpression, .caseInsensitive]) != nil {
+        return true
+    }
+    return false
 }
 
 private func openDesignSignalDigestFallbackValue(
@@ -4242,24 +4548,20 @@ private struct OpenDesignDayMainView: View {
     @Binding var interaction: OpenDesignDayInteractionState
     @Binding var pendingScrollRequest: OpenDesignScrollRequest?
     @Binding var searchPulseTarget: String?
-    let submitStep: (OpenDesignDayContent.InterviewStep) -> Void
+    let submitStep: (OpenDesignDayContent.InterviewStep, Int) -> Void
     let acceptMission: () -> Void
-    let advanceHandoff: () -> Void
     let completeDayAction: () -> Void
     let advanceToNextDay: () -> Void
-    let focusContextOverview: () -> Void
-    let focusCurrentProgress: () -> Void
     let layout: OpenDesignDayLayoutMetrics
 
     @State private var introRevealStage = 0
+    @State private var showsEvidence = false
 
     var body: some View {
         VStack(spacing: 0) {
             OpenDesignDayHeader(
                 content: content,
                 interaction: $interaction,
-                focusContextOverview: focusContextOverview,
-                focusCurrentProgress: focusCurrentProgress,
                 horizontalPadding: layout.mainHorizontalPadding
             )
             OpenDesignStepper(
@@ -4272,27 +4574,19 @@ private struct OpenDesignDayMainView: View {
                     pendingScrollRequest = OpenDesignScrollRequest(target: target)
                 }
             )
+            OpenDesignHypothesisStrip(
+                content: content,
+                interaction: interaction,
+                horizontalPadding: layout.mainHorizontalPadding
+            )
 
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        OpenDesignTutorHead()
+                        actionSection
                             .openDesignStagedReveal(isVisible: introRevealStage >= 1)
                             .openDesignSearchPulse(id: "top", isActive: isSearchPulseActive("top"))
                             .id("top")
-
-                        contextSection
-
-                        if interaction.introStage.revealsMission {
-                            OpenDesignMissionCard(
-                                mission: content.mission,
-                                accepted: interaction.missionAccepted,
-                                acceptMission: acceptMission
-                            )
-                            .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
-                            .openDesignSearchPulse(id: "mission", isActive: isSearchPulseActive("mission"))
-                            .id("mission")
-                        }
 
                         if interaction.missionAccepted {
                             ForEach(content.interviewSteps.filter { $0.id <= interaction.highestVisibleInterviewStep }) { step in
@@ -4312,7 +4606,7 @@ private struct OpenDesignDayMainView: View {
                                             }
                                         }
                                     ),
-                                    submit: { submitStep(step) }
+                                    submit: { choiceID in submitStep(step, choiceID) }
                                 )
                                 .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
                                 .openDesignSearchPulse(
@@ -4324,23 +4618,14 @@ private struct OpenDesignDayMainView: View {
                         }
 
                         if interaction.allInterviewsSubmitted {
-                            OpenDesignIcpPreview(
-                                content: content,
-                                interaction: interaction,
-                                layout: layout,
-                                advanceHandoff: advanceHandoff
-                            )
-                                .openDesignSearchPulse(id: "icp-preview", isActive: isSearchPulseActive("icp-preview"))
-                                .id("icp-preview")
-
-                            OpenDesignFinalHandoff(
+                            OpenDesignHypothesisConfirmationCard(
                                 content: content,
                                 interaction: $interaction,
-                                layout: layout,
-                                advanceHandoff: advanceHandoff,
                                 completeDayAction: completeDayAction,
                                 advanceToNextDay: advanceToNextDay
                             )
+                            .openDesignSearchPulse(id: "final-icp", isActive: isSearchPulseActive("final-icp"))
+                            .id("final-icp")
                         }
                     }
                     .frame(maxWidth: 820, alignment: .leading)
@@ -4403,80 +4688,87 @@ private struct OpenDesignDayMainView: View {
         }
     }
 
-    private var contextSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(content.contextTitle)
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(OpenDesignDayColor.fg)
-                .padding(.bottom, 6)
+    private var actionSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            OpenDesignSectionHeader(title: "오늘 할 액션", meta: "Day 1 · 3분")
+                .id("mission")
 
-            Text(content.contextBody)
-                .font(.system(size: 13.5, weight: .regular))
-                .foregroundStyle(OpenDesignDayColor.fgSecondary)
-                .lineSpacing(3)
-                .padding(.bottom, 22)
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 14) {
+                    Text("01")
+                        .font(.system(size: 14, weight: .bold, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.bgDeep)
+                        .frame(width: 42, height: 42)
+                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(OpenDesignDayColor.accent))
 
-            if !interaction.introStage.revealsSignals {
-                introAdvanceFooter
-            }
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("핵심 가설을 확정합니다")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(OpenDesignDayColor.fg)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("3분 · 질문 \(content.interviewSteps.count)개 · Day2 시장 신호 검증으로 이동")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.muted)
+                    }
 
-            if interaction.introStage.revealsSignals {
-                OpenDesignSectionHeader(title: "지금까지 시그널", meta: "workspace + interviews + BIP")
-                    .openDesignSearchPulse(id: "signals", isActive: isSearchPulseActive("signals"))
-                    .id("signals")
+                    Spacer(minLength: 0)
 
-                VStack(spacing: 1) {
-                    ForEach(signalRows.indices, id: \.self) { index in
-                        let item = signalRows[index]
-                        signalRow(key: item.key, value: item.value)
+                    if interaction.missionAccepted {
+                        Text(interaction.allInterviewsSubmitted ? "가설 준비됨" : "진행 중")
+                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.accent)
+                            .padding(.horizontal, 9)
+                            .frame(height: 24)
+                            .background(Capsule().fill(OpenDesignDayColor.accentDim))
+                            .overlay(Capsule().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
+                    } else {
+                        OpenDesignHandoffActionButton(
+                            label: "가설 확정 시작",
+                            accessibilityIdentifier: "opendesign.day.start",
+                            action: acceptMission
+                        )
                     }
                 }
-                .background(OpenDesignDayColor.borderSoft)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(OpenDesignDayColor.borderSoft, lineWidth: 1)
-                )
-                .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
-                .padding(.bottom, 16)
 
-                Text(signalSummary)
-                    .font(.system(size: 13, weight: .regular))
-                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
-                    .lineSpacing(3)
-                    .padding(.bottom, 8)
+                DisclosureGroup(isExpanded: $showsEvidence) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(content.contextBody)
+                            .font(.system(size: 12.5, weight: .regular))
+                            .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                            .lineSpacing(3)
 
-                if !interaction.introStage.revealsMission {
-                    introAdvanceFooter
+                        VStack(spacing: 1) {
+                            ForEach(signalRows.indices, id: \.self) { index in
+                                let item = signalRows[index]
+                                signalRow(key: item.key, value: item.value)
+                            }
+                        }
+                        .background(OpenDesignDayColor.borderSoft)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(OpenDesignDayColor.borderSoft, lineWidth: 1)
+                        )
+
+                        Text(signalSummary)
+                            .font(.system(size: 12.5, weight: .regular))
+                            .foregroundStyle(OpenDesignDayColor.muted)
+                            .lineSpacing(3)
+                    }
+                    .padding(.top, 10)
+                    .id("signals")
+                } label: {
+                    Text("근거 보기")
+                        .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
                 }
+                .accentColor(OpenDesignDayColor.accent)
+                .accessibilityIdentifier("opendesign.day.evidence")
             }
+            .padding(18)
+            .background(gradientCardBackground(cornerRadius: 14, colors: [OpenDesignDayColor.surface, OpenDesignDayColor.surface2], stroke: OpenDesignDayColor.border, accent: OpenDesignDayColor.accent))
         }
-    }
-
-    private var introAdvanceFooter: some View {
-        HStack(spacing: 12) {
-            Spacer(minLength: 0)
-            OpenDesignHandoffActionButton(
-                label: interaction.introStage.nextButtonTitle ?? "계속",
-                accessibilityIdentifier: "opendesign.day.intro.next",
-                action: advanceIntro
-            )
-        }
-        .padding(.top, 2)
-        .padding(.bottom, 18)
-    }
-
-    private func advanceIntro() {
-        switch interaction.introStage {
-        case .context:
-            revealIntroStage(.signals)
-            pendingScrollRequest = OpenDesignScrollRequest(target: .signals)
-        case .signals:
-            revealIntroStage(.mission)
-            pendingScrollRequest = OpenDesignScrollRequest(target: .mission, placement: .nextAction)
-        case .mission:
-            break
-        }
+        .padding(.bottom, 8)
     }
 
     private func revealIntroIfNeeded(for target: OpenDesignSectionAnchor) {
@@ -4630,7 +4922,7 @@ private struct OpenDesignDayMainView: View {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         let product = parts.first { !$0.lowercased().hasPrefix("quality") } ?? parts.first ?? value
-        return displayProductName(product) ?? product
+        return displayProductName(product) ?? "이 프로젝트"
     }
 
     private static func displayProductName(_ value: String?) -> String? {
@@ -4649,6 +4941,9 @@ private struct OpenDesignDayMainView: View {
             options: [.regularExpression, .caseInsensitive]
         ) != nil {
             return "Agentic30"
+        }
+        if openDesignLooksLikeEphemeralWorkspaceName(trimmed) {
+            return nil
         }
         return trimmed
     }
@@ -4692,11 +4987,56 @@ private struct OpenDesignDayMainView: View {
     }
 }
 
+private struct OpenDesignHypothesisStrip: View {
+    let content: OpenDesignDayContent
+    let interaction: OpenDesignDayInteractionState
+    let horizontalPadding: CGFloat
+
+    private var draft: OpenDesignDayDraft {
+        content.draft(for: interaction)
+    }
+
+    private var hypothesisText: String {
+        if content.alignmentPlan != nil || content.plan != nil {
+            return draft.finalIcpStatement
+        }
+        let core = [draft.distance, draft.stuck, draft.action]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0 != "미선택" }
+            .joined(separator: " · ")
+        return core.isEmpty ? "질문에 답하면 Day2에서 검증할 핵심 가설이 여기에 쌓입니다." : core
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text("현재 가설")
+                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.accent)
+                .padding(.horizontal, 8)
+                .frame(height: 22)
+                .background(Capsule().fill(OpenDesignDayColor.accentDim))
+                .overlay(Capsule().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
+
+            Text(hypothesisText)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, horizontalPadding)
+        .frame(height: 42)
+        .background(OpenDesignDayColor.bgDeep)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("opendesign.day.hypothesis")
+    }
+}
+
 private struct OpenDesignDayHeader: View {
     let content: OpenDesignDayContent
     @Binding var interaction: OpenDesignDayInteractionState
-    let focusContextOverview: () -> Void
-    let focusCurrentProgress: () -> Void
     let horizontalPadding: CGFloat
 
     var body: some View {
@@ -4718,7 +5058,7 @@ private struct OpenDesignDayHeader: View {
                 )
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(content.alignmentPlan == nil ? (content.plan == nil ? "먼저 도울 사람을 정해요" : "ICP v0 질문을 정해요") : "30일 목표와 방향을 정해요")
+                    Text("핵심 가설을 확정합니다")
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(OpenDesignDayColor.fg)
                     HStack(spacing: 8) {
@@ -4726,7 +5066,7 @@ private struct OpenDesignDayHeader: View {
                             .fill(OpenDesignDayColor.accent)
                             .frame(width: 5, height: 5)
                             .shadow(color: OpenDesignDayColor.accentDim, radius: 3)
-                        Text("Day 1 · 오리엔테이션 → 인터뷰")
+                        Text("Day 1 · 액션 → 가설 확정")
                         Text("·")
                             .foregroundStyle(OpenDesignDayColor.mutedDeep)
                         Text(progressStepLabel)
@@ -4746,22 +5086,6 @@ private struct OpenDesignDayHeader: View {
             }
 
             Spacer(minLength: 12)
-
-            OpenDesignHeaderActionButton(
-                title: "맥락 다시 보기",
-                systemImage: "tray.and.arrow.down",
-                tone: .ghost,
-                accessibilityIdentifier: "opendesign.day.header.context",
-                action: focusContextOverview
-            )
-
-            OpenDesignHeaderActionButton(
-                title: primaryActionTitle,
-                systemImage: nil,
-                tone: .accent,
-                accessibilityIdentifier: "opendesign.day.header.primary",
-                action: focusCurrentProgress
-            )
         }
         .padding(.horizontal, horizontalPadding)
         .frame(height: 70)
@@ -4769,54 +5093,21 @@ private struct OpenDesignDayHeader: View {
         .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
     }
 
-    private var primaryActionTitle: String {
-        if !interaction.introStage.revealsSignals {
-            return "시그널 보기"
-        }
-        if !interaction.introStage.revealsMission {
-            return "오늘 미션 보기"
-        }
-        if interaction.dayCompleted {
-            return "Day 1 완료"
-        }
-        if interaction.allInterviewsSubmitted {
-            if interaction.handoffIndex >= OpenDesignDayInteractionState.completedHandoffIndex {
-                return "완료 버튼으로 이동"
-            }
-            if interaction.handoffIndex > 0 {
-                return "현재 진행 위치"
-            }
-            return "ICP 초안 확인"
-        }
-        return "인터뷰 계속"
-    }
-
     private var progressStepLabel: String {
         if interaction.dayCompleted || interaction.allInterviewsSubmitted {
-            return "STEP 4 / 4"
+            return "STEP 3 / 3"
         }
-        if !interaction.introStage.revealsSignals {
-            return "STEP 1 / 4"
+        if interaction.missionAccepted {
+            return "STEP 2 / 3"
         }
-        if !interaction.introStage.revealsMission || !interaction.missionAccepted {
-            return "STEP 2 / 4"
-        }
-        return "STEP 3 / 4"
+        return "STEP 1 / 3"
     }
 
     private var progressDetailLabel: String {
         if interaction.allInterviewsSubmitted {
-            return content.alignmentPlan == nil ? "docs/ICP.md 초안" : "핵심 가설 초안"
+            return "확정 대기"
         }
-        if !interaction.introStage.revealsSignals {
-            return "오늘 목표"
-        }
-        if !interaction.introStage.revealsMission {
-            return "시그널 확인"
-        }
-        if !interaction.missionAccepted {
-            return "미션 수락 전"
-        }
+        if !interaction.missionAccepted { return "시작 전" }
         return "질문 \(interaction.highestVisibleInterviewStep) / \(content.interviewSteps.count)"
     }
 }
@@ -4884,16 +5175,9 @@ private struct OpenDesignStepper: View {
 
     private var steps: [(String, Bool, Bool)] {
         [
-            ("맥락 · 오늘의 목표", interaction.introStage.revealsSignals, !interaction.introStage.revealsSignals),
-            ("시그널 · 근거 확인", interaction.introStage.revealsMission, interaction.introStage.revealsSignals && !interaction.introStage.revealsMission),
-            (
-                interaction.allInterviewsSubmitted
-                    ? (content.alignmentPlan == nil ? "질문 · ICP v0 완료" : "질문 · 핵심 가설 완료")
-                    : (content.alignmentPlan == nil ? "질문 · ICP v0 (\(interaction.highestVisibleInterviewStep) / \(content.interviewSteps.count))" : "질문 · 핵심 가설 (\(interaction.highestVisibleInterviewStep) / \(content.interviewSteps.count))"),
-                interaction.allInterviewsSubmitted,
-                interaction.introStage.revealsMission && !interaction.allInterviewsSubmitted
-            ),
-            (content.alignmentPlan == nil ? "ICP · docs/ICP.md 미리보기" : "핵심 가설 · 품질 게이트", false, interaction.allInterviewsSubmitted),
+            ("시작", interaction.missionAccepted, !interaction.missionAccepted),
+            ("질문 \(min(interaction.submittedSteps.count, content.interviewSteps.count)) / \(content.interviewSteps.count)", interaction.allInterviewsSubmitted, interaction.missionAccepted && !interaction.allInterviewsSubmitted),
+            ("확정", interaction.dayCompleted, interaction.allInterviewsSubmitted),
         ]
     }
 
@@ -4965,33 +5249,6 @@ private struct OpenDesignStepperChip: View {
     }
 }
 
-private struct OpenDesignTutorHead: View {
-    var body: some View {
-        HStack(spacing: 6) {
-            Text("tutor@day")
-                .foregroundStyle(OpenDesignDayColor.accent)
-            Text("~/code/agentic30")
-                .foregroundStyle(OpenDesignDayColor.sky)
-            Text("$")
-                .foregroundStyle(OpenDesignDayColor.mutedDeep)
-            Text("open day --mode=tutoring")
-                .foregroundStyle(OpenDesignDayColor.fgSecondary)
-        }
-        .font(.system(size: 11, weight: .medium, design: .monospaced))
-        .padding(.horizontal, 12)
-        .frame(height: 32)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(OpenDesignDayColor.bgDarker)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(OpenDesignDayColor.borderSoft, lineWidth: 1)
-                )
-        )
-        .padding(.bottom, 16)
-    }
-}
-
 private struct OpenDesignSectionHeader: View {
     let title: String
     var meta: String?
@@ -5019,132 +5276,18 @@ private struct OpenDesignSectionHeader: View {
     }
 }
 
-private struct OpenDesignMissionCard: View {
-    let mission: OpenDesignDayContent.Mission
-    let accepted: Bool
-    let acceptMission: () -> Void
-
-    @State private var isAcceptHovered = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            OpenDesignSectionHeader(title: "오늘의 미션", meta: "Mission · 1 of 1")
-
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 11) {
-                    Text("Mission")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(OpenDesignDayColor.amber)
-                        .padding(.horizontal, 8)
-                        .frame(height: 24)
-                        .background(Capsule().fill(OpenDesignDayColor.amberDim))
-                        .overlay(Capsule().stroke(OpenDesignDayColor.amberLine, lineWidth: 1))
-                    Text(
-                        openDesignAttributedText(
-                            [
-                                .body("오늘은 "),
-                                .mark(mission.markedTitle),
-                                .body(mission.titleSuffix),
-                            ],
-                            bodySize: 17,
-                            bodyWeight: .medium,
-                            bodyColor: OpenDesignDayColor.fg,
-                            markColor: OpenDesignDayColor.amber,
-                            markBackground: OpenDesignDayColor.amberDim
-                        )
-                    )
-                    .lineSpacing(3)
-                }
-
-                Text(
-                    openDesignAttributedText(
-                        [
-                            .body(mission.body),
-                        ],
-                        bodySize: 13
-                    )
-                )
-                    .lineSpacing(3)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array(mission.rules.prefix(3).enumerated()), id: \.offset) { index, rule in
-                        missionRule("\(index + 1)", [.body(rule)])
-                    }
-                }
-                .padding(.top, 12)
-                .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
-
-                HStack(spacing: 12) {
-                    Circle()
-                        .fill(OpenDesignDayColor.amber)
-                        .frame(width: 6, height: 6)
-                        .shadow(color: OpenDesignDayColor.amberDim, radius: 3)
-                    Text(mission.footnote)
-                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                        .foregroundStyle(OpenDesignDayColor.muted)
-                    Spacer(minLength: 0)
-                    Button(action: acceptMission) {
-                        Text(accepted ? mission.acceptedLabel : mission.acceptLabel)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(accepted ? OpenDesignDayColor.amber : OpenDesignDayColor.bgDeep)
-                            .padding(.horizontal, 16)
-                            .frame(height: 30)
-                            .openDesignHoverRow(
-                                isHovered: isAcceptHovered,
-                                isDisabled: accepted,
-                                cornerRadius: 8,
-                                fill: accepted ? OpenDesignDayColor.amberDim : OpenDesignDayColor.amber,
-                                hoverFill: OpenDesignDayColor.amber.opacity(0.92),
-                                border: accepted ? OpenDesignDayColor.amberLine : Color.clear,
-                                hoverBorder: accepted ? OpenDesignDayColor.amberLine : Color.clear
-                            )
-                    }
-                    .buttonStyle(OpenDesignInteractiveButtonStyle(isDisabled: accepted))
-                    .disabled(accepted)
-                    .onHover { isAcceptHovered = $0 }
-                    .accessibilityIdentifier("opendesign.day.mission.accept")
-                    .accessibilityValue(accepted ? "locked" : isAcceptHovered ? "active" : "inactive")
-                    .id("mission-action")
-                }
-                .padding(.top, 12)
-                .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 16)
-            .background(gradientCardBackground(cornerRadius: 14, colors: [OpenDesignDayColor.surface, OpenDesignDayColor.surface2], stroke: OpenDesignDayColor.border, accent: OpenDesignDayColor.amber))
-        }
-    }
-
-    private func missionRule(_ index: String, _ text: [OpenDesignInlineSegment]) -> some View {
-        HStack(alignment: .top, spacing: 9) {
-            Text(index)
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundStyle(OpenDesignDayColor.muted)
-                .frame(width: 20, height: 20)
-                .background(Circle().fill(OpenDesignDayColor.bgDeep))
-                .overlay(Circle().stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
-            Text(openDesignAttributedText(text, bodySize: 12.5))
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}
-
 private struct OpenDesignInterviewStepView: View {
     let step: OpenDesignDayContent.InterviewStep
     @Binding var selectedChoice: Int?
     let submittedChoice: Int?
     @Binding var freeformAnswer: String
-    let submit: () -> Void
+    let submit: (Int) -> Void
 
-    @State private var isSubmitHovered = false
     @State private var hidesTip = false
 
     var body: some View {
         let hasFreeformAnswer = step.allowsFreeform && !freeformAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasSubmitted = submittedChoice != nil
-        let selectedIsSubmitted = selectedChoice != nil && selectedChoice == submittedChoice
-        let submitDisabled = selectedChoice == nil || selectedIsSubmitted
 
         VStack(alignment: .leading, spacing: 0) {
             OpenDesignSectionHeader(title: step.title, meta: step.meta)
@@ -5169,16 +5312,6 @@ private struct OpenDesignInterviewStepView: View {
                     .font(.system(size: 17, weight: .medium))
                     .lineSpacing(4)
                     .fixedSize(horizontal: false, vertical: true)
-
-                HStack(spacing: 14) {
-                    ForEach(step.criteria, id: \.self) { criterion in
-                        Label(criterion, systemImage: "checkmark")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundStyle(OpenDesignDayColor.muted)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 2)
             }
             .padding(18)
             .background(gradientCardBackground(cornerRadius: 14, colors: [OpenDesignDayColor.surface, OpenDesignDayColor.surface2], stroke: OpenDesignDayColor.border, accent: OpenDesignDayColor.accent))
@@ -5210,7 +5343,11 @@ private struct OpenDesignInterviewStepView: View {
                             option: option,
                             isPicked: selectedChoice == option.id,
                             isSubmitted: submittedChoice == option.id,
-                            select: { selectedChoice = option.id }
+                            hasSubmittedStep: hasSubmitted,
+                            select: {
+                                selectedChoice = option.id
+                                submit(option.id)
+                            }
                         )
                         .accessibilityIdentifier(step.id == 1 ? "opendesign.day.icp.option.\(option.id)" : "opendesign.day.interview.\(step.id).option.\(option.id)")
                     }
@@ -5266,14 +5403,20 @@ private struct OpenDesignInterviewStepView: View {
                 }
 
                 HStack(spacing: 12) {
-                    if let selectedChoice {
-                        Text(selectedIsSubmitted ? "제출 완료 · \(selectedChoice)번" : "선택됨 · \(selectedChoice)번")
-                            .foregroundStyle(selectedIsSubmitted ? OpenDesignDayColor.accent : OpenDesignDayColor.muted)
+                    if let submittedChoice {
+                        Text("저장 완료 · \(submittedChoice)번")
+                            .foregroundStyle(OpenDesignDayColor.accent)
                             .accessibilityIdentifier(step.id == 1 ? "opendesign.day.icp.footer.status" : "opendesign.day.interview.\(step.id).footer.status")
-                        if let title = step.options.first(where: { $0.id == selectedChoice })?.title {
+                        if let title = step.options.first(where: { $0.id == submittedChoice })?.title {
                             Text("— \(title)")
                                 .foregroundStyle(OpenDesignDayColor.accent)
                         }
+                        Text("다른 선택지를 클릭하면 변경")
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    } else if let selectedChoice {
+                        Text("선택 중 · \(selectedChoice)번")
+                            .foregroundStyle(OpenDesignDayColor.muted)
+                            .accessibilityIdentifier(step.id == 1 ? "opendesign.day.icp.footer.status" : "opendesign.day.interview.\(step.id).footer.status")
                     } else if hasFreeformAnswer {
                         Text("직접 입력 중")
                             .foregroundStyle(OpenDesignDayColor.muted)
@@ -5285,28 +5428,6 @@ private struct OpenDesignInterviewStepView: View {
                     }
 
                     Spacer(minLength: 0)
-
-                    Button(action: submit) {
-                        Text(submitButtonTitle)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(submitDisabled ? OpenDesignDayColor.mutedDeep : OpenDesignDayColor.bgDeep)
-                            .padding(.horizontal, 16)
-                            .frame(height: 30)
-                            .openDesignHoverRow(
-                                isHovered: isSubmitHovered,
-                                isDisabled: submitDisabled,
-                                cornerRadius: 8,
-                                fill: submitDisabled ? OpenDesignDayColor.surface2 : OpenDesignDayColor.accent,
-                                hoverFill: OpenDesignDayColor.accentStrong,
-                                border: submitDisabled ? OpenDesignDayColor.borderSoft : Color.clear,
-                                hoverBorder: Color.clear
-                            )
-                    }
-                    .buttonStyle(OpenDesignInteractiveButtonStyle(isDisabled: submitDisabled))
-                    .disabled(submitDisabled)
-                    .onHover { isSubmitHovered = $0 }
-                    .accessibilityIdentifier(step.id == 1 ? "opendesign.day.icp.submit" : "opendesign.day.interview.\(step.id).submit")
-                    .accessibilityValue(submitDisabled ? "locked" : isSubmitHovered ? "active" : "inactive")
                 }
                 .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                 .padding(.horizontal, 14)
@@ -5340,13 +5461,6 @@ private struct OpenDesignInterviewStepView: View {
         return text
     }
 
-    private var submitButtonTitle: String {
-        guard selectedChoice != nil else { return "\(step.submitLabel) ↵" }
-        if selectedChoice == submittedChoice { return "제출됨 ✓" }
-        if submittedChoice != nil { return "이 후보로 다시 제출 ↵" }
-        return "\(step.submitLabel) ↵"
-    }
-
     private var highlightedStatementText: Text {
         var statement = AttributedString(step.statementPrefix + step.markedStatement + step.statementSuffix)
         statement.foregroundColor = OpenDesignDayColor.fg
@@ -5361,6 +5475,7 @@ private struct OpenDesignOptionRow: View {
     let option: OpenDesignDayContent.InterviewOption
     let isPicked: Bool
     let isSubmitted: Bool
+    let hasSubmittedStep: Bool
     let select: () -> Void
 
     @State private var isHovered = false
@@ -5380,7 +5495,7 @@ private struct OpenDesignOptionRow: View {
                     .overlay(Circle().stroke(isPicked || isSubmitted ? OpenDesignDayColor.accent : isHovered ? OpenDesignDayColor.borderStrong : OpenDesignDayColor.border, lineWidth: 1))
                     .padding(.top, 1)
 
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 0) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(option.title)
                             .font(.system(size: 13, weight: .semibold))
@@ -5388,7 +5503,7 @@ private struct OpenDesignOptionRow: View {
                             .fixedSize(horizontal: false, vertical: true)
 
                         if isSubmitted {
-                            Text("제출됨")
+                            Text("확정됨")
                                 .font(.system(size: 9.5, weight: .bold, design: .monospaced))
                                 .foregroundStyle(OpenDesignDayColor.bgDeep)
                                 .padding(.horizontal, 7)
@@ -5399,25 +5514,11 @@ private struct OpenDesignOptionRow: View {
                                 }
                         }
                     }
-                    Text(option.detail)
-                        .font(.system(size: 11.5, weight: .regular))
-                        .foregroundStyle(isPicked ? OpenDesignDayColor.fgSecondary : OpenDesignDayColor.muted)
-                        .lineSpacing(2)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    if let evidenceLabel = option.evidenceLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
-                       !evidenceLabel.isEmpty,
-                       !option.detail.contains(evidenceLabel) {
-                        Text(evidenceLabel)
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundStyle(option.evidenceLimited ? OpenDesignDayColor.amber : OpenDesignDayColor.mutedDeep)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
                 }
 
                 Spacer(minLength: 8)
 
-                Text(isPicked && !isSubmitted ? "선택됨" : option.tail)
+                Text(optionTail)
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .frame(minWidth: 76, alignment: .trailing)
                     .padding(.top, 4)
@@ -5439,353 +5540,166 @@ private struct OpenDesignOptionRow: View {
         .simultaneousGesture(TapGesture().onEnded(select))
         .onHover { isHovered = $0 }
         .accessibilityElement(children: .combine)
-        .accessibilityValue(isSubmitted ? "locked" : isPicked || isHovered ? "active" : "inactive")
+        .accessibilityValue(isSubmitted || isPicked || isHovered ? "active" : "inactive")
+    }
+
+    private var optionTail: String {
+        if isSubmitted { return "확정됨" }
+        if hasSubmittedStep { return "변경" }
+        if isHovered { return "왜?" }
+        return option.tail
     }
 }
 
-private struct OpenDesignIcpPreview: View {
-    let content: OpenDesignDayContent
-    let interaction: OpenDesignDayInteractionState
-    let layout: OpenDesignDayLayoutMetrics
-    let advanceHandoff: () -> Void
-
-    @State private var didCopyPreview = false
-
-    private var draft: OpenDesignDayDraft {
-        content.draft(for: interaction)
-    }
-
-    private var alignmentPlan: Day1AlignmentPlan? {
-        draft.alignmentPlan
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            guide(
-                title: alignmentPlan == nil ? "문서 초안을 먼저 확인해요." : "핵심 가설 초안을 먼저 확인해요.",
-                body: alignmentPlan == nil
-                    ? "인터뷰 네 개가 끝났습니다. 바로 결론을 쌓지 않고, 먼저 docs/ICP.md에 들어갈 초안을 보여드릴게요. 이 문서는 다음 단계의 ICP 한 문장과 후보 1명을 판단하는 기준점입니다."
-                    : "질문이 끝났습니다. 바로 결론으로 가지 않고, Day 2에 넘길 핵심 가설과 품질 점수를 먼저 확인합니다."
-            )
-
-            OpenDesignSectionHeader(
-                title: alignmentPlan == nil ? "문서 미리보기" : "핵심 가설 미리보기",
-                meta: alignmentPlan == nil ? "docs/ICP.md · draft" : "docs/GOAL.md + ICP/SPEC · draft"
-            )
-
-            VStack(spacing: 0) {
-                HStack(spacing: 12) {
-                    Text("MD")
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .foregroundStyle(OpenDesignDayColor.accent)
-                        .frame(width: 26, height: 26)
-                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(OpenDesignDayColor.accentDim))
-                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(alignmentPlan == nil ? "마지막 인터뷰 결과로 쓸 ICP 문서 초안" : "Day 2로 넘길 핵심 가설 초안")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(OpenDesignDayColor.fg)
-                        Text(alignmentPlan == nil ? "write target · docs/ICP.md" : "write target · docs/GOAL.md, docs/ICP.md, docs/SPEC.md")
-                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                            .foregroundStyle(OpenDesignDayColor.muted)
-                    }
-                    Spacer(minLength: 0)
-                    OpenDesignGhostActionButton(
-                        label: didCopyPreview ? "복사됨 ✓" : "초안 복사",
-                        accessibilityIdentifier: "opendesign.day.icpPreview.copy",
-                        action: copyPreview
-                    )
-                    .help(alignmentPlan == nil ? "ICP 문서 초안을 클립보드에 복사" : "핵심 가설 초안을 클립보드에 복사")
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 13)
-                .background(OpenDesignDayColor.surface2)
-                .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
-
-                VStack(alignment: .leading, spacing: 12) {
-                    LazyVGrid(columns: openDesignGridColumns(layout.openDesignGridColumnCount), alignment: .leading, spacing: 8) {
-                        if draft.plan != nil {
-                            ForEach(Array(draft.selectedAnswers.prefix(5).enumerated()), id: \.offset) { _, answer in
-                                chip(OpenDesignDayContent.dimensionDisplayName(answer.dimension), answer.value)
-                            }
-                        } else {
-                            chip("Distance", draft.distance)
-                            chip("Tool", draft.tool)
-                            chip("Stuck", draft.stuck)
-                            chip("Last 7d", draft.action)
-                        }
-                    }
-
-                    Text(previewMarkdownAttributed)
-                        .font(.system(size: 11.5, weight: .medium, design: .monospaced))
-                        .lineSpacing(3)
-                        .padding(14)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(OpenDesignDayColor.bgDarker)
-                                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
-                        )
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
-                .padding(.bottom, 16)
-            }
-            .background(gradientCardBackground(cornerRadius: 14, colors: [OpenDesignDayColor.surface2, OpenDesignDayColor.surface], stroke: OpenDesignDayColor.accentLine))
-
-            handoffButton(
-                label: alignmentPlan == nil ? "문서 확인 → ICP 한 문장 보기" : "핵심 가설 확인 → 최종 statement 보기",
-                hint: alignmentPlan == nil ? "문서 초안이 맞으면 ICP를 한 문장으로 고정합니다." : "초안이 맞으면 품질 게이트가 붙은 핵심 가설로 고정합니다.",
-                targetIndex: 1,
-                currentIndex: interaction.handoffIndex,
-                accessibilityIdentifier: "opendesign.day.preview.next",
-                action: advanceHandoff
-            )
-            .id("icp-preview-action")
-        }
-        .padding(.top, 6)
-    }
-
-    private var previewMarkdown: String {
-        draft.markdown
-    }
-
-    private var previewMarkdownAttributed: AttributedString {
-        var text = AttributedString(previewMarkdown)
-        text.foregroundColor = OpenDesignDayColor.fgSecondary
-        for header in ["# Ideal Customer Profile", "# Day 1 Alignment Statement"] {
-            if let range = text.range(of: header) {
-                text[range].foregroundColor = OpenDesignDayColor.fg
-            }
-        }
-        for key in ["## Our ICP", "## Evidence from Day 1", "## Anti-ICP guardrail", "## Next action", "## Project Goal", "## ICP", "## Pain Point", "## Outcome", "## Structured Alignment Statement", "## Quality Gate", "## Day 2 Handoff", "## Description", "## Criteria", "## Why they matter", "## Needs", "## Haves", "## Don't needs", "## Day 1 selections", "## Evidence", "## Reference customers to find"] {
-            if let range = text.range(of: key) {
-                text[range].foregroundColor = OpenDesignDayColor.amber
-            }
-        }
-        for muted in ["> Write target: docs/ICP.md", "> Source: Day 1 interview flow", "> Write target: docs/GOAL.md, docs/ICP.md, docs/SPEC.md", "> Source: Day 1 goal alignment flow"] {
-            if let range = text.range(of: muted) {
-                text[range].foregroundColor = OpenDesignDayColor.mutedDeep
-            }
-        }
-        if let range = text.range(of: "docs/ICP.md") {
-            text[range].foregroundColor = OpenDesignDayColor.accent
-        }
-        return text
-    }
-
-    private func copyPreview() {
-        copyToPasteboard(previewMarkdown)
-        didCopyPreview = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
-            didCopyPreview = false
-        }
-    }
-
+private struct OpenDesignHypothesisSummaryRow: Identifiable {
+    let id: String
+    let label: String
+    let value: String
 }
 
-private struct OpenDesignFinalHandoff: View {
+private struct OpenDesignHypothesisConfirmationCard: View {
     let content: OpenDesignDayContent
     @Binding var interaction: OpenDesignDayInteractionState
-    let layout: OpenDesignDayLayoutMetrics
-    let advanceHandoff: () -> Void
     let completeDayAction: () -> Void
     let advanceToNextDay: () -> Void
 
-    @State private var isCompleteHovered = false
-    @State private var isDay2Hovered = false
+    @State private var showsDetails = false
+    @State private var isConfirmHovered = false
 
     private var draft: OpenDesignDayDraft {
         content.draft(for: interaction)
     }
 
-    private var alignmentPlan: Day1AlignmentPlan? {
-        draft.alignmentPlan
-    }
-
-    private var alignmentDisplayRows: [OpenDesignAlignmentDisplayRow] {
-        guard let alignmentPlan else { return [] }
-        return openDesignAlignmentDisplayRows(for: alignmentPlan)
-    }
-
-    private var finalIcpStatementText: Text {
-        var text = AttributedString(draft.finalIcpStatement)
-        text.foregroundColor = OpenDesignDayColor.fg
-        let marks = draft.plan == nil
-            ? [draft.distance, draft.tool, draft.stuck, draft.action]
-            : draft.selectedAnswers.map(\.value)
-        for marked in marks where !marked.isEmpty {
-            if let range = text.range(of: marked) {
-                text[range].foregroundColor = OpenDesignDayColor.accent
-            }
+    private var rows: [OpenDesignHypothesisSummaryRow] {
+        if let alignmentPlan = content.alignmentPlan {
+            let icpValue = selectedOptionTitle(stepID: 1)
+                ?? alignmentPlan.signals.currentIcpGuess
+                ?? alignmentPlan.alignmentStatement.icp
+            let painValue = selectedOptionTitle(stepID: 2) ?? alignmentPlan.alignmentStatement.painPoint
+            let outcomeValue = selectedOptionTitle(stepID: 3) ?? alignmentPlan.alignmentStatement.outcome
+            return [
+                OpenDesignHypothesisSummaryRow(id: "goal", label: "Goal", value: alignmentPlan.projectGoal),
+                OpenDesignHypothesisSummaryRow(id: "icp", label: "ICP", value: icpValue),
+                OpenDesignHypothesisSummaryRow(id: "pain", label: "Pain", value: painValue),
+                OpenDesignHypothesisSummaryRow(id: "outcome", label: "Outcome", value: outcomeValue),
+            ]
         }
-        return Text(text)
-    }
 
-    private var finalIcpBadges: [String] {
-        if alignmentPlan != nil {
-            return ["Project Goal", "ICP", "Pain Point", "Outcome"]
-        }
-        if draft.plan != nil {
-            return draft.selectedAnswers.prefix(4).map { OpenDesignDayContent.dimensionDisplayName($0.dimension) }
-        }
-        return ["이번 주 연락 가능", "도구 사용 빈도 확인", "막힌 단계 명확", "최근 행동 기준"]
-    }
-
-    private var candidateName: String {
-        if alignmentPlan != nil { return "Day 2 handoff" }
-        return draft.plan == nil ? "박주영" : "Reference customer"
-    }
-
-    private var candidateInitial: String {
-        if alignmentPlan != nil { return "D2" }
-        return draft.plan == nil ? "박" : "R"
-    }
-
-    private var candidateSubtitle: String {
-        if let alignmentPlan {
-            return "\(alignmentPlan.day2Handoff.title) · \(alignmentPlan.qualityGate.label) \(String(format: "%.1f", alignmentPlan.qualityGate.score))/10"
-        }
-        if let plan = draft.plan {
-            let target = plan.signals.currentIcpGuess ?? "ICP v0 후보"
-            return "\(target) · Day 3 인터뷰 후보 · 검증 기준 확인"
-        }
-        return "서울 · 퇴사 5개월차 · 가까움 0.82 · Day 3 후보"
-    }
-
-    private var candidateFacts: [(key: String, value: String)] {
-        if let alignmentPlan {
-            return openDesignAlignmentDisplayRows(for: alignmentPlan).map { ($0.label, $0.value) }
-        }
-        if draft.plan != nil {
-            let facts = draft.selectedAnswers.prefix(4).map { answer in
-                (key: OpenDesignDayContent.dimensionDisplayName(answer.dimension), value: answer.value)
-            }
-            return facts.isEmpty ? [("ICP", draft.finalIcpStatement)] : facts
-        }
+        let goal = content.plan == nil
+            ? "이번 주 바로 연락할 첫 고객 1명을 고정"
+            : content.contextTitle
+        let pain = content.plan?.signals.problem ?? draft.stuck
         return [
-            ("거리", label(1)),
-            ("도구", label(2)),
-            ("막힌 곳", label(3)),
-            ("지난 7일", label(4)),
+            OpenDesignHypothesisSummaryRow(id: "goal", label: "Goal", value: goal),
+            OpenDesignHypothesisSummaryRow(id: "icp", label: "ICP", value: draft.finalIcpStatement),
+            OpenDesignHypothesisSummaryRow(id: "pain", label: "Pain", value: pain),
+            OpenDesignHypothesisSummaryRow(id: "outcome", label: "Outcome", value: draft.recommendation),
         ]
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if interaction.handoffIndex >= 1 {
-                finalIcp
-                    .id("final-icp")
+        VStack(alignment: .leading, spacing: 14) {
+            OpenDesignSectionHeader(title: "핵심 가설 확정", meta: "Day 2 handoff")
+
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text("CONFIRM")
+                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.accent)
+                        .padding(.horizontal, 8)
+                        .frame(height: 22)
+                        .background(Capsule().fill(OpenDesignDayColor.accentDim))
+                        .overlay(Capsule().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
+                    Text("이 가설로 내일 시장 신호를 검증합니다.")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+
+                VStack(spacing: 8) {
+                    ForEach(rows) { row in
+                        hypothesisRow(row)
+                    }
+                }
+
+                DisclosureGroup(isExpanded: $showsDetails) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("문서/근거")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        Text(draft.markdown)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                            .lineSpacing(3)
+                            .lineLimit(14)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .fill(OpenDesignDayColor.bgDarker)
+                                    .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+                            )
+                        Text(draft.antiIcpBody)
+                            .font(.system(size: 12, weight: .regular))
+                            .foregroundStyle(OpenDesignDayColor.muted)
+                            .lineSpacing(2)
+                    }
+                    .padding(.top, 8)
+                } label: {
+                    Text("문서/근거 보기")
+                        .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                }
+                .accentColor(OpenDesignDayColor.accent)
+                .accessibilityIdentifier("opendesign.day.final.details")
+
+                Button(action: confirmAndAdvance) {
+                    Text(interaction.dayCompleted ? "Day 2로 이동 ↵" : "가설 확정 → Day2로 이동 ↵")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.bgDeep)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
+                        .openDesignHoverRow(
+                            isHovered: isConfirmHovered,
+                            cornerRadius: 9,
+                            fill: OpenDesignDayColor.accent,
+                            hoverFill: OpenDesignDayColor.accentStrong,
+                            hoverBorder: Color.clear
+                        )
+                }
+                .buttonStyle(OpenDesignInteractiveButtonStyle())
+                .modifier(OpenDesignReturnShortcutModifier(isEnabled: true))
+                .onHover { isConfirmHovered = $0 }
+                .accessibilityIdentifier("opendesign.day.final.confirm")
+                .accessibilityValue(isConfirmHovered ? "active" : "inactive")
+                .id("final-icp-action")
             }
-            if interaction.handoffIndex >= 2 {
-                candidate
-                    .id("candidate")
-            }
-            if interaction.handoffIndex >= OpenDesignDayInteractionState.completedHandoffIndex {
-                gate
-                    .id("gate")
-            }
+            .padding(18)
+            .background(gradientCardBackground(cornerRadius: 14, colors: [OpenDesignDayColor.surface2, OpenDesignDayColor.surface], stroke: OpenDesignDayColor.accentLine))
+
             if interaction.dayCompleted {
                 completion
                     .id("completion")
             }
         }
-    }
-
-    private var finalIcp: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            guide(
-                title: alignmentPlan == nil ? "ICP 한 문장으로 좁혀요." : "핵심 가설 한 문장으로 좁혀요.",
-                body: alignmentPlan == nil
-                    ? "좋아요. 이제 네 번의 선택을 한 문장으로 압축합니다. 이 문장은 Day 3 인터뷰 대상을 고르는 기준선이고, 이후 랜딩·웨지 방향이 흔들리지 않게 잡아주는 작은 계약입니다."
-                    : "좋아요. 이제 선택을 Project Goal, ICP, Pain Point, Outcome이 모두 들어간 핵심 가설로 압축합니다. 이 문장이 Day 2 시장 신호와 Day 3 질문의 기준선입니다."
-            )
-            OpenDesignSectionHeader(
-                title: alignmentPlan == nil ? "ICP 한 문장" : "핵심 가설",
-                meta: alignmentPlan == nil
-                    ? (draft.plan == nil ? "인터뷰 4개 답변 기준 · 좁힘 점수 8.2" : "adaptive scan 질문 기준 · ICP v0")
-                    : "quality gate · \(String(format: "%.1f", alignmentPlan?.qualityGate.score ?? 0))/10"
-            )
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text(alignmentPlan == nil ? "ICP · 최종 후보 문장" : "ALIGNMENT · 최종 핵심 가설")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .textCase(.uppercase)
-                        .foregroundStyle(OpenDesignDayColor.accent)
-                    Spacer()
-                    Text(alignmentPlan.map { String(format: "%.1f / 10", $0.qualityGate.score) } ?? draft.plan?.confidence.map { String(format: "%.2f", $0) } ?? "8.2 / 10")
-                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(OpenDesignDayColor.accent)
-                        .padding(.horizontal, 8)
-                        .background(Capsule().fill(OpenDesignDayColor.accentDim))
-                }
-                if alignmentPlan != nil {
-                    alignmentStatementRows
-                } else {
-                    finalIcpStatementText
-                        .font(.system(size: 17, weight: .medium))
-                        .lineSpacing(4)
-                    HStack(spacing: 14) {
-                        ForEach(finalIcpBadges, id: \.self) { text in
-                            Label(text, systemImage: "checkmark")
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundStyle(OpenDesignDayColor.muted)
-                        }
-                    }
-                }
-            }
-            .padding(18)
-            .background(gradientCardBackground(cornerRadius: 14, colors: [OpenDesignDayColor.surface, OpenDesignDayColor.surface2], stroke: OpenDesignDayColor.border, accent: OpenDesignDayColor.accent))
-            handoffButton(
-                label: alignmentPlan == nil ? "ICP 확인 → 후보/Anti-ICP 보기" : "핵심 가설 확인 → Day 2 handoff 보기",
-                hint: alignmentPlan == nil ? "이 문장으로 후보 1명과 Anti-ICP 신호를 같이 확인합니다." : "이 핵심 가설로 Day 2 시장 신호 확인 기준을 봅니다.",
-                targetIndex: 2,
-                currentIndex: interaction.handoffIndex,
-                accessibilityIdentifier: "opendesign.day.final.next",
-                action: advanceHandoff
-            )
-            .id("final-icp-action")
-        }
+        .padding(.top, 6)
         .overlay(alignment: .topLeading) {
-            openDesignAccessibilityAnchor("opendesign.day.final", label: "OpenDesign Day Final ICP")
+            openDesignAccessibilityAnchor("opendesign.day.final", label: "OpenDesign Day Final Hypothesis")
         }
     }
 
-    private var alignmentStatementRows: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            ForEach(alignmentDisplayRows) { row in
-                alignmentStatementRow(row)
-            }
-
-            if !draft.selectedAnswers.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("SELECTED DAY 1 CONDITIONS")
-                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
-                    OpenDesignFlowLayout(spacing: 8, lineSpacing: 6) {
-                        ForEach(Array(draft.selectedAnswers.prefix(3).enumerated()), id: \.offset) { _, answer in
-                            chip(OpenDesignDayContent.dimensionDisplayName(answer.dimension), answer.value)
-                        }
-                    }
-                }
-                .padding(.top, 4)
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("opendesign.day.final.row.selected")
-            }
-        }
-    }
-
-    private func alignmentStatementRow(_ row: OpenDesignAlignmentDisplayRow) -> some View {
+    private func hypothesisRow(_ row: OpenDesignHypothesisSummaryRow) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(row.label)
                 .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                 .foregroundStyle(OpenDesignDayColor.muted)
                 .frame(width: 68, alignment: .leading)
             Text(row.value)
-                .font(.system(size: 13.5, weight: row.isAccent ? .semibold : .regular))
-                .foregroundStyle(row.isAccent ? OpenDesignDayColor.accent : OpenDesignDayColor.fgSecondary)
+                .font(.system(size: 13.5, weight: row.id == "icp" ? .semibold : .regular))
+                .foregroundStyle(row.id == "icp" ? OpenDesignDayColor.accent : OpenDesignDayColor.fgSecondary)
                 .lineSpacing(2)
+                .lineLimit(row.id == "outcome" ? 2 : 1)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
@@ -5797,170 +5711,18 @@ private struct OpenDesignFinalHandoff: View {
                 .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
         )
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(row.label) \(row.value)")
         .accessibilityIdentifier("opendesign.day.final.row.\(row.id)")
     }
 
-    private var candidate: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            guide(
-                title: alignmentPlan == nil ? "후보와 Anti-ICP를 함께 봐요." : "Day 2 handoff와 경계를 함께 봐요.",
-                body: alignmentPlan == nil
-                    ? "문장이 정해졌으니 추상적인 ICP를 실제 연락 가능한 한 사람으로 바꿉니다. 동시에 \"좋네요\"만 말하고 최근 행동이 없는 사람은 제외하도록 Anti-ICP 신호도 같이 잠급니다."
-                    : "핵심 가설이 정해졌으니 내일 볼 시장 신호 기준으로 넘깁니다. 동시에 품질 게이트가 낮아지는 조건을 확인해 Day 2가 넓은 리서치로 새지 않게 합니다."
-            )
-            OpenDesignSectionHeader(
-                title: alignmentPlan == nil ? "후보 1명" : "Day 2 handoff",
-                meta: alignmentPlan == nil ? "SPEC 입력용 · Day 3 첫 인터뷰 대상" : "Market Signals 입력 기준"
-            )
-            HStack(alignment: .top, spacing: 16) {
-                Text(candidateInitial)
-                    .font(.system(size: 19, weight: .bold, design: .monospaced))
-                    .foregroundStyle(OpenDesignDayColor.accent)
-                    .frame(width: 56, height: 56)
-                    .background(Circle().fill(OpenDesignDayColor.accentDim))
-                    .overlay(Circle().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
-
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 8) {
-                        Text(candidateName)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(OpenDesignDayColor.fg)
-                        Text("CANDIDATE 01")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundStyle(OpenDesignDayColor.accent)
-                            .padding(.horizontal, 7)
-                            .background(Capsule().fill(OpenDesignDayColor.accentDim))
-                    }
-                    Text(candidateSubtitle)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(OpenDesignDayColor.muted)
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 10) {
-                        ForEach(candidateFacts, id: \.key) { fact in
-                            personFact(fact.key, fact.value)
-                        }
-                    }
-                }
-                Spacer(minLength: 0)
-                OpenDesignGhostActionButton(
-                    label: "교체",
-                    systemImage: "arrow.triangle.2.circlepath",
-                    accessibilityIdentifier: "opendesign.day.candidate.replace",
-                    action: {}
-                )
-                .help("후보 교체")
-            }
-            .padding(16)
-            .background(cardBackground(cornerRadius: 12, fill: OpenDesignDayColor.surface))
-
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "exclamationmark.circle")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(OpenDesignDayColor.rose)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(alignmentPlan == nil ? "Anti-ICP 체크" : "품질 게이트 체크")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(OpenDesignDayColor.rose)
-                    Text(antiIcpAttributedBody)
-                        .lineSpacing(2)
-                }
-            }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(OpenDesignDayColor.surface)
-                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
-            )
-            .overlay(Rectangle().fill(OpenDesignDayColor.rose).frame(width: 2), alignment: .leading)
-
-            handoffButton(
-                label: alignmentPlan == nil ? "후보 확인 → Day 1 게이트 보기" : "Handoff 확인 → Day 1 게이트 보기",
-                hint: alignmentPlan == nil ? "후보가 살아 있으면 오늘은 게이트 조건만 닫고, 일정 조율은 다음 단계로 넘깁니다." : "핵심 가설이 충분하면 오늘은 품질 게이트만 닫고, 실제 대화 준비는 다음 단계로 넘깁니다.",
-                targetIndex: OpenDesignDayInteractionState.completedHandoffIndex,
-                currentIndex: interaction.handoffIndex,
-                accessibilityIdentifier: "opendesign.day.candidate.next",
-                action: advanceHandoff
-            )
-            .id("candidate-action")
+    private func selectedOptionTitle(stepID: Int) -> String? {
+        let selectedID = interaction.submittedChoices[stepID] ?? interaction.selectedChoices[stepID]
+        guard let selectedID,
+              let step = content.interviewSteps.first(where: { $0.id == stepID }),
+              let option = step.options.first(where: { $0.id == selectedID }) else {
+            return nil
         }
-        .overlay(alignment: .topLeading) {
-            openDesignAccessibilityAnchor("opendesign.day.candidate", label: "OpenDesign Day Candidate")
-        }
-    }
-
-    private var gate: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            guide(
-                title: "Day 1 게이트를 닫아요.",
-                body: alignmentPlan == nil
-                    ? "마지막으로 게이트를 확인합니다. Day 1은 문서가 예쁜지가 아니라, 내일 실제 인터뷰로 이어질 조건이 채워졌는지로 끝납니다. 체크가 남아 있으면 다음 날로 넘기지 말고 여기서 닫습니다."
-                    : "마지막으로 품질 게이트를 확인합니다. Day 1은 긴 ICP 문서가 아니라, Day 2가 검증할 핵심 가설이 충분히 선명한지로 끝납니다."
-            )
-            OpenDesignSectionHeader(title: "Day 1 게이트 조건", meta: nil)
-            VStack(spacing: 8) {
-                gateRow(
-                    1,
-                    alignmentPlan == nil
-                        ? (draft.plan == nil ? "ICP 한 문장 (좁힘 점수 ≥ 7)" : "docs/ICP.md preview — Description / Criteria / Evidence 확인")
-                        : "Project Goal + ICP + Pain Point + Outcome이 담긴 핵심 가설",
-                    completedTag: alignmentPlan.map { "완료 · \(String(format: "%.1f", $0.qualityGate.score))/10" } ?? (draft.plan == nil ? "완료 · 8.2" : "완료")
-                )
-                gateRow(
-                    2,
-                    alignmentPlan == nil
-                        ? (draft.plan == nil ? "후보 1명 — distance · tools · stuck · last7d 모두 채움" : "adaptive ICP 질문 \(content.interviewSteps.count)개 모두 제출")
-                        : "alignment 질문 \(content.interviewSteps.count)개 모두 제출",
-                    completedTag: "완료"
-                )
-                gateRow(3, alignmentPlan == nil ? "후보 1명 — Day 3 첫 인터뷰 대상으로 확인" : "Day 2 handoff 확인", completedTag: "완료", pendingTag: "확인 필요")
-                    .id("gate-action")
-                gateRow(4, alignmentPlan == nil ? "Anti-ICP 체크리스트 동의" : "품질 게이트 PASS/REWORK 기준 확인", completedTag: "완료", pendingTag: draft.isAntiSignal ? "재확인" : "대기")
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-            .background(cardBackground(cornerRadius: 12, fill: OpenDesignDayColor.surface))
-
-            VStack(alignment: .center, spacing: 12) {
-                Text(alignmentPlan == nil
-                    ? "후보, Anti-ICP, 게이트 조건까지 모두 확인했다면 Day 1을 닫습니다."
-                    : "핵심 가설, 품질 점수, Day 2 handoff까지 확인했다면 Day 1을 닫습니다.")
-                    .font(.system(size: 12.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button(action: completeDayAction) {
-                    Text(interaction.dayCompleted ? "Day 1 완료됨 ✓" : "Day 1 확인 완료 ↵")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(OpenDesignDayColor.bgDeep)
-                        .padding(.horizontal, 18)
-                        .frame(maxWidth: 430)
-                        .frame(height: 48)
-                        .openDesignHoverRow(
-                            isHovered: isCompleteHovered,
-                            isDisabled: interaction.dayCompleted,
-                            cornerRadius: 9,
-                            fill: OpenDesignDayColor.accent,
-                            hoverFill: OpenDesignDayColor.accentStrong,
-                            hoverBorder: Color.clear
-                        )
-                }
-                .buttonStyle(OpenDesignInteractiveButtonStyle(isDisabled: interaction.dayCompleted))
-                .disabled(interaction.dayCompleted)
-                .onHover { isCompleteHovered = $0 }
-                .accessibilityValue(interaction.dayCompleted ? "locked" : isCompleteHovered ? "active" : "inactive")
-                .accessibilityIdentifier("opendesign.day.complete")
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 16)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(OpenDesignDayColor.accentDim)
-                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
-            )
-        }
-        .overlay(alignment: .topLeading) {
-            openDesignAccessibilityAnchor("opendesign.day.gate", label: "OpenDesign Day Gate")
-        }
+        return option.title
     }
 
     private var completion: some View {
@@ -5974,177 +5736,22 @@ private struct OpenDesignFinalHandoff: View {
                 Text("Day 1이 완료됐습니다.")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(OpenDesignDayColor.fg)
-                Text(alignmentPlan?.day2Handoff.body ?? "이제 Day 2에서 오늘 정한 ICP를 기준으로 시장 신호와 키워드 3개를 잠급니다.")
+                Text("Day 2에서 이 가설의 시장 신호와 키워드를 확인합니다.")
                     .font(.system(size: 12.5, weight: .regular))
                     .foregroundStyle(OpenDesignDayColor.fgSecondary)
             }
             Spacer(minLength: 0)
-            Button(action: advanceToNextDay) {
-                Text("Day 2로 이동 →")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(isDay2Hovered ? OpenDesignDayColor.accent : OpenDesignDayColor.fg)
-                    .padding(.horizontal, 16)
-                    .frame(height: 36)
-                    .openDesignHoverRow(
-                        isHovered: isDay2Hovered,
-                        cornerRadius: 10,
-                        fill: OpenDesignDayColor.bgDarker,
-                        hoverFill: OpenDesignDayColor.bgDarker,
-                        border: OpenDesignDayColor.accentLine,
-                        hoverBorder: OpenDesignDayColor.accent
-                    )
-            }
-            .buttonStyle(OpenDesignInteractiveButtonStyle())
-            .onHover { isDay2Hovered = $0 }
-            .accessibilityIdentifier("opendesign.day.day2")
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 18)
         .background(gradientCardBackground(cornerRadius: 14, colors: [OpenDesignDayColor.surface2, OpenDesignDayColor.surface], stroke: OpenDesignDayColor.accentLine))
-        .overlay(alignment: .topLeading) {
-            Color.clear
-                .frame(width: 1, height: 1)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("OpenDesign Day Completion")
-                .accessibilityIdentifier("opendesign.day.completion")
-                .allowsHitTesting(false)
+    }
+
+    private func confirmAndAdvance() {
+        if !interaction.dayCompleted {
+            completeDayAction()
         }
-    }
-
-    private var antiIcpAttributedBody: AttributedString {
-        if draft.plan != nil {
-            let body = draft.antiIcpBody
-            let segments: [OpenDesignInlineSegment] = draft.isAntiSignal
-                ? [.strong("Anti-ICP 경계"), .body(" · \(body)")]
-                : [.body(body)]
-            return openDesignAttributedText(
-                segments,
-                bodySize: 12.5,
-                markColor: OpenDesignDayColor.rose,
-                markBackground: OpenDesignDayColor.roseDim,
-                codeColor: OpenDesignDayColor.rose
-            )
-        }
-        let segments: [OpenDesignInlineSegment]
-        if draft.isAntiSignal {
-            segments = [
-                .strong("지난 7일 행동 없음"),
-                .body(" 신호가 있어 Day 3 인터뷰 전에 실제 사건을 한 번 더 확인하세요. 박주영이 "),
-                .strong("\"언젠가 해볼게요\""),
-                .body(" 또는 "),
-                .strong("\"좋은 아이디어네요\""),
-                .body("로 답하면 후보 교체. "),
-                .code("Mom Test"),
-                .body(" 기준 그대로."),
-            ]
-        } else {
-            segments = [
-                .body("좋은 신호는 "),
-                .strong("지난주에 같은 문제로 시간을 쓴 사건"),
-                .body("입니다. 박주영이 "),
-                .strong("\"언젠가 해볼게요\""),
-                .body(" 또는 "),
-                .strong("\"좋은 아이디어네요\""),
-                .body("로 답하면 후보 교체. "),
-                .code("Mom Test"),
-                .body(" 기준 그대로."),
-            ]
-        }
-        return openDesignAttributedText(
-            segments,
-            bodySize: 12.5,
-            markColor: OpenDesignDayColor.rose,
-            markBackground: OpenDesignDayColor.roseDim,
-            codeColor: OpenDesignDayColor.rose
-        )
-    }
-
-    private func gateRow(_ id: Int, _ text: String, completedTag: String, pendingTag: String = "대기") -> some View {
-        OpenDesignGateRow(
-            id: id,
-            text: text,
-            completedTag: completedTag,
-            pendingTag: pendingTag,
-            interaction: $interaction
-        )
-    }
-
-    private func label(_ step: Int) -> String {
-        content.selectedLabel(stepID: step, in: interaction)
-    }
-
-    private func personFact(_ key: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(key)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .textCase(.uppercase)
-                .foregroundStyle(OpenDesignDayColor.muted)
-            Text(value)
-                .font(.system(size: 12, weight: .regular))
-                .foregroundStyle(OpenDesignDayColor.fg)
-        }
-    }
-
-}
-
-private struct OpenDesignGateRow: View {
-    let id: Int
-    let text: String
-    let completedTag: String
-    let pendingTag: String
-    @Binding var interaction: OpenDesignDayInteractionState
-
-    @State private var isHovered = false
-
-    private var isDone: Bool {
-        interaction.completedGateRows.contains(id)
-    }
-
-    private var tag: String {
-        interaction.gateTag(id: id, completedTag: completedTag, initialPendingTag: pendingTag)
-    }
-
-    var body: some View {
-        Button {
-            interaction.toggleGateRow(id)
-        } label: {
-            HStack(spacing: 10) {
-                Text(isDone ? "✓" : "")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(OpenDesignDayColor.bgDeep)
-                    .frame(width: 16, height: 16)
-                    .background(Circle().fill(isDone ? OpenDesignDayColor.accent : OpenDesignDayColor.bgDeep))
-                    .overlay(Circle().stroke(isHovered ? OpenDesignDayColor.borderStrong : OpenDesignDayColor.border, lineWidth: 1))
-                Text(text)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
-                Spacer(minLength: 0)
-                Text(tag)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(isDone ? OpenDesignDayColor.accent : OpenDesignDayColor.muted)
-                    .padding(.horizontal, 7)
-                    .frame(height: 20)
-                    .background(
-                        Capsule()
-                            .fill(isDone ? OpenDesignDayColor.accentDim : OpenDesignDayColor.bgDarker)
-                            .overlay(
-                                Capsule()
-                                    .stroke(isDone ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, lineWidth: 1)
-                            )
-                    )
-            }
-            .padding(.vertical, 1)
-            .openDesignHoverRow(
-                isHovered: isHovered,
-                cornerRadius: 6,
-                hoverFill: OpenDesignDayColor.hover,
-                hoverBorder: Color.clear
-            )
-        }
-        .buttonStyle(OpenDesignInteractiveButtonStyle())
-        .onHover { isHovered = $0 }
-        .accessibilityValue(isDone || isHovered ? "active" : "inactive")
-        .accessibilityIdentifier("opendesign.day.gate.row.\(id)")
+        advanceToNextDay()
     }
 }
 
@@ -6176,7 +5783,7 @@ private struct OpenDesignMetaPanelView: View {
                         Text("/")
                             .font(.system(size: 13, weight: .medium, design: .monospaced))
                             .foregroundStyle(OpenDesignDayColor.mutedDeep)
-                        Text("4 STEP")
+                        Text("3 STEP")
                             .font(.system(size: 13, weight: .medium, design: .monospaced))
                             .foregroundStyle(OpenDesignDayColor.muted)
                         Spacer()
@@ -6194,7 +5801,7 @@ private struct OpenDesignMetaPanelView: View {
                             }
                     }
                     .frame(height: 3)
-                    Text("● 맥락    ● 미션    \(interaction.allInterviewsSubmitted ? "●" : "○") 질문    \(interaction.allInterviewsSubmitted ? "●" : "○") ICP")
+                    Text("\(interaction.missionAccepted ? "●" : "○") 시작    \(interaction.missionAccepted ? "●" : "○") 질문    \(interaction.allInterviewsSubmitted ? "●" : "○") 확정")
                         .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(OpenDesignDayColor.muted)
                 }
@@ -6280,7 +5887,7 @@ private struct OpenDesignMetaPanelView: View {
     private func followupRow(step: OpenDesignDayContent.InterviewStep) -> some View {
         let done = interaction.submittedSteps.contains(step.id)
         let active = step.id == interaction.highestVisibleInterviewStep && !done
-        let subtitle = done ? "완료 · 제출됨" : active ? "지금 진행 중 · 선택지에서 하나 선택" : "잠금 · \(step.options.prefix(3).map(\.title).joined(separator: " / "))"
+        let subtitle = done ? "완료 · 저장됨" : active ? "지금 진행 중 · 선택지에서 하나 선택" : "잠금 · \(step.options.prefix(3).map(\.title).joined(separator: " / "))"
         return followupStatic(
             done ? "checkmark.circle" : active ? "record.circle" : "lock",
             step.title,

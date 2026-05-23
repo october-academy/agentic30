@@ -160,35 +160,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
                 }
             }
-        } else if CommandLine.arguments.contains("--ui-testing-open-workspace-switcher-tour") {
-            scheduleUITestingWorkspaceOpen(openSettings: false)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
-                self?.viewModel.requestWorkspaceSwitcherTourOpen()
-            }
-        } else if CommandLine.arguments.contains("--ui-testing-open-workspace-curriculum-navigator-tour") {
-            scheduleUITestingWorkspaceOpen(openSettings: false)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
-                self?.viewModel.requestWorkspaceCurriculumNavigatorTourOpen()
-            }
-        } else if CommandLine.arguments.contains("--ui-testing-open-workspace-settings-tour") {
-            scheduleUITestingWorkspaceOpen(openSettings: false)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
-                self?.viewModel.requestWorkspaceSettingsTourOpen()
-            }
-        } else if CommandLine.arguments.contains("--ui-testing-open-workspace-help-tour") {
-            scheduleUITestingWorkspaceOpen(openSettings: false)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
-                self?.viewModel.requestWorkspaceHelpTourOpen()
-            }
-        } else if CommandLine.arguments.contains("--ui-testing-open-workspace-recent-conversations-tour") {
-            scheduleUITestingWorkspaceOpen(openSettings: false)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
-                self?.viewModel.requestWorkspaceRecentConversationsTourOpen()
-            }
-        } else if CommandLine.arguments.contains("--ui-testing-open-workspace-settings") {
-            scheduleUITestingWorkspaceOpen(openSettings: true)
         } else if CommandLine.arguments.contains("--ui-testing-open-workspace") {
-            scheduleUITestingWorkspaceOpen(openSettings: false)
+            scheduleUITestingWorkspaceOpen()
         }
         #endif
 
@@ -334,12 +307,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     #if DEBUG
-    private func scheduleUITestingWorkspaceOpen(openSettings: Bool) {
+    private func scheduleUITestingWorkspaceOpen() {
         for delay in [0.0, 0.2, 0.6, 1.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                if openSettings {
-                    self?.viewModel.requestWorkspaceSettingsOpen()
-                }
                 self?.openWorkspaceWindow()
             }
         }
@@ -423,36 +393,6 @@ private struct StatusMenuContent: View {
                 openWorkspaceWindow()
             }
 
-            Button("Workspace Switcher Tour") {
-                requestTour("workspace_switcher") {
-                    viewModel.requestWorkspaceSwitcherTourOpen()
-                }
-            }
-
-            Button("Curriculum Navigator Tour") {
-                requestTour("curriculum_navigator") {
-                    viewModel.requestWorkspaceCurriculumNavigatorTourOpen()
-                }
-            }
-
-            Button("Settings Tour") {
-                requestTour("settings") {
-                    viewModel.requestWorkspaceSettingsTourOpen()
-                }
-            }
-
-            Button("Help Tour") {
-                requestTour("help") {
-                    viewModel.requestWorkspaceHelpTourOpen()
-                }
-            }
-
-            Button("Recent Conversations Tour") {
-                requestTour("recent_conversations") {
-                    viewModel.requestWorkspaceRecentConversationsTourOpen()
-                }
-            }
-
             Button("New Codex Chat") {
                 viewModel.createSession(provider: .codex, source: "menu_bar")
                 openWorkspaceWindow()
@@ -528,8 +468,10 @@ private struct StatusMenuContent: View {
                     properties: ["action": "open_settings"],
                     authSession: viewModel.macAuthSession
                 )
-                viewModel.requestWorkspaceSettingsOpen()
-                openWorkspaceWindow()
+                NSApp.activate(ignoringOtherApps: true)
+                if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
+                    NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+                }
             } label: {
                 Text("Settings…")
             }
@@ -548,19 +490,6 @@ private struct StatusMenuContent: View {
             installWorkspaceOpenHandler()
             viewModel.start()
         }
-    }
-
-    private func requestTour(_ tour: String, body: () -> Void) {
-        PostHogTelemetry.capture(
-            "mac_menu_bar_action",
-            properties: [
-                "action": "tour_requested",
-                "tour": tour,
-            ],
-            authSession: viewModel.macAuthSession
-        )
-        body()
-        openWorkspaceWindow()
     }
 
     private func openWorkspaceWindow() {
