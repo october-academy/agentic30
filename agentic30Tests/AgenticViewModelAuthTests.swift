@@ -793,7 +793,7 @@ struct AgenticViewModelAuthTests {
                 "Starting workspace scan...",
                 "Starting workspace scan...",
                 "Found 3 local candidate(s). Asking agents to verify context...",
-                "Claude Haiku 4.5 (claude-haiku-4-5): using Read: docs/ICP.md docs/SPEC.md docs/GOAL.md",
+                "Claude Sonnet 4.6 (claude-sonnet-4-6): using Read: docs/ICP.md docs/SPEC.md docs/GOAL.md",
                 "GPT 5.4 Mini (gpt-5.4-mini): this is a long provider summary that should not leak raw debug text into onboarding"
             ],
             scanDidComplete: true,
@@ -815,7 +815,7 @@ struct AgenticViewModelAuthTests {
         #expect(state.lines[3].status == "verifying context")
         #expect(state.lines[4].status == "✓ 3 artifacts verified")
         #expect(!state.lines.contains { $0.status == "Preparing workspace scan..." })
-        #expect(!state.lines.contains { $0.status?.contains("Claude Haiku") == true })
+        #expect(!state.lines.contains { $0.status?.contains("Claude Sonnet") == true })
         #expect(!state.lines.contains { $0.status?.contains("gpt-5.4-mini") == true })
         #expect(state.scanDidComplete)
         #expect(!state.scanDidFail)
@@ -827,6 +827,7 @@ struct AgenticViewModelAuthTests {
         #expect(!empty.scanDidComplete)
         #expect(!empty.scanDidFail)
         #expect(empty.foundArtifactCount == nil)
+        #expect(empty.scanElapsed == nil)
 
         let pending = IntakeV2BootLogState(
             isConnected: false,
@@ -848,6 +849,7 @@ struct AgenticViewModelAuthTests {
         #expect(pending.lines[0].isActive)
         #expect(!pending.scanDidComplete)
         #expect(!pending.scanDidFail)
+        #expect(pending.scanElapsed == nil)
     }
 
     @Test @MainActor func intakeV2BootLogStateSurfacesScanFailures() {
@@ -873,6 +875,80 @@ struct AgenticViewModelAuthTests {
         #expect(state.lines.last?.status == "✗ Workspace root is not a directory.")
         #expect(state.scanDidComplete)
         #expect(state.scanDidFail)
+    }
+
+    @Test @MainActor func intakeV2BootLogElapsedFormatsRunningAndCompletedDurations() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let running = IntakeV2BootLogElapsed(
+            status: .running,
+            startedAt: start,
+            completedAt: nil
+        )
+        #expect(running.chipText(at: start.addingTimeInterval(9)) == "진행 00:09")
+        #expect(running.chipText(at: start.addingTimeInterval(65)) == "진행 01:05")
+        #expect(running.chipText(at: start.addingTimeInterval(3_723)) == "진행 1:02:03")
+        #expect(running.accessibilityLabel(at: start.addingTimeInterval(3_723)) == "스캔 진행 시간 1시간 2분 3초")
+
+        let succeeded = IntakeV2BootLogElapsed(
+            status: .succeeded,
+            startedAt: start,
+            completedAt: start.addingTimeInterval(127)
+        )
+        #expect(succeeded.chipText(at: start.addingTimeInterval(999)) == "완료 02:07")
+        #expect(succeeded.accessibilityLabel(at: start.addingTimeInterval(999)) == "스캔 완료 시간 2분 7초")
+
+        let failed = IntakeV2BootLogElapsed(
+            status: .failed,
+            startedAt: start,
+            completedAt: start.addingTimeInterval(127)
+        )
+        #expect(failed.chipText(at: start.addingTimeInterval(999)) == "중단 02:07")
+        #expect(failed.accessibilityLabel(at: start.addingTimeInterval(999)) == "스캔 중단 시간 2분 7초")
+    }
+
+    @Test @MainActor func intakeV2BootLogStateDerivesElapsedChipState() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let completed = start.addingTimeInterval(127)
+        let running = IntakeV2BootLogState(
+            isConnected: false,
+            workspaceRoot: "",
+            diagnostics: nil,
+            scanProgressLogs: ["Starting workspace scan..."],
+            scanDidComplete: false,
+            scanError: nil,
+            foundArtifactCount: nil,
+            isScanning: true,
+            scanStartedAt: start
+        )
+        #expect(running.scanElapsed?.chipText(at: start.addingTimeInterval(65)) == "진행 01:05")
+
+        let succeeded = IntakeV2BootLogState(
+            isConnected: false,
+            workspaceRoot: "",
+            diagnostics: nil,
+            scanProgressLogs: ["Starting workspace scan..."],
+            scanDidComplete: true,
+            scanError: nil,
+            foundArtifactCount: 3,
+            isScanning: false,
+            scanStartedAt: start,
+            scanCompletedAt: completed
+        )
+        #expect(succeeded.scanElapsed?.chipText(at: start.addingTimeInterval(999)) == "완료 02:07")
+
+        let failed = IntakeV2BootLogState(
+            isConnected: false,
+            workspaceRoot: "",
+            diagnostics: nil,
+            scanProgressLogs: ["Starting workspace scan..."],
+            scanDidComplete: true,
+            scanError: "Workspace root is not a directory.",
+            foundArtifactCount: nil,
+            isScanning: false,
+            scanStartedAt: start,
+            scanCompletedAt: completed
+        )
+        #expect(failed.scanElapsed?.chipText(at: start.addingTimeInterval(999)) == "중단 02:07")
     }
 
     @Test @MainActor func startHydratesExplicitWorkspaceBeforeSidecarReady() throws {

@@ -69,8 +69,9 @@ enum KeychainHelper {
     // MARK: - Single-Blob Settings
 
     struct Settings: Codable {
-        static let currentSchemaVersion = 6
+        static let currentSchemaVersion = 7
         static let legacyDefaultCodexModelID = "gpt-5.4"
+        static let legacyDefaultGeminiModelID = "gemini-3.1-pro-preview"
 
         var schemaVersion: Int = Settings.currentSchemaVersion
 
@@ -261,6 +262,9 @@ enum KeychainHelper {
             migrated.geminiAuthMode = AgentAuthMode.normalized(migrated.geminiAuthMode, provider: .gemini).rawValue
             if schemaVersion < 4 && migrated.preferredCodexModel == legacyDefaultCodexModelID {
                 migrated.preferredCodexModel = AgentModelCatalog.defaultCodexModelID
+            }
+            if schemaVersion < 7 && migrated.preferredGeminiModel == legacyDefaultGeminiModelID {
+                migrated.preferredGeminiModel = AgentModelCatalog.defaultGeminiModelID
             }
             return migrated
         }

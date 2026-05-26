@@ -127,6 +127,7 @@ struct IntakeV2BootLogState: Equatable {
     let scanDidComplete: Bool
     let scanDidFail: Bool
     let foundArtifactCount: Int?
+    let scanElapsed: IntakeV2BootLogElapsed?
 
     static let empty = IntakeV2BootLogState(
         isConnected: false,
@@ -147,9 +148,12 @@ struct IntakeV2BootLogState: Equatable {
         scanDidComplete: Bool,
         scanError: String?,
         foundArtifactCount: Int?,
-        isScanning: Bool
+        isScanning: Bool,
+        scanStartedAt: Date? = nil,
+        scanCompletedAt: Date? = nil
     ) {
         var nextLines: [Line] = []
+        let didFail = scanError?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty != nil
 
         if isConnected, diagnostics != nil {
             nextLines.append(Line(
@@ -181,8 +185,23 @@ struct IntakeV2BootLogState: Equatable {
 
         lines = Array(nextLines.suffix(6))
         self.scanDidComplete = scanDidComplete
-        self.scanDidFail = scanError?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty != nil
+        self.scanDidFail = didFail
         self.foundArtifactCount = foundArtifactCount
+        if let scanStartedAt, !scanDidComplete {
+            self.scanElapsed = IntakeV2BootLogElapsed(
+                status: .running,
+                startedAt: scanStartedAt,
+                completedAt: nil
+            )
+        } else if let scanStartedAt, let scanCompletedAt {
+            self.scanElapsed = IntakeV2BootLogElapsed(
+                status: didFail ? .failed : .succeeded,
+                startedAt: scanStartedAt,
+                completedAt: scanCompletedAt
+            )
+        } else {
+            self.scanElapsed = nil
+        }
     }
 
     private nonisolated static func readyStatus(workspaceRoot: String, diagnostics: SidecarDiagnostics?) -> String {
@@ -312,6 +331,80 @@ struct IntakeV2BootLogState: Equatable {
         guard cleaned.count > maxLength else { return cleaned }
         let endIndex = cleaned.index(cleaned.startIndex, offsetBy: maxLength - 1)
         return "\(cleaned[..<endIndex])…"
+    }
+}
+
+struct IntakeV2BootLogElapsed: Equatable {
+    enum Status: Equatable {
+        case running
+        case succeeded
+        case failed
+
+        var chipPrefix: String {
+            switch self {
+            case .running: return "진행"
+            case .succeeded: return "완료"
+            case .failed: return "중단"
+            }
+        }
+
+        var accessibilityPrefix: String {
+            switch self {
+            case .running: return "스캔 진행 시간"
+            case .succeeded: return "스캔 완료 시간"
+            case .failed: return "스캔 중단 시간"
+            }
+        }
+    }
+
+    let status: Status
+    let startedAt: Date
+    let completedAt: Date?
+
+    var isRunning: Bool {
+        status == .running
+    }
+
+    func chipText(at now: Date) -> String {
+        "\(status.chipPrefix) \(Self.compactDurationText(seconds: elapsedSeconds(at: now)))"
+    }
+
+    func accessibilityLabel(at now: Date) -> String {
+        "\(status.accessibilityPrefix) \(Self.spokenDurationText(seconds: elapsedSeconds(at: now)))"
+    }
+
+    func elapsedSeconds(at now: Date) -> Int {
+        let end = completedAt ?? now
+        return max(0, Int(end.timeIntervalSince(startedAt)))
+    }
+
+    static func compactDurationText(seconds: Int) -> String {
+        let clamped = max(0, seconds)
+        let hours = clamped / 3_600
+        let minutes = (clamped % 3_600) / 60
+        let remainingSeconds = clamped % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, remainingSeconds)
+        }
+        return String(format: "%02d:%02d", minutes, remainingSeconds)
+    }
+
+    static func spokenDurationText(seconds: Int) -> String {
+        let clamped = max(0, seconds)
+        let hours = clamped / 3_600
+        let minutes = (clamped % 3_600) / 60
+        let remainingSeconds = clamped % 60
+        var parts: [String] = []
+        if hours > 0 {
+            parts.append("\(hours)시간")
+        }
+        if minutes > 0 {
+            parts.append("\(minutes)분")
+        }
+        if remainingSeconds > 0 || parts.isEmpty {
+            parts.append("\(remainingSeconds)초")
+        }
+        return parts.joined(separator: " ")
     }
 }
 
@@ -458,6 +551,8 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var isScanning = false
     @Published private(set) var scanProgressMessage = ""
     @Published private(set) var scanProgressLogs: [String] = []
+    @Published private(set) var scanStartedAt: Date?
+    @Published private(set) var scanCompletedAt: Date?
     @Published var scanResult: WorkspaceScanResult?
     @Published private(set) var isCreatingDoc: String?
     @Published private(set) var docCreationLogs: [String] = []
@@ -1198,7 +1293,9 @@ final class AgenticViewModel: ObservableObject {
             scanDidComplete: scanResult != nil,
             scanError: scanResult?.error,
             foundArtifactCount: scanResult?.foundArtifactCount,
-            isScanning: isScanning
+            isScanning: isScanning,
+            scanStartedAt: scanStartedAt,
+            scanCompletedAt: scanCompletedAt
         )
     }
 
@@ -1883,6 +1980,7 @@ final class AgenticViewModel: ObservableObject {
 
     func scanWorkspace(root: String) {
         guard !root.isEmpty else { return }
+        beginWorkspaceScanTiming(reset: true)
         isScanning = true
         scanProgressMessage = isConnected ? "Preparing workspace scan..." : "Waiting for workspace connection..."
         scanProgressLogs = [scanProgressMessage]
@@ -1905,6 +2003,23 @@ final class AgenticViewModel: ObservableObject {
         ])
     }
 
+    private func beginWorkspaceScanTiming(reset: Bool = false) {
+        if reset || scanStartedAt == nil || scanCompletedAt != nil {
+            scanStartedAt = .now
+        }
+        scanCompletedAt = nil
+    }
+
+    private func finishWorkspaceScanTiming() {
+        guard scanStartedAt != nil else { return }
+        scanCompletedAt = .now
+    }
+
+    private func clearWorkspaceScanTiming() {
+        scanStartedAt = nil
+        scanCompletedAt = nil
+    }
+
     private var scanResultHasDay1Plan: Bool {
         scanResult?.day1AlignmentPlan != nil || scanResult?.day1IcpPlan != nil
     }
@@ -1924,6 +2039,7 @@ final class AgenticViewModel: ObservableObject {
         guard !root.isEmpty else { return }
         guard let cached = workspaceScanResultStore(for: root).load() else { return }
         workspaceRoot = root
+        clearWorkspaceScanTiming()
         scanResult = cached
     }
 
@@ -2931,6 +3047,7 @@ final class AgenticViewModel: ObservableObject {
         pendingWorkspaceScanRoot = nil
         attemptedStartupWorkspaceScanRecoveryRoots.removeAll()
         scanResult = nil
+        clearWorkspaceScanTiming()
         lastError = nil
 
         if isChangingPrefetchTarget, started {
@@ -2965,6 +3082,7 @@ final class AgenticViewModel: ObservableObject {
         scanResult = nil
         scanProgressMessage = ""
         scanProgressLogs = []
+        clearWorkspaceScanTiming()
         lastError = nil
 
         if started {
@@ -3503,6 +3621,7 @@ final class AgenticViewModel: ObservableObject {
             appendSidecarOutput(sessionID: sessionID, event: event)
             refreshPresentationState()
         case "workspace_scan_started":
+            beginWorkspaceScanTiming()
             isScanning = true
             setScanProgress(event.progressText ?? "Preparing workspace scan...", reset: true)
             scanResult = nil
@@ -3510,6 +3629,7 @@ final class AgenticViewModel: ObservableObject {
             isScanning = true
             setScanProgress(event.progressText ?? scanProgressMessage)
         case "workspace_scan_result":
+            finishWorkspaceScanTiming()
             isScanning = false
             setScanProgress(event.error == nil ? "Workspace scan complete." : "Workspace scan failed.")
             let result = WorkspaceScanResult(
@@ -3560,6 +3680,11 @@ final class AgenticViewModel: ObservableObject {
             }
         case "workspace_day1_alignment_plan_result", "workspace_day1_icp_plan_result":
             if event.day1AlignmentPlan != nil || event.day1IcpPlan != nil {
+                isScanning = false
+                if event.day1AlignmentPlan?.source == "frontier_ensemble"
+                    || event.day1AlignmentPlan?.source == "frontier_single" {
+                    setScanProgress("frontier 선택지 생성 완료")
+                }
                 let result: WorkspaceScanResult
                 if let current = scanResult {
                     result = current.replacing(
@@ -5413,43 +5538,43 @@ final class AgenticViewModel: ObservableObject {
         )
         let icp = Day1AlignmentComponent(
             id: "icp",
-            title: "ICP",
-            prompt: "이 목표를 위해 Day 2에서 먼저 검증할 고객은 누구인가요?",
-            helperText: "이번 주에 실제로 물어볼 수 있는 고객 조건을 고릅니다.",
+            title: "고객",
+            prompt: "이 목표를 검증하려면 이번 주 가장 먼저 확인할 고객은 누구인가요?",
+            helperText: "직함보다 지금 같은 문제를 겪고, 이번 주 실제로 물어볼 수 있는 고객 조건을 고릅니다.",
             statement: documentPointer,
             evidence: ["docs/ICP.md"],
             missingAssumptions: [],
             options: [
-                Day1IcpQuestionOption(id: "dev-tool-user", label: "AI 코딩 도구를 쓰는 개발자", description: "이번 주 직접 대화 가능한 사용자입니다. · 근거: docs/ICP.md", preview: "ICP", antiSignal: false, evidenceLabel: "근거: docs/ICP.md", evidenceLimited: false),
-                Day1IcpQuestionOption(id: "solo-builder", label: "1인 빌더", description: "구매자와 사용자가 같은 후보입니다. · 근거: README.md", preview: "ICP", antiSignal: false, evidenceLabel: "근거: README.md", evidenceLimited: false),
-                Day1IcpQuestionOption(id: "curious-only", label: "관심만 있음", description: "최근 행동이 없어 Day 2 신호로 약합니다.", preview: "Weak", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
+                Day1IcpQuestionOption(id: "dev-tool-user", label: "AI 코딩 도구를 쓰는 개발자", description: "이번 주 직접 대화 가능한 사용자입니다. · 근거: docs/ICP.md", preview: "고객", antiSignal: false, evidenceLabel: "근거: docs/ICP.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "solo-builder", label: "1인 빌더", description: "구매자와 사용자가 같은 후보입니다. · 근거: README.md", preview: "고객", antiSignal: false, evidenceLabel: "근거: README.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "curious-only", label: "관심만 있음", description: "최근 행동이 없어 다음 시장 신호로 약합니다.", preview: "Weak", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
             ]
         )
         let pain = Day1AlignmentComponent(
             id: "pain_point",
-            title: "Pain Point",
-            prompt: "이 고객이 지금 겪는 가장 압축된 통증은 무엇인가요?",
+            title: "문제",
+            prompt: "이 고객이 지금 겪는 가장 압축된 문제는 무엇인가요?",
             helperText: "시간, 돈, 리스크, 반복 행동으로 이미 비용이 나는 문제를 고릅니다.",
             statement: "무엇을 팔아야 할지 모른다",
             evidence: ["docs/SPEC.md"],
             missingAssumptions: [],
             options: [
-                Day1IcpQuestionOption(id: "what-to-sell", label: "무엇을 팔아야 할지 모름", description: "검증 없이 빌드가 반복됩니다. · 근거: docs/SPEC.md", preview: "Pain", antiSignal: false, evidenceLabel: "근거: docs/SPEC.md", evidenceLimited: false),
-                Day1IcpQuestionOption(id: "first-user", label: "첫 사용자를 어디서 데려올지 모름", description: "Day 2 시장 신호로 이어집니다. · 근거: docs/GOAL.md", preview: "Pain", antiSignal: false, evidenceLabel: "근거: docs/GOAL.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "what-to-sell", label: "무엇을 팔아야 할지 모름", description: "검증 없이 빌드가 반복됩니다. · 근거: docs/SPEC.md", preview: "문제", antiSignal: false, evidenceLabel: "근거: docs/SPEC.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "first-user", label: "첫 사용자를 어디서 데려올지 모름", description: "다음 시장 신호 확인으로 이어집니다. · 근거: docs/GOAL.md", preview: "문제", antiSignal: false, evidenceLabel: "근거: docs/GOAL.md", evidenceLimited: false),
                 Day1IcpQuestionOption(id: "nice-to-have", label: "있으면 좋음", description: "오늘 비용이 확인되지 않습니다.", preview: "Weak", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
             ]
         )
         let outcome = Day1AlignmentComponent(
             id: "outcome",
-            title: "Outcome",
-            prompt: "Day 2 시장 신호가 확인해야 할 고객 결과는 무엇인가요?",
-            helperText: "제품 기능이 아니라 고객이 얻는 결과와 다음 검증 행동을 씁니다.",
+            title: "확인할 행동",
+            prompt: "그 고객에게서 어떤 행동 신호를 확인해야 하나요?",
+            helperText: "제품 기능이 아니라 지불 의향, 현재 대안, 최근 사건처럼 관찰 가능한 행동을 씁니다.",
             statement: "첫 대화에서 지불 의향과 현재 대안을 확인한다",
             evidence: ["docs/GOAL.md"],
             missingAssumptions: [],
             options: [
-                Day1IcpQuestionOption(id: "paid-alternative", label: "첫 대화에서 지불 의향과 대안을 확인한다", description: "Day 2에서 바로 검증할 수 있습니다. · 근거: docs/GOAL.md", preview: "Outcome", antiSignal: false, evidenceLabel: "근거: docs/GOAL.md", evidenceLimited: false),
-                Day1IcpQuestionOption(id: "market-signal", label: "시장 신호로 첫 사용자 획득 행동을 확인한다", description: "채널과 행동이 함께 남습니다. · 근거: docs/SPEC.md", preview: "Outcome", antiSignal: false, evidenceLabel: "근거: docs/SPEC.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "paid-alternative", label: "첫 대화에서 지불 의향과 대안을 확인한다", description: "다음 시장 신호 확인에서 바로 검증할 수 있습니다. · 근거: docs/GOAL.md", preview: "확인할 행동", antiSignal: false, evidenceLabel: "근거: docs/GOAL.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "market-signal", label: "시장 신호로 첫 사용자 획득 행동을 확인한다", description: "채널과 행동이 함께 남습니다. · 근거: docs/SPEC.md", preview: "확인할 행동", antiSignal: false, evidenceLabel: "근거: docs/SPEC.md", evidenceLimited: false),
                 Day1IcpQuestionOption(id: "ship-feature", label: "기능을 더 만든다", description: "고객 결과가 아니라 빌드 도피입니다.", preview: "Anti", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
             ]
         )
@@ -5461,11 +5586,11 @@ final class AgenticViewModel: ObservableObject {
             confidence: 0.86,
             fellBackToDeterministic: false,
             projectGoal: projectGoal,
-            mission: "Goal, ICP, Pain Point, Outcome을 정렬합니다.",
+            mission: "목표, 고객, 문제, 확인할 행동을 정렬합니다.",
             signals: signals,
             components: Day1AlignmentComponents(icp: icp, painPoint: pain, outcome: outcome),
             alignmentStatement: Day1AlignmentStatement(
-                statement: "목표: \(projectGoal) / ICP: \(documentPointer) / Pain Point: 무엇을 팔아야 할지 모른다 / Outcome: 첫 대화에서 지불 의향과 현재 대안을 확인한다",
+                statement: "목표: \(projectGoal) / 고객: \(documentPointer) / 문제: 무엇을 팔아야 할지 모른다 / 확인할 행동: 첫 대화에서 지불 의향과 현재 대안을 확인한다",
                 projectGoal: projectGoal,
                 icp: documentPointer,
                 painPoint: "무엇을 팔아야 할지 모른다",
@@ -5476,11 +5601,11 @@ final class AgenticViewModel: ObservableObject {
                 threshold: 7.0,
                 passed: true,
                 label: "PASS",
-                passGate: "Project Goal + ICP + Pain Point + Outcome이 담긴 핵심 가설이 7.0/10 이상입니다.",
-                failGate: "목표, 고객, 통증, 결과 중 하나가 비어 있습니다.",
+                passGate: "목표, 고객, 문제, 확인할 행동이 담긴 핵심 가설이 7.0/10 이상입니다.",
+                failGate: "목표, 고객, 문제, 확인할 행동 중 하나가 비어 있습니다.",
                 criteria: [
-                    Day1AlignmentQualityCriterion(id: "project_goal", label: "Project goal", score: 2.0, maxScore: 2.0, passed: true, detail: "명확함"),
-                    Day1AlignmentQualityCriterion(id: "icp", label: "ICP", score: 2.2, maxScore: 2.5, passed: true, detail: documentPointer),
+                    Day1AlignmentQualityCriterion(id: "project_goal", label: "목표", score: 2.0, maxScore: 2.0, passed: true, detail: "명확함"),
+                    Day1AlignmentQualityCriterion(id: "icp", label: "고객", score: 2.2, maxScore: 2.5, passed: true, detail: documentPointer),
                 ]
             ),
             firstInterviewMessage: FirstInterviewMessage(
@@ -5528,7 +5653,7 @@ final class AgenticViewModel: ObservableObject {
             ("icp", "먼저 도울 사람", "이번 주 인터뷰할 고객 후보는 누구인가요?"),
             ("pain_point", "반복되는 막힘", "최근 실제로 멈춘 문제는 무엇인가요?"),
             ("current_alternative", "현재 대안", "지금은 어떤 방식으로 버티고 있나요?"),
-            ("outcome", "내일 확인할 결과", "Day 2로 넘길 검증 가능한 결과는 무엇인가요?"),
+            ("outcome", "다음 검증 결과", "다음 검증으로 넘길 확인 가능한 결과는 무엇인가요?"),
         ]
         let questions = dimensions.enumerated().map { index, item in
             Day1IcpQuestion(
@@ -5976,7 +6101,7 @@ struct WorkspaceScanResultStore {
         try? FileManager.default.removeItem(at: fileURL)
     }
 
-    private static let schemaVersion = 1
+    private static let schemaVersion = 2
 
     private struct Payload: Codable {
         let schemaVersion: Int
@@ -6049,6 +6174,7 @@ private extension AgenticViewModel {
         isScanning = false
         scanProgressMessage = ""
         scanProgressLogs = []
+        clearWorkspaceScanTiming()
         scanResult = nil
         attemptedStartupWorkspaceScanRecoveryRoots = []
         isCreatingDoc = nil

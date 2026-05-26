@@ -127,7 +127,8 @@ enum AgentModelCatalog {
     ]
 
     static let gemini: [AgentModelOption] = [
-        AgentModelOption(id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro (Preview) (Best)", provider: .gemini, isRecommended: true),
+        AgentModelOption(id: "gemini-3.5-flash", label: "Gemini 3.5 Flash (Best)", provider: .gemini, isRecommended: true),
+        AgentModelOption(id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro (Preview)", provider: .gemini),
         AgentModelOption(id: "gemini-3-flash-preview", label: "Gemini 3 Flash (Preview)", provider: .gemini),
         AgentModelOption(id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite", provider: .gemini),
         AgentModelOption(id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", provider: .gemini),
@@ -137,7 +138,7 @@ enum AgentModelCatalog {
 
     static let defaultClaudeModelID = "claude-opus-4-7"
     static let defaultCodexModelID = "gpt-5.5"
-    static let defaultGeminiModelID = "gemini-3.1-pro-preview"
+    static let defaultGeminiModelID = "gemini-3.5-flash"
 
     static func options(for provider: AgentProvider) -> [AgentModelOption] {
         switch provider {

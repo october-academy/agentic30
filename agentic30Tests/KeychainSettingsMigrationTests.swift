@@ -7,6 +7,8 @@ struct KeychainSettingsMigrationTests {
     @Test func geminiProviderAndModelCatalogAreNormalized() {
         #expect(AgentProvider(rawValue: "gemini") == .gemini)
         #expect(AgentModelCatalog.defaultModelID(for: .gemini) == AgentModelCatalog.defaultGeminiModelID)
+        #expect(AgentModelCatalog.defaultGeminiModelID == "gemini-3.5-flash")
+        #expect(AgentModelCatalog.normalizedModelID("gemini-3.5-flash", provider: .gemini) == "gemini-3.5-flash")
         #expect(AgentModelCatalog.normalizedModelID("gemini-2.5-flash", provider: .gemini) == "gemini-2.5-flash")
         #expect(AgentModelCatalog.normalizedModelID("unknown", provider: .gemini) == AgentModelCatalog.defaultGeminiModelID)
         #expect(AgentModelCatalog.options(for: .gemini).contains { $0.id == AgentModelCatalog.defaultGeminiModelID })
@@ -110,6 +112,17 @@ struct KeychainSettingsMigrationTests {
         let migrated = KeychainHelper.Settings.migrate(oldSettings, from: 3)
 
         #expect(migrated.preferredCodexModel == "gpt-5.4-mini")
+    }
+
+    @Test func migrationMovesLegacyGeminiDefaultToGemini35Flash() {
+        var oldSettings = KeychainHelper.Settings()
+        oldSettings.schemaVersion = 6
+        oldSettings.preferredGeminiModel = KeychainHelper.Settings.legacyDefaultGeminiModelID
+
+        let migrated = KeychainHelper.Settings.migrate(oldSettings, from: 6)
+
+        #expect(migrated.schemaVersion == KeychainHelper.Settings.currentSchemaVersion)
+        #expect(migrated.preferredGeminiModel == AgentModelCatalog.defaultGeminiModelID)
     }
 
     @Test func resetAgentic30DefaultsRemovesOnlyAppScopedKeys() throws {

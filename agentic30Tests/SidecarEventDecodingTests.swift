@@ -504,9 +504,9 @@ struct SidecarEventDecodingTests {
               "rows": [
                 { "key": "project", "label": "프로젝트", "value": "SupportLens", "tone": "strong" },
                 { "key": "goal", "label": "목표", "value": "유료 support lead 후보 1명을 검증한다", "tone": "body" },
-                { "key": "icp", "label": "ICP", "value": "B2B SaaS support lead", "tone": "body" },
-                { "key": "pain", "label": "Pain", "value": "urgent Slack escalation을 놓침", "tone": "mark" },
-                { "key": "outcome", "label": "Outcome", "value": "계정 리스크 escalation을 더 빨리 판단한다", "tone": "strong" },
+                { "key": "icp", "label": "고객", "value": "B2B SaaS support lead", "tone": "body" },
+                { "key": "pain", "label": "문제", "value": "urgent Slack escalation을 놓침", "tone": "mark" },
+                { "key": "outcome", "label": "확인할 행동", "value": "계정 리스크 escalation을 더 빨리 판단한다", "tone": "strong" },
                 { "key": "evidence", "label": "근거", "value": "docs/GOAL.md, docs/ICP.md", "tone": "code" }
               ],
               "summary": "SupportLens는 support lead의 Slack escalation 누락을 Day 2에서 검증한다."
@@ -523,7 +523,7 @@ struct SidecarEventDecodingTests {
             "confidence": 0.82,
             "fellBackToDeterministic": false,
             "projectGoal": "SupportLens가 유료 support lead 후보 1명을 검증한다",
-            "mission": "Goal, ICP, Pain Point, Outcome을 정렬합니다.",
+            "mission": "목표, 고객, 문제, 확인할 행동을 정렬합니다.",
             "signals": {
               "productName": "SupportLens",
               "currentIcpGuess": "B2B SaaS support lead",
@@ -537,46 +537,46 @@ struct SidecarEventDecodingTests {
             "components": {
               "icp": {
                 "id": "icp",
-                "title": "ICP",
-                "prompt": "먼저 검증할 고객은?",
-                "helperText": "고객 조건",
+                "title": "고객",
+                "prompt": "이 목표를 검증하려면 이번 주 가장 먼저 확인할 고객은 누구인가요?",
+                "helperText": "이번 주 실제로 물어볼 수 있는 고객 조건",
                 "statement": "B2B SaaS support lead",
                 "evidence": ["README.md: README"],
                 "missingAssumptions": [],
                 "options": [
-                  { "id": "o1", "label": "support lead", "description": "현재 고객", "preview": "ICP", "antiSignal": false },
+                  { "id": "o1", "label": "support lead", "description": "현재 고객", "preview": "고객", "antiSignal": false },
                   { "id": "o2", "label": "관심만 있음", "description": "최근 사건 없음", "preview": "Weak", "antiSignal": true }
                 ]
               },
               "painPoint": {
                 "id": "pain_point",
-                "title": "Pain Point",
-                "prompt": "압축된 통증은?",
+                "title": "문제",
+                "prompt": "이 고객이 지금 겪는 가장 압축된 문제는 무엇인가요?",
                 "helperText": "비용 신호",
                 "statement": "urgent Slack escalation을 놓침",
                 "evidence": ["docs/SPEC.md"],
                 "missingAssumptions": [],
                 "options": [
-                  { "id": "o1", "label": "Slack 누락", "description": "반복됨", "preview": "Pain" },
+                  { "id": "o1", "label": "Slack 누락", "description": "반복됨", "preview": "문제" },
                   { "id": "o2", "label": "불편만 있음", "description": "행동 없음", "preview": "Weak", "antiSignal": true }
                 ]
               },
               "outcome": {
                 "id": "outcome",
-                "title": "Outcome",
-                "prompt": "고객 결과는?",
-                "helperText": "Day 2 기준",
+                "title": "확인할 행동",
+                "prompt": "그 고객에게서 어떤 행동 신호를 확인해야 하나요?",
+                "helperText": "지불 의향, 현재 대안, 최근 사건처럼 관찰 가능한 행동",
                 "statement": "계정 리스크 escalation을 더 빨리 판단한다",
                 "evidence": ["docs/GOAL.md"],
                 "missingAssumptions": [],
                 "options": [
-                  { "id": "o1", "label": "빠른 판단", "description": "결과", "preview": "Outcome" },
+                  { "id": "o1", "label": "빠른 판단", "description": "행동 신호", "preview": "확인할 행동" },
                   { "id": "o2", "label": "기능 추가", "description": "빌드 도피", "preview": "Anti", "antiSignal": true }
                 ]
               }
             },
             "alignmentStatement": {
-              "statement": "목표: SupportLens가 유료 support lead 후보 1명을 검증한다 / ICP: B2B SaaS support lead / Pain Point: urgent Slack escalation을 놓침 / Outcome: 계정 리스크 escalation을 더 빨리 판단한다",
+              "statement": "목표: SupportLens가 유료 support lead 후보 1명을 검증한다 / 고객: B2B SaaS support lead / 문제: urgent Slack escalation을 놓침 / 확인할 행동: 계정 리스크 escalation을 더 빨리 판단한다",
               "projectGoal": "SupportLens가 유료 support lead 후보 1명을 검증한다",
               "icp": "B2B SaaS support lead",
               "painPoint": "urgent Slack escalation을 놓침",
@@ -588,9 +588,9 @@ struct SidecarEventDecodingTests {
               "passed": true,
               "label": "PASS",
               "passGate": "핵심 가설이 7.0/10 이상",
-              "failGate": "목표, 고객, 통증, 결과 중 하나가 비어 있음",
+              "failGate": "목표, 고객, 문제, 확인할 행동 중 하나가 비어 있음",
               "criteria": [
-                { "id": "project_goal", "label": "Project goal", "score": 2.0, "maxScore": 2.0, "passed": true, "detail": "명확함" }
+                { "id": "project_goal", "label": "목표", "score": 2.0, "maxScore": 2.0, "passed": true, "detail": "명확함" }
               ]
             },
             "firstInterviewMessage": {

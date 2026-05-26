@@ -2072,6 +2072,9 @@ struct IntakeV2ReadyAnalyzeView: View {
                     .foregroundStyle(IntakeV2Color.monospaceMuted)
                     .padding(.leading, 8)
                 Spacer()
+                if let scanElapsed = bootLogState.scanElapsed {
+                    IntakeV2BootLogElapsedChip(elapsed: scanElapsed)
+                }
             }
             .padding(.bottom, 14)
 
@@ -2095,6 +2098,73 @@ struct IntakeV2ReadyAnalyzeView: View {
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("intakeV2.bootLog")
+    }
+
+    private struct IntakeV2BootLogElapsedChip: View {
+        let elapsed: IntakeV2BootLogElapsed
+
+        var body: some View {
+            Group {
+                if elapsed.isRunning {
+                    TimelineView(.periodic(from: Date(), by: 1)) { context in
+                        chip(at: context.date)
+                    }
+                } else {
+                    chip(at: elapsed.completedAt ?? Date())
+                }
+            }
+        }
+
+        private func chip(at date: Date) -> some View {
+            Text(elapsed.chipText(at: date))
+                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                .monospacedDigit()
+                .foregroundStyle(chipForeground)
+                .lineLimit(1)
+                .minimumScaleFactor(0.86)
+                .frame(width: 104, height: 22)
+                .background(
+                    Capsule()
+                        .fill(chipFill)
+                        .overlay(Capsule().stroke(chipStroke, lineWidth: 1))
+                )
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(elapsed.accessibilityLabel(at: date)))
+                .accessibilityIdentifier("intakeV2.bootLog.elapsed")
+        }
+
+        private var chipForeground: Color {
+            switch elapsed.status {
+            case .running:
+                return IntakeV2Color.textSecondary
+            case .succeeded:
+                return IntakeV2Color.accentBright
+            case .failed:
+                return Color(red: 1.0, green: 0.51, blue: 0.45)
+            }
+        }
+
+        private var chipFill: Color {
+            switch elapsed.status {
+            case .running:
+                return .white.opacity(0.035)
+            case .succeeded:
+                return IntakeV2Color.accent.opacity(0.10)
+            case .failed:
+                return Color(red: 1.0, green: 0.29, blue: 0.24).opacity(0.10)
+            }
+        }
+
+        private var chipStroke: Color {
+            switch elapsed.status {
+            case .running:
+                return .white.opacity(0.08)
+            case .succeeded:
+                return IntakeV2Color.accent.opacity(0.22)
+            case .failed:
+                return Color(red: 1.0, green: 0.29, blue: 0.24).opacity(0.25)
+            }
+        }
     }
 
     private func terminalLine(_ line: TerminalLine) -> some View {

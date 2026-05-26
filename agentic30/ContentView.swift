@@ -317,7 +317,7 @@ struct ContentView: View {
                             .font(.system(size: 28, weight: .bold))
                             .foregroundStyle(OpenDesignDayColor.fg)
 
-                        Text("워크스페이스 scan 결과가 준비되면 목표, ICP, Pain, Outcome이 담긴 핵심 가설을 보여줍니다.")
+                        Text("워크스페이스 scan 결과가 준비되면 목표, 고객, 문제, 확인할 행동이 담긴 핵심 가설을 보여줍니다.")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(OpenDesignDayColor.fgSecondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -2833,7 +2833,7 @@ struct AgenticCurriculumDay: Identifiable, Hashable {
     var id: Int { day }
 
     static let days: [AgenticCurriculumDay] = [
-        .init(day: 1, phase: .foundation, title: "목표와 고객 핵심 가설을 만든다", shortTitle: "Alignment", summary: "프로젝트 목표를 ICP, Pain Point, Outcome과 한 문장으로 맞추고 Day 2 시장 신호 검증 기준으로 둡니다.", tasks: ["프로젝트 목표 한 문장 고정하기", "ICP / Pain Point / Outcome 세 컴포넌트 작성하기", "품질 게이트 7.0/10 이상인지 확인하고 Day 2 handoff 기록"], output: "day-1-alignment-statement.md, docs/GOAL.md, docs/ICP.md, docs/SPEC.md v0"),
+        .init(day: 1, phase: .foundation, title: "목표와 고객 핵심 가설을 만든다", shortTitle: "가설", summary: "프로젝트 목표를 고객, 문제, 확인할 행동과 한 문장으로 맞추고 Day 2 시장 신호 검증 기준으로 둡니다.", tasks: ["프로젝트 목표 한 문장 고정하기", "고객 / 문제 / 확인할 행동 세 요소 작성하기", "품질 게이트 7.0/10 이상인지 확인하고 다음 검증 기준 기록"], output: "day-1-alignment-statement.md, docs/GOAL.md, docs/ICP.md, docs/SPEC.md v0"),
         .init(day: 2, phase: .foundation, title: "돈이 흐르는 기준 시장을 고른다", shortTitle: "Market", summary: "어제 통증과 가까운 iOS/Android/Web/Mac 앱·도구 시장에서 이미 지불 행동이 있는지 확인합니다.", tasks: ["카테고리 1-2개 고르기", "작은 팀/개인이 만든 유료 앱·광고 앱 5개 찾기", "가격·리뷰·ASO·광고/콘텐츠 흔적을 day-2-evidence-log.md에 기록"], output: "day-2-evidence-log.md"),
         .init(day: 3, phase: .foundation, title: "Mom Test 인터뷰 질문을 만든다", shortTitle: "Mom Test", summary: "약한 가설을 검증/반증할 5문장 인터뷰 질문을 만들고 미래 의향 질문을 제거합니다.", tasks: ["과거 행동 질문 3개 이상 쓰기", "미래 의향/칭찬 유도 질문 제거", "다음 인터뷰 대상 1명과 질문 5개 확정"], output: "day-3-interview-script.md"),
         .init(day: 4, phase: .foundation, title: "10배 wedge로 약한 섹션을 다시 쓴다", shortTitle: "10x Wedge", summary: "경쟁 앱을 베끼지 않고 더 좁은 페르소나나 더 빠른 결과로 SPEC.md의 약한 섹션을 다시 씁니다.", tasks: ["원조/대체재의 핵심 흐름 1개 고르기", "가격·속도·UX·페르소나 중 10배 wedge 1개 선택", "SPEC.md 같은 파일에서 약한 섹션 다시 쓰기"], output: "day-4-rewrite-decision.md"),
