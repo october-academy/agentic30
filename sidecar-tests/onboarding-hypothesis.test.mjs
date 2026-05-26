@@ -50,13 +50,13 @@ test("deriveWorkspaceOnboardingHypothesisLocally infers project context from REA
     });
 
     assert.equal(hypothesis.confidence, "high");
-    assert.equal(hypothesis.productName, "Agentic30");
+    assert.equal(hypothesis.productName, "agentic30 Mac");
     assert.match(hypothesis.targetUser, /전업 1인 개발자|developers using Codex/i);
     assert.match(hypothesis.goal, /첫 고객 인터뷰/);
     assert.match(hypothesis.values, /사용자 결정 증거/);
     assert.equal(hypothesis.stage, "first_users");
     assert.ok(hypothesis.likelyUsers.includes("AI 코딩 도구를 쓰는 개발자"));
-    assert.match(hypothesis.suggestedFirstQuestion, /가장 먼저 인터뷰할 1인 개발자 유형/);
+    assert.match(hypothesis.suggestedFirstQuestion, /가장 먼저 인터뷰할 .*1인 개발자.*유형/);
     assert.ok(hypothesis.evidence.some((item) => item.includes("README")));
   });
 });
@@ -103,18 +103,83 @@ test("deriveWorkspaceOnboardingHypothesisLocally ignores markdown reference bull
   });
 });
 
-test("normalizeProductName canonicalizes Agentic30 display variants only", () => {
-  assert.equal(normalizeProductName("agentic30"), "Agentic30");
+test("deriveWorkspaceOnboardingHypothesisLocally prefers canonical docs over schema source snippets", async () => {
+  await withTempWorkspace(async (root) => {
+    await fs.mkdir(path.join(root, "src"), { recursive: true });
+    await fs.writeFile(path.join(root, "README.md"), "# agentic30 Mac\n");
+    await fs.writeFile(
+      path.join(root, "docs", "GOAL.md"),
+      [
+        "# Agentic30 목표 / 핵심 결과",
+        "",
+        "## 프로젝트 미션",
+        "",
+        "Agentic30은 전업 1인 개발자를 위한 30일 부트캠프다. 사용자 100명과 첫 매출 달성을 목표로 한다.",
+      ].join("\n"),
+    );
+    await fs.writeFile(
+      path.join(root, "docs", "ICP.md"),
+      [
+        "# Ideal Customer Profile",
+        "",
+        "## Our ICP: 전업 1인 개발자 (수익 0원, macOS)",
+        "",
+        "### 설명",
+        "퇴사 후 전업했지만 수익은 0원이다. 제품은 만들 수 있으나 무엇을 팔아야 할지, 누구에게 팔아야 할지, 어떻게 첫 사용자를 데려올지 막혀 있다.",
+      ].join("\n"),
+    );
+    await fs.writeFile(
+      path.join(root, "docs", "SPEC.md"),
+      "# Agentic30 Product Spec\n\n핵심 문제는 “만들 줄은 알지만 무엇을 팔아야 하는지, 어떻게 사람을 데려와야 하는지, 오늘 무엇을 검증해야 하는지 모른다”는 것이다.\n",
+    );
+    await fs.writeFile(
+      path.join(root, "docs", "VALUES.md"),
+      [
+        "# Values — Agentic30이 지키는 기준",
+        "",
+        "Agentic30의 가치는 좋은 말이 아니라 제품과 코칭이 매일 지킬 판단 기준이다.",
+        "",
+        "## 1. 사용자가 드라이브한다",
+      ].join("\n"),
+    );
+    await fs.writeFile(
+      path.join(root, "src", "schema.mjs"),
+      [
+        "const signalDigestLimits = {",
+        "  goal: 120,",
+        "  values: z.string().min(1),",
+        "};",
+      ].join("\n"),
+    );
+
+    const hypothesis = await deriveWorkspaceOnboardingHypothesisLocally(root, {
+      docPaths: {
+        icp: "docs/ICP.md",
+        spec: "docs/SPEC.md",
+        goal: "docs/GOAL.md",
+        values: "docs/VALUES.md",
+      },
+    });
+
+    assert.match(hypothesis.goal, /사용자 100명|첫 매출/);
+    assert.match(hypothesis.problem, /무엇을 팔아야|누구에게 팔아야|오늘 무엇을 검증/);
+    assert.match(hypothesis.values, /가치|사용자가 드라이브/);
+    assert.doesNotMatch(JSON.stringify(hypothesis), /"goal":"?120|z\.string|min\(1\)/);
+  });
+});
+
+test("normalizeProductName preserves product names after generic cleanup", () => {
+  assert.equal(normalizeProductName("agentic30"), "agentic30");
   assert.equal(normalizeProductName("Agentic30"), "Agentic30");
-  assert.equal(normalizeProductName("agentic30 Mac"), "Agentic30");
-  assert.equal(normalizeProductName("Agentic30 macOS app"), "Agentic30");
-  assert.equal(normalizeProductName("agentic30-sidecar"), "Agentic30");
-  assert.equal(normalizeProductName("agentic30-public"), "Agentic30");
-  assert.equal(normalizeProductName("**agentic30 Mac**"), "Agentic30");
+  assert.equal(normalizeProductName("agentic30 Mac"), "agentic30 Mac");
+  assert.equal(normalizeProductName("Agentic30 macOS app"), "Agentic30 macOS app");
+  assert.equal(normalizeProductName("agentic30-sidecar"), "agentic30-sidecar");
+  assert.equal(normalizeProductName("agentic30-public"), "agentic30-public");
+  assert.equal(normalizeProductName("**agentic30 Mac**"), "agentic30 Mac");
   assert.equal(normalizeProductName("RevenuePilot Mac"), "RevenuePilot Mac");
 });
 
-test("deriveWorkspaceOnboardingHypothesisLocally normalizes package-only Agentic30 names", async () => {
+test("deriveWorkspaceOnboardingHypothesisLocally preserves package-only project names", async () => {
   await withTempWorkspace(async (root) => {
     await fs.writeFile(
       path.join(root, "package.json"),
@@ -126,7 +191,7 @@ test("deriveWorkspaceOnboardingHypothesisLocally normalizes package-only Agentic
 
     const hypothesis = await deriveWorkspaceOnboardingHypothesisLocally(root);
 
-    assert.equal(hypothesis.productName, "Agentic30");
+    assert.equal(hypothesis.productName, "agentic30-sidecar");
   });
 });
 
@@ -233,7 +298,7 @@ test("normalizeWorkspaceOnboardingHypothesis accepts provider snake_case fields"
     suggested_first_question: "이 가설이 맞나요?",
   });
 
-  assert.equal(hypothesis.productName, "Agentic30");
+  assert.equal(hypothesis.productName, "agentic30 Mac");
   assert.equal(hypothesis.projectKind, "mac_app");
   assert.equal(hypothesis.targetUser, "전업 1인 개발자");
   assert.equal(hypothesis.problem, "무엇을 만들어야 팔리는지 모른다");
@@ -242,7 +307,7 @@ test("normalizeWorkspaceOnboardingHypothesis accepts provider snake_case fields"
   assert.equal(hypothesis.values, "작게 검증하고 근거 없는 확장을 거절한다");
   assert.deepEqual(hypothesis.likelyUsers, ["AI 코딩 도구를 쓰는 개발자"]);
   assert.match(hypothesis.suggestedFirstQuestion, /1인 개발자/);
-  assert.match(hypothesis.suggestedFirstQuestion, /가장 먼저 인터뷰/);
+  assert.match(hypothesis.suggestedFirstQuestion, /먼저.*만날|가장 먼저 인터뷰/);
 });
 
 test("mergeWorkspaceOnboardingHypotheses combines local and provider evidence", () => {
@@ -277,7 +342,7 @@ test("mergeWorkspaceOnboardingHypotheses combines local and provider evidence", 
   assert.equal(merged.confidence, "high");
   assert.deepEqual(merged.likelyUsers, ["개발자", "AI 코딩 도구를 쓰는 개발자"]);
   assert.deepEqual(merged.evidence, ["README", "package.json"]);
-  assert.match(merged.suggestedFirstQuestion, /가장 먼저 인터뷰할 1인 개발자 유형/);
+  assert.match(merged.suggestedFirstQuestion, /가장 먼저 인터뷰할 .*1인 개발자.*유형/);
 });
 
 test("mergeWorkspaceOnboardingHypotheses keeps concrete kind when highest confidence is unknown", () => {

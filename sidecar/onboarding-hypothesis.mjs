@@ -3,6 +3,8 @@ import fsSync from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
+import { extractWorkspaceEvidence } from "./workspace-signal-extractor.mjs";
+
 const MAX_CONTEXT_CHARS = 24_000;
 const MAX_EVIDENCE = 5;
 const MAX_USERS = 4;
@@ -31,6 +33,7 @@ const SOURCE_DENY_SEGMENTS = new Set([
   "dist",
   "DerivedData",
   "node_modules",
+  "sidecar-build",
   "vendor",
   "coverage",
 ]);
@@ -43,14 +46,22 @@ const confidenceRank = {
 
 export async function deriveWorkspaceOnboardingHypothesisLocally(scanRoot, { docPaths = {} } = {}) {
   const root = path.resolve(scanRoot || ".");
+  const workspaceEvidence = await extractWorkspaceEvidence(root, {
+    scanPaths: docPaths,
+    includeSource: true,
+  }).catch(() => null);
+  const extractedSignals = workspaceEvidence?.signals || {};
   const evidence = [];
   const contextParts = [];
+  const documentContextParts = [];
+  const sourceContextParts = [];
 
   const rootReadme = await readFirstExisting(root, ["README.md", "readme.md", "Readme.md"]);
   if (rootReadme?.content) {
     const heading = firstMarkdownHeading(rootReadme.content);
     evidence.push(heading ? `README: ${heading}` : `README: ${rootReadme.relativePath}`);
     contextParts.push(rootReadme.content);
+    documentContextParts.push(rootReadme.content);
   }
 
   const packageJson = await readJson(path.join(root, "package.json"));
@@ -64,19 +75,24 @@ export async function deriveWorkspaceOnboardingHypothesisLocally(scanRoot, { doc
       dependencies: Object.keys(packageJson.dependencies || {}).slice(0, 40),
       devDependencies: Object.keys(packageJson.devDependencies || {}).slice(0, 40),
     }));
+    documentContextParts.push(JSON.stringify({ name, description }));
   }
 
   for (const [role, relativePath] of Object.entries(docPaths || {})) {
     if (!relativePath || role === "onboardingHypothesis") continue;
-    const loaded = await readWorkspaceFile(root, relativePath, 4000);
+    const normalizedPath = cleanWorkspaceRelativePath(relativePath);
+    if (!normalizedPath || hasDeniedWorkspacePathSegment(normalizedPath)) continue;
+    const loaded = await readWorkspaceFile(root, normalizedPath, 4000);
     if (!loaded) continue;
-    evidence.push(`${docTitle(role)}: ${relativePath}`);
+    evidence.push(`${docTitle(role)}: ${normalizedPath}`);
     contextParts.push(loaded.content);
+    documentContextParts.push(loaded.content);
   }
 
   const manifestEvidence = await collectManifestEvidence(root);
   evidence.push(...manifestEvidence.evidence);
   contextParts.push(...manifestEvidence.contextParts);
+  documentContextParts.push(...manifestEvidence.contextParts);
 
   const recentFiles = await readRecentGitFiles(root);
   if (recentFiles.length > 0) {
@@ -87,15 +103,35 @@ export async function deriveWorkspaceOnboardingHypothesisLocally(scanRoot, { doc
   const sourceEvidence = await collectSourceCodeEvidence(root, recentFiles);
   evidence.push(...sourceEvidence.evidence);
   contextParts.push(...sourceEvidence.contextParts);
+  sourceContextParts.push(...sourceEvidence.contextParts);
 
   const context = contextParts.join("\n\n").slice(0, MAX_CONTEXT_CHARS);
+  const documentContext = documentContextParts.join("\n\n").slice(0, MAX_CONTEXT_CHARS);
+  const sourceContext = sourceContextParts.join("\n\n").slice(0, MAX_CONTEXT_CHARS);
   const projectKind = inferProjectKind({ root, packageJson, context, recentFiles });
-  const productName = inferProductName({ rootReadme, packageJson, root });
-  const productBrief = inferProductBrief({ context, productName });
-  const likelyUsers = inferLikelyUsers(context, packageJson);
-  const stage = inferProjectStage({ context, docPaths, recentFiles, packageJson });
-  const compactEvidence = uniqueCompact(evidence).slice(0, MAX_EVIDENCE);
-  const confidence = inferConfidence({ likelyUsers, evidence: compactEvidence, stage, projectKind });
+  const productName = extractedSignals.productName || inferProductName({ rootReadme, packageJson, root });
+  const productBrief = mergeProductBriefs(
+    extractedSignals,
+    mergeProductBriefs(
+      inferProductBrief({ context: documentContext, productName }),
+      inferProductBrief({ context: sourceContext, productName }),
+    ),
+  );
+  const likelyUsers = uniqueCompact([
+    ...(Array.isArray(extractedSignals.likelyUsers) ? extractedSignals.likelyUsers : []),
+    ...inferLikelyUsers(context, packageJson),
+  ]);
+  const stage = extractedSignals.stage && extractedSignals.stage !== "unknown"
+    ? extractedSignals.stage
+    : inferProjectStage({ context, docPaths, recentFiles, packageJson });
+  const compactEvidence = uniqueCompact([
+    ...evidenceFromWorkspaceEvidence(workspaceEvidence),
+    ...evidence,
+  ]).slice(0, MAX_EVIDENCE);
+  const confidence = strongerConfidence(
+    workspaceEvidence?.confidence,
+    inferConfidence({ likelyUsers, evidence: compactEvidence, stage, projectKind }),
+  );
   const hypothesis = {
     productName,
     projectKind,
@@ -125,13 +161,6 @@ export async function deriveWorkspaceOnboardingHypothesisLocally(scanRoot, { doc
 export function normalizeProductName(value) {
   const text = cleanProductNameText(value);
   if (!text) return "";
-  const comparable = text
-    .replace(/[_-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (/^agentic\s*30(?:\s+(?:macos\s+app|mac\s+app|mac|sidecar|public))*$/i.test(comparable)) {
-    return "Agentic30";
-  }
   return cleanText(text);
 }
 
@@ -236,9 +265,6 @@ function suggestedFirstQuestion({ confidence, productName, targetUser, problem, 
   const product = cleanSentenceFragment(userFacingProductName(productName));
   const user = cleanSentenceFragment(likelyUsers?.[0]);
   const currentIcp = cleanSentenceFragment(targetUser || user);
-  if (isAgentic30IcpContext({ productName, targetUser, problem, likelyUsers })) {
-    return "이번 주 가장 먼저 인터뷰할 1인 개발자 유형은 누구인가요?";
-  }
   if (confidence === "high" && currentIcp) {
     return `이번 주 가장 먼저 인터뷰할 ${targetSegmentFragment(currentIcp)} 유형은 누구인가요?`;
   }
@@ -246,18 +272,6 @@ function suggestedFirstQuestion({ confidence, productName, targetUser, problem, 
     return `이번 주 먼저 만날 ${targetSegmentFragment(currentIcp || "잠재 고객")} 유형은 누구인가요?`;
   }
   return "이번 주 가장 먼저 인터뷰할 고객 유형은 누구인가요?";
-}
-
-function isAgentic30IcpContext({ productName, targetUser, problem, likelyUsers } = {}) {
-  const text = [
-    productName,
-    targetUser,
-    problem,
-    ...(Array.isArray(likelyUsers) ? likelyUsers : []),
-  ].join(" ").toLowerCase();
-  return text.includes("agentic30")
-    || /전업\s*1인\s*개발자/.test(text)
-    || /수익\s*0원/.test(text);
 }
 
 function problemFocusFragment(value) {
@@ -352,6 +366,7 @@ function inferProductBrief({ context, productName = "" }) {
     /^[ \t]*\*\*설명\*\*[ \t]*\|[ \t]*([^|\n]*?모른다[^|\n]*)/im,
     /^##[ \t]+제품 한 문장[^\n]*\n+\*\*([^*\n]+)\*\*/im,
     /^###[ \t]+설명[^\n]*\n+([^\n]*?(?:모른다|막혀 있다)[^\n]*)/im,
+    /^[ \t]*([^#\n]*?(?:무엇을\s*(?:팔아야|만들어야|검증해야)|누구에게\s*팔아야|첫\s*사용자를\s*데려올지|막혀 있다|모른다)[^\n]*)/im,
     /^[ \t]*(?:(?:\/\/|#)[ \t]*)?(?:problem|pain)[ \t]*[:：-][ \t]*([^\n]+)/im,
   ]);
   const purpose = firstSemanticMatch(context, [
@@ -364,11 +379,18 @@ function inferProductBrief({ context, productName = "" }) {
     /^[ \t]*\*\*(?:목표|goal)[ \t]*[:：]\*\*[ \t]*([^\n]+)/im,
     /^[ \t]*(?:(?:\/\/|#)[ \t]*)?(?:목표|goal)[ \t]*[:：-][ \t]*([^\n]+)/im,
     /^##[ \t]+(?:목표|Goal)[^\n]*\n+[ \t]*([^\n]+)/im,
+    /^##[ \t]+프로젝트 미션[^\n]*\n+(?:[ \t]*\n)*([^\n]*목표로 한다[^\n]*)/im,
+    /^#{1,3}[ \t]+[^\n]*(?:목표|Goal|North Star)[^\n]*\n+(?:[ \t]*\n|>[^\n]*\n|---[^\n]*\n)*([^\n]*(?:목표로 한다|검증한다|달성한다|만든다)[^\n]*)/im,
+    /^#{1,4}[ \t]+North Star[^\n]*\n+(?:[ \t]*\n)*[-*]?[ \t]*([^\n]+)/im,
+    /^[ \t]*([^\n]{8,220}?목표로 한다[^\n]*)/im,
+    /^[ \t]*목표는[ \t]*([^\n]{8,220})/im,
   ]);
   const values = firstSemanticMatch(context, [
     /^[ \t]*\*\*(?:가치|values?)[ \t]*[:：]\*\*[ \t]*([^\n]+)/im,
     /^[ \t]*(?:(?:\/\/|#)[ \t]*)?(?:핵심 가치|values?)[ \t]*[:：-][ \t]*([^\n]+)/im,
     /^##[ \t]+(?:가치|Values?)[^\n]*\n+[ \t]*([^\n]+)/im,
+    /^# [^\n]*(?:Values|가치)[^\n]*\n+(?:[ \t]*\n|>[^\n]*\n|---[^\n]*\n)*([^\n]*(?:가치|판단 기준|우선|거절)[^\n]*)/im,
+    /^##[ \t]+\d+\.[ \t]*([^\n]+)/im,
   ]);
   return {
     targetUser,
@@ -377,6 +399,33 @@ function inferProductBrief({ context, productName = "" }) {
     goal,
     values,
   };
+}
+
+function mergeProductBriefs(primary = {}, fallback = {}) {
+  return {
+    targetUser: primary.targetUser || fallback.targetUser || "",
+    problem: primary.problem || fallback.problem || "",
+    purpose: primary.purpose || fallback.purpose || "",
+    goal: primary.goal || fallback.goal || "",
+    values: primary.values || fallback.values || "",
+  };
+}
+
+function evidenceFromWorkspaceEvidence(workspaceEvidence) {
+  const refs = Array.isArray(workspaceEvidence?.evidence) ? workspaceEvidence.evidence : [];
+  return refs.map((ref) => {
+    const pathLabel = cleanText(ref.path);
+    if (!pathLabel) return "";
+    if (ref.role === "source") return `source:${pathLabel}`;
+    if (ref.role === "docs" && /^readme\./i.test(pathLabel)) return `README: ${pathLabel}`;
+    return `${docTitle(ref.role || ref.field || "evidence")}: ${pathLabel}`;
+  });
+}
+
+function strongerConfidence(...values) {
+  return values
+    .map(normalizeConfidence)
+    .sort((a, b) => confidenceRank[b] - confidenceRank[a])[0] || "low";
 }
 
 function productPurposeFallback({ productName, targetUser, problem }) {
@@ -409,11 +458,28 @@ function cleanBriefMatch(value) {
   let text = cleanText(value)
     .replace(/^[-*]\s*/, "")
     .replace(/^["“]+|["”]+$/g, "")
+    .replace(/[,;]+$/g, "")
+    .replace(/^["“]+|["”]+$/g, "")
     .replace(/\s+[—–-]\s*$/, "")
     .trim();
   if (!text || looksLikeBriefDocumentPointer(text)) return "";
+  if (looksLikeCodeSemanticSnippet(text)) return "";
   if (/^(상세는|참고|관련 문서)\b/.test(text)) return "";
   return text;
+}
+
+function looksLikeCodeSemanticSnippet(value) {
+  const text = cleanText(value);
+  if (!text) return true;
+  if (/^[\d\s,./:;+-]+$/.test(text)) return true;
+  if (/\bz\.[A-Za-z_][A-Za-z0-9_]*\s*\(/.test(text)) return true;
+  if (/\b(?:zod|schema|enum|literal|object|array|optional|passthrough)\b/i.test(text) && /[().{}[\],:]/.test(text)) {
+    return true;
+  }
+  if (/^(?:true|false|null|undefined|NaN)$/i.test(text)) return true;
+  if (/^(?:const|let|var|function|return|import|export|case|if|switch)\b/.test(text)) return true;
+  if (/^[A-Za-z_$][\w$]*\s*[:=]\s*[^가-힣"“']/.test(text)) return true;
+  return false;
 }
 
 function looksLikeBriefDocumentPointer(value) {
@@ -566,19 +632,33 @@ async function readFirstExisting(root, candidates) {
 }
 
 async function readWorkspaceFile(root, relativePath, maxChars) {
-  const resolved = path.resolve(root, relativePath);
+  const normalizedPath = cleanWorkspaceRelativePath(relativePath);
+  if (!normalizedPath || hasDeniedWorkspacePathSegment(normalizedPath)) return null;
+  const resolved = path.resolve(root, normalizedPath);
   if (!isPathInside(resolved, root)) return null;
   try {
     const stat = await fs.stat(resolved);
     if (!stat.isFile() || stat.size > 2_000_000) return null;
     const content = await fs.readFile(resolved, "utf8");
     return {
-      relativePath,
+      relativePath: path.relative(root, resolved).split(path.sep).join(path.posix.sep),
       content: content.slice(0, maxChars),
     };
   } catch {
     return null;
   }
+}
+
+function cleanWorkspaceRelativePath(value) {
+  const text = String(value || "").trim();
+  if (!text || text.includes("\0") || path.isAbsolute(text)) return "";
+  return text.split(/[\\/]+/).filter(Boolean).join(path.posix.sep);
+}
+
+function hasDeniedWorkspacePathSegment(relativePath) {
+  return cleanWorkspaceRelativePath(relativePath)
+    .split(/[\\/]+/)
+    .some((part) => SOURCE_DENY_SEGMENTS.has(part));
 }
 
 async function readJson(filePath) {

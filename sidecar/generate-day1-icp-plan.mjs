@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { z } from "zod";
 
 import {
@@ -7,6 +8,7 @@ import {
   READ_ONLY_WORKSPACE_ALLOWED_TOOLS,
 } from "./read-only-workspace-tool-policy.mjs";
 import { normalizeProductName } from "./onboarding-hypothesis.mjs";
+import { extractWorkspaceEvidence } from "./workspace-signal-extractor.mjs";
 
 export const DAY1_ICP_PLAN_SCHEMA_VERSION = 1;
 export const DAY1_ALIGNMENT_PLAN_SCHEMA_VERSION = 1;
@@ -15,6 +17,8 @@ export const DAY1_ICP_PLAN_MIN_CONFIDENCE = 0.35;
 export const DAY1_ALIGNMENT_PLAN_MIN_CONFIDENCE = 0.35;
 export const DAY1_ICP_PLAN_DEFAULT_TIMEOUT_MS = 30_000;
 
+const DAY1_ALIGNMENT_FRONTIER_OPTION_COUNT = 5;
+const DAY1_ALIGNMENT_FRONTIER_MAX_ANTI_SIGNAL_OPTIONS = 1;
 const QUESTION_DIMENSIONS = Object.freeze([
   "must_have",
   "core_need",
@@ -29,9 +33,20 @@ const QUESTION_DIMENSIONS = Object.freeze([
 const MAX_EVIDENCE_REFS = 8;
 const MAX_DOC_CHARS = 8_000;
 const MAX_CONTEXT_CHARS = 28_000;
+const MAX_SOURCE_EVIDENCE_FILES = 10;
+const MAX_SOURCE_FILE_CHARS = 4_000;
+const MAX_SOURCE_SIGNAL_LINES = 30;
 const DAY1_ALIGNMENT_QUALITY_GATE_THRESHOLD = 7.0;
 const EVIDENCE_LIMITED_LABEL = "근거 부족";
 const SIGNAL_DIGEST_ROW_ORDER = Object.freeze(["project", "goal", "icp", "pain", "outcome", "evidence"]);
+const SIGNAL_DIGEST_LABELS = Object.freeze({
+  project: "프로젝트",
+  goal: "목표",
+  icp: "고객",
+  pain: "문제",
+  outcome: "확인할 행동",
+  evidence: "근거",
+});
 const SIGNAL_DIGEST_VALUE_LIMITS = Object.freeze({
   project: 90,
   goal: 120,
@@ -41,8 +56,40 @@ const SIGNAL_DIGEST_VALUE_LIMITS = Object.freeze({
   evidence: 120,
 });
 const USER_FACING_GENERIC_PROJECT_NAME = "이 프로젝트";
-const USER_FACING_GENERIC_PAIN_POINT = "핵심 통증 확인 필요";
+const USER_FACING_GENERIC_PAIN_POINT = "핵심 문제 확인 필요";
 const USER_FACING_GENERIC_PROBLEM = "핵심 문제 확인 필요";
+
+const SOURCE_EVIDENCE_EXTENSIONS = new Set([
+  ".swift",
+  ".ts",
+  ".tsx",
+  ".js",
+  ".mjs",
+  ".jsx",
+  ".py",
+  ".rs",
+  ".go",
+  ".kt",
+  ".kts",
+]);
+const SOURCE_EVIDENCE_DENY_SEGMENTS = new Set([
+  ".git",
+  ".build",
+  ".next",
+  ".turbo",
+  "build",
+  "dist",
+  "DerivedData",
+  "node_modules",
+  "sidecar-build",
+  "vendor",
+  "coverage",
+]);
+const SOURCE_SIGNAL_PATTERN = /(customer|user|problem|mission|goal|value|pricing|onboarding|landing|persona|audience|target|pain|friction|stuck|success|outcome|proof|고객|사용자|문제|목표|가치|미션|가격|온보딩|랜딩|페르소나|타깃|대상|통증|막힘|성공|결과|검증)/i;
+const GOAL_SIGNAL_PATTERN = /(goal|mission|purpose|success|north\s*star|proof\s*target|objective|목표|미션|목적|성공\s*기준|검증\s*목표)/i;
+const ICP_SIGNAL_PATTERN = /(customer|user|persona|audience|target|icp|고객|사용자|페르소나|타깃|대상)/i;
+const PAIN_SIGNAL_PATTERN = /(problem|pain|friction|stuck|blocked|struggle|문제|통증|막힘|불편|어려움)/i;
+const OUTCOME_SIGNAL_PATTERN = /(outcome|success|result|activation|validation|signal|proof|행동|결과|성공|검증|확인|신호|대화|시장)/i;
 
 const SignalDigestRowSchema = z.object({
   key: z.enum(SIGNAL_DIGEST_ROW_ORDER),
@@ -101,17 +148,25 @@ export async function generateDay1IcpPlan({
   now = new Date(),
   fsImpl = fs,
 } = {}) {
-  const evidence = await collectDay1IcpEvidence({
-    workspaceRoot,
-    scanResult,
+  const workspaceEvidence = await extractWorkspaceEvidence(workspaceRoot, {
+    scanPaths: scanResult,
+    includeSource: true,
     fsImpl,
-  });
+  }).catch(() => null);
+  const evidence = workspaceEvidence?.evidence?.length
+    ? workspaceEvidence.evidence.map(workspaceEvidenceRefToDay1Ref)
+    : await collectDay1IcpEvidence({
+        workspaceRoot,
+        scanResult,
+        fsImpl,
+      });
   const signals = buildDay1IcpSignals({
     workspaceRoot,
     scanResult,
     onboardingHypothesis,
     localDiscovery,
     evidence,
+    workspaceEvidence,
   });
   const questions = buildAdaptiveQuestions(signals);
   const plan = {
@@ -138,17 +193,25 @@ export async function generateDay1AlignmentPlan({
   now = new Date(),
   fsImpl = fs,
 } = {}) {
-  const evidence = await collectDay1IcpEvidence({
-    workspaceRoot,
-    scanResult,
+  const workspaceEvidence = await extractWorkspaceEvidence(workspaceRoot, {
+    scanPaths: scanResult,
+    includeSource: true,
     fsImpl,
-  });
+  }).catch(() => null);
+  const evidence = workspaceEvidence?.evidence?.length
+    ? workspaceEvidence.evidence.map(workspaceEvidenceRefToDay1Ref)
+    : await collectDay1IcpEvidence({
+        workspaceRoot,
+        scanResult,
+        fsImpl,
+      });
   const signals = buildDay1IcpSignals({
     workspaceRoot,
     scanResult,
     onboardingHypothesis,
     localDiscovery,
     evidence,
+    workspaceEvidence,
   });
   const projectGoal = buildProjectGoal({
     signals,
@@ -250,11 +313,28 @@ export async function composeDay1AlignmentPlan({
   workspaceRoot,
   deterministicPlan,
   queryImpl,
+  frontierResults = null,
   now = new Date(),
   timeoutMs = DAY1_ICP_PLAN_DEFAULT_TIMEOUT_MS,
 } = {}) {
   const fallback = normalizeDay1AlignmentPlan(deterministicPlan)
     || fallbackDay1AlignmentPlan({ workspaceRoot, now });
+
+  if (Array.isArray(frontierResults)) {
+    const frontierPlan = composeFrontierDay1AlignmentPlan({
+      frontierResults,
+      fallback,
+      now,
+    });
+    if (frontierPlan) return frontierPlan;
+    if (typeof queryImpl !== "function") {
+      return {
+        ...fallback,
+        source: "deterministic",
+        fellBackToDeterministic: true,
+      };
+    }
+  }
 
   if (typeof queryImpl !== "function") {
     return {
@@ -295,6 +375,280 @@ export async function composeDay1AlignmentPlan({
     generatedAt: normalized.generatedAt || toIso(now),
     fellBackToDeterministic: false,
   };
+}
+
+function composeFrontierDay1AlignmentPlan({ frontierResults, fallback, now }) {
+  const candidates = frontierResults
+    .map((result, index) => normalizeFrontierAlignmentCandidate(result, index))
+    .filter(Boolean);
+  if (!candidates.length) return null;
+
+  candidates.sort((a, b) => frontierAlignmentPlanScore(b.plan) - frontierAlignmentPlanScore(a.plan));
+  const merged = mergeFrontierAlignmentCandidatePlans(candidates.map((candidate) => candidate.plan), fallback);
+  const normalized = merged ? normalizeDay1AlignmentPlan(merged) : null;
+  if (
+    !normalized
+    || (normalized.confidence ?? 0) < DAY1_ALIGNMENT_PLAN_MIN_CONFIDENCE
+    || !frontierAlignmentPlanPassesStrictOptionAudit(normalized)
+  ) {
+    return null;
+  }
+
+  return {
+    ...normalized,
+    source: candidates.length > 1 ? "frontier_ensemble" : "frontier_single",
+    generatedAt: normalized.generatedAt || toIso(now),
+    fellBackToDeterministic: false,
+  };
+}
+
+function normalizeFrontierAlignmentCandidate(result, index) {
+  const text = typeof result === "string"
+    ? result
+    : result?.text || result?.output || result?.response || "";
+  const parsed = parseDay1IcpPlanText(text);
+  const sdkOutput = Day1AlignmentSdkOutputSchema.safeParse(parsed);
+  if (!sdkOutput.success) return null;
+  const normalized = normalizeDay1AlignmentPlan(
+    sanitizeFrontierAlignmentCandidateBeforeNormalize(sdkOutput.data),
+  );
+  if (!normalized || (normalized.confidence ?? 0) < DAY1_ALIGNMENT_PLAN_MIN_CONFIDENCE) return null;
+  return {
+    provider: cleanToken(result?.provider) || `frontier_${index + 1}`,
+    model: cleanToken(result?.model),
+    plan: normalized,
+  };
+}
+
+function sanitizeFrontierAlignmentCandidateBeforeNormalize(value) {
+  if (!value || typeof value !== "object") return value;
+  const components = value.components && typeof value.components === "object" ? value.components : {};
+  const planContext = {
+    projectGoal: value.projectGoal || value.project_goal,
+    alignmentStatement: value.alignmentStatement || value.alignment_statement,
+  };
+  const sanitizeComponent = (component, dimension) => {
+    if (!component || typeof component !== "object" || !Array.isArray(component.options)) return component;
+    return {
+      ...component,
+      options: component.options.filter((optionValue) =>
+        !looksLikeContaminatedAlignmentChoice(optionValue?.label || optionValue?.title, dimension, planContext)
+      ),
+    };
+  };
+  return {
+    ...value,
+    components: {
+      ...components,
+      icp: sanitizeComponent(components.icp, "icp"),
+      painPoint: sanitizeComponent(components.painPoint || components.pain_point, "pain_point"),
+      outcome: sanitizeComponent(components.outcome, "outcome"),
+    },
+  };
+}
+
+function mergeFrontierAlignmentCandidatePlans(candidatePlans, fallback) {
+  const primary = candidatePlans[0];
+  if (!primary?.components || !fallback?.components) return null;
+
+  const components = {
+    icp: mergeFrontierAlignmentComponent({
+      dimension: "icp",
+      candidateComponents: candidatePlans.map((plan) => plan.components?.icp),
+      fallbackComponent: fallback.components.icp,
+      plan: primary,
+    }),
+    painPoint: mergeFrontierAlignmentComponent({
+      dimension: "pain_point",
+      candidateComponents: candidatePlans.map((plan) => plan.components?.painPoint),
+      fallbackComponent: fallback.components.painPoint,
+      plan: primary,
+    }),
+    outcome: mergeFrontierAlignmentComponent({
+      dimension: "outcome",
+      candidateComponents: candidatePlans.map((plan) => plan.components?.outcome),
+      fallbackComponent: fallback.components.outcome,
+      plan: primary,
+    }),
+  };
+  if (!components.icp || !components.painPoint || !components.outcome) return null;
+
+  const merged = {
+    ...primary,
+    components,
+    confidence: Math.max(primary.confidence ?? 0, fallback.confidence ?? 0, DAY1_ALIGNMENT_PLAN_MIN_CONFIDENCE),
+  };
+  merged.alignmentStatement = normalizeAlignmentStatement(primary.alignmentStatement, {
+    projectGoal: merged.projectGoal,
+    components,
+    signals: merged.signals,
+  }) || buildAlignmentStatement({ projectGoal: merged.projectGoal, components });
+  merged.signalDigest = normalizeSignalDigest(primary.signalDigest, merged) || buildConciseSignalDigest(merged);
+  return merged;
+}
+
+function mergeFrontierAlignmentComponent({
+  dimension,
+  candidateComponents,
+  fallbackComponent,
+  plan,
+}) {
+  const primary = candidateComponents.find(Boolean) || fallbackComponent;
+  const rawOptions = [
+    ...candidateComponents.flatMap((component) => Array.isArray(component?.options) ? component.options : []),
+    ...(Array.isArray(fallbackComponent?.options) ? fallbackComponent.options : []),
+  ];
+  const options = selectFrontierAlignmentOptions(rawOptions, { dimension, plan });
+  if (!options) return null;
+  return {
+    ...primary,
+    options,
+  };
+}
+
+function selectFrontierAlignmentOptions(rawOptions, { dimension, plan }) {
+  const rankedOptions = uniqueBy(
+    rawOptions
+      .map((optionValue) => prepareFrontierAlignmentOption(optionValue, dimension))
+      .filter((optionValue) => frontierAlignmentOptionPassesStrictAudit(optionValue, dimension, plan))
+      .sort((a, b) => frontierAlignmentOptionScore(b) - frontierAlignmentOptionScore(a)),
+    (optionValue) => comparableOptionText(optionValue.label),
+  );
+  const selected = [];
+  let antiSignalCount = 0;
+  for (const optionValue of rankedOptions) {
+    if (optionValue.antiSignal === true) {
+      if (antiSignalCount >= DAY1_ALIGNMENT_FRONTIER_MAX_ANTI_SIGNAL_OPTIONS) continue;
+      antiSignalCount += 1;
+    }
+    selected.push(optionValue);
+    if (selected.length >= DAY1_ALIGNMENT_FRONTIER_OPTION_COUNT) break;
+  }
+  if (selected.length !== DAY1_ALIGNMENT_FRONTIER_OPTION_COUNT) return null;
+  return selected.map((optionValue, index) => ({
+    ...optionValue,
+    id: cleanToken(optionValue.id) || `o${index + 1}`,
+  }));
+}
+
+function prepareFrontierAlignmentOption(optionValue, dimension) {
+  const normalized = normalizeAlignmentOption(optionValue, 0);
+  if (!normalized) return null;
+  const evidenceLabel = cleanText(normalized.evidenceLabel)
+    || cleanText(optionValue?.evidence_label)
+    || "근거: frontier synthesis";
+  const evidenceLimited = normalized.evidenceLimited === true || evidenceLabel === EVIDENCE_LIMITED_LABEL;
+  return {
+    ...normalized,
+    description: cleanText(normalized.description)
+      || frontierAlignmentOptionDescription(normalized, dimension, evidenceLabel),
+    evidenceLabel,
+    evidenceLimited,
+  };
+}
+
+function frontierAlignmentOptionDescription(optionValue, dimension, evidenceLabel) {
+  const label = cleanSignalText(optionValue?.label);
+  const evidence = evidenceLabel === EVIDENCE_LIMITED_LABEL ? "근거 부족" : evidenceLabel;
+  if (dimension === "icp") {
+    return `${label} 후보가 이번 주 실제 대화 가능한 고객인지 확인합니다. · ${evidence}`;
+  }
+  if (dimension === "pain_point") {
+    return `${label} 문제가 시간, 돈, 리스크 비용으로 반복되는지 확인합니다. · ${evidence}`;
+  }
+  return `${label} 신호를 최근 사건, 현재 대안, 지불 의향 같은 행동으로 확인합니다. · ${evidence}`;
+}
+
+function frontierAlignmentPlanPassesStrictOptionAudit(plan) {
+  return [
+    ["icp", plan.components?.icp],
+    ["pain_point", plan.components?.painPoint],
+    ["outcome", plan.components?.outcome],
+  ].every(([dimension, component]) => {
+    const options = Array.isArray(component?.options) ? component.options : [];
+    const antiSignalCount = options.filter((optionValue) => optionValue?.antiSignal === true).length;
+    return options.length === DAY1_ALIGNMENT_FRONTIER_OPTION_COUNT
+      && antiSignalCount <= DAY1_ALIGNMENT_FRONTIER_MAX_ANTI_SIGNAL_OPTIONS
+      && options.every((optionValue) => frontierAlignmentOptionPassesStrictAudit(optionValue, dimension, plan));
+  });
+}
+
+function frontierAlignmentOptionPassesStrictAudit(optionValue, dimension, plan) {
+  if (!optionValue) return false;
+  if (!cleanText(optionValue.description)) return false;
+  if (!cleanText(optionValue.evidenceLabel)) return false;
+  if (looksLikeContaminatedAlignmentChoice(optionValue.label, dimension, plan)) return false;
+  return alignmentOptionPassesQualityAudit(optionValue, dimension, plan);
+}
+
+function frontierAlignmentPlanScore(plan) {
+  if (!plan?.components) return 0;
+  return [
+    ["icp", plan.components.icp],
+    ["pain_point", plan.components.painPoint],
+    ["outcome", plan.components.outcome],
+  ].reduce((total, [dimension, component]) => {
+    const options = Array.isArray(component?.options) ? component.options : [];
+    return total + options.reduce((score, optionValue) => {
+      const prepared = prepareFrontierAlignmentOption(optionValue, dimension);
+      return score + (frontierAlignmentOptionPassesStrictAudit(prepared, dimension, plan)
+        ? frontierAlignmentOptionScore(prepared)
+        : -4);
+    }, 0);
+  }, plan.confidence ?? 0);
+}
+
+function frontierAlignmentOptionScore(optionValue) {
+  let score = 0;
+  if (optionValue?.evidenceLabel && optionValue.evidenceLabel !== EVIDENCE_LIMITED_LABEL) score += 6;
+  if (cleanText(optionValue?.description)) score += 3;
+  if (optionValue?.evidenceLimited === true) score -= 2;
+  if (optionValue?.antiSignal === true) score -= 1;
+  if (cleanText(optionValue?.label).length >= 8) score += 1;
+  return score;
+}
+
+function looksLikeContaminatedAlignmentChoice(value, dimension, plan) {
+  const label = cleanSignalText(value);
+  if (!label) return true;
+  if (looksLikeInvalidCandidateText(label) || looksLikeOptionDocumentPointer(label) || hasBrokenGeneratedGrammar(label)) {
+    return true;
+  }
+  if (dimension === "pain_point" && looksLikeProductInputArtifactPain(label)) {
+    return true;
+  }
+  if (
+    dimension === "outcome"
+    && /(job\s*summary|motivation|frustration|persona|부트캠프|사용자\s*\d+명.*첫\s*매출|첫\s*매출\s*달성|사업\s*목표|제품\s*기능|기능\s*추가|feature|문서화|업로드)/i.test(label)
+  ) {
+    return true;
+  }
+  if (dimension === "outcome" && outcomeContainsKnownCustomerSegment(label, plan)) {
+    return true;
+  }
+  const comparableLabel = comparableOptionText(label);
+  return dimension === "outcome" && (
+    comparableLabel === comparableOptionText(plan?.projectGoal)
+    || comparableLabel === comparableOptionText(plan?.alignmentStatement?.painPoint)
+  );
+}
+
+function looksLikeProductInputArtifactPain(value) {
+  const text = cleanSignalText(value);
+  if (!text) return false;
+  if (hasPainCostSignal(text) && !/^\s*[-*]?\s*(?:problem\s*memo|interview\s*transcript|인터뷰\s*transcript)\s*(?:입력|업로드|등록)?\s*$/i.test(text)) {
+    return false;
+  }
+  if (/(?:problem\s*memo|interview\s*transcript|인터뷰\s*transcript|transcript\s*(?:입력|업로드|등록|연결)|메모\s*(?:입력|업로드|등록))/i.test(text)) {
+    return true;
+  }
+  const hasArtifact = /(?:problem\s*evidence|product[-_\s]?input|file[-_\s]?entry|schema|스키마|파일|문서|upload|업로드)/i.test(text);
+  const hasProductFlow = /(?:입력|업로드|등록|연결|제출|import|attach|drop|upload|entry|file|schema)/i.test(text);
+  return hasArtifact && hasProductFlow && !hasPainCostSignal(text);
+}
+
+function hasPainCostSignal(value) {
+  return /(시간|돈|비용|리스크|위험|반복|수동|매번|매주|누락|실패|막힘|막혀|느림|오래|불편|어려움|모른|못|delay|risk|cost|manual|miss|missed|slow|stuck|repeat|repeated|struggle|friction)/i.test(cleanSignalText(value));
 }
 
 export function parseDay1IcpPlanText(text) {
@@ -378,9 +732,12 @@ function alignmentOptionPassesQualityAudit(optionValue, dimension, plan) {
   if (optionValue?.evidenceLimited === true || label.startsWith("직접 입력") || label.startsWith("추가 scan 필요")) {
     return true;
   }
-  if (looksLikeOptionDocumentPointer(label) || hasBrokenGeneratedGrammar(label)) return false;
+  if (looksLikeContaminatedAlignmentChoice(label, dimension, plan)) return false;
   if (dimension === "icp") {
     return optionValue?.antiSignal === true || looksLikeCustomerSegment(label);
+  }
+  if (dimension === "pain_point") {
+    return !looksLikeProductInputArtifactPain(label);
   }
   if (dimension === "outcome") {
     return alignmentOutcomeOptionPassesQualityAudit(label, optionValue, plan);
@@ -395,6 +752,7 @@ function alignmentOutcomeOptionPassesQualityAudit(label, optionValue, plan) {
   const comparablePain = comparableOptionText(plan?.alignmentStatement?.painPoint);
   if (comparableGoal && comparableLabel === comparableGoal) return false;
   if (comparablePain && comparableLabel === comparablePain) return false;
+  if (outcomeContainsKnownCustomerSegment(label, plan)) return false;
   if (/부트캠프|사용자\s*\d+명.*첫\s*매출|첫\s*매출\s*달성.*목표|제품\s*기능|기능\s*추가|feature/i.test(label)) {
     return false;
   }
@@ -417,7 +775,35 @@ function looksLikeOptionDocumentPointer(value) {
 }
 
 function hasBrokenGeneratedGrammar(value) {
-  return /(검증로|한다\.로|모른다을|다로 이어지는|\.로 이어지는|을을|를를)/.test(cleanText(value));
+  const text = cleanText(value);
+  if (!text) return false;
+  return /(검증로|한다\.로|모른다을|다로 이어지는|\.로 이어지는|을을|를를|수익\s*0원(?:의|가|\s+1명))/i.test(text)
+    || hasUnbalancedGeneratedDelimiters(text);
+}
+
+function hasUnbalancedGeneratedDelimiters(value) {
+  const stack = [];
+  const pairs = new Map([
+    ["(", ")"],
+    ["[", "]"],
+    ["{", "}"],
+    ["（", "）"],
+    ["［", "］"],
+    ["｛", "｝"],
+  ]);
+  const openerForCloser = new Map([...pairs.entries()].map(([open, close]) => [close, open]));
+  for (const char of String(value || "")) {
+    const expectedClose = pairs.get(char);
+    if (expectedClose) {
+      stack.push(char);
+      continue;
+    }
+    const expectedOpen = openerForCloser.get(char);
+    if (!expectedOpen) continue;
+    if (stack[stack.length - 1] !== expectedOpen) return true;
+    stack.pop();
+  }
+  return stack.length > 0;
 }
 
 export function normalizeDay1IcpPlan(value) {
@@ -467,35 +853,119 @@ export function buildDay1IcpQuestionForDimensionForTesting(dimension, signals = 
 async function collectDay1IcpEvidence({ workspaceRoot, scanResult, fsImpl }) {
   if (!workspaceRoot) return [];
   const root = path.resolve(workspaceRoot);
-  const candidates = [
-    ["README.md", "README"],
-    ["readme.md", "README"],
-    ["package.json", "package metadata"],
-    ...Object.entries(scanResult || {})
-      .filter(([, relative]) => typeof relative === "string" && relative.trim())
-      .map(([role, relative]) => [relative, `${role} document`]),
-  ];
-
   const refs = [];
+
+  await appendWorkspaceFileRefs(refs, {
+    root,
+    fsImpl,
+    candidates: canonicalEvidenceCandidates(scanResult),
+    maxRefs: MAX_EVIDENCE_REFS,
+  });
+  await appendWorkspaceFileRefs(refs, {
+    root,
+    fsImpl,
+    candidates: [
+      ["README.md", "readme"],
+      ["readme.md", "readme"],
+      ["README", "readme"],
+      ["README.rst", "readme"],
+    ],
+    maxRefs: MAX_EVIDENCE_REFS,
+  });
+
+  const generalDocRefs = await collectDiscoveryFileRefs({
+    root,
+    fsImpl,
+    existing: refs,
+    directories: ["docs"],
+    maxRefs: 3,
+  });
+  refs.push(...generalDocRefs.slice(0, Math.max(0, MAX_EVIDENCE_REFS - refs.length)));
+
+  await appendWorkspaceFileRefs(refs, {
+    root,
+    fsImpl,
+    candidates: packageConfigEvidenceCandidates(),
+    maxRefs: MAX_EVIDENCE_REFS,
+  });
+
+  const discoveryRefs = await collectDiscoveryFileRefs({
+    root,
+    fsImpl,
+    existing: refs,
+    directories: [".agentic30", "interviews", "interview", "transcripts", "bip", "logs", "worklog", "notes"],
+    maxRefs: 3,
+  });
+  refs.push(...discoveryRefs.slice(0, Math.max(0, MAX_EVIDENCE_REFS - refs.length)));
+
+  const recentRefs = await collectRecentGitFileRefs({ root, fsImpl, existing: refs });
+  refs.push(...recentRefs.slice(0, Math.max(0, MAX_EVIDENCE_REFS - refs.length)));
+
+  const sourceRefs = await collectSourceEvidenceRefs({ root, fsImpl, existing: refs });
+  refs.push(...sourceRefs.slice(0, Math.max(0, MAX_EVIDENCE_REFS - refs.length)));
+
+  return uniqueBy(refs, (item) => item.path).slice(0, MAX_EVIDENCE_REFS);
+}
+
+function workspaceEvidenceRefToDay1Ref(ref = {}) {
+  return {
+    path: cleanText(ref.path),
+    reason: cleanText(ref.reason || `${ref.role || "workspace"} signal`),
+    quote: cleanText(ref.quote),
+  };
+}
+
+function canonicalEvidenceCandidates(scanResult = {}) {
+  const fromScan = Object.entries(scanResult || {})
+    .filter(([, relative]) => typeof relative === "string" && relative.trim())
+    .map(([role, relative]) => [relative, `${role} canonical_doc`]);
+  return [
+    ["docs/GOAL.md", "goal canonical_doc"],
+    ["docs/ICP.md", "icp canonical_doc"],
+    ["docs/SPEC.md", "spec canonical_doc"],
+    ["docs/VALUES.md", "values canonical_doc"],
+    ...fromScan,
+  ];
+}
+
+function packageConfigEvidenceCandidates() {
+  return [
+    ["package.json", "manifest package_config"],
+    ["pyproject.toml", "manifest package_config"],
+    ["Cargo.toml", "manifest package_config"],
+    ["go.mod", "manifest package_config"],
+    ["Package.swift", "manifest package_config"],
+    ["composer.json", "manifest package_config"],
+    ["mix.exs", "manifest package_config"],
+    ["Gemfile", "manifest package_config"],
+  ];
+}
+
+async function appendWorkspaceFileRefs(refs, { root, fsImpl, candidates, maxRefs }) {
+  const existingPaths = new Set(refs.map((item) => item.path));
   for (const [relativePath, reason] of candidates) {
-    if (refs.length >= MAX_EVIDENCE_REFS) break;
-    const loaded = await readWorkspaceText({ root, relativePath, fsImpl });
-    if (!loaded) continue;
+    if (refs.length >= maxRefs) break;
+    const normalizedPath = String(relativePath || "").trim();
+    if (!normalizedPath || existingPaths.has(normalizedPath)) continue;
+    const loaded = await readWorkspaceText({ root, relativePath: normalizedPath, fsImpl });
+    if (!loaded || existingPaths.has(loaded.relativePath)) continue;
     refs.push({
       path: loaded.relativePath,
       reason,
       quote: evidenceQuote(loaded.content),
     });
+    existingPaths.add(loaded.relativePath);
   }
-
-  const discoveryRefs = await collectDiscoveryFileRefs({ root, fsImpl, existing: refs });
-  refs.push(...discoveryRefs.slice(0, Math.max(0, MAX_EVIDENCE_REFS - refs.length)));
-  return uniqueBy(refs, (item) => item.path).slice(0, MAX_EVIDENCE_REFS);
 }
 
-async function collectDiscoveryFileRefs({ root, fsImpl, existing }) {
+async function collectDiscoveryFileRefs({
+  root,
+  fsImpl,
+  existing,
+  directories = ["interviews", "interview", "transcripts", "bip", "logs", "worklog", "notes", "docs"],
+  maxRefs = 3,
+}) {
   const existingPaths = new Set(existing.map((item) => item.path));
-  const directories = ["interviews", "interview", "transcripts", "bip", "logs", "worklog", "notes", "docs"];
   const refs = [];
   for (const directory of directories) {
     let entries = [];
@@ -505,7 +975,7 @@ async function collectDiscoveryFileRefs({ root, fsImpl, existing }) {
       continue;
     }
     for (const entry of entries) {
-      if (refs.length >= 3) return refs;
+      if (refs.length >= maxRefs) return refs;
       if (!entry.isFile()) continue;
       if (!/\.(md|mdx|txt|json)$/i.test(entry.name)) continue;
       const relativePath = path.posix.join(directory, entry.name);
@@ -522,11 +992,208 @@ async function collectDiscoveryFileRefs({ root, fsImpl, existing }) {
   return refs;
 }
 
+async function collectRecentGitFileRefs({ root, fsImpl, existing }) {
+  const recentFiles = await readRecentGitFileNames(root);
+  const existingPaths = new Set(existing.map((item) => item.path));
+  const refs = [];
+  for (const relativePath of recentFiles) {
+    if (refs.length >= 3) break;
+    if (existingPaths.has(relativePath) || !isEvidenceFileCandidate(relativePath)) continue;
+    const loaded = await readWorkspaceText({ root, relativePath, fsImpl, maxChars: 2400 });
+    if (!loaded) continue;
+    refs.push({
+      path: loaded.relativePath,
+      reason: "recent_git signal",
+      quote: isSourceEvidenceCandidate(loaded.relativePath)
+        ? sourceEvidenceQuote(loaded.content)
+        : evidenceQuote(loaded.content),
+    });
+    existingPaths.add(loaded.relativePath);
+  }
+  return refs.filter((item) => item.quote);
+}
+
+function readRecentGitFileNames(root) {
+  return new Promise((resolve) => {
+    let output = "";
+    let settled = false;
+    let child;
+    try {
+      child = spawn("git", ["log", "--since=30.days", "--name-only", "--format="], {
+        cwd: root,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    } catch {
+      resolve([]);
+      return;
+    }
+    const settle = (value) => {
+      if (settled) return;
+      settled = true;
+      try { child.kill("SIGKILL"); } catch { /* noop */ }
+      resolve(value);
+    };
+    const timer = setTimeout(() => settle([]), 1500);
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+      if (output.length > 12_000) settle([]);
+    });
+    child.on("error", () => {
+      clearTimeout(timer);
+      settle([]);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        settle([]);
+        return;
+      }
+      settle(uniqueBy(
+        output
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .filter((line) => !line.includes("\0")),
+        (item) => item,
+      ).slice(0, 12));
+    });
+  });
+}
+
+async function collectSourceEvidenceRefs({ root, fsImpl, existing }) {
+  const existingPaths = new Set(existing.map((item) => item.path));
+  const candidates = await listSourceEvidenceCandidates({ root, fsImpl });
+  const scored = [];
+  for (const relativePath of candidates) {
+    if (existingPaths.has(relativePath)) continue;
+    const loaded = await readWorkspaceText({
+      root,
+      relativePath,
+      fsImpl,
+      maxChars: MAX_SOURCE_FILE_CHARS,
+    });
+    if (!loaded) continue;
+    const score = sourceEvidenceScore(loaded.relativePath, loaded.content);
+    if (score <= 0) continue;
+    const quote = sourceEvidenceQuote(loaded.content);
+    if (!quote) continue;
+    scored.push({
+      path: loaded.relativePath,
+      reason: "source signal",
+      quote,
+      score,
+    });
+  }
+  scored.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+  return scored.slice(0, MAX_SOURCE_EVIDENCE_FILES).map(({ score, ...item }) => item);
+}
+
+async function listSourceEvidenceCandidates({ root, fsImpl }) {
+  const results = [];
+  await collectSourceEvidenceCandidatesInDir({ root, fsImpl, dirPath: root, results, depth: 0 });
+  return results;
+}
+
+async function collectSourceEvidenceCandidatesInDir({ root, fsImpl, dirPath, results, depth }) {
+  if (depth > 4 || results.length >= 80) return;
+  let entries = [];
+  try {
+    entries = await fsImpl.readdir(dirPath, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (entry.name.startsWith(".") && entry.name !== ".agentic30") continue;
+    if (SOURCE_EVIDENCE_DENY_SEGMENTS.has(entry.name)) continue;
+    const entryPath = path.join(dirPath, entry.name);
+    if (!isPathInsideRoot(root, entryPath)) continue;
+    if (entry.isDirectory()) {
+      await collectSourceEvidenceCandidatesInDir({ root, fsImpl, dirPath: entryPath, results, depth: depth + 1 });
+    } else if (entry.isFile()) {
+      const relativePath = path.relative(root, entryPath).split(path.sep).join(path.posix.sep);
+      if (isSourceEvidenceCandidate(relativePath)) {
+        results.push(relativePath);
+        if (results.length >= 80) return;
+      }
+    }
+  }
+}
+
+function isEvidenceFileCandidate(relativePath) {
+  const normalized = String(relativePath || "");
+  if (!normalized || normalized.includes("\0")) return false;
+  return /\.(md|mdx|txt|json|toml|swift|ts|tsx|js|mjs|jsx|py|rs|go|kt|kts)$/i.test(normalized)
+    && !hasDeniedEvidencePathSegment(normalized);
+}
+
+function isSourceEvidenceCandidate(relativePath) {
+  const normalized = String(relativePath || "");
+  if (!normalized || normalized.includes("\0")) return false;
+  if (hasDeniedEvidencePathSegment(normalized)) return false;
+  if (/\.(test|spec)\.[A-Za-z0-9]+$/i.test(normalized)) return false;
+  if (/(^|[\\/])(__tests__|tests?|fixtures?)([\\/]|$)/i.test(normalized)) return false;
+  if (/(^|[\\/])[^\\/]*(?:secret|token|credential|password|key)[^\\/]*($|[\\/])/i.test(normalized)) return false;
+  return SOURCE_EVIDENCE_EXTENSIONS.has(path.extname(normalized));
+}
+
+function hasDeniedEvidencePathSegment(relativePath) {
+  return String(relativePath || "")
+    .split(/[\\/]+/)
+    .some((part) => SOURCE_EVIDENCE_DENY_SEGMENTS.has(part));
+}
+
+function sourceEvidenceScore(relativePath, content) {
+  const haystack = `${relativePath}\n${content}`;
+  let score = 0;
+  const matches = haystack.match(new RegExp(SOURCE_SIGNAL_PATTERN.source, "gi"));
+  score += Math.min(matches?.length || 0, 12);
+  if (/onboarding|landing|marketing|pricing|customer|user|goal|values?|mission|icp|persona/i.test(relativePath)) {
+    score += 4;
+  }
+  return score;
+}
+
+function sourceEvidenceQuote(content) {
+  const lines = extractSourceSignalLines(content)
+    .map(userFacingSourceLine)
+    .filter(Boolean)
+    .slice(0, 5);
+  return cleanText(lines.join(" / ")).slice(0, 420);
+}
+
+function extractSourceSignalLines(content) {
+  return String(content || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && SOURCE_SIGNAL_PATTERN.test(line))
+    .slice(0, MAX_SOURCE_SIGNAL_LINES);
+}
+
+function userFacingSourceLine(line) {
+  const text = cleanSignalText(line)
+    .replace(/^\s*(?:let|var|const|static\s+let|private\s+let|public\s+let)\s+[A-Za-z0-9_]+\s*[:=]\s*/i, "")
+    .replace(/[{}[\]<>;]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const label = cleanText(text.match(/^([A-Za-z0-9_]+)\s*[:=]/)?.[1] || "");
+  const quoted = [...text.matchAll(/["'“”]([^"'“”]{8,180})["'“”]/g)]
+    .map((match) => match[1]);
+  const value = quoted.length ? quoted.join(" / ") : text;
+  return cleanText(label ? `${label}: ${value}` : value).slice(0, 260);
+}
+
+function isPathInsideRoot(root, candidatePath) {
+  const resolvedRoot = path.resolve(root);
+  const resolvedCandidate = path.resolve(candidatePath);
+  return resolvedCandidate === resolvedRoot || resolvedCandidate.startsWith(`${resolvedRoot}${path.sep}`);
+}
+
 async function readWorkspaceText({ root, relativePath, fsImpl, maxChars = MAX_DOC_CHARS }) {
   if (typeof relativePath !== "string" || !relativePath.trim()) return null;
   if (path.isAbsolute(relativePath) || relativePath.includes("\0")) return null;
   const resolved = path.resolve(root, relativePath);
-  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) return null;
+  if (!isPathInsideRoot(root, resolved)) return null;
   try {
     const stat = await fsImpl.stat(resolved);
     if (!stat.isFile() || stat.size > 2_000_000) return null;
@@ -546,13 +1213,24 @@ function buildDay1IcpSignals({
   onboardingHypothesis,
   localDiscovery,
   evidence,
+  workspaceEvidence = null,
 }) {
   const h = onboardingHypothesis || {};
-  const productName = normalizeUserFacingProjectName(h.productName) || inferProductName(workspaceRoot, evidence);
-  const likelyUsers = normalizeStringArray(h.likelyUsers).slice(0, 5);
-  const problem = cleanCandidateText(h.problem);
-  const currentIcpGuess = cleanCandidateText(h.targetUser) || likelyUsers[0] || "";
-  const confidence = cleanToken(h.confidence) || inferSignalConfidence({ evidence, currentIcpGuess, problem });
+  const extracted = workspaceEvidence?.signals || {};
+  const productName = normalizeUserFacingProjectName(h.productName)
+    || normalizeUserFacingProjectName(extracted.productName)
+    || inferProductName(workspaceRoot, evidence);
+  const initialLikelyUsers = uniqueBy([
+    ...normalizeStringArray(h.likelyUsers),
+    ...normalizeStringArray(extracted.likelyUsers),
+    extracted.targetUser,
+  ].filter(Boolean), (item) => cleanText(item).toLowerCase()).slice(0, 5);
+  const initialProblemCandidate = cleanCandidateText(h.problem) || cleanCandidateText(extracted.problem);
+  const initialProblem = looksLikeProductInputArtifactPain(initialProblemCandidate) ? "" : initialProblemCandidate;
+  const initialIcpGuess = cleanCandidateText(h.targetUser)
+    || cleanCandidateText(extracted.targetUser)
+    || initialLikelyUsers[0]
+    || "";
   const evidenceText = evidenceContext(evidence);
   const currentAlternatives = inferCurrentAlternatives({
     projectKind: h.projectKind,
@@ -560,13 +1238,35 @@ function buildDay1IcpSignals({
     localDiscovery,
   });
   const normalizedEvidence = evidence.map(normalizeEvidenceRef).filter(Boolean).slice(0, MAX_EVIDENCE_REFS);
+  const evidenceBackedHypothesis = {
+    ...h,
+    productName,
+    targetUser: cleanCandidateText(h.targetUser) || cleanCandidateText(extracted.targetUser),
+    problem: initialProblem,
+    purpose: cleanCandidateText(h.purpose) || cleanCandidateText(extracted.purpose),
+    goal: cleanCandidateText(h.goal) || cleanCandidateText(extracted.goal),
+    values: cleanCandidateText(h.values) || cleanCandidateText(extracted.values),
+    likelyUsers: initialLikelyUsers,
+    confidence: strongestSignalConfidence(h.confidence, workspaceEvidence?.confidence),
+  };
   const evidenceBank = buildScanEvidenceBank({
     scanResult,
-    onboardingHypothesis: h,
+    onboardingHypothesis: evidenceBackedHypothesis,
     evidenceRefs: normalizedEvidence,
     currentAlternatives,
     localDiscovery,
   });
+  const currentIcpGuess = initialIcpGuess || evidenceBank.targetUsers[0]?.value || "";
+  const likelyUsers = uniqueBy([
+    ...initialLikelyUsers,
+    ...evidenceBank.targetUsers.map((candidate) => candidate.value),
+  ].filter(Boolean), (item) => cleanText(item).toLowerCase()).slice(0, 5);
+  const problem = initialProblem || evidenceBank.problems[0]?.value || "";
+  const confidence = strongestSignalConfidence(
+    h.confidence,
+    workspaceEvidence?.confidence,
+    inferSignalConfidence({ evidence, currentIcpGuess, problem }),
+  );
   return {
     productName,
     currentIcpGuess,
@@ -584,6 +1284,14 @@ function buildDay1IcpSignals({
     confidence,
     evidenceBank,
   };
+}
+
+function strongestSignalConfidence(...values) {
+  const rank = { low: 0, medium: 1, high: 2 };
+  return values
+    .map(cleanToken)
+    .filter((value) => value === "low" || value === "medium" || value === "high")
+    .sort((a, b) => rank[b] - rank[a])[0] || "low";
 }
 
 function buildScanEvidenceBank({
@@ -607,6 +1315,7 @@ function buildScanEvidenceBank({
     ...(h.evidence || []),
     refs.map((ref) => `${ref.path} ${ref.reason} ${ref.quote}`).join("\n"),
   ].filter(Boolean).join("\n");
+  const evidenceSignals = extractEvidenceSignals(refs);
 
   const icpRef = roleRef("icp") || defaultRef;
   const specRef = roleRef("spec") || defaultRef;
@@ -618,16 +1327,19 @@ function buildScanEvidenceBank({
     ...normalizeStringArray(h.likelyUsers).map((value) =>
       evidenceCandidate(value, icpRef || docsRef, "likely_user")
     ),
+    ...evidenceSignals.targetUsers,
   ].filter((candidate) => candidate && looksLikeCustomerSegment(candidate.value)));
 
   const problems = uniqueCandidates([
     evidenceCandidate(h.problem, specRef, "problem"),
     ...problemCandidatesFromText(h.purpose || h.goal, specRef || goalRef),
-  ].filter(Boolean));
+    ...evidenceSignals.problems,
+  ].filter((candidate) => candidate && !looksLikeProductInputArtifactPain(candidate.value)));
 
   const goals = uniqueCandidates([
     evidenceCandidate(h.goal, goalRef, "goal"),
     evidenceCandidate(h.purpose, goalRef || docsRef, "purpose"),
+    ...evidenceSignals.goals,
   ].filter(Boolean));
 
   const alternatives = uniqueCandidates(
@@ -646,7 +1358,7 @@ function buildScanEvidenceBank({
     problems,
     goalRef,
     specRef,
-  }));
+  }).concat(evidenceSignals.outcomes));
   const paySignals = uniqueCandidates(buildPaySignalCandidates({
     h,
     context,
@@ -695,6 +1407,147 @@ function preferredRoleEvidenceRef(refs, scanResult, role) {
     || null;
 }
 
+function extractEvidenceSignals(refs = []) {
+  const output = {
+    targetUsers: [],
+    problems: [],
+    goals: [],
+    outcomes: [],
+  };
+  for (const ref of refs) {
+    const normalizedRef = normalizeEvidenceRef(ref);
+    if (!normalizedRef) continue;
+    const role = evidenceRole(normalizedRef);
+    for (const fragment of evidenceSignalFragments(normalizedRef.quote)) {
+      const explicitGoal = labeledSignalValue(fragment, GOAL_SIGNAL_PATTERN);
+      const explicitTarget = labeledSignalValue(fragment, ICP_SIGNAL_PATTERN);
+      const explicitPain = labeledSignalValue(fragment, PAIN_SIGNAL_PATTERN);
+      const explicitOutcome = labeledSignalValue(fragment, OUTCOME_SIGNAL_PATTERN);
+
+      const goalValue = explicitGoal || (goalLikeSignal(fragment) ? fragment : "");
+      const targetValue = explicitTarget
+        || (ICP_SIGNAL_PATTERN.test(fragment) && looksLikeCustomerSegment(fragment) ? fragment : "")
+        || (role === "icp" && looksLikeCustomerSegment(fragment) ? fragment : "");
+      const painValue = explicitPain || (painLikeSignal(fragment) ? fragment : "");
+      const outcomeValue = outcomeCandidateValue({
+        fragment,
+        explicitOutcome,
+        role,
+      });
+
+      if (goalValue) output.goals.push(evidenceCandidate(goalValue, normalizedRef, "evidence_goal"));
+      if (targetValue) output.targetUsers.push(evidenceCandidate(targetValue, normalizedRef, "evidence_target"));
+      if (painValue && !looksLikeProductInputArtifactPain(painValue)) {
+        output.problems.push(evidenceCandidate(painValue, normalizedRef, "evidence_problem"));
+      }
+      if (outcomeValue) output.outcomes.push(evidenceCandidate(outcomeValue, normalizedRef, "evidence_outcome"));
+    }
+  }
+  return {
+    targetUsers: uniqueCandidates(output.targetUsers).slice(0, 5),
+    problems: uniqueCandidates(output.problems).slice(0, 5),
+    goals: uniqueCandidates(output.goals).slice(0, 5),
+    outcomes: uniqueCandidates(output.outcomes).slice(0, 5),
+  };
+}
+
+function evidenceRole(ref) {
+  const text = `${ref.reason || ""} ${ref.path || ""}`.toLowerCase();
+  if (/goal|okr|north/.test(text)) return "goal";
+  if (/icp|persona|customer|user|audience/.test(text)) return "icp";
+  if (/spec|problem|pain|product/.test(text)) return "spec";
+  if (/readme/.test(text)) return "readme";
+  if (/source|recent_git/.test(text)) return "source";
+  if (/manifest|package_config|package\.json/.test(text)) return "manifest";
+  return "discovery";
+}
+
+function evidenceSignalFragments(value) {
+  const text = cleanSignalText(value)
+    .replace(/\s+\/\s+/g, "\n")
+    .replace(/\s+\|\s+/g, "\n")
+    .replace(/\s+[•·]\s+/g, "\n");
+  return uniqueBy(
+    text
+      .split(/\r?\n|(?<=[.!?。])\s+/)
+      .map((fragment) => fragment.trim())
+      .filter((fragment) => fragment.length >= 8)
+      .map((fragment) => conciseText(fragment, 180)),
+    (item) => item.toLowerCase(),
+  ).slice(0, 16);
+}
+
+function labeledSignalValue(fragment, pattern) {
+  const text = cleanSignalText(fragment);
+  if (!pattern.test(text)) return "";
+  const labelMatch = text.match(/(?:goal|mission|purpose|success|north\s*star|proof\s*target|objective|customer|user|persona|audience|target|icp|problem|pain|friction|stuck|outcome|result|activation|validation|signal|목표|미션|목적|성공\s*기준|검증\s*목표|고객|사용자|페르소나|타깃|대상|문제|통증|막힘|결과|성공|검증|확인|신호)\s*(?:=|:|：|-|은|는)\s*["'“”]?([^"'“”\n]{6,180})/i);
+  return cleanCandidateText(labelMatch?.[1] || text);
+}
+
+function outcomeCandidateValue({ fragment, explicitOutcome, role } = {}) {
+  const candidate = explicitOutcome || (outcomeLikeSignal(fragment) ? fragment : "");
+  if (!candidate) return "";
+  return isUsableOutcomeSignal(candidate, { fragment, role }) ? candidate : "";
+}
+
+function goalLikeSignal(value) {
+  const text = cleanText(value);
+  return GOAL_SIGNAL_PATTERN.test(text) && !looksLikeDocumentPointer(text);
+}
+
+function painLikeSignal(value) {
+  const text = cleanText(value);
+  return PAIN_SIGNAL_PATTERN.test(text) && !looksLikeDocumentPointer(text);
+}
+
+function outcomeLikeSignal(value) {
+  const text = cleanText(value);
+  if (!isUsableOutcomeSignal(text)) return false;
+  return OUTCOME_SIGNAL_PATTERN.test(text)
+    && /(검증|확인|신호|대화|시장|인터뷰|반응|피드백|지불|의향|의사|대안|도입|결정|소개|최근\s*사건|validate|confirm|signal|activation|interview|conversation|feedback|alternative|willingness)/i.test(text)
+    && !looksLikeDocumentPointer(text);
+}
+
+function isUsableOutcomeSignal(value, { fragment = value, role = "" } = {}) {
+  const text = cleanSignalText(value);
+  const sourceText = cleanSignalText(fragment);
+  if (!text || looksLikeDocumentPointer(text) || looksLikeInvalidCandidateText(text)) return false;
+  if (looksLikePersonaSummaryText(sourceText) || looksLikePersonaSummaryText(text)) return false;
+  if (cleanToken(role) === "icp" && looksLikeProfileSummarySentence(sourceText || text)) return false;
+  if (looksLikeBusinessGoalSummary(text)) return false;
+  if (!hasConcreteOutcomeAction(text)) return false;
+  if (/(?:약하다|두렵다|못한다|모른다|막혀\s*있다)[.。．]?$/i.test(text)) {
+    return false;
+  }
+  return true;
+}
+
+function hasConcreteOutcomeAction(value) {
+  return /(검증|확인|신호|대화|시장|인터뷰|반응|피드백|지불|의향|의사|대안|도입|결정|소개|최근\s*사건|validate|confirm|signal|activation|interview|conversation|feedback|alternative|willingness)/i.test(cleanSignalText(value));
+}
+
+function looksLikePersonaSummaryText(value) {
+  const text = cleanSignalText(value);
+  if (!text) return false;
+  return /^\s*[-*]?\s*(?:\*\*)?(?:job\s+summary|motivation|frustration|persona|primary\s+persona)\b/i.test(text)
+    || /^\s*[-*]?\s*(?:\*\*)?(?:직무\s*요약|동기|불만|페르소나)\b/i.test(text);
+}
+
+function looksLikeProfileSummarySentence(value) {
+  const text = cleanSignalText(value);
+  if (!text) return false;
+  return /(?:빠르게|빨리|만들\s*수\s*있지만|사용하지만).*(?:약하다|두렵다|못한다|모른다|막혀\s*있다)/i.test(text)
+    || /(?:job\s+summary|motivation|frustration|persona)/i.test(text);
+}
+
+function looksLikeBusinessGoalSummary(value) {
+  const text = cleanSignalText(value);
+  if (!text) return false;
+  const hasValidationAction = /(대화|인터뷰|현재\s*대안|지불\s*의향|최근\s*사건|고객\s*반응|구체\s*피드백|도입\s*결정|소개|conversation|interview|feedback|alternative|willingness)/i.test(text);
+  if (hasValidationAction) return false;
+  return /(?:목표|목표로\s*한다|달성|30일|사용자\s*\d+\s*명|첫\s*매출|revenue|business\s*goal)/i.test(text);
+}
+
 function evidenceCandidate(value, evidenceRef = null, source = "") {
   const text = cleanCandidateText(value);
   if (!text) return null;
@@ -724,9 +1577,31 @@ function cleanCandidateText(value, max = 110) {
   const text = cleanSignalText(value)
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
     .replace(/\s+[—-]\s+$/g, "")
+    .replace(/[,;]+$/g, "")
     .trim();
   if (!text || looksLikeDocumentPointer(text)) return "";
+  if (looksLikeInvalidCandidateText(text)) return "";
   return conciseText(text, max);
+}
+
+function firstCleanCandidate(values = [], max = 110) {
+  for (const value of values) {
+    const cleaned = cleanCandidateText(value, max);
+    if (cleaned) return cleaned;
+  }
+  return "";
+}
+
+function looksLikeInvalidCandidateText(value) {
+  const text = cleanSignalText(value);
+  if (!text) return true;
+  if (/^[\d\s,./:;+-]+$/.test(text)) return true;
+  if (/\bz\.[A-Za-z_][A-Za-z0-9_]*\s*\(/.test(text)) return true;
+  if (/\b(?:zod|schema|enum|literal|object|array|optional|passthrough)\b/i.test(text) && /[().{}[\],:]/.test(text)) {
+    return true;
+  }
+  if (/^(?:true|false|null|undefined|NaN)$/i.test(text)) return true;
+  return false;
 }
 
 function looksLikeDocumentPointer(value) {
@@ -779,37 +1654,36 @@ function buildBuyerSignalCandidates({ h, targetUsers, icpRef, defaultRef }) {
 
 function buildSuccessSignalCandidates({ h = {}, context = "", targetUsers = [], goals, problems, goalRef, specRef }) {
   const candidates = [];
-  const target = outcomeTargetFragment(targetUsers[0]?.value || h.targetUser || h.likelyUsers?.[0] || "첫 고객 후보");
   const problem = outcomeProblemFragment(problems[0]?.value || h.problem);
   const goalText = cleanSignalText(h.goal || goals[0]?.value || h.purpose || "");
   const lowerContext = `${goalText}\n${context}`.toLowerCase();
   const primaryRef = problems[0]?.evidenceRef || specRef || goalRef;
   const goalEvidenceRef = goals[0]?.evidenceRef || goalRef || primaryRef;
 
-  if (problem) {
+  if (/유료|매출|결제|가격|pricing|paid|revenue|money|\$|₩|원/.test(lowerContext)) {
     candidates.push(evidenceCandidate(
-      `${target}가 ${problem}을 이번 주 고객 대화에서 확인한다`,
-      primaryRef,
+      "지불 의향과 현재 대안을 다음 시장 신호 확인에서 검증한다",
+      goalEvidenceRef,
       "success_signal",
     ));
   }
-  if (/유료|매출|결제|가격|pricing|paid|revenue|money|\$|₩|원/.test(lowerContext)) {
+  if (problem) {
     candidates.push(evidenceCandidate(
-      `${target}의 지불 의향과 현재 대안을 Day 2 시장 신호로 확인한다`,
-      goalEvidenceRef,
+      `"${problem}" 상황을 이번 주 고객 대화에서 확인한다`,
+      primaryRef,
       "success_signal",
     ));
   }
   if (/사용자|user|고객|interview|인터뷰|파일럿|pilot|시장/.test(lowerContext)) {
     candidates.push(evidenceCandidate(
-      `${target} 1명에게 최근 사건과 첫 사용자 획득 대안을 확인한다`,
+      "최근 사건과 첫 사용자 획득 대안을 확인한다",
       goalEvidenceRef,
       "success_signal",
     ));
   }
   if (candidates.length === 0) {
     candidates.push(evidenceCandidate(
-      `${target}가 다음 인터뷰에서 확인할 시장 신호를 정한다`,
+      "다음 인터뷰에서 확인할 시장 신호를 정한다",
       goalEvidenceRef,
       "success_signal",
     ));
@@ -915,24 +1789,31 @@ function buildMission(signals) {
 
 function buildProjectGoal({ signals, onboardingHypothesis, evidence }) {
   const h = onboardingHypothesis || {};
-  const explicitGoal = cleanText(h.goal || h.purpose || h.businessGoal || h.business_goal);
+  const explicitGoal = firstCleanCandidate([h.goal, h.businessGoal, h.business_goal], 140);
   if (explicitGoal) return explicitGoal;
+  const evidenceGoal = signals?.evidenceBank?.goals?.[0]?.value;
+  if (evidenceGoal) return evidenceGoal;
+  const purposeGoal = firstCleanCandidate([h.purpose], 140);
+  if (purposeGoal) return purposeGoal;
 
   const product = signals.productName || "이 프로젝트";
   const hasSpecificTarget = Boolean(signals.currentIcpGuess || signals.likelyUsers?.[0]);
   const hasSpecificProblem = Boolean(signals.problem);
-  if (!hasSpecificTarget && !hasSpecificProblem && !(evidence?.length)) {
-    return "Day 7까지 검증할 첫 고객 증거를 만든다.";
+  if (!hasSpecificTarget && !hasSpecificProblem) {
+    return "목표 확인 필요";
   }
   const problem = signals.problem || "현재 가장 큰 고객 문제";
   const target = signals.currentIcpGuess || signals.likelyUsers?.[0] || "첫 고객 후보";
-  const evidenceHint = evidence?.[0]?.path ? ` (${evidence[0].path} 근거)` : "";
-  return `${product}가 ${target}의 "${problem}" 해결을 Day 7까지 검증할 수 있는 첫 고객 증거를 만든다${evidenceHint}.`;
+  const hasUserFacingEvidence = (evidence || []).some(isUserFacingEvidenceRef);
+  if (!hasUserFacingEvidence) {
+    return "목표 확인 필요";
+  }
+  return `${product}가 ${target}의 "${problem}" 해결을 검증할 첫 고객 증거를 만든다.`;
 }
 
 function buildAlignmentMission({ signals, projectGoal }) {
   const product = signals.productName || "이 프로젝트";
-  return `${product}의 Day 1은 고정 ICP 질문지가 아니라 핵심 가설을 만드는 날입니다. 프로젝트 목표 "${projectGoal}"를 기준으로 ICP, Pain Point, Outcome을 각각 한 문장으로 압축하고 Day 2 시장 신호 검증에 넘길 품질 게이트를 확인합니다.`;
+  return `${product}의 Day 1은 고정 질문지가 아니라 핵심 가설을 만드는 날입니다. 프로젝트 목표 "${projectGoal}"를 기준으로 고객, 문제, 확인할 행동을 각각 한 문장으로 압축하고 Day 2 시장 신호 검증에 넘길 품질 게이트를 확인합니다.`;
 }
 
 function buildAlignmentComponents({ signals, projectGoal }) {
@@ -946,20 +1827,20 @@ function buildAlignmentComponents({ signals, projectGoal }) {
   return {
     icp: {
       id: "icp",
-      title: "ICP",
-      prompt: "이 목표를 위해 Day 2에서 먼저 검증할 고객은 누구인가요?",
-      helperText: "직함보다 지금 같은 문제를 겪고, 이번 주에 실제로 물어볼 수 있는 고객 조건을 고릅니다.",
+      title: "고객",
+      prompt: "이 목표를 검증하려면 이번 주 가장 먼저 확인할 고객 후보는 누구인가요?",
+      helperText: "직함보다 지금 같은 문제를 겪고, 이번 주 실제로 물어볼 수 있는 고객 조건을 고릅니다.",
       statement: hasSpecificProblem
-        ? `${target} 중 ${problem}을 지금 해결하려는 고객.`
-        : `${target} 중 Day 2에서 먼저 검증할 고객.`,
+        ? `${target} 중 "${problem}" 상황을 지금 해결하려는 고객.`
+        : `${target} 중 이번 주 가장 먼저 확인할 고객.`,
       evidence,
       missingAssumptions: signals.currentIcpGuess ? [] : ["current_icp"],
       options: buildAlignmentIcpOptions(bank),
     },
     painPoint: {
       id: "pain_point",
-      title: "Pain Point",
-      prompt: "이 고객이 지금 겪는 가장 압축된 통증은 무엇인가요?",
+      title: "문제",
+      prompt: "이 고객이 지금 겪는 가장 압축된 문제는 무엇인가요?",
       helperText: "좋으면 쓰는 문제가 아니라 시간, 돈, 리스크, 반복 행동으로 이미 비용이 나는 문제여야 합니다.",
       statement: problem,
       evidence,
@@ -968,31 +1849,44 @@ function buildAlignmentComponents({ signals, projectGoal }) {
     },
     outcome: {
       id: "outcome",
-      title: "Outcome",
-      prompt: "Day 2 시장 신호가 확인해야 할 고객 결과는 무엇인가요?",
-      helperText: "제품 기능이 아니라 고객이 얻는 결과와 다음 검증 행동을 씁니다.",
+      title: "확인할 행동",
+      prompt: "그 고객에게서 어떤 행동 신호를 확인해야 하나요?",
+      helperText: "제품 기능이 아니라 지불 의향, 현재 대안, 최근 사건처럼 관찰 가능한 행동을 씁니다.",
       statement: outcome,
       evidence,
       missingAssumptions: outcome ? [] : ["outcome"],
-      options: buildAlignmentOutcomeOptions(bank, outcome),
+      options: buildAlignmentOutcomeOptions(bank, outcome, projectGoal),
     },
   };
 }
 
 function buildOutcomeStatement({ signals, projectGoal }) {
-  const target = outcomeTargetFragment(signals.currentIcpGuess || signals.likelyUsers?.[0] || "첫 고객 후보");
+  const evidenceOutcome = firstCleanCandidate([
+    ...(signals?.evidenceBank?.successSignals || [])
+      .filter((candidate) => candidate?.source === "evidence_outcome")
+      .map((candidate) => candidate.value),
+    signals?.evidenceBank?.successSignals?.[0]?.value,
+  ], 110);
+  if (evidenceOutcome) {
+    return sentenceWithPeriod(sanitizeOutcomeActionText(evidenceOutcome, { signals }));
+  }
   const problem = outcomeProblemFragment(signals.problem || "");
   if (problem) {
-    return `${target}가 ${problem}을 이번 주 고객 대화와 시장 신호로 확인한다.`;
+    return `"${problem}" 상황을 이번 주 고객 대화와 시장 신호로 확인한다.`;
   }
   if (!signals.currentIcpGuess && !(signals.likelyUsers?.length)) {
-    return `${target}가 Day 2에서 검증할 고객 행동과 시장 신호를 정한다.`;
+    return "다음 시장 신호 확인에서 검증할 고객 행동을 정한다.";
   }
   const goalFocus = outcomeGoalFragment(projectGoal);
   if (goalFocus) {
-    return `${target}가 ${goalFocus} 기준으로 검증할 고객 행동과 시장 신호를 정한다.`;
+    return `${goalFocus} 기준으로 검증할 고객 행동과 시장 신호를 정한다.`;
   }
-  return `${target}가 이번 주 인터뷰/시장 검증에서 확인할 행동 신호를 정한다.`;
+  return "이번 주 인터뷰/시장 검증에서 확인할 행동 신호를 정한다.";
+}
+
+function sentenceWithPeriod(value) {
+  const text = cleanSignalText(value).replace(/[.。．]+$/u, "").trim();
+  return text ? `${text}.` : "";
 }
 
 function buildAlignmentStatement({ projectGoal, components }) {
@@ -1000,7 +1894,7 @@ function buildAlignmentStatement({ projectGoal, components }) {
   const painPoint = components.painPoint.statement;
   const outcome = components.outcome.statement;
   return {
-    statement: `목표: ${projectGoal} / ICP: ${icp} / Pain Point: ${painPoint} / Outcome: ${outcome}`,
+    statement: `목표: ${projectGoal} / 고객: ${icp} / 문제: ${painPoint} / 확인할 행동: ${outcome}`,
     projectGoal,
     icp,
     painPoint,
@@ -1009,42 +1903,47 @@ function buildAlignmentStatement({ projectGoal, components }) {
 }
 
 function buildAlignmentQualityGate({ projectGoal, signals, components, evidence }) {
+  const evidenceScore = alignmentEvidenceScore(evidence || []);
+  const outcomeDuplicatesPain = comparableOptionText(components.outcome.statement)
+    === comparableOptionText(components.painPoint.statement);
   const criteria = [
     qualityCriterion({
       id: "project_goal",
-      label: "Project goal",
+      label: "목표",
       maxScore: 2,
-      score: projectGoal && !isGenericAlignmentText(projectGoal) ? 2 : 0.8,
+      score: isHighQualityAlignmentText("goal", projectGoal) ? 2 : 0.5,
       detail: projectGoal || "프로젝트 목표가 비어 있습니다.",
     }),
     qualityCriterion({
       id: "icp",
-      label: "ICP specificity",
+      label: "고객",
       maxScore: 2.5,
-      score: signals.currentIcpGuess ? 2.5 : signals.likelyUsers?.length ? 1.5 : 0.5,
+      score: isHighQualityAlignmentText("icp", signals.currentIcpGuess)
+        ? 2.5
+        : signals.likelyUsers?.some((value) => isHighQualityAlignmentText("icp", value)) ? 1.5 : 0.5,
       detail: components.icp.statement,
     }),
     qualityCriterion({
       id: "pain_point",
-      label: "Pain point",
+      label: "문제",
       maxScore: 2,
-      score: signals.problem ? 2 : 0.6,
+      score: isHighQualityAlignmentText("pain", signals.problem) ? 2 : 0.5,
       detail: components.painPoint.statement,
     }),
     qualityCriterion({
       id: "outcome",
-      label: "Outcome",
+      label: "확인할 행동",
       maxScore: 2,
-      score: components.outcome.statement && !isGenericAlignmentText(components.outcome.statement) ? 2 : 0.8,
+      score: !outcomeDuplicatesPain && isHighQualityAlignmentText("outcome", components.outcome.statement) ? 2 : 0.5,
       detail: components.outcome.statement,
     }),
     qualityCriterion({
       id: "evidence",
-      label: "Workspace evidence",
+      label: "근거",
       maxScore: 1.5,
-      score: Math.min(1.5, Math.max(0.4, (evidence?.length || 0) * 0.45)),
+      score: evidenceScore.score,
       detail: evidence?.length
-        ? evidence.map((item) => item.path).slice(0, 3).join(", ")
+        ? `${evidenceScore.detail}: ${evidence.map((item) => item.path).slice(0, 3).join(", ")}`
         : "근거 문서를 찾지 못했습니다.",
     }),
   ];
@@ -1055,8 +1954,8 @@ function buildAlignmentQualityGate({ projectGoal, signals, components, evidence 
     threshold: DAY1_ALIGNMENT_QUALITY_GATE_THRESHOLD,
     passed,
     label: passed ? "PASS" : "REWORK",
-    passGate: "Project Goal + ICP + Pain Point + Outcome이 담긴 핵심 가설이 7.0/10 이상이고 Day 2 시장 신호로 넘길 한 문장이 있다.",
-    failGate: "목표, 고객, 통증, 결과 중 하나가 비어 있거나 founder 추측만 있고 Day 2에서 확인할 시장 신호가 없다.",
+    passGate: "목표, 고객, 문제, 확인할 행동이 담긴 핵심 가설이 7.0/10 이상이고 Day 2 시장 신호로 넘길 한 문장이 있다.",
+    failGate: "목표, 고객, 문제, 확인할 행동 중 하나가 비어 있거나 founder 추측만 있고 Day 2에서 확인할 시장 신호가 없다.",
     criteria,
   };
 }
@@ -1105,7 +2004,7 @@ function buildConciseSignalDigest(plan) {
   const pain = firstUsableSignalDigestValue("pain", [
     plan?.signals?.problem,
     plan?.alignmentStatement?.painPoint,
-    "핵심 통증 확인 필요",
+    "핵심 문제 확인 필요",
   ], plan);
   const outcome = firstUsableSignalDigestValue("outcome", [
     conciseOutcome({ signals: plan?.signals, alignmentStatement: plan?.alignmentStatement }),
@@ -1123,12 +2022,12 @@ function buildConciseSignalDigest(plan) {
   return {
     schemaVersion: DAY1_SIGNAL_DIGEST_SCHEMA_VERSION,
     rows: [
-      { key: "project", label: "프로젝트", value: projectValue, tone: "strong" },
-      { key: "goal", label: "목표", value: goal, tone: "body" },
-      { key: "icp", label: "ICP", value: icp, tone: "body" },
-      { key: "pain", label: "Pain", value: pain, tone: "mark" },
-      { key: "outcome", label: "Outcome", value: outcome, tone: "strong" },
-      { key: "evidence", label: "근거", value: evidence, tone: "code" },
+      { key: "project", label: signalDigestLabel("project"), value: projectValue, tone: "strong" },
+      { key: "goal", label: signalDigestLabel("goal"), value: goal, tone: "body" },
+      { key: "icp", label: signalDigestLabel("icp"), value: icp, tone: "body" },
+      { key: "pain", label: signalDigestLabel("pain"), value: pain, tone: "mark" },
+      { key: "outcome", label: signalDigestLabel("outcome"), value: outcome, tone: "strong" },
+      { key: "evidence", label: signalDigestLabel("evidence"), value: evidence, tone: "code" },
     ],
     summary,
   };
@@ -1141,7 +2040,7 @@ function normalizeSignalDigest(value, plan = null) {
     schemaVersion: DAY1_SIGNAL_DIGEST_SCHEMA_VERSION,
     rows: parsed.data.rows.map((row) => ({
       key: row.key,
-      label: cleanText(row.label),
+      label: signalDigestLabel(row.key, row.label),
       value: sanitizeSignalDigestRowValue(row.key, row.value, plan),
       tone: cleanToken(row.tone),
     })),
@@ -1153,48 +2052,77 @@ function sanitizeSignalDigestRowValue(key, value, plan = null) {
   if (key === "evidence") {
     return conciseText(value, SIGNAL_DIGEST_VALUE_LIMITS.evidence) || "evidence 없음";
   }
-  const cleaned = cleanDigestDisplayText(value);
-  if (cleaned && !looksLikeSignalDigestDocumentReference(value, cleaned)) {
+  const cleaned = key === "outcome"
+    ? sanitizeOutcomeActionText(cleanDigestDisplayText(value), plan)
+    : cleanDigestDisplayText(value);
+  if (cleaned
+      && !looksLikeSignalDigestDocumentReference(value, cleaned)
+      && isHighQualityAlignmentText(key, cleaned)) {
     const normalized = conciseSignalDigestValue(key, cleaned);
     if (normalized) return normalized;
   }
   return fallbackSignalDigestValue(key, plan);
 }
 
+function signalDigestLabel(key, fallback = "") {
+  return SIGNAL_DIGEST_LABELS[key] || cleanText(fallback) || "항목";
+}
+
 function fallbackSignalDigestValue(key, plan = null) {
   switch (key) {
     case "project":
-      return firstUsableSignalDigestValue("project", [plan?.signals?.productName, "이 프로젝트"]);
+      return firstUsableSignalDigestValue("project", [plan?.signals?.productName, "이 프로젝트"], plan);
     case "goal":
-      return firstUsableSignalDigestValue("goal", [firstSentence(plan?.projectGoal), plan?.projectGoal, "목표 확인 필요"]);
+      return firstUsableSignalDigestValue("goal", [firstSentence(plan?.projectGoal), plan?.projectGoal, "목표 확인 필요"], plan);
     case "icp":
       return firstUsableSignalDigestValue("icp", [
         plan?.signals?.currentIcpGuess,
         plan?.alignmentStatement?.icp,
         plan?.signals?.likelyUsers?.[0],
         "첫 고객 후보 확인 필요",
-      ]);
+      ], plan);
     case "pain":
-      return firstUsableSignalDigestValue("pain", [plan?.signals?.problem, plan?.alignmentStatement?.painPoint, "핵심 통증 확인 필요"]);
+      return firstUsableSignalDigestValue("pain", [plan?.signals?.problem, plan?.alignmentStatement?.painPoint, "핵심 문제 확인 필요"], plan);
     case "outcome":
       return firstUsableSignalDigestValue("outcome", [
         plan?.alignmentStatement?.outcome,
         conciseOutcome({ signals: plan?.signals, alignmentStatement: plan?.alignmentStatement }),
         "첫 검증 행동",
-      ]);
+      ], plan);
     default:
       return "확인 필요";
   }
 }
 
-function firstUsableSignalDigestValue(key, candidates = []) {
+function firstUsableSignalDigestValue(key, candidates = [], plan = null) {
   for (const candidate of candidates) {
-    const cleaned = cleanDigestDisplayText(candidate);
+    const cleaned = key === "outcome"
+      ? sanitizeOutcomeActionText(cleanDigestDisplayText(candidate), plan)
+      : cleanDigestDisplayText(candidate);
     if (!cleaned || looksLikeSignalDigestDocumentReference(candidate, cleaned)) continue;
+    if (key === "outcome" && outcomeContainsKnownCustomerSegment(cleaned, plan)) continue;
+    if (!isHighQualityAlignmentText(key, cleaned)) continue;
     const normalized = conciseSignalDigestValue(key, cleaned);
     if (normalized) return normalized;
   }
-  return conciseSignalDigestValue(key, key === "project" ? "이 프로젝트" : "확인 필요");
+  return conciseSignalDigestValue(key, placeholderSignalDigestValue(key));
+}
+
+function placeholderSignalDigestValue(key) {
+  switch (key) {
+  case "project":
+    return "이 프로젝트";
+  case "goal":
+    return "목표 확인 필요";
+  case "icp":
+    return "첫 고객 후보 확인 필요";
+  case "pain":
+    return "핵심 문제 확인 필요";
+  case "outcome":
+    return "첫 검증 행동";
+  default:
+    return "확인 필요";
+  }
 }
 
 function conciseSignalDigestValue(key, value) {
@@ -1227,7 +2155,7 @@ function normalizeProjectDigestValue(value) {
 }
 
 function conciseOutcome({ signals, alignmentStatement } = {}) {
-  const raw = cleanSignalText(alignmentStatement?.outcome);
+  const raw = sanitizeOutcomeActionText(alignmentStatement?.outcome, { signals, alignmentStatement });
   const goalLeak = cleanSignalText(alignmentStatement?.projectGoal);
   if (raw && raw.length <= SIGNAL_DIGEST_VALUE_LIMITS.outcome && (!goalLeak || !raw.includes(goalLeak))) {
     return raw;
@@ -1272,8 +2200,8 @@ function buildAlignmentIcpOptions(bank) {
   const options = bank.targetUsers.slice(0, 3).map((candidate) =>
     alignmentOptionFromCandidate(
       candidate,
-      "scan에서 확인된 고객 후보입니다.",
-      "ICP",
+      "",
+      "고객",
     )
   );
   return ensureEvidenceBackedOptions(options, {
@@ -1284,58 +2212,98 @@ function buildAlignmentIcpOptions(bank) {
 }
 
 function buildAlignmentPainOptions(bank) {
-  const options = bank.problems.slice(0, 3).map((candidate) =>
-    alignmentOptionFromCandidate(
-      candidate,
-      "scan에서 확인된 핵심 통증입니다.",
-      "Pain",
-    )
-  );
+  const options = bank.problems
+    .filter((candidate) => !looksLikeProductInputArtifactPain(candidate.value))
+    .slice(0, 3)
+    .map((candidate) =>
+      alignmentOptionFromCandidate(
+        candidate,
+        "",
+        "문제",
+      )
+    );
   return ensureEvidenceBackedOptions(options, {
-    fallbackLabel: "직접 입력: scan보다 더 정확한 Pain Point",
-    fallbackDescription: "통증 근거가 부족하면 최근 사건/비용 기준으로 보정합니다.",
+    fallbackLabel: "직접 입력: scan보다 더 정확한 문제",
+    fallbackDescription: "문제 근거가 부족하면 최근 사건/비용 기준으로 보정합니다.",
     fallbackPreview: "직접 입력",
+    preferDirectFallback: true,
   });
 }
 
-function buildAlignmentOutcomeOptions(bank, outcome) {
-  const options = bank.successSignals.slice(0, 3).map((candidate) =>
-    alignmentOptionFromCandidate(
-      candidate,
-      "scan 목표/통증에서 이어지는 고객 결과입니다.",
-      "Outcome",
-    )
+function buildAlignmentOutcomeOptions(bank, outcome, projectGoal = "") {
+  const blockedGoalLabels = new Set(
+    [projectGoal, ...(bank.goals || []).map((candidate) => candidate.value)]
+      .map((value) => comparableOptionText(value))
+      .filter(Boolean)
   );
+  const outcomeContext = { signals: {
+    currentIcpGuess: bank.targetUsers?.[0]?.value,
+    likelyUsers: (bank.targetUsers || []).slice(1).map((candidate) => candidate.value),
+  } };
+  const options = bank.successSignals
+    .filter((candidate) => !blockedGoalLabels.has(comparableOptionText(candidate.value)))
+    .slice(0, 3)
+    .map((candidate) =>
+      alignmentOptionFromCandidate(
+        { ...candidate, value: sanitizeOutcomeActionText(candidate.value, outcomeContext) },
+        "",
+        "확인할 행동",
+      )
+    )
+    .filter((optionValue) => cleanText(optionValue?.label));
   if (options.length === 0 && !isGenericAlignmentText(outcome)) {
     const fallbackRef = bank.goals[0]?.evidenceRef || bank.problems[0]?.evidenceRef || bank.defaultRef;
-    options.push(alignmentOptionFromCandidate(
-      evidenceCandidate(outcome, fallbackRef, "outcome"),
-      "목표, 고객, 통증을 결과 문장으로 연결합니다.",
-      "Outcome",
-    ));
+    const fallbackOutcome = sanitizeOutcomeActionText(outcome, outcomeContext);
+    if (fallbackOutcome) {
+      options.push(alignmentOptionFromCandidate(
+        evidenceCandidate(fallbackOutcome, fallbackRef, "outcome"),
+        "",
+        "확인할 행동",
+      ));
+    }
   }
   return ensureEvidenceBackedOptions(options, {
-    fallbackLabel: "직접 입력: Day 2가 확인할 고객 결과",
-    fallbackDescription: "결과 근거가 부족하면 기능이 아니라 고객이 얻는 결과를 씁니다.",
+    fallbackLabel: "직접 입력: 다음 검증에서 확인할 행동",
+    fallbackDescription: "행동 신호 근거가 부족하면 기능이 아니라 고객 반응과 현재 대안을 씁니다.",
     fallbackPreview: "직접 입력",
   });
 }
 
 function alignmentOptionFromCandidate(candidate, description, preview, antiSignal = false) {
+  const metadata = optionMetadataFromCandidate(candidate);
+  const optionDescription = cleanText(description)
+    || alignmentOptionDescriptionFromCandidate(candidate, preview, metadata);
   return alignmentOption(
     "",
     candidate.value,
-    description,
+    optionDescription,
     preview,
     antiSignal || candidate.evidenceLimited === true,
-    optionMetadataFromCandidate(candidate),
+    metadata,
   );
+}
+
+function alignmentOptionDescriptionFromCandidate(candidate = {}, preview = "", metadata = {}) {
+  const label = cleanSignalText(candidate.value);
+  const evidenceLabel = cleanText(metadata.evidenceLabel);
+  const evidence = evidenceLabel && evidenceLabel !== EVIDENCE_LIMITED_LABEL ? ` · ${evidenceLabel}` : "";
+  if (preview === "고객") {
+    return `${label} 후보가 이번 주 실제 대화 가능한 고객인지 확인합니다.${evidence}`;
+  }
+  if (preview === "문제") {
+    return `${label} 문제가 시간, 돈, 리스크 비용으로 반복되는지 확인합니다.${evidence}`;
+  }
+  if (preview === "확인할 행동") {
+    return `${label} 신호를 최근 사건, 현재 대안, 지불 의향 같은 행동으로 확인합니다.${evidence}`;
+  }
+  return evidence ? `${label}${evidence}` : label;
 }
 
 function ensureEvidenceBackedOptions(options, {
   fallbackLabel,
   fallbackDescription,
   fallbackPreview,
+  preferDirectFallback = false,
   min = 2,
   max = 4,
 } = {}) {
@@ -1345,11 +2313,13 @@ function ensureEvidenceBackedOptions(options, {
   ).slice(0, max);
   while (cleaned.length < min) {
     const index = cleaned.length + 1;
+    const hasPrimaryFallback = cleaned.some((optionValue) => cleanText(optionValue.label) === fallbackLabel);
+    const usePrimaryFallback = index === 1 || (preferDirectFallback && !hasPrimaryFallback);
     cleaned.push(option(
-      index === 1 ? fallbackLabel : "추가 scan 필요: 선택지 근거 부족",
-      index === 1 ? fallbackDescription : "선택지를 자신 있게 만들 scan 근거가 아직 부족합니다.",
-      index === 1 ? fallbackPreview : EVIDENCE_LIMITED_LABEL,
-      index !== 1,
+      usePrimaryFallback ? fallbackLabel : "추가 scan 필요: 선택지 근거 부족",
+      usePrimaryFallback ? fallbackDescription : "선택지를 자신 있게 만들 scan 근거가 아직 부족합니다.",
+      usePrimaryFallback ? fallbackPreview : EVIDENCE_LIMITED_LABEL,
+      !usePrimaryFallback,
       { evidenceLabel: EVIDENCE_LIMITED_LABEL, evidenceLimited: true },
     ));
   }
@@ -1373,9 +2343,18 @@ function alignmentComponentsAsQuestions(components) {
 }
 
 function alignmentOption(id, label, description, preview, antiSignal = false, metadata = {}) {
+  const evidenceLabel = cleanText(metadata.evidenceLabel);
+  const evidenceLimited = metadata.evidenceLimited === true || evidenceLabel === EVIDENCE_LIMITED_LABEL;
   return {
     id,
-    ...option(label, description, preview, antiSignal, metadata),
+    label,
+    description: evidenceLimited
+      ? optionDescriptionWithEvidence(description, evidenceLabel, evidenceLimited)
+      : cleanText(description),
+    preview,
+    antiSignal,
+    evidenceLabel,
+    evidenceLimited,
   };
 }
 
@@ -1760,9 +2739,6 @@ function inferMissingAssumptions({ scanResult, currentIcpGuess, problem, evidenc
   const missing = [];
   if (!currentIcpGuess) missing.push("current_icp");
   if (!problem) missing.push("core_need");
-  if (!scanResult?.icp) missing.push("icp_doc");
-  if (!scanResult?.spec) missing.push("spec_doc");
-  if (!scanResult?.goal) missing.push("goal_doc");
   if ((evidence || []).length < 2) missing.push("evidence");
   if (confidence === "low") missing.push("reference_customer");
   return missing.slice(0, 8);
@@ -1794,15 +2770,21 @@ function buildDay1IcpComposerPrompt(plan) {
   ].join("\n");
 }
 
-function buildDay1AlignmentComposerPrompt(plan) {
+export function buildDay1AlignmentComposerPrompt(plan) {
   return [
     "You are improving a Day 1 startup onboarding alignment plan.",
-    "The new Day 1 contract is not an ICP questionnaire. It must produce one project goal and a structured alignment statement with exactly three components: ICP, Pain Point, and Outcome.",
-    "Use workspace evidence. Keep the plan actionable for Day 2 market-signal validation. Do not edit files. Do not run commands.",
+    "The new Day 1 contract is not an ICP questionnaire. It must produce one project goal and a structured alignment statement with exactly three user-facing components: 고객, 문제, 확인할 행동. Keep the JSON keys as icp, painPoint, and outcome for compatibility.",
+    "Use workspace evidence. Keep the Day 1 questions actionable without assuming the user already understands Day 2. Do not edit files. Do not run commands.",
     "Return one JSON object only. Do not wrap it in markdown, do not include prose outside JSON, and do not repeat long source paragraphs.",
-    "Preserve projectGoal, components.icp, components.painPoint, components.outcome, alignmentStatement, qualityGate, firstInterviewMessage, and day2Handoff. The quality gate is a 0-10 score and should pass at 7.0+ only when the statement is specific enough for Day 2.",
-    "For components.outcome, write the customer's gained result plus an observable validation action. Do not copy the product goal, business metric, pain sentence, document pointer, or product feature as an Outcome option.",
-    "Every choice label must answer its component's question directly: ICP choices are customer segments, Pain choices are customer pains/costs, Outcome choices are customer result/market-signal actions.",
+    "Preserve projectGoal, components.icp, components.painPoint, components.outcome, alignmentStatement, qualityGate, firstInterviewMessage, and day2Handoff. The quality gate is a 0-10 score and should pass at 7.0+ only when the statement is specific enough for the next market-signal validation.",
+    "For each of components.icp.options, components.painPoint.options, and components.outcome.options, return exactly 5 choices. Aim for 4 evidence-backed candidates and at most 1 weak/exclusion signal.",
+    "Every option must include a non-empty description, evidenceLabel, and evidenceLimited boolean. Evidence-backed descriptions should say why this option is a strong Day 1 choice; weak options should explain the missing signal.",
+    "Do not use direct-input, scan-needed, schema, upload, transcript-entry, file-entry, or product-input placeholders as selectable options.",
+    "Every component prompt must be understandable in the Day 1 card and should ask for a concrete customer, pain, or behavior signal.",
+    "Do not put \"Day 2\" or \"Day2\" in component prompts, helper text, or option labels/descriptions. Reserve Day 2 wording for day2Handoff only.",
+    "For components.outcome, write an observable validation action. Do not copy the ICP/customer segment, product goal, business metric, pain sentence, document pointer, persona Job summary, Motivation, Frustration, or product feature as a 확인할 행동 option.",
+    "확인할 행동 labels and statements must not repeat the concrete 고객/ICP segment; keep customer segments only in components.icp and write outcome as the behavior to observe or validate.",
+    "Every choice label must answer its component's question directly: 고객 choices are customer segments, 문제 choices are customer pains/costs, 확인할 행동 choices are customer behavior or market-signal actions.",
     "Add signalDigest for direct UI rendering. signalDigest.rows must be exactly this order: project, goal, icp, pain, outcome, evidence.",
     "The project signalDigest row value must be the display product name only. Do not include quality score, confidence, or other metadata in the project row.",
     "Each other signalDigest row value must be concise Korean display copy: goal <= 120 chars, icp <= 90 chars, pain <= 80 chars, outcome <= 110 chars. signalDigest.summary <= 160 chars.",
@@ -1926,12 +2908,12 @@ function normalizeAlignmentComponents(value) {
 function normalizeAlignmentComponent(value, fallbackId) {
   if (!value || typeof value !== "object") return null;
   const id = cleanToken(value.id) || fallbackId;
-  const title = cleanText(value.title) || alignmentComponentTitle(id);
+  const title = alignmentComponentTitle(id);
   const prompt = cleanText(value.prompt || value.question);
   const statement = cleanText(value.statement || value.value);
   const options = Array.isArray(value.options)
     ? value.options.map((optionValue, optionIndex) =>
-      normalizeQuestionOption(optionValue, optionIndex)
+      normalizeAlignmentOption(optionValue, optionIndex)
     ).filter(Boolean).slice(0, 5)
     : [];
   if (!prompt || !statement || options.length < 2) return null;
@@ -1947,6 +2929,22 @@ function normalizeAlignmentComponent(value, fallbackId) {
   };
 }
 
+function normalizeAlignmentOption(value, index) {
+  if (!value || typeof value !== "object") return null;
+  const label = cleanText(value.label || value.title);
+  if (!label) return null;
+  const evidenceLabel = cleanText(value.evidenceLabel || value.evidence_label);
+  return {
+    id: cleanToken(value.id) || `o${index + 1}`,
+    label,
+    description: cleanText(value.description || value.detail),
+    preview: cleanText(value.preview),
+    antiSignal: Boolean(value.antiSignal || value.anti_signal),
+    evidenceLabel,
+    evidenceLimited: Boolean(value.evidenceLimited || value.evidence_limited || evidenceLabel === EVIDENCE_LIMITED_LABEL),
+  };
+}
+
 function sanitizeNormalizedAlignmentComponents(components, { signals, projectGoal } = {}) {
   if (!components) return null;
   const icp = sanitizeAlignmentFragment("icp", components.icp.statement, [
@@ -1956,17 +2954,23 @@ function sanitizeNormalizedAlignmentComponents(components, { signals, projectGoa
   ]);
   const painPoint = sanitizeAlignmentFragment("pain", components.painPoint.statement, [
     signals?.problem,
-    "핵심 통증 확인 필요",
+    "핵심 문제 확인 필요",
   ]);
+  const painOptions = components.painPoint.options
+    .filter((optionValue) => !looksLikeProductInputArtifactPain(optionValue.label));
+  const outcomeContext = { signals, components, alignmentStatement: { icp } };
   const outcome = sanitizeAlignmentFragment("outcome", components.outcome.statement, [
     buildOutcomeStatement({ signals: signals || {}, projectGoal }),
     "첫 검증 행동",
-  ]);
+  ], outcomeContext);
+  const outcomeOptions = components.outcome.options
+    .map((optionValue) => sanitizeAlignmentOutcomeOption(optionValue, outcomeContext))
+    .filter(Boolean);
   if (!icp || !painPoint || !outcome) return null;
   return {
     icp: { ...components.icp, statement: icp },
-    painPoint: { ...components.painPoint, statement: painPoint },
-    outcome: { ...components.outcome, statement: outcome },
+    painPoint: { ...components.painPoint, statement: painPoint, options: painOptions },
+    outcome: { ...components.outcome, statement: outcome, options: outcomeOptions },
   };
 }
 
@@ -1984,12 +2988,13 @@ function normalizeAlignmentStatement(value, { projectGoal, components, signals }
     components?.painPoint?.statement,
     signals?.problem,
   ]);
+  const outcomeContext = { signals, components, alignmentStatement: { icp } };
   const outcome = sanitizeAlignmentFragment("outcome", raw.outcome, [
     components?.outcome?.statement,
     buildOutcomeStatement({ signals: signals || {}, projectGoal }),
-  ]);
+  ], outcomeContext);
   const statement = resolvedProjectGoal && icp && painPoint && outcome
-    ? `목표: ${resolvedProjectGoal} / ICP: ${icp} / Pain Point: ${painPoint} / Outcome: ${outcome}`
+    ? `목표: ${resolvedProjectGoal} / 고객: ${icp} / 문제: ${painPoint} / 확인할 행동: ${outcome}`
     : "";
   if (!statement || !resolvedProjectGoal || !icp || !painPoint || !outcome) return null;
   return {
@@ -2001,13 +3006,13 @@ function normalizeAlignmentStatement(value, { projectGoal, components, signals }
   };
 }
 
-function sanitizeAlignmentFragment(key, value, fallbacks = []) {
-  const primary = cleanAlignmentFragment(value);
+function sanitizeAlignmentFragment(key, value, fallbacks = [], context = {}) {
+  const primary = prepareAlignmentFragment(key, cleanAlignmentFragment(value), context);
   if (primary && !looksLikeAlignmentDocumentReference(value, primary)) {
     return conciseSignalDigestValue(key, primary);
   }
   for (const fallback of fallbacks) {
-    const cleaned = cleanAlignmentFragment(fallback);
+    const cleaned = prepareAlignmentFragment(key, cleanAlignmentFragment(fallback), context);
     if (cleaned && !looksLikeAlignmentDocumentReference(fallback, cleaned)) {
       return conciseSignalDigestValue(key, cleaned);
     }
@@ -2015,10 +3020,114 @@ function sanitizeAlignmentFragment(key, value, fallbacks = []) {
   return "";
 }
 
+function prepareAlignmentFragment(key, value, context = {}) {
+  if (key === "outcome") return sanitizeOutcomeActionText(value, context);
+  return removeDanglingOpeningDelimiter(value) || value;
+}
+
 function cleanAlignmentFragment(value) {
   return cleanSignalText(value)
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
     .trim();
+}
+
+function sanitizeAlignmentOutcomeOption(optionValue, context = {}) {
+  const label = sanitizeOutcomeActionText(optionValue?.label, context);
+  if (!label) return null;
+  return { ...optionValue, label };
+}
+
+function sanitizeOutcomeActionText(value, context = {}) {
+  let text = cleanSignalText(value)
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
+    .trim();
+  text = removeDanglingOpeningDelimiter(text) || text;
+  if (!text) return "";
+  for (let index = 0; index < 3; index += 1) {
+    const stripped = stripKnownOutcomeCustomerPrefix(text, context)
+      .replace(/^(?:그\s*)?고객(?:에게서|에게|이|가|은|는|의)\s+/u, "")
+      .replace(/^(?:첫\s*고객\s*후보|잠재\s*고객)(?:에게서|에게|이|가|은|는|의)?\s+/u, "")
+      .replace(/^(?:의|가|은|는|에게서|에게|한\s*명에게|1\s*명에게|\d+\s*명에게|와|과)\s+/u, "")
+      .trim();
+    if (stripped === text) break;
+    text = stripped;
+  }
+  return removeDanglingOpeningDelimiter(text) || text;
+}
+
+function stripKnownOutcomeCustomerPrefix(value, context = {}) {
+  let text = cleanText(value);
+  for (const segment of knownOutcomeCustomerSegments(context)) {
+    const escaped = escapeRegExp(segment);
+    const prefixPattern = new RegExp(
+      `^${escaped}\\s*(?:\\([^)]*)?\\s*(?:의|가|은|는|을|를|에게서|에게|한\\s*명에게|1\\s*명에게|\\d+\\s*명에게|와|과)?\\s*`,
+      "iu",
+    );
+    const stripped = text.replace(prefixPattern, "").trim();
+    if (stripped && stripped !== text) {
+      text = stripped;
+    }
+  }
+  return text;
+}
+
+function outcomeContainsKnownCustomerSegment(value, context = {}) {
+  const text = comparableOptionText(value);
+  if (!text) return false;
+  return knownOutcomeCustomerSegments(context).some((segment) => {
+    const comparable = comparableOptionText(segment);
+    return comparable.length >= 6 && text.includes(comparable);
+  });
+}
+
+function knownOutcomeCustomerSegments(context = {}) {
+  const signals = context?.signals || {};
+  const rawValues = [
+    signals.currentIcpGuess,
+    ...(Array.isArray(signals.likelyUsers) ? signals.likelyUsers : []),
+    context?.alignmentStatement?.icp,
+    context?.components?.icp?.statement,
+  ];
+  const variants = rawValues.flatMap(outcomeCustomerSegmentVariants);
+  return uniqueBy(
+    variants.filter((value) => value.length >= 4 && !isGenericOutcomeCustomerSegment(value)),
+    (value) => comparableOptionText(value),
+  ).sort((a, b) => b.length - a.length);
+}
+
+function outcomeCustomerSegmentVariants(value) {
+  const text = cleanSignalText(value);
+  if (!text) return [];
+  const unlinked = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1").trim();
+  const withoutParenthetical = removeParentheticalFragments(unlinked);
+  const firstFragment = firstTopLevelFragment(unlinked);
+  return [unlinked, withoutParenthetical, firstFragment, removeParentheticalFragments(firstFragment)]
+    .map((variant) => cleanText(variant))
+    .filter(Boolean);
+}
+
+function removeParentheticalFragments(value) {
+  return cleanText(value)
+    .replace(/\s*[\(（][^\)）]*(?:[\)）]|$)/gu, "")
+    .replace(/\s*[\[［][^\]］]*(?:[\]］]|$)/gu, "")
+    .trim();
+}
+
+function isGenericOutcomeCustomerSegment(value) {
+  const text = cleanText(value).toLowerCase();
+  return [
+    "고객",
+    "사용자",
+    "잠재 고객",
+    "첫 고객 후보",
+    "customer",
+    "user",
+    "target user",
+  ].includes(text);
+}
+
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function looksLikeAlignmentDocumentReference(rawValue, cleanedValue = rawValue) {
@@ -2085,13 +3194,13 @@ function normalizeDay2Handoff(value) {
 function alignmentComponentTitle(id) {
   switch (id) {
   case "icp":
-    return "ICP";
+    return "고객";
   case "pain_point":
-    return "Pain Point";
+    return "문제";
   case "outcome":
-    return "Outcome";
+    return "확인할 행동";
   default:
-    return "Alignment";
+    return "가설";
   }
 }
 
@@ -2231,16 +3340,27 @@ function normalizeEvidenceRef(value) {
 
 function inferProductName(workspaceRoot, evidence) {
   const readmeHeading = evidence
+    .filter((item) => /^readme(?:\.|$)/i.test(cleanText(item.path)))
     .map((item) => item.quote)
     .find((quote) => /^#\s+/.test(quote || ""));
-  const evidenceName = normalizeUserFacingProjectName(readmeHeading?.replace(/^#+\s*/, ""))
-    || evidence
-      .map((item) => packageNameFromEvidence(item))
-      .map(normalizeUserFacingProjectName)
-      .find(Boolean);
+  const packageName = evidence
+    .map((item) => packageNameFromEvidence(item))
+    .map(normalizeUserFacingProjectName)
+    .find(Boolean);
+  const anyHeading = evidence
+    .map((item) => item.quote)
+    .find((quote) => /^#\s+/.test(quote || ""));
+  const evidenceName = normalizeUserFacingProjectName(markdownHeadingTitle(readmeHeading))
+    || packageName
+    || normalizeUserFacingProjectName(markdownHeadingTitle(anyHeading));
   if (evidenceName) return evidenceName;
   const base = workspaceRoot ? path.basename(path.resolve(workspaceRoot)) : "";
   return normalizeUserFacingProjectName(base) || USER_FACING_GENERIC_PROJECT_NAME;
+}
+
+function markdownHeadingTitle(value) {
+  const match = cleanText(value).match(/^#{1,6}\s+([^|#]+)/);
+  return cleanText(match?.[1] || "");
 }
 
 function packageNameFromEvidence(item = {}) {
@@ -2297,14 +3417,79 @@ function evidenceQuote(content) {
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith("<!--"));
   const heading = lines.find((line) => /^#{1,3}\s+/.test(line));
-  const useful = heading || lines.find((line) => line.length >= 20) || lines[0] || "";
+  const signals = lines
+    .filter((line) => SOURCE_SIGNAL_PATTERN.test(line) && line.length >= 12 && line !== heading)
+    .slice(0, 4);
+  const useful = heading && signals.length
+    ? `${heading} | ${signals.join(" | ")}`
+    : heading || signals[0] || lines.find((line) => line.length >= 20) || lines[0] || "";
   return cleanText(useful).slice(0, 220);
 }
 
-function targetFragment(value) {
+function firstTopLevelFragment(value) {
   const text = cleanText(value);
+  if (!text) return "";
+  const stack = [];
+  const openers = new Map([
+    ["(", ")"],
+    ["[", "]"],
+    ["{", "}"],
+    ["（", "）"],
+    ["［", "］"],
+    ["｛", "｝"],
+  ]);
+  const closers = new Set(openers.values());
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (openers.has(char)) {
+      stack.push(openers.get(char));
+      continue;
+    }
+    if (closers.has(char)) {
+      if (stack[stack.length - 1] === char) stack.pop();
+      continue;
+    }
+    if (stack.length === 0 && /[.,，、]/.test(char)) {
+      return text.slice(0, index).trim();
+    }
+  }
+  return text;
+}
+
+function removeDanglingOpeningDelimiter(value) {
+  let text = cleanText(value);
+  if (!text) return "";
+  const stack = [];
+  const pairs = {
+    "(": ")",
+    "[": "]",
+    "{": "}",
+    "（": "）",
+    "［": "］",
+    "｛": "｝",
+  };
+  const openerForCloser = Object.fromEntries(Object.entries(pairs).map(([open, close]) => [close, open]));
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (pairs[char]) {
+      stack.push({ char, index });
+      continue;
+    }
+    const expectedOpen = openerForCloser[char];
+    if (expectedOpen && stack[stack.length - 1]?.char === expectedOpen) {
+      stack.pop();
+    }
+  }
+  if (stack.length > 0) {
+    text = text.slice(0, stack[0].index).trim();
+  }
+  return text.replace(/\s+[·,/:-]\s*$/u, "").trim();
+}
+
+function targetFragment(value) {
+  const text = removeDanglingOpeningDelimiter(firstTopLevelFragment(value));
   if (!text) return "잠재 고객";
-  return text.split(/[.,，、]/)[0].trim().slice(0, 60);
+  return conciseText(text, 60);
 }
 
 function outcomeTargetFragment(value) {
@@ -2316,9 +3501,9 @@ function outcomeTargetFragment(value) {
 }
 
 function problemFragment(value) {
-  const text = cleanText(value);
+  const text = removeDanglingOpeningDelimiter(firstTopLevelFragment(value));
   if (!text) return "핵심 문제";
-  return text.split(/[.,，、]/)[0].trim().slice(0, 72);
+  return conciseText(text, 72);
 }
 
 function outcomeProblemFragment(value) {
@@ -2371,10 +3556,12 @@ function firstSentence(value) {
 }
 
 function conciseText(value, max) {
-  const text = cleanSignalText(value);
+  const text = removeDanglingOpeningDelimiter(cleanSignalText(value)) || cleanSignalText(value);
   if (!text) return "";
   if (text.length <= max) return text;
-  return `${text.slice(0, Math.max(0, max - 1)).trim()}…`;
+  const truncated = text.slice(0, Math.max(0, max - 1)).trim();
+  const balanced = removeDanglingOpeningDelimiter(truncated) || truncated;
+  return `${balanced}…`;
 }
 
 function cleanSignalText(value) {
@@ -2408,6 +3595,68 @@ function isGenericAlignmentText(value) {
     "target user",
     "core problem",
   ].some((marker) => text === marker || text.includes(`"${marker}"`));
+}
+
+function isHighQualityAlignmentText(key, value) {
+  const text = cleanSignalText(value);
+  if (!text || isGenericAlignmentText(text)) return false;
+  if (/확인\s*필요|근거\s*부족|첫\s*검증\s*행동/.test(text)) return false;
+  if (looksLikeDocumentPointer(text) || looksLikeSignalDigestDocumentReference(text, text)) return false;
+  if (looksLikeSourcePathOnly(text)) return false;
+  if (/^[\d\s,./:;+-]+$/.test(text)) return false;
+  if (key === "project") return isUserFacingProjectName(text);
+  if (/^[A-Za-z0-9_.$:/-]+$/.test(text) && !/[가-힣]/.test(text) && !/(user|customer|lead|founder|developer|team|market|sales|support|pricing)/i.test(text)) {
+    return false;
+  }
+  switch (key) {
+  case "icp":
+    return looksLikeCustomerSegment(text);
+  case "outcome":
+    return outcomeLikeSignal(text);
+  case "goal":
+    return GOAL_SIGNAL_PATTERN.test(text) || /(검증|고객|사용자|매출|시장|성공|신호|evidence|proof|prove|revenue|customer|user|market)/i.test(text);
+  case "pain":
+    return !looksLikeCustomerSegment(text)
+      || PAIN_SIGNAL_PATTERN.test(text)
+      || /(모르|모른|막혀|막힘|무엇을\s*(?:팔아야|팔지|만들어야|검증해야)|누구에게\s*팔|첫\s*사용자|데려올|불편|비용|리스크|시간|실패|manual|missing|slow|stuck)/i.test(text);
+  default:
+    return true;
+  }
+}
+
+function looksLikeSourcePathOnly(value) {
+  const text = cleanText(value);
+  if (!text) return false;
+  return /^(?:\.\/)?[A-Za-z0-9_.@/-]+\.(?:swift|ts|tsx|js|mjs|jsx|py|rs|go|kt|kts|md|json|toml)(?::\d+)?$/i.test(text);
+}
+
+function isUserFacingEvidenceRef(ref) {
+  const normalized = normalizeEvidenceRef(ref);
+  if (!normalized) return false;
+  const role = evidenceRole(normalized);
+  if (["goal", "icp", "spec", "readme", "source", "discovery"].includes(role)) {
+    return SOURCE_SIGNAL_PATTERN.test(`${normalized.reason || ""}\n${normalized.quote || ""}`);
+  }
+  if (role === "manifest") {
+    return /(description|customer|user|problem|mission|goal|pricing|고객|사용자|문제|목표)/i.test(normalized.quote || "");
+  }
+  return false;
+}
+
+function alignmentEvidenceScore(evidence = []) {
+  const refs = normalizeEvidenceRefs(evidence);
+  const userFacingCount = refs.filter(isUserFacingEvidenceRef).length;
+  const canonicalCount = refs.filter((ref) => /canonical_doc/.test(ref.reason || "")).length;
+  if (userFacingCount === 0) {
+    return {
+      score: refs.length ? 0.4 : 0,
+      detail: refs.length ? "기술/파일 근거만 있음" : "근거 없음",
+    };
+  }
+  return {
+    score: Math.min(1.5, 0.6 + userFacingCount * 0.35 + canonicalCount * 0.15),
+    detail: canonicalCount > 0 ? "문서/사용자 근거" : "사용자-facing 근거",
+  };
 }
 
 function normalizeStringArray(value) {

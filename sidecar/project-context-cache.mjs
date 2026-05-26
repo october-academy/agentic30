@@ -53,7 +53,10 @@ export async function refreshProjectContextCache({
     : await deriveWorkspaceOnboardingHypothesisLocally(workspaceRoot, {
         docPaths: scanResult || docPaths || {},
       });
-  const mergedHypothesis = mergeWorkspaceOnboardingHypotheses(previous, localHypothesis);
+  const mergedHypothesis = preferFreshValidContextFields(
+    mergeWorkspaceOnboardingHypotheses(previous, localHypothesis),
+    localHypothesis,
+  );
   const answerLog = await loadCurriculumAnswerLog({ workspaceRoot, now, fsImpl }).catch(() => ({ records: [] }));
   const answerRefs = evidenceRefsFromAnswers(answerLog.records, completedDay);
   const evidenceRefs = uniqueStrings([
@@ -98,6 +101,39 @@ export function normalizeProjectContextCache(value = {}) {
     lastCompletedDay,
     updatedAt: normalizeIsoDate(value.updatedAt ?? value.updated_at),
   };
+}
+
+function preferFreshValidContextFields(mergedHypothesis, freshHypothesis) {
+  const merged = normalizeWorkspaceOnboardingHypothesis(mergedHypothesis);
+  const fresh = normalizeWorkspaceOnboardingHypothesis(freshHypothesis);
+  const output = { ...merged };
+  for (const field of ["productName", "targetUser", "problem", "purpose", "goal", "values"]) {
+    const freshValue = cleanString(fresh[field]);
+    if (!freshValue || looksInvalidContextField(field, freshValue)) continue;
+    const currentValue = cleanString(output[field]);
+    if (!currentValue || looksInvalidContextField(field, currentValue)) {
+      output[field] = freshValue;
+    }
+  }
+  if ((output.projectKind === "unknown" || !output.projectKind) && fresh.projectKind !== "unknown") {
+    output.projectKind = fresh.projectKind;
+  }
+  if ((output.stage === "unknown" || !output.stage) && fresh.stage !== "unknown") {
+    output.stage = fresh.stage;
+  }
+  return output;
+}
+
+function looksInvalidContextField(field, value) {
+  const text = cleanString(value);
+  if (!text) return true;
+  if (/^[\d\s,./:;+-]+$/.test(text)) return true;
+  if (/\bz\.[A-Za-z_][A-Za-z0-9_]*\s*\(/.test(text)) return true;
+  if (/\b(?:zod|schema|enum|literal|object|array|optional|passthrough)\b/i.test(text) && /[().{}[\],:]/.test(text)) {
+    return true;
+  }
+  if (field !== "productName" && /^(?:true|false|null|undefined|NaN)$/i.test(text)) return true;
+  return false;
 }
 
 export function formatProjectContextForPrompt(projectContext, {

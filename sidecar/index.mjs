@@ -29,6 +29,7 @@ import { createTelemetryClient } from "./telemetry.mjs";
 import { getCachedBipContext } from "./context-cache.mjs";
 import { collectLocalDiscovery } from "./local-discovery.mjs";
 import {
+  buildDay1AlignmentComposerPrompt,
   composeDay1AlignmentPlan,
   generateDay1AlignmentPlan,
   generateDay1IcpPlan,
@@ -42,6 +43,7 @@ import {
   mergeWorkspaceOnboardingHypotheses,
   normalizeWorkspaceOnboardingHypothesis,
 } from "./onboarding-hypothesis.mjs";
+import { extractWorkspaceEvidence } from "./workspace-signal-extractor.mjs";
 import {
   formatProjectContextForPrompt,
   loadProjectContextCache,
@@ -253,9 +255,13 @@ const internalMcpServerName = "agentic30_sidecar";
 const sidecarAuthToken = randomBytes(32).toString("base64url");
 const BIP_TEMPLATE_DOC_ID = process.env.AGENTIC30_BIP_TEMPLATE_DOC_ID || "1EoQIaByJd5Aq8ENbgEfxHKKJsZsup7d5gJxcT7uqNeA";
 const BIP_TEMPLATE_SHEET_ID = process.env.AGENTIC30_BIP_TEMPLATE_SHEET_ID || "16NkGIe8K9NZiLy4O81zyXKVeQ72nvBGSZ0YBQaBr0sA";
-const WORKSPACE_SCAN_CLAUDE_MODEL = "claude-haiku-4-5";
+const WORKSPACE_SCAN_CLAUDE_MODEL = "claude-sonnet-4-6";
 const WORKSPACE_SCAN_CODEX_MODEL = "gpt-5.4-mini";
-const WORKSPACE_SCAN_GEMINI_MODEL = "gemini-2.5-flash";
+const WORKSPACE_SCAN_GEMINI_MODEL = "gemini-3.5-flash";
+const DAY1_CHOICE_CLAUDE_MODEL = process.env.AGENTIC30_DAY1_CHOICE_CLAUDE_MODEL || "claude-opus-4-7";
+const DAY1_CHOICE_CODEX_MODEL = process.env.AGENTIC30_DAY1_CHOICE_CODEX_MODEL || "gpt-5.5";
+const DAY1_CHOICE_GEMINI_MODEL = process.env.AGENTIC30_DAY1_CHOICE_GEMINI_MODEL || "gemini-3.5-flash";
+const DAY1_CHOICE_PROVIDER_TIMEOUT_MS = 45_000;
 const CHAT_BIP_CONTEXT_MAX_CHARS = 60000;
 const CHAT_BIP_LOCAL_DOC_MAX_CHARS = 12000;
 const CHAT_BIP_EXTERNAL_DOC_MAX_CHARS = 12000;
@@ -3366,7 +3372,7 @@ async function buildInstantChatResponse(prompt) {
     appSupportPath,
     workspaceRoot,
   });
-  const configuredDocAnswer = buildConfiguredDocPathAnswer(prompt);
+  const configuredDocAnswer = await buildConfiguredDocPathAnswer(prompt);
   if (configuredDocAnswer) {
     return {
       text: configuredDocAnswer,
@@ -3387,7 +3393,7 @@ async function buildInstantChatResponse(prompt) {
   };
 }
 
-function buildConfiguredDocPathAnswer(prompt) {
+async function buildConfiguredDocPathAnswer(prompt) {
   const value = String(prompt || "");
   if (!isWorkspacePathLookupPrompt(value)) return "";
   const workspace = currentBipConfig()?.workspace || {};
@@ -3403,16 +3409,62 @@ function buildConfiguredDocPathAnswer(prompt) {
   );
   if (!match) return "";
   const [label, docPath] = match;
+  const workspaceEvidence = await extractWorkspaceEvidence(workspaceRoot, {
+    scanPaths: workspace,
+    includeSource: true,
+  }).catch(() => null);
+  const summaryLines = workspaceEvidenceSummaryLines(workspaceEvidence);
   return [
     `\`${label}\`는 현재 BIP 설정 기준으로 \`${docPath}\`에 있습니다.`,
-    "ICP 기준 요약: 전업 1인 개발자, 수익 0원, macOS에서 Codex를 쓰고 고객 인터뷰 의향이 있으면 Agentic30 조건에 맞습니다.",
-    "Day 1 판단 기준: 이 ICP와 SPEC proof target을 기준으로 오늘 고객 행동 1개를 정합니다.",
-    "다음 액션: 이 문서를 기준으로 Day 1 판단을 이어가면 됩니다.",
+    ...summaryLines,
+    "다음 액션: 이 문서와 확인된 근거를 기준으로 Day 1 판단을 이어가면 됩니다.",
   ].join("\n");
+}
+
+function workspaceEvidenceSummaryLines(workspaceEvidence) {
+  const signals = workspaceEvidence?.signals || {};
+  const lines = [];
+  const target = cleanFastPathFragment(signals.targetUser || signals.likelyUsers?.[0]);
+  const problem = cleanFastPathFragment(signals.problem);
+  const goal = cleanFastPathFragment(signals.goal || signals.purpose);
+  const outcome = cleanFastPathFragment(signals.outcome);
+  if (target || problem) {
+    lines.push(`ICP 기준 요약: ${[target, problem].filter(Boolean).join(" — ")}`);
+  }
+  if (goal) {
+    lines.push(`Goal 기준: ${goal}`);
+  }
+  if (outcome) {
+    lines.push(`Outcome 기준: ${outcome}`);
+  } else if (target || problem || goal) {
+    lines.push("Day 1 판단 기준: 위 근거에서 고객, 통증, 검증 행동을 한 문장으로 좁힙니다.");
+  }
+  const evidencePaths = (workspaceEvidence?.evidence || [])
+    .map((item) => String(item?.path || "").trim())
+    .filter(Boolean)
+    .slice(0, 4);
+  if (evidencePaths.length) {
+    lines.push(`근거: ${evidencePaths.join(", ")}`);
+  }
+  return lines.length ? lines : ["workspace 문서에서 고객/문제/목표 근거를 더 확인해야 합니다."];
+}
+
+function cleanFastPathFragment(value) {
+  return cleanShortText(value, 140)
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
+    .replace(/[.。．]+$/u, "")
+    .trim();
 }
 
 function buildStageAwareActionPlan({ prompt = "", context = {}, selectedOption = "", forcedIntentMode = "" } = {}) {
   const config = currentBipConfig() || {};
+  const hypothesis = normalizeWorkspaceOnboardingHypothesis(state.workspaceOnboardingHypothesis || {});
+  const targetUser = cleanFastPathFragment(hypothesis.targetUser || hypothesis.likelyUsers?.[0]);
+  const problem = cleanFastPathFragment(hypothesis.problem);
+  const goal = cleanFastPathFragment(hypothesis.goal || hypothesis.purpose);
+  const customerLabel = targetUser || "아직 좁히는 중인 고객 후보";
+  const problemLabel = problem || "이번 주 검증할 핵심 문제";
+  const goalLabel = goal || "고객 답변 원문 1개와 검증 근거 1개";
   const stageState = readWorkspaceStageState(config);
   const repoStage = inferRepoStage({ prompt, config, context, stageState });
   const intentMode = forcedIntentMode || inferIntentMode({ prompt, selectedOption, stageState });
@@ -3438,32 +3490,34 @@ function buildStageAwareActionPlan({ prompt = "", context = {}, selectedOption =
     verdict = "keep";
     domainLine = "Builder retro: 끝난 demo loop는 회고로 닫고, 가장 선명한 artifact를 다음 공개 증거로 이어갑니다.";
     stageLine = `근거: ${proofRefs.length ? proofRefs.join(", ") : "완료된 demo loop와 현재 BIP 기록"}`;
-    nextAction = "오늘 demo에서 가장 선명했던 화면 1개를 골라 retro와 함께 Threads에 올리세요.";
-    proofTarget = "retro Threads URL 1개, 다음 artifact proof target 1개, demo를 이해한 사람 1명/막힌 지점 1개를 Sheet 오늘 행에 기록합니다.";
+    nextAction = "오늘 demo에서 가장 선명했던 화면 1개를 골라 retro와 함께 공개 proof로 남기세요.";
+    proofTarget = "retro 공개 proof 1개, 다음 artifact proof target 1개, demo를 이해한 사람 1명/막힌 지점 1개를 오늘 기록에 남깁니다.";
   } else if (isComplete) {
     verdict = proofRefs.length >= 2 ? "change" : "inconclusive";
     domainLine = `Startup verdict: ${verdict}. 이번 루프는 감이 아니라 공개 proof와 고객 반응 숫자로 다음 방향을 정합니다.`;
     stageLine = `근거: ${proofRefs.length ? proofRefs.join(", ") : "완료 상태지만 충분한 proof 숫자는 아직 부족함"}`;
     nextAction = "가장 반응이 있었던 proof 1개를 골라 같은 고객군 1명에게 후속 질문을 보내고 답변 원문을 저장하세요.";
-    proofTarget = "Threads retro URL 1개, 같은 고객군의 답변 원문 1개, 계속/전환/중단 기준 숫자 1개를 Sheet 오늘 행에 기록합니다.";
+    proofTarget = "retro 공개 proof 1개, 같은 고객군의 답변 원문 1개, 계속/전환/중단 기준 숫자 1개를 오늘 기록에 남깁니다.";
   } else if (isBuilder) {
     verdict = repoStage === "empty" ? "builder-first-demo" : "builder-proof-loop";
     domainLine = "Builder verdict: 오늘은 전략 문서보다 공유 산출물/artifact 1개와 5분 demo/wow moment를 먼저 만들고 BIP 공개 증거로 남깁니다.";
-    stageLine = "ICP 확인: 전업 1인 개발자, 수익 0원, macOS/Codex 사용, 인터뷰 의향이 있으면 Agentic30 조건에 맞습니다.";
+    stageLine = targetUser
+      ? `ICP 확인: ${targetUser}`
+      : "ICP 확인: workspace 문서에서 고객 조건을 더 좁혀야 합니다.";
     nextAction = selected
-      ? `${selected}에서 사용자가 처음 보는 화면 1개를 녹화하거나 캡처해 Threads에 공개하세요.`
-      : "demo에서 사용자가 처음 보는 화면 1개를 녹화하거나 캡처해 Threads에 공개하세요.";
-    proofTarget = "BIP Threads URL 1개와 'demo를 보고 이해한 사람 1명/막힌 지점 1개'를 Sheet 오늘 행에 기록합니다.";
+      ? `${selected}에서 사용자가 처음 보는 화면 1개를 녹화하거나 캡처해 공개 proof로 남기세요.`
+      : "demo에서 사용자가 처음 보는 화면 1개를 녹화하거나 캡처해 공개 proof로 남기세요.";
+    proofTarget = "공개 proof URL 1개와 'demo를 보고 이해한 사람 1명/막힌 지점 1개'를 오늘 기록에 남깁니다.";
   } else {
     verdict = repoStage === "empty" ? "conditional-icp-fit" : "day1-start";
-    domainLine = "진단: Startup verdict는 조건부 ICP fit입니다. 전업 1인 개발자, 수익 0원, macOS에서 Codex를 쓰고 고객 인터뷰를 오늘 실행할 수 있으면 시작해도 됩니다.";
+    domainLine = `진단: Startup verdict는 조건부 ICP fit입니다. ${customerLabel}에게 "${problemLabel}"를 오늘 확인할 수 있으면 시작해도 됩니다.`;
     stageLine = repoStage === "running"
-      ? "Evidence: docs/ICP.md와 이전 proof를 기준으로 다음 고객증거 loop, 기준 숫자, proof target을 오늘 갱신합니다."
+      ? `Evidence: ${evidenceRefs.length ? evidenceRefs.join(", ") : "workspace 근거"}를 기준으로 다음 고객증거 loop, 기준 숫자, proof target을 오늘 갱신합니다.`
       : (docs.icp
-        ? "Evidence: docs/ICP.md는 대상 사용자, docs/GOAL.md는 Day 1/Day 7, docs/SPEC.md는 proof baseline과 다음 proof target 기준입니다."
+        ? `Evidence: docs/ICP.md와 관련 문서는 "${goalLabel}" 판단 기준입니다.`
         : "Evidence: 아직 전략 문서가 비어 있어도 시작 조건은 고객 대화 1개와 공개 proof 1개입니다.");
-    nextAction = "오늘 한 명에게 '지금 Codex로 제품을 만들 때 가장 돈/시간을 잃는 순간이 어디인지'를 묻고 답변 원문을 저장하세요.";
-    proofTarget = "응답 1개를 확보한 뒤 그 응답 원문을 담은 Threads BIP 공개 proof URL 1개를 남깁니다.";
+    nextAction = `오늘 ${customerLabel} 1명에게 "${problemLabel}"와 관련된 최근 상황을 묻고 답변 원문을 저장하세요.`;
+    proofTarget = "응답 1개를 확보한 뒤 그 응답 원문과 다음 판단 기준을 공개 proof URL 또는 오늘 기록에 남깁니다.";
   }
 
   const message = [
@@ -3472,9 +3526,9 @@ function buildStageAwareActionPlan({ prompt = "", context = {}, selectedOption =
     `Verdict: ${verdict}.`,
     domainLine,
     stageLine,
-    "Customer/status quo: 혼자 코딩하며 만든 뒤 유저가 오지 않는 전업 1인 개발자가 현재 대안입니다.",
-    "Narrow wedge: macOS에서 Codex/Claude Code로 만들지만 아직 첫 매출이 없는 사람 1명.",
-    "Numeric threshold: 오늘 고객 답변 원문 1개와 공개 proof URL 1개. 반응이 없으면 질문을 바꿉니다.",
+    `Customer/status quo: ${customerLabel}가 현재 "${problemLabel}"를 어떻게 처리하는지 확인합니다.`,
+    `Narrow wedge: ${customerLabel} 중 이번 주 바로 대화 가능한 사람 1명.`,
+    "Numeric threshold: 오늘 고객 답변 원문 1개와 공개 proof/기록 1개. 반응이 없으면 질문을 바꿉니다.",
     `다음 액션: ${nextAction}`,
     `증거 목표: ${proofTarget}`,
   ];
@@ -6079,7 +6133,7 @@ async function refreshProjectContextFromRequest(payload = {}) {
       .filter((result) => result.status === "fulfilled" && result.value)
       .map((result) => result.value);
     if (parsedAgentResults.length) {
-      scanResult = mergeWorkspaceScanResults(scanResult, ...parsedAgentResults);
+      scanResult = await mergeWorkspaceScanResultsForRoot(root, scanResult, ...parsedAgentResults);
       onboardingHypothesis = mergeWorkspaceOnboardingHypotheses(
         onboardingHypothesis,
         ...parsedAgentResults.map((result) => result.onboardingHypothesis),
@@ -6454,7 +6508,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
     const parsedAgentResults = agentResults
       .filter((result) => result.status === "fulfilled" && result.value)
       .map((result) => result.value);
-    const merged = mergeWorkspaceScanResults(localResult, ...parsedAgentResults);
+    const merged = await mergeWorkspaceScanResultsForRoot(scanRoot, localResult, ...parsedAgentResults);
     const onboardingHypothesis = mergeWorkspaceOnboardingHypotheses(
       localOnboardingHypothesis,
       ...parsedAgentResults.map((result) => result.onboardingHypothesis),
@@ -6552,14 +6606,18 @@ async function appendWorkspaceScanVisibleAnswer({ sessionId = "", prompt = "", s
     ["SPEC.md", result.spec],
   ].filter(([, docPath]) => docPath);
   if (!wantsPath && found.length === 0) return;
+  const workspaceEvidence = await extractWorkspaceEvidence(scanRoot, {
+    scanPaths: result,
+    includeSource: true,
+  }).catch(() => null);
+  const summaryLines = workspaceEvidenceSummaryLines(workspaceEvidence);
 
   const lines = found.length
     ? [
         "로컬 workspace에서 바로 찾은 문서 경로입니다.",
         ...found.map(([label, docPath]) => `- ${label}: ${docPath}`),
-        "ICP 기준 요약: 전업 1인 개발자, 수익 0원, macOS에서 Codex를 쓰고 고객 인터뷰 의향이 있으면 Agentic30 조건에 맞습니다.",
-        "Day 1 판단 기준: 이 ICP와 SPEC proof target을 기준으로 오늘 고객 행동 1개를 정합니다.",
-        "다음 액션: 이 경로들을 BIP 설정에 반영하고 Day 1 판단은 이 문서 기준으로 이어가면 됩니다.",
+        ...summaryLines,
+        "다음 액션: 이 경로들을 BIP 설정에 반영하고 Day 1 판단은 확인된 근거 기준으로 이어가면 됩니다.",
       ]
     : [
         "로컬 workspace에서 ICP/VALUES/GOAL/SPEC 문서를 아직 찾지 못했습니다.",
@@ -6597,7 +6655,7 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
     "- sheet: SHEET.md, SHEETS.md, or BIP_SHEET.md",
     "",
     "Also infer an onboardingHypothesis for the first user-facing question:",
-    '- productName: display product/project name without platform/form-factor suffixes; for example README "# agentic30 Mac" should return "Agentic30"',
+    '- productName: display product/project name exactly as shown by README/docs/package after generic cleanup; for example README "# agentic30 Mac" should return "agentic30 Mac"',
     "- projectKind: short snake_case product type such as mac_app, web_app, developer_tool, node_app, strategy_docs, or unknown",
     "- targetUser: the current customer/ICP definition visible from docs, in Korean when possible",
     "- problem: the concrete user pain/problem the product claims to solve; do not infer from tech stack alone",
@@ -6684,9 +6742,9 @@ function broadcastWorkspaceScanProgress(scanRoot, progressText) {
 }
 
 function workspaceScanProviderLabel(provider, model) {
-  if (provider === "claude") return `Claude Haiku 4.5 (${model})`;
+  if (provider === "claude") return `Claude Sonnet 4.6 (${model})`;
   if (provider === "codex") return `GPT 5.4 Mini (${model})`;
-  if (provider === "gemini") return `Gemini 2.5 Flash (${model})`;
+  if (provider === "gemini") return `Gemini 3.5 Flash (${model})`;
   return `${provider} (${model})`;
 }
 
@@ -6781,67 +6839,10 @@ function truncateWorkspaceScanProgress(text, maxLength = 220) {
 }
 
 async function findWorkspaceDocsLocally(scanRoot) {
-  const targets = {
-    icp: ["icp.md"],
-    spec: ["spec.md"],
-    values: ["values.md", "principles.md", "product_values.md", "product-values.md"],
-    designSystem: ["design.md", "design_system.md", "design-system.md"],
-    adr: ["adr.md"],
-    goal: ["goal.md"],
-    docs: ["docs.md", "readme.md", "index.md"],
-    sheet: ["sheet.md", "sheets.md", "bip_sheet.md"],
-  };
-  const result = emptyWorkspaceScanResult();
-  const queue = [{ absolute: scanRoot, relative: "", depth: 0 }];
-  let visited = 0;
-
-  while (queue.length > 0 && visited < 8000) {
-    const current = queue.shift();
-    visited += 1;
-    let entries = [];
-    try {
-      entries = await fs.readdir(current.absolute, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-
-    for (const entry of entries) {
-      if (shouldSkipWorkspaceScanEntry(entry.name)) continue;
-      const relativePath = current.relative ? path.posix.join(current.relative, entry.name) : entry.name;
-      const absolutePath = path.join(current.absolute, entry.name);
-      if (entry.isDirectory()) {
-        if (current.depth < 6) {
-          queue.push({ absolute: absolutePath, relative: relativePath, depth: current.depth + 1 });
-        }
-        continue;
-    }
-      if (!entry.isFile()) continue;
-      const filename = entry.name.toLowerCase();
-      for (const [key, names] of Object.entries(targets)) {
-        if (!result[key] && names.includes(filename)) {
-          result[key] = relativePath;
-        }
-    }
-    }
-  }
-
-  return result;
-}
-
-function shouldSkipWorkspaceScanEntry(name) {
-  return [
-    ".git",
-    ".next",
-    ".turbo",
-    ".vercel",
-    "build",
-    "coverage",
-    "dist",
-    "DerivedData",
-    "node_modules",
-    "Pods",
-    "vendor",
-  ].includes(name);
+  const workspaceEvidence = await extractWorkspaceEvidence(scanRoot, {
+    includeSource: false,
+  });
+  return normalizeWorkspaceScanDocs(workspaceEvidence.docs);
 }
 
 function parseWorkspaceScanText(text) {
@@ -6864,16 +6865,24 @@ function emptyWorkspaceScanResult() {
   };
 }
 
-function normalizeWorkspaceScanResult(input, scanRoot) {
+function normalizeWorkspaceScanDocs(docs = {}) {
   const result = emptyWorkspaceScanResult();
-  if (!input || typeof input !== "object") return result;
   for (const key of Object.keys(result)) {
-    result[key] = normalizeWorkspaceScanPath(input[key], scanRoot);
+    result[key] = typeof docs?.[key] === "string" && docs[key].trim() ? docs[key].trim() : null;
   }
   return result;
 }
 
-function normalizeWorkspaceScanPath(value, scanRoot) {
+function normalizeWorkspaceScanResult(input, scanRoot) {
+  const result = emptyWorkspaceScanResult();
+  if (!input || typeof input !== "object") return result;
+  for (const key of Object.keys(result)) {
+    result[key] = normalizeWorkspaceScanPath(input[key], scanRoot, key);
+  }
+  return result;
+}
+
+function normalizeWorkspaceScanPath(value, scanRoot, role = "") {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   if (!trimmed || trimmed.toLowerCase() === "null") return null;
@@ -6882,24 +6891,57 @@ function normalizeWorkspaceScanPath(value, scanRoot) {
   if (!resolved.startsWith(`${path.resolve(scanRoot)}${path.sep}`) && resolved !== path.resolve(scanRoot)) {
     return null;
   }
-  if (!fsSync.existsSync(resolved)) return null;
+  try {
+    const stat = fsSync.statSync(resolved);
+    if (!stat.isFile() || !isWorkspaceScanTextPath(trimmed, role)) return null;
+  } catch {
+    return null;
+  }
   return path.relative(scanRoot, resolved).split(path.sep).join(path.posix.sep);
 }
 
+function isWorkspaceScanTextPath(relativePath, role = "") {
+  const value = String(relativePath || "");
+  if (role === "sheet") return /\.(?:md|mdx|txt|rst|adoc|json|yaml|yml)$/i.test(value);
+  return /\.(?:md|mdx|txt|rst|adoc)$/i.test(value);
+}
+
+async function mergeWorkspaceScanResultsForRoot(scanRoot, ...results) {
+  const scanPaths = Object.fromEntries(Object.keys(emptyWorkspaceScanResult()).map((key) => [
+    key,
+    results
+      .map((result) => result?.[key])
+      .filter((value) => typeof value === "string" && value.trim()),
+  ]));
+  const workspaceEvidence = await extractWorkspaceEvidence(scanRoot, {
+    scanPaths,
+    includeSource: false,
+  }).catch(() => null);
+  if (workspaceEvidence?.docs) return normalizeWorkspaceScanDocs(workspaceEvidence.docs);
+  return mergeWorkspaceScanResults(...results);
+}
+
 function mergeWorkspaceScanResults(...results) {
-  return results.reduce((merged, result) => {
-    if (!result) return merged;
-    return {
-      icp: merged.icp || result.icp || null,
-      spec: merged.spec || result.spec || null,
-      values: merged.values || result.values || null,
-      designSystem: merged.designSystem || result.designSystem || null,
-      adr: merged.adr || result.adr || null,
-      goal: merged.goal || result.goal || null,
-      docs: merged.docs || result.docs || null,
-      sheet: merged.sheet || result.sheet || null,
-    };
-  }, emptyWorkspaceScanResult());
+  const merged = emptyWorkspaceScanResult();
+  for (const key of Object.keys(merged)) {
+    const candidates = results
+      .map((result) => result?.[key])
+      .filter((value) => typeof value === "string" && value.trim())
+      .map((value) => String(value).trim());
+    candidates.sort((a, b) => workspaceScanPathScore(b, key) - workspaceScanPathScore(a, key) || a.localeCompare(b));
+    merged[key] = candidates[0] || null;
+  }
+  return merged;
+}
+
+function workspaceScanPathScore(relativePath, role) {
+  const normalized = String(relativePath || "").toLowerCase();
+  let score = 0;
+  if (normalized.startsWith("docs/")) score += 20;
+  if (normalized === `docs/${role.toLowerCase()}.md`) score += 60;
+  if (path.posix.basename(normalized) === `${role.toLowerCase()}.md`) score += 35;
+  if (role === "docs" && /^readme\.(md|mdx|txt|rst)$/i.test(path.posix.basename(normalized))) score += 60;
+  return score;
 }
 
 function countWorkspaceScanResults(result) {
@@ -6916,7 +6958,7 @@ function countWorkspaceScanResults(result) {
 }
 
 /**
- * LLM-enhanced alignment plan follows the same non-blocking pattern as the
+ * Frontier-enhanced alignment plan follows the same non-blocking pattern as the
  * Day 1 deterministic plan already included in workspace_scan_result. This
  * event only refreshes the UI if a richer valid plan arrives; the legacy
  * day1IcpPlan remains attached as a compatibility fallback.
@@ -6925,13 +6967,19 @@ function triggerDay1AlignmentPlanBroadcast({ scanRoot, deterministicPlan, compat
   if (!scanRoot || !deterministicPlan) return;
   if (process.env.AGENTIC30_TEST_STUB_PROVIDER === "1") return;
   Promise.resolve()
-    .then(() => composeDay1AlignmentPlan({
-      workspaceRoot: scanRoot,
-      deterministicPlan,
-      queryImpl: query,
-    }))
+    .then(async () => {
+      const frontierResults = await runDay1ChoiceFrontierSynthesis({
+        scanRoot,
+        deterministicPlan,
+      });
+      return composeDay1AlignmentPlan({
+        workspaceRoot: scanRoot,
+        deterministicPlan,
+        frontierResults,
+      });
+    })
     .then((plan) => {
-      if (!plan) return;
+      if (!plan || plan.source === "deterministic") return;
       broadcast({
         type: "workspace_day1_alignment_plan_result",
         scanRoot,
@@ -6945,6 +6993,100 @@ function triggerDay1AlignmentPlanBroadcast({ scanRoot, deterministicPlan, compat
         scan_root: scanRoot,
       });
     });
+}
+
+async function runDay1ChoiceFrontierSynthesis({ scanRoot, deterministicPlan }) {
+  const providers = [
+    { provider: "claude", model: DAY1_CHOICE_CLAUDE_MODEL },
+    { provider: "codex", model: DAY1_CHOICE_CODEX_MODEL },
+    { provider: "gemini", model: DAY1_CHOICE_GEMINI_MODEL },
+  ];
+  broadcastWorkspaceScanProgress(scanRoot, "frontier 선택지 생성 중");
+  const prompt = buildDay1AlignmentComposerPrompt(deterministicPlan);
+  const results = await Promise.allSettled(
+    providers.map(({ provider, model }) =>
+      runDay1ChoiceFrontierProvider({
+        provider,
+        model,
+        scanRoot,
+        prompt,
+      })
+    ),
+  );
+  const fulfilled = results
+    .filter((result) => result.status === "fulfilled" && result.value)
+    .map((result) => result.value);
+  if (fulfilled.length) {
+    telemetry.captureEvent("mac_sidecar_day1_choice_frontier_completed", {
+      scan_root: scanRoot,
+      provider_count: fulfilled.length,
+      claude_model: DAY1_CHOICE_CLAUDE_MODEL,
+      codex_model: DAY1_CHOICE_CODEX_MODEL,
+      gemini_model: DAY1_CHOICE_GEMINI_MODEL,
+    });
+  }
+  return fulfilled;
+}
+
+async function runDay1ChoiceFrontierProvider({ provider, model, scanRoot, prompt }) {
+  const authState = getProviderAuthState(provider);
+  if (!authState.available) {
+    telemetry.captureEvent("mac_sidecar_day1_choice_frontier_provider_skipped", {
+      provider,
+      model,
+      reason: authState.source,
+    });
+    return null;
+  }
+
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), DAY1_CHOICE_PROVIDER_TIMEOUT_MS);
+  let responseText = "";
+  try {
+    await runProviderStream({
+      provider,
+      prompt,
+      model,
+      workspaceRoot: scanRoot,
+      abortController,
+      executionMode: "idd_question_synthesis",
+      systemPromptOverride: [
+        "You synthesize high-quality Day 1 customer-discovery choices for agentic30.",
+        "Work only from the deterministic plan and evidence embedded in the prompt.",
+        "Do not use tools, inspect files, browse the web, or ask follow-up questions.",
+        "Return only valid JSON matching the requested schema.",
+      ].join("\n"),
+      onTextDelta: (text) => {
+        responseText += text;
+      },
+      onTextReplace: (text) => {
+        responseText = text;
+      },
+      onRunEvent: (event) => {
+        if (event.once) return;
+        telemetry.captureEvent("mac_sidecar_day1_choice_frontier_phase", {
+          provider,
+          model,
+          phase: event.phase,
+        });
+      },
+    });
+    return {
+      provider,
+      model,
+      text: responseText,
+    };
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "runDay1ChoiceFrontierProvider",
+      provider,
+      model,
+      scan_root: scanRoot,
+    });
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function updateIntegrationSettings(integrations = {}) {

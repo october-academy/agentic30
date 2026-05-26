@@ -34,8 +34,9 @@ test("workspace setup request_emit envelopes are host-routed and completion wait
     assert.equal(scanResult.day1Context, undefined);
     assert.equal(scanResult.composedOpening, undefined);
     assert.equal(scanResult.day1AlignmentPlan?.schemaVersion, 1);
-    assert.equal(scanResult.day1AlignmentPlan?.components?.icp?.title, "ICP");
-    assert.equal(scanResult.day1AlignmentPlan?.components?.painPoint?.title, "Pain Point");
+    assert.equal(scanResult.day1AlignmentPlan?.components?.icp?.title, "고객");
+    assert.equal(scanResult.day1AlignmentPlan?.components?.painPoint?.title, "문제");
+    assert.equal(scanResult.day1AlignmentPlan?.components?.outcome?.title, "확인할 행동");
     assert.equal(typeof scanResult.day1AlignmentPlan?.qualityGate?.score, "number");
     assert.equal(scanResult.day1IcpPlan?.schemaVersion, 1);
     assert.ok(Array.isArray(scanResult.day1IcpPlan?.questions));
