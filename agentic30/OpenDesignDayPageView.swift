@@ -1253,7 +1253,7 @@ struct OpenDesignDayContent {
     nonisolated private static func rewriteStageMetaOptionDescription(_ value: String) -> String {
         let normalized = normalizedOptionDescription(value)
         if normalized.contains("다음시장신호") || normalized.contains("다음검증") {
-            return "이번 주 대화에서 확인합니다."
+            return ""
         }
         return value
     }
@@ -1270,6 +1270,7 @@ struct OpenDesignDayContent {
             "바로대화가능한조건",
             "시간돈리스크비용",
             "사건대안지불의향확인",
+            "이번주대화에서확인합니다",
         ]
         if genericValues.contains(normalized) { return true }
 
@@ -1625,11 +1626,16 @@ struct OpenDesignDayContent {
             guard let value = step.selectedAnswerTitle(in: interaction) else {
                 return nil
             }
+            let selectedOption = step.selectedOption(in: interaction)
+            let isFreeform = step.selectedAnswerIsFreeform(in: interaction)
             return OpenDesignDaySelectedAnswer(
                 dimension: step.dimension.isEmpty ? step.title : step.dimension,
                 title: step.title,
                 value: value,
-                isAntiSignal: step.selectedAnswerIsAntiSignal(in: interaction)
+                isAntiSignal: step.selectedAnswerIsAntiSignal(in: interaction),
+                evidenceLabel: evidenceLabel(for: step, selectedOption: selectedOption, isFreeform: isFreeform),
+                evidenceLimited: selectedOption?.evidenceLimited == true || isFreeform,
+                isFreeform: isFreeform
             )
         }
         return OpenDesignDayDraft(
@@ -1642,9 +1648,71 @@ struct OpenDesignDayContent {
             alignmentPlan: alignmentPlan
         )
     }
+
+    private func evidenceLabel(
+        for step: InterviewStep,
+        selectedOption: InterviewOption?,
+        isFreeform: Bool
+    ) -> String? {
+        if isFreeform {
+            return "직접 입력"
+        }
+        if let optionEvidence = Self.cleanNonEmpty(selectedOption?.evidenceLabel) {
+            return optionEvidence
+        }
+        if selectedOption?.evidenceLimited == true {
+            return "근거 부족"
+        }
+        let refs = alignmentEvidenceRefs(for: step.dimension)
+        guard !refs.isEmpty else { return nil }
+        return "근거: \(refs.prefix(2).joined(separator: ", "))"
+    }
+
+    private func alignmentEvidenceRefs(for dimension: String) -> [String] {
+        guard let alignmentPlan else { return [] }
+        let evidence: [String]
+        switch dimension {
+        case "icp":
+            evidence = alignmentPlan.components.icp.evidence
+        case "pain_point", "pain":
+            evidence = alignmentPlan.components.painPoint.evidence
+        case "outcome":
+            evidence = alignmentPlan.components.outcome.evidence
+        default:
+            evidence = []
+        }
+        let componentRefs = evidence.compactMap(Self.compactEvidenceReference)
+        if !componentRefs.isEmpty {
+            return componentRefs
+        }
+        return alignmentPlan.signals.evidenceRefs.map(\.path).compactMap(Self.compactEvidenceReference)
+    }
+
+    nonisolated private static func compactEvidenceReference(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let beforeColon = trimmed.split(separator: ":", maxSplits: 1).first.map(String.init) ?? trimmed
+        let firstToken = beforeColon.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? beforeColon
+        let cleaned = firstToken
+            .trimmingCharacters(in: CharacterSet(charactersIn: "`[](),"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? nil : cleaned
+    }
 }
 
 private extension OpenDesignDayContent.InterviewStep {
+    func selectedOption(in interaction: OpenDesignDayInteractionState) -> OpenDesignDayContent.InterviewOption? {
+        guard let selectedID = interaction.selectedChoices[id],
+              selectedID != OpenDesignDayInteractionState.freeformChoiceID else {
+            return nil
+        }
+        return options.first(where: { $0.id == selectedID })
+    }
+
+    func selectedAnswerIsFreeform(in interaction: OpenDesignDayInteractionState) -> Bool {
+        interaction.selectedChoices[id] == OpenDesignDayInteractionState.freeformChoiceID
+    }
+
     func selectedAnswerTitle(in interaction: OpenDesignDayInteractionState) -> String? {
         guard let selectedID = interaction.selectedChoices[id] else { return nil }
         if selectedID == OpenDesignDayInteractionState.freeformChoiceID {
@@ -1665,11 +1733,7 @@ private extension OpenDesignDayContent.InterviewStep {
     }
 
     func selectedAnswerIsAntiSignal(in interaction: OpenDesignDayInteractionState) -> Bool {
-        guard let selectedID = interaction.selectedChoices[id],
-              selectedID != OpenDesignDayInteractionState.freeformChoiceID else {
-            return false
-        }
-        return options.first(where: { $0.id == selectedID })?.isAntiSignal == true
+        selectedOption(in: interaction)?.isAntiSignal == true
     }
 }
 
@@ -2016,6 +2080,33 @@ struct OpenDesignDayInteractionState: Equatable {
         self.totalInterviewSteps = totalInterviewSteps
     }
 
+    func synchronized(totalInterviewSteps newTotalInterviewSteps: Int) -> OpenDesignDayInteractionState {
+        var copy = self
+        copy.synchronize(totalInterviewSteps: newTotalInterviewSteps)
+        return copy
+    }
+
+    mutating func synchronize(totalInterviewSteps newTotalInterviewSteps: Int) {
+        let boundedTotal = max(1, newTotalInterviewSteps)
+        totalInterviewSteps = boundedTotal
+
+        let validStepIDs = Set(validInterviewStepIDs(for: boundedTotal))
+        selectedChoices = selectedChoices.filter { validStepIDs.contains($0.key) }
+        submittedChoices = submittedChoices.filter { validStepIDs.contains($0.key) }
+        freeformAnswers = freeformAnswers.filter { validStepIDs.contains($0.key) }
+        submittedSteps = submittedSteps.intersection(validStepIDs)
+        revisionSteps = revisionSteps.intersection(validStepIDs)
+        lockedPrefillStepIDs = lockedPrefillStepIDs.intersection(validStepIDs)
+
+        activeStepID = min(max(activeStepID, 0), finalStepID)
+        maxUnlockedStepID = min(max(maxUnlockedStepID, 0), finalStepID)
+        if !validStepIDs.contains(1) {
+            freeformAnswer = ""
+        } else if let firstFreeformAnswer = freeformAnswers[1] {
+            freeformAnswer = firstFreeformAnswer
+        }
+    }
+
     var finalStepID: Int {
         totalInterviewSteps + 1
     }
@@ -2332,6 +2423,35 @@ struct OpenDesignDayInteractionState: Equatable {
         }
     }
 
+    private func validInterviewStepIDs(for total: Int) -> [Int] {
+        guard total > 0 else { return [] }
+        return Array(1...total)
+    }
+}
+
+struct OpenDesignDayInteractionKey: Hashable {
+    let workspaceRoot: String
+    let dayNumber: Int
+}
+
+struct OpenDesignDayInteractionStateCache: Equatable {
+    private var states: [OpenDesignDayInteractionKey: OpenDesignDayInteractionState] = [:]
+
+    func state(
+        for key: OpenDesignDayInteractionKey,
+        totalInterviewSteps: Int
+    ) -> OpenDesignDayInteractionState {
+        let existing = states[key] ?? OpenDesignDayInteractionState(totalInterviewSteps: totalInterviewSteps)
+        return existing.synchronized(totalInterviewSteps: totalInterviewSteps)
+    }
+
+    mutating func update(
+        _ state: OpenDesignDayInteractionState,
+        for key: OpenDesignDayInteractionKey,
+        totalInterviewSteps: Int
+    ) {
+        states[key] = state.synchronized(totalInterviewSteps: totalInterviewSteps)
+    }
 }
 
 struct OpenDesignDaySelectedAnswer: Equatable {
@@ -2339,6 +2459,34 @@ struct OpenDesignDaySelectedAnswer: Equatable {
     let title: String
     let value: String
     let isAntiSignal: Bool
+    let evidenceLabel: String?
+    let evidenceLimited: Bool
+    let isFreeform: Bool
+
+    init(
+        dimension: String,
+        title: String,
+        value: String,
+        isAntiSignal: Bool,
+        evidenceLabel: String? = nil,
+        evidenceLimited: Bool = false,
+        isFreeform: Bool = false
+    ) {
+        self.dimension = dimension
+        self.title = title
+        self.value = value
+        self.isAntiSignal = isAntiSignal
+        self.evidenceLabel = evidenceLabel
+        self.evidenceLimited = evidenceLimited
+        self.isFreeform = isFreeform
+    }
+}
+
+private struct OpenDesignDayAlignmentSnapshot: Equatable {
+    let goal: String
+    let icp: String
+    let pain: String
+    let outcome: String
 }
 
 struct OpenDesignDayDraft: Equatable {
@@ -2357,7 +2505,7 @@ struct OpenDesignDayDraft: Equatable {
     var recommendation: String {
         if let alignmentPlan {
             if alignmentPlan.qualityGate.passed {
-                return alignmentPlan.day2Handoff.nextDayPrompt
+                return alignmentDay2ValidationText(plan: alignmentPlan)
             }
             return alignmentPlan.qualityGate.failGate
         }
@@ -2434,53 +2582,160 @@ struct OpenDesignDayDraft: Equatable {
     }
 
     private func alignmentMarkdown(plan: Day1AlignmentPlan) -> String {
-        let selectedLines = selectedAnswers.isEmpty
-            ? ["- 아직 선택된 답변 없음"]
-            : selectedAnswers.map { "- \($0.title): \($0.value)" }
+        let snapshot = alignmentSnapshot(for: plan)
+        let selectedLines = alignmentSelectionRecordLines(plan: plan)
+        let assumptionLines = alignmentRemainingAssumptionLines(plan: plan)
         let criteria = plan.qualityGate.criteria.map {
             "- \($0.label): \(String(format: "%.1f", $0.score))/\(String(format: "%.1f", $0.maxScore)) — \($0.detail)"
         }
         return """
         # Day 1 핵심 가설
 
+        > Source: Day 1 alignment flow
+        > Based on: workspace scan + user selections
         > Write target: docs/GOAL.md, docs/ICP.md, docs/SPEC.md
-        > Source: Day 1 goal alignment flow
 
-        ## 목표
-        \(plan.projectGoal)
-
-        ## 고객
-        \(plan.alignmentStatement.icp)
-
-        ## 문제
-        \(plan.alignmentStatement.painPoint)
-
-        ## 확인할 행동
-        \(plan.alignmentStatement.outcome)
+        ## 확정
+        - 목표: \(snapshot.goal)
+        - 고객: \(snapshot.icp)
+        - 문제: \(snapshot.pain)
+        - 확인할 행동: \(snapshot.outcome)
 
         ## 핵심 가설 문장
         \(alignmentDisplayStatement(for: plan))
 
-        ## Day 1 selections
+        ## 선택 기록
         \(selectedLines.joined(separator: "\n"))
+
+        ## 남은 가정
+        \(assumptionLines.joined(separator: "\n"))
 
         ## Quality Gate
         Score: \(String(format: "%.1f", plan.qualityGate.score))/10 · \(plan.qualityGate.label)
         \(criteria.joined(separator: "\n"))
 
-        ## Day 2 Handoff
-        \(plan.day2Handoff.focus)
-        \(plan.day2Handoff.nextDayPrompt)
+        ## Day 2 검증 기준
+        \(alignmentDay2ValidationText(plan: plan))
         """
     }
 
     private func alignmentDisplayStatement(for plan: Day1AlignmentPlan) -> String {
-        [
-            "목표: \(plan.projectGoal)",
-            "고객: \(plan.alignmentStatement.icp)",
-            "문제: \(plan.alignmentStatement.painPoint)",
-            "확인할 행동: \(plan.alignmentStatement.outcome)",
+        let snapshot = alignmentSnapshot(for: plan)
+        return [
+            "목표: \(snapshot.goal)",
+            "고객: \(snapshot.icp)",
+            "문제: \(snapshot.pain)",
+            "확인할 행동: \(snapshot.outcome)",
         ].joined(separator: " / ")
+    }
+
+    private func alignmentSnapshot(for plan: Day1AlignmentPlan) -> OpenDesignDayAlignmentSnapshot {
+        OpenDesignDayAlignmentSnapshot(
+            goal: plan.projectGoal,
+            icp: selectedAlignmentValue(for: ["icp"], fallback: plan.alignmentStatement.icp),
+            pain: selectedAlignmentValue(for: ["pain_point", "pain"], fallback: plan.alignmentStatement.painPoint),
+            outcome: selectedAlignmentValue(for: ["outcome"], fallback: plan.alignmentStatement.outcome)
+        )
+    }
+
+    private func selectedAlignmentValue(for dimensions: Set<String>, fallback: String) -> String {
+        guard let selected = selectedAlignmentAnswer(for: dimensions)?.value.trimmingCharacters(in: .whitespacesAndNewlines),
+              !selected.isEmpty else {
+            return fallback
+        }
+        return selected
+    }
+
+    private func selectedAlignmentAnswer(for dimensions: Set<String>) -> OpenDesignDaySelectedAnswer? {
+        selectedAnswers.first { answer in
+            dimensions.contains(answer.dimension.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+        }
+    }
+
+    private func alignmentSelectionRecordLines(plan: Day1AlignmentPlan) -> [String] {
+        let specs: [(label: String, dimensions: Set<String>, fallback: String, evidence: String)] = [
+            ("고객", ["icp"], plan.alignmentStatement.icp, fallbackEvidenceLabel(plan: plan, dimension: "icp")),
+            ("문제", ["pain_point", "pain"], plan.alignmentStatement.painPoint, fallbackEvidenceLabel(plan: plan, dimension: "pain_point")),
+            ("확인할 행동", ["outcome"], plan.alignmentStatement.outcome, fallbackEvidenceLabel(plan: plan, dimension: "outcome")),
+        ]
+        return specs.map { spec in
+            guard let answer = selectedAlignmentAnswer(for: spec.dimensions) else {
+                return "- \(spec.label): \(spec.fallback) · \(spec.evidence) · scan 후보"
+            }
+            let evidence = displayEvidenceLabel(answer.evidenceLabel) ?? spec.evidence
+            let freeform = answer.isFreeform ? " · 직접 입력" : ""
+            let scanCandidate = answer.value == spec.fallback ? "" : " · scan 후보: \(spec.fallback)"
+            return "- \(spec.label): \(answer.value) · \(evidence)\(freeform)\(scanCandidate)"
+        }
+    }
+
+    private func alignmentRemainingAssumptionLines(plan: Day1AlignmentPlan) -> [String] {
+        var assumptions = plan.signals.missingAssumptions
+        assumptions.append(contentsOf: plan.components.icp.missingAssumptions)
+        assumptions.append(contentsOf: plan.components.painPoint.missingAssumptions)
+        assumptions.append(contentsOf: plan.components.outcome.missingAssumptions)
+        let normalized = assumptions
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        var seen = Set<String>()
+        let unique = normalized.filter { assumption in
+            let key = assumption.lowercased()
+            guard !seen.contains(key) else { return false }
+            seen.insert(key)
+            return true
+        }
+        if unique.isEmpty {
+            return ["- 현재 남은 가정 없음"]
+        }
+        return unique.map { "- \($0)" }
+    }
+
+    private func alignmentDay2ValidationText(plan: Day1AlignmentPlan) -> String {
+        let snapshot = alignmentSnapshot(for: plan)
+        return "\(plan.day2Handoff.nextDayPrompt) 기준: 고객 \"\(snapshot.icp)\"의 문제 \"\(snapshot.pain)\"를 \"\(snapshot.outcome)\"으로 확인한다."
+    }
+
+    private func fallbackEvidenceLabel(plan: Day1AlignmentPlan, dimension: String) -> String {
+        let evidence: [String]
+        switch dimension {
+        case "icp":
+            evidence = plan.components.icp.evidence
+        case "pain_point", "pain":
+            evidence = plan.components.painPoint.evidence
+        case "outcome":
+            evidence = plan.components.outcome.evidence
+        default:
+            evidence = []
+        }
+        let refs = evidence.compactMap(Self.compactEvidenceReference)
+        if !refs.isEmpty {
+            return "근거: \(refs.prefix(2).joined(separator: ", "))"
+        }
+        let signalRefs = plan.signals.evidenceRefs.map(\.path).compactMap(Self.compactEvidenceReference)
+        if !signalRefs.isEmpty {
+            return "근거: \(signalRefs.prefix(2).joined(separator: ", "))"
+        }
+        return "근거 부족"
+    }
+
+    private func displayEvidenceLabel(_ label: String?) -> String? {
+        let trimmed = label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed == "직접 입력" || trimmed == "근거 부족" || trimmed.hasPrefix("근거") {
+            return trimmed
+        }
+        return "근거: \(trimmed)"
+    }
+
+    nonisolated private static func compactEvidenceReference(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let beforeColon = trimmed.split(separator: ":", maxSplits: 1).first.map(String.init) ?? trimmed
+        let firstToken = beforeColon.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? beforeColon
+        let cleaned = firstToken
+            .trimmingCharacters(in: CharacterSet(charactersIn: "`[](),"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? nil : cleaned
     }
 
     private func personalizedMarkdown(plan: Day1IcpPlan) -> String {
@@ -2731,12 +2986,18 @@ struct OpenDesignDayPageView: View {
     let refreshBipResearch: () -> Void
     let prepareBipResearch: () -> Void
     let openNewsSettings: () -> Void
+    let day1DocPreviews: [IddDocPreview]
+    let day1HandoffPromptCard: AnyView?
+    let activeDay1HandoffDocType: String?
+    let pendingDay1HandoffDocType: String?
+    let day1HandoffError: String?
+    let startDay1DocHandoff: (String, [String: Any]) -> Void
     let completeDay: () -> Void
     let advanceToNextDay: () -> Void
     let selectDay: (Int) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var interaction = OpenDesignDayInteractionState()
+    @Binding private var interaction: OpenDesignDayInteractionState
     @Binding private var selectedReferencePage: OpenDesignReferencePageKind?
     @State private var isSearchPresented = false
     @State private var searchQuery = ""
@@ -2750,6 +3011,7 @@ struct OpenDesignDayPageView: View {
 
     init(
         content: OpenDesignDayContent = .day1,
+        interaction: Binding<OpenDesignDayInteractionState>,
         selectedReferencePage: Binding<OpenDesignReferencePageKind?> = .constant(nil),
         openSettings: @escaping () -> Void,
         submitStructuredPromptChoice: @escaping (OpenDesignDayAnswerSubmission) -> Void = { _ in },
@@ -2760,11 +3022,18 @@ struct OpenDesignDayPageView: View {
         refreshBipResearch: @escaping () -> Void = {},
         prepareBipResearch: @escaping () -> Void = {},
         openNewsSettings: @escaping () -> Void = {},
+        day1DocPreviews: [IddDocPreview] = [],
+        day1HandoffPromptCard: AnyView? = nil,
+        activeDay1HandoffDocType: String? = nil,
+        pendingDay1HandoffDocType: String? = nil,
+        day1HandoffError: String? = nil,
+        startDay1DocHandoff: @escaping (String, [String: Any]) -> Void = { _, _ in },
         completeDay: @escaping () -> Void = {},
         advanceToNextDay: @escaping () -> Void = {},
         selectDay: @escaping (Int) -> Void = { _ in }
     ) {
         self.content = content
+        _interaction = interaction
         _selectedReferencePage = selectedReferencePage
         self.openSettings = openSettings
         self.submitStructuredPromptChoice = submitStructuredPromptChoice
@@ -2775,12 +3044,15 @@ struct OpenDesignDayPageView: View {
         self.refreshBipResearch = refreshBipResearch
         self.prepareBipResearch = prepareBipResearch
         self.openNewsSettings = openNewsSettings
+        self.day1DocPreviews = day1DocPreviews
+        self.day1HandoffPromptCard = day1HandoffPromptCard
+        self.activeDay1HandoffDocType = activeDay1HandoffDocType
+        self.pendingDay1HandoffDocType = pendingDay1HandoffDocType
+        self.day1HandoffError = day1HandoffError
+        self.startDay1DocHandoff = startDay1DocHandoff
         self.completeDay = completeDay
         self.advanceToNextDay = advanceToNextDay
         self.selectDay = selectDay
-        _interaction = State(initialValue: OpenDesignDayInteractionState(
-            totalInterviewSteps: content.interviewSteps.count
-        ))
     }
 
     private var searchResults: [OpenDesignDayContent.SearchItem] {
@@ -2815,6 +3087,12 @@ struct OpenDesignDayPageView: View {
                     refreshBipResearch: refreshBipResearch,
                     prepareBipResearch: prepareBipResearch,
                     openNewsSettings: openNewsSettings,
+                    day1DocPreviews: day1DocPreviews,
+                    day1HandoffPromptCard: day1HandoffPromptCard,
+                    activeDay1HandoffDocType: activeDay1HandoffDocType,
+                    pendingDay1HandoffDocType: pendingDay1HandoffDocType,
+                    day1HandoffError: day1HandoffError,
+                    startDay1DocHandoff: startDay1DocHandoff,
                     submitStep: submitStep,
                     acceptMission: acceptMission,
                     completeDayAction: completeDayAction,
@@ -3338,6 +3616,12 @@ struct OpenDesignDayShell: View {
     let refreshBipResearch: () -> Void
     let prepareBipResearch: () -> Void
     let openNewsSettings: () -> Void
+    let day1DocPreviews: [IddDocPreview]
+    let day1HandoffPromptCard: AnyView?
+    let activeDay1HandoffDocType: String?
+    let pendingDay1HandoffDocType: String?
+    let day1HandoffError: String?
+    let startDay1DocHandoff: (String, [String: Any]) -> Void
     let submitStep: (OpenDesignDayContent.InterviewStep, Int) -> Void
     let acceptMission: () -> Void
     let completeDayAction: () -> Void
@@ -3446,6 +3730,12 @@ struct OpenDesignDayShell: View {
                             acceptMission: acceptMission,
                             completeDayAction: completeDayAction,
                             advanceToNextDay: advanceToNextDay,
+                            day1DocPreviews: day1DocPreviews,
+                            day1HandoffPromptCard: day1HandoffPromptCard,
+                            activeDay1HandoffDocType: activeDay1HandoffDocType,
+                            pendingDay1HandoffDocType: pendingDay1HandoffDocType,
+                            day1HandoffError: day1HandoffError,
+                            startDay1DocHandoff: startDay1DocHandoff,
                             layout: layout
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -4329,6 +4619,148 @@ private func openDesignLooksLikeMarkdownDocumentReference(_ value: String) -> Bo
         of: #"(문서|매핑|루브릭|reference|참고|company|회사|source|docs?|alignment)"#,
         options: [.regularExpression, .caseInsensitive]
     ) != nil
+}
+
+func openDesignOptionTitleHighlightPhrases(_ phrases: [String], for title: String) -> [String] {
+    let cleanTitle = openDesignNormalizedOptionHighlightText(title)
+    guard !cleanTitle.isEmpty else { return [] }
+
+    var seen: Set<String> = []
+    var result: [String] = []
+    for phrase in OpenDesignDayContent.InterviewStep.normalizedHighlightPhrases(phrases) {
+        guard let readablePhrase = openDesignReadableOptionHighlightPhrase(phrase, in: cleanTitle),
+              openDesignIsUsableOptionTitleHighlightPhrase(readablePhrase, in: cleanTitle) else {
+            continue
+        }
+        let key = openDesignNormalizedOptionHighlightText(readablePhrase).lowercased()
+        if seen.insert(key).inserted {
+            result.append(readablePhrase)
+        }
+    }
+    return result
+}
+
+private func openDesignReadableOptionHighlightPhrase(_ phrase: String, in title: String) -> String? {
+    let cleanPhrase = openDesignNormalizedOptionHighlightText(phrase)
+    guard !cleanPhrase.isEmpty,
+          let range = title.range(of: cleanPhrase, options: [.caseInsensitive, .diacriticInsensitive]) else {
+        return nil
+    }
+    let readableRange = openDesignReadableOptionHighlightRange(range, in: title)
+    return openDesignNormalizedOptionHighlightText(String(title[readableRange]))
+}
+
+private func openDesignReadableOptionHighlightRange(
+    _ range: Range<String.Index>,
+    in text: String
+) -> Range<String.Index> {
+    if let delimiterRange = openDesignBalancedDelimiterRange(containing: range, in: text) {
+        return delimiterRange
+    }
+
+    var lower = range.lowerBound
+    var upper = range.upperBound
+
+    while lower > text.startIndex {
+        let previous = text.index(before: lower)
+        guard lower < text.endIndex,
+              openDesignIsHighlightTokenCharacter(text[previous]),
+              openDesignIsHighlightTokenCharacter(text[lower]) else {
+            break
+        }
+        lower = previous
+    }
+
+    while upper < text.endIndex {
+        let previous = text.index(before: upper)
+        guard openDesignIsHighlightTokenCharacter(text[previous]),
+              openDesignIsHighlightTokenCharacter(text[upper]) else {
+            break
+        }
+        upper = text.index(after: upper)
+    }
+
+    return lower..<upper
+}
+
+private func openDesignBalancedDelimiterRange(
+    containing range: Range<String.Index>,
+    in text: String
+) -> Range<String.Index>? {
+    let pairs: [Character: Character] = [
+        "(": ")",
+        "[": "]",
+        "{": "}",
+        "（": "）",
+        "［": "］",
+        "｛": "｝",
+    ]
+    let openerForCloser = Dictionary(uniqueKeysWithValues: pairs.map { ($0.value, $0.key) })
+    var stack: [(character: Character, index: String.Index)] = []
+    var matches: [Range<String.Index>] = []
+
+    for index in text.indices {
+        let character = text[index]
+        if pairs[character] != nil {
+            stack.append((character, index))
+            continue
+        }
+        guard let expectedOpen = openerForCloser[character],
+              let last = stack.last,
+              last.character == expectedOpen else {
+            continue
+        }
+        _ = stack.popLast()
+        let delimiterRange = last.index..<text.index(after: index)
+        if delimiterRange.lowerBound <= range.lowerBound,
+           delimiterRange.upperBound >= range.upperBound {
+            matches.append(delimiterRange)
+        }
+    }
+
+    return matches.min { lhs, rhs in
+        text.distance(from: lhs.lowerBound, to: lhs.upperBound) < text.distance(from: rhs.lowerBound, to: rhs.upperBound)
+    }
+}
+
+private func openDesignIsHighlightTokenCharacter(_ character: Character) -> Bool {
+    guard !character.isWhitespace else { return false }
+    return character.unicodeScalars.allSatisfy { scalar in
+        CharacterSet.alphanumerics.contains(scalar)
+            || scalar.value == 95
+            || (0xAC00...0xD7A3).contains(scalar.value)
+            || (0x1100...0x11FF).contains(scalar.value)
+            || (0x3130...0x318F).contains(scalar.value)
+    }
+}
+
+private func openDesignIsUsableOptionTitleHighlightPhrase(_ phrase: String, in title: String) -> Bool {
+    let cleanTitle = openDesignNormalizedOptionHighlightText(title)
+    let cleanPhrase = openDesignNormalizedOptionHighlightText(phrase)
+    guard !cleanTitle.isEmpty,
+          !cleanPhrase.isEmpty,
+          cleanTitle.localizedCaseInsensitiveContains(cleanPhrase) else {
+        return false
+    }
+
+    if cleanPhrase.caseInsensitiveCompare(cleanTitle) == .orderedSame {
+        return cleanTitle.count <= 14 && openDesignOptionHighlightWordCount(cleanTitle) <= 3
+    }
+
+    guard cleanPhrase.count <= 18 else { return false }
+    return Double(cleanPhrase.count) / Double(max(cleanTitle.count, 1)) <= 0.78
+}
+
+private func openDesignNormalizedOptionHighlightText(_ value: String) -> String {
+    value
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+}
+
+private func openDesignOptionHighlightWordCount(_ value: String) -> Int {
+    openDesignNormalizedOptionHighlightText(value)
+        .split(separator: " ")
+        .count
 }
 
 func openDesignHighlightedAttributedText(
@@ -5387,6 +5819,12 @@ private struct OpenDesignDayMainView: View {
     let acceptMission: () -> Void
     let completeDayAction: () -> Void
     let advanceToNextDay: () -> Void
+    let day1DocPreviews: [IddDocPreview]
+    let day1HandoffPromptCard: AnyView?
+    let activeDay1HandoffDocType: String?
+    let pendingDay1HandoffDocType: String?
+    let day1HandoffError: String?
+    let startDay1DocHandoff: (String, [String: Any]) -> Void
     let layout: OpenDesignDayLayoutMetrics
 
     @State private var introRevealStage = 0
@@ -5423,6 +5861,12 @@ private struct OpenDesignDayMainView: View {
                             freeformAnswer: freeformBinding(for: activeInterviewStep),
                             completeDayAction: completeDayAction,
                             advanceToNextDay: advanceToNextDay,
+                            day1DocPreviews: day1DocPreviews,
+                            day1HandoffPromptCard: day1HandoffPromptCard,
+                            activeDay1HandoffDocType: activeDay1HandoffDocType,
+                            pendingDay1HandoffDocType: pendingDay1HandoffDocType,
+                            day1HandoffError: day1HandoffError,
+                            startDay1DocHandoff: startDay1DocHandoff,
                             activateFreeformAnswer: activateFreeformAnswer,
                             previousAction: previousWorkflowStep,
                             nextAction: advanceWorkflowStep
@@ -5846,6 +6290,12 @@ private struct OpenDesignDayStepWorkspaceView: View {
     @Binding var freeformAnswer: String
     let completeDayAction: () -> Void
     let advanceToNextDay: () -> Void
+    let day1DocPreviews: [IddDocPreview]
+    let day1HandoffPromptCard: AnyView?
+    let activeDay1HandoffDocType: String?
+    let pendingDay1HandoffDocType: String?
+    let day1HandoffError: String?
+    let startDay1DocHandoff: (String, [String: Any]) -> Void
     let activateFreeformAnswer: (Int) -> Void
     let previousAction: () -> Void
     let nextAction: () -> Void
@@ -5900,7 +6350,13 @@ private struct OpenDesignDayStepWorkspaceView: View {
                     content: content,
                     interaction: $interaction,
                     completeDayAction: completeDayAction,
-                    advanceToNextDay: advanceToNextDay
+                    advanceToNextDay: advanceToNextDay,
+                    day1DocPreviews: day1DocPreviews,
+                    day1HandoffPromptCard: day1HandoffPromptCard,
+                    activeDay1HandoffDocType: activeDay1HandoffDocType,
+                    pendingDay1HandoffDocType: pendingDay1HandoffDocType,
+                    day1HandoffError: day1HandoffError,
+                    startDay1DocHandoff: startDay1DocHandoff
                 )
                 .transition(workflowPhaseTransition)
                 .overlay(alignment: .topLeading) {
@@ -6725,11 +7181,12 @@ private struct OpenDesignScanWarningCard: View {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(openDesignHighlightedAttributedText(
                         option.title,
-                        phrases: option.highlightPhrases,
+                        phrases: titleHighlightPhrases,
                         bodySize: 12.8,
                         bodyWeight: .semibold,
                         bodyColor: OpenDesignDayColor.fg,
-                        highlightWeight: .semibold
+                        highlightWeight: .semibold,
+                        highlightBackground: Color.clear
                     ))
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -6757,6 +7214,10 @@ private struct OpenDesignScanWarningCard: View {
         .accessibilityElement(children: .combine)
         .accessibilityValue("scan-needed")
         .accessibilityIdentifier(stepID == 1 ? "opendesign.day.icp.scanWarning" : "opendesign.day.interview.\(stepID).scanWarning")
+    }
+
+    private var titleHighlightPhrases: [String] {
+        openDesignOptionTitleHighlightPhrases(option.highlightPhrases, for: option.title)
     }
 }
 
@@ -6823,11 +7284,13 @@ private struct OpenDesignQuestionOptionTile: View {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(openDesignHighlightedAttributedText(
                             option.title,
-                            phrases: option.highlightPhrases,
+                            phrases: titleHighlightPhrases,
                             bodySize: 13.5,
                             bodyWeight: .semibold,
                             bodyColor: OpenDesignDayColor.fg,
-                            highlightWeight: .semibold
+                            highlightWeight: .semibold,
+                            highlightColor: tone,
+                            highlightBackground: Color.clear
                         ))
                             .lineLimit(nil)
                             .fixedSize(horizontal: false, vertical: true)
@@ -6898,6 +7361,10 @@ private struct OpenDesignQuestionOptionTile: View {
         if hasSubmittedStep { return "변경" }
         return option.tail
     }
+
+    private var titleHighlightPhrases: [String] {
+        openDesignOptionTitleHighlightPhrases(option.highlightPhrases, for: option.title)
+    }
 }
 
 private struct OpenDesignHypothesisSummaryRow: Identifiable {
@@ -6914,11 +7381,81 @@ private struct OpenDesignHypothesisSummaryRow: Identifiable {
     }
 }
 
+private struct OpenDesignDayDocumentStep: Identifiable {
+    let type: String
+    let title: String
+    let path: String
+    let status: String
+    let isUnlocked: Bool
+
+    var id: String { type }
+
+    var isWritten: Bool {
+        ["written", "written_with_assumptions", "approved"].contains(status)
+    }
+
+    var stateGlyph: String {
+        if isWritten { return "✓" }
+        return isUnlocked ? "•" : "–"
+    }
+
+    var detail: String {
+        switch status {
+        case "written": return "\(path) 저장됨"
+        case "written_with_assumptions": return "\(path) 저장됨 · 가정 남음"
+        case "approved": return "\(path) 승인됨"
+        case "drafted": return "\(path) 초안 준비"
+        case "writing": return "\(path) 저장 중"
+        case "error": return "\(path) 오류"
+        default: return isUnlocked ? "\(path) 작성 가능" : "이전 문서를 먼저 저장"
+        }
+    }
+
+    var actionLabel: String {
+        if isWritten { return "작성됨" }
+        return isUnlocked ? "\(title) 작성" : "잠금"
+    }
+
+    var accessibilityValue: String {
+        if isWritten { return "written" }
+        return isUnlocked ? "available" : "locked"
+    }
+
+    static func ordered(previews: [IddDocPreview]) -> [OpenDesignDayDocumentStep] {
+        let order = [
+            ("goal", "GOAL", "docs/GOAL.md"),
+            ("icp", "ICP", "docs/ICP.md"),
+            ("values", "VALUES", "docs/VALUES.md"),
+            ("spec", "SPEC", "docs/SPEC.md"),
+        ]
+        var previousWritten = true
+        return order.map { item in
+            let preview = previews.first(where: { $0.type == item.0 })
+            let status = preview?.status ?? "pending"
+            let step = OpenDesignDayDocumentStep(
+                type: item.0,
+                title: item.1,
+                path: preview?.path ?? item.2,
+                status: status,
+                isUnlocked: previousWritten
+            )
+            previousWritten = previousWritten && step.isWritten
+            return step
+        }
+    }
+}
+
 private struct OpenDesignHypothesisConfirmationCard: View {
     let content: OpenDesignDayContent
     @Binding var interaction: OpenDesignDayInteractionState
     let completeDayAction: () -> Void
     let advanceToNextDay: () -> Void
+    let day1DocPreviews: [IddDocPreview]
+    let day1HandoffPromptCard: AnyView?
+    let activeDay1HandoffDocType: String?
+    let pendingDay1HandoffDocType: String?
+    let day1HandoffError: String?
+    let startDay1DocHandoff: (String, [String: Any]) -> Void
 
     @State private var showsDetails = false
     @State private var isConfirmHovered = false
@@ -6968,6 +7505,14 @@ private struct OpenDesignHypothesisConfirmationCard: View {
             OpenDesignHypothesisSummaryRow(id: "pain", label: "문제", value: pain),
             OpenDesignHypothesisSummaryRow(id: "outcome", label: "확인할 행동", value: draft.recommendation),
         ]
+    }
+
+    private var documentSteps: [OpenDesignDayDocumentStep] {
+        OpenDesignDayDocumentStep.ordered(previews: day1DocPreviews)
+    }
+
+    private var areDay1DocumentsWritten: Bool {
+        documentSteps.allSatisfy(\.isWritten)
     }
 
     var body: some View {
@@ -7027,25 +7572,29 @@ private struct OpenDesignHypothesisConfirmationCard: View {
                 .accentColor(OpenDesignDayColor.accent)
                 .accessibilityIdentifier("opendesign.day.final.details")
 
+                documentHandoff
+
                 Button(action: confirmAndAdvance) {
                     Text(confirmButtonTitle)
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(OpenDesignDayColor.bgDeep)
+                        .foregroundStyle(confirmButtonDisabled ? OpenDesignDayColor.mutedDeep : OpenDesignDayColor.bgDeep)
                         .frame(maxWidth: .infinity)
                         .frame(height: 48)
                         .openDesignHoverRow(
                             isHovered: isConfirmHovered,
+                            isDisabled: confirmButtonDisabled,
                             cornerRadius: 9,
-                            fill: OpenDesignDayColor.accent,
-                            hoverFill: OpenDesignDayColor.accentStrong,
-                            hoverBorder: Color.clear
+                            fill: confirmButtonDisabled ? OpenDesignDayColor.surface2 : OpenDesignDayColor.accent,
+                            hoverFill: confirmButtonDisabled ? OpenDesignDayColor.surface2 : OpenDesignDayColor.accentStrong,
+                            border: confirmButtonDisabled ? OpenDesignDayColor.borderSoft : Color.clear,
+                            hoverBorder: confirmButtonDisabled ? OpenDesignDayColor.borderSoft : Color.clear
                         )
                 }
-                .buttonStyle(OpenDesignInteractiveButtonStyle())
-                .modifier(OpenDesignReturnShortcutModifier(isEnabled: true))
+                .buttonStyle(OpenDesignInteractiveButtonStyle(isDisabled: confirmButtonDisabled))
+                .modifier(OpenDesignReturnShortcutModifier(isEnabled: !confirmButtonDisabled))
                 .onHover { isConfirmHovered = $0 }
                 .accessibilityIdentifier("opendesign.day.final.confirm")
-                .accessibilityValue(isConfirmHovered ? "active" : "inactive")
+                .accessibilityValue(confirmButtonDisabled ? "locked" : isConfirmHovered ? "active" : "inactive")
                 .id("final-icp-action")
             }
             .padding(18)
@@ -7073,8 +7622,10 @@ private struct OpenDesignHypothesisConfirmationCard: View {
                 phrases: row.highlightPhrases,
                 bodySize: 13.5,
                 bodyWeight: row.id == "icp" ? .semibold : .regular,
-                bodyColor: row.id == "icp" ? OpenDesignDayColor.accent : OpenDesignDayColor.fgSecondary,
-                highlightWeight: .semibold
+                bodyColor: OpenDesignDayColor.fgSecondary,
+                highlightWeight: .semibold,
+                highlightColor: OpenDesignDayColor.amber,
+                highlightBackground: OpenDesignDayColor.amberDim
             ))
                 .lineSpacing(2)
                 .lineLimit(row.id == "outcome" ? 2 : 1)
@@ -7093,6 +7644,141 @@ private struct OpenDesignHypothesisConfirmationCard: View {
         .accessibilityIdentifier("opendesign.day.final.row.\(row.id)")
     }
 
+    private var documentHandoff: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Text("문서 작성")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    .textCase(.uppercase)
+                Spacer(minLength: 0)
+                Text("\(documentSteps.filter { $0.isWritten }.count)/\(documentSteps.count)")
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(areDay1DocumentsWritten ? OpenDesignDayColor.accent : OpenDesignDayColor.muted)
+            }
+
+            VStack(spacing: 7) {
+                ForEach(documentSteps) { step in
+                    VStack(alignment: .leading, spacing: 8) {
+                        documentStepRow(step)
+                        if activeDay1HandoffDocType == step.type, let day1HandoffPromptCard {
+                            VStack(alignment: .leading, spacing: 0) {
+                                day1HandoffPromptCard
+                            }
+                            .padding(.leading, 32)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                            .accessibilityElement(children: .contain)
+                            .accessibilityIdentifier("opendesign.day.final.doc.\(step.type).prompt")
+                        }
+                    }
+                }
+            }
+
+            if let day1HandoffError, !day1HandoffError.isEmpty {
+                Text(day1HandoffError)
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.amber)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(OpenDesignDayColor.surface2)
+                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+                    )
+                    .accessibilityIdentifier("opendesign.day.final.doc.error")
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(OpenDesignDayColor.bgDeep)
+                .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+        )
+        .accessibilityIdentifier("opendesign.day.final.docs")
+    }
+
+    private func documentStepRow(_ step: OpenDesignDayDocumentStep) -> some View {
+        let isPromptActive = activeDay1HandoffDocType == step.type
+        let isPreparing = pendingDay1HandoffDocType == step.type && !isPromptActive && !step.isWritten
+        let canStart = step.isUnlocked && !step.isWritten && !isPreparing && !isPromptActive
+        return HStack(spacing: 10) {
+            Text(step.stateGlyph)
+                .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                .foregroundStyle(step.isWritten ? OpenDesignDayColor.bgDeep : step.isUnlocked ? OpenDesignDayColor.accent : OpenDesignDayColor.mutedDeep)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(step.isWritten ? OpenDesignDayColor.accent : OpenDesignDayColor.surface2))
+                .overlay(Circle().stroke(step.isUnlocked || step.isWritten ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, lineWidth: 1))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(step.title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(step.isUnlocked ? OpenDesignDayColor.fg : OpenDesignDayColor.muted)
+                Text(documentStepDetail(step, isPreparing: isPreparing, isPromptActive: isPromptActive))
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(step.isWritten ? OpenDesignDayColor.accent : OpenDesignDayColor.mutedDeep)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            Button(action: { startDay1DocHandoff(step.type, handoffPayload) }) {
+                Text(documentStepActionLabel(step, isPreparing: isPreparing, isPromptActive: isPromptActive))
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(canStart ? OpenDesignDayColor.bgDeep : OpenDesignDayColor.mutedDeep)
+                    .padding(.horizontal, 10)
+                    .frame(height: 26)
+                    .background(
+                        Capsule().fill(canStart ? OpenDesignDayColor.accent : OpenDesignDayColor.surface2)
+                    )
+                    .overlay(Capsule().stroke(canStart ? Color.clear : OpenDesignDayColor.borderSoft, lineWidth: 1))
+            }
+            .buttonStyle(OpenDesignInteractiveButtonStyle(isDisabled: !canStart))
+            .disabled(!canStart)
+            .accessibilityIdentifier("opendesign.day.final.doc.\(step.type)")
+            .accessibilityValue(step.accessibilityValue)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func documentStepActionLabel(
+        _ step: OpenDesignDayDocumentStep,
+        isPreparing: Bool,
+        isPromptActive: Bool
+    ) -> String {
+        if isPromptActive { return "답변 대기" }
+        if isPreparing { return "준비 중" }
+        return step.actionLabel
+    }
+
+    private func documentStepDetail(
+        _ step: OpenDesignDayDocumentStep,
+        isPreparing: Bool,
+        isPromptActive: Bool
+    ) -> String {
+        if isPromptActive { return "\(step.path) 질문 카드 준비됨" }
+        if isPreparing { return "\(step.path) 질문 준비 중" }
+        return step.detail
+    }
+
+    private var handoffPayload: [String: Any] {
+        let value: (String) -> String = { id in
+            rows.first(where: { $0.id == id })?.value ?? ""
+        }
+        var payload: [String: Any] = [
+            "goal": value("goal"),
+            "icp": value("icp"),
+            "pain": value("pain"),
+            "outcome": value("outcome"),
+            "markdown": draft.markdown,
+        ]
+        if let score = content.alignmentPlan?.qualityGate.score {
+            payload["qualityScore"] = String(format: "%.1f/10", score)
+        }
+        return payload
+    }
+
     private func selectedOptionTitle(stepID: Int) -> String? {
         content.interviewSteps.first(where: { $0.id == stepID })?.selectedAnswerTitle(in: interaction)
     }
@@ -7104,10 +7790,13 @@ private struct OpenDesignHypothesisConfirmationCard: View {
               let option = step.options.first(where: { $0.id == selectedID }) else {
             return nil
         }
-        return option.highlightPhrases
+        return openDesignOptionTitleHighlightPhrases(option.highlightPhrases, for: option.title)
     }
 
     private var confirmButtonTitle: String {
+        if !areDay1DocumentsWritten {
+            return "문서 4개 작성 필요"
+        }
         if interaction.dayCompleted {
             return "Day 2로 이동 ↵"
         }
@@ -7121,6 +7810,10 @@ private struct OpenDesignHypothesisConfirmationCard: View {
             return "Day 2 시장 신호로 넘기기 ↵"
         }
         return "가설 확정 → Day2로 이동 ↵"
+    }
+
+    private var confirmButtonDisabled: Bool {
+        !areDay1DocumentsWritten
     }
 
     private func alignmentDisplayValue(key: String, label: String, fallback: String) -> String {
@@ -7164,6 +7857,10 @@ private struct OpenDesignHypothesisConfirmationCard: View {
     }
 
     private func confirmAndAdvance() {
+        guard areDay1DocumentsWritten else {
+            showsDetails = true
+            return
+        }
         if let alignmentPlan = content.alignmentPlan,
            !interaction.dayCompleted,
            (alignmentPlan.signals.evidenceRefs.isEmpty || !alignmentPlan.qualityGate.passed) {

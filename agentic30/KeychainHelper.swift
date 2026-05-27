@@ -435,11 +435,7 @@ enum KeychainHelper {
         delete(account: onboardingContextAccount)
     }
 
-    struct LocalDataResetReport: Equatable {
-        let removedDefaultsCount: Int
-        let removedAppSupport: Bool
-        let removedWorkspaceAgentic30: Bool
-    }
+    typealias LocalDataResetReport = Agentic30LocalDataResetReport
 
     static func resetAgentic30LocalData(
         defaults: UserDefaults = .standard,
@@ -448,31 +444,17 @@ enum KeychainHelper {
         workspaceURL: URL? = nil,
         removeWorkspaceAgentic30: Bool = true
     ) throws -> LocalDataResetReport {
-        cachedSettings = nil
-        cachedMacAuthSession = nil
-        didLoadMacAuthSession = true
-        cachedOnboardingContext = nil
-        didLoadOnboardingContext = true
+        var options = Agentic30LocalDataResetOptions()
+        options.includeKnownWorkspaces = removeWorkspaceAgentic30
 
-        deleteSettings()
-        deleteMacAuthSession()
-        deleteOnboardingContext()
-        deleteAllServiceEntries()
-
-        let removedDefaults = resetAgentic30Defaults(defaults)
-        var removedAppSupport = false
-        if removeAppSupport, fileManager.fileExists(atPath: appSupportURL.path) {
-            try fileManager.removeItem(at: appSupportURL)
-            removedAppSupport = true
-        }
-        let removedWorkspaceAgentic30 = try (removeWorkspaceAgentic30
-            ? removeWorkspaceAgentic30Data(in: workspaceURL, fileManager: fileManager)
-            : false)
-
-        return LocalDataResetReport(
-            removedDefaultsCount: removedDefaults,
-            removedAppSupport: removedAppSupport,
-            removedWorkspaceAgentic30: removedWorkspaceAgentic30
+        let additionalWorkspaceURLs = workspaceURL.map { [$0] } ?? []
+        return Agentic30LocalDataResetter.reset(
+            options: options,
+            defaults: defaults,
+            fileManager: fileManager,
+            appSupportURLs: removeAppSupport ? nil : [],
+            devSecretsURLs: removeAppSupport ? nil : [],
+            additionalWorkspaceURLs: additionalWorkspaceURLs
         )
     }
 
@@ -493,7 +475,19 @@ enum KeychainHelper {
     }
 
     @discardableResult
-    static func resetAgentic30Defaults(_ defaults: UserDefaults = .standard) -> Int {
+    static func resetAgentic30Defaults(
+        _ defaults: UserDefaults = .standard,
+        bundleIdentifier: String? = Bundle.main.bundleIdentifier
+    ) -> Int {
+        var removed = 0
+        let domainNames = Agentic30LocalDataResetter.agentic30BundleIdentifiers(bundleIdentifier)
+        for domainName in domainNames {
+            if let domain = defaults.persistentDomain(forName: domainName), !domain.isEmpty {
+                removed += domain.count
+                defaults.removePersistentDomain(forName: domainName)
+            }
+        }
+
         let keys = defaults.dictionaryRepresentation().keys.filter { key in
             key.hasPrefix("agentic30.")
                 || key.hasPrefix("com.agentic30.")
@@ -506,8 +500,9 @@ enum KeychainHelper {
         for key in keys {
             defaults.removeObject(forKey: key)
         }
+        removed += keys.count
         defaults.synchronize()
-        return keys.count
+        return removed
     }
 
     private static func loadOnboardingContextFromKeychain() -> OnboardingContext? {
@@ -615,6 +610,23 @@ enum KeychainHelper {
         SecItemDelete(query as CFDictionary)
     }
 
+    static func resetKeychainStorageForLocalDataReset() {
+        cachedSettings = nil
+        cachedMacAuthSession = nil
+        didLoadMacAuthSession = true
+        cachedOnboardingContext = nil
+        didLoadOnboardingContext = true
+
+        deleteSettings()
+        deleteMacAuthSession()
+        deleteOnboardingContext()
+        deleteAllServiceEntries()
+    }
+
+    static var devSecretsURLForReset: URL {
+        devSecretsURL
+    }
+
     // MARK: - Config File Sync
 
     private static var appSupportURL: URL {
@@ -715,5 +727,276 @@ enum KeychainHelper {
                 return "Keychain error: \(status)"
             }
         }
+    }
+}
+
+struct Agentic30LocalDataResetOptions: Equatable {
+    var includeKnownWorkspaces: Bool = true
+    var includeAgentic30QmdIndex: Bool = true
+    var removeAppBundle: Bool = false
+}
+
+struct Agentic30LocalDataResetFailure: Equatable {
+    let path: String
+    let reason: String
+}
+
+struct Agentic30LocalDataResetReport: Equatable {
+    let removedDefaultsCount: Int
+    let removedKeychainServiceEntries: Bool
+    let removedAppSupportPaths: [String]
+    let removedCachePaths: [String]
+    let removedPreferencePaths: [String]
+    let removedSavedStatePaths: [String]
+    let removedQmdPaths: [String]
+    let removedWorkspaceAgentic30Paths: [String]
+    let removedAppBundlePaths: [String]
+    let skippedPaths: [String]
+    let failures: [Agentic30LocalDataResetFailure]
+
+    var removedAppSupport: Bool { !removedAppSupportPaths.isEmpty }
+    var removedWorkspaceAgentic30: Bool { !removedWorkspaceAgentic30Paths.isEmpty }
+    var removedQmdIndex: Bool { !removedQmdPaths.isEmpty }
+
+    var removedPathCount: Int {
+        removedAppSupportPaths.count
+            + removedCachePaths.count
+            + removedPreferencePaths.count
+            + removedSavedStatePaths.count
+            + removedQmdPaths.count
+            + removedWorkspaceAgentic30Paths.count
+            + removedAppBundlePaths.count
+    }
+}
+
+enum Agentic30LocalDataResetter {
+    static let qmdIndexName = "agentic30"
+
+    static func reset(
+        options: Agentic30LocalDataResetOptions = Agentic30LocalDataResetOptions(),
+        defaults: UserDefaults = .standard,
+        fileManager: FileManager = .default,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        bundleIdentifier: String? = Bundle.main.bundleIdentifier,
+        appSupportURLs: [URL]? = nil,
+        devSecretsURLs: [URL]? = nil,
+        cacheURLs: [URL]? = nil,
+        preferenceURLs: [URL]? = nil,
+        savedStateURLs: [URL]? = nil,
+        qmdDataURLs: [URL]? = nil,
+        appBundleURL: URL? = Bundle.main.bundleURL,
+        additionalWorkspaceURLs: [URL] = [],
+        resetKeychainStorage: () -> Void = KeychainHelper.resetKeychainStorageForLocalDataReset
+    ) -> Agentic30LocalDataResetReport {
+        let workspaceURLs = uniqueURLs(
+            (options.includeKnownWorkspaces ? WorkspaceSettings.knownWorkspaceURLs(defaults: defaults) : [])
+                + additionalWorkspaceURLs
+        )
+
+        resetKeychainStorage()
+        let removedDefaultsCount = KeychainHelper.resetAgentic30Defaults(
+            defaults,
+            bundleIdentifier: bundleIdentifier
+        )
+
+        var removedAppSupportPaths: [String] = []
+        var removedCachePaths: [String] = []
+        var removedPreferencePaths: [String] = []
+        var removedSavedStatePaths: [String] = []
+        var removedQmdPaths: [String] = []
+        var removedWorkspaceAgentic30Paths: [String] = []
+        var removedAppBundlePaths: [String] = []
+        var skippedPaths: [String] = []
+        var failures: [Agentic30LocalDataResetFailure] = []
+
+        func remove(_ url: URL, into removed: inout [String]) {
+            removeIfPresent(
+                url,
+                fileManager: fileManager,
+                removedPaths: &removed,
+                skippedPaths: &skippedPaths,
+                failures: &failures
+            )
+        }
+
+        for url in appSupportURLs ?? defaultApplicationSupportURLs(environment: environment) {
+            remove(url, into: &removedAppSupportPaths)
+        }
+
+        for url in devSecretsURLs ?? defaultDevSecretsURLs(environment: environment) {
+            remove(url, into: &removedAppSupportPaths)
+        }
+
+        for url in cacheURLs ?? defaultCacheURLs(environment: environment, bundleIdentifier: bundleIdentifier) {
+            remove(url, into: &removedCachePaths)
+        }
+
+        for url in preferenceURLs ?? defaultPreferenceURLs(environment: environment, bundleIdentifier: bundleIdentifier) {
+            remove(url, into: &removedPreferencePaths)
+        }
+
+        for url in savedStateURLs ?? defaultSavedStateURLs(environment: environment, bundleIdentifier: bundleIdentifier) {
+            remove(url, into: &removedSavedStatePaths)
+        }
+
+        if options.includeAgentic30QmdIndex {
+            for url in qmdDataURLs ?? defaultQmdDataURLs(environment: environment) {
+                remove(url, into: &removedQmdPaths)
+            }
+        }
+
+        if options.includeKnownWorkspaces {
+            for workspaceURL in workspaceURLs {
+                let agentic30URL = workspaceURL
+                    .standardizedFileURL
+                    .appendingPathComponent(".agentic30", isDirectory: true)
+                remove(agentic30URL, into: &removedWorkspaceAgentic30Paths)
+            }
+        }
+
+        if options.removeAppBundle, let appBundleURL {
+            remove(appBundleURL, into: &removedAppBundlePaths)
+        }
+
+        return Agentic30LocalDataResetReport(
+            removedDefaultsCount: removedDefaultsCount,
+            removedKeychainServiceEntries: true,
+            removedAppSupportPaths: removedAppSupportPaths,
+            removedCachePaths: removedCachePaths,
+            removedPreferencePaths: removedPreferencePaths,
+            removedSavedStatePaths: removedSavedStatePaths,
+            removedQmdPaths: removedQmdPaths,
+            removedWorkspaceAgentic30Paths: removedWorkspaceAgentic30Paths,
+            removedAppBundlePaths: removedAppBundlePaths,
+            skippedPaths: skippedPaths,
+            failures: failures
+        )
+    }
+
+    private static func removeIfPresent(
+        _ url: URL,
+        fileManager: FileManager,
+        removedPaths: inout [String],
+        skippedPaths: inout [String],
+        failures: inout [Agentic30LocalDataResetFailure]
+    ) {
+        let path = url.standardizedFileURL.path
+        guard fileManager.fileExists(atPath: path) else {
+            appendUnique(path, to: &skippedPaths)
+            return
+        }
+        do {
+            try fileManager.removeItem(atPath: path)
+            appendUnique(path, to: &removedPaths)
+        } catch {
+            failures.append(Agentic30LocalDataResetFailure(path: path, reason: error.localizedDescription))
+        }
+    }
+
+    private static func defaultApplicationSupportURLs(environment: [String: String]) -> [URL] {
+        var urls = [KeychainHelper.applicationSupportURL]
+        if environment["AGENTIC30_APP_SUPPORT_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
+            let appSupportRoot = homeDirectory(environment: environment)
+                .appendingPathComponent("Library/Application Support", isDirectory: true)
+            urls.append(appSupportRoot.appendingPathComponent("Agentic30", isDirectory: true))
+        }
+        return uniqueURLs(urls)
+    }
+
+    private static func defaultDevSecretsURLs(environment: [String: String]) -> [URL] {
+        uniqueURLs(defaultApplicationSupportURLs(environment: environment).map {
+            $0.appendingPathComponent("dev-secrets.json", isDirectory: false)
+        } + [KeychainHelper.devSecretsURLForReset])
+    }
+
+    private static func defaultCacheURLs(
+        environment: [String: String],
+        bundleIdentifier: String?
+    ) -> [URL] {
+        let cacheRoot = homeDirectory(environment: environment)
+            .appendingPathComponent("Library/Caches", isDirectory: true)
+        return uniqueURLs(agentic30BundleIdentifiers(bundleIdentifier).map {
+            cacheRoot.appendingPathComponent($0, isDirectory: true)
+        } + [
+            cacheRoot.appendingPathComponent("agentic30", isDirectory: true),
+            cacheRoot.appendingPathComponent("Agentic30", isDirectory: true),
+        ])
+    }
+
+    private static func defaultPreferenceURLs(
+        environment: [String: String],
+        bundleIdentifier: String?
+    ) -> [URL] {
+        let preferencesRoot = homeDirectory(environment: environment)
+            .appendingPathComponent("Library/Preferences", isDirectory: true)
+        return uniqueURLs(agentic30BundleIdentifiers(bundleIdentifier).map {
+            preferencesRoot.appendingPathComponent("\($0).plist", isDirectory: false)
+        })
+    }
+
+    private static func defaultSavedStateURLs(
+        environment: [String: String],
+        bundleIdentifier: String?
+    ) -> [URL] {
+        let savedStateRoot = homeDirectory(environment: environment)
+            .appendingPathComponent("Library/Saved Application State", isDirectory: true)
+        return uniqueURLs(agentic30BundleIdentifiers(bundleIdentifier).map {
+            savedStateRoot.appendingPathComponent("\($0).savedState", isDirectory: true)
+        })
+    }
+
+    private static func defaultQmdDataURLs(environment: [String: String]) -> [URL] {
+        let home = homeDirectory(environment: environment)
+        let cacheRoot = environment["XDG_CACHE_HOME"].flatMap(nonEmptyPathURL)
+            ?? home.appendingPathComponent(".cache", isDirectory: true)
+        let configRoot = environment["XDG_CONFIG_HOME"].flatMap(nonEmptyPathURL)
+            ?? home.appendingPathComponent(".config", isDirectory: true)
+        return [
+            cacheRoot
+                .appendingPathComponent("qmd", isDirectory: true)
+                .appendingPathComponent("\(qmdIndexName).sqlite", isDirectory: false),
+            configRoot
+                .appendingPathComponent("qmd", isDirectory: true)
+                .appendingPathComponent("\(qmdIndexName).yml", isDirectory: false),
+        ]
+    }
+
+    static func agentic30BundleIdentifiers(_ bundleIdentifier: String?) -> [String] {
+        uniqueStrings([
+            bundleIdentifier,
+            "october-academy.agentic30",
+            "com.agentic30",
+        ].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })
+    }
+
+    private static func homeDirectory(environment: [String: String]) -> URL {
+        environment["HOME"].flatMap(nonEmptyPathURL) ?? FileManager.default.homeDirectoryForCurrentUser
+    }
+
+    private static func nonEmptyPathURL(_ value: String) -> URL? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return URL(fileURLWithPath: trimmed, isDirectory: true)
+    }
+
+    private static func uniqueURLs(_ urls: [URL]) -> [URL] {
+        var seen = Set<String>()
+        var result: [URL] = []
+        for url in urls {
+            let standardized = url.standardizedFileURL
+            guard seen.insert(standardized.path).inserted else { continue }
+            result.append(standardized)
+        }
+        return result
+    }
+
+    private static func uniqueStrings(_ strings: [String]) -> [String] {
+        var seen = Set<String>()
+        return strings.filter { seen.insert($0).inserted }
+    }
+
+    private static func appendUnique(_ path: String, to paths: inout [String]) {
+        guard !paths.contains(path) else { return }
+        paths.append(path)
     }
 }

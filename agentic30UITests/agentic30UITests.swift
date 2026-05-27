@@ -347,14 +347,14 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
-    func testIntakeV2EarlyStartCTAStaysInBodyAndExpandsWhileScanWaits() throws {
+    func testIntakeV2ScanWaitDoesNotShowEarlyAnswerQuestions() throws {
         let runID = UUID().uuidString
         let tempRoot = FileManager.default.temporaryDirectory
         let workspacePath = tempRoot
-            .appendingPathComponent("agentic30-ui-intake-early-start-workspace-\(runID)", isDirectory: true)
+            .appendingPathComponent("agentic30-ui-intake-scan-wait-workspace-\(runID)", isDirectory: true)
             .path
         let appSupportPath = tempRoot
-            .appendingPathComponent("agentic30-ui-intake-early-start-app-\(runID)", isDirectory: true)
+            .appendingPathComponent("agentic30-ui-intake-scan-wait-app-\(runID)", isDirectory: true)
             .path
         resetDirectory(at: workspacePath)
         resetDirectory(at: appSupportPath)
@@ -362,7 +362,7 @@ final class agentic30UITests: XCTestCase {
             atPath: workspacePath,
             withIntermediateDirectories: true
         )
-        try "Agentic30 UI early start fixture\n".write(
+        try "Agentic30 UI scan wait fixture\n".write(
             toFile: "\(workspacePath)/README.md",
             atomically: true,
             encoding: .utf8
@@ -420,28 +420,35 @@ final class agentic30UITests: XCTestCase {
         assertIntakeProgress(in: app, current: 8, timeout: 10)
         let bootLog = elementWithIdentifier(in: app, "intakeV2.bootLog")
         let openInbox = elementWithIdentifier(in: app, "intakeV2.openInboxButton")
+        let scanPreview = elementWithIdentifier(in: app, "intakeV2.scanPreview")
+        XCTAssertTrue(scanPreview.waitForExistence(timeout: 5))
         XCTAssertTrue(bootLog.waitForExistence(timeout: 5))
         XCTAssertTrue(openInbox.waitForExistence(timeout: 5))
         XCTAssertFalse(openInbox.isEnabled)
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
-        XCTAssertTrue(app.debugDescription.contains("질문 3개 준비 중"))
+        let scanWaitTree = app.debugDescription
+        XCTAssertFalse(scanWaitTree.contains("보통 30-45초 걸립니다."))
+        XCTAssertFalse(scanWaitTree.contains("질문 3개 준비 중…"))
+        XCTAssertTrue(openInbox.label.contains("초 남음 예상") || openInbox.label.contains("마무리 중"))
 
-        let earlyStartButton = elementWithIdentifier(in: app, "intakeV2.earlyStartButton")
-        XCTAssertTrue(earlyStartButton.waitForExistence(timeout: 16))
-        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "intakeV2.earlyStartButton", containing: "3개 질문 먼저 답하기", timeout: 2))
-        XCTAssertLessThan(earlyStartButton.frame.maxY, bootLog.frame.minY)
-        XCTAssertGreaterThan(abs(earlyStartButton.frame.midY - openInbox.frame.midY), 80)
-        XCTAssertFalse(app.debugDescription.contains("intake 답변으로 먼저 시작하기"))
-
-        let openInboxFrameBeforeExpand = openInbox.frame
-        clickCenter(of: earlyStartButton)
-        let earlyStartQuestions = elementWithIdentifier(in: app, "intakeV2.earlyStartQuestions")
-        XCTAssertTrue(earlyStartQuestions.waitForExistence(timeout: 3))
-        XCTAssertFalse(earlyStartButton.exists)
-        XCTAssertLessThan(earlyStartQuestions.frame.maxY, bootLog.frame.minY)
+        let removedButtonIdentifier = "intakeV2." + "early" + "StartButton"
+        let removedPromptIdentifier = "intakeV2." + "early" + "StartPrompt"
+        let removedQuestionsIdentifier = "intakeV2." + "early" + "StartQuestions"
+        let removedMergeIdentifier = "intakeV2." + "scan" + "MergeWait"
+        let removedButton = elementWithIdentifier(in: app, removedButtonIdentifier)
+        XCTAssertFalse(removedButton.waitForExistence(timeout: 2))
+        XCTAssertFalse(elementWithIdentifier(in: app, removedPromptIdentifier).exists)
+        XCTAssertFalse(elementWithIdentifier(in: app, removedQuestionsIdentifier).exists)
+        XCTAssertFalse(elementWithIdentifier(in: app, removedMergeIdentifier).exists)
+        XCTAssertFalse(removedButton.exists)
         XCTAssertFalse(openInbox.isEnabled)
-        XCTAssertEqual(openInbox.frame.maxX, openInboxFrameBeforeExpand.maxX, accuracy: 2.0)
-        XCTAssertEqual(openInbox.frame.midY, openInboxFrameBeforeExpand.midY, accuracy: 2.0)
+        XCTAssertTrue(scanPreview.exists)
+        XCTAssertTrue(bootLog.exists)
+        let renderedTree = app.debugDescription
+        XCTAssertFalse(renderedTree.contains("기다리는 동안 " + "먼저 답할 수 있어요"))
+        XCTAssertFalse(renderedTree.contains("3개 질문 " + "먼저 답하기"))
+        XCTAssertFalse(renderedTree.contains("답변은 " + "저장했습니다"))
+        XCTAssertFalse(renderedTree.contains("intake 답변으로 먼저 시작하기"))
     }
 
     @MainActor
@@ -1436,6 +1443,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-seed-auth",
             "--ui-testing-seed-onboarding-context",
             "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
             "--ui-testing-disable-sidecar",
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
@@ -1527,7 +1535,7 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
-    func testOpenDesignDayCompletionAdvancesWithoutFoundationSetupApproved() throws {
+    func testOpenDesignDayCompletionRequiresFoundationDocsWritten() throws {
         let runID = UUID().uuidString
         let workspacePath = "/tmp/agentic30-ui-opendesign-day-unlocked-\(runID)"
         let appSupportPath = "/tmp/agentic30-ui-opendesign-day-unlocked-support-\(runID)"
@@ -1562,18 +1570,82 @@ final class agentic30UITests: XCTestCase {
 
         let finalConfirm = elementWithIdentifier(in: app, "opendesign.day.final.confirm")
         XCTAssertTrue(waitForOpenDesignMainHittable(finalConfirm, in: app, timeout: 6))
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.final.confirm", containing: "문서 4개 작성 필요", timeout: 3))
         clickCenter(of: finalConfirm)
 
         let day2Main = elementWithIdentifier(in: app, "opendesign.day2.main")
-        if !day2Main.waitForExistence(timeout: 5) {
-            attachScreenshot(from: app, named: "OpenDesign Day2 Missing Without Foundation Setup")
-            attachText(app.debugDescription, named: "OpenDesign Day2 Missing Without Foundation Setup Tree")
+        XCTAssertFalse(day2Main.waitForExistence(timeout: 1))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.final.docs").exists)
+        let goalDoc = app.buttons["opendesign.day.final.doc.goal"]
+        XCTAssertTrue(goalDoc.exists)
+        XCTAssertTrue(goalDoc.isEnabled)
+        for docType in ["icp", "values", "spec"] {
+            let button = app.buttons["opendesign.day.final.doc.\(docType)"]
+            XCTAssertTrue(button.exists)
+            XCTAssertFalse(button.isEnabled)
         }
-        XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.day.complete.blocked").waitForExistence(timeout: 1))
-        XCTAssertTrue(day2Main.exists)
-        XCTAssertTrue(app.staticTexts["시장 신호 읽기"].waitForExistence(timeout: 3))
-        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.task.day1", containing: "done", timeout: 3))
-        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.task.day2", containing: "active", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.task.day1", containing: "active", timeout: 3))
+    }
+
+    @MainActor
+    func testOpenDesignDayRendersGoalHandoffPromptInline() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-opendesign-day-goal-handoff-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-opendesign-day-goal-handoff-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-day1-handoff-goal-prompt-delayed",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
+        completeOpenDesignDayInterviews(in: app)
+
+        let goalDoc = app.buttons["opendesign.day.final.doc.goal"]
+        XCTAssertTrue(waitForOpenDesignMainHittable(goalDoc, in: app, timeout: 6))
+        clickCenter(of: goalDoc)
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.final.doc.goal", containing: "준비 중", timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.final.confirm").exists)
+        XCTAssertFalse(app.buttons["opendesign.day.start"].exists)
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.final.doc.goal", containing: "답변 대기", timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.final.confirm").exists)
+        XCTAssertFalse(app.buttons["opendesign.day.start"].exists)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredPromptTitle", containing: "GOAL 정하기", timeout: 3))
+        let goalOption = buttonContaining(in: app, text: "첫 고객 반응 확인")
+        XCTAssertTrue(goalOption.waitForExistence(timeout: 3))
+        clickCenter(of: goalOption)
+
+        let submitButton = app.buttons["assistant.structuredContinueButton"]
+        XCTAssertTrue(waitUntilEnabled(submitButton, timeout: 3))
+        XCTAssertTrue(waitForOpenDesignMainHittable(submitButton, in: app, timeout: 6))
+        clickCenter(of: submitButton)
+        guard waitForButtonLabel(in: app, identifier: "opendesign.day.final.doc.goal", containing: "작성됨", timeout: 5) else {
+            attachText(app.debugDescription, named: "OpenDesign GOAL handoff after submit tree")
+            XCTFail("Expected GOAL row to become written after submitting the handoff prompt")
+            return
+        }
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.final.doc.icp", containing: "ICP 작성", timeout: 3))
     }
 
     @MainActor
@@ -1710,6 +1782,98 @@ final class agentic30UITests: XCTestCase {
             timeout: 2
         ))
         attachScreenshot(from: app, named: "02 Settings Models Saved")
+    }
+
+    @MainActor
+    func testSettingsResetLocalDataReturnsToOnboardingBootIntro() throws {
+        let runID = UUID().uuidString
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-ui-reset-\(runID)", isDirectory: true)
+        let homePath = tempRoot.appendingPathComponent("home", isDirectory: true).path
+        let workspacePath = tempRoot.appendingPathComponent("workspace", isDirectory: true).path
+        let appSupportPath = tempRoot.appendingPathComponent("app-support", isDirectory: true).path
+        let xdgCachePath = tempRoot.appendingPathComponent("xdg-cache", isDirectory: true).path
+        let xdgConfigPath = tempRoot.appendingPathComponent("xdg-config", isDirectory: true).path
+        resetDirectory(at: tempRoot.path)
+        try FileManager.default.createDirectory(atPath: homePath, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: "\(workspacePath)/.agentic30", withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: appSupportPath, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: "\(xdgCachePath)/qmd", withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: "\(xdgConfigPath)/qmd", withIntermediateDirectories: true)
+        try "# Project".write(toFile: "\(workspacePath)/README.md", atomically: true, encoding: .utf8)
+        try "setup".write(toFile: "\(workspacePath)/.agentic30/setup.json", atomically: true, encoding: .utf8)
+        try "session".write(toFile: "\(appSupportPath)/session.json", atomically: true, encoding: .utf8)
+        try "default".write(toFile: "\(xdgCachePath)/qmd/index.sqlite", atomically: true, encoding: .utf8)
+        try "agentic30".write(toFile: "\(xdgCachePath)/qmd/agentic30.sqlite", atomically: true, encoding: .utf8)
+        try "default".write(toFile: "\(xdgConfigPath)/qmd/index.yml", atomically: true, encoding: .utf8)
+        try "agentic30".write(toFile: "\(xdgConfigPath)/qmd/agentic30.yml", atomically: true, encoding: .utf8)
+
+        let app = launchApp(
+            arguments: [
+                "--ui-testing-reset-onboarding",
+                "--ui-testing-seed-auth",
+                "--ui-testing-seed-workspace=\(workspacePath)",
+                "--ui-testing-seed-onboarding-context",
+                "--ui-testing-disable-sidecar",
+                "--ui-testing-skip-keychain-reset",
+                "--ui-testing-open-settings-section=account",
+                "--ui-testing-opaque-window",
+            ],
+            environment: [
+                "HOME": homePath,
+                "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+                "XDG_CACHE_HOME": xdgCachePath,
+                "XDG_CONFIG_HOME": xdgConfigPath,
+                "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            ]
+        )
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: tempRoot.path)
+        }
+
+        XCTAssertTrue(openSettingsWindow(in: app))
+        let settingsWindow = app.windows["Agentic30 Settings"]
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5))
+        let resetButton = settingsWindow.buttons["settings.account.resetLocalDataButton"]
+        XCTAssertTrue(resetButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            scrollElementToVisible(
+                resetButton,
+                in: app,
+                timeout: 5,
+                scrollViewIdentifier: "settings.contentScroll"
+            )
+        )
+        clickCenter(of: resetButton)
+        let confirmReset = app.buttons["Reset Local Data"]
+        XCTAssertTrue(confirmReset.waitForExistence(timeout: 3))
+        confirmReset.click()
+
+        let bootCards = elementWithIdentifier(in: app, "intakeV2.boot.cards")
+        if !bootCards.waitForExistence(timeout: 3), settingsWindow.exists {
+            let closeSettings = settingsWindow.buttons["_XCUI:CloseWindow"]
+            if closeSettings.exists {
+                closeSettings.click()
+            } else {
+                app.typeKey("w", modifierFlags: .command)
+            }
+        }
+        XCTAssertTrue(
+            bootCards.waitForExistence(timeout: 8)
+                || app.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 2),
+            "Expected reset to return to the first onboarding screen"
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: "\(workspacePath)/.agentic30"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(workspacePath)/README.md"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: appSupportPath))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: "\(xdgCachePath)/qmd/agentic30.sqlite"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: "\(xdgConfigPath)/qmd/agentic30.yml"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(xdgCachePath)/qmd/index.sqlite"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(xdgConfigPath)/qmd/index.yml"))
     }
 
     @MainActor

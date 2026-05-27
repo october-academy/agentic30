@@ -26,6 +26,7 @@ struct ContentView: View {
     @State private var showsBipReadinessAdvanced = false
     @State private var showsInlineBipReadinessSetup = false
     @State private var selectedOpenDesignReferencePage: OpenDesignReferencePageKind?
+    @State private var openDesignDayInteractionStateCache = OpenDesignDayInteractionStateCache()
 
     @MainActor
     init(
@@ -132,6 +133,7 @@ struct ContentView: View {
                         viewModel.completeMacOnboardingIntro(openWorkspace: true)
                     }
                 )
+                .id(viewModel.localDataResetGeneration)
             } else if let session = viewModel.selectedSession {
                 switch activeSurface {
                 case .assistantBubble:
@@ -207,10 +209,15 @@ struct ContentView: View {
         let bipResearchDay = AgenticCurriculumDay.days.first(where: { $0.day == bipResearchDayNumber })
             ?? AgenticCurriculumDay.days[0]
         let bipResearchCurriculum = curriculumPayload(for: bipResearchDay)
+        let day1HandoffPrompt = viewModel.activeDay1HandoffPrompt
+        let day1HandoffPromptCard = day1HandoffPrompt.map { prompt in
+            AnyView(inlineStructuredPrompt(prompt, submissionState: submissionState(for: prompt)))
+        }
         let content = ZStack {
             if let resolvedContent {
                 OpenDesignDayPageView(
                     content: resolvedContent,
+                    interaction: openDesignDayInteractionBinding(for: day, content: resolvedContent),
                     selectedReferencePage: $selectedOpenDesignReferencePage,
                     openSettings: {
                         withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
@@ -243,6 +250,14 @@ struct ContentView: View {
                         withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
                             selectedOpenDesignReferencePage = .settings
                         }
+                    },
+                    day1DocPreviews: viewModel.iddDocPreviews,
+                    day1HandoffPromptCard: day1HandoffPromptCard,
+                    activeDay1HandoffDocType: day1HandoffPrompt?.generation?.docType?.lowercased(),
+                    pendingDay1HandoffDocType: viewModel.day1DocHandoffPendingDocType,
+                    day1HandoffError: viewModel.day1DocHandoffError,
+                    startDay1DocHandoff: { docType, handoff in
+                        viewModel.startDay1DocHandoff(docType: docType, day1Handoff: handoff)
                     },
                     completeDay: {
                         _ = viewModel.markFoundationDayCompleted(day.day)
@@ -356,6 +371,40 @@ struct ContentView: View {
         if !OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: dayNumber) {
             clearOpenDesignReferenceRoute()
         }
+    }
+
+    private var openDesignInteractionWorkspaceRoot: String {
+        let root = viewModel.workspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !root.isEmpty {
+            return root
+        }
+        return WorkspaceSettings.resolvedURL().path
+    }
+
+    private func openDesignDayInteractionBinding(
+        for day: AgenticCurriculumDay,
+        content: OpenDesignDayContent
+    ) -> Binding<OpenDesignDayInteractionState> {
+        let key = OpenDesignDayInteractionKey(
+            workspaceRoot: openDesignInteractionWorkspaceRoot,
+            dayNumber: day.day
+        )
+        let totalInterviewSteps = content.interviewSteps.count
+        return Binding(
+            get: {
+                openDesignDayInteractionStateCache.state(
+                    for: key,
+                    totalInterviewSteps: totalInterviewSteps
+                )
+            },
+            set: { state in
+                openDesignDayInteractionStateCache.update(
+                    state,
+                    for: key,
+                    totalInterviewSteps: totalInterviewSteps
+                )
+            }
+        )
     }
 
     private func submitOpenDesignDayChoice(

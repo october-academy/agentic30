@@ -73,6 +73,8 @@ struct SettingsView: View {
     private let returnToWorkspace: (() -> Void)?
     private let selectedSectionOverride: Binding<SettingsSection>?
 
+    @Environment(\.openWindow) private var openWindow
+
     // MARK: - Ad Analytics State
 
     @State private var posthogApiKey = ""
@@ -123,9 +125,48 @@ struct SettingsView: View {
     @State private var confettiTestRunID = 0
     @State private var confettiTestMessage = ""
     @State private var resetLocalDataMessage = ""
-    @State private var showsResetLocalDataConfirmation = false
+    @State private var localDataConfirmation: LocalDataConfirmation?
     @State private var localSelectedSection: SettingsSection = .account
     @State private var isBackButtonHovered = false
+
+    private enum LocalDataConfirmation: Identifiable {
+        case reset
+        case uninstall
+
+        var id: String {
+            switch self {
+            case .reset: return "reset"
+            case .uninstall: return "uninstall"
+            }
+        }
+
+        var title: String {
+            switch self {
+            case .reset:
+                return "Reset local Agentic30 data?"
+            case .uninstall:
+                return "Uninstall Agentic30?"
+            }
+        }
+
+        var message: String {
+            switch self {
+            case .reset:
+                return "This clears Agentic30 UserDefaults, Keychain entries, app support, local sessions, caches, Saved State, onboarding state, the Agentic30 QMD index, and .agentic30 folders in known workspaces. Other project files and global provider logins are not deleted."
+            case .uninstall:
+                return "This runs the same local data reset, then selects the Agentic30 app in Finder so you can quit the app and move it to Trash. macOS does not run cleanup when an app is deleted directly from Finder."
+            }
+        }
+
+        var actionTitle: String {
+            switch self {
+            case .reset:
+                return "Reset Local Data"
+            case .uninstall:
+                return "Clear Data & Show App"
+            }
+        }
+    }
 
     // MARK: - Launch at Login
 
@@ -195,20 +236,19 @@ struct SettingsView: View {
                     applyDocCreated(type: created.type, path: created.path)
                 }
             }
-            .alert("Reset local Agentic30 data?", isPresented: $showsResetLocalDataConfirmation) {
-                Button("Reset Local Data", role: .destructive) {
-                    resetAgentic30LocalData()
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This clears Agentic30 settings, Keychain entries, local sessions, caches, onboarding state, and the selected workspace's .agentic30 setup/interview data. Other project files are not deleted.")
-            }
             .overlay {
-                if confettiTestRunID > 0 {
-                    RealisticConfettiBurst(trigger: confettiTestRunID)
-                        .id(confettiTestRunID)
-                        .allowsHitTesting(false)
-                        .accessibilityIdentifier("settings.developerTools.confettiOverlay")
+                ZStack {
+                    if let localDataConfirmation {
+                        localDataConfirmationDialog(localDataConfirmation)
+                            .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                    }
+
+                    if confettiTestRunID > 0 {
+                        RealisticConfettiBurst(trigger: confettiTestRunID)
+                            .id(confettiTestRunID)
+                            .allowsHitTesting(false)
+                            .accessibilityIdentifier("settings.developerTools.confettiOverlay")
+                    }
                 }
             }
     }
@@ -945,7 +985,7 @@ struct SettingsView: View {
                 Text("Reset Agentic30 on this Mac")
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.88))
-                Text("Clears Agentic30 UserDefaults, Keychain entries, local sessions, caches, setup state, and the selected workspace's .agentic30 setup/interview data. Other project files are not deleted.")
+                Text("Clears Agentic30 UserDefaults, Keychain entries, app support, local sessions, caches, Saved State, onboarding state, the Agentic30 QMD index, and .agentic30 folders in known workspaces. Other project files and global Claude/Codex/GWS logins are not deleted.")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.48))
                     .fixedSize(horizontal: false, vertical: true)
@@ -953,9 +993,14 @@ struct SettingsView: View {
 
             HStack(spacing: 14) {
                 accountButton("Reset Local Data...", destructive: true) {
-                    showsResetLocalDataConfirmation = true
+                    localDataConfirmation = .reset
                 }
                 .accessibilityIdentifier("settings.account.resetLocalDataButton")
+
+                accountButton("Uninstall Agentic30...", destructive: true) {
+                    localDataConfirmation = .uninstall
+                }
+                .accessibilityIdentifier("settings.account.uninstallAgentic30Button")
 
                 if !resetLocalDataMessage.isEmpty {
                     Text(resetLocalDataMessage)
@@ -970,6 +1015,71 @@ struct SettingsView: View {
         }
         .padding(20)
         .background(cardBackground)
+    }
+
+    private func localDataConfirmationDialog(_ confirmation: LocalDataConfirmation) -> some View {
+        ZStack {
+            Color.black.opacity(0.58)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    localDataConfirmation = nil
+                }
+
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(confirmation.title)
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.94))
+                    Text(confirmation.message)
+                        .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.62))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                HStack(spacing: 10) {
+                    Spacer(minLength: 0)
+                    Button("Cancel") {
+                        localDataConfirmation = nil
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.84))
+                    .padding(.horizontal, 14)
+                    .frame(height: 34)
+                    .background(Capsule().fill(Color.white.opacity(0.12)))
+
+                    Button(confirmation.actionTitle) {
+                        localDataConfirmation = nil
+                        switch confirmation {
+                        case .reset:
+                            resetAgentic30LocalData()
+                        case .uninstall:
+                            uninstallAgentic30()
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .padding(.horizontal, 14)
+                    .frame(height: 34)
+                    .background(Capsule().fill(Color.red.opacity(0.68)))
+                }
+            }
+            .padding(20)
+            .frame(width: 430)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color(red: 0.09, green: 0.10, blue: 0.12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                    )
+            )
+            .shadow(color: .black.opacity(0.42), radius: 22, x: 0, y: 14)
+        }
+        .zIndex(20)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("settings.account.localDataConfirmation")
     }
 
     // MARK: - Agents Tab
@@ -2427,6 +2537,7 @@ struct SettingsView: View {
             .padding(.vertical, embeddedInWorkspace ? 22 : 22)
             .frame(maxWidth: .infinity)
         }
+        .accessibilityIdentifier("settings.contentScroll")
         .background(settingsTabBackground)
     }
 
@@ -3091,13 +3202,47 @@ struct SettingsView: View {
         do {
             let report = try viewModel.resetAgentic30LocalUserData()
             loadAllValues()
-            let scope = report.removedWorkspaceAgentic30
-                ? "settings, sessions, caches, and workspace setup data"
-                : (report.removedAppSupport ? "settings, sessions, and caches" : "settings")
-            showMessage($resetLocalDataMessage, text: "Reset \(scope)")
+            openWorkspaceAfterLocalDataReset()
+            showMessage($resetLocalDataMessage, text: localDataResetSummary(report))
         } catch {
             showMessage($resetLocalDataMessage, text: "Reset failed: \(error.localizedDescription)")
         }
+    }
+
+    private func openWorkspaceAfterLocalDataReset() {
+        if let appDelegate = NSApp.delegate as? AppDelegate {
+            appDelegate.openWorkspaceWindow()
+        } else {
+            openWindow(id: "workspace")
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    private func uninstallAgentic30() {
+        do {
+            let report = try viewModel.resetAgentic30LocalUserData()
+            loadAllValues()
+            NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
+            let suffix = report.failures.isEmpty
+                ? " Agentic30 will quit; move the selected app to Trash."
+                : " Cleanup had \(report.failures.count) warning(s). Agentic30 will quit; move the selected app to Trash."
+            showMessage($resetLocalDataMessage, text: "Local data cleared.\(suffix)")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                NSApplication.shared.terminate(nil)
+            }
+        } catch {
+            showMessage($resetLocalDataMessage, text: "Reset failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func localDataResetSummary(_ report: KeychainHelper.LocalDataResetReport) -> String {
+        let pathCount = report.removedPathCount
+        if report.failures.isEmpty {
+            return pathCount > 0
+                ? "Reset local data (\(pathCount) path(s) removed)"
+                : "Reset local settings"
+        }
+        return "Reset with \(report.failures.count) cleanup warning(s)"
     }
 
     private func showMessage(_ binding: Binding<String>, text: String) {

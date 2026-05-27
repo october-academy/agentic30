@@ -276,7 +276,8 @@ struct StructuredPromptSubmissionStateTests {
     private static func makeSession(
         id: String = "structured-session",
         pendingUserInput: StructuredPromptRequest?,
-        status: SessionStatus = .awaitingInput
+        status: SessionStatus = .awaitingInput,
+        runtime: ChatSessionRuntime? = nil
     ) -> ChatSession {
         ChatSession(
             id: id,
@@ -289,14 +290,15 @@ struct StructuredPromptSubmissionStateTests {
             error: nil,
             messages: [],
             pendingUserInput: pendingUserInput,
-            runtime: nil
+            runtime: runtime
         )
     }
 
     private static func makeIddPrompt(
         sessionId: String = "structured-session",
         docType: String,
-        toolName: String = "agentic30_request_user_input"
+        toolName: String = "agentic30_request_user_input",
+        mode: String = "host_structured"
     ) -> StructuredPromptRequest {
         StructuredPromptRequest(
             requestId: "idd-\(docType)-request",
@@ -324,7 +326,7 @@ struct StructuredPromptSubmissionStateTests {
                     textMode: .short
                 ),
             ],
-            generation: StructuredPromptGeneration(mode: "host_structured", docType: docType)
+            generation: StructuredPromptGeneration(mode: mode, docType: docType)
         )
     }
 
@@ -430,6 +432,82 @@ struct StructuredPromptSubmissionStateTests {
         #expect(viewModel.isMismatchedFoundationPrompt(mismatched) == true)
         #expect(viewModel.isMatchingFoundationPrompt(generic) == false)
         #expect(viewModel.isMismatchedFoundationPrompt(generic) == true)
+    }
+
+    @MainActor @Test func activeDay1HandoffPromptUsesSelectedMatchingDoc() {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        viewModel.setIddCurrentDocTypeForTesting("goal")
+        let prompt = Self.makeIddPrompt(docType: "goal", mode: "day1_handoff")
+        viewModel.replaceSessionsForTesting(
+            [Self.makeSession(pendingUserInput: prompt)],
+            selectedSessionID: prompt.sessionId
+        )
+
+        #expect(viewModel.activeDay1HandoffPrompt?.requestId == prompt.requestId)
+    }
+
+    @MainActor @Test func activeDay1HandoffPromptRejectsMismatchedDoc() {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        viewModel.setIddCurrentDocTypeForTesting("goal")
+        let prompt = Self.makeIddPrompt(docType: "icp", mode: "day1_handoff")
+        viewModel.replaceSessionsForTesting(
+            [Self.makeSession(pendingUserInput: prompt)],
+            selectedSessionID: prompt.sessionId
+        )
+
+        #expect(viewModel.activeDay1HandoffPrompt == nil)
+    }
+
+    @MainActor @Test func day1HandoffDisconnectedSurfacesVisibleError() {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+
+        viewModel.startDay1DocHandoff(docType: "goal", day1Handoff: [:])
+
+        #expect(viewModel.day1DocHandoffPendingDocType == nil)
+        #expect(viewModel.day1DocHandoffError?.contains("Sidecar 연결") == true)
+    }
+
+    @MainActor @Test func day1HandoffSessionReadyDoesNotLeaveWorkspaceSurface() throws {
+        let viewModel = AgenticViewModel(
+            onboardingContextOverride: OnboardingContext.make(
+                workMode: .fullTimeSolo,
+                role: .developer,
+                projectStage: .building,
+                isolationLevel: .projectFolder
+            ),
+            disablesSidecarStartForTesting: true,
+            activateAppForAuth: {}
+        )
+        let prompt = Self.makeIddPrompt(
+            sessionId: "handoff-session",
+            docType: "goal",
+            mode: "day1_handoff"
+        )
+        let runtime = ChatSessionRuntime(
+            codexThreadId: nil,
+            codexThreadMeta: nil,
+            codexWarm: nil,
+            startupTiming: nil,
+            iddDocumentType: "goal",
+            iddMode: "day1_handoff"
+        )
+        viewModel.replaceSessionsForTesting(
+            [Self.makeSession(id: prompt.sessionId, pendingUserInput: prompt, runtime: runtime)],
+            selectedSessionID: prompt.sessionId
+        )
+        viewModel.showWorkspace()
+
+        let event = try JSONDecoder().decode(SidecarEvent.self, from: """
+        {
+          "type": "bip_idd_session_ready",
+          "sessionId": "\(prompt.sessionId)",
+          "iddCurrentDocType": "goal"
+        }
+        """.data(using: .utf8)!)
+        viewModel.applySidecarEventForTesting(event)
+
+        #expect(viewModel.selectedSessionID == prompt.sessionId)
+        #expect(viewModel.activeSurface == .workspace)
     }
 
     @MainActor @Test func matchingIddProgressUpdatesSubmittedState() {

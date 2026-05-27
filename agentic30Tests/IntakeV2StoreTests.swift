@@ -27,7 +27,6 @@ final class IntakeV2StoreTests: XCTestCase {
         XCTAssertNil(store.commitmentLevel)
         XCTAssertEqual(store.evidenceLevels, [])
         XCTAssertNil(store.folderURL)
-        XCTAssertEqual(store.earlyStartAnswers, [:])
         XCTAssertFalse(store.isFullyComplete)
         XCTAssertFalse(store.restoreFailed)
     }
@@ -40,8 +39,6 @@ final class IntakeV2StoreTests: XCTestCase {
         store1.toggleEvidenceLevel(.workLog)
         store1.toggleEvidenceLevel(.paymentResponses)
         store1.folderURL = URL(fileURLWithPath: "/Users/test/Projects")
-        store1.lockEarlyStartAnswer(questionId: "customer", answer: "직접 연락 가능한 1명")
-        store1.lockEarlyStartAnswer(questionId: "problem", answer: "반복 수작업")
         store1.persist()
         XCTAssertNotNil(suiteDefaults.data(forKey: IntakeV2Store.stateDefaultsKey))
         XCTAssertNil(suiteDefaults.data(forKey: IntakeV2Store.legacyStateDefaultsKey))
@@ -53,8 +50,6 @@ final class IntakeV2StoreTests: XCTestCase {
         XCTAssertEqual(store2.stuck, .ideaOnly)
         XCTAssertEqual(store2.evidenceLevels, [.workLog, .paymentResponses])
         XCTAssertEqual(store2.folderURL?.path, "/Users/test/Projects")
-        XCTAssertEqual(store2.earlyStartAnswers["customer"], "직접 연락 가능한 1명")
-        XCTAssertEqual(store2.earlyStartAnswers["problem"], "반복 수작업")
     }
 
     func test_onboardingRoleChoices_excludeLegacyStudentStatus() {
@@ -102,9 +97,6 @@ final class IntakeV2StoreTests: XCTestCase {
         store.toggleEvidenceLevel(.workLog)
         store.toggleEvidenceLevel(.paymentResponses)
         store.folderURL = URL(fileURLWithPath: "/tmp/work")
-        store.lockEarlyStartAnswer(questionId: "customer", answer: "최근 가입/문의한 사람")
-        store.lockEarlyStartAnswer(questionId: "problem", answer: "전환/결제 지연")
-        store.lockEarlyStartAnswer(questionId: "behavior", answer: "인터뷰 수락")
 
         let context = IntakeV2OnboardingContextMapper.makeContext(from: store)
 
@@ -112,23 +104,6 @@ final class IntakeV2StoreTests: XCTestCase {
         XCTAssertEqual(context?.customWorkMode, "하루 1~2시간")
         XCTAssertEqual(context?.isolationLevel, .projectFolder)
         XCTAssertEqual(Set(context?.isolationLevels ?? []), Set([.projectFolder, .workLog, .paymentResponses]))
-        XCTAssertEqual(store.earlyStartAnswers["customer"], "최근 가입/문의한 사람")
-        XCTAssertEqual(store.earlyStartAnswers["problem"], "전환/결제 지연")
-        XCTAssertEqual(store.earlyStartAnswers["behavior"], "인터뷰 수락")
-        XCTAssertNil(context?.bridgePayload["intake_only_draft"])
-    }
-
-    func test_earlyStartAnswers_areLockedAndPersisted() {
-        let store = IntakeV2Store(defaults: suiteDefaults)
-        store.lockEarlyStartAnswer(questionId: "customer", answer: "직접 연락 가능한 1명")
-        store.lockEarlyStartAnswer(questionId: "customer", answer: "문제를 공개적으로 말한 사람")
-        store.lockEarlyStartAnswer(questionId: "unknown", answer: "무시")
-        store.lockEarlyStartAnswer(questionId: "problem", answer: "   ")
-
-        XCTAssertEqual(store.earlyStartAnswers, ["customer": "직접 연락 가능한 1명"])
-
-        let fresh = IntakeV2Store(defaults: suiteDefaults)
-        XCTAssertEqual(fresh.earlyStartAnswers, ["customer": "직접 연락 가능한 1명"])
     }
 
     func test_onboardingContextMapper_requiresEvidenceButNotFolder() {

@@ -16,6 +16,7 @@ import Foundation
 enum WorkspaceSettings {
     private static let kWorkspaceRootKey = "agentic30.workspaceRoot"
     private static let kLegacyBipKey = "bipWorkspaceRoot"
+    private static let kKnownWorkspaceRootsKey = "agentic30.workspaceRoots.v1"
 
     /// Test seam for the legacy Keychain fallback. Production reads
     /// `KeychainHelper.loadSettings().bipWorkspaceRoot`; tests override this so they
@@ -76,11 +77,58 @@ enum WorkspaceSettings {
     }
 
     static func store(_ url: URL) {
-        UserDefaults.standard.set(url.path, forKey: kWorkspaceRootKey)
+        store(url, defaults: .standard)
     }
 
     static func clear() {
         UserDefaults.standard.removeObject(forKey: kWorkspaceRootKey)
+    }
+
+    static func knownWorkspaceURLs(
+        defaults: UserDefaults = .standard,
+        includeLegacy: Bool = true
+    ) -> [URL] {
+        var paths: [String] = []
+        if let stored = defaults.array(forKey: kKnownWorkspaceRootsKey) as? [String] {
+            paths.append(contentsOf: stored)
+        }
+        if let current = defaults.string(forKey: kWorkspaceRootKey), !current.isEmpty {
+            paths.append(current)
+        }
+        if includeLegacy {
+            let legacy = legacyWorkspaceProvider().trimmingCharacters(in: .whitespacesAndNewlines)
+            if !legacy.isEmpty {
+                paths.append(legacy)
+            }
+        }
+
+        var seen = Set<String>()
+        return paths.compactMap { rawPath in
+            let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let url = URL(fileURLWithPath: trimmed, isDirectory: true).standardizedFileURL
+            guard seen.insert(url.path).inserted else { return nil }
+            return url
+        }
+    }
+
+    static func clearKnownWorkspaceRoots(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: kKnownWorkspaceRootsKey)
+    }
+
+    private static func store(_ url: URL, defaults: UserDefaults) {
+        defaults.set(url.path, forKey: kWorkspaceRootKey)
+        rememberWorkspace(url, defaults: defaults)
+    }
+
+    private static func rememberWorkspace(_ url: URL, defaults: UserDefaults) {
+        let path = url.standardizedFileURL.path
+        var paths = defaults.array(forKey: kKnownWorkspaceRootsKey) as? [String] ?? []
+        paths.removeAll { existing in
+            URL(fileURLWithPath: existing, isDirectory: true).standardizedFileURL.path == path
+        }
+        paths.append(path)
+        defaults.set(paths, forKey: kKnownWorkspaceRootsKey)
     }
 
     private static func isExistingDirectory(_ url: URL) -> Bool {

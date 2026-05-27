@@ -78,11 +78,6 @@ struct AgenticViewModelAuthTests {
           "role": "developer",
           "project_stage": "building",
           "isolation_level": "project_folder",
-          "intake_only_draft": {
-            "customer": "최근 가입/문의한 사람",
-            "problem": "전환/결제 지연",
-            "behavior": "인터뷰 수락"
-          },
           "completed_at": "2026-05-08T00:00:00Z"
         }
         """.data(using: .utf8)!
@@ -124,7 +119,6 @@ struct AgenticViewModelAuthTests {
         #expect(object?["project_stage"] as? String == "pre_revenue")
         #expect(object?["isolation_level"] as? String == "weekly_loop")
         #expect(object?["isolation_levels"] as? [String] == ["payment_responses", "weekly_loop"])
-        #expect(object?["intake_only_draft"] == nil)
         #expect(object?["completed_at"] as? String == "2026-05-08T00:00:00Z")
         #expect((bridgePayload["business_description"] as? String) == (object?["business_description"] as? String))
         #expect((bridgePayload["current_stage"] as? String) == (object?["current_stage"] as? String))
@@ -135,9 +129,7 @@ struct AgenticViewModelAuthTests {
         #expect((bridgePayload["project_stage"] as? String) == (object?["project_stage"] as? String))
         #expect((bridgePayload["isolation_level"] as? String) == (object?["isolation_level"] as? String))
         #expect((bridgePayload["isolation_levels"] as? [String]) == (object?["isolation_levels"] as? [String]))
-        #expect(bridgePayload["intake_only_draft"] == nil)
         #expect((bridgePayload["completed_at"] as? String) == (object?["completed_at"] as? String))
-        #expect(!context.assistantSystemPromptFragment.contains("Early start 답변"))
     }
 
     @Test @MainActor func submitOnboardingContextPersistsCanonicalContextAndClearsDraftOnly() throws {
@@ -668,6 +660,65 @@ struct AgenticViewModelAuthTests {
         #expect(viewModel.structuredPromptDraftBySession.isEmpty)
     }
 
+    @Test @MainActor func localDataResetClearsVolatileStateAndBumpsOnboardingGeneration() throws {
+        KeychainHelper.resetAgentic30Defaults()
+        let workspaceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-viewmodel-reset-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+        WorkspaceSettings.store(workspaceURL)
+        defer {
+            KeychainHelper.resetAgentic30Defaults()
+            try? FileManager.default.removeItem(at: workspaceURL)
+        }
+
+        var capturedOptions: Agentic30LocalDataResetOptions?
+        var capturedWorkspaceURLs: [URL] = []
+        let viewModel = AgenticViewModel(
+            onboardingContextOverride: OnboardingContext.make(
+                businessDescription: "Reset test",
+                currentStage: "Testing",
+                goal: "Verify reset",
+                role: .developer,
+                projectStage: .building,
+                isolationLevel: .projectFolder
+            ),
+            disablesSidecarStartForTesting: true,
+            localDataResetter: { options, workspaceURLs in
+                capturedOptions = options
+                capturedWorkspaceURLs = workspaceURLs
+                KeychainHelper.resetAgentic30Defaults()
+                return Agentic30LocalDataResetReport(
+                    removedDefaultsCount: 1,
+                    removedKeychainServiceEntries: true,
+                    removedAppSupportPaths: ["/tmp/app-support"],
+                    removedCachePaths: ["/tmp/cache"],
+                    removedPreferencePaths: [],
+                    removedSavedStatePaths: [],
+                    removedQmdPaths: ["/tmp/qmd/agentic30.sqlite"],
+                    removedWorkspaceAgentic30Paths: [workspaceURL.appendingPathComponent(".agentic30").path],
+                    removedAppBundlePaths: [],
+                    skippedPaths: [],
+                    failures: []
+                )
+            },
+            activateAppForAuth: {}
+        )
+        viewModel.completeMacOnboardingIntro()
+        let beforeGeneration = viewModel.localDataResetGeneration
+
+        let report = try viewModel.resetAgentic30LocalUserData()
+
+        #expect(capturedOptions == Agentic30LocalDataResetOptions())
+        #expect(capturedWorkspaceURLs.map(\.path).contains(workspaceURL.standardizedFileURL.path))
+        #expect(report.removedQmdIndex)
+        #expect(viewModel.localDataResetGeneration == beforeGeneration + 1)
+        #expect(viewModel.requiresMacOnboarding == true)
+        #expect(viewModel.needsOnboardingIntro == true)
+        #expect(viewModel.needsOnboardingContext == true)
+        #expect(viewModel.sessions.isEmpty)
+        #expect(viewModel.selectedSessionID == nil)
+    }
+
     @Test @MainActor func explicitWorkspaceAndLocalContextCanStartWithoutGoogleAuth() throws {
         let workspaceURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("agentic30-loginless-\(UUID().uuidString)", isDirectory: true)
@@ -1118,12 +1169,46 @@ struct AgenticViewModelAuthTests {
             scanStartedAt: start
         )
 
+        let missingElapsed = IntakeV2BootLogState(
+            isConnected: false,
+            workspaceRoot: "",
+            diagnostics: nil,
+            scanProgressLogs: ["scan.local · 로컬 문서 후보를 읽는 중"],
+            scanDidComplete: false,
+            scanError: nil,
+            foundArtifactCount: nil,
+            isScanning: true
+        )
+        let missingElapsedPresentation = Day1ScanWaitPresentation(
+            bootLogState: missingElapsed,
+            hasFolder: true,
+            hasWorkspaceScanResult: false,
+            now: start
+        )
+        #expect(missingElapsedPresentation.primaryCTATitle(questionCount: 3) == "45초 남음 (예상)")
+        #expect(missingElapsedPresentation.primaryCTAAccessibilityLabel(questionCount: 3) == "질문 3개 준비 중, 45초 남음 예상")
+
+        let startingPresentation = Day1ScanWaitPresentation(
+            bootLogState: running,
+            hasFolder: true,
+            hasWorkspaceScanResult: false,
+            now: start
+        )
+        #expect(startingPresentation.primaryCTATitle(questionCount: 3) == "45초 남음 (예상)")
+
+        let fiveSecondPresentation = Day1ScanWaitPresentation(
+            bootLogState: running,
+            hasFolder: true,
+            hasWorkspaceScanResult: false,
+            now: start.addingTimeInterval(5)
+        )
+        #expect(fiveSecondPresentation.primaryCTATitle(questionCount: 3) == "40초 남음 (예상)")
+        #expect(fiveSecondPresentation.primaryCTAAccessibilityLabel(questionCount: 3) == "질문 3개 준비 중, 40초 남음 예상")
+
         #expect(Day1ScanWaitPresentation(
             bootLogState: running,
             hasFolder: true,
             hasWorkspaceScanResult: false,
-            earlyStartActive: false,
-            earlyStartCompleted: false,
             now: start.addingTimeInterval(5)
         ).state == .scanningNormal)
 
@@ -1131,22 +1216,40 @@ struct AgenticViewModelAuthTests {
             bootLogState: running,
             hasFolder: true,
             hasWorkspaceScanResult: false,
-            earlyStartActive: false,
-            earlyStartCompleted: false,
             now: start.addingTimeInterval(13)
-        ).state == .earlyStartAvailable)
+        ).state == .scanningNormal)
 
         #expect(Day1ScanWaitPresentation(
             bootLogState: running,
             hasFolder: true,
             hasWorkspaceScanResult: false,
-            earlyStartActive: false,
-            earlyStartCompleted: false,
+            now: start.addingTimeInterval(44)
+        ).primaryCTATitle(questionCount: 3) == "1초 남음 (예상)")
+
+        let exceededPresentation = Day1ScanWaitPresentation(
+            bootLogState: running,
+            hasFolder: true,
+            hasWorkspaceScanResult: false,
+            now: start.addingTimeInterval(45)
+        )
+        #expect(exceededPresentation.primaryCTATitle(questionCount: 3) == "마무리 중…")
+        #expect(exceededPresentation.primaryCTAAccessibilityLabel(questionCount: 3) == "질문 3개 준비 중, 마무리 중")
+
+        #expect(Day1ScanWaitPresentation(
+            bootLogState: running,
+            hasFolder: true,
+            hasWorkspaceScanResult: false,
             now: start.addingTimeInterval(50)
         ).state == .scanningSlow)
+        #expect(Day1ScanWaitPresentation(
+            bootLogState: running,
+            hasFolder: true,
+            hasWorkspaceScanResult: false,
+            now: start.addingTimeInterval(50)
+        ).primaryCTATitle(questionCount: 3) == "마무리 중…")
     }
 
-    @Test @MainActor func earlyStartCompletionWaitsForScanResultBeforeDay1Ready() {
+    @Test @MainActor func scanResultOrFailureEnablesDay1Ready() {
         let start = Date(timeIntervalSince1970: 1_000)
         let running = IntakeV2BootLogState(
             isConnected: false,
@@ -1160,25 +1263,10 @@ struct AgenticViewModelAuthTests {
             scanStartedAt: start
         )
 
-        let pending = Day1ScanWaitPresentation(
-            bootLogState: running,
-            hasFolder: true,
-            hasWorkspaceScanResult: false,
-            earlyStartActive: false,
-            earlyStartCompleted: true,
-            now: start.addingTimeInterval(30)
-        )
-        #expect(pending.state == .earlyStartAnsweredScanPending)
-        #expect(!pending.canOpenDay1)
-        #expect(pending.headerTitle(questionCount: 3) == "Day 1 질문 3개를 만드는 중")
-        #expect(pending.primaryCTATitle(questionCount: 3) == "마지막 신호 붙이는 중…")
-
         let ready = Day1ScanWaitPresentation(
             bootLogState: running,
             hasFolder: true,
             hasWorkspaceScanResult: true,
-            earlyStartActive: false,
-            earlyStartCompleted: true,
             now: start.addingTimeInterval(31)
         )
         #expect(ready.state == .scanMergedReady)
@@ -1186,17 +1274,6 @@ struct AgenticViewModelAuthTests {
         #expect(ready.headerTitle(questionCount: 3) == "Day 1 질문 3개가 준비됐어요")
         #expect(ready.primaryCTATitle(questionCount: 3) == "질문 3개 시작하기 →")
         #expect(ready.primaryCTAAccessibilityLabel(questionCount: 3) == "질문 3개 시작하기")
-
-        let readyWhileAnswering = Day1ScanWaitPresentation(
-            bootLogState: running,
-            hasFolder: true,
-            hasWorkspaceScanResult: true,
-            earlyStartActive: true,
-            earlyStartCompleted: false,
-            now: start.addingTimeInterval(31)
-        )
-        #expect(readyWhileAnswering.state == .scanMergedReady)
-        #expect(readyWhileAnswering.canOpenDay1)
 
         let failed = IntakeV2BootLogState(
             isConnected: false,
@@ -1215,12 +1292,12 @@ struct AgenticViewModelAuthTests {
             bootLogState: failed,
             hasFolder: true,
             hasWorkspaceScanResult: false,
-            earlyStartActive: false,
-            earlyStartCompleted: true,
             now: start.addingTimeInterval(32)
         )
         #expect(failedPresentation.state == .scanFailed)
         #expect(failedPresentation.headerTitle(questionCount: 3) == "Day 1 질문 3개가 준비됐어요")
+        #expect(failedPresentation.primaryCTATitle(questionCount: 3) == "질문 3개 시작하기 →")
+        #expect(failedPresentation.primaryCTAAccessibilityLabel(questionCount: 3) == "질문 3개 시작하기")
     }
 
     @Test @MainActor func startHydratesExplicitWorkspaceBeforeSidecarReady() throws {

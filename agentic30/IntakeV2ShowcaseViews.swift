@@ -1819,48 +1819,11 @@ struct IntakeV2ReadyAnalyzeView: View {
     @State private var showExecuteNudge: Bool = false
     @State private var firstDecisionExpanded: Bool = true
     @State private var todoGenerationTask: Task<Void, Never>?
-    @State private var earlyStartMode: EarlyStartMode = .idle
     @State private var didTrackScanWaitViewed: Bool = false
-    @State private var didTrackEarlyStartShown: Bool = false
-    @State private var didTrackMergeWaitViewed: Bool = false
     @State private var didTrackMergeCompleted: Bool = false
     @State private var showBootLogDetails: Bool = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AccessibilityFocusState private var primaryCTAFocused: Bool
-
-    private enum EarlyStartMode: Equatable {
-        case idle
-        case active
-        case answered
-    }
-
-    private struct EarlyStartQuestion: Identifiable, Equatable {
-        let id: String
-        let title: String
-        let prompt: String
-        let options: [String]
-    }
-
-    private static let earlyStartQuestions: [EarlyStartQuestion] = [
-        EarlyStartQuestion(
-            id: "customer",
-            title: "고객",
-            prompt: "Day 1에서 먼저 확인할 고객 후보는 누구인가요?",
-            options: ["최근 가입/문의한 사람", "문제를 공개적으로 말한 사람", "직접 연락 가능한 1명"]
-        ),
-        EarlyStartQuestion(
-            id: "problem",
-            title: "문제",
-            prompt: "그 고객에게서 가장 먼저 확인할 문제 신호는 무엇인가요?",
-            options: ["반복 수작업", "전환/결제 지연", "기존 도구 조합의 한계"]
-        ),
-        EarlyStartQuestion(
-            id: "behavior",
-            title: "확인할 행동",
-            prompt: "오늘 확인해야 하는 실제 행동은 무엇인가요?",
-            options: ["인터뷰 수락", "대안/예산 언급", "테스트 링크 실행"]
-        ),
-    ]
 
     private enum InboxCTAState: Equatable {
         case preparingDecision
@@ -1890,7 +1853,6 @@ struct IntakeV2ReadyAnalyzeView: View {
         }
         .onAppear {
             synchronizeDecisionWithBootState()
-            synchronizeEarlyStartModeWithStoredAnswers()
         }
         .onChange(of: bootLogState) { _, _ in
             synchronizeDecisionWithBootState()
@@ -1898,10 +1860,6 @@ struct IntakeV2ReadyAnalyzeView: View {
         }
         .onChange(of: workspaceScanResult) { _, _ in
             synchronizeDecisionWithBootState()
-            trackPresentationMilestonesIfNeeded(scanWaitPresentation(at: Date()))
-        }
-        .onChange(of: store.earlyStartAnswers) { _, _ in
-            synchronizeEarlyStartModeWithStoredAnswers()
             trackPresentationMilestonesIfNeeded(scanWaitPresentation(at: Date()))
         }
         .onDisappear {
@@ -1936,16 +1894,8 @@ struct IntakeV2ReadyAnalyzeView: View {
                         scanPreviewCard(presentation)
                             .transition(.opacity)
 
-                        earlyStartArea(presentation)
-                            .transition(.opacity)
-
                         if presentation.showsSlowCopy {
                             slowScanNotice
-                                .transition(.opacity)
-                        }
-
-                        if presentation.showsMergeWait {
-                            mergeWaitCard
                                 .transition(.opacity)
                         }
 
@@ -1953,7 +1903,7 @@ struct IntakeV2ReadyAnalyzeView: View {
                     }
                 }
                 .frame(maxWidth: 880, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.42), value: presentation.canOpenDay1)
             }
         } footer: { isNarrow in
@@ -1966,8 +1916,6 @@ struct IntakeV2ReadyAnalyzeView: View {
             bootLogState: bootLogState,
             hasFolder: store.folderURL != nil,
             hasWorkspaceScanResult: workspaceScanResult != nil,
-            earlyStartActive: earlyStartMode == .active,
-            earlyStartCompleted: earlyStartMode == .answered,
             now: now
         )
     }
@@ -1983,14 +1931,7 @@ struct IntakeV2ReadyAnalyzeView: View {
         if store.folderURL == nil {
             return "폴더 없이 시작합니다. 앞서 답한 내용만으로 질문을 준비합니다."
         }
-        switch presentation.state {
-        case .earlyStartActive:
-            return "폴더 분석은 계속되고, 끝나면 근거만 보강됩니다."
-        case .earlyStartAnsweredScanPending:
-            return "답변은 저장했습니다. 폴더 분석이 끝나면 바로 질문을 시작할 수 있습니다."
-        default:
-            return "보통 30-45초 걸립니다. 완료되면 바로 질문을 시작할 수 있습니다."
-        }
+        return "완료되면 바로 질문을 시작할 수 있습니다."
     }
 
     private var questionCount: Int {
@@ -2000,7 +1941,7 @@ struct IntakeV2ReadyAnalyzeView: View {
         if let legacyCount = workspaceScanResult?.day1IcpPlan?.questions.count, legacyCount > 0 {
             return legacyCount
         }
-        return Self.earlyStartQuestions.count
+        return 3
     }
 
     private var readySignalCount: Int? {
@@ -2291,217 +2232,6 @@ struct IntakeV2ReadyAnalyzeView: View {
         .accessibilityIdentifier("intakeV2.scanSlowNotice")
     }
 
-    @ViewBuilder
-    private func earlyStartArea(_ presentation: Day1ScanWaitPresentation) -> some View {
-        if presentation.canShowEarlyStartCTA && earlyStartMode == .idle && store.folderURL != nil {
-            earlyStartPromptCard
-        } else if earlyStartMode == .active || earlyStartMode == .answered {
-            earlyStartQuestionSet(presentation)
-        }
-    }
-
-    private var earlyStartPromptCard: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 14) {
-                earlyStartPromptIcon
-                earlyStartPromptCopy
-                Spacer(minLength: 16)
-                earlyStartPromptButton
-            }
-
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top, spacing: 13) {
-                    earlyStartPromptIcon
-                    earlyStartPromptCopy
-                    Spacer(minLength: 0)
-                }
-                earlyStartPromptButton
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(IntakeV2Color.accent.opacity(0.075))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(IntakeV2Color.accent.opacity(0.22), lineWidth: 1)
-                )
-        )
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("intakeV2.earlyStartPrompt")
-    }
-
-    private var earlyStartPromptIcon: some View {
-        Image(systemName: "text.badge.checkmark")
-            .font(.system(size: 17, weight: .bold))
-            .foregroundStyle(IntakeV2Color.accentBright)
-            .frame(width: 28, height: 28)
-            .background(
-                Circle()
-                    .fill(.black.opacity(0.18))
-                    .overlay(Circle().stroke(IntakeV2Color.accent.opacity(0.25), lineWidth: 1))
-            )
-    }
-
-    private var earlyStartPromptCopy: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("기다리는 동안 먼저 답할 수 있어요")
-                .font(.system(size: 15.5, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.94))
-                .fixedSize(horizontal: false, vertical: true)
-            Text("폴더 분석은 계속되고, 끝나면 근거만 보강됩니다.")
-                .font(.system(size: 12.5, weight: .medium, design: .rounded))
-                .foregroundStyle(IntakeV2Color.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var earlyStartPromptButton: some View {
-        Button(action: startEarlyStart) {
-            HStack(spacing: 7) {
-                Text("3개 질문 먼저 답하기")
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 11.5, weight: .heavy))
-            }
-            .font(.system(size: 13.5, weight: .bold, design: .rounded))
-            .foregroundStyle(.black)
-            .lineLimit(1)
-            .minimumScaleFactor(0.82)
-            .padding(.horizontal, 15)
-            .frame(height: 38)
-            .background(Capsule().fill(Color.white))
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("intakeV2.earlyStartButton")
-    }
-
-    private func earlyStartQuestionSet(_ presentation: Day1ScanWaitPresentation) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("3개 질문 먼저 답하기")
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.94))
-                    Text("이미 답한 항목은 폴더 분석 결과가 도착해도 다시 쓰거나 바꾸지 않습니다.")
-                        .font(.system(size: 12.5, weight: .medium, design: .rounded))
-                        .foregroundStyle(IntakeV2Color.textTertiary)
-                }
-                Spacer(minLength: 0)
-                Text("\(store.earlyStartAnswers.count)/\(Self.earlyStartQuestions.count)")
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    .foregroundStyle(IntakeV2Color.accentBright)
-                    .monospacedDigit()
-            }
-
-            ForEach(Self.earlyStartQuestions) { question in
-                earlyStartQuestionRow(question)
-            }
-
-            if presentation.showsMergeWait {
-                Text("답변은 저장했습니다. 폴더 분석이 끝나면 근거 카드와 후속 질문만 보강합니다.")
-                    .font(.system(size: 12.5, weight: .semibold, design: .rounded))
-                    .foregroundStyle(IntakeV2Color.textSecondary)
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.white.opacity(0.03))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(IntakeV2Color.accent.opacity(0.16), lineWidth: 1)
-                )
-        )
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("intakeV2.earlyStartQuestions")
-    }
-
-    private func earlyStartQuestionRow(_ question: EarlyStartQuestion) -> some View {
-        let selected = store.earlyStartAnswers[question.id]
-
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text(question.title)
-                    .font(.system(size: 12, weight: .heavy, design: .rounded))
-                    .foregroundStyle(IntakeV2Color.accentBright)
-                    .frame(width: 86, alignment: .leading)
-                Text(question.prompt)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.88))
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
-                if selected != nil {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(IntakeV2Color.textTertiary)
-                }
-            }
-
-            HStack(spacing: 8) {
-                ForEach(question.options, id: \.self) { option in
-                    let isSelected = selected == option
-                    Button {
-                        selectEarlyStartOption(option, for: question)
-                    } label: {
-                        Text(option)
-                            .font(.system(size: 12.5, weight: .semibold, design: .rounded))
-                            .foregroundStyle(isSelected ? .black : .white.opacity(0.78))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.84)
-                            .padding(.horizontal, 11)
-                            .frame(height: 32)
-                            .frame(maxWidth: .infinity)
-                            .background(
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .fill(isSelected ? Color.white : .white.opacity(0.04))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                            .stroke(isSelected ? Color.white.opacity(0.7) : .white.opacity(0.08), lineWidth: 1)
-                                    )
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(selected != nil)
-                }
-            }
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(.black.opacity(0.14))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(.white.opacity(0.055), lineWidth: 1))
-        )
-    }
-
-    private var mergeWaitCard: some View {
-        HStack(alignment: .center, spacing: 13) {
-            ProgressView()
-                .progressViewStyle(.circular)
-                .controlSize(.small)
-                .tint(IntakeV2Color.accentBright)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("답변은 저장했습니다.")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.94))
-                Text("폴더 분석이 마지막 근거를 붙이는 중입니다.")
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(IntakeV2Color.textSecondary)
-                Text("완료되면 바로 질문을 시작할 수 있습니다.")
-                    .font(.system(size: 12.5, weight: .medium, design: .rounded))
-                    .foregroundStyle(IntakeV2Color.textTertiary)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(IntakeV2Color.accent.opacity(0.07))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(IntakeV2Color.accent.opacity(0.18), lineWidth: 1))
-        )
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("intakeV2.scanMergeWait")
-    }
-
     private func scanWaitFooter(_ presentation: Day1ScanWaitPresentation, isNarrow: Bool) -> some View {
         HStack(alignment: .center, spacing: 12) {
             Button(action: handleBack) {
@@ -2531,6 +2261,7 @@ struct IntakeV2ReadyAnalyzeView: View {
                             .foregroundStyle(presentation.canOpenDay1 ? .black : .white.opacity(0.3))
                             .lineLimit(1)
                             .minimumScaleFactor(0.82)
+                            .monospacedDigit()
                     }
                     .padding(.horizontal, 30)
                     .padding(.vertical, 14)
@@ -2552,6 +2283,7 @@ struct IntakeV2ReadyAnalyzeView: View {
             }
         }
         .frame(maxWidth: isNarrow ? .infinity : 880, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: isNarrow ? .leading : .center)
         .padding(.top, 8)
     }
 
@@ -2598,37 +2330,6 @@ struct IntakeV2ReadyAnalyzeView: View {
         onBack()
     }
 
-    private func startEarlyStart() {
-        guard earlyStartMode == .idle else { return }
-        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) {
-            earlyStartMode = .active
-        }
-        PostHogTelemetry.capture("mac_scan_early_start_clicked", properties: telemetryProperties(for: scanWaitPresentation(at: Date())))
-    }
-
-    private func selectEarlyStartOption(_ option: String, for question: EarlyStartQuestion) {
-        guard store.earlyStartAnswers[question.id] == nil else { return }
-        store.lockEarlyStartAnswer(questionId: question.id, answer: option)
-        guard Self.earlyStartQuestions.allSatisfy({ store.earlyStartAnswers[$0.id] != nil }) else {
-            return
-        }
-
-        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) {
-            earlyStartMode = .answered
-        }
-        trackPresentationMilestonesIfNeeded(scanWaitPresentation(at: Date()))
-    }
-
-    private func synchronizeEarlyStartModeWithStoredAnswers() {
-        let answeredCount = Self.earlyStartQuestions.filter { store.earlyStartAnswers[$0.id] != nil }.count
-        guard answeredCount > 0 else { return }
-        if answeredCount == Self.earlyStartQuestions.count {
-            earlyStartMode = .answered
-        } else if earlyStartMode == .idle {
-            earlyStartMode = .active
-        }
-    }
-
     private func trackScanWaitViewedIfNeeded() {
         guard !didTrackScanWaitViewed else { return }
         didTrackScanWaitViewed = true
@@ -2636,16 +2337,6 @@ struct IntakeV2ReadyAnalyzeView: View {
     }
 
     private func trackPresentationMilestonesIfNeeded(_ presentation: Day1ScanWaitPresentation) {
-        if presentation.canShowEarlyStartCTA && !didTrackEarlyStartShown {
-            didTrackEarlyStartShown = true
-            PostHogTelemetry.capture("mac_scan_early_start_shown", properties: telemetryProperties(for: presentation))
-        }
-
-        if presentation.showsMergeWait && !didTrackMergeWaitViewed {
-            didTrackMergeWaitViewed = true
-            PostHogTelemetry.capture("mac_scan_merge_wait_viewed", properties: telemetryProperties(for: presentation))
-        }
-
         if presentation.canOpenDay1 && !didTrackMergeCompleted {
             didTrackMergeCompleted = true
             PostHogTelemetry.capture("mac_scan_merge_completed", properties: telemetryProperties(for: presentation))
@@ -2662,9 +2353,7 @@ struct IntakeV2ReadyAnalyzeView: View {
             "step_index": presentation.phase.stepIndex,
             "total_steps": presentation.phase.totalSteps,
             "has_folder": store.folderURL != nil,
-            "early_start_answer_count": store.earlyStartAnswers.count,
             "scan_failed": presentation.state == .scanFailed,
-            "opened_from_merge_wait": didTrackMergeWaitViewed,
         ]
         if let elapsedSeconds = presentation.elapsedSeconds {
             properties["elapsed_seconds"] = elapsedSeconds

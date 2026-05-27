@@ -524,14 +524,10 @@ struct Day1ScanWaitPresentation: Equatable {
     enum State: Equatable {
         case scanningNormal
         case scanningSlow
-        case earlyStartAvailable
-        case earlyStartActive
-        case earlyStartAnsweredScanPending
         case scanMergedReady
         case scanFailed
     }
 
-    static let earlyStartUnlockSeconds = 12
     static let slowScanSeconds = 45
 
     let state: State
@@ -549,38 +545,39 @@ struct Day1ScanWaitPresentation: Equatable {
         if canOpenDay1 {
             return "질문 \(questionCount)개 시작하기 →"
         }
-        if showsMergeWait {
-            return "마지막 신호 붙이는 중…"
+        if let remainingSeconds = estimatedRemainingSeconds, remainingSeconds > 0 {
+            return "\(remainingSeconds)초 남음 (예상)"
         }
-        return "질문 \(questionCount)개 준비 중…"
+        return "마무리 중…"
     }
 
     func primaryCTAAccessibilityLabel(questionCount: Int = 3) -> String {
-        primaryCTATitle(questionCount: questionCount).replacingOccurrences(of: " →", with: "")
-    }
-
-    var canShowEarlyStartCTA: Bool {
-        state == .earlyStartAvailable || state == .scanningSlow
+        if canOpenDay1 {
+            return primaryCTATitle(questionCount: questionCount).replacingOccurrences(of: " →", with: "")
+        }
+        if let remainingSeconds = estimatedRemainingSeconds, remainingSeconds > 0 {
+            return "질문 \(questionCount)개 준비 중, \(remainingSeconds)초 남음 예상"
+        }
+        return "질문 \(questionCount)개 준비 중, 마무리 중"
     }
 
     var canOpenDay1: Bool {
         state == .scanMergedReady || state == .scanFailed
     }
 
-    var showsMergeWait: Bool {
-        state == .earlyStartAnsweredScanPending
-    }
-
     var showsSlowCopy: Bool {
         state == .scanningSlow
+    }
+
+    var estimatedRemainingSeconds: Int? {
+        guard !canOpenDay1 else { return nil }
+        return max(0, Self.slowScanSeconds - (elapsedSeconds ?? 0))
     }
 
     init(
         bootLogState: IntakeV2BootLogState,
         hasFolder: Bool,
         hasWorkspaceScanResult: Bool,
-        earlyStartActive: Bool,
-        earlyStartCompleted: Bool,
         now: Date
     ) {
         phase = bootLogState.scanPhase
@@ -601,21 +598,9 @@ struct Day1ScanWaitPresentation: Equatable {
             return
         }
 
-        if earlyStartActive && !earlyStartCompleted {
-            state = .earlyStartActive
-            return
-        }
-
-        if earlyStartCompleted {
-            state = .earlyStartAnsweredScanPending
-            return
-        }
-
         let elapsed = elapsedSeconds ?? 0
         if elapsed >= Self.slowScanSeconds {
             state = .scanningSlow
-        } else if elapsed >= Self.earlyStartUnlockSeconds {
-            state = .earlyStartAvailable
         } else {
             state = .scanningNormal
         }
@@ -849,6 +834,7 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var macAuthSession: MacAuthSession?
     @Published private(set) var macOnboardingStatus: MacOnboardingStatus = .idle
     @Published private(set) var macOnboardingIntroCompleted: Bool = false
+    @Published private(set) var localDataResetGeneration: Int = 0
     @Published private(set) var onboardingContext: OnboardingContext?
     @Published private(set) var onboardingContextStatus: OnboardingContextSubmissionStatus = .idle
     @Published private(set) var bipCoach: BipCoachState?
@@ -868,6 +854,8 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var iddDocPreviews: [IddDocPreview] = []
     @Published private(set) var iddProviderRecovery: IddProviderRecovery?
     @Published private(set) var iddSetupError: IddSetupError?
+    @Published private(set) var day1DocHandoffPendingDocType: String?
+    @Published private(set) var day1DocHandoffError: String?
     @Published private(set) var bipTokenExpired: String?
     @Published private(set) var bipMissionProgress: BipMissionProgress?
     // F6: transient banner displayed in the Foundation surface when the IDD
@@ -911,6 +899,7 @@ final class AgenticViewModel: ObservableObject {
     private let authSessionFactory: WebAuthenticationSessionFactory
     private let activateAppForAuth: @MainActor () -> Void
     private let disablesSidecarStartForTesting: Bool
+    private let localDataResetter: (Agentic30LocalDataResetOptions, [URL]) -> KeychainHelper.LocalDataResetReport
     private var startupSessionAppearStartedAt: Date?
     private var didRecordStartupSessionAppear = false
 
@@ -1158,6 +1147,16 @@ final class AgenticViewModel: ObservableObject {
         disablesSidecarStartForTesting: Bool = false,
         foundationCurriculumLifecycleController: FoundationCurriculumLifecycleController? = nil,
         sidecar: (any SidecarTransport)? = nil,
+        localDataResetter: @escaping (Agentic30LocalDataResetOptions, [URL]) -> KeychainHelper.LocalDataResetReport = { options, workspaceURLs in
+            let resetKeychainStorage: () -> Void = CommandLine.arguments.contains("--ui-testing-skip-keychain-reset")
+                ? {}
+                : KeychainHelper.resetKeychainStorageForLocalDataReset
+            return Agentic30LocalDataResetter.reset(
+                options: options,
+                additionalWorkspaceURLs: workspaceURLs,
+                resetKeychainStorage: resetKeychainStorage
+            )
+        },
         activateAppForAuth: @escaping @MainActor () -> Void = {
             NSApplication.shared.activate(ignoringOtherApps: true)
         }
@@ -1175,6 +1174,7 @@ final class AgenticViewModel: ObservableObject {
         self.disablesSidecarStartForTesting = disablesSidecarStartForTesting
         self.foundationCurriculumLifecycleController = foundationCurriculumLifecycleController ?? FoundationCurriculumLifecycleController()
         self.sidecar = sidecar ?? SidecarBridge()
+        self.localDataResetter = localDataResetter
 
         let arguments = CommandLine.arguments
 
@@ -1301,6 +1301,37 @@ final class AgenticViewModel: ObservableObject {
         selectedSession?.pendingUserInput?.isLegacyStaticIddQuestion == true
             ? nil
             : selectedSession?.pendingUserInput
+    }
+
+    var activeDay1HandoffPrompt: StructuredPromptRequest? {
+        guard let prompt = pendingStructuredPrompt,
+              prompt.generation?.mode == "day1_handoff",
+              prompt.isAgentic30StructuredInput,
+              let promptDocType = prompt.generation?.docType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !promptDocType.isEmpty else {
+            return nil
+        }
+        if let pendingDocType = day1DocHandoffPendingDocType?.lowercased(), pendingDocType == promptDocType {
+            return prompt
+        }
+        let expectedDocType = iddCurrentDocType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard expectedDocType == nil || expectedDocType == promptDocType else {
+            return nil
+        }
+        return prompt
+    }
+
+    private func isDay1HandoffSession(_ session: ChatSession?) -> Bool {
+        guard let session else { return false }
+        if session.runtime?.iddMode?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "day1_handoff" {
+            return true
+        }
+        return session.pendingUserInput?.generation?.mode == "day1_handoff"
+    }
+
+    private func isDay1HandoffSession(id sessionID: String?) -> Bool {
+        guard let sessionID else { return false }
+        return isDay1HandoffSession(sessions.first(where: { $0.id == sessionID }))
     }
 
     func structuredPromptSubmissionState(for sessionId: String?) -> StructuredPromptSubmissionState? {
@@ -2222,6 +2253,9 @@ final class AgenticViewModel: ObservableObject {
             "response_count": responses.count,
             "provider": session.provider.rawValue,
         ], authSession: macAuthSession)
+        #if DEBUG
+        let promptBeforeLocalSubmission = session.pendingUserInput
+        #endif
         let payloadResponses = responses.map { response in
             [
                 "question": response.question,
@@ -2234,6 +2268,15 @@ final class AgenticViewModel: ObservableObject {
             requestId: requestId,
             responses: responses
         )
+        #if DEBUG
+        if completeUITestingDay1DocHandoffSubmissionIfNeeded(
+            sessionId: session.id,
+            requestId: requestId,
+            promptBeforeLocalSubmission: promptBeforeLocalSubmission
+        ) {
+            return
+        }
+        #endif
 
         sidecar.send(payload: [
             "type": "submit_user_input",
@@ -3143,6 +3186,54 @@ final class AgenticViewModel: ObservableObject {
         sidecar.send(payload: payload)
     }
 
+    func startDay1DocHandoff(docType: String, day1Handoff: [String: Any]) {
+        let normalizedDocType = docType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalizedDocType.isEmpty else { return }
+        guard isConnected else {
+            let message = "Sidecar 연결 후 \(normalizedDocType.uppercased()) 문서를 작성할 수 있습니다."
+            day1DocHandoffPendingDocType = nil
+            day1DocHandoffError = message
+            lastError = message
+            PostHogTelemetry.capture("mac_day1_doc_handoff_rejected", properties: [
+                "doc_type": normalizedDocType,
+                "reason": "sidecar_disconnected",
+            ], authSession: macAuthSession)
+            return
+        }
+        day1DocHandoffPendingDocType = normalizedDocType
+        day1DocHandoffError = nil
+        #if DEBUG
+        if seedUITestingDay1DocHandoffPromptIfNeeded(docType: normalizedDocType) {
+            return
+        }
+        #endif
+        let provider = selectedSession?.provider ?? visibleBipCoach?.config.provider ?? selectedProvider
+        var payload: [String: Any] = [
+            "type": "day1_doc_handoff_start",
+            "provider": provider.rawValue,
+            "docType": normalizedDocType,
+            "localEvidence": localEvidenceBundle(),
+            "day1Handoff": day1Handoff,
+        ]
+        if let sessionID = currentBipCoachSessionID() {
+            payload["sessionId"] = sessionID
+        }
+        PostHogTelemetry.capture("mac_day1_doc_handoff_requested", properties: [
+            "doc_type": normalizedDocType,
+            "provider": provider.rawValue,
+        ], authSession: macAuthSession)
+        if !sidecar.send(payload: payload) {
+            let message = "\(normalizedDocType.uppercased()) 문서 질문 카드를 요청하지 못했습니다. Sidecar 연결을 확인해 주세요."
+            day1DocHandoffPendingDocType = nil
+            day1DocHandoffError = message
+            lastError = message
+            PostHogTelemetry.capture("mac_day1_doc_handoff_rejected", properties: [
+                "doc_type": normalizedDocType,
+                "reason": "sidecar_send_failed",
+            ], authSession: macAuthSession)
+        }
+    }
+
     func retryCurrentIddQuestion() {
         startBipIddQueue(docType: iddCurrentDocType ?? selectedSession?.pendingUserInput?.generation?.docType)
     }
@@ -3290,18 +3381,26 @@ final class AgenticViewModel: ObservableObject {
         sendAuthContextToSidecar()
     }
 
-    func resetAgentic30LocalUserData() throws -> KeychainHelper.LocalDataResetReport {
+    func resetAgentic30LocalUserData(
+        options: Agentic30LocalDataResetOptions = Agentic30LocalDataResetOptions()
+    ) throws -> KeychainHelper.LocalDataResetReport {
         let hadAppSupport = FileManager.default.fileExists(atPath: KeychainHelper.applicationSupportURL.path)
-        let workspaceURLForReset = WorkspaceSettings.hasExplicitWorkspace
-            ? WorkspaceSettings.resolvedURL()
-            : nil
+        let workspaceURLsForReset = options.includeKnownWorkspaces
+            ? WorkspaceSettings.knownWorkspaceURLs()
+            : []
+        let workspaceAgentic30Count = workspaceURLsForReset.filter {
+            FileManager.default.fileExists(
+                atPath: $0.appendingPathComponent(".agentic30", isDirectory: true).path
+            )
+        }.count
         PostHogTelemetry.capture(
             "mac_local_data_reset_requested",
             properties: [
                 "had_app_support": hadAppSupport,
-                "had_workspace_agentic30": workspaceURLForReset.map {
-                    FileManager.default.fileExists(atPath: $0.appendingPathComponent(".agentic30", isDirectory: true).path)
-                } ?? false,
+                "known_workspace_count": workspaceURLsForReset.count,
+                "workspace_agentic30_count": workspaceAgentic30Count,
+                "include_qmd_index": options.includeAgentic30QmdIndex,
+                "remove_app_bundle": options.removeAppBundle,
             ],
             authSession: macAuthSession
         )
@@ -3311,8 +3410,11 @@ final class AgenticViewModel: ObservableObject {
         sidecar.stop()
         started = false
 
-        defer { resetVolatileLocalUserDataState() }
-        return try KeychainHelper.resetAgentic30LocalData(workspaceURL: workspaceURLForReset)
+        defer {
+            resetVolatileLocalUserDataState()
+            localDataResetGeneration += 1
+        }
+        return localDataResetter(options, workspaceURLsForReset)
     }
 
     func setProjectWorkspace(_ url: URL) {
@@ -4122,12 +4224,15 @@ final class AgenticViewModel: ObservableObject {
             lastError = event.bipSetupGateMessage ?? "오늘 미션은 바로 만들 수 있고, 부족한 기준은 추천 정확도를 높이는 데 사용됩니다."
         case "bip_idd_session_ready":
             updateBipSetupGate(from: event)
+            let isDay1HandoffReady = isDay1HandoffSession(id: event.sessionId)
             if let sessionId = event.sessionId {
                 selectedSessionID = sessionId
             }
             isBipCoachGenerating = false
             bipMissionProgress = nil
-            activeSurface = .assistantBubble
+            if !isDay1HandoffReady {
+                activeSurface = .assistantBubble
+            }
         case "idd_setup_state", "idd_provider_recovery":
             updateBipSetupGate(from: event)
             isBipCoachGenerating = false
@@ -4296,6 +4401,10 @@ final class AgenticViewModel: ObservableObject {
             bipMissionProgress = event.bipMissionProgress
         case "error":
             lastError = event.message
+            if day1DocHandoffPendingDocType != nil {
+                day1DocHandoffPendingDocType = nil
+                day1DocHandoffError = event.message ?? "문서 질문 카드를 준비하지 못했습니다."
+            }
             isBipCoachRefreshing = false
             isBipCoachGenerating = false
             isBipCoachCompleting = false
@@ -4374,6 +4483,22 @@ final class AgenticViewModel: ObservableObject {
         missingBipLocalDocs = event.missingLocalDocs ?? missingBipLocalDocs
         missingBipExternalRequirements = event.missingExternalRequirements ?? missingBipExternalRequirements
         bipSetupGateMessage = event.bipSetupGateMessage ?? bipSetupGateMessage
+        reconcileDay1DocHandoffState(from: event)
+    }
+
+    private func reconcileDay1DocHandoffState(from event: SidecarEvent) {
+        if let setupError = event.iddSetupError,
+           setupError.docType == day1DocHandoffPendingDocType {
+            day1DocHandoffPendingDocType = nil
+            day1DocHandoffError = setupError.message
+            return
+        }
+
+        guard let pendingDocType = day1DocHandoffPendingDocType else { return }
+        if event.iddDocPreviews?.first(where: { $0.type == pendingDocType })?.isWritten == true {
+            day1DocHandoffPendingDocType = nil
+            day1DocHandoffError = nil
+        }
     }
 
     private var usesInlineUITestStubResponses: Bool {
@@ -4640,6 +4765,204 @@ final class AgenticViewModel: ObservableObject {
         return nil
         #endif
     }
+
+    private static func makeUITestingDay1HandoffGoalPromptIfNeeded(
+        sessionID requestedSessionID: String,
+        createdAt: Date
+    ) -> StructuredPromptRequest? {
+        #if DEBUG
+        let arguments = CommandLine.arguments
+        guard arguments.contains("--ui-testing-seed-day1-handoff-goal-prompt")
+            || arguments.contains("--ui-testing-seed-day1-handoff-goal-prompt-delayed") else {
+            return nil
+        }
+        return StructuredPromptRequest(
+            requestId: "ui-test-day1-handoff-goal-request",
+            sessionId: requestedSessionID,
+            toolName: "agentic30_request_user_input",
+            title: "GOAL 정하기",
+            createdAt: createdAt,
+            questions: [
+                StructuredPromptQuestion(
+                    header: "이번 주 GOAL",
+                    question: "이번 주에 가장 먼저 검증하거나 달성하려는 GOAL은 무엇인가요?",
+                    helperText: "먼저 검증할 목표를 정합니다. 저장: docs/GOAL.md",
+                    options: [
+                        StructuredPromptOption(
+                            label: "첫 고객 반응 확인",
+                            description: "ICP가 답변, 미팅, 사용 시도 같은 실제 반응을 보이는지 봅니다.",
+                            preview: nil,
+                            nextIntent: "goal_customer_response"
+                        ),
+                        StructuredPromptOption(
+                            label: "문제 강도 확인",
+                            description: "현재 대안의 시간, 돈, 평판 비용을 실제로 겪는지 봅니다.",
+                            preview: nil,
+                            nextIntent: "goal_problem_intensity"
+                        ),
+                    ],
+                    multiSelect: false,
+                    allowFreeText: true,
+                    requiresFreeText: false,
+                    freeTextPlaceholder: "예: 이번 주 5명에게 요청하고 3명 이상 답하면 통과",
+                    textMode: .short
+                )
+            ],
+            generation: StructuredPromptGeneration(mode: "day1_handoff", docType: "goal")
+        )
+        #else
+        return nil
+        #endif
+    }
+
+    #if DEBUG
+    private func seedUITestingDay1DocHandoffPromptIfNeeded(docType: String) -> Bool {
+        let arguments = CommandLine.arguments
+        let shouldSeedImmediately = arguments.contains("--ui-testing-seed-day1-handoff-goal-prompt")
+        let shouldSeedAfterDelay = arguments.contains("--ui-testing-seed-day1-handoff-goal-prompt-delayed")
+        guard (shouldSeedImmediately || shouldSeedAfterDelay),
+              docType == "goal" else {
+            return false
+        }
+
+        if shouldSeedAfterDelay {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                self?.installUITestingDay1DocHandoffPrompt(docType: docType, forceNewSession: true)
+            }
+            return true
+        }
+
+        installUITestingDay1DocHandoffPrompt(docType: docType, forceNewSession: false)
+        return true
+    }
+
+    @discardableResult
+    private func installUITestingDay1DocHandoffPrompt(docType: String, forceNewSession: Bool) -> Bool {
+        let now = Date()
+        let sessionID = forceNewSession
+            ? "ui-test-day1-handoff-\(docType)-\(UUID().uuidString)"
+            : selectedSessionID ?? sessions.first?.id ?? UUID().uuidString
+        guard let prompt = Self.makeUITestingDay1HandoffGoalPromptIfNeeded(
+            sessionID: sessionID,
+            createdAt: now
+        ) else {
+            return false
+        }
+
+        if var session = sessions.first(where: { $0.id == sessionID }) {
+            session.title = "Day 1 Handoff: GOAL"
+            session.status = .awaitingInput
+            session.updatedAt = now
+            session.error = nil
+            session.pendingUserInput = prompt
+            if session.runtime == nil {
+                session.runtime = ChatSessionRuntime(
+                    codexThreadId: nil,
+                    codexThreadMeta: nil,
+                    codexWarm: nil,
+                    startupTiming: nil,
+                    iddDocumentType: docType,
+                    iddMode: "day1_handoff"
+                )
+            } else {
+                session.runtime?.iddDocumentType = docType
+                session.runtime?.iddMode = "day1_handoff"
+            }
+            upsert(session)
+        } else {
+            let provider = selectedProvider
+            upsert(ChatSession(
+                id: sessionID,
+                title: "Day 1 Handoff: GOAL",
+                provider: provider,
+                model: preferredModel(for: provider),
+                status: .awaitingInput,
+                createdAt: now,
+                updatedAt: now,
+                error: nil,
+                messages: [],
+                pendingUserInput: prompt,
+                runtime: ChatSessionRuntime(
+                    codexThreadId: nil,
+                    codexThreadMeta: nil,
+                    codexWarm: nil,
+                    startupTiming: nil,
+                    iddDocumentType: docType,
+                    iddMode: "day1_handoff"
+                )
+            ))
+        }
+
+        selectedSessionID = sessionID
+        iddSetupStatus = "interviewing"
+        iddCurrentDocType = docType
+        day1DocHandoffPendingDocType = docType
+        day1DocHandoffError = nil
+        refreshPresentationState()
+        return true
+    }
+
+    private func completeUITestingDay1DocHandoffSubmissionIfNeeded(
+        sessionId: String,
+        requestId: String,
+        promptBeforeLocalSubmission: StructuredPromptRequest?
+    ) -> Bool {
+        let arguments = CommandLine.arguments
+        guard (arguments.contains("--ui-testing-seed-day1-handoff-goal-prompt")
+                || arguments.contains("--ui-testing-seed-day1-handoff-goal-prompt-delayed")),
+              let sessionIndex = sessions.firstIndex(where: { $0.id == sessionId }),
+              let prompt = promptBeforeLocalSubmission ?? sessions[sessionIndex].pendingUserInput,
+              prompt.requestId == requestId,
+              prompt.generation?.mode == "day1_handoff",
+              let docType = prompt.generation?.docType?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !docType.isEmpty else {
+            return false
+        }
+
+        let docMeta: (title: String, path: String)
+        switch docType {
+        case "goal":
+            docMeta = ("GOAL", "docs/GOAL.md")
+        case "icp":
+            docMeta = ("ICP", "docs/ICP.md")
+        case "values":
+            docMeta = ("VALUES", "docs/VALUES.md")
+        case "spec":
+            docMeta = ("SPEC", "docs/SPEC.md")
+        default:
+            docMeta = (docType.uppercased(), "docs/\(docType.uppercased()).md")
+        }
+
+        let writtenPreview = IddDocPreview(
+            type: docType,
+            title: docMeta.title,
+            path: docMeta.path,
+            status: "written",
+            content: "UI test handoff response"
+        )
+        if let previewIndex = iddDocPreviews.firstIndex(where: { $0.type == docType }) {
+            iddDocPreviews[previewIndex] = writtenPreview
+        } else {
+            iddDocPreviews.append(writtenPreview)
+        }
+        let order = ["goal", "icp", "values", "spec"]
+        iddDocPreviews.sort {
+            (order.firstIndex(of: $0.type) ?? Int.max) < (order.firstIndex(of: $1.type) ?? Int.max)
+        }
+
+        sessions[sessionIndex].pendingUserInput = nil
+        sessions[sessionIndex].status = .idle
+        sessions[sessionIndex].error = nil
+        sessions[sessionIndex].updatedAt = .now
+        submittedStructuredPromptBySession.removeValue(forKey: sessionId)
+        structuredPromptDraftBySession.removeValue(forKey: sessionId)
+        day1DocHandoffPendingDocType = nil
+        day1DocHandoffError = nil
+        iddCurrentDocType = order.drop(while: { $0 != docType }).dropFirst().first
+        refreshPresentationState()
+        return true
+    }
+    #endif
 
     private func seedInlineUITestBipCoachIfNeeded() {
         #if DEBUG
@@ -4934,6 +5257,10 @@ final class AgenticViewModel: ObservableObject {
 
     func applySessionUpdatedForTesting(_ session: ChatSession) {
         upsert(session)
+    }
+
+    func applySidecarEventForTesting(_ event: SidecarEvent) {
+        handle(event)
     }
 
     func applyCurriculumQuestionReframeForTesting(

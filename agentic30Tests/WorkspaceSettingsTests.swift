@@ -14,10 +14,12 @@ final class WorkspaceSettingsTests: XCTestCase {
         // (or mutate) whatever the dev box's login keychain happens to hold.
         WorkspaceSettings.legacyWorkspaceProvider = { "" }
         UserDefaults.standard.removeObject(forKey: defaultsKey)
+        WorkspaceSettings.clearKnownWorkspaceRoots()
     }
 
     override func tearDown() {
         UserDefaults.standard.removeObject(forKey: defaultsKey)
+        WorkspaceSettings.clearKnownWorkspaceRoots()
         WorkspaceSettings.legacyWorkspaceProvider = productionLegacyProvider
         super.tearDown()
     }
@@ -55,6 +57,26 @@ final class WorkspaceSettingsTests: XCTestCase {
 
         WorkspaceSettings.clear()
         XCTAssertFalse(WorkspaceSettings.hasExplicitWorkspace)
+    }
+
+    func testStoreRecordsKnownWorkspaceHistory() {
+        let first = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-known-a-\(UUID().uuidString)", isDirectory: true)
+        let second = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-known-b-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: first, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: first)
+            try? FileManager.default.removeItem(at: second)
+        }
+
+        WorkspaceSettings.store(first)
+        WorkspaceSettings.store(second)
+        WorkspaceSettings.clear()
+
+        let knownPaths = WorkspaceSettings.knownWorkspaceURLs().map(\.path)
+        XCTAssertEqual(knownPaths, [first.standardizedFileURL.path, second.standardizedFileURL.path])
     }
 
     func testHasExplicitWorkspaceMigratesLegacyWorkspaceRoot() {

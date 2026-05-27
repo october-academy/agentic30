@@ -633,6 +633,9 @@ final class SidecarBridge: SidecarTransport {
     private func makeProcessEnvironment(nodeURL: URL) -> [String: String] {
         var environment = nodeResolver.makeEnvironment(nodeURL: nodeURL)
         environment["AGENTIC30_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
+        if environment["AGENTIC30_QMD_INDEX"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
+            environment["AGENTIC30_QMD_INDEX"] = Agentic30LocalDataResetter.qmdIndexName
+        }
 
         // Prepend login-shell PATH so gws, npm, mise-managed node etc. are findable.
         // launchd gives apps only /usr/bin:/bin; resolveLoginShellPath() fetches the

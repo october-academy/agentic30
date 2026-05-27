@@ -299,6 +299,31 @@ struct OpenDesignDayContentTests {
         #expect(String(rendered.characters) == "강조할 문구가 없는 질문입니다.")
     }
 
+    @Test func optionTitleHighlightPhrasesDropFullLongLabels() {
+        let longCustomer = "전업 1인 개발자 (수익 0원, macOS)"
+        let longToolUser = "AI 코딩 도구를 쓰는 개발자"
+
+        #expect(openDesignOptionTitleHighlightPhrases([longCustomer], for: longCustomer).isEmpty)
+        #expect(openDesignOptionTitleHighlightPhrases([longToolUser], for: longToolUser).isEmpty)
+    }
+
+    @Test func optionTitleHighlightPhrasesKeepShortDecisionPhrases() {
+        #expect(openDesignOptionTitleHighlightPhrases(["Slack 누락"], for: "Slack 누락") == ["Slack 누락"])
+        #expect(openDesignOptionTitleHighlightPhrases(["support lead"], for: "support lead") == ["support lead"])
+        #expect(openDesignOptionTitleHighlightPhrases(["AI 코딩 도구"], for: "AI 코딩 도구를 쓰는 개발자") == ["AI 코딩 도구를"])
+    }
+
+    @Test func optionTitleHighlightPhrasesExpandReadableRanges() {
+        #expect(openDesignOptionTitleHighlightPhrases(
+            ["수익 0원, macOS"],
+            for: "전업 1인 개발자 (수익 0원, macOS)"
+        ) == ["(수익 0원, macOS)"])
+        #expect(openDesignOptionTitleHighlightPhrases(
+            ["AI 코딩 도구를 쓰"],
+            for: "AI 코딩 도구를 쓰는 개발자"
+        ) == ["AI 코딩 도구를 쓰는"])
+    }
+
     @Test func personalizedDay1KeepsFiveFrontierOptionsAndSelectionFlow() {
         let content = OpenDesignDayContent.personalized(
             from: makeFiveOptionAlignmentPlan(),
@@ -435,6 +460,9 @@ struct OpenDesignDayContentTests {
         let draft = content.draft(for: state)
 
         #expect(draft.markdown.contains("Day 1 핵심 가설"))
+        #expect(draft.markdown.contains("Based on: workspace scan + user selections"))
+        #expect(draft.markdown.contains("## 확정"))
+        #expect(draft.markdown.contains("## 선택 기록"))
         #expect(draft.markdown.contains("Quality Gate"))
         #expect(draft.markdown.contains("목표:"))
         #expect(draft.markdown.contains("고객:"))
@@ -444,6 +472,46 @@ struct OpenDesignDayContentTests {
         #expect(draft.finalIcpStatement.contains("확인할 행동"))
         #expect(draft.antiIcpBody.contains("8.4/10"))
         #expect(draft.recommendation.contains("유료 대체재"))
+    }
+
+    @Test func alignmentDraftUsesSelectedValuesAsCanonicalMarkdown() {
+        let content = OpenDesignDayContent.personalized(from: makeFiveOptionAlignmentPlan(), fallback: nil)
+        var state = OpenDesignDayInteractionState(totalInterviewSteps: content.interviewSteps.count)
+        state.selectedChoices = [1: 2, 2: 2, 3: 3]
+        state.recordSubmittedChoice(stepID: 1, choiceID: 2)
+        state.recordSubmittedChoice(stepID: 2, choiceID: 2)
+        state.recordSubmittedChoice(stepID: 3, choiceID: 3)
+
+        let draft = content.draft(for: state)
+        let expectedStatement = "목표: SupportLens가 유료 support lead 후보 1명을 검증한다 / 고객: customer success lead / 문제: SLA 리스크 발견 지연 / 확인할 행동: 현재 대안 확인"
+
+        #expect(draft.finalIcpStatement == expectedStatement)
+        #expect(draft.markdown.contains("## 확정"))
+        #expect(draft.markdown.contains("- 고객: customer success lead"))
+        #expect(draft.markdown.contains("- 문제: SLA 리스크 발견 지연"))
+        #expect(draft.markdown.contains("- 확인할 행동: 현재 대안 확인"))
+        #expect(draft.markdown.contains(expectedStatement))
+        #expect(draft.markdown.contains("근거: docs/ICP.md"))
+        #expect(draft.markdown.contains("근거: docs/SPEC.md"))
+        #expect(draft.markdown.contains("근거: docs/GOAL.md"))
+        #expect(draft.markdown.contains("scan 후보: B2B SaaS support lead"))
+        #expect(!draft.markdown.contains("## Day 1 selections"))
+    }
+
+    @Test func alignmentDraftUsesFreeformAsCanonicalSelection() {
+        let content = OpenDesignDayContent.personalized(from: makeAlignmentPlan(), fallback: nil)
+        var state = OpenDesignDayInteractionState(totalInterviewSteps: content.interviewSteps.count)
+        state.setFreeformAnswer(stepID: 1, value: "  자체 입력 고객  ")
+        state.recordSubmittedChoice(stepID: 1, choiceID: OpenDesignDayInteractionState.freeformChoiceID)
+        state.recordSubmittedChoice(stepID: 2, choiceID: 1)
+        state.recordSubmittedChoice(stepID: 3, choiceID: 1)
+
+        let draft = content.draft(for: state)
+
+        #expect(draft.finalIcpStatement.contains("고객: 자체 입력 고객"))
+        #expect(draft.markdown.contains("- 고객: 자체 입력 고객"))
+        #expect(draft.markdown.contains("직접 입력"))
+        #expect(draft.markdown.contains("scan 후보: B2B SaaS support lead"))
     }
 
     @Test func alignmentQuestionCopyKeepsIcpTitleAndSanitizesOutcomeCopy() {
@@ -464,7 +532,7 @@ struct OpenDesignDayContentTests {
         #expect(content.interviewSteps[0].markedStatement == "이번 주 실제로 연락해 확인할 첫 고객 후보는 누구인가요?")
         #expect(content.interviewSteps[2].markedStatement == "선택한 문제가 진짜인지 이번 주 대화에서 어떤 행동 신호로 확인할까요?")
         #expect(!content.interviewSteps[2].markedStatement.contains("Day 2"))
-        #expect(content.interviewSteps[2].options[0].detail == "이번 주 대화에서 확인합니다.")
+        #expect(content.interviewSteps[2].options[0].detail == "")
         #expect(!content.interviewSteps[2].options[0].detail.contains("Day 2"))
         #expect(!content.interviewSteps[2].options[0].detail.contains("다음 시장 신호"))
         #expect(content.alignmentPlan?.day2Handoff.title.contains("Day 2") == true)
@@ -999,6 +1067,65 @@ struct OpenDesignDayContentTests {
         #expect(state.submittedChoices.isEmpty)
         #expect(state.progressPercent == 0)
         #expect(state.workflowNavigationDirection == .neutral)
+    }
+
+    @Test func interactionCacheRestoresFinalConfirmationStateForSameWorkspaceDay() {
+        let key = OpenDesignDayInteractionKey(workspaceRoot: "/tmp/project-a", dayNumber: 1)
+        var cache = OpenDesignDayInteractionStateCache()
+        var state = OpenDesignDayInteractionState(totalInterviewSteps: 4)
+        state.acceptMissionForStepFlow()
+        for stepID in 1...4 {
+            state.selectChoice(stepID: stepID, choiceID: 1)
+            state.recordSubmittedChoice(stepID: stepID, choiceID: 1)
+        }
+
+        cache.update(state, for: key, totalInterviewSteps: 4)
+        let restored = cache.state(for: key, totalInterviewSteps: 4)
+
+        #expect(restored.submittedSteps == [1, 2, 3, 4])
+        #expect(restored.activeStepID == restored.finalStepID)
+        #expect(restored.allInterviewsSubmitted)
+        #expect(restored.normalizedActiveStepID == restored.finalStepID)
+    }
+
+    @Test func interactionCacheSeparatesWorkspaceAndDayKeys() {
+        let day1Key = OpenDesignDayInteractionKey(workspaceRoot: "/tmp/project-a", dayNumber: 1)
+        let day2Key = OpenDesignDayInteractionKey(workspaceRoot: "/tmp/project-a", dayNumber: 2)
+        let otherWorkspaceKey = OpenDesignDayInteractionKey(workspaceRoot: "/tmp/project-b", dayNumber: 1)
+        var cache = OpenDesignDayInteractionStateCache()
+        var day1State = OpenDesignDayInteractionState(totalInterviewSteps: 4)
+        day1State.acceptMissionForStepFlow()
+        day1State.recordSubmittedChoice(stepID: 1, choiceID: 1)
+        cache.update(day1State, for: day1Key, totalInterviewSteps: 4)
+
+        #expect(cache.state(for: day1Key, totalInterviewSteps: 4).submittedSteps == [1])
+        #expect(cache.state(for: day2Key, totalInterviewSteps: 4).submittedSteps.isEmpty)
+        #expect(cache.state(for: otherWorkspaceKey, totalInterviewSteps: 4).submittedSteps.isEmpty)
+    }
+
+    @Test func interactionStateSynchronizationDropsOutOfRangeStepData() {
+        var state = OpenDesignDayInteractionState(totalInterviewSteps: 4)
+        state.acceptMissionForStepFlow()
+        for stepID in 1...4 {
+            state.selectChoice(stepID: stepID, choiceID: stepID)
+            state.recordSubmittedChoice(stepID: stepID, choiceID: stepID)
+        }
+        state.freeformAnswers = [1: "freeform 1", 4: "freeform 4"]
+        state.freeformAnswer = "freeform 1"
+        state.lockedPrefillStepIDs = [2, 4]
+        state.revisionSteps = [3, 4]
+
+        let synchronized = state.synchronized(totalInterviewSteps: 3)
+
+        #expect(synchronized.totalInterviewSteps == 3)
+        #expect(synchronized.submittedSteps == [1, 2, 3])
+        #expect(synchronized.selectedChoices[4] == nil)
+        #expect(synchronized.submittedChoices[4] == nil)
+        #expect(synchronized.freeformAnswers[4] == nil)
+        #expect(synchronized.lockedPrefillStepIDs == [2])
+        #expect(synchronized.revisionSteps == [3])
+        #expect(synchronized.activeStepID == synchronized.finalStepID)
+        #expect(synchronized.allInterviewsSubmitted)
     }
 
     @Test func previousFromFirstQuestionReturnsToStartPhaseWithoutResettingFlow() {

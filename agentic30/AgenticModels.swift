@@ -245,6 +245,7 @@ struct ChatSessionRuntime: Codable, Hashable {
     var codexWarm: CodexWarmState?
     var startupTiming: StartupTimingState?
     var iddDocumentType: String?
+    var iddMode: String?
 }
 
 struct CodexThreadMeta: Codable, Hashable {
@@ -850,6 +851,10 @@ struct IddDocPreview: Identifiable, Codable, Hashable {
     let content: String
 
     var id: String { type }
+
+    var isWritten: Bool {
+        ["written", "written_with_assumptions", "approved"].contains(status)
+    }
 }
 
 struct IddProviderRecovery: Codable, Hashable {

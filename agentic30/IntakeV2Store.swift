@@ -421,11 +421,9 @@ final class IntakeV2Store: ObservableObject {
     @Published var evidenceLevels: [OnboardingIsolationLevel] = []
     @Published var folderURL: URL?
     @Published var completedAt: Date?
-    @Published private(set) var earlyStartAnswers: [String: String] = [:]
 
     static let stateDefaultsKey = "agentic30.intakeV2.state.v1"
     static let legacyStateDefaultsKey = "IntakeV2.state.v1"
-    static let earlyStartQuestionIDs: Set<String> = ["customer", "problem", "behavior"]
 
     private let defaults: UserDefaults
 
@@ -447,7 +445,6 @@ final class IntakeV2Store: ObservableObject {
         var evidenceLevels: [OnboardingIsolationLevel]?
         var folderPath: String?
         var completedAt: Date?
-        var earlyStartAnswers: [String: String]?
     }
 
     private func restore() {
@@ -468,7 +465,6 @@ final class IntakeV2Store: ObservableObject {
                     self.folderURL = URL(fileURLWithPath: path)
                 }
                 self.completedAt = snap.completedAt
-                self.earlyStartAnswers = Self.normalizedEarlyStartAnswers(snap.earlyStartAnswers ?? [:])
                 if key != Self.stateDefaultsKey {
                     defaults.set(data, forKey: Self.stateDefaultsKey)
                     defaults.removeObject(forKey: key)
@@ -491,8 +487,7 @@ final class IntakeV2Store: ObservableObject {
             commitmentLevel: commitmentLevel,
             evidenceLevels: evidenceLevels,
             folderPath: folderURL?.path,
-            completedAt: completedAt,
-            earlyStartAnswers: earlyStartAnswers
+            completedAt: completedAt
         )
         do {
             let data = try JSONEncoder().encode(snap)
@@ -511,7 +506,6 @@ final class IntakeV2Store: ObservableObject {
         evidenceLevels = []
         folderURL = nil
         completedAt = nil
-        earlyStartAnswers = [:]
         restoreFailed = false
         Self.clearPersistedDraft(defaults: defaults)
     }
@@ -567,33 +561,12 @@ final class IntakeV2Store: ObservableObject {
         persist()
     }
 
-    func lockEarlyStartAnswer(questionId: String, answer: String) {
-        let id = questionId.trimmingCharacters(in: .whitespacesAndNewlines)
-        let value = answer.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard Self.earlyStartQuestionIDs.contains(id),
-              !value.isEmpty,
-              earlyStartAnswers[id] == nil else {
-            return
-        }
-        earlyStartAnswers[id] = value
-        persist()
-    }
-
     static func normalizedEvidenceLevels(_ levels: [OnboardingIsolationLevel]) -> [OnboardingIsolationLevel] {
         let selected = Set(levels)
         if selected.contains(.community) {
             return [.community]
         }
         return OnboardingIsolationLevel.intakeV2EvidenceChoices.filter { selected.contains($0) }
-    }
-
-    static func normalizedEarlyStartAnswers(_ answers: [String: String]) -> [String: String] {
-        answers.reduce(into: [:]) { result, item in
-            let key = item.key.trimmingCharacters(in: .whitespacesAndNewlines)
-            let value = item.value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard earlyStartQuestionIDs.contains(key), !value.isEmpty else { return }
-            result[key] = value
-        }
     }
 }
 

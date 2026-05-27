@@ -166,6 +166,123 @@ struct KeychainSettingsMigrationTests {
         #expect(defaults.string(forKey: "unrelated.app.key") == "keep")
     }
 
+    @Test func localDataResetterRemovesOnlyAgentic30OwnedLocalData() throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("agentic30-local-reset-\(UUID().uuidString)", isDirectory: true)
+        let home = tempRoot.appendingPathComponent("home", isDirectory: true)
+        let appSupport = home.appendingPathComponent("Library/Application Support/agentic30", isDirectory: true)
+        let legacyAppSupport = home.appendingPathComponent("Library/Application Support/Agentic30", isDirectory: true)
+        let bundleCache = home.appendingPathComponent("Library/Caches/october-academy.agentic30", isDirectory: true)
+        let genericCache = home.appendingPathComponent("Library/Caches/agentic30", isDirectory: true)
+        let preferences = home.appendingPathComponent("Library/Preferences/october-academy.agentic30.plist")
+        let savedState = home.appendingPathComponent("Library/Saved Application State/october-academy.agentic30.savedState", isDirectory: true)
+        let xdgCache = tempRoot.appendingPathComponent("xdg-cache", isDirectory: true)
+        let xdgConfig = tempRoot.appendingPathComponent("xdg-config", isDirectory: true)
+        let workspaceA = tempRoot.appendingPathComponent("workspace-a", isDirectory: true)
+        let workspaceB = tempRoot.appendingPathComponent("workspace-b", isDirectory: true)
+        let currentWorkspace = tempRoot.appendingPathComponent("workspace-current", isDirectory: true)
+        let suiteName = "agentic30.local-resetter.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        let productionLegacyProvider = WorkspaceSettings.legacyWorkspaceProvider
+        WorkspaceSettings.legacyWorkspaceProvider = { "" }
+        defer {
+            WorkspaceSettings.legacyWorkspaceProvider = productionLegacyProvider
+            defaults.removePersistentDomain(forName: suiteName)
+            try? fileManager.removeItem(at: tempRoot)
+        }
+
+        for directory in [
+            appSupport.appendingPathComponent("sessions", isDirectory: true),
+            legacyAppSupport,
+            bundleCache,
+            genericCache,
+            savedState,
+            xdgCache.appendingPathComponent("qmd", isDirectory: true),
+            xdgConfig.appendingPathComponent("qmd", isDirectory: true),
+            workspaceA.appendingPathComponent(".agentic30", isDirectory: true),
+            workspaceB.appendingPathComponent(".agentic30", isDirectory: true),
+            currentWorkspace.appendingPathComponent(".agentic30", isDirectory: true),
+        ] {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        try "session".write(to: appSupport.appendingPathComponent("sessions/session.json"), atomically: true, encoding: .utf8)
+        try "legacy".write(to: legacyAppSupport.appendingPathComponent("legacy.json"), atomically: true, encoding: .utf8)
+        try "cache".write(to: bundleCache.appendingPathComponent("cache.json"), atomically: true, encoding: .utf8)
+        try "cache".write(to: genericCache.appendingPathComponent("cache.json"), atomically: true, encoding: .utf8)
+        try fileManager.createDirectory(at: preferences.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "plist".write(to: preferences, atomically: true, encoding: .utf8)
+        try "state".write(to: savedState.appendingPathComponent("windows.plist"), atomically: true, encoding: .utf8)
+        try "default-index".write(
+            to: xdgCache.appendingPathComponent("qmd/index.sqlite"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "agentic30-index".write(
+            to: xdgCache.appendingPathComponent("qmd/agentic30.sqlite"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "default-config".write(
+            to: xdgConfig.appendingPathComponent("qmd/index.yml"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "agentic30-config".write(
+            to: xdgConfig.appendingPathComponent("qmd/agentic30.yml"),
+            atomically: true,
+            encoding: .utf8
+        )
+        for workspace in [workspaceA, workspaceB, currentWorkspace] {
+            try "# Project".write(
+                to: workspace.appendingPathComponent("README.md"),
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+        defaults.set([workspaceA.path, workspaceB.path], forKey: "agentic30.workspaceRoots.v1")
+        defaults.set(currentWorkspace.path, forKey: "agentic30.workspaceRoot")
+        defaults.set("reset-me", forKey: "agentic30.test")
+        defaults.set("keep", forKey: "unrelated.test")
+
+        let report = Agentic30LocalDataResetter.reset(
+            defaults: defaults,
+            fileManager: fileManager,
+            environment: [
+                "HOME": home.path,
+                "XDG_CACHE_HOME": xdgCache.path,
+                "XDG_CONFIG_HOME": xdgConfig.path,
+            ],
+            bundleIdentifier: "october-academy.agentic30",
+            appSupportURLs: [appSupport, legacyAppSupport],
+            devSecretsURLs: [],
+            appBundleURL: nil,
+            resetKeychainStorage: {}
+        )
+
+        #expect(report.failures.isEmpty)
+        #expect(report.removedAppSupportPaths.count >= 1)
+        #expect(report.removedQmdPaths.count == 2)
+        #expect(report.removedWorkspaceAgentic30Paths.count == 3)
+        #expect(fileManager.fileExists(atPath: appSupport.path) == false)
+        #expect(fileManager.fileExists(atPath: legacyAppSupport.path) == false)
+        #expect(fileManager.fileExists(atPath: bundleCache.path) == false)
+        #expect(fileManager.fileExists(atPath: genericCache.path) == false)
+        #expect(fileManager.fileExists(atPath: preferences.path) == false)
+        #expect(fileManager.fileExists(atPath: savedState.path) == false)
+        #expect(fileManager.fileExists(atPath: xdgCache.appendingPathComponent("qmd/agentic30.sqlite").path) == false)
+        #expect(fileManager.fileExists(atPath: xdgConfig.appendingPathComponent("qmd/agentic30.yml").path) == false)
+        #expect(fileManager.fileExists(atPath: xdgCache.appendingPathComponent("qmd/index.sqlite").path) == true)
+        #expect(fileManager.fileExists(atPath: xdgConfig.appendingPathComponent("qmd/index.yml").path) == true)
+        for workspace in [workspaceA, workspaceB, currentWorkspace] {
+            #expect(fileManager.fileExists(atPath: workspace.appendingPathComponent(".agentic30").path) == false)
+            #expect(fileManager.fileExists(atPath: workspace.appendingPathComponent("README.md").path) == true)
+        }
+        #expect(defaults.object(forKey: "agentic30.workspaceRoots.v1") == nil)
+        #expect(defaults.object(forKey: "agentic30.workspaceRoot") == nil)
+        #expect(defaults.string(forKey: "unrelated.test") == "keep")
+    }
+
     @Test func resetWorkspaceAgentic30DataRemovesOnlyManagedWorkspaceDirectory() throws {
         let workspace = FileManager.default.temporaryDirectory
             .appendingPathComponent("agentic30-reset-workspace-\(UUID().uuidString)", isDirectory: true)
