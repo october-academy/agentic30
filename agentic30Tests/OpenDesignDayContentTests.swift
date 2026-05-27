@@ -186,9 +186,9 @@ struct OpenDesignDayContentTests {
         #expect(content.interviewSteps.map(\.dimension) == ["icp", "pain_point", "outcome"])
         #expect(content.interviewSteps.map(\.title) == ["질문 1 — 고객", "질문 2 — 문제", "질문 3 — 확인할 행동"])
         #expect(content.interviewSteps.allSatisfy { $0.criteria.isEmpty })
-        #expect(content.interviewSteps.first?.markedStatement == "이 목표를 검증하려면 이번 주 가장 먼저 확인할 고객은 누구인가요?")
-        #expect(content.interviewSteps.first?.hintText == "직함보다 지금 같은 문제를 겪고, 이번 주 실제로 물어볼 수 있는 고객 조건을 고릅니다.")
-        #expect(openDesignQuestionHintText(for: content.interviewSteps[0]) == "직함보다 지금 같은 문제를 겪고, 이번 주 실제로 물어볼 수 있는 고객 조건을 고릅니다.")
+        #expect(content.interviewSteps.first?.markedStatement == "이번 주 먼저 확인할 고객은?")
+        #expect(content.interviewSteps.first?.hintText == "바로 대화 가능한 조건.")
+        #expect(openDesignQuestionHintText(for: content.interviewSteps[0]) == "바로 대화 가능한 조건.")
         #expect(content.taskGroups.first?.tasks.first?.title == "30일 목표와 방향을 정해요")
         #expect(content.taskGroups.first?.tasks.first?.meta == "가설 · 목표+3요소")
         #expect(content.contextTitle.contains("핵심 가설"))
@@ -286,10 +286,10 @@ struct OpenDesignDayContentTests {
             state.recordSubmittedChoice(stepID: step.id, choiceID: 1)
         }
 
-        #expect(content.interviewSteps[0].markedStatement == "이 목표를 검증하려면 이번 주 가장 먼저 확인할 고객은 누구인가요?")
-        #expect(content.interviewSteps[2].markedStatement == "그 고객에게서 어떤 행동 신호를 확인해야 하나요?")
+        #expect(content.interviewSteps[0].markedStatement == "이번 주 먼저 확인할 고객은?")
+        #expect(content.interviewSteps[2].markedStatement == "확인할 행동 신호는?")
         #expect(!content.interviewSteps[2].markedStatement.contains("Day 2"))
-        #expect(content.interviewSteps[2].options[0].detail.contains("다음 시장 신호 확인에서 바로 검증할 수 있습니다."))
+        #expect(content.interviewSteps[2].options[0].detail == "사건·대안·지불 의향 확인.")
         #expect(content.alignmentPlan?.day2Handoff.title.contains("Day 2") == true)
         #expect(content.draft(for: state).recommendation.contains("유료 대체재"))
     }
@@ -308,7 +308,7 @@ struct OpenDesignDayContentTests {
 
         #expect(noHelperStep.hintText == nil)
         #expect(openDesignQuestionHintText(for: noHelperStep) == nil)
-        #expect(duplicateHelperStep.hintText == "고객")
+        #expect(duplicateHelperStep.hintText == nil)
         #expect(openDesignQuestionHintText(for: duplicateHelperStep) == nil)
     }
 
@@ -914,6 +914,11 @@ struct OpenDesignDayContentTests {
         state.selectChoice(stepID: 1, choiceID: 2)
         #expect(state.selectedChoices[1] == 2)
         #expect(state.freeformAnswer.isEmpty)
+
+        state.setFreeformAnswer(stepID: 1, value: "123 macOS solo builders")
+
+        #expect(state.selectedChoices[1] == OpenDesignDayInteractionState.freeformChoiceID)
+        #expect(state.trimmedFreeformAnswer(stepID: 1) == "123 macOS solo builders")
     }
 
     @Test func activatingFreeformClearsSubmittedNumberChoiceUntilTextIsProvided() {

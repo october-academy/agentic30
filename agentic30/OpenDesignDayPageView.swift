@@ -98,8 +98,8 @@ struct OpenDesignDayContent {
             submitLabel: String,
             options: [InterviewOption],
             allowsFreeform: Bool = false,
-            freeformLabel: String = "직접 답하기 — 위 선택지에 없으면 한 줄로 적어도 돼요",
-            freeformPlaceholder: String = "예: 이 프로젝트에서 가장 먼저 검증할 고객 조건"
+            freeformLabel: String = "직접 입력",
+            freeformPlaceholder: String = "한 줄로 입력"
         ) {
             self.id = id
             self.dimension = dimension
@@ -1002,22 +1002,22 @@ struct OpenDesignDayContent {
                 )
             },
             contextTitle: isAlignment
-                ? "\(productName)의 Day 1 핵심 가설을 만듭니다."
-                : "\(productName)의 ICP v0를 scan 결과로 만듭니다.",
+                ? "\(productName)의 핵심 가설"
+                : "\(productName)의 ICP v0",
             contextBody: isAlignment
-                ? "Day 1은 고정 질문지가 아니라 프로젝트 목표, 고객, 문제, 확인할 행동을 한 문장으로 맞추는 단계입니다. 이 핵심 가설이 Day 2 시장 신호와 Day 3 Mom Test 질문의 기준점이 됩니다."
-                : "Day 1은 첫 후보를 감으로 고정하는 화면이 아니라, \(target) 가설을 \(problem) 기준으로 검증 가능한 ICP 문서와 Anti-ICP 경계까지 만드는 단계입니다.",
+                ? "목표·고객·문제·검증 행동을 한 문장으로 맞춥니다."
+                : "\(target) 가설을 \(problem) 기준으로 좁힙니다.",
             mission: Mission(
                 markedTitle: isAlignment ? "핵심 가설" : "ICP v0",
                 titleSuffix: isAlignment ? "을 Day 2에 넘길 만큼 선명하게 만들어요." : "를 검증 가능하게 좁혀요.",
                 body: alignmentPlan?.mission ?? plan.mission,
                 rules: [
-                    isAlignment ? "프로젝트 목표를 먼저 고정하고 고객 / 문제 / 확인할 행동을 분리합니다." : "좋은 고객의 need / have / don't need를 분리합니다.",
-                    isAlignment ? "Day 2에서 확인할 시장 신호 기준이 문장 안에 있어야 합니다." : "산업·직함보다 현재 대안, 반복 행동, 비용 신호를 우선합니다.",
-                    isAlignment ? "마지막에는 품질 점수와 다음 검증 기준을 확인합니다." : "마지막에는 docs/ICP.md preview와 Anti-ICP 경계를 확인합니다.",
+                    isAlignment ? "목표·고객·문제·행동을 분리합니다." : "need / have / don't need를 분리합니다.",
+                    isAlignment ? "다음 검증 기준이 문장 안에 있어야 합니다." : "현재 대안, 반복 행동, 비용 신호를 우선합니다.",
+                    isAlignment ? "마지막에 품질 점수를 확인합니다." : "마지막에 docs/ICP.md와 Anti-ICP를 확인합니다.",
                 ],
                 footnote: isAlignment
-                    ? "수락하면 목표+고객/문제/행동 질문 \(steps.count)개가 열려요 · 약 3분"
+                    ? "질문 \(steps.count)개 · 약 3분"
                     : "수락하면 scan 기반 adaptive 질문 \(steps.count)개가 열려요 · 약 3분",
                 acceptLabel: isAlignment ? "미션 수락하고 핵심 가설 시작 ↵" : "미션 수락하고 ICP 질문 시작 ↵",
                 acceptedLabel: "미션 수락됨 ✓"
@@ -1041,7 +1041,7 @@ struct OpenDesignDayContent {
                 dimension: component.id,
                 title: alignmentComponentDisplayTitle(component),
                 prompt: alignmentQuestionPrompt(for: component),
-                helperText: safeAlignmentQuestionCopy(component.helperText),
+                helperText: compactAlignmentHelperText(component),
                 options: component.options.map(safeAlignmentQuestionOption),
                 allowFreeText: true,
                 freeTextPlaceholder: "직접 입력"
@@ -1086,9 +1086,11 @@ struct OpenDesignDayContent {
     nonisolated private static func alignmentQuestionPrompt(for component: Day1AlignmentComponent) -> String {
         switch component.id {
         case "icp":
-            return "이 목표를 검증하려면 이번 주 가장 먼저 확인할 고객은 누구인가요?"
+            return "이번 주 먼저 확인할 고객은?"
+        case "pain_point":
+            return "지금 가장 아픈 문제는?"
         case "outcome":
-            return "그 고객에게서 어떤 행동 신호를 확인해야 하나요?"
+            return "확인할 행동 신호는?"
         default:
             return safeAlignmentQuestionCopy(component.prompt) ?? component.prompt
         }
@@ -1103,16 +1105,73 @@ struct OpenDesignDayContent {
         }
     }
 
+    nonisolated private static func compactAlignmentHelperText(_ component: Day1AlignmentComponent) -> String? {
+        guard let helperText = safeAlignmentQuestionCopy(component.helperText) else { return nil }
+        if helperText == alignmentComponentDisplayTitle(component) {
+            return nil
+        }
+
+        switch component.id {
+        case "icp":
+            return "바로 대화 가능한 조건."
+        case "pain_point":
+            return "시간·돈·리스크 비용."
+        case "outcome":
+            return "사건·대안·지불 의향."
+        default:
+            return helperText
+        }
+    }
+
     nonisolated private static func safeAlignmentQuestionOption(_ option: Day1IcpQuestionOption) -> Day1IcpQuestionOption {
-        Day1IcpQuestionOption(
+        let preview = safeAlignmentQuestionCopy(option.preview)
+        return Day1IcpQuestionOption(
             id: option.id,
-            label: safeAlignmentQuestionCopy(option.label) ?? option.label,
-            description: safeAlignmentQuestionCopy(option.description) ?? option.description,
-            preview: safeAlignmentQuestionCopy(option.preview),
+            label: compactAlignmentOptionLabel(option.label),
+            description: compactAlignmentOptionDescription(option, preview: preview),
+            preview: preview,
             antiSignal: option.antiSignal,
             evidenceLabel: option.evidenceLabel,
             evidenceLimited: option.evidenceLimited
         )
+    }
+
+    nonisolated private static func compactAlignmentOptionLabel(_ value: String) -> String {
+        let text = safeAlignmentQuestionCopy(value) ?? value
+        if text.hasPrefix("직접 입력:") {
+            return "직접 입력"
+        }
+        if text.hasPrefix("추가 scan 필요") {
+            return "scan 필요"
+        }
+        return compactDisplayText(text, max: 38)
+    }
+
+    nonisolated private static func compactAlignmentOptionDescription(
+        _ option: Day1IcpQuestionOption,
+        preview: String?
+    ) -> String {
+        if option.evidenceLimited == true {
+            if option.label.lowercased().contains("scan") {
+                return "근거 부족. 직접 입력으로 보정하세요."
+            }
+            if option.antiSignal == true {
+                return "최근 행동·비용 신호 없음."
+            }
+            return "근거 부족. 한 줄로 보정하세요."
+        }
+
+        switch preview {
+        case "고객", "ICP":
+            return "이번 주 대화 가능."
+        case "문제", "Pain":
+            return "시간·돈·리스크 비용."
+        case "확인할 행동", "Outcome":
+            return "사건·대안·지불 의향 확인."
+        default:
+            let text = safeAlignmentQuestionCopy(option.description) ?? option.description
+            return compactDisplayText(stripEvidenceSuffix(text), max: 34)
+        }
     }
 
     nonisolated private static func safeAlignmentQuestionCopy(_ value: String?) -> String? {
@@ -1143,6 +1202,22 @@ struct OpenDesignDayContent {
             options: [.regularExpression, .caseInsensitive]
         )
         return cleanNonEmpty(text)
+    }
+
+    nonisolated private static func stripEvidenceSuffix(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: #"근거\s*부족[:：]?\s*"#, with: "", options: .regularExpression)
+            .components(separatedBy: "· 근거:")
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? value
+    }
+
+    nonisolated private static func compactDisplayText(_ value: String, max: Int) -> String {
+        let text = value
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.count > max else { return text }
+        return String(text.prefix(max - 1)).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
     }
 
     private static func alignmentAntiRules(from alignmentPlan: Day1AlignmentPlan) -> [AntiIcpRule] {
@@ -1195,7 +1270,11 @@ struct OpenDesignDayContent {
                     return InterviewOption(
                         id: optionIndex + 1,
                         title: option.label,
-                        detail: option.description,
+                        detail: compactQuestionOptionDescription(
+                            option.description,
+                            preview: option.preview,
+                            evidenceLimited: option.evidenceLimited == true
+                        ),
                         tail: shortTail(tailText),
                         isAntiSignal: option.antiSignal == true,
                         evidenceLabel: evidenceLabel,
@@ -1203,9 +1282,29 @@ struct OpenDesignDayContent {
                     )
                 },
                 allowsFreeform: question.allowFreeText ?? true,
-                freeformLabel: "직접 답하기 — scan 선택지보다 정확하면 한 줄로 적어도 돼요",
-                freeformPlaceholder: question.freeTextPlaceholder ?? "예: 지금 가장 먼저 검증할 좋은 고객 조건"
+                freeformLabel: "직접 입력",
+                freeformPlaceholder: question.freeTextPlaceholder ?? "한 줄로 입력"
             )
+        }
+    }
+
+    private static func compactQuestionOptionDescription(
+        _ value: String,
+        preview: String?,
+        evidenceLimited: Bool
+    ) -> String {
+        if evidenceLimited {
+            return "근거 부족. 한 줄로 보정하세요."
+        }
+        switch safeAlignmentQuestionCopy(preview) {
+        case "고객", "ICP":
+            return "이번 주 대화 가능."
+        case "문제", "Pain":
+            return "시간·돈·리스크 비용."
+        case "확인할 행동", "Outcome":
+            return "사건·대안·지불 의향 확인."
+        default:
+            return compactDisplayText(stripEvidenceSuffix(value), max: 34)
         }
     }
 
@@ -1605,7 +1704,15 @@ private func openDesignAlignmentQuestionContextValue(
     else {
         return openDesignAlignmentPlaceholder(key: key)
     }
-    return display
+    return openDesignCompactDisplayText(display, max: 64)
+}
+
+private func openDesignCompactDisplayText(_ value: String, max: Int) -> String {
+    let text = value
+        .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard text.count > max else { return text }
+    return String(text.prefix(max - 1)).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
 }
 
 private extension OpenDesignDayContent.InterviewOption {
@@ -1941,6 +2048,9 @@ struct OpenDesignDayInteractionState: Equatable {
     mutating func selectChoice(stepID: Int, choiceID: Int?) {
         guard (1...totalInterviewSteps).contains(stepID),
               selectedChoices[stepID] != choiceID else {
+            if let choiceID, choiceID != Self.freeformChoiceID {
+                clearFreeformAnswer(stepID: stepID)
+            }
             return
         }
 
@@ -1971,7 +2081,6 @@ struct OpenDesignDayInteractionState: Equatable {
         let shouldInvalidate = hasSubmittedNumberChoice
             || hasDownstreamState(after: stepID)
             || dayCompleted
-        guard hasNumberChoice || shouldInvalidate else { return }
 
         if hasNumberChoice {
             selectedChoices.removeValue(forKey: stepID)
@@ -5281,18 +5390,19 @@ private struct OpenDesignDayMainView: View {
                     .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(OpenDesignDayColor.accent))
 
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("핵심 가설 확정")
+                    Text("Day 1 — 만들기 전에, 팔릴 문제를 고릅니다.")
                         .font(.system(size: 22, weight: .semibold))
                         .foregroundStyle(OpenDesignDayColor.fg)
                         .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("opendesign.day.start.title")
                     Text("3분 · \(content.interviewSteps.count)문항")
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(OpenDesignDayColor.muted)
-                    Text("프로젝트 목표, 고객, 문제, 확인할 행동을 맞춰 Day 2 시장 신호 기준을 만듭니다.")
+                    Text("오늘은 코딩하지 않습니다.\n30일 동안 검증할 고객, 문제, 첫 결제 이유를 한 문장으로 정합니다.")
                         .font(.system(size: 12, weight: .regular))
                         .foregroundStyle(OpenDesignDayColor.fgSecondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("opendesign.day.start.description")
                 }
 
@@ -5656,7 +5766,7 @@ private struct OpenDesignStepFooter: View {
             return "저장 완료 · \(savedLabel)"
         }
         if selectedChoice != nil {
-            return "선택 완료. \(nextLabel)을 눌러 진행하세요."
+            return "선택 완료"
         }
         return nil
     }
@@ -5979,8 +6089,8 @@ private struct OpenDesignQuestionContextRows: View {
                         .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(OpenDesignDayColor.fgSecondary)
                         .lineSpacing(2)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
 
                     Spacer(minLength: 0)
                 }
@@ -6088,7 +6198,7 @@ private struct OpenDesignInterviewStepView: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                Text(selectedChoice == nil ? "선택 대기 · \(step.progressLabel)" : "선택 1개 · \(step.progressLabel)")
+                Text(selectedChoice == nil ? "대기 · \(step.progressLabel)" : "선택됨 · \(step.progressLabel)")
                     .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                     .foregroundStyle(OpenDesignDayColor.muted)
             }
@@ -6125,6 +6235,7 @@ private struct OpenDesignInterviewStepView: View {
         .onChange(of: selectedChoice) { _, value in
             if let value, value != OpenDesignDayInteractionState.freeformChoiceID {
                 isFreeformPresentationActive = false
+                isFreeformFocused = false
             }
         }
     }
@@ -6162,15 +6273,16 @@ private struct OpenDesignInterviewStepView: View {
 
     private var freeformRow: some View {
         let isPicked = selectedChoice == OpenDesignDayInteractionState.freeformChoiceID
-        let isFieldActive = isPicked || isFreeformFocused || isFreeformPresentationActive
+        let isFieldFocused = isFreeformFocused || isFreeformPresentationActive
+        let isFieldHighlighted = isPicked || isFieldFocused
         let isSubmitted = submittedChoice == OpenDesignDayInteractionState.freeformChoiceID && isPicked
         return HStack(alignment: .top, spacing: 11) {
             Text(isSubmitted ? "✓" : "›")
                 .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                .foregroundStyle(isFieldActive ? OpenDesignDayColor.bgDeep : OpenDesignDayColor.accent)
+                .foregroundStyle(isPicked ? OpenDesignDayColor.bgDeep : OpenDesignDayColor.accent)
                 .frame(width: 24, height: 24)
-                .background(Circle().fill(isFieldActive ? OpenDesignDayColor.accent : OpenDesignDayColor.bgDeep))
-                .overlay(Circle().stroke(isFieldActive ? OpenDesignDayColor.accent : OpenDesignDayColor.border, lineWidth: 1))
+                .background(Circle().fill(isPicked ? OpenDesignDayColor.accent : OpenDesignDayColor.bgDeep))
+                .overlay(Circle().stroke(isPicked ? OpenDesignDayColor.accent : OpenDesignDayColor.border, lineWidth: 1))
                 .padding(.top, 1)
 
             VStack(alignment: .leading, spacing: 8) {
@@ -6216,17 +6328,17 @@ private struct OpenDesignInterviewStepView: View {
                     .background(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .fill(OpenDesignDayColor.bgDeep)
-                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(isFieldActive ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, lineWidth: 1))
+                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(isFieldHighlighted ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, lineWidth: 1))
                     )
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .background(isFieldActive ? OpenDesignDayColor.accent.opacity(0.08) : OpenDesignDayColor.surface)
-        .overlay(Rectangle().stroke(isFieldActive ? OpenDesignDayColor.accentLine : Color.clear, lineWidth: 1))
+        .background(isPicked ? OpenDesignDayColor.accent.opacity(0.08) : OpenDesignDayColor.surface)
+        .overlay(Rectangle().stroke(isPicked ? OpenDesignDayColor.accentLine : Color.clear, lineWidth: 1))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(isSubmitted || isFieldActive ? "active" : "inactive")
-        .accessibilityValue(isSubmitted || isFieldActive ? "active" : "inactive")
+        .accessibilityLabel(isSubmitted || isPicked ? "active" : "inactive")
+        .accessibilityValue(isSubmitted || isPicked ? "active" : "inactive")
         .accessibilityIdentifier(step.id == 1 ? "opendesign.day.icp.freeform.card" : "opendesign.day.interview.\(step.id).freeform.card")
     }
 
@@ -6437,7 +6549,7 @@ private struct OpenDesignQuestionOptionTile: View {
                             .font(.system(size: 11.8, weight: .regular))
                             .foregroundStyle(OpenDesignDayColor.muted)
                             .lineSpacing(2)
-                            .lineLimit(3)
+                            .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
@@ -6454,7 +6566,7 @@ private struct OpenDesignQuestionOptionTile: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 12)
-            .frame(maxWidth: .infinity, minHeight: hasDetail ? 104 : 82, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: hasDetail ? 86 : 70, alignment: .topLeading)
             .background(fill)
             .overlay(Rectangle().stroke(stroke, lineWidth: 1))
             .contentShape(Rectangle())

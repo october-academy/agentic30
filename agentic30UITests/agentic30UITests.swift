@@ -609,12 +609,20 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(waitForOpenDesignMainHittable(icpFreeform, in: app, timeout: 3))
         clickCenter(of: icpFreeform)
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.option.3", containing: "inactive", timeout: 3))
-        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.freeform.card", containing: "active", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.freeform.card", containing: "inactive", timeout: 3))
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.step.next", containing: "선택 필요", timeout: 3))
         XCTAssertFalse(nextStepButton.isEnabled)
 
+        icpFreeform.typeText("123")
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.option.1", containing: "inactive", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.option.2", containing: "inactive", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.option.3", containing: "inactive", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.freeform.card", containing: "active", timeout: 3))
+        XCTAssertTrue(waitUntilEnabled(nextStepButton, timeout: 3))
+
         clickCenter(of: icpOption)
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.option.3", containing: "active", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.freeform.card", containing: "inactive", timeout: 3))
         XCTAssertTrue(waitUntilEnabled(nextStepButton, timeout: 3))
         XCTAssertTrue(waitForOpenDesignMainHittable(nextStepButton, in: app, timeout: 3))
         clickCenter(of: nextStepButton)
@@ -632,7 +640,7 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(waitForOpenDesignMainHittable(returnedIcpFreeform, in: app, timeout: 3))
         clickCenter(of: returnedIcpFreeform)
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.option.3", containing: "inactive", timeout: 3))
-        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.freeform.card", containing: "active", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.freeform.card", containing: "inactive", timeout: 3))
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.step.next", containing: "선택 필요", timeout: 3))
         XCTAssertFalse(nextStepButton.isEnabled)
 
@@ -717,7 +725,9 @@ final class agentic30UITests: XCTestCase {
         }
 
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
-        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.start.description", containing: "프로젝트 목표, 고객, 문제, 확인할 행동", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.start.title", containing: "Day 1 — 만들기 전에", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.start.description", containing: "오늘은 코딩하지 않습니다.", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.start.description", containing: "30일 동안 검증할 고객", timeout: 3))
 
         let startAction = app.buttons["opendesign.day.start"]
         XCTAssertTrue(waitUntilHittable(startAction, timeout: 5))
@@ -738,6 +748,70 @@ final class agentic30UITests: XCTestCase {
         clickCenter(of: resumeFromStart)
         XCTAssertTrue(waitUntilHittable(app.buttons["opendesign.day.icp.option.1"], timeout: 5))
         XCTAssertTrue(waitForOpenDesignMainHittable(app.buttons["opendesign.day.step.previous"], in: app, timeout: 3))
+    }
+
+    @MainActor
+    func testOpenDesignDayDirectAnswerDigitsStayFreeform() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-opendesign-day-freeform-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-opendesign-day-freeform-app-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
+        let startAction = app.buttons["opendesign.day.start"]
+        XCTAssertTrue(waitUntilHittable(startAction, timeout: 5))
+        clickCenter(of: startAction)
+        XCTAssertTrue(waitUntilHittable(app.buttons["opendesign.day.icp.option.1"], timeout: 5))
+
+        let optionThree = app.buttons["opendesign.day.icp.option.3"]
+        XCTAssertTrue(waitUntilHittable(optionThree, timeout: 5))
+        clickCenter(of: optionThree)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.option.3", containing: "active", timeout: 3))
+
+        let nextStepButton = app.buttons["opendesign.day.step.next"]
+        let freeform = elementWithIdentifier(in: app, "opendesign.day.icp.freeform")
+        XCTAssertTrue(waitForOpenDesignMainHittable(freeform, in: app, timeout: 3))
+        clickCenter(of: freeform)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.option.3", containing: "inactive", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.freeform.card", containing: "inactive", timeout: 3))
+        XCTAssertFalse(nextStepButton.isEnabled)
+
+        freeform.typeText("123")
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.option.1", containing: "inactive", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.option.2", containing: "inactive", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.option.3", containing: "inactive", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.freeform.card", containing: "active", timeout: 3))
+        XCTAssertTrue(waitUntilEnabled(nextStepButton, timeout: 3))
+
+        let optionTwo = app.buttons["opendesign.day.icp.option.2"]
+        XCTAssertTrue(waitForOpenDesignMainHittable(optionTwo, in: app, timeout: 3))
+        clickCenter(of: optionTwo)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.option.2", containing: "active", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.icp.freeform.card", containing: "inactive", timeout: 3))
     }
 
     @MainActor
