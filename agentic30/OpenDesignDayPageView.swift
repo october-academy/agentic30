@@ -7515,6 +7515,18 @@ private struct OpenDesignHypothesisConfirmationCard: View {
         documentSteps.allSatisfy(\.isWritten)
     }
 
+    private var writtenDocumentCount: Int {
+        documentSteps.filter(\.isWritten).count
+    }
+
+    private var isBulkWritingDocuments: Bool {
+        pendingDay1HandoffDocType == "all"
+    }
+
+    private var isDocumentHandoffBusy: Bool {
+        pendingDay1HandoffDocType != nil || activeDay1HandoffDocType != nil
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             OpenDesignSectionHeader(title: "핵심 가설 확정")
@@ -7645,14 +7657,14 @@ private struct OpenDesignHypothesisConfirmationCard: View {
     }
 
     private var documentHandoff: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("문서 작성")
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .foregroundStyle(OpenDesignDayColor.mutedDeep)
                     .textCase(.uppercase)
                 Spacer(minLength: 0)
-                Text("\(documentSteps.filter { $0.isWritten }.count)/\(documentSteps.count)")
+                Text("\(writtenDocumentCount)/\(documentSteps.count)")
                     .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                     .foregroundStyle(areDay1DocumentsWritten ? OpenDesignDayColor.accent : OpenDesignDayColor.muted)
             }
@@ -7701,8 +7713,8 @@ private struct OpenDesignHypothesisConfirmationCard: View {
 
     private func documentStepRow(_ step: OpenDesignDayDocumentStep) -> some View {
         let isPromptActive = activeDay1HandoffDocType == step.type
-        let isPreparing = pendingDay1HandoffDocType == step.type && !isPromptActive && !step.isWritten
-        let canStart = step.isUnlocked && !step.isWritten && !isPreparing && !isPromptActive
+        let isPreparing = (pendingDay1HandoffDocType == step.type || isBulkWritingDocuments) && !isPromptActive && !step.isWritten
+        let canStart = step.isUnlocked && !step.isWritten && !isPreparing && !isPromptActive && !isBulkWritingDocuments
         return HStack(spacing: 10) {
             Text(step.stateGlyph)
                 .font(.system(size: 10.5, weight: .bold, design: .monospaced))
@@ -7757,6 +7769,7 @@ private struct OpenDesignHypothesisConfirmationCard: View {
         isPromptActive: Bool
     ) -> String {
         if isPromptActive { return "답변 대기" }
+        if isBulkWritingDocuments && !step.isWritten { return "저장 중" }
         if isPreparing { return "준비 중" }
         return step.actionLabel
     }
@@ -7767,6 +7780,7 @@ private struct OpenDesignHypothesisConfirmationCard: View {
         isPromptActive: Bool
     ) -> String {
         if isPromptActive { return "\(step.path) 질문 카드 준비됨" }
+        if isBulkWritingDocuments && !step.isWritten { return "\(step.path) 저장 중" }
         if isPreparing { return "\(step.path) 질문 준비 중" }
         return step.detail
     }
@@ -7804,7 +7818,10 @@ private struct OpenDesignHypothesisConfirmationCard: View {
 
     private var confirmButtonTitle: String {
         if !areDay1DocumentsWritten {
-            return "문서 4개 작성 필요"
+            if isBulkWritingDocuments { return "문서 저장 중" }
+            if activeDay1HandoffDocType != nil { return "문서 답변 대기 중" }
+            if pendingDay1HandoffDocType != nil { return "문서 준비 중" }
+            return "4개 문서 저장"
         }
         if interaction.dayCompleted {
             return "Day 2로 이동 ↵"
@@ -7822,7 +7839,7 @@ private struct OpenDesignHypothesisConfirmationCard: View {
     }
 
     private var confirmButtonDisabled: Bool {
-        !areDay1DocumentsWritten
+        !areDay1DocumentsWritten && isDocumentHandoffBusy
     }
 
     private func alignmentDisplayValue(key: String, label: String, fallback: String) -> String {
@@ -7866,8 +7883,11 @@ private struct OpenDesignHypothesisConfirmationCard: View {
     }
 
     private func confirmAndAdvance() {
+        guard !confirmButtonDisabled else {
+            return
+        }
         guard areDay1DocumentsWritten else {
-            showsDetails = true
+            startDay1DocHandoff("all", handoffPayload)
             return
         }
         if let alignmentPlan = content.alignmentPlan,

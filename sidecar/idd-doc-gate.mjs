@@ -1918,6 +1918,89 @@ export function day1HandoffDocByType(type) {
     || null;
 }
 
+export function buildDay1HandoffResponseText(doc, { day1Handoff = {} } = {}) {
+  const title = doc?.title || "Document";
+  const goal = cleanHandoffField(day1Handoff.goal) || "이번 주 첫 고객 반응 검증";
+  const icp = cleanHandoffField(day1Handoff.icp) || "Day 1에서 고른 좁은 첫 고객 세그먼트";
+  const pain = cleanHandoffField(day1Handoff.pain) || "현재 대안과 압박 비용이 아직 약한 가정";
+  const outcome = cleanHandoffField(day1Handoff.outcome) || "이번 주 관찰 가능한 완료 행동";
+  const qualityScore = cleanHandoffField(day1Handoff.qualityScore);
+
+  switch (doc?.type) {
+    case "goal":
+      return [
+        `이번 주 proof target은 ${goal}입니다.`,
+        `판단 지표는 ${outcome}의 응답 수, 완료 전환, 실제 사용 신호입니다.`,
+        "목표값은 금요일까지 최소 3명에게 연락하고 1명 이상의 구체적 과거 행동을 확인하는 것입니다.",
+        "실패 조건은 연락한 후보가 모두 응답하지 않거나 문제를 현재 해결 중이라고 말하지 못하면 피벗하는 것입니다.",
+        qualityScore ? `Day 1 품질 점수는 ${qualityScore}입니다.` : "",
+      ].filter(Boolean).join("\n");
+    case "icp":
+      return [
+        `좁은 세그먼트는 ${icp}입니다.`,
+        "이번 주 연락 가능한 실제 사람은 기존 동료, 커뮤니티 계정, DM으로 닿을 수 있는 후보 3명입니다.",
+        `현재 대안은 ${pain}을 노션, 스프레드시트, Slack, 수작업 복사 같은 workflow로 우회하는 것입니다.`,
+        "압박 비용은 주 3시간 이상의 지연, 도구 비용, 평판 리스크 중 하나로 확인합니다.",
+      ].join("\n");
+    case "values":
+      return [
+        `이번 주 tradeoff는 ${goal}보다 넓은 플랫폼 확장을 우선하지 않는 것입니다.`,
+        "포기할 선택지는 자동화, 예쁜 대시보드, 다중 Day 확장처럼 증거 없이 범위를 키우는 일입니다.",
+        `적용 trigger는 ${outcome}이 관찰되지 않았는데 새 기능을 추가하고 싶어지는 상황입니다.`,
+        "위반 예시는 인터뷰, 응답, 사용 행동 없이 SPEC 범위를 키우는 것입니다.",
+      ].join("\n");
+    case "spec":
+      return [
+        `한 사용자의 실제 workflow는 가설 확인, ${icp} 선택, ${outcome} 저장까지 이어지는 단계입니다.`,
+        "이번 주 MVP wedge는 Day 1 확정에서 네 개 foundation 문서를 저장하고 Day 2 검증으로 넘기는 가장 작은 v0입니다.",
+        "non-goal은 완전 자동 문서 편집기, 새 provider 실행, 모든 문서 세부 인터뷰를 첫 경로에 넣는 것입니다.",
+        `관찰 가능한 성공 기준은 사용자가 ${outcome}을 끝내고 GOAL/ICP/VALUES/SPEC가 저장된 상태를 보는 것입니다.`,
+        `핵심 리스크는 ${pain}이 실제 구매/사용 압박이 아니라면 이 가설이 틀리는 것입니다.`,
+      ].join("\n");
+    default:
+      return [
+        `# ${title}`,
+        "",
+        `Day 1 확정 가설: ${goal}`,
+        `고객: ${icp}`,
+        `문제: ${pain}`,
+        `확인할 행동: ${outcome}`,
+      ].join("\n");
+  }
+}
+
+export async function writeAllDay1HandoffDocuments(workspaceRoot, state, {
+  day1Handoff = {},
+  provider = "codex",
+  fsImpl = fs,
+  onProgress = null,
+} = {}) {
+  let nextState = normalizeIddSetupState(state);
+  const written = [];
+  for (const type of DAY1_HANDOFF_DOC_TYPES) {
+    const doc = day1HandoffDocByType(type);
+    if (!doc) continue;
+    if (isDay1HandoffDocWritten(nextState, type)) {
+      written.push(doc);
+      await onProgress?.({ stage: "skipped", doc, state: nextState });
+      continue;
+    }
+    nextState = recordIddStructuredResponse(nextState, {
+      doc,
+      provider,
+      responseText: buildDay1HandoffResponseText(doc, { day1Handoff }),
+    });
+    await onProgress?.({ stage: "recorded", doc, state: nextState });
+    nextState = await writeDay1HandoffDocument(workspaceRoot, nextState, doc, {
+      day1Handoff,
+      fsImpl,
+    });
+    written.push(doc);
+    await onProgress?.({ stage: "written", doc, state: nextState });
+  }
+  return { state: normalizeIddSetupState(nextState), written };
+}
+
 export function isDay1HandoffDocWritten(state, type) {
   const normalized = normalizeIddSetupState(state);
   const status = normalized.docWriteStatuses?.[type]?.status;

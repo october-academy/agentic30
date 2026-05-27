@@ -870,6 +870,85 @@ test("Day 1 document handoff writes one canonical doc immediately without auto-s
   assert.equal(stderr.trim(), "");
 });
 
+test("Day 1 bulk document handoff writes all canonical docs without structured prompts", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-doc-bulk-handoff-workspace-"));
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-doc-bulk-handoff-app-"));
+  await writeDay1Fixture(root, appSupportPath);
+  await fs.mkdir(path.join(root, "docs"), { recursive: true });
+  await fs.writeFile(path.join(root, "docs", "GOAL.md"), "# GOAL\n\n기존 목표는 보존한다.\n");
+
+  const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", root], {
+    cwd: packageRoot,
+    env: {
+      ...process.env,
+      AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
+      AGENTIC30_DISABLE_IDD_AGENT_SYNTHESIS: "1",
+      AGENTIC30_TEST_STUB_PROVIDER: "1",
+      AGENTIC30_CODEX_MODEL: "gpt-5.4-mini",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  let ws;
+
+  try {
+    const ready = await readSidecarReady(child);
+    const events = [];
+    ws = await connectAuthenticated(ready, events);
+
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.4-mini" }));
+    const created = await waitForEvent(events, (event) => event.type === "session_created");
+
+    ws.send(JSON.stringify({
+      type: "day1_doc_handoff_write_all",
+      sessionId: created.session.id,
+      provider: "codex",
+      day1Handoff: {
+        goal: "첫 고객 반응 검증",
+        icp: "macOS에서 AI 코딩 도구를 쓰는 전업 1인 개발자",
+        pain: "무엇을 팔아야 할지 몰라 노션과 스프레드시트로 인터뷰 메모를 복사함",
+        outcome: "이번 주 3명 인터뷰 완료",
+        qualityScore: "9.0/10",
+        markdown: "# Day 1 핵심 가설",
+      },
+    }));
+
+    const setupState = await waitForEvent(events, (event) =>
+      event.type === "idd_setup_state"
+      && event.iddSetupComplete === true
+      && event.iddDocPreviews?.every((preview) => /^(written|approved)/.test(preview.status))
+    );
+    assert.equal(setupState.iddDocPreviews.length, 4);
+    assert.equal(
+      events.some((event) =>
+        (event.type === "session_created" || event.type === "session_updated")
+        && event.session?.pendingUserInput?.generation?.mode === "day1_handoff"
+      ),
+      false,
+    );
+    for (const rel of ["docs/GOAL.md", "docs/ICP.md", "docs/VALUES.md", "docs/SPEC.md"]) {
+      const content = await fs.readFile(path.join(root, rel), "utf8");
+      assert.match(content, /Day 1 Handoff/);
+    }
+    const goal = await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8");
+    assert.match(goal, /기존 목표는 보존한다/);
+
+    await closeWebSocket(ws);
+    ws = null;
+  } finally {
+    await closeWebSocket(ws);
+    await terminateChild(child);
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
+
+  assert.equal(stderr.trim(), "");
+});
+
 test("IDD follow-up uses sidecar agent synthesis instead of host template when available", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-followup-synth-workspace-"));
   const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-followup-synth-app-"));

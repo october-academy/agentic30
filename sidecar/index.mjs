@@ -159,6 +159,7 @@ import {
   setIddSetupError,
   setIddProviderRecovery,
   summarizeBipSetupGate,
+  writeAllDay1HandoffDocuments,
   writeDay1HandoffDocument,
 } from "./idd-doc-gate.mjs";
 import { buildMiniActionSessionTriggerEvent } from "./adaptive-curriculum.mjs";
@@ -1729,6 +1730,14 @@ async function handleClientMessage(socket, payload) {
         provider: payload.provider,
         requestedDocType: payload.docType,
         localEvidence: payload.localEvidence,
+        day1Handoff: payload.day1Handoff,
+      });
+      return;
+    }
+    case "day1_doc_handoff_write_all": {
+      await writeAllDay1DocHandoff({
+        sessionId: payload.sessionId,
+        provider: payload.provider,
         day1Handoff: payload.day1Handoff,
       });
       return;
@@ -6306,6 +6315,99 @@ async function startDay1DocHandoff({
     ...serializeBipSetupGate(currentBipSetupGate()),
   });
   return session;
+}
+
+async function writeAllDay1DocHandoff({
+  sessionId = "",
+  provider = "",
+  day1Handoff = null,
+} = {}) {
+  const seed = resolveIddSessionSeed({ sessionId, provider });
+  const handoffSnapshot = normalizeDay1HandoffPayload(day1Handoff);
+  const session = resolveBipCoachSession(sessionId);
+  const startedAt = Date.now();
+
+  state.iddSetup = await persistIddSetupState(workspaceRoot, {
+    ...state.iddSetup,
+    status: "interviewing",
+    currentDocType: DAY1_HANDOFF_DOC_TYPES[0],
+    lastProvider: seed.provider,
+    providerRecovery: null,
+    setupError: null,
+  });
+
+  telemetry.captureEvent("mac_sidecar_day1_doc_handoff_write_all_started", {
+    session_id: session?.id ?? "",
+    provider: seed.provider,
+  });
+
+  const progress = (stage, progressText, docType = "") => {
+    broadcast({
+      type: "idd_setup_progress",
+      sessionId: session?.id ?? null,
+      requestId: "day1-handoff-write-all",
+      docType,
+      stage,
+      progressText,
+      elapsedMs: Date.now() - startedAt,
+    });
+  };
+
+  progress("bulk_started", "GOAL/ICP/VALUES/SPEC 문서 저장 시작", "all");
+  const result = await writeAllDay1HandoffDocuments(workspaceRoot, state.iddSetup, {
+    day1Handoff: handoffSnapshot,
+    provider: seed.provider,
+    onProgress: ({ stage, doc }) => {
+      if (stage === "recorded") {
+        progress("recording_response", `${doc.title} 문서 초안 구성 중`, doc.type);
+      } else if (stage === "written") {
+        progress("file_written", `${doc.canonicalPath} 저장 완료`, doc.type);
+      } else if (stage === "skipped") {
+        progress("file_written", `${doc.canonicalPath} 이미 저장됨`, doc.type);
+      }
+    },
+  });
+  state.iddSetup = await persistIddSetupState(workspaceRoot, result.state);
+
+  progress("bulk_written", "GOAL/ICP/VALUES/SPEC 문서 저장 완료", "all");
+  telemetry.captureEvent("mac_sidecar_day1_doc_handoff_write_all_completed", {
+    session_id: session?.id ?? "",
+    provider: seed.provider,
+    doc_count: result.written.length,
+    status: state.iddSetup.status,
+  });
+
+  if (session) {
+    session.runtime = {
+      ...(session.runtime || {}),
+      iddMode: null,
+      pendingIddContinuation: null,
+      iddPendingAdaptiveContinuation: null,
+      day1HandoffFollowupCount: 0,
+    };
+    session.pendingUserInput = null;
+    session.status = "idle";
+    session.error = null;
+    session.messages.push(makeMessage({
+      role: "assistant",
+      provider: session.provider,
+      content: "Day 1 확정 가설로 GOAL/ICP/VALUES/SPEC 문서를 저장했습니다.",
+      state: "final",
+    }));
+    touch(session);
+  }
+
+  broadcast({
+    type: "idd_setup_state",
+    ...serializeIddSetupFields(state.iddSetup),
+    ...serializeBipSetupGate(currentBipSetupGate()),
+  });
+  broadcastBipSetupGateState(currentBipSetupGate());
+  if (session) {
+    await persistSessions();
+    broadcast({ type: "session_updated", session });
+  }
+  return state.iddSetup;
 }
 
 async function refreshProjectContextFromRequest(payload = {}) {

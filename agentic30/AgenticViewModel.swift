@@ -3190,7 +3190,8 @@ final class AgenticViewModel: ObservableObject {
         let normalizedDocType = docType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalizedDocType.isEmpty else { return }
         guard isConnected else {
-            let message = "Sidecar 연결 후 \(normalizedDocType.uppercased()) 문서를 작성할 수 있습니다."
+            let docLabel = normalizedDocType == "all" ? "foundation" : normalizedDocType.uppercased()
+            let message = "Sidecar 연결 후 \(docLabel) 문서를 작성할 수 있습니다."
             day1DocHandoffPendingDocType = nil
             day1DocHandoffError = message
             lastError = message
@@ -3208,22 +3209,32 @@ final class AgenticViewModel: ObservableObject {
         }
         #endif
         let provider = selectedSession?.provider ?? visibleBipCoach?.config.provider ?? selectedProvider
-        var payload: [String: Any] = [
-            "type": "day1_doc_handoff_start",
-            "provider": provider.rawValue,
-            "docType": normalizedDocType,
-            "localEvidence": localEvidenceBundle(),
-            "day1Handoff": day1Handoff,
-        ]
+        let isBulkWrite = normalizedDocType == "all"
+        var payload: [String: Any] = isBulkWrite
+            ? [
+                "type": "day1_doc_handoff_write_all",
+                "provider": provider.rawValue,
+                "day1Handoff": day1Handoff,
+            ]
+            : [
+                "type": "day1_doc_handoff_start",
+                "provider": provider.rawValue,
+                "docType": normalizedDocType,
+                "localEvidence": localEvidenceBundle(),
+                "day1Handoff": day1Handoff,
+            ]
         if let sessionID = currentBipCoachSessionID() {
             payload["sessionId"] = sessionID
         }
         PostHogTelemetry.capture("mac_day1_doc_handoff_requested", properties: [
             "doc_type": normalizedDocType,
             "provider": provider.rawValue,
+            "bulk": isBulkWrite,
         ], authSession: macAuthSession)
         if !sidecar.send(payload: payload) {
-            let message = "\(normalizedDocType.uppercased()) 문서 질문 카드를 요청하지 못했습니다. Sidecar 연결을 확인해 주세요."
+            let message = isBulkWrite
+                ? "Foundation 문서 저장을 요청하지 못했습니다. Sidecar 연결을 확인해 주세요."
+                : "\(normalizedDocType.uppercased()) 문서 질문 카드를 요청하지 못했습니다. Sidecar 연결을 확인해 주세요."
             day1DocHandoffPendingDocType = nil
             day1DocHandoffError = message
             lastError = message
@@ -4495,6 +4506,17 @@ final class AgenticViewModel: ObservableObject {
         }
 
         guard let pendingDocType = day1DocHandoffPendingDocType else { return }
+        if pendingDocType == "all" {
+            let previews = event.iddDocPreviews ?? iddDocPreviews
+            let requiredDocTypes = ["goal", "icp", "values", "spec"]
+            if requiredDocTypes.allSatisfy({ docType in
+                previews.first(where: { $0.type == docType })?.isWritten == true
+            }) {
+                day1DocHandoffPendingDocType = nil
+                day1DocHandoffError = nil
+            }
+            return
+        }
         if event.iddDocPreviews?.first(where: { $0.type == pendingDocType })?.isWritten == true {
             day1DocHandoffPendingDocType = nil
             day1DocHandoffError = nil

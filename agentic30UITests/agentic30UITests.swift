@@ -1570,7 +1570,8 @@ final class agentic30UITests: XCTestCase {
 
         let finalConfirm = elementWithIdentifier(in: app, "opendesign.day.final.confirm")
         XCTAssertTrue(waitForOpenDesignMainHittable(finalConfirm, in: app, timeout: 6))
-        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.final.confirm", containing: "문서 4개 작성 필요", timeout: 3))
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.final.confirm", containing: "4개 문서 저장", timeout: 3))
+        XCTAssertTrue(finalConfirm.isEnabled)
         clickCenter(of: finalConfirm)
 
         let day2Main = elementWithIdentifier(in: app, "opendesign.day2.main")

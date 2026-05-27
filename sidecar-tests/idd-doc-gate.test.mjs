@@ -31,6 +31,7 @@ import {
   recordIddStructuredResponse,
   serializeIddSetupFields,
   setIddSetupError,
+  writeAllDay1HandoffDocuments,
   writeDay1HandoffDocument,
 } from "../sidecar/idd-doc-gate.mjs";
 
@@ -529,6 +530,47 @@ test("Day 1 handoff writes canonical docs immediately and completes after all fo
       assert.match(content, /agentic30:day1-handoff:start/);
       assert.match(content, /agentic30:day1-handoff:end/);
     }
+  });
+});
+
+test("Day 1 bulk handoff writes all canonical docs from final hypothesis", async () => {
+  await withTempWorkspace(async (root) => {
+    await fs.writeFile(path.join(root, "docs", "GOAL.md"), "# GOAL\n\n기존 목표\n");
+    const progress = [];
+    const { state } = await writeAllDay1HandoffDocuments(root, {}, {
+      provider: "codex",
+      day1Handoff: {
+        goal: "첫 고객 반응 검증",
+        icp: "macOS에서 AI 코딩 도구를 쓰는 전업 1인 개발자",
+        pain: "무엇을 팔아야 할지 몰라 노션과 스프레드시트로 인터뷰 메모를 복사함",
+        outcome: "이번 주 3명 인터뷰 완료",
+        qualityScore: "9.0/10",
+        markdown: "# Day 1 핵심 가설",
+      },
+      onProgress: (event) => progress.push(`${event.doc.type}:${event.stage}`),
+    });
+
+    assert.equal(state.status, "approved");
+    assert.equal(state.approvedDocPaths.length, 4);
+    assert.deepEqual(
+      serializeIddSetupFields(state).iddDocPreviews.map((preview) => [preview.type, /^(written|approved)/.test(preview.status)]),
+      [
+        ["icp", true],
+        ["goal", true],
+        ["values", true],
+        ["spec", true],
+      ],
+    );
+    assert.ok(progress.includes("goal:written"));
+    assert.ok(progress.includes("spec:written"));
+    for (const rel of ["docs/GOAL.md", "docs/ICP.md", "docs/VALUES.md", "docs/SPEC.md"]) {
+      const content = await fs.readFile(path.join(root, rel), "utf8");
+      assert.match(content, /agentic30:day1-handoff:start/);
+      assert.match(content, /agentic30:day1-handoff:end/);
+    }
+    const goal = await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8");
+    assert.match(goal, /기존 목표/);
+    assert.match(goal, /첫 고객 반응 검증/);
   });
 });
 
