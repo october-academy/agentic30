@@ -610,25 +610,50 @@ struct Day1IcpQuestion: Codable, Hashable {
     let dimension: String
     let title: String
     let prompt: String
+    let highlightPhrases: [String]?
     let helperText: String?
     let options: [Day1IcpQuestionOption]
     let allowFreeText: Bool?
     let freeTextPlaceholder: String?
+
+    nonisolated init(
+        id: String,
+        dimension: String,
+        title: String,
+        prompt: String,
+        highlightPhrases: [String]? = nil,
+        helperText: String?,
+        options: [Day1IcpQuestionOption],
+        allowFreeText: Bool?,
+        freeTextPlaceholder: String?
+    ) {
+        self.id = id
+        self.dimension = dimension
+        self.title = title
+        self.prompt = prompt
+        self.highlightPhrases = highlightPhrases
+        self.helperText = helperText
+        self.options = options
+        self.allowFreeText = allowFreeText
+        self.freeTextPlaceholder = freeTextPlaceholder
+    }
 }
 
 struct Day1IcpQuestionOption: Codable, Hashable {
     let id: String
     let label: String
     let description: String
+    let highlightPhrases: [String]?
     let preview: String?
     let antiSignal: Bool?
     let evidenceLabel: String?
     let evidenceLimited: Bool?
 
-    init(
+    nonisolated init(
         id: String,
         label: String,
         description: String,
+        highlightPhrases: [String]? = nil,
         preview: String? = nil,
         antiSignal: Bool? = nil,
         evidenceLabel: String? = nil,
@@ -637,6 +662,7 @@ struct Day1IcpQuestionOption: Codable, Hashable {
         self.id = id
         self.label = label
         self.description = description
+        self.highlightPhrases = highlightPhrases
         self.preview = preview
         self.antiSignal = antiSignal
         self.evidenceLabel = evidenceLabel
@@ -751,11 +777,34 @@ struct Day1AlignmentComponent: Codable, Hashable {
     let id: String
     let title: String
     let prompt: String
+    let highlightPhrases: [String]?
     let helperText: String?
     let statement: String
     let evidence: [String]
     let missingAssumptions: [String]
     let options: [Day1IcpQuestionOption]
+
+    nonisolated init(
+        id: String,
+        title: String,
+        prompt: String,
+        highlightPhrases: [String]? = nil,
+        helperText: String?,
+        statement: String,
+        evidence: [String],
+        missingAssumptions: [String],
+        options: [Day1IcpQuestionOption]
+    ) {
+        self.id = id
+        self.title = title
+        self.prompt = prompt
+        self.highlightPhrases = highlightPhrases
+        self.helperText = helperText
+        self.statement = statement
+        self.evidence = evidence
+        self.missingAssumptions = missingAssumptions
+        self.options = options
+    }
 }
 
 struct Day1AlignmentStatement: Codable, Hashable {

@@ -55,6 +55,8 @@ const SIGNAL_DIGEST_VALUE_LIMITS = Object.freeze({
   outcome: 110,
   evidence: 120,
 });
+const HIGHLIGHT_PHRASE_MAX_COUNT = 5;
+const HIGHLIGHT_PHRASE_MAX_CHARS = 80;
 const USER_FACING_GENERIC_PROJECT_NAME = "이 프로젝트";
 const USER_FACING_GENERIC_PAIN_POINT = "핵심 문제 확인 필요";
 const USER_FACING_GENERIC_PROBLEM = "핵심 문제 확인 필요";
@@ -90,6 +92,39 @@ const GOAL_SIGNAL_PATTERN = /(goal|mission|purpose|success|north\s*star|proof\s*
 const ICP_SIGNAL_PATTERN = /(customer|user|persona|audience|target|icp|고객|사용자|페르소나|타깃|대상)/i;
 const PAIN_SIGNAL_PATTERN = /(problem|pain|friction|stuck|blocked|struggle|문제|통증|막힘|불편|어려움)/i;
 const OUTCOME_SIGNAL_PATTERN = /(outcome|success|result|activation|validation|signal|proof|행동|결과|성공|검증|확인|신호|대화|시장)/i;
+
+const HighlightPhrasesSchema = z.array(
+  z.string().trim().min(1).max(HIGHLIGHT_PHRASE_MAX_CHARS)
+).min(1).max(HIGHLIGHT_PHRASE_MAX_COUNT);
+
+const AlignmentOptionSchema = z.object({
+  id: z.string().optional(),
+  label: z.string().min(1),
+  description: z.string().min(1),
+  highlightPhrases: HighlightPhrasesSchema,
+  preview: z.string().optional(),
+  antiSignal: z.boolean().optional(),
+  evidenceLabel: z.string().optional(),
+  evidenceLimited: z.boolean().optional(),
+}).passthrough();
+
+const AlignmentComponentSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  prompt: z.string().min(1),
+  highlightPhrases: HighlightPhrasesSchema,
+  helperText: z.string().optional(),
+  statement: z.string().min(1),
+  evidence: z.array(z.string()).optional(),
+  missingAssumptions: z.array(z.string()).optional(),
+  options: z.array(AlignmentOptionSchema).min(2).max(5),
+}).passthrough();
+
+const AlignmentComponentsSchema = z.object({
+  icp: AlignmentComponentSchema,
+  painPoint: AlignmentComponentSchema,
+  outcome: AlignmentComponentSchema,
+}).passthrough();
 
 const SignalDigestRowSchema = z.object({
   key: z.enum(SIGNAL_DIGEST_ROW_ORDER),
@@ -131,7 +166,7 @@ export const Day1AlignmentSdkOutputSchema = z.object({
   projectGoal: z.string().min(1),
   mission: z.string().min(1),
   signals: z.object({}).passthrough(),
-  components: z.object({}).passthrough(),
+  components: AlignmentComponentsSchema,
   alignmentStatement: z.object({}).passthrough(),
   qualityGate: z.object({}).passthrough(),
   firstInterviewMessage: z.object({}).passthrough(),
@@ -577,6 +612,7 @@ function frontierAlignmentOptionPassesStrictAudit(optionValue, dimension, plan) 
   if (!optionValue) return false;
   if (!cleanText(optionValue.description)) return false;
   if (!cleanText(optionValue.evidenceLabel)) return false;
+  if (!Array.isArray(optionValue.highlightPhrases) || optionValue.highlightPhrases.length === 0) return false;
   if (looksLikeContaminatedAlignmentChoice(optionValue.label, dimension, plan)) return false;
   return alignmentOptionPassesQualityAudit(optionValue, dimension, plan);
 }
@@ -721,6 +757,7 @@ function alignmentPlanOptionsPassQualityAudit(plan) {
 function alignmentComponentOptionsPassQualityAudit(component, dimension, plan) {
   const options = Array.isArray(component?.options) ? component.options : [];
   if (options.length < 2) return false;
+  if (!Array.isArray(component?.highlightPhrases) || component.highlightPhrases.length === 0) return false;
   return options.every((optionValue) =>
     alignmentOptionPassesQualityAudit(optionValue, dimension, plan)
   );
@@ -729,6 +766,7 @@ function alignmentComponentOptionsPassQualityAudit(component, dimension, plan) {
 function alignmentOptionPassesQualityAudit(optionValue, dimension, plan) {
   const label = cleanSignalText(optionValue?.label);
   if (!label) return false;
+  if (!Array.isArray(optionValue?.highlightPhrases) || optionValue.highlightPhrases.length === 0) return false;
   if (optionValue?.evidenceLimited === true || label.startsWith("직접 입력") || label.startsWith("추가 scan 필요")) {
     return true;
   }
@@ -1828,6 +1866,7 @@ function buildAlignmentComponents({ signals, projectGoal }) {
       id: "icp",
       title: "고객",
       prompt: "이 목표를 검증하려면 이번 주 가장 먼저 확인할 고객 후보는 누구인가요?",
+      highlightPhrases: alignmentComponentHighlightPhrases("icp"),
       helperText: "직함보다 지금 같은 문제를 겪고, 이번 주 실제로 물어볼 수 있는 고객 조건을 고릅니다.",
       statement: hasSpecificProblem
         ? `${target} 중 "${problem}" 상황을 지금 해결하려는 고객.`
@@ -1840,6 +1879,7 @@ function buildAlignmentComponents({ signals, projectGoal }) {
       id: "pain_point",
       title: "문제",
       prompt: "이 고객이 지금 겪는 가장 압축된 문제는 무엇인가요?",
+      highlightPhrases: alignmentComponentHighlightPhrases("pain_point"),
       helperText: "좋으면 쓰는 문제가 아니라 시간, 돈, 리스크, 반복 행동으로 이미 비용이 나는 문제여야 합니다.",
       statement: problem,
       evidence,
@@ -1850,6 +1890,7 @@ function buildAlignmentComponents({ signals, projectGoal }) {
       id: "outcome",
       title: "확인할 행동",
       prompt: "그 고객에게서 어떤 행동 신호를 확인해야 하나요?",
+      highlightPhrases: alignmentComponentHighlightPhrases("outcome"),
       helperText: "제품 기능이 아니라 지불 의향, 현재 대안, 최근 사건처럼 관찰 가능한 행동을 씁니다.",
       statement: outcome,
       evidence,
@@ -2350,6 +2391,7 @@ function alignmentOption(id, label, description, preview, antiSignal = false, me
     description: evidenceLimited
       ? optionDescriptionWithEvidence(description, evidenceLabel, evidenceLimited)
       : cleanText(description),
+    highlightPhrases: normalizeOptionHighlightPhrases(metadata.highlightPhrases, label),
     preview,
     antiSignal,
     evidenceLabel,
@@ -2366,11 +2408,13 @@ function buildAdaptiveQuestions(signals) {
       dimension,
       title: built.title,
       prompt: built.prompt,
+      highlightPhrases: normalizeHighlightPhrases(built.highlightPhrases, []),
       helperText: built.helperText,
       options: built.options.map((option, optionIndex) => ({
         id: `o${optionIndex + 1}`,
         label: option.label,
         description: option.description,
+        highlightPhrases: normalizeOptionHighlightPhrases(option.highlightPhrases, option.label),
         preview: option.preview || option.label,
         antiSignal: option.antiSignal === true,
         evidenceLabel: cleanText(option.evidenceLabel),
@@ -2583,6 +2627,7 @@ function option(label, description, preview, antiSignal = false, metadata = {}) 
   return {
     label,
     description: optionDescriptionWithEvidence(description, evidenceLabel, evidenceLimited),
+    highlightPhrases: normalizeOptionHighlightPhrases(metadata.highlightPhrases, label),
     preview,
     antiSignal,
     evidenceLabel,
@@ -2778,6 +2823,8 @@ export function buildDay1AlignmentComposerPrompt(plan) {
     "Preserve projectGoal, components.icp, components.painPoint, components.outcome, alignmentStatement, qualityGate, firstInterviewMessage, and day2Handoff. The quality gate is a 0-10 score and should pass at 7.0+ only when the statement is specific enough for the next market-signal validation.",
     "For each of components.icp.options, components.painPoint.options, and components.outcome.options, return exactly 5 choices. Aim for 4 evidence-backed candidates and at most 1 weak/exclusion signal.",
     "Every option must include a non-empty description, evidenceLabel, and evidenceLimited boolean. Evidence-backed descriptions should say why this option is a strong Day 1 choice; weak options should explain the missing signal.",
+    "Every component and every option must include highlightPhrases: an array of 1-5 exact substrings from its prompt, statement, or label that should be highlighted in the UI. Use short display phrases, not whole paragraphs.",
+    "For component highlightPhrases, prefer these if present in the prompt: 고객 -> [\"첫 고객 후보\", \"고객 후보\"], 문제 -> [\"비용을 치르는 문제\", \"문제\"], 확인할 행동 -> [\"행동 신호\", \"확인할 행동\", \"검증 행동\"]. For option highlightPhrases, usually use the option label or the most decision-critical substring of it.",
     "Do not use direct-input, scan-needed, schema, upload, transcript-entry, file-entry, or product-input placeholders as selectable options.",
     "Every component prompt must be understandable in the Day 1 card and should ask for a concrete customer, pain, or behavior signal.",
     "Do not put \"Day 2\" or \"Day2\" in component prompts, helper text, or option labels/descriptions. Reserve Day 2 wording for day2Handoff only.",
@@ -2920,6 +2967,10 @@ function normalizeAlignmentComponent(value, fallbackId) {
     id,
     title,
     prompt,
+    highlightPhrases: normalizeHighlightPhrases(
+      value.highlightPhrases || value.highlight_phrases,
+      alignmentComponentHighlightPhrases(id)
+    ),
     helperText: cleanText(value.helperText || value.helper_text),
     statement,
     evidence: normalizeStringArray(value.evidence).slice(0, 8),
@@ -2937,6 +2988,10 @@ function normalizeAlignmentOption(value, index) {
     id: cleanToken(value.id) || `o${index + 1}`,
     label,
     description: cleanText(value.description || value.detail),
+    highlightPhrases: normalizeOptionHighlightPhrases(
+      value.highlightPhrases || value.highlight_phrases,
+      label
+    ),
     preview: cleanText(value.preview),
     antiSignal: Boolean(value.antiSignal || value.anti_signal),
     evidenceLabel,
@@ -3033,7 +3088,11 @@ function cleanAlignmentFragment(value) {
 function sanitizeAlignmentOutcomeOption(optionValue, context = {}) {
   const label = sanitizeOutcomeActionText(optionValue?.label, context);
   if (!label) return null;
-  return { ...optionValue, label };
+  return {
+    ...optionValue,
+    label,
+    highlightPhrases: normalizeOptionHighlightPhrases(optionValue?.highlightPhrases, label),
+  };
 }
 
 function sanitizeOutcomeActionText(value, context = {}) {
@@ -3241,6 +3300,7 @@ function normalizeQuestion(value, index) {
     dimension,
     title,
     prompt,
+    highlightPhrases: normalizeHighlightPhrases(value.highlightPhrases || value.highlight_phrases, []),
     helperText: cleanText(value.helperText || value.helper_text),
     options: options.slice(0, 5),
     allowFreeText: value.allowFreeText !== false && value.allow_free_text !== false,
@@ -3258,6 +3318,7 @@ function normalizeQuestionOption(value, index) {
     id: cleanToken(value.id) || `o${index + 1}`,
     label,
     description,
+    highlightPhrases: normalizeOptionHighlightPhrases(value.highlightPhrases || value.highlight_phrases, label),
     preview: cleanText(value.preview),
     antiSignal: Boolean(value.antiSignal || value.anti_signal),
     evidenceLabel,
@@ -3671,6 +3732,86 @@ function alignmentEvidenceScore(evidence = []) {
 function normalizeStringArray(value) {
   if (!Array.isArray(value)) return [];
   return uniqueBy(value.map(cleanText).filter(Boolean), (item) => item);
+}
+
+function normalizeHighlightPhrases(value, fallback = []) {
+  const primary = cleanHighlightPhraseArray(value);
+  const parsed = HighlightPhrasesSchema.safeParse(primary);
+  if (parsed.success) return parsed.data;
+
+  const fallbackPhrases = cleanHighlightPhraseArray(expandHighlightPhraseFallbacks(fallback));
+  const fallbackParsed = HighlightPhrasesSchema.safeParse(fallbackPhrases);
+  return fallbackParsed.success ? fallbackParsed.data : [];
+}
+
+function normalizeOptionHighlightPhrases(value, label) {
+  const labelText = cleanText(label);
+  const phrases = normalizeHighlightPhrases(value, [labelText])
+    .filter((phrase) => textContainsHighlightPhrase(labelText, phrase));
+  if (phrases.length) return phrases;
+  return normalizeHighlightPhrases([], [labelText])
+    .filter((phrase) => textContainsHighlightPhrase(labelText, phrase));
+}
+
+function cleanHighlightPhraseArray(value) {
+  if (!Array.isArray(value)) return [];
+  return uniqueBy(
+    value
+      .map(cleanText)
+      .filter(Boolean)
+      .filter((item) => item.length <= HIGHLIGHT_PHRASE_MAX_CHARS),
+    (item) => item.toLowerCase()
+  ).slice(0, HIGHLIGHT_PHRASE_MAX_COUNT);
+}
+
+function expandHighlightPhraseFallbacks(value) {
+  const inputs = Array.isArray(value) ? value : [value];
+  return inputs.flatMap((item) => {
+    const text = cleanText(item);
+    if (!text) return [];
+    return [text, ...highlightPhraseCandidatesFromText(text)];
+  });
+}
+
+function highlightPhraseCandidatesFromText(text) {
+  const candidates = [];
+  for (const match of text.matchAll(/["'“”]([^"'“”]{2,80})["'“”]/g)) {
+    candidates.push(match[1]);
+  }
+  candidates.push(
+    ...text
+      .split(/\s*(?:\/|·|\||,|，|;|；|:|：|。|!|\?| - )\s*/u)
+      .map((segment) => segment.replace(/^["'“”]+|["'“”]+$/g, ""))
+  );
+  candidates.push(firstHighlightSubstring(text));
+  return candidates;
+}
+
+function firstHighlightSubstring(value) {
+  const text = cleanText(value);
+  if (text.length <= HIGHLIGHT_PHRASE_MAX_CHARS) return text;
+  const prefix = text.slice(0, HIGHLIGHT_PHRASE_MAX_CHARS).trim();
+  const wordBoundaryPrefix = prefix.replace(/\s+\S*$/u, "").trim();
+  return wordBoundaryPrefix.length >= 8 ? wordBoundaryPrefix : prefix;
+}
+
+function textContainsHighlightPhrase(text, phrase) {
+  const haystack = cleanText(text).toLowerCase();
+  const needle = cleanText(phrase).toLowerCase();
+  return Boolean(haystack && needle && haystack.includes(needle));
+}
+
+function alignmentComponentHighlightPhrases(id) {
+  switch (cleanToken(id)) {
+  case "icp":
+    return ["첫 고객 후보", "고객 후보"];
+  case "pain_point":
+    return ["비용을 치르는 문제", "문제"];
+  case "outcome":
+    return ["행동 신호", "확인할 행동", "검증 행동"];
+  default:
+    return [];
+  }
 }
 
 function uniqueBy(items, keyFn) {

@@ -71,6 +71,7 @@ struct OpenDesignDayContent {
         let statementPrefix: String
         let markedStatement: String
         let statementSuffix: String
+        let highlightPhrases: [String]
         let criteria: [String]
         let hintText: String?
         let prompt: String
@@ -91,6 +92,7 @@ struct OpenDesignDayContent {
             statementPrefix: String,
             markedStatement: String,
             statementSuffix: String,
+            highlightPhrases: [String]? = nil,
             criteria: [String],
             hintText: String? = nil,
             prompt: String,
@@ -110,6 +112,7 @@ struct OpenDesignDayContent {
             self.statementPrefix = statementPrefix
             self.markedStatement = markedStatement
             self.statementSuffix = statementSuffix
+            self.highlightPhrases = Self.normalizedHighlightPhrases(highlightPhrases ?? [])
             self.criteria = criteria
             self.hintText = hintText
             self.prompt = prompt
@@ -119,6 +122,25 @@ struct OpenDesignDayContent {
             self.allowsFreeform = allowsFreeform
             self.freeformLabel = freeformLabel
             self.freeformPlaceholder = freeformPlaceholder
+        }
+
+        static func normalizedHighlightPhrases(_ phrases: [String]) -> [String] {
+            var seen: Set<String> = []
+            return phrases
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .sorted { lhs, rhs in
+                    if lhs.count == rhs.count { return lhs < rhs }
+                    return lhs.count > rhs.count
+                }
+                .filter { phrase in
+                    let normalized = phrase
+                        .lowercased()
+                        .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                    if seen.contains(normalized) { return false }
+                    seen.insert(normalized)
+                    return true
+                }
         }
     }
 
@@ -130,6 +152,7 @@ struct OpenDesignDayContent {
         let isAntiSignal: Bool
         let evidenceLabel: String?
         let evidenceLimited: Bool
+        let highlightPhrases: [String]
 
         init(
             id: Int,
@@ -138,7 +161,8 @@ struct OpenDesignDayContent {
             tail: String,
             isAntiSignal: Bool = false,
             evidenceLabel: String? = nil,
-            evidenceLimited: Bool = false
+            evidenceLimited: Bool = false,
+            highlightPhrases: [String]? = nil
         ) {
             self.id = id
             self.title = title
@@ -147,6 +171,7 @@ struct OpenDesignDayContent {
             self.isAntiSignal = isAntiSignal
             self.evidenceLabel = evidenceLabel
             self.evidenceLimited = evidenceLimited
+            self.highlightPhrases = OpenDesignDayContent.InterviewStep.normalizedHighlightPhrases(highlightPhrases ?? [])
         }
     }
 
@@ -1041,6 +1066,7 @@ struct OpenDesignDayContent {
                 dimension: component.id,
                 title: alignmentComponentDisplayTitle(component),
                 prompt: alignmentQuestionPrompt(for: component),
+                highlightPhrases: component.highlightPhrases,
                 helperText: compactAlignmentHelperText(component),
                 options: component.options.map(safeAlignmentQuestionOption),
                 allowFreeText: true,
@@ -1086,11 +1112,11 @@ struct OpenDesignDayContent {
     nonisolated private static func alignmentQuestionPrompt(for component: Day1AlignmentComponent) -> String {
         switch component.id {
         case "icp":
-            return "이번 주 먼저 확인할 고객은?"
+            return "이번 주 실제로 연락해 확인할 첫 고객 후보는 누구인가요?"
         case "pain_point":
-            return "지금 가장 아픈 문제는?"
+            return "선택한 고객이 지금 가장 비용을 치르는 문제는 무엇인가요?"
         case "outcome":
-            return "확인할 행동 신호는?"
+            return "선택한 문제가 진짜인지 이번 주 대화에서 어떤 행동 신호로 확인할까요?"
         default:
             return safeAlignmentQuestionCopy(component.prompt) ?? component.prompt
         }
@@ -1112,12 +1138,8 @@ struct OpenDesignDayContent {
         }
 
         switch component.id {
-        case "icp":
-            return "바로 대화 가능한 조건."
-        case "pain_point":
-            return "시간·돈·리스크 비용."
-        case "outcome":
-            return "사건·대안·지불 의향."
+        case "icp", "pain_point", "outcome":
+            return nil
         default:
             return helperText
         }
@@ -1129,6 +1151,7 @@ struct OpenDesignDayContent {
             id: option.id,
             label: compactAlignmentOptionLabel(option.label),
             description: compactAlignmentOptionDescription(option, preview: preview),
+            highlightPhrases: option.highlightPhrases,
             preview: preview,
             antiSignal: option.antiSignal,
             evidenceLabel: option.evidenceLabel,
@@ -1144,7 +1167,7 @@ struct OpenDesignDayContent {
         if text.hasPrefix("추가 scan 필요") {
             return "scan 필요"
         }
-        return compactDisplayText(text, max: 38)
+        return text
     }
 
     nonisolated private static func compactAlignmentOptionDescription(
@@ -1161,17 +1184,11 @@ struct OpenDesignDayContent {
             return "근거 부족. 한 줄로 보정하세요."
         }
 
-        switch preview {
-        case "고객", "ICP":
-            return "이번 주 대화 가능."
-        case "문제", "Pain":
-            return "시간·돈·리스크 비용."
-        case "확인할 행동", "Outcome":
-            return "사건·대안·지불 의향 확인."
-        default:
-            let text = safeAlignmentQuestionCopy(option.description) ?? option.description
-            return compactDisplayText(stripEvidenceSuffix(text), max: 34)
-        }
+        return compactOptionDescription(
+            option.description,
+            optionLabel: option.label,
+            preview: preview
+        )
     }
 
     nonisolated private static func safeAlignmentQuestionCopy(_ value: String?) -> String? {
@@ -1212,6 +1229,80 @@ struct OpenDesignDayContent {
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? value
     }
 
+    nonisolated private static func compactOptionDescription(
+        _ value: String,
+        optionLabel: String? = nil,
+        preview: String?
+    ) -> String {
+        let previewText = safeAlignmentQuestionCopy(preview)
+        let text = compactOptionDescriptionText(value)
+        guard !text.isEmpty else { return "" }
+        guard !isGenericOptionDescription(text, optionLabel: optionLabel, preview: previewText) else { return "" }
+        return compactDisplayText(text, max: 54)
+    }
+
+    nonisolated private static func compactOptionDescriptionText(_ value: String) -> String {
+        let safeText = safeAlignmentQuestionCopy(value) ?? value
+        let stripped = stripEvidenceSuffix(safeText)
+        let rewritten = rewriteStageMetaOptionDescription(stripped)
+        return rewritten
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    nonisolated private static func rewriteStageMetaOptionDescription(_ value: String) -> String {
+        let normalized = normalizedOptionDescription(value)
+        if normalized.contains("다음시장신호") || normalized.contains("다음검증") {
+            return "이번 주 대화에서 확인합니다."
+        }
+        return value
+    }
+
+    nonisolated private static func isGenericOptionDescription(
+        _ value: String,
+        optionLabel: String?,
+        preview: String?
+    ) -> Bool {
+        let normalized = normalizedOptionDescription(value)
+        let genericValues: Set<String> = [
+            "이번주대화가능",
+            "이번주직접대화가능한사용자입니다",
+            "바로대화가능한조건",
+            "시간돈리스크비용",
+            "사건대안지불의향확인",
+        ]
+        if genericValues.contains(normalized) { return true }
+
+        let hasLabelPrefix: Bool
+        if let optionLabel {
+            let normalizedLabel = normalizedOptionDescription(optionLabel)
+            hasLabelPrefix = !normalizedLabel.isEmpty && normalized.hasPrefix(normalizedLabel)
+        } else {
+            hasLabelPrefix = false
+        }
+
+        switch preview {
+        case "고객", "ICP":
+            return normalized.contains("이번주실제대화가능한고객인지확인")
+                || normalized.contains("이번주대화가능한고객인지확인")
+                || (hasLabelPrefix && normalized.contains("후보가이번주"))
+        case "문제", "Pain":
+            return normalized.contains("시간돈리스크비용으로반복되는지확인")
+                || (hasLabelPrefix && normalized.contains("문제가시간돈리스크"))
+        case "확인할 행동", "Outcome":
+            return normalized.contains("최근사건현재대안지불의향같은행동으로확인")
+                || (hasLabelPrefix && normalized.contains("신호를최근사건현재대안지불의향"))
+        default:
+            return false
+        }
+    }
+
+    nonisolated private static func normalizedOptionDescription(_ value: String) -> String {
+        value
+            .lowercased()
+            .replacingOccurrences(of: #"[\s·•.,!?'"“”‘’"()/\-_]+"#, with: "", options: .regularExpression)
+    }
+
     nonisolated private static func compactDisplayText(_ value: String, max: Int) -> String {
         let text = value
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
@@ -1242,6 +1333,10 @@ struct OpenDesignDayContent {
         return plan.questions.prefix(total).enumerated().map { index, question in
             let stepID = index + 1
             let dimensionTitle = dimensionDisplayName(question.dimension)
+            let allowsFreeform = question.allowFreeText ?? true
+            let visibleOptions = question.options.filter {
+                !isDuplicateFreeformOption($0, allowsFreeform: allowsFreeform)
+            }
             return InterviewStep(
                 id: stepID,
                 dimension: question.dimension,
@@ -1252,12 +1347,13 @@ struct OpenDesignDayContent {
                 statementPrefix: "",
                 markedStatement: question.prompt,
                 statementSuffix: "",
+                highlightPhrases: question.highlightPhrases ?? [],
                 criteria: [],
                 hintText: question.helperText,
                 prompt: question.title,
                 progressLabel: dimensionTitle,
                 submitLabel: "이 답으로 제출",
-                options: question.options.enumerated().map { optionIndex, option in
+                options: visibleOptions.enumerated().map { optionIndex, option in
                     let evidenceLabel = cleanNonEmpty(option.evidenceLabel)
                     let tailText: String
                     if option.evidenceLimited == true {
@@ -1272,40 +1368,43 @@ struct OpenDesignDayContent {
                         title: option.label,
                         detail: compactQuestionOptionDescription(
                             option.description,
+                            optionLabel: option.label,
                             preview: option.preview,
                             evidenceLimited: option.evidenceLimited == true
                         ),
                         tail: shortTail(tailText),
                         isAntiSignal: option.antiSignal == true,
                         evidenceLabel: evidenceLabel,
-                        evidenceLimited: option.evidenceLimited == true
+                        evidenceLimited: option.evidenceLimited == true,
+                        highlightPhrases: option.highlightPhrases ?? []
                     )
                 },
-                allowsFreeform: question.allowFreeText ?? true,
+                allowsFreeform: allowsFreeform,
                 freeformLabel: "직접 입력",
                 freeformPlaceholder: question.freeTextPlaceholder ?? "한 줄로 입력"
             )
         }
     }
 
+    private static func isDuplicateFreeformOption(
+        _ option: Day1IcpQuestionOption,
+        allowsFreeform: Bool
+    ) -> Bool {
+        guard allowsFreeform else { return false }
+        let label = option.label.trimmingCharacters(in: .whitespacesAndNewlines)
+        return label == "직접 입력" || label.hasPrefix("직접 입력:")
+    }
+
     private static func compactQuestionOptionDescription(
         _ value: String,
+        optionLabel: String,
         preview: String?,
         evidenceLimited: Bool
     ) -> String {
         if evidenceLimited {
             return "근거 부족. 한 줄로 보정하세요."
         }
-        switch safeAlignmentQuestionCopy(preview) {
-        case "고객", "ICP":
-            return "이번 주 대화 가능."
-        case "문제", "Pain":
-            return "시간·돈·리스크 비용."
-        case "확인할 행동", "Outcome":
-            return "사건·대안·지불 의향 확인."
-        default:
-            return compactDisplayText(stripEvidenceSuffix(value), max: 34)
-        }
+        return compactOptionDescription(value, optionLabel: optionLabel, preview: preview)
     }
 
     static func dimensionDisplayName(_ dimension: String) -> String {
@@ -1627,6 +1726,14 @@ struct OpenDesignAlignmentQuestionContextRow: Hashable, Identifiable {
     let id: String
     let label: String
     let value: String
+    let accessibilityLabel: String
+
+    init(id: String, label: String, value: String, accessibilityLabel: String? = nil) {
+        self.id = id
+        self.label = label
+        self.value = value
+        self.accessibilityLabel = accessibilityLabel ?? "\(label) \(value)"
+    }
 }
 
 func openDesignAlignmentQuestionContextRows(
@@ -1634,54 +1741,54 @@ func openDesignAlignmentQuestionContextRows(
     content: OpenDesignDayContent,
     interaction: OpenDesignDayInteractionState
 ) -> [OpenDesignAlignmentQuestionContextRow] {
-    guard let alignmentPlan = content.alignmentPlan else { return [] }
+    var rows: [OpenDesignAlignmentQuestionContextRow] = []
 
-    var rows: [OpenDesignAlignmentQuestionContextRow] = [
-        OpenDesignAlignmentQuestionContextRow(
-            id: "goal",
-            label: "목표",
-            value: openDesignAlignmentQuestionContextValue(
-                key: "goal",
-                label: "목표",
-                fallback: alignmentPlan.projectGoal,
-                alignmentPlan: alignmentPlan
-            )
-        ),
-    ]
-
-    if step.id >= 2 {
-        let selectedIcp = content.interviewSteps.first(where: { $0.id == 1 })?.selectedAnswerTitle(in: interaction)
-        rows.append(
-            OpenDesignAlignmentQuestionContextRow(
-                id: "icp",
-                label: "고객",
-                value: openDesignAlignmentQuestionContextValue(
-                    key: "icp",
-                    label: "고객",
-                    fallback: selectedIcp ?? alignmentPlan.alignmentStatement.icp,
-                    alignmentPlan: alignmentPlan
-                )
-            )
-        )
+    if step.id >= 2,
+       let customerRow = openDesignSelectedAnswerContextRow(
+        stepID: 1,
+        label: "고객",
+        accessibilityPrefix: "선택한 고객",
+        content: content,
+        interaction: interaction
+       ) {
+        rows.append(customerRow)
     }
 
-    if step.id >= 3 {
-        let selectedPain = content.interviewSteps.first(where: { $0.id == 2 })?.selectedAnswerTitle(in: interaction)
-        rows.append(
-            OpenDesignAlignmentQuestionContextRow(
-                id: "pain",
-                label: "문제",
-                value: openDesignAlignmentQuestionContextValue(
-                    key: "pain",
-                    label: "문제",
-                    fallback: selectedPain ?? alignmentPlan.alignmentStatement.painPoint,
-                    alignmentPlan: alignmentPlan
-                )
-            )
-        )
+    if step.id >= 3,
+       let painRow = openDesignSelectedAnswerContextRow(
+        stepID: 2,
+        label: "문제",
+        accessibilityPrefix: "선택한 문제",
+        content: content,
+        interaction: interaction
+       ) {
+        rows.append(painRow)
     }
 
     return rows
+}
+
+private func openDesignSelectedAnswerContextRow(
+    stepID: Int,
+    label: String,
+    accessibilityPrefix: String,
+    content: OpenDesignDayContent,
+    interaction: OpenDesignDayInteractionState
+) -> OpenDesignAlignmentQuestionContextRow? {
+    guard let step = content.interviewSteps.first(where: { $0.id == stepID }),
+          let title = step.selectedAnswerTitle(in: interaction) else {
+        return nil
+    }
+
+    let value = openDesignCompactDisplayText(title, max: 64)
+    guard !value.isEmpty else { return nil }
+
+    return OpenDesignAlignmentQuestionContextRow(
+        id: step.dimension.isEmpty ? "step-\(stepID)" : step.dimension,
+        label: label,
+        value: value,
+        accessibilityLabel: "\(accessibilityPrefix) \(value)"
+    )
 }
 
 private func openDesignAlignmentQuestionContextValue(
@@ -1898,9 +2005,16 @@ struct OpenDesignDayInteractionState: Equatable {
     var submittedChoices: [Int: Int] = [:]
     var submittedSteps: Set<Int> = []
     var revisionSteps: Set<Int> = []
+    var lockedPrefillStepIDs: Set<Int> = []
     var freeformAnswer = ""
     var freeformAnswers: [Int: String] = [:]
     var dayCompleted = false
+
+    init(
+        totalInterviewSteps: Int = 4
+    ) {
+        self.totalInterviewSteps = totalInterviewSteps
+    }
 
     var finalStepID: Int {
         totalInterviewSteps + 1
@@ -2020,6 +2134,7 @@ struct OpenDesignDayInteractionState: Equatable {
     }
 
     mutating func recordSubmittedChoice(stepID: Int, choiceID: Int) {
+        guard !lockedPrefillStepIDs.contains(stepID) else { return }
         let currentStepID = normalizedActiveStepID
         selectedChoices[stepID] = choiceID
         _ = submittedSteps.insert(stepID)
@@ -2046,6 +2161,7 @@ struct OpenDesignDayInteractionState: Equatable {
     }
 
     mutating func selectChoice(stepID: Int, choiceID: Int?) {
+        guard !lockedPrefillStepIDs.contains(stepID) else { return }
         guard (1...totalInterviewSteps).contains(stepID),
               selectedChoices[stepID] != choiceID else {
             if let choiceID, choiceID != Self.freeformChoiceID {
@@ -2074,6 +2190,7 @@ struct OpenDesignDayInteractionState: Equatable {
     }
 
     mutating func activateFreeformAnswer(stepID: Int) {
+        guard !lockedPrefillStepIDs.contains(stepID) else { return }
         guard (1...totalInterviewSteps).contains(stepID) else { return }
         let currentChoice = selectedChoices[stepID]
         let hasNumberChoice = currentChoice != nil && currentChoice != Self.freeformChoiceID
@@ -2092,6 +2209,7 @@ struct OpenDesignDayInteractionState: Equatable {
     }
 
     mutating func setFreeformAnswer(stepID: Int, value: String) {
+        guard !lockedPrefillStepIDs.contains(stepID) else { return }
         guard (1...totalInterviewSteps).contains(stepID) else { return }
         let previousFreeform = trimmedFreeformAnswer(stepID: stepID)
         freeformAnswers[stepID] = value
@@ -2164,6 +2282,7 @@ struct OpenDesignDayInteractionState: Equatable {
         revisionSteps = []
         freeformAnswer = ""
         freeformAnswers = [:]
+        lockedPrefillStepIDs = []
         dayCompleted = false
         workflowNavigationDirection = .neutral
     }
@@ -2187,6 +2306,9 @@ struct OpenDesignDayInteractionState: Equatable {
 
     private mutating func invalidateStepAndFollowing(from stepID: Int) {
         for id in stepID...totalInterviewSteps {
+            if lockedPrefillStepIDs.contains(id) {
+                continue
+            }
             submittedChoices.removeValue(forKey: id)
             submittedSteps.remove(id)
             revisionSteps.remove(id)
@@ -2209,6 +2331,7 @@ struct OpenDesignDayInteractionState: Equatable {
             freeformAnswer = ""
         }
     }
+
 }
 
 struct OpenDesignDaySelectedAnswer: Equatable {
@@ -2655,7 +2778,9 @@ struct OpenDesignDayPageView: View {
         self.completeDay = completeDay
         self.advanceToNextDay = advanceToNextDay
         self.selectDay = selectDay
-        _interaction = State(initialValue: OpenDesignDayInteractionState(totalInterviewSteps: content.interviewSteps.count))
+        _interaction = State(initialValue: OpenDesignDayInteractionState(
+            totalInterviewSteps: content.interviewSteps.count
+        ))
     }
 
     private var searchResults: [OpenDesignDayContent.SearchItem] {
@@ -4206,6 +4331,74 @@ private func openDesignLooksLikeMarkdownDocumentReference(_ value: String) -> Bo
     ) != nil
 }
 
+func openDesignHighlightedAttributedText(
+    _ text: String,
+    phrases: [String],
+    bodySize: CGFloat,
+    bodyWeight: Font.Weight = .regular,
+    bodyColor: Color = OpenDesignDayColor.fgSecondary,
+    highlightWeight: Font.Weight = .semibold,
+    highlightColor: Color = OpenDesignDayColor.amber,
+    highlightBackground: Color = OpenDesignDayColor.amberDim
+) -> AttributedString {
+    let cleanPhrases = OpenDesignDayContent.InterviewStep.normalizedHighlightPhrases(phrases)
+    guard !text.isEmpty, !cleanPhrases.isEmpty else {
+        var value = AttributedString(text)
+        value.font = .system(size: bodySize, weight: bodyWeight)
+        value.foregroundColor = bodyColor
+        return value
+    }
+
+    var highlightRanges: [Range<String.Index>] = []
+    for phrase in cleanPhrases {
+        var searchRange = text.startIndex..<text.endIndex
+        while let range = text.range(
+            of: phrase,
+            options: [.caseInsensitive, .diacriticInsensitive],
+            range: searchRange
+        ) {
+            if !highlightRanges.contains(where: { $0.overlaps(range) }) {
+                highlightRanges.append(range)
+            }
+            searchRange = range.upperBound..<text.endIndex
+        }
+    }
+    highlightRanges.sort { $0.lowerBound < $1.lowerBound }
+
+    guard !highlightRanges.isEmpty else {
+        var value = AttributedString(text)
+        value.font = .system(size: bodySize, weight: bodyWeight)
+        value.foregroundColor = bodyColor
+        return value
+    }
+
+    var value = AttributedString()
+    var cursor = text.startIndex
+    for range in highlightRanges {
+        if cursor < range.lowerBound {
+            var body = AttributedString(String(text[cursor..<range.lowerBound]))
+            body.font = .system(size: bodySize, weight: bodyWeight)
+            body.foregroundColor = bodyColor
+            value += body
+        }
+
+        var highlight = AttributedString(String(text[range]))
+        highlight.font = .system(size: bodySize, weight: highlightWeight)
+        highlight.foregroundColor = highlightColor
+        highlight.backgroundColor = highlightBackground
+        value += highlight
+        cursor = range.upperBound
+    }
+
+    if cursor < text.endIndex {
+        var body = AttributedString(String(text[cursor...]))
+        body.font = .system(size: bodySize, weight: bodyWeight)
+        body.foregroundColor = bodyColor
+        value += body
+    }
+    return value
+}
+
 private func openDesignAttributedText(
     _ segments: [OpenDesignInlineSegment],
     bodySize: CGFloat,
@@ -5289,6 +5482,7 @@ private struct OpenDesignDayMainView: View {
             },
             set: { value in
                 guard let step else { return }
+                guard !interaction.lockedPrefillStepIDs.contains(step.id) else { return }
                 interaction.selectChoice(stepID: step.id, choiceID: value)
             }
         )
@@ -5304,6 +5498,7 @@ private struct OpenDesignDayMainView: View {
             },
             set: { value in
                 guard let step else { return }
+                guard !interaction.lockedPrefillStepIDs.contains(step.id) else { return }
                 interaction.setFreeformAnswer(stepID: step.id, value: value)
             }
         )
@@ -5398,9 +5593,7 @@ private struct OpenDesignDayMainView: View {
                     Text("3분 · \(content.interviewSteps.count)문항")
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(OpenDesignDayColor.muted)
-                    Text("오늘은 코딩하지 않습니다.\n30일 동안 검증할 고객, 문제, 첫 결제 이유를 한 문장으로 정합니다.")
-                        .font(.system(size: 12, weight: .regular))
-                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    Text(startDescriptionAttributedText)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("opendesign.day.start.description")
@@ -5464,6 +5657,20 @@ private struct OpenDesignDayMainView: View {
         .id("mission")
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("opendesign.day.start.phase")
+    }
+
+    private var startDescriptionAttributedText: AttributedString {
+        var text = AttributedString("오늘은 코딩하지 않습니다.\n30일 동안 검증할 고객, 문제, 첫 결제 이유를 한 문장으로 정합니다.")
+        text.font = .system(size: 12, weight: .regular)
+        text.foregroundColor = OpenDesignDayColor.fgSecondary
+
+        if let range = text.range(of: "한 문장으로 정합니다.") {
+            text[range].font = .system(size: 12, weight: .semibold)
+            text[range].foregroundColor = OpenDesignDayColor.amber
+            text[range].backgroundColor = OpenDesignDayColor.amberDim
+        }
+
+        return text
     }
 
     private func revealIntroIfNeeded(for target: OpenDesignSectionAnchor) {
@@ -5656,24 +5863,26 @@ private struct OpenDesignDayStepWorkspaceView: View {
                     .id("active-step-start")
             } else if let activeInterviewStep {
                 VStack(alignment: .leading, spacing: 0) {
-                    OpenDesignInterviewStepView(
-                        step: activeInterviewStep,
-                        contextRows: openDesignAlignmentQuestionContextRows(
-                            for: activeInterviewStep,
-                            content: content,
-                            interaction: interaction
-                        ),
-                        selectedChoice: $selectedChoice,
-                        submittedChoice: interaction.submittedChoices[activeInterviewStep.id],
-                        freeformAnswer: $freeformAnswer,
-                        activateFreeformAnswer: activateFreeformAnswer
-                    )
+                        OpenDesignInterviewStepView(
+                            step: activeInterviewStep,
+                            contextRows: openDesignAlignmentQuestionContextRows(
+                                for: activeInterviewStep,
+                                content: content,
+                                interaction: interaction
+                            ),
+                            selectedChoice: $selectedChoice,
+                            submittedChoice: interaction.submittedChoices[activeInterviewStep.id],
+                            isLockedPrefill: interaction.lockedPrefillStepIDs.contains(activeInterviewStep.id),
+                            freeformAnswer: $freeformAnswer,
+                            activateFreeformAnswer: activateFreeformAnswer
+                        )
                     OpenDesignStepFooter(
                         content: content,
                         interaction: interaction,
                         activeInterviewStep: activeInterviewStep,
                         selectedChoice: selectedChoice,
                         freeformAnswer: freeformAnswer,
+                        isLockedPrefill: interaction.lockedPrefillStepIDs.contains(activeInterviewStep.id),
                         previousAction: previousAction,
                         nextAction: nextAction
                     )
@@ -5740,6 +5949,7 @@ private struct OpenDesignStepFooter: View {
     let activeInterviewStep: OpenDesignDayContent.InterviewStep
     let selectedChoice: Int?
     let freeformAnswer: String
+    let isLockedPrefill: Bool
     let previousAction: () -> Void
     let nextAction: () -> Void
 
@@ -5760,9 +5970,19 @@ private struct OpenDesignStepFooter: View {
     }
 
     private var statusText: String? {
+        if isLockedPrefill {
+            let savedLabel = activeInterviewStep
+                .selectedAnswerTitle(in: interaction)
+                .map { openDesignCompactDisplayText($0, max: 28) }
+                ?? "intake 답변"
+            return "intake 답변 저장됨 · \(savedLabel)"
+        }
         if let submitted = interaction.submittedChoices[activeInterviewStep.id],
            submitted == selectedChoice {
-            let savedLabel = submitted == OpenDesignDayInteractionState.freeformChoiceID ? "직접 입력" : "\(submitted)번"
+            let savedLabel = activeInterviewStep
+                .selectedAnswerTitle(in: interaction)
+                .map { openDesignCompactDisplayText($0, max: 28) }
+                ?? (submitted == OpenDesignDayInteractionState.freeformChoiceID ? "직접 입력" : "\(submitted)번")
             return "저장 완료 · \(savedLabel)"
         }
         if selectedChoice != nil {
@@ -6098,7 +6318,7 @@ private struct OpenDesignQuestionContextRows: View {
                 .padding(.vertical, 7)
                 .background(OpenDesignDayColor.bgDeep)
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("\(row.label) \(row.value)")
+                .accessibilityLabel(row.accessibilityLabel)
                 .accessibilityIdentifier("opendesign.day.question.context.\(row.id)")
 
                 if index < rows.count - 1 {
@@ -6123,6 +6343,7 @@ private struct OpenDesignInterviewStepView: View {
     let contextRows: [OpenDesignAlignmentQuestionContextRow]
     @Binding var selectedChoice: Int?
     let submittedChoice: Int?
+    let isLockedPrefill: Bool
     @Binding var freeformAnswer: String
     let activateFreeformAnswer: (Int) -> Void
 
@@ -6198,7 +6419,7 @@ private struct OpenDesignInterviewStepView: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                Text(selectedChoice == nil ? "대기 · \(step.progressLabel)" : "선택됨 · \(step.progressLabel)")
+                Text(stepStatusText)
                     .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                     .foregroundStyle(OpenDesignDayColor.muted)
             }
@@ -6213,7 +6434,8 @@ private struct OpenDesignInterviewStepView: View {
                     options: selectableOptions,
                     selectedChoice: $selectedChoice,
                     submittedChoice: submittedChoice,
-                    hasSubmittedStep: hasSubmitted
+                    hasSubmittedStep: hasSubmitted,
+                    isLockedPrefill: isLockedPrefill
                 )
                 .id(step.id == 1 ? "interview1-options" : "interview\(step.id)-options")
             }
@@ -6244,6 +6466,13 @@ private struct OpenDesignInterviewStepView: View {
         step.options.filter { !$0.isScanWarningOnly }
     }
 
+    private var stepStatusText: String {
+        if isLockedPrefill {
+            return "intake 답변 저장됨 · \(step.progressLabel)"
+        }
+        return selectedChoice == nil ? "대기 · \(step.progressLabel)" : "선택됨 · \(step.progressLabel)"
+    }
+
     private var scanWarningOption: OpenDesignDayContent.InterviewOption? {
         step.options.first(where: \.isScanWarningOnly)
     }
@@ -6255,12 +6484,14 @@ private struct OpenDesignInterviewStepView: View {
     }
 
     private var questionTitleText: AttributedString {
-        var statement = AttributedString(questionStatement)
-        statement.foregroundColor = OpenDesignDayColor.fg
-        if !step.markedStatement.isEmpty, let range = statement.range(of: step.markedStatement) {
-            statement[range].foregroundColor = OpenDesignDayColor.accent
-        }
-        return statement
+        openDesignHighlightedAttributedText(
+            questionStatement,
+            phrases: step.highlightPhrases,
+            bodySize: 22,
+            bodyWeight: .semibold,
+            bodyColor: OpenDesignDayColor.fg,
+            highlightWeight: .semibold
+        )
     }
 
     private var questionHint: String? {
@@ -6268,7 +6499,7 @@ private struct OpenDesignInterviewStepView: View {
     }
 
     private var shouldShowQuestionHint: Bool {
-        step.dimension == "icp" || contextRows.isEmpty
+        true
     }
 
     private var freeformRow: some View {
@@ -6308,10 +6539,15 @@ private struct OpenDesignInterviewStepView: View {
                     .focused($isFreeformFocused)
                     .onChange(of: isFreeformFocused) { _, isFocused in
                         guard isFocused else { return }
+                        guard !isLockedPrefill else { return }
                         focusFreeformPresentation()
                     }
-                    .simultaneousGesture(TapGesture().onEnded { _ in focusFreeformPresentation() })
+                    .simultaneousGesture(TapGesture().onEnded {
+                        guard !isLockedPrefill else { return }
+                        focusFreeformPresentation()
+                    })
                     .onChange(of: freeformAnswer) { _, value in
+                        guard !isLockedPrefill else { return }
                         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
                         if trimmed.isEmpty {
                             if selectedChoice == OpenDesignDayInteractionState.freeformChoiceID {
@@ -6322,6 +6558,7 @@ private struct OpenDesignInterviewStepView: View {
                             selectedChoice = OpenDesignDayInteractionState.freeformChoiceID
                         }
                     }
+                    .disabled(isLockedPrefill)
                     .accessibilityIdentifier(step.id == 1 ? "opendesign.day.icp.freeform" : "opendesign.day.interview.\(step.id).freeform")
                     .padding(.horizontal, 11)
                     .frame(height: 34)
@@ -6361,12 +6598,73 @@ private struct OpenDesignQuestionGridWidthPreferenceKey: PreferenceKey {
     }
 }
 
+private struct OpenDesignQuestionOptionGridLayout: Layout {
+    let columnCount: Int
+    var spacing: CGFloat = 1
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 0
+        let metrics = layoutMetrics(for: subviews, width: width)
+        return CGSize(width: width, height: metrics.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let metrics = layoutMetrics(for: subviews, width: bounds.width)
+        var rowY = bounds.minY
+
+        for rowIndex in 0..<metrics.rowHeights.count {
+            let rowHeight = metrics.rowHeights[rowIndex]
+            for columnIndex in 0..<metrics.columns {
+                let subviewIndex = rowIndex * metrics.columns + columnIndex
+                guard subviewIndex < subviews.count else { continue }
+
+                let x = bounds.minX + CGFloat(columnIndex) * (metrics.columnWidth + spacing)
+                subviews[subviewIndex].place(
+                    at: CGPoint(x: x, y: rowY),
+                    proposal: ProposedViewSize(width: metrics.columnWidth, height: rowHeight)
+                )
+            }
+            rowY += rowHeight + spacing
+        }
+    }
+
+    private func layoutMetrics(for subviews: Subviews, width: CGFloat) -> OpenDesignQuestionOptionGridMetrics {
+        let columns = max(columnCount, 1)
+        let columnWidth = max((width - CGFloat(columns - 1) * spacing) / CGFloat(columns), 0)
+        let rowCount = Int(ceil(Double(subviews.count) / Double(columns)))
+        let rowHeights = (0..<rowCount).map { rowIndex in
+            let range = rowIndex * columns..<min((rowIndex + 1) * columns, subviews.count)
+            return range.reduce(CGFloat(0)) { height, subviewIndex in
+                let size = subviews[subviewIndex].sizeThatFits(
+                    ProposedViewSize(width: columnWidth, height: nil)
+                )
+                return max(height, size.height)
+            }
+        }
+        let height = rowHeights.reduce(CGFloat(0), +) + CGFloat(max(0, rowHeights.count - 1)) * spacing
+        return OpenDesignQuestionOptionGridMetrics(
+            columns: columns,
+            columnWidth: columnWidth,
+            rowHeights: rowHeights,
+            height: height
+        )
+    }
+
+    private struct OpenDesignQuestionOptionGridMetrics {
+        let columns: Int
+        let columnWidth: CGFloat
+        let rowHeights: [CGFloat]
+        let height: CGFloat
+    }
+}
+
 private struct OpenDesignQuestionOptionGrid: View {
     let stepID: Int
     let options: [OpenDesignDayContent.InterviewOption]
     @Binding var selectedChoice: Int?
     let submittedChoice: Int?
     let hasSubmittedStep: Bool
+    let isLockedPrefill: Bool
 
     @State private var availableWidth: CGFloat = 0
 
@@ -6374,31 +6672,23 @@ private struct OpenDesignQuestionOptionGrid: View {
         availableWidth >= 620
     }
 
-    private var rows: [[OpenDesignDayContent.InterviewOption]] {
-        if !usesTwoColumns {
-            return options.map { [$0] }
-        }
-        return stride(from: 0, to: options.count, by: 2).map { index in
-            Array(options[index..<min(index + 2, options.count)])
-        }
+    private var columnCount: Int {
+        usesTwoColumns ? 2 : 1
     }
 
     var body: some View {
-        VStack(spacing: 1) {
-            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                HStack(alignment: .top, spacing: 1) {
-                    ForEach(row) { option in
-                        let isPicked = selectedChoice == option.id
-                        OpenDesignQuestionOptionTile(
-                            option: option,
-                            isPicked: isPicked,
-                            isSubmitted: isPicked && submittedChoice == option.id,
-                            hasSubmittedStep: hasSubmittedStep,
-                            select: { selectedChoice = option.id }
-                        )
-                        .accessibilityIdentifier(accessibilityIdentifier(for: option))
-                    }
-                }
+        OpenDesignQuestionOptionGridLayout(columnCount: columnCount, spacing: 1) {
+            ForEach(options) { option in
+                let isPicked = selectedChoice == option.id
+                OpenDesignQuestionOptionTile(
+                    option: option,
+                    isPicked: isPicked,
+                    isSubmitted: isPicked && submittedChoice == option.id,
+                    hasSubmittedStep: hasSubmittedStep,
+                    isLockedPrefill: isLockedPrefill,
+                    select: { selectedChoice = option.id }
+                )
+                .accessibilityIdentifier(accessibilityIdentifier(for: option))
             }
         }
         .padding(1)
@@ -6433,9 +6723,14 @@ private struct OpenDesignScanWarningCard: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(option.title)
-                        .font(.system(size: 12.8, weight: .semibold))
-                        .foregroundStyle(OpenDesignDayColor.fg)
+                    Text(openDesignHighlightedAttributedText(
+                        option.title,
+                        phrases: option.highlightPhrases,
+                        bodySize: 12.8,
+                        bodyWeight: .semibold,
+                        bodyColor: OpenDesignDayColor.fg,
+                        highlightWeight: .semibold
+                    ))
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                     Text("scan 필요")
@@ -6470,6 +6765,7 @@ private struct OpenDesignQuestionOptionTile: View {
     let isPicked: Bool
     let isSubmitted: Bool
     let hasSubmittedStep: Bool
+    let isLockedPrefill: Bool
     let select: () -> Void
 
     @State private var isHovered = false
@@ -6525,11 +6821,17 @@ private struct OpenDesignQuestionOptionTile: View {
 
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(option.title)
-                            .font(.system(size: 13.5, weight: .semibold))
-                            .foregroundStyle(OpenDesignDayColor.fg)
-                            .lineLimit(2)
+                        Text(openDesignHighlightedAttributedText(
+                            option.title,
+                            phrases: option.highlightPhrases,
+                            bodySize: 13.5,
+                            bodyWeight: .semibold,
+                            bodyColor: OpenDesignDayColor.fg,
+                            highlightWeight: .semibold
+                        ))
+                            .lineLimit(nil)
                             .fixedSize(horizontal: false, vertical: true)
+                            .layoutPriority(1)
 
                         if let badgeText {
                             Text(badgeText)
@@ -6549,8 +6851,9 @@ private struct OpenDesignQuestionOptionTile: View {
                             .font(.system(size: 11.8, weight: .regular))
                             .foregroundStyle(OpenDesignDayColor.muted)
                             .lineSpacing(2)
-                            .lineLimit(2)
+                            .lineLimit(nil)
                             .fixedSize(horizontal: false, vertical: true)
+                            .layoutPriority(1)
                     }
 
                     Text(optionTail)
@@ -6563,21 +6866,24 @@ private struct OpenDesignQuestionOptionTile: View {
                         .overlay(Capsule().stroke(isActive ? tone.opacity(0.36) : OpenDesignDayColor.borderSoft, lineWidth: 1))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 12)
-            .frame(maxWidth: .infinity, minHeight: hasDetail ? 86 : 70, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: hasDetail ? 86 : 70, maxHeight: .infinity, alignment: .topLeading)
             .background(fill)
             .overlay(Rectangle().stroke(stroke, lineWidth: 1))
             .contentShape(Rectangle())
         }
-        .buttonStyle(OpenDesignInteractiveButtonStyle())
+        .buttonStyle(OpenDesignInteractiveButtonStyle(isDisabled: isLockedPrefill))
+        .disabled(isLockedPrefill)
         .onHover { isHovered = $0 }
         .accessibilityElement(children: .combine)
-        .accessibilityValue(isSubmitted || isPicked ? "active" : "inactive")
+        .accessibilityValue(isLockedPrefill && isSubmitted ? "intake-saved" : isSubmitted || isPicked ? "active" : "inactive")
     }
 
     private var badgeText: String? {
+        if isLockedPrefill && isSubmitted { return "intake 저장" }
         if isSubmitted { return "확정됨" }
         return nil
     }
@@ -6587,6 +6893,7 @@ private struct OpenDesignQuestionOptionTile: View {
     }
 
     private var optionTail: String {
+        if isLockedPrefill && isSubmitted { return "intake 답변" }
         if isSubmitted { return "확정됨" }
         if hasSubmittedStep { return "변경" }
         return option.tail
@@ -6597,6 +6904,14 @@ private struct OpenDesignHypothesisSummaryRow: Identifiable {
     let id: String
     let label: String
     let value: String
+    let highlightPhrases: [String]
+
+    init(id: String, label: String, value: String, highlightPhrases: [String] = []) {
+        self.id = id
+        self.label = label
+        self.value = value
+        self.highlightPhrases = highlightPhrases
+    }
 }
 
 private struct OpenDesignHypothesisConfirmationCard: View {
@@ -6622,9 +6937,24 @@ private struct OpenDesignHypothesisConfirmationCard: View {
                 ?? alignmentDisplayValue(key: "outcome", label: "확인할 행동", fallback: alignmentPlan.alignmentStatement.outcome)
             return [
                 OpenDesignHypothesisSummaryRow(id: "goal", label: "목표", value: alignmentDisplayValue(key: "goal", label: "목표", fallback: alignmentPlan.projectGoal)),
-                OpenDesignHypothesisSummaryRow(id: "icp", label: "고객", value: icpValue),
-                OpenDesignHypothesisSummaryRow(id: "pain", label: "문제", value: painValue),
-                OpenDesignHypothesisSummaryRow(id: "outcome", label: "확인할 행동", value: outcomeValue),
+                OpenDesignHypothesisSummaryRow(
+                    id: "icp",
+                    label: "고객",
+                    value: icpValue,
+                    highlightPhrases: selectedOptionHighlightPhrases(stepID: 1) ?? alignmentPlan.components.icp.highlightPhrases ?? []
+                ),
+                OpenDesignHypothesisSummaryRow(
+                    id: "pain",
+                    label: "문제",
+                    value: painValue,
+                    highlightPhrases: selectedOptionHighlightPhrases(stepID: 2) ?? alignmentPlan.components.painPoint.highlightPhrases ?? []
+                ),
+                OpenDesignHypothesisSummaryRow(
+                    id: "outcome",
+                    label: "확인할 행동",
+                    value: outcomeValue,
+                    highlightPhrases: selectedOptionHighlightPhrases(stepID: 3) ?? alignmentPlan.components.outcome.highlightPhrases ?? []
+                ),
             ]
         }
 
@@ -6738,9 +7068,14 @@ private struct OpenDesignHypothesisConfirmationCard: View {
                 .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                 .foregroundStyle(OpenDesignDayColor.muted)
                 .frame(width: 68, alignment: .leading)
-            Text(row.value)
-                .font(.system(size: 13.5, weight: row.id == "icp" ? .semibold : .regular))
-                .foregroundStyle(row.id == "icp" ? OpenDesignDayColor.accent : OpenDesignDayColor.fgSecondary)
+            Text(openDesignHighlightedAttributedText(
+                row.value,
+                phrases: row.highlightPhrases,
+                bodySize: 13.5,
+                bodyWeight: row.id == "icp" ? .semibold : .regular,
+                bodyColor: row.id == "icp" ? OpenDesignDayColor.accent : OpenDesignDayColor.fgSecondary,
+                highlightWeight: .semibold
+            ))
                 .lineSpacing(2)
                 .lineLimit(row.id == "outcome" ? 2 : 1)
                 .fixedSize(horizontal: false, vertical: true)
@@ -6760,6 +7095,16 @@ private struct OpenDesignHypothesisConfirmationCard: View {
 
     private func selectedOptionTitle(stepID: Int) -> String? {
         content.interviewSteps.first(where: { $0.id == stepID })?.selectedAnswerTitle(in: interaction)
+    }
+
+    private func selectedOptionHighlightPhrases(stepID: Int) -> [String]? {
+        guard let step = content.interviewSteps.first(where: { $0.id == stepID }),
+              let selectedID = interaction.selectedChoices[stepID],
+              selectedID != OpenDesignDayInteractionState.freeformChoiceID,
+              let option = step.options.first(where: { $0.id == selectedID }) else {
+            return nil
+        }
+        return option.highlightPhrases
     }
 
     private var confirmButtonTitle: String {

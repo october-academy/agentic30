@@ -71,6 +71,8 @@ function assertEvidenceMarkedOptions(options, { allowLimited = false, requireEvi
   assert.ok(options.length >= 2, "expected at least two options");
   for (const option of options) {
     assert.ok(option.evidenceLabel, `missing evidenceLabel for ${option.label}`);
+    assert.ok(Array.isArray(option.highlightPhrases), `missing highlightPhrases for ${option.label}`);
+    assert.ok(option.highlightPhrases.length >= 1, `empty highlightPhrases for ${option.label}`);
     if (option.evidenceLabel === "근거 부족") {
       assert.equal(option.evidenceLimited, true, `evidence-limited option must be marked: ${option.label}`);
       assert.match(option.description, /근거 부족/);
@@ -92,6 +94,7 @@ function frontierOption(id, label, description, preview, evidenceLabel, {
     id,
     label,
     description,
+    highlightPhrases: [label],
     preview,
     antiSignal,
     evidenceLabel,
@@ -213,9 +216,12 @@ test("Agentic30 fixture produces goal-based Day 1 alignment statement and qualit
     assert.match(plan.alignmentStatement.statement, /확인할 행동:/);
     assert.equal(plan.components.icp.title, "고객");
     assert.equal(plan.components.icp.prompt, "이 목표를 검증하려면 이번 주 가장 먼저 확인할 고객 후보는 누구인가요?");
+    assert.deepEqual(plan.components.icp.highlightPhrases, ["첫 고객 후보", "고객 후보"]);
     assert.equal(plan.components.painPoint.title, "문제");
+    assert.deepEqual(plan.components.painPoint.highlightPhrases, ["비용을 치르는 문제", "문제"]);
     assert.equal(plan.components.outcome.title, "확인할 행동");
     assert.equal(plan.components.outcome.prompt, "그 고객에게서 어떤 행동 신호를 확인해야 하나요?");
+    assert.deepEqual(plan.components.outcome.highlightPhrases, ["행동 신호", "확인할 행동", "검증 행동"]);
     assert.doesNotMatch(JSON.stringify(plan.components), /Day\s*2|Day2/);
     assert.ok(plan.qualityGate.score >= 7, `expected quality score >= 7, got ${plan.qualityGate.score}`);
     assert.equal(plan.qualityGate.passed, true);
@@ -316,6 +322,17 @@ test("Day 1 alignment extracts user-facing signals from source when docs are abs
     assert.match(plan.projectGoal, /buyer signal|founder calls/i);
     assert.ok(plan.qualityGate.passed, `expected source evidence to pass, got ${plan.qualityGate.score}`);
     assert.ok(plan.signals.evidenceRefs.some((ref) => ref.path === "src/landing-copy.ts"));
+    for (const component of Object.values(plan.components)) {
+      for (const option of component.options) {
+        assert.ok(option.highlightPhrases.length >= 1, `missing highlight phrase for ${option.label}`);
+        assert.ok(
+          option.highlightPhrases.every((phrase) =>
+            option.label.toLowerCase().includes(phrase.toLowerCase())
+          ),
+          `highlight phrases must be exact option label substrings: ${option.label}`,
+        );
+      }
+    }
     assert.doesNotMatch(JSON.stringify(plan.signalDigest), /landing-copy\.ts.*targetUser/);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
@@ -1071,6 +1088,16 @@ test("Day 1 alignment composer falls back to deterministic alignment plan", asyn
     });
     assert.equal(missingDigest.source, "deterministic");
     assert.equal(missingDigest.fellBackToDeterministic, true);
+
+    const missingHighlightsPlan = structuredClone(deterministicPlan);
+    delete missingHighlightsPlan.components.icp.highlightPhrases;
+    const missingHighlights = await composeDay1AlignmentPlan({
+      workspaceRoot: root,
+      deterministicPlan,
+      queryImpl: async () => JSON.stringify(missingHighlightsPlan),
+    });
+    assert.equal(missingHighlights.source, "deterministic");
+    assert.equal(missingHighlights.fellBackToDeterministic, true);
 
     const overlongDigest = await composeDay1AlignmentPlan({
       workspaceRoot: root,

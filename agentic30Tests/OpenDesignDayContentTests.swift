@@ -164,6 +164,44 @@ struct OpenDesignDayContentTests {
         #expect(state.currentProgressScrollTarget == .interview1)
     }
 
+    @Test func dayInteractionStartsUnfilledForAlignmentQuestions() throws {
+        let content = OpenDesignDayContent.personalized(
+            from: makeAlignmentPlan(),
+            fallback: nil
+        )
+
+        var state = OpenDesignDayInteractionState(
+            totalInterviewSteps: content.interviewSteps.count
+        )
+
+        #expect(state.selectedChoices.isEmpty)
+        #expect(state.submittedChoices.isEmpty)
+        #expect(state.submittedSteps.isEmpty)
+        #expect(state.lockedPrefillStepIDs.isEmpty)
+        #expect(state.trimmedFreeformAnswer(stepID: 2).isEmpty)
+
+        state.selectChoice(stepID: 1, choiceID: 2)
+        state.setFreeformAnswer(stepID: 2, value: "덮어쓰기")
+
+        #expect(state.selectedChoices[1] == 2)
+        #expect(state.trimmedFreeformAnswer(stepID: 2) == "덮어쓰기")
+    }
+
+    @Test func dayInteractionStartsUnfilledForStaticFallback() {
+        let content = OpenDesignDayContent.day1
+
+        let state = OpenDesignDayInteractionState(
+            totalInterviewSteps: content.interviewSteps.count
+        )
+
+        #expect(state.selectedChoices[1] == nil)
+        #expect(state.selectedChoices[2] == nil)
+        #expect(state.selectedChoices[4] == nil)
+        #expect(state.submittedSteps.isEmpty)
+        #expect(state.lockedPrefillStepIDs.isEmpty)
+        #expect(!state.allInterviewsSubmitted)
+    }
+
     @Test func personalizedDay1RendersAdaptiveQuestionCounts() {
         for count in [3, 4, 5] {
             let content = OpenDesignDayContent.personalized(from: makePlan(questionCount: count))
@@ -176,6 +214,34 @@ struct OpenDesignDayContentTests {
         }
     }
 
+    @Test func personalizedDay1HidesDirectInputFallbackOptionWhenFreeformExists() throws {
+        let directFallbackOptions = [
+            Day1IcpQuestionOption(id: "o1", label: "이번 주 연락 가능한 support lead", description: "현재 행동이 있음", preview: "Have", antiSignal: false),
+            Day1IcpQuestionOption(id: "o2", label: "직접 입력: scan보다 더 정확한 고객 후보", description: "고객 후보 근거가 부족하면 한 줄로 보정합니다.", preview: "직접 입력", antiSignal: false, evidenceLabel: "근거 부족", evidenceLimited: true),
+        ]
+        let content = OpenDesignDayContent.personalized(from: makePlan(
+            questionCount: 3,
+            firstQuestionOptions: directFallbackOptions,
+            firstQuestionAllowFreeText: true
+        ))
+        let noFreeformContent = OpenDesignDayContent.personalized(from: makePlan(
+            questionCount: 3,
+            firstQuestionOptions: directFallbackOptions,
+            firstQuestionAllowFreeText: false
+        ))
+
+        let firstStep = try #require(content.interviewSteps.first)
+        let noFreeformFirstStep = try #require(noFreeformContent.interviewSteps.first)
+
+        #expect(firstStep.allowsFreeform)
+        #expect(firstStep.freeformLabel == "직접 입력")
+        #expect(firstStep.options.map(\.id) == [1])
+        #expect(firstStep.options.map(\.title) == ["이번 주 연락 가능한 support lead"])
+        #expect(!noFreeformFirstStep.allowsFreeform)
+        #expect(noFreeformFirstStep.options.map(\.id) == [1, 2])
+        #expect(noFreeformFirstStep.options[1].title.hasPrefix("직접 입력:"))
+    }
+
     @Test func personalizedDay1PrefersAlignmentPlanAndBuildsGoalComponents() {
         let content = OpenDesignDayContent.personalized(
             from: makeAlignmentPlan(),
@@ -186,12 +252,51 @@ struct OpenDesignDayContentTests {
         #expect(content.interviewSteps.map(\.dimension) == ["icp", "pain_point", "outcome"])
         #expect(content.interviewSteps.map(\.title) == ["질문 1 — 고객", "질문 2 — 문제", "질문 3 — 확인할 행동"])
         #expect(content.interviewSteps.allSatisfy { $0.criteria.isEmpty })
-        #expect(content.interviewSteps.first?.markedStatement == "이번 주 먼저 확인할 고객은?")
-        #expect(content.interviewSteps.first?.hintText == "바로 대화 가능한 조건.")
-        #expect(openDesignQuestionHintText(for: content.interviewSteps[0]) == "바로 대화 가능한 조건.")
+        #expect(content.interviewSteps[0].markedStatement == "이번 주 실제로 연락해 확인할 첫 고객 후보는 누구인가요?")
+        #expect(content.interviewSteps[1].markedStatement == "선택한 고객이 지금 가장 비용을 치르는 문제는 무엇인가요?")
+        #expect(content.interviewSteps[2].markedStatement == "선택한 문제가 진짜인지 이번 주 대화에서 어떤 행동 신호로 확인할까요?")
+        #expect(content.interviewSteps.map(\.hintText) == [nil, nil, nil])
+        #expect(content.interviewSteps.allSatisfy { openDesignQuestionHintText(for: $0) == nil })
         #expect(content.taskGroups.first?.tasks.first?.title == "30일 목표와 방향을 정해요")
         #expect(content.taskGroups.first?.tasks.first?.meta == "가설 · 목표+3요소")
         #expect(content.contextTitle.contains("핵심 가설"))
+    }
+
+    @Test func personalizedAlignmentUsesPayloadQuestionAndOptionHighlightPhrases() throws {
+        let content = OpenDesignDayContent.personalized(
+            from: makeAlignmentPlan(),
+            fallback: makePlan(questionCount: 4)
+        )
+
+        #expect(content.interviewSteps[0].highlightPhrases == ["첫 고객 후보", "고객 후보"])
+        #expect(content.interviewSteps[1].highlightPhrases == ["비용을 치르는 문제", "문제"])
+        #expect(Set(content.interviewSteps[2].highlightPhrases) == Set(["행동 신호", "확인할 행동", "검증 행동"]))
+
+        let customerOption = try #require(content.interviewSteps[0].options.first)
+        let painOption = try #require(content.interviewSteps[1].options.first)
+        let outcomeOption = try #require(content.interviewSteps[2].options.first)
+
+        #expect(customerOption.highlightPhrases == ["support lead"])
+        #expect(painOption.highlightPhrases == ["Slack 누락"])
+        #expect(outcomeOption.highlightPhrases == ["빠른 판단"])
+    }
+
+    @Test func highlightPhrasesDeduplicateAndIgnoreEmptyCopy() {
+        let phrases = OpenDesignDayContent.InterviewStep.normalizedHighlightPhrases([
+            "문제",
+            " ",
+            "비용을 치르는 문제",
+            "문제",
+            "  비용을 치르는 문제  ",
+        ])
+        let rendered = openDesignHighlightedAttributedText(
+            "강조할 문구가 없는 질문입니다.",
+            phrases: ["첫 고객 후보"],
+            bodySize: 13
+        )
+
+        #expect(phrases == ["비용을 치르는 문제", "문제"])
+        #expect(String(rendered.characters) == "강조할 문구가 없는 질문입니다.")
     }
 
     @Test func personalizedDay1KeepsFiveFrontierOptionsAndSelectionFlow() {
@@ -217,7 +322,50 @@ struct OpenDesignDayContentTests {
         #expect(state.allInterviewsSubmitted)
     }
 
-    @Test func alignmentQuestionContextRowsExposeGoalAndPreviousSelections() throws {
+    @Test func personalizedAlignmentOptionLabelsKeepFullKoreanCopy() throws {
+        let longPainLabel = "만들 줄은 알지만 무엇을 팔아야 하는지, 어떻게 사람을 데려와야 하는지, 오늘 무엇을 검증해야 하는지 모른다"
+        let base = makeAlignmentPlan()
+        let pain = Day1AlignmentComponent(
+            id: base.components.painPoint.id,
+            title: base.components.painPoint.title,
+            prompt: base.components.painPoint.prompt,
+            helperText: base.components.painPoint.helperText,
+            statement: base.components.painPoint.statement,
+            evidence: base.components.painPoint.evidence,
+            missingAssumptions: base.components.painPoint.missingAssumptions,
+            options: [
+                Day1IcpQuestionOption(id: "pain-long", label: longPainLabel, description: "반복 비용이 큽니다. · 근거: docs/SPEC.md", preview: "Pain", antiSignal: false, evidenceLabel: "근거: docs/SPEC.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "pain-weak", label: "불편만 있음", description: "행동 없음", preview: "Weak", antiSignal: true),
+            ]
+        )
+        let plan = Day1AlignmentPlan(
+            schemaVersion: base.schemaVersion,
+            source: base.source,
+            generatedAt: base.generatedAt,
+            confidence: base.confidence,
+            fellBackToDeterministic: base.fellBackToDeterministic,
+            projectGoal: base.projectGoal,
+            mission: base.mission,
+            signals: base.signals,
+            components: Day1AlignmentComponents(icp: base.components.icp, painPoint: pain, outcome: base.components.outcome),
+            alignmentStatement: base.alignmentStatement,
+            qualityGate: base.qualityGate,
+            firstInterviewMessage: base.firstInterviewMessage,
+            day2Handoff: base.day2Handoff,
+            signalDigest: base.signalDigest
+        )
+
+        let content = OpenDesignDayContent.personalized(
+            from: plan,
+            fallback: makePlan(questionCount: 4)
+        )
+        let firstPainOption = try #require(content.interviewSteps.first(where: { $0.dimension == "pain_point" })?.options.first)
+
+        #expect(firstPainOption.title == longPainLabel)
+        #expect(!firstPainOption.title.contains("…"))
+    }
+
+    @Test func alignmentQuestionContextRowsShowRealPriorAnswersDuringQuestionFlow() throws {
         let content = OpenDesignDayContent.personalized(
             from: makeAlignmentPlan(),
             fallback: makePlan(questionCount: 4)
@@ -228,21 +376,44 @@ struct OpenDesignDayContentTests {
         let step3 = try #require(content.interviewSteps.first(where: { $0.id == 3 }))
 
         let step1Rows = openDesignAlignmentQuestionContextRows(for: step1, content: content, interaction: state)
-        #expect(step1Rows.map(\.label) == ["목표"])
-        #expect(step1Rows.first?.value == "SupportLens가 유료 support lead 후보 1명을 검증한다")
+        #expect(step1Rows.isEmpty)
+        #expect(openDesignAlignmentQuestionContextRows(for: step2, content: content, interaction: state).isEmpty)
 
         state.selectChoice(stepID: 1, choiceID: 1)
         let step2Rows = openDesignAlignmentQuestionContextRows(for: step2, content: content, interaction: state)
-        #expect(step2Rows.map(\.label) == ["목표", "고객"])
-        #expect(step2Rows.first(where: { $0.id == "icp" })?.value == "support lead")
+        #expect(step2Rows.map(\.id) == ["icp"])
+        #expect(step2Rows.map(\.label) == ["고객"])
+        #expect(step2Rows.map(\.value) == ["support lead"])
+        #expect(step2Rows.map(\.accessibilityLabel) == ["선택한 고객 support lead"])
 
         state.selectChoice(stepID: 2, choiceID: 1)
         let step3Rows = openDesignAlignmentQuestionContextRows(for: step3, content: content, interaction: state)
-        #expect(step3Rows.map(\.label) == ["목표", "고객", "문제"])
-        #expect(step3Rows.first(where: { $0.id == "pain" })?.value == "Slack 누락")
+        #expect(step3Rows.map(\.id) == ["icp", "pain_point"])
+        #expect(step3Rows.map(\.label) == ["고객", "문제"])
+        #expect(step3Rows.map(\.value) == ["support lead", "Slack 누락"])
+        #expect(step3Rows.map(\.accessibilityLabel) == ["선택한 고객 support lead", "선택한 문제 Slack 누락"])
     }
 
-    @Test func legacyIcpPlanDoesNotRenderAlignmentQuestionContextRows() throws {
+    @Test func alignmentQuestionContextRowsUseFreeformPriorAnswers() throws {
+        let content = OpenDesignDayContent.personalized(
+            from: makeAlignmentPlan(),
+            fallback: makePlan(questionCount: 4)
+        )
+        var state = OpenDesignDayInteractionState(totalInterviewSteps: content.interviewSteps.count)
+        let step2 = try #require(content.interviewSteps.first(where: { $0.id == 2 }))
+        let step3 = try #require(content.interviewSteps.first(where: { $0.id == 3 }))
+
+        state.setFreeformAnswer(stepID: 1, value: "  이번 주 연락할 macOS 개발자  ")
+        let step2Rows = openDesignAlignmentQuestionContextRows(for: step2, content: content, interaction: state)
+        #expect(step2Rows.map(\.value) == ["이번 주 연락할 macOS 개발자"])
+
+        state.setFreeformAnswer(stepID: 2, value: "  유료 전환 전 Slack escalation 확인  ")
+        let step3Rows = openDesignAlignmentQuestionContextRows(for: step3, content: content, interaction: state)
+        #expect(step3Rows.map(\.label) == ["고객", "문제"])
+        #expect(step3Rows.map(\.value) == ["이번 주 연락할 macOS 개발자", "유료 전환 전 Slack escalation 확인"])
+    }
+
+    @Test func questionContextRowsStayEmptyWithoutPriorSelection() throws {
         let content = OpenDesignDayContent.personalized(
             from: nil,
             fallback: makePlan(questionCount: 4)
@@ -265,6 +436,10 @@ struct OpenDesignDayContentTests {
 
         #expect(draft.markdown.contains("Day 1 핵심 가설"))
         #expect(draft.markdown.contains("Quality Gate"))
+        #expect(draft.markdown.contains("목표:"))
+        #expect(draft.markdown.contains("고객:"))
+        #expect(draft.markdown.contains("문제:"))
+        #expect(draft.markdown.contains("확인할 행동:"))
         #expect(draft.finalIcpStatement.contains("문제"))
         #expect(draft.finalIcpStatement.contains("확인할 행동"))
         #expect(draft.antiIcpBody.contains("8.4/10"))
@@ -286,12 +461,30 @@ struct OpenDesignDayContentTests {
             state.recordSubmittedChoice(stepID: step.id, choiceID: 1)
         }
 
-        #expect(content.interviewSteps[0].markedStatement == "이번 주 먼저 확인할 고객은?")
-        #expect(content.interviewSteps[2].markedStatement == "확인할 행동 신호는?")
+        #expect(content.interviewSteps[0].markedStatement == "이번 주 실제로 연락해 확인할 첫 고객 후보는 누구인가요?")
+        #expect(content.interviewSteps[2].markedStatement == "선택한 문제가 진짜인지 이번 주 대화에서 어떤 행동 신호로 확인할까요?")
         #expect(!content.interviewSteps[2].markedStatement.contains("Day 2"))
-        #expect(content.interviewSteps[2].options[0].detail == "사건·대안·지불 의향 확인.")
+        #expect(content.interviewSteps[2].options[0].detail == "이번 주 대화에서 확인합니다.")
+        #expect(!content.interviewSteps[2].options[0].detail.contains("Day 2"))
+        #expect(!content.interviewSteps[2].options[0].detail.contains("다음 시장 신호"))
         #expect(content.alignmentPlan?.day2Handoff.title.contains("Day 2") == true)
         #expect(content.draft(for: state).recommendation.contains("유료 대체재"))
+    }
+
+    @Test func alignmentOptionDescriptionsKeepMeaningfulCopyWithoutGenericOverwrites() throws {
+        let content = OpenDesignDayContent.personalized(
+            from: makeAlignmentPlan(),
+            fallback: nil
+        )
+
+        #expect(content.interviewSteps[0].options[0].detail == "현재 고객")
+        #expect(content.interviewSteps[1].options[0].detail == "반복됨")
+        #expect(content.interviewSteps[2].options[0].detail == "결과")
+
+        let details = content.interviewSteps.flatMap { step in step.options.map(\.detail) }
+        #expect(!details.contains("이번 주 대화 가능."))
+        #expect(!details.contains("시간·돈·리스크 비용."))
+        #expect(!details.contains("사건·대안·지불 의향 확인."))
     }
 
     @Test func questionHintHidesEmptyOrDuplicateDimensionCopy() throws {
@@ -1206,39 +1399,42 @@ struct OpenDesignDayContentTests {
             id: "icp",
             title: "ICP",
             prompt: icpPrompt,
+            highlightPhrases: ["첫 고객 후보", "고객 후보"],
             helperText: icpHelperText,
             statement: "B2B SaaS support lead",
             evidence: ["README.md: README"],
             missingAssumptions: [],
             options: [
-                Day1IcpQuestionOption(id: "o1", label: "support lead", description: "현재 고객 · 근거: README.md", preview: "ICP", antiSignal: false, evidenceLabel: "근거: README.md", evidenceLimited: false),
-                Day1IcpQuestionOption(id: "o2", label: "관심만 있음", description: "근거 부족: 최근 사건 없음", preview: "Weak", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
+                Day1IcpQuestionOption(id: "o1", label: "support lead", description: "현재 고객 · 근거: README.md", highlightPhrases: ["support lead"], preview: "ICP", antiSignal: false, evidenceLabel: "근거: README.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "o2", label: "관심만 있음", description: "근거 부족: 최근 사건 없음", highlightPhrases: ["관심만 있음"], preview: "Weak", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
             ]
         )
         let pain = Day1AlignmentComponent(
             id: "pain_point",
             title: "Pain Point",
             prompt: "압축된 통증은?",
+            highlightPhrases: ["비용을 치르는 문제", "문제"],
             helperText: "비용 신호",
             statement: "urgent Slack escalation을 놓침",
             evidence: ["docs/SPEC.md"],
             missingAssumptions: [],
             options: [
-                Day1IcpQuestionOption(id: "o1", label: "Slack 누락", description: "반복됨", preview: "Pain", antiSignal: false),
-                Day1IcpQuestionOption(id: "o2", label: "불편만 있음", description: "행동 없음", preview: "Weak", antiSignal: true),
+                Day1IcpQuestionOption(id: "o1", label: "Slack 누락", description: "반복됨", highlightPhrases: ["Slack 누락"], preview: "Pain", antiSignal: false),
+                Day1IcpQuestionOption(id: "o2", label: "불편만 있음", description: "행동 없음", highlightPhrases: ["불편만 있음"], preview: "Weak", antiSignal: true),
             ]
         )
         let outcome = Day1AlignmentComponent(
             id: "outcome",
             title: "Outcome",
             prompt: outcomePrompt,
+            highlightPhrases: ["행동 신호", "확인할 행동", "검증 행동"],
             helperText: "Day 2 기준",
             statement: "계정 리스크 escalation을 더 빨리 판단한다",
             evidence: ["docs/GOAL.md"],
             missingAssumptions: [],
             options: [
-                Day1IcpQuestionOption(id: "o1", label: "빠른 판단", description: outcomeOptionDescription, preview: "Outcome", antiSignal: false),
-                Day1IcpQuestionOption(id: "o2", label: "기능 추가", description: "빌드 도피", preview: "Anti", antiSignal: true),
+                Day1IcpQuestionOption(id: "o1", label: "빠른 판단", description: outcomeOptionDescription, highlightPhrases: ["빠른 판단"], preview: "Outcome", antiSignal: false),
+                Day1IcpQuestionOption(id: "o2", label: "기능 추가", description: "빌드 도피", highlightPhrases: ["기능 추가"], preview: "Anti", antiSignal: true),
             ]
         )
         return Day1AlignmentPlan(
@@ -1355,20 +1551,25 @@ struct OpenDesignDayContentTests {
         )
     }
 
-    private func makePlan(questionCount: Int) -> Day1IcpPlan {
+    private func makePlan(
+        questionCount: Int,
+        firstQuestionOptions: [Day1IcpQuestionOption]? = nil,
+        firstQuestionAllowFreeText: Bool? = nil
+    ) -> Day1IcpPlan {
         let dimensions = ["must_have", "core_need", "current_alternative", "bad_fit_boundary", "reference_customer", "overflow"]
         let questions = dimensions.prefix(questionCount).enumerated().map { index, dimension in
-            Day1IcpQuestion(
+            let defaultOptions = [
+                Day1IcpQuestionOption(id: "o1", label: index == 2 ? "Slack 수동 확인" : "좋은 조건 \(index + 1)", description: "현재 행동이 있음", preview: "Have", antiSignal: false),
+                Day1IcpQuestionOption(id: "o2", label: "관심만 있음", description: "최근 사건 없음", preview: "Weak", antiSignal: dimension == "bad_fit_boundary"),
+            ]
+            return Day1IcpQuestion(
                 id: "q\(index + 1)_\(dimension)",
                 dimension: dimension,
                 title: "질문 \(index + 1)",
                 prompt: "\(dimension) prompt?",
                 helperText: "scan 기반 질문",
-                options: [
-                    Day1IcpQuestionOption(id: "o1", label: index == 2 ? "Slack 수동 확인" : "좋은 조건 \(index + 1)", description: "현재 행동이 있음", preview: "Have", antiSignal: false),
-                    Day1IcpQuestionOption(id: "o2", label: "관심만 있음", description: "최근 사건 없음", preview: "Weak", antiSignal: dimension == "bad_fit_boundary"),
-                ],
-                allowFreeText: true,
+                options: index == 0 ? firstQuestionOptions ?? defaultOptions : defaultOptions,
+                allowFreeText: index == 0 ? firstQuestionAllowFreeText ?? true : true,
                 freeTextPlaceholder: "직접 입력"
             )
         }
