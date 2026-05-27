@@ -3,7 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { extractGoogleDocPlainText } from "./bip-coach-state.mjs";
-import { resolveQmdBinary } from "./qmd-support.mjs";
+import { buildQmdCliArgs, resolveQmdBinary } from "./qmd-support.mjs";
 
 const collectionName = "agentic30-gws-memory";
 
@@ -64,7 +64,7 @@ export async function ensureQmdGoogleMemoryIndexed({
     return { attempted: false, updated: false, reason: "qmd-unavailable" };
   }
 
-  const collection = runner(qmd, [
+  const collection = runner(qmd, buildQmdCliArgs(env, [
     "collection",
     "add",
     memoryRoot,
@@ -72,7 +72,7 @@ export async function ensureQmdGoogleMemoryIndexed({
     collectionName,
     "--mask",
     "**/*.md",
-  ], {
+  ]), {
     env,
     encoding: "utf8",
     timeout: 15_000,
@@ -81,7 +81,7 @@ export async function ensureQmdGoogleMemoryIndexed({
   const collectionOutput = `${collection.stdout || ""}\n${collection.stderr || ""}`;
   const collectionOk = collection.status === 0 || /already|exists|duplicate/i.test(collectionOutput);
 
-  const update = runner(qmd, ["update"], {
+  const update = runner(qmd, buildQmdCliArgs(env, ["update"]), {
     env,
     encoding: "utf8",
     timeout: 60_000,

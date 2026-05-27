@@ -333,6 +333,7 @@ test("buildCodexEnv points Codex CLI at an isolated app config home", () => {
   assert.equal(env.PATH, "/usr/bin");
   assert.equal(env.CODEX_API_KEY, "codex-key");
   assert.equal(env.OPENAI_API_KEY, "openai-key");
+  assert.equal(env.AGENTIC30_QMD_INDEX, "agentic30");
 });
 
 test("provider environment parser accepts KEY=VALUE lines and strips quotes", () => {

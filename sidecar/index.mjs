@@ -128,6 +128,7 @@ import {
 } from "./bip-readiness.mjs";
 import {
   BIP_REQUIRED_LOCAL_DOCS,
+  DAY1_HANDOFF_DOC_TYPES,
   IDD_FOUNDATION_DOCS,
   agentSynthesisTargetsCorrectSignal,
   approveIddSetupDocuments,
@@ -140,6 +141,8 @@ import {
   dedupeIddAgentOptions,
   deriveLocalDocReadinessRows,
   docTypeFromLocalRowId,
+  canStartDay1HandoffDoc,
+  day1HandoffDocByType,
   genericIddUserFacingTitle,
   initialIddStructuredInputForDoc,
   isMissingIcpContextIntro,
@@ -156,6 +159,7 @@ import {
   setIddSetupError,
   setIddProviderRecovery,
   summarizeBipSetupGate,
+  writeDay1HandoffDocument,
 } from "./idd-doc-gate.mjs";
 import { buildMiniActionSessionTriggerEvent } from "./adaptive-curriculum.mjs";
 import {
@@ -1321,6 +1325,74 @@ async function handleClientMessage(socket, payload) {
             signalLabel: answeredSignalLabel,
           }),
         );
+        if (session.runtime?.iddMode === "day1_handoff") {
+          const normalizedIdd = normalizeIddSetupState(state.iddSetup);
+          const docRubric = normalizedIdd.ambiguityRubric?.docs?.find((entry) => entry.type === completedDoc.type);
+          const followupCount = Number.parseInt(session.runtime?.day1HandoffFollowupCount ?? 0, 10) || 0;
+          const shouldAskFollowup = docRubric?.blocked && followupCount < 2;
+          if (shouldAskFollowup) {
+            session.runtime = {
+              ...(session.runtime || {}),
+              iddMode: "day1_handoff",
+              day1HandoffFollowupCount: followupCount + 1,
+            };
+            broadcastIddSubmitProgress("routing_followup", "문서 저장 전 빠진 근거를 한 번 더 묻는 중", completedDoc.type);
+            await createHostIddQuestionRequest(session, completedDoc, {
+              previousRequestId: requestId,
+              progressText: "Day 1 문서 보완 질문 준비 완료",
+              iddMode: "day1_handoff",
+              titlePrefix: "Day 1 Handoff",
+            });
+            await persistSessions();
+            broadcast({
+              type: "idd_setup_state",
+              ...serializeIddSetupFields(state.iddSetup),
+              ...serializeBipSetupGate(currentBipSetupGate()),
+            });
+            broadcast({ type: "session_updated", session });
+            return;
+          }
+
+          broadcastIddSubmitProgress("writing_file", `${completedDoc.canonicalPath} 저장 중`, completedDoc.type);
+          state.iddSetup = await writeDay1HandoffDocument(workspaceRoot, state.iddSetup, completedDoc, {
+            day1Handoff: session.runtime?.day1Handoff || {},
+          });
+          const writtenPreview = serializeIddSetupFields(state.iddSetup).iddDocPreviews
+            ?.find((preview) => preview.type === completedDoc.type);
+          const writtenStatus = writtenPreview?.status || "written";
+          broadcastIddSubmitProgress("file_written", `${completedDoc.canonicalPath} 저장 완료`, completedDoc.type);
+          session.runtime = {
+            ...(session.runtime || {}),
+            pendingIddContinuation: null,
+            iddPendingAdaptiveContinuation: null,
+            day1HandoffFollowupCount: 0,
+          };
+          session.messages.push(makeMessage({
+            role: "assistant",
+            provider: session.provider,
+            content: `${completedDoc.title} 문서를 ${completedDoc.canonicalPath}에 저장했습니다. 상태: ${writtenStatus}.`,
+            state: "final",
+          }));
+          session.status = "idle";
+          session.error = null;
+          touch(session);
+          telemetry.captureEvent("mac_sidecar_day1_doc_handoff_written", {
+            session_id: session.id,
+            provider: session.provider,
+            doc_type: completedDoc.type,
+            doc_path: completedDoc.canonicalPath,
+            status: writtenStatus,
+          });
+          broadcast({
+            type: "idd_setup_state",
+            ...serializeIddSetupFields(state.iddSetup),
+            ...serializeBipSetupGate(currentBipSetupGate()),
+          });
+          broadcastBipSetupGateState(currentBipSetupGate());
+          await persistSessions();
+          broadcast({ type: "session_updated", session });
+          return;
+        }
         const nextDoc = selectNextIddAdaptiveDoc(state.iddSetup, completedDoc);
         broadcastIddSubmitProgress("routing_followup", "다음 질문 카드를 준비 중", nextDoc?.type || completedDoc.type);
         if (nextDoc) {
@@ -1649,6 +1721,16 @@ async function handleClientMessage(socket, payload) {
         provider: payload.provider,
         requestedDocType: payload.docType,
     });
+      return;
+    }
+    case "day1_doc_handoff_start": {
+      await startDay1DocHandoff({
+        sessionId: payload.sessionId,
+        provider: payload.provider,
+        requestedDocType: payload.docType,
+        localEvidence: payload.localEvidence,
+        day1Handoff: payload.day1Handoff,
+      });
       return;
     }
     case "idd_setup_approve": {
@@ -5399,6 +5481,8 @@ async function createHostIddQuestionRequest(session, doc, {
   localEvidence = null,
   previousRequestId = null,
   progressText = "질문 카드 준비 완료",
+  iddMode = session?.runtime?.iddMode || null,
+  titlePrefix = iddMode === "day1_handoff" ? "Day 1 Handoff" : "Foundation Setup",
 } = {}) {
   if (!session?.id || !doc?.type) {
     throw new Error("Host IDD question requires a session and document type.");
@@ -5437,7 +5521,9 @@ async function createHostIddQuestionRequest(session, doc, {
       ...(structuredInput.generation && typeof structuredInput.generation === "object"
         ? structuredInput.generation
         : {}),
-      mode: structuredInput.generation?.mode || "host_structured",
+      mode: iddMode === "day1_handoff"
+        ? "day1_handoff"
+        : (structuredInput.generation?.mode || "host_structured"),
       docType: doc.type,
     },
   });
@@ -5445,10 +5531,11 @@ async function createHostIddQuestionRequest(session, doc, {
   session.pendingUserInput = request;
   session.status = "awaiting_input";
   session.error = null;
-  session.title = `Foundation Setup: ${doc.title}`;
+  session.title = `${titlePrefix}: ${doc.title}`;
   session.runtime = {
     ...(session.runtime || {}),
     iddDocumentType: doc.type,
+    ...(iddMode ? { iddMode } : {}),
     pendingIddContinuation: {
       requestId: request.requestId,
       docType: doc.type,
@@ -6119,6 +6206,106 @@ function scheduleWorkspaceOnboardingHypothesisWarmup() {
     .finally(() => {
       workspaceOnboardingHypothesisWarmup = null;
     });
+}
+
+function normalizeDay1HandoffPayload(value = {}) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const clean = (key, max = 4000) => String(source[key] || "").trim().slice(0, max);
+  return {
+    goal: clean("goal", 1000),
+    icp: clean("icp", 1000),
+    pain: clean("pain", 1000),
+    outcome: clean("outcome", 1000),
+    qualityScore: clean("qualityScore", 80),
+    markdown: clean("markdown", 5000),
+  };
+}
+
+function findExistingDay1HandoffSession(docType) {
+  return [...state.sessions.values()].find((session) =>
+    session.runtime?.iddMode === "day1_handoff"
+      && session.runtime?.iddDocumentType === docType
+      && session.archivedAt == null
+      && ["running", "awaiting_input", "idle", "error"].includes(session.status)
+  ) || null;
+}
+
+async function startDay1DocHandoff({
+  sessionId = "",
+  provider = "",
+  requestedDocType = "",
+  localEvidence = null,
+  day1Handoff = null,
+} = {}) {
+  const doc = day1HandoffDocByType(requestedDocType);
+  if (!doc || !DAY1_HANDOFF_DOC_TYPES.includes(doc.type)) {
+    throw new Error(`Unknown Day 1 handoff document type: ${requestedDocType}`);
+  }
+  if (!canStartDay1HandoffDoc(state.iddSetup, doc.type)) {
+    const nextType = DAY1_HANDOFF_DOC_TYPES.find((type) => !canStartDay1HandoffDoc(state.iddSetup, type) || !state.iddSetup?.docWriteStatuses?.[type]?.status)
+      || DAY1_HANDOFF_DOC_TYPES[0];
+    throw new Error(`Day 1 handoff must write documents in order. Next expected document: ${nextType}.`);
+  }
+
+  const seed = resolveIddSessionSeed({ sessionId, provider });
+  const handoffSnapshot = normalizeDay1HandoffPayload(day1Handoff);
+  let session = findExistingDay1HandoffSession(doc.type);
+  const isNewSession = !session;
+  if (!session) {
+    session = createSession(seed);
+  }
+  session.title = `Day 1 Handoff: ${doc.title}`;
+  session.runtime = {
+    ...(session.runtime || {}),
+    iddDocumentType: doc.type,
+    iddMode: "day1_handoff",
+    day1Handoff: handoffSnapshot,
+    day1HandoffFollowupCount: 0,
+    pendingIddContinuation: null,
+    iddPendingAdaptiveContinuation: null,
+    iddAdaptiveRegenerationInFlight: false,
+  };
+  state.iddSetup = await persistIddSetupState(workspaceRoot, {
+    ...state.iddSetup,
+    status: "interviewing",
+    currentDocType: doc.type,
+    lastProvider: seed.provider,
+    providerRecovery: null,
+    setupError: null,
+  });
+  telemetry.captureEvent("mac_sidecar_day1_doc_handoff_started", {
+    session_id: session.id,
+    doc_type: doc.type,
+    provider: seed.provider,
+  });
+  await createHostIddQuestionRequest(session, doc, {
+    localEvidence,
+    progressText: `${doc.title} 문서 질문 카드 준비 완료`,
+    iddMode: "day1_handoff",
+    titlePrefix: "Day 1 Handoff",
+  });
+  touch(session);
+  state.sessions.set(session.id, session);
+  await persistSessions();
+  if (isNewSession) {
+    await syncAndBroadcastBipCoachSessionState({ preferredSessionId: session.id });
+    broadcast({ type: "session_created", session });
+  } else {
+    broadcast({ type: "session_updated", session });
+  }
+  broadcast({
+    type: "bip_idd_session_ready",
+    sessionId: session.id,
+    iddDocumentType: doc.type,
+    iddDocumentTitle: genericIddUserFacingTitle(doc),
+    ...serializeBipSetupGate(currentBipSetupGate()),
+  });
+  broadcast({
+    type: "idd_setup_state",
+    ...serializeIddSetupFields(state.iddSetup),
+    ...serializeBipSetupGate(currentBipSetupGate()),
+  });
+  return session;
 }
 
 async function refreshProjectContextFromRequest(payload = {}) {

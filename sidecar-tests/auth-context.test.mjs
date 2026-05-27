@@ -47,11 +47,6 @@ test("auth context normalizes onboarding context from snake_case payload", () =>
       project_stage: "pre_revenue",
       isolation_level: "weekly_loop",
       isolation_levels: ["weekly_loop", "payment_responses"],
-      intake_only_draft: {
-        customer: "최근 가입/문의한 사람",
-        problem: "전환/결제 지연",
-        behavior: "인터뷰 수락",
-      },
       completed_at: "2026-05-08T00:00:00Z",
     },
   });

@@ -5,7 +5,12 @@ import { isBipCoachConfigured } from "./bip-coach-state.mjs";
 import { normalizeWorkspaceOnboardingHypothesis } from "./onboarding-hypothesis.mjs";
 import { CODEX_STRUCTURED_INPUT_TOOL } from "./structured-input-tools.mjs";
 
-export const IDD_SETUP_SCHEMA_VERSION = 1;
+export const IDD_SETUP_SCHEMA_VERSION = 2;
+
+export const DAY1_HANDOFF_DOC_TYPES = ["goal", "icp", "values", "spec"];
+
+export const DAY1_HANDOFF_MARKER_START = "<!-- agentic30:day1-handoff:start -->";
+export const DAY1_HANDOFF_MARKER_END = "<!-- agentic30:day1-handoff:end -->";
 
 export const IDD_FOUNDATION_DOCS = [
   {
@@ -159,6 +164,7 @@ export function emptyIddSetupState() {
       "제품 범위와 성공 기준이 아직 승인되지 않았습니다.",
     ],
     drafts: {},
+    docWriteStatuses: {},
     approvedAt: null,
     approvedDocPaths: [],
     lastProvider: null,
@@ -168,6 +174,29 @@ export function emptyIddSetupState() {
   };
 }
 
+function normalizeDocWriteStatuses(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const out = {};
+  for (const doc of IDD_FOUNDATION_DOCS) {
+    const raw = value[doc.type];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const status = String(raw.status || "").trim();
+    if (!status) continue;
+    out[doc.type] = {
+      type: doc.type,
+      path: String(raw.path || doc.canonicalPath),
+      status,
+      writtenAt: typeof raw.writtenAt === "string" ? raw.writtenAt : null,
+      unresolvedAssumptions: Array.isArray(raw.unresolvedAssumptions)
+        ? raw.unresolvedAssumptions.map(String).filter(Boolean)
+        : [],
+    };
+  }
+  return out;
+}
+
 export function normalizeIddSetupState(value = {}) {
   const base = emptyIddSetupState();
   const transcript = Array.isArray(value.transcript) ? value.transcript : [];
@@ -175,6 +204,10 @@ export function normalizeIddSetupState(value = {}) {
     ? value.drafts
     : {};
   const approved = value.status === "approved" || Boolean(value.approvedAt);
+  const docWriteStatuses = normalizeDocWriteStatuses(value.docWriteStatuses);
+  const allDay1HandoffDocsWritten = DAY1_HANDOFF_DOC_TYPES.every((type) =>
+    ["written", "written_with_assumptions", "approved"].includes(docWriteStatuses[type]?.status),
+  );
   const answeredCount = IDD_FOUNDATION_DOC_TYPES.filter((type) => typeof drafts[type] === "string" && drafts[type].trim()).length;
   const previewReady = answeredCount >= IDD_FOUNDATION_DOCS.length;
   const rubric = calculateIddAmbiguityRubric({ ...value, transcript, drafts });
@@ -186,7 +219,7 @@ export function normalizeIddSetupState(value = {}) {
     ...base,
     ...value,
     schemaVersion: IDD_SETUP_SCHEMA_VERSION,
-    status: approved ? "approved" : (rubricPreviewReady ? "preview_ready" : (value.status === "provider_recovery" || value.status === "error" ? value.status : (answeredCount > 0 ? "interviewing" : value.status || "not_started"))),
+    status: (approved || allDay1HandoffDocsWritten) ? "approved" : (rubricPreviewReady ? "preview_ready" : (value.status === "provider_recovery" || value.status === "error" ? value.status : (answeredCount > 0 ? "interviewing" : value.status || "not_started"))),
     currentDocType,
     docOrder: IDD_FOUNDATION_DOC_TYPES,
     transcript,
@@ -196,8 +229,13 @@ export function normalizeIddSetupState(value = {}) {
       ? value.unresolvedAssumptions.map(String).filter(Boolean)
       : (rubric.unresolvedAssumptions.length ? rubric.unresolvedAssumptions : base.unresolvedAssumptions),
     drafts,
-    approvedAt: typeof value.approvedAt === "string" ? value.approvedAt : null,
-    approvedDocPaths: Array.isArray(value.approvedDocPaths) ? value.approvedDocPaths.map(String) : [],
+    docWriteStatuses,
+    approvedAt: typeof value.approvedAt === "string" ? value.approvedAt : (allDay1HandoffDocsWritten ? new Date().toISOString() : null),
+    approvedDocPaths: Array.isArray(value.approvedDocPaths) && value.approvedDocPaths.length
+      ? value.approvedDocPaths.map(String)
+      : (allDay1HandoffDocsWritten
+          ? DAY1_HANDOFF_DOC_TYPES.map((type) => requiredDocByType(type)?.canonicalPath).filter(Boolean)
+          : []),
     lastProvider: typeof value.lastProvider === "string" ? value.lastProvider : null,
     providerRecovery: value.providerRecovery && typeof value.providerRecovery === "object" ? value.providerRecovery : null,
     setupError: value.setupError && typeof value.setupError === "object" ? {
@@ -1868,9 +1906,174 @@ function buildIddDocPreviews(state) {
     type: doc.type,
     title: doc.title,
     path: doc.canonicalPath,
-    status: normalized.drafts?.[doc.type]?.trim() ? "drafted" : "pending",
+    status: normalized.docWriteStatuses?.[doc.type]?.status
+      || (normalized.status === "approved" && normalized.approvedDocPaths?.includes(doc.canonicalPath) ? "approved" : null)
+      || (normalized.drafts?.[doc.type]?.trim() ? "drafted" : "pending"),
     content: normalized.drafts?.[doc.type] || "",
   }));
+}
+
+export function day1HandoffDocByType(type) {
+  return IDD_FOUNDATION_DOCS.find((doc) => doc.type === String(type || ""))
+    || null;
+}
+
+export function isDay1HandoffDocWritten(state, type) {
+  const normalized = normalizeIddSetupState(state);
+  const status = normalized.docWriteStatuses?.[type]?.status;
+  return ["written", "written_with_assumptions", "approved"].includes(status);
+}
+
+export function isDay1HandoffComplete(state) {
+  const normalized = normalizeIddSetupState(state);
+  return DAY1_HANDOFF_DOC_TYPES.every((type) => isDay1HandoffDocWritten(normalized, type));
+}
+
+export function nextDay1HandoffDocType(state) {
+  const normalized = normalizeIddSetupState(state);
+  return DAY1_HANDOFF_DOC_TYPES.find((type) => !isDay1HandoffDocWritten(normalized, type)) || null;
+}
+
+export function canStartDay1HandoffDoc(state, type) {
+  const requested = String(type || "");
+  const index = DAY1_HANDOFF_DOC_TYPES.indexOf(requested);
+  if (index < 0) return false;
+  const normalized = normalizeIddSetupState(state);
+  return DAY1_HANDOFF_DOC_TYPES
+    .slice(0, index)
+    .every((candidate) => isDay1HandoffDocWritten(normalized, candidate));
+}
+
+export function buildDay1HandoffDocumentContent(doc, draft, {
+  day1Handoff = {},
+  unresolvedAssumptions = [],
+  writtenAt = new Date().toISOString(),
+  status = "written",
+} = {}) {
+  const title = doc?.title || "Document";
+  const pathLabel = doc?.canonicalPath || "";
+  const goal = cleanHandoffField(day1Handoff.goal);
+  const icp = cleanHandoffField(day1Handoff.icp);
+  const pain = cleanHandoffField(day1Handoff.pain);
+  const outcome = cleanHandoffField(day1Handoff.outcome);
+  const qualityScore = cleanHandoffField(day1Handoff.qualityScore);
+  const markdown = cleanHandoffField(day1Handoff.markdown);
+  const assumptionLines = unresolvedAssumptions.length
+    ? unresolvedAssumptions.map((item) => `- ${item}`)
+    : ["- 없음"];
+  return [
+    DAY1_HANDOFF_MARKER_START,
+    `## Day 1 Handoff — ${title}`,
+    "",
+    `> Target: ${pathLabel}`,
+    `> Written: ${writtenAt}`,
+    `> Status: ${status}`,
+    "",
+    "### Confirmed Hypothesis",
+    goal ? `- 목표: ${goal}` : "- 목표: 확인 필요",
+    icp ? `- 고객: ${icp}` : "- 고객: 확인 필요",
+    pain ? `- 문제: ${pain}` : "- 문제: 확인 필요",
+    outcome ? `- 확인할 행동: ${outcome}` : "- 확인할 행동: 확인 필요",
+    qualityScore ? `- 품질 점수: ${qualityScore}` : null,
+    "",
+    "### Document Decision",
+    cleanHandoffField(draft) || `# ${title}\n\nDay 1 handoff 답변이 아직 충분하지 않습니다.`,
+    "",
+    "### Open Assumptions",
+    ...assumptionLines,
+    markdown ? ["", "### Day 1 Evidence Snapshot", trimMarkdownSnapshot(markdown)].join("\n") : null,
+    DAY1_HANDOFF_MARKER_END,
+    "",
+  ].filter((line) => line !== null).join("\n");
+}
+
+export function mergeDay1HandoffBlock(existingContent, handoffBlock, doc) {
+  const block = String(handoffBlock || "").trimEnd() + "\n";
+  const existing = String(existingContent || "");
+  const markerPattern = new RegExp(
+    `${escapeRegExp(DAY1_HANDOFF_MARKER_START)}[\\s\\S]*?${escapeRegExp(DAY1_HANDOFF_MARKER_END)}\\n?`,
+    "m",
+  );
+  if (markerPattern.test(existing)) {
+    return existing.replace(markerPattern, block);
+  }
+  if (existing.trim()) {
+    return `${existing.replace(/\s*$/u, "\n\n")}${block}`;
+  }
+  return [`# ${doc?.title || "Document"}`, "", block].join("\n");
+}
+
+export async function writeDay1HandoffDocument(workspaceRoot, state, doc, {
+  day1Handoff = {},
+  fsImpl = fs,
+} = {}) {
+  const normalized = normalizeIddSetupState(state);
+  const targetDoc = doc || day1HandoffDocByType(normalized.currentDocType);
+  if (!targetDoc?.type) {
+    throw new Error("Day 1 handoff document type is required.");
+  }
+  const draft = normalized.drafts?.[targetDoc.type] || "";
+  const docRubric = normalized.ambiguityRubric?.docs?.find((entry) => entry.type === targetDoc.type);
+  const unresolvedAssumptions = docRubric?.missingSignals?.length
+    ? docRubric.missingSignals.map((signal) => signal.label)
+    : [];
+  const status = unresolvedAssumptions.length ? "written_with_assumptions" : "written";
+  const writtenAt = new Date().toISOString();
+  const root = path.resolve(workspaceRoot || ".");
+  const target = path.join(root, targetDoc.canonicalPath);
+  await fsImpl.mkdir(path.dirname(target), { recursive: true });
+  let existing = "";
+  try {
+    existing = await fsImpl.readFile(target, "utf8");
+  } catch {
+    existing = "";
+  }
+  const block = buildDay1HandoffDocumentContent(targetDoc, draft, {
+    day1Handoff,
+    unresolvedAssumptions,
+    writtenAt,
+    status,
+  });
+  await fsImpl.writeFile(target, mergeDay1HandoffBlock(existing, block, targetDoc), "utf8");
+
+  const docWriteStatuses = {
+    ...normalized.docWriteStatuses,
+    [targetDoc.type]: {
+      type: targetDoc.type,
+      path: targetDoc.canonicalPath,
+      status,
+      writtenAt,
+      unresolvedAssumptions,
+    },
+  };
+  const complete = DAY1_HANDOFF_DOC_TYPES.every((type) =>
+    ["written", "written_with_assumptions", "approved"].includes(docWriteStatuses[type]?.status),
+  );
+  const next = normalizeIddSetupState({
+    ...normalized,
+    status: complete ? "approved" : "interviewing",
+    currentDocType: complete ? targetDoc.type : (nextDay1HandoffDocType({ ...normalized, docWriteStatuses }) || targetDoc.type),
+    docWriteStatuses,
+    approvedAt: complete ? writtenAt : normalized.approvedAt,
+    approvedDocPaths: complete
+      ? DAY1_HANDOFF_DOC_TYPES.map((type) => requiredDocByType(type)?.canonicalPath).filter(Boolean)
+      : normalized.approvedDocPaths,
+  });
+  return persistIddSetupState(workspaceRoot, next, { fsImpl });
+}
+
+function cleanHandoffField(value) {
+  return String(value || "").trim();
+}
+
+function trimMarkdownSnapshot(value) {
+  const text = cleanHandoffField(value);
+  if (text.length <= 1400) return text;
+  return `${text.slice(0, 1400).trim()}\n...`;
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function buildIddDraftDocument(doc, transcriptEntry, { transcript = [], provider = "codex" } = {}) {

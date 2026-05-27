@@ -100,7 +100,7 @@ test("buildQmdMcpConfig returns qmd mcp server when available", () => {
   assert.deepEqual(config, {
     qmd: {
       command: "/usr/local/bin/qmd",
-      args: ["mcp"],
+      args: ["--index", "agentic30", "mcp"],
     },
   });
 });
@@ -146,9 +146,10 @@ test("buildQmdMcpConfig uses bundled qmd when present", () => {
   assert.deepEqual(config, {
     qmd: {
       command: bundledQmd,
-      args: ["mcp"],
+      args: ["--index", "agentic30", "mcp"],
     },
   });
+  assert.equal(state.index, "agentic30");
   assert.equal(state.source, "bundled");
   assert.equal(state.available, true);
 });
@@ -261,8 +262,13 @@ test("ensureQmdMemoryCollections adds sources and refreshes the QMD index", () =
   assert.equal(result.updated, true);
   assert.equal(result.collections.length, 1);
   assert.deepEqual(calls[0], [qmd, ["mcp", "--help"]]);
-  assert.deepEqual(calls.at(-1), [qmd, ["update"]]);
-  assert.ok(calls.some(([, args]) => args[0] === "collection" && args[1] === "add"));
+  assert.deepEqual(calls.at(-1), [qmd, ["--index", "agentic30", "update"]]);
+  assert.ok(calls.some(([, args]) =>
+    args[0] === "--index"
+      && args[1] === "agentic30"
+      && args[2] === "collection"
+      && args[3] === "add"
+  ));
 });
 
 test("buildQmdMcpConfig refuses qmd builds without mcp support", () => {

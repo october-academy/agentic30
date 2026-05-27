@@ -774,6 +774,102 @@ test("IDD start uses sidecar agent synthesized structured question when availabl
   assert.equal(stderr.trim(), "");
 });
 
+test("Day 1 document handoff writes one canonical doc immediately without auto-starting the next doc", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-doc-handoff-workspace-"));
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-doc-handoff-app-"));
+  await writeDay1Fixture(root, appSupportPath);
+  await fs.mkdir(path.join(root, "docs"), { recursive: true });
+  await fs.writeFile(path.join(root, "docs", "GOAL.md"), "# GOAL\n\n기존 목표는 보존한다.\n");
+
+  const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", root], {
+    cwd: packageRoot,
+    env: {
+      ...process.env,
+      AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
+      AGENTIC30_DISABLE_IDD_AGENT_SYNTHESIS: "1",
+      AGENTIC30_TEST_STUB_PROVIDER: "1",
+      AGENTIC30_CODEX_MODEL: "gpt-5.4-mini",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  let ws;
+
+  try {
+    const ready = await readSidecarReady(child);
+    const events = [];
+    ws = await connectAuthenticated(ready, events);
+
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.4-mini" }));
+    const created = await waitForEvent(events, (event) => event.type === "session_created");
+
+    ws.send(JSON.stringify({
+      type: "day1_doc_handoff_start",
+      sessionId: created.session.id,
+      provider: "codex",
+      docType: "goal",
+      day1Handoff: {
+        goal: "첫 고객 반응 검증",
+        icp: "전업 1인 개발자",
+        pain: "무엇을 팔아야 할지 모름",
+        outcome: "이번 주 3명 인터뷰 완료",
+        qualityScore: "9.0/10",
+        markdown: "# Day 1 핵심 가설",
+      },
+    }));
+
+    const handoffReady = await waitForEvent(events, (event) =>
+      (event.type === "session_created" || event.type === "session_updated")
+      && event.session?.title === "Day 1 Handoff: GOAL"
+      && event.session?.status === "awaiting_input"
+      && event.session?.pendingUserInput?.generation?.mode === "day1_handoff"
+    );
+    const request = handoffReady.session.pendingUserInput;
+    ws.send(JSON.stringify({
+      type: "submit_user_input",
+      sessionId: handoffReady.session.id,
+      requestId: request.requestId,
+      responses: [{
+        question: request.questions[0].question,
+        selectedOptions: [request.questions[0].options[0].label],
+        freeText: "이번 주 proof target은 인터뷰 카드 완료 3명. 지표는 완료 전환율과 응답 수. 금요일까지 3명 완료가 목표값이고, 5명에게 연락해 0명이 과거 행동을 말하면 실패로 보고 피벗한다.",
+      }],
+    }));
+
+    await waitForEvent(events, (event) =>
+      event.type === "idd_setup_progress"
+      && event.docType === "goal"
+      && event.stage === "file_written"
+    );
+    const setupState = await waitForEvent(events, (event) =>
+      event.type === "idd_setup_state"
+      && event.iddDocPreviews?.some((preview) => preview.type === "goal" && /^written/.test(preview.status))
+    );
+    assert.equal(setupState.iddSetupComplete, false);
+    assert.equal(
+      events.some((event) => event.type === "session_created" && event.session?.title === "Day 1 Handoff: ICP"),
+      false,
+    );
+    const written = await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8");
+    assert.match(written, /기존 목표는 보존한다/);
+    assert.match(written, /Day 1 Handoff — GOAL/);
+
+    await closeWebSocket(ws);
+    ws = null;
+  } finally {
+    await closeWebSocket(ws);
+    await terminateChild(child);
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
+
+  assert.equal(stderr.trim(), "");
+});
+
 test("IDD follow-up uses sidecar agent synthesis instead of host template when available", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-followup-synth-workspace-"));
   const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-followup-synth-app-"));

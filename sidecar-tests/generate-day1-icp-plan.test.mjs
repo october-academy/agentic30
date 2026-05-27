@@ -86,6 +86,43 @@ function assertEvidenceMarkedOptions(options, { allowLimited = false, requireEvi
   }
 }
 
+function outcomeValidationFamilyForTest(label) {
+  const text = String(label || "").toLowerCase();
+  if (/(첫\s*사용자|사용자\s*획득|획득|데려오|소개|추천|채널|유입|acquisition|referral|channel)/i.test(text)) {
+    return "acquisition_channel";
+  }
+  if (/(지불|결제|유료|매출|가격|돈|willingness|paid|pricing|revenue)/i.test(text)) {
+    return "payment";
+  }
+  if (/(최근\s*사건|사건|고객\s*대화|대화|인터뷰|반응|피드백|conversation|interview|feedback)/i.test(text)) {
+    return "incident_conversation";
+  }
+  if (/(도입|결정|승인|구매|계약|예산|pilot|파일럿|decision|adoption)/i.test(text)) {
+    return "adoption_decision";
+  }
+  if (/(현재\s*대안|대안|수동|workflow|워크플로|alternative)/i.test(text)) {
+    return "alternative";
+  }
+  if (/(리스크|위험|sla|판단|우선순위|risk)/i.test(text)) {
+    return "risk_judgement";
+  }
+  if (/(무엇을\s*(?:팔|만들)|누구에게\s*팔|오늘\s*무엇|검증할\s*행동)/i.test(text)) {
+    return "what_to_sell";
+  }
+  return "other";
+}
+
+function assertOutcomeValidationDiversity(options, { minFamilies = 3 } = {}) {
+  const labels = options
+    .filter((option) => option.evidenceLimited !== true && !String(option.label || "").startsWith("직접 입력"))
+    .map((option) => option.label);
+  const families = new Set(labels.map(outcomeValidationFamilyForTest));
+  assert.ok(
+    families.size >= minFamilies,
+    `expected at least ${minFamilies} outcome validation families, got ${[...families].join(", ")} from ${labels.join(" / ")}`,
+  );
+}
+
 function frontierOption(id, label, description, preview, evidenceLabel, {
   antiSignal = false,
   evidenceLimited = false,
@@ -450,6 +487,12 @@ test("Agentic30 public docs produce customer-outcome choices instead of business
     assertEvidenceMarkedOptions(plan.components.icp.options);
     assertEvidenceMarkedOptions(plan.components.painPoint.options, { allowLimited: true });
     assertEvidenceMarkedOptions(plan.components.outcome.options, { allowLimited: true });
+    assertOutcomeValidationDiversity(plan.components.outcome.options);
+    assert.equal(
+      labels.every((label) => /(검증|확인)한다[.。．]?$/u.test(label)),
+      false,
+      `outcome choices should not all be generic verify/confirm phrasing: ${serialized}`,
+    );
     assert.deepEqual(plan.signalDigest.rows.map((row) => row.label), SIGNAL_DIGEST_LABELS);
     assert.match(plan.alignmentStatement.icp, /전업 1인 개발자 \(수익 0원, macOS\)/);
     assert.doesNotMatch(`${plan.alignmentStatement.outcome}\n${serialized}`, /Job summary|Motivation|Frustration|고객 검증과 배포\/획득 루프는 약하다|다음 행동으로 연결하지 못한다/);
@@ -560,7 +603,9 @@ test("Day 1 alignment normalizer strips customer segment from outcome surfaces",
             ...option,
             label: index === 0
               ? contaminatedOutcome
-              : "전업 1인 개발자 (수익 0원, macOS) 1명에게 최근 사건을 고객 대화에서 확인한다",
+              : index === 1
+                ? "전업 1인 개발자 (수익 0원, macOS) 1명에게 최근 사건을 고객 대화에서 확인한다"
+                : "전업 1인 개발자 (수익 0원, macOS)에게 첫 사용자 획득 채널을 확인한다",
           })),
         },
       },
@@ -588,6 +633,125 @@ test("Day 1 alignment normalizer strips customer segment from outcome surfaces",
       assert.doesNotMatch(value, /전업 1인 개발자|\(수익|macOS/);
       assert.match(value, /지불 의향|현재 대안|최근 사건|검증|확인|대화|행동|신호/);
     }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Day 1 alignment normalizer rejects near-duplicate outcome choices", async () => {
+  const root = await tempWorkspace();
+  try {
+    const deterministicPlan = await generateDay1AlignmentPlan({
+      workspaceRoot: root,
+      scanResult: {},
+      onboardingHypothesis: {
+        productName: "Agentic30",
+        targetUser: "전업 1인 개발자 (수익 0원, macOS)",
+        problem: "무엇을 팔아야 할지 모른다",
+        goal: "첫 유료 고객 후보를 검증한다",
+        confidence: "high",
+      },
+    });
+    const duplicatePaymentLabels = [
+      "첫 대화에서 지불 의향을 확인한다",
+      "가격 지불 의사를 고객 대화에서 묻는다",
+      "유료 전환 가능성을 시장 신호로 검증한다",
+    ];
+    const normalized = normalizeDay1AlignmentPlan({
+      ...deterministicPlan,
+      components: {
+        ...deterministicPlan.components,
+        outcome: {
+          ...deterministicPlan.components.outcome,
+          options: deterministicPlan.components.outcome.options.map((option, index) => ({
+            ...option,
+            label: duplicatePaymentLabels[index % duplicatePaymentLabels.length],
+            highlightPhrases: [duplicatePaymentLabels[index % duplicatePaymentLabels.length]],
+          })),
+        },
+      },
+    });
+
+    assert.equal(normalized, null);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Day 1 alignment normalizer avoids full-label option highlights", async () => {
+  const root = await tempWorkspace();
+  try {
+    const deterministicPlan = await generateDay1AlignmentPlan({
+      workspaceRoot: root,
+      scanResult: {},
+      onboardingHypothesis: {
+        productName: "Agentic30",
+        targetUser: "전업 1인 개발자 (수익 0원, macOS)",
+        problem: "무엇을 팔아야 할지 모른다",
+        goal: "첫 유료 고객 후보를 검증한다",
+        confidence: "high",
+      },
+    });
+    const longLabel = "전업 1인 개발자 (수익 0원, macOS)";
+    const longSingleTokenLabel = "초장문개발자옵션라벨전체강조금지";
+    const parentheticalLabel = "초기 창업자 (월 매출 0원, macOS)";
+    const tokenLabel = "AI 코딩 도구를 쓰는 개발자";
+    const baseOption = deterministicPlan.components.icp.options[0];
+    const secondOption = deterministicPlan.components.icp.options[1] || baseOption;
+    const normalized = normalizeDay1AlignmentPlan({
+      ...deterministicPlan,
+      components: {
+        ...deterministicPlan.components,
+        icp: {
+          ...deterministicPlan.components.icp,
+          options: [
+            {
+              ...baseOption,
+              id: "long-label",
+              label: longLabel,
+              highlightPhrases: [longLabel],
+            },
+            {
+              ...secondOption,
+              id: "long-single-token",
+              label: longSingleTokenLabel,
+              highlightPhrases: [longSingleTokenLabel],
+            },
+            {
+              ...baseOption,
+              id: "parenthetical",
+              label: parentheticalLabel,
+              highlightPhrases: ["월 매출 0원, macOS"],
+            },
+            {
+              ...baseOption,
+              id: "token-boundary",
+              label: tokenLabel,
+              highlightPhrases: ["AI 코딩 도구를 쓰"],
+            },
+          ],
+        },
+      },
+    });
+
+    assert.ok(normalized);
+    const phrases = normalized.components.icp.options[0].highlightPhrases;
+    assert.ok(phrases.length >= 1);
+    assert.ok(!phrases.includes(longLabel), `should not keep whole option label: ${phrases.join(", ")}`);
+    assert.ok(
+      phrases.every((phrase) => longLabel.toLowerCase().includes(phrase.toLowerCase())),
+      `highlight phrases must stay exact label substrings: ${phrases.join(", ")}`,
+    );
+    const singleTokenPhrases = normalized.components.icp.options[1].highlightPhrases;
+    assert.ok(singleTokenPhrases.length >= 1);
+    assert.ok(
+      !singleTokenPhrases.includes(longSingleTokenLabel),
+      `should not keep whole single-token option label: ${singleTokenPhrases.join(", ")}`,
+    );
+    const parentheticalPhrases = normalized.components.icp.options[2].highlightPhrases;
+    assert.deepEqual(parentheticalPhrases, ["(월 매출 0원, macOS)"]);
+    const tokenPhrases = normalized.components.icp.options[3].highlightPhrases;
+    assert.deepEqual(tokenPhrases, ["AI 코딩 도구를 쓰는"]);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -779,6 +943,59 @@ test("Day 1 alignment frontier synthesis merges five high-quality choices", asyn
       }
       assert.ok(component.options.filter((option) => option.antiSignal === true).length <= 1);
     }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Day 1 alignment frontier synthesis dedupes similar outcomes and fills from backup candidates", async () => {
+  const root = await tempWorkspace();
+  try {
+    const deterministicPlan = await generateDay1AlignmentPlan({
+      workspaceRoot: root,
+      scanResult: {},
+      onboardingHypothesis: {
+        productName: "SupportLens",
+        targetUser: "B2B SaaS support lead",
+        problem: "Slack escalation 누락",
+        goal: "유료 support lead 후보 1명을 검증한다",
+        confidence: "high",
+      },
+    });
+    const noisyPrimary = makeFrontierAlignmentPlan(deterministicPlan, "Noisy");
+    noisyPrimary.components.outcome.options = [
+      frontierOption("outcome_noisy_1", "지불 의향을 첫 고객 대화에서 확인한다", "돈을 낼 문제인지 확인합니다. · 근거: docs/GOAL.md", "확인할 행동", "근거: docs/GOAL.md"),
+      frontierOption("outcome_noisy_2", "가격 지불 의사를 이번 주 대화에서 묻는다", "같은 결제 신호를 다른 말로 반복합니다. · 근거: docs/GOAL.md", "확인할 행동", "근거: docs/GOAL.md"),
+      frontierOption("outcome_noisy_3", "최근 Slack 누락 사건을 고객 대화에서 기록한다", "최근 사건 기반 검증입니다. · 근거: docs/SPEC.md", "확인할 행동", "근거: docs/SPEC.md"),
+      frontierOption("outcome_noisy_4", "계정 위험 알림 도입 결정을 누가 하는지 확인한다", "도입 결정권 검증입니다. · 근거: docs/ICP.md", "확인할 행동", "근거: docs/ICP.md"),
+      frontierOption("outcome_noisy_5", "수동 확인 workflow를 보여달라고 요청한다", "현재 대안 관찰입니다. · 근거: README.md", "확인할 행동", "근거: README.md"),
+    ];
+    const backup = makeFrontierAlignmentPlan(deterministicPlan, "Backup");
+    backup.components.outcome.options = [
+      frontierOption("outcome_backup_1", "첫 사용자 획득 채널이나 소개 가능성을 확인한다", "획득 경로 신호를 확인합니다. · 근거: docs/GOAL.md", "확인할 행동", "근거: docs/GOAL.md"),
+      frontierOption("outcome_backup_2", "최근 누락 사건과 현재 대안을 고객 대화에서 확인한다", "실제 사건과 대안을 같이 확인합니다. · 근거: docs/SPEC.md", "확인할 행동", "근거: docs/SPEC.md"),
+      frontierOption("outcome_backup_3", "SLA 리스크 판단을 위해 지불 의향을 묻는다", "지불 신호입니다. · 근거: docs/GOAL.md", "확인할 행동", "근거: docs/GOAL.md"),
+      frontierOption("outcome_backup_4", "계정 위험 알림 도입 결정을 누가 하는지 확인한다", "결정권 신호입니다. · 근거: docs/ICP.md", "확인할 행동", "근거: docs/ICP.md"),
+      frontierOption("outcome_backup_5", "수동 확인 workflow를 보여달라고 요청한다", "현재 대안 신호입니다. · 근거: README.md", "확인할 행동", "근거: README.md"),
+    ];
+
+    const plan = await composeDay1AlignmentPlan({
+      workspaceRoot: root,
+      deterministicPlan,
+      frontierResults: [
+        { provider: "claude", model: "claude-opus-4-7", text: JSON.stringify(noisyPrimary) },
+        { provider: "codex", model: "gpt-5.5", text: JSON.stringify(backup) },
+      ],
+    });
+
+    assert.match(plan.source, /^frontier_/);
+    assert.equal(plan.components.outcome.options.length, 5);
+    assertOutcomeValidationDiversity(plan.components.outcome.options, { minFamilies: 5 });
+    assert.equal(
+      plan.components.outcome.options.filter((option) => /지불 의향|가격 지불|유료 전환|지불 의향/.test(option.label)).length,
+      1,
+      JSON.stringify(plan.components.outcome.options.map((option) => option.label)),
+    );
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

@@ -1227,6 +1227,7 @@ export function buildCodexEnv(baseEnv = process.env) {
     MODEL_OVERLAY: "codex",
     AGENTIC30_SIDECAR_ROOT: sidecarRoot,
     AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+    AGENTIC30_QMD_INDEX: providerEnv.AGENTIC30_QMD_INDEX || "agentic30",
     AGENTIC30_CODEX_MODEL: providerEnv.AGENTIC30_CODEX_MODEL,
     CODEX_MODEL: providerEnv.CODEX_MODEL,
     OPENAI_MODEL: providerEnv.OPENAI_MODEL,
@@ -1836,6 +1837,7 @@ function buildMcpConfig(
     env: {
       ...buildAuthEnv(),
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+      AGENTIC30_QMD_INDEX: process.env.AGENTIC30_QMD_INDEX || "agentic30",
       AGENTIC30_EXECUTION_MODE: executionMode,
       AGENTIC30_APPROVED_TOOL_EXECUTION: approvedToolExecution ? "1" : "0",
     },

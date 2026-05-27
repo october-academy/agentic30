@@ -57,6 +57,9 @@ const SIGNAL_DIGEST_VALUE_LIMITS = Object.freeze({
 });
 const HIGHLIGHT_PHRASE_MAX_COUNT = 5;
 const HIGHLIGHT_PHRASE_MAX_CHARS = 80;
+const OPTION_HIGHLIGHT_MAX_CHARS = 18;
+const OPTION_HIGHLIGHT_FULL_LABEL_MAX_CHARS = 14;
+const OPTION_HIGHLIGHT_MAX_LABEL_RATIO = 0.78;
 const USER_FACING_GENERIC_PROJECT_NAME = "이 프로젝트";
 const USER_FACING_GENERIC_PAIN_POINT = "핵심 문제 확인 필요";
 const USER_FACING_GENERIC_PROBLEM = "핵심 문제 확인 필요";
@@ -464,11 +467,15 @@ function sanitizeFrontierAlignmentCandidateBeforeNormalize(value) {
   };
   const sanitizeComponent = (component, dimension) => {
     if (!component || typeof component !== "object" || !Array.isArray(component.options)) return component;
+    const cleanedOptions = component.options.filter((optionValue) =>
+      !looksLikeContaminatedAlignmentChoice(optionValue?.label || optionValue?.title, dimension, planContext)
+    );
     return {
       ...component,
-      options: component.options.filter((optionValue) =>
-        !looksLikeContaminatedAlignmentChoice(optionValue?.label || optionValue?.title, dimension, planContext)
-      ),
+      options: selectAlignmentOptionsWithSemanticDiversity(cleanedOptions, {
+        dimension,
+        max: DAY1_ALIGNMENT_FRONTIER_OPTION_COUNT,
+      }),
     };
   };
   return {
@@ -550,14 +557,31 @@ function selectFrontierAlignmentOptions(rawOptions, { dimension, plan }) {
     (optionValue) => comparableOptionText(optionValue.label),
   );
   const selected = [];
+  const selectedKeys = new Set();
   let antiSignalCount = 0;
-  for (const optionValue of rankedOptions) {
+  const addOption = (optionValue, { enforceSemanticDiversity }) => {
+    if (selected.includes(optionValue)) return false;
     if (optionValue.antiSignal === true) {
-      if (antiSignalCount >= DAY1_ALIGNMENT_FRONTIER_MAX_ANTI_SIGNAL_OPTIONS) continue;
+      if (antiSignalCount >= DAY1_ALIGNMENT_FRONTIER_MAX_ANTI_SIGNAL_OPTIONS) return false;
+    }
+    const semanticKey = alignmentOptionSemanticDiversityKey(optionValue, dimension);
+    if (enforceSemanticDiversity && semanticKey && selectedKeys.has(semanticKey)) {
+      return false;
+    }
+    if (optionValue.antiSignal === true) {
       antiSignalCount += 1;
     }
     selected.push(optionValue);
+    if (semanticKey) selectedKeys.add(semanticKey);
+    return true;
+  };
+  for (const optionValue of rankedOptions) {
+    addOption(optionValue, { enforceSemanticDiversity: true });
     if (selected.length >= DAY1_ALIGNMENT_FRONTIER_OPTION_COUNT) break;
+  }
+  for (const optionValue of rankedOptions) {
+    if (selected.length >= DAY1_ALIGNMENT_FRONTIER_OPTION_COUNT) break;
+    addOption(optionValue, { enforceSemanticDiversity: false });
   }
   if (selected.length !== DAY1_ALIGNMENT_FRONTIER_OPTION_COUNT) return null;
   return selected.map((optionValue, index) => ({
@@ -758,9 +782,27 @@ function alignmentComponentOptionsPassQualityAudit(component, dimension, plan) {
   const options = Array.isArray(component?.options) ? component.options : [];
   if (options.length < 2) return false;
   if (!Array.isArray(component?.highlightPhrases) || component.highlightPhrases.length === 0) return false;
+  if (!alignmentComponentOptionsPassDiversityAudit(options, dimension)) return false;
   return options.every((optionValue) =>
     alignmentOptionPassesQualityAudit(optionValue, dimension, plan)
   );
+}
+
+function alignmentComponentOptionsPassDiversityAudit(options, dimension) {
+  if (dimension !== "outcome") return true;
+  const exactKeys = [];
+  const semanticKeys = [];
+  for (const optionValue of options) {
+    const label = cleanSignalText(optionValue?.label);
+    if (!label || optionExemptFromSemanticDiversity(optionValue, label)) continue;
+    const exactKey = comparableOptionText(label);
+    if (exactKey) exactKeys.push(exactKey);
+    const semanticKey = alignmentOptionSemanticDiversityKey(optionValue, dimension);
+    if (semanticKey) semanticKeys.push(semanticKey);
+  }
+  if (exactKeys.length !== new Set(exactKeys).size) return false;
+  if (semanticKeys.length !== new Set(semanticKeys).size) return false;
+  return true;
 }
 
 function alignmentOptionPassesQualityAudit(optionValue, dimension, plan) {
@@ -1700,21 +1742,21 @@ function buildSuccessSignalCandidates({ h = {}, context = "", targetUsers = [], 
 
   if (/유료|매출|결제|가격|pricing|paid|revenue|money|\$|₩|원/.test(lowerContext)) {
     candidates.push(evidenceCandidate(
-      "지불 의향과 현재 대안을 다음 시장 신호 확인에서 검증한다",
+      "지불 의향과 현재 대안을 첫 고객 대화에서 묻는다",
       goalEvidenceRef,
       "success_signal",
     ));
   }
   if (problem) {
     candidates.push(evidenceCandidate(
-      `"${problem}" 상황을 이번 주 고객 대화에서 확인한다`,
+      `"${problem}"을 겪은 최근 사건을 고객 대화에서 기록한다`,
       primaryRef,
       "success_signal",
     ));
   }
   if (/사용자|user|고객|interview|인터뷰|파일럿|pilot|시장/.test(lowerContext)) {
     candidates.push(evidenceCandidate(
-      "최근 사건과 첫 사용자 획득 대안을 확인한다",
+      "첫 사용자 획득 채널이나 소개 가능성을 확인한다",
       goalEvidenceRef,
       "success_signal",
     ));
@@ -2280,9 +2322,9 @@ function buildAlignmentOutcomeOptions(bank, outcome, projectGoal = "") {
     currentIcpGuess: bank.targetUsers?.[0]?.value,
     likelyUsers: (bank.targetUsers || []).slice(1).map((candidate) => candidate.value),
   } };
-  const options = bank.successSignals
+  const options = selectAlignmentOptionsWithSemanticDiversity(
+    bank.successSignals
     .filter((candidate) => !blockedGoalLabels.has(comparableOptionText(candidate.value)))
-    .slice(0, 3)
     .map((candidate) =>
       alignmentOptionFromCandidate(
         { ...candidate, value: sanitizeOutcomeActionText(candidate.value, outcomeContext) },
@@ -2290,7 +2332,9 @@ function buildAlignmentOutcomeOptions(bank, outcome, projectGoal = "") {
         "확인할 행동",
       )
     )
-    .filter((optionValue) => cleanText(optionValue?.label));
+    .filter((optionValue) => cleanText(optionValue?.label)),
+    { dimension: "outcome", max: 3 },
+  );
   if (options.length === 0 && !isGenericAlignmentText(outcome)) {
     const fallbackRef = bank.goals[0]?.evidenceRef || bank.problems[0]?.evidenceRef || bank.defaultRef;
     const fallbackOutcome = sanitizeOutcomeActionText(outcome, outcomeContext);
@@ -2367,6 +2411,88 @@ function ensureEvidenceBackedOptions(options, {
     ...optionValue,
     id: cleanToken(optionValue.id) || `o${index + 1}`,
   }));
+}
+
+function selectAlignmentOptionsWithSemanticDiversity(options, { dimension, max }) {
+  const ranked = uniqueBy(
+    options.filter(Boolean),
+    (optionValue) => comparableOptionText(optionValue.label),
+  );
+  const selected = [];
+  const selectedKeys = new Set();
+  const addOption = (optionValue, { enforceSemanticDiversity }) => {
+    if (selected.includes(optionValue)) return false;
+    const semanticKey = alignmentOptionSemanticDiversityKey(optionValue, dimension);
+    if (enforceSemanticDiversity && semanticKey && selectedKeys.has(semanticKey)) {
+      return false;
+    }
+    selected.push(optionValue);
+    if (semanticKey) selectedKeys.add(semanticKey);
+    return true;
+  };
+  for (const optionValue of ranked) {
+    addOption(optionValue, { enforceSemanticDiversity: true });
+    if (selected.length >= max) return selected;
+  }
+  for (const optionValue of ranked) {
+    addOption(optionValue, { enforceSemanticDiversity: false });
+    if (selected.length >= max) return selected;
+  }
+  return selected;
+}
+
+function alignmentOptionSemanticDiversityKey(optionValue, dimension) {
+  const label = cleanSignalText(optionValue?.label);
+  if (!label || optionExemptFromSemanticDiversity(optionValue, label)) return "";
+  if (dimension === "outcome") return outcomeValidationFamilyKey(label);
+  return "";
+}
+
+function optionExemptFromSemanticDiversity(optionValue, label = optionValue?.label) {
+  const text = cleanSignalText(label);
+  return optionValue?.evidenceLimited === true
+    || text.startsWith("직접 입력")
+    || text.startsWith("추가 scan 필요");
+}
+
+function outcomeValidationFamilyKey(value) {
+  const text = comparableOptionText(value);
+  if (!text) return "";
+  if (/(첫\s*사용자|사용자\s*획득|획득|데려오|소개|추천|채널|유입|acquisition|referral|channel)/i.test(text)) {
+    return "outcome:acquisition_channel";
+  }
+  if (/(지불|결제|유료|매출|가격|돈|willingness|paid|pricing|revenue)/i.test(text)) {
+    return "outcome:payment";
+  }
+  if (/(최근\s*사건|사건|고객\s*대화|대화|인터뷰|반응|피드백|conversation|interview|feedback)/i.test(text)) {
+    return "outcome:incident_conversation";
+  }
+  if (/(도입|결정|승인|구매|계약|예산|pilot|파일럿|decision|adoption)/i.test(text)) {
+    return "outcome:adoption_decision";
+  }
+  if (/(현재\s*대안|대안|수동|workflow|워크플로|alternative)/i.test(text)) {
+    return "outcome:alternative";
+  }
+  if (/(리스크|위험|sla|판단|우선순위|risk)/i.test(text)) {
+    return "outcome:risk_judgement";
+  }
+  if (/(무엇을\s*(?:팔|만들)|누구에게\s*팔|오늘\s*무엇|검증할\s*행동)/i.test(text)) {
+    return "outcome:what_to_sell";
+  }
+  return `outcome:${genericOutcomeFingerprint(text)}`;
+}
+
+function genericOutcomeFingerprint(value) {
+  const text = cleanSignalText(value)
+    .toLowerCase()
+    .replace(/["'“”]/g, " ")
+    .replace(/[()（）[\]{}｛｝]/g, " ")
+    .replace(/\b(?:validate|confirm|check|verify|signal|market|customer|week|this)\b/gi, " ")
+    .replace(/(?:검증|확인|판단|행동|시장|신호|이번\s*주|다음|고객|상황|기준|정한다|묻는다|기록한다|한다|에서|으로|하고|거나|같은|어떤|오늘|첫)\s*/g, " ")
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text || comparableOptionText(value);
 }
 
 function alignmentComponentsAsQuestions(components) {
@@ -2822,9 +2948,10 @@ export function buildDay1AlignmentComposerPrompt(plan) {
     "Return one JSON object only. Do not wrap it in markdown, do not include prose outside JSON, and do not repeat long source paragraphs.",
     "Preserve projectGoal, components.icp, components.painPoint, components.outcome, alignmentStatement, qualityGate, firstInterviewMessage, and day2Handoff. The quality gate is a 0-10 score and should pass at 7.0+ only when the statement is specific enough for the next market-signal validation.",
     "For each of components.icp.options, components.painPoint.options, and components.outcome.options, return exactly 5 choices. Aim for 4 evidence-backed candidates and at most 1 weak/exclusion signal.",
+    "Do not return near-duplicate choices that only rephrase the same validation method. Outcome choices should vary by observable method: payment willingness, current alternative, recent incident/customer conversation, acquisition/referral/channel, adoption/decision, or another genuinely different behavior signal.",
     "Every option must include a non-empty description, evidenceLabel, and evidenceLimited boolean. Evidence-backed descriptions should say why this option is a strong Day 1 choice; weak options should explain the missing signal.",
     "Every component and every option must include highlightPhrases: an array of 1-5 exact substrings from its prompt, statement, or label that should be highlighted in the UI. Use short display phrases, not whole paragraphs.",
-    "For component highlightPhrases, prefer these if present in the prompt: 고객 -> [\"첫 고객 후보\", \"고객 후보\"], 문제 -> [\"비용을 치르는 문제\", \"문제\"], 확인할 행동 -> [\"행동 신호\", \"확인할 행동\", \"검증 행동\"]. For option highlightPhrases, usually use the option label or the most decision-critical substring of it.",
+    "For component highlightPhrases, prefer these if present in the prompt: 고객 -> [\"첫 고객 후보\", \"고객 후보\"], 문제 -> [\"비용을 치르는 문제\", \"문제\"], 확인할 행동 -> [\"행동 신호\", \"확인할 행동\", \"검증 행동\"]. For option highlightPhrases, use the shortest decision-critical substring of the label; do not use the whole label unless the label is already very short. Never split a balanced parenthetical group or a Korean/English word token; include both parentheses and complete 어절 when they are part of the highlighted text.",
     "Do not use direct-input, scan-needed, schema, upload, transcript-entry, file-entry, or product-input placeholders as selectable options.",
     "Every component prompt must be understandable in the Day 1 card and should ask for a concrete customer, pain, or behavior signal.",
     "Do not put \"Day 2\" or \"Day2\" in component prompts, helper text, or option labels/descriptions. Reserve Day 2 wording for day2Handoff only.",
@@ -3746,11 +3873,31 @@ function normalizeHighlightPhrases(value, fallback = []) {
 
 function normalizeOptionHighlightPhrases(value, label) {
   const labelText = cleanText(label);
-  const phrases = normalizeHighlightPhrases(value, [labelText])
-    .filter((phrase) => textContainsHighlightPhrase(labelText, phrase));
+  if (!labelText) return [];
+
+  const phrases = uniqueBy(
+    normalizeHighlightPhrases(value, [])
+      .map((phrase) => normalizeReadableOptionHighlightPhrase(labelText, phrase))
+      .filter((phrase) => isUsableOptionHighlightPhrase(labelText, phrase)),
+    (phrase) => phrase.toLowerCase(),
+  );
   if (phrases.length) return phrases;
-  return normalizeHighlightPhrases([], [labelText])
-    .filter((phrase) => textContainsHighlightPhrase(labelText, phrase));
+
+  const fallbackPhrases = uniqueBy(
+    cleanHighlightPhraseArray(optionHighlightPhraseCandidatesFromLabel(labelText))
+      .map((phrase) => normalizeReadableOptionHighlightPhrase(labelText, phrase))
+      .filter((phrase) => isUsableOptionHighlightPhrase(labelText, phrase)),
+    (phrase) => phrase.toLowerCase(),
+  );
+  if (fallbackPhrases.length) return fallbackPhrases;
+
+  const compactFallback = normalizeReadableOptionHighlightPhrase(labelText, labelText);
+  const safeFallback = isUsableOptionHighlightPhrase(labelText, compactFallback)
+    ? compactFallback
+    : firstOptionHighlightSubstring(labelText);
+  return safeFallback && textContainsHighlightPhrase(labelText, safeFallback)
+    ? [safeFallback]
+    : [];
 }
 
 function cleanHighlightPhraseArray(value) {
@@ -3785,6 +3932,161 @@ function highlightPhraseCandidatesFromText(text) {
   );
   candidates.push(firstHighlightSubstring(text));
   return candidates;
+}
+
+function optionHighlightPhraseCandidatesFromLabel(label) {
+  const text = cleanText(label);
+  if (!text) return [];
+
+  const candidates = [];
+  for (const match of text.matchAll(/[\[(（［｛{]([^()[\]{}（）［］｛｝]{2,80})[\])）］｝}]/gu)) {
+    candidates.push(match[0]);
+    candidates.push(match[1]);
+  }
+  candidates.push(
+    ...text
+      .replace(/[\[(（［｛{]/gu, " ")
+      .replace(/[\])）］｝}]/gu, " ")
+      .split(/\s*(?:\/|·|\||,|，|;|；|:|：|。|!|\?| - |–|—)\s*/u)
+  );
+
+  const words = text.split(/\s+/u).filter(Boolean);
+  for (let count = 2; count <= Math.min(4, words.length); count += 1) {
+    candidates.push(words.slice(0, count).join(" "));
+  }
+  candidates.push(firstOptionHighlightSubstring(text));
+  return candidates;
+}
+
+function compactOptionHighlightPhrase(value) {
+  let text = stripTrailingKoreanParticle(
+    removeDanglingOpeningDelimiter(cleanText(value).replace(/^["'“”]+|["'“”]+$/g, "")) || cleanText(value),
+  );
+  if (!text) return "";
+  if (text.length <= OPTION_HIGHLIGHT_MAX_CHARS) return text;
+
+  const words = text.split(/\s+/u).filter(Boolean);
+  let compact = "";
+  for (const word of words) {
+    const candidateRaw = [compact, word].filter(Boolean).join(" ");
+    const balancedCandidate = removeDanglingOpeningDelimiter(candidateRaw);
+    if (balancedCandidate && balancedCandidate !== candidateRaw) {
+      compact = stripTrailingKoreanParticle(balancedCandidate);
+      break;
+    }
+    const candidate = stripTrailingKoreanParticle(candidateRaw);
+    if (candidate.length > OPTION_HIGHLIGHT_MAX_CHARS) break;
+    compact = candidate;
+  }
+  return compact || firstOptionHighlightSubstring(text);
+}
+
+function normalizeReadableOptionHighlightPhrase(labelText, phrase) {
+  const compact = compactOptionHighlightPhrase(phrase);
+  if (!compact) return "";
+  const readable = readableOptionHighlightPhrase(labelText, compact);
+  if (readable && isUsableOptionHighlightPhrase(labelText, readable)) return readable;
+  return compact;
+}
+
+function readableOptionHighlightPhrase(labelText, phrase) {
+  const label = cleanText(labelText);
+  const cleanPhrase = cleanText(phrase);
+  if (!label || !cleanPhrase) return cleanPhrase;
+
+  const start = label.toLowerCase().indexOf(cleanPhrase.toLowerCase());
+  if (start < 0) return cleanPhrase;
+  const range = readableOptionHighlightRange(label, start, start + cleanPhrase.length);
+  return cleanText(label.slice(range.start, range.end));
+}
+
+function readableOptionHighlightRange(text, start, end) {
+  const delimiterRange = balancedDelimiterRangeContaining(text, start, end);
+  if (delimiterRange) return delimiterRange;
+
+  let expandedStart = start;
+  let expandedEnd = end;
+  while (
+    expandedStart > 0
+    && isOptionHighlightTokenCharacter(text[expandedStart - 1])
+    && isOptionHighlightTokenCharacter(text[expandedStart])
+  ) {
+    expandedStart -= 1;
+  }
+  while (
+    expandedEnd < text.length
+    && isOptionHighlightTokenCharacter(text[expandedEnd - 1])
+    && isOptionHighlightTokenCharacter(text[expandedEnd])
+  ) {
+    expandedEnd += 1;
+  }
+  return { start: expandedStart, end: expandedEnd };
+}
+
+function balancedDelimiterRangeContaining(text, start, end) {
+  const pairs = {
+    "(": ")",
+    "[": "]",
+    "{": "}",
+    "（": "）",
+    "［": "］",
+    "｛": "｝",
+  };
+  const openerForCloser = Object.fromEntries(Object.entries(pairs).map(([open, close]) => [close, open]));
+  const stack = [];
+  let best = null;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (pairs[char]) {
+      stack.push({ char, index });
+      continue;
+    }
+    const expectedOpen = openerForCloser[char];
+    if (!expectedOpen || stack[stack.length - 1]?.char !== expectedOpen) continue;
+    const opener = stack.pop();
+    const candidate = { start: opener.index, end: index + 1 };
+    if (candidate.start <= start && candidate.end >= end) {
+      if (!best || candidate.end - candidate.start < best.end - best.start) {
+        best = candidate;
+      }
+    }
+  }
+  return best;
+}
+
+function isOptionHighlightTokenCharacter(char) {
+  return Boolean(char && /^[\p{L}\p{N}_]$/u.test(char));
+}
+
+function firstOptionHighlightSubstring(value) {
+  const text = cleanText(value);
+  if (text.length <= OPTION_HIGHLIGHT_FULL_LABEL_MAX_CHARS) return text;
+  const prefix = text.slice(0, OPTION_HIGHLIGHT_FULL_LABEL_MAX_CHARS).trim();
+  const wordBoundaryPrefix = prefix.replace(/\s+\S*$/u, "").trim();
+  return stripTrailingKoreanParticle(wordBoundaryPrefix.length >= 4 ? wordBoundaryPrefix : prefix);
+}
+
+function stripTrailingKoreanParticle(value) {
+  let text = cleanText(value);
+  if (text.length > 4) {
+    text = text.replace(/(?:에게서|에게|으로서|으로|로서|부터|까지|처럼|보다|이나|거나|은|는|이|가|을|를|의|와|과|나)$/u, "");
+  }
+  return text.trim();
+}
+
+function isUsableOptionHighlightPhrase(labelText, phrase) {
+  const label = cleanText(labelText);
+  const cleanPhrase = cleanText(phrase);
+  if (!label || !cleanPhrase || !textContainsHighlightPhrase(label, cleanPhrase)) return false;
+  if (cleanPhrase.length < 2) return false;
+
+  if (cleanPhrase.toLowerCase() === label.toLowerCase()) {
+    return label.length <= OPTION_HIGHLIGHT_FULL_LABEL_MAX_CHARS
+      && label.split(/\s+/u).filter(Boolean).length <= 3;
+  }
+
+  if (cleanPhrase.length > OPTION_HIGHLIGHT_MAX_CHARS) return false;
+  return cleanPhrase.length / Math.max(label.length, 1) <= OPTION_HIGHLIGHT_MAX_LABEL_RATIO;
 }
 
 function firstHighlightSubstring(value) {

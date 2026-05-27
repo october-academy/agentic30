@@ -5,6 +5,8 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import {
   BIP_REQUIRED_LOCAL_DOCS,
+  DAY1_HANDOFF_MARKER_START,
+  DAY1_HANDOFF_MARKER_END,
   IDD_AMBIGUITY_THRESHOLD,
   agentSynthesisTargetsCorrectSignal,
   approveIddSetupDocuments,
@@ -25,9 +27,11 @@ import {
   isStaleAwkwardIcpUserInputRequest,
   isStaleGenericHostIddUserInputRequest,
   localDocRowId,
+  mergeDay1HandoffBlock,
   recordIddStructuredResponse,
   serializeIddSetupFields,
   setIddSetupError,
+  writeDay1HandoffDocument,
 } from "../sidecar/idd-doc-gate.mjs";
 
 async function withTempWorkspace(fn) {
@@ -432,6 +436,99 @@ test("IDD approval rejects complete drafts when ambiguity remains above threshol
       () => approveIddSetupDocuments(root, state),
       /ambiguity is too high/,
     );
+  });
+});
+
+test("Day 1 handoff merge preserves existing document content and replaces only managed block", () => {
+  const existing = [
+    "# GOAL",
+    "",
+    "기존 목표 섹션",
+    "",
+    DAY1_HANDOFF_MARKER_START,
+    "old generated block",
+    DAY1_HANDOFF_MARKER_END,
+    "",
+    "## Appendix",
+    "보존할 링크",
+  ].join("\n");
+  const merged = mergeDay1HandoffBlock(
+    existing,
+    [DAY1_HANDOFF_MARKER_START, "new generated block", DAY1_HANDOFF_MARKER_END].join("\n"),
+    { title: "GOAL" },
+  );
+
+  assert.match(merged, /기존 목표 섹션/);
+  assert.match(merged, /new generated block/);
+  assert.doesNotMatch(merged, /old generated block/);
+  assert.match(merged, /## Appendix\n보존할 링크/);
+});
+
+test("Day 1 handoff writes canonical docs immediately and completes after all four", async () => {
+  await withTempWorkspace(async (root) => {
+    await fs.writeFile(path.join(root, "docs", "GOAL.md"), "# GOAL\n\n기존 목표\n");
+    let state = {};
+    const byType = new Map(BIP_REQUIRED_LOCAL_DOCS.map((doc) => [doc.type, doc]));
+    state = recordIddStructuredResponse(state, {
+      doc: byType.get("goal"),
+      provider: "codex",
+      responseText: [
+        "이번 주 proof target은 첫 인터뷰 카드 완료 3명.",
+        "지표는 완료 전환율과 응답 수.",
+        "목표값은 3명 완료, 기한은 금요일.",
+        "5명에게 연락해 0명이 과거 행동을 말하면 실패하고 피벗.",
+      ].join("\n"),
+    });
+    state = await writeDay1HandoffDocument(root, state, byType.get("goal"), {
+      day1Handoff: { goal: "첫 고객 반응 검증", icp: "전업 1인 개발자", pain: "팔 대상이 없음", outcome: "3명 인터뷰" },
+    });
+    assert.equal(state.docWriteStatuses.goal.status, "written");
+    assert.equal(state.status, "interviewing");
+    assert.match(await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8"), /기존 목표/);
+    assert.match(await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8"), /Day 1 Handoff — GOAL/);
+
+    state = recordIddStructuredResponse(state, {
+      doc: byType.get("icp"),
+      provider: "codex",
+      responseText: [
+        "유료 고객 0명이고 macOS에서 Codex를 쓰는 전업 1인 개발자.",
+        "이번 주 전 직장 동료 A님에게 DM으로 인터뷰 연락 가능.",
+        "현재 Notion과 스프레드시트에 인터뷰 메모를 복사해 쓰는 대안.",
+        "주 3시간 낭비와 월 20만원 도구비 압박.",
+      ].join("\n"),
+    });
+    state = await writeDay1HandoffDocument(root, state, byType.get("icp"));
+    state = recordIddStructuredResponse(state, {
+      doc: byType.get("values"),
+      provider: "codex",
+      responseText: [
+        "tradeoff는 넓은 플랫폼 대신 이번 주 검증 행동을 우선 선택.",
+        "예쁜 대시보드와 자동화 기능은 포기하고 나중으로 제외.",
+        "사용자가 다음 행동을 못 고르는 상황 때 이 원칙을 적용.",
+        "위반 예시는 인터뷰 없이 기능을 추가하면 안 된다는 금지 행동.",
+      ].join("\n"),
+    });
+    state = await writeDay1HandoffDocument(root, state, byType.get("values"));
+    state = recordIddStructuredResponse(state, {
+      doc: byType.get("spec"),
+      provider: "codex",
+      responseText: [
+        "사용자 workflow는 프로젝트 선택, ICP 카드 입력, 다음 미션 저장 단계.",
+        "이번 주 MVP wedge는 가장 작은 Foundation Setup v0.",
+        "non-goal은 다중 기기와 완전 자동 문서 생성을 하지 않는 것.",
+        "성공 기준은 사용자가 미션 저장 완료를 관찰 가능하게 만드는 것.",
+        "핵심 리스크는 실제 인터뷰 증거 없이 가정이 틀리는 실패.",
+      ].join("\n"),
+    });
+    state = await writeDay1HandoffDocument(root, state, byType.get("spec"));
+
+    assert.equal(state.status, "approved");
+    assert.equal(state.approvedDocPaths.length, 4);
+    for (const rel of ["docs/GOAL.md", "docs/ICP.md", "docs/VALUES.md", "docs/SPEC.md"]) {
+      const content = await fs.readFile(path.join(root, rel), "utf8");
+      assert.match(content, /agentic30:day1-handoff:start/);
+      assert.match(content, /agentic30:day1-handoff:end/);
+    }
   });
 });
 

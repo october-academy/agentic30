@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 const qmdServerName = "qmd";
 const qmdPackageBinSegments = ["node_modules", "@tobilu", "qmd", "bin", "qmd"];
 const QMD_STATE_CACHE_TTL_MS = 5 * 60 * 1000;
+export const defaultQmdIndexName = "agentic30";
 const canonicalMemoryDocs = [
   ["ICP", "docs/ICP.md"],
   ["VALUES", "docs/VALUES.md"],
@@ -52,10 +53,11 @@ export function getQmdState({
   sidecarRoot = null,
   useCache = true,
 } = {}) {
+  const qmdIndex = qmdIndexName(env);
   const effectiveUseCache = useCache && runner === spawnSync && fsImpl === fsSync;
   const cacheKey = [
     env.AGENTIC30_QMD_BIN || "",
-    env.AGENTIC30_QMD_INDEX || "",
+    qmdIndex,
     env.PATH || "",
     sidecarRoot || "",
   ].join("|");
@@ -79,7 +81,7 @@ export function getQmdState({
         : "QMD CLI is installed but does not support `qmd mcp`. Install a newer @tobilu/qmd or set AGENTIC30_QMD_BIN to a QMD build with MCP support.",
     binaryPath,
     command: binaryPath && mcpSupported ? `${binaryPath} ${args.join(" ")}` : null,
-    index: env.AGENTIC30_QMD_INDEX || null,
+    index: qmdIndex,
     mcpSupported,
     source: binaryInfo?.source ?? null,
   };
@@ -259,13 +261,15 @@ export function ensureQmdMemoryCollections({
 
   const results = collections.map((collection) => {
     const add = runner(state.binaryPath, [
-      "collection",
-      "add",
-      collection.path,
-      "--name",
-      collection.name,
-      "--mask",
-      collection.mask,
+      ...buildQmdCliArgs(env, [
+        "collection",
+        "add",
+        collection.path,
+        "--name",
+        collection.name,
+        "--mask",
+        collection.mask,
+      ]),
     ], {
       env,
       encoding: "utf8",
@@ -275,10 +279,12 @@ export function ensureQmdMemoryCollections({
     const ok = add.status === 0 || /already|exists|duplicate/i.test(output);
     if (ok && collection.context) {
       runner(state.binaryPath, [
-        "context",
-        "add",
-        `qmd://${collection.name}`,
-        collection.context,
+        ...buildQmdCliArgs(env, [
+          "context",
+          "add",
+          `qmd://${collection.name}`,
+          collection.context,
+        ]),
       ], {
         env,
         encoding: "utf8",
@@ -292,7 +298,7 @@ export function ensureQmdMemoryCollections({
     };
   });
 
-  const update = runner(state.binaryPath, ["update"], {
+  const update = runner(state.binaryPath, buildQmdCliArgs(env, ["update"]), {
     env,
     encoding: "utf8",
     timeout: 60_000,
@@ -362,8 +368,16 @@ function supportsQmdMcp(binaryPath, { env = process.env, runner = spawnSync } = 
 }
 
 function buildQmdMcpArgs(env = process.env) {
-  const index = env.AGENTIC30_QMD_INDEX;
-  return index ? ["--index", index, "mcp"] : ["mcp"];
+  return buildQmdCliArgs(env, ["mcp"]);
+}
+
+export function buildQmdCliArgs(env = process.env, args = []) {
+  return ["--index", qmdIndexName(env), ...args];
+}
+
+function qmdIndexName(env = process.env) {
+  const configured = String(env.AGENTIC30_QMD_INDEX || "").trim();
+  return configured || defaultQmdIndexName;
 }
 
 function isExecutable(fsImpl, filePath) {

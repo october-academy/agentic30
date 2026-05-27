@@ -128,4 +128,10 @@ test("persists GWS memory only when content hash changes and updates QMD", async
   assert.match(saved, /바뀐 내용/);
   assert.ok(calls.some(([, args]) => args.includes("collection")));
   assert.ok(calls.some(([, args]) => args.includes("update")));
+  assert.ok(calls.some(([, args]) =>
+    args[0] === "--index" && args[1] === "agentic30" && args.includes("collection")
+  ));
+  assert.ok(calls.some(([, args]) =>
+    args[0] === "--index" && args[1] === "agentic30" && args.includes("update")
+  ));
 });
