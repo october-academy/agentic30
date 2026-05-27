@@ -3189,6 +3189,13 @@ final class AgenticViewModel: ObservableObject {
     func startDay1DocHandoff(docType: String, day1Handoff: [String: Any]) {
         let normalizedDocType = docType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalizedDocType.isEmpty else { return }
+        day1DocHandoffPendingDocType = normalizedDocType
+        day1DocHandoffError = nil
+        #if DEBUG
+        if seedUITestingDay1BulkDocHandoffIfNeeded(docType: normalizedDocType) {
+            return
+        }
+        #endif
         guard isConnected else {
             let docLabel = normalizedDocType == "all" ? "foundation" : normalizedDocType.uppercased()
             let message = "Sidecar 연결 후 \(docLabel) 문서를 작성할 수 있습니다."
@@ -3201,8 +3208,6 @@ final class AgenticViewModel: ObservableObject {
             ], authSession: macAuthSession)
             return
         }
-        day1DocHandoffPendingDocType = normalizedDocType
-        day1DocHandoffError = nil
         #if DEBUG
         if seedUITestingDay1DocHandoffPromptIfNeeded(docType: normalizedDocType) {
             return
@@ -4838,6 +4843,42 @@ final class AgenticViewModel: ObservableObject {
     }
 
     #if DEBUG
+    private func seedUITestingDay1BulkDocHandoffIfNeeded(docType: String) -> Bool {
+        let arguments = CommandLine.arguments
+        guard docType == "all",
+              arguments.contains("--ui-testing-disable-sidecar"),
+              ProcessInfo.processInfo.environment["AGENTIC30_TEST_STUB_PROVIDER"] == "1" else {
+            return false
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            self?.installUITestingDay1BulkDocPreviews()
+        }
+        return true
+    }
+
+    private func installUITestingDay1BulkDocPreviews() {
+        let order = ["goal", "icp", "values", "spec"]
+        let seededPreviews = [
+            IddDocPreview(type: "goal", title: "GOAL", path: "docs/GOAL.md", status: "written", content: "UI test GOAL handoff response"),
+            IddDocPreview(type: "icp", title: "ICP", path: "docs/ICP.md", status: "written", content: "UI test ICP handoff response"),
+            IddDocPreview(type: "values", title: "VALUES", path: "docs/VALUES.md", status: "written", content: "UI test VALUES handoff response"),
+            IddDocPreview(type: "spec", title: "SPEC", path: "docs/SPEC.md", status: "written", content: "UI test SPEC handoff response"),
+        ]
+        var mergedPreviews = iddDocPreviews.filter { !order.contains($0.type) }
+        mergedPreviews.append(contentsOf: seededPreviews)
+        mergedPreviews.sort {
+            (order.firstIndex(of: $0.type) ?? Int.max) < (order.firstIndex(of: $1.type) ?? Int.max)
+        }
+        iddDocPreviews = mergedPreviews
+        iddSetupComplete = true
+        iddSetupStatus = "approved"
+        iddCurrentDocType = nil
+        day1DocHandoffPendingDocType = nil
+        day1DocHandoffError = nil
+        refreshPresentationState()
+    }
+
     private func seedUITestingDay1DocHandoffPromptIfNeeded(docType: String) -> Bool {
         let arguments = CommandLine.arguments
         let shouldSeedImmediately = arguments.contains("--ui-testing-seed-day1-handoff-goal-prompt")

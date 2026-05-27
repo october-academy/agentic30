@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 struct OpenDesignDayContent {
@@ -2451,6 +2452,10 @@ struct OpenDesignDayInteractionStateCache: Equatable {
         totalInterviewSteps: Int
     ) {
         states[key] = state.synchronized(totalInterviewSteps: totalInterviewSteps)
+    }
+
+    mutating func removeAll() {
+        states.removeAll()
     }
 }
 
@@ -7394,33 +7399,6 @@ private struct OpenDesignDayDocumentStep: Identifiable {
         ["written", "written_with_assumptions", "approved"].contains(status)
     }
 
-    var stateGlyph: String {
-        if isWritten { return "✓" }
-        return isUnlocked ? "•" : "–"
-    }
-
-    var detail: String {
-        switch status {
-        case "written": return "\(path) 저장됨"
-        case "written_with_assumptions": return "\(path) 저장됨 · 가정 남음"
-        case "approved": return "\(path) 승인됨"
-        case "drafted": return "\(path) 초안 준비"
-        case "writing": return "\(path) 저장 중"
-        case "error": return "\(path) 오류"
-        default: return isUnlocked ? "\(path) 작성 가능" : "이전 문서를 먼저 저장"
-        }
-    }
-
-    var actionLabel: String {
-        if isWritten { return "작성됨" }
-        return isUnlocked ? "\(title) 작성" : "잠금"
-    }
-
-    var accessibilityValue: String {
-        if isWritten { return "written" }
-        return isUnlocked ? "available" : "locked"
-    }
-
     static func ordered(previews: [IddDocPreview]) -> [OpenDesignDayDocumentStep] {
         let order = [
             ("goal", "GOAL", "docs/GOAL.md"),
@@ -7459,6 +7437,13 @@ private struct OpenDesignHypothesisConfirmationCard: View {
 
     @State private var showsDetails = false
     @State private var isConfirmHovered = false
+    @State private var bulkSavingDocType: String?
+    @State private var bulkSavePendingDocTypes: [String] = []
+    @State private var bulkBackendWrittenDocTypes: Set<String> = []
+    @State private var bulkDelayCompletedDocTypes: Set<String> = []
+    @State private var bulkVisualCompletedDocTypes: Set<String> = []
+    @State private var isBulkSaveVisualActive = false
+    @State private var bulkSaveAnimationTask: Task<Void, Never>?
 
     private var draft: OpenDesignDayDraft {
         content.draft(for: interaction)
@@ -7519,12 +7504,23 @@ private struct OpenDesignHypothesisConfirmationCard: View {
         documentSteps.filter(\.isWritten).count
     }
 
+    private var displayedWrittenDocumentCount: Int {
+        if isBulkSaveVisualActive {
+            return documentSteps.filter { documentStepVisuallyWritten($0) }.count
+        }
+        return writtenDocumentCount
+    }
+
     private var isBulkWritingDocuments: Bool {
-        pendingDay1HandoffDocType == "all"
+        pendingDay1HandoffDocType == "all" || isBulkSaveVisualActive
     }
 
     private var isDocumentHandoffBusy: Bool {
-        pendingDay1HandoffDocType != nil || activeDay1HandoffDocType != nil
+        pendingDay1HandoffDocType != nil || activeDay1HandoffDocType != nil || isBulkSaveVisualActive
+    }
+
+    private var day1HandoffDocumentOrder: [String] {
+        ["goal", "icp", "values", "spec"]
     }
 
     var body: some View {
@@ -7621,6 +7617,23 @@ private struct OpenDesignHypothesisConfirmationCard: View {
         .overlay(alignment: .topLeading) {
             openDesignAccessibilityAnchor("opendesign.day.final", label: "OpenDesign Day Final Hypothesis")
         }
+        .onChange(of: writtenDocumentCount) {
+            recordBulkBackendWrittenDocTypes()
+            advanceBulkSaveAnimationIfReady()
+        }
+        .onReceive(Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()) { _ in
+            guard isBulkSaveVisualActive else { return }
+            recordBulkBackendWrittenDocTypes()
+            advanceBulkSaveAnimationIfReady()
+        }
+        .onChange(of: day1HandoffError ?? "") { _, error in
+            if !error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                cancelBulkSaveAnimation()
+            }
+        }
+        .onDisappear {
+            cancelBulkSaveAnimation()
+        }
     }
 
     private func hypothesisRow(_ row: OpenDesignHypothesisSummaryRow) -> some View {
@@ -7664,7 +7677,7 @@ private struct OpenDesignHypothesisConfirmationCard: View {
                     .foregroundStyle(OpenDesignDayColor.mutedDeep)
                     .textCase(.uppercase)
                 Spacer(minLength: 0)
-                Text("\(writtenDocumentCount)/\(documentSteps.count)")
+                Text("\(displayedWrittenDocumentCount)/\(documentSteps.count)")
                     .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                     .foregroundStyle(areDay1DocumentsWritten ? OpenDesignDayColor.accent : OpenDesignDayColor.muted)
             }
@@ -7708,70 +7721,57 @@ private struct OpenDesignHypothesisConfirmationCard: View {
                 .fill(OpenDesignDayColor.bgDeep)
                 .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
         )
-        .accessibilityIdentifier("opendesign.day.final.docs")
+        .overlay(alignment: .topLeading) {
+            openDesignAccessibilityAnchor("opendesign.day.final.docs", label: "OpenDesign Day Final Documents")
+        }
     }
 
     private func documentStepRow(_ step: OpenDesignDayDocumentStep) -> some View {
         let isPromptActive = activeDay1HandoffDocType == step.type
-        let isPreparing = (pendingDay1HandoffDocType == step.type || isBulkWritingDocuments) && !isPromptActive && !step.isWritten
-        let canStart = step.isUnlocked && !step.isWritten && !isPreparing && !isPromptActive && !isBulkWritingDocuments
+        let isPreparing = (pendingDay1HandoffDocType == step.type || isBulkWritingDocuments) && !isPromptActive && !documentStepVisuallyWritten(step)
+        let accessibilityLabel = "\(step.title) \(documentStepDetail(step, isPreparing: isPreparing, isPromptActive: isPromptActive))"
         return HStack(spacing: 10) {
-            Text(step.stateGlyph)
-                .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                .foregroundStyle(step.isWritten ? OpenDesignDayColor.bgDeep : step.isUnlocked ? OpenDesignDayColor.accent : OpenDesignDayColor.mutedDeep)
-                .frame(width: 22, height: 22)
-                .background(Circle().fill(step.isWritten ? OpenDesignDayColor.accent : OpenDesignDayColor.surface2))
-                .overlay(Circle().stroke(step.isUnlocked || step.isWritten ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, lineWidth: 1))
+            documentStepStatusIcon(step)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(step.title)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(step.isUnlocked ? OpenDesignDayColor.fg : OpenDesignDayColor.muted)
+                    .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(documentStepVisuallyWritten(step) ? OpenDesignDayColor.accent : OpenDesignDayColor.fg)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(accessibilityLabel)
+                    .accessibilityValue(documentStepAccessibilityValue(step))
+                    .accessibilityIdentifier("opendesign.day.final.doc.\(step.type)")
                 Text(documentStepDetail(step, isPreparing: isPreparing, isPromptActive: isPromptActive))
                     .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(step.isWritten ? OpenDesignDayColor.accent : OpenDesignDayColor.mutedDeep)
+                    .foregroundStyle(documentStepVisuallyWritten(step) ? OpenDesignDayColor.accent : OpenDesignDayColor.mutedDeep)
                     .lineLimit(1)
             }
 
             Spacer(minLength: 8)
-
-            Button(action: { startDay1DocHandoff(step.type, handoffPayload) }) {
-                HStack(spacing: 6) {
-                    if isPreparing {
-                        ProgressView()
-                            .progressViewStyle(.circular)
-                            .controlSize(.mini)
-                            .tint(OpenDesignDayColor.mutedDeep)
-                            .accessibilityHidden(true)
-                    }
-                    Text(documentStepActionLabel(step, isPreparing: isPreparing, isPromptActive: isPromptActive))
-                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(canStart ? OpenDesignDayColor.bgDeep : OpenDesignDayColor.mutedDeep)
-                }
-                    .padding(.horizontal, 10)
-                    .frame(height: 26)
-                    .background(
-                        Capsule().fill(canStart ? OpenDesignDayColor.accent : OpenDesignDayColor.surface2)
-                    )
-                    .overlay(Capsule().stroke(canStart ? Color.clear : OpenDesignDayColor.borderSoft, lineWidth: 1))
-            }
-            .buttonStyle(OpenDesignInteractiveButtonStyle(isDisabled: !canStart))
-            .disabled(!canStart)
-            .accessibilityIdentifier("opendesign.day.final.doc.\(step.type)")
-            .accessibilityValue(step.accessibilityValue)
         }
-        .accessibilityElement(children: .contain)
+        .padding(.vertical, 1)
     }
 
-    private func documentStepActionLabel(
-        _ step: OpenDesignDayDocumentStep,
-        isPreparing: Bool,
-        isPromptActive: Bool
-    ) -> String {
-        if isPromptActive { return "답변 대기" }
-        if isBulkWritingDocuments && !step.isWritten { return "저장 중" }
-        if isPreparing { return "준비 중" }
-        return step.actionLabel
+    @ViewBuilder
+    private func documentStepStatusIcon(_ step: OpenDesignDayDocumentStep) -> some View {
+        if documentStepIsSaving(step) {
+            ProgressView()
+                .progressViewStyle(.circular)
+                .controlSize(.mini)
+                .tint(OpenDesignDayColor.accent)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(OpenDesignDayColor.surface2))
+                .overlay(Circle().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
+                .accessibilityHidden(true)
+        } else {
+            Text(documentStepVisuallyWritten(step) ? "✅" : "•")
+                .font(.system(size: documentStepVisuallyWritten(step) ? 12 : 10.5, weight: .bold, design: .monospaced))
+                .foregroundStyle(documentStepVisuallyWritten(step) ? OpenDesignDayColor.accent : OpenDesignDayColor.mutedDeep)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(OpenDesignDayColor.surface2))
+                .overlay(Circle().stroke(documentStepVisuallyWritten(step) ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, lineWidth: 1))
+                .accessibilityHidden(true)
+        }
     }
 
     private func documentStepDetail(
@@ -7780,9 +7780,32 @@ private struct OpenDesignHypothesisConfirmationCard: View {
         isPromptActive: Bool
     ) -> String {
         if isPromptActive { return "\(step.path) 질문 카드 준비됨" }
-        if isBulkWritingDocuments && !step.isWritten { return "\(step.path) 저장 중" }
+        if documentStepVisuallyWritten(step) { return "\(step.path) 저장됨" }
+        if documentStepIsSaving(step) { return "\(step.path) 저장 중" }
+        if isBulkWritingDocuments { return "\(step.path) 저장 대기" }
         if isPreparing { return "\(step.path) 질문 준비 중" }
-        return step.detail
+        return "\(step.path) 저장 대기"
+    }
+
+    private func documentStepIsSaving(_ step: OpenDesignDayDocumentStep) -> Bool {
+        isBulkSaveVisualActive && bulkSavingDocType == step.type
+    }
+
+    private func documentStepVisuallyWritten(_ step: OpenDesignDayDocumentStep) -> Bool {
+        if isBulkSaveVisualActive && bulkSavePendingDocTypes.contains(step.type) {
+            return bulkVisualCompletedDocTypes.contains(step.type)
+        }
+        return step.isWritten
+    }
+
+    private func documentStepAccessibilityValue(_ step: OpenDesignDayDocumentStep) -> String {
+        if documentStepVisuallyWritten(step) { return "written" }
+        if documentStepIsSaving(step) { return "saving" }
+        return "waiting"
+    }
+
+    private func isBackendDocumentWritten(_ type: String) -> Bool {
+        documentSteps.first(where: { $0.type == type })?.isWritten == true
     }
 
     private var handoffPayload: [String: Any] {
@@ -7817,6 +7840,9 @@ private struct OpenDesignHypothesisConfirmationCard: View {
     }
 
     private var confirmButtonTitle: String {
+        if isBulkSaveVisualActive {
+            return "문서 저장 중"
+        }
         if !areDay1DocumentsWritten {
             if isBulkWritingDocuments { return "문서 저장 중" }
             if activeDay1HandoffDocType != nil { return "문서 답변 대기 중" }
@@ -7839,7 +7865,7 @@ private struct OpenDesignHypothesisConfirmationCard: View {
     }
 
     private var confirmButtonDisabled: Bool {
-        !areDay1DocumentsWritten && isDocumentHandoffBusy
+        isBulkSaveVisualActive || (!areDay1DocumentsWritten && isDocumentHandoffBusy)
     }
 
     private func alignmentDisplayValue(key: String, label: String, fallback: String) -> String {
@@ -7887,6 +7913,7 @@ private struct OpenDesignHypothesisConfirmationCard: View {
             return
         }
         guard areDay1DocumentsWritten else {
+            beginBulkSaveAnimation()
             startDay1DocHandoff("all", handoffPayload)
             return
         }
@@ -7900,6 +7927,78 @@ private struct OpenDesignHypothesisConfirmationCard: View {
             completeDayAction()
         }
         advanceToNextDay()
+    }
+
+    private func beginBulkSaveAnimation() {
+        guard !isBulkSaveVisualActive else { return }
+        let pendingTypes = day1HandoffDocumentOrder.filter { !isBackendDocumentWritten($0) }
+        guard !pendingTypes.isEmpty else { return }
+
+        bulkSaveAnimationTask?.cancel()
+        bulkSavePendingDocTypes = pendingTypes
+        bulkBackendWrittenDocTypes = Set(day1HandoffDocumentOrder.filter { isBackendDocumentWritten($0) })
+        bulkDelayCompletedDocTypes = []
+        bulkVisualCompletedDocTypes = []
+        isBulkSaveVisualActive = true
+        beginBulkDelay(for: pendingTypes[0])
+    }
+
+    private func beginBulkDelay(for docType: String) {
+        bulkSaveAnimationTask?.cancel()
+        bulkSavingDocType = docType
+        bulkSaveAnimationTask = Task { @MainActor in
+            let seconds = Double.random(in: 1.0...2.0)
+            let nanoseconds = UInt64(seconds * 1_000_000_000)
+            do {
+                try await Task.sleep(nanoseconds: nanoseconds)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            bulkDelayCompletedDocTypes.insert(docType)
+            advanceBulkSaveAnimationIfReady()
+        }
+    }
+
+    private func advanceBulkSaveAnimationIfReady() {
+        guard isBulkSaveVisualActive,
+              let currentType = bulkSavingDocType,
+              bulkDelayCompletedDocTypes.contains(currentType),
+              bulkBackendWrittenDocTypes.contains(currentType)
+        else {
+            return
+        }
+
+        var completedDocTypes = bulkVisualCompletedDocTypes
+        completedDocTypes.insert(currentType)
+        bulkVisualCompletedDocTypes = completedDocTypes
+        if let nextType = bulkSavePendingDocTypes.first(where: { !completedDocTypes.contains($0) }) {
+            beginBulkDelay(for: nextType)
+            return
+        }
+        bulkSavingDocType = nil
+        isBulkSaveVisualActive = false
+        bulkSavePendingDocTypes = []
+        bulkBackendWrittenDocTypes = []
+        bulkDelayCompletedDocTypes = []
+        bulkVisualCompletedDocTypes = []
+        bulkSaveAnimationTask = nil
+    }
+
+    private func recordBulkBackendWrittenDocTypes() {
+        let writtenTypes = day1HandoffDocumentOrder.filter { isBackendDocumentWritten($0) }
+        bulkBackendWrittenDocTypes.formUnion(writtenTypes)
+    }
+
+    private func cancelBulkSaveAnimation() {
+        bulkSaveAnimationTask?.cancel()
+        bulkSaveAnimationTask = nil
+        bulkSavingDocType = nil
+        isBulkSaveVisualActive = false
+        bulkSavePendingDocTypes = []
+        bulkBackendWrittenDocTypes = []
+        bulkDelayCompletedDocTypes = []
+        bulkVisualCompletedDocTypes = []
     }
 }
 

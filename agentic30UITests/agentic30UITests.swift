@@ -1572,27 +1572,51 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(waitForOpenDesignMainHittable(finalConfirm, in: app, timeout: 6))
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.final.confirm", containing: "4개 문서 저장", timeout: 3))
         XCTAssertTrue(finalConfirm.isEnabled)
+        for docType in ["goal", "icp", "values", "spec"] {
+            let row = elementWithIdentifier(in: app, "opendesign.day.final.doc.\(docType)")
+            XCTAssertTrue(row.exists)
+            XCTAssertFalse(app.buttons["opendesign.day.final.doc.\(docType)"].exists)
+            XCTAssertFalse(row.label.contains("잠금"))
+        }
         clickCenter(of: finalConfirm)
 
         let day2Main = elementWithIdentifier(in: app, "opendesign.day2.main")
         XCTAssertFalse(day2Main.waitForExistence(timeout: 1))
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.final.docs").exists)
-        let goalDoc = app.buttons["opendesign.day.final.doc.goal"]
-        XCTAssertTrue(goalDoc.exists)
-        XCTAssertTrue(goalDoc.isEnabled)
-        for docType in ["icp", "values", "spec"] {
-            let button = app.buttons["opendesign.day.final.doc.\(docType)"]
-            XCTAssertTrue(button.exists)
-            XCTAssertFalse(button.isEnabled)
+        guard waitForButtonLabel(in: app, identifier: "opendesign.day.final.confirm", containing: "문서 저장 중", timeout: 3) else {
+            XCTFail("confirm label=\(app.buttons["opendesign.day.final.confirm"].label)")
+            return
         }
-        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.task.day1", containing: "active", timeout: 3))
+        let sawSpecSaving = waitForElementLabel(in: app, identifier: "opendesign.day.final.doc.spec", containing: "저장 중", timeout: 10)
+        let docRowSnapshot = ["goal", "icp", "values", "spec"]
+            .map { docType -> String in
+                let row = elementWithIdentifier(in: app, "opendesign.day.final.doc.\(docType)")
+                return "\(docType)=\(row.label)"
+            }
+            .joined(separator: " | ")
+        XCTAssertTrue(sawSpecSaving, "rows=\(docRowSnapshot); confirm=\(app.buttons["opendesign.day.final.confirm"].label)")
+        for docType in ["goal", "icp", "values", "spec"] {
+            let didSave = waitForElementLabel(in: app, identifier: "opendesign.day.final.doc.\(docType)", containing: "저장됨", timeout: 12)
+            let row = elementWithIdentifier(in: app, "opendesign.day.final.doc.\(docType)")
+            guard didSave else {
+                XCTFail("\(docType) row label=\(row.label); confirm=\(app.buttons["opendesign.day.final.confirm"].label)")
+                return
+            }
+        }
+        guard waitForButtonLabel(in: app, identifier: "opendesign.day.final.confirm", containing: "Day2", timeout: 3) else {
+            XCTFail("after save confirm=\(app.buttons["opendesign.day.final.confirm"].label)")
+            return
+        }
+        clickCenter(of: finalConfirm)
+        XCTAssertTrue(day2Main.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.task.day1", containing: "done", timeout: 3))
     }
 
     @MainActor
-    func testOpenDesignDayRendersGoalHandoffPromptInline() throws {
+    func testOpenDesignDayDocumentRowsAreStatusOnly() throws {
         let runID = UUID().uuidString
-        let workspacePath = "/tmp/agentic30-ui-opendesign-day-goal-handoff-\(runID)"
-        let appSupportPath = "/tmp/agentic30-ui-opendesign-day-goal-handoff-support-\(runID)"
+        let workspacePath = "/tmp/agentic30-ui-opendesign-day-doc-status-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-opendesign-day-doc-status-support-\(runID)"
         resetDirectory(at: workspacePath)
         resetDirectory(at: appSupportPath)
 
@@ -1601,14 +1625,12 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-seed-auth",
             "--ui-testing-seed-onboarding-context",
             "--ui-testing-seed-workspace=\(workspacePath)",
-            "--ui-testing-seed-day1-handoff-goal-prompt-delayed",
             "--ui-testing-disable-sidecar",
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
             "--ui-testing-workspace-window-size=1360x820",
         ], environment: [
             "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
-            "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
         ])
         hideKnownInterferingApplications()
@@ -1623,30 +1645,14 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
         completeOpenDesignDayInterviews(in: app)
 
-        let goalDoc = app.buttons["opendesign.day.final.doc.goal"]
-        XCTAssertTrue(waitForOpenDesignMainHittable(goalDoc, in: app, timeout: 6))
-        clickCenter(of: goalDoc)
-        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.final.doc.goal", containing: "준비 중", timeout: 3))
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.final.confirm").exists)
-        XCTAssertFalse(app.buttons["opendesign.day.start"].exists)
-        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.final.doc.goal", containing: "답변 대기", timeout: 5))
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.final.confirm").exists)
-        XCTAssertFalse(app.buttons["opendesign.day.start"].exists)
-        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredPromptTitle", containing: "GOAL 정하기", timeout: 3))
-        let goalOption = buttonContaining(in: app, text: "첫 고객 반응 확인")
-        XCTAssertTrue(goalOption.waitForExistence(timeout: 3))
-        clickCenter(of: goalOption)
-
-        let submitButton = app.buttons["assistant.structuredContinueButton"]
-        XCTAssertTrue(waitUntilEnabled(submitButton, timeout: 3))
-        XCTAssertTrue(waitForOpenDesignMainHittable(submitButton, in: app, timeout: 6))
-        clickCenter(of: submitButton)
-        guard waitForButtonLabel(in: app, identifier: "opendesign.day.final.doc.goal", containing: "작성됨", timeout: 5) else {
-            attachText(app.debugDescription, named: "OpenDesign GOAL handoff after submit tree")
-            XCTFail("Expected GOAL row to become written after submitting the handoff prompt")
-            return
+        for docType in ["goal", "icp", "values", "spec"] {
+            let row = elementWithIdentifier(in: app, "opendesign.day.final.doc.\(docType)")
+            XCTAssertTrue(row.exists)
+            XCTAssertFalse(app.buttons["opendesign.day.final.doc.\(docType)"].exists)
+            XCTAssertTrue(row.label.contains("저장 대기"))
+            XCTAssertFalse(row.label.contains("잠금"))
         }
-        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day.final.doc.icp", containing: "ICP 작성", timeout: 3))
     }
 
     @MainActor
@@ -3275,13 +3281,14 @@ final class agentic30UITests: XCTestCase {
         timeout: TimeInterval
     ) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
-        let button = app.buttons[identifier]
         repeat {
+            let button = app.buttons[identifier]
             if button.exists && element(button, contains: marker) {
                 return true
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         } while Date() < deadline
+        let button = app.buttons[identifier]
         return button.exists && element(button, contains: marker)
     }
 
@@ -3293,13 +3300,14 @@ final class agentic30UITests: XCTestCase {
         timeout: TimeInterval
     ) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
-        let element = elementWithIdentifier(in: app, identifier)
         repeat {
+            let element = elementWithIdentifier(in: app, identifier)
             if element.exists && self.element(element, contains: marker) {
                 return true
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         } while Date() < deadline
+        let element = elementWithIdentifier(in: app, identifier)
         return element.exists && self.element(element, contains: marker)
     }
 
