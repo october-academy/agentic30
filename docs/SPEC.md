@@ -127,3 +127,95 @@ Bridge envelope, event type, session schema를 바꾸면 Swift와 sidecar를 함
 - [ICP.md](./ICP.md)
 - [GOAL.md](./GOAL.md)
 - [VALUES.md](./VALUES.md)
+
+<!-- agentic30:day1-handoff:start -->
+## Day 1 Handoff — SPEC
+
+> Target: docs/SPEC.md
+> Written: 2026-05-27T22:13:42.931Z
+> Status: written_with_assumptions
+
+### Confirmed Hypothesis
+- 목표: Agentic30은 전업 1인 개발자를 위한 30일 부트캠프다. 사용자 100명과 첫 매출 달성을 목표로 한다.
+- 고객: 전업 1인 개발자 (수익 0원, macOS)
+- 문제: 만들 줄은 알지만 무엇을 팔아야 하는지, 어떻게 사람을 데려와야 하는지, 오늘 무엇을 검증해야 하는지 모른다
+- 확인할 행동: 지불 의향과 현재 대안을 첫 고객 대화에서 묻는다
+- 품질 점수: 10.0/10
+
+### Document Decision
+# SPEC
+
+> Generated through Agentic30 IDD setup. Provider path: codex.
+
+## Core Decision
+한 사용자의 실제 workflow는 가설 확인, 전업 1인 개발자 (수익 0원, macOS) 선택, 지불 의향과 현재 대안을 첫 고객 대화에서 묻는다 저장까지 이어지는 단계입니다. / 이번 주 MVP wedge는 Day 1 확정에서 네 개 foundation 문서를 저장하고 Day 2 검증으로 넘기는 가장 작은 v0입니다. / non-goal은 완전 자동 문서 편집기, 새 provider 실행, 모든 문서 세부 인터뷰를 첫 경로에 넣는 것입니다. / 관찰 가능한 성공 기준은 사용자가 지불 의향과 현재 대안을 첫 고객 대화에서 묻는다을 끝내고 GOAL/ICP/VALUES/SPEC가 저장된 상태를 보는 것입니다.
+
+## Evidence From Interview
+한 사용자의 실제 workflow는 가설 확인, 전업 1인 개발자 (수익 0원, macOS) 선택, 지불 의향과 현재 대안을 첫 고객 대화에서 묻는다 저장까지 이어지는 단계입니다.
+이번 주 MVP wedge는 Day 1 확정에서 네 개 foundation 문서를 저장하고 Day 2 검증으로 넘기는 가장 작은 v0입니다.
+non-goal은 완전 자동 문서 편집기, 새 provider 실행, 모든 문서 세부 인터뷰를 첫 경로에 넣는 것입니다.
+관찰 가능한 성공 기준은 사용자가 지불 의향과 현재 대안을 첫 고객 대화에서 묻는다을 끝내고 GOAL/ICP/VALUES/SPEC가 저장된 상태를 보는 것입니다.
+핵심 리스크는 만들 줄은 알지만 무엇을 팔아야 하는지, 어떻게 사람을 데려와야 하는지, 오늘 무엇을 검증해야 하는지 모른다이 실제 구매/사용 압박이 아니라면 이 가설이 틀리는 것입니다.
+
+## Rubric Signals
+- Confirmed: 한 사용자의 실제 workflow가 필요합니다.
+- Confirmed: 이번 주 만들 가장 작은 MVP wedge가 필요합니다.
+- Confirmed: 관찰 가능한 성공 기준이 필요합니다.
+- Confirmed: 틀리면 무너지는 핵심 리스크가 필요합니다.
+- Missing: 첫 버전에서 하지 않을 일이 필요합니다.
+
+## Non-Goals
+- Do not expand scope before the first narrow validation signal is observed.
+- Do not treat generic interest as demand.
+- Do not add platform features that do not support this week's decision.
+
+## Decision Boundaries
+- If the next action does not create user evidence this week, defer it.
+- If the scope cannot be explained in one sentence, narrow it before building.
+- If the tradeoff is unclear, record the rejected option and the evidence needed to revisit it.
+
+## Pressure-Pass Follow-Up
+Remove one feature from the first version. If nothing can be removed, the spec is still a wishlist.
+
+## Open Assumptions
+- 첫 버전에서 하지 않을 일이 필요합니다.
+
+### Open Assumptions
+- 첫 버전에서 하지 않을 일이 필요합니다.
+
+### Day 1 Evidence Snapshot
+# Day 1 핵심 가설
+
+> Source: Day 1 alignment flow
+> Based on: workspace scan + user selections
+> Write target: docs/GOAL.md, docs/ICP.md, docs/SPEC.md
+
+## 확정
+- 목표: Agentic30은 전업 1인 개발자를 위한 30일 부트캠프다. 사용자 100명과 첫 매출 달성을 목표로 한다.
+- 고객: 전업 1인 개발자 (수익 0원, macOS)
+- 문제: 만들 줄은 알지만 무엇을 팔아야 하는지, 어떻게 사람을 데려와야 하는지, 오늘 무엇을 검증해야 하는지 모른다
+- 확인할 행동: 지불 의향과 현재 대안을 첫 고객 대화에서 묻는다
+
+## 핵심 가설 문장
+목표: Agentic30은 전업 1인 개발자를 위한 30일 부트캠프다. 사용자 100명과 첫 매출 달성을 목표로 한다. / 고객: 전업 1인 개발자 (수익 0원, macOS) / 문제: 만들 줄은 알지만 무엇을 팔아야 하는지, 어떻게 사람을 데려와야 하는지, 오늘 무엇을 검증해야 하는지 모른다 / 확인할 행동: 지불 의향과 현재 대안을 첫 고객 대화에서 묻는다
+
+## 선택 기록
+- 고객: 전업 1인 개발자 (수익 0원, macOS) · 근거: docs/ICP.md · scan 후보: 전업 1인 개발자 (수익 0원, macOS) 중 "만들 줄은 알지만 무엇을 팔아야 하는지, 어떻게 사람을 데려와야 하는지, 오늘 무엇을 검증해야 하는지 모른다"…
+- 문제: 만들 줄은 알지만 무엇을 팔아야 하는지, 어떻게 사람을 데려와야 하는지, 오늘 무엇을 검증해야 하는지 모른다 · 근거: docs/SPEC.md
+- 확인할 행동: 지불 의향과 현재 대안을 첫 고객 대화에서 묻는다 · 근거: docs/GOAL.md · scan 후보: 지불 의향과 현재 대안을 첫 고객 대화에서 묻는다.
+
+## 남은 가정
+- 현재 남은 가정 없음
+
+## Quality Gate
+Score: 10.0/10 · PASS
+- 목표: 2.0/2.0 — Agentic30은 전업 1인 개발자를 위한 30일 부트캠프다. 사용자 100명과 첫 매출 달성을 목표로 한다.
+- 고객: 2.5/2.5 — 전업 1인 개발자 (수익 0원, macOS) 중 "만들 줄은 알지만 무엇을 팔아야 하는지, 어떻게 사람을 데려와야 하는지, 오늘 무엇을 검증해야 하는지 모른다" 상황을 지금 해결하려는 고객.
+- 문제: 2.0/2.0 — 만들 줄은 알지만 무엇을 팔아야 하는지, 어떻게 사람을 데려와야 하는지, 오늘 무엇을 검증해야 하는지 모른다
+- 확인할 행동: 2.0/2.0 — 지불 의향과 현재 대안을 첫 고객 대화에서 묻는다.
+- 근거: 1.5/1.5 — 사용자-facing 근거: docs/GOAL.md, docs/ICP.md, docs/SPEC.md
+
+## Day 2 검증 기준
+Age
+...
+<!-- agentic30:day1-handoff:end -->
