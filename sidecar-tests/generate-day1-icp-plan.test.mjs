@@ -207,6 +207,7 @@ test("Agentic30 fixture produces goal-based Day 1 alignment statement and qualit
     assert.equal(plan.schemaVersion, DAY1_ALIGNMENT_PLAN_SCHEMA_VERSION);
     assert.equal(plan.signals.productName, "agentic30 Mac");
     assert.match(plan.projectGoal, /첫 유료 고객 후보/);
+    assert.equal(plan.mission, "Day 1 — 만들기 전에, 팔릴 문제를 고릅니다.\n오늘은 코딩하지 않습니다.\n30일 동안 검증할 고객, 문제, 첫 결제 이유를 한 문장으로 정합니다.");
     assert.match(plan.alignmentStatement.statement, /고객:/);
     assert.match(plan.alignmentStatement.statement, /문제:/);
     assert.match(plan.alignmentStatement.statement, /확인할 행동:/);

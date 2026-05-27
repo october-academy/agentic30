@@ -668,7 +668,7 @@ export function normalizeDay1AlignmentPlan(value) {
 
   const signals = normalizeSignals(value.signals);
   const projectGoal = cleanText(value.projectGoal || value.project_goal);
-  const mission = cleanText(value.mission);
+  const mission = cleanMultilineText(value.mission);
   const components = sanitizeNormalizedAlignmentComponents(
     normalizeAlignmentComponents(value.components),
     { signals, projectGoal },
@@ -1811,9 +1811,8 @@ function buildProjectGoal({ signals, onboardingHypothesis, evidence }) {
   return `${product}가 ${target}의 "${problem}" 해결을 검증할 첫 고객 증거를 만든다.`;
 }
 
-function buildAlignmentMission({ signals, projectGoal }) {
-  const product = signals.productName || "이 프로젝트";
-  return `${product}의 Day 1은 고정 질문지가 아니라 핵심 가설을 만드는 날입니다. 프로젝트 목표 "${projectGoal}"를 기준으로 고객, 문제, 확인할 행동을 각각 한 문장으로 압축하고 Day 2 시장 신호 검증에 넘길 품질 게이트를 확인합니다.`;
+function buildAlignmentMission() {
+  return "Day 1 — 만들기 전에, 팔릴 문제를 고릅니다.\n오늘은 코딩하지 않습니다.\n30일 동안 검증할 고객, 문제, 첫 결제 이유를 한 문장으로 정합니다.";
 }
 
 function buildAlignmentComponents({ signals, projectGoal }) {
@@ -3574,6 +3573,16 @@ function cleanSignalText(value) {
 function cleanText(value) {
   if (typeof value !== "string") return "";
   return value.replace(/\s+/g, " ").trim();
+}
+
+function cleanMultilineText(value) {
+  if (typeof value !== "string") return "";
+  return value
+    .split(/\r?\n/u)
+    .map((line) => cleanText(line))
+    .filter(Boolean)
+    .join("\n")
+    .trim();
 }
 
 function cleanToken(value) {

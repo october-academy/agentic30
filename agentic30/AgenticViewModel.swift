@@ -5586,7 +5586,7 @@ final class AgenticViewModel: ObservableObject {
             confidence: 0.86,
             fellBackToDeterministic: false,
             projectGoal: projectGoal,
-            mission: "목표, 고객, 문제, 확인할 행동을 정렬합니다.",
+            mission: "Day 1 — 만들기 전에, 팔릴 문제를 고릅니다.\n오늘은 코딩하지 않습니다.\n30일 동안 검증할 고객, 문제, 첫 결제 이유를 한 문장으로 정합니다.",
             signals: signals,
             components: Day1AlignmentComponents(icp: icp, painPoint: pain, outcome: outcome),
             alignmentStatement: Day1AlignmentStatement(
