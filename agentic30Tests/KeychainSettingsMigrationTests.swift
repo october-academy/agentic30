@@ -283,6 +283,76 @@ struct KeychainSettingsMigrationTests {
         #expect(defaults.string(forKey: "unrelated.test") == "keep")
     }
 
+    @Test func localDataResetterRemovesOnlyManagedDay1HandoffBlocks() throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("agentic30-managed-content-reset-\(UUID().uuidString)", isDirectory: true)
+        let workspace = tempRoot.appendingPathComponent("workspace", isDirectory: true)
+        let docs = workspace.appendingPathComponent("docs", isDirectory: true)
+        let goal = docs.appendingPathComponent("GOAL.md")
+        let icp = docs.appendingPathComponent("ICP.md")
+        let readme = workspace.appendingPathComponent("README.md")
+        let suiteName = "agentic30.managed-content-reset.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        let productionLegacyProvider = WorkspaceSettings.legacyWorkspaceProvider
+        WorkspaceSettings.legacyWorkspaceProvider = { "" }
+        defer {
+            WorkspaceSettings.legacyWorkspaceProvider = productionLegacyProvider
+            defaults.removePersistentDomain(forName: suiteName)
+            try? fileManager.removeItem(at: tempRoot)
+        }
+
+        try fileManager.createDirectory(at: docs, withIntermediateDirectories: true)
+        try [
+            "# GOAL",
+            "",
+            "User-authored goal stays.",
+            "",
+            "<!-- agentic30:day1-handoff:start -->",
+            "generated interview content must reset",
+            "<!-- agentic30:day1-handoff:end -->",
+            "",
+            "User appendix stays.",
+            "",
+        ].joined(separator: "\n").write(to: goal, atomically: true, encoding: .utf8)
+        try "# ICP\n\nNo generated block here.\n".write(to: icp, atomically: true, encoding: .utf8)
+        try [
+            "# README",
+            "",
+            "<!-- agentic30:day1-handoff:start -->",
+            "not a canonical managed doc",
+            "<!-- agentic30:day1-handoff:end -->",
+            "",
+        ].joined(separator: "\n").write(to: readme, atomically: true, encoding: .utf8)
+        defaults.set(workspace.path, forKey: "agentic30.workspaceRoot")
+
+        let report = Agentic30LocalDataResetter.reset(
+            defaults: defaults,
+            fileManager: fileManager,
+            appSupportURLs: [],
+            devSecretsURLs: [],
+            cacheURLs: [],
+            preferenceURLs: [],
+            savedStateURLs: [],
+            qmdDataURLs: [],
+            appBundleURL: nil,
+            resetKeychainStorage: {}
+        )
+
+        let cleanedGoal = try String(contentsOf: goal, encoding: .utf8)
+        let preservedIcp = try String(contentsOf: icp, encoding: .utf8)
+        let preservedReadme = try String(contentsOf: readme, encoding: .utf8)
+
+        #expect(report.failures.isEmpty)
+        #expect(report.removedManagedWorkspaceContentPaths == [goal.path])
+        #expect(cleanedGoal.contains("User-authored goal stays."))
+        #expect(cleanedGoal.contains("User appendix stays."))
+        #expect(!cleanedGoal.contains("agentic30:day1-handoff"))
+        #expect(!cleanedGoal.contains("generated interview content must reset"))
+        #expect(preservedIcp == "# ICP\n\nNo generated block here.\n")
+        #expect(preservedReadme.contains("not a canonical managed doc"))
+    }
+
     @Test func resetWorkspaceAgentic30DataRemovesOnlyManagedWorkspaceDirectory() throws {
         let workspace = FileManager.default.temporaryDirectory
             .appendingPathComponent("agentic30-reset-workspace-\(UUID().uuidString)", isDirectory: true)

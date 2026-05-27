@@ -87,6 +87,9 @@ struct ContentView: View {
                     clearOpenDesignReferenceRoute()
                 }
             }
+            .onChange(of: viewModel.localDataResetGeneration) { _, _ in
+                resetLocalSwiftUIStateAfterLocalDataReset()
+            }
 
         if isWorkspaceWindow {
             content
@@ -371,6 +374,17 @@ struct ContentView: View {
         if !OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: dayNumber) {
             clearOpenDesignReferenceRoute()
         }
+    }
+
+    private func resetLocalSwiftUIStateAfterLocalDataReset() {
+        currentPromptBindingToken = nil
+        showsBipMissionEvidence = false
+        showsBipCompletionFields = false
+        showsBipReadinessPreview = false
+        showsBipReadinessAdvanced = false
+        showsInlineBipReadinessSetup = false
+        selectedOpenDesignReferencePage = nil
+        openDesignDayInteractionStateCache.removeAll()
     }
 
     private var openDesignInteractionWorkspaceRoot: String {

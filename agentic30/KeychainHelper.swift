@@ -733,6 +733,7 @@ enum KeychainHelper {
 struct Agentic30LocalDataResetOptions: Equatable {
     var includeKnownWorkspaces: Bool = true
     var includeAgentic30QmdIndex: Bool = true
+    var removeManagedWorkspaceContent: Bool = true
     var removeAppBundle: Bool = false
 }
 
@@ -750,6 +751,7 @@ struct Agentic30LocalDataResetReport: Equatable {
     let removedSavedStatePaths: [String]
     let removedQmdPaths: [String]
     let removedWorkspaceAgentic30Paths: [String]
+    let removedManagedWorkspaceContentPaths: [String]
     let removedAppBundlePaths: [String]
     let skippedPaths: [String]
     let failures: [Agentic30LocalDataResetFailure]
@@ -765,12 +767,21 @@ struct Agentic30LocalDataResetReport: Equatable {
             + removedSavedStatePaths.count
             + removedQmdPaths.count
             + removedWorkspaceAgentic30Paths.count
+            + removedManagedWorkspaceContentPaths.count
             + removedAppBundlePaths.count
     }
 }
 
 enum Agentic30LocalDataResetter {
     static let qmdIndexName = "agentic30"
+    private static let day1HandoffMarkerStart = "<!-- agentic30:day1-handoff:start -->"
+    private static let day1HandoffMarkerEnd = "<!-- agentic30:day1-handoff:end -->"
+    private static let managedDay1HandoffRelativePaths = [
+        "docs/GOAL.md",
+        "docs/ICP.md",
+        "docs/VALUES.md",
+        "docs/SPEC.md",
+    ]
 
     static func reset(
         options: Agentic30LocalDataResetOptions = Agentic30LocalDataResetOptions(),
@@ -805,6 +816,7 @@ enum Agentic30LocalDataResetter {
         var removedSavedStatePaths: [String] = []
         var removedQmdPaths: [String] = []
         var removedWorkspaceAgentic30Paths: [String] = []
+        var removedManagedWorkspaceContentPaths: [String] = []
         var removedAppBundlePaths: [String] = []
         var skippedPaths: [String] = []
         var failures: [Agentic30LocalDataResetFailure] = []
@@ -854,6 +866,17 @@ enum Agentic30LocalDataResetter {
             }
         }
 
+        if options.removeManagedWorkspaceContent {
+            for workspaceURL in workspaceURLs {
+                removeManagedWorkspaceContent(
+                    in: workspaceURL,
+                    fileManager: fileManager,
+                    removedPaths: &removedManagedWorkspaceContentPaths,
+                    failures: &failures
+                )
+            }
+        }
+
         if options.removeAppBundle, let appBundleURL {
             remove(appBundleURL, into: &removedAppBundlePaths)
         }
@@ -867,6 +890,7 @@ enum Agentic30LocalDataResetter {
             removedSavedStatePaths: removedSavedStatePaths,
             removedQmdPaths: removedQmdPaths,
             removedWorkspaceAgentic30Paths: removedWorkspaceAgentic30Paths,
+            removedManagedWorkspaceContentPaths: removedManagedWorkspaceContentPaths,
             removedAppBundlePaths: removedAppBundlePaths,
             skippedPaths: skippedPaths,
             failures: failures
@@ -891,6 +915,52 @@ enum Agentic30LocalDataResetter {
         } catch {
             failures.append(Agentic30LocalDataResetFailure(path: path, reason: error.localizedDescription))
         }
+    }
+
+    private static func removeManagedWorkspaceContent(
+        in workspaceURL: URL,
+        fileManager: FileManager,
+        removedPaths: inout [String],
+        failures: inout [Agentic30LocalDataResetFailure]
+    ) {
+        let workspaceRoot = workspaceURL.standardizedFileURL
+        for relativePath in managedDay1HandoffRelativePaths {
+            let url = workspaceRoot.appendingPathComponent(relativePath, isDirectory: false)
+            let path = url.standardizedFileURL.path
+            guard fileManager.fileExists(atPath: path) else { continue }
+            do {
+                let existing = try String(contentsOf: url, encoding: .utf8)
+                let cleaned = removingDay1HandoffBlocks(from: existing)
+                guard cleaned != existing else { continue }
+                try cleaned.write(to: url, atomically: true, encoding: .utf8)
+                appendUnique(path, to: &removedPaths)
+            } catch {
+                failures.append(Agentic30LocalDataResetFailure(path: path, reason: error.localizedDescription))
+            }
+        }
+    }
+
+    private static func removingDay1HandoffBlocks(from content: String) -> String {
+        var result = content
+        while let start = result.range(of: day1HandoffMarkerStart),
+              let end = result.range(of: day1HandoffMarkerEnd, range: start.upperBound..<result.endIndex) {
+            var removalRange = start.lowerBound..<end.upperBound
+            if removalRange.upperBound < result.endIndex,
+               result[removalRange.upperBound] == "\r" {
+                removalRange = removalRange.lowerBound..<result.index(after: removalRange.upperBound)
+            }
+            if removalRange.upperBound < result.endIndex,
+               result[removalRange.upperBound] == "\n" {
+                removalRange = removalRange.lowerBound..<result.index(after: removalRange.upperBound)
+            }
+            while removalRange.lowerBound > result.startIndex {
+                let previous = result.index(before: removalRange.lowerBound)
+                guard result[previous] == "\n" else { break }
+                removalRange = previous..<removalRange.upperBound
+            }
+            result.removeSubrange(removalRange)
+        }
+        return result
     }
 
     private static func defaultApplicationSupportURLs(environment: [String: String]) -> [URL] {

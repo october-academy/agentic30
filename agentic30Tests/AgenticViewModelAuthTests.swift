@@ -696,6 +696,7 @@ struct AgenticViewModelAuthTests {
                     removedSavedStatePaths: [],
                     removedQmdPaths: ["/tmp/qmd/agentic30.sqlite"],
                     removedWorkspaceAgentic30Paths: [workspaceURL.appendingPathComponent(".agentic30").path],
+                    removedManagedWorkspaceContentPaths: [],
                     removedAppBundlePaths: [],
                     skippedPaths: [],
                     failures: []

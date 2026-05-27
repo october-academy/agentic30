@@ -985,7 +985,7 @@ struct SettingsView: View {
                 Text("Reset Agentic30 on this Mac")
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.88))
-                Text("Clears Agentic30 UserDefaults, Keychain entries, app support, local sessions, caches, Saved State, onboarding state, the Agentic30 QMD index, and .agentic30 folders in known workspaces. Other project files and global Claude/Codex/GWS logins are not deleted.")
+                Text("Clears Agentic30 UserDefaults, Keychain entries, app support, local sessions, caches, Saved State, onboarding state, the Agentic30 QMD index, .agentic30 folders, and Agentic30-managed Day 1 handoff blocks in known workspaces. Other project files and global Claude/Codex/GWS logins are not deleted.")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.48))
                     .fixedSize(horizontal: false, vertical: true)

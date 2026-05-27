@@ -1103,6 +1103,22 @@ struct OpenDesignDayContentTests {
         #expect(cache.state(for: otherWorkspaceKey, totalInterviewSteps: 4).submittedSteps.isEmpty)
     }
 
+    @Test func interactionCacheRemoveAllClearsPersistedDayProgress() {
+        let key = OpenDesignDayInteractionKey(workspaceRoot: "/tmp/project-a", dayNumber: 1)
+        var cache = OpenDesignDayInteractionStateCache()
+        var state = OpenDesignDayInteractionState(totalInterviewSteps: 4)
+        state.acceptMissionForStepFlow()
+        state.recordSubmittedChoice(stepID: 1, choiceID: 1)
+        cache.update(state, for: key, totalInterviewSteps: 4)
+
+        cache.removeAll()
+
+        let restored = cache.state(for: key, totalInterviewSteps: 4)
+        #expect(!restored.missionAccepted)
+        #expect(restored.submittedSteps.isEmpty)
+        #expect(restored.normalizedActiveStepID == 0)
+    }
+
     @Test func interactionStateSynchronizationDropsOutOfRangeStepData() {
         var state = OpenDesignDayInteractionState(totalInterviewSteps: 4)
         state.acceptMissionForStepFlow()
