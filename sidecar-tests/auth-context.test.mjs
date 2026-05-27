@@ -23,6 +23,8 @@ test("auth context exposes tokens only through child process env", () => {
 
   assert.equal(summary.authenticated, true);
   assert.equal(summary.email, "founder@example.com");
+  assert.equal(summary.accessToken, undefined);
+  assert.equal(summary.refreshToken, undefined);
   assert.deepEqual(buildAuthEnv(), {
     AGENTIC30_WEB_BASE_URL: "https://agentic30.app",
     AGENTIC30_SUPABASE_ACCESS_TOKEN: "access-secret",
@@ -36,22 +38,84 @@ test("auth context normalizes onboarding context from snake_case payload", () =>
   setAuthContext({
     accessToken: "access-secret",
     onboardingContext: {
+      business_description: "AI assistant for solo founders",
+      current_stage: "First users are active",
+      goal: "Validate one paid user",
       work_mode: "side_project",
       custom_work_mode: "주말마다 고객 인터뷰를 돌리는 중",
       role: "designer",
       project_stage: "pre_revenue",
       isolation_level: "weekly_loop",
+      isolation_levels: ["weekly_loop", "payment_responses"],
+      intake_only_draft: {
+        customer: "최근 가입/문의한 사람",
+        problem: "전환/결제 지연",
+        behavior: "인터뷰 수락",
+      },
       completed_at: "2026-05-08T00:00:00Z",
     },
   });
 
   assert.deepEqual(getAuthContextSummary().onboardingContext, {
+    businessDescription: "AI assistant for solo founders",
+    currentStage: "First users are active",
+    goal: "Validate one paid user",
     workMode: "side_project",
     customWorkMode: "주말마다 고객 인터뷰를 돌리는 중",
     role: "designer",
     projectStage: "pre_revenue",
     isolationLevel: "weekly_loop",
+    isolationLevels: ["weekly_loop", "payment_responses"],
     completedAt: "2026-05-08T00:00:00Z",
+  });
+});
+
+test("auth context accepts comma-delimited isolation levels and clears memory state", () => {
+  clearAuthContext();
+  setAuthContext({
+    accessToken: "access-secret",
+    onboardingContext: {
+      businessDescription: "Agentic30",
+      currentStage: "Building",
+      goal: "Find ICP",
+      workMode: "full_time_solo",
+      role: "developer",
+      projectStage: "building",
+      isolationLevel: "project_folder",
+      isolationLevels: "project_folder,work_log",
+      completedAt: "2026-05-08T00:00:00Z",
+    },
+  });
+
+  assert.deepEqual(getAuthContextSummary().onboardingContext?.isolationLevels, [
+    "project_folder",
+    "work_log",
+  ]);
+
+  clearAuthContext();
+  assert.deepEqual(getAuthContextSummary(), { authenticated: false });
+});
+
+test("auth context preserves freeform custom work mode without structured choices", () => {
+  clearAuthContext();
+  setAuthContext({
+    accessToken: "access-secret",
+    onboardingContext: {
+      custom_work_mode: "주말마다 고객 인터뷰",
+    },
+  });
+
+  assert.deepEqual(getAuthContextSummary().onboardingContext, {
+    businessDescription: "",
+    currentStage: "",
+    goal: "",
+    workMode: "",
+    customWorkMode: "주말마다 고객 인터뷰",
+    role: "",
+    projectStage: "",
+    isolationLevel: "",
+    isolationLevels: [],
+    completedAt: null,
   });
 });
 

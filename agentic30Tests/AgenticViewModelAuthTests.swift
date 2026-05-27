@@ -78,6 +78,11 @@ struct AgenticViewModelAuthTests {
           "role": "developer",
           "project_stage": "building",
           "isolation_level": "project_folder",
+          "intake_only_draft": {
+            "customer": "최근 가입/문의한 사람",
+            "problem": "전환/결제 지연",
+            "behavior": "인터뷰 수락"
+          },
           "completed_at": "2026-05-08T00:00:00Z"
         }
         """.data(using: .utf8)!
@@ -94,24 +99,98 @@ struct AgenticViewModelAuthTests {
 
     @Test @MainActor func onboardingContextEncodesWorkModeForSidecarContract() throws {
         let context = OnboardingContext(
+            businessDescription: "AI assistant for solo founders",
+            currentStage: "First users are active",
+            goal: "Validate one paid user",
             customWorkMode: "주말마다 고객 인터뷰를 돌리는 중",
             workMode: .sideProject,
             role: .designer,
             projectStage: .preRevenue,
             isolationLevel: .weeklyLoop,
+            isolationLevels: [.weeklyLoop, .paymentResponses],
             completedAt: "2026-05-08T00:00:00Z"
         )
 
         let data = try JSONEncoder().encode(context)
         let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let bridgePayload = context.bridgePayload
 
+        #expect(object?["business_description"] as? String == "AI assistant for solo founders")
+        #expect(object?["current_stage"] as? String == "First users are active")
+        #expect(object?["goal"] as? String == "Validate one paid user")
         #expect(object?["work_mode"] as? String == "side_project")
         #expect(object?["custom_work_mode"] as? String == "주말마다 고객 인터뷰를 돌리는 중")
         #expect(object?["role"] as? String == "designer")
         #expect(object?["project_stage"] as? String == "pre_revenue")
         #expect(object?["isolation_level"] as? String == "weekly_loop")
-        #expect(object?["isolation_levels"] as? [String] == ["weekly_loop"])
+        #expect(object?["isolation_levels"] as? [String] == ["payment_responses", "weekly_loop"])
+        #expect(object?["intake_only_draft"] == nil)
         #expect(object?["completed_at"] as? String == "2026-05-08T00:00:00Z")
+        #expect((bridgePayload["business_description"] as? String) == (object?["business_description"] as? String))
+        #expect((bridgePayload["current_stage"] as? String) == (object?["current_stage"] as? String))
+        #expect((bridgePayload["goal"] as? String) == (object?["goal"] as? String))
+        #expect((bridgePayload["custom_work_mode"] as? String) == (object?["custom_work_mode"] as? String))
+        #expect((bridgePayload["work_mode"] as? String) == (object?["work_mode"] as? String))
+        #expect((bridgePayload["role"] as? String) == (object?["role"] as? String))
+        #expect((bridgePayload["project_stage"] as? String) == (object?["project_stage"] as? String))
+        #expect((bridgePayload["isolation_level"] as? String) == (object?["isolation_level"] as? String))
+        #expect((bridgePayload["isolation_levels"] as? [String]) == (object?["isolation_levels"] as? [String]))
+        #expect(bridgePayload["intake_only_draft"] == nil)
+        #expect((bridgePayload["completed_at"] as? String) == (object?["completed_at"] as? String))
+        #expect(!context.assistantSystemPromptFragment.contains("Early start 답변"))
+    }
+
+    @Test @MainActor func submitOnboardingContextPersistsCanonicalContextAndClearsDraftOnly() throws {
+        let productionLegacyProvider = WorkspaceSettings.legacyWorkspaceProvider
+        WorkspaceSettings.legacyWorkspaceProvider = { "" }
+        KeychainHelper.deleteOnboardingContext()
+        UserDefaults.standard.removeObject(forKey: IntakeV2Store.stateDefaultsKey)
+        UserDefaults.standard.removeObject(forKey: IntakeV2Store.legacyStateDefaultsKey)
+        UserDefaults.standard.removeObject(forKey: IntakeV2SourceManager.sourcesDefaultsKey)
+        UserDefaults.standard.removeObject(forKey: IntakeV2SourceManager.legacySourcesDefaultsKey)
+        WorkspaceSettings.clear()
+
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-submit-context-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer {
+            KeychainHelper.deleteOnboardingContext()
+            UserDefaults.standard.removeObject(forKey: IntakeV2Store.stateDefaultsKey)
+            UserDefaults.standard.removeObject(forKey: IntakeV2Store.legacyStateDefaultsKey)
+            UserDefaults.standard.removeObject(forKey: IntakeV2SourceManager.sourcesDefaultsKey)
+            UserDefaults.standard.removeObject(forKey: IntakeV2SourceManager.legacySourcesDefaultsKey)
+            WorkspaceSettings.clear()
+            WorkspaceSettings.legacyWorkspaceProvider = productionLegacyProvider
+            try? FileManager.default.removeItem(at: workspace)
+        }
+
+        UserDefaults.standard.set(Data([0x01]), forKey: IntakeV2Store.stateDefaultsKey)
+        UserDefaults.standard.set(Data([0x02]), forKey: IntakeV2Store.legacyStateDefaultsKey)
+        UserDefaults.standard.set(Data([0x03]), forKey: IntakeV2SourceManager.sourcesDefaultsKey)
+        WorkspaceSettings.store(workspace)
+
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true, activateAppForAuth: {})
+        let context = OnboardingContext(
+            businessDescription: "Agentic30",
+            currentStage: "first users",
+            goal: "validate paid demand",
+            customWorkMode: "하루 1~2시간",
+            workMode: .sideProject,
+            role: .productManager,
+            projectStage: .firstUsers,
+            isolationLevel: .projectFolder,
+            isolationLevels: [.projectFolder, .paymentResponses],
+            completedAt: "2026-05-08T00:00:00Z"
+        )
+
+        viewModel.submitOnboardingContext(context)
+
+        let persisted = try #require(KeychainHelper.loadOnboardingContext())
+        #expect(persisted == context)
+        #expect(UserDefaults.standard.data(forKey: IntakeV2Store.stateDefaultsKey) == nil)
+        #expect(UserDefaults.standard.data(forKey: IntakeV2Store.legacyStateDefaultsKey) == nil)
+        #expect(UserDefaults.standard.data(forKey: IntakeV2SourceManager.sourcesDefaultsKey) == Data([0x03]))
+        #expect(WorkspaceSettings.resolvedURL().path == workspace.path)
     }
 
     @Test @MainActor func onboardingContextPersistsMultipleRecordSources() throws {
@@ -949,6 +1028,199 @@ struct AgenticViewModelAuthTests {
             scanCompletedAt: completed
         )
         #expect(failed.scanElapsed?.chipText(at: start.addingTimeInterval(999)) == "중단 02:07")
+    }
+
+    @Test @MainActor func intakeV2BootLogStateMapsStructuredScanPhase() {
+        let state = IntakeV2BootLogState(
+            isConnected: false,
+            workspaceRoot: "",
+            diagnostics: nil,
+            scanProgressLogs: ["scan.compose · Day 1 질문 세트를 구성 중"],
+            scanProgressSnapshots: [
+                WorkspaceScanProgressSnapshot(
+                    progressText: "scan.compose · Day 1 질문 세트를 구성 중",
+                    stage: "composing",
+                    stepIndex: 3,
+                    totalSteps: 3,
+                    etaSeconds: 10,
+                    foundCount: 4
+                ),
+            ],
+            scanDidComplete: false,
+            scanError: nil,
+            foundArtifactCount: nil,
+            isScanning: true
+        )
+
+        #expect(state.scanPhase.stage == .composing)
+        #expect(state.scanPhase.stepIndex == 3)
+        #expect(state.scanPhase.totalSteps == 3)
+        #expect(state.scanPhase.etaSeconds == 10)
+        #expect(state.scanPhase.foundCount == 4)
+        #expect(state.scanPhase.label == "3/3")
+    }
+
+    @Test @MainActor func intakeV2BootLogStateMapsSequentialStructuredScanPhases() {
+        let cases: [(stage: String, stepIndex: Int, expectedStage: IntakeV2BootLogState.ScanStage, expectedLabel: String)] = [
+            ("local", 1, .local, "1/3"),
+            ("verifying", 2, .verifying, "2/3"),
+            ("composing", 3, .composing, "3/3"),
+            ("merged", 3, .merged, "3/3"),
+        ]
+
+        for item in cases {
+            let progressText = "scan.\(item.stage) · Day 1 scan progress"
+            let state = IntakeV2BootLogState(
+                isConnected: false,
+                workspaceRoot: "",
+                diagnostics: nil,
+                scanProgressLogs: [progressText],
+                scanProgressSnapshots: [
+                    WorkspaceScanProgressSnapshot(
+                        progressText: progressText,
+                        stage: item.stage,
+                        stepIndex: item.stepIndex,
+                        totalSteps: 3
+                    ),
+                ],
+                scanDidComplete: false,
+                scanError: nil,
+                foundArtifactCount: nil,
+                isScanning: true
+            )
+
+            #expect(state.scanPhase.stage == item.expectedStage)
+            #expect(state.scanPhase.stepIndex == item.stepIndex)
+            #expect(state.scanPhase.totalSteps == 3)
+            #expect(state.scanPhase.label == item.expectedLabel)
+        }
+    }
+
+    @Test @MainActor func day1ScanWaitPresentationMapsScanStates() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let running = IntakeV2BootLogState(
+            isConnected: false,
+            workspaceRoot: "",
+            diagnostics: nil,
+            scanProgressLogs: ["scan.local · 로컬 문서 후보를 읽는 중"],
+            scanProgressSnapshots: [
+                WorkspaceScanProgressSnapshot(
+                    progressText: "scan.local · 로컬 문서 후보를 읽는 중",
+                    stage: "local",
+                    stepIndex: 1,
+                    totalSteps: 3
+                ),
+            ],
+            scanDidComplete: false,
+            scanError: nil,
+            foundArtifactCount: nil,
+            isScanning: true,
+            scanStartedAt: start
+        )
+
+        #expect(Day1ScanWaitPresentation(
+            bootLogState: running,
+            hasFolder: true,
+            hasWorkspaceScanResult: false,
+            earlyStartActive: false,
+            earlyStartCompleted: false,
+            now: start.addingTimeInterval(5)
+        ).state == .scanningNormal)
+
+        #expect(Day1ScanWaitPresentation(
+            bootLogState: running,
+            hasFolder: true,
+            hasWorkspaceScanResult: false,
+            earlyStartActive: false,
+            earlyStartCompleted: false,
+            now: start.addingTimeInterval(13)
+        ).state == .earlyStartAvailable)
+
+        #expect(Day1ScanWaitPresentation(
+            bootLogState: running,
+            hasFolder: true,
+            hasWorkspaceScanResult: false,
+            earlyStartActive: false,
+            earlyStartCompleted: false,
+            now: start.addingTimeInterval(50)
+        ).state == .scanningSlow)
+    }
+
+    @Test @MainActor func earlyStartCompletionWaitsForScanResultBeforeDay1Ready() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let running = IntakeV2BootLogState(
+            isConnected: false,
+            workspaceRoot: "",
+            diagnostics: nil,
+            scanProgressLogs: ["scan.verify · 로컬 후보 2개를 Day 1 ICP 근거로 검증 중"],
+            scanDidComplete: false,
+            scanError: nil,
+            foundArtifactCount: nil,
+            isScanning: true,
+            scanStartedAt: start
+        )
+
+        let pending = Day1ScanWaitPresentation(
+            bootLogState: running,
+            hasFolder: true,
+            hasWorkspaceScanResult: false,
+            earlyStartActive: false,
+            earlyStartCompleted: true,
+            now: start.addingTimeInterval(30)
+        )
+        #expect(pending.state == .earlyStartAnsweredScanPending)
+        #expect(!pending.canOpenDay1)
+        #expect(pending.headerTitle(questionCount: 3) == "Day 1 질문 3개를 만드는 중")
+        #expect(pending.primaryCTATitle(questionCount: 3) == "마지막 신호 붙이는 중…")
+
+        let ready = Day1ScanWaitPresentation(
+            bootLogState: running,
+            hasFolder: true,
+            hasWorkspaceScanResult: true,
+            earlyStartActive: false,
+            earlyStartCompleted: true,
+            now: start.addingTimeInterval(31)
+        )
+        #expect(ready.state == .scanMergedReady)
+        #expect(ready.canOpenDay1)
+        #expect(ready.headerTitle(questionCount: 3) == "Day 1 질문 3개가 준비됐어요")
+        #expect(ready.primaryCTATitle(questionCount: 3) == "질문 3개 시작하기 →")
+        #expect(ready.primaryCTAAccessibilityLabel(questionCount: 3) == "질문 3개 시작하기")
+
+        let readyWhileAnswering = Day1ScanWaitPresentation(
+            bootLogState: running,
+            hasFolder: true,
+            hasWorkspaceScanResult: true,
+            earlyStartActive: true,
+            earlyStartCompleted: false,
+            now: start.addingTimeInterval(31)
+        )
+        #expect(readyWhileAnswering.state == .scanMergedReady)
+        #expect(readyWhileAnswering.canOpenDay1)
+
+        let failed = IntakeV2BootLogState(
+            isConnected: false,
+            workspaceRoot: "",
+            diagnostics: nil,
+            scanProgressLogs: ["Workspace scan failed."],
+            scanDidComplete: true,
+            scanError: "Workspace root is not a directory.",
+            foundArtifactCount: nil,
+            isScanning: false,
+            scanStartedAt: start,
+            scanCompletedAt: start.addingTimeInterval(32)
+        )
+        #expect(failed.scanPhase.stage == .failed)
+        let failedPresentation = Day1ScanWaitPresentation(
+            bootLogState: failed,
+            hasFolder: true,
+            hasWorkspaceScanResult: false,
+            earlyStartActive: false,
+            earlyStartCompleted: true,
+            now: start.addingTimeInterval(32)
+        )
+        #expect(failedPresentation.state == .scanFailed)
+        #expect(failedPresentation.headerTitle(questionCount: 3) == "Day 1 질문 3개가 준비됐어요")
     }
 
     @Test @MainActor func startHydratesExplicitWorkspaceBeforeSidecarReady() throws {

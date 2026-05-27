@@ -268,6 +268,21 @@ struct OnboardingContext: Codable, Hashable {
         )
     }
 
+    var bridgePayload: [String: Any] {
+        [
+            "business_description": businessDescription,
+            "current_stage": currentStage,
+            "goal": goal,
+            "custom_work_mode": customWorkMode,
+            "work_mode": workMode.rawValue,
+            "role": role.rawValue,
+            "project_stage": projectStage.rawValue,
+            "isolation_level": isolationLevel.rawValue,
+            "isolation_levels": isolationLevels.map(\.rawValue),
+            "completed_at": completedAt,
+        ]
+    }
+
     /// Builds Assistant system prompt fragment per design doc decision rules R1/R2/R3.
     /// Owner: ContentView Assistant call wrapper. Single source of truth for tone personalization.
     var assistantSystemPromptFragment: String {
@@ -283,7 +298,6 @@ struct OnboardingContext: Codable, Hashable {
         lines.append(
             "유저 컨텍스트: \(workModeContext) · \(role.rawValue) · \(projectStage.rawValue) · \(isolationLevels.map(\.rawValue).joined(separator: ","))."
         )
-
         switch workMode {
         case .fullTimeSolo:
             lines.append("[R0] 전업 1인 개발자 기준으로 실행 강도를 높이고, 30일 안에 증거를 남기는 방향으로 답하세요.")

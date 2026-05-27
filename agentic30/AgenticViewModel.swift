@@ -115,6 +115,31 @@ struct BipNotificationOpenRequest: Identifiable, Equatable, Sendable {
     }
 }
 
+struct WorkspaceScanProgressSnapshot: Equatable {
+    let progressText: String
+    let stage: String?
+    let stepIndex: Int?
+    let totalSteps: Int?
+    let etaSeconds: Int?
+    let foundCount: Int?
+
+    init(
+        progressText: String,
+        stage: String? = nil,
+        stepIndex: Int? = nil,
+        totalSteps: Int? = nil,
+        etaSeconds: Int? = nil,
+        foundCount: Int? = nil
+    ) {
+        self.progressText = progressText
+        self.stage = stage
+        self.stepIndex = stepIndex
+        self.totalSteps = totalSteps
+        self.etaSeconds = etaSeconds
+        self.foundCount = foundCount
+    }
+}
+
 struct IntakeV2BootLogState: Equatable {
     struct Line: Identifiable, Equatable {
         let id: String
@@ -123,11 +148,68 @@ struct IntakeV2BootLogState: Equatable {
         let isActive: Bool
     }
 
+    enum ScanStage: String, Equatable {
+        case local
+        case verifying
+        case composing
+        case merged
+        case failed
+
+        nonisolated var title: String {
+            switch self {
+            case .local:
+                return "폴더 신호 읽기"
+            case .verifying:
+                return "질문 근거 검증"
+            case .composing:
+                return "질문 세트 구성"
+            case .merged:
+                return "Day 1 준비 완료"
+            case .failed:
+                return "scan 중단"
+            }
+        }
+
+        nonisolated var fallbackStepIndex: Int {
+            switch self {
+            case .local:
+                return 1
+            case .verifying:
+                return 2
+            case .composing, .merged, .failed:
+                return 3
+            }
+        }
+
+        nonisolated init?(rawStage: String?) {
+            guard let value = rawStage?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased(),
+                  !value.isEmpty else {
+                return nil
+            }
+            self.init(rawValue: value)
+        }
+    }
+
+    struct ScanPhase: Equatable {
+        let stage: ScanStage
+        let stepIndex: Int
+        let totalSteps: Int
+        let etaSeconds: Int?
+        let foundCount: Int?
+
+        var label: String {
+            "\(stepIndex)/\(totalSteps)"
+        }
+    }
+
     let lines: [Line]
     let scanDidComplete: Bool
     let scanDidFail: Bool
     let foundArtifactCount: Int?
     let scanElapsed: IntakeV2BootLogElapsed?
+    let scanPhase: ScanPhase
 
     static let empty = IntakeV2BootLogState(
         isConnected: false,
@@ -145,6 +227,7 @@ struct IntakeV2BootLogState: Equatable {
         workspaceRoot: String,
         diagnostics: SidecarDiagnostics?,
         scanProgressLogs: [String],
+        scanProgressSnapshots: [WorkspaceScanProgressSnapshot] = [],
         scanDidComplete: Bool,
         scanError: String?,
         foundArtifactCount: Int?,
@@ -187,6 +270,13 @@ struct IntakeV2BootLogState: Equatable {
         self.scanDidComplete = scanDidComplete
         self.scanDidFail = didFail
         self.foundArtifactCount = foundArtifactCount
+        self.scanPhase = Self.scanPhase(
+            snapshots: scanProgressSnapshots,
+            messages: scanProgressLogs,
+            scanDidComplete: scanDidComplete,
+            scanDidFail: didFail,
+            foundArtifactCount: foundArtifactCount
+        )
         if let scanStartedAt, !scanDidComplete {
             self.scanElapsed = IntakeV2BootLogElapsed(
                 status: .running,
@@ -326,11 +416,209 @@ struct IntakeV2BootLogState: Equatable {
         return "local candidates found"
     }
 
+    private nonisolated static func scanPhase(
+        snapshots: [WorkspaceScanProgressSnapshot],
+        messages: [String],
+        scanDidComplete: Bool,
+        scanDidFail: Bool,
+        foundArtifactCount: Int?
+    ) -> ScanPhase {
+        if scanDidFail {
+            let lastSnapshot = snapshots.last
+            return scanPhase(
+                stage: .failed,
+                stepIndex: lastSnapshot?.stepIndex,
+                totalSteps: lastSnapshot?.totalSteps,
+                etaSeconds: nil,
+                foundCount: lastSnapshot?.foundCount ?? foundArtifactCount
+            )
+        }
+
+        if scanDidComplete {
+            return ScanPhase(
+                stage: .merged,
+                stepIndex: 3,
+                totalSteps: 3,
+                etaSeconds: nil,
+                foundCount: foundArtifactCount
+            )
+        }
+
+        if let snapshot = snapshots.last {
+            return scanPhase(
+                stage: ScanStage(rawStage: snapshot.stage) ?? inferredStage(from: snapshot.progressText),
+                stepIndex: snapshot.stepIndex,
+                totalSteps: snapshot.totalSteps,
+                etaSeconds: snapshot.etaSeconds,
+                foundCount: snapshot.foundCount ?? foundArtifactCount
+            )
+        }
+
+        return scanPhase(
+            stage: messages.last.map(inferredStage(from:)) ?? .local,
+            stepIndex: nil,
+            totalSteps: nil,
+            etaSeconds: nil,
+            foundCount: foundArtifactCount
+        )
+    }
+
+    private nonisolated static func scanPhase(
+        stage: ScanStage,
+        stepIndex: Int?,
+        totalSteps: Int?,
+        etaSeconds: Int?,
+        foundCount: Int?
+    ) -> ScanPhase {
+        let total = max(1, totalSteps ?? 3)
+        let step = min(max(1, stepIndex ?? stage.fallbackStepIndex), total)
+        return ScanPhase(
+            stage: stage,
+            stepIndex: step,
+            totalSteps: total,
+            etaSeconds: etaSeconds,
+            foundCount: foundCount
+        )
+    }
+
+    private nonisolated static func inferredStage(from message: String) -> ScanStage {
+        let lowercased = message.lowercased()
+        if lowercased.contains("merged")
+            || lowercased.contains("complete")
+            || lowercased.contains("완료")
+            || lowercased.contains("result") {
+            return .merged
+        }
+        if lowercased.contains("fail")
+            || lowercased.contains("error")
+            || lowercased.contains("중단")
+            || lowercased.contains("실패") {
+            return .failed
+        }
+        if lowercased.contains("compos")
+            || lowercased.contains("질문 세트")
+            || lowercased.contains("선택지")
+            || lowercased.contains("구성") {
+            return .composing
+        }
+        if lowercased.contains("verify")
+            || lowercased.contains("agent")
+            || lowercased.contains("claude")
+            || lowercased.contains("codex")
+            || lowercased.contains("gemini")
+            || lowercased.contains("검증") {
+            return .verifying
+        }
+        return .local
+    }
+
     private nonisolated static func truncateDisplayStatus(_ value: String, maxLength: Int = 44) -> String {
         let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard cleaned.count > maxLength else { return cleaned }
         let endIndex = cleaned.index(cleaned.startIndex, offsetBy: maxLength - 1)
         return "\(cleaned[..<endIndex])…"
+    }
+}
+
+struct Day1ScanWaitPresentation: Equatable {
+    enum State: Equatable {
+        case scanningNormal
+        case scanningSlow
+        case earlyStartAvailable
+        case earlyStartActive
+        case earlyStartAnsweredScanPending
+        case scanMergedReady
+        case scanFailed
+    }
+
+    static let earlyStartUnlockSeconds = 12
+    static let slowScanSeconds = 45
+
+    let state: State
+    let phase: IntakeV2BootLogState.ScanPhase
+    let elapsedSeconds: Int?
+
+    func headerTitle(questionCount: Int = 3) -> String {
+        if canOpenDay1 {
+            return "Day 1 질문 \(questionCount)개가 준비됐어요"
+        }
+        return "Day 1 질문 \(questionCount)개를 만드는 중"
+    }
+
+    func primaryCTATitle(questionCount: Int = 3) -> String {
+        if canOpenDay1 {
+            return "질문 \(questionCount)개 시작하기 →"
+        }
+        if showsMergeWait {
+            return "마지막 신호 붙이는 중…"
+        }
+        return "질문 \(questionCount)개 준비 중…"
+    }
+
+    func primaryCTAAccessibilityLabel(questionCount: Int = 3) -> String {
+        primaryCTATitle(questionCount: questionCount).replacingOccurrences(of: " →", with: "")
+    }
+
+    var canShowEarlyStartCTA: Bool {
+        state == .earlyStartAvailable || state == .scanningSlow
+    }
+
+    var canOpenDay1: Bool {
+        state == .scanMergedReady || state == .scanFailed
+    }
+
+    var showsMergeWait: Bool {
+        state == .earlyStartAnsweredScanPending
+    }
+
+    var showsSlowCopy: Bool {
+        state == .scanningSlow
+    }
+
+    init(
+        bootLogState: IntakeV2BootLogState,
+        hasFolder: Bool,
+        hasWorkspaceScanResult: Bool,
+        earlyStartActive: Bool,
+        earlyStartCompleted: Bool,
+        now: Date
+    ) {
+        phase = bootLogState.scanPhase
+        elapsedSeconds = bootLogState.scanElapsed?.elapsedSeconds(at: now)
+
+        if !hasFolder {
+            state = .scanMergedReady
+            return
+        }
+
+        if bootLogState.scanDidFail {
+            state = .scanFailed
+            return
+        }
+
+        if hasWorkspaceScanResult || bootLogState.scanDidComplete {
+            state = .scanMergedReady
+            return
+        }
+
+        if earlyStartActive && !earlyStartCompleted {
+            state = .earlyStartActive
+            return
+        }
+
+        if earlyStartCompleted {
+            state = .earlyStartAnsweredScanPending
+            return
+        }
+
+        let elapsed = elapsedSeconds ?? 0
+        if elapsed >= Self.slowScanSeconds {
+            state = .scanningSlow
+        } else if elapsed >= Self.earlyStartUnlockSeconds {
+            state = .earlyStartAvailable
+        } else {
+            state = .scanningNormal
+        }
     }
 }
 
@@ -551,6 +839,7 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var isScanning = false
     @Published private(set) var scanProgressMessage = ""
     @Published private(set) var scanProgressLogs: [String] = []
+    @Published private(set) var scanProgressSnapshots: [WorkspaceScanProgressSnapshot] = []
     @Published private(set) var scanStartedAt: Date?
     @Published private(set) var scanCompletedAt: Date?
     @Published var scanResult: WorkspaceScanResult?
@@ -1290,6 +1579,7 @@ final class AgenticViewModel: ObservableObject {
             workspaceRoot: workspaceRoot,
             diagnostics: sidecarDiagnostics,
             scanProgressLogs: scanProgressLogs,
+            scanProgressSnapshots: scanProgressSnapshots,
             scanDidComplete: scanResult != nil,
             scanError: scanResult?.error,
             foundArtifactCount: scanResult?.foundArtifactCount,
@@ -1984,6 +2274,7 @@ final class AgenticViewModel: ObservableObject {
         isScanning = true
         scanProgressMessage = isConnected ? "Preparing workspace scan..." : "Waiting for workspace connection..."
         scanProgressLogs = [scanProgressMessage]
+        scanProgressSnapshots = [WorkspaceScanProgressSnapshot(progressText: scanProgressMessage)]
         scanResult = nil
         PostHogTelemetry.capture("mac_workspace_scan_requested", properties: [
             "workspace_basename": (root as NSString).lastPathComponent,
@@ -2094,19 +2385,42 @@ final class AgenticViewModel: ObservableObject {
         KeychainHelper.syncBipConfigFile(from: settings)
     }
 
-    private func setScanProgress(_ text: String, reset: Bool = false) {
+    private func setScanProgress(
+        _ text: String,
+        reset: Bool = false,
+        stage: String? = nil,
+        stepIndex: Int? = nil,
+        totalSteps: Int? = nil,
+        etaSeconds: Int? = nil,
+        foundCount: Int? = nil
+    ) {
         let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return }
         scanProgressMessage = message
+        let snapshot = WorkspaceScanProgressSnapshot(
+            progressText: message,
+            stage: stage,
+            stepIndex: stepIndex,
+            totalSteps: totalSteps,
+            etaSeconds: etaSeconds,
+            foundCount: foundCount
+        )
         if reset {
             scanProgressLogs = [message]
+            scanProgressSnapshots = [snapshot]
             return
         }
         if scanProgressLogs.last != message {
             scanProgressLogs.append(message)
         }
+        if scanProgressSnapshots.last != snapshot {
+            scanProgressSnapshots.append(snapshot)
+        }
         if scanProgressLogs.count > 24 {
             scanProgressLogs = Array(scanProgressLogs.suffix(24))
+        }
+        if scanProgressSnapshots.count > 24 {
+            scanProgressSnapshots = Array(scanProgressSnapshots.suffix(24))
         }
     }
 
@@ -2883,17 +3197,7 @@ final class AgenticViewModel: ObservableObject {
             "workspaceRoot": WorkspaceSettings.resolvedURL().path,
         ]
         if let onboardingContext {
-            bundle["onboardingContext"] = [
-                "business_description": onboardingContext.businessDescription,
-                "current_stage": onboardingContext.currentStage,
-                "goal": onboardingContext.goal,
-                "custom_work_mode": onboardingContext.customWorkMode,
-                "work_mode": onboardingContext.workMode.rawValue,
-                "role": onboardingContext.role.rawValue,
-                "project_stage": onboardingContext.projectStage.rawValue,
-                "isolation_level": onboardingContext.isolationLevel.rawValue,
-                "isolation_levels": onboardingContext.isolationLevels.map(\.rawValue),
-            ]
+            bundle["onboardingContext"] = onboardingContext.bridgePayload
         }
         if let scanResult {
             var scan: [String: Any] = [:]
@@ -3082,6 +3386,7 @@ final class AgenticViewModel: ObservableObject {
         scanResult = nil
         scanProgressMessage = ""
         scanProgressLogs = []
+        scanProgressSnapshots = []
         clearWorkspaceScanTiming()
         lastError = nil
 
@@ -3147,6 +3452,7 @@ final class AgenticViewModel: ObservableObject {
         onboardingContextStatus = .submitting
         do {
             try KeychainHelper.saveOnboardingContext(context)
+            IntakeV2Store.clearPersistedDraft()
             onboardingContext = context
             onboardingContextStatus = .idle
             PostHogTelemetry.capture("mac_onboarding_context_submitted", properties: [
@@ -3360,18 +3666,7 @@ final class AgenticViewModel: ObservableObject {
             payload["email"] = email
         }
         if let onboardingContext {
-            payload["onboardingContext"] = [
-                "business_description": onboardingContext.businessDescription,
-                "current_stage": onboardingContext.currentStage,
-                "goal": onboardingContext.goal,
-                "custom_work_mode": onboardingContext.customWorkMode,
-                "work_mode": onboardingContext.workMode.rawValue,
-                "role": onboardingContext.role.rawValue,
-                "project_stage": onboardingContext.projectStage.rawValue,
-                "isolation_level": onboardingContext.isolationLevel.rawValue,
-                "isolation_levels": onboardingContext.isolationLevels.map(\.rawValue),
-                "completed_at": onboardingContext.completedAt,
-            ]
+            payload["onboardingContext"] = onboardingContext.bridgePayload
         }
         sidecar.send(payload: payload)
     }
@@ -3623,15 +3918,37 @@ final class AgenticViewModel: ObservableObject {
         case "workspace_scan_started":
             beginWorkspaceScanTiming()
             isScanning = true
-            setScanProgress(event.progressText ?? "Preparing workspace scan...", reset: true)
+            setScanProgress(
+                event.progressText ?? "Preparing workspace scan...",
+                reset: true,
+                stage: event.stage,
+                stepIndex: event.stepIndex,
+                totalSteps: event.totalSteps,
+                etaSeconds: event.etaSeconds,
+                foundCount: event.foundCount
+            )
             scanResult = nil
         case "workspace_scan_progress":
             isScanning = true
-            setScanProgress(event.progressText ?? scanProgressMessage)
+            setScanProgress(
+                event.progressText ?? scanProgressMessage,
+                stage: event.stage,
+                stepIndex: event.stepIndex,
+                totalSteps: event.totalSteps,
+                etaSeconds: event.etaSeconds,
+                foundCount: event.foundCount
+            )
         case "workspace_scan_result":
             finishWorkspaceScanTiming()
             isScanning = false
-            setScanProgress(event.error == nil ? "Workspace scan complete." : "Workspace scan failed.")
+            setScanProgress(
+                event.error == nil ? "Workspace scan complete." : "Workspace scan failed.",
+                stage: event.stage ?? (event.error == nil ? "merged" : "failed"),
+                stepIndex: event.stepIndex ?? 3,
+                totalSteps: event.totalSteps ?? 3,
+                etaSeconds: event.etaSeconds,
+                foundCount: event.foundCount
+            )
             let result = WorkspaceScanResult(
                 icp: event.icp,
                 spec: event.spec,
@@ -3683,7 +4000,13 @@ final class AgenticViewModel: ObservableObject {
                 isScanning = false
                 if event.day1AlignmentPlan?.source == "frontier_ensemble"
                     || event.day1AlignmentPlan?.source == "frontier_single" {
-                    setScanProgress("frontier 선택지 생성 완료")
+                    setScanProgress(
+                        "frontier 선택지 생성 완료",
+                        stage: "merged",
+                        stepIndex: 3,
+                        totalSteps: 3,
+                        foundCount: event.foundCount
+                    )
                 }
                 let result: WorkspaceScanResult
                 if let current = scanResult {
@@ -6174,6 +6497,7 @@ private extension AgenticViewModel {
         isScanning = false
         scanProgressMessage = ""
         scanProgressLogs = []
+        scanProgressSnapshots = []
         clearWorkspaceScanTiming()
         scanResult = nil
         attemptedStartupWorkspaceScanRecoveryRoots = []
@@ -6562,6 +6886,10 @@ struct SidecarEvent: Decodable {
     let sheetRowsRead: Int?
     let docCharsRead: Int?
     let elapsedMs: Int?
+    let stepIndex: Int?
+    let totalSteps: Int?
+    let etaSeconds: Int?
+    let foundCount: Int?
     let phase: String?
     let toolName: String?
     let summary: String?
@@ -6646,6 +6974,10 @@ struct SidecarEvent: Decodable {
         sheetRowsRead: Int?,
         docCharsRead: Int?,
         elapsedMs: Int?,
+        stepIndex: Int? = nil,
+        totalSteps: Int? = nil,
+        etaSeconds: Int? = nil,
+        foundCount: Int? = nil,
         phase: String?,
         toolName: String?,
         summary: String?,
@@ -6724,6 +7056,10 @@ struct SidecarEvent: Decodable {
         self.sheetRowsRead = sheetRowsRead
         self.docCharsRead = docCharsRead
         self.elapsedMs = elapsedMs
+        self.stepIndex = stepIndex
+        self.totalSteps = totalSteps
+        self.etaSeconds = etaSeconds
+        self.foundCount = foundCount
         self.phase = phase
         self.toolName = toolName
         self.summary = summary
@@ -7077,6 +7413,10 @@ extension SidecarEvent {
         case sheetRowsRead
         case docCharsRead
         case elapsedMs
+        case stepIndex
+        case totalSteps
+        case etaSeconds
+        case foundCount
         case phase
         case toolName
         case summary
@@ -7171,6 +7511,10 @@ extension SidecarEvent {
         sheetRowsRead = Self.decodeIfPresent(Int.self, from: container, forKey: .sheetRowsRead)
         docCharsRead = Self.decodeIfPresent(Int.self, from: container, forKey: .docCharsRead)
         elapsedMs = Self.decodeIfPresent(Int.self, from: container, forKey: .elapsedMs)
+        stepIndex = Self.decodeIfPresent(Int.self, from: container, forKey: .stepIndex)
+        totalSteps = Self.decodeIfPresent(Int.self, from: container, forKey: .totalSteps)
+        etaSeconds = Self.decodeIfPresent(Int.self, from: container, forKey: .etaSeconds)
+        foundCount = Self.decodeIfPresent(Int.self, from: container, forKey: .foundCount)
         phase = Self.decodeIfPresent(String.self, from: container, forKey: .phase)
         toolName = Self.decodeIfPresent(String.self, from: container, forKey: .toolName)
         summary = Self.decodeIfPresent(String.self, from: container, forKey: .summary)

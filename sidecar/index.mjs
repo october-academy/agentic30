@@ -1567,6 +1567,10 @@ async function handleClientMessage(socket, payload) {
           type: "workspace_scan_result",
           scanRoot: root,
           error: error.message,
+          stage: "failed",
+          stepIndex: 1,
+          totalSteps: 3,
+          foundCount: 0,
         });
         return;
     }
@@ -1574,6 +1578,10 @@ async function handleClientMessage(socket, payload) {
         type: "workspace_scan_started",
         scanRoot: root,
         progressText: "scan.local · Day 1 ICP 질문 신호를 읽는 중",
+        stage: "local",
+        stepIndex: 1,
+        totalSteps: 3,
+        etaSeconds: 45,
     });
       runWorkspaceScan(root, {
         sessionId: payload.sessionId,
@@ -6401,7 +6409,12 @@ async function recoverStalledIddInterviewIfNeeded(sessionId, { provider = "codex
 
 async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) {
   try {
-    broadcastWorkspaceScanProgress(scanRoot, "scan.local · 로컬 문서 후보를 읽는 중");
+    broadcastWorkspaceScanProgress(scanRoot, "scan.local · 로컬 문서 후보를 읽는 중", {
+      stage: "local",
+      stepIndex: 1,
+      totalSteps: 3,
+      etaSeconds: 45,
+    });
     const localResult = await findWorkspaceDocsLocally(scanRoot);
     // Stage-3 deterministic local signals — git activity, project shape,
     // runway hints. Pure read; absorbs all errors so a non-git folder still
@@ -6435,6 +6448,24 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
         agent_result_count: 0,
         provider_verification_skipped: true,
       });
+      broadcastWorkspaceScanProgress(
+        scanRoot,
+        `scan.verify · 로컬 후보 ${localFoundCount}개를 Day 1 ICP 근거로 확인 중`,
+        {
+          stage: "verifying",
+          stepIndex: 2,
+          totalSteps: 3,
+          etaSeconds: 20,
+          foundCount: localFoundCount,
+        },
+      );
+      broadcastWorkspaceScanProgress(scanRoot, "scan.compose · Day 1 질문 세트를 구성 중", {
+        stage: "composing",
+        stepIndex: 3,
+        totalSteps: 3,
+        etaSeconds: 10,
+        foundCount: localFoundCount,
+      });
       const day1AlignmentPlan = await generateDay1AlignmentPlan({
         workspaceRoot: scanRoot,
         scanResult: localResult,
@@ -6452,6 +6483,12 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
         reason: "workspace_scan",
         scanResult: localResult,
         onboardingHypothesis: localOnboardingHypothesis,
+      });
+      broadcastWorkspaceScanProgress(scanRoot, "scan.merged · 폴더 신호를 Day 1 질문 세트에 붙였습니다", {
+        stage: "merged",
+        stepIndex: 3,
+        totalSteps: 3,
+        foundCount: localFoundCount,
       });
       broadcast({
         type: "project_context_updated",
@@ -6487,6 +6524,13 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
       localFoundCount > 0
         ? `scan.verify · 로컬 후보 ${localFoundCount}개를 Day 1 ICP 근거로 검증 중`
         : "scan.agent · 로컬 후보가 부족해 workspace 맥락을 확인 중",
+      {
+        stage: "verifying",
+        stepIndex: 2,
+        totalSteps: 3,
+        etaSeconds: 30,
+        foundCount: localFoundCount,
+      },
     );
     const agentResults = await Promise.allSettled([
       runWorkspaceScanAgent({
@@ -6530,6 +6574,13 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
       onboarding_hypothesis_confidence: onboardingHypothesis.confidence,
       agent_result_count: parsedAgentResults.length,
     });
+    broadcastWorkspaceScanProgress(scanRoot, "scan.compose · Day 1 질문 세트를 구성 중", {
+      stage: "composing",
+      stepIndex: 3,
+      totalSteps: 3,
+      etaSeconds: 10,
+      foundCount,
+    });
     const day1AlignmentPlan = await generateDay1AlignmentPlan({
       workspaceRoot: scanRoot,
       scanResult: merged,
@@ -6547,6 +6598,12 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
       reason: "workspace_scan",
       scanResult: merged,
       onboardingHypothesis,
+    });
+    broadcastWorkspaceScanProgress(scanRoot, "scan.merged · 폴더 신호를 Day 1 질문 세트에 붙였습니다", {
+      stage: "merged",
+      stepIndex: 3,
+      totalSteps: 3,
+      foundCount,
     });
     broadcast({
       type: "project_context_updated",
@@ -6585,6 +6642,10 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
       type: "workspace_scan_result",
       scanRoot,
       error: formatError(error),
+      stage: "failed",
+      stepIndex: 3,
+      totalSteps: 3,
+      foundCount: 0,
     });
   }
 }
@@ -6641,7 +6702,11 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
   const timeout = setTimeout(() => abortController.abort(), 45_000);
   let responseText = "";
   const providerLabel = workspaceScanProviderLabel(provider, model);
-  broadcastWorkspaceScanProgress(scanRoot, `scan.agent · ${providerLabel}가 질문 근거를 확인 중`);
+  broadcastWorkspaceScanProgress(scanRoot, `scan.agent · ${providerLabel}가 질문 근거를 확인 중`, {
+    stage: "verifying",
+    stepIndex: 2,
+    totalSteps: 3,
+  });
   const scanPrompt = [
     "Scan the current workspace for these project documents and return only JSON.",
     "Find the best relative path for each role:",
@@ -6699,7 +6764,11 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
       onToolEvent: (event) => {
         const summary = formatWorkspaceScanToolEvent(event);
         if (summary) {
-          broadcastWorkspaceScanProgress(scanRoot, `${providerLabel}: ${summary}`);
+          broadcastWorkspaceScanProgress(scanRoot, `${providerLabel}: ${summary}`, {
+            stage: "verifying",
+            stepIndex: 2,
+            totalSteps: 3,
+          });
         }
       },
     });
@@ -6712,6 +6781,12 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
     broadcastWorkspaceScanProgress(
       scanRoot,
       `scan.agent · ${providerLabel} 완료 (${foundCount}개 근거)`,
+      {
+        stage: "verifying",
+        stepIndex: 2,
+        totalSteps: 3,
+        foundCount,
+      },
     );
     return result;
   } catch (error) {
@@ -6730,14 +6805,23 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
 function broadcastWorkspaceScanAgentOutput(scanRoot, providerLabel, text) {
   const summary = formatWorkspaceScanAgentText(text);
   if (!summary) return;
-  broadcastWorkspaceScanProgress(scanRoot, `${providerLabel}: ${summary}`);
+  broadcastWorkspaceScanProgress(scanRoot, `${providerLabel}: ${summary}`, {
+    stage: "verifying",
+    stepIndex: 2,
+    totalSteps: 3,
+  });
 }
 
-function broadcastWorkspaceScanProgress(scanRoot, progressText) {
+function broadcastWorkspaceScanProgress(scanRoot, progressText, progress = {}) {
   broadcast({
     type: "workspace_scan_progress",
     scanRoot,
     progressText,
+    stage: progress.stage || undefined,
+    stepIndex: Number.isFinite(progress.stepIndex) ? progress.stepIndex : undefined,
+    totalSteps: Number.isFinite(progress.totalSteps) ? progress.totalSteps : undefined,
+    etaSeconds: Number.isFinite(progress.etaSeconds) ? progress.etaSeconds : undefined,
+    foundCount: Number.isFinite(progress.foundCount) ? progress.foundCount : undefined,
   });
 }
 

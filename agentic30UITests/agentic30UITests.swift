@@ -211,8 +211,11 @@ final class agentic30UITests: XCTestCase {
         let executeButton = elementWithIdentifier(in: app, "intakeV2.executeButton")
         let firstDecisionCard = elementWithIdentifier(in: app, "intakeV2.firstDecisionCard")
         let todoListWindow = elementWithIdentifier(in: app, "intakeV2.todoListWindow")
+        let scanPreview = elementWithIdentifier(in: app, "intakeV2.scanPreview")
         let day1ReadyHandoff = elementWithIdentifier(in: app, "intakeV2.day1ReadyHandoff")
+        let bootLogDetails = elementWithIdentifier(in: app, "intakeV2.bootLogDetails")
         let elapsedChip = elementWithIdentifier(in: app, "intakeV2.bootLog.elapsed")
+        XCTAssertTrue(scanPreview.waitForExistence(timeout: 5))
         XCTAssertTrue(bootLog.waitForExistence(timeout: 5))
         XCTAssertTrue(elapsedChip.waitForExistence(timeout: 5))
         XCTAssertTrue(
@@ -224,17 +227,19 @@ final class agentic30UITests: XCTestCase {
         assertBootLogLayoutStableUntilDecisionReady(
             bootLog: bootLog,
             baselineFrame: bootLogFrameBeforeDecision,
-            readyElement: day1ReadyHandoff
+            readyElement: openInbox,
+            timeout: 30
         )
-        XCTAssertTrue(day1ReadyHandoff.waitForExistence(timeout: 30))
-        XCTAssertTrue(elapsedChip.exists)
-        XCTAssertTrue(elapsedChip.label.contains("스캔 완료 시간") || elapsedChip.label.contains("스캔 중단 시간"))
-        assertBootLogLayoutStable(bootLog: bootLog, baselineFrame: bootLogFrameBeforeDecision)
+        XCTAssertTrue(day1ReadyHandoff.waitForExistence(timeout: 5))
+        XCTAssertTrue(bootLogDetails.waitForExistence(timeout: 5))
+        XCTAssertLessThan(day1ReadyHandoff.frame.minY, bootLogDetails.frame.minY)
+        XCTAssertFalse(scanPreview.exists)
+        XCTAssertFalse(bootLog.exists)
         XCTAssertTrue(openInbox.waitForExistence(timeout: 5))
         XCTAssertFalse(executeButton.exists)
         XCTAssertFalse(firstDecisionCard.exists)
         XCTAssertFalse(todoListWindow.exists)
-        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "intakeV2.openInboxButton", containing: "Open inbox", timeout: 10))
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "intakeV2.openInboxButton", containing: "시작하기", timeout: 10))
         XCTAssertTrue(waitUntilEnabled(openInbox, timeout: 5))
         openInbox.click()
         XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.shell"].waitForExistence(timeout: 30))
@@ -289,7 +294,11 @@ final class agentic30UITests: XCTestCase {
         XCTAssertFalse(button(in: app, matching: ["Continue →", "Continue"]).exists)
         clickCenter(of: buttonContaining(in: app, text: "나중에 폴더 선택"))
 
-        XCTAssertTrue(app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10))
+        if !app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10) {
+            attachText(app.debugDescription, named: "Intake V2 source step missing after folder skip")
+            XCTFail("Source connection step should appear after skipping folder selection.")
+            return
+        }
         assertIntakeProgress(in: app, current: 7)
         let representativeMainGridSources: [(label: String, identifier: String)] = [
             ("GitHub", "intakeV2.source.github"),
@@ -313,24 +322,126 @@ final class agentic30UITests: XCTestCase {
         clickCenter(of: button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"]))
 
         assertIntakeProgress(in: app, current: 8, timeout: 10)
+        let openInbox = elementWithIdentifier(in: app, "intakeV2.openInboxButton")
         let day1ReadyHandoff = elementWithIdentifier(in: app, "intakeV2.day1ReadyHandoff")
-        XCTAssertTrue(day1ReadyHandoff.waitForExistence(timeout: 30))
+        XCTAssertTrue(waitUntilEnabled(openInbox, timeout: 30))
+        XCTAssertTrue(day1ReadyHandoff.waitForExistence(timeout: 5))
         let renderedTree = app.debugDescription
-        XCTAssertTrue(renderedTree.contains("폴더 없이 시작합니다"))
+        XCTAssertTrue(renderedTree.contains("질문 3개가 준비됐어요"))
+        XCTAssertTrue(renderedTree.contains("기본 질문 3개가 준비됐습니다"))
         XCTAssertFalse(renderedTree.contains("kernel.init"))
         XCTAssertFalse(renderedTree.contains("signals.detect"))
         XCTAssertFalse(renderedTree.contains("context.read (no folder)"))
         XCTAssertFalse(renderedTree.contains("intake-only"))
         XCTAssertFalse(renderedTree.contains("당신의 폴더를 읽고"))
-        let openInbox = elementWithIdentifier(in: app, "intakeV2.openInboxButton")
         XCTAssertTrue(openInbox.exists)
         XCTAssertTrue(openInbox.isEnabled)
-        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "intakeV2.openInboxButton", containing: "Open inbox", timeout: 5))
+        XCTAssertLessThanOrEqual(openInbox.frame.maxX, day1ReadyHandoff.frame.maxX + 2)
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "intakeV2.openInboxButton", containing: "질문 3개 시작하기", timeout: 5))
+        XCTAssertFalse(elementWithIdentifier(in: app, "intakeV2.bootLogDetails").exists)
         XCTAssertFalse(elementWithIdentifier(in: app, "intakeV2.bootLog.elapsed").exists)
         XCTAssertFalse(elementWithIdentifier(in: app, "intakeV2.executeButton").exists)
         XCTAssertFalse(elementWithIdentifier(in: app, "intakeV2.firstDecisionCard").exists)
         XCTAssertFalse(elementWithIdentifier(in: app, "intakeV2.todoListWindow").exists)
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
+    }
+
+    @MainActor
+    func testIntakeV2EarlyStartCTAStaysInBodyAndExpandsWhileScanWaits() throws {
+        let runID = UUID().uuidString
+        let tempRoot = FileManager.default.temporaryDirectory
+        let workspacePath = tempRoot
+            .appendingPathComponent("agentic30-ui-intake-early-start-workspace-\(runID)", isDirectory: true)
+            .path
+        let appSupportPath = tempRoot
+            .appendingPathComponent("agentic30-ui-intake-early-start-app-\(runID)", isDirectory: true)
+            .path
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+        try FileManager.default.createDirectory(
+            atPath: workspacePath,
+            withIntermediateDirectories: true
+        )
+        try "Agentic30 UI early start fixture\n".write(
+            toFile: "\(workspacePath)/README.md",
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-picker-path=\(workspacePath)",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        let bootCards = app.groups["intakeV2.boot.cards"]
+        if app.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 3) {
+            advanceOnboardingIntroToContext(in: app)
+        } else if bootCards.waitForExistence(timeout: 3) || elementWithIdentifier(in: app, "intakeV2.boot.cards").exists {
+            clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
+        }
+
+        if !app.staticTexts["지금 하루를 가장 많이 쓰는 역할은 무엇인가요?"].waitForExistence(timeout: 10),
+           bootCards.exists {
+            clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
+        }
+        XCTAssertTrue(app.staticTexts["지금 하루를 가장 많이 쓰는 역할은 무엇인가요?"].waitForExistence(timeout: 5))
+        clickCenter(of: buttonContaining(in: app, text: "개발자"))
+        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        XCTAssertTrue(app.staticTexts["지금 가장 큰 막힘은 무엇인가요?"].waitForExistence(timeout: 5))
+        clickCenter(of: buttonContaining(in: app, text: "첫 사용자를 찾지 못하고 있다"))
+        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        XCTAssertTrue(app.staticTexts["하루에 얼마나 시간을 쓸 수 있나요?"].waitForExistence(timeout: 5))
+        clickCenter(of: buttonContaining(in: app, text: "전업으로 6시간 이상"))
+        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        XCTAssertTrue(app.staticTexts["이미 가진 기록이 있나요?"].waitForExistence(timeout: 5))
+        clickCenter(of: buttonContaining(in: app, text: "프로젝트 일지"))
+        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        XCTAssertTrue(app.staticTexts["첫 결정을 만들 프로젝트 폴더를 선택할까요?"].waitForExistence(timeout: 5))
+        clickCenter(of: buttonContaining(in: app, text: "폴더 선택하기"))
+        XCTAssertTrue(buttonContaining(in: app, text: "다른 폴더 선택").waitForExistence(timeout: 3))
+        clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
+        XCTAssertTrue(app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10))
+        clickCenter(of: button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"]))
+
+        assertIntakeProgress(in: app, current: 8, timeout: 10)
+        let bootLog = elementWithIdentifier(in: app, "intakeV2.bootLog")
+        let openInbox = elementWithIdentifier(in: app, "intakeV2.openInboxButton")
+        XCTAssertTrue(bootLog.waitForExistence(timeout: 5))
+        XCTAssertTrue(openInbox.waitForExistence(timeout: 5))
+        XCTAssertFalse(openInbox.isEnabled)
+        XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
+        XCTAssertTrue(app.debugDescription.contains("질문 3개 준비 중"))
+
+        let earlyStartButton = elementWithIdentifier(in: app, "intakeV2.earlyStartButton")
+        XCTAssertTrue(earlyStartButton.waitForExistence(timeout: 16))
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "intakeV2.earlyStartButton", containing: "3개 질문 먼저 답하기", timeout: 2))
+        XCTAssertLessThan(earlyStartButton.frame.maxY, bootLog.frame.minY)
+        XCTAssertGreaterThan(abs(earlyStartButton.frame.midY - openInbox.frame.midY), 80)
+        XCTAssertFalse(app.debugDescription.contains("intake 답변으로 먼저 시작하기"))
+
+        let openInboxFrameBeforeExpand = openInbox.frame
+        clickCenter(of: earlyStartButton)
+        let earlyStartQuestions = elementWithIdentifier(in: app, "intakeV2.earlyStartQuestions")
+        XCTAssertTrue(earlyStartQuestions.waitForExistence(timeout: 3))
+        XCTAssertFalse(earlyStartButton.exists)
+        XCTAssertLessThan(earlyStartQuestions.frame.maxY, bootLog.frame.minY)
+        XCTAssertFalse(openInbox.isEnabled)
+        XCTAssertEqual(openInbox.frame.maxX, openInboxFrameBeforeExpand.maxX, accuracy: 2.0)
+        XCTAssertEqual(openInbox.frame.midY, openInboxFrameBeforeExpand.midY, accuracy: 2.0)
     }
 
     @MainActor
@@ -2409,14 +2520,20 @@ final class agentic30UITests: XCTestCase {
     ) {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
+            if readyElement.exists && readyElement.isEnabled {
+                return
+            }
             RunLoop.current.run(until: Date().addingTimeInterval(0.35))
+            if readyElement.exists && readyElement.isEnabled {
+                return
+            }
             assertBootLogLayoutStable(
                 bootLog: bootLog,
                 baselineFrame: baselineFrame,
                 file: file,
                 line: line
             )
-        } while Date() < deadline && !readyElement.exists
+        } while Date() < deadline && !(readyElement.exists && readyElement.isEnabled)
     }
 
     @MainActor

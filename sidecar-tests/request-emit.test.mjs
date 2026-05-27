@@ -31,6 +31,51 @@ test("workspace setup request_emit envelopes are host-routed and completion wait
     assertRequestEmitEnvelope(started, "workspace_setup_started");
 
     const scanResult = await waitForEvent(ws.events, (event) => event.type === "workspace_scan_result");
+    const scanStarted = ws.events.find((event) => event.type === "workspace_scan_started");
+    assert.equal(scanStarted?.stage, "local");
+    assert.equal(scanStarted?.stepIndex, 1);
+    assert.equal(scanStarted?.totalSteps, 3);
+    const scanStartedIndex = ws.events.findIndex((event) => event === scanStarted);
+    const verifyingIndex = ws.events.findIndex((event) =>
+      event.type === "workspace_scan_progress"
+        && event.stage === "verifying"
+        && event.stepIndex === 2
+        && event.totalSteps === 3
+        && event.foundCount >= 2
+    );
+    const composingIndex = ws.events.findIndex((event) =>
+      event.type === "workspace_scan_progress"
+        && event.stage === "composing"
+        && event.stepIndex === 3
+        && event.totalSteps === 3
+    );
+    assert.notEqual(verifyingIndex, -1, "local-only scan should emit structured verifying progress");
+    assert.notEqual(composingIndex, -1, "scan_workspace should emit structured composing progress");
+    assert.ok(
+      scanStartedIndex < verifyingIndex && verifyingIndex < composingIndex,
+      "local-only scan progress should move from 1/3 to 2/3 to 3/3",
+    );
+    assert.equal(
+      ws.events.some((event) =>
+        event.type === "workspace_scan_progress"
+          && event.stage === "composing"
+          && event.stepIndex === 3
+          && event.totalSteps === 3
+      ),
+      true,
+      "scan_workspace should emit structured composing progress",
+    );
+    assert.equal(
+      ws.events.some((event) =>
+        event.type === "workspace_scan_progress"
+          && event.stage === "merged"
+          && event.stepIndex === 3
+          && event.totalSteps === 3
+          && event.foundCount >= 2
+      ),
+      true,
+      "scan_workspace should emit structured merged progress with foundCount",
+    );
     assert.equal(scanResult.day1Context, undefined);
     assert.equal(scanResult.composedOpening, undefined);
     assert.equal(scanResult.day1AlignmentPlan?.schemaVersion, 1);
@@ -96,6 +141,12 @@ test("workspace setup failures use the same request_emit envelope shape", async 
       root: missingRoot,
       prompt: "where are the docs paths?",
     }));
+
+    const scanResult = await waitForEvent(ws.events, (event) => event.type === "workspace_scan_result");
+    assert.equal(scanResult.stage, "failed");
+    assert.equal(scanResult.stepIndex, 1);
+    assert.equal(scanResult.totalSteps, 3);
+    assert.equal(scanResult.foundCount, 0);
 
     const failed = await waitForEvent(ws.events, (event) =>
       event.type === "request_emit" && event.event === "workspace_setup_failed",

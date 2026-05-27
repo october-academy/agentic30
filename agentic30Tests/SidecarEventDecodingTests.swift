@@ -161,6 +161,32 @@ struct SidecarEventDecodingTests {
         #expect(event.sessions == nil)
     }
 
+    @MainActor @Test func decodesWorkspaceScanProgressStructuredFields() throws {
+        let payload = """
+        {
+          "type": "workspace_scan_progress",
+          "scanRoot": "/tmp/workspace",
+          "progressText": "scan.compose · Day 1 질문 세트를 구성 중",
+          "stage": "composing",
+          "stepIndex": 3,
+          "totalSteps": 3,
+          "etaSeconds": 10,
+          "foundCount": 4
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "workspace_scan_progress")
+        #expect(event.scanRoot == "/tmp/workspace")
+        #expect(event.progressText == "scan.compose · Day 1 질문 세트를 구성 중")
+        #expect(event.stage == "composing")
+        #expect(event.stepIndex == 3)
+        #expect(event.totalSteps == 3)
+        #expect(event.etaSeconds == 10)
+        #expect(event.foundCount == 4)
+    }
+
     @MainActor @Test func decodesRubricQuarantineListPayload() throws {
         // R6 / CCG-Codex: protocol drift safety net for the quarantine list
         // wire shape. If sidecar emit shape changes, this test catches the
@@ -635,7 +661,11 @@ struct SidecarEventDecodingTests {
         {
           "type": "workspace_scan_result",
           "scanRoot": "/Users/october/prj/myapp",
-          "error": "Agent could not identify documents in this workspace."
+          "error": "Agent could not identify documents in this workspace.",
+          "stage": "failed",
+          "stepIndex": 2,
+          "totalSteps": 3,
+          "foundCount": 0
         }
         """
 
@@ -643,6 +673,10 @@ struct SidecarEventDecodingTests {
 
         #expect(event.type == "workspace_scan_result")
         #expect(event.error == "Agent could not identify documents in this workspace.")
+        #expect(event.stage == "failed")
+        #expect(event.stepIndex == 2)
+        #expect(event.totalSteps == 3)
+        #expect(event.foundCount == 0)
         #expect(event.icp == nil)
         #expect(event.goal == nil)
     }

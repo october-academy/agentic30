@@ -192,10 +192,14 @@ struct ContentView: View {
 
     @ViewBuilder
     private func openDesignDaySurface(day: AgenticCurriculumDay, session: ChatSession?) -> some View {
-        let day1Content = OpenDesignDayContent.personalizedIfAvailable(
+        let personalizedDay1Content = OpenDesignDayContent.personalizedIfAvailable(
             from: viewModel.scanResult?.day1AlignmentPlan,
             fallback: viewModel.scanResult?.day1IcpPlan
         )
+        let shouldUseIntakeOnlyDay1 = day.day == 1
+            && !viewModel.isScanning
+            && (viewModel.workspaceRoot.isEmpty || viewModel.scanResult?.error?.nonEmpty != nil)
+        let day1Content = personalizedDay1Content ?? (shouldUseIntakeOnlyDay1 ? OpenDesignDayContent.day1 : nil)
         let resolvedContent: OpenDesignDayContent? = (day.day == 2 ? OpenDesignDayContent.day2 : day1Content)?
             .applyingFoundationProgress(viewModel.foundationProgressState, selectedDay: day.day)
             .lockingDaysAfterSecond

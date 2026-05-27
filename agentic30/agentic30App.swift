@@ -38,7 +38,7 @@ struct agentic30App: App {
                 )
             }
         }
-        .defaultSize(width: 1180, height: 760)
+        .defaultSize(width: 1360, height: 820)
         .windowResizability(.contentMinSize)
         .defaultLaunchBehavior(CommandLine.arguments.contains { $0.hasPrefix("--ui-testing") } ? .presented : .automatic)
         .commands {

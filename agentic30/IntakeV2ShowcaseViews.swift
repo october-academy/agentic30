@@ -1819,8 +1819,48 @@ struct IntakeV2ReadyAnalyzeView: View {
     @State private var showExecuteNudge: Bool = false
     @State private var firstDecisionExpanded: Bool = true
     @State private var todoGenerationTask: Task<Void, Never>?
-    @State private var didNotifyAnalyzeComplete: Bool = false
+    @State private var earlyStartMode: EarlyStartMode = .idle
+    @State private var didTrackScanWaitViewed: Bool = false
+    @State private var didTrackEarlyStartShown: Bool = false
+    @State private var didTrackMergeWaitViewed: Bool = false
+    @State private var didTrackMergeCompleted: Bool = false
+    @State private var showBootLogDetails: Bool = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AccessibilityFocusState private var primaryCTAFocused: Bool
+
+    private enum EarlyStartMode: Equatable {
+        case idle
+        case active
+        case answered
+    }
+
+    private struct EarlyStartQuestion: Identifiable, Equatable {
+        let id: String
+        let title: String
+        let prompt: String
+        let options: [String]
+    }
+
+    private static let earlyStartQuestions: [EarlyStartQuestion] = [
+        EarlyStartQuestion(
+            id: "customer",
+            title: "고객",
+            prompt: "Day 1에서 먼저 확인할 고객 후보는 누구인가요?",
+            options: ["최근 가입/문의한 사람", "문제를 공개적으로 말한 사람", "직접 연락 가능한 1명"]
+        ),
+        EarlyStartQuestion(
+            id: "problem",
+            title: "문제",
+            prompt: "그 고객에게서 가장 먼저 확인할 문제 신호는 무엇인가요?",
+            options: ["반복 수작업", "전환/결제 지연", "기존 도구 조합의 한계"]
+        ),
+        EarlyStartQuestion(
+            id: "behavior",
+            title: "확인할 행동",
+            prompt: "오늘 확인해야 하는 실제 행동은 무엇인가요?",
+            options: ["인터뷰 수락", "대안/예산 언급", "테스트 링크 실행"]
+        ),
+    ]
 
     private enum InboxCTAState: Equatable {
         case preparingDecision
@@ -1838,51 +1878,31 @@ struct IntakeV2ReadyAnalyzeView: View {
     }
 
     var body: some View {
-        IntakeV2PinnedStepScaffold { _ in
-            VStack(alignment: .leading, spacing: 22) {
-                IntakeV2ProgressReservedSpace()
-
-                VStack(alignment: .leading, spacing: 22) {
-                    IntakeV2Header(
-                        title: readyTitle,
-                        subtitle: readySubtitle
-                    )
-
-                    terminalBox
-
-                    if analysisReady {
-                        intakeReadyHandoff
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .transition(.opacity)
-                    }
+        TimelineView(.periodic(from: Date(), by: 1)) { context in
+            content(at: context.date)
+                .onAppear {
+                    trackScanWaitViewedIfNeeded()
+                    trackPresentationMilestonesIfNeeded(scanWaitPresentation(at: context.date))
                 }
-                .frame(maxWidth: 880, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        } footer: { _ in
-            IntakeV2Footer(
-                backDisabled: false,
-                nextTitle: inboxFooterTitle,
-                nextEnabled: inboxCTAState == .ready,
-                nextLoading: inboxCTAState != .ready,
-                nextAccessibilityIdentifier: "intakeV2.openInboxButton",
-                onBack: onBack,
-                onNext: handleInboxCTA
-            )
+                .onChange(of: scanWaitPresentation(at: context.date).state) { _, _ in
+                    trackPresentationMilestonesIfNeeded(scanWaitPresentation(at: context.date))
+                }
         }
         .onAppear {
             synchronizeDecisionWithBootState()
-            if analysisReady {
-                didNotifyAnalyzeComplete = true
-            }
+            synchronizeEarlyStartModeWithStoredAnswers()
         }
         .onChange(of: bootLogState) { _, _ in
             synchronizeDecisionWithBootState()
-            notifyAnalyzeCompleteIfReady()
+            trackPresentationMilestonesIfNeeded(scanWaitPresentation(at: Date()))
         }
         .onChange(of: workspaceScanResult) { _, _ in
             synchronizeDecisionWithBootState()
-            notifyAnalyzeCompleteIfReady()
+            trackPresentationMilestonesIfNeeded(scanWaitPresentation(at: Date()))
+        }
+        .onChange(of: store.earlyStartAnswers) { _, _ in
+            synchronizeEarlyStartModeWithStoredAnswers()
+            trackPresentationMilestonesIfNeeded(scanWaitPresentation(at: Date()))
         }
         .onDisappear {
             todoGenerationTask?.cancel()
@@ -1890,99 +1910,653 @@ struct IntakeV2ReadyAnalyzeView: View {
         }
     }
 
-    private func notifyAnalyzeCompleteIfReady() {
-        guard analysisReady, !didNotifyAnalyzeComplete else { return }
-        didNotifyAnalyzeComplete = true
-        Task { await deliverAnalyzeCompleteNotification() }
+    @ViewBuilder
+    private func content(at now: Date) -> some View {
+        let presentation = scanWaitPresentation(at: now)
+
+        IntakeV2PinnedStepScaffold { _ in
+            VStack(alignment: .leading, spacing: 18) {
+                IntakeV2ProgressReservedSpace()
+
+                VStack(alignment: .leading, spacing: 18) {
+                    IntakeV2Header(
+                        title: readyTitle(for: presentation),
+                        subtitle: readySubtitle(for: presentation)
+                    )
+
+                    if presentation.canOpenDay1 {
+                        day1ReadySummaryCard(presentation)
+                            .transition(readySummaryTransition)
+
+                        if store.folderURL != nil {
+                            completedBootLogDetails
+                                .transition(.opacity)
+                        }
+                    } else {
+                        scanPreviewCard(presentation)
+                            .transition(.opacity)
+
+                        earlyStartArea(presentation)
+                            .transition(.opacity)
+
+                        if presentation.showsSlowCopy {
+                            slowScanNotice
+                                .transition(.opacity)
+                        }
+
+                        if presentation.showsMergeWait {
+                            mergeWaitCard
+                                .transition(.opacity)
+                        }
+
+                        terminalBox
+                    }
+                }
+                .frame(maxWidth: 880, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.42), value: presentation.canOpenDay1)
+            }
+        } footer: { isNarrow in
+            scanWaitFooter(presentation, isNarrow: isNarrow)
+        }
     }
 
-    private func deliverAnalyzeCompleteNotification() async {
-        let center = UNUserNotificationCenter.current()
-        let settings = await withCheckedContinuation { continuation in
-            center.getNotificationSettings { continuation.resume(returning: $0) }
-        }
-
-        var authorized = settings.authorizationStatus == .authorized
-            || settings.authorizationStatus == .provisional
-        if settings.authorizationStatus == .notDetermined {
-            authorized = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
-        }
-        guard authorized else { return }
-
-        let content = UNMutableNotificationContent()
-        content.title = "Day 1 ICP 질문 세트가 준비됐어요"
-        if store.folderURL == nil {
-            content.body = "intake 답변만으로 ICP 질문 플랜을 준비했어요. Open inbox로 이어가세요."
-        } else if bootLogState.scanDidFail {
-            content.body = "scan 신호를 못 찾아 intake 답변만으로 준비했어요. Open inbox로 이어가세요."
-        } else {
-            content.body = "선택한 폴더에서 신호를 추출했어요. Open inbox로 이어가세요."
-        }
-        content.sound = .default
-
-        let request = UNNotificationRequest(
-            identifier: "agentic30.intakeV2.scanAnalyzeComplete.\(UUID().uuidString)",
-            content: content,
-            trigger: nil
+    private func scanWaitPresentation(at now: Date) -> Day1ScanWaitPresentation {
+        Day1ScanWaitPresentation(
+            bootLogState: bootLogState,
+            hasFolder: store.folderURL != nil,
+            hasWorkspaceScanResult: workspaceScanResult != nil,
+            earlyStartActive: earlyStartMode == .active,
+            earlyStartCompleted: earlyStartMode == .answered,
+            now: now
         )
-        _ = await withCheckedContinuation { (continuation: CheckedContinuation<Error?, Never>) in
-            center.add(request) { continuation.resume(returning: $0) }
-        }
     }
 
-    private var readyTitle: String {
-        if store.folderURL == nil || bootLogState.scanDidFail {
-            return "Day 1 ICP 질문 세트가 준비됐습니다."
-        }
-        if analysisReady {
-            return "Day 1 ICP 질문 세트가 준비됐습니다."
-        }
-        return "Day 1 ICP 질문 세트를 준비하고 있습니다."
+    private func readyTitle(for presentation: Day1ScanWaitPresentation) -> String {
+        presentation.headerTitle(questionCount: questionCount)
     }
 
-    private var readySubtitle: String {
+    private func readySubtitle(for presentation: Day1ScanWaitPresentation) -> String {
+        if presentation.canOpenDay1 {
+            return "약 3분 · 선택하고 한 줄만 답하면 됩니다."
+        }
         if store.folderURL == nil {
-            return "폴더 없이 시작합니다. intake 답변만으로 ICP 질문 플랜을 준비합니다."
+            return "폴더 없이 시작합니다. 앞서 답한 내용만으로 질문을 준비합니다."
         }
-        if bootLogState.scanDidFail {
-            return "Sidecar scan에서 충분한 신호를 못 찾았어요. intake 답변만으로 ICP 질문 플랜을 준비했습니다."
+        switch presentation.state {
+        case .earlyStartActive:
+            return "폴더 분석은 계속되고, 끝나면 근거만 보강됩니다."
+        case .earlyStartAnsweredScanPending:
+            return "답변은 저장했습니다. 폴더 분석이 끝나면 바로 질문을 시작할 수 있습니다."
+        default:
+            return "보통 30-45초 걸립니다. 완료되면 바로 질문을 시작할 수 있습니다."
         }
-        if workspaceScanResult == nil {
-            return "선택한 폴더를 읽고, Day 1 ICP 질문 세트에 쓸 신호만 추리고 있습니다."
-        }
-        return "선택한 폴더를 읽고 신호를 추출했습니다. Day 1 ICP 질문 세트로 이어갑니다."
     }
 
-    private var intakeReadyHandoff: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Image(systemName: "arrow.down.forward.circle.fill")
-                .font(.system(size: 20, weight: .heavy))
-                .foregroundStyle(IntakeV2Color.accentBright)
-                .frame(width: 28, height: 28)
+    private var questionCount: Int {
+        if workspaceScanResult?.day1AlignmentPlan != nil {
+            return 3
+        }
+        if let legacyCount = workspaceScanResult?.day1IcpPlan?.questions.count, legacyCount > 0 {
+            return legacyCount
+        }
+        return Self.earlyStartQuestions.count
+    }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("오늘의 한 가지와 todo.list는 Day 1에서 시작합니다.")
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.94))
-                Text("Open inbox를 누르면 Day 1 ICP 질문 세트 앞에서 바로 선택하고 답할 수 있습니다.")
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(IntakeV2Color.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+    private var readySignalCount: Int? {
+        bootLogState.scanPhase.foundCount ?? workspaceScanResult?.foundArtifactCount
+    }
+
+    private var previewSlots: [(title: String, body: String, systemImage: String)] {
+        [
+            ("고객 후보", "누구를 먼저 확인할지 좁힙니다.", "person.2.fill"),
+            ("문제 신호", "폴더에서 반복되는 pain을 찾습니다.", "waveform.path.ecg"),
+            ("확인할 행동", "오늘 검증할 실제 행동을 고릅니다.", "checkmark.seal.fill"),
+        ]
+    }
+
+    private func scanPreviewCard(_ presentation: Day1ScanWaitPresentation) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(scanPreviewTitle(for: presentation))
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.92))
+                    Text(scanPreviewSubtitle(for: presentation))
+                        .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                        .foregroundStyle(IntakeV2Color.textTertiary)
+                }
+
+                Spacer(minLength: 12)
+
+                Text(presentation.phase.label)
+                    .font(.system(size: 14, weight: .heavy, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(IntakeV2Color.accentBright)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(IntakeV2Color.accent.opacity(0.12))
+                            .overlay(Capsule().stroke(IntakeV2Color.accent.opacity(0.28), lineWidth: 1))
+                    )
+                    .accessibilityLabel(Text("scan phase \(presentation.phase.label)"))
             }
 
-            Spacer(minLength: 0)
+            HStack(alignment: .top, spacing: 10) {
+                ForEach(previewSlots.indices, id: \.self) { index in
+                    let slot = previewSlots[index]
+                    let slotStatus = scanPreviewSlotStatus(at: index, presentation: presentation)
+
+                    VStack(alignment: .leading, spacing: 9) {
+                        scanPreviewSlotMarker(systemImage: slot.systemImage, status: slotStatus)
+                        Text(slot.title)
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .foregroundStyle(slotStatus == .pending ? .white.opacity(0.62) : .white.opacity(0.92))
+                        Text(slot.body)
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundStyle(slotStatus == .pending ? IntakeV2Color.textTertiary.opacity(0.68) : IntakeV2Color.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, minHeight: 118, alignment: .topLeading)
+                    .background(ScanPreviewSlotBackground(status: slotStatus))
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(slot.title), \(scanPreviewSlotAccessibilityStatus(for: slotStatus))")
+                    .accessibilityIdentifier("intakeV2.scanPreview.slot.\(index + 1)")
+                }
+            }
         }
-        .padding(16)
+        .padding(18)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.white.opacity(0.035))
+                .fill(.white.opacity(0.034))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .stroke(IntakeV2Color.accent.opacity(0.16), lineWidth: 1)
                 )
         )
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("intakeV2.scanPreview")
+    }
+
+    @ViewBuilder
+    private func scanPreviewSlotMarker(systemImage: String, status: ScanPreviewSlotStatus) -> some View {
+        switch status {
+        case .active where !reduceMotion:
+            ProgressView()
+                .progressViewStyle(.circular)
+                .controlSize(.small)
+                .tint(IntakeV2Color.accentBright)
+                .frame(width: 22, height: 22, alignment: .leading)
+                .accessibilityHidden(true)
+        case .active:
+            Image(systemName: "hourglass")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(IntakeV2Color.accentBright)
+                .frame(width: 22, height: 22, alignment: .leading)
+                .accessibilityHidden(true)
+        case .complete, .pending:
+            Image(systemName: systemImage)
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(scanPreviewSlotAccent(for: status))
+                .frame(width: 22, height: 22, alignment: .leading)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var readySummaryTransition: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        return .opacity.combined(with: .scale(scale: 0.985, anchor: .top))
+    }
+
+    private func scanPreviewTitle(for presentation: Day1ScanWaitPresentation) -> String {
+        guard store.folderURL != nil else { return "답변 정리" }
+        switch presentation.phase.stage {
+        case .local:
+            return "자료 후보 찾는 중"
+        case .verifying:
+            return "질문 근거 확인 중"
+        case .composing:
+            return "질문 \(questionCount)개 구성 중"
+        case .merged:
+            return "질문 준비 완료"
+        case .failed:
+            return "자료 확인 중단"
+        }
+    }
+
+    private func scanPreviewSubtitle(for presentation: Day1ScanWaitPresentation) -> String {
+        guard store.folderURL != nil else {
+            return "폴더 없이 앞서 답한 내용만 사용합니다."
+        }
+        switch presentation.phase.stage {
+        case .local:
+            return "질문에 쓸 자료 후보만 빠르게 확인합니다."
+        case .verifying:
+            return "후보 자료가 Day 1 질문 근거로 쓸 만한지 확인합니다."
+        case .composing:
+            return "고객, 문제, 확인할 행동 질문으로 묶는 중입니다."
+        case .merged:
+            return "질문에 쓸 근거를 모두 붙였습니다."
+        case .failed:
+            return "폴더 신호가 부족해 기본 질문으로 이어갑니다."
+        }
+    }
+
+    private func day1ReadySummaryCard(_ presentation: Day1ScanWaitPresentation) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 13) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 23, weight: .heavy))
+                    .foregroundStyle(IntakeV2Color.accentBright)
+                    .frame(width: 30, height: 30)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("질문 \(questionCount)개가 준비됐어요")
+                        .font(.system(size: 18, weight: .heavy, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.96))
+                    Text(readySummaryBody(for: presentation))
+                        .font(.system(size: 13.5, weight: .medium, design: .rounded))
+                        .foregroundStyle(IntakeV2Color.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 12)
+
+                Text("READY")
+                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                    .foregroundStyle(IntakeV2Color.accentBright)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(IntakeV2Color.accent.opacity(0.12))
+                            .overlay(Capsule().stroke(IntakeV2Color.accent.opacity(0.26), lineWidth: 1))
+                    )
+            }
+
+            HStack(alignment: .top, spacing: 10) {
+                ForEach(previewSlots.indices, id: \.self) { index in
+                    readySummarySlot(slot: previewSlots[index], index: index)
+                }
+            }
+        }
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(IntakeV2Color.accent.opacity(0.065))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(IntakeV2Color.accent.opacity(0.24), lineWidth: 1)
+                )
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text("질문 \(questionCount)개가 준비됐어요. \(readySummaryBody(for: presentation))"))
         .accessibilityIdentifier("intakeV2.day1ReadyHandoff")
+    }
+
+    private func readySummarySlot(
+        slot: (title: String, body: String, systemImage: String),
+        index: Int
+    ) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(IntakeV2Color.accentBright)
+                .frame(width: 18, height: 18)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(slot.title)
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.92))
+                Text("답변 대기")
+                    .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(IntakeV2Color.textTertiary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 64, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(.black.opacity(0.14))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(IntakeV2Color.accent.opacity(0.16), lineWidth: 1))
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(slot.title), 준비 완료")
+        .accessibilityIdentifier("intakeV2.readySummary.slot.\(index + 1)")
+    }
+
+    private func readySummaryBody(for presentation: Day1ScanWaitPresentation) -> String {
+        if store.folderURL == nil {
+            return "기본 질문 \(questionCount)개가 준비됐습니다. 이제 고객, 문제, 확인할 행동을 차례로 고르면 됩니다."
+        }
+        if presentation.state == .scanFailed {
+            return "기본 질문 \(questionCount)개가 준비됐습니다. 폴더 신호는 나중에 다시 붙일 수 있습니다."
+        }
+        if let readySignalCount, readySignalCount > 0 {
+            return "폴더 신호 \(readySignalCount)개를 반영했습니다. 이제 고객, 문제, 확인할 행동을 차례로 고르면 됩니다."
+        }
+        return "선택한 폴더의 신호를 반영했습니다. 이제 고객, 문제, 확인할 행동을 차례로 고르면 됩니다."
+    }
+
+    private func scanPreviewSlotStatus(
+        at index: Int,
+        presentation: Day1ScanWaitPresentation
+    ) -> ScanPreviewSlotStatus {
+        guard !presentation.canOpenDay1 else { return .complete }
+        let activeIndex = min(max(presentation.phase.stepIndex - 1, 0), previewSlots.count - 1)
+        if index < activeIndex { return .complete }
+        if index == activeIndex { return .active }
+        return .pending
+    }
+
+    private func scanPreviewSlotAccent(for status: ScanPreviewSlotStatus) -> Color {
+        switch status {
+        case .complete, .active:
+            return IntakeV2Color.accentBright
+        case .pending:
+            return IntakeV2Color.textTertiary
+        }
+    }
+
+    private func scanPreviewSlotAccessibilityStatus(for status: ScanPreviewSlotStatus) -> String {
+        switch status {
+        case .complete:
+            return "완료"
+        case .active:
+            return "진행 중"
+        case .pending:
+            return "대기 중"
+        }
+    }
+
+    private var slowScanNotice: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "folder.badge.gearshape")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(IntakeV2Color.accentBright)
+            Text("생각보다 큰 폴더라 조금 더 걸리고 있어요.")
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.82))
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(IntakeV2Color.accent.opacity(0.08))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(IntakeV2Color.accent.opacity(0.18), lineWidth: 1))
+        )
+        .accessibilityIdentifier("intakeV2.scanSlowNotice")
+    }
+
+    @ViewBuilder
+    private func earlyStartArea(_ presentation: Day1ScanWaitPresentation) -> some View {
+        if presentation.canShowEarlyStartCTA && earlyStartMode == .idle && store.folderURL != nil {
+            earlyStartPromptCard
+        } else if earlyStartMode == .active || earlyStartMode == .answered {
+            earlyStartQuestionSet(presentation)
+        }
+    }
+
+    private var earlyStartPromptCard: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 14) {
+                earlyStartPromptIcon
+                earlyStartPromptCopy
+                Spacer(minLength: 16)
+                earlyStartPromptButton
+            }
+
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 13) {
+                    earlyStartPromptIcon
+                    earlyStartPromptCopy
+                    Spacer(minLength: 0)
+                }
+                earlyStartPromptButton
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(IntakeV2Color.accent.opacity(0.075))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(IntakeV2Color.accent.opacity(0.22), lineWidth: 1)
+                )
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("intakeV2.earlyStartPrompt")
+    }
+
+    private var earlyStartPromptIcon: some View {
+        Image(systemName: "text.badge.checkmark")
+            .font(.system(size: 17, weight: .bold))
+            .foregroundStyle(IntakeV2Color.accentBright)
+            .frame(width: 28, height: 28)
+            .background(
+                Circle()
+                    .fill(.black.opacity(0.18))
+                    .overlay(Circle().stroke(IntakeV2Color.accent.opacity(0.25), lineWidth: 1))
+            )
+    }
+
+    private var earlyStartPromptCopy: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("기다리는 동안 먼저 답할 수 있어요")
+                .font(.system(size: 15.5, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.94))
+                .fixedSize(horizontal: false, vertical: true)
+            Text("폴더 분석은 계속되고, 끝나면 근거만 보강됩니다.")
+                .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                .foregroundStyle(IntakeV2Color.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var earlyStartPromptButton: some View {
+        Button(action: startEarlyStart) {
+            HStack(spacing: 7) {
+                Text("3개 질문 먼저 답하기")
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 11.5, weight: .heavy))
+            }
+            .font(.system(size: 13.5, weight: .bold, design: .rounded))
+            .foregroundStyle(.black)
+            .lineLimit(1)
+            .minimumScaleFactor(0.82)
+            .padding(.horizontal, 15)
+            .frame(height: 38)
+            .background(Capsule().fill(Color.white))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("intakeV2.earlyStartButton")
+    }
+
+    private func earlyStartQuestionSet(_ presentation: Day1ScanWaitPresentation) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("3개 질문 먼저 답하기")
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.94))
+                    Text("이미 답한 항목은 폴더 분석 결과가 도착해도 다시 쓰거나 바꾸지 않습니다.")
+                        .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                        .foregroundStyle(IntakeV2Color.textTertiary)
+                }
+                Spacer(minLength: 0)
+                Text("\(store.earlyStartAnswers.count)/\(Self.earlyStartQuestions.count)")
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundStyle(IntakeV2Color.accentBright)
+                    .monospacedDigit()
+            }
+
+            ForEach(Self.earlyStartQuestions) { question in
+                earlyStartQuestionRow(question)
+            }
+
+            if presentation.showsMergeWait {
+                Text("답변은 저장했습니다. 폴더 분석이 끝나면 근거 카드와 후속 질문만 보강합니다.")
+                    .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(IntakeV2Color.textSecondary)
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.white.opacity(0.03))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(IntakeV2Color.accent.opacity(0.16), lineWidth: 1)
+                )
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("intakeV2.earlyStartQuestions")
+    }
+
+    private func earlyStartQuestionRow(_ question: EarlyStartQuestion) -> some View {
+        let selected = store.earlyStartAnswers[question.id]
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text(question.title)
+                    .font(.system(size: 12, weight: .heavy, design: .rounded))
+                    .foregroundStyle(IntakeV2Color.accentBright)
+                    .frame(width: 86, alignment: .leading)
+                Text(question.prompt)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.88))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                if selected != nil {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(IntakeV2Color.textTertiary)
+                }
+            }
+
+            HStack(spacing: 8) {
+                ForEach(question.options, id: \.self) { option in
+                    let isSelected = selected == option
+                    Button {
+                        selectEarlyStartOption(option, for: question)
+                    } label: {
+                        Text(option)
+                            .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                            .foregroundStyle(isSelected ? .black : .white.opacity(0.78))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.84)
+                            .padding(.horizontal, 11)
+                            .frame(height: 32)
+                            .frame(maxWidth: .infinity)
+                            .background(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(isSelected ? Color.white : .white.opacity(0.04))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                            .stroke(isSelected ? Color.white.opacity(0.7) : .white.opacity(0.08), lineWidth: 1)
+                                    )
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(selected != nil)
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(.black.opacity(0.14))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(.white.opacity(0.055), lineWidth: 1))
+        )
+    }
+
+    private var mergeWaitCard: some View {
+        HStack(alignment: .center, spacing: 13) {
+            ProgressView()
+                .progressViewStyle(.circular)
+                .controlSize(.small)
+                .tint(IntakeV2Color.accentBright)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("답변은 저장했습니다.")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.94))
+                Text("폴더 분석이 마지막 근거를 붙이는 중입니다.")
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundStyle(IntakeV2Color.textSecondary)
+                Text("완료되면 바로 질문을 시작할 수 있습니다.")
+                    .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                    .foregroundStyle(IntakeV2Color.textTertiary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(IntakeV2Color.accent.opacity(0.07))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(IntakeV2Color.accent.opacity(0.18), lineWidth: 1))
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("intakeV2.scanMergeWait")
+    }
+
+    private func scanWaitFooter(_ presentation: Day1ScanWaitPresentation, isNarrow: Bool) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Button(action: handleBack) {
+                Text("Back")
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .padding(.horizontal, 30)
+                    .padding(.vertical, 14)
+                    .background(Capsule().fill(.white.opacity(0.06)))
+            }
+            .buttonStyle(.plain)
+
+            Spacer(minLength: 16)
+
+            VStack(alignment: .trailing, spacing: 6) {
+                Button(action: { handleInboxCTA(presentation) }) {
+                    HStack(spacing: 8) {
+                        if !presentation.canOpenDay1 {
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                                .controlSize(.small)
+                                .tint(.white.opacity(0.55))
+                                .accessibilityIdentifier("intakeV2.footerNextSpinner")
+                        }
+                        Text(primaryFooterTitle(for: presentation))
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                            .foregroundStyle(presentation.canOpenDay1 ? .black : .white.opacity(0.3))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.82)
+                    }
+                    .padding(.horizontal, 30)
+                    .padding(.vertical, 14)
+                    .background(Capsule().fill(presentation.canOpenDay1 ? Color.white : .white.opacity(0.1)))
+                }
+                .buttonStyle(.plain)
+                .disabled(!presentation.canOpenDay1)
+                .accessibilityLabel(presentation.primaryCTAAccessibilityLabel(questionCount: questionCount))
+                .accessibilityIdentifier("intakeV2.openInboxButton")
+                .accessibilityFocused($primaryCTAFocused)
+
+                if presentation.canOpenDay1 {
+                    Text("약 3분 · 선택하고 한 줄만 답하면 됩니다")
+                        .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                        .foregroundStyle(IntakeV2Color.textTertiary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                }
+            }
+        }
+        .frame(maxWidth: isNarrow ? .infinity : 880, alignment: .leading)
+        .padding(.top, 8)
+    }
+
+    private func primaryFooterTitle(for presentation: Day1ScanWaitPresentation) -> String {
+        presentation.primaryCTATitle(questionCount: questionCount)
     }
 
     private var inboxFooterTitle: String {
@@ -2013,17 +2587,132 @@ struct IntakeV2ReadyAnalyzeView: View {
         return .opacity.combined(with: .scale(scale: 0.985, anchor: .center))
     }
 
-    private func handleInboxCTA() {
-        switch inboxCTAState {
-        case .ready:
-            onDone()
-        case .needsExecute:
-            break
-        case .preparingInbox:
-            break
-        case .preparingDecision:
-            break
+    private func handleInboxCTA(_ presentation: Day1ScanWaitPresentation) {
+        guard presentation.canOpenDay1 else { return }
+        trackPresentationMilestonesIfNeeded(presentation)
+        onDone()
+    }
+
+    private func handleBack() {
+        PostHogTelemetry.capture("mac_scan_wait_back_clicked", properties: telemetryProperties(for: scanWaitPresentation(at: Date())))
+        onBack()
+    }
+
+    private func startEarlyStart() {
+        guard earlyStartMode == .idle else { return }
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.18)) {
+            earlyStartMode = .active
         }
+        PostHogTelemetry.capture("mac_scan_early_start_clicked", properties: telemetryProperties(for: scanWaitPresentation(at: Date())))
+    }
+
+    private func selectEarlyStartOption(_ option: String, for question: EarlyStartQuestion) {
+        guard store.earlyStartAnswers[question.id] == nil else { return }
+        store.lockEarlyStartAnswer(questionId: question.id, answer: option)
+        guard Self.earlyStartQuestions.allSatisfy({ store.earlyStartAnswers[$0.id] != nil }) else {
+            return
+        }
+
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) {
+            earlyStartMode = .answered
+        }
+        trackPresentationMilestonesIfNeeded(scanWaitPresentation(at: Date()))
+    }
+
+    private func synchronizeEarlyStartModeWithStoredAnswers() {
+        let answeredCount = Self.earlyStartQuestions.filter { store.earlyStartAnswers[$0.id] != nil }.count
+        guard answeredCount > 0 else { return }
+        if answeredCount == Self.earlyStartQuestions.count {
+            earlyStartMode = .answered
+        } else if earlyStartMode == .idle {
+            earlyStartMode = .active
+        }
+    }
+
+    private func trackScanWaitViewedIfNeeded() {
+        guard !didTrackScanWaitViewed else { return }
+        didTrackScanWaitViewed = true
+        PostHogTelemetry.capture("mac_scan_wait_viewed", properties: telemetryProperties(for: scanWaitPresentation(at: Date())))
+    }
+
+    private func trackPresentationMilestonesIfNeeded(_ presentation: Day1ScanWaitPresentation) {
+        if presentation.canShowEarlyStartCTA && !didTrackEarlyStartShown {
+            didTrackEarlyStartShown = true
+            PostHogTelemetry.capture("mac_scan_early_start_shown", properties: telemetryProperties(for: presentation))
+        }
+
+        if presentation.showsMergeWait && !didTrackMergeWaitViewed {
+            didTrackMergeWaitViewed = true
+            PostHogTelemetry.capture("mac_scan_merge_wait_viewed", properties: telemetryProperties(for: presentation))
+        }
+
+        if presentation.canOpenDay1 && !didTrackMergeCompleted {
+            didTrackMergeCompleted = true
+            PostHogTelemetry.capture("mac_scan_merge_completed", properties: telemetryProperties(for: presentation))
+            DispatchQueue.main.asyncAfter(deadline: .now() + (reduceMotion ? 0.05 : 0.45)) {
+                primaryCTAFocused = true
+            }
+        }
+    }
+
+    private func telemetryProperties(for presentation: Day1ScanWaitPresentation) -> [String: Any] {
+        var properties: [String: Any] = [
+            "state": "\(presentation.state)",
+            "phase": presentation.phase.stage.rawValue,
+            "step_index": presentation.phase.stepIndex,
+            "total_steps": presentation.phase.totalSteps,
+            "has_folder": store.folderURL != nil,
+            "early_start_answer_count": store.earlyStartAnswers.count,
+            "scan_failed": presentation.state == .scanFailed,
+            "opened_from_merge_wait": didTrackMergeWaitViewed,
+        ]
+        if let elapsedSeconds = presentation.elapsedSeconds {
+            properties["elapsed_seconds"] = elapsedSeconds
+        }
+        if let foundCount = presentation.phase.foundCount {
+            properties["found_count"] = foundCount
+        }
+        return properties
+    }
+
+    private var completedBootLogDetails: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) {
+                    showBootLogDetails.toggle()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: showBootLogDetails ? "chevron.down.circle.fill" : "chevron.right.circle.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(IntakeV2Color.accentBright)
+                    Text(showBootLogDetails ? "세부 로그 접기" : "세부 로그 보기")
+                        .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.84))
+                    if let scanElapsed = bootLogState.scanElapsed {
+                        Text(scanElapsed.chipText(at: scanElapsed.completedAt ?? Date()))
+                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(IntakeV2Color.textTertiary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 14)
+                .frame(height: 38)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(.white.opacity(0.028))
+                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(.white.opacity(0.07), lineWidth: 1))
+                )
+            }
+            .buttonStyle(.plain)
+
+            if showBootLogDetails {
+                terminalBox
+                    .transition(.opacity)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("intakeV2.bootLogDetails")
     }
 
     // MARK: terminal
@@ -2036,11 +2725,25 @@ struct IntakeV2ReadyAnalyzeView: View {
     }
 
     private enum TerminalMetrics {
-        static let boxHeight: CGFloat = 220
+        static let maxVisibleLines = 6
+        static let horizontalPadding: CGFloat = 22
+        static let verticalPadding: CGFloat = 18
+        static let headerHeight: CGFloat = 22
+        static let headerBottomSpacing: CGFloat = 14
+        static let lineStackSpacing: CGFloat = 6
         static let rowHeight: CGFloat = 22
         static let promptWidth: CGFloat = 16
-        static let statusWidth: CGFloat = 312
+        static let statusMinWidth: CGFloat = 280
+        static let statusMaxWidth: CGFloat = 420
         static let columnSpacing: CGFloat = 8
+        static let cornerRadius: CGFloat = 8
+
+        static let boxHeight: CGFloat =
+            verticalPadding * 2
+            + headerHeight
+            + headerBottomSpacing
+            + rowHeight * CGFloat(maxVisibleLines)
+            + lineStackSpacing * CGFloat(maxVisibleLines - 1)
     }
 
     private struct GeneratedTodoTask: Identifiable, Equatable {
@@ -2051,7 +2754,7 @@ struct IntakeV2ReadyAnalyzeView: View {
     }
 
     private var logLines: [TerminalLine] {
-        bootLogState.lines.map { line in
+        bootLogState.lines.suffix(TerminalMetrics.maxVisibleLines).map { line in
             TerminalLine(
                 id: line.id,
                 cmd: line.command,
@@ -2067,7 +2770,7 @@ struct IntakeV2ReadyAnalyzeView: View {
                 Circle().fill(Color(red: 1.00, green: 0.373, blue: 0.341)).frame(width: 9, height: 9)
                 Circle().fill(Color(red: 0.996, green: 0.737, blue: 0.180)).frame(width: 9, height: 9)
                 Circle().fill(Color(red: 0.157, green: 0.784, blue: 0.251)).frame(width: 9, height: 9)
-                Text("agentic30 — boot.log")
+                Text("details — boot.log")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(IntakeV2Color.monospaceMuted)
                     .padding(.leading, 8)
@@ -2076,23 +2779,23 @@ struct IntakeV2ReadyAnalyzeView: View {
                     IntakeV2BootLogElapsedChip(elapsed: scanElapsed)
                 }
             }
-            .padding(.bottom, 14)
+            .frame(height: TerminalMetrics.headerHeight, alignment: .center)
+            .padding(.bottom, TerminalMetrics.headerBottomSpacing)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: TerminalMetrics.lineStackSpacing) {
                 ForEach(logLines) { line in
                     terminalLine(line)
                 }
             }
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 18)
+        .padding(.horizontal, TerminalMetrics.horizontalPadding)
+        .padding(.vertical, TerminalMetrics.verticalPadding)
         .frame(maxWidth: .infinity, minHeight: TerminalMetrics.boxHeight, maxHeight: TerminalMetrics.boxHeight, alignment: .topLeading)
-        .clipped()
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: TerminalMetrics.cornerRadius)
                 .fill(Color(red: 0.039, green: 0.039, blue: 0.047))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: TerminalMetrics.cornerRadius)
                         .stroke(.white.opacity(0.06), lineWidth: 1)
                 )
         )
@@ -2190,7 +2893,11 @@ struct IntakeV2ReadyAnalyzeView: View {
                 .foregroundStyle(terminalStatusColor(for: line.status))
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(width: TerminalMetrics.statusWidth, alignment: .trailing)
+                .frame(
+                    minWidth: TerminalMetrics.statusMinWidth,
+                    maxWidth: TerminalMetrics.statusMaxWidth,
+                    alignment: .trailing
+                )
                 .layoutPriority(1)
         }
         .font(.system(size: 13, design: .monospaced))
@@ -2506,6 +3213,106 @@ struct IntakeV2ReadyAnalyzeView: View {
                     || path.range(of: "pricing", options: .caseInsensitive) != nil
             }
         )
+    }
+}
+
+// MARK: - Scan preview progress
+
+private enum ScanPreviewSlotStatus: Equatable {
+    case complete
+    case active
+    case pending
+}
+
+private struct ScanPreviewSlotBackground: View {
+    let status: ScanPreviewSlotStatus
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+
+        shape
+            .fill(fill)
+            .overlay(shape.stroke(baseStroke, lineWidth: 1))
+            .overlay {
+                switch status {
+                case .complete:
+                    shape.stroke(IntakeV2Color.accent.opacity(0.22), lineWidth: 1)
+                case .active:
+                    ScanPreviewGlowingBorderTrace(cornerRadius: 8)
+                case .pending:
+                    EmptyView()
+                }
+            }
+            .clipShape(shape)
+    }
+
+    private var fill: Color {
+        switch status {
+        case .complete:
+            return .white.opacity(0.03)
+        case .active:
+            return IntakeV2Color.accent.opacity(0.07)
+        case .pending:
+            return .white.opacity(0.02)
+        }
+    }
+
+    private var baseStroke: Color {
+        switch status {
+        case .complete:
+            return IntakeV2Color.accent.opacity(0.15)
+        case .active:
+            return IntakeV2Color.accent.opacity(0.24)
+        case .pending:
+            return .white.opacity(0.05)
+        }
+    }
+}
+
+private struct ScanPreviewGlowingBorderTrace: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulse: Bool = false
+
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+
+        ZStack {
+            shape.stroke(IntakeV2Color.accent.opacity(0.24), lineWidth: 1)
+
+            if reduceMotion {
+                shape
+                    .stroke(IntakeV2Color.accentBright.opacity(0.72), lineWidth: 2)
+                    .shadow(color: IntakeV2Color.accentBright.opacity(0.34), radius: 7)
+            } else {
+                shape
+                    .stroke(
+                        IntakeV2Color.accentBright.opacity(pulse ? 0.45 : 0.22),
+                        lineWidth: pulse ? 1.6 : 1.1
+                    )
+                    .shadow(
+                        color: IntakeV2Color.accentBright.opacity(pulse ? 0.34 : 0.18),
+                        radius: pulse ? 7 : 3
+                    )
+            }
+        }
+        .onAppear {
+            updateAnimation(reduceMotion: reduceMotion)
+        }
+        .onChange(of: reduceMotion) { _, newValue in
+            updateAnimation(reduceMotion: newValue)
+        }
+    }
+
+    private func updateAnimation(reduceMotion: Bool) {
+        pulse = false
+        guard !reduceMotion else { return }
+        DispatchQueue.main.async {
+            withAnimation(.easeInOut(duration: 1.55).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        }
     }
 }
 
