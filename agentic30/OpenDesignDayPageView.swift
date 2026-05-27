@@ -7724,9 +7724,18 @@ private struct OpenDesignHypothesisConfirmationCard: View {
             Spacer(minLength: 8)
 
             Button(action: { startDay1DocHandoff(step.type, handoffPayload) }) {
-                Text(documentStepActionLabel(step, isPreparing: isPreparing, isPromptActive: isPromptActive))
-                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(canStart ? OpenDesignDayColor.bgDeep : OpenDesignDayColor.mutedDeep)
+                HStack(spacing: 6) {
+                    if isPreparing {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .controlSize(.mini)
+                            .tint(OpenDesignDayColor.mutedDeep)
+                            .accessibilityHidden(true)
+                    }
+                    Text(documentStepActionLabel(step, isPreparing: isPreparing, isPromptActive: isPromptActive))
+                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(canStart ? OpenDesignDayColor.bgDeep : OpenDesignDayColor.mutedDeep)
+                }
                     .padding(.horizontal, 10)
                     .frame(height: 26)
                     .background(
