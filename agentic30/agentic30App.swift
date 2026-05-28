@@ -86,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static let initialWorkspaceMaximizeDefaultsKey = "agentic30.workspaceWindow.initialInstallMaximizeApplied.v1"
 
     func applicationWillFinishLaunching(_ notification: Notification) {
+        Agentic30Theme.current.applyAppKitAppearance()
         wasLaunchedAtLogin = LoginItemsManager.wasLaunchedAtLogin()
         #if DEBUG
         if Self.isUITestingLaunch() {
