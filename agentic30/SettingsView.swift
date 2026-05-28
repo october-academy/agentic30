@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 
 enum SettingsSection: CaseIterable, Identifiable {
+    case appearance
     case account
     case agents
     case adAnalytics
@@ -15,6 +16,7 @@ enum SettingsSection: CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .appearance: "Appearance"
         case .account: "Workspace"
         case .agents: "AI Providers"
         case .adAnalytics: "Ad Analytics"
@@ -28,6 +30,7 @@ enum SettingsSection: CaseIterable, Identifiable {
 
     var sidebarTitle: String {
         switch self {
+        case .appearance: "테마"
         case .account: "워크스페이스"
         case .agents: "AI 프로바이더"
         case .adAnalytics: "광고 분석"
@@ -41,6 +44,7 @@ enum SettingsSection: CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
+        case .appearance: "circle.lefthalf.filled"
         case .account: "person.crop.circle"
         case .agents: "pencil.and.outline"
         case .adAnalytics: "chart.bar.xaxis"
@@ -54,6 +58,7 @@ enum SettingsSection: CaseIterable, Identifiable {
 
     var accessibilityIdentifier: String {
         switch self {
+        case .appearance: "appearance"
         case .account: "account"
         case .agents: "agents"
         case .adAnalytics: "adAnalytics"
@@ -128,6 +133,7 @@ struct SettingsView: View {
     @State private var localDataConfirmation: LocalDataConfirmation?
     @State private var localSelectedSection: SettingsSection = .account
     @State private var isBackButtonHovered = false
+    @AppStorage(Agentic30Theme.storageKey) private var appThemeRawValue = Agentic30Theme.defaultTheme.rawValue
 
     private enum LocalDataConfirmation: Identifiable {
         case reset
@@ -219,6 +225,7 @@ struct SettingsView: View {
 
     var body: some View {
         settingsContent
+            .agentic30Themed()
             .onAppear(perform: loadAllValues)
             .onChange(of: viewModel.workspaceRoot) { _, root in
                 syncWorkspaceRoot(root)
@@ -310,13 +317,13 @@ struct SettingsView: View {
             HStack(spacing: 6) {
                 Text("설정")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.94))
+                    .foregroundStyle(settingsText.opacity(0.94))
                 Text("\(SettingsSection.allCases.count)")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.44))
+                    .foregroundStyle(settingsText.opacity(0.44))
                     .padding(.horizontal, 6)
                     .frame(height: 18)
-                    .background(Capsule().fill(Color.white.opacity(0.055)))
+                    .background(Capsule().fill(settingsText.opacity(0.055)))
                 Spacer(minLength: 0)
             }
             .padding(.top, 10)
@@ -331,13 +338,13 @@ struct SettingsView: View {
                     Spacer()
                     Text("⌘ K")
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.28))
+                        .foregroundStyle(settingsText.opacity(0.28))
                 }
                 .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(.white.opacity(0.72))
+                .foregroundStyle(settingsText.opacity(0.72))
                 .padding(.horizontal, 10)
                 .frame(height: 30)
-                .background(settingsRounded(fill: Color.white.opacity(0.045), stroke: Color.white.opacity(0.08), radius: 6))
+                .background(settingsRounded(fill: settingsText.opacity(0.045), stroke: settingsText.opacity(0.08), radius: 6))
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 8)
@@ -360,7 +367,7 @@ struct SettingsView: View {
                         }
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .textCase(.uppercase)
-                        .foregroundStyle(.white.opacity(0.30))
+                        .foregroundStyle(settingsText.opacity(0.30))
                         .padding(.top, index == 0 && returnToWorkspace == nil ? 8 : 14)
                         .padding(.horizontal, 8)
                         .padding(.bottom, 6)
@@ -375,7 +382,7 @@ struct SettingsView: View {
             }
         }
         .background(settingsBackground)
-        .overlay(Rectangle().fill(Color.white.opacity(0.08)).frame(width: 1), alignment: .trailing)
+        .overlay(Rectangle().fill(settingsText.opacity(0.08)).frame(width: 1), alignment: .trailing)
         .accessibilityIdentifier("settings.designSidebar")
     }
 
@@ -392,10 +399,10 @@ struct SettingsView: View {
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
-            .foregroundStyle(.white.opacity(0.66))
+            .foregroundStyle(settingsText.opacity(0.66))
             .padding(.horizontal, 10)
             .frame(height: 34)
-            .background(settingsRounded(fill: Color.white.opacity(0.0), stroke: Color.clear, radius: 7))
+            .background(settingsRounded(fill: settingsText.opacity(0.0), stroke: Color.clear, radius: 7))
             .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -404,7 +411,7 @@ struct SettingsView: View {
 
     private var settingsNavigationGroups: [(title: String, sections: [SettingsSection])] {
         [
-            ("General", [.account, .buildInPublic]),
+            ("General", [.appearance, .account, .buildInPublic]),
             ("Agent", [.agents, .adAnalytics, .notion]),
             ("Trust", [.diagnostics, .developerTools, .quarantineRecovery]),
         ]
@@ -417,7 +424,7 @@ struct SettingsView: View {
             HStack(spacing: 10) {
                 Image(systemName: section.systemImage)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(section == selectedSection.wrappedValue ? settingsAccentColor : .white.opacity(0.42))
+                    .foregroundStyle(section == selectedSection.wrappedValue ? settingsAccentColor : settingsText.opacity(0.42))
                     .frame(width: 24, height: 24)
                     .background(
                         RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -430,7 +437,7 @@ struct SettingsView: View {
 
                 Text(section.sidebarTitle)
                     .font(.system(size: 12.2, weight: .medium))
-                    .foregroundStyle(section == selectedSection.wrappedValue ? .white.opacity(0.94) : .white.opacity(0.70))
+                    .foregroundStyle(section == selectedSection.wrappedValue ? settingsText.opacity(0.94) : settingsText.opacity(0.70))
                     .lineLimit(1)
 
                 Spacer(minLength: 6)
@@ -438,7 +445,7 @@ struct SettingsView: View {
                 if let badge = settingsSidebarBadge(for: section) {
                     Text(badge)
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(section == selectedSection.wrappedValue ? settingsAccentColor : .white.opacity(0.42))
+                        .foregroundStyle(section == selectedSection.wrappedValue ? settingsAccentColor : settingsText.opacity(0.42))
                         .lineLimit(1)
                 }
             }
@@ -446,7 +453,7 @@ struct SettingsView: View {
             .padding(.vertical, 7.5)
             .background(
                 settingsRounded(
-                    fill: section == selectedSection.wrappedValue ? Color.white.opacity(0.095) : Color.clear,
+                    fill: section == selectedSection.wrappedValue ? settingsText.opacity(0.095) : Color.clear,
                     stroke: Color.clear,
                     radius: 7
                 )
@@ -469,7 +476,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("설정")
                         .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.96))
+                        .foregroundStyle(settingsText.opacity(0.96))
                         .lineLimit(1)
 
                     HStack(spacing: 8) {
@@ -479,14 +486,14 @@ struct SettingsView: View {
                             .shadow(color: settingsAccentColor.opacity(0.24), radius: 3)
                         Text("Agentic30 · 로컬 우선")
                         Text("·")
-                            .foregroundStyle(.white.opacity(0.22))
+                            .foregroundStyle(settingsText.opacity(0.22))
                         Text(selectedSection.wrappedValue.sidebarTitle)
                         Text("·")
-                            .foregroundStyle(.white.opacity(0.22))
+                            .foregroundStyle(settingsText.opacity(0.22))
                         Text("변경 사항은 Keychain/UserDefaults에 저장")
                     }
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.44))
+                    .foregroundStyle(settingsText.opacity(0.44))
                     .lineLimit(1)
                 }
                 .frame(minWidth: 0, alignment: .leading)
@@ -504,9 +511,9 @@ struct SettingsView: View {
                 } label: {
                     Image(systemName: "sidebar.left")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.74))
+                        .foregroundStyle(settingsText.opacity(0.74))
                         .frame(width: 28, height: 28)
-                        .background(settingsRounded(fill: Color.white.opacity(0.055), stroke: Color.white.opacity(0.08), radius: 7))
+                        .background(settingsRounded(fill: settingsText.opacity(0.055), stroke: settingsText.opacity(0.08), radius: 7))
                 }
                 .menuStyle(.button)
                 .buttonStyle(.plain)
@@ -516,10 +523,10 @@ struct SettingsView: View {
             Button(action: loadAllValues) {
                 Label("새로고침", systemImage: "arrow.clockwise")
                     .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.74))
+                    .foregroundStyle(settingsText.opacity(0.74))
                     .padding(.horizontal, 12)
                     .frame(height: 28)
-                    .background(settingsRounded(fill: Color.clear, stroke: Color.white.opacity(0.08), radius: 8))
+                    .background(settingsRounded(fill: Color.clear, stroke: settingsText.opacity(0.08), radius: 8))
             }
             .buttonStyle(.plain)
 
@@ -539,7 +546,7 @@ struct SettingsView: View {
         .padding(.horizontal, 28)
         .frame(height: 70)
         .background(settingsBackground)
-        .overlay(Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1), alignment: .bottom)
+        .overlay(Rectangle().fill(settingsText.opacity(0.08)).frame(height: 1), alignment: .bottom)
     }
 
     private var settingsMetaPanel: some View {
@@ -547,7 +554,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 Text("시스템 상태")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.94))
+                    .foregroundStyle(settingsText.opacity(0.94))
 
                 settingsMetaCard(label: "Sidecar", isLive: viewModel.isConnected) {
                     settingsMetaRow("상태", viewModel.isConnected ? "실행 중" : "연결 대기")
@@ -566,7 +573,7 @@ struct SettingsView: View {
                 Text("빠른 작업")
                     .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                     .textCase(.uppercase)
-                    .foregroundStyle(.white.opacity(0.34))
+                    .foregroundStyle(settingsText.opacity(0.34))
                     .padding(.top, 2)
 
                 settingsMetaAction(title: "진단 스냅샷 내보내기", subtitle: "sanitize · copy", systemImage: "square.and.arrow.down", action: copyDiagnostics)
@@ -576,12 +583,12 @@ struct SettingsView: View {
                 Text("버전")
                     .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                     .textCase(.uppercase)
-                    .foregroundStyle(.white.opacity(0.34))
+                    .foregroundStyle(settingsText.opacity(0.34))
                     .padding(.top, 2)
 
                 Text(settingsVersionSummary)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.46))
+                    .foregroundStyle(settingsText.opacity(0.46))
                     .lineSpacing(4)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 6)
@@ -590,7 +597,7 @@ struct SettingsView: View {
             .padding(16)
         }
         .background(settingsBackground)
-        .overlay(Rectangle().fill(Color.white.opacity(0.08)).frame(width: 1), alignment: .leading)
+        .overlay(Rectangle().fill(settingsText.opacity(0.08)).frame(width: 1), alignment: .leading)
         .accessibilityIdentifier("settings.metaPanel")
     }
 
@@ -602,30 +609,30 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Circle()
-                    .fill(isLive ? settingsAccentColor : Color.white.opacity(0.28))
+                    .fill(isLive ? settingsAccentColor : settingsText.opacity(0.28))
                     .frame(width: 6, height: 6)
                     .shadow(color: isLive ? settingsAccentColor.opacity(0.24) : .clear, radius: 3)
                 Text(label)
                     .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                     .textCase(.uppercase)
-                    .foregroundStyle(.white.opacity(0.42))
+                    .foregroundStyle(settingsText.opacity(0.42))
             }
             content()
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(settingsRounded(fill: Color.white.opacity(0.055), stroke: Color.white.opacity(0.08), radius: 10))
+        .background(settingsRounded(fill: settingsText.opacity(0.055), stroke: settingsText.opacity(0.08), radius: 10))
     }
 
     private func settingsMetaRow(_ key: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             Text(key)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.42))
+                .foregroundStyle(settingsText.opacity(0.42))
             Spacer(minLength: 0)
             Text(value)
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.74))
+                .foregroundStyle(settingsText.opacity(0.74))
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
@@ -648,24 +655,26 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.84))
+                        .foregroundStyle(settingsText.opacity(0.84))
                         .lineLimit(1)
                     Text(subtitle)
                         .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.38))
+                        .foregroundStyle(settingsText.opacity(0.38))
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            .background(settingsRounded(fill: Color.white.opacity(0.035), stroke: Color.clear, radius: 8))
+            .background(settingsRounded(fill: settingsText.opacity(0.035), stroke: Color.clear, radius: 8))
         }
         .buttonStyle(.plain)
     }
 
     private func settingsSidebarBadge(for section: SettingsSection) -> String? {
         switch section {
+        case .appearance:
+            return Agentic30Theme.normalized(appThemeRawValue).displayName
         case .account:
             return loginItemsManager.isEnabled ? "ON" : "Local"
         case .agents:
@@ -689,7 +698,7 @@ struct SettingsView: View {
 
     private func settingsSidebarTone(_ section: SettingsSection) -> Color {
         switch section {
-        case .account, .agents:
+        case .appearance, .account, .agents:
             return settingsAccentColor
         case .adAnalytics, .notion, .developerTools:
             return Color(red: 0.96, green: 0.78, blue: 0.54)
@@ -740,17 +749,17 @@ struct SettingsView: View {
                         .lineLimit(1)
                     Spacer(minLength: 0)
                 }
-                .foregroundStyle(.white.opacity(isBackButtonHovered ? 0.90 : 0.58))
+                .foregroundStyle(settingsText.opacity(isBackButtonHovered ? 0.90 : 0.58))
                 .padding(.horizontal, 10)
                 .frame(height: 40)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.white.opacity(isBackButtonHovered ? 0.075 : 0.0))
+                        .fill(settingsText.opacity(isBackButtonHovered ? 0.075 : 0.0))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.white.opacity(isBackButtonHovered ? 0.12 : 0.0), lineWidth: 1)
+                        .stroke(settingsText.opacity(isBackButtonHovered ? 0.12 : 0.0), lineWidth: 1)
                 )
                 .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
@@ -773,7 +782,7 @@ struct SettingsView: View {
             Spacer(minLength: 0)
         }
         .frame(width: 236)
-        .background(Color.white.opacity(0.025))
+        .background(settingsText.opacity(0.025))
         .overlay(alignment: .trailing) {
             Divider().opacity(0.36)
         }
@@ -792,12 +801,12 @@ struct SettingsView: View {
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
-            .foregroundStyle(section == selectedSection.wrappedValue ? .white.opacity(0.88) : .white.opacity(0.58))
+            .foregroundStyle(section == selectedSection.wrappedValue ? settingsText.opacity(0.88) : settingsText.opacity(0.58))
             .padding(.horizontal, 12)
             .frame(height: 36)
             .background(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(section == selectedSection.wrappedValue ? Color.white.opacity(0.10) : Color.clear)
+                    .fill(section == selectedSection.wrappedValue ? settingsText.opacity(0.10) : Color.clear)
             )
             .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
@@ -806,7 +815,23 @@ struct SettingsView: View {
     }
 
     private var settingsBackground: Color {
-        Color(red: 0.085, green: 0.095, blue: 0.105)
+        OpenDesignDayColor.bg
+    }
+
+    private var settingsText: Color {
+        OpenDesignDayColor.fg
+    }
+
+    private var settingsSecondaryText: Color {
+        OpenDesignDayColor.fgSecondary
+    }
+
+    private var settingsSubtleText: Color {
+        OpenDesignDayColor.muted
+    }
+
+    private var settingsHairline: Color {
+        OpenDesignDayColor.borderSoft
     }
 
     private var settingsSectionBar: some View {
@@ -817,12 +842,12 @@ struct SettingsView: View {
                 } label: {
                     Label(section.title, systemImage: section.systemImage)
                         .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundStyle(section == selectedSection.wrappedValue ? .white.opacity(0.92) : .white.opacity(0.5))
+                        .foregroundStyle(section == selectedSection.wrappedValue ? settingsText.opacity(0.92) : settingsText.opacity(0.5))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
                         .background(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(section == selectedSection.wrappedValue ? Color.white.opacity(0.14) : Color.white.opacity(0.04))
+                                .fill(section == selectedSection.wrappedValue ? settingsText.opacity(0.14) : settingsText.opacity(0.04))
                         )
                 }
                 .buttonStyle(.plain)
@@ -832,12 +857,14 @@ struct SettingsView: View {
         .padding(.horizontal, 16)
         .padding(.top, 16)
         .padding(.bottom, 12)
-        .background(Color(red: 0.14, green: 0.16, blue: 0.14))
+        .background(OpenDesignDayColor.bgDeep)
     }
 
     @ViewBuilder
     private var selectedSettingsSection: some View {
         switch selectedSection.wrappedValue {
+        case .appearance:
+            appearanceTab
         case .account:
             accountTab
         case .agents:
@@ -854,6 +881,112 @@ struct SettingsView: View {
             diagnosticsTab
         case .quarantineRecovery:
             RubricQuarantineView(viewModel: viewModel)
+        }
+    }
+
+    // MARK: - Appearance Tab
+
+    private var appearanceTab: some View {
+        settingsTabScaffold(
+            title: "Appearance",
+            subtitle: "day-white.html 팔레트를 기본으로 사용하고, 기존 다크 테마도 보존합니다."
+        ) {
+            appearanceThemeSection
+        }
+    }
+
+    private var appearanceThemeSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            sectionHeader(title: "Theme", configured: true)
+
+            Picker("Theme", selection: $appThemeRawValue) {
+                ForEach(Agentic30Theme.allCases) { theme in
+                    Text(theme.displayName)
+                        .tag(theme.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .tint(settingsAccentColor)
+            .accessibilityIdentifier("settings.appearance.themePicker")
+            .onChange(of: appThemeRawValue) { _, newValue in
+                let normalized = Agentic30Theme.normalized(newValue)
+                if normalized.rawValue != newValue {
+                    appThemeRawValue = normalized.rawValue
+                }
+                normalized.applyAppKitAppearance()
+            }
+
+            ForEach(Agentic30Theme.allCases) { theme in
+                themePreviewRow(theme)
+            }
+        }
+        .padding(20)
+        .background(cardBackground)
+    }
+
+    private func themePreviewRow(_ theme: Agentic30Theme) -> some View {
+        let isSelected = Agentic30Theme.normalized(appThemeRawValue) == theme
+        return HStack(spacing: 12) {
+            HStack(spacing: 0) {
+                Circle().fill(themePreviewAccent(theme)).frame(width: 12, height: 12)
+                Circle().fill(themePreviewSurface(theme)).frame(width: 12, height: 12)
+                    .overlay(Circle().stroke(themePreviewBorder(theme), lineWidth: 1))
+                Circle().fill(themePreviewText(theme)).frame(width: 12, height: 12)
+            }
+            .frame(width: 44, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(theme.displayName)
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundStyle(settingsText.opacity(0.88))
+                Text(theme.detail)
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(settingsText.opacity(0.50))
+            }
+
+            Spacer(minLength: 0)
+
+            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(isSelected ? settingsAccentColor : settingsText.opacity(0.30))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(settingsRounded(fill: isSelected ? settingsAccentColor.opacity(0.10) : settingsText.opacity(0.035), stroke: isSelected ? settingsAccentColor.opacity(0.22) : settingsText.opacity(0.08), radius: 8))
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .onTapGesture {
+            appThemeRawValue = theme.rawValue
+            theme.applyAppKitAppearance()
+        }
+        .accessibilityIdentifier("settings.appearance.theme.\(theme.rawValue)")
+    }
+
+    private func themePreviewAccent(_ theme: Agentic30Theme) -> Color {
+        switch theme {
+        case .white: Color(red: 0.0000, green: 0.5144, blue: 0.2936)
+        case .dark: Color(red: 0.2165, green: 0.8352, blue: 0.6244)
+        }
+    }
+
+    private func themePreviewSurface(_ theme: Agentic30Theme) -> Color {
+        switch theme {
+        case .white: Color.white
+        case .dark: Color(red: 0.0544, green: 0.0614, blue: 0.0666)
+        }
+    }
+
+    private func themePreviewText(_ theme: Agentic30Theme) -> Color {
+        switch theme {
+        case .white: Color(red: 0.0769, green: 0.1081, blue: 0.1353)
+        case .dark: Color(red: 0.9410, green: 0.9490, blue: 0.9550)
+        }
+    }
+
+    private func themePreviewBorder(_ theme: Agentic30Theme) -> Color {
+        switch theme {
+        case .white: Color(red: 0.7807, green: 0.8039, blue: 0.8214)
+        case .dark: Color(red: 0.1501, green: 0.1619, blue: 0.1708)
         }
     }
 
@@ -882,10 +1015,10 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Signed in: \(email)")
                         .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(settingsText.opacity(0.9))
                     Text("Sign-in is no longer required. You can clear this stored session and keep using the app locally.")
                         .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.45))
+                        .foregroundStyle(settingsText.opacity(0.45))
                 }
 
                 HStack(spacing: 10) {
@@ -897,10 +1030,10 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Using local mode")
                         .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(settingsText.opacity(0.9))
                     Text("Choose a project folder and continue without Google sign-in. Workspace integrations remain separate.")
                         .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.45))
+                        .foregroundStyle(settingsText.opacity(0.45))
                 }
             }
         }
@@ -913,7 +1046,7 @@ struct SettingsView: View {
         destructive: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
-        let color = destructive ? Color.red : Color.white
+        let color = destructive ? Color.red : settingsText
         return Button(action: action) {
             Text(title)
                 .font(.system(size: 13, weight: .bold, design: .rounded))
@@ -931,7 +1064,7 @@ struct SettingsView: View {
 
             Text("Mac에 로그인하면 Agentic30 메뉴바 아이콘이 자동으로 활성화됩니다. 워크스페이스 윈도우는 메뉴바에서 직접 열 수 있습니다.")
                 .font(.system(size: 13, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.48))
+                .foregroundStyle(settingsText.opacity(0.48))
 
             Toggle(isOn: Binding(
                 get: { loginItemsManager.isEnabled },
@@ -939,7 +1072,7 @@ struct SettingsView: View {
             )) {
                 Text("로그인 시 자동 시작")
                     .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.86))
+                    .foregroundStyle(settingsText.opacity(0.86))
             }
             .toggleStyle(.switch)
             .accessibilityIdentifier("settings.account.launchAtLogin.toggle")
@@ -954,7 +1087,7 @@ struct SettingsView: View {
 
             Text("Agentic30 checks the signed update feed in the background. You can also check manually.")
                 .font(.system(size: 13, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.48))
+                .foregroundStyle(settingsText.opacity(0.48))
 
             Button {
                 NotificationCenter.default.post(name: .agenticCheckForUpdatesRequested, object: nil)
@@ -965,10 +1098,10 @@ struct SettingsView: View {
                     Text("Check for Updates...")
                         .font(.system(size: 14, weight: .bold, design: .rounded))
                 }
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(settingsText.opacity(0.9))
                 .padding(.horizontal, 18)
                 .padding(.vertical, 10)
-                .background(Capsule().fill(Color.white.opacity(0.16)))
+                .background(Capsule().fill(settingsText.opacity(0.16)))
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("settings.updates.checkForUpdates")
@@ -984,10 +1117,10 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Reset Agentic30 on this Mac")
                     .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.88))
+                    .foregroundStyle(settingsText.opacity(0.88))
                 Text("Clears Agentic30 UserDefaults, Keychain entries, app support, local sessions, caches, Saved State, onboarding state, the Agentic30 QMD index, .agentic30 folders, and Agentic30-managed Day 1 handoff blocks in known workspaces. Other project files and global Claude/Codex/GWS logins are not deleted.")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.48))
+                    .foregroundStyle(settingsText.opacity(0.48))
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -1029,10 +1162,10 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(confirmation.title)
                         .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.94))
+                        .foregroundStyle(settingsText.opacity(0.94))
                     Text(confirmation.message)
                         .font(.system(size: 12.5, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.62))
+                        .foregroundStyle(settingsText.opacity(0.62))
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -1043,10 +1176,10 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
                     .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.84))
+                    .foregroundStyle(settingsText.opacity(0.84))
                     .padding(.horizontal, 14)
                     .frame(height: 34)
-                    .background(Capsule().fill(Color.white.opacity(0.12)))
+                    .background(Capsule().fill(settingsText.opacity(0.12)))
 
                     Button(confirmation.actionTitle) {
                         localDataConfirmation = nil
@@ -1059,7 +1192,7 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
                     .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.92))
+                    .foregroundStyle(settingsText.opacity(0.92))
                     .padding(.horizontal, 14)
                     .frame(height: 34)
                     .background(Capsule().fill(Color.red.opacity(0.68)))
@@ -1069,10 +1202,10 @@ struct SettingsView: View {
             .frame(width: 430)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color(red: 0.09, green: 0.10, blue: 0.12))
+                    .fill(OpenDesignDayColor.elevated)
                     .overlay(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                            .stroke(settingsHairline, lineWidth: 1)
                     )
             )
             .shadow(color: .black.opacity(0.42), radius: 22, x: 0, y: 14)
@@ -1132,10 +1265,10 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Exa Market Research")
                         .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.88))
+                        .foregroundStyle(settingsText.opacity(0.88))
                     Text(exaApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Provider Exa MCP is used first. Add this only as a fallback." : "News Market Radar can fall back to this Exa API key.")
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.52))
+                        .foregroundStyle(settingsText.opacity(0.52))
                 }
                 Spacer(minLength: 0)
             }
@@ -1149,7 +1282,7 @@ struct SettingsView: View {
 
             Text("Fallback only for the News tab's Market Radar when Codex, Claude Code, or Gemini does not already expose Exa MCP. Queries may include the product name, public URL, and explicit competitors; raw Day answers and local excerpts stay on this Mac.")
                 .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.44))
+                .foregroundStyle(settingsText.opacity(0.44))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(20)
@@ -1173,7 +1306,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(providerSettingsTitle(provider))
                         .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.88))
+                        .foregroundStyle(settingsText.opacity(0.88))
 
                     HStack(spacing: 8) {
                         Circle()
@@ -1181,7 +1314,7 @@ struct SettingsView: View {
                             .frame(width: 7, height: 7)
                         Text(providerStatusLabel(status))
                             .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.54))
+                            .foregroundStyle(settingsText.opacity(0.54))
                             .lineLimit(1)
                     }
                 }
@@ -1192,7 +1325,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Authenticate with")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.64))
+                    .foregroundStyle(settingsText.opacity(0.64))
 
                 authModeMenu(provider: provider, selection: authMode)
 
@@ -1225,12 +1358,12 @@ struct SettingsView: View {
                 if let quickstartURL = providerQuickstartURL(provider) {
                     Link("Get started", destination: quickstartURL)
                         .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.68))
+                        .foregroundStyle(settingsText.opacity(0.68))
                 }
                 if let configURL = providerConfigURL(provider) {
                     Link("Configure", destination: configURL)
                         .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.68))
+                        .foregroundStyle(settingsText.opacity(0.68))
                 }
             }
         }
@@ -1243,10 +1376,10 @@ struct SettingsView: View {
             Button(action: saveAgentSettingsValues) {
                 Text("Save Agent Settings")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(settingsText.opacity(0.9))
                     .padding(.horizontal, 24)
                     .padding(.vertical, 10)
-                    .background(Capsule().fill(Color.white.opacity(0.18)))
+                    .background(Capsule().fill(settingsText.opacity(0.18)))
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("settings.agents.saveButton")
@@ -1277,9 +1410,9 @@ struct SettingsView: View {
 
         return Image(systemName: symbol)
             .font(.system(size: 21, weight: .semibold))
-            .foregroundStyle(.white.opacity(0.75))
+            .foregroundStyle(settingsText.opacity(0.75))
             .frame(width: 44, height: 44)
-            .background(Color.white.opacity(0.085), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(settingsText.opacity(0.085), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private func providerSettingsTitle(_ provider: AgentProvider) -> String {
@@ -1341,14 +1474,14 @@ struct SettingsView: View {
             HStack(spacing: 10) {
                 Text(authModeLabel(selectedMode, provider: provider))
                     .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(settingsText.opacity(0.9))
                     .lineLimit(1)
 
                 Spacer(minLength: 12)
 
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.42))
+                    .foregroundStyle(settingsText.opacity(0.42))
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
@@ -1404,7 +1537,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(localAuthDescription(provider))
                 .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.44))
+                .foregroundStyle(settingsText.opacity(0.44))
                 .fixedSize(horizontal: false, vertical: true)
 
             Button {
@@ -1428,10 +1561,10 @@ struct SettingsView: View {
                     Text(provider == .gemini ? "Run gcloud ADC login" : "Open \(provider.title) Auth")
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                 }
-                .foregroundStyle(.white.opacity(0.86))
+                .foregroundStyle(settingsText.opacity(0.86))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
-                .background(Capsule().fill(Color.white.opacity(0.12)))
+                .background(Capsule().fill(settingsText.opacity(0.12)))
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("settings.\(provider.rawValue).openAuthButton")
@@ -1439,7 +1572,7 @@ struct SettingsView: View {
             if provider == .gemini, let diagnostic = providerEnvironment(for: .gemini)?.geminiAdc, diagnostic.isGcloudMissing {
                 Text("팁: Gemini API key를 쓰면 gcloud 설치 단계를 건너뛸 수 있습니다. (aistudio.google.com/apikey)")
                     .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(settingsText.opacity(0.6))
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("settings.gemini.byokHint")
             }
@@ -1450,7 +1583,7 @@ struct SettingsView: View {
                         .controlSize(.small)
                     Text(viewModel.providerAuthMessage ?? "Authenticating...")
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(settingsText.opacity(0.55))
                 }
             }
         }
@@ -1564,11 +1697,11 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label)
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(settingsText.opacity(0.6))
             SecureField(placeholder, text: text)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(settingsText.opacity(0.9))
                 .padding(12)
                 .background(fieldBackground)
                 .accessibilityIdentifier(identifier)
@@ -1583,10 +1716,10 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label)
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(settingsText.opacity(0.6))
             TextEditor(text: text)
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(settingsText.opacity(0.9))
                 .scrollContentBackground(.hidden)
                 .frame(minHeight: 86)
                 .padding(8)
@@ -1594,7 +1727,7 @@ struct SettingsView: View {
                 .accessibilityIdentifier(identifier)
             Text("One KEY=VALUE pair per line.")
                 .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.36))
+                .foregroundStyle(settingsText.opacity(0.36))
         }
     }
 
@@ -1629,10 +1762,10 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(provider.subtitle)
                         .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.72))
+                        .foregroundStyle(settingsText.opacity(0.72))
                     Text(providerFamilyLabel(provider))
                         .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.34))
+                        .foregroundStyle(settingsText.opacity(0.34))
                 }
 
                 Spacer(minLength: 12)
@@ -1656,13 +1789,13 @@ struct SettingsView: View {
                     HStack(spacing: 10) {
                         Text(AgentModelCatalog.label(for: selection.wrappedValue, provider: provider))
                             .font(.system(size: 14, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.9))
+                            .foregroundStyle(settingsText.opacity(0.9))
                             .lineLimit(1)
                             .truncationMode(.tail)
 
                         Image(systemName: "chevron.up.chevron.down")
                             .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.42))
+                            .foregroundStyle(settingsText.opacity(0.42))
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
@@ -1676,7 +1809,7 @@ struct SettingsView: View {
 
             Text(selection.wrappedValue)
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.36))
+                .foregroundStyle(settingsText.opacity(0.36))
                 .accessibilityIdentifier("settings.\(provider.rawValue).modelID")
         }
     }
@@ -1709,7 +1842,7 @@ struct SettingsView: View {
         } label: {
             Text(option.label)
                 .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.62))
+                .foregroundStyle(settingsText.opacity(0.62))
                 .frame(width: 230, height: 22, alignment: .leading)
         }
         .accessibilityIdentifier(identifier)
@@ -1719,7 +1852,7 @@ struct SettingsView: View {
         .padding(.vertical, 4)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color.white.opacity(isSelected ? 0.16 : 0.06))
+                .fill(settingsText.opacity(isSelected ? 0.16 : 0.06))
             )
     }
 
@@ -1734,12 +1867,12 @@ struct SettingsView: View {
                 } label: {
                     Text(mode.title)
                         .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.62))
+                        .foregroundStyle(settingsText.opacity(0.62))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(
                             Capsule()
-                                .fill(Color.white.opacity(selection.wrappedValue == mode.rawValue ? 0.16 : 0.06))
+                                .fill(settingsText.opacity(selection.wrappedValue == mode.rawValue ? 0.16 : 0.06))
                         )
                 }
                 .buttonStyle(.borderless)
@@ -1802,7 +1935,7 @@ struct SettingsView: View {
                         .frame(width: 8, height: 8)
                     Text("Connected to Notion")
                         .font(.system(size: 14, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(settingsText.opacity(0.9))
                     Spacer()
                     Button(action: {
                         viewModel.disconnectNotion()
@@ -1819,17 +1952,17 @@ struct SettingsView: View {
 
                 Text("Notion tools are available in all Claude and Codex sessions.")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.45))
+                    .foregroundStyle(settingsText.opacity(0.45))
 
             } else if viewModel.notionOAuthInProgress {
                 // OAuth in progress
                 HStack(spacing: 12) {
                     ProgressView()
                         .controlSize(.small)
-                        .tint(.white.opacity(0.6))
+                        .tint(settingsText.opacity(0.6))
                     Text("Waiting for authorization...")
                         .font(.system(size: 14, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.7))
+                        .foregroundStyle(settingsText.opacity(0.7))
                 }
 
             } else {
@@ -1837,7 +1970,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Not connected")
                         .font(.system(size: 14, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(settingsText.opacity(0.5))
 
                     Button(action: {
                         viewModel.startNotionOAuth()
@@ -1847,10 +1980,10 @@ struct SettingsView: View {
                             Text("Connect to Notion")
                         }
                         .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(settingsText.opacity(0.9))
                         .padding(.horizontal, 24)
                         .padding(.vertical, 10)
-                        .background(Capsule().fill(Color.white.opacity(0.18)))
+                        .background(Capsule().fill(settingsText.opacity(0.18)))
                     }
                     .buttonStyle(.plain)
 
@@ -1887,7 +2020,7 @@ struct SettingsView: View {
 
             Text("OAuth tokens are stored locally and refreshed automatically.")
                 .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.35))
+                .foregroundStyle(settingsText.opacity(0.35))
         }
         .padding(20)
         .background(cardBackground)
@@ -1911,7 +2044,7 @@ struct SettingsView: View {
 
             Text("테스트 알림은 실제 macOS 알림 센터 경로를 사용합니다. 배너를 누르면 Agentic30이 열리고 BIP 알림 task surface로 이동합니다.")
                 .font(.system(size: 13, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.50))
+                .foregroundStyle(settingsText.opacity(0.50))
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 12) {
@@ -1958,7 +2091,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 7) {
             Text("앱 화면 전체에 realistic confetti burst를 재생합니다.")
                 .font(.system(size: 13, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.50))
+                .foregroundStyle(settingsText.opacity(0.50))
                 .fixedSize(horizontal: false, vertical: true)
 
             developerToolButton(
@@ -1993,10 +2126,10 @@ struct SettingsView: View {
                 Text(title)
                     .font(.system(size: 14, weight: .bold, design: .rounded))
             }
-            .foregroundStyle(.white.opacity(0.9))
+            .foregroundStyle(settingsText.opacity(0.9))
             .padding(.horizontal, 18)
             .padding(.vertical, 10)
-            .background(Capsule().fill(Color.white.opacity(0.16)))
+            .background(Capsule().fill(settingsText.opacity(0.16)))
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(identifier)
@@ -2038,18 +2171,18 @@ struct SettingsView: View {
                                 if let message = check.message {
                                     Text(message)
                                         .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                        .foregroundStyle(.white.opacity(0.45))
+                                        .foregroundStyle(settingsText.opacity(0.45))
                                         .lineLimit(2)
                                 }
                                 if let recovery = check.recovery {
                                     Text(recovery)
                                         .font(.system(size: 11, weight: .medium, design: .rounded))
-                                        .foregroundStyle(.white.opacity(0.5))
+                                        .foregroundStyle(settingsText.opacity(0.5))
                                 }
                             }
                             .padding(10)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.white.opacity(0.04))
+                            .background(settingsText.opacity(0.04))
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         }
                     }
@@ -2057,7 +2190,7 @@ struct SettingsView: View {
             } else {
                 Text("Diagnostics are not available until the sidecar connects.")
                     .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.5))
+                    .foregroundStyle(settingsText.opacity(0.5))
             }
         }
         .padding(20)
@@ -2069,20 +2202,20 @@ struct SettingsView: View {
             Button(action: refreshDiagnostics) {
                 Text("Refresh")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(settingsText.opacity(0.9))
                     .padding(.horizontal, 24)
                     .padding(.vertical, 10)
-                    .background(Capsule().fill(Color.white.opacity(0.18)))
+                    .background(Capsule().fill(settingsText.opacity(0.18)))
             }
             .buttonStyle(.plain)
 
             Button(action: copyDiagnostics) {
                 Text("Copy Diagnostics")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.75))
+                    .foregroundStyle(settingsText.opacity(0.75))
                     .padding(.horizontal, 24)
                     .padding(.vertical, 10)
-                    .background(Capsule().fill(Color.white.opacity(0.08)))
+                    .background(Capsule().fill(settingsText.opacity(0.08)))
             }
             .buttonStyle(.plain)
 
@@ -2101,7 +2234,7 @@ struct SettingsView: View {
         ScrollView {
             Text(viewModel.diagnosticsReport)
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.58))
+                .foregroundStyle(settingsText.opacity(0.58))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
                 .padding(14)
@@ -2114,11 +2247,11 @@ struct SettingsView: View {
         HStack(alignment: .top) {
             Text(label)
                 .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(settingsText.opacity(0.5))
                 .frame(width: 96, alignment: .leading)
             Text(value)
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.74))
+                .foregroundStyle(settingsText.opacity(0.74))
                 .lineLimit(2)
             Spacer(minLength: 0)
         }
@@ -2128,11 +2261,11 @@ struct SettingsView: View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon)
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(settingsText.opacity(0.5))
                 .frame(width: 22)
             Text(text)
                 .font(.system(size: 13, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(settingsText.opacity(0.7))
         }
     }
 
@@ -2148,11 +2281,11 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("MCP / Personal API Key")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(settingsText.opacity(0.6))
                 SecureField("phx_...", text: $posthogApiKey)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(settingsText.opacity(0.9))
                     .padding(12)
                     .background(fieldBackground)
             }
@@ -2160,11 +2293,11 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Project API Key")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(settingsText.opacity(0.6))
                 SecureField("phc_...", text: $posthogProjectAPIKey)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(settingsText.opacity(0.9))
                     .padding(12)
                     .background(fieldBackground)
             }
@@ -2172,18 +2305,18 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Host")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(settingsText.opacity(0.6))
                 TextField("https://us.posthog.com", text: $posthogHost)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(settingsText.opacity(0.9))
                     .padding(12)
                     .background(fieldBackground)
             }
 
             Text("`phx_` key는 MCP/조회용이고, 앱/sidecar 이벤트 수집은 `phc_` project key를 사용합니다. 빈 칸이면 배포 빌드에 임베드된 기본 키를 사용합니다.")
                 .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.44))
+                .foregroundStyle(settingsText.opacity(0.44))
 
             if !posthogApiKey.isEmpty && posthogProjectAPIKey.isEmpty {
                 Text("MCP/조회는 설정되었지만 앱 이벤트 수집은 아직 비활성 상태입니다. `phc_` project key를 추가하거나, 비워두면 빌드 기본값을 사용합니다.")
@@ -2197,10 +2330,10 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("이 디바이스에서 telemetry 비활성화")
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.86))
+                        .foregroundStyle(settingsText.opacity(0.86))
                     Text("켜면 PostHog 이벤트 전송이 즉시 중단됩니다. distinct_id는 보존되어 재활성화 시 동일 사용자로 묶입니다.")
                         .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(settingsText.opacity(0.5))
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -2238,11 +2371,11 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Access Token")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(settingsText.opacity(0.6))
                 SecureField("EAA...", text: $metaAccessToken)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(settingsText.opacity(0.9))
                     .padding(12)
                     .background(fieldBackground)
             }
@@ -2250,11 +2383,11 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Ad Account ID")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(settingsText.opacity(0.6))
                 TextField("act_123456789", text: $metaAdAccountId)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(settingsText.opacity(0.9))
                     .padding(12)
                     .background(fieldBackground)
             }
@@ -2272,19 +2405,19 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Workspace Root")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(settingsText.opacity(0.6))
                 HStack(spacing: 8) {
                     TextField("/Users/you/project", text: $bipWorkspaceRoot)
                         .textFieldStyle(.plain)
                         .font(.system(size: 14, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(settingsText.opacity(0.9))
                         .padding(12)
                         .background(fieldBackground)
 
                     Button(action: pickFolder) {
                         Image(systemName: "folder")
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.6))
+                            .foregroundStyle(settingsText.opacity(0.6))
                             .padding(12)
                             .background(fieldBackground)
                     }
@@ -2299,7 +2432,7 @@ struct SettingsView: View {
                         } else {
                             Image(systemName: "sparkle.magnifyingglass")
                                 .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.6))
+                                .foregroundStyle(settingsText.opacity(0.6))
                                 .padding(12)
                                 .background(fieldBackground)
                         }
@@ -2325,7 +2458,7 @@ struct SettingsView: View {
                         ForEach(scanProgressLogLines, id: \.self) { line in
                             Text("• \(line)")
                                 .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundStyle(.white.opacity(0.48))
+                                .foregroundStyle(settingsText.opacity(0.48))
                                 .lineLimit(2)
                                 .textSelection(.enabled)
                         }
@@ -2356,7 +2489,7 @@ struct SettingsView: View {
 
             Text("Paths relative to workspace root. Agent auto-detects on scan.")
                 .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.35))
+                .foregroundStyle(settingsText.opacity(0.35))
         }
         .padding(20)
         .background(cardBackground)
@@ -2373,7 +2506,7 @@ struct SettingsView: View {
 
             Text("처음 설정은 Chat Assistant 안의 오늘 실행 카드에서 진행하세요. 이 영역은 고급 사용자용 수동 연결입니다.")
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.58))
+                .foregroundStyle(settingsText.opacity(0.58))
                 .fixedSize(horizontal: false, vertical: true)
 
             settingsField(label: "Google Docs 수동 연결 URL", placeholder: "https://docs.google.com/... (comma-separated)", text: $bipGdocsUrls)
@@ -2382,7 +2515,7 @@ struct SettingsView: View {
 
             Text("Chat Assistant 안의 오늘 실행 카드가 업무일지 Doc과 게시글 Sheet 템플릿을 내 Drive에 복사하고 자동 연결합니다. 수동 URL은 복구나 이전 연결 유지가 필요할 때만 사용하세요.")
                 .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.42))
+                .foregroundStyle(settingsText.opacity(0.42))
         }
         .padding(20)
         .background(cardBackground)
@@ -2400,16 +2533,16 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Threads")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(settingsText.opacity(0.6))
                 HStack(spacing: 0) {
                     Text("@")
                         .font(.system(size: 14, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.4))
+                        .foregroundStyle(settingsText.opacity(0.4))
                         .padding(.leading, 12)
                     TextField("handle", text: $bipThreadsHandle)
                         .textFieldStyle(.plain)
                         .font(.system(size: 14, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(settingsText.opacity(0.9))
                         .padding(12)
                 }
                 .background(fieldBackground)
@@ -2418,16 +2551,16 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("X (Twitter)")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(settingsText.opacity(0.6))
                 HStack(spacing: 0) {
                     Text("@")
                         .font(.system(size: 14, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.4))
+                        .foregroundStyle(settingsText.opacity(0.4))
                         .padding(.leading, 12)
                     TextField("handle", text: $bipXHandle)
                         .textFieldStyle(.plain)
                         .font(.system(size: 14, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(settingsText.opacity(0.9))
                         .padding(12)
                 }
                 .background(fieldBackground)
@@ -2444,20 +2577,20 @@ struct SettingsView: View {
             Button(action: saveAdValues) {
                 Text("Save")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(settingsText.opacity(0.9))
                     .padding(.horizontal, 24)
                     .padding(.vertical, 10)
-                    .background(Capsule().fill(Color.white.opacity(0.18)))
+                    .background(Capsule().fill(settingsText.opacity(0.18)))
             }
             .buttonStyle(.plain)
 
             Button(action: clearAdValues) {
                 Text("Clear All")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.5))
+                    .foregroundStyle(settingsText.opacity(0.5))
                     .padding(.horizontal, 24)
                     .padding(.vertical, 10)
-                    .background(Capsule().fill(Color.white.opacity(0.06)))
+                    .background(Capsule().fill(settingsText.opacity(0.06)))
             }
             .buttonStyle(.plain)
 
@@ -2477,20 +2610,20 @@ struct SettingsView: View {
             Button(action: saveBipValues) {
                 Text("Save")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(settingsText.opacity(0.9))
                     .padding(.horizontal, 24)
                     .padding(.vertical, 10)
-                    .background(Capsule().fill(Color.white.opacity(0.18)))
+                    .background(Capsule().fill(settingsText.opacity(0.18)))
             }
             .buttonStyle(.plain)
 
             Button(action: clearBipValues) {
                 Text("Clear All")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.5))
+                    .foregroundStyle(settingsText.opacity(0.5))
                     .padding(.horizontal, 24)
                     .padding(.vertical, 10)
-                    .background(Capsule().fill(Color.white.opacity(0.06)))
+                    .background(Capsule().fill(settingsText.opacity(0.06)))
             }
             .buttonStyle(.plain)
 
@@ -2554,18 +2687,18 @@ struct SettingsView: View {
 
                     Text(selectedSection.wrappedValue.sidebarTitle)
                         .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.52))
+                        .foregroundStyle(settingsText.opacity(0.52))
                 }
             }
 
             Text(title)
                 .font(.system(size: embeddedInWorkspace ? 27 : 26, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.96))
+                .foregroundStyle(settingsText.opacity(0.96))
                 .fixedSize(horizontal: false, vertical: true)
 
             Text(subtitle)
                 .font(.system(size: embeddedInWorkspace ? 14 : 14, weight: embeddedInWorkspace ? .semibold : .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(embeddedInWorkspace ? 0.58 : 0.50))
+                .foregroundStyle(settingsText.opacity(embeddedInWorkspace ? 0.58 : 0.50))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(embeddedInWorkspace ? 18 : 0)
@@ -2587,18 +2720,18 @@ struct SettingsView: View {
     }
 
     private var settingsAccentColor: Color {
-        Color(red: 0.64, green: 0.84, blue: 1.0)
+        OpenDesignDayColor.accent
     }
 
     private func settingsField(label: String, placeholder: String, text: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label)
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(settingsText.opacity(0.6))
             TextField(placeholder, text: text)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(settingsText.opacity(0.9))
                 .padding(12)
                 .background(fieldBackground)
         }
@@ -2641,7 +2774,7 @@ struct SettingsView: View {
             HStack(spacing: 6) {
                 Text(label)
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(settingsText.opacity(0.6))
                 if detected {
                     Text("auto-detected")
                         .font(.system(size: 10, weight: .bold, design: .rounded))
@@ -2680,7 +2813,7 @@ struct SettingsView: View {
                             .controlSize(.mini)
                         Text(viewModel.docCreationLogs.last ?? "Starting agent...")
                             .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.5))
+                            .foregroundStyle(settingsText.opacity(0.5))
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
@@ -2706,7 +2839,7 @@ struct SettingsView: View {
             TextField(placeholder, text: text)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(settingsText.opacity(0.9))
                 .padding(12)
                 .background(fieldBackground)
 
@@ -2727,12 +2860,12 @@ struct SettingsView: View {
                             }
                         }
                         .font(.system(size: 10, weight: .regular, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.4))
+                        .foregroundStyle(settingsText.opacity(0.4))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(8)
                     }
                     .frame(maxHeight: 80)
-                    .background(Color.white.opacity(0.03))
+                    .background(settingsText.opacity(0.03))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                     .onChange(of: viewModel.docCreationLogs.count) {
                         withAnimation {
@@ -2747,11 +2880,11 @@ struct SettingsView: View {
     private func sectionHeader(title: String, configured: Bool) -> some View {
         HStack(spacing: 10) {
             Circle()
-                .fill(configured ? Agentic30BrandColor.greenBright : Color.white.opacity(0.18))
+                .fill(configured ? Agentic30BrandColor.greenBright : settingsText.opacity(0.18))
                 .frame(width: 9, height: 9)
             Text(title)
                 .font(.system(size: 16, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.84))
+                .foregroundStyle(settingsText.opacity(0.84))
         }
     }
 
@@ -2764,22 +2897,22 @@ struct SettingsView: View {
         case "failed":
             return Color(red: 1.0, green: 0.45, blue: 0.42)
         default:
-            return .white.opacity(0.5)
+            return settingsText.opacity(0.5)
         }
     }
 
     private var fieldBackground: some View {
         let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
         return shape
-            .fill(Color.white.opacity(0.055))
-            .overlay(shape.stroke(Color.white.opacity(0.085), lineWidth: 1))
+            .fill(OpenDesignDayColor.surface)
+            .overlay(shape.stroke(settingsHairline, lineWidth: 1))
     }
 
     private var cardBackground: some View {
         let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
         return shape
-            .fill(Color.white.opacity(0.060))
-            .overlay(shape.stroke(Color.white.opacity(0.085), lineWidth: 1))
+            .fill(OpenDesignDayColor.surface)
+            .overlay(shape.stroke(settingsHairline, lineWidth: 1))
     }
 
     private func pickFolder() {

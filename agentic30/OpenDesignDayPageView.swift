@@ -2793,32 +2793,113 @@ struct OpenDesignDayDraft: Equatable {
     }
 }
 
-enum OpenDesignDayColor {
-    static let bg = Color(red: 0.0801, green: 0.0874, blue: 0.0928)
-    static let bgDeep = Color(red: 0.0379, green: 0.0446, blue: 0.0497)
-    static let bgDarker = Color(red: 0.0252, green: 0.0291, blue: 0.0322)
-    static let surface = Color(red: 0.0544, green: 0.0614, blue: 0.0666)
-    static let surface2 = Color(red: 0.0714, green: 0.0786, blue: 0.0839)
-    static let elevated = Color(red: 0.1053, green: 0.1147, blue: 0.1217)
-    static let hover = Color(red: 0.1407, green: 0.1524, blue: 0.1611)
-    static let selected = Color(red: 0.1756, green: 0.1918, blue: 0.2039)
-    static let border = Color(red: 0.1501, green: 0.1619, blue: 0.1708)
-    static let borderSoft = Color(red: 0.1128, green: 0.1242, blue: 0.1327)
-    static let borderStrong = Color(red: 0.2421, green: 0.2634, blue: 0.2793)
-    static let fg = Color(red: 0.9410, green: 0.9490, blue: 0.9550)
-    static let fgSecondary = Color(red: 0.7328, green: 0.7455, blue: 0.7551)
-    static let muted = Color(red: 0.4865, green: 0.5055, blue: 0.5198)
-    static let mutedDeep = Color(red: 0.3263, green: 0.3486, blue: 0.3652)
-    static let accent = Color(red: 0.2165, green: 0.8352, blue: 0.6244)
-    static let accentStrong = Color(red: 0.0000, green: 0.7754, blue: 0.5051)
-    static let amber = Color(red: 0.9364, green: 0.6955, blue: 0.2742)
-    static let rose = Color(red: 0.9751, green: 0.4673, blue: 0.4400)
-    static let sky = Color(red: 0.3475, green: 0.7738, blue: 0.9615)
-    static let diffAdd = Color(red: 0.2284, green: 0.7286, blue: 0.4173)
-    static let diffDel = Color(red: 0.9473, green: 0.4424, blue: 0.4166)
+private struct OpenDesignDayPalette {
+    let bg: Color
+    let bgDeep: Color
+    let bgDarker: Color
+    let surface: Color
+    let surface2: Color
+    let elevated: Color
+    let hover: Color
+    let selected: Color
+    let border: Color
+    let borderSoft: Color
+    let borderStrong: Color
+    let fg: Color
+    let fgSecondary: Color
+    let muted: Color
+    let mutedDeep: Color
+    let accent: Color
+    let accentStrong: Color
+    let amber: Color
+    let rose: Color
+    let sky: Color
+    let diffAdd: Color
+    let diffDel: Color
+}
 
-    static var accentDim: Color { accent.opacity(0.14) }
-    static var accentLine: Color { accent.opacity(0.40) }
+enum OpenDesignDayColor {
+    private static var palette: OpenDesignDayPalette {
+        switch Agentic30Theme.current {
+        case .white:
+            // Converted from day-white.html OKLCH tokens to sRGB for native SwiftUI rendering.
+            OpenDesignDayPalette(
+                bg: Color(red: 0.9698, green: 0.9778, blue: 0.9838),
+                bgDeep: Color(red: 0.9371, green: 0.9530, blue: 0.9651),
+                bgDarker: Color(red: 0.9015, green: 0.9227, blue: 0.9387),
+                surface: Color(red: 1.0000, green: 1.0000, blue: 1.0000),
+                surface2: Color(red: 0.9571, green: 0.9678, blue: 0.9758),
+                elevated: Color(red: 1.0000, green: 1.0000, blue: 1.0000),
+                hover: Color(red: 0.9089, green: 0.9274, blue: 0.9414),
+                selected: Color(red: 0.8692, green: 0.8982, blue: 0.9200),
+                border: Color(red: 0.7807, green: 0.8039, blue: 0.8214),
+                borderSoft: Color(red: 0.8625, green: 0.8808, blue: 0.8947),
+                borderStrong: Color(red: 0.6280, green: 0.6630, blue: 0.6892),
+                fg: Color(red: 0.0769, green: 0.1081, blue: 0.1353),
+                fgSecondary: Color(red: 0.2265, green: 0.2536, blue: 0.2777),
+                muted: Color(red: 0.4009, green: 0.4261, blue: 0.4487),
+                mutedDeep: Color(red: 0.5778, green: 0.6001, blue: 0.6202),
+                accent: Color(red: 0.0000, green: 0.5144, blue: 0.2936),
+                accentStrong: Color(red: 0.0000, green: 0.4477, blue: 0.2202),
+                amber: Color(red: 0.9364, green: 0.6955, blue: 0.2742),
+                rose: Color(red: 0.7566, green: 0.2345, blue: 0.2311),
+                sky: Color(red: 0.0000, green: 0.5040, blue: 0.6955),
+                diffAdd: Color(red: 0.0000, green: 0.4778, blue: 0.2025),
+                diffDel: Color(red: 0.7429, green: 0.2211, blue: 0.2199)
+            )
+        case .dark:
+            OpenDesignDayPalette(
+                bg: Color(red: 0.0801, green: 0.0874, blue: 0.0928),
+                bgDeep: Color(red: 0.0379, green: 0.0446, blue: 0.0497),
+                bgDarker: Color(red: 0.0252, green: 0.0291, blue: 0.0322),
+                surface: Color(red: 0.0544, green: 0.0614, blue: 0.0666),
+                surface2: Color(red: 0.0714, green: 0.0786, blue: 0.0839),
+                elevated: Color(red: 0.1053, green: 0.1147, blue: 0.1217),
+                hover: Color(red: 0.1407, green: 0.1524, blue: 0.1611),
+                selected: Color(red: 0.1756, green: 0.1918, blue: 0.2039),
+                border: Color(red: 0.1501, green: 0.1619, blue: 0.1708),
+                borderSoft: Color(red: 0.1128, green: 0.1242, blue: 0.1327),
+                borderStrong: Color(red: 0.2421, green: 0.2634, blue: 0.2793),
+                fg: Color(red: 0.9410, green: 0.9490, blue: 0.9550),
+                fgSecondary: Color(red: 0.7328, green: 0.7455, blue: 0.7551),
+                muted: Color(red: 0.4865, green: 0.5055, blue: 0.5198),
+                mutedDeep: Color(red: 0.3263, green: 0.3486, blue: 0.3652),
+                accent: Color(red: 0.2165, green: 0.8352, blue: 0.6244),
+                accentStrong: Color(red: 0.0000, green: 0.7754, blue: 0.5051),
+                amber: Color(red: 0.9364, green: 0.6955, blue: 0.2742),
+                rose: Color(red: 0.9751, green: 0.4673, blue: 0.4400),
+                sky: Color(red: 0.3475, green: 0.7738, blue: 0.9615),
+                diffAdd: Color(red: 0.2284, green: 0.7286, blue: 0.4173),
+                diffDel: Color(red: 0.9473, green: 0.4424, blue: 0.4166)
+            )
+        }
+    }
+
+    static var bg: Color { palette.bg }
+    static var bgDeep: Color { palette.bgDeep }
+    static var bgDarker: Color { palette.bgDarker }
+    static var surface: Color { palette.surface }
+    static var surface2: Color { palette.surface2 }
+    static var elevated: Color { palette.elevated }
+    static var hover: Color { palette.hover }
+    static var selected: Color { palette.selected }
+    static var border: Color { palette.border }
+    static var borderSoft: Color { palette.borderSoft }
+    static var borderStrong: Color { palette.borderStrong }
+    static var fg: Color { palette.fg }
+    static var fgSecondary: Color { palette.fgSecondary }
+    static var muted: Color { palette.muted }
+    static var mutedDeep: Color { palette.mutedDeep }
+    static var accent: Color { palette.accent }
+    static var accentStrong: Color { palette.accentStrong }
+    static var amber: Color { palette.amber }
+    static var rose: Color { palette.rose }
+    static var sky: Color { palette.sky }
+    static var diffAdd: Color { palette.diffAdd }
+    static var diffDel: Color { palette.diffDel }
+
+    static var accentDim: Color { accent.opacity(Agentic30Theme.current == .white ? 0.12 : 0.14) }
+    static var accentLine: Color { accent.opacity(Agentic30Theme.current == .white ? 0.34 : 0.40) }
     static var amberDim: Color { amber.opacity(0.14) }
     static var amberLine: Color { amber.opacity(0.36) }
     static var roseDim: Color { rose.opacity(0.14) }
@@ -6258,7 +6339,8 @@ private struct OpenDesignDayMainView: View {
             Text(signalAttributedValue(value))
                 .lineSpacing(2.5)
                 .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -7653,9 +7735,9 @@ private struct OpenDesignHypothesisConfirmationCard: View {
                 highlightBackground: OpenDesignDayColor.amberDim
             ))
                 .lineSpacing(2)
-                .lineLimit(row.id == "outcome" ? 2 : 1)
                 .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
@@ -8399,12 +8481,12 @@ private struct OpenDesignSearchTextField: NSViewRepresentable {
         field.placeholderAttributedString = NSAttributedString(
             string: placeholder,
             attributes: [
-                .foregroundColor: Self.placeholderColor,
+                .foregroundColor: Self.placeholderColor(),
                 .font: Self.font,
             ]
         )
         field.font = Self.font
-        field.textColor = Self.foregroundColor
+        field.textColor = Self.foregroundColor()
         field.backgroundColor = .clear
         field.drawsBackground = false
         field.isBordered = false
@@ -8423,6 +8505,14 @@ private struct OpenDesignSearchTextField: NSViewRepresentable {
         if nsView.stringValue != text {
             nsView.stringValue = text
         }
+        nsView.textColor = Self.foregroundColor()
+        nsView.placeholderAttributedString = NSAttributedString(
+            string: placeholder,
+            attributes: [
+                .foregroundColor: Self.placeholderColor(),
+                .font: Self.font,
+            ]
+        )
         nsView.wantsPaletteFocus = focusRequestID > 0
         if focusRequestID > 0 {
             nsView.requestPaletteFocus()
@@ -8448,8 +8538,24 @@ private struct OpenDesignSearchTextField: NSViewRepresentable {
     }
 
     private static let font = NSFont.systemFont(ofSize: 14, weight: .medium)
-    private static let foregroundColor = NSColor(red: 0.9410, green: 0.9490, blue: 0.9550, alpha: 1)
-    private static let placeholderColor = NSColor(red: 0.4865, green: 0.5055, blue: 0.5198, alpha: 1)
+
+    private static func foregroundColor() -> NSColor {
+        switch Agentic30Theme.current {
+        case .white:
+            NSColor(red: 0.0769, green: 0.1081, blue: 0.1353, alpha: 1)
+        case .dark:
+            NSColor(red: 0.9410, green: 0.9490, blue: 0.9550, alpha: 1)
+        }
+    }
+
+    private static func placeholderColor() -> NSColor {
+        switch Agentic30Theme.current {
+        case .white:
+            NSColor(red: 0.4009, green: 0.4261, blue: 0.4487, alpha: 1)
+        case .dark:
+            NSColor(red: 0.4865, green: 0.5055, blue: 0.5198, alpha: 1)
+        }
+    }
 }
 
 private final class OpenDesignNativeSearchField: NSTextField {

@@ -19,7 +19,7 @@ struct RubricQuarantineView: View {
             content
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color(red: 0.10, green: 0.12, blue: 0.10))
+        .background(OpenDesignDayColor.bg)
         .onAppear { viewModel.requestQuarantineList() }
     }
 
@@ -27,10 +27,10 @@ struct RubricQuarantineView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("정직 모드 복구")
                 .font(.title3.weight(.semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(OpenDesignDayColor.fg)
             Text("Day 30 결산 schema가 거부한 record를 한 줄 fix로 다시 들이는 곳입니다. 점수가 낮은 게 아니라, 왜 낮은지를 모르는 게 위험합니다.")
                 .font(.callout)
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 12) {
                 Button {
@@ -70,10 +70,10 @@ struct RubricQuarantineView: View {
                 .font(.system(size: 28))
                 .foregroundStyle(Agentic30BrandColor.green)
             Text("복구할 record가 없습니다.")
-                .foregroundStyle(.white)
+                .foregroundStyle(OpenDesignDayColor.fg)
             Text("Day 30 schema가 거부한 record가 생기면 여기로 옵니다.")
                 .font(.footnote)
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(OpenDesignDayColor.muted)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -87,14 +87,14 @@ struct RubricQuarantineView: View {
             }
             .padding(12)
         }
-        .background(Color(red: 0.12, green: 0.14, blue: 0.12))
+        .background(OpenDesignDayColor.bgDeep)
     }
 
     private func fileGroup(_ bundle: QuarantineFileWithDump) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(bundle.dump.quarantinedAt ?? bundle.file.name)
                 .font(.caption.monospaced())
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(OpenDesignDayColor.muted)
             ForEach(bundle.dump.records) { entry in
                 let entryID = "\(bundle.file.id)#\(entry.index)"
                 Button {
@@ -115,7 +115,7 @@ struct RubricQuarantineView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.originalSummary ?? "Day-30 record #\(entry.index)")
                     .font(.callout)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(OpenDesignDayColor.fg)
                 Text("\(entry.issues.count)개 schema issue")
                     .font(.caption2)
                     .foregroundStyle(.orange)
@@ -123,7 +123,7 @@ struct RubricQuarantineView: View {
             Spacer()
         }
         .padding(8)
-        .background(isSelected ? Color.white.opacity(0.08) : Color.clear)
+        .background(isSelected ? OpenDesignDayColor.selected : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
@@ -141,7 +141,7 @@ struct RubricQuarantineView: View {
         } else {
             VStack {
                 Text("좌측에서 record를 선택하세요.")
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(OpenDesignDayColor.muted)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -151,7 +151,7 @@ struct RubricQuarantineView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Explain — 왜 거부됐나")
                 .font(.headline)
-                .foregroundStyle(.white)
+                .foregroundStyle(OpenDesignDayColor.fg)
             ForEach(entry.issues, id: \.self) { issue in
                 HStack(alignment: .top, spacing: 6) {
                     Text("•")
@@ -162,7 +162,7 @@ struct RubricQuarantineView: View {
                             .foregroundStyle(.orange)
                         Text(issue.message)
                             .font(.callout)
-                            .foregroundStyle(.white.opacity(0.85))
+                            .foregroundStyle(OpenDesignDayColor.fgSecondary)
                     }
                 }
             }
@@ -175,10 +175,10 @@ struct RubricQuarantineView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Propose — 가장 흔한 fix")
                     .font(.headline)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(OpenDesignDayColor.fg)
                 Text(proposal.suggestion)
                     .font(.callout)
-                    .foregroundStyle(.white.opacity(0.85))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -188,7 +188,7 @@ struct RubricQuarantineView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Fix — 한 줄 입력")
                 .font(.headline)
-                .foregroundStyle(.white)
+                .foregroundStyle(OpenDesignDayColor.fg)
             TextField("정직 모드 한 줄 (예: 이번 주 수요 검증 안 한 상태)", text: $honestModeInput)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("honest-mode-input")

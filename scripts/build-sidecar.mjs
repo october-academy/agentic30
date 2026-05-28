@@ -38,6 +38,7 @@ const ENTRY_POINTS = [
   "index.mjs",
   "qmd-bootstrap-worker.mjs",
   "mcp-server.mjs",
+  "onboarding-helper.mjs",
   "acp-adapter.mjs",
   "preflight-cli.mjs",
 ];

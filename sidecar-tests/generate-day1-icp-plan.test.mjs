@@ -29,7 +29,7 @@ async function writeFile(root, relativePath, content) {
 
 const SIGNAL_DIGEST_ROW_ORDER = ["project", "goal", "icp", "pain", "outcome", "evidence"];
 const SIGNAL_DIGEST_LABELS = ["프로젝트", "목표", "고객", "문제", "확인할 행동", "근거"];
-const SIGNAL_DIGEST_LIMITS = { project: 90, goal: 120, icp: 90, pain: 80, outcome: 110, evidence: 120 };
+const SIGNAL_DIGEST_LIMITS = { project: 90, goal: 120, icp: 90, pain: 180, outcome: 110, evidence: 120 };
 
 function assertConciseSignalDigest(digest) {
   assert.ok(digest);
@@ -633,6 +633,58 @@ test("Day 1 alignment normalizer strips customer segment from outcome surfaces",
       assert.doesNotMatch(value, /전업 1인 개발자|\(수익|macOS/);
       assert.match(value, /지불 의향|현재 대안|최근 사건|검증|확인|대화|행동|신호/);
     }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Day 1 alignment signal digest keeps long pain copy within display limit", async () => {
+  const root = await tempWorkspace();
+  try {
+    const deterministicPlan = await generateDay1AlignmentPlan({
+      workspaceRoot: root,
+      scanResult: {},
+      onboardingHypothesis: {
+        productName: "PhotoVault",
+        targetUser: "개인 사용자 및 소규모 팀",
+        problem: "Google Photos와 iCloud 같은 클라우드 서비스에 개인 사진과 동영상을 맡기고 싶지 않은 사용자가 자체 호스팅 대안 없이 데이터 주권을 잃는다",
+        goal: "개인 사진 보관 대안을 검증한다",
+        confidence: "high",
+      },
+    });
+    const longPain = "Google Photos와 iCloud 같은 클라우드 서비스에 개인 사진과 동영상을 맡기고 싶지 않은 사용자가 자체 호스팅 대안 없이 데이터 주권을 잃는 문제";
+
+    const normalized = normalizeDay1AlignmentPlan({
+      ...deterministicPlan,
+      signals: {
+        ...deterministicPlan.signals,
+        problem: longPain,
+      },
+      components: {
+        ...deterministicPlan.components,
+        painPoint: {
+          ...deterministicPlan.components.painPoint,
+          statement: longPain,
+        },
+      },
+      alignmentStatement: {
+        ...deterministicPlan.alignmentStatement,
+        painPoint: longPain,
+      },
+      signalDigest: {
+        ...deterministicPlan.signalDigest,
+        rows: deterministicPlan.signalDigest.rows.map((row) =>
+          row.key === "pain" ? { ...row, value: longPain } : row
+        ),
+      },
+    });
+
+    assert.ok(normalized);
+    const pain = normalized.signalDigest.rows.find((row) => row.key === "pain").value;
+    assert.equal(pain, longPain);
+    assert.ok(pain.length > 80);
+    assert.ok(pain.length <= SIGNAL_DIGEST_LIMITS.pain);
+    assert.doesNotMatch(pain, /…$/);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

@@ -91,12 +91,15 @@ struct ContentView: View {
                 resetLocalSwiftUIStateAfterLocalDataReset()
             }
 
-        if isWorkspaceWindow {
-            content
-        } else {
-            content
-                .containerBackground(.clear, for: .window)
+        Group {
+            if isWorkspaceWindow {
+                content
+            } else {
+                content
+                    .containerBackground(.clear, for: .window)
+            }
         }
+        .agentic30Themed()
     }
 
     private var isWorkspaceWindow: Bool {

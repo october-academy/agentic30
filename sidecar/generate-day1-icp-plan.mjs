@@ -51,7 +51,7 @@ const SIGNAL_DIGEST_VALUE_LIMITS = Object.freeze({
   project: 90,
   goal: 120,
   icp: 90,
-  pain: 80,
+  pain: 180,
   outcome: 110,
   evidence: 120,
 });
@@ -2960,7 +2960,7 @@ export function buildDay1AlignmentComposerPrompt(plan) {
     "Every choice label must answer its component's question directly: 고객 choices are customer segments, 문제 choices are customer pains/costs, 확인할 행동 choices are customer behavior or market-signal actions.",
     "Add signalDigest for direct UI rendering. signalDigest.rows must be exactly this order: project, goal, icp, pain, outcome, evidence.",
     "The project signalDigest row value must be the display product name only. Do not include quality score, confidence, or other metadata in the project row.",
-    "Each other signalDigest row value must be concise Korean display copy: goal <= 120 chars, icp <= 90 chars, pain <= 80 chars, outcome <= 110 chars. signalDigest.summary <= 160 chars.",
+    "Each other signalDigest row value must be concise Korean display copy: goal <= 120 chars, icp <= 90 chars, pain <= 180 chars, outcome <= 110 chars. signalDigest.summary <= 160 chars.",
     "",
     "DETERMINISTIC_ALIGNMENT_PLAN_JSON:",
     JSON.stringify(plan, null, 2).slice(0, MAX_CONTEXT_CHARS),

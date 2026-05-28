@@ -170,7 +170,7 @@ final class agentic30UITests: XCTestCase {
         )
         clickCenter(of: buttonContaining(in: app, text: "프로젝트 일지"))
         clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
-        XCTAssertTrue(app.staticTexts["첫 결정을 만들 프로젝트 폴더를 선택할까요?"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["프로젝트 폴더를 연결할까요?"].waitForExistence(timeout: 5))
         assertStableIntakeStepLayout(
             in: app,
             current: 6,
@@ -178,9 +178,12 @@ final class agentic30UITests: XCTestCase {
         )
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
         XCTAssertFalse(button(in: app, matching: ["Continue →", "Continue"]).exists)
-        clickCenter(of: buttonContaining(in: app, text: "폴더 선택하기"))
+        clickCenter(of: buttonContaining(in: app, text: "AI 도구로 연결"))
+        XCTAssertTrue(elementWithIdentifier(in: app, "intakeV2.folderPromptPasteGuide").waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["열어 둔 Cursor, Claude Code, Codex에 붙여넣으세요."].exists)
+        clickCenter(of: buttonContaining(in: app, text: "직접 선택"))
         XCTAssertTrue(buttonContaining(in: app, text: "다른 폴더 선택").waitForExistence(timeout: 3))
-        XCTAssertFalse(buttonContaining(in: app, text: "나중에 폴더 선택").exists)
+        XCTAssertFalse(buttonContaining(in: app, text: "나중에").exists)
         let selectedFolderName = elementWithIdentifier(in: app, "intakeV2.selectedFolderName")
         XCTAssertTrue(selectedFolderName.waitForExistence(timeout: 3))
         XCTAssertEqual(selectedFolderName.label, (workspacePath as NSString).lastPathComponent)
@@ -290,9 +293,9 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["이미 가진 기록이 있나요?"].waitForExistence(timeout: 5))
         clickCenter(of: buttonContaining(in: app, text: "아직 기록은 없다"))
         clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
-        XCTAssertTrue(app.staticTexts["첫 결정을 만들 프로젝트 폴더를 선택할까요?"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["프로젝트 폴더를 연결할까요?"].waitForExistence(timeout: 5))
         XCTAssertFalse(button(in: app, matching: ["Continue →", "Continue"]).exists)
-        clickCenter(of: buttonContaining(in: app, text: "나중에 폴더 선택"))
+        clickCenter(of: buttonContaining(in: app, text: "나중에"))
 
         if !app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10) {
             attachText(app.debugDescription, named: "Intake V2 source step missing after folder skip")
@@ -410,8 +413,8 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["이미 가진 기록이 있나요?"].waitForExistence(timeout: 5))
         clickCenter(of: buttonContaining(in: app, text: "프로젝트 일지"))
         clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
-        XCTAssertTrue(app.staticTexts["첫 결정을 만들 프로젝트 폴더를 선택할까요?"].waitForExistence(timeout: 5))
-        clickCenter(of: buttonContaining(in: app, text: "폴더 선택하기"))
+        XCTAssertTrue(app.staticTexts["프로젝트 폴더를 연결할까요?"].waitForExistence(timeout: 5))
+        clickCenter(of: buttonContaining(in: app, text: "직접 선택"))
         XCTAssertTrue(buttonContaining(in: app, text: "다른 폴더 선택").waitForExistence(timeout: 3))
         clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
         XCTAssertTrue(app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10))
@@ -494,8 +497,8 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["이미 가진 기록이 있나요?"].waitForExistence(timeout: 5))
         clickCenter(of: buttonContaining(in: app, text: "아직 기록은 없다"))
         clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
-        XCTAssertTrue(app.staticTexts["첫 결정을 만들 프로젝트 폴더를 선택할까요?"].waitForExistence(timeout: 5))
-        clickCenter(of: buttonContaining(in: app, text: "나중에 폴더 선택"))
+        XCTAssertTrue(app.staticTexts["프로젝트 폴더를 연결할까요?"].waitForExistence(timeout: 5))
+        clickCenter(of: buttonContaining(in: app, text: "나중에"))
 
         XCTAssertTrue(app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10))
         assertIntakeProgress(in: app, current: 7)

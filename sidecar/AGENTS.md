@@ -38,6 +38,8 @@ Local Node.js sidecar that the macOS app launches as a child process. Provides a
 | `monetization-ask-result.mjs` | Result handling/normalization for monetization-ask |
 | `monetization-ask-integration.mjs` | Glue between monetization-ask and the chat surface |
 | `onboarding-hypothesis.mjs` | Derives + merges workspace onboarding hypothesis |
+| `onboarding-helper.mjs` | Onboarding helper CLI: `agentic30-onboarding --register --path X --source Y --token T` registers the current project folder by calling `registerOnboardingWorkspaceRequest` and exits. No MCP, no stdio server. No-args invocation prints usage and exits 64. |
+| `onboarding-workspace-request.mjs` | Persists pending workspace registrations under `appSupport/onboarding-workspace-requests/` with 30 min TTL; verifies nonce from `AGENTIC30_ONBOARDING_NONCE_PATH` when provided; records caller-claimed source as `claimedSource` (do not treat as trusted). |
 | `idd-doc-gate.mjs` | Iterative Doc Development gate (~37k chars) |
 | `adaptive-curriculum.mjs` | Adaptive curriculum builder |
 
@@ -107,3 +109,7 @@ Local Node.js sidecar that the macOS app launches as a child process. Provides a
 - `@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk`, `@modelcontextprotocol/sdk`, `@tobilu/qmd`, `ws`, `zod`.
 
 <!-- MANUAL: -->
+
+### Build integration
+
+When editing `ENTRY_POINTS` in `scripts/build-sidecar.mjs`, also update the matching `inputPaths` list in the "Build Sidecar Bundle" Run Script phase of `agentic30.xcodeproj/project.pbxproj`. Xcode's incremental build graph relies on the pbxproj input list; without it, edits to new entry-point modules may not trigger a Run Script rerun even though `build-sidecar.mjs`'s own fingerprint would catch the change.

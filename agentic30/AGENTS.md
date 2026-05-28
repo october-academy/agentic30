@@ -28,6 +28,7 @@ SwiftUI/AppKit source for the macOS app target. Owns the menu bar extra, workspa
 | `PostHogTelemetry.swift` | PostHog event capture wrapper (respects telemetry toggle) |
 | `Item.swift` | Minimal SwiftData example model — likely scaffold residue |
 | `Info.plist` | App bundle metadata |
+| `OnboardingWorkspaceRequestStore.swift` | Onboarding helper plumbing: `OnboardingWorkspaceRequestStore` reads pending registrations from `appSupport/onboarding-workspace-requests/`; `OnboardingNonceStore` issues/rotates/invalidates the per-session onboarding token in `appSupport/onboarding-nonce.json`; `OnboardingHelperInstaller` writes the zsh launcher at `bin/agentic30-onboarding` and exports `AGENTIC30_APP_SUPPORT_PATH` + `AGENTIC30_ONBOARDING_NONCE_PATH`. |
 
 ## Subdirectories
 

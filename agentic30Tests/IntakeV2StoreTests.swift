@@ -473,6 +473,268 @@ final class IntakeV2SourceManagerTests: XCTestCase {
         XCTAssertEqual(mgr.status(of: .localFolder), .connected)
     }
 
+    func test_onboardingWorkspaceRequestStore_loadsLatestValidPendingRequest() throws {
+        let appSupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-request-store-\(UUID().uuidString)", isDirectory: true)
+        let workspace = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-workspace-\(UUID().uuidString)", isDirectory: true)
+        let requestsDir = appSupport
+            .appendingPathComponent(OnboardingWorkspaceRequestStore.requestsDirectoryName, isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: requestsDir, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: appSupport)
+            try? FileManager.default.removeItem(at: workspace)
+        }
+
+        let older = """
+        {
+          "id": "req_old",
+          "path": "\(workspace.path)",
+          "basename": "\(workspace.lastPathComponent)",
+          "source": "cursor",
+          "createdAt": "2026-05-28T00:00:00.000Z",
+          "expiresAt": "2026-05-28T00:30:00.000Z",
+          "usedCwd": true,
+          "status": "pending"
+        }
+        """
+        let newer = """
+        {
+          "id": "req_new",
+          "path": "\(workspace.path)",
+          "basename": "\(workspace.lastPathComponent)",
+          "source": "codex",
+          "createdAt": "2026-05-28T00:10:00.000Z",
+          "expiresAt": "2026-05-28T00:40:00.000Z",
+          "usedCwd": false,
+          "status": "pending"
+        }
+        """
+        try older.data(using: .utf8)?.write(to: requestsDir.appendingPathComponent("old.json"))
+        try newer.data(using: .utf8)?.write(to: requestsDir.appendingPathComponent("new.json"))
+
+        var store = OnboardingWorkspaceRequestStore(appSupportURL: appSupport)
+        store.now = { ISO8601DateFormatter().date(from: "2026-05-28T00:20:00Z")! }
+
+        let request = store.latestPendingRequest()
+
+        XCTAssertEqual(request?.id, "req_new")
+        XCTAssertEqual(request?.source, "codex")
+        XCTAssertEqual(request?.url.path, workspace.path)
+    }
+
+    func test_onboardingWorkspaceRequestStore_ignoresExpiredMissingAndRejectedRequests() throws {
+        let appSupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-request-store-\(UUID().uuidString)", isDirectory: true)
+        let requestsDir = appSupport
+            .appendingPathComponent(OnboardingWorkspaceRequestStore.requestsDirectoryName, isDirectory: true)
+        try FileManager.default.createDirectory(at: requestsDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: appSupport) }
+
+        let expired = """
+        {
+          "id": "req_expired",
+          "path": "/tmp/missing-agentic30-workspace",
+          "basename": "missing-agentic30-workspace",
+          "source": "unknown",
+          "createdAt": "2026-05-28T00:00:00.000Z",
+          "expiresAt": "2026-05-28T00:01:00.000Z",
+          "usedCwd": true,
+          "status": "pending"
+        }
+        """
+        let rejected = """
+        {
+          "id": "req_rejected",
+          "path": "/tmp",
+          "basename": "tmp",
+          "source": "unknown",
+          "createdAt": "2026-05-28T00:02:00.000Z",
+          "expiresAt": "2026-05-28T00:40:00.000Z",
+          "usedCwd": true,
+          "status": "rejected"
+        }
+        """
+        try expired.data(using: .utf8)?.write(to: requestsDir.appendingPathComponent("expired.json"))
+        try rejected.data(using: .utf8)?.write(to: requestsDir.appendingPathComponent("rejected.json"))
+
+        var store = OnboardingWorkspaceRequestStore(appSupportURL: appSupport)
+        store.now = { ISO8601DateFormatter().date(from: "2026-05-28T00:20:00Z")! }
+
+        XCTAssertNil(store.latestPendingRequest())
+    }
+
+    func test_onboardingWorkspaceRequestStore_removesConsumedRequest() throws {
+        let appSupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-request-store-\(UUID().uuidString)", isDirectory: true)
+        let requestsDir = appSupport
+            .appendingPathComponent(OnboardingWorkspaceRequestStore.requestsDirectoryName, isDirectory: true)
+        try FileManager.default.createDirectory(at: requestsDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: appSupport) }
+
+        let requestURL = requestsDir.appendingPathComponent("req_done.json")
+        try Data("{}".utf8).write(to: requestURL)
+
+        OnboardingWorkspaceRequestStore(appSupportURL: appSupport).removeRequest(id: "req_done")
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: requestURL.path))
+    }
+
+    func test_onboardingPromptIncludesHelperAndCliInstructions() {
+        let prompt = IntakeV2FolderPickView.agentWorkspaceRegistrationPrompt(token: "test-token-123")
+        let helperPath = OnboardingHelperInstaller().helperURL.path
+
+        XCTAssertTrue(prompt.contains(helperPath))
+        XCTAssertTrue(prompt.contains("--register"))
+        XCTAssertTrue(prompt.contains("--path"))
+        XCTAssertTrue(prompt.contains("--token"))
+        XCTAssertTrue(prompt.contains("프로젝트 파일은 수정되지 않습니다"))
+        XCTAssertTrue(prompt.contains("프로젝트 파일을 읽거나, 스캔하거나, 수정하지 마"))
+
+        // Negative: 잔존 MCP 표현이 prompt 본문에서 사라졌어야 함
+        XCTAssertFalse(prompt.contains("claude mcp add"))
+        XCTAssertFalse(prompt.contains(".cursor/mcp.json"))
+        XCTAssertFalse(prompt.contains("codex mcp add"))
+        XCTAssertFalse(prompt.contains("full Agentic30 MCP"))
+        XCTAssertFalse(prompt.contains("jsonrpc"))
+        XCTAssertFalse(prompt.contains("register_current_project_workspace"))
+    }
+
+    func test_agentWorkspaceRegistrationPromptInjectsOnboardingToken() {
+        let token = "nonce-\(UUID().uuidString)"
+        let prompt = IntakeV2FolderPickView.agentWorkspaceRegistrationPrompt(token: token)
+        XCTAssertTrue(prompt.contains(token), "Issued onboarding token should be embedded in the prompt for the AI agent")
+    }
+
+    func test_onboardingNonceStore_rotateAndCurrentTokenRoundTrip() throws {
+        let appSupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-nonce-store-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: appSupport) }
+
+        var store = OnboardingNonceStore(appSupportURL: appSupport)
+        let issued = try store.rotateAndIssue()
+        XCTAssertFalse(issued.isEmpty)
+        XCTAssertEqual(store.currentToken(), issued)
+
+        let rotated = try store.rotateAndIssue()
+        XCTAssertNotEqual(rotated, issued, "Rotation should yield a new token")
+        XCTAssertEqual(store.currentToken(), rotated)
+    }
+
+    func test_onboardingNonceStore_currentTokenReturnsNilAfterExpiry() throws {
+        let appSupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-nonce-store-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: appSupport) }
+
+        var store = OnboardingNonceStore(appSupportURL: appSupport)
+        let issuedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        store.now = { issuedAt }
+        _ = try store.rotateAndIssue()
+
+        store.now = { issuedAt.addingTimeInterval(OnboardingNonceStore.tokenTTL + 1) }
+        XCTAssertNil(store.currentToken(), "Expired token must not be returned")
+    }
+
+    func test_onboardingNonceStore_invalidateRemovesFile() throws {
+        let appSupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-nonce-store-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: appSupport) }
+
+        let store = OnboardingNonceStore(appSupportURL: appSupport)
+        _ = try store.rotateAndIssue()
+        XCTAssertNotNil(store.currentToken())
+
+        store.invalidate()
+        XCTAssertNil(store.currentToken())
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: appSupport.appendingPathComponent(OnboardingNonceStore.fileName).path)
+        )
+    }
+
+    func test_onboardingHelperShellQuoteEscapesSingleQuotes() {
+        XCTAssertEqual(
+            OnboardingHelperInstaller.shellQuote("/tmp/Agentic30's Helper"),
+            "'/tmp/Agentic30'\\''s Helper'"
+        )
+    }
+
+    private func makeStubNodeResolver(nodePath: String) -> NodeExecutableResolver {
+        NodeExecutableResolver(
+            environment: ["NODE_BINARY": nodePath],
+            homeDirectory: "/tmp",
+            shellLookup: { nil },
+            isExecutable: { $0 == nodePath },
+            directoryContentsProvider: { _ in [] }
+        )
+    }
+
+    func test_onboardingHelperInstaller_writesExecutableWrapper() throws {
+        let appSupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-helper-installer-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: appSupport) }
+
+        let nodePath = "/tmp/stub/node-\(UUID().uuidString)"
+        let installer = OnboardingHelperInstaller(
+            appSupportURL: appSupport,
+            nodeResolver: makeStubNodeResolver(nodePath: nodePath)
+        )
+
+        let helperURL = try installer.installOrRefresh()
+        XCTAssertEqual(helperURL, installer.helperURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: helperURL.path))
+
+        let attrs = try FileManager.default.attributesOfItem(atPath: helperURL.path)
+        XCTAssertEqual(attrs[.posixPermissions] as? NSNumber, NSNumber(value: 0o755))
+    }
+
+    func test_onboardingHelperInstaller_wrapperReferencesNonceAndSidecarPaths() throws {
+        let appSupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-helper-installer-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: appSupport) }
+
+        let nodePath = "/tmp/stub/node-\(UUID().uuidString)"
+        let installer = OnboardingHelperInstaller(
+            appSupportURL: appSupport,
+            nodeResolver: makeStubNodeResolver(nodePath: nodePath)
+        )
+
+        let helperURL = try installer.installOrRefresh()
+        let content = try String(contentsOf: helperURL, encoding: .utf8)
+        let noncePath = appSupport.appendingPathComponent(OnboardingNonceStore.fileName).path
+
+        XCTAssertTrue(content.contains("AGENTIC30_APP_SUPPORT_PATH=\(OnboardingHelperInstaller.shellQuote(appSupport.path))"))
+        XCTAssertTrue(content.contains("AGENTIC30_ONBOARDING_NONCE_PATH=\(OnboardingHelperInstaller.shellQuote(noncePath))"))
+        XCTAssertTrue(content.contains(nodePath))
+        XCTAssertTrue(content.contains("onboarding-helper.mjs"))
+    }
+
+    func test_onboardingHelperInstaller_isIdempotent() throws {
+        let appSupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-helper-installer-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: appSupport) }
+
+        let nodePath = "/tmp/stub/node-\(UUID().uuidString)"
+        let installer = OnboardingHelperInstaller(
+            appSupportURL: appSupport,
+            nodeResolver: makeStubNodeResolver(nodePath: nodePath)
+        )
+
+        let firstURL = try installer.installOrRefresh()
+        let firstContent = try String(contentsOf: firstURL, encoding: .utf8)
+        let secondURL = try installer.installOrRefresh()
+        let secondContent = try String(contentsOf: secondURL, encoding: .utf8)
+
+        XCTAssertEqual(firstURL, secondURL)
+        XCTAssertEqual(firstContent, secondContent)
+    }
+
     func test_localFolderStatusText_prefersFolderNameOverDetail() {
         let source = IntakeSourceState(
             id: .localFolder,

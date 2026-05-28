@@ -653,6 +653,27 @@ struct OpenDesignDayContentTests {
         #expect(openDesignAlignmentDisplayLabel(for: "outcome", fallback: "Outcome") == "확인할 행동")
     }
 
+    @Test func signalDigestDisplayKeepsLongPainValueUntruncated() throws {
+        let longPain = "Google Photos와 iCloud 같은 클라우드 서비스에 개인 사진과 동영상을 맡기고 싶지 않은 사용자가 자체 호스팅 대안 없이 데이터 주권을 잃는 문제"
+        let digest = Day1SignalDigest(
+            schemaVersion: 1,
+            rows: [
+                Day1SignalDigestRow(key: "project", label: "프로젝트", value: "PhotoVault", tone: "strong"),
+                Day1SignalDigestRow(key: "goal", label: "목표", value: "개인 사진 보관 대안을 검증한다", tone: "body"),
+                Day1SignalDigestRow(key: "icp", label: "고객", value: "개인 사용자 및 소규모 팀", tone: "body"),
+                Day1SignalDigestRow(key: "pain", label: "문제", value: longPain, tone: "mark"),
+                Day1SignalDigestRow(key: "outcome", label: "확인할 행동", value: "첫 고객 대화에서 지불 의향과 현재 대안을 묻는다", tone: "strong"),
+                Day1SignalDigestRow(key: "evidence", label: "근거", value: "docs/GOAL.md, docs/ICP.md", tone: "code"),
+            ],
+            summary: "PhotoVault는 개인 사진 보관 대안을 검증한다."
+        )
+        let plan = makeAlignmentPlan(signalDigest: digest)
+        let painRow = try #require(plan.signalDigest?.rows.first { $0.key == "pain" })
+
+        #expect(openDesignDisplaySignalDigestValue(for: painRow, alignmentPlan: plan) == longPain)
+        #expect(!openDesignDisplaySignalDigestValue(for: painRow, alignmentPlan: plan).contains("…"))
+    }
+
     @Test func alignmentDisplayRowsUseStructuredSanitizedValues() throws {
         let documentPointer = "[VALUES.md](./VALUES.md) — 제품 가치"
         let plan = makeAlignmentPlan(

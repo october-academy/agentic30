@@ -106,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isUITesting: Self.isUITestingLaunch()
         )
         PostHogTelemetry.capture("mac_app_launched")
+        installOnboardingHelper()
         PostHogTelemetry.flushPendingOnceCaptures()
         if isFirstLaunchEver {
             PostHogTelemetry.captureOnce(
@@ -169,6 +170,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async { [weak self] in
                 self?.closeWorkspaceWindows()
             }
+        }
+    }
+
+    private func installOnboardingHelper() {
+        do {
+            _ = try OnboardingHelperInstaller().installOrRefresh()
+        } catch {
+            NSLog("Agentic30 onboarding helper install failed: \(error.localizedDescription)")
         }
     }
 
