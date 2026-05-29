@@ -372,6 +372,8 @@ final class agentic30UITests: XCTestCase {
         )
 
         let app = launchApp(arguments: [
+            "-agentic30.appearance.theme.v1",
+            "white",
             "--ui-testing-reset-onboarding",
             "--ui-testing-picker-path=\(workspacePath)",
             "--ui-testing-disable-sidecar",
@@ -394,6 +396,7 @@ final class agentic30UITests: XCTestCase {
         if app.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 3) {
             advanceOnboardingIntroToContext(in: app)
         } else if bootCards.waitForExistence(timeout: 3) || elementWithIdentifier(in: app, "intakeV2.boot.cards").exists {
+            verifyBootIntroLayout(in: app)
             clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
         }
 
@@ -424,9 +427,11 @@ final class agentic30UITests: XCTestCase {
         let bootLog = elementWithIdentifier(in: app, "intakeV2.bootLog")
         let openInbox = elementWithIdentifier(in: app, "intakeV2.openInboxButton")
         let scanPreview = elementWithIdentifier(in: app, "intakeV2.scanPreview")
+        let footerSpinner = elementWithIdentifier(in: app, "intakeV2.footerNextSpinner")
         XCTAssertTrue(scanPreview.waitForExistence(timeout: 5))
         XCTAssertTrue(bootLog.waitForExistence(timeout: 5))
         XCTAssertTrue(openInbox.waitForExistence(timeout: 5))
+        XCTAssertTrue(footerSpinner.waitForExistence(timeout: 5))
         XCTAssertFalse(openInbox.isEnabled)
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
         let scanWaitTree = app.debugDescription
@@ -452,6 +457,85 @@ final class agentic30UITests: XCTestCase {
         XCTAssertFalse(renderedTree.contains("3개 질문 " + "먼저 답하기"))
         XCTAssertFalse(renderedTree.contains("답변은 " + "저장했습니다"))
         XCTAssertFalse(renderedTree.contains("intake 답변으로 먼저 시작하기"))
+    }
+
+    @MainActor
+    func testIntakeV2ScanWaitRendersInDarkTheme() throws {
+        let runID = UUID().uuidString
+        let tempRoot = FileManager.default.temporaryDirectory
+        let workspacePath = tempRoot
+            .appendingPathComponent("agentic30-ui-intake-scan-wait-dark-workspace-\(runID)", isDirectory: true)
+            .path
+        let appSupportPath = tempRoot
+            .appendingPathComponent("agentic30-ui-intake-scan-wait-dark-app-\(runID)", isDirectory: true)
+            .path
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+        try FileManager.default.createDirectory(
+            atPath: workspacePath,
+            withIntermediateDirectories: true
+        )
+        try "Agentic30 UI dark scan wait fixture\n".write(
+            toFile: "\(workspacePath)/README.md",
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let app = launchApp(arguments: [
+            "-agentic30.appearance.theme.v1",
+            "dark",
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-picker-path=\(workspacePath)",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        let bootCards = elementWithIdentifier(in: app, "intakeV2.boot.cards")
+        if app.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 3) {
+            advanceOnboardingIntroToContext(in: app)
+        } else if bootCards.waitForExistence(timeout: 3) {
+            verifyBootIntroLayout(in: app)
+            clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
+        } else {
+            XCTFail("Expected Intake V2 boot intro in dark theme")
+        }
+
+        XCTAssertTrue(app.staticTexts["지금 하루를 가장 많이 쓰는 역할은 무엇인가요?"].waitForExistence(timeout: 5))
+        clickCenter(of: buttonContaining(in: app, text: "개발자"))
+        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        XCTAssertTrue(app.staticTexts["지금 가장 큰 막힘은 무엇인가요?"].waitForExistence(timeout: 5))
+        clickCenter(of: buttonContaining(in: app, text: "첫 사용자를 찾지 못하고 있다"))
+        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        XCTAssertTrue(app.staticTexts["하루에 얼마나 시간을 쓸 수 있나요?"].waitForExistence(timeout: 5))
+        clickCenter(of: buttonContaining(in: app, text: "전업으로 6시간 이상"))
+        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        XCTAssertTrue(app.staticTexts["이미 가진 기록이 있나요?"].waitForExistence(timeout: 5))
+        clickCenter(of: buttonContaining(in: app, text: "프로젝트 일지"))
+        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        XCTAssertTrue(app.staticTexts["프로젝트 폴더를 연결할까요?"].waitForExistence(timeout: 5))
+        clickCenter(of: buttonContaining(in: app, text: "직접 선택"))
+        XCTAssertTrue(buttonContaining(in: app, text: "다른 폴더 선택").waitForExistence(timeout: 3))
+        clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
+        XCTAssertTrue(app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10))
+        clickCenter(of: button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"]))
+
+        assertIntakeProgress(in: app, current: 8, timeout: 10)
+        XCTAssertTrue(elementWithIdentifier(in: app, "intakeV2.progress").waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "intakeV2.scanPreview").waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "intakeV2.openInboxButton").waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "intakeV2.footerNextSpinner").waitForExistence(timeout: 5))
     }
 
     @MainActor
@@ -1572,6 +1656,15 @@ final class agentic30UITests: XCTestCase {
         }
 
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
+        let mainScroll = app.scrollViews["opendesign.day.main.scroll"]
+        XCTAssertTrue(mainScroll.waitForExistence(timeout: 5))
+        let summaryCardInMainScroll = mainScroll.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier == %@", "day1.situationSummary.card"))
+            .element(boundBy: 0)
+        XCTAssertTrue(
+            summaryCardInMainScroll.waitForExistence(timeout: 5),
+            "Day-1 situation summary card should render inside the Day 1 main scroll"
+        )
         XCTAssertTrue(
             elementWithIdentifier(in: app, "day1.situationSummary.title").waitForExistence(timeout: 5),
             "Day-1 situation summary card should render on the workspace surface"
@@ -1579,6 +1672,33 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(
             elementWithIdentifier(in: app, "day1.situationSummary.goalOption").firstMatch.waitForExistence(timeout: 5),
             "goal-concretization option buttons should render"
+        )
+        XCTAssertFalse(
+            elementWithIdentifier(in: app, "opendesign.day.start.phase").exists,
+            "mission card should not render before the summary advances"
+        )
+        XCTAssertFalse(
+            app.buttons["opendesign.day.start"].exists,
+            "mission start button should not render before the summary advances"
+        )
+        let nextSummary = app.buttons["day1.situationSummary.next"]
+        XCTAssertTrue(
+            nextSummary.waitForExistence(timeout: 5),
+            "summary next button should render"
+        )
+        clickCenter(of: nextSummary)
+        XCTAssertTrue(
+            waitForElementToDisappear(summaryCardInMainScroll, timeout: 3),
+            "summary card should advance away after tapping next"
+        )
+        XCTAssertTrue(
+            waitForOpenDesignMainHittable(elementWithIdentifier(in: app, "opendesign.day.start"), in: app, timeout: 5),
+            "mission card should be visible after tapping next"
+        )
+        clickCenter(of: app.buttons["opendesign.day.start"])
+        XCTAssertTrue(
+            waitUntilHittable(app.buttons["opendesign.day.icp.option.1"], timeout: 5),
+            "mission start should advance to the first Day 1 question"
         )
         attachScreenshot(from: app, named: "Day1 Situation Summary Card")
     }
