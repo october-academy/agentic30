@@ -27,6 +27,7 @@ const sidecarRoot = path.resolve(__dirname);
 process.env.AGENTIC30_SIDECAR_ROOT ??= sidecarRoot;
 const DEFAULT_CODEX_MODEL = "gpt-5.5";
 const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
+export const CODEX_BINARY_NOT_INSTALLED_ERROR_CODE = "ERR_CODEX_BINARY_NOT_INSTALLED";
 const MINI_ACTION_EXECUTION_ONLY_MODE = "mini_action_execution_only";
 const CODEX_REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
 const GEMINI_CAPABLE_EXECUTION_MODES = new Set([
@@ -379,17 +380,28 @@ function getProviderSdkState(provider) {
 
   const packageName = "@openai/codex-sdk";
   const packageRoot = resolveInstalledPackageRoot("@openai", "codex-sdk");
-  const binaryPath = resolveCodexBinaryPath();
+  let binaryPath = null;
+  let binaryError = null;
+  try {
+    binaryPath = resolveCodexBinaryPath();
+  } catch (error) {
+    if (error?.code !== CODEX_BINARY_NOT_INSTALLED_ERROR_CODE) {
+      throw error;
+    }
+    binaryError = error;
+  }
   const packageJson = readPackageJson(packageRoot);
+  const binaryInstalled = Boolean(binaryPath && fsSync.existsSync(binaryPath));
   return {
-    available: fsSync.existsSync(binaryPath),
+    available: binaryInstalled,
     packageName,
     version: packageJson?.version ?? null,
     packageRoot,
     entrypointPath: binaryPath,
-    message: fsSync.existsSync(binaryPath)
-      ? "Codex SDK and CLI binary are installed"
-      : "Codex CLI binary is missing",
+    message: binaryError?.message
+      ?? (binaryInstalled
+        ? "Codex SDK and CLI binary are installed"
+        : "Codex CLI binary is missing"),
   };
 }
 
@@ -1779,7 +1791,9 @@ async function runTextOnlyProvider({
   onTextReplace?.(text);
 }
 
-export function resolveCodexBinaryPath() {
+export function resolveCodexBinaryPath({
+  packageRootResolver = resolveExistingInstalledPackageRoot,
+} = {}) {
   const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
   const platform =
     process.platform === "darwin"
@@ -1791,9 +1805,9 @@ export function resolveCodexBinaryPath() {
   const targetTriple = `${arch}-${platform}`;
   const platformPackage = resolveCodexPlatformPackageName(targetTriple);
   const packageRoots = [
-    platformPackage ? resolveInstalledPackageRoot("@openai", platformPackage) : null,
-    resolveInstalledPackageRoot("@openai", "codex"),
-    resolveInstalledPackageRoot("@openai", "codex-sdk"),
+    platformPackage ? packageRootResolver("@openai", platformPackage) : null,
+    packageRootResolver("@openai", "codex"),
+    packageRootResolver("@openai", "codex-sdk"),
   ].filter(Boolean);
 
   for (const packageRoot of packageRoots) {
@@ -1803,7 +1817,30 @@ export function resolveCodexBinaryPath() {
     }
   }
 
+  if (packageRoots.length === 0) {
+    throw buildCodexBinaryNotInstalledError({
+      targetTriple,
+      platformPackage,
+    });
+  }
+
   return path.join(packageRoots[0], "vendor", targetTriple, "codex", binary);
+}
+
+function buildCodexBinaryNotInstalledError({ targetTriple, platformPackage }) {
+  const expectedPackages = [
+    platformPackage ? `@openai/${platformPackage}` : null,
+    "@openai/codex",
+    "@openai/codex-sdk",
+  ].filter(Boolean);
+  const error = new Error(
+    `Codex binary not installed: expected ${expectedPackages.join(", ")} under sidecar/node_modules or node_modules for ${targetTriple}.`,
+  );
+  error.name = "CodexBinaryNotInstalledError";
+  error.code = CODEX_BINARY_NOT_INSTALLED_ERROR_CODE;
+  error.targetTriple = targetTriple;
+  error.expectedPackages = expectedPackages;
+  return error;
 }
 
 function resolveCodexPlatformPackageName(targetTriple) {
@@ -1831,6 +1868,18 @@ function resolveInstalledPackageRoot(...segments) {
     return bundledPath;
   }
   return path.resolve(sidecarRoot, "..", "node_modules", ...segments);
+}
+
+function resolveExistingInstalledPackageRoot(...segments) {
+  const bundledPath = path.resolve(sidecarRoot, "node_modules", ...segments);
+  if (fsSync.existsSync(bundledPath)) {
+    return bundledPath;
+  }
+  const workspacePath = path.resolve(sidecarRoot, "..", "node_modules", ...segments);
+  if (fsSync.existsSync(workspacePath)) {
+    return workspacePath;
+  }
+  return null;
 }
 
 function buildMcpConfig(
