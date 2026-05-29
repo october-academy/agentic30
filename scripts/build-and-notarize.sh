@@ -13,6 +13,9 @@ set -euo pipefail
 #   ASC_ISSUER_ID         — App Store Connect API Issuer ID (UUID)
 #   SPARKLE_PUBLIC_ED_KEY — public EdDSA key embedded in Info.plist
 #   SPARKLE_GENERATE_APPCAST_BIN — path to Sparkle's generate_appcast tool
+#   POSTHOG_PROJECT_API_KEY — PostHog project token embedded for launch telemetry
+# Optional:
+#   POSTHOG_HOST           — PostHog app/ingest host (defaults to https://us.posthog.com)
 # Apple-ID + app-specific password path is unused (notarytool now authenticates
 # via ASC API key — same key reused by future fastlane match in W2+).
 #
@@ -51,6 +54,7 @@ required_vars=(
   ASC_ISSUER_ID
   SPARKLE_PUBLIC_ED_KEY
   SPARKLE_GENERATE_APPCAST_BIN
+  POSTHOG_PROJECT_API_KEY
 )
 missing=0
 for var in "${required_vars[@]}"; do
@@ -60,6 +64,13 @@ for var in "${required_vars[@]}"; do
   fi
 done
 [ "$missing" = "1" ] && exit 2
+
+if [[ "$POSTHOG_PROJECT_API_KEY" != phc_* ]]; then
+  echo "ERROR: \$POSTHOG_PROJECT_API_KEY must be a PostHog project token starting with phc_" >&2
+  exit 2
+fi
+
+POSTHOG_HOST="${POSTHOG_HOST:-https://us.posthog.com}"
 
 ARCHIVE_PATH="build/agentic30.xcarchive"
 EXPORT_PATH="build/export"
@@ -108,7 +119,9 @@ xcodebuild archive \
   CODE_SIGN_IDENTITY="$CODE_SIGN_IDENTITY" \
   CODE_SIGN_STYLE=Manual \
   DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
-  SPARKLE_PUBLIC_ED_KEY="$SPARKLE_PUBLIC_ED_KEY"
+  SPARKLE_PUBLIC_ED_KEY="$SPARKLE_PUBLIC_ED_KEY" \
+  POSTHOG_PROJECT_API_KEY="$POSTHOG_PROJECT_API_KEY" \
+  POSTHOG_HOST="$POSTHOG_HOST"
 
 [ -d "$ARCHIVE_PATH" ] || { echo "ERROR: archive build failed" >&2; exit 1; }
 
@@ -119,6 +132,12 @@ xcodebuild -exportArchive \
   -exportOptionsPlist "$EXPORT_OPTIONS"
 
 [ -d "$APP_PATH" ] || { echo "ERROR: export failed; .app not at $APP_PATH" >&2; exit 1; }
+
+embedded_posthog_key="$(/usr/libexec/PlistBuddy -c 'Print :Agentic30PostHogProjectAPIKey' "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)"
+if [[ "$embedded_posthog_key" != phc_* ]]; then
+  echo "ERROR: exported app is missing embedded PostHog project token" >&2
+  exit 1
+fi
 
 # Bundled sidecar npm packages ship .bin/ symlinks (cmake-js, node-llama-cpp,
 # etc.) that point outside the bundle on the build machine. macOS codesign
