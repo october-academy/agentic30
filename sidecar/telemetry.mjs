@@ -161,6 +161,12 @@ function loadOrCreateDistinctId(statePath) {
   return distinctId;
 }
 
+function persistDistinctId(statePath, distinctId) {
+  try {
+    fs.writeFileSync(statePath, JSON.stringify({ distinctId }, null, 2), { mode: 0o600 });
+  } catch {}
+}
+
 function normalizeError(error) {
   if (error instanceof Error) {
     return {
@@ -181,7 +187,7 @@ function normalizeError(error) {
 
 export function createTelemetryClient({ appSupportPath, workspaceRoot }) {
   const distinctIdPath = path.join(appSupportPath, "posthog-telemetry.json");
-  const anonymousDistinctId = loadOrCreateDistinctId(distinctIdPath);
+  let anonymousDistinctId = loadOrCreateDistinctId(distinctIdPath);
 
   function loadConfig() {
     const configPath = path.join(appSupportPath, "ad-config.json");
@@ -241,7 +247,21 @@ export function createTelemetryClient({ appSupportPath, workspaceRoot }) {
     }).catch(() => {});
   }
 
+  function setAnonymousDistinctId(nextId) {
+    const trimmed = String(nextId || "").trim();
+    if (!trimmed || trimmed === anonymousDistinctId) return false;
+    anonymousDistinctId = trimmed;
+    persistDistinctId(distinctIdPath, trimmed);
+    return true;
+  }
+
   return {
+    setAnonymousDistinctId,
+
+    getAnonymousDistinctId() {
+      return anonymousDistinctId;
+    },
+
     captureEvent(event, properties = {}) {
       const config = loadConfig();
       if (!config) return;

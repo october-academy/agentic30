@@ -329,6 +329,19 @@ enum PostHogTelemetry {
         UserDefaults.standard.string(forKey: distinctIDDefaultsKey) != nil
     }
 
+    /// Persistent anonymous distinct ID shared with the Node sidecar so events
+    /// captured by either process before sign-in resolve to the same PostHog
+    /// person. Sign-in flips both sides to `auth.userId` via `distinctID(for:)`.
+    static func anonymousDistinctID() -> String {
+        if let existing = UserDefaults.standard.string(forKey: distinctIDDefaultsKey),
+           !existing.isEmpty {
+            return existing
+        }
+        let generated = UUID().uuidString
+        UserDefaults.standard.set(generated, forKey: distinctIDDefaultsKey)
+        return generated
+    }
+
     static func resetTestingHooks() {
         captureSink = nil
         configurationProvider = nil
@@ -717,15 +730,7 @@ enum PostHogTelemetry {
         if let userID = authSession?.userId.nonEmpty {
             return userID
         }
-
-        if let existing = UserDefaults.standard.string(forKey: distinctIDDefaultsKey),
-           !existing.isEmpty {
-            return existing
-        }
-
-        let generated = UUID().uuidString
-        UserDefaults.standard.set(generated, forKey: distinctIDDefaultsKey)
-        return generated
+        return anonymousDistinctID()
     }
 
     nonisolated static func appVersionDescription() -> String {

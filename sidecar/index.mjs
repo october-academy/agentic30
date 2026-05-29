@@ -1802,11 +1802,17 @@ async function handleClientMessage(socket, payload) {
       return;
     }
     case "set_auth_context": {
+      if (payload?.anonymousDistinctId) {
+        telemetry.setAnonymousDistinctId(payload.anonymousDistinctId);
+      }
       const auth = setAuthContext(payload);
       send(socket, { type: "auth_context_updated", auth });
       return;
     }
     case "clear_auth_context": {
+      if (payload?.anonymousDistinctId) {
+        telemetry.setAnonymousDistinctId(payload.anonymousDistinctId);
+      }
       clearAuthContext();
       send(socket, {
         type: "auth_context_updated",
