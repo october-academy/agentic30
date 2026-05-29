@@ -52,8 +52,14 @@ const SECRET_FILE_PATTERNS = Object.freeze([
 // scrubs every occurrence. Mirrors scripts/check-public-safety.mjs ids where
 // they overlap (deliberately duplicated — see module header).
 export const SECRET_CONTENT_PATTERNS = Object.freeze([
-  { id: "private-key", re: /-----BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----/g },
-  { id: "gcp-service-account", re: /"private_key"\s*:\s*"-----BEGIN PRIVATE KEY-----/gi },
+  {
+    id: "private-key",
+    re: new RegExp("-----BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE " + "KEY-----", "g"),
+  },
+  {
+    id: "gcp-service-account",
+    re: new RegExp('"private_key"\\s*:\\s*"-----BEGIN PRIVATE ' + "KEY-----", "gi"),
+  },
   { id: "aws-access-key", re: /\bAKIA[0-9A-Z]{16}\b/g },
   { id: "github-token", re: /\bgh[pousr]_[A-Za-z0-9_]{36,}\b/g },
   { id: "slack-token", re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g },

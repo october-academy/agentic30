@@ -47,6 +47,7 @@ import {
 import { collectAgentWorkHistory } from "./agent-work-history.mjs";
 import { buildDay1SituationSummary } from "./generate-day1-situation-summary.mjs";
 import { extractWorkspaceEvidence } from "./workspace-signal-extractor.mjs";
+import { isSecretPath, redactSecrets } from "./workspace-safety.mjs";
 import {
   formatProjectContextForPrompt,
   loadProjectContextCache,
@@ -6776,8 +6777,10 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
       });
       const day1SituationSummary = await buildDay1SituationSummary({
         workspaceRoot: scanRoot,
+        scanResult: localResult,
         onboardingHypothesis: localOnboardingHypothesis,
         agentHistory,
+        localDiscovery,
       }).catch(() => null);
       const projectContext = await refreshProjectContextCache({
         workspaceRoot: scanRoot,
@@ -6854,6 +6857,9 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
     const parsedAgentResults = agentResults
       .filter((result) => result.status === "fulfilled" && result.value)
       .map((result) => result.value);
+    const agentSituationSignals = parsedAgentResults
+      .map((result) => result.situationSignals)
+      .filter(Boolean);
     const merged = await mergeWorkspaceScanResultsForRoot(scanRoot, localResult, ...parsedAgentResults);
     const onboardingHypothesis = mergeWorkspaceOnboardingHypotheses(
       localOnboardingHypothesis,
@@ -6901,8 +6907,11 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
     });
     const day1SituationSummary = await buildDay1SituationSummary({
       workspaceRoot: scanRoot,
+      scanResult: merged,
       onboardingHypothesis,
       agentHistory,
+      agentSituationSignals,
+      localDiscovery,
     }).catch(() => null);
     const projectContext = await refreshProjectContextCache({
       workspaceRoot: scanRoot,
@@ -7045,15 +7054,25 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
     "- confidence: low, medium, or high",
     "- suggestedFirstQuestion: one Korean question that diagnoses the current ICP and asks the user to narrow it into a more specific customer segment; do not ask whether your guess is right",
     "",
+    "Also return situationSignals for the Day 1 project situation card. Only include a signal when you can cite a real workspace file and a short quote from that file.",
+    "- channels: customer acquisition, distribution, or community paths explicitly visible in workspace evidence",
+    "- analyticsTools: analytics, dashboard, instrumentation, or measurement tools explicitly visible in workspace evidence",
+    "- events: event names or metric names explicitly visible in workspace evidence",
+    "- customerActions: observable customer behaviors or validation actions explicitly visible in workspace evidence",
+    "- currentAlternatives: current manual tools/workflows/alternatives explicitly visible in workspace evidence",
+    "- conversionSignals: payment, pilot, signup, adoption, referral, or buying signals explicitly visible in workspace evidence",
+    "- missingAssumptions: concise labels for important missing signals, only when the absence is clear from the scanned docs",
+    "Every item in channels/analyticsTools/events/customerActions/currentAlternatives/conversionSignals must have: label, evidencePath, shortQuote. The quote must be copied from that file, short, and non-secret.",
+    "",
     "Prefer exact filenames under docs/. If exact files are absent, use the closest matching project document.",
     "Return paths relative to the workspace root. Use null when not found.",
-    '{"icp": null, "spec": null, "values": null, "designSystem": null, "adr": null, "goal": null, "docs": null, "sheet": null, "onboardingHypothesis": {"productName": "", "projectKind": "unknown", "targetUser": "", "problem": "", "purpose": "", "goal": "", "values": "", "likelyUsers": [], "stage": "unknown", "evidence": [], "confidence": "low", "suggestedFirstQuestion": ""}}',
+    '{"icp": null, "spec": null, "values": null, "designSystem": null, "adr": null, "goal": null, "docs": null, "sheet": null, "onboardingHypothesis": {"productName": "", "projectKind": "unknown", "targetUser": "", "problem": "", "purpose": "", "goal": "", "values": "", "likelyUsers": [], "stage": "unknown", "evidence": [], "confidence": "low", "suggestedFirstQuestion": ""}, "situationSignals": {"channels": [], "analyticsTools": [], "events": [], "customerActions": [], "currentAlternatives": [], "conversionSignals": [], "missingAssumptions": []}}',
   ].join("\n");
   const systemPromptOverride = [
     "You are a fast read-only workspace document scanner.",
     "Do not modify files. Do not run network commands.",
     "Use the smallest number of read-only filesystem inspections needed.",
-    "Return only one JSON object with keys: icp, spec, values, designSystem, adr, goal, docs, sheet, onboardingHypothesis.",
+    "Return only one JSON object with keys: icp, spec, values, designSystem, adr, goal, docs, sheet, onboardingHypothesis, situationSignals.",
   ].join("\n");
 
   try {
@@ -7087,7 +7106,8 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
     const parsed = parseWorkspaceScanText(responseText);
     const result = {
       ...normalizeWorkspaceScanResult(parsed, scanRoot),
-    onboardingHypothesis: normalizeWorkspaceOnboardingHypothesis(parsed?.onboardingHypothesis),
+      onboardingHypothesis: normalizeWorkspaceOnboardingHypothesis(parsed?.onboardingHypothesis),
+      situationSignals: normalizeWorkspaceSituationSignals(parsed?.situationSignals, scanRoot),
     };
     const foundCount = countWorkspaceScanResults(result);
     broadcastWorkspaceScanProgress(
@@ -7276,6 +7296,83 @@ function normalizeWorkspaceScanResult(input, scanRoot) {
     result[key] = normalizeWorkspaceScanPath(input[key], scanRoot, key);
   }
   return result;
+}
+
+function normalizeWorkspaceSituationSignals(input, scanRoot) {
+  const fields = [
+    "channels",
+    "analyticsTools",
+    "events",
+    "customerActions",
+    "currentAlternatives",
+    "conversionSignals",
+  ];
+  const output = Object.fromEntries(fields.map((field) => [field, []]));
+  output.missingAssumptions = Array.isArray(input?.missingAssumptions)
+    ? input.missingAssumptions.map((value) => cleanWorkspaceSituationSignalText(value, 80)).filter(Boolean).slice(0, 8)
+    : [];
+  if (!input || typeof input !== "object") return output;
+  for (const field of fields) {
+    const values = Array.isArray(input[field]) ? input[field] : [];
+    output[field] = values
+      .map((item) => normalizeWorkspaceSituationSignalItem(item, scanRoot))
+      .filter(Boolean)
+      .slice(0, 8);
+  }
+  return output;
+}
+
+function normalizeWorkspaceSituationSignalItem(item, scanRoot) {
+  if (!item || typeof item !== "object") return null;
+  const label = cleanWorkspaceSituationSignalText(item.label, 80);
+  const evidencePath = normalizeSituationEvidencePath(item.evidencePath || item.path, scanRoot);
+  const shortQuote = cleanWorkspaceSituationSignalText(item.shortQuote || item.quote, 220);
+  if (!label || !evidencePath || !shortQuote) return null;
+  const content = readWorkspaceSituationEvidence(scanRoot, evidencePath);
+  if (!content) return null;
+  const normalizedContent = normalizeSignalNeedle(content);
+  const quoteNeedle = normalizeSignalNeedle(shortQuote);
+  const labelNeedle = normalizeSignalNeedle(label);
+  if (!normalizedContent.includes(quoteNeedle) && !normalizedContent.includes(labelNeedle)) {
+    return null;
+  }
+  return { label, evidencePath, shortQuote };
+}
+
+function cleanWorkspaceSituationSignalText(value, maxLength) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1).trim()}…`;
+}
+
+function normalizeSituationEvidencePath(value, scanRoot) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.toLowerCase() === "null") return null;
+  if (path.isAbsolute(trimmed) || trimmed.includes("\0") || isSecretPath(trimmed)) return null;
+  if (!/\.(?:md|mdx|txt|rst|adoc|json|yaml|yml|swift|ts|tsx|js|mjs|jsx|py)$/i.test(trimmed)) return null;
+  const resolved = path.resolve(scanRoot, trimmed);
+  const root = path.resolve(scanRoot);
+  if (!resolved.startsWith(`${root}${path.sep}`) && resolved !== root) return null;
+  try {
+    const stat = fsSync.statSync(resolved);
+    if (!stat.isFile() || stat.size > 2_000_000) return null;
+  } catch {
+    return null;
+  }
+  return path.relative(scanRoot, resolved).split(path.sep).join(path.posix.sep);
+}
+
+function readWorkspaceSituationEvidence(scanRoot, relativePath) {
+  try {
+    return redactSecrets(fsSync.readFileSync(path.join(scanRoot, relativePath), "utf8").slice(0, 24_000));
+  } catch {
+    return "";
+  }
+}
+
+function normalizeSignalNeedle(value) {
+  return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function normalizeWorkspaceScanPath(value, scanRoot, role = "") {
