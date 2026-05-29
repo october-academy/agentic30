@@ -139,6 +139,94 @@ test("MCP GWS tools do not expose gws_exec and require approval for Gmail send",
   }
 });
 
+test("MCP read_workspace_file refuses secret files and redacts token content", async () => {
+  const harness = await startMcpHarness();
+  try {
+    // token-shaped strings built via concatenation so this source file does not
+    // trip scripts/check-public-safety.mjs (see public-safety.test.mjs).
+    const githubToken = `ghp_${"a".repeat(40)}`;
+    await fs.writeFile(path.join(harness.workspaceRoot, ".env"), `SECRET=${"x".repeat(20)}\n`);
+    await fs.mkdir(path.join(harness.workspaceRoot, "secrets"), { recursive: true });
+    await fs.writeFile(path.join(harness.workspaceRoot, "secrets", "dev.pem"), "private\n");
+    await fs.writeFile(
+      path.join(harness.workspaceRoot, "notes.md"),
+      `deploy token: ${githubToken}\nplain text line\n`,
+    );
+
+    const envRead = await harness.client.callTool({
+      name: "read_workspace_file",
+      arguments: { relativePath: ".env" },
+    });
+    assert.match(envRead.content[0].text, /Refused/);
+    assert.doesNotMatch(envRead.content[0].text, /SECRET=/);
+
+    const pemRead = await harness.client.callTool({
+      name: "read_workspace_file",
+      arguments: { relativePath: "secrets/dev.pem" },
+    });
+    assert.match(pemRead.content[0].text, /Refused/);
+
+    const noteRead = await harness.client.callTool({
+      name: "read_workspace_file",
+      arguments: { relativePath: "notes.md" },
+    });
+    assert.match(noteRead.content[0].text, /plain text line/);
+    assert.match(noteRead.content[0].text, /‹redacted:github-token›/);
+    assert.doesNotMatch(noteRead.content[0].text, new RegExp(githubToken));
+  } finally {
+    await harness.close();
+  }
+});
+
+test("MCP list_workspace_files hides secret entries", async () => {
+  const harness = await startMcpHarness();
+  try {
+    await fs.writeFile(path.join(harness.workspaceRoot, ".env"), "X=1\n");
+    await fs.writeFile(path.join(harness.workspaceRoot, ".env.local"), "Y=2\n");
+    await fs.writeFile(path.join(harness.workspaceRoot, "auth.json"), "{}\n");
+    await fs.writeFile(path.join(harness.workspaceRoot, "README.md"), "# hi\n");
+    await fs.mkdir(path.join(harness.workspaceRoot, "secrets"), { recursive: true });
+
+    const listed = await harness.client.callTool({
+      name: "list_workspace_files",
+      arguments: { relativePath: "." },
+    });
+    const payload = JSON.parse(listed.content[0].text);
+    const names = payload.items.map((item) => item.name);
+    assert.ok(names.includes("README.md"));
+    assert.ok(!names.includes(".env"));
+    assert.ok(!names.includes(".env.local"));
+    assert.ok(!names.includes("auth.json"));
+    assert.ok(!names.includes("secrets"));
+  } finally {
+    await harness.close();
+  }
+});
+
+test("MCP search_workspace excludes secret files and redacts matches", async () => {
+  const harness = await startMcpHarness();
+  try {
+    const githubToken = `ghp_${"z".repeat(40)}`;
+    await fs.writeFile(path.join(harness.workspaceRoot, ".env"), `APIKEY=${githubToken}\n`);
+    await fs.writeFile(
+      path.join(harness.workspaceRoot, "app.ts"),
+      `const t = "${githubToken}"; // findme\n`,
+    );
+
+    const result = await harness.client.callTool({
+      name: "search_workspace",
+      arguments: { query: "findme" },
+    });
+    const text = result.content[0].text;
+    assert.match(text, /app\.ts/);
+    assert.doesNotMatch(text, /\.env/);
+    // the matched line still contains the token literal in app.ts → must be redacted
+    assert.doesNotMatch(text, new RegExp(githubToken));
+  } finally {
+    await harness.close();
+  }
+});
+
 async function startMcpHarness({ gws = false, approvedToolExecution = false } = {}) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-mcp-security-"));
   const workspaceRoot = path.join(tempRoot, "workspace");

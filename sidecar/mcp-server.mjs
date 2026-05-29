@@ -33,6 +33,12 @@ import {
   redactRubricStatus,
   summarizeOriginalForMcp,
 } from "./rubric-redact.mjs";
+import {
+  isSecretFilename,
+  isSecretPath,
+  redactSecrets,
+  SEARCH_EXCLUDE_GLOBS,
+} from "./workspace-safety.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sidecarRoot = path.resolve(__dirname);
@@ -178,7 +184,7 @@ server.tool(
     const targetPath = await resolveWorkspacePath(relativePath);
     const entries = await fs.readdir(targetPath, { withFileTypes: true });
     const visible = entries
-      .filter((entry) => !entry.name.startsWith(".git"))
+      .filter((entry) => !entry.name.startsWith(".git") && !isSecretFilename(entry.name))
       .slice(0, limit)
       .map((entry) => ({
         name: entry.name,
@@ -211,13 +217,23 @@ server.tool(
     maxChars: z.number().int().min(200).max(20000).optional(),
   },
   async ({ relativePath, maxChars = 8000 }) => {
+    if (isSecretPath(relativePath)) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Refused: "${relativePath}" looks like a secret/credential file and is blocked from reads.`,
+          },
+        ],
+      };
+    }
     const filePath = await resolveWorkspacePath(relativePath);
     const content = await fs.readFile(filePath, "utf8");
     return {
       content: [
         {
           type: "text",
-          text: content.slice(0, maxChars),
+          text: redactSecrets(content.slice(0, maxChars)),
         },
       ],
     };
@@ -233,17 +249,28 @@ server.tool(
     limit: z.number().int().min(1).max(200).optional(),
   },
   async ({ query, glob, limit = 60 }) => {
-    const args = ["-n", "--no-heading", "--color", "never", query];
+    const args = ["-n", "--no-heading", "--color", "never"];
+    for (const exclude of SEARCH_EXCLUDE_GLOBS) {
+      args.push("-g", exclude);
+    }
     if (glob) {
       args.push("-g", glob);
     }
-    args.push(workspaceRootRealpath);
+    args.push(query, workspaceRootRealpath);
 
     const output = await execCapture("rg", args);
     const lines = output
       .split("\n")
       .filter(Boolean)
+      // rg output is `path:line:content` — drop any hit whose file is a secret
+      // path that slipped past the glob excludes, then redact the line content.
+      .filter((line) => {
+        const filePart = line.split(":", 1)[0];
+        const relative = path.relative(workspaceRootRealpath, filePart);
+        return !isSecretPath(relative || filePart);
+      })
       .slice(0, limit)
+      .map((line) => redactSecrets(line))
       .join("\n");
 
     return {
