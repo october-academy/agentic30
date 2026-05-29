@@ -43,6 +43,8 @@ import {
   mergeWorkspaceOnboardingHypotheses,
   normalizeWorkspaceOnboardingHypothesis,
 } from "./onboarding-hypothesis.mjs";
+import { collectAgentWorkHistory } from "./agent-work-history.mjs";
+import { buildDay1SituationSummary } from "./generate-day1-situation-summary.mjs";
 import { extractWorkspaceEvidence } from "./workspace-signal-extractor.mjs";
 import {
   formatProjectContextForPrompt,
@@ -6709,14 +6711,23 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
     // runway hints. Pure read; absorbs all errors so a non-git folder still
     // produces a stable shape.
     const localDiscovery = await collectLocalDiscovery(scanRoot);
+    // Recent agent work (~/.claude + ~/.codex). Kicked off concurrently and
+    // awaited only at hypothesis time so it never delays the first visible
+    // answer (the <500ms first-visible-value budget). Redacted + bounded.
+    const agentHistoryPromise = collectAgentWorkHistory({
+      workspaceRoot: scanRoot,
+      enabled: process.env.AGENTIC30_DISABLE_AGENT_HISTORY !== "1",
+    }).catch(() => null);
     await appendWorkspaceScanVisibleAnswer({
       sessionId,
       prompt,
       scanRoot,
       result: localResult,
     });
+    const agentHistory = await agentHistoryPromise;
     const localOnboardingHypothesis = await deriveWorkspaceOnboardingHypothesisLocally(scanRoot, {
       docPaths: localResult,
+      agentHistory,
     });
     const localFoundCount = countWorkspaceScanResults(localResult);
     if (isWorkspacePathLookupPrompt(prompt) && localFoundCount > 0) {
@@ -6767,6 +6778,11 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
         onboardingHypothesis: localOnboardingHypothesis,
         localDiscovery,
       });
+      const day1SituationSummary = await buildDay1SituationSummary({
+        workspaceRoot: scanRoot,
+        onboardingHypothesis: localOnboardingHypothesis,
+        agentHistory,
+      }).catch(() => null);
       const projectContext = await refreshProjectContextCache({
         workspaceRoot: scanRoot,
         reason: "workspace_scan",
@@ -6800,6 +6816,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
         onboardingHypothesis: localOnboardingHypothesis,
         day1AlignmentPlan,
         day1IcpPlan,
+        day1SituationSummary,
       });
       triggerDay1AlignmentPlanBroadcast({
         scanRoot,
@@ -6846,6 +6863,10 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
       localOnboardingHypothesis,
       ...parsedAgentResults.map((result) => result.onboardingHypothesis),
     );
+    // merge normalizes a fresh object → re-attach the recent-work digest.
+    if (localOnboardingHypothesis.recentWork) {
+      onboardingHypothesis.recentWork = localOnboardingHypothesis.recentWork;
+    }
     state.workspaceOnboardingHypothesis = onboardingHypothesis;
     const foundCount = countWorkspaceScanResults(merged);
 
@@ -6882,6 +6903,11 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
       onboardingHypothesis,
       localDiscovery,
     });
+    const day1SituationSummary = await buildDay1SituationSummary({
+      workspaceRoot: scanRoot,
+      onboardingHypothesis,
+      agentHistory,
+    }).catch(() => null);
     const projectContext = await refreshProjectContextCache({
       workspaceRoot: scanRoot,
       reason: "workspace_scan",
@@ -6915,6 +6941,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
       onboardingHypothesis,
       day1AlignmentPlan,
       day1IcpPlan,
+      day1SituationSummary,
     });
     triggerDay1AlignmentPlanBroadcast({
       scanRoot,

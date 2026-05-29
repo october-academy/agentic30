@@ -1538,6 +1538,52 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    func testDay1SituationSummaryCardRendersOnWorkspaceSurface() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-day1-situation-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-day1-situation-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-day1-situation-summary",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1136x820",
+            // Force the white theme (the product default) so the card's contrast
+            // is verified deterministically regardless of any persisted theme.
+            "-agentic30.appearance.theme.v1", "white",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            elementWithIdentifier(in: app, "day1.situationSummary.title").waitForExistence(timeout: 5),
+            "Day-1 situation summary card should render on the workspace surface"
+        )
+        XCTAssertTrue(
+            elementWithIdentifier(in: app, "day1.situationSummary.goalOption").firstMatch.waitForExistence(timeout: 5),
+            "goal-concretization option buttons should render"
+        )
+        attachScreenshot(from: app, named: "Day1 Situation Summary Card")
+    }
+
+    @MainActor
     func testOpenDesignDayCompletionRequiresFoundationDocsWritten() throws {
         let runID = UUID().uuidString
         let workspacePath = "/tmp/agentic30-ui-opendesign-day-unlocked-\(runID)"

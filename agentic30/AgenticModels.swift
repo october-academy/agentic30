@@ -755,6 +755,40 @@ struct Day1AlignmentPlan: Codable, Hashable {
     }
 }
 
+/// Day-1 multi-angle "project situation" summary. Built by the sidecar from the
+/// onboarding hypothesis + recent agent work (~/.claude / ~/.codex) + git +
+/// README drift. `goalDecision` reuses StructuredPromptQuestion so the existing
+/// decision-card renderer drives the button-first goal concretization.
+struct Day1SituationSummary: Codable, Hashable {
+    let schemaVersion: Int
+    let source: String?
+    let generatedAt: String?
+    let angles: Angles
+    let readmeUpdate: ReadmeUpdate
+    let nextActions: [NextAction]
+    let goalDecision: StructuredPromptQuestion
+    let confidence: Double?
+
+    struct Angles: Codable, Hashable {
+        let product: String
+        let engineering: String
+        let recentFocus: String
+    }
+
+    struct ReadmeUpdate: Codable, Hashable {
+        let hasDrift: Bool
+        let suggestion: String
+        let missing: [String]
+        let stale: [String]
+    }
+
+    struct NextAction: Codable, Hashable, Identifiable {
+        let label: String
+        let rationale: String?
+        var id: String { label }
+    }
+}
+
 struct Day1SignalDigest: Codable, Hashable {
     let schemaVersion: Int
     let rows: [Day1SignalDigestRow]

@@ -367,3 +367,28 @@ test("mergeWorkspaceOnboardingHypotheses keeps concrete kind when highest confid
   assert.equal(merged.stage, "prototype");
   assert.equal(merged.confidence, "high");
 });
+
+test("deriveWorkspaceOnboardingHypothesisLocally attaches injected agent history", async () => {
+  await withTempWorkspace(async (root) => {
+    await fs.writeFile(path.join(root, "README.md"), "# Demo\nA tool.\n");
+    const agentHistory = {
+      providers: ["claude"],
+      sessionCount: 2,
+      lastActivityAt: "2026-05-29T08:00:00.000Z",
+      recentIntents: [{ kstDay: "2026-05-29", provider: "claude", text: "Day-1 요약 카드 구현", ts: 1 }],
+      filesTouched: [{ file: "sidecar/index.mjs", count: 3 }],
+      commandThemes: [{ cmd: "npm test", count: 5 }],
+      perDayKst: [],
+      warnings: [],
+    };
+
+    const withHistory = await deriveWorkspaceOnboardingHypothesisLocally(root, { agentHistory });
+    assert.ok(withHistory.recentWork, "recentWork attached");
+    assert.equal(withHistory.recentWork.sessionCount, 2);
+    assert.ok(withHistory.evidence.some((item) => /최근 작업/.test(item)), "agent evidence bullet present");
+
+    // Absence is a no-op: shape stays clean (no recentWork key).
+    const without = await deriveWorkspaceOnboardingHypothesisLocally(root);
+    assert.equal(Object.prototype.hasOwnProperty.call(without, "recentWork"), false);
+  });
+});

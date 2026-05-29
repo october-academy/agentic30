@@ -4,6 +4,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 
 import { extractWorkspaceEvidence } from "./workspace-signal-extractor.mjs";
+import { renderAgentHistoryEvidence } from "./agent-work-history.mjs";
 
 const MAX_CONTEXT_CHARS = 24_000;
 const MAX_EVIDENCE = 5;
@@ -44,7 +45,10 @@ const confidenceRank = {
   high: 2,
 };
 
-export async function deriveWorkspaceOnboardingHypothesisLocally(scanRoot, { docPaths = {} } = {}) {
+export async function deriveWorkspaceOnboardingHypothesisLocally(
+  scanRoot,
+  { docPaths = {}, agentHistory = null } = {},
+) {
   const root = path.resolve(scanRoot || ".");
   const workspaceEvidence = await extractWorkspaceEvidence(root, {
     scanPaths: docPaths,
@@ -105,6 +109,14 @@ export async function deriveWorkspaceOnboardingHypothesisLocally(scanRoot, { doc
   contextParts.push(...sourceEvidence.contextParts);
   sourceContextParts.push(...sourceEvidence.contextParts);
 
+  // Recent agent work (~/.claude + ~/.codex) is computed by the caller and
+  // injected (keeps this function free of home-dir I/O + keeps unit tests
+  // hermetic). It surfaces as a light evidence bullet here and is carried whole
+  // on `recentWork` for the Day-1 situation summary generator.
+  if (agentHistory) {
+    evidence.push(...renderAgentHistoryEvidence(agentHistory));
+  }
+
   const context = contextParts.join("\n\n").slice(0, MAX_CONTEXT_CHARS);
   const documentContext = documentContextParts.join("\n\n").slice(0, MAX_CONTEXT_CHARS);
   const sourceContext = sourceContextParts.join("\n\n").slice(0, MAX_CONTEXT_CHARS);
@@ -155,7 +167,11 @@ export async function deriveWorkspaceOnboardingHypothesisLocally(scanRoot, { doc
     }),
   };
 
-  return normalizeWorkspaceOnboardingHypothesis(hypothesis);
+  const normalized = normalizeWorkspaceOnboardingHypothesis(hypothesis);
+  if (agentHistory && (agentHistory.recentIntents?.length || agentHistory.filesTouched?.length)) {
+    normalized.recentWork = agentHistory;
+  }
+  return normalized;
 }
 
 export function normalizeProductName(value) {

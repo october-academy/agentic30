@@ -915,6 +915,7 @@ final class AgenticViewModel: ObservableObject {
         let onboardingHypothesis: WorkspaceOnboardingHypothesis?
         let day1AlignmentPlan: Day1AlignmentPlan?
         let day1IcpPlan: Day1IcpPlan?
+        let day1SituationSummary: Day1SituationSummary?
         let error: String?
 
         var foundArtifactPaths: [String] {
@@ -928,7 +929,8 @@ final class AgenticViewModel: ObservableObject {
 
         func replacing(
             day1AlignmentPlan: Day1AlignmentPlan? = nil,
-            day1IcpPlan: Day1IcpPlan? = nil
+            day1IcpPlan: Day1IcpPlan? = nil,
+            day1SituationSummary: Day1SituationSummary? = nil
         ) -> WorkspaceScanResult {
             WorkspaceScanResult(
                 icp: icp,
@@ -942,6 +944,7 @@ final class AgenticViewModel: ObservableObject {
                 onboardingHypothesis: onboardingHypothesis,
                 day1AlignmentPlan: day1AlignmentPlan ?? self.day1AlignmentPlan,
                 day1IcpPlan: day1IcpPlan ?? self.day1IcpPlan,
+                day1SituationSummary: day1SituationSummary ?? self.day1SituationSummary,
                 error: error
             )
         }
@@ -1990,6 +1993,15 @@ final class AgenticViewModel: ObservableObject {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let session = selectedSession else { return nil }
         return classifyMessageRoute(prompt: trimmed, in: session)
+    }
+
+    /// Day-1 situation card → goal concretization. Sends the chosen goal as a
+    /// normal chat prompt through the existing pipeline (draft + sendPrompt).
+    func submitDay1SituationGoal(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        draft = "30일 목표를 \"\(trimmed)\"(으)로 정하고 싶어. 이 목표를 한 줄로 구체화해줘."
+        sendPrompt()
     }
 
     func sendPrompt() {
@@ -4079,6 +4091,7 @@ final class AgenticViewModel: ObservableObject {
                 onboardingHypothesis: event.onboardingHypothesis,
                 day1AlignmentPlan: event.day1AlignmentPlan,
                 day1IcpPlan: event.day1IcpPlan,
+                day1SituationSummary: event.day1SituationSummary,
                 error: event.error
             )
             scanResult = result
@@ -4145,6 +4158,7 @@ final class AgenticViewModel: ObservableObject {
                         onboardingHypothesis: nil,
                         day1AlignmentPlan: event.day1AlignmentPlan,
                         day1IcpPlan: event.day1IcpPlan,
+                        day1SituationSummary: event.day1SituationSummary,
                         error: nil
                     )
                 }
@@ -6205,6 +6219,7 @@ final class AgenticViewModel: ObservableObject {
 
     private static func makeUITestingWorkspaceScanResult(arguments: [String]) -> WorkspaceScanResult {
         let usesAlignmentPlan = arguments.contains("--ui-testing-seed-day1-alignment-plan")
+        let usesSituationSummary = arguments.contains("--ui-testing-seed-day1-situation-summary")
         return WorkspaceScanResult(
             icp: "docs/ICP.md",
             spec: "docs/SPEC.md",
@@ -6230,7 +6245,47 @@ final class AgenticViewModel: ObservableObject {
             ),
             day1AlignmentPlan: usesAlignmentPlan ? makeUITestingDay1AlignmentPlan() : nil,
             day1IcpPlan: makeUITestingDay1IcpPlan(),
+            day1SituationSummary: usesSituationSummary ? makeUITestingDay1SituationSummary() : nil,
             error: nil
+        )
+    }
+
+    private static func makeUITestingDay1SituationSummary() -> Day1SituationSummary {
+        Day1SituationSummary(
+            schemaVersion: 1,
+            source: "deterministic",
+            generatedAt: nil,
+            angles: Day1SituationSummary.Angles(
+                product: "Agentic30은(는) macOS 앱 · 30일 안에 첫 매출 검증을 돕는다 · 대상: 1인 빌더",
+                engineering: "macOS 앱 · 최근 12개 커밋 · 6개 파일 변경 · 단계: 초기 사용자",
+                recentFocus: "최근 작업(claude, 3세션): Day-1 상황 요약 카드 구현"
+            ),
+            readmeUpdate: Day1SituationSummary.ReadmeUpdate(
+                hasDrift: true,
+                suggestion: "README에 없는 최근 작업: situation, summary",
+                missing: ["situation", "summary"],
+                stale: []
+            ),
+            nextActions: [
+                Day1SituationSummary.NextAction(label: "README 최신화", rationale: "최근 작업이 README에 없어요"),
+                Day1SituationSummary.NextAction(label: "오늘 작업 이어가기", rationale: "Day-1 상황 요약 카드 구현")
+            ],
+            goalDecision: StructuredPromptQuestion(
+                questionId: "ui-testing-goal",
+                header: "30일 목표",
+                question: "30일 목표를 한 줄로 고정할까요?",
+                helperText: nil,
+                options: [
+                    StructuredPromptOption(label: "첫 매출", description: "수익을 30일 목표로", preview: nil, nextIntent: nil),
+                    StructuredPromptOption(label: "사용자 100명", description: "활성 사용자 100명 목표", preview: nil, nextIntent: nil)
+                ],
+                multiSelect: false,
+                allowFreeText: true,
+                requiresFreeText: false,
+                freeTextPlaceholder: "직접 입력",
+                textMode: .short
+            ),
+            confidence: 0.9
         )
     }
 
@@ -7247,6 +7302,7 @@ struct SidecarEvent: Decodable {
     let onboardingHypothesis: WorkspaceOnboardingHypothesis?
     let day1AlignmentPlan: Day1AlignmentPlan?
     let day1IcpPlan: Day1IcpPlan?
+    let day1SituationSummary: Day1SituationSummary?
     let error: String?
 
     // Document creation fields
@@ -7343,6 +7399,7 @@ struct SidecarEvent: Decodable {
         onboardingHypothesis: WorkspaceOnboardingHypothesis?,
         day1AlignmentPlan: Day1AlignmentPlan? = nil,
         day1IcpPlan: Day1IcpPlan? = nil,
+        day1SituationSummary: Day1SituationSummary? = nil,
         error: String?,
         docType: String?,
         docPath: String?,
@@ -7425,6 +7482,7 @@ struct SidecarEvent: Decodable {
         self.onboardingHypothesis = onboardingHypothesis
         self.day1AlignmentPlan = day1AlignmentPlan
         self.day1IcpPlan = day1IcpPlan
+        self.day1SituationSummary = day1SituationSummary
         self.error = error
         self.docType = docType
         self.docPath = docPath
@@ -7782,6 +7840,7 @@ extension SidecarEvent {
         case onboardingHypothesis
         case day1AlignmentPlan
         case day1IcpPlan
+        case day1SituationSummary
         case error
         case docType
         case docPath
@@ -7876,6 +7935,7 @@ extension SidecarEvent {
         onboardingHypothesis = Self.decodeIfPresent(WorkspaceOnboardingHypothesis.self, from: container, forKey: .onboardingHypothesis)
         day1AlignmentPlan = Self.decodeIfPresent(Day1AlignmentPlan.self, from: container, forKey: .day1AlignmentPlan)
         day1IcpPlan = Self.decodeIfPresent(Day1IcpPlan.self, from: container, forKey: .day1IcpPlan)
+        day1SituationSummary = Self.decodeIfPresent(Day1SituationSummary.self, from: container, forKey: .day1SituationSummary)
 
         let stringError = Self.decodeIfPresent(String.self, from: container, forKey: .error)
         let structuredError = Self.decodeIfPresent(BipReadinessError.self, from: container, forKey: .error)

@@ -428,6 +428,64 @@ struct SidecarEventDecodingTests {
         #expect(event.error == nil)
     }
 
+    @MainActor @Test func decodesWorkspaceScanResultWithDay1SituationSummary() throws {
+        let payload = """
+        {
+          "type": "workspace_scan_result",
+          "scanRoot": "/Users/october/prj/myapp",
+          "day1SituationSummary": {
+            "schemaVersion": 1,
+            "source": "deterministic",
+            "angles": {
+              "product": "Agentic30은(는) macOS 앱 · 30일 안에 첫 매출 검증",
+              "engineering": "macOS 앱 · 최근 12개 커밋 · 6개 파일 변경",
+              "recentFocus": "최근 작업(claude+codex, 5세션): Day-1 요약 카드"
+            },
+            "readmeUpdate": {
+              "hasDrift": true,
+              "suggestion": "README에 없는 최근 작업: notion, onboarding",
+              "missing": ["notion", "onboarding"],
+              "stale": []
+            },
+            "nextActions": [
+              { "label": "README 최신화", "rationale": "최근 작업이 README에 없어요" },
+              { "label": "오늘 작업 이어가기" }
+            ],
+            "goalDecision": {
+              "header": "30일 목표",
+              "question": "30일 목표를 한 줄로 고정할까요?",
+              "options": [
+                { "label": "첫 매출", "description": "수익을 30일 목표로" },
+                { "label": "사용자 100명", "description": "활성 사용자 100명 목표" }
+              ],
+              "multiSelect": false,
+              "allowFreeText": true,
+              "freeTextPlaceholder": "직접 입력",
+              "textMode": "short"
+            },
+            "provenance": { "usedAgentHistory": true, "sessionCount": 5 },
+            "confidence": 0.9
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        let summary = try #require(event.day1SituationSummary)
+
+        #expect(summary.schemaVersion == 1)
+        #expect(summary.angles.product.contains("macOS 앱"))
+        #expect(summary.angles.recentFocus.contains("5세션"))
+        #expect(summary.readmeUpdate.hasDrift == true)
+        #expect(summary.readmeUpdate.missing == ["notion", "onboarding"])
+        #expect(summary.nextActions.count == 2)
+        #expect(summary.nextActions.first?.label == "README 최신화")
+        #expect(summary.goalDecision.question == "30일 목표를 한 줄로 고정할까요?")
+        #expect(summary.goalDecision.options?.count == 2)
+        #expect(summary.goalDecision.options?.first?.label == "첫 매출")
+        #expect(summary.goalDecision.allowFreeText == true)
+        #expect(summary.confidence == 0.9)
+    }
+
     @MainActor @Test func decodesWorkspaceScanResultWithDay1IcpPlan() throws {
         let payload = """
         {

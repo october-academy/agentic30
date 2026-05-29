@@ -295,11 +295,29 @@ struct ContentView: View {
             }
         }
 
+        let situationSummary = day.day == 1 ? viewModel.scanResult?.day1SituationSummary : nil
+
         if isWorkspaceWindow {
-            content
+            if let situationSummary {
+                // Card is shown ABOVE the day content only when a summary exists.
+                // The no-card path below stays byte-identical to the original so
+                // existing Day-1 layout/screenshot tests are unaffected.
+                VStack(spacing: 0) {
+                    Day1SituationSummaryCard(summary: situationSummary) { goal in
+                        viewModel.submitDay1SituationGoal(goal)
+                    }
+                    content
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(OpenDesignDayColor.bg)
                 .accessibilityIdentifier("workspace.surface")
+            } else {
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(OpenDesignDayColor.bg)
+                    .accessibilityIdentifier("workspace.surface")
+            }
         } else {
             content
                 .frame(width: 1136, height: 716)
