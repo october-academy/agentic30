@@ -38,6 +38,15 @@ enum Agentic30Theme: String, CaseIterable, Identifiable, Codable {
         }
     }
 
+    var windowBackgroundColor: NSColor {
+        switch self {
+        case .white:
+            NSColor(red: 0.9698, green: 0.9778, blue: 0.9838, alpha: 1.0)
+        case .dark:
+            NSColor(red: 0.0801, green: 0.0874, blue: 0.0928, alpha: 1.0)
+        }
+    }
+
     static func normalized(_ rawValue: String?) -> Agentic30Theme {
         guard let rawValue, let theme = Agentic30Theme(rawValue: rawValue) else {
             return defaultTheme

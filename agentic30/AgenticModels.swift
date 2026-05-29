@@ -755,37 +755,146 @@ struct Day1AlignmentPlan: Codable, Hashable {
     }
 }
 
-/// Day-1 multi-angle "project situation" summary. Built by the sidecar from the
-/// onboarding hypothesis + recent agent work (~/.claude / ~/.codex) + git +
-/// README drift. `goalDecision` reuses StructuredPromptQuestion so the existing
-/// decision-card renderer drives the button-first goal concretization.
+/// Day-1 "project situation" summary. Version 3 is the only supported contract:
+/// every user-visible project value is evidence-ranked by the sidecar.
 struct Day1SituationSummary: Codable, Hashable {
+    static let supportedSchemaVersion = 3
+
     let schemaVersion: Int
     let source: String?
     let generatedAt: String?
-    let angles: Angles
-    let readmeUpdate: ReadmeUpdate
-    let nextActions: [NextAction]
-    let goalDecision: StructuredPromptQuestion
-    let confidence: Double?
+    let project: Project
+    let diagnosis: Diagnosis
+    let realityGap: RealityGap?
+    let baseline: Baseline
+    let path: [PathNode]
+    let actions: [Action]
+    let qualityGate: QualityGate
+    let trust: Trust
 
-    struct Angles: Codable, Hashable {
-        let product: String
-        let engineering: String
-        let recentFocus: String
+    nonisolated init(
+        schemaVersion: Int,
+        source: String?,
+        generatedAt: String?,
+        project: Project,
+        diagnosis: Diagnosis,
+        realityGap: RealityGap? = nil,
+        baseline: Baseline,
+        path: [PathNode],
+        actions: [Action],
+        qualityGate: QualityGate,
+        trust: Trust
+    ) {
+        self.schemaVersion = schemaVersion
+        self.source = source
+        self.generatedAt = generatedAt
+        self.project = project
+        self.diagnosis = diagnosis
+        self.realityGap = realityGap
+        self.baseline = baseline
+        self.path = path
+        self.actions = actions
+        self.qualityGate = qualityGate
+        self.trust = trust
     }
 
-    struct ReadmeUpdate: Codable, Hashable {
-        let hasDrift: Bool
-        let suggestion: String
-        let missing: [String]
-        let stale: [String]
+    struct Project: Codable, Hashable {
+        let name: String
+        let oneLine: String
+        let customer: String
+        let problem: String
+        let evidenceRefs: [String]
     }
 
-    struct NextAction: Codable, Hashable, Identifiable {
+    struct Diagnosis: Codable, Hashable {
+        let stage: String
+        let bottleneck: String
+        let whyNow: String
+        let missingSignal: String
+        let confidence: Double
+        let evidenceRefs: [String]
+    }
+
+    struct RealityGap: Codable, Hashable {
+        let docClaim: String
+        let observedReality: String
+        let recommendation: String
+        let evidenceRefs: [String]
+    }
+
+    struct Baseline: Codable, Hashable {
+        let target: String
+        let current: String
+        let day30Question: String
+        let metrics: [String]
+    }
+
+    struct PathNode: Codable, Hashable, Identifiable {
         let label: String
-        let rationale: String?
-        var id: String { label }
+        let kind: String
+        let status: String
+        let why: String
+        let evidenceRefs: [String]
+        var id: String { "\(kind)-\(label)" }
+    }
+
+    struct Action: Codable, Hashable, Identifiable {
+        let id: String
+        let label: String
+        let rationale: String
+        let kind: String
+        let promptSeed: String
+        let evidenceRefs: [String]
+        let evidenceLimited: Bool
+    }
+
+    struct QualityGate: Codable, Hashable {
+        let score: Double
+        let passed: Bool
+        let reasons: [String]
+    }
+
+    struct Trust: Codable, Hashable {
+        let readOnly: Bool
+        let secretsExcluded: Bool
+        let sourcesUsed: [String]
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case source
+        case generatedAt
+        case project
+        case diagnosis
+        case realityGap
+        case baseline
+        case path
+        case actions
+        case qualityGate
+        case trust
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let version = try container.decode(Int.self, forKey: .schemaVersion)
+        guard version == Self.supportedSchemaVersion else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .schemaVersion,
+                in: container,
+                debugDescription: "Unsupported Day1SituationSummary schemaVersion: \(version)"
+            )
+        }
+        schemaVersion = version
+        source = try container.decodeIfPresent(String.self, forKey: .source)
+        generatedAt = try container.decodeIfPresent(String.self, forKey: .generatedAt)
+        project = try container.decode(Project.self, forKey: .project)
+        diagnosis = try container.decode(Diagnosis.self, forKey: .diagnosis)
+        realityGap = try container.decodeIfPresent(RealityGap.self, forKey: .realityGap)
+        baseline = try container.decode(Baseline.self, forKey: .baseline)
+        path = try container.decode([PathNode].self, forKey: .path)
+        actions = try container.decode([Action].self, forKey: .actions)
+        qualityGate = try container.decode(QualityGate.self, forKey: .qualityGate)
+        trust = try container.decode(Trust.self, forKey: .trust)
     }
 }
 

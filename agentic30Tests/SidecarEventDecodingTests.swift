@@ -434,37 +434,54 @@ struct SidecarEventDecodingTests {
           "type": "workspace_scan_result",
           "scanRoot": "/Users/october/prj/myapp",
           "day1SituationSummary": {
-            "schemaVersion": 1,
-            "source": "deterministic",
-            "angles": {
-              "product": "Agentic30은(는) macOS 앱 · 30일 안에 첫 매출 검증",
-              "engineering": "macOS 앱 · 최근 12개 커밋 · 6개 파일 변경",
-              "recentFocus": "최근 작업(claude+codex, 5세션): Day-1 요약 카드"
+            "schemaVersion": 3,
+            "source": "local_evidence",
+            "generatedAt": "2026-05-29T10:00:00.000Z",
+            "project": {
+              "name": "mood.disk",
+              "oneLine": "mood.disk: 출판 요청부터 결제까지 앱 안에서 처리하려는 기록/출판 앱",
+              "customer": "출판을 원하는 기록 앱 사용자",
+              "problem": "출판 요청과 결제를 앱 안에서 처리하고 싶다",
+              "evidenceRefs": ["README.md (README)", "docs/ICP.md (ICP)"]
             },
-            "readmeUpdate": {
-              "hasDrift": true,
-              "suggestion": "README에 없는 최근 작업: notion, onboarding",
-              "missing": ["notion", "onboarding"],
-              "stale": []
+            "diagnosis": {
+              "stage": "초기 사용자 검증",
+              "bottleneck": "확인할 행동 신호가 비어 있음",
+              "whyNow": "고객과 문제 후보는 있지만 실제 행동으로 확인할 기준이 아직 약합니다.",
+              "missingSignal": "확인할 행동",
+              "confidence": 0.84,
+              "evidenceRefs": ["interviews/mood.md", "marketing/plan.md"]
             },
-            "nextActions": [
-              { "label": "README 최신화", "rationale": "최근 작업이 README에 없어요" },
-              { "label": "오늘 작업 이어가기" }
+            "realityGap": {
+              "docClaim": "README는 기록 앱 중심입니다.",
+              "observedReality": "IAP, PDF",
+              "recommendation": "IAP, PDF 계획을 문서에 반영해야 다음 판단이 맞아집니다.",
+              "evidenceRefs": ["README.md", "git/agent recent work"]
+            },
+            "baseline": {
+              "target": "활성 100명 또는 첫 유료 출판 요청",
+              "current": "초기 사용자 검증: 확인할 행동 신호가 비어 있음",
+              "day30Question": "30일 뒤 활성 100명, 첫 유료 출판 요청 근거가 실제로 남았나요?",
+              "metrics": ["활성 100명", "첫 유료 출판 요청"]
+            },
+            "path": [
+              { "label": "IAP", "kind": "conversion", "status": "found", "why": "marketing/plan.md에 IAP 계획이 있습니다.", "evidenceRefs": ["marketing/plan.md"] },
+              { "label": "PDF", "kind": "workflow", "status": "found", "why": "README.md에 PDF 출판 흐름이 있습니다.", "evidenceRefs": ["README.md"] }
             ],
-            "goalDecision": {
-              "header": "30일 목표",
-              "question": "30일 목표를 한 줄로 고정할까요?",
-              "options": [
-                { "label": "첫 매출", "description": "수익을 30일 목표로" },
-                { "label": "사용자 100명", "description": "활성 사용자 100명 목표" }
-              ],
-              "multiSelect": false,
-              "allowFreeText": true,
-              "freeTextPlaceholder": "직접 입력",
-              "textMode": "short"
+            "actions": [
+              { "id": "paid-publish", "label": "유료 출판 요청", "rationale": "첫 유료 출판 요청 근거를 오늘 확인합니다.", "kind": "conversion", "promptSeed": "첫 유료 출판 요청을 어떤 행동으로 확인할까요?", "evidenceRefs": ["marketing/plan.md"], "evidenceLimited": false },
+              { "id": "pdf-flow", "label": "PDF 흐름", "rationale": "PDF 출판 흐름이 실제 요청으로 이어지는지 확인합니다.", "kind": "workflow", "promptSeed": "PDF 출판 흐름을 어떤 행동으로 검증할까요?", "evidenceRefs": ["README.md"], "evidenceLimited": false }
+            ],
+            "qualityGate": {
+              "score": 8.4,
+              "passed": true,
+              "reasons": ["고객과 문제가 근거에서 확인됨", "목표/비교 기준 후보가 있음"]
             },
-            "provenance": { "usedAgentHistory": true, "sessionCount": 5 },
-            "confidence": 0.9
+            "trust": {
+              "readOnly": true,
+              "secretsExcluded": true,
+              "sourcesUsed": ["onboarding hypothesis", "customer evidence", "market/recent evidence"]
+            }
           }
         }
         """
@@ -472,18 +489,42 @@ struct SidecarEventDecodingTests {
         let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
         let summary = try #require(event.day1SituationSummary)
 
-        #expect(summary.schemaVersion == 1)
-        #expect(summary.angles.product.contains("macOS 앱"))
-        #expect(summary.angles.recentFocus.contains("5세션"))
-        #expect(summary.readmeUpdate.hasDrift == true)
-        #expect(summary.readmeUpdate.missing == ["notion", "onboarding"])
-        #expect(summary.nextActions.count == 2)
-        #expect(summary.nextActions.first?.label == "README 최신화")
-        #expect(summary.goalDecision.question == "30일 목표를 한 줄로 고정할까요?")
-        #expect(summary.goalDecision.options?.count == 2)
-        #expect(summary.goalDecision.options?.first?.label == "첫 매출")
-        #expect(summary.goalDecision.allowFreeText == true)
-        #expect(summary.confidence == 0.9)
+        #expect(summary.schemaVersion == 3)
+        #expect(summary.project.name == "mood.disk")
+        #expect(summary.diagnosis.stage == "초기 사용자 검증")
+        #expect(summary.diagnosis.missingSignal == "확인할 행동")
+        #expect(summary.realityGap?.recommendation.contains("IAP") == true)
+        #expect(summary.baseline.day30Question.contains("활성 100명") == true)
+        #expect(summary.path.map(\.label) == ["IAP", "PDF"])
+        #expect(summary.actions.first?.label == "유료 출판 요청")
+        #expect(summary.qualityGate.passed == true)
+        #expect(summary.trust.readOnly == true)
+        #expect(summary.trust.secretsExcluded == true)
+    }
+
+    @MainActor @Test func rejectsDay1SituationSummaryV2Payload() {
+        let payload = """
+        {
+          "schemaVersion": 2,
+          "source": "deterministic",
+          "identity": {
+            "productName": "mood.disk",
+            "oneLine": "old shape",
+            "customer": "old customer",
+            "problem": "old problem"
+          },
+          "stage": { "label": "old", "reason": "old" },
+          "currentBottleneck": { "label": "old", "whyNow": "old", "evidenceRefs": [] },
+          "day1Baseline": { "goal30d": "old", "currentState": "old", "compareOnDay30": "old" },
+          "gtmPath": [],
+          "proofActions": [{ "label": "old", "rationale": "old" }],
+          "trust": { "readOnly": true, "secretsExcluded": true, "sourcesUsed": [], "confidence": 0.1 }
+        }
+        """
+
+        #expect(throws: Error.self) {
+            try decoder.decode(Day1SituationSummary.self, from: Data(payload.utf8))
+        }
     }
 
     @MainActor @Test func decodesWorkspaceScanResultWithDay1IcpPlan() throws {

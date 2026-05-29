@@ -3077,6 +3077,8 @@ struct OpenDesignDayPageView: View {
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
     let day1HandoffError: String?
+    let day1SituationSummary: Day1SituationSummary?
+    let onChooseDay1SituationGoal: (String) -> Void
     let startDay1DocHandoff: (String, [String: Any]) -> Void
     let completeDay: () -> Void
     let advanceToNextDay: () -> Void
@@ -3113,6 +3115,8 @@ struct OpenDesignDayPageView: View {
         activeDay1HandoffDocType: String? = nil,
         pendingDay1HandoffDocType: String? = nil,
         day1HandoffError: String? = nil,
+        day1SituationSummary: Day1SituationSummary? = nil,
+        onChooseDay1SituationGoal: @escaping (String) -> Void = { _ in },
         startDay1DocHandoff: @escaping (String, [String: Any]) -> Void = { _, _ in },
         completeDay: @escaping () -> Void = {},
         advanceToNextDay: @escaping () -> Void = {},
@@ -3135,6 +3139,8 @@ struct OpenDesignDayPageView: View {
         self.activeDay1HandoffDocType = activeDay1HandoffDocType
         self.pendingDay1HandoffDocType = pendingDay1HandoffDocType
         self.day1HandoffError = day1HandoffError
+        self.day1SituationSummary = day1SituationSummary
+        self.onChooseDay1SituationGoal = onChooseDay1SituationGoal
         self.startDay1DocHandoff = startDay1DocHandoff
         self.completeDay = completeDay
         self.advanceToNextDay = advanceToNextDay
@@ -3178,6 +3184,8 @@ struct OpenDesignDayPageView: View {
                     activeDay1HandoffDocType: activeDay1HandoffDocType,
                     pendingDay1HandoffDocType: pendingDay1HandoffDocType,
                     day1HandoffError: day1HandoffError,
+                    day1SituationSummary: day1SituationSummary,
+                    onChooseDay1SituationGoal: onChooseDay1SituationGoal,
                     startDay1DocHandoff: startDay1DocHandoff,
                     submitStep: submitStep,
                     acceptMission: acceptMission,
@@ -3707,6 +3715,8 @@ struct OpenDesignDayShell: View {
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
     let day1HandoffError: String?
+    let day1SituationSummary: Day1SituationSummary?
+    let onChooseDay1SituationGoal: (String) -> Void
     let startDay1DocHandoff: (String, [String: Any]) -> Void
     let submitStep: (OpenDesignDayContent.InterviewStep, Int) -> Void
     let acceptMission: () -> Void
@@ -3821,6 +3831,8 @@ struct OpenDesignDayShell: View {
                             activeDay1HandoffDocType: activeDay1HandoffDocType,
                             pendingDay1HandoffDocType: pendingDay1HandoffDocType,
                             day1HandoffError: day1HandoffError,
+                            day1SituationSummary: day1SituationSummary,
+                            onChooseDay1SituationGoal: onChooseDay1SituationGoal,
                             startDay1DocHandoff: startDay1DocHandoff,
                             layout: layout
                         )
@@ -5910,11 +5922,14 @@ private struct OpenDesignDayMainView: View {
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
     let day1HandoffError: String?
+    let day1SituationSummary: Day1SituationSummary?
+    let onChooseDay1SituationGoal: (String) -> Void
     let startDay1DocHandoff: (String, [String: Any]) -> Void
     let layout: OpenDesignDayLayoutMetrics
 
     @State private var introRevealStage = 0
     @State private var showsEvidence = false
+    @State private var hasAdvancedPastSituationSummary = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -5938,25 +5953,35 @@ private struct OpenDesignDayMainView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        OpenDesignDayStepWorkspaceView(
-                            content: content,
-                            interaction: $interaction,
-                            activeInterviewStep: activeInterviewStep,
-                            actionSection: AnyView(actionSection),
-                            selectedChoice: selectedChoiceBinding(for: activeInterviewStep),
-                            freeformAnswer: freeformBinding(for: activeInterviewStep),
-                            completeDayAction: completeDayAction,
-                            advanceToNextDay: advanceToNextDay,
-                            day1DocPreviews: day1DocPreviews,
-                            day1HandoffPromptCard: day1HandoffPromptCard,
-                            activeDay1HandoffDocType: activeDay1HandoffDocType,
-                            pendingDay1HandoffDocType: pendingDay1HandoffDocType,
-                            day1HandoffError: day1HandoffError,
-                            startDay1DocHandoff: startDay1DocHandoff,
-                            activateFreeformAnswer: activateFreeformAnswer,
-                            previousAction: previousWorkflowStep,
-                            nextAction: advanceWorkflowStep
-                        )
+                        VStack(alignment: .leading, spacing: 14) {
+                            if shouldShowSituationSummary, let day1SituationSummary {
+                                Day1SituationSummaryCard(
+                                    summary: day1SituationSummary,
+                                    onChooseGoal: onChooseDay1SituationGoal,
+                                    onContinue: advancePastSituationSummary
+                                )
+                            } else {
+                                OpenDesignDayStepWorkspaceView(
+                                    content: content,
+                                    interaction: $interaction,
+                                    activeInterviewStep: activeInterviewStep,
+                                    actionSection: AnyView(actionSection),
+                                    selectedChoice: selectedChoiceBinding(for: activeInterviewStep),
+                                    freeformAnswer: freeformBinding(for: activeInterviewStep),
+                                    completeDayAction: completeDayAction,
+                                    advanceToNextDay: advanceToNextDay,
+                                    day1DocPreviews: day1DocPreviews,
+                                    day1HandoffPromptCard: day1HandoffPromptCard,
+                                    activeDay1HandoffDocType: activeDay1HandoffDocType,
+                                    pendingDay1HandoffDocType: pendingDay1HandoffDocType,
+                                    day1HandoffError: day1HandoffError,
+                                    startDay1DocHandoff: startDay1DocHandoff,
+                                    activateFreeformAnswer: activateFreeformAnswer,
+                                    previousAction: previousWorkflowStep,
+                                    nextAction: advanceWorkflowStep
+                                )
+                            }
+                        }
                         .openDesignStagedReveal(isVisible: introRevealStage >= 1)
                         .openDesignSearchPulse(id: "top", isActive: isSearchPulseActive("top"))
                         .id("top")
@@ -5992,6 +6017,10 @@ private struct OpenDesignDayMainView: View {
     private var activeInterviewStep: OpenDesignDayContent.InterviewStep? {
         guard let stepID = interaction.activeInterviewStepID else { return nil }
         return content.interviewSteps.first(where: { $0.id == stepID })
+    }
+
+    private var shouldShowSituationSummary: Bool {
+        day1SituationSummary != nil && !hasAdvancedPastSituationSummary && !interaction.missionAccepted
     }
 
     private var startPhaseResumeLabel: String {
@@ -6071,6 +6100,14 @@ private struct OpenDesignDayMainView: View {
 
     private func activateFreeformAnswer(stepID: Int) {
         interaction.activateFreeformAnswer(stepID: stepID)
+    }
+
+    private func advancePastSituationSummary() {
+        withAnimation(.spring(response: reduceMotion ? 0 : 0.24, dampingFraction: 0.90)) {
+            hasAdvancedPastSituationSummary = true
+            interaction.focusWorkflowStep(0)
+        }
+        pendingScrollRequest = OpenDesignScrollRequest(target: .top)
     }
 
     private func startIntroReveal() {

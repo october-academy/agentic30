@@ -219,6 +219,7 @@ struct ContentView: View {
         let day1HandoffPromptCard = day1HandoffPrompt.map { prompt in
             AnyView(inlineStructuredPrompt(prompt, submissionState: submissionState(for: prompt)))
         }
+        let situationSummary = isWorkspaceWindow && day.day == 1 ? viewModel.scanResult?.day1SituationSummary : nil
         let content = ZStack {
             if let resolvedContent {
                 OpenDesignDayPageView(
@@ -262,6 +263,10 @@ struct ContentView: View {
                     activeDay1HandoffDocType: day1HandoffPrompt?.generation?.docType?.lowercased(),
                     pendingDay1HandoffDocType: viewModel.day1DocHandoffPendingDocType,
                     day1HandoffError: viewModel.day1DocHandoffError,
+                    day1SituationSummary: situationSummary,
+                    onChooseDay1SituationGoal: { goal in
+                        viewModel.submitDay1SituationGoal(goal)
+                    },
                     startDay1DocHandoff: { docType, handoff in
                         viewModel.startDay1DocHandoff(docType: docType, day1Handoff: handoff)
                     },
@@ -295,29 +300,11 @@ struct ContentView: View {
             }
         }
 
-        let situationSummary = day.day == 1 ? viewModel.scanResult?.day1SituationSummary : nil
-
         if isWorkspaceWindow {
-            if let situationSummary {
-                // Card is shown ABOVE the day content only when a summary exists.
-                // The no-card path below stays byte-identical to the original so
-                // existing Day-1 layout/screenshot tests are unaffected.
-                VStack(spacing: 0) {
-                    Day1SituationSummaryCard(summary: situationSummary) { goal in
-                        viewModel.submitDay1SituationGoal(goal)
-                    }
-                    content
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+            content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(OpenDesignDayColor.bg)
                 .accessibilityIdentifier("workspace.surface")
-            } else {
-                content
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(OpenDesignDayColor.bg)
-                    .accessibilityIdentifier("workspace.surface")
-            }
         } else {
             content
                 .frame(width: 1136, height: 716)
@@ -3420,9 +3407,10 @@ private struct WorkspaceWindowChrome: NSViewRepresentable {
             window.titlebarAppearsTransparent = true
             window.toolbarStyle = .unifiedCompact
             window.styleMask.insert(.fullSizeContentView)
-            window.appearance = NSAppearance(named: .darkAqua)
+            let theme = Agentic30Theme.current
+            window.appearance = NSAppearance(named: theme.appKitAppearanceName)
             window.isOpaque = true
-            window.backgroundColor = NSColor(red: 0.125, green: 0.137, blue: 0.153, alpha: 1.0)
+            window.backgroundColor = theme.windowBackgroundColor
             window.isMovableByWindowBackground = true
             if CommandLine.arguments.contains("--ui-testing-opaque-window") {
                 window.level = .screenSaver

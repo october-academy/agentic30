@@ -2000,7 +2000,7 @@ final class AgenticViewModel: ObservableObject {
     func submitDay1SituationGoal(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        draft = "30일 목표를 \"\(trimmed)\"(으)로 정하고 싶어. 이 목표를 한 줄로 구체화해줘."
+        draft = "Day 1에서 \"\(trimmed)\"을(를) 오늘 실행할 검증 행동으로 고르고 싶어. 한 문장 실행 계획으로 구체화해줘."
         sendPrompt()
     }
 
@@ -6257,40 +6257,54 @@ final class AgenticViewModel: ObservableObject {
 
     private static func makeUITestingDay1SituationSummary() -> Day1SituationSummary {
         Day1SituationSummary(
-            schemaVersion: 1,
-            source: "deterministic",
+            schemaVersion: 3,
+            source: "local_evidence",
             generatedAt: nil,
-            angles: Day1SituationSummary.Angles(
-                product: "Agentic30은(는) macOS 앱 · 30일 안에 첫 매출 검증을 돕는다 · 대상: 1인 빌더",
-                engineering: "macOS 앱 · 최근 12개 커밋 · 6개 파일 변경 · 단계: 초기 사용자",
-                recentFocus: "최근 작업(claude, 3세션): Day-1 상황 요약 카드 구현"
+            project: Day1SituationSummary.Project(
+                name: "Agentic30",
+                oneLine: "Agentic30: Day 1 고객 검증을 돕는 macOS 앱입니다.",
+                customer: "1인 빌더",
+                problem: "첫 고객 기준이 흔들림",
+                evidenceRefs: ["README.md (README)", "docs/ICP.md (ICP)"]
             ),
-            readmeUpdate: Day1SituationSummary.ReadmeUpdate(
-                hasDrift: true,
-                suggestion: "README에 없는 최근 작업: situation, summary",
-                missing: ["situation", "summary"],
-                stale: []
+            diagnosis: Day1SituationSummary.Diagnosis(
+                stage: "초기 사용자 검증",
+                bottleneck: "측정 기준 근거가 부족함",
+                whyNow: "첫 가치 이벤트와 유입 기준을 정해야 합니다.",
+                missingSignal: "측정 기준",
+                confidence: 0.82,
+                evidenceRefs: ["README.md", "docs/ICP.md"]
             ),
-            nextActions: [
-                Day1SituationSummary.NextAction(label: "README 최신화", rationale: "최근 작업이 README에 없어요"),
-                Day1SituationSummary.NextAction(label: "오늘 작업 이어가기", rationale: "Day-1 상황 요약 카드 구현")
+            realityGap: Day1SituationSummary.RealityGap(
+                docClaim: "README는 초기 가설 중심입니다.",
+                observedReality: "Day 1 검증, 온보딩, 계측",
+                recommendation: "검증 행동과 계측 기준을 문서에 반영해야 다음 판단이 맞아집니다.",
+                evidenceRefs: ["README.md", "git/agent recent work"]
+            ),
+            baseline: Day1SituationSummary.Baseline(
+                target: "인터뷰 5명과 첫 유료 신호",
+                current: "초기 사용자 검증: 측정 기준 근거가 부족함",
+                day30Question: "30일 뒤 인터뷰 5명, 첫 유료 신호 근거가 실제로 남았나요?",
+                metrics: ["인터뷰 5명", "첫 유료 신호"]
+            ),
+            path: [
+                Day1SituationSummary.PathNode(label: "고객 인터뷰", kind: "customer_action", status: "found", why: "docs/ICP.md에 고객 인터뷰 검증 흐름이 있습니다.", evidenceRefs: ["docs/ICP.md"]),
+                Day1SituationSummary.PathNode(label: "첫 유료 신호", kind: "conversion", status: "found", why: "docs/GOAL.md에 첫 유료 신호 목표가 있습니다.", evidenceRefs: ["docs/GOAL.md"])
             ],
-            goalDecision: StructuredPromptQuestion(
-                questionId: "ui-testing-goal",
-                header: "30일 목표",
-                question: "30일 목표를 한 줄로 고정할까요?",
-                helperText: nil,
-                options: [
-                    StructuredPromptOption(label: "첫 매출", description: "수익을 30일 목표로", preview: nil, nextIntent: nil),
-                    StructuredPromptOption(label: "사용자 100명", description: "활성 사용자 100명 목표", preview: nil, nextIntent: nil)
-                ],
-                multiSelect: false,
-                allowFreeText: true,
-                requiresFreeText: false,
-                freeTextPlaceholder: "직접 입력",
-                textMode: .short
+            actions: [
+                Day1SituationSummary.Action(id: "customer-interview", label: "고객 인터뷰", rationale: "첫 고객 기준을 실제 대화로 확인합니다.", kind: "customer_action", promptSeed: "이번 주 고객 인터뷰로 무엇을 확인할까요?", evidenceRefs: ["docs/ICP.md"], evidenceLimited: false),
+                Day1SituationSummary.Action(id: "paid-signal", label: "유료 신호", rationale: "돈이나 시간을 쓰는 반응을 오늘 남깁니다.", kind: "conversion", promptSeed: "첫 유료 신호를 어떤 행동으로 확인할까요?", evidenceRefs: ["docs/GOAL.md"], evidenceLimited: false)
+            ],
+            qualityGate: Day1SituationSummary.QualityGate(
+                score: 8.2,
+                passed: true,
+                reasons: ["고객과 문제가 근거에서 확인됨", "관찰할 행동 신호 후보가 있음"]
             ),
-            confidence: 0.9
+            trust: Day1SituationSummary.Trust(
+                readOnly: true,
+                secretsExcluded: true,
+                sourcesUsed: ["onboarding hypothesis", "docs/source"]
+            )
         )
     }
 
@@ -6874,7 +6888,7 @@ struct WorkspaceScanResultStore {
         try? FileManager.default.removeItem(at: fileURL)
     }
 
-    private static let schemaVersion = 2
+    private static let schemaVersion = 3
 
     private struct Payload: Codable {
         let schemaVersion: Int
