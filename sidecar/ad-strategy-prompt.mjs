@@ -36,7 +36,7 @@ Produce your analysis in the following structure, using markdown formatting:
 - Traffic source breakdown (which utm_source / utm_medium drive the most quality traffic)
 - Campaign attribution analysis
 - Channel-level performance comparison
-${posthogAvailable ? "- Use PostHog HogQL to query: SELECT properties.$utm_source, properties.$utm_medium, count() as visits, countIf(event = 'sign_up' OR event = '$autocapture') as conversions FROM events WHERE properties.$current_url LIKE '%${url}%' AND timestamp >= now() - INTERVAL 30 DAY GROUP BY 1, 2 ORDER BY visits DESC" : "- (Skipped: PostHog not configured)"}
+${posthogAvailable ? "- Use PostHog MCP read-only tools such as execute-sql or query-run to run HogQL: SELECT properties.$utm_source, properties.$utm_medium, count() as visits, countIf(event = 'sign_up' OR event = '$autocapture') as conversions FROM events WHERE properties.$current_url LIKE '%${url}%' AND timestamp >= now() - INTERVAL 30 DAY GROUP BY 1, 2 ORDER BY visits DESC" : "- (Skipped: PostHog not configured)"}
 
 ### 3. Scroll Depth Analysis
 - Content engagement metrics for the landing page
@@ -114,7 +114,7 @@ const POSTHOG_INSTRUCTIONS = `You have access to PostHog analytics via MCP tools
 4. **Funnel Analysis** — Create funnels from pageview → engagement → conversion
 5. **Session Duration** — Analyze time-on-page metrics by traffic source
 
-Use the PostHog MCP query tools to run HogQL queries. Example:
+Use the PostHog MCP read-only query tools to run HogQL queries. Prefer execute-sql or query-run when available. Example:
 \`\`\`sql
 SELECT
   properties.$utm_source AS source,

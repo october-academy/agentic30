@@ -13,8 +13,8 @@ set -euo pipefail
 #   ASC_ISSUER_ID         — App Store Connect API Issuer ID (UUID)
 #   SPARKLE_PUBLIC_ED_KEY — public EdDSA key embedded in Info.plist
 #   SPARKLE_GENERATE_APPCAST_BIN — path to Sparkle's generate_appcast tool
-#   POSTHOG_PROJECT_API_KEY — PostHog project token embedded for launch telemetry
 # Optional:
+#   POSTHOG_PROJECT_API_KEY — PostHog project token embedded for launch telemetry
 #   POSTHOG_HOST           — PostHog app/ingest host (defaults to https://us.posthog.com)
 # Apple-ID + app-specific password path is unused (notarytool now authenticates
 # via ASC API key — same key reused by future fastlane match in W2+).
@@ -54,7 +54,6 @@ required_vars=(
   ASC_ISSUER_ID
   SPARKLE_PUBLIC_ED_KEY
   SPARKLE_GENERATE_APPCAST_BIN
-  POSTHOG_PROJECT_API_KEY
 )
 missing=0
 for var in "${required_vars[@]}"; do
@@ -65,6 +64,7 @@ for var in "${required_vars[@]}"; do
 done
 [ "$missing" = "1" ] && exit 2
 
+POSTHOG_PROJECT_API_KEY="${POSTHOG_PROJECT_API_KEY:-phc_IXc1t2XtX4u1lOK8XHuiuE7Z0IwjiQSMxmG1rDWgMgA}"
 if [[ "$POSTHOG_PROJECT_API_KEY" != phc_* ]]; then
   echo "ERROR: \$POSTHOG_PROJECT_API_KEY must be a PostHog project token starting with phc_" >&2
   exit 2

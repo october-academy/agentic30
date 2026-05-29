@@ -85,6 +85,10 @@ struct SettingsView: View {
     @State private var posthogApiKey = ""
     @State private var posthogProjectAPIKey = ""
     @State private var posthogHost = ""
+    @State private var posthogMcpURL = KeychainHelper.Settings.defaultPostHogMcpURL
+    @State private var posthogMcpRegion = KeychainHelper.Settings.defaultPostHogMcpRegion
+    @State private var posthogMcpReadonly = true
+    @State private var posthogMcpFeatures = KeychainHelper.Settings.defaultPostHogMcpFeatures
     @State private var telemetryDisabled = PostHogTelemetry.isTelemetryDisabledByUser
     @State private var metaAccessToken = ""
     @State private var metaAdAccountId = ""
@@ -2303,7 +2307,7 @@ struct SettingsView: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Host")
+                Text("PostHog API Host")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .foregroundStyle(settingsText.opacity(0.6))
                 TextField("https://us.posthog.com", text: $posthogHost)
@@ -2314,7 +2318,54 @@ struct SettingsView: View {
                     .background(fieldBackground)
             }
 
-            Text("`phx_` key는 MCP/조회용이고, 앱/sidecar 이벤트 수집은 `phc_` project key를 사용합니다. 빈 칸이면 배포 빌드에 임베드된 기본 키를 사용합니다.")
+            VStack(alignment: .leading, spacing: 10) {
+                Text("MCP Endpoint")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundStyle(settingsText.opacity(0.6))
+
+                Picker("MCP Region", selection: $posthogMcpRegion) {
+                    Text("US").tag("us")
+                    Text("EU").tag("eu")
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .tint(settingsAccentColor)
+                .onChange(of: posthogMcpRegion) { _, newValue in
+                    if posthogMcpURL == KeychainHelper.Settings.defaultPostHogMcpURL
+                        || posthogMcpURL == KeychainHelper.Settings.defaultPostHogEuMcpURL
+                        || posthogMcpURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        if newValue == "eu" {
+                            posthogMcpURL = KeychainHelper.Settings.defaultPostHogEuMcpURL
+                        } else {
+                            posthogMcpURL = KeychainHelper.Settings.defaultPostHogMcpURL
+                        }
+                    }
+                }
+
+                TextField("https://mcp.posthog.com/mcp", text: $posthogMcpURL)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14, weight: .medium, design: .monospaced))
+                    .foregroundStyle(settingsText.opacity(0.9))
+                    .padding(12)
+                    .background(fieldBackground)
+
+                Toggle(isOn: $posthogMcpReadonly) {
+                    Text("Read-only MCP tools")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(settingsText.opacity(0.86))
+                }
+                .toggleStyle(.switch)
+                .tint(Agentic30BrandColor.green)
+
+                TextField(KeychainHelper.Settings.defaultPostHogMcpFeatures, text: $posthogMcpFeatures)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(settingsText.opacity(0.84))
+                    .padding(12)
+                    .background(fieldBackground)
+            }
+
+            Text("`phx_`/`pha_` key는 MCP 조회용이고, 앱/sidecar 이벤트 수집은 `phc_` project key를 사용합니다. Codex CLI 동기화는 토큰 원문 대신 `POSTHOG_MCP_API_KEY` env var를 참조합니다.")
                 .font(.system(size: 12, weight: .medium, design: .rounded))
                 .foregroundStyle(settingsText.opacity(0.44))
 
@@ -3060,6 +3111,10 @@ struct SettingsView: View {
         s.posthogApiKey = posthogApiKey
         s.posthogProjectAPIKey = posthogProjectAPIKey
         s.posthogHost = posthogHost
+        s.posthogMcpURL = posthogMcpURL
+        s.posthogMcpRegion = posthogMcpRegion
+        s.posthogMcpReadonly = posthogMcpReadonly
+        s.posthogMcpFeatures = posthogMcpFeatures
         s.metaAccessToken = metaAccessToken
         s.metaAdAccountId = metaAdAccountId
         s.bipWorkspaceRoot = bipWorkspaceRoot
@@ -3134,6 +3189,10 @@ struct SettingsView: View {
         posthogApiKey = s.posthogApiKey
         posthogProjectAPIKey = s.posthogProjectAPIKey
         posthogHost = s.posthogHost
+        posthogMcpURL = s.posthogMcpURL
+        posthogMcpRegion = s.posthogMcpRegion
+        posthogMcpReadonly = s.posthogMcpReadonly
+        posthogMcpFeatures = s.posthogMcpFeatures
         metaAccessToken = s.metaAccessToken
         metaAdAccountId = s.metaAdAccountId
         bipWorkspaceRoot = s.bipWorkspaceRoot
@@ -3260,9 +3319,12 @@ struct SettingsView: View {
         let settings = currentSettings()
         try? KeychainHelper.saveSettings(settings)
         KeychainHelper.syncAdConfigFile(from: settings)
+        PostHogTelemetry.reloadConfiguration()
         PostHogTelemetry.capture("mac_settings_ad_saved", properties: [
             "posthog_mcp_configured": !posthogApiKey.isEmpty,
             "posthog_project_configured": !posthogProjectAPIKey.isEmpty,
+            "posthog_mcp_region": posthogMcpRegion,
+            "posthog_mcp_readonly": posthogMcpReadonly,
             "meta_configured": !metaAccessToken.isEmpty && !metaAdAccountId.isEmpty,
         ])
         showMessage($adSaveMessage, text: "Saved")
@@ -3277,11 +3339,16 @@ struct SettingsView: View {
         posthogApiKey = ""
         posthogProjectAPIKey = ""
         posthogHost = ""
+        posthogMcpURL = KeychainHelper.Settings.defaultPostHogMcpURL
+        posthogMcpRegion = KeychainHelper.Settings.defaultPostHogMcpRegion
+        posthogMcpReadonly = true
+        posthogMcpFeatures = KeychainHelper.Settings.defaultPostHogMcpFeatures
         metaAccessToken = ""
         metaAdAccountId = ""
         let settings = currentSettings()
         try? KeychainHelper.saveSettings(settings)
         KeychainHelper.syncAdConfigFile(from: settings)
+        PostHogTelemetry.reloadConfiguration()
         showMessage($adSaveMessage, text: "Cleared")
     }
 

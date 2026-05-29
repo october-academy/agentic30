@@ -2,6 +2,11 @@ import XCTest
 @testable import agentic30
 
 final class PostHogTelemetryTests: XCTestCase {
+    func testPublicProjectTokenIsCaptureOnlyTokenShape() {
+        XCTAssertTrue(PostHogTelemetryConfig.publicProjectAPIKey.hasPrefix("phc_"))
+        XCTAssertEqual(PostHogTelemetryConfig.defaultHost, "https://us.i.posthog.com")
+    }
+
     func testUSHostResolvesToUSIngest() {
         let resolved = PostHogHostResolver.ingestBaseURL(for: "https://us.posthog.com")
         XCTAssertEqual(resolved?.absoluteString, "https://us.i.posthog.com")
@@ -17,33 +22,76 @@ final class PostHogTelemetryTests: XCTestCase {
         XCTAssertEqual(resolved?.absoluteString, "https://analytics.example.com")
     }
 
-    func testSanitizerMasksSensitiveFieldsAndLocalPaths() {
+    func testLoadConfigNormalizesHostToSDKIngestHost() {
+        PostHogTelemetry.configurationProvider = {
+            PostHogTelemetryConfig(projectAPIKey: "phc_test", host: "https://us.posthog.com")
+        }
+        defer { PostHogTelemetry.resetTestingHooks() }
+
+        XCTAssertEqual(PostHogTelemetry.loadConfigForTesting()?.host, "https://us.i.posthog.com")
+    }
+
+    func testSanitizerMasksSensitiveFieldsLocalPathsAndContent() {
         let sanitized = PostHogTelemetrySanitizer.sanitize([
             "payment_key": "payment-fixture-1234567890",
             "workspace_root": "/Users/october/prj/agentic30",
             "doc_path": "docs/ICP.md",
             "auth_email": "founder@example.com",
+            "prompt_text": "ship my private prompt",
+            "tool_output": "private tool output",
+            "nested": [
+                "message": "chat transcript",
+                "api_key": "secret",
+            ],
         ])
 
         XCTAssertEqual(sanitized["payment_key_suffix"] as? String, "567890")
         XCTAssertEqual(sanitized["workspace_basename"] as? String, "agentic30")
         XCTAssertEqual(sanitized["doc_path"] as? String, "docs/ICP.md")
         XCTAssertEqual(sanitized["auth_email_domain"] as? String, "example.com")
+        XCTAssertEqual(sanitized["prompt_text"] as? String, "[redacted]")
+        XCTAssertEqual(sanitized["tool_output"] as? String, "[redacted]")
+        XCTAssertEqual((sanitized["nested"] as? [String: Any])?["message"] as? String, "[redacted]")
+        XCTAssertEqual((sanitized["nested"] as? [String: Any])?["api_key"] as? String, "[redacted]")
         XCTAssertNil(sanitized["payment_key"])
         XCTAssertNil(sanitized["workspace_root"])
         XCTAssertNil(sanitized["auth_email"])
     }
 
-    func testCaptureOnceDedupesByOnceKey() {
-        let defaultsKey = "agentic30.posthog.once.test.capture.once.\(UUID().uuidString)"
-        let onceKey = defaultsKey.replacingOccurrences(of: "agentic30.posthog.once.", with: "")
-        UserDefaults.standard.removeObject(forKey: defaultsKey)
+    func testCaptureUsesSDKClient() {
+        let client = CapturingPostHogClient()
+        PostHogTelemetry.sdkClient = client
+        PostHogTelemetry.configurationProvider = {
+            PostHogTelemetryConfig(projectAPIKey: "phc_test", host: "https://us.posthog.com")
+        }
+        defer { PostHogTelemetry.resetTestingHooks() }
 
-        var captures: [PostHogTelemetryCapture] = []
-        PostHogTelemetry.captureSink = { captures.append($0) }
+        XCTAssertTrue(PostHogTelemetry.capture(
+            "mac_probe",
+            properties: ["workspace_root": "/tmp/agentic30", "prompt": "secret"]
+        ))
+
+        XCTAssertEqual(client.setupConfigs.first?.host, "https://us.i.posthog.com")
+        XCTAssertEqual(client.captures.map(\.event), ["mac_probe"])
+        XCTAssertEqual(client.captures.first?.properties["workspace_basename"] as? String, "agentic30")
+        XCTAssertEqual(client.captures.first?.properties["prompt"] as? String, "[redacted]")
+        XCTAssertEqual(client.captures.first?.properties["platform"] as? String, "macos")
+    }
+
+    func testCaptureOnceDedupesByOnceKeyAndLeavesQueueToSDK() {
+        let client = CapturingPostHogClient()
+        let onceKey = "test.capture.once.\(UUID().uuidString)"
+        let defaultsKey = "agentic30.posthog.once.\(onceKey)"
+        let pendingKey = "agentic30.posthog.once.pending.\(onceKey)"
+        Self.clearCaptureOnceState(defaultsKey: defaultsKey, pendingKey: pendingKey)
+
+        PostHogTelemetry.sdkClient = client
+        PostHogTelemetry.configurationProvider = {
+            PostHogTelemetryConfig(projectAPIKey: "phc_test", host: "https://us.posthog.com")
+        }
         defer {
-            PostHogTelemetry.captureSink = nil
-            UserDefaults.standard.removeObject(forKey: defaultsKey)
+            PostHogTelemetry.resetTestingHooks()
+            Self.clearCaptureOnceState(defaultsKey: defaultsKey, pendingKey: pendingKey)
         }
 
         XCTAssertTrue(PostHogTelemetry.captureOnce(
@@ -57,91 +105,10 @@ final class PostHogTelemetryTests: XCTestCase {
             properties: ["event_schema_version": 1]
         ))
 
-        XCTAssertEqual(captures.map(\.event), ["dmg_install_completed"])
-        XCTAssertEqual(captures.first?.properties["event_schema_version"] as? Int, 1)
-    }
-
-    func testCaptureOnceKeepsPendingUntilSendSucceeds() {
-        let onceKey = "test.capture.once.pending.\(UUID().uuidString)"
-        let defaultsKey = "agentic30.posthog.once.\(onceKey)"
-        let pendingKey = "agentic30.posthog.once.pending.\(onceKey)"
-        Self.clearCaptureOnceState(defaultsKey: defaultsKey, pendingKey: pendingKey)
-
-        var sentPayloads: [[String: Any]] = []
-        PostHogTelemetry.configurationProvider = {
-            PostHogTelemetryConfig(projectAPIKey: "phc_test", host: "https://us.posthog.com")
-        }
-        PostHogTelemetry.sender = { url, payload, completion in
-            XCTAssertEqual(url.absoluteString, "https://us.i.posthog.com/i/v0/e/")
-            sentPayloads.append(payload)
-            completion(false)
-        }
-        defer {
-            PostHogTelemetry.resetTestingHooks()
-            Self.clearCaptureOnceState(defaultsKey: defaultsKey, pendingKey: pendingKey)
-        }
-
-        XCTAssertTrue(PostHogTelemetry.captureOnce(
-            "dmg_install_completed",
-            onceKey: onceKey,
-            properties: ["event_schema_version": 1]
-        ))
-
-        XCTAssertFalse(UserDefaults.standard.bool(forKey: defaultsKey))
-        XCTAssertNotNil(UserDefaults.standard.data(forKey: pendingKey))
-
-        PostHogTelemetry.sender = { _, payload, completion in
-            sentPayloads.append(payload)
-            completion(true)
-        }
-        PostHogTelemetry.flushPendingOnceCaptures()
-
         XCTAssertTrue(UserDefaults.standard.bool(forKey: defaultsKey))
         XCTAssertNil(UserDefaults.standard.data(forKey: pendingKey))
-        XCTAssertEqual(sentPayloads.count, 2)
-        XCTAssertEqual(sentPayloads[0]["uuid"] as? String, sentPayloads[1]["uuid"] as? String)
-        XCTAssertEqual(sentPayloads[0]["timestamp"] as? String, sentPayloads[1]["timestamp"] as? String)
-    }
-
-    func testCaptureOnceDoesNotCompleteBeforeAsyncSenderCallback() {
-        let onceKey = "test.capture.once.async.\(UUID().uuidString)"
-        let defaultsKey = "agentic30.posthog.once.\(onceKey)"
-        let pendingKey = "agentic30.posthog.once.pending.\(onceKey)"
-        Self.clearCaptureOnceState(defaultsKey: defaultsKey, pendingKey: pendingKey)
-
-        var sendCompletions: [(Bool) -> Void] = []
-        var sentPayloads: [[String: Any]] = []
-        PostHogTelemetry.configurationProvider = {
-            PostHogTelemetryConfig(projectAPIKey: "phc_test", host: "https://us.posthog.com")
-        }
-        PostHogTelemetry.sender = { _, payload, completion in
-            sentPayloads.append(payload)
-            sendCompletions.append(completion)
-        }
-        defer {
-            PostHogTelemetry.resetTestingHooks()
-            Self.clearCaptureOnceState(defaultsKey: defaultsKey, pendingKey: pendingKey)
-        }
-
-        XCTAssertTrue(PostHogTelemetry.captureOnce(
-            "dmg_install_completed",
-            onceKey: onceKey,
-            properties: ["event_schema_version": 1]
-        ))
-        XCTAssertFalse(UserDefaults.standard.bool(forKey: defaultsKey))
-        XCTAssertNotNil(UserDefaults.standard.data(forKey: pendingKey))
-
-        XCTAssertFalse(PostHogTelemetry.captureOnce(
-            "dmg_install_completed",
-            onceKey: onceKey,
-            properties: ["event_schema_version": 1]
-        ))
-        XCTAssertEqual(sentPayloads.count, 1)
-
-        sendCompletions.first?(true)
-
-        XCTAssertTrue(UserDefaults.standard.bool(forKey: defaultsKey))
-        XCTAssertNil(UserDefaults.standard.data(forKey: pendingKey))
+        XCTAssertEqual(client.captures.map(\.event), ["dmg_install_completed"])
+        XCTAssertEqual(client.captures.first?.properties["event_schema_version"] as? Int, 1)
     }
 
     func testCaptureOnceDoesNotPersistWhenNoSinkAndNoConfig() {
@@ -151,12 +118,7 @@ final class PostHogTelemetryTests: XCTestCase {
         let distinctIDKey = "agentic30.posthog.distinctId"
         Self.clearCaptureOnceState(defaultsKey: defaultsKey, pendingKey: pendingKey)
 
-        // Capture distinct id BEFORE the call so we can assert no new id
-        // gets generated for an unconfigured user.
         let distinctIDBefore = UserDefaults.standard.string(forKey: distinctIDKey)
-
-        // No sink, configurationProvider returns nil — simulates the
-        // common case of a user who never configured a PostHog key.
         PostHogTelemetry.captureSink = nil
         PostHogTelemetry.configurationProvider = { nil }
         defer {
@@ -172,44 +134,16 @@ final class PostHogTelemetryTests: XCTestCase {
 
         XCTAssertFalse(UserDefaults.standard.bool(forKey: defaultsKey))
         XCTAssertNil(UserDefaults.standard.data(forKey: pendingKey))
-        // No new distinct id minted for the unconfigured user.
         XCTAssertEqual(UserDefaults.standard.string(forKey: distinctIDKey), distinctIDBefore)
     }
 
-    func testTelemetryDisabledByUserBlocksCapture() {
-        let originalDisabled = PostHogTelemetry.isTelemetryDisabledByUser
-        defer {
-            PostHogTelemetry.setTelemetryDisabledByUser(originalDisabled)
-            PostHogTelemetry.resetTestingHooks()
-        }
-
-        PostHogTelemetry.setTelemetryDisabledByUser(true)
-        // configurationProvider intentionally NOT set so loadConfig() exercises
-        // the disabled-by-user gate.
-        var didSend = false
-        PostHogTelemetry.sender = { _, _, completion in
-            didSend = true
-            completion(true)
-        }
-
-        let captured = PostHogTelemetry.capture("mac_disabled_probe")
-        XCTAssertFalse(captured, "capture should fail when user disabled telemetry")
-        XCTAssertFalse(didSend, "sender must not be invoked while opt-out is active")
-    }
-
-    func testCaptureBlockingDeliversBeforeTimeout() {
+    func testCaptureBlockingFlushesSDKClient() {
+        let client = CapturingPostHogClient()
+        PostHogTelemetry.sdkClient = client
         PostHogTelemetry.configurationProvider = {
             PostHogTelemetryConfig(projectAPIKey: "phc_test", host: "https://us.posthog.com")
         }
         defer { PostHogTelemetry.resetTestingHooks() }
-
-        var sentEvents: [String] = []
-        PostHogTelemetry.sender = { _, payload, completion in
-            if let event = payload["event"] as? String {
-                sentEvents.append(event)
-            }
-            completion(true)
-        }
 
         let success = PostHogTelemetry.captureBlocking(
             "mac_app_terminating",
@@ -217,11 +151,139 @@ final class PostHogTelemetryTests: XCTestCase {
         )
 
         XCTAssertTrue(success)
-        XCTAssertEqual(sentEvents, ["mac_app_terminating"])
+        XCTAssertEqual(client.captures.map(\.event), ["mac_app_terminating"])
+        XCTAssertEqual(client.flushCount, 1)
+    }
+
+    func testExceptionLogIdentifyResetAndOptOutUseSDKClient() {
+        let client = CapturingPostHogClient()
+        let originalDisabled = PostHogTelemetry.isTelemetryDisabledByUser
+        let session = MacAuthSession(
+            accessToken: "access",
+            refreshToken: "refresh",
+            expiresAt: nil,
+            tokenType: "bearer",
+            userId: "user_123",
+            email: "founder@example.com",
+            onboardingCompletedAt: "2026-05-01T00:00:00Z",
+            termsAcceptedAt: "2026-05-01T00:00:00Z",
+            termsVersion: "2026-04-15",
+            privacyVersion: "2026-04-15"
+        )
+
+        PostHogTelemetry.sdkClient = client
+        PostHogTelemetry.configurationProvider = {
+            PostHogTelemetryConfig(projectAPIKey: "phc_test", host: "https://us.posthog.com")
+        }
+        defer {
+            PostHogTelemetry.setTelemetryDisabledByUser(originalDisabled)
+            PostHogTelemetry.resetTestingHooks()
+        }
+
+        PostHogTelemetry.captureException(
+            NSError(domain: "Test", code: 1, userInfo: [NSLocalizedDescriptionKey: "Boom"]),
+            properties: ["component": "unit_test"],
+            authSession: session
+        )
+        PostHogTelemetry.captureLog(
+            "sidecar failed",
+            level: .error,
+            properties: ["message": "private details"],
+            authSession: session
+        )
+        PostHogTelemetry.identify(authSession: session)
+        PostHogTelemetry.resetIdentity()
+        PostHogTelemetry.setTelemetryDisabledByUser(true)
+        PostHogTelemetry.setTelemetryDisabledByUser(false)
+
+        XCTAssertEqual(client.exceptions.count, 1)
+        XCTAssertEqual(client.exceptions.first?.properties["component"] as? String, "unit_test")
+        XCTAssertEqual(client.logs.count, 1)
+        XCTAssertEqual(client.logs.first?.level, .error)
+        XCTAssertEqual(client.logs.first?.attributes["message"] as? String, "[redacted]")
+        XCTAssertEqual(client.identifies.first?.distinctId, "user_123")
+        XCTAssertEqual(client.identifies.first?.userProperties["email_domain"] as? String, "example.com")
+        XCTAssertEqual(client.resetCount, 1)
+        XCTAssertGreaterThanOrEqual(client.optOutCount, 1)
+        XCTAssertGreaterThanOrEqual(client.optInCount, 1)
     }
 
     private static func clearCaptureOnceState(defaultsKey: String, pendingKey: String) {
         UserDefaults.standard.removeObject(forKey: defaultsKey)
         UserDefaults.standard.removeObject(forKey: pendingKey)
+    }
+}
+
+private final class CapturingPostHogClient: PostHogTelemetrySDKClient {
+    struct CapturedEvent {
+        let event: String
+        let distinctId: String
+        let properties: [String: Any]
+    }
+
+    struct CapturedException {
+        let error: Error
+        let properties: [String: Any]
+    }
+
+    struct CapturedLog {
+        let message: String
+        let level: PostHogTelemetryLogLevel
+        let attributes: [String: Any]
+    }
+
+    struct Identify {
+        let distinctId: String
+        let userProperties: [String: Any]
+    }
+
+    private(set) var configuredConfig: PostHogTelemetryConfig?
+    private(set) var setupConfigs: [PostHogTelemetryConfig] = []
+    private(set) var setupDisabledFlags: [Bool] = []
+    private(set) var captures: [CapturedEvent] = []
+    private(set) var exceptions: [CapturedException] = []
+    private(set) var logs: [CapturedLog] = []
+    private(set) var identifies: [Identify] = []
+    private(set) var resetCount = 0
+    private(set) var optOutCount = 0
+    private(set) var optInCount = 0
+    private(set) var flushCount = 0
+
+    func setup(config: PostHogTelemetryConfig, disabled: Bool) {
+        configuredConfig = config
+        setupConfigs.append(config)
+        setupDisabledFlags.append(disabled)
+    }
+
+    func capture(_ event: String, distinctId: String, properties: [String: Any]) {
+        captures.append(CapturedEvent(event: event, distinctId: distinctId, properties: properties))
+    }
+
+    func captureException(_ error: Error, properties: [String: Any]) {
+        exceptions.append(CapturedException(error: error, properties: properties))
+    }
+
+    func captureLog(_ message: String, level: PostHogTelemetryLogLevel, attributes: [String: Any]) {
+        logs.append(CapturedLog(message: message, level: level, attributes: attributes))
+    }
+
+    func identify(_ distinctId: String, userProperties: [String: Any]) {
+        identifies.append(Identify(distinctId: distinctId, userProperties: userProperties))
+    }
+
+    func reset() {
+        resetCount += 1
+    }
+
+    func optOut() {
+        optOutCount += 1
+    }
+
+    func optIn() {
+        optInCount += 1
+    }
+
+    func flush() {
+        flushCount += 1
     }
 }

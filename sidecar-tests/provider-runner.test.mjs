@@ -27,6 +27,7 @@ import {
   shouldResumeCodexThread,
   updateProviderSettings,
 } from "../sidecar/provider-runner.mjs";
+import { POSTHOG_MCP_TOKEN_ENV_VAR } from "../sidecar/posthog-mcp-config.mjs";
 
 test("test stub provider bypasses local provider auth checks", () => {
   const previous = process.env.AGENTIC30_TEST_STUB_PROVIDER;
@@ -277,6 +278,27 @@ test("buildCodexConfig gives memory_chat both QMD and internal BIP MCP access", 
   assert.equal(config.mcp_servers.agentic30_sidecar.env.AGENTIC30_APPROVED_TOOL_EXECUTION, "0");
 });
 
+test("buildCodexConfig adds read-only PostHog MCP for tool-capable sessions", () => {
+  const previous = process.env.POSTHOG_API_KEY;
+  process.env.POSTHOG_API_KEY = "phx_test";
+  try {
+    const config = buildCodexConfig({
+      systemPromptText: "system",
+      executionMode: "memory_chat",
+      sessionIdForMcp: "session",
+      workspaceRoot: "/tmp/workspace",
+    });
+
+    assert.ok(config.mcp_servers.posthog);
+    assert.match(config.mcp_servers.posthog.url, /^https:\/\/mcp\.posthog\.com\/mcp\?/);
+    assert.match(config.mcp_servers.posthog.url, /readonly=1/);
+    assert.equal(config.mcp_servers.posthog.bearer_token_env_var, POSTHOG_MCP_TOKEN_ENV_VAR);
+    assert.equal(JSON.stringify(config.mcp_servers.posthog).includes("phx_test"), false);
+  } finally {
+    restoreEnv("POSTHOG_API_KEY", previous);
+  }
+});
+
 test("provider permission bypass requires an approved agentic action", () => {
   assert.equal(
     allowsProviderPermissionBypass({ executionMode: "agentic", approvedToolExecution: true }),
@@ -310,14 +332,20 @@ test("Claude read-only gate treats shell, write, web, and mutating GWS tools as 
 });
 
 test("buildCodexConfig keeps judge_read_only isolated from MCP tools", () => {
-  const config = buildCodexConfig({
-    systemPromptText: "system",
-    executionMode: "judge_read_only",
-    sessionIdForMcp: "session",
-    workspaceRoot: "/tmp/workspace",
-  });
+  const previous = process.env.POSTHOG_API_KEY;
+  process.env.POSTHOG_API_KEY = "phx_test";
+  try {
+    const config = buildCodexConfig({
+      systemPromptText: "system",
+      executionMode: "judge_read_only",
+      sessionIdForMcp: "session",
+      workspaceRoot: "/tmp/workspace",
+    });
 
-  assert.deepEqual(config.mcp_servers, {});
+    assert.deepEqual(config.mcp_servers, {});
+  } finally {
+    restoreEnv("POSTHOG_API_KEY", previous);
+  }
 });
 
 test("buildCodexEnv points Codex CLI at an isolated app config home", () => {
@@ -327,12 +355,14 @@ test("buildCodexEnv points Codex CLI at an isolated app config home", () => {
     TMPDIR: "/tmp",
     CODEX_API_KEY: "codex-key",
     OPENAI_API_KEY: "openai-key",
+    POSTHOG_API_KEY: "phx_posthog",
   });
 
   assert.match(env.CODEX_HOME, /Application Support\/agentic30\/codex-home$/);
   assert.equal(env.PATH, "/usr/bin");
   assert.equal(env.CODEX_API_KEY, "codex-key");
   assert.equal(env.OPENAI_API_KEY, "openai-key");
+  assert.equal(env.POSTHOG_MCP_API_KEY, "phx_posthog");
   assert.equal(env.AGENTIC30_QMD_INDEX, "agentic30");
 });
 

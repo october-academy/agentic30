@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		596660B12F86A4920021885C /* sidecar in Copy Sidecar Resources */ = {isa = PBXBuildFile; fileRef = 596660B02F86A4920021885C /* sidecar */; };
 		596660C02F86A4920021885C /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 596660C12F86A4920021885C /* Sparkle */; };
+		596660D02F86B0000021885C /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = 596660D12F86B0000021885C /* PostHog */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -87,6 +88,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				596660C02F86A4920021885C /* Sparkle in Frameworks */,
+				596660D02F86B0000021885C /* PostHog in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -152,6 +154,7 @@
 			name = agentic30;
 			packageProductDependencies = (
 				596660C12F86A4920021885C /* Sparkle */,
+				596660D12F86B0000021885C /* PostHog */,
 			);
 			productName = agentic30;
 			productReference = 596660502F86A4900021885C /* agentic30.app */;
@@ -237,6 +240,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				596660C22F86A4920021885C /* XCRemoteSwiftPackageReference "Sparkle" */,
+				596660D22F86B0000021885C /* XCRemoteSwiftPackageReference "posthog-ios" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 596660512F86A4900021885C /* Products */;
@@ -702,6 +706,14 @@
 				minimumVersion = 2.9.1;
 			};
 		};
+		596660D22F86B0000021885C /* XCRemoteSwiftPackageReference "posthog-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/PostHog/posthog-ios.git";
+			requirement = {
+				kind = exactVersion;
+				version = 3.59.2;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -709,6 +721,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 596660C22F86A4920021885C /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		596660D12F86B0000021885C /* PostHog */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 596660D22F86B0000021885C /* XCRemoteSwiftPackageReference "posthog-ios" */;
+			productName = PostHog;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

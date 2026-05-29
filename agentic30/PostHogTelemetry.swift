@@ -1,6 +1,13 @@
 import Foundation
+import PostHog
 
-struct PostHogTelemetryConfig {
+struct PostHogTelemetryConfig: Equatable {
+    /// Public PostHog project token for the Agentic30 project. This is safe to
+    /// ship in client apps because it can only write capture events to public
+    /// ingest endpoints; never replace it with a personal API key.
+    static let publicProjectAPIKey = "phc_IXc1t2XtX4u1lOK8XHuiuE7Z0IwjiQSMxmG1rDWgMgA"
+    static let defaultHost = "https://us.i.posthog.com"
+
     let projectAPIKey: String
     let host: String
 }
@@ -10,6 +17,119 @@ struct PostHogTelemetryCapture {
     let properties: [String: Any]
     let timestamp: Date
     let isException: Bool
+}
+
+enum PostHogTelemetryLogLevel: Equatable {
+    case trace
+    case debug
+    case info
+    case warn
+    case error
+    case fatal
+}
+
+protocol PostHogTelemetrySDKClient: AnyObject {
+    var configuredConfig: PostHogTelemetryConfig? { get }
+
+    func setup(config: PostHogTelemetryConfig, disabled: Bool)
+    func capture(_ event: String, distinctId: String, properties: [String: Any])
+    func captureException(_ error: Error, properties: [String: Any])
+    func captureLog(_ message: String, level: PostHogTelemetryLogLevel, attributes: [String: Any])
+    func identify(_ distinctId: String, userProperties: [String: Any])
+    func reset()
+    func optOut()
+    func optIn()
+    func flush()
+}
+
+final class PostHogSDKTelemetryClient: PostHogTelemetrySDKClient {
+    private(set) var configuredConfig: PostHogTelemetryConfig?
+
+    func setup(config: PostHogTelemetryConfig, disabled: Bool) {
+        if configuredConfig != nil {
+            PostHogSDK.shared.close()
+        }
+
+        let sdkConfig = PostHogConfig(projectToken: config.projectAPIKey, host: config.host)
+        sdkConfig.captureApplicationLifecycleEvents = true
+        sdkConfig.captureScreenViews = true
+        sdkConfig.enableSwizzling = true
+        sdkConfig.preloadFeatureFlags = true
+        sdkConfig.sendFeatureFlagEvent = true
+        sdkConfig.setDefaultPersonProperties = true
+        sdkConfig.personProfiles = .identifiedOnly
+        sdkConfig.optOut = disabled
+        sdkConfig.errorTrackingConfig.autoCapture = true
+        sdkConfig.logs.serviceName = "agentic30-mac"
+        sdkConfig.logs.serviceVersion = PostHogTelemetry.appVersionDescription()
+        #if DEBUG
+            sdkConfig.logs.environment = "development"
+        #else
+            sdkConfig.logs.environment = "production"
+        #endif
+        sdkConfig.setBeforeSend { event in
+            event.properties = PostHogTelemetrySanitizer.sanitize(event.properties)
+            return event
+        }
+        sdkConfig.logs.setBeforeSend { record in
+            record.attributes = PostHogTelemetrySanitizer.sanitize(record.attributes)
+            return record
+        }
+
+        PostHogSDK.shared.setup(sdkConfig)
+        configuredConfig = config
+
+        if disabled {
+            PostHogSDK.shared.optOut()
+        } else {
+            PostHogSDK.shared.optIn()
+        }
+    }
+
+    func capture(_ event: String, distinctId: String, properties: [String: Any]) {
+        PostHogSDK.shared.capture(event, distinctId: distinctId, properties: properties)
+    }
+
+    func captureException(_ error: Error, properties: [String: Any]) {
+        PostHogSDK.shared.captureException(error, properties: properties)
+    }
+
+    func captureLog(_ message: String, level: PostHogTelemetryLogLevel, attributes: [String: Any]) {
+        PostHogSDK.shared.captureLog(message, level: level.sdkLevel, attributes: attributes)
+    }
+
+    func identify(_ distinctId: String, userProperties: [String: Any]) {
+        PostHogSDK.shared.identify(distinctId, userProperties: userProperties)
+    }
+
+    func reset() {
+        PostHogSDK.shared.reset()
+    }
+
+    func optOut() {
+        PostHogSDK.shared.optOut()
+    }
+
+    func optIn() {
+        PostHogSDK.shared.optIn()
+    }
+
+    func flush() {
+        PostHogSDK.shared.flush()
+    }
+}
+
+private extension PostHogTelemetryLogLevel {
+    var sdkLevel: PostHogLogSeverity {
+        switch self {
+        case .trace: .trace
+        case .debug: .debug
+        case .info: .info
+        case .warn: .warn
+        case .error: .error
+        case .fatal: .fatal
+        }
+    }
 }
 
 enum PostHogTelemetrySanitizer {
@@ -27,6 +147,20 @@ enum PostHogTelemetrySanitizer {
         "password",
         "signature",
         "api_key",
+        "prompt",
+        "transcript",
+        "tool_output",
+        "file_content",
+    ]
+
+    nonisolated private static let redactedExactKeys: Set<String> = [
+        "content",
+        "message",
+        "prompt_body",
+        "prompt_text",
+        "raw_prompt",
+        "tool_result",
+        "tool_response",
     ]
 
     nonisolated static func sanitize(_ properties: [String: Any]) -> [String: Any] {
@@ -70,7 +204,8 @@ enum PostHogTelemetrySanitizer {
             return ["has_\(key)": false]
         }
 
-        if redactedKeyPatterns.contains(where: { normalizedKey.contains($0) }) {
+        if redactedExactKeys.contains(normalizedKey)
+            || redactedKeyPatterns.contains(where: { normalizedKey.contains($0) }) {
             return [key: "[redacted]"]
         }
 
@@ -141,7 +276,7 @@ enum PostHogTelemetrySanitizer {
 enum PostHogHostResolver {
     static func ingestBaseURL(for rawHost: String) -> URL? {
         let trimmed = rawHost.trimmingCharacters(in: .whitespacesAndNewlines)
-        let candidate = trimmed.isEmpty ? "https://us.posthog.com" : trimmed
+        let candidate = trimmed.isEmpty ? PostHogTelemetryConfig.defaultHost : trimmed
         let normalized = candidate.contains("://") ? candidate : "https://\(candidate)"
 
         guard let url = URL(string: normalized),
@@ -167,24 +302,21 @@ enum PostHogHostResolver {
 }
 
 enum PostHogTelemetry {
-    typealias Sender = (URL, [String: Any], @escaping (Bool) -> Void) -> Void
-
     static let telemetryDisabledDefaultsKey = "agentic30.posthog.telemetryDisabled"
     static let bundleProjectAPIKeyInfoPlistKey = "Agentic30PostHogProjectAPIKey"
     static let bundleHostInfoPlistKey = "Agentic30PostHogHost"
     private static let distinctIDDefaultsKey = "agentic30.posthog.distinctId"
     private static let captureOnceDefaultsPrefix = "agentic30.posthog.once."
-    private static let pendingOnceDefaultsPrefix = "agentic30.posthog.once.pending."
+    private static let stalePendingOnceDefaultsPrefix = "agentic30.posthog.once.pending."
     private static let captureFileEnvironmentKey = "AGENTIC30_TELEMETRY_CAPTURE_FILE"
     private static let captureFileLock = NSLock()
     private static let captureOnceLock = NSLock()
-    private static var pendingOnceInFlight: Set<String> = []
+    private static let clientLock = NSLock()
+    private static let defaultClient = PostHogSDKTelemetryClient()
 
     static var captureSink: ((PostHogTelemetryCapture) -> Void)?
     static var configurationProvider: (() -> PostHogTelemetryConfig?)?
-    static var sender: Sender = { url, payload, completion in
-        PostHogTelemetry.defaultSend(url: url, payload: payload, completion: completion)
-    }
+    static var sdkClient: PostHogTelemetrySDKClient = defaultClient
 
     /// True if any prior launch that ran `capture(...)` already persisted the
     /// anonymous distinct ID. Used by the app delegate to suppress
@@ -200,19 +332,20 @@ enum PostHogTelemetry {
     static func resetTestingHooks() {
         captureSink = nil
         configurationProvider = nil
-        sender = { url, payload, completion in
-            PostHogTelemetry.defaultSend(url: url, payload: payload, completion: completion)
-        }
-        captureOnceLock.lock()
-        pendingOnceInFlight.removeAll()
-        captureOnceLock.unlock()
+        sdkClient = defaultClient
     }
 
-    /// Fires an event and blocks the caller until the HTTP send completes or
-    /// `timeout` elapses. Use for terminate-time captures (e.g.
-    /// `mac_app_terminating`) — the default async path uses
-    /// `URLSession.shared.dataTask`, which the OS cancels on process exit and
-    /// would otherwise lose the event.
+    static func setup(force: Bool = false) {
+        _ = ensureConfigured(force: force)
+    }
+
+    static func reloadConfiguration() {
+        setup(force: true)
+    }
+
+    /// Fires an event and flushes the SDK queue immediately. The SDK owns
+    /// durable queueing/retry semantics; this only asks it to flush before
+    /// returning for terminate-time captures.
     @discardableResult
     static func captureBlocking(
         _ event: String,
@@ -220,6 +353,7 @@ enum PostHogTelemetry {
         authSession: MacAuthSession? = nil,
         timeout: TimeInterval = 1.5
     ) -> Bool {
+        _ = timeout
         let extra = eventProperties(properties)
 
         if emitToConfiguredSink(
@@ -231,35 +365,15 @@ enum PostHogTelemetry {
             return true
         }
 
-        guard let config = loadConfig(),
-              let ingestBaseURL = PostHogHostResolver.ingestBaseURL(for: config.host),
-              let url = URL(string: "i/v0/e/", relativeTo: ingestBaseURL)
-        else { return false }
-
+        guard ensureConfigured() else { return false }
         let resolvedDistinctID = distinctID(for: authSession)
-        let payload: [String: Any] = [
-            "api_key": config.projectAPIKey,
-            "event": event,
-            "distinct_id": resolvedDistinctID,
-            "uuid": UUID().uuidString,
-            "properties": baseProperties(
-                extra: extra,
-                authSession: authSession,
-                distinctID: resolvedDistinctID
-            ),
-            "timestamp": ISO8601DateFormatter().string(from: Date()),
-        ]
-
-        guard JSONSerialization.isValidJSONObject(payload) else { return false }
-
-        let semaphore = DispatchSemaphore(value: 0)
-        var didSucceed = false
-        sender(url, payload) { success in
-            didSucceed = success
-            semaphore.signal()
-        }
-        _ = semaphore.wait(timeout: .now() + timeout)
-        return didSucceed
+        sdkClient.capture(
+            event,
+            distinctId: resolvedDistinctID,
+            properties: baseProperties(extra: extra, authSession: authSession, distinctID: resolvedDistinctID)
+        )
+        sdkClient.flush()
+        return true
     }
 
     @discardableResult
@@ -279,26 +393,14 @@ enum PostHogTelemetry {
             return true
         }
 
-        guard let config = loadConfig(),
-              let ingestBaseURL = PostHogHostResolver.ingestBaseURL(for: config.host),
-              let url = URL(string: "i/v0/e/", relativeTo: ingestBaseURL)
-        else { return false }
-
+        guard ensureConfigured() else { return false }
         let resolvedDistinctID = distinctID(for: authSession)
-        let payload: [String: Any] = [
-            "api_key": config.projectAPIKey,
-            "event": event,
-            "distinct_id": resolvedDistinctID,
-            "uuid": UUID().uuidString,
-            "properties": baseProperties(
-                extra: extra,
-                authSession: authSession,
-                distinctID: resolvedDistinctID
-            ),
-            "timestamp": ISO8601DateFormatter().string(from: Date()),
-        ]
-
-        return send(url: url, payload: payload)
+        sdkClient.capture(
+            event,
+            distinctId: resolvedDistinctID,
+            properties: baseProperties(extra: extra, authSession: authSession, distinctID: resolvedDistinctID)
+        )
+        return true
     }
 
     @discardableResult
@@ -309,7 +411,6 @@ enum PostHogTelemetry {
         authSession: MacAuthSession? = nil
     ) -> Bool {
         let defaultsKey = captureOnceDefaultsPrefix + onceKey
-        let pendingKey = pendingOnceDefaultsPrefix + onceKey
         let extra = eventProperties(properties)
 
         guard !isDisabledForCurrentProcess
@@ -318,197 +419,38 @@ enum PostHogTelemetry {
         else { return false }
 
         captureOnceLock.lock()
-        if UserDefaults.standard.bool(forKey: defaultsKey)
-            || UserDefaults.standard.data(forKey: pendingKey) != nil
-            || pendingOnceInFlight.contains(pendingKey) {
+        if UserDefaults.standard.bool(forKey: defaultsKey) {
             captureOnceLock.unlock()
             return false
         }
+        UserDefaults.standard.set(true, forKey: defaultsKey)
+        captureOnceLock.unlock()
 
+        let didCapture: Bool
         if hasConfiguredCaptureSink {
-            UserDefaults.standard.set(true, forKey: defaultsKey)
-            captureOnceLock.unlock()
-
-            let didCapture = emitToConfiguredSink(
+            didCapture = emitToConfiguredSink(
                 event: event,
                 extra: extra,
                 authSession: authSession,
                 isException: false
             )
-            if !didCapture {
-                captureOnceLock.lock()
-                UserDefaults.standard.removeObject(forKey: defaultsKey)
-                captureOnceLock.unlock()
-            }
-            return didCapture
+        } else {
+            didCapture = capture(event, properties: properties, authSession: authSession)
         }
 
-        // No sink and no PostHog config: refuse to persist any tracking
-        // state. Without this guard, users who never configured a key would
-        // get a distinct id and a serialized pending payload written to
-        // their prefs plist (via pendingOnceCaptureData -> baseProperties),
-        // sitting orphaned until they later configure a key — at which
-        // point the queued event would fire with a stale install-time
-        // timestamp. capture() already gates on loadConfig(); captureOnce
-        // must do the same.
-        guard loadConfig() != nil else {
+        if !didCapture {
+            captureOnceLock.lock()
+            UserDefaults.standard.removeObject(forKey: defaultsKey)
             captureOnceLock.unlock()
-            return false
         }
 
-        guard let pendingData = pendingOnceCaptureData(
-            event: event,
-            onceKey: onceKey,
-            extra: extra,
-            authSession: authSession
-        ) else {
-            captureOnceLock.unlock()
-            return false
-        }
-
-        UserDefaults.standard.set(pendingData, forKey: pendingKey)
-        captureOnceLock.unlock()
-
-        _ = flushPendingOnceCapture(pendingKey: pendingKey)
-        return true
+        return didCapture
     }
 
     static func flushPendingOnceCaptures() {
-        let pendingKeys = UserDefaults.standard.dictionaryRepresentation().keys
-            .filter { $0.hasPrefix(pendingOnceDefaultsPrefix) }
-
-        for pendingKey in pendingKeys {
-            _ = flushPendingOnceCapture(pendingKey: pendingKey)
-        }
-    }
-
-    @discardableResult
-    private static func flushPendingOnceCapture(pendingKey: String) -> Bool {
-        captureOnceLock.lock()
-        if pendingOnceInFlight.contains(pendingKey) {
-            captureOnceLock.unlock()
-            return false
-        }
-        guard let pendingData = UserDefaults.standard.data(forKey: pendingKey) else {
-            captureOnceLock.unlock()
-            return false
-        }
-        pendingOnceInFlight.insert(pendingKey)
-        captureOnceLock.unlock()
-
-        guard let record = pendingOnceCaptureRecord(from: pendingData) else {
-            captureOnceLock.lock()
-            pendingOnceInFlight.remove(pendingKey)
-            UserDefaults.standard.removeObject(forKey: pendingKey)
-            captureOnceLock.unlock()
-            return false
-        }
-
-        let defaultsKey = captureOnceDefaultsPrefix + record.onceKey
-        captureOnceLock.lock()
-        if UserDefaults.standard.bool(forKey: defaultsKey) {
-            pendingOnceInFlight.remove(pendingKey)
-            UserDefaults.standard.removeObject(forKey: pendingKey)
-            captureOnceLock.unlock()
-            return false
-        }
-        captureOnceLock.unlock()
-
-        guard let config = loadConfig(),
-              let ingestBaseURL = PostHogHostResolver.ingestBaseURL(for: config.host),
-              let url = URL(string: "i/v0/e/", relativeTo: ingestBaseURL)
-        else {
-            captureOnceLock.lock()
-            pendingOnceInFlight.remove(pendingKey)
-            captureOnceLock.unlock()
-            return false
-        }
-
-        let payload: [String: Any] = [
-            "api_key": config.projectAPIKey,
-            "event": record.event,
-            "distinct_id": record.distinctID,
-            "uuid": record.uuid,
-            "properties": record.properties,
-            "timestamp": record.timestamp,
-        ]
-
-        let didStart = send(url: url, payload: payload) { success in
-            captureOnceLock.lock()
-            pendingOnceInFlight.remove(pendingKey)
-            if success {
-                UserDefaults.standard.set(true, forKey: defaultsKey)
-                UserDefaults.standard.removeObject(forKey: pendingKey)
-            }
-            captureOnceLock.unlock()
-        }
-
-        if !didStart {
-            captureOnceLock.lock()
-            pendingOnceInFlight.remove(pendingKey)
-            captureOnceLock.unlock()
-        }
-
-        return didStart
-    }
-
-    private static var hasConfiguredCaptureSink: Bool {
-        captureSink != nil
-            || ProcessInfo.processInfo.environment[captureFileEnvironmentKey]?.nonEmpty != nil
-    }
-
-    private static func pendingOnceCaptureData(
-        event: String,
-        onceKey: String,
-        extra: [String: Any],
-        authSession: MacAuthSession?
-    ) -> Data? {
-        let resolvedDistinctID = distinctID(for: authSession)
-        let record: [String: Any] = [
-            "event": event,
-            "once_key": onceKey,
-            "distinct_id": resolvedDistinctID,
-            "uuid": UUID().uuidString,
-            "properties": baseProperties(
-                extra: extra,
-                authSession: authSession,
-                distinctID: resolvedDistinctID
-            ),
-            "timestamp": ISO8601DateFormatter().string(from: Date()),
-        ]
-
-        guard JSONSerialization.isValidJSONObject(record) else { return nil }
-        return try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys])
-    }
-
-    private struct PendingOnceCaptureRecord {
-        let event: String
-        let onceKey: String
-        let distinctID: String
-        let uuid: String
-        let properties: [String: Any]
-        let timestamp: String
-    }
-
-    private static func pendingOnceCaptureRecord(from data: Data) -> PendingOnceCaptureRecord? {
-        guard let object = try? JSONSerialization.jsonObject(with: data),
-              let dictionary = object as? [String: Any],
-              let event = dictionary["event"] as? String,
-              let onceKey = dictionary["once_key"] as? String,
-              let distinctID = dictionary["distinct_id"] as? String,
-              let uuid = dictionary["uuid"] as? String,
-              let properties = dictionary["properties"] as? [String: Any],
-              let timestamp = dictionary["timestamp"] as? String
-        else { return nil }
-
-        return PendingOnceCaptureRecord(
-            event: event,
-            onceKey: onceKey,
-            distinctID: distinctID,
-            uuid: uuid,
-            properties: properties,
-            timestamp: timestamp
-        )
+        clearStalePendingOnceCaptures()
+        guard ensureConfigured() else { return }
+        sdkClient.flush()
     }
 
     static func captureException(
@@ -517,35 +459,21 @@ enum PostHogTelemetry {
         handled: Bool = true,
         authSession: MacAuthSession? = nil
     ) {
-        let exceptionType = String(describing: type(of: error))
-        let exceptionValue: String
+        let wrappedError: Error
         if let err = error as? Error {
-            exceptionValue = err.localizedDescription
+            wrappedError = err
         } else {
-            exceptionValue = String(describing: error)
+            wrappedError = NSError(
+                domain: "Agentic30Telemetry",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: String(describing: error)]
+            )
         }
 
-        let exceptionPayload: [String: Any] = [
-            "type": exceptionType,
-            "value": exceptionValue,
-            "mechanism": [
-                "handled": handled,
-                "synthetic": false,
-            ],
-            "stacktrace": [
-                "type": "raw",
-                "frames": callStackFrames(),
-            ],
-        ]
-
-        let extra = properties.merging([
-            "$exception_list": [exceptionPayload],
-            "$exception_level": "error",
-            "$lib": "mac",
-            "$lib_version": appVersionDescription(),
+        let extra = eventProperties(properties.merging([
             "platform": "macos",
             "handled": handled,
-        ]) { _, new in new }
+        ]) { _, new in new })
 
         if emitToConfiguredSink(
             event: "$exception",
@@ -556,22 +484,43 @@ enum PostHogTelemetry {
             return
         }
 
-        guard let config = loadConfig(),
-              let ingestBaseURL = PostHogHostResolver.ingestBaseURL(for: config.host),
-              let url = URL(string: "i/v0/e/", relativeTo: ingestBaseURL)
-        else { return }
+        guard ensureConfigured() else { return }
+        sdkClient.captureException(wrappedError, properties: baseProperties(extra: extra, authSession: authSession))
+    }
 
-        let payload: [String: Any] = [
-            "token": config.projectAPIKey,
-            "event": "$exception",
-            "properties": baseProperties(
-                extra: extra,
-                authSession: authSession
-            ),
-            "timestamp": ISO8601DateFormatter().string(from: Date()),
+    static func captureLog(
+        _ message: String,
+        level: PostHogTelemetryLogLevel = .info,
+        properties: [String: Any] = [:],
+        authSession: MacAuthSession? = nil
+    ) {
+        guard ensureConfigured() else { return }
+        sdkClient.captureLog(
+            message,
+            level: level,
+            attributes: baseProperties(extra: eventProperties(properties), authSession: authSession)
+        )
+    }
+
+    static func identify(authSession: MacAuthSession) {
+        guard authSession.isUsable, ensureConfigured() else { return }
+
+        var userProperties: [String: Any] = [
+            "platform": "macos",
         ]
+        if let emailDomain = PostHogTelemetrySanitizer.emailDomain(authSession.email) {
+            userProperties["email_domain"] = emailDomain
+        }
 
-        send(url: url, payload: payload)
+        sdkClient.identify(
+            authSession.userId,
+            userProperties: PostHogTelemetrySanitizer.sanitize(userProperties)
+        )
+    }
+
+    static func resetIdentity() {
+        guard ensureConfigured() else { return }
+        sdkClient.reset()
     }
 
     static var isTelemetryDisabledByUser: Bool {
@@ -580,11 +529,37 @@ enum PostHogTelemetry {
 
     static func setTelemetryDisabledByUser(_ disabled: Bool) {
         UserDefaults.standard.set(disabled, forKey: telemetryDisabledDefaultsKey)
+        guard ensureConfigured() else { return }
+        if disabled {
+            sdkClient.optOut()
+        } else {
+            sdkClient.optIn()
+        }
+    }
+
+    static func loadConfigForTesting() -> PostHogTelemetryConfig? {
+        loadConfig()
+    }
+
+    private static func ensureConfigured(force: Bool = false) -> Bool {
+        guard let config = loadConfig() else { return false }
+
+        clientLock.lock()
+        defer { clientLock.unlock() }
+
+        if force || sdkClient.configuredConfig != config {
+            sdkClient.setup(config: config, disabled: isDisabledForCurrentProcess)
+        } else if isDisabledForCurrentProcess {
+            sdkClient.optOut()
+        } else {
+            sdkClient.optIn()
+        }
+        return !isDisabledForCurrentProcess || configurationProvider != nil
     }
 
     private static func loadConfig() -> PostHogTelemetryConfig? {
         if let configurationProvider {
-            return configurationProvider()
+            return configurationProvider().flatMap(normalizedConfig)
         }
 
         guard !isDisabledForCurrentProcess else { return nil }
@@ -596,18 +571,21 @@ enum PostHogTelemetry {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .nonEmpty
             ?? bundleProjectAPIKey
+            ?? PostHogTelemetryConfig.publicProjectAPIKey
 
-        guard let projectAPIKey = resolvedProjectKey, !projectAPIKey.isEmpty else {
-            return nil
-        }
-
-        let host = settings.posthogHost.nonEmpty
+        let rawHost = settings.posthogHost.nonEmpty
             ?? ProcessInfo.processInfo.environment["POSTHOG_HOST"]?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .nonEmpty
             ?? bundleHost
-            ?? "https://us.posthog.com"
-        return PostHogTelemetryConfig(projectAPIKey: projectAPIKey, host: host)
+            ?? PostHogTelemetryConfig.defaultHost
+
+        return normalizedConfig(PostHogTelemetryConfig(projectAPIKey: resolvedProjectKey, host: rawHost))
+    }
+
+    nonisolated private static func normalizedConfig(_ config: PostHogTelemetryConfig) -> PostHogTelemetryConfig? {
+        guard let ingestBaseURL = PostHogHostResolver.ingestBaseURL(for: config.host) else { return nil }
+        return PostHogTelemetryConfig(projectAPIKey: config.projectAPIKey, host: ingestBaseURL.absoluteString)
     }
 
     /// Build-time embedded fallbacks. Distribution builds inject
@@ -639,48 +617,9 @@ enum PostHogTelemetry {
             || CommandLine.arguments.contains(where: { $0.contains(".xctest") })
     }
 
-    @discardableResult
-    private static func send(
-        url: URL,
-        payload: [String: Any],
-        completion: ((Bool) -> Void)? = nil
-    ) -> Bool {
-        guard JSONSerialization.isValidJSONObject(payload) else {
-            completion?(false)
-            return false
-        }
-
-        sender(url, payload) { success in
-            completion?(success)
-        }
-        return true
-    }
-
-    private static func defaultSend(
-        url: URL,
-        payload: [String: Any],
-        completion: @escaping (Bool) -> Void
-    ) {
-        guard let body = try? JSONSerialization.data(withJSONObject: payload, options: []) else {
-            completion(false)
-            return
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = body
-
-        URLSession.shared.dataTask(with: request) { _, response, error in
-            guard error == nil,
-                  let httpResponse = response as? HTTPURLResponse
-            else {
-                completion(false)
-                return
-            }
-
-            completion((200..<300).contains(httpResponse.statusCode))
-        }.resume()
+    private static var hasConfiguredCaptureSink: Bool {
+        captureSink != nil
+            || ProcessInfo.processInfo.environment[captureFileEnvironmentKey]?.nonEmpty != nil
     }
 
     private static func emitToConfiguredSink(
@@ -740,6 +679,14 @@ enum PostHogTelemetry {
         try? handle.close()
     }
 
+    private static func clearStalePendingOnceCaptures() {
+        let pendingKeys = UserDefaults.standard.dictionaryRepresentation().keys
+            .filter { $0.hasPrefix(stalePendingOnceDefaultsPrefix) }
+        for pendingKey in pendingKeys {
+            UserDefaults.standard.removeObject(forKey: pendingKey)
+        }
+    }
+
     private static func baseProperties(
         extra: [String: Any],
         authSession: MacAuthSession?,
@@ -780,23 +727,8 @@ enum PostHogTelemetry {
         UserDefaults.standard.set(generated, forKey: distinctIDDefaultsKey)
         return generated
     }
-    private static func callStackFrames() -> [[String: Any]] {
-        Thread.callStackSymbols
-            .prefix(8)
-            .enumerated()
-            .map { index, symbol in
-                [
-                    "platform": "custom",
-                    "lang": "swift",
-                    "function": symbol,
-                    "filename": "agentic30",
-                    "lineno": index + 1,
-                    "colno": 0,
-                ] as [String : Any]
-            }
-    }
 
-    private static func appVersionDescription() -> String {
+    nonisolated static func appVersionDescription() -> String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
 

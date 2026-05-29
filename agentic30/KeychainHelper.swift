@@ -69,9 +69,13 @@ enum KeychainHelper {
     // MARK: - Single-Blob Settings
 
     struct Settings: Codable {
-        static let currentSchemaVersion = 7
+        static let currentSchemaVersion = 8
         static let legacyDefaultCodexModelID = "gpt-5.4"
         static let legacyDefaultGeminiModelID = "gemini-3.1-pro-preview"
+        static let defaultPostHogMcpURL = "https://mcp.posthog.com/mcp"
+        static let defaultPostHogEuMcpURL = "https://mcp-eu.posthog.com/mcp"
+        static let defaultPostHogMcpRegion = "us"
+        static let defaultPostHogMcpFeatures = "sql,data_schema,insights,web_analytics,search,docs"
 
         var schemaVersion: Int = Settings.currentSchemaVersion
 
@@ -94,6 +98,10 @@ enum KeychainHelper {
         var posthogApiKey: String = ""
         var posthogProjectAPIKey: String = ""
         var posthogHost: String = ""
+        var posthogMcpURL: String = Settings.defaultPostHogMcpURL
+        var posthogMcpRegion: String = Settings.defaultPostHogMcpRegion
+        var posthogMcpReadonly: Bool = true
+        var posthogMcpFeatures: String = Settings.defaultPostHogMcpFeatures
         var metaAccessToken: String = ""
         var metaAdAccountId: String = ""
 
@@ -140,6 +148,10 @@ enum KeychainHelper {
             posthogApiKey = try container.decodeIfPresent(String.self, forKey: .posthogApiKey) ?? ""
             posthogProjectAPIKey = try container.decodeIfPresent(String.self, forKey: .posthogProjectAPIKey) ?? ""
             posthogHost = try container.decodeIfPresent(String.self, forKey: .posthogHost) ?? ""
+            posthogMcpURL = try container.decodeIfPresent(String.self, forKey: .posthogMcpURL) ?? Settings.defaultPostHogMcpURL
+            posthogMcpRegion = try container.decodeIfPresent(String.self, forKey: .posthogMcpRegion) ?? Settings.defaultPostHogMcpRegion
+            posthogMcpReadonly = try container.decodeIfPresent(Bool.self, forKey: .posthogMcpReadonly) ?? true
+            posthogMcpFeatures = try container.decodeIfPresent(String.self, forKey: .posthogMcpFeatures) ?? Settings.defaultPostHogMcpFeatures
             metaAccessToken = try container.decodeIfPresent(String.self, forKey: .metaAccessToken) ?? ""
             metaAdAccountId = try container.decodeIfPresent(String.self, forKey: .metaAdAccountId) ?? ""
 
@@ -184,6 +196,10 @@ enum KeychainHelper {
             try container.encode(posthogApiKey, forKey: .posthogApiKey)
             try container.encode(posthogProjectAPIKey, forKey: .posthogProjectAPIKey)
             try container.encode(posthogHost, forKey: .posthogHost)
+            try container.encode(posthogMcpURL, forKey: .posthogMcpURL)
+            try container.encode(posthogMcpRegion, forKey: .posthogMcpRegion)
+            try container.encode(posthogMcpReadonly, forKey: .posthogMcpReadonly)
+            try container.encode(posthogMcpFeatures, forKey: .posthogMcpFeatures)
             try container.encode(metaAccessToken, forKey: .metaAccessToken)
             try container.encode(metaAdAccountId, forKey: .metaAdAccountId)
 
@@ -223,6 +239,10 @@ enum KeychainHelper {
             case posthogApiKey
             case posthogProjectAPIKey
             case posthogHost
+            case posthogMcpURL
+            case posthogMcpRegion
+            case posthogMcpReadonly
+            case posthogMcpFeatures
             case metaAccessToken
             case metaAdAccountId
             case bipWorkspaceRoot
@@ -266,7 +286,31 @@ enum KeychainHelper {
             if schemaVersion < 7 && migrated.preferredGeminiModel == legacyDefaultGeminiModelID {
                 migrated.preferredGeminiModel = AgentModelCatalog.defaultGeminiModelID
             }
+            if schemaVersion < 8 {
+                migrated.posthogMcpRegion = normalizedPostHogMcpRegion(migrated.posthogMcpRegion, host: migrated.posthogHost)
+                if migrated.posthogMcpURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || migrated.posthogMcpURL == defaultPostHogMcpURL {
+                    if migrated.posthogMcpRegion == "eu" {
+                        migrated.posthogMcpURL = defaultPostHogEuMcpURL
+                    } else {
+                        migrated.posthogMcpURL = defaultPostHogMcpURL
+                    }
+                }
+                if migrated.posthogMcpFeatures.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    migrated.posthogMcpFeatures = defaultPostHogMcpFeatures
+                }
+            }
             return migrated
+        }
+
+        private static func normalizedPostHogMcpRegion(_ value: String, host: String) -> String {
+            let region = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if region == "eu" { return "eu" }
+            let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if normalizedHost.contains("eu.posthog.com") || normalizedHost.contains("eu.i.posthog.com") {
+                return "eu"
+            }
+            return defaultPostHogMcpRegion
         }
     }
 
@@ -669,6 +713,10 @@ enum KeychainHelper {
                 "apiKey": settings.posthogApiKey,
                 "projectApiKey": settings.posthogProjectAPIKey,
                 "host": settings.posthogHost.isEmpty ? "https://us.posthog.com" : settings.posthogHost,
+                "mcpUrl": settings.posthogMcpURL.isEmpty ? Settings.defaultPostHogMcpURL : settings.posthogMcpURL,
+                "mcpRegion": settings.posthogMcpRegion.isEmpty ? Settings.defaultPostHogMcpRegion : settings.posthogMcpRegion,
+                "mcpReadonly": settings.posthogMcpReadonly,
+                "mcpFeatures": settings.posthogMcpFeatures.isEmpty ? Settings.defaultPostHogMcpFeatures : settings.posthogMcpFeatures,
             ],
             "meta": [
                 "accessToken": settings.metaAccessToken,

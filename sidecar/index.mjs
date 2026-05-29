@@ -25,6 +25,7 @@ import {
   buildQmdMcpConfig,
   getQmdState,
 } from "./qmd-support.mjs";
+import { buildPostHogClaudeMcpConfigFromSources } from "./posthog-mcp-config.mjs";
 import { createTelemetryClient } from "./telemetry.mjs";
 import { getCachedBipContext } from "./context-cache.mjs";
 import { collectLocalDiscovery } from "./local-discovery.mjs";
@@ -3215,8 +3216,11 @@ async function runAnalyzeAds(session, targetUrl, originalPrompt) {
   const adConfig = readJsonFile(path.join(appSupportPath, "ad-config.json"));
   const metaToken = process.env.META_ACCESS_TOKEN || adConfig?.meta?.accessToken;
   const metaAccountId = process.env.META_AD_ACCOUNT_ID || adConfig?.meta?.adAccountId;
-  const posthogKey = process.env.POSTHOG_API_KEY || adConfig?.posthog?.apiKey;
-  const posthogHost = process.env.POSTHOG_HOST || adConfig?.posthog?.host || "https://us.posthog.com";
+  const posthogMcpServers = buildPostHogClaudeMcpConfigFromSources({
+    appSupportPath,
+    config: adConfig,
+  });
+  const posthogAvailable = Boolean(posthogMcpServers.posthog);
 
   if (!metaToken || !metaAccountId) {
     throw new Error(
@@ -3288,29 +3292,20 @@ async function runAnalyzeAds(session, targetUrl, originalPrompt) {
 
     appendAssistantText(session, assistantMessage.id, "Running AI analysis...\n\n");
 
-    // 2. Build MCP servers config (internal + optional PostHog + optional Notion)
+    // 2. Build MCP servers config (internal + PostHog when configured + optional Notion)
     const mcpServers = {
       [internalMcpServerName]: buildMcpConfig(session.id, {
         executionMode: "agentic",
         approvedToolExecution: true,
       }),
+      ...posthogMcpServers,
       ...buildNotionMcpConfig(),
       ...buildQmdMcpConfig({ sidecarRoot }),
     };
 
-    if (posthogKey) {
-      mcpServers["posthog"] = {
-        type: "http",
-        url: `${posthogHost.replace(/\/$/, "")}/mcp`,
-        headers: {
-          Authorization: `Bearer ${posthogKey}`,
-        },
-    };
-    }
-
     // 3. Build specialized system prompt
     const strategyPrompt = [
-      buildAdStrategyPrompt(targetUrl, metaReport, !!posthogKey),
+      buildAdStrategyPrompt(targetUrl, metaReport, posthogAvailable),
       buildQmdGuidance(workspaceRoot, { appSupportPath, sidecarRoot }),
     ].filter(Boolean).join("\n\n");
 
@@ -3340,7 +3335,7 @@ async function runAnalyzeAds(session, targetUrl, originalPrompt) {
     const analysisPrompt = [
       `Analyze the ad performance for ${targetUrl}.`,
       "The Meta Ads data has been provided in your system context.",
-      posthogKey
+      posthogAvailable
         ? "Use the PostHog MCP tools to query UTM data, scroll depth, and conversion funnels for this URL before writing your analysis."
         : "",
       "Provide a comprehensive ad performance improvement strategy in Korean (한국어).",
@@ -4135,6 +4130,7 @@ async function runBipDraft(session, topic, originalPrompt) {
         executionMode: "agentic",
         approvedToolExecution: true,
       }),
+      ...buildPostHogClaudeMcpConfigFromSources({ appSupportPath }),
       ...buildNotionMcpConfig(),
       ...buildQmdMcpConfig({ sidecarRoot }),
     };

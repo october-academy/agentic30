@@ -34,6 +34,10 @@ struct KeychainSettingsMigrationTests {
         #expect(settings.schemaVersion == KeychainHelper.Settings.currentSchemaVersion)
         #expect(settings.posthogApiKey == "ph-key")
         #expect(settings.posthogHost == "https://eu.posthog.com")
+        #expect(settings.posthogMcpURL == KeychainHelper.Settings.defaultPostHogEuMcpURL)
+        #expect(settings.posthogMcpRegion == "eu")
+        #expect(settings.posthogMcpReadonly == true)
+        #expect(settings.posthogMcpFeatures == KeychainHelper.Settings.defaultPostHogMcpFeatures)
         #expect(settings.metaAccessToken == "meta-token")
         #expect(settings.metaAdAccountId == "act_123")
         #expect(settings.bipWorkspaceRoot == "/tmp/app")
@@ -53,6 +57,10 @@ struct KeychainSettingsMigrationTests {
         var settings = KeychainHelper.Settings()
         settings.posthogApiKey = "ph-key"
         settings.posthogProjectAPIKey = "phc-project"
+        settings.posthogMcpURL = "https://mcp-eu.posthog.com/mcp"
+        settings.posthogMcpRegion = "eu"
+        settings.posthogMcpReadonly = false
+        settings.posthogMcpFeatures = "sql,docs"
         settings.preferredClaudeModel = "claude-opus-4-7"
         settings.preferredCodexModel = "gpt-5.3-codex"
         settings.preferredGeminiModel = "gemini-2.5-flash"
@@ -67,6 +75,10 @@ struct KeychainSettingsMigrationTests {
         #expect(object["schemaVersion"] as? Int == KeychainHelper.Settings.currentSchemaVersion)
         #expect(object["posthogApiKey"] as? String == "ph-key")
         #expect(object["posthogProjectAPIKey"] as? String == "phc-project")
+        #expect(object["posthogMcpURL"] as? String == "https://mcp-eu.posthog.com/mcp")
+        #expect(object["posthogMcpRegion"] as? String == "eu")
+        #expect(object["posthogMcpReadonly"] as? Bool == false)
+        #expect(object["posthogMcpFeatures"] as? String == "sql,docs")
         #expect(object["preferredClaudeModel"] as? String == "claude-opus-4-7")
         #expect(object["preferredCodexModel"] as? String == "gpt-5.3-codex")
         #expect(object["preferredGeminiModel"] as? String == "gemini-2.5-flash")

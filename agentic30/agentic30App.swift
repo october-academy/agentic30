@@ -98,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
         _ = updaterController
+        PostHogTelemetry.setup()
         // Snapshot before capture(), which lazy-generates the distinct id.
         // Pending captures from a prior failed first-launch still flush; this
         // gate only suppresses NEW captureOnce attempts for upgraders.

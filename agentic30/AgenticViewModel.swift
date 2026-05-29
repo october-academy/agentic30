@@ -3403,6 +3403,7 @@ final class AgenticViewModel: ObservableObject {
 
     func signOutMacAuth() {
         PostHogTelemetry.capture("mac_google_sign_out", authSession: macAuthSession)
+        PostHogTelemetry.resetIdentity()
         KeychainHelper.deleteMacAuthSession()
         macAuthSession = nil
         macOnboardingStatus = .idle
@@ -3432,6 +3433,7 @@ final class AgenticViewModel: ObservableObject {
             ],
             authSession: macAuthSession
         )
+        PostHogTelemetry.resetIdentity()
 
         authSession?.cancel()
         authSession = nil
@@ -3710,6 +3712,7 @@ final class AgenticViewModel: ObservableObject {
             try KeychainHelper.saveMacAuthSession(session)
             macAuthSession = session
             macOnboardingStatus = .idle
+            PostHogTelemetry.identify(authSession: session)
             PostHogTelemetry.capture("mac_google_sign_in_completed", properties: [
                 "user_id": session.userId,
                 "email_domain": session.email.flatMap { PostHogTelemetrySanitizer.emailDomain($0) } ?? "",
@@ -3755,6 +3758,7 @@ final class AgenticViewModel: ObservableObject {
                 try KeychainHelper.saveMacAuthSession(refreshed)
                 macAuthSession = refreshed
                 macOnboardingStatus = .idle
+                PostHogTelemetry.identify(authSession: refreshed)
                 PostHogTelemetry.capture("mac_google_session_refreshed", properties: [
                     "user_id": refreshed.userId,
                     "email_domain": refreshed.email.flatMap { PostHogTelemetrySanitizer.emailDomain($0) } ?? "",
@@ -3767,6 +3771,7 @@ final class AgenticViewModel: ObservableObject {
                 KeychainHelper.deleteMacAuthSession()
                 macAuthSession = nil
                 macOnboardingStatus = .failed("Your session expired. Sign in again.")
+                PostHogTelemetry.resetIdentity()
                 PostHogTelemetry.captureException(error, properties: [
                     "component": "agentic_view_model",
                     "operation": "refresh_mac_auth",

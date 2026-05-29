@@ -7,6 +7,8 @@
     "mcp": "node sidecar/mcp-server.mjs",
     "acp": "node sidecar/acp-adapter.mjs",
     "doctor": "node sidecar/preflight-cli.mjs",
+    "posthog:mcp:dry-run": "node sidecar/posthog-mcp-config-cli.mjs dry-run",
+    "posthog:mcp:sync": "node sidecar/posthog-mcp-config-cli.mjs sync",
     "preflight:release": "node sidecar/preflight-cli.mjs",
     "preflight:bundle": "node scripts/preflight-bundle.mjs",
     "build:sidecar": "node scripts/build-sidecar.mjs",
