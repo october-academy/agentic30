@@ -25,12 +25,12 @@ struct MacOnboardingContextView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(currentTitle)
                         .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.94))
+                        .foregroundStyle(MacOnboardingTheme.text)
                         .fixedSize(horizontal: false, vertical: true)
 
                     Text(currentSubtitle)
                         .font(.system(size: 15, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.56))
+                        .foregroundStyle(MacOnboardingTheme.secondaryText)
                         .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -52,13 +52,13 @@ struct MacOnboardingContextView: View {
             .padding(.top, 16)
             .padding(.bottom, 18)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(Color(red: 0.06, green: 0.07, blue: 0.07))
+            .background(MacOnboardingTheme.bg)
         }
         .frame(width: 716, height: 676)
         .clipShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 34, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                .stroke(MacOnboardingTheme.border, lineWidth: 1)
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.88), value: sceneIndex)
         .animation(.easeInOut(duration: 0.2), value: viewModel.onboardingContextStatus)
@@ -92,14 +92,14 @@ struct MacOnboardingContextView: View {
                     .foregroundStyle(Color(red: 0.96, green: 0.90, blue: 0.66))
                 Text("Making")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.92))
+                    .foregroundStyle(MacOnboardingTheme.visualText)
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 14)
             .background(
                 Capsule()
-                    .fill(Color.black.opacity(0.32))
-                    .overlay(Capsule().stroke(Color.white.opacity(0.11), lineWidth: 1))
+                    .fill(MacOnboardingTheme.badgeFill)
+                    .overlay(Capsule().stroke(MacOnboardingTheme.border, lineWidth: 1))
             )
         case 1:
             RoundedRectangle(cornerRadius: 30, style: .continuous)
@@ -116,8 +116,8 @@ struct MacOnboardingContextView: View {
                 .frame(width: 132, height: 108)
                 .overlay(alignment: .center) {
                     HStack(spacing: 18) {
-                        Capsule().fill(Color.white.opacity(0.95)).frame(width: 20, height: 40)
-                        Capsule().fill(Color.white.opacity(0.95)).frame(width: 20, height: 40)
+                        Capsule().fill(MacOnboardingTheme.surface.opacity(0.95)).frame(width: 20, height: 40)
+                        Capsule().fill(MacOnboardingTheme.surface.opacity(0.95)).frame(width: 20, height: 40)
                     }
                 }
         case 2:
@@ -127,30 +127,30 @@ struct MacOnboardingContextView: View {
                     .foregroundStyle(Color(red: 0.96, green: 0.90, blue: 0.66))
                 Text("Stuck point")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.92))
+                    .foregroundStyle(MacOnboardingTheme.visualText)
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 14)
             .background(
                 Capsule()
-                    .fill(Color.black.opacity(0.32))
-                    .overlay(Capsule().stroke(Color.white.opacity(0.11), lineWidth: 1))
+                    .fill(MacOnboardingTheme.badgeFill)
+                    .overlay(Capsule().stroke(MacOnboardingTheme.border, lineWidth: 1))
             )
         case 3:
             HStack(spacing: 12) {
                 Image(systemName: "doc.text.fill")
                     .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.92))
+                    .foregroundStyle(MacOnboardingTheme.visualText)
                 Text("Records")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.92))
+                    .foregroundStyle(MacOnboardingTheme.visualText)
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 14)
             .background(
                 Capsule()
-                    .fill(Color.black.opacity(0.32))
-                    .overlay(Capsule().stroke(Color.white.opacity(0.11), lineWidth: 1))
+                    .fill(MacOnboardingTheme.badgeFill)
+                    .overlay(Capsule().stroke(MacOnboardingTheme.border, lineWidth: 1))
             )
         default:
             EmptyView()
@@ -158,6 +158,31 @@ struct MacOnboardingContextView: View {
     }
 
     private var currentVisualColors: [Color] {
+        if Agentic30Theme.current == .white {
+            switch sceneIndex {
+            case 0, 1:
+                return [
+                    OpenDesignDayColor.surface,
+                    OpenDesignDayColor.bgDeep,
+                    OpenDesignDayColor.accent.opacity(0.34),
+                ]
+            case 2:
+                return [
+                    OpenDesignDayColor.surface,
+                    OpenDesignDayColor.bgDeep,
+                    OpenDesignDayColor.amber.opacity(0.42),
+                ]
+            case 3:
+                return [
+                    OpenDesignDayColor.surface,
+                    OpenDesignDayColor.bgDeep,
+                    OpenDesignDayColor.sky.opacity(0.34),
+                ]
+            default:
+                return [MacOnboardingTheme.bg, MacOnboardingTheme.surface]
+            }
+        }
+
         switch sceneIndex {
         case 0, 1:
             return [
@@ -178,7 +203,7 @@ struct MacOnboardingContextView: View {
                 Color(red: 0.47, green: 0.58, blue: 0.70),
             ]
         default:
-            return [Color.black, Color.black]
+            return [MacOnboardingTheme.bg, MacOnboardingTheme.bg]
         }
     }
 
@@ -210,7 +235,7 @@ struct MacOnboardingContextView: View {
         HStack(spacing: 8) {
             ForEach(0..<totalScenes, id: \.self) { index in
                 Capsule()
-                    .fill(index == sceneIndex ? Color.white.opacity(0.9) : Color.white.opacity(0.22))
+                    .fill(index == sceneIndex ? MacOnboardingTheme.text : MacOnboardingTheme.border)
                     .frame(width: index == sceneIndex ? 28 : 8, height: 8)
             }
         }
@@ -316,13 +341,13 @@ struct MacOnboardingContextView: View {
                 TextField("예: 퇴근 후 주 2일, 공동창업자와 검증 중", text: $customWorkMode)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.92))
+                    .foregroundStyle(MacOnboardingTheme.text)
                     .focused($customWorkModeFocused)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
                     .background(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.white.opacity(0.06))
+                            .fill(MacOnboardingTheme.surfaceSubtle)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                                     .stroke(workModeAccent.opacity(0.42), lineWidth: 1)
@@ -344,16 +369,16 @@ struct MacOnboardingContextView: View {
         Button(action: action) {
             HStack(alignment: .center, spacing: 14) {
                 Circle()
-                    .fill(selected ? accent : Color.white.opacity(0.22))
+                    .fill(selected ? accent : MacOnboardingTheme.border)
                     .frame(width: 10, height: 10)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
                         .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(selected ? 0.97 : 0.94))
+                        .foregroundStyle(MacOnboardingTheme.text)
                     Text(description)
                         .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(selected ? 0.62 : 0.54))
+                        .foregroundStyle(selected ? MacOnboardingTheme.secondaryText : MacOnboardingTheme.tertiaryText)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -370,11 +395,11 @@ struct MacOnboardingContextView: View {
             .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(selected ? accent.opacity(0.13) : Color.white.opacity(0.05))
+                    .fill(selected ? accent.opacity(0.13) : MacOnboardingTheme.surfaceSubtle)
                     .overlay(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .stroke(
-                                (selected ? accent : Color.white).opacity(selected ? 0.95 : 0.08),
+                                selected ? accent.opacity(0.95) : MacOnboardingTheme.border,
                                 lineWidth: 1
                             )
                     )
@@ -397,10 +422,10 @@ struct MacOnboardingContextView: View {
             } label: {
                 Text("Back")
                     .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(sceneIndex == 0 ? 0.28 : 0.78))
+                    .foregroundStyle(sceneIndex == 0 ? MacOnboardingTheme.tertiaryText.opacity(0.62) : MacOnboardingTheme.secondaryButtonText)
                     .padding(.horizontal, 24)
                     .padding(.vertical, 13)
-                    .background(Capsule().fill(Color.white.opacity(0.08)))
+                    .background(Capsule().fill(MacOnboardingTheme.secondaryFill))
             }
             .buttonStyle(.plain)
             .disabled(sceneIndex == 0)
@@ -413,29 +438,32 @@ struct MacOnboardingContextView: View {
             } label: {
                 HStack(spacing: 8) {
                     if isSubmitting {
-                        ProgressView()
-                            .controlSize(.small)
-                            .tint(.black.opacity(0.74))
+                        IntakeV2ActivitySpinner(
+                            size: 14,
+                            lineWidth: 2,
+                            color: primaryButtonEnabled ? MacOnboardingTheme.primaryText : MacOnboardingTheme.disabledText,
+                            trackColor: MacOnboardingTheme.primaryText.opacity(0.22)
+                        )
                     }
                     Text(primaryButtonTitle)
                         .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.black.opacity(primaryButtonEnabled ? 0.86 : 0.36))
+                        .foregroundStyle(primaryButtonEnabled ? MacOnboardingTheme.primaryText : MacOnboardingTheme.disabledText)
 
                     if !isSubmitting && sceneIndex < totalScenes - 1 {
                         Image(systemName: "arrow.right")
                             .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(Color.black.opacity(primaryButtonEnabled ? 0.86 : 0.36))
+                            .foregroundStyle(primaryButtonEnabled ? MacOnboardingTheme.primaryText : MacOnboardingTheme.disabledText)
                     } else if !isSubmitting {
                         Image(systemName: "sparkle")
                             .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(Color.black.opacity(primaryButtonEnabled ? 0.86 : 0.36))
+                            .foregroundStyle(primaryButtonEnabled ? MacOnboardingTheme.primaryText : MacOnboardingTheme.disabledText)
                     }
                 }
                 .padding(.horizontal, 28)
                 .padding(.vertical, 14)
                 .background(
                     Capsule()
-                        .fill(Color.white.opacity(primaryButtonEnabled ? 0.96 : 0.34))
+                        .fill(primaryButtonEnabled ? MacOnboardingTheme.primaryFill : MacOnboardingTheme.disabledFill)
                 )
             }
             .buttonStyle(.plain)
@@ -535,7 +563,7 @@ private struct HalftoneFieldDots: View {
             ForEach(0..<rows, id: \.self) { row in
                 ForEach(0..<columns, id: \.self) { column in
                     Circle()
-                        .fill(Color.black.opacity(0.32))
+                        .fill(MacOnboardingTheme.text.opacity(Agentic30Theme.current == .white ? 0.10 : 0.32))
                         .frame(width: 3.4, height: 3.4)
                         .position(
                             x: CGFloat(column) * cellWidth + cellWidth / 2,

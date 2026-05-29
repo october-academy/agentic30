@@ -322,7 +322,7 @@ struct IntakeV2BootIntroView: View {
                 HStack(spacing: 0) {
                     Text(verb)
                         .font(.system(size: 24, weight: .heavy, design: .rounded))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(IntakeV2Color.textPrimary)
                     Text(".")
                         .font(.system(size: 24, weight: .heavy, design: .rounded))
                         .foregroundStyle(IntakeV2Color.accent)
@@ -349,7 +349,7 @@ struct IntakeV2BootIntroView: View {
         .background(
             ZStack(alignment: .top) {
                 RoundedRectangle(cornerRadius: 14)
-                    .fill(active ? Color(red: 0.082, green: 0.090, blue: 0.098) : IntakeV2Color.panel)
+                    .fill(active ? IntakeV2Color.panelElevated : IntakeV2Color.panel)
                 if active {
                     LinearGradient(
                         colors: [.clear, IntakeV2Color.accent, .clear],
@@ -367,7 +367,7 @@ struct IntakeV2BootIntroView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14)
-                .stroke(active ? IntakeV2Color.accent.opacity(0.26) : .white.opacity(0.06),
+                .stroke(active ? IntakeV2Color.accentLine : IntakeV2Color.cardStroke,
                         lineWidth: 1)
         )
         .shadow(color: active ? IntakeV2Color.accent.opacity(0.06) : .clear,
@@ -650,10 +650,10 @@ private struct ReadIconGrid: View {
                             let isSpotlit = isActive && idx == spotlight
                             ZStack {
                                 RoundedRectangle(cornerRadius: 12)
-                                    .fill(isSpotlit ? IntakeV2Color.accent.opacity(0.09) : .white.opacity(0.02))
+                                    .fill(isSpotlit ? IntakeV2Color.accentDim.opacity(0.72) : IntakeV2Color.cardMutedFill)
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 12)
-                                            .stroke(isSpotlit ? IntakeV2Color.accent.opacity(0.34) : .white.opacity(0.04), lineWidth: 1)
+                                            .stroke(isSpotlit ? IntakeV2Color.accentLine : IntakeV2Color.cardStroke, lineWidth: 1)
                                     )
                                     .shadow(
                                         color: isSpotlit ? IntakeV2Color.accent.opacity(0.16) : .clear,
@@ -777,9 +777,9 @@ private struct ExecuteTaskList: View {
 
     private func textColor(_ s: ExecState) -> Color {
         switch s {
-        case .done: return .white.opacity(0.4)
-        case .focused: return .white.opacity(0.88)
-        case .pending: return .white.opacity(0.4)
+        case .done: return IntakeV2Color.textTertiary
+        case .focused: return IntakeV2Color.textPrimary
+        case .pending: return IntakeV2Color.textTertiary
         }
     }
 
@@ -788,7 +788,7 @@ private struct ExecuteTaskList: View {
         case .focused:
             return IntakeV2Color.accent.opacity(pulse ? 0.13 : 0.08)
         case .done, .pending:
-            return .white.opacity(0.02)
+            return IntakeV2Color.cardMutedFill
         }
     }
 
@@ -797,7 +797,7 @@ private struct ExecuteTaskList: View {
         case .focused:
             return IntakeV2Color.accent.opacity(pulse ? 0.52 : 0.3)
         case .done, .pending:
-            return .white.opacity(0.04)
+            return IntakeV2Color.cardStroke
         }
     }
 
@@ -807,14 +807,14 @@ private struct ExecuteTaskList: View {
             .fill(state == .done ? IntakeV2Color.accent : (pulse ? IntakeV2Color.accent.opacity(0.12) : .clear))
             .overlay(
                 RoundedRectangle(cornerRadius: 4)
-                    .stroke(state == .done ? IntakeV2Color.accent : (state == .focused ? IntakeV2Color.accent.opacity(pulse ? 0.9 : 1.0) : .white.opacity(0.2)),
+                    .stroke(state == .done ? IntakeV2Color.accent : (state == .focused ? IntakeV2Color.accent.opacity(pulse ? 0.9 : 1.0) : IntakeV2Color.selectionDotEmpty),
                             lineWidth: 1.5)
             )
             .overlay {
                 if state == .done {
                     Image(systemName: "checkmark")
                         .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(IntakeV2Color.primaryButtonFill)
                 }
             }
             .frame(width: 16, height: 16)
@@ -874,10 +874,10 @@ struct IntakeV2DecideShowcaseView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("오늘의 한 가지")
                             .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(IntakeV2Color.textPrimary)
                         Text(t.body)
                             .font(.system(size: 18, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.94))
+                            .foregroundStyle(IntakeV2Color.textPrimary)
                             .opacity(fading ? 0 : 1)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -907,9 +907,9 @@ struct IntakeV2DecideShowcaseView: View {
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 28)
-                                .stroke(.white.opacity(0.05), lineWidth: 1)
+                                .stroke(IntakeV2Color.cardStroke, lineWidth: 1)
                         )
-                        .shadow(color: .black.opacity(0.4), radius: 30, y: 20)
+                        .shadow(color: IntakeV2Color.textPrimary.opacity(0.14), radius: 30, y: 20)
                 )
                 .frame(maxWidth: 880)
                 .frame(maxWidth: .infinity, alignment: .center)
@@ -944,7 +944,7 @@ struct IntakeV2DecideShowcaseView: View {
                                     .frame(width: 18, height: 5)
                             } else {
                                 Circle()
-                                    .fill(.white.opacity(0.15))
+                                    .fill(IntakeV2Color.borderSoft)
                                     .frame(width: 5, height: 5)
                             }
                         }
@@ -976,7 +976,7 @@ struct IntakeV2DecideShowcaseView: View {
             .frame(maxWidth: 1180, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
-        .background(Color(red: 0.039, green: 0.078, blue: 0.063))
+        .background(IntakeV2Color.bg)
         .onAppear { startRotation() }
         .onDisappear { stopRotation() }
     }
@@ -1056,14 +1056,14 @@ struct IntakeV2ConnectShowcaseView: View {
                         Text("\(connectedSelectionCount) connected")
                             .foregroundStyle(IntakeV2Color.textTertiary)
                         if requestedSelectionCount > 0 {
-                            Text("·").foregroundStyle(.white.opacity(0.15))
-                            Circle().fill(Color(red: 0.961, green: 0.620, blue: 0.043)).frame(width: 5, height: 5)
+                            Text("·").foregroundStyle(IntakeV2Color.borderSoft)
+                            Circle().fill(IntakeV2Color.warning).frame(width: 5, height: 5)
                             Text("\(requestedSelectionCount) requested")
                                 .foregroundStyle(IntakeV2Color.textTertiary)
                         }
                         if !errorTiles.isEmpty {
-                            Text("·").foregroundStyle(.white.opacity(0.15))
-                            Circle().fill(Color(red: 0.961, green: 0.620, blue: 0.043)).frame(width: 5, height: 5)
+                            Text("·").foregroundStyle(IntakeV2Color.borderSoft)
+                            Circle().fill(IntakeV2Color.warning).frame(width: 5, height: 5)
                             Text("\(errorTiles.count) needs review")
                                 .foregroundStyle(IntakeV2Color.textTertiary)
                         }
@@ -1128,9 +1128,9 @@ struct IntakeV2ConnectShowcaseView: View {
                     togglePill(on: isOn)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(item.id.displayName)
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
+                        Text(item.id.displayName)
+                            .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(IntakeV2Color.textPrimary)
                         .lineLimit(2)
                         .minimumScaleFactor(0.82)
                     Text(item.kind)
@@ -1161,7 +1161,7 @@ struct IntakeV2ConnectShowcaseView: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 14)
-                    .stroke(isOn ? statusStrokeColor(for: connectionState) : .white.opacity(0.06),
+                    .stroke(isOn ? statusStrokeColor(for: connectionState) : IntakeV2Color.cardStroke,
                             lineWidth: isOn ? 1.5 : 1)
             )
             .shadow(color: isOn ? IntakeV2Color.accent.opacity(0.08) : .clear, radius: 12)
@@ -1176,7 +1176,7 @@ struct IntakeV2ConnectShowcaseView: View {
             VStack(spacing: 10) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 10)
-                        .fill(.white.opacity(0.04))
+                        .fill(IntakeV2Color.cardMutedFill)
                     Image(systemName: "plus")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(IntakeV2Color.textTertiary)
@@ -1190,7 +1190,7 @@ struct IntakeV2ConnectShowcaseView: View {
             .contentShape(RoundedRectangle(cornerRadius: 14))
             .overlay(
                 RoundedRectangle(cornerRadius: 14)
-                    .strokeBorder(.white.opacity(0.1), style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
+                    .strokeBorder(IntakeV2Color.borderSoft, style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
             )
         }
         .buttonStyle(.plain)
@@ -1206,13 +1206,13 @@ struct IntakeV2ConnectShowcaseView: View {
                 Spacer()
                 Image(systemName: "checkmark")
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(Color(red: 0.961, green: 0.620, blue: 0.043))
+                    .foregroundStyle(IntakeV2Color.warning)
                     .frame(width: 32, height: 20)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.id.displayName)
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.white)
+                        .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(IntakeV2Color.textPrimary)
                     .lineLimit(2)
                 Text(item.kind)
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -1222,11 +1222,11 @@ struct IntakeV2ConnectShowcaseView: View {
             Spacer(minLength: 4)
             HStack(spacing: 5) {
                 Circle()
-                    .fill(Color(red: 0.961, green: 0.620, blue: 0.043))
+                    .fill(IntakeV2Color.warning)
                     .frame(width: 6, height: 6)
                 Text("Connect later · Settings")
                     .font(.system(size: 11))
-                    .foregroundStyle(Color(red: 0.961, green: 0.620, blue: 0.043))
+                    .foregroundStyle(IntakeV2Color.warning)
             }
         }
         .padding(16)
@@ -1237,7 +1237,7 @@ struct IntakeV2ConnectShowcaseView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14)
-                .stroke(Color(red: 0.961, green: 0.620, blue: 0.043).opacity(0.75), lineWidth: 1.5)
+                .stroke(IntakeV2Color.warning.opacity(0.75), lineWidth: 1.5)
         )
     }
 
@@ -1245,12 +1245,12 @@ struct IntakeV2ConnectShowcaseView: View {
     private func togglePill(on: Bool) -> some View {
         ZStack(alignment: on ? .trailing : .leading) {
             Capsule()
-                .fill(on ? IntakeV2Color.accent : .white.opacity(0.1))
+                .fill(on ? IntakeV2Color.accent : IntakeV2Color.borderSoft)
                 .frame(width: 32, height: 20)
             Circle()
-                .fill(.white)
+                .fill(IntakeV2Color.panel)
                 .frame(width: 16, height: 16)
-                .shadow(color: .black.opacity(0.4), radius: 1, y: 1)
+                .shadow(color: IntakeV2Color.textPrimary.opacity(0.18), radius: 1, y: 1)
                 .padding(.horizontal, 2)
         }
         .animation(.easeInOut(duration: 0.18), value: on)
@@ -1284,19 +1284,19 @@ struct IntakeV2ConnectShowcaseView: View {
     }
 
     private func statusColor(isError: Bool, state: SourceConnectionState) -> Color {
-        if isError { return Color(red: 0.961, green: 0.620, blue: 0.043) }
+        if isError { return IntakeV2Color.warning }
         switch state {
         case .connected: return IntakeV2Color.accent
-        case .requested: return Color(red: 0.961, green: 0.620, blue: 0.043)
-        case .disconnected: return .white.opacity(0.2)
+        case .requested: return IntakeV2Color.warning
+        case .disconnected: return IntakeV2Color.borderSoft
         }
     }
 
     private func statusTextColor(isError: Bool, state: SourceConnectionState) -> Color {
-        if isError { return Color(red: 0.961, green: 0.620, blue: 0.043) }
+        if isError { return IntakeV2Color.warning }
         switch state {
         case .connected: return IntakeV2Color.accentBright
-        case .requested: return Color(red: 0.961, green: 0.620, blue: 0.043)
+        case .requested: return IntakeV2Color.warning
         case .disconnected: return IntakeV2Color.textTertiary
         }
     }
@@ -1304,8 +1304,8 @@ struct IntakeV2ConnectShowcaseView: View {
     private func statusStrokeColor(for state: SourceConnectionState) -> Color {
         switch state {
         case .connected: return IntakeV2Color.accent
-        case .requested: return Color(red: 0.961, green: 0.620, blue: 0.043).opacity(0.75)
-        case .disconnected: return .white.opacity(0.06)
+        case .requested: return IntakeV2Color.warning.opacity(0.75)
+        case .disconnected: return IntakeV2Color.cardStroke
         }
     }
 
@@ -1398,14 +1398,14 @@ private struct IntakeV2AddSourceModal: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("기록 소스 추가")
                     .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(IntakeV2Color.textPrimary)
                 Spacer()
                 Button(action: { isPresented = false }) {
                     Image(systemName: "xmark")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(IntakeV2Color.textSecondary)
                         .frame(width: 30, height: 30)
-                        .background(Circle().fill(.white.opacity(0.06)))
+                        .background(Circle().fill(IntakeV2Color.secondaryButtonFill))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Close")
@@ -1425,7 +1425,7 @@ private struct IntakeV2AddSourceModal: View {
                 TextField("소스 검색", text: $query)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(IntakeV2Color.textPrimary)
                     .focused($isSearchFocused)
                     .onSubmit(selectTopFilteredItem)
                     .accessibilityIdentifier("intakeV2.addSource.search")
@@ -1437,7 +1437,7 @@ private struct IntakeV2AddSourceModal: View {
                     .fill(IntakeV2Color.panel)
                     .overlay(
                         RoundedRectangle(cornerRadius: 9)
-                            .stroke(.white.opacity(0.08), lineWidth: 1)
+                            .stroke(IntakeV2Color.cardStroke, lineWidth: 1)
                     )
             )
 
@@ -1475,7 +1475,7 @@ private struct IntakeV2AddSourceModal: View {
         VStack(spacing: 12) {
             ZStack {
                 Circle()
-                    .fill(.white.opacity(0.05))
+                    .fill(IntakeV2Color.cardMutedFill)
                 Image(systemName: "tray")
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(IntakeV2Color.textTertiary)
@@ -1483,17 +1483,17 @@ private struct IntakeV2AddSourceModal: View {
             .frame(width: 54, height: 54)
             Text("결과 없음")
                 .font(.system(size: 16, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
+                .foregroundStyle(IntakeV2Color.textPrimary)
             Text("찾는 소스가 아직 catalog에 없다면 Custom source로 표시해두세요.")
                 .font(.system(size: 13, weight: .medium, design: .rounded))
                 .foregroundStyle(IntakeV2Color.textSecondary)
             Button(action: selectCustomSource) {
                 Text("Custom source로 추가")
                     .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundStyle(.black)
+                    .foregroundStyle(IntakeV2Color.primaryButtonText)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
-                    .background(Capsule().fill(.white))
+                    .background(Capsule().fill(IntakeV2Color.primaryButtonFill))
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("intakeV2.addSource.customFromEmpty")
@@ -1506,11 +1506,11 @@ private struct IntakeV2AddSourceModal: View {
             if let saveError {
                 HStack(spacing: 8) {
                     Circle()
-                        .fill(Color(red: 0.961, green: 0.620, blue: 0.043))
+                        .fill(IntakeV2Color.warning)
                         .frame(width: 6, height: 6)
                     Text(saveError)
                         .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(Color(red: 0.961, green: 0.620, blue: 0.043))
+                        .foregroundStyle(IntakeV2Color.warning)
                 }
             }
 
@@ -1527,15 +1527,15 @@ private struct IntakeV2AddSourceModal: View {
                 .foregroundStyle(IntakeV2Color.textSecondary)
                 .padding(.horizontal, 16)
                 .frame(height: 36)
-                .background(Capsule().fill(.white.opacity(0.06)))
+                .background(Capsule().fill(IntakeV2Color.secondaryButtonFill))
 
                 Button(action: addSelectedSources) {
                     Text("Add selected")
                         .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .foregroundStyle(selectedIDs.isEmpty ? .white.opacity(0.32) : .black)
+                        .foregroundStyle(selectedIDs.isEmpty ? IntakeV2Color.disabledButtonText : IntakeV2Color.primaryButtonText)
                         .padding(.horizontal, 18)
                         .frame(height: 36)
-                        .background(Capsule().fill(selectedIDs.isEmpty ? .white.opacity(0.10) : .white))
+                        .background(Capsule().fill(selectedIDs.isEmpty ? IntakeV2Color.disabledButtonFill : IntakeV2Color.primaryButtonFill))
                 }
                 .accessibilityIdentifier("intakeV2.addSource.addSelected")
                 .accessibilityLabel("Add selected")
@@ -1552,12 +1552,12 @@ private struct IntakeV2AddSourceModal: View {
         Button(action: { selectedCategory = category }) {
             Text(category.rawValue)
                 .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(isSelected ? .black : IntakeV2Color.textSecondary)
+                .foregroundStyle(isSelected ? IntakeV2Color.primaryButtonText : IntakeV2Color.textSecondary)
                 .padding(.horizontal, 12)
                 .frame(height: 30)
                 .background(
                     Capsule()
-                        .fill(isSelected ? Color.white : .white.opacity(0.06))
+                        .fill(isSelected ? IntakeV2Color.primaryButtonFill : IntakeV2Color.secondaryButtonFill)
                 )
         }
         .buttonStyle(.plain)
@@ -1573,7 +1573,7 @@ private struct IntakeV2AddSourceModal: View {
                     HStack(spacing: 8) {
                         Text(item.id.displayName)
                             .font(.system(size: 14, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(IntakeV2Color.textPrimary)
                             .lineLimit(1)
                         Text(item.kind)
                             .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -1593,7 +1593,7 @@ private struct IntakeV2AddSourceModal: View {
             .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(state == .selected ? IntakeV2Color.accent.opacity(0.08) : IntakeV2Color.panel)
+                    .fill(state == .selected ? IntakeV2Color.accentDim.opacity(0.70) : IntakeV2Color.panel)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
@@ -1627,8 +1627,8 @@ private struct IntakeV2AddSourceModal: View {
 
     private func rowStroke(for state: AddSourceRowState) -> Color {
         switch state {
-        case .selected: return Color(red: 0.961, green: 0.620, blue: 0.043).opacity(0.75)
-        case .available: return .white.opacity(0.07)
+        case .selected: return IntakeV2Color.warning.opacity(0.75)
+        case .available: return IntakeV2Color.cardStroke
         }
     }
 
@@ -1962,7 +1962,7 @@ struct IntakeV2ReadyAnalyzeView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(scanPreviewTitle(for: presentation))
                         .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.92))
+                        .foregroundStyle(IntakeV2Color.textPrimary)
                     Text(scanPreviewSubtitle(for: presentation))
                         .font(.system(size: 12.5, weight: .medium, design: .rounded))
                         .foregroundStyle(IntakeV2Color.textTertiary)
@@ -1993,7 +1993,7 @@ struct IntakeV2ReadyAnalyzeView: View {
                         scanPreviewSlotMarker(systemImage: slot.systemImage, status: slotStatus)
                         Text(slot.title)
                             .font(.system(size: 14, weight: .bold, design: .rounded))
-                            .foregroundStyle(slotStatus == .pending ? .white.opacity(0.62) : .white.opacity(0.92))
+                            .foregroundStyle(slotStatus == .pending ? IntakeV2Color.textTertiary : IntakeV2Color.textPrimary)
                         Text(slot.body)
                             .font(.system(size: 12, weight: .medium, design: .rounded))
                             .foregroundStyle(slotStatus == .pending ? IntakeV2Color.textTertiary.opacity(0.68) : IntakeV2Color.textTertiary)
@@ -2010,8 +2010,8 @@ struct IntakeV2ReadyAnalyzeView: View {
         }
         .padding(18)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.white.opacity(0.034))
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(IntakeV2Color.cardFill)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .stroke(IntakeV2Color.accent.opacity(0.16), lineWidth: 1)
@@ -2025,10 +2025,12 @@ struct IntakeV2ReadyAnalyzeView: View {
     private func scanPreviewSlotMarker(systemImage: String, status: ScanPreviewSlotStatus) -> some View {
         switch status {
         case .active where !reduceMotion:
-            ProgressView()
-                .progressViewStyle(.circular)
-                .controlSize(.small)
-                .tint(IntakeV2Color.accentBright)
+            IntakeV2ActivitySpinner(
+                size: 18,
+                lineWidth: 2.4,
+                color: IntakeV2Color.accentBright,
+                trackColor: IntakeV2Color.spinnerTrack
+            )
                 .frame(width: 22, height: 22, alignment: .leading)
                 .accessibilityHidden(true)
         case .active:
@@ -2096,7 +2098,7 @@ struct IntakeV2ReadyAnalyzeView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("질문 \(questionCount)개가 준비됐어요")
                         .font(.system(size: 18, weight: .heavy, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.96))
+                        .foregroundStyle(IntakeV2Color.textPrimary)
                     Text(readySummaryBody(for: presentation))
                         .font(.system(size: 13.5, weight: .medium, design: .rounded))
                         .foregroundStyle(IntakeV2Color.textSecondary)
@@ -2149,7 +2151,7 @@ struct IntakeV2ReadyAnalyzeView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(slot.title)
                     .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.92))
+                    .foregroundStyle(IntakeV2Color.textPrimary)
                 Text("답변 대기")
                     .font(.system(size: 11.5, weight: .semibold, design: .rounded))
                     .foregroundStyle(IntakeV2Color.textTertiary)
@@ -2160,7 +2162,7 @@ struct IntakeV2ReadyAnalyzeView: View {
         .frame(maxWidth: .infinity, minHeight: 64, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(.black.opacity(0.14))
+                .fill(IntakeV2Color.cardMutedFill)
                 .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(IntakeV2Color.accent.opacity(0.16), lineWidth: 1))
         )
         .accessibilityElement(children: .combine)
@@ -2219,7 +2221,7 @@ struct IntakeV2ReadyAnalyzeView: View {
                 .foregroundStyle(IntakeV2Color.accentBright)
             Text("생각보다 큰 폴더라 조금 더 걸리고 있어요.")
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.82))
+                .foregroundStyle(IntakeV2Color.textSecondary)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 14)
@@ -2237,41 +2239,51 @@ struct IntakeV2ReadyAnalyzeView: View {
             Button(action: handleBack) {
                 Text("Back")
                     .font(.system(size: 16, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.7))
+                    .foregroundStyle(IntakeV2Color.secondaryButtonText)
                     .padding(.horizontal, 30)
                     .padding(.vertical, 14)
-                    .background(Capsule().fill(.white.opacity(0.06)))
+                    .background(Capsule().fill(IntakeV2Color.secondaryButtonFill))
             }
             .buttonStyle(.plain)
 
             Spacer(minLength: 16)
 
             VStack(alignment: .trailing, spacing: 6) {
-                Button(action: { handleInboxCTA(presentation) }) {
-                    HStack(spacing: 8) {
-                        if !presentation.canOpenDay1 {
-                            ProgressView()
-                                .progressViewStyle(.circular)
-                                .controlSize(.small)
-                                .tint(.white.opacity(0.55))
-                                .accessibilityIdentifier("intakeV2.footerNextSpinner")
+                ZStack(alignment: .leading) {
+                    Button(action: { handleInboxCTA(presentation) }) {
+                        HStack(spacing: 8) {
+                            if !presentation.canOpenDay1 {
+                                IntakeV2ActivitySpinner(
+                                    size: 15,
+                                    lineWidth: 2,
+                                    color: IntakeV2Color.disabledButtonText,
+                                    trackColor: IntakeV2Color.spinnerTrack
+                                )
+                                .accessibilityHidden(true)
+                            }
+                            Text(primaryFooterTitle(for: presentation))
+                                .font(.system(size: 16, weight: .bold, design: .rounded))
+                                .foregroundStyle(presentation.canOpenDay1 ? IntakeV2Color.primaryButtonText : IntakeV2Color.disabledButtonText)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.82)
+                                .monospacedDigit()
                         }
-                        Text(primaryFooterTitle(for: presentation))
-                            .font(.system(size: 16, weight: .bold, design: .rounded))
-                            .foregroundStyle(presentation.canOpenDay1 ? .black : .white.opacity(0.3))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.82)
-                            .monospacedDigit()
+                        .padding(.horizontal, 30)
+                        .padding(.vertical, 14)
+                        .background(Capsule().fill(presentation.canOpenDay1 ? IntakeV2Color.primaryButtonFill : IntakeV2Color.disabledButtonFill))
+                        .accessibilityElement(children: .contain)
                     }
-                    .padding(.horizontal, 30)
-                    .padding(.vertical, 14)
-                    .background(Capsule().fill(presentation.canOpenDay1 ? Color.white : .white.opacity(0.1)))
+                    .buttonStyle(.plain)
+                    .disabled(!presentation.canOpenDay1)
+                    .accessibilityLabel(presentation.primaryCTAAccessibilityLabel(questionCount: questionCount))
+                    .accessibilityIdentifier("intakeV2.openInboxButton")
+                    .accessibilityFocused($primaryCTAFocused)
+
+                    if !presentation.canOpenDay1 {
+                        IntakeV2FooterSpinnerAccessibilityMarker()
+                            .padding(.leading, 30)
+                    }
                 }
-                .buttonStyle(.plain)
-                .disabled(!presentation.canOpenDay1)
-                .accessibilityLabel(presentation.primaryCTAAccessibilityLabel(questionCount: questionCount))
-                .accessibilityIdentifier("intakeV2.openInboxButton")
-                .accessibilityFocused($primaryCTAFocused)
 
                 if presentation.canOpenDay1 {
                     Text("약 3분 · 선택하고 한 줄만 답하면 됩니다")
@@ -2377,7 +2389,7 @@ struct IntakeV2ReadyAnalyzeView: View {
                         .foregroundStyle(IntakeV2Color.accentBright)
                     Text(showBootLogDetails ? "세부 로그 접기" : "세부 로그 보기")
                         .font(.system(size: 12.5, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.84))
+                        .foregroundStyle(IntakeV2Color.textSecondary)
                     if let scanElapsed = bootLogState.scanElapsed {
                         Text(scanElapsed.chipText(at: scanElapsed.completedAt ?? Date()))
                             .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
@@ -2389,8 +2401,8 @@ struct IntakeV2ReadyAnalyzeView: View {
                 .frame(height: 38)
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(.white.opacity(0.028))
-                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(.white.opacity(0.07), lineWidth: 1))
+                        .fill(IntakeV2Color.cardMutedFill)
+                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(IntakeV2Color.cardStroke, lineWidth: 1))
                 )
             }
             .buttonStyle(.plain)
@@ -2482,10 +2494,10 @@ struct IntakeV2ReadyAnalyzeView: View {
         .frame(maxWidth: .infinity, minHeight: TerminalMetrics.boxHeight, maxHeight: TerminalMetrics.boxHeight, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: TerminalMetrics.cornerRadius)
-                .fill(Color(red: 0.039, green: 0.039, blue: 0.047))
+                .fill(IntakeV2Color.terminalBg)
                 .overlay(
                     RoundedRectangle(cornerRadius: TerminalMetrics.cornerRadius)
-                        .stroke(.white.opacity(0.06), lineWidth: 1)
+                        .stroke(IntakeV2Color.terminalStroke, lineWidth: 1)
                 )
         )
         .accessibilityElement(children: .contain)
@@ -2539,7 +2551,7 @@ struct IntakeV2ReadyAnalyzeView: View {
         private var chipFill: Color {
             switch elapsed.status {
             case .running:
-                return .white.opacity(0.035)
+                return IntakeV2Color.cardMutedFill
             case .succeeded:
                 return IntakeV2Color.accent.opacity(0.10)
             case .failed:
@@ -2550,7 +2562,7 @@ struct IntakeV2ReadyAnalyzeView: View {
         private var chipStroke: Color {
             switch elapsed.status {
             case .running:
-                return .white.opacity(0.08)
+                return IntakeV2Color.cardStroke
             case .succeeded:
                 return IntakeV2Color.accent.opacity(0.22)
             case .failed:
@@ -2567,7 +2579,7 @@ struct IntakeV2ReadyAnalyzeView: View {
 
             HStack(spacing: 2) {
                 Text(line.cmd)
-                    .foregroundStyle(.white.opacity(0.85))
+                    .foregroundStyle(IntakeV2Color.terminalCommand)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .layoutPriority(0)
@@ -2664,8 +2676,8 @@ struct IntakeV2ReadyAnalyzeView: View {
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 13)
-            .background(.white.opacity(0.018))
-            .overlay(Rectangle().fill(.white.opacity(0.045)).frame(height: 1), alignment: .bottom)
+            .background(IntakeV2Color.cardMutedFill)
+            .overlay(Rectangle().fill(IntakeV2Color.cardStroke).frame(height: 1), alignment: .bottom)
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
@@ -2688,7 +2700,7 @@ struct IntakeV2ReadyAnalyzeView: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color(red: 0.038, green: 0.042, blue: 0.047))
+                .fill(IntakeV2Color.terminalBg)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(IntakeV2Color.accent.opacity(0.22), lineWidth: 1)
@@ -2729,7 +2741,7 @@ struct IntakeV2ReadyAnalyzeView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(task.title)
                     .font(.system(size: 13.5, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.94))
+                    .foregroundStyle(IntakeV2Color.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(task.detail)
                     .font(.system(size: 11.5))
@@ -2754,8 +2766,8 @@ struct IntakeV2ReadyAnalyzeView: View {
         .padding(.vertical, 11)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(.white.opacity(0.025))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.055), lineWidth: 1))
+                .fill(IntakeV2Color.cardMutedFill)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(IntakeV2Color.cardStroke, lineWidth: 1))
         )
         .frame(maxWidth: .infinity, minHeight: ReadyTodoMetrics.rowHeight, maxHeight: ReadyTodoMetrics.rowHeight, alignment: .topLeading)
     }
@@ -2772,10 +2784,10 @@ struct IntakeV2ReadyAnalyzeView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 RoundedRectangle(cornerRadius: 3)
-                    .fill(.white.opacity(0.10))
+                    .fill(IntakeV2Color.borderSoft)
                     .frame(width: nextIndex == 1 ? 230 : 280, height: 8)
                 RoundedRectangle(cornerRadius: 3)
-                    .fill(.white.opacity(0.055))
+                    .fill(IntakeV2Color.borderSoft.opacity(0.72))
                     .frame(width: nextIndex == 3 ? 190 : 245, height: 7)
             }
             Spacer()
@@ -2784,8 +2796,8 @@ struct IntakeV2ReadyAnalyzeView: View {
         .padding(.vertical, 12)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(.white.opacity(0.014))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.white.opacity(0.035), lineWidth: 1))
+                .fill(IntakeV2Color.cardMutedFill)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(IntakeV2Color.cardStroke, lineWidth: 1))
         )
         .frame(maxWidth: .infinity, minHeight: ReadyTodoMetrics.rowHeight, maxHeight: ReadyTodoMetrics.rowHeight, alignment: .topLeading)
     }
@@ -2938,11 +2950,11 @@ private struct ScanPreviewSlotBackground: View {
     private var fill: Color {
         switch status {
         case .complete:
-            return .white.opacity(0.03)
+            return IntakeV2Color.cardFill
         case .active:
             return IntakeV2Color.accent.opacity(0.07)
         case .pending:
-            return .white.opacity(0.02)
+            return IntakeV2Color.cardMutedFill
         }
     }
 
@@ -2953,7 +2965,7 @@ private struct ScanPreviewSlotBackground: View {
         case .active:
             return IntakeV2Color.accent.opacity(0.24)
         case .pending:
-            return .white.opacity(0.05)
+            return IntakeV2Color.cardStroke
         }
     }
 }

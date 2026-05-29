@@ -221,16 +221,16 @@ struct IntakeV2FolderPickView: View {
                             HStack(spacing: 10) {
                                 Image(systemName: didCopyAgentPrompt ? "checkmark" : "doc.on.doc")
                                     .font(.system(size: 16, weight: .semibold))
-                                Text(didCopyAgentPrompt ? "프롬프트 복사됨" : "AI 도구로 연결")
+                            Text(didCopyAgentPrompt ? "프롬프트 복사됨" : "AI 도구로 연결")
                                     .font(.system(size: 17, weight: .bold, design: .rounded))
                             }
-                            .foregroundStyle(.black)
+                            .foregroundStyle(IntakeV2Color.primaryButtonText)
                             .padding(.horizontal, 26)
                             .padding(.vertical, 15)
                             .frame(minWidth: 230)
                             .background(
                                 RoundedRectangle(cornerRadius: 12)
-                                    .fill(Color.white)
+                                    .fill(IntakeV2Color.primaryButtonFill)
                             )
                         }
                         .buttonStyle(.plain)
@@ -269,11 +269,11 @@ struct IntakeV2FolderPickView: View {
                 .frame(maxWidth: 760, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(.white.opacity(0.03))
+                        .fill(IntakeV2Color.cardFill)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(.white.opacity(0.08), lineWidth: 1)
+                        .stroke(IntakeV2Color.cardStroke, lineWidth: 1)
                 )
                 .padding(.top, 2)
             }
@@ -321,7 +321,7 @@ struct IntakeV2FolderPickView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay {
-            Color.white.opacity(0.001)
+            IntakeV2Color.invisibleHitArea
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(Text(verbatim: url.lastPathComponent))
                 .accessibilityValue(Text(verbatim: url.path))
@@ -340,10 +340,12 @@ struct IntakeV2FolderPickView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 7) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(IntakeV2Color.accentBright)
-                        .frame(width: 14, height: 14)
+                    IntakeV2ActivitySpinner(
+                        size: 14,
+                        lineWidth: 2,
+                        color: IntakeV2Color.accentBright,
+                        trackColor: IntakeV2Color.spinnerTrack
+                    )
                     Text("폴더가 감지되면 여기서 확인합니다.")
                         .font(.system(size: 12, weight: .medium, design: .rounded))
                         .foregroundStyle(IntakeV2Color.textSecondary)

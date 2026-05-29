@@ -1,6 +1,26 @@
 import SwiftUI
 import AppKit
 
+enum MacOnboardingTheme {
+    static var bg: Color { OpenDesignDayColor.bg }
+    static var surface: Color { OpenDesignDayColor.surface }
+    static var surfaceSubtle: Color { OpenDesignDayColor.surface2 }
+    static var text: Color { OpenDesignDayColor.fg }
+    static var secondaryText: Color { OpenDesignDayColor.fgSecondary }
+    static var tertiaryText: Color { OpenDesignDayColor.muted }
+    static var border: Color { OpenDesignDayColor.borderSoft }
+    static var accent: Color { OpenDesignDayColor.accent }
+    static var primaryFill: Color { Agentic30Theme.current == .white ? OpenDesignDayColor.fg : Color.white }
+    static var primaryText: Color { Agentic30Theme.current == .white ? OpenDesignDayColor.surface : Color.black.opacity(0.86) }
+    static var disabledFill: Color { Agentic30Theme.current == .white ? OpenDesignDayColor.selected.opacity(0.74) : Color.white.opacity(0.34) }
+    static var disabledText: Color { Agentic30Theme.current == .white ? OpenDesignDayColor.muted : Color.black.opacity(0.36) }
+    static var secondaryFill: Color { Agentic30Theme.current == .white ? OpenDesignDayColor.surface2 : Color.white.opacity(0.08) }
+    static var secondaryButtonText: Color { Agentic30Theme.current == .white ? OpenDesignDayColor.fgSecondary : Color.white.opacity(0.78) }
+    static var badgeFill: Color { Agentic30Theme.current == .white ? Color.white.opacity(0.78) : Color.black.opacity(0.32) }
+    static var visualText: Color { Agentic30Theme.current == .white ? OpenDesignDayColor.fg : Color.white.opacity(0.92) }
+    static var visualSecondaryText: Color { Agentic30Theme.current == .white ? OpenDesignDayColor.fgSecondary : Color.white.opacity(0.72) }
+}
+
 struct MacOnboardingView: View {
     @ObservedObject var viewModel: AgenticViewModel
 
@@ -35,12 +55,12 @@ struct MacOnboardingView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(currentScene.title)
                         .font(.system(size: 34, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.94))
+                        .foregroundStyle(MacOnboardingTheme.text)
                         .fixedSize(horizontal: false, vertical: true)
 
                     Text(currentScene.subtitle)
                         .font(.system(size: 18, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.56))
+                        .foregroundStyle(MacOnboardingTheme.secondaryText)
                         .lineSpacing(4)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -53,13 +73,13 @@ struct MacOnboardingView: View {
             .padding(.top, 28)
             .padding(.bottom, 34)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(Color(red: 0.07, green: 0.075, blue: 0.08))
+            .background(MacOnboardingTheme.bg)
         }
         .frame(width: 716, height: 676)
         .clipShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 34, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                .stroke(MacOnboardingTheme.border, lineWidth: 1)
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.88), value: sceneIndex)
     }
@@ -80,7 +100,7 @@ struct MacOnboardingView: View {
                     .opacity(0.32)
                 Image(systemName: "folder.badge.gearshape")
                     .font(.system(size: 78, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.88))
+                    .foregroundStyle(MacOnboardingTheme.visualText)
             }
             .frame(height: 246)
 
@@ -88,11 +108,11 @@ struct MacOnboardingView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Choose your project folder")
                         .font(.system(size: 34, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.94))
+                        .foregroundStyle(MacOnboardingTheme.text)
 
                     Text("Agentic30 reads docs, runs agents, and writes strategy files inside this workspace. Pick the repo or project directory you want the assistant to work on.")
                         .font(.system(size: 17, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.58))
+                        .foregroundStyle(MacOnboardingTheme.secondaryText)
                         .lineSpacing(4)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -108,19 +128,19 @@ struct MacOnboardingView: View {
                                 .font(.system(size: 16, weight: .bold, design: .rounded))
                             Text(selectedWorkspaceURL?.path ?? "No folder selected")
                                 .font(.system(size: 12, weight: .medium, design: .rounded))
-                                .foregroundStyle(.white.opacity(0.48))
+                                .foregroundStyle(MacOnboardingTheme.tertiaryText)
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 0)
                     }
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(MacOnboardingTheme.text)
                     .padding(16)
                     .background(
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(Color.white.opacity(0.08))
+                            .fill(MacOnboardingTheme.surfaceSubtle)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                                    .stroke(MacOnboardingTheme.border, lineWidth: 1)
                             )
                     )
                 }
@@ -133,7 +153,7 @@ struct MacOnboardingView: View {
                 HStack {
                     Text(workspaceFooterHint)
                         .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.46))
+                        .foregroundStyle(MacOnboardingTheme.tertiaryText)
 
                     Spacer(minLength: 0)
 
@@ -144,12 +164,12 @@ struct MacOnboardingView: View {
                     } label: {
                         Text("Start assistant")
                             .font(.system(size: 16, weight: .bold, design: .rounded))
-                            .foregroundStyle(Color.black.opacity(selectedWorkspaceURL == nil ? 0.36 : 0.86))
+                            .foregroundStyle(selectedWorkspaceURL == nil ? MacOnboardingTheme.disabledText : MacOnboardingTheme.primaryText)
                             .padding(.horizontal, 28)
                             .padding(.vertical, 14)
                             .background(
                                 Capsule()
-                                    .fill(Color.white.opacity(selectedWorkspaceURL == nil ? 0.34 : 0.96))
+                                    .fill(selectedWorkspaceURL == nil ? MacOnboardingTheme.disabledFill : MacOnboardingTheme.primaryFill)
                             )
                     }
                     .buttonStyle(.plain)
@@ -162,13 +182,13 @@ struct MacOnboardingView: View {
             .padding(.top, 28)
             .padding(.bottom, 34)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(Color(red: 0.07, green: 0.075, blue: 0.08))
+            .background(MacOnboardingTheme.bg)
         }
         .frame(width: 716, height: 676)
         .clipShape(RoundedRectangle(cornerRadius: 34, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 34, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                .stroke(MacOnboardingTheme.border, lineWidth: 1)
         }
     }
 
@@ -220,7 +240,7 @@ struct MacOnboardingView: View {
         HStack(spacing: 8) {
             ForEach(scenes.indices, id: \.self) { index in
                 Capsule()
-                    .fill(index == sceneIndex ? Color.white.opacity(0.9) : Color.white.opacity(0.22))
+                    .fill(index == sceneIndex ? MacOnboardingTheme.text : MacOnboardingTheme.border)
                     .frame(width: index == sceneIndex ? 28 : 8, height: 8)
             }
         }
@@ -234,10 +254,10 @@ struct MacOnboardingView: View {
             } label: {
                 Text("Back")
                     .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(sceneIndex == 0 ? 0.28 : 0.78))
+                    .foregroundStyle(sceneIndex == 0 ? MacOnboardingTheme.tertiaryText.opacity(0.55) : MacOnboardingTheme.secondaryButtonText)
                     .padding(.horizontal, 24)
                     .padding(.vertical, 13)
-                    .background(Capsule().fill(Color.white.opacity(0.08)))
+                    .background(Capsule().fill(MacOnboardingTheme.secondaryFill))
             }
             .buttonStyle(.plain)
             .disabled(sceneIndex == 0)
@@ -250,12 +270,12 @@ struct MacOnboardingView: View {
             } label: {
                 Text(primaryButtonTitle)
                 .font(.system(size: 16, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.black.opacity(0.86))
+                .foregroundStyle(MacOnboardingTheme.primaryText)
                 .padding(.horizontal, 28)
                 .padding(.vertical, 14)
                 .background(
                     Capsule()
-                        .fill(Color.white.opacity(0.96))
+                        .fill(MacOnboardingTheme.primaryFill)
                 )
             }
             .buttonStyle(.plain)
@@ -396,7 +416,7 @@ private struct HalftoneField: View {
             ForEach(0..<rows, id: \.self) { row in
                 ForEach(0..<columns, id: \.self) { column in
                     Circle()
-                        .fill(Color.black.opacity(0.35))
+                        .fill(MacOnboardingTheme.text.opacity(Agentic30Theme.current == .white ? 0.10 : 0.35))
                         .frame(width: 3.4, height: 3.4)
                         .position(
                             x: CGFloat(column) * cellWidth + cellWidth / 2,
@@ -432,10 +452,10 @@ private struct AssistantMark: View {
 
                 HStack(spacing: capSpacing) {
                     Capsule()
-                        .fill(Color.white.opacity(0.95))
+                        .fill(MacOnboardingTheme.surface.opacity(0.95))
                         .frame(width: capWidth, height: capHeight)
                     Capsule()
-                        .fill(Color.white.opacity(0.95))
+                        .fill(MacOnboardingTheme.surface.opacity(0.95))
                         .frame(width: capWidth, height: capHeight)
                 }
             }
@@ -458,7 +478,7 @@ private struct FloatingBriefingBubble: View {
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                 Text("이번 주 가입자 3명에게 30분 인터뷰 요청하고 결제 의향 묻기.")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(MacOnboardingTheme.visualSecondaryText)
             }
             Spacer(minLength: 0)
             Text("실행")
@@ -467,12 +487,12 @@ private struct FloatingBriefingBubble: View {
                 .padding(.vertical, 10)
                 .background(Capsule().fill(Color(red: 0.26, green: 0.85, blue: 0.54)))
         }
-        .foregroundStyle(.white.opacity(0.92))
+        .foregroundStyle(MacOnboardingTheme.visualText)
         .padding(.horizontal, 18)
         .padding(.vertical, 16)
         .background(
             RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .fill(Color.black.opacity(0.32))
+                .fill(MacOnboardingTheme.badgeFill)
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
         )
     }
@@ -483,17 +503,17 @@ private struct FloatingMilestoneCard: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("30-day launch path")
                 .font(.system(size: 15, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.74))
+                .foregroundStyle(MacOnboardingTheme.visualSecondaryText)
             Text("Idea → product → 100 users → first revenue")
                 .font(.system(size: 23, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.94))
+                .foregroundStyle(MacOnboardingTheme.visualText)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 22)
         .background(
             RoundedRectangle(cornerRadius: 30, style: .continuous)
-                .fill(Color.black.opacity(0.34))
+                .fill(MacOnboardingTheme.badgeFill)
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
         )
     }
@@ -511,7 +531,7 @@ private struct IntegrationIconRow: View {
         HStack(spacing: 54) {
             ForEach(items, id: \.0) { item in
                 RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .fill(Color.white.opacity(0.06))
+                    .fill(MacOnboardingTheme.badgeFill)
                     .frame(width: 118, height: 118)
                     .overlay {
                         Image(systemName: item.0)

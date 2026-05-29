@@ -14,15 +14,103 @@ import AppKit
 // MARK: - Color tokens
 
 enum IntakeV2Color {
-    static let bg = Color(red: 0.055, green: 0.055, blue: 0.063)          // #0e0e10
-    static let panel = Color(red: 0.075, green: 0.075, blue: 0.086)       // #131316
-    static let accent = Agentic30BrandColor.green      // #16a34a
-    static let accentBright = Agentic30BrandColor.greenBright // #4ade80
-    static let textPrimary = Color.white
-    static let textSecondary = Color.white.opacity(0.65)
-    static let textCardSecondary = Color.white.opacity(0.62)
-    static let textTertiary = Color.white.opacity(0.45)
-    static let monospaceMuted = Color.white.opacity(0.4)
+    private static var isWhiteTheme: Bool { Agentic30Theme.current == .white }
+
+    static var bg: Color { OpenDesignDayColor.bg }
+    static var bgDeep: Color { OpenDesignDayColor.bgDeep }
+    static var panel: Color { OpenDesignDayColor.surface }
+    static var panelElevated: Color { OpenDesignDayColor.elevated }
+    static var panelSubtle: Color { OpenDesignDayColor.surface2 }
+    static var accent: Color { OpenDesignDayColor.accent }
+    static var accentBright: Color { Agentic30BrandColor.greenBright }
+    static var accentDim: Color { OpenDesignDayColor.accentDim }
+    static var accentLine: Color { OpenDesignDayColor.accentLine }
+    static var warning: Color { OpenDesignDayColor.amber }
+    static var textPrimary: Color { OpenDesignDayColor.fg }
+    static var textSecondary: Color { OpenDesignDayColor.fgSecondary }
+    static var textCardSecondary: Color { OpenDesignDayColor.fgSecondary.opacity(isWhiteTheme ? 0.82 : 0.86) }
+    static var textTertiary: Color { OpenDesignDayColor.muted }
+    static var monospaceMuted: Color { OpenDesignDayColor.mutedDeep }
+    static var border: Color { OpenDesignDayColor.border }
+    static var borderSoft: Color { OpenDesignDayColor.borderSoft }
+
+    static var primaryButtonFill: Color { isWhiteTheme ? OpenDesignDayColor.fg : Color.white }
+    static var primaryButtonText: Color { isWhiteTheme ? OpenDesignDayColor.surface : Color.black.opacity(0.86) }
+    static var disabledButtonFill: Color { isWhiteTheme ? OpenDesignDayColor.selected.opacity(0.74) : Color.white.opacity(0.10) }
+    static var disabledButtonText: Color { isWhiteTheme ? OpenDesignDayColor.muted : Color.white.opacity(0.34) }
+    static var secondaryButtonFill: Color { isWhiteTheme ? OpenDesignDayColor.surface2 : Color.white.opacity(0.06) }
+    static var secondaryButtonText: Color { isWhiteTheme ? OpenDesignDayColor.fgSecondary : Color.white.opacity(0.70) }
+
+    static var cardFill: Color { isWhiteTheme ? OpenDesignDayColor.surface : Color.white.opacity(0.03) }
+    static var cardMutedFill: Color { isWhiteTheme ? OpenDesignDayColor.surface2 : Color.white.opacity(0.02) }
+    static var cardStroke: Color { isWhiteTheme ? OpenDesignDayColor.borderSoft : Color.white.opacity(0.08) }
+    static var selectionDotEmpty: Color { isWhiteTheme ? OpenDesignDayColor.borderStrong : Color.white.opacity(0.22) }
+    static var invisibleHitArea: Color { OpenDesignDayColor.fg.opacity(0.001) }
+
+    static var terminalBg: Color { isWhiteTheme ? Color(red: 0.985, green: 0.989, blue: 0.992) : Color(red: 0.039, green: 0.039, blue: 0.047) }
+    static var terminalStroke: Color { isWhiteTheme ? OpenDesignDayColor.borderSoft : Color.white.opacity(0.06) }
+    static var terminalCommand: Color { isWhiteTheme ? OpenDesignDayColor.fg : Color.white.opacity(0.85) }
+    static var terminalMuted: Color { isWhiteTheme ? OpenDesignDayColor.muted : Color.white.opacity(0.40) }
+    static var terminalPrompt: Color { OpenDesignDayColor.accent }
+    static var spinnerTrack: Color { isWhiteTheme ? OpenDesignDayColor.borderSoft.opacity(0.82) : Color.white.opacity(0.16) }
+}
+
+struct IntakeV2ActivitySpinner: View {
+    var size: CGFloat = 16
+    var lineWidth: CGFloat = 2
+    var color: Color = IntakeV2Color.accentBright
+    var trackColor: Color = IntakeV2Color.spinnerTrack
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isAnimating = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(trackColor, lineWidth: lineWidth)
+            Circle()
+                .trim(from: 0.10, to: 0.72)
+                .stroke(
+                    color,
+                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+                )
+                .rotationEffect(.degrees(reduceMotion ? -50 : (isAnimating ? 310 : -50)))
+        }
+        .frame(width: size, height: size)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Loading")
+        .onAppear {
+            guard !reduceMotion else { return }
+            isAnimating = false
+            DispatchQueue.main.async {
+                withAnimation(.linear(duration: 0.82).repeatForever(autoreverses: false)) {
+                    isAnimating = true
+                }
+            }
+        }
+        .onChange(of: reduceMotion) { _, newValue in
+            isAnimating = false
+            guard !newValue else { return }
+            DispatchQueue.main.async {
+                withAnimation(.linear(duration: 0.82).repeatForever(autoreverses: false)) {
+                    isAnimating = true
+                }
+            }
+        }
+    }
+}
+
+struct IntakeV2FooterSpinnerAccessibilityMarker: View {
+    var body: some View {
+        Text("Loading")
+            .font(.system(size: 1))
+            .frame(width: 15, height: 15)
+            .opacity(0.01)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Loading")
+            .accessibilityIdentifier("intakeV2.footerNextSpinner")
+            .allowsHitTesting(false)
+    }
 }
 
 enum IntakeV2Layout {
@@ -73,9 +161,9 @@ struct IntakeV2DashPagination: View {
                 .frame(width: 6, height: 6)
                 .scaleEffect(1.0)
                 .transition(reduceMotion ? .opacity : .scale(scale: 0.85).combined(with: .opacity))
-        } else {
-            Circle()
-                .fill(.white.opacity(0.18))
+            } else {
+                Circle()
+                .fill(IntakeV2Color.borderSoft.opacity(0.82))
                 .frame(width: 6, height: 6)
         }
     }
@@ -83,7 +171,7 @@ struct IntakeV2DashPagination: View {
     @ViewBuilder
     private var currentMarker: some View {
         let marker = Capsule()
-            .fill(.white)
+            .fill(IntakeV2Color.textPrimary)
             .frame(width: 24, height: 6)
 
         if reduceMotion {
@@ -174,11 +262,11 @@ struct IntakeV2OptionCard: View {
                 ZStack {
                     if selectionStyle == .single {
                         Circle()
-                            .stroke(selected ? IntakeV2Color.accentBright : .white.opacity(0.22), lineWidth: 1.5)
+                            .stroke(selected ? IntakeV2Color.accentBright : IntakeV2Color.selectionDotEmpty, lineWidth: 1.5)
                             .frame(width: 14, height: 14)
                     } else {
                         RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .stroke(selected ? IntakeV2Color.accentBright : .white.opacity(0.22), lineWidth: 1.5)
+                            .stroke(selected ? IntakeV2Color.accentBright : IntakeV2Color.selectionDotEmpty, lineWidth: 1.5)
                             .frame(width: 14, height: 14)
                     }
                     if selected {
@@ -217,12 +305,12 @@ struct IntakeV2OptionCard: View {
             .padding(.vertical, 18)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(selected ? IntakeV2Color.accent.opacity(0.055) : .white.opacity(0.03))
+                    .fill(selected ? IntakeV2Color.accentDim.opacity(0.62) : IntakeV2Color.cardFill)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
                     .stroke(
-                        selected ? IntakeV2Color.accent : .white.opacity(0.05),
+                        selected ? IntakeV2Color.accent : IntakeV2Color.cardStroke,
                         lineWidth: selected ? 1.5 : 1
                     )
             )
@@ -252,10 +340,10 @@ struct IntakeV2Footer: View {
                 Button(action: onBack) {
                     Text("Back")
                         .font(.system(size: 16, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.7))
+                        .foregroundStyle(IntakeV2Color.secondaryButtonText)
                         .padding(.horizontal, 30)
                         .padding(.vertical, 14)
-                        .background(Capsule().fill(.white.opacity(0.06)))
+                        .background(Capsule().fill(IntakeV2Color.secondaryButtonFill))
                 }
                 .buttonStyle(.plain)
             } else {
@@ -266,28 +354,40 @@ struct IntakeV2Footer: View {
             Spacer()
 
             if nextVisible {
-                Button(action: onNext) {
-                    HStack(spacing: 8) {
-                        if nextLoading {
-                            ProgressView()
-                                .progressViewStyle(.circular)
-                                .controlSize(.small)
-                                .tint(.white.opacity(0.55))
-                                .accessibilityIdentifier("intakeV2.footerNextSpinner")
+                ZStack(alignment: .leading) {
+                    Button(action: onNext) {
+                        HStack(spacing: 8) {
+                            if nextLoading {
+                                IntakeV2ActivitySpinner(
+                                    size: 15,
+                                    lineWidth: 2,
+                                    color: nextEnabled ? IntakeV2Color.primaryButtonText : IntakeV2Color.disabledButtonText,
+                                    trackColor: nextEnabled
+                                        ? IntakeV2Color.primaryButtonText.opacity(0.22)
+                                        : IntakeV2Color.spinnerTrack
+                                )
+                                .accessibilityHidden(true)
+                            }
+                            Text(nextTitle)
+                                .font(.system(size: 16, weight: .bold, design: .rounded))
+                                .foregroundStyle(nextEnabled ? IntakeV2Color.primaryButtonText : IntakeV2Color.disabledButtonText)
                         }
-                        Text(nextTitle)
-                            .font(.system(size: 16, weight: .bold, design: .rounded))
-                            .foregroundStyle(nextEnabled ? .black : .white.opacity(0.3))
+                        .padding(.horizontal, 30)
+                        .padding(.vertical, 14)
+                        .background(Capsule().fill(nextEnabled ? IntakeV2Color.primaryButtonFill : IntakeV2Color.disabledButtonFill))
+                        .accessibilityElement(children: .contain)
                     }
-                    .padding(.horizontal, 30)
-                    .padding(.vertical, 14)
-                    .background(Capsule().fill(nextEnabled ? Color.white : .white.opacity(0.1)))
-                }
-                .buttonStyle(.plain)
-                .disabled(!nextEnabled)
-                .accessibilityLabel(nextAccessibilityLabel)
-                .ifLet(nextAccessibilityIdentifier) { view, identifier in
-                    view.accessibilityIdentifier(identifier)
+                    .buttonStyle(.plain)
+                    .disabled(!nextEnabled)
+                    .accessibilityLabel(nextAccessibilityLabel)
+                    .ifLet(nextAccessibilityIdentifier) { view, identifier in
+                        view.accessibilityIdentifier(identifier)
+                    }
+
+                    if nextLoading {
+                        IntakeV2FooterSpinnerAccessibilityMarker()
+                            .padding(.leading, 30)
+                    }
                 }
             } else {
                 Color.clear
@@ -364,7 +464,7 @@ struct IntakeV2PinnedStepScaffold<Content: View, Footer: View>: View {
             }
             .frame(maxWidth: IntakeV2Layout.contentMaxWidth, maxHeight: .infinity, alignment: .topLeading)
             .overlay {
-                Color.white.opacity(0.001)
+                IntakeV2Color.invisibleHitArea
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Intake step shell")
                     .accessibilityIdentifier("intakeV2.stepShell")

@@ -132,24 +132,24 @@ struct DecideNotificationGroupView: View {
         ZStack(alignment: .top) {
             ForEach((0..<3).reversed(), id: \.self) { index in
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(.white.opacity(index == 0 ? 0.052 : 0.034))
+                    .fill(index == 0 ? IntakeV2Color.cardFill : IntakeV2Color.cardMutedFill)
                     .overlay(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(.white.opacity(index == 0 ? 0.085 : 0.060), lineWidth: 1)
+                            .stroke(IntakeV2Color.cardStroke, lineWidth: 1)
                     )
                     .frame(height: stackPreviewCardHeight(for: index))
                     .overlay(alignment: .leading) {
                         if index == 0 {
                             HStack(spacing: 10) {
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(.white.opacity(0.05))
+                                    .fill(IntakeV2Color.cardMutedFill)
                                     .frame(width: 30, height: 30)
                                 VStack(alignment: .leading, spacing: 6) {
                                     RoundedRectangle(cornerRadius: 3)
-                                        .fill(.white.opacity(0.050))
+                                        .fill(IntakeV2Color.borderSoft)
                                         .frame(width: 88, height: 7)
                                     RoundedRectangle(cornerRadius: 3)
-                                        .fill(.white.opacity(0.034))
+                                        .fill(IntakeV2Color.borderSoft.opacity(0.70))
                                         .frame(width: 132, height: 7)
                                 }
                             }
@@ -178,21 +178,21 @@ struct DecideNotificationGroupView: View {
                         HStack(alignment: .firstTextBaseline, spacing: 5) {
                             Text("Agentic30")
                                 .font(.system(size: 9.8, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.58))
+                                .foregroundStyle(IntakeV2Color.textTertiary)
                                 .lineLimit(1)
                             Text("·")
                                 .font(.system(size: 9.8, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.28))
+                                .foregroundStyle(IntakeV2Color.borderSoft)
                             Text(item.timeLabel)
                                 .font(.system(size: 9.4, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.42))
+                                .foregroundStyle(IntakeV2Color.textTertiary)
                                 .lineLimit(1)
                             Spacer(minLength: 4)
                         }
 
                         Text(item.body)
                             .font(.system(size: 12.8, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.96))
+                            .foregroundStyle(IntakeV2Color.textPrimary)
                             .lineLimit(2)
                             .minimumScaleFactor(0.82)
                             .truncationMode(.tail)
@@ -211,7 +211,7 @@ struct DecideNotificationGroupView: View {
         .frame(maxWidth: .infinity, minHeight: stackPreviewCardHeight(for: index), maxHeight: stackPreviewCardHeight(for: index), alignment: .topLeading)
         .background(stackPreviewBackground(index: index))
         .overlay(stackPreviewStroke(index: index))
-        .shadow(color: .black.opacity(front ? 0.20 : 0.12), radius: front ? 7 : 4, y: front ? 4 : 2)
+        .shadow(color: IntakeV2Color.textPrimary.opacity(front ? 0.12 : 0.08), radius: front ? 7 : 4, y: front ? 4 : 2)
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .padding(.horizontal, stackPreviewHorizontalInset(for: index))
     }
@@ -219,10 +219,10 @@ struct DecideNotificationGroupView: View {
     private func stackPreviewSilhouette(index: Int) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             RoundedRectangle(cornerRadius: 3, style: .continuous)
-                .fill(.white.opacity(index == 1 ? 0.15 : 0.10))
+                .fill(IntakeV2Color.borderSoft.opacity(index == 1 ? 1.0 : 0.72))
                 .frame(width: index == 1 ? 96 : 82, height: 6)
             RoundedRectangle(cornerRadius: 3, style: .continuous)
-                .fill(.white.opacity(index == 1 ? 0.12 : 0.08))
+                .fill(IntakeV2Color.borderSoft.opacity(index == 1 ? 0.86 : 0.60))
                 .frame(width: index == 1 ? 164 : 136, height: 7)
         }
         .padding(.top, 2)
@@ -277,7 +277,7 @@ struct DecideNotificationGroupView: View {
             Button("덜 보기", action: onToggleExpanded)
                 .buttonStyle(.borderless)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.68))
+                .foregroundStyle(IntakeV2Color.textSecondary)
                 .keyboardShortcut(.cancelAction)
                 .accessibilityIdentifier("intakeV2.decideNotificationShowLess")
         }
@@ -300,27 +300,27 @@ struct DecideNotificationGroupView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text("Agentic30")
                         .font(.system(size: expandedRow ? 13 : 12, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.70))
+                        .foregroundStyle(IntakeV2Color.textSecondary)
                         .lineLimit(1)
                     Text("·")
                         .font(.system(size: expandedRow ? 13 : 12, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.36))
+                        .foregroundStyle(IntakeV2Color.borderSoft)
                     Text(item.timeLabel)
                         .font(.system(size: expandedRow ? 12 : 11.5, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.52))
+                        .foregroundStyle(IntakeV2Color.textTertiary)
                         .lineLimit(1)
                     Spacer(minLength: 8)
                 }
 
                 Text(item.title)
                     .font(.system(size: expandedRow ? 15 : 14, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.93))
+                    .foregroundStyle(IntakeV2Color.textPrimary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.86)
 
                 Text(item.body)
                     .font(.system(size: expandedRow ? 14.5 : 13.7, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.86))
+                    .foregroundStyle(IntakeV2Color.textSecondary)
                     .lineLimit(expandedRow ? 3 : 2)
                     .minimumScaleFactor(0.88)
                     .truncationMode(.tail)
@@ -344,7 +344,7 @@ struct DecideNotificationGroupView: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(cardBackground)
         .overlay(cardStroke)
-        .shadow(color: .black.opacity(isBackingLayer ? 0.12 : 0.20), radius: isBackingLayer ? 5 : 8, y: isBackingLayer ? 2 : 4)
+        .shadow(color: IntakeV2Color.textPrimary.opacity(isBackingLayer ? 0.08 : 0.12), radius: isBackingLayer ? 5 : 8, y: isBackingLayer ? 2 : 4)
         .contentShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
     }
 
@@ -357,25 +357,25 @@ struct DecideNotificationGroupView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
                     Text("Agentic30")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.72))
+                        .foregroundStyle(IntakeV2Color.textSecondary)
                         .lineLimit(1)
                     Text("·")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.38))
+                        .foregroundStyle(IntakeV2Color.borderSoft)
                     Text(item.contextLabel)
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.72))
+                        .foregroundStyle(IntakeV2Color.textSecondary)
                         .lineLimit(1)
                     Spacer(minLength: 10)
                     Text(item.timeLabel)
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.50))
+                        .foregroundStyle(IntakeV2Color.textTertiary)
                         .lineLimit(1)
                 }
 
                 Text(item.body)
                     .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.94))
+                    .foregroundStyle(IntakeV2Color.textPrimary)
                     .lineLimit(3)
                     .minimumScaleFactor(0.84)
                     .truncationMode(.tail)
@@ -391,7 +391,7 @@ struct DecideNotificationGroupView: View {
                     if let rationale = item.rationale, !rationale.isEmpty {
                         Text(rationale)
                             .font(.system(size: 12.5, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.58))
+                            .foregroundStyle(IntakeV2Color.textTertiary)
                             .lineLimit(1)
                             .minimumScaleFactor(0.82)
                             .truncationMode(.tail)
@@ -430,7 +430,7 @@ struct DecideNotificationGroupView: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(cardBackground)
         .overlay(cardStroke)
-        .shadow(color: .black.opacity(0.20), radius: 8, y: 4)
+        .shadow(color: IntakeV2Color.textPrimary.opacity(0.12), radius: 8, y: 4)
         .contentShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Agentic30, \(item.contextLabel), \(item.body)")
@@ -441,7 +441,7 @@ struct DecideNotificationGroupView: View {
             if let actionHint {
                 Text(actionHint)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.56))
+                    .foregroundStyle(IntakeV2Color.textTertiary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
             }
@@ -502,16 +502,16 @@ struct DecideNotificationGroupView: View {
     private func metaChip(_ label: String, prominent: Bool) -> some View {
         Text(label)
             .font(.system(size: prominent ? 11.5 : 11, weight: .semibold, design: .rounded))
-            .foregroundStyle(prominent ? IntakeV2Color.accentBright : .white.opacity(0.58))
+            .foregroundStyle(prominent ? IntakeV2Color.accentBright : IntakeV2Color.textTertiary)
             .lineLimit(1)
             .padding(.horizontal, 7)
             .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(prominent ? IntakeV2Color.accent.opacity(0.12) : .white.opacity(0.045))
+                    .fill(prominent ? IntakeV2Color.accentDim : IntakeV2Color.cardMutedFill)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(prominent ? IntakeV2Color.accent.opacity(0.22) : .white.opacity(0.055), lineWidth: 1)
+                            .stroke(prominent ? IntakeV2Color.accentLine : IntakeV2Color.cardStroke, lineWidth: 1)
                     )
             )
     }
@@ -601,24 +601,24 @@ struct DecideNotificationGroupView: View {
 
     private func stackPreviewBackground(index: Int) -> some View {
         RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .fill(Color(red: 0.105, green: 0.109, blue: 0.118).opacity(index == 0 ? 0.86 : 0.72))
+            .fill(index == 0 ? IntakeV2Color.panelElevated : IntakeV2Color.panel)
             .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func stackPreviewStroke(index: Int) -> some View {
         RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .stroke(index == 0 ? .white.opacity(0.12) : .white.opacity(0.08), lineWidth: 1)
+            .stroke(index == 0 ? IntakeV2Color.border : IntakeV2Color.cardStroke, lineWidth: 1)
     }
 
     private var cardBackground: some View {
         RoundedRectangle(cornerRadius: 19, style: .continuous)
-            .fill(Color(red: 0.105, green: 0.109, blue: 0.118).opacity(0.82))
+            .fill(IntakeV2Color.panelElevated)
             .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 19, style: .continuous))
     }
 
     private var cardStroke: some View {
         RoundedRectangle(cornerRadius: 19, style: .continuous)
-            .stroke(.white.opacity(0.095), lineWidth: 1)
+            .stroke(IntakeV2Color.cardStroke, lineWidth: 1)
     }
 
     private var backingItems: [DecideNotificationItem] {
@@ -666,6 +666,6 @@ struct Agentic30AppIcon: View {
             .scaledToFit()
             .frame(width: size, height: size)
             .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
-            .shadow(color: .black.opacity(0.24), radius: size * 0.15, y: size * 0.05)
+            .shadow(color: IntakeV2Color.textPrimary.opacity(0.14), radius: size * 0.15, y: size * 0.05)
     }
 }
