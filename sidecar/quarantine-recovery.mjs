@@ -7,6 +7,7 @@ import {
   loadAssessmentsFromFile,
   persistAssessmentsToFile,
 } from "./rubric-assessment.mjs";
+import { swallow } from "./error-telemetry.mjs";
 
 // Quarantine recovery surface for Day 30 schema-invalid records (Round 2 leaves
 // them in `<workspace>/.agentic30/<source>.invalid-<timestamp>.json`). Round 4
@@ -56,12 +57,15 @@ export async function listQuarantinedFiles({
   // Best-effort prune before list — keeps quarantine directory bounded
   // without forcing a separate cron. Failures are swallowed; the list
   // itself must still succeed.
-  await pruneExpiredQuarantineFiles({
-    workspaceRoot,
-    agenticDir,
-    maxAgeDays,
-    now,
-  }).catch(() => {});
+  await swallow(
+    "quarantine_prune_expired",
+    pruneExpiredQuarantineFiles({
+      workspaceRoot,
+      agenticDir,
+      maxAgeDays,
+      now,
+    }),
+  );
   const dir = path.join(workspaceRoot, agenticDir);
   let entries;
   try {

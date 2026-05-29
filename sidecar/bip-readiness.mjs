@@ -7,6 +7,7 @@ import {
   parseGoogleSheetUrl,
 } from "./bip-coach-state.mjs";
 import { gwsExec, resolveGwsBin, stripGwsPreamble } from "./gws-client.mjs";
+import { swallow } from "./error-telemetry.mjs";
 
 // Validation cache: keyed by `${kind}:${id}`, value: { ok, error?, expiresAt }
 const validationCache = new Map();
@@ -522,8 +523,8 @@ export function startGwsAuth({
     }
   }
 
-  pollTimer = setInterval(() => { probe().catch(() => {}); }, pollIntervalMs);
-  setTimeout(() => { probe().catch(() => {}); }, 500);
+  pollTimer = setInterval(() => { swallow("bip_readiness_probe_poll", probe()); }, pollIntervalMs);
+  setTimeout(() => { swallow("bip_readiness_probe_initial", probe()); }, 500);
 
   // OAuth callback timeout: if the browser flow doesn't complete within
   // `oauthTimeoutMs`, surface an actionable message instead of leaving the

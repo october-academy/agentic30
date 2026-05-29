@@ -27,6 +27,7 @@ import {
 } from "./qmd-support.mjs";
 import { buildPostHogClaudeMcpConfigFromSources } from "./posthog-mcp-config.mjs";
 import { createTelemetryClient } from "./telemetry.mjs";
+import { setTelemetryClient as setSharedTelemetryClient, swallow } from "./error-telemetry.mjs";
 import { getCachedBipContext } from "./context-cache.mjs";
 import { collectLocalDiscovery } from "./local-discovery.mjs";
 import {
@@ -359,6 +360,7 @@ state.bipCoach = syncBipCoachSessionState();
 state.iddSetup = await loadIddSetupState(workspaceRoot);
 await persistBipCoachState(bipCoachFilePath, state.bipCoach);
 const telemetry = createTelemetryClient({ appSupportPath, workspaceRoot });
+setSharedTelemetryClient(telemetry);
 let fatalSidecarWriteInProgress = false;
 
 function fireAndForget(operation, promise, properties = {}) {
@@ -3095,7 +3097,7 @@ async function runOfficeHoursDocs(session, topic, originalPrompt) {
       onRuntimeUpdate: (runtime) => {
         session.runtime = runtime;
         touch(session);
-        persistSessions().catch(() => {});
+        fireAndForget("persist_sessions_office_hours_runtime", persistSessions());
       },
       systemPromptOverride: buildOfficeHoursDocsSystemPrompt(workspaceRoot, {
         provider: session.provider,
@@ -4353,26 +4355,32 @@ async function readBipCoachEvidenceBundle({ onProgress } = {}) {
   const tabName = pickSheetTab(sheetMetadata, config.sheetTabName);
   const sheetRange = buildSheetRange(tabName);
   const sheetValues = await readSheetValues(config.sheetId, sheetRange, { cwd: workspaceRoot });
-  await persistGwsReadToMemory({
-    appSupportPath,
-    sidecarRoot,
-    kind: "sheet",
-    id: config.sheetId,
-    range: sheetRange,
-    payload: sheetValues,
-  }).catch(() => {});
+  await swallow(
+    "persist_gws_sheet_memory",
+    persistGwsReadToMemory({
+      appSupportPath,
+      sidecarRoot,
+      kind: "sheet",
+      id: config.sheetId,
+      range: sheetRange,
+      payload: sheetValues,
+    }),
+  );
   const sheetSummary = summarizeSheetValues(sheetValues);
   onProgress?.("reading_doc", "업무일지 Doc을 읽는 중", {
     sheetRowsRead: sheetSummary.allRows.length,
   });
   const docPayload = await readGoogleDoc(config.docId, { cwd: workspaceRoot });
-  await persistGwsReadToMemory({
-    appSupportPath,
-    sidecarRoot,
-    kind: "doc",
-    id: config.docId,
-    payload: docPayload,
-  }).catch(() => {});
+  await swallow(
+    "persist_gws_doc_memory",
+    persistGwsReadToMemory({
+      appSupportPath,
+      sidecarRoot,
+      kind: "doc",
+      id: config.docId,
+      payload: docPayload,
+    }),
+  );
   const docFullText = extractGoogleDocPlainText(docPayload);
   const projectContext = await loadProjectContextCache({ workspaceRoot });
   const now = new Date().toISOString();
@@ -5021,7 +5029,7 @@ async function runBipCoachProvider(provider, prompt, coachSession = null, {
         if (!coachSession) return;
         coachSession.runtime = runtime;
         touch(coachSession);
-        persistSessions().catch(() => {});
+        fireAndForget("persist_sessions_bip_coach_runtime", persistSessions());
       },
       onToolEvent: (event) => {
         observeBipCoachToolEvent(event, {
@@ -10504,13 +10512,16 @@ async function handleBipReadinessAction(request) {
 
   // gwsAuth: recheck without starting login
   if (rowId === "gwsAuth" && action === "recheck") {
-    checkGwsAuthStatus({ env: process.env }).then(({ done, error }) => {
-      emitRow("gwsAuth", done ? "done" : "blocked", undefined, done ? undefined : error);
-      if (done) {
-        emitRow("docUrl", "pending");
-        emitRow("sheetUrl", "pending");
-    }
-    }).catch(() => {});
+    fireAndForget(
+      "check_gws_auth_status_recheck",
+      checkGwsAuthStatus({ env: process.env }).then(({ done, error }) => {
+        emitRow("gwsAuth", done ? "done" : "blocked", undefined, done ? undefined : error);
+        if (done) {
+          emitRow("docUrl", "pending");
+          emitRow("sheetUrl", "pending");
+        }
+      }),
+    );
     return;
   }
 }
