@@ -107,6 +107,31 @@ test("planning-phase ICP routes to office-hours", () => {
   assert.match(selection.reason, /planning phase/);
 });
 
+test("explicit office-hours command routes to office-hours specialist", () => {
+  assert.equal(
+    classifyDecisionKind({ promptText: "/office-hours" }),
+    "customer",
+  );
+  assert.equal(
+    classifyDecisionKind({ promptText: "/office-hours customer context" }),
+    "customer",
+  );
+  assert.notEqual(
+    classifyDecisionKind({ promptText: "/office-hours-docs" }),
+    "customer",
+  );
+
+  const selection = selectSpecialist({
+    bipSetupGate: buildGate,
+    promptText: "/office-hours",
+    lastAnswer: "Office Hours",
+  });
+  assert.equal(selection.id, "office-hours");
+  assert.equal(selection.decisionKind, "customer");
+  assert.equal(selection.vendor.codex.exists, true);
+  assert.equal(selection.vendor.claude.exists, true);
+});
+
 test("planning-phase SPEC/GOAL/VALUES routes to plan-ceo-review", () => {
   for (const docType of ["spec", "goal", "values"]) {
     const selection = selectSpecialist({

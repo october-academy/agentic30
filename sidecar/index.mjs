@@ -21,6 +21,11 @@ import {
   buildOfficeHoursDocsSystemPrompt,
 } from "./office-hours-docs-prompt.mjs";
 import {
+  buildOfficeHoursChatPrompt,
+  buildOfficeHoursChatSystemPrompt,
+  clampOfficeHoursContext,
+} from "./office-hours-chat-prompt.mjs";
+import {
   buildQmdGuidance,
   buildQmdMcpConfig,
   getQmdState,
@@ -1102,7 +1107,7 @@ async function handleClientMessage(socket, payload) {
         throw new Error("This session is waiting for structured input.");
       }
       const context = String(payload.context || "").trim();
-      const visiblePrompt = String(payload.visiblePrompt || "Day999 Office Hours").trim() || "Day999 Office Hours";
+      const visiblePrompt = String(payload.visiblePrompt || "Office Hours").trim() || "Office Hours";
       markWorkspaceSetupFirstInput("office_hours_start");
       if (state.activeRuns.has(session.id)) {
         send(socket, {
@@ -2053,6 +2058,7 @@ async function runPrompt(
       systemPromptOverride = buildOfficeHoursChatSystemPrompt(workspaceRoot, {
         specialistInjection: officeHoursSpecialistInjection,
         context: officeHoursContext,
+        provider: session.provider,
       });
       telemetry.captureEvent("mac_sidecar_specialist_routed", {
         session_id: session.id,
@@ -3096,10 +3102,6 @@ async function runNextQueuedPrompt(sessionId) {
   });
 }
 
-function clampOfficeHoursContext(context = "") {
-  return String(context || "").trim().slice(0, 16_000);
-}
-
 function buildOfficeHoursRuntime(context = "", source = "manual") {
   return {
     active: true,
@@ -3126,42 +3128,6 @@ function activeOfficeHoursContext(session = null) {
   return clampOfficeHoursContext(officeHours.context || "");
 }
 
-function buildOfficeHoursChatPrompt({ context = "", userPrompt = "" } = {}) {
-  const sections = [
-    "Day999 Office Hours를 시작한다.",
-    "지금까지 project, scan, workspace, 그리고 사용자가 Day 1에서 질의응답한 내용을 바탕으로 YC Office Hours 대화를 진행한다.",
-    "첫 응답은 현재 핵심 가설을 3-4줄로 요약한 뒤, 가장 약한 가정 하나를 겨냥하는 질문 정확히 1개만 물어본다.",
-  ];
-  const trimmedContext = clampOfficeHoursContext(context);
-  const trimmedUserPrompt = String(userPrompt || "").trim();
-  if (trimmedContext) {
-    sections.push("## Context");
-    sections.push(trimmedContext);
-  }
-  if (trimmedUserPrompt) {
-    sections.push("## User Request");
-    sections.push(trimmedUserPrompt);
-  }
-  return sections.join("\n\n");
-}
-
-function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
-  specialistInjection = "",
-  context = "",
-} = {}) {
-  return [
-    "## Agentic30 Day999 Office Hours",
-    "Use the office-hours specialist for this whole session.",
-    "Keep this as a chat conversation, not a one-shot report.",
-    "Ask one forcing question at a time. Push vague answers toward names, recent behavior, money/time cost, status quo, and the narrowest wedge.",
-    "Use workspace facts and Day 1 answers before generic startup advice.",
-    "Do not edit files or write artifacts unless the user explicitly asks for implementation or document writing later.",
-    `Workspace root: ${workspaceRootValue || workspaceRoot}`,
-    specialistInjection ? `\n${specialistInjection}` : "",
-    context ? `\n## Day999 Context\n${clampOfficeHoursContext(context)}` : "",
-  ].filter(Boolean).join("\n");
-}
-
 function selectOfficeHoursSpecialist({ context = "", lastAnswer = "" } = {}) {
   return selectSpecialist({
     bipSetupGate: currentBipSetupGate(),
@@ -3183,7 +3149,7 @@ function scheduleQueuedPromptRun(session) {
 
 async function runOfficeHours(session, {
   context = "",
-  originalPrompt = "Day999 Office Hours",
+  originalPrompt = "Office Hours",
   source = "manual",
 } = {}) {
   if (state.activeRuns.has(session.id)) {
@@ -3196,7 +3162,7 @@ async function runOfficeHours(session, {
   }
 
   const officeHoursRuntime = buildOfficeHoursRuntime(context, source);
-  const visiblePrompt = String(originalPrompt || "Day999 Office Hours").trim() || "Day999 Office Hours";
+  const visiblePrompt = String(originalPrompt || "Office Hours").trim() || "Office Hours";
   const abortController = new AbortController();
   const runKey = randomUUID();
   const assistantMessage = makeMessage({
@@ -3211,7 +3177,7 @@ async function runOfficeHours(session, {
     assistantMessage,
   );
   if (!session.title || session.title === "New Session") {
-    session.title = "Day999 Office Hours";
+    session.title = "Office Hours";
   }
   session.status = "running";
   session.error = null;
@@ -3291,6 +3257,7 @@ async function runOfficeHours(session, {
       systemPromptOverride: buildOfficeHoursChatSystemPrompt(workspaceRoot, {
         specialistInjection: officeHoursSpecialistInjection,
         context: officeHoursRuntime.context,
+        provider: session.provider,
       }),
     });
 

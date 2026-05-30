@@ -25,6 +25,7 @@ const DEVEX_KEYWORD_RE = /(개발자 경험|developer|onboarding|cli|tthw|time t
 const DEVEX_AUDIT_KEYWORD_RE = /(직접 따라|첫 5분|재현|first run|live audit|점수.*매겼)/i;
 const DESIGN_SYSTEM_KEYWORD_RE = /(디자인 시스템|design system|토큰 시스템|컴포넌트 규칙|광고 에셋)/i;
 const SHOTGUN_KEYWORD_RE = /(여러 시안|several variants|shotgun|후보 비교|design 후보)/i;
+const OFFICE_HOURS_COMMAND_RE = /^\/office-hours(?:\s|$)/i;
 
 export function detectPhase({ bipSetupGate, signals = {} } = {}) {
   const docs = bipSetupGate?.localDocs ?? [];
@@ -41,6 +42,9 @@ export function classifyDecisionKind({
   lastAnswer = "",
   promptText = "",
 } = {}) {
+  const trimmedPromptText = String(promptText || "").trim();
+  if (OFFICE_HOURS_COMMAND_RE.test(trimmedPromptText)) return "customer";
+
   const text = `${lastAnswer || ""}\n${promptText || ""}`;
   if (SHOTGUN_KEYWORD_RE.test(text)) return "design-direction";
   if (DESIGN_HTML_KEYWORD_RE.test(text)) return "html-finalize";
