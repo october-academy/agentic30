@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  DEFAULT_CLAUDE_MODEL,
   allowsProviderPermissionBypass,
   buildGeminiEnv,
   CODEX_BINARY_NOT_INSTALLED_ERROR_CODE,
@@ -21,6 +22,7 @@ import {
   mapCodexItemToToolEvent,
   parseProviderEnvironment,
   resetProviderSettingsForTest,
+  resolveClaudeModel,
   resolveCodexBinaryPath,
   resolveCodexModel,
   resolveCodexReasoningEffort,
@@ -28,6 +30,8 @@ import {
   shouldResumeCodexThread,
   updateProviderSettings,
 } from "../sidecar/provider-runner.mjs";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { POSTHOG_MCP_TOKEN_ENV_VAR } from "../sidecar/posthog-mcp-config.mjs";
 
 test("test stub provider bypasses local provider auth checks", () => {
@@ -245,6 +249,38 @@ test("resolveCodexModel defaults Codex sessions to GPT 5.5", () => {
     restoreEnv("AGENTIC30_CODEX_MODEL", previousAgenticModel);
     restoreEnv("CODEX_MODEL", previousCodexModel);
     restoreEnv("OPENAI_MODEL", previousOpenAIModel);
+  }
+});
+
+test("DEFAULT_CLAUDE_MODEL targets a non-deprecated Claude family supported by the bundled SDK", () => {
+  assert.match(DEFAULT_CLAUDE_MODEL, /^claude-(opus|sonnet|haiku)-[0-9]/);
+
+  const require = createRequire(import.meta.url);
+  const sdkEntry = require.resolve("@anthropic-ai/claude-agent-sdk");
+  const sdkSource = readFileSync(sdkEntry, "utf8");
+
+  const deprecationTable = sdkSource.match(/\{[^{}]*"claude-3-7-sonnet-latest"\s*:[^{}]*\}/);
+  if (deprecationTable) {
+    assert.ok(
+      !deprecationTable[0].includes(`"${DEFAULT_CLAUDE_MODEL}"`),
+      `${DEFAULT_CLAUDE_MODEL} is listed as deprecated by the bundled @anthropic-ai/claude-agent-sdk`,
+    );
+  }
+});
+
+test("resolveClaudeModel falls back to DEFAULT_CLAUDE_MODEL and honors overrides", () => {
+  const previousAnthropicModel = process.env.ANTHROPIC_MODEL;
+  try {
+    delete process.env.ANTHROPIC_MODEL;
+    resetProviderSettingsForTest();
+    assert.equal(resolveClaudeModel(), DEFAULT_CLAUDE_MODEL);
+
+    process.env.ANTHROPIC_MODEL = "claude-sonnet-4-6";
+    assert.equal(resolveClaudeModel(), "claude-sonnet-4-6");
+    assert.equal(resolveClaudeModel("claude-opus-4-6"), "claude-opus-4-6");
+  } finally {
+    restoreEnv("ANTHROPIC_MODEL", previousAnthropicModel);
+    resetProviderSettingsForTest();
   }
 });
 

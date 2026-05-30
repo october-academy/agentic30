@@ -28,6 +28,7 @@ process.env.AGENTIC30_SIDECAR_ROOT ??= sidecarRoot;
 const DEFAULT_CODEX_MODEL = "gpt-5.5";
 const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
 export const CODEX_BINARY_NOT_INSTALLED_ERROR_CODE = "ERR_CODEX_BINARY_NOT_INSTALLED";
+const DEFAULT_CLAUDE_MODEL = "claude-opus-4-7";
 const MINI_ACTION_EXECUTION_ONLY_MODE = "mini_action_execution_only";
 const CODEX_REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
 const GEMINI_CAPABLE_EXECUTION_MODES = new Set([
@@ -1418,6 +1419,18 @@ export function resolveGeminiModel(model = "") {
   ).trim();
 }
 
+export function resolveClaudeModel(model = "") {
+  const env = buildProviderEnv("claude");
+  return String(
+    model
+      || env.ANTHROPIC_MODEL
+      || providerSettings.claude?.model
+      || DEFAULT_CLAUDE_MODEL,
+  ).trim();
+}
+
+export { DEFAULT_CLAUDE_MODEL };
+
 export function supportsGeminiExecutionMode(executionMode = "") {
   return GEMINI_CAPABLE_EXECUTION_MODES.has(String(executionMode || ""));
 }
@@ -1725,7 +1738,7 @@ async function runTextOnlyProvider({
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: model || env.ANTHROPIC_MODEL || "claude-3-7-sonnet-latest",
+        model: model || env.ANTHROPIC_MODEL || DEFAULT_CLAUDE_MODEL,
         max_tokens: 4000,
         system: RESPONSE_LANGUAGE_INSTRUCTION,
         messages: [
