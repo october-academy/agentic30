@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   allowsProviderPermissionBypass,
   buildGeminiEnv,
+  CODEX_BINARY_NOT_INSTALLED_ERROR_CODE,
   buildCodexConfig,
   buildCodexEnv,
   buildProviderEnv,
@@ -248,9 +249,26 @@ test("resolveCodexModel defaults Codex sessions to GPT 5.5", () => {
 });
 
 test("resolveCodexBinaryPath uses Codex platform package layout", () => {
-  const binaryPath = resolveCodexBinaryPath();
+  const binaryPath = resolveCodexBinaryPath({
+    packageRootResolver: (...segments) => path.join("/tmp", "node_modules", ...segments),
+  });
+
   assert.match(binaryPath, /node_modules\/@openai\/codex-(darwin|linux|win32)-(arm64|x64)\/vendor\//);
   assert.match(binaryPath, /\/codex\/codex(?:\.exe)?$/);
+});
+
+test("resolveCodexBinaryPath reports missing Codex packages clearly", () => {
+  assert.throws(
+    () => resolveCodexBinaryPath({ packageRootResolver: () => null }),
+    (error) => {
+      assert.equal(error.name, "CodexBinaryNotInstalledError");
+      assert.equal(error.code, CODEX_BINARY_NOT_INSTALLED_ERROR_CODE);
+      assert.match(error.message, /Codex binary not installed/);
+      assert.match(error.message, /@openai\/codex-sdk/);
+      assert.doesNotMatch(error.message, /ERR_INVALID_ARG_TYPE/);
+      return true;
+    },
+  );
 });
 
 test("buildCodexConfig isolates sidecar runs from global Codex notifier", () => {
