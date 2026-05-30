@@ -7969,7 +7969,7 @@ private struct OpenDesignHypothesisConfirmationCard: View {
             return "4개 문서 저장"
         }
         if interaction.dayCompleted {
-            return "Day 2로 이동 ↵"
+            return "Day 999로 이동 ↵"
         }
         if let alignmentPlan = content.alignmentPlan {
             if alignmentPlan.signals.evidenceRefs.isEmpty {
@@ -7978,9 +7978,9 @@ private struct OpenDesignHypothesisConfirmationCard: View {
             if !alignmentPlan.qualityGate.passed {
                 return "부족한 항목 다시 고르기"
             }
-            return "Day 2 시장 신호로 넘기기 ↵"
+            return "Day 999 Office Hours로 넘기기 ↵"
         }
-        return "가설 확정 → Day2로 이동 ↵"
+        return "가설 확정 → Day999로 이동 ↵"
     }
 
     private var confirmButtonDisabled: Bool {
@@ -8016,7 +8016,7 @@ private struct OpenDesignHypothesisConfirmationCard: View {
                 Text("Day 1이 완료됐습니다.")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(OpenDesignDayColor.fg)
-                Text("Day 2에서 이 가설의 시장 신호와 키워드를 확인합니다.")
+                Text("Day999에서 이 가설을 바탕으로 Office Hours 대화를 시작합니다.")
                     .font(.system(size: 12.5, weight: .regular))
                     .foregroundStyle(OpenDesignDayColor.fgSecondary)
             }

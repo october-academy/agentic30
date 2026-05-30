@@ -4,6 +4,72 @@ import Testing
 @testable import agentic30
 
 struct OpenDesignDayContentTests {
+    @Test func temporaryDay999OfficeHoursCurriculumMarkerIsAvailable() {
+        #expect(AgenticCurriculumDay.day999OfficeHours.day == 999)
+        #expect(AgenticCurriculumDay.day999OfficeHours.shortTitle == "Office Hours")
+        #expect(AgenticCurriculumDay.day999OfficeHours.output == "office-hours chat")
+    }
+
+    @Test func day999TranscriptRowsConvertSyntheticStartPromptToContextRow() {
+        let rows = Day999OfficeHoursTranscriptRow.rows(from: [
+            makeChatMessage(id: "start", role: .user, content: "Day999 Office Hours"),
+            makeChatMessage(id: "answer", role: .assistant, content: "현재 강한 가설은 이렇습니다."),
+        ])
+
+        #expect(rows.count == 2)
+        #expect(rows[0].kind == .contextLoaded)
+        #expect(rows[0].content == Day999OfficeHoursTranscriptRow.contextLoadedCopy)
+        #expect(rows[0].lineLimit == 1)
+        #expect(rows[1].kind == .assistant)
+    }
+
+    @Test func day999TranscriptRowsKeepLongUserAndAssistantTextUntruncated() {
+        let longQuestion = String(repeating: "고객에게 무엇을 물어봐야 하는지 더 구체적으로 알고 싶습니다. ", count: 18)
+        let longAnswer = String(repeating: "먼저 결제 이유를 만든 사건과 지금 대안을 분리해서 물어보세요. ", count: 22)
+        let rows = Day999OfficeHoursTranscriptRow.rows(from: [
+            makeChatMessage(id: "question", role: .user, content: longQuestion),
+            makeChatMessage(id: "answer", role: .assistant, content: longAnswer),
+        ])
+
+        #expect(rows.count == 2)
+        #expect(rows[0].kind == .user)
+        #expect(rows[0].content == longQuestion.trimmingCharacters(in: .whitespacesAndNewlines))
+        #expect(rows[0].lineLimit == nil)
+        #expect(rows[1].kind == .assistant)
+        #expect(rows[1].content == longAnswer.trimmingCharacters(in: .whitespacesAndNewlines))
+        #expect(rows[1].lineLimit == nil)
+    }
+
+    @Test func day999TranscriptRowsKeepEmptyStreamingAssistantForLiveStatus() {
+        let rows = Day999OfficeHoursTranscriptRow.rows(from: [
+            makeChatMessage(id: "streaming", role: .assistant, content: "", state: .streaming),
+        ])
+
+        #expect(rows.count == 1)
+        #expect(rows[0].isStreamingPlaceholder)
+        #expect(rows[0].lineLimit == nil)
+    }
+
+    private func makeChatMessage(
+        id: String,
+        role: MessageRole,
+        content: String,
+        state: MessageState = .final
+    ) -> ChatMessage {
+        ChatMessage(
+            id: id,
+            role: role,
+            provider: .codex,
+            content: content,
+            state: state,
+            createdAt: Date(),
+            error: nil,
+            bipMissionChoices: nil,
+            providerAuthActions: nil,
+            inlineDecision: nil
+        )
+    }
+
     @Test func inlineMarkdownEmphasisParserSplitsSingleRun() {
         #expect(openDesignInlineMarkdownEmphasisRuns(in: "a **b** c") == [
             OpenDesignInlineMarkdownEmphasisRun(text: "a ", isEmphasized: false),

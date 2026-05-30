@@ -24,6 +24,28 @@ private final class FakeSidecarTransport: SidecarTransport {
     private(set) var sentPayloads: [[String: Any]] = []
 
     private let workspaceRoot: String
+    private static let decoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            if let timestamp = try? container.decode(Double.self) {
+                return Date(timeIntervalSinceReferenceDate: timestamp)
+            }
+            let value = try container.decode(String.self)
+            if let date = fractionalFormatter.date(from: value) ?? formatter.date(from: value) {
+                return date
+            }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Invalid ISO8601 date: \(value)"
+            )
+        }
+        return decoder
+    }()
 
     init(workspaceRoot: String) {
         self.workspaceRoot = workspaceRoot
@@ -46,7 +68,7 @@ private final class FakeSidecarTransport: SidecarTransport {
     @MainActor
     func emit(_ json: String) throws {
         let data = try #require(json.data(using: .utf8))
-        let event = try JSONDecoder().decode(SidecarEvent.self, from: data)
+        let event = try Self.decoder.decode(SidecarEvent.self, from: data)
         onEvent?(event)
     }
 }
@@ -1354,6 +1376,100 @@ struct AgenticViewModelAuthTests {
         #expect(viewModel.draft.isEmpty)
         #expect(viewModel.startupQueuedAction?.title == "첫 메시지 대기 중")
         #expect(viewModel.startupQueuedAction?.summary == "Day 1에서 먼저 볼 고객 증거를 정리해줘")
+    }
+
+    @Test @MainActor func day999OfficeHoursStartSendsContextPayload() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 1
+        )
+        sidecar.resetSentPayloads()
+
+        let sent = viewModel.startDay999OfficeHours(
+            sessionID: "session-1",
+            context: "project + Day 1 answers"
+        )
+
+        #expect(sent)
+        let payload = try #require(sidecar.sentPayloads.first)
+        #expect(payload["type"] as? String == "office_hours_start")
+        #expect(payload["sessionId"] as? String == "session-1")
+        #expect(payload["source"] as? String == "day999")
+        #expect(payload["visiblePrompt"] as? String == "Day999 Office Hours")
+        #expect(payload["context"] as? String == "project + Day 1 answers")
+    }
+
+    @Test @MainActor func day999OfficeHoursEnsureSessionCreatesSessionWhenConnected() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 1
+        )
+
+        let hasSession = viewModel.ensureDay999OfficeHoursSession()
+
+        #expect(!hasSession)
+        let payload = try #require(sidecar.sentPayloads.first)
+        #expect(payload["type"] as? String == "create_session")
+        #expect(payload["provider"] as? String == AgentProvider.codex.rawValue)
+        #expect(payload["model"] as? String == AgentModelCatalog.defaultModelID(for: .codex))
+    }
+
+    @Test @MainActor func day999OfficeHoursEnsureSessionDoesNotDuplicateCreateWhileInFlight() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 1
+        )
+
+        _ = viewModel.ensureDay999OfficeHoursSession()
+        _ = viewModel.ensureDay999OfficeHoursSession()
+
+        let createPayloads = sidecar.sentPayloads.filter { $0["type"] as? String == "create_session" }
+        #expect(createPayloads.count == 1)
+    }
+
+    @Test @MainActor func day999OfficeHoursEnsureSessionUsesCreatedSession() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 1
+        )
+        _ = viewModel.ensureDay999OfficeHoursSession()
+
+        viewModel.applySessionCreatedForTesting(
+            ChatSession(
+                id: "day999-session",
+                title: "Day999 Office Hours",
+                provider: .codex,
+                model: AgentModelCatalog.defaultModelID(for: .codex),
+                status: .idle,
+                createdAt: Date(),
+                updatedAt: Date(),
+                error: nil,
+                messages: [],
+                pendingUserInput: nil,
+                runtime: nil
+            )
+        )
+        sidecar.resetSentPayloads()
+
+        #expect(viewModel.selectedSession?.id == "day999-session")
+        #expect(viewModel.ensureDay999OfficeHoursSession())
+        #expect(sidecar.sentPayloads.isEmpty)
     }
 
     @Test @MainActor func missionBeforeSessionQueuesStartupAction() throws {

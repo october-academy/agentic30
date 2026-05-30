@@ -1096,6 +1096,30 @@ async function handleClientMessage(socket, payload) {
     });
       return;
     }
+    case "office_hours_start": {
+      const session = getSession(payload.sessionId);
+      if (session.pendingUserInput) {
+        throw new Error("This session is waiting for structured input.");
+      }
+      const context = String(payload.context || "").trim();
+      const visiblePrompt = String(payload.visiblePrompt || "Day999 Office Hours").trim() || "Day999 Office Hours";
+      markWorkspaceSetupFirstInput("office_hours_start");
+      if (state.activeRuns.has(session.id)) {
+        send(socket, {
+          type: "error",
+          sessionId: session.id,
+          message: "Office Hours is waiting for the current run to finish.",
+        });
+        return;
+      }
+      cancelWarmSession(session.id);
+      await runOfficeHours(session, {
+        context,
+        originalPrompt: visiblePrompt,
+        source: payload.source || "manual",
+      });
+      return;
+    }
     case "foundation_first_prompt": {
       // AI-driven daily first prompt generator (Foundation Day 0/2-7).
       // Returns the 3-section minimal opener (yesterday / today / question)
@@ -1892,7 +1916,9 @@ async function runPrompt(
         ? "bip_draft"
         : prompt.startsWith("/office-hours-docs")
           ? "office_hours_docs"
-        : "chat",
+          : prompt.startsWith("/office-hours")
+            ? "office_hours"
+            : "chat",
     prompt_length: prompt.length,
   });
   const runStartedAt = performance.now();
@@ -1913,6 +1939,17 @@ async function runPrompt(
   if (officeHoursDocsMatch) {
     const topic = (officeHoursDocsMatch[1] || "").trim();
     await runOfficeHoursDocs(session, topic, prompt);
+    return;
+  }
+
+  const officeHoursMatch = prompt.match(/^\/office-hours(?:\s+([\s\S]*))?$/i);
+  if (officeHoursMatch) {
+    const context = (officeHoursMatch[1] || "").trim() || activeOfficeHoursContext(session);
+    await runOfficeHours(session, {
+      context,
+      originalPrompt: prompt,
+      source: "slash_command",
+    });
     return;
   }
 
@@ -1982,7 +2019,47 @@ async function runPrompt(
       abortController.abort();
     };
 
-    const route = classifyChatExecutionRoute(prompt, { executionIntent });
+    let route = classifyChatExecutionRoute(prompt, { executionIntent });
+    const officeHoursContext = activeOfficeHoursContext(session);
+    const officeHoursRuntimeForRun = session.runtime?.officeHours?.active === true
+      ? { ...session.runtime.officeHours, context: officeHoursContext }
+      : null;
+    let routedSpecialist = specialist;
+    let systemPromptOverride = "";
+    if (officeHoursContext && !routedSpecialist) {
+      if (route.executionMode === "fast_chat" || route.executionMode === "instant_chat") {
+        route = {
+          ...route,
+          executionMode: "memory_chat",
+          reason: "office_hours_context_chat",
+          contextSummary: "context=office_hours",
+          inlineBipContext: false,
+          approvedToolExecution: false,
+        };
+      }
+      routedSpecialist = selectOfficeHoursSpecialist({
+        context: officeHoursContext,
+        lastAnswer: prompt,
+      });
+      const officeHoursSpecialistInjection = buildSpecialistInjection(routedSpecialist, {
+        provider: session.provider,
+      });
+      systemPromptOverride = buildOfficeHoursChatSystemPrompt(workspaceRoot, {
+        specialistInjection: officeHoursSpecialistInjection,
+        context: officeHoursContext,
+      });
+      telemetry.captureEvent("mac_sidecar_specialist_routed", {
+        session_id: session.id,
+        stage: "office_hours_continuation",
+        specialist_id: routedSpecialist.id,
+        phase: routedSpecialist.phase,
+        decision_kind: routedSpecialist.decisionKind,
+        vendor_used: Boolean(
+          routedSpecialist?.vendor?.claude?.exists
+            && routedSpecialist?.vendor?.codex?.exists,
+        ),
+      });
+    }
     recordMessageTiming(session, assistantMessage, runStartedAt, "route.classified", route);
     emitChatRunPhase(session, assistantMessage.id, `route=${route.executionMode} reason=${route.reason}`);
     if (route.executionMode === "instant_chat") {
@@ -2050,7 +2127,7 @@ async function runPrompt(
       sessionIdForMcp: session.id,
       executionMode: route.executionMode,
       approvedToolExecution: route.approvedToolExecution === true,
-      specialist,
+      specialist: routedSpecialist,
       onTextDelta: (chunk) => {
         emitAgentEvent(session, assistantMessage.id, {
           eventType: "message.delta",
@@ -2080,7 +2157,7 @@ async function runPrompt(
         });
       },
       onRuntimeUpdate: async (nextRuntime) => {
-        session.runtime = nextRuntime;
+        session.runtime = attachOfficeHoursRuntime(nextRuntime, officeHoursRuntimeForRun);
         recordMessageTiming(session, assistantMessage, runStartedAt, "runtime.updated", {
           hasCodexThread: Boolean(nextRuntime?.codexThreadId),
           hasClaudeSession: Boolean(nextRuntime?.claudeSessionId),
@@ -2108,9 +2185,13 @@ async function runPrompt(
           event.once ? { once: true, seen: seenRunPhases } : {},
         );
       },
+      systemPromptOverride,
     });
 
-    session.runtime = mergeProviderRuntime(session.runtime, runtime);
+    session.runtime = attachOfficeHoursRuntime(
+      mergeProviderRuntime(session.runtime, runtime),
+      officeHoursRuntimeForRun,
+    );
     setAssistantText(session, assistantMessage.id, assistantMessage.content);
     recordMessageTiming(session, assistantMessage, runStartedAt, "provider.call_finished");
 
@@ -3009,6 +3090,82 @@ async function runNextQueuedPrompt(sessionId) {
   });
 }
 
+function clampOfficeHoursContext(context = "") {
+  return String(context || "").trim().slice(0, 16_000);
+}
+
+function buildOfficeHoursRuntime(context = "", source = "manual") {
+  return {
+    active: true,
+    source: String(source || "manual"),
+    startedAt: new Date().toISOString(),
+    context: clampOfficeHoursContext(context),
+  };
+}
+
+function attachOfficeHoursRuntime(runtime = {}, officeHours = null) {
+  if (!officeHours) return runtime || {};
+  return {
+    ...(runtime || {}),
+    officeHours: {
+      ...officeHours,
+      active: true,
+    },
+  };
+}
+
+function activeOfficeHoursContext(session = null) {
+  const officeHours = session?.runtime?.officeHours;
+  if (officeHours?.active !== true) return "";
+  return clampOfficeHoursContext(officeHours.context || "");
+}
+
+function buildOfficeHoursChatPrompt({ context = "", userPrompt = "" } = {}) {
+  const sections = [
+    "Day999 Office Hours를 시작한다.",
+    "지금까지 project, scan, workspace, 그리고 사용자가 Day 1에서 질의응답한 내용을 바탕으로 YC Office Hours 대화를 진행한다.",
+    "첫 응답은 현재 핵심 가설을 3-4줄로 요약한 뒤, 가장 약한 가정 하나를 겨냥하는 질문 정확히 1개만 물어본다.",
+  ];
+  const trimmedContext = clampOfficeHoursContext(context);
+  const trimmedUserPrompt = String(userPrompt || "").trim();
+  if (trimmedContext) {
+    sections.push("## Context");
+    sections.push(trimmedContext);
+  }
+  if (trimmedUserPrompt) {
+    sections.push("## User Request");
+    sections.push(trimmedUserPrompt);
+  }
+  return sections.join("\n\n");
+}
+
+function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
+  specialistInjection = "",
+  context = "",
+} = {}) {
+  return [
+    "## Agentic30 Day999 Office Hours",
+    "Use the office-hours specialist for this whole session.",
+    "Keep this as a chat conversation, not a one-shot report.",
+    "Ask one forcing question at a time. Push vague answers toward names, recent behavior, money/time cost, status quo, and the narrowest wedge.",
+    "Use workspace facts and Day 1 answers before generic startup advice.",
+    "Do not edit files or write artifacts unless the user explicitly asks for implementation or document writing later.",
+    `Workspace root: ${workspaceRootValue || workspaceRoot}`,
+    specialistInjection ? `\n${specialistInjection}` : "",
+    context ? `\n## Day999 Context\n${clampOfficeHoursContext(context)}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+function selectOfficeHoursSpecialist({ context = "", lastAnswer = "" } = {}) {
+  return selectSpecialist({
+    bipSetupGate: currentBipSetupGate(),
+    doc: null,
+    lastAnswer,
+    promptText: "/office-hours",
+    observations: context,
+  });
+}
+
 function scheduleQueuedPromptRun(session) {
   queueMicrotask(() => {
     fireAndForget("runNextQueuedPrompt", runNextQueuedPrompt(session.id), {
@@ -3016,6 +3173,169 @@ function scheduleQueuedPromptRun(session) {
       provider: session.provider,
     });
   });
+}
+
+async function runOfficeHours(session, {
+  context = "",
+  originalPrompt = "Day999 Office Hours",
+  source = "manual",
+} = {}) {
+  if (state.activeRuns.has(session.id)) {
+    throw new Error("This session is already running.");
+  }
+
+  const authState = getProviderAuthState(session.provider);
+  if (!authState.available) {
+    throw new Error(authState.message);
+  }
+
+  const officeHoursRuntime = buildOfficeHoursRuntime(context, source);
+  const visiblePrompt = String(originalPrompt || "Day999 Office Hours").trim() || "Day999 Office Hours";
+  const abortController = new AbortController();
+  const runKey = randomUUID();
+  const assistantMessage = makeMessage({
+    role: "assistant",
+    provider: session.provider,
+    content: "",
+    state: "streaming",
+  });
+
+  session.messages.push(
+    makeMessage({ role: "user", provider: session.provider, content: visiblePrompt, state: "final" }),
+    assistantMessage,
+  );
+  if (!session.title || session.title === "New Session") {
+    session.title = "Day999 Office Hours";
+  }
+  session.status = "running";
+  session.error = null;
+  session.pendingUserInput = null;
+  session.runtime = attachOfficeHoursRuntime(session.runtime, officeHoursRuntime);
+  touch(session);
+  await persistSessions();
+  broadcast({ type: "session_updated", session });
+
+  state.activeRuns.set(session.id, {
+    runKey,
+    abortController,
+    stop: null,
+  });
+
+  telemetry.captureEvent("mac_sidecar_office_hours_started", {
+    session_id: session.id,
+    provider: session.provider,
+    source: officeHoursRuntime.source,
+    context_length: officeHoursRuntime.context.length,
+  });
+
+  try {
+    state.activeRuns.get(session.id).stop = async () => {
+      abortController.abort();
+    };
+
+    const officeHoursSelection = selectOfficeHoursSpecialist({
+      context: officeHoursRuntime.context,
+      lastAnswer: visiblePrompt,
+    });
+    telemetry.captureEvent("mac_sidecar_specialist_routed", {
+      session_id: session.id,
+      stage: "office_hours",
+      specialist_id: officeHoursSelection.id,
+      phase: officeHoursSelection.phase,
+      decision_kind: officeHoursSelection.decisionKind,
+      vendor_used: Boolean(
+        officeHoursSelection?.vendor?.claude?.exists
+          && officeHoursSelection?.vendor?.codex?.exists,
+      ),
+    });
+    const officeHoursSpecialistInjection = buildSpecialistInjection(officeHoursSelection, {
+      provider: session.provider,
+    });
+    const result = await runProviderStream({
+      provider: session.provider,
+      sessionRuntime: session.runtime,
+      prompt: buildOfficeHoursChatPrompt({ context: officeHoursRuntime.context }),
+      model: session.model,
+      workspaceRoot,
+      abortController,
+      sessionIdForMcp: session.id,
+      executionMode: "memory_chat",
+      approvedToolExecution: false,
+      specialist: officeHoursSelection,
+      onTextDelta: (text) => appendAssistantText(session, assistantMessage.id, text),
+      onTextReplace: (text) => setAssistantText(session, assistantMessage.id, text),
+      onToolEvent: (toolEvent) => {
+        broadcast({
+          type: "tool_event",
+          sessionId: session.id,
+          messageId: assistantMessage.id,
+          phase: toolEvent.phase,
+          toolName: toolEvent.toolName,
+          toolCallKey: toolEvent.toolCallKey,
+          payload: toolEvent.payload,
+          summary: formatChatToolEvent(toolEvent),
+        });
+      },
+      onRuntimeUpdate: (runtime) => {
+        session.runtime = attachOfficeHoursRuntime(runtime, officeHoursRuntime);
+        touch(session);
+        fireAndForget("persist_sessions_office_hours_runtime", persistSessions());
+        broadcast({ type: "session_updated", session });
+      },
+      systemPromptOverride: buildOfficeHoursChatSystemPrompt(workspaceRoot, {
+        specialistInjection: officeHoursSpecialistInjection,
+        context: officeHoursRuntime.context,
+      }),
+    });
+
+    session.runtime = attachOfficeHoursRuntime(
+      mergeProviderRuntime(session.runtime, result.runtime),
+      officeHoursRuntime,
+    );
+    assistantMessage.state = "final";
+    session.status = "idle";
+    session.error = null;
+  } catch (error) {
+    if (abortController.signal.aborted || error?.name === "AbortError") {
+      telemetry.captureEvent("mac_sidecar_office_hours_aborted", {
+        session_id: session.id,
+        provider: session.provider,
+      });
+      assistantMessage.state = "final";
+      session.status = "idle";
+      session.error = null;
+    } else {
+      telemetry.captureException(error, {
+        operation: "runOfficeHours",
+        session_id: session.id,
+        provider: session.provider,
+      });
+      assistantMessage.state = "error";
+      assistantMessage.error = formatError(error);
+      if (!assistantMessage.content) {
+        assistantMessage.content = `Office Hours failed: ${formatError(error)}`;
+      }
+      session.status = "error";
+      session.error = formatError(error);
+      broadcast({
+        type: "error",
+        sessionId: session.id,
+        message: formatError(error),
+      });
+    }
+  } finally {
+    if (session.status === "idle" && assistantMessage.state === "final") {
+      telemetry.captureEvent("mac_sidecar_office_hours_completed", {
+        session_id: session.id,
+        provider: session.provider,
+      });
+    }
+    state.activeRuns.delete(session.id);
+    touch(session);
+    await persistSessions();
+    broadcast({ type: "session_updated", session });
+    scheduleQueuedPromptRun(session);
+  }
 }
 
 async function runOfficeHoursDocs(session, topic, originalPrompt) {

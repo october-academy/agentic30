@@ -975,6 +975,7 @@ final class AgenticViewModel: ObservableObject {
     private var requestedInitialBipMission = false
     private var activeOnboardingWorkspacePrefetchFingerprint: String?
     private var replacementSessionCreateInFlight = false
+    private var day999OfficeHoursSessionCreateInFlight = false
     private var latestCurriculumQuestionReframesByKey: [String: CurriculumQuestionReframeRecord] = [:]
     private var lastNewsMarketRadarViewedAt: Date?
     private var lastBipResearchViewedAt: Date?
@@ -1788,6 +1789,7 @@ final class AgenticViewModel: ObservableObject {
         authSession = nil
         sidecar.stop()
         started = false
+        day999OfficeHoursSessionCreateInFlight = false
     }
 
     func reconnectSidecar() {
@@ -1804,6 +1806,7 @@ final class AgenticViewModel: ObservableObject {
         started = false
         requestedInitialBipGate = false
         requestedInitialBipMission = false
+        day999OfficeHoursSessionCreateInFlight = false
         start()
     }
 
@@ -1844,6 +1847,23 @@ final class AgenticViewModel: ObservableObject {
             payload["suppressBootstrapIntake"] = true
         }
         return sidecar.send(payload: payload)
+    }
+
+    @discardableResult
+    func ensureDay999OfficeHoursSession() -> Bool {
+        if selectedSession != nil {
+            day999OfficeHoursSessionCreateInFlight = false
+            return true
+        }
+        guard isConnected else { return false }
+        guard !day999OfficeHoursSessionCreateInFlight else { return false }
+
+        day999OfficeHoursSessionCreateInFlight = true
+        if createSession(provider: selectedProvider, source: "day999_office_hours") {
+            return false
+        }
+        day999OfficeHoursSessionCreateInFlight = false
+        return false
     }
 
     private func createReplacementSessionIfNeeded(source: String) {
@@ -2002,6 +2022,34 @@ final class AgenticViewModel: ObservableObject {
         guard !trimmed.isEmpty else { return }
         draft = "Day 1에서 \"\(trimmed)\"을(를) 오늘 실행할 검증 행동으로 고르고 싶어. 한 문장 실행 계획으로 구체화해줘."
         sendPrompt()
+    }
+
+    @discardableResult
+    func startDay999OfficeHours(sessionID: String, context: String) -> Bool {
+        let trimmedSessionID = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSessionID.isEmpty else { return false }
+        guard isConnected else {
+            lastError = "Sidecar 연결 후 Day999 Office Hours를 시작할 수 있습니다."
+            return false
+        }
+
+        let trimmedContext = context.trimmingCharacters(in: .whitespacesAndNewlines)
+        PostHogTelemetry.capture(
+            "mac_day999_office_hours_start_requested",
+            properties: [
+                "session_id": trimmedSessionID,
+                "context_length": trimmedContext.count,
+            ],
+            authSession: macAuthSession
+        )
+
+        return sidecar.send(payload: [
+            "type": "office_hours_start",
+            "sessionId": trimmedSessionID,
+            "source": "day999",
+            "visiblePrompt": "Day999 Office Hours",
+            "context": trimmedContext,
+        ])
     }
 
     func sendPrompt() {
@@ -3914,6 +3962,7 @@ final class AgenticViewModel: ObservableObject {
         case "sidecar_status":
             connectionLabel = event.message ?? connectionLabel
             isConnected = false
+            day999OfficeHoursSessionCreateInFlight = false
             PostHogTelemetry.capture("mac_sidecar_status", properties: [
                 "message": event.message ?? "",
             ], authSession: macAuthSession)
@@ -3921,6 +3970,7 @@ final class AgenticViewModel: ObservableObject {
             let message = event.message ?? "Sidecar stopped unexpectedly."
             connectionLabel = message
             isConnected = false
+            day999OfficeHoursSessionCreateInFlight = false
             markRunningSessionsRecoverableAfterSidecarExit(message: message)
             markStartupQueuedActionFailed(message)
             refreshPresentationState()
@@ -3951,6 +4001,9 @@ final class AgenticViewModel: ObservableObject {
                 "notion_connected": notionConnected,
             ], authSession: macAuthSession)
             ensureSelection()
+            if selectedSession != nil {
+                day999OfficeHoursSessionCreateInFlight = false
+            }
             recordStartupSessionAppearIfNeeded(source: "ready")
             sendAuthContextToSidecar()
             syncProviderSettingsToSidecar()
@@ -3971,24 +4024,16 @@ final class AgenticViewModel: ObservableObject {
             if let sessions = event.sessions {
                 self.sessions = sessions.sorted(by: { $0.updatedAt > $1.updatedAt })
                 ensureSelection()
+                if selectedSession != nil {
+                    day999OfficeHoursSessionCreateInFlight = false
+                }
                 recordStartupSessionAppearIfNeeded(source: "sessions_snapshot")
                 refreshPresentationState()
                 requestCodexWarmupIfNeeded()
             }
         case "session_created":
             if let session = event.session {
-                replacementSessionCreateInFlight = false
-                upsert(session)
-                selectedSessionID = session.id
-                PostHogTelemetry.capture("mac_session_created", properties: [
-                    "session_id": session.id,
-                    "provider": session.provider.rawValue,
-                ], authSession: macAuthSession)
-                recordStartupSessionAppearIfNeeded(source: "session_created")
-                refreshPresentationState()
-                requestCodexWarmupIfNeeded()
-                requestInitialBipGateIfNeeded()
-                flushStartupQueuedActionIfPossible()
+                handleSessionCreated(session)
             }
         case "session_updated":
             if let session = event.session {
@@ -4447,6 +4492,7 @@ final class AgenticViewModel: ObservableObject {
             if event.sessionId == nil {
                 connectionLabel = event.message ?? connectionLabel
                 isConnected = false
+                day999OfficeHoursSessionCreateInFlight = false
                 if shouldRecoverRunningSessions(forGlobalSidecarError: event.message) {
                     markRunningSessionsRecoverableAfterSidecarExit(
                         message: event.message ?? "Sidecar connection closed."
@@ -5341,6 +5387,10 @@ final class AgenticViewModel: ObservableObject {
         upsert(session)
     }
 
+    func applySessionCreatedForTesting(_ session: ChatSession) {
+        handleSessionCreated(session)
+    }
+
     func applySidecarEventForTesting(_ event: SidecarEvent) {
         handle(event)
     }
@@ -5520,6 +5570,22 @@ final class AgenticViewModel: ObservableObject {
         if selectedSessionID == nil {
             selectedSessionID = session.id
         }
+    }
+
+    private func handleSessionCreated(_ session: ChatSession) {
+        replacementSessionCreateInFlight = false
+        day999OfficeHoursSessionCreateInFlight = false
+        upsert(session)
+        selectedSessionID = session.id
+        PostHogTelemetry.capture("mac_session_created", properties: [
+            "session_id": session.id,
+            "provider": session.provider.rawValue,
+        ], authSession: macAuthSession)
+        recordStartupSessionAppearIfNeeded(source: "session_created")
+        refreshPresentationState()
+        requestCodexWarmupIfNeeded()
+        requestInitialBipGateIfNeeded()
+        flushStartupQueuedActionIfPossible()
     }
 
     private func sanitizedSessionSnapshot(_ session: ChatSession) -> ChatSession {
@@ -7026,6 +7092,7 @@ private extension AgenticViewModel {
         requestedInitialBipMission = false
         activeOnboardingWorkspacePrefetchFingerprint = nil
         replacementSessionCreateInFlight = false
+        day999OfficeHoursSessionCreateInFlight = false
         latestCurriculumQuestionReframesByKey = [:]
         lastNewsMarketRadarViewedAt = nil
         injectedFoundationFirstPromptKeys = []
