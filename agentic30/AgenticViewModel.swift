@@ -975,7 +975,7 @@ final class AgenticViewModel: ObservableObject {
     private var requestedInitialBipMission = false
     private var activeOnboardingWorkspacePrefetchFingerprint: String?
     private var replacementSessionCreateInFlight = false
-    private var day999OfficeHoursSessionCreateInFlight = false
+    private var officeHoursSessionCreateInFlight = false
     private var latestCurriculumQuestionReframesByKey: [String: CurriculumQuestionReframeRecord] = [:]
     private var lastNewsMarketRadarViewedAt: Date?
     private var lastBipResearchViewedAt: Date?
@@ -1789,7 +1789,7 @@ final class AgenticViewModel: ObservableObject {
         authSession = nil
         sidecar.stop()
         started = false
-        day999OfficeHoursSessionCreateInFlight = false
+        officeHoursSessionCreateInFlight = false
     }
 
     func reconnectSidecar() {
@@ -1806,7 +1806,7 @@ final class AgenticViewModel: ObservableObject {
         started = false
         requestedInitialBipGate = false
         requestedInitialBipMission = false
-        day999OfficeHoursSessionCreateInFlight = false
+        officeHoursSessionCreateInFlight = false
         start()
     }
 
@@ -1850,20 +1850,30 @@ final class AgenticViewModel: ObservableObject {
     }
 
     @discardableResult
-    func ensureDay999OfficeHoursSession() -> Bool {
+    func ensureOfficeHoursSession() -> Bool {
         if selectedSession != nil {
-            day999OfficeHoursSessionCreateInFlight = false
+            officeHoursSessionCreateInFlight = false
             return true
         }
+        #if DEBUG
+        if installUITestingOfficeHoursStructuredPromptSessionIfNeeded() {
+            return true
+        }
+        #endif
         guard isConnected else { return false }
-        guard !day999OfficeHoursSessionCreateInFlight else { return false }
+        guard !officeHoursSessionCreateInFlight else { return false }
 
-        day999OfficeHoursSessionCreateInFlight = true
-        if createSession(provider: selectedProvider, source: "day999_office_hours") {
+        officeHoursSessionCreateInFlight = true
+        if createSession(provider: selectedProvider, source: "day1_step_office_hours") {
             return false
         }
-        day999OfficeHoursSessionCreateInFlight = false
+        officeHoursSessionCreateInFlight = false
         return false
+    }
+
+    @discardableResult
+    func ensureDay999OfficeHoursSession() -> Bool {
+        ensureOfficeHoursSession()
     }
 
     private func createReplacementSessionIfNeeded(source: String) {
@@ -2025,20 +2035,21 @@ final class AgenticViewModel: ObservableObject {
     }
 
     @discardableResult
-    func startDay999OfficeHours(sessionID: String, context: String) -> Bool {
+    func startOfficeHours(sessionID: String, context: String) -> Bool {
         let trimmedSessionID = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSessionID.isEmpty else { return false }
         guard isConnected else {
-            lastError = "Sidecar 연결 후 Day999 Office Hours를 시작할 수 있습니다."
+            lastError = "Sidecar 연결 후 Office Hours를 시작할 수 있습니다."
             return false
         }
 
         let trimmedContext = context.trimmingCharacters(in: .whitespacesAndNewlines)
         PostHogTelemetry.capture(
-            "mac_day999_office_hours_start_requested",
+            "mac_office_hours_start_requested",
             properties: [
                 "session_id": trimmedSessionID,
                 "context_length": trimmedContext.count,
+                "source": "day1_step",
             ],
             authSession: macAuthSession
         )
@@ -2046,10 +2057,15 @@ final class AgenticViewModel: ObservableObject {
         return sidecar.send(payload: [
             "type": "office_hours_start",
             "sessionId": trimmedSessionID,
-            "source": "day999",
-            "visiblePrompt": "Day999 Office Hours",
+            "source": "day1_step",
+            "visiblePrompt": "Office Hours",
             "context": trimmedContext,
         ])
+    }
+
+    @discardableResult
+    func startDay999OfficeHours(sessionID: String, context: String) -> Bool {
+        startOfficeHours(sessionID: sessionID, context: context)
     }
 
     func sendPrompt() {
@@ -2315,6 +2331,13 @@ final class AgenticViewModel: ObservableObject {
         ], authSession: macAuthSession)
         #if DEBUG
         let promptBeforeLocalSubmission = session.pendingUserInput
+        if completeUITestingOfficeHoursStructuredSubmissionIfNeeded(
+            sessionId: session.id,
+            requestId: requestId,
+            promptBeforeLocalSubmission: promptBeforeLocalSubmission
+        ) {
+            return
+        }
         #endif
         let payloadResponses = responses.map { response in
             [
@@ -3967,7 +3990,7 @@ final class AgenticViewModel: ObservableObject {
         case "sidecar_status":
             connectionLabel = event.message ?? connectionLabel
             isConnected = false
-            day999OfficeHoursSessionCreateInFlight = false
+            officeHoursSessionCreateInFlight = false
             PostHogTelemetry.capture("mac_sidecar_status", properties: [
                 "message": event.message ?? "",
             ], authSession: macAuthSession)
@@ -3975,7 +3998,7 @@ final class AgenticViewModel: ObservableObject {
             let message = event.message ?? "Sidecar stopped unexpectedly."
             connectionLabel = message
             isConnected = false
-            day999OfficeHoursSessionCreateInFlight = false
+            officeHoursSessionCreateInFlight = false
             markRunningSessionsRecoverableAfterSidecarExit(message: message)
             markStartupQueuedActionFailed(message)
             refreshPresentationState()
@@ -4007,7 +4030,7 @@ final class AgenticViewModel: ObservableObject {
             ], authSession: macAuthSession)
             ensureSelection()
             if selectedSession != nil {
-                day999OfficeHoursSessionCreateInFlight = false
+                officeHoursSessionCreateInFlight = false
             }
             recordStartupSessionAppearIfNeeded(source: "ready")
             sendAuthContextToSidecar()
@@ -4030,7 +4053,7 @@ final class AgenticViewModel: ObservableObject {
                 self.sessions = sessions.sorted(by: { $0.updatedAt > $1.updatedAt })
                 ensureSelection()
                 if selectedSession != nil {
-                    day999OfficeHoursSessionCreateInFlight = false
+                    officeHoursSessionCreateInFlight = false
                 }
                 recordStartupSessionAppearIfNeeded(source: "sessions_snapshot")
                 refreshPresentationState()
@@ -4497,7 +4520,7 @@ final class AgenticViewModel: ObservableObject {
             if event.sessionId == nil {
                 connectionLabel = event.message ?? connectionLabel
                 isConnected = false
-                day999OfficeHoursSessionCreateInFlight = false
+                officeHoursSessionCreateInFlight = false
                 if shouldRecoverRunningSessions(forGlobalSidecarError: event.message) {
                     markRunningSessionsRecoverableAfterSidecarExit(
                         message: event.message ?? "Sidecar connection closed."
@@ -4724,6 +4747,7 @@ final class AgenticViewModel: ObservableObject {
 
         let stubSessionID = UUID().uuidString
         let pendingUserInput = Self.makeUITestingFoundationDay2QuestionIfNeeded(sessionID: stubSessionID, createdAt: now)
+            ?? Self.makeUITestingOfficeHoursStructuredPromptIfNeeded(sessionID: stubSessionID, createdAt: now)
             ?? Self.makeUITestingIcpStructuredPromptIfNeeded(sessionID: stubSessionID, createdAt: now)
         let session = ChatSession(
             id: pendingUserInput?.sessionId ?? stubSessionID,
@@ -4860,6 +4884,107 @@ final class AgenticViewModel: ObservableObject {
         )
         #else
         return nil
+        #endif
+    }
+
+    private static func makeUITestingOfficeHoursStructuredPromptIfNeeded(
+        sessionID requestedSessionID: String,
+        createdAt: Date
+    ) -> StructuredPromptRequest? {
+        #if DEBUG
+        guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-structured-prompt") else {
+            return nil
+        }
+        return StructuredPromptRequest(
+            requestId: "ui-test-office-hours-request",
+            sessionId: requestedSessionID,
+            toolName: "agentic30_request_user_input",
+            title: "Office Hours",
+            createdAt: createdAt,
+            questions: [
+                StructuredPromptQuestion(
+                    questionId: "office_hours_scope",
+                    header: "고객 접점",
+                    question: "이번 주 실제 고객 접점 범위는 어디까지 잡겠습니까?",
+                    helperText: "선택지는 sidecar structured input으로만 렌더링합니다.",
+                    options: [
+                        StructuredPromptOption(
+                            label: "5명 대화 예약",
+                            description: "실제 후보 5명에게 연락하고 대화 시간을 잡습니다.",
+                            preview: nil,
+                            nextIntent: "book_five_customer_calls"
+                        ),
+                        StructuredPromptOption(
+                            label: "3명 문제 인터뷰",
+                            description: "문제 강도와 현재 대안을 확인하는 짧은 인터뷰를 합니다.",
+                            preview: nil,
+                            nextIntent: "run_three_problem_interviews"
+                        ),
+                        StructuredPromptOption(
+                            label: "1명 유료 제안",
+                            description: "가장 강한 후보에게 유료 파일럿을 제안합니다.",
+                            preview: nil,
+                            nextIntent: "make_one_paid_offer"
+                        ),
+                    ],
+                    multiSelect: false,
+                    allowFreeText: true,
+                    requiresFreeText: false,
+                    freeTextPlaceholder: "예: 5명에게 연락하고 2명 이상 통화 예약",
+                    textMode: .short
+                )
+            ],
+            generation: StructuredPromptGeneration(mode: "office_hours", docType: "day1_step")
+        )
+        #else
+        return nil
+        #endif
+    }
+
+    @discardableResult
+    private func installUITestingOfficeHoursStructuredPromptSessionIfNeeded() -> Bool {
+        #if DEBUG
+        guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-structured-prompt") else {
+            return false
+        }
+        guard selectedSession == nil else { return true }
+
+        let now = Date()
+        let sessionID = "ui-test-office-hours-\(UUID().uuidString)"
+        guard let prompt = Self.makeUITestingOfficeHoursStructuredPromptIfNeeded(
+            sessionID: sessionID,
+            createdAt: now
+        ) else {
+            return false
+        }
+
+        let session = ChatSession(
+            id: sessionID,
+            title: "Office Hours",
+            provider: selectedProvider,
+            model: preferredModel(for: selectedProvider),
+            status: .awaitingInput,
+            createdAt: now,
+            updatedAt: now,
+            error: nil,
+            messages: [],
+            pendingUserInput: prompt,
+            runtime: ChatSessionRuntime(
+                codexThreadId: nil,
+                codexThreadMeta: nil,
+                codexWarm: nil,
+                startupTiming: nil,
+                iddDocumentType: "day1_step",
+                iddMode: "office_hours"
+            )
+        )
+        sessions = [session]
+        selectedSessionID = sessionID
+        officeHoursSessionCreateInFlight = false
+        refreshPresentationState()
+        return true
+        #else
+        return false
         #endif
     }
 
@@ -5094,6 +5219,54 @@ final class AgenticViewModel: ObservableObject {
         iddCurrentDocType = order.drop(while: { $0 != docType }).dropFirst().first
         refreshPresentationState()
         return true
+    }
+
+    private func completeUITestingOfficeHoursStructuredSubmissionIfNeeded(
+        sessionId: String,
+        requestId: String,
+        promptBeforeLocalSubmission: StructuredPromptRequest?
+    ) -> Bool {
+        let arguments = CommandLine.arguments
+        guard arguments.contains("--ui-testing-seed-office-hours-structured-prompt"),
+              let sessionIndex = sessions.firstIndex(where: { $0.id == sessionId }) else {
+            return false
+        }
+        guard sessions[sessionIndex].pendingUserInput?.requestId == requestId else {
+            return true
+        }
+        guard
+              let prompt = promptBeforeLocalSubmission ?? sessions[sessionIndex].pendingUserInput,
+              prompt.requestId == requestId else {
+            return false
+        }
+
+        sessions[sessionIndex].pendingUserInput = nil
+        sessions[sessionIndex].status = .idle
+        sessions[sessionIndex].error = nil
+        sessions[sessionIndex].updatedAt = .now
+        sessions[sessionIndex].messages.append(ChatMessage(
+            id: UUID().uuidString,
+            role: .assistant,
+            provider: sessions[sessionIndex].provider,
+            content: "선택지를 확인했어요. 이제 채팅으로 이어갈 수 있습니다.",
+            state: .final,
+            createdAt: .now,
+            error: nil,
+            bipMissionChoices: nil,
+            providerAuthActions: nil
+        ))
+        submittedStructuredPromptBySession.removeValue(forKey: sessionId)
+        structuredPromptDraftBySession.removeValue(forKey: sessionId)
+        refreshPresentationState()
+        return true
+    }
+
+    func completeUITestingOfficeHoursStructuredPromptIfNeeded(_ prompt: StructuredPromptRequest) -> Bool {
+        completeUITestingOfficeHoursStructuredSubmissionIfNeeded(
+            sessionId: prompt.sessionId,
+            requestId: prompt.requestId,
+            promptBeforeLocalSubmission: prompt
+        )
     }
     #endif
 
@@ -5579,7 +5752,7 @@ final class AgenticViewModel: ObservableObject {
 
     private func handleSessionCreated(_ session: ChatSession) {
         replacementSessionCreateInFlight = false
-        day999OfficeHoursSessionCreateInFlight = false
+        officeHoursSessionCreateInFlight = false
         upsert(session)
         selectedSessionID = session.id
         PostHogTelemetry.capture("mac_session_created", properties: [
@@ -7097,7 +7270,7 @@ private extension AgenticViewModel {
         requestedInitialBipMission = false
         activeOnboardingWorkspacePrefetchFingerprint = nil
         replacementSessionCreateInFlight = false
-        day999OfficeHoursSessionCreateInFlight = false
+        officeHoursSessionCreateInFlight = false
         latestCurriculumQuestionReframesByKey = [:]
         lastNewsMarketRadarViewedAt = nil
         injectedFoundationFirstPromptKeys = []

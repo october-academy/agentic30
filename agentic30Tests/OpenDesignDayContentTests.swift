@@ -4,29 +4,33 @@ import Testing
 @testable import agentic30
 
 struct OpenDesignDayContentTests {
-    @Test func temporaryDay999OfficeHoursCurriculumMarkerIsAvailable() {
-        #expect(AgenticCurriculumDay.day999OfficeHours.day == 999)
-        #expect(AgenticCurriculumDay.day999OfficeHours.shortTitle == "Office Hours")
-        #expect(AgenticCurriculumDay.day999OfficeHours.output == "office-hours chat")
-    }
-
-    @Test func day999TranscriptRowsConvertSyntheticStartPromptToContextRow() {
-        let rows = Day999OfficeHoursTranscriptRow.rows(from: [
-            makeChatMessage(id: "start", role: .user, content: "Day999 Office Hours"),
+    @Test func officeHoursTranscriptRowsConvertSyntheticStartPromptToContextRow() {
+        let rows = OfficeHoursTranscriptRow.rows(from: [
+            makeChatMessage(id: "start", role: .user, content: "Office Hours"),
             makeChatMessage(id: "answer", role: .assistant, content: "현재 강한 가설은 이렇습니다."),
         ])
 
         #expect(rows.count == 2)
         #expect(rows[0].kind == .contextLoaded)
-        #expect(rows[0].content == Day999OfficeHoursTranscriptRow.contextLoadedCopy)
+        #expect(rows[0].content == OfficeHoursTranscriptRow.contextLoadedCopy)
         #expect(rows[0].lineLimit == 1)
         #expect(rows[1].kind == .assistant)
     }
 
-    @Test func day999TranscriptRowsKeepLongUserAndAssistantTextUntruncated() {
+    @Test func officeHoursTranscriptRowsSupportLegacySyntheticStartPrompt() {
+        let rows = OfficeHoursTranscriptRow.rows(from: [
+            makeChatMessage(id: "legacy-start", role: .user, content: "Day999 Office Hours"),
+        ])
+
+        #expect(rows.count == 1)
+        #expect(rows[0].kind == .contextLoaded)
+        #expect(rows[0].content == OfficeHoursTranscriptRow.contextLoadedCopy)
+    }
+
+    @Test func officeHoursTranscriptRowsKeepLongUserAndAssistantTextUntruncated() {
         let longQuestion = String(repeating: "고객에게 무엇을 물어봐야 하는지 더 구체적으로 알고 싶습니다. ", count: 18)
         let longAnswer = String(repeating: "먼저 결제 이유를 만든 사건과 지금 대안을 분리해서 물어보세요. ", count: 22)
-        let rows = Day999OfficeHoursTranscriptRow.rows(from: [
+        let rows = OfficeHoursTranscriptRow.rows(from: [
             makeChatMessage(id: "question", role: .user, content: longQuestion),
             makeChatMessage(id: "answer", role: .assistant, content: longAnswer),
         ])
@@ -40,8 +44,8 @@ struct OpenDesignDayContentTests {
         #expect(rows[1].lineLimit == nil)
     }
 
-    @Test func day999TranscriptRowsKeepEmptyStreamingAssistantForLiveStatus() {
-        let rows = Day999OfficeHoursTranscriptRow.rows(from: [
+    @Test func officeHoursTranscriptRowsKeepEmptyStreamingAssistantForLiveStatus() {
+        let rows = OfficeHoursTranscriptRow.rows(from: [
             makeChatMessage(id: "streaming", role: .assistant, content: "", state: .streaming),
         ])
 
@@ -1104,20 +1108,26 @@ struct OpenDesignDayContentTests {
 
         state.submittedSteps.formUnion([2, 3, 4])
         #expect(state.allInterviewsSubmitted)
-        #expect(state.progressStepCount == 3)
+        #expect(state.progressStepCount == state.finalStepID + 1)
         #expect(state.progressPercent == 90)
 
         state.dayCompleted = true
+        state.activeStepID = state.officeHoursStepID
+        state.maxUnlockedStepID = state.officeHoursStepID
+        #expect(state.normalizedActiveStepID == state.officeHoursStepID)
+        #expect(state.isWorkflowStepUnlocked(state.officeHoursStepID))
+        #expect(state.progressStepCount == state.workflowStepCount)
         #expect(state.progressPercent == 100)
     }
 
     @Test func stepWorkflowSupportsFocusBackAdvanceAndReset() {
         var state = OpenDesignDayInteractionState(totalInterviewSteps: 3)
 
-        #expect(state.workflowStepCount == 5)
+        #expect(state.workflowStepCount == 6)
         #expect(state.workflowNavigationDirection == .neutral)
         #expect(state.isWorkflowStepUnlocked(0))
         #expect(!state.isWorkflowStepUnlocked(1))
+        #expect(!state.isWorkflowStepUnlocked(state.officeHoursStepID))
 
         state.acceptMissionForStepFlow()
         #expect(state.workflowNavigationDirection == .forward)
@@ -1146,6 +1156,17 @@ struct OpenDesignDayContentTests {
         #expect(state.workflowNavigationDirection == .forward)
         #expect(state.normalizedActiveStepID == state.finalStepID)
         #expect(state.isWorkflowStepUnlocked(state.finalStepID))
+        #expect(!state.isWorkflowStepUnlocked(state.officeHoursStepID))
+
+        state.dayCompleted = true
+        state.maxUnlockedStepID = state.officeHoursStepID
+        state.focusWorkflowStep(state.officeHoursStepID)
+        #expect(state.normalizedActiveStepID == state.officeHoursStepID)
+        #expect(state.isWorkflowStepUnlocked(state.officeHoursStepID))
+
+        state.moveToPreviousWorkflowStep()
+        #expect(state.normalizedActiveStepID == state.finalStepID)
+        #expect(state.workflowNavigationDirection == .backward)
 
         state.resetStepFlow()
         #expect(!state.missionAccepted)

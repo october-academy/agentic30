@@ -27,10 +27,9 @@ struct ContentView: View {
     @State private var showsInlineBipReadinessSetup = false
     @State private var selectedOpenDesignReferencePage: OpenDesignReferencePageKind?
     @State private var openDesignDayInteractionStateCache = OpenDesignDayInteractionStateCache()
-    @State private var routesDay1CompletionToDay999 = false
-    @State private var day999OfficeHoursStartedSessionIDs: Set<String> = []
+    @State private var officeHoursStartedSessionIDs: Set<String> = []
 
-    private static let day999TranscriptBottomID = "day999-transcript-bottom"
+    private static let officeHoursTranscriptBottomID = "office-hours-transcript-bottom"
 
     @MainActor
     init(
@@ -182,9 +181,6 @@ struct ContentView: View {
     }
 
     private var workspaceOpenDesignDay: AgenticCurriculumDay {
-        if routesDay1CompletionToDay999 {
-            return AgenticCurriculumDay.day999OfficeHours
-        }
         let dayNumber = OpenDesignWorkspaceDayResolver.dayNumber(
             selectedDay: viewModel.selectedFoundationDay,
             completedDays: viewModel.foundationProgressState.completedDays
@@ -211,7 +207,6 @@ struct ContentView: View {
             from: viewModel.scanResult?.day1AlignmentPlan,
             fallback: viewModel.scanResult?.day1IcpPlan
         )
-        let isDay999OfficeHours = day.day == AgenticCurriculumDay.day999OfficeHours.day
         let shouldUseIntakeOnlyDay1 = day.day == 1
             && !viewModel.isScanning
             && (viewModel.workspaceRoot.isEmpty || viewModel.scanResult?.error?.nonEmpty != nil)
@@ -228,13 +223,21 @@ struct ContentView: View {
             AnyView(inlineStructuredPrompt(prompt, submissionState: submissionState(for: prompt)))
         }
         let situationSummary = isWorkspaceWindow && day.day == 1 ? viewModel.scanResult?.day1SituationSummary : nil
-        let content = ZStack {
-            if isDay999OfficeHours {
-                day999OfficeHoursSurface(
-                    session: session,
-                    day1Content: personalizedDay1Content ?? OpenDesignDayContent.day1
+        let officeHoursStepCard: AnyView? = day.day == 1
+            ? resolvedContent.map { content in
+                AnyView(
+                    openDesignOfficeHoursStepView(
+                        session: session,
+                        day1Content: content,
+                        advanceToNextDay: {
+                            advanceOpenDesignDay(from: day)
+                        }
+                    )
                 )
-            } else if let resolvedContent {
+            }
+            : nil
+        let content = ZStack {
+            if let resolvedContent {
                 OpenDesignDayPageView(
                     content: resolvedContent,
                     interaction: openDesignDayInteractionBinding(for: day, content: resolvedContent),
@@ -273,6 +276,7 @@ struct ContentView: View {
                     },
                     day1DocPreviews: viewModel.iddDocPreviews,
                     day1HandoffPromptCard: day1HandoffPromptCard,
+                    officeHoursStepCard: officeHoursStepCard,
                     activeDay1HandoffDocType: day1HandoffPrompt?.generation?.docType?.lowercased(),
                     pendingDay1HandoffDocType: viewModel.day1DocHandoffPendingDocType,
                     day1HandoffError: viewModel.day1DocHandoffError,
@@ -285,19 +289,12 @@ struct ContentView: View {
                     },
                     completeDay: {
                         _ = viewModel.markFoundationDayCompleted(day.day)
+                        if day.day == 1 {
+                            viewModel.selectFoundationDay(1)
+                        }
                     },
                     advanceToNextDay: {
-                        if day.day == 1 {
-                            clearOpenDesignReferenceRoute()
-                            routesDay1CompletionToDay999 = true
-                            return
-                        }
-                        let nextDay = min(day.day + 1, 30)
-                        guard OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: nextDay),
-                              viewModel.isFoundationDayUnlocked(nextDay) else { return }
-                        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-                            viewModel.selectFoundationDay(nextDay)
-                        }
+                        advanceOpenDesignDay(from: day)
                     },
                     selectDay: { selectedDay in
                         guard OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: selectedDay),
@@ -336,52 +333,45 @@ struct ContentView: View {
         }
     }
 
-    private func day999OfficeHoursSurface(
+    private func openDesignOfficeHoursStepView(
         session: ChatSession?,
-        day1Content: OpenDesignDayContent
+        day1Content: OpenDesignDayContent,
+        advanceToNextDay: @escaping () -> Void
     ) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(spacing: 14) {
-                Text("999")
-                    .font(.system(size: 18, weight: .bold, design: .monospaced))
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("OFFICE HOURS")
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                     .foregroundStyle(OpenDesignDayColor.accent)
-                    .frame(width: 58, height: 44)
-                    .background(
-                        RoundedRectangle(cornerRadius: 11, style: .continuous)
-                            .fill(OpenDesignDayColor.accentDim)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                    .stroke(OpenDesignDayColor.accentLine, lineWidth: 1)
-                            )
-                    )
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Office Hours")
-                        .font(.system(size: 22, weight: .bold))
-                        .foregroundStyle(OpenDesignDayColor.fg)
-                    Text("project, scan, workspace, Day 1 질의응답 맥락으로 대화를 시작합니다.")
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
-                }
+                    .padding(.horizontal, 8)
+                    .frame(height: 22)
+                    .background(Capsule().fill(OpenDesignDayColor.accentDim))
+                    .overlay(Capsule().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
+                Text("Day 1 가설을 gstack 인터뷰로 압축합니다.")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
             }
+            .padding(18)
 
             if let session {
-                day999OfficeHoursChat(session: session, day1Content: day1Content)
+                officeHoursChat(session: session, day1Content: day1Content)
                     .onAppear {
-                        startDay999OfficeHoursIfNeeded(session: session, day1Content: day1Content)
+                        startOfficeHoursIfNeeded(session: session, day1Content: day1Content)
                     }
                     .onChange(of: session.status) { _, _ in
-                        startDay999OfficeHoursIfNeeded(session: session, day1Content: day1Content)
+                        startOfficeHoursIfNeeded(session: session, day1Content: day1Content)
                     }
                     .onChange(of: viewModel.isConnected) { _, _ in
-                        startDay999OfficeHoursIfNeeded(session: session, day1Content: day1Content)
+                        startOfficeHoursIfNeeded(session: session, day1Content: day1Content)
                     }
             } else {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(viewModel.isConnected ? "채팅 세션을 만드는 중입니다." : "채팅 세션을 준비 중입니다.")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(OpenDesignDayColor.fg)
-                    Text(viewModel.isConnected ? "세션이 만들어지면 Day999 Office Hours를 자동으로 시작합니다." : "Sidecar 연결 후 자동으로 시작합니다.")
+                    Text(viewModel.isConnected ? "세션이 만들어지면 Office Hours를 자동으로 시작합니다." : "Sidecar 연결 후 자동으로 시작합니다.")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(OpenDesignDayColor.fgSecondary)
                 }
@@ -396,54 +386,95 @@ struct ContentView: View {
                         )
                 )
                 .onAppear {
-                    viewModel.ensureDay999OfficeHoursSession()
+                    viewModel.ensureOfficeHoursSession()
                 }
                 .onChange(of: viewModel.isConnected) { _, _ in
-                    viewModel.ensureDay999OfficeHoursSession()
+                    viewModel.ensureOfficeHoursSession()
                 }
             }
+
+            officeHoursStepFooter(advanceToNextDay: advanceToNextDay)
         }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 24)
-        .frame(maxWidth: 1040, maxHeight: .infinity, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(OpenDesignDayColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(OpenDesignDayColor.accentLine, lineWidth: 1)
+                )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("opendesign.day999.main")
+        .accessibilityIdentifier("opendesign.officeHours.main")
     }
 
-    private func day999OfficeHoursChat(
+    private func officeHoursStepFooter(advanceToNextDay: @escaping () -> Void) -> some View {
+        HStack(spacing: 12) {
+            Text("Day 1 완료 · 선택지 질문은 채팅 안의 카드에서 답합니다.")
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.accent)
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+
+            Button(action: advanceToNextDay) {
+                HStack(spacing: 6) {
+                    Text("Day 2로 이동")
+                    Image(systemName: "arrow.turn.down.left")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.bgDeep)
+                .padding(.horizontal, 16)
+                .frame(height: 30)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(OpenDesignDayColor.accent)
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("opendesign.officeHours.advanceToDay2")
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 48)
+        .background(OpenDesignDayColor.bgDeep)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
+    }
+
+    private func officeHoursChat(
         session: ChatSession,
         day1Content: OpenDesignDayContent
     ) -> some View {
-        let rows = Day999OfficeHoursTranscriptRow.rows(from: session.messages)
+        let rows = OfficeHoursTranscriptRow.rows(from: session.messages)
         return VStack(alignment: .leading, spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
                         if rows.isEmpty {
-                            day999EmptyTranscript()
+                            officeHoursEmptyTranscript()
                         } else {
                             ForEach(rows) { row in
-                                day999TranscriptRow(row, session: session)
+                                officeHoursTranscriptRow(row, session: session)
                                     .id(row.id)
                             }
                         }
 
                         Color.clear
                             .frame(height: 1)
-                            .id(Self.day999TranscriptBottomID)
+                            .id(Self.officeHoursTranscriptBottomID)
                     }
                     .padding(18)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityIdentifier("opendesign.day999.chatTranscript")
+                .accessibilityIdentifier("opendesign.officeHours.chatTranscript")
                 .onAppear {
-                    scrollDay999Transcript(proxy)
+                    scrollOfficeHoursTranscript(proxy)
                 }
                 .onChange(of: session.updatedAt) { _, _ in
-                    scrollDay999Transcript(proxy)
+                    scrollOfficeHoursTranscript(proxy)
                 }
                 .onChange(of: rows.count) { _, _ in
-                    scrollDay999Transcript(proxy)
+                    scrollOfficeHoursTranscript(proxy)
                 }
             }
 
@@ -453,15 +484,19 @@ struct ContentView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 if let pendingPrompt = session.pendingUserInput {
-                    inlineStructuredPrompt(pendingPrompt, submissionState: submissionState(for: pendingPrompt))
+                    inlineStructuredPrompt(
+                        pendingPrompt,
+                        compact: true,
+                        submissionState: submissionState(for: pendingPrompt)
+                    )
                 } else {
-                    day999PromptComposer()
+                    officeHoursPromptComposer()
                 }
             }
             .padding(14)
             .background(OpenDesignDayColor.surface2.opacity(0.74))
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 430, maxHeight: 640, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(OpenDesignDayColor.surface)
@@ -472,19 +507,19 @@ struct ContentView: View {
         )
     }
 
-    private func scrollDay999Transcript(_ proxy: ScrollViewProxy) {
+    private func scrollOfficeHoursTranscript(_ proxy: ScrollViewProxy) {
         DispatchQueue.main.async {
             if reduceMotion {
-                proxy.scrollTo(Self.day999TranscriptBottomID, anchor: .bottom)
+                proxy.scrollTo(Self.officeHoursTranscriptBottomID, anchor: .bottom)
             } else {
                 withAnimation(.easeOut(duration: 0.18)) {
-                    proxy.scrollTo(Self.day999TranscriptBottomID, anchor: .bottom)
+                    proxy.scrollTo(Self.officeHoursTranscriptBottomID, anchor: .bottom)
                 }
             }
         }
     }
 
-    private func day999EmptyTranscript() -> some View {
+    private func officeHoursEmptyTranscript() -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "bubble.left.and.bubble.right.fill")
                 .font(.system(size: 13, weight: .semibold))
@@ -514,8 +549,8 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func day999TranscriptRow(
-        _ row: Day999OfficeHoursTranscriptRow,
+    private func officeHoursTranscriptRow(
+        _ row: OfficeHoursTranscriptRow,
         session: ChatSession
     ) -> some View {
         if row.isContextLoaded {
@@ -532,7 +567,7 @@ struct ContentView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(Capsule().fill(OpenDesignDayColor.accentDim.opacity(0.56)))
-            .accessibilityIdentifier("opendesign.day999.contextLoaded")
+            .accessibilityIdentifier("opendesign.officeHours.contextLoaded")
         } else {
             HStack(alignment: .top, spacing: 10) {
                 if row.isUser {
@@ -551,7 +586,7 @@ struct ContentView: View {
                             isLarge: false
                         )
                     } else {
-                        day999TranscriptBubble(row)
+                        officeHoursTranscriptBubble(row)
                     }
                 }
                 .frame(maxWidth: row.isUser ? 720 : .infinity, alignment: row.isUser ? .trailing : .leading)
@@ -561,11 +596,11 @@ struct ContentView: View {
                 }
             }
             .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("opendesign.day999.message.\(row.id)")
+            .accessibilityIdentifier("opendesign.officeHours.message.\(row.id)")
         }
     }
 
-    private func day999TranscriptBubble(_ row: Day999OfficeHoursTranscriptRow) -> some View {
+    private func officeHoursTranscriptBubble(_ row: OfficeHoursTranscriptRow) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if !row.content.isEmpty {
                 Text(row.content)
@@ -599,7 +634,7 @@ struct ContentView: View {
         )
     }
 
-    private func day999PromptComposer() -> some View {
+    private func officeHoursPromptComposer() -> some View {
         let placeholder = "Office Hours에 이어서 질문하기"
         let canSend = viewModel.canSend
         return HStack(alignment: .bottom, spacing: 10) {
@@ -610,7 +645,7 @@ struct ContentView: View {
                     .scrollContentBackground(.hidden)
                     .background(Color.clear)
                     .frame(minHeight: 54, maxHeight: 110)
-                    .accessibilityIdentifier("opendesign.day999.promptComposer")
+                    .accessibilityIdentifier("opendesign.officeHours.promptComposer")
                     .accessibilityLabel(placeholder)
 
                 if viewModel.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -634,7 +669,7 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
             .disabled(!canSend)
-            .accessibilityIdentifier("opendesign.day999.sendButton")
+            .accessibilityIdentifier("opendesign.officeHours.sendButton")
             .accessibilityLabel("Send Office Hours message")
         }
         .padding(.horizontal, 12)
@@ -649,21 +684,21 @@ struct ContentView: View {
         )
     }
 
-    private func startDay999OfficeHoursIfNeeded(
+    private func startOfficeHoursIfNeeded(
         session: ChatSession,
         day1Content: OpenDesignDayContent
     ) {
         guard session.status == .idle else { return }
         guard session.pendingUserInput == nil else { return }
-        guard !day999OfficeHoursStartedSessionIDs.contains(session.id) else { return }
+        guard !officeHoursStartedSessionIDs.contains(session.id) else { return }
 
-        let context = day999OfficeHoursContext(day1Content: day1Content)
-        if viewModel.startDay999OfficeHours(sessionID: session.id, context: context) {
-            day999OfficeHoursStartedSessionIDs.insert(session.id)
+        let context = officeHoursContext(day1Content: day1Content)
+        if viewModel.startOfficeHours(sessionID: session.id, context: context) {
+            officeHoursStartedSessionIDs.insert(session.id)
         }
     }
 
-    private func day999OfficeHoursContext(day1Content: OpenDesignDayContent) -> String {
+    private func officeHoursContext(day1Content: OpenDesignDayContent) -> String {
         let day1State = openDesignDayInteractionStateCache.state(
             for: OpenDesignDayInteractionKey(
                 workspaceRoot: openDesignInteractionWorkspaceRoot,
@@ -687,7 +722,7 @@ struct ContentView: View {
         }
 
         var lines: [String] = [
-            "Day999 Office Hours context",
+            "Day 1 STEP Office Hours context",
             "Workspace: \(openDesignInteractionWorkspaceRoot)",
         ]
 
@@ -797,6 +832,16 @@ struct ContentView: View {
         }
     }
 
+    private func advanceOpenDesignDay(from day: AgenticCurriculumDay) {
+        let nextDay = min(day.day + 1, 30)
+        guard OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: nextDay),
+              viewModel.isFoundationDayUnlocked(nextDay) else { return }
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+            clearOpenDesignReferenceRoute()
+            viewModel.selectFoundationDay(nextDay)
+        }
+    }
+
     private func resetLocalSwiftUIStateAfterLocalDataReset() {
         currentPromptBindingToken = nil
         showsBipMissionEvidence = false
@@ -806,8 +851,7 @@ struct ContentView: View {
         showsInlineBipReadinessSetup = false
         selectedOpenDesignReferencePage = nil
         openDesignDayInteractionStateCache.removeAll()
-        routesDay1CompletionToDay999 = false
-        day999OfficeHoursStartedSessionIDs.removeAll()
+        officeHoursStartedSessionIDs.removeAll()
     }
 
     private var openDesignInteractionWorkspaceRoot: String {
@@ -2586,9 +2630,7 @@ struct ContentView: View {
                 Spacer(minLength: 0)
 
                 Button {
-                    if !isSubmitting {
-                        submitPrompt(prompt)
-                    }
+                    submitPrompt(prompt)
                 } label: {
                     HStack(spacing: 7) {
                         if isSubmitting {
@@ -2608,7 +2650,7 @@ struct ContentView: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .disabled(!canSubmitPrompt)
+                .accessibilityValue(canSubmitPrompt ? "Ready" : "Incomplete")
                 .accessibilityIdentifier("assistant.structuredContinueButton")
             }
         }
@@ -3268,7 +3310,14 @@ struct ContentView: View {
     }
 
     private func submitPrompt(_ prompt: StructuredPromptRequest) {
+        #if DEBUG
+        if viewModel.completeUITestingOfficeHoursStructuredPromptIfNeeded(prompt) {
+            return
+        }
+        #endif
+
         guard submissionState(for: prompt) == nil else { return }
+        guard canSubmit(prompt) else { return }
 
         let submissions = viewModel.structuredPromptSubmissions(for: prompt)
 
@@ -3321,16 +3370,6 @@ struct AgenticCurriculumDay: Identifiable, Hashable {
     let output: String
 
     var id: Int { day }
-
-    static let day999OfficeHours = AgenticCurriculumDay(
-        day: 999,
-        phase: .foundation,
-        title: "Office Hours",
-        shortTitle: "Office Hours",
-        summary: "Day 1에서 모은 project, scan, workspace, 질의응답 맥락을 바탕으로 YC Office Hours 대화를 시작합니다.",
-        tasks: ["Day 1 핵심 가설 요약", "가장 약한 가정 하나 찾기", "다음 질문 하나로 대화 이어가기"],
-        output: "office-hours chat"
-    )
 
     static let days: [AgenticCurriculumDay] = [
         .init(day: 1, phase: .foundation, title: "목표와 고객 핵심 가설을 만든다", shortTitle: "가설", summary: "프로젝트 목표를 고객, 문제, 확인할 행동과 한 문장으로 맞추고 Day 2 시장 신호 검증 기준으로 둡니다.", tasks: ["프로젝트 목표 한 문장 고정하기", "고객 / 문제 / 확인할 행동 세 요소 작성하기", "품질 게이트 7.0/10 이상인지 확인하고 다음 검증 기준 기록"], output: "day-1-alignment-statement.md, docs/GOAL.md, docs/ICP.md, docs/SPEC.md v0"),

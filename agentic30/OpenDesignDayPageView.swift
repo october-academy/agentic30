@@ -2099,8 +2099,9 @@ struct OpenDesignDayInteractionState: Equatable {
         revisionSteps = revisionSteps.intersection(validStepIDs)
         lockedPrefillStepIDs = lockedPrefillStepIDs.intersection(validStepIDs)
 
-        activeStepID = min(max(activeStepID, 0), finalStepID)
-        maxUnlockedStepID = min(max(maxUnlockedStepID, 0), finalStepID)
+        let workflowUpperBound = dayCompleted ? officeHoursStepID : finalStepID
+        activeStepID = min(max(activeStepID, 0), workflowUpperBound)
+        maxUnlockedStepID = min(max(maxUnlockedStepID, 0), workflowUpperBound)
         if !validStepIDs.contains(1) {
             freeformAnswer = ""
         } else if let firstFreeformAnswer = freeformAnswers[1] {
@@ -2112,12 +2113,19 @@ struct OpenDesignDayInteractionState: Equatable {
         totalInterviewSteps + 1
     }
 
-    var workflowStepCount: Int {
+    var officeHoursStepID: Int {
         totalInterviewSteps + 2
     }
 
+    var workflowStepCount: Int {
+        totalInterviewSteps + 3
+    }
+
     var normalizedActiveStepID: Int {
-        if dayCompleted || allInterviewsSubmitted {
+        if dayCompleted {
+            return min(max(activeStepID, finalStepID), officeHoursStepID)
+        }
+        if allInterviewsSubmitted {
             return min(max(activeStepID, finalStepID), finalStepID)
         }
         if !missionAccepted { return 0 }
@@ -2126,7 +2134,8 @@ struct OpenDesignDayInteractionState: Equatable {
     }
 
     var maxReachableStepID: Int {
-        if dayCompleted || allInterviewsSubmitted { return finalStepID }
+        if dayCompleted { return officeHoursStepID }
+        if allInterviewsSubmitted { return finalStepID }
         if !missionAccepted { return 0 }
         return min(max(maxUnlockedStepID, highestVisibleInterviewStep), totalInterviewSteps)
     }
@@ -2164,13 +2173,14 @@ struct OpenDesignDayInteractionState: Equatable {
     }
 
     var progressStepCount: Int {
-        if allInterviewsSubmitted || dayCompleted { return 3 }
-        if missionAccepted { return 2 }
+        if dayCompleted { return workflowStepCount }
+        if allInterviewsSubmitted { return finalStepID + 1 }
+        if missionAccepted { return normalizedActiveStepID + 1 }
         return 1
     }
 
     var currentProgressScrollTarget: OpenDesignSectionAnchor {
-        if dayCompleted { return .completion }
+        if dayCompleted { return .top }
         if !introStage.revealsSignals { return .top }
         if !missionAccepted { return .mission }
         if normalizedActiveStepID == 0 { return .mission }
@@ -2344,7 +2354,7 @@ struct OpenDesignDayInteractionState: Equatable {
     }
 
     mutating func focusWorkflowStep(_ stepID: Int) {
-        let bounded = min(max(stepID, 0), finalStepID)
+        let bounded = min(max(stepID, 0), officeHoursStepID)
         guard isWorkflowStepUnlocked(bounded) else { return }
         workflowNavigationDirection = OpenDesignWorkflowNavigationDirection.direction(from: normalizedActiveStepID, to: bounded)
         activeStepID = bounded
@@ -2382,6 +2392,7 @@ struct OpenDesignDayInteractionState: Equatable {
     func isWorkflowStepUnlocked(_ stepID: Int) -> Bool {
         if stepID == 0 { return true }
         if stepID == finalStepID { return allInterviewsSubmitted || dayCompleted }
+        if stepID == officeHoursStepID { return dayCompleted }
         guard (1...totalInterviewSteps).contains(stepID) else { return false }
         return missionAccepted && stepID <= maxReachableStepID
     }
@@ -3074,6 +3085,7 @@ struct OpenDesignDayPageView: View {
     let openNewsSettings: () -> Void
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
+    let officeHoursStepCard: AnyView?
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
     let day1HandoffError: String?
@@ -3112,6 +3124,7 @@ struct OpenDesignDayPageView: View {
         openNewsSettings: @escaping () -> Void = {},
         day1DocPreviews: [IddDocPreview] = [],
         day1HandoffPromptCard: AnyView? = nil,
+        officeHoursStepCard: AnyView? = nil,
         activeDay1HandoffDocType: String? = nil,
         pendingDay1HandoffDocType: String? = nil,
         day1HandoffError: String? = nil,
@@ -3136,6 +3149,7 @@ struct OpenDesignDayPageView: View {
         self.openNewsSettings = openNewsSettings
         self.day1DocPreviews = day1DocPreviews
         self.day1HandoffPromptCard = day1HandoffPromptCard
+        self.officeHoursStepCard = officeHoursStepCard
         self.activeDay1HandoffDocType = activeDay1HandoffDocType
         self.pendingDay1HandoffDocType = pendingDay1HandoffDocType
         self.day1HandoffError = day1HandoffError
@@ -3181,6 +3195,7 @@ struct OpenDesignDayPageView: View {
                     openNewsSettings: openNewsSettings,
                     day1DocPreviews: day1DocPreviews,
                     day1HandoffPromptCard: day1HandoffPromptCard,
+                    officeHoursStepCard: officeHoursStepCard,
                     activeDay1HandoffDocType: activeDay1HandoffDocType,
                     pendingDay1HandoffDocType: pendingDay1HandoffDocType,
                     day1HandoffError: day1HandoffError,
@@ -3491,10 +3506,6 @@ struct OpenDesignDayPageView: View {
     }
 
     private func focusCurrentProgress() {
-        if interaction.dayCompleted {
-            advanceToNextDay()
-            return
-        }
         if !interaction.missionAccepted {
             acceptMission()
             return
@@ -3584,13 +3595,13 @@ struct OpenDesignDayPageView: View {
         let shouldRunBurst = !interaction.dayCompleted && !reduceMotion
         withAnimation(.spring(response: reduceMotion ? 0 : 0.30, dampingFraction: 0.88)) {
             interaction.dayCompleted = true
-            interaction.activeStepID = interaction.finalStepID
-            interaction.maxUnlockedStepID = interaction.finalStepID
+            interaction.activeStepID = interaction.officeHoursStepID
+            interaction.maxUnlockedStepID = interaction.officeHoursStepID
         }
         if shouldRunBurst {
             runCompletionBurst()
         }
-        requestScroll(to: .completion)
+        requestScroll(to: .top)
     }
 
     private func requestDayCompletionOnce() {
@@ -3631,11 +3642,11 @@ struct OpenDesignDayPageView: View {
 
         let progress: String
         if interaction.dayCompleted {
-            progress = "Day 1 완료"
+            progress = "STEP \(interaction.workflowStepCount) / \(interaction.workflowStepCount) · Office Hours"
         } else if interaction.allInterviewsSubmitted {
-            progress = "STEP 3 / 3 · 핵심 가설 확정 대기"
+            progress = "STEP \(interaction.finalStepID + 1) / \(interaction.workflowStepCount) · 핵심 가설 확정 대기"
         } else {
-            progress = "STEP 2 / 3 · 질문 \(interaction.highestVisibleInterviewStep) / \(content.interviewSteps.count)"
+            progress = "STEP \(interaction.normalizedActiveStepID + 1) / \(interaction.workflowStepCount) · 질문 \(interaction.highestVisibleInterviewStep) / \(content.interviewSteps.count)"
         }
 
         let choiceLines = content.interviewSteps.map { step -> String in
@@ -3646,7 +3657,7 @@ struct OpenDesignDayPageView: View {
         return """
         Agentic30 Day 1 · Foundation / ICP 좁히기
         먼저 도울 사람을 정해요
-        진행: \(progress) · \(interaction.progressStepCount)/3 · \(interaction.progressPercent)%
+        진행: \(progress) · \(interaction.progressStepCount)/\(interaction.workflowStepCount) · \(interaction.progressPercent)%
 
         \(choiceLines)
         """
@@ -3712,6 +3723,7 @@ struct OpenDesignDayShell: View {
     let openNewsSettings: () -> Void
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
+    let officeHoursStepCard: AnyView?
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
     let day1HandoffError: String?
@@ -3828,6 +3840,7 @@ struct OpenDesignDayShell: View {
                             advanceToNextDay: advanceToNextDay,
                             day1DocPreviews: day1DocPreviews,
                             day1HandoffPromptCard: day1HandoffPromptCard,
+                            officeHoursStepCard: officeHoursStepCard,
                             activeDay1HandoffDocType: activeDay1HandoffDocType,
                             pendingDay1HandoffDocType: pendingDay1HandoffDocType,
                             day1HandoffError: day1HandoffError,
@@ -5919,6 +5932,7 @@ private struct OpenDesignDayMainView: View {
     let advanceToNextDay: () -> Void
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
+    let officeHoursStepCard: AnyView?
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
     let day1HandoffError: String?
@@ -5972,6 +5986,7 @@ private struct OpenDesignDayMainView: View {
                                     advanceToNextDay: advanceToNextDay,
                                     day1DocPreviews: day1DocPreviews,
                                     day1HandoffPromptCard: day1HandoffPromptCard,
+                                    officeHoursStepCard: officeHoursStepCard,
                                     activeDay1HandoffDocType: activeDay1HandoffDocType,
                                     pendingDay1HandoffDocType: pendingDay1HandoffDocType,
                                     day1HandoffError: day1HandoffError,
@@ -6416,6 +6431,7 @@ private struct OpenDesignDayStepWorkspaceView: View {
     let advanceToNextDay: () -> Void
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
+    let officeHoursStepCard: AnyView?
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
     let day1HandoffError: String?
@@ -6469,6 +6485,14 @@ private struct OpenDesignDayStepWorkspaceView: View {
                     activeStepAnchor
                 }
                 .id("active-step-\(activeInterviewStep.id)")
+            } else if interaction.normalizedActiveStepID == interaction.officeHoursStepID,
+                      let officeHoursStepCard {
+                officeHoursStepCard
+                    .transition(workflowPhaseTransition)
+                    .overlay(alignment: .topLeading) {
+                        activeStepAnchor
+                    }
+                    .id("active-step-office-hours")
             } else if interaction.allInterviewsSubmitted {
                 OpenDesignHypothesisConfirmationCard(
                     content: content,
@@ -6659,9 +6683,6 @@ private struct OpenDesignDayHeader: View {
     }
 
     private var progressStepLabel: String {
-        if interaction.dayCompleted || interaction.allInterviewsSubmitted {
-            return "STEP \(interaction.workflowStepCount) / \(interaction.workflowStepCount)"
-        }
         if interaction.missionAccepted {
             return "STEP \(interaction.normalizedActiveStepID + 1) / \(interaction.workflowStepCount)"
         }
@@ -6769,7 +6790,14 @@ private struct OpenDesignStepper: View {
             isCurrent: interaction.normalizedActiveStepID == interaction.finalStepID,
             isUnlocked: interaction.isWorkflowStepUnlocked(interaction.finalStepID)
         )
-        return [start] + questions + [final]
+        let officeHours = StepItem(
+            id: interaction.officeHoursStepID,
+            title: "Office Hours",
+            isDone: false,
+            isCurrent: interaction.normalizedActiveStepID == interaction.officeHoursStepID,
+            isUnlocked: interaction.isWorkflowStepUnlocked(interaction.officeHoursStepID)
+        )
+        return [start] + questions + [final, officeHours]
     }
 
     var body: some View {
@@ -7969,7 +7997,7 @@ private struct OpenDesignHypothesisConfirmationCard: View {
             return "4개 문서 저장"
         }
         if interaction.dayCompleted {
-            return "Day 999로 이동 ↵"
+            return "Office Hours 열기 ↵"
         }
         if let alignmentPlan = content.alignmentPlan {
             if alignmentPlan.signals.evidenceRefs.isEmpty {
@@ -7978,9 +8006,9 @@ private struct OpenDesignHypothesisConfirmationCard: View {
             if !alignmentPlan.qualityGate.passed {
                 return "부족한 항목 다시 고르기"
             }
-            return "Day 999 Office Hours로 넘기기 ↵"
+            return "Office Hours로 넘기기 ↵"
         }
-        return "가설 확정 → Day999로 이동 ↵"
+        return "가설 확정 → Office Hours ↵"
     }
 
     private var confirmButtonDisabled: Bool {
@@ -8016,7 +8044,7 @@ private struct OpenDesignHypothesisConfirmationCard: View {
                 Text("Day 1이 완료됐습니다.")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(OpenDesignDayColor.fg)
-                Text("Day999에서 이 가설을 바탕으로 Office Hours 대화를 시작합니다.")
+                Text("다음 STEP에서 이 가설을 바탕으로 Office Hours 대화를 시작합니다.")
                     .font(.system(size: 12.5, weight: .regular))
                     .foregroundStyle(OpenDesignDayColor.fgSecondary)
             }
@@ -8045,7 +8073,6 @@ private struct OpenDesignHypothesisConfirmationCard: View {
         if !interaction.dayCompleted {
             completeDayAction()
         }
-        advanceToNextDay()
     }
 
     private func beginBulkSaveAnimation() {
@@ -8194,7 +8221,7 @@ private struct OpenDesignMetaPanelView: View {
                             }
                     }
                     .frame(height: 3)
-                    Text("\(interaction.missionAccepted ? "●" : "○") 시작    \(interaction.missionAccepted ? "●" : "○") 질문    \(interaction.allInterviewsSubmitted ? "●" : "○") 확정")
+                    Text("\(interaction.missionAccepted ? "●" : "○") 시작    \(interaction.missionAccepted ? "●" : "○") 질문    \(interaction.allInterviewsSubmitted ? "●" : "○") 확정    \(interaction.dayCompleted ? "●" : "○") Office Hours")
                         .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(OpenDesignDayColor.muted)
                 }

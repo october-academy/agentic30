@@ -1378,7 +1378,7 @@ struct AgenticViewModelAuthTests {
         #expect(viewModel.startupQueuedAction?.summary == "Day 1에서 먼저 볼 고객 증거를 정리해줘")
     }
 
-    @Test @MainActor func day999OfficeHoursStartSendsContextPayload() throws {
+    @Test @MainActor func officeHoursStepStartSendsContextPayload() throws {
         let (workspace, cleanup) = try Self.installTemporaryWorkspace()
         defer { cleanup() }
         let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
@@ -1389,7 +1389,7 @@ struct AgenticViewModelAuthTests {
         )
         sidecar.resetSentPayloads()
 
-        let sent = viewModel.startDay999OfficeHours(
+        let sent = viewModel.startOfficeHours(
             sessionID: "session-1",
             context: "project + Day 1 answers"
         )
@@ -1398,12 +1398,12 @@ struct AgenticViewModelAuthTests {
         let payload = try #require(sidecar.sentPayloads.first)
         #expect(payload["type"] as? String == "office_hours_start")
         #expect(payload["sessionId"] as? String == "session-1")
-        #expect(payload["source"] as? String == "day999")
-        #expect(payload["visiblePrompt"] as? String == "Day999 Office Hours")
+        #expect(payload["source"] as? String == "day1_step")
+        #expect(payload["visiblePrompt"] as? String == "Office Hours")
         #expect(payload["context"] as? String == "project + Day 1 answers")
     }
 
-    @Test @MainActor func day999OfficeHoursEnsureSessionCreatesSessionWhenConnected() throws {
+    @Test @MainActor func officeHoursStepEnsureSessionCreatesSessionWhenConnected() throws {
         let (workspace, cleanup) = try Self.installTemporaryWorkspace()
         defer { cleanup() }
         let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
@@ -1413,7 +1413,7 @@ struct AgenticViewModelAuthTests {
             currentDay: 1
         )
 
-        let hasSession = viewModel.ensureDay999OfficeHoursSession()
+        let hasSession = viewModel.ensureOfficeHoursSession()
 
         #expect(!hasSession)
         let payload = try #require(sidecar.sentPayloads.first)
@@ -1422,7 +1422,7 @@ struct AgenticViewModelAuthTests {
         #expect(payload["model"] as? String == AgentModelCatalog.defaultModelID(for: .codex))
     }
 
-    @Test @MainActor func day999OfficeHoursEnsureSessionDoesNotDuplicateCreateWhileInFlight() throws {
+    @Test @MainActor func officeHoursStepEnsureSessionDoesNotDuplicateCreateWhileInFlight() throws {
         let (workspace, cleanup) = try Self.installTemporaryWorkspace()
         defer { cleanup() }
         let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
@@ -1432,14 +1432,14 @@ struct AgenticViewModelAuthTests {
             currentDay: 1
         )
 
-        _ = viewModel.ensureDay999OfficeHoursSession()
-        _ = viewModel.ensureDay999OfficeHoursSession()
+        _ = viewModel.ensureOfficeHoursSession()
+        _ = viewModel.ensureOfficeHoursSession()
 
         let createPayloads = sidecar.sentPayloads.filter { $0["type"] as? String == "create_session" }
         #expect(createPayloads.count == 1)
     }
 
-    @Test @MainActor func day999OfficeHoursEnsureSessionUsesCreatedSession() throws {
+    @Test @MainActor func officeHoursStepEnsureSessionUsesCreatedSession() throws {
         let (workspace, cleanup) = try Self.installTemporaryWorkspace()
         defer { cleanup() }
         let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
@@ -1448,12 +1448,12 @@ struct AgenticViewModelAuthTests {
             workspace: workspace,
             currentDay: 1
         )
-        _ = viewModel.ensureDay999OfficeHoursSession()
+        _ = viewModel.ensureOfficeHoursSession()
 
         viewModel.applySessionCreatedForTesting(
             ChatSession(
-                id: "day999-session",
-                title: "Day999 Office Hours",
+                id: "office-hours-session",
+                title: "Office Hours",
                 provider: .codex,
                 model: AgentModelCatalog.defaultModelID(for: .codex),
                 status: .idle,
@@ -1467,8 +1467,8 @@ struct AgenticViewModelAuthTests {
         )
         sidecar.resetSentPayloads()
 
-        #expect(viewModel.selectedSession?.id == "day999-session")
-        #expect(viewModel.ensureDay999OfficeHoursSession())
+        #expect(viewModel.selectedSession?.id == "office-hours-session")
+        #expect(viewModel.ensureOfficeHoursSession())
         #expect(sidecar.sentPayloads.isEmpty)
     }
 

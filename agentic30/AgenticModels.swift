@@ -217,7 +217,7 @@ struct ChatMessage: Identifiable, Codable, Hashable {
     var inlineDecision: StructuredPromptQuestion? = nil
 }
 
-struct Day999OfficeHoursTranscriptRow: Identifiable, Hashable {
+struct OfficeHoursTranscriptRow: Identifiable, Hashable {
     enum Kind: String, Hashable {
         case contextLoaded
         case user
@@ -225,7 +225,8 @@ struct Day999OfficeHoursTranscriptRow: Identifiable, Hashable {
         case system
     }
 
-    nonisolated static var syntheticStartPrompt: String { "Day999 Office Hours" }
+    nonisolated static var syntheticStartPrompt: String { "Office Hours" }
+    nonisolated static var legacySyntheticStartPrompt: String { "Day999 Office Hours" }
     nonisolated static var contextLoadedCopy: String { "Day 1 맥락을 불러왔습니다." }
 
     let id: String
@@ -247,18 +248,21 @@ struct Day999OfficeHoursTranscriptRow: Identifiable, Hashable {
             && error?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
     }
 
-    nonisolated static func rows(from messages: [ChatMessage]) -> [Day999OfficeHoursTranscriptRow] {
+    nonisolated static func rows(from messages: [ChatMessage]) -> [OfficeHoursTranscriptRow] {
         messages.compactMap(row(from:))
     }
 
-    nonisolated private static func row(from message: ChatMessage) -> Day999OfficeHoursTranscriptRow? {
+    nonisolated private static func row(from message: ChatMessage) -> OfficeHoursTranscriptRow? {
         let trimmedContent = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedError = message.error?.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if message.role == .user,
-           trimmedContent.caseInsensitiveCompare(Self.syntheticStartPrompt) == .orderedSame {
-            return Day999OfficeHoursTranscriptRow(
-                id: "day999-context-\(message.id)",
+           (
+               trimmedContent.caseInsensitiveCompare(Self.syntheticStartPrompt) == .orderedSame
+               || trimmedContent.caseInsensitiveCompare(Self.legacySyntheticStartPrompt) == .orderedSame
+           ) {
+            return OfficeHoursTranscriptRow(
+                id: "office-hours-context-\(message.id)",
                 kind: .contextLoaded,
                 role: message.role,
                 provider: message.provider,
@@ -272,7 +276,7 @@ struct Day999OfficeHoursTranscriptRow: Identifiable, Hashable {
         switch message.role {
         case .user:
             guard !trimmedContent.isEmpty else { return nil }
-            return Day999OfficeHoursTranscriptRow(
+            return OfficeHoursTranscriptRow(
                 id: message.id,
                 kind: .user,
                 role: message.role,
@@ -293,7 +297,7 @@ struct Day999OfficeHoursTranscriptRow: Identifiable, Hashable {
             let fallbackContent = message.providerAuthActions?.isEmpty == false
                 ? "Provider authentication is required before this response can continue."
                 : ""
-            return Day999OfficeHoursTranscriptRow(
+            return OfficeHoursTranscriptRow(
                 id: message.id,
                 kind: kind,
                 role: message.role,
