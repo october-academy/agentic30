@@ -6,6 +6,69 @@ import path from "node:path";
 import { createTelemetryClient } from "../sidecar/telemetry.mjs";
 import { clearAuthContext, setAuthContext } from "../sidecar/auth-context.mjs";
 
+test("telemetry adopts a Mac-supplied anonymous distinct id and persists it", async () => {
+  const appSupportPath = fs.mkdtempSync(path.join(os.tmpdir(), "agentic30-telemetry-distinct-"));
+  const originalFetch = globalThis.fetch;
+  let captured = null;
+
+  try {
+    fs.writeFileSync(
+      path.join(appSupportPath, "ad-config.json"),
+      JSON.stringify({
+        posthog: {
+          projectApiKey: "phc_test_123",
+          host: "https://us.posthog.com",
+        },
+      }),
+    );
+
+    globalThis.fetch = async (_url, init) => {
+      captured = JSON.parse(String(init?.body));
+      return new Response("{}", { status: 200 });
+    };
+
+    const telemetry = createTelemetryClient({
+      appSupportPath,
+      workspaceRoot: "/Users/october/prj/agentic30",
+    });
+
+    const sidecarGenerated = telemetry.getAnonymousDistinctId();
+    const macDistinctId = "12345678-AAAA-BBBB-CCCC-1234567890AB";
+
+    assert.notEqual(sidecarGenerated, macDistinctId);
+    assert.equal(telemetry.setAnonymousDistinctId(macDistinctId), true);
+    assert.equal(telemetry.getAnonymousDistinctId(), macDistinctId);
+
+    telemetry.captureEvent("anonymous_event");
+    assert.equal(captured.distinct_id, macDistinctId);
+
+    const persisted = JSON.parse(
+      fs.readFileSync(path.join(appSupportPath, "posthog-telemetry.json"), "utf8"),
+    );
+    assert.equal(persisted.distinctId, macDistinctId);
+
+    // Empty / no-op writes leave the value alone.
+    assert.equal(telemetry.setAnonymousDistinctId(""), false);
+    assert.equal(telemetry.setAnonymousDistinctId(macDistinctId), false);
+    assert.equal(telemetry.getAnonymousDistinctId(), macDistinctId);
+
+    // Once auth is set, distinct_id flips to the user id even after we recorded
+    // the shared anonymous id.
+    setAuthContext({
+      accessToken: "access",
+      userId: "user-42",
+      email: "founder@example.com",
+      webBaseUrl: "https://agentic30.app",
+    });
+    telemetry.captureEvent("authenticated_event");
+    assert.equal(captured.distinct_id, "user-42");
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearAuthContext();
+    fs.rmSync(appSupportPath, { recursive: true, force: true });
+  }
+});
+
 test("telemetry sanitizes auth email, raw keys, and absolute paths", async () => {
   const appSupportPath = fs.mkdtempSync(path.join(os.tmpdir(), "agentic30-telemetry-"));
   const originalFetch = globalThis.fetch;

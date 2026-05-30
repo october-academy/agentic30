@@ -3830,8 +3830,12 @@ final class AgenticViewModel: ObservableObject {
 
     private func sendAuthContextToSidecar() {
         guard isConnected else { return }
+        let anonymousDistinctId = PostHogTelemetry.anonymousDistinctID()
         guard let session = macAuthSession, session.isUsable else {
-            sidecar.send(payload: ["type": "clear_auth_context"])
+            sidecar.send(payload: [
+                "type": "clear_auth_context",
+                "anonymousDistinctId": anonymousDistinctId,
+            ])
             return
         }
 
@@ -3841,6 +3845,7 @@ final class AgenticViewModel: ObservableObject {
             "refreshToken": session.refreshToken,
             "userId": session.userId,
             "webBaseUrl": MacOnboardingConstants.appBaseURL.absoluteString,
+            "anonymousDistinctId": anonymousDistinctId,
         ]
         if let expiresAt = session.expiresAt {
             payload["expiresAt"] = expiresAt
