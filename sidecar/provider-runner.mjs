@@ -31,6 +31,28 @@ export const CODEX_BINARY_NOT_INSTALLED_ERROR_CODE = "ERR_CODEX_BINARY_NOT_INSTA
 const DEFAULT_CLAUDE_MODEL = "claude-opus-4-7";
 const MINI_ACTION_EXECUTION_ONLY_MODE = "mini_action_execution_only";
 const CODEX_REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
+const CODEX_MCP_TOOL_TIMEOUT_SEC = 60;
+const CODEX_INTERNAL_MCP_TOOL_TIMEOUT_SEC = 60 * 30;
+const CODEX_INTERNAL_MCP_READ_ONLY_TOOLS = Object.freeze([
+  "get_agentic30_context",
+  CODEX_STRUCTURED_INPUT_TOOL,
+  "AskUserQuestion",
+  "ask_user_question",
+  "list_workspace_files",
+  "read_workspace_file",
+  "search_workspace",
+  "get_bip_context",
+  "read_project_doc",
+  "get_social_context",
+  "gws_gmail_list",
+  "gws_gmail_read",
+  "gws_drive_list",
+  "gws_calendar_list",
+  "gws_sheets_read",
+  "gws_docs_read",
+  "get_rubric_status",
+  "list_quarantined_records",
+]);
 const GEMINI_CAPABLE_EXECUTION_MODES = new Set([
   "isolated_read_only",
   "judge_read_only",
@@ -1212,15 +1234,19 @@ export function buildCodexConfig({
     mcp_servers: {
       ...(usesInternalMcp(executionMode) && sessionIdForMcp
         ? {
-            [internalMcpServerName]: buildMcpConfig(sessionIdForMcp, workspaceRoot, {
+            [internalMcpServerName]: buildCodexInternalMcpConfig(sessionIdForMcp, workspaceRoot, {
               executionMode,
               approvedToolExecution,
             }),
           }
         : {}),
-      ...(allowsProviderPermissionBypass({ executionMode, approvedToolExecution }) ? buildNotionMcpConfig() : {}),
-      ...(usesQmdMcp(executionMode) ? buildQmdMcpConfig({ sidecarRoot }) : {}),
-      ...(usesPostHogMcp(executionMode) ? buildPostHogCodexMcpConfigFromSources({ appSupportPath, env: posthogEnv }) : {}),
+      ...(allowsProviderPermissionBypass({ executionMode, approvedToolExecution })
+        ? withCodexMcpApproval(buildNotionMcpConfig())
+        : {}),
+      ...(usesQmdMcp(executionMode) ? withCodexMcpApproval(buildQmdMcpConfig({ sidecarRoot })) : {}),
+      ...(usesPostHogMcp(executionMode)
+        ? withCodexMcpApproval(buildPostHogCodexMcpConfigFromSources({ appSupportPath, env: posthogEnv }))
+        : {}),
     },
     ...(codexVendor?.exists
       ? {
@@ -1914,6 +1940,44 @@ function buildMcpConfig(
       AGENTIC30_APPROVED_TOOL_EXECUTION: approvedToolExecution ? "1" : "0",
     },
   };
+}
+
+function buildCodexInternalMcpConfig(
+  sessionId,
+  workspaceRoot,
+  {
+    executionMode = "",
+    approvedToolExecution = false,
+  } = {},
+) {
+  const config = {
+    ...buildMcpConfig(sessionId, workspaceRoot, {
+      executionMode,
+      approvedToolExecution,
+    }),
+    tool_timeout_sec: CODEX_INTERNAL_MCP_TOOL_TIMEOUT_SEC,
+  };
+  if (!approvedToolExecution) {
+    config.enabled_tools = [...CODEX_INTERNAL_MCP_READ_ONLY_TOOLS];
+  }
+  return withCodexMcpApproval(config);
+}
+
+function withCodexMcpApproval(mcpServers) {
+  if (!mcpServers || typeof mcpServers !== "object") return {};
+  if (mcpServers.command || mcpServers.url || mcpServers.type) {
+    return {
+      ...mcpServers,
+      default_tools_approval_mode: "approve",
+      tool_timeout_sec: mcpServers.tool_timeout_sec ?? CODEX_MCP_TOOL_TIMEOUT_SEC,
+    };
+  }
+  return Object.fromEntries(
+    Object.entries(mcpServers).map(([name, config]) => [
+      name,
+      withCodexMcpApproval(config),
+    ]),
+  );
 }
 
 function readApiKey(provider, env = buildProviderEnv(provider)) {

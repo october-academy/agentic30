@@ -76,6 +76,14 @@ test("workspace setup request_emit envelopes are host-routed and completion wait
       true,
       "scan_workspace should emit structured merged progress with foundCount",
     );
+    assert.equal(
+      ws.events.some((event) =>
+        event.type === "workspace_scan_progress"
+          && event.progressText === "frontier 선택지 생성 중"
+      ),
+      false,
+      "background frontier enrichment must not reuse foreground workspace_scan_progress",
+    );
     assert.equal(scanResult.day1Context, undefined);
     assert.equal(scanResult.composedOpening, undefined);
     assert.equal(scanResult.day1AlignmentPlan?.schemaVersion, 1);
@@ -123,6 +131,176 @@ test("workspace setup request_emit envelopes are host-routed and completion wait
     assert.equal(completed.properties.workspace_basename, path.basename(harness.workspacePath));
     assert.equal(completed.properties.input_source, "structured_input");
     assert.equal(typeof completed.properties.elapsed_ms, "number");
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("office_hours_start preserves custom source and ignores duplicate concurrent starts", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.4-mini",
+      suppressBootstrapIntake: true,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle",
+    );
+
+    const officeHoursStartPayload = {
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context: "Workspace: Revenue analytics dashboard. ICP: B2B founders. Problem: activation drop-off.",
+      visiblePrompt: "Test Office Hours on current project",
+      source: "day1_real_project_test",
+    };
+    ws.send(JSON.stringify(officeHoursStartPayload));
+    ws.send(JSON.stringify(officeHoursStartPayload));
+
+    const started = await waitForEvent(ws.events, (event) =>
+      event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.runtime?.officeHours?.source === "day1_real_project_test",
+    );
+    const duplicateError = await waitForEvent(ws.events, (event) =>
+      event.type === "error"
+        && event.sessionId === created.session.id
+        && /waiting for the current run/i.test(event.message || ""),
+    );
+    assert.equal(started.session.runtime.officeHours.active, true);
+    assert.equal(started.session.runtime.officeHours.source, "day1_real_project_test");
+    assert.match(started.session.runtime.officeHours.context, /Revenue analytics dashboard/);
+    assert.equal(duplicateError.sessionId, created.session.id);
+    assert.equal(
+      started.session.messages.filter((message) =>
+        message.role === "user" && message.content === "Test Office Hours on current project",
+      ).length,
+      1,
+    );
+
+    ws.send(JSON.stringify({ type: "stop_session", sessionId: created.session.id }));
+    await waitForEvent(ws.events, (event) =>
+      event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.status === "idle",
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("office_hours structured submission keeps question before visible answer", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.4-mini",
+      suppressBootstrapIntake: true,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle",
+    );
+
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context: [
+        "Project: agentic30 Mac - native macOS menu bar assistant",
+        "Customer: 전업 1인 개발자",
+        "Problem: 공개와 판매를 미루며 시간을 반복 낭비함",
+      ].join("\n"),
+      visiblePrompt: "Office Hours",
+      source: "transcript_regression",
+    }));
+
+    const awaitingQuestion = await waitForEvent(ws.events, (event) =>
+      event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.pendingUserInput?.generation?.mode === "office_hours_fallback",
+    );
+    const request = awaitingQuestion.session.pendingUserInput;
+    const questionText = request.questions[0].question;
+    const selectedOption = request.questions[0].options[0].label;
+    const freeText = "이번 주 1명에게 유료 파일럿 제안";
+    const eventCursor = ws.events.length;
+
+    ws.send(JSON.stringify({
+      type: "submit_user_input",
+      sessionId: created.session.id,
+      requestId: request.requestId,
+      responses: [
+        {
+          question: request.questions[0].question,
+          selectedOptions: [selectedOption],
+          freeText,
+        },
+      ],
+    }));
+
+    const firstSubmittedUpdate = await waitForEventAfter(ws.events, eventCursor, (event) =>
+      event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.pendingUserInput == null
+        && event.session?.messages?.some((message) =>
+          message.role === "user" && String(message.content || "").includes(freeText)
+        ),
+    );
+    assert.equal(firstSubmittedUpdate.session.status, "running");
+    assert.ok(
+      firstSubmittedUpdate.session.messages.some((message) =>
+        message.role === "assistant"
+          && message.state === "streaming"
+          && String(message.content || "") === ""
+      ),
+      "first post-submit update should include a streaming assistant placeholder",
+    );
+
+    const replacement = await waitForEventAfter(ws.events, eventCursor, (event) =>
+      event.type === "message_replaced"
+        && event.sessionId === created.session.id
+        && event.state === "streaming",
+    );
+    assert.equal(replacement.state, "streaming");
+
+    const submitted = await waitForEventAfter(ws.events, eventCursor, (event) =>
+      event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.pendingUserInput == null
+        && event.session?.messages?.some((message) =>
+          message.role === "assistant" && message.content === questionText
+        )
+        && event.session?.messages?.some((message) =>
+          message.role === "user" && String(message.content || "").includes(freeText)
+        ),
+    );
+    const messages = submitted.session.messages;
+    const questionIndex = messages.findIndex((message) =>
+      message.role === "assistant" && message.content === questionText
+    );
+    const answerIndex = messages.findIndex((message) =>
+      message.role === "user" && String(message.content || "").includes(freeText)
+    );
+
+    assert.notEqual(questionIndex, -1);
+    assert.notEqual(answerIndex, -1);
+    assert.ok(questionIndex < answerIndex);
+    assert.equal(
+      messages.filter((message) =>
+        message.role === "assistant" && message.content === questionText
+      ).length,
+      1,
+    );
   } finally {
     ws?.close();
     await harness.close();
@@ -302,4 +480,14 @@ async function waitForEvent(events, predicate, timeoutMs = 10_000) {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error(`Timed out waiting for event. Saw: ${events.map((event) => event.type).join(", ")}`);
+}
+
+async function waitForEventAfter(events, startIndex, predicate, timeoutMs = 10_000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const found = events.slice(startIndex).find(predicate);
+    if (found) return found;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for event after ${startIndex}. Saw: ${events.slice(startIndex).map((event) => event.type).join(", ")}`);
 }

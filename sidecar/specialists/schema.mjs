@@ -46,13 +46,12 @@ export function formatRubricInstruction(rubric) {
   const focus = rubric
     .map((axis) => `${axis} (${AXIS_LABELS_KO[axis] || axis})`)
     .join(", ");
-  const metadataKey = `rubric_focus: [${rubric.map((a) => `"${a}"`).join(", ")}]`;
   return [
     "",
     "",
     "## Alignment rubric",
     `이 응답은 5축 사령관 루브릭 중 ${focus} 축을 단련시키는 데 초점이 있다.`,
-    `최소 한 가지 inline_decision option은 위 축의 행동을 직접 강화하도록 만들고, 응답 마지막에 ${metadataKey} 한 줄을 metadata로 남긴다.`,
+    "최소 한 가지 inline_decision option은 위 축의 행동을 직접 강화하도록 만든다. 내부 루브릭 이름이나 metadata 키를 사용자-facing 답변에 출력하지 않는다.",
   ].join("\n");
 }
 

@@ -24,6 +24,7 @@ import {
   buildOfficeHoursChatPrompt,
   buildOfficeHoursChatSystemPrompt,
   clampOfficeHoursContext,
+  isOfficeHoursWriteDesignDocContext,
 } from "./office-hours-chat-prompt.mjs";
 import {
   buildQmdGuidance,
@@ -77,6 +78,7 @@ import {
   runProviderStream,
   updateProviderSettings,
 } from "./provider-runner.mjs";
+import { runWithSoftTimeout } from "./frontier-soft-timeout.mjs";
 import {
   extractInlineDecision,
   inferInlineDecisionFromPlainText,
@@ -197,6 +199,16 @@ import { emitInlineHintTriggerForFeatureAppearance } from "./curriculum-hint-eli
 import {
   CODEX_STRUCTURED_INPUT_TOOL,
 } from "./structured-input-tools.mjs";
+import {
+  OFFICE_HOURS_FALLBACK_MODE,
+  buildOfficeHoursStructuredQuestionTranscriptText,
+  buildOfficeHoursStructuredInputContinuationPrompt,
+  buildOfficeHoursStructuredPromptPayload,
+  isOfficeHoursStructuredInputMode,
+  isOfficeHoursStructuredInputToolEvent,
+  shouldAppendOfficeHoursStructuredQuestionMessage,
+  stripTrailingRubricFocusMetadata,
+} from "./office-hours-card-fallback.mjs";
 import {
   clearUserInputArtifacts,
   createUserInputRequest,
@@ -1258,6 +1270,7 @@ async function handleClientMessage(socket, payload) {
       if (!requestId || session.pendingUserInput?.requestId !== requestId) {
         throw new Error("No matching structured input request is waiting for this session.");
     }
+      const pendingUserInput = session.pendingUserInput;
       const pendingIddContinuation = session.runtime?.pendingIddContinuation;
       const pendingIddContinuationDocType = pendingIddContinuation?.requestId === requestId
         ? String(pendingIddContinuation.docType || "")
@@ -1275,7 +1288,7 @@ async function handleClientMessage(socket, payload) {
           elapsedMs: Date.now() - iddProgressStartedAt,
         });
       };
-      const response = normalizeUserInputResponse(session.pendingUserInput, payload);
+      const response = normalizeUserInputResponse(pendingUserInput, payload);
       const missingRequiredFreeText = findMissingRequiredFreeTextQuestion(response);
       if (missingRequiredFreeText) {
         broadcastIddSubmitProgress(
@@ -1304,20 +1317,40 @@ async function handleClientMessage(socket, payload) {
       // do, so this lets a single click advance the signal instead of always
       // needing the repeated-answer auto-pass fallback.
       const userResponseDescription = collectSelectedOptionDescriptions(
-        session.pendingUserInput,
+        pendingUserInput,
         response,
       );
       // Capture signalId/signalLabel from the structured input the user is
       // answering so the transcript entry can carry rubric-dimension lineage
       // for the next follow-up's dimension-transition stamp (F6).
-      const answeredGeneration = session.pendingUserInput?.generation || null;
+      const answeredGeneration = pendingUserInput?.generation || null;
       const answeredSignalId = answeredGeneration?.signalId ? String(answeredGeneration.signalId) : null;
       const answeredSignalLabel = answeredGeneration?.signalLabel ? String(answeredGeneration.signalLabel) : null;
+      const isOfficeHoursStructuredInputResponse = isOfficeHoursStructuredInputMode(
+        answeredGeneration?.mode,
+      );
+      const officeHoursStructuredQuestionText = isOfficeHoursStructuredInputResponse
+        ? buildOfficeHoursStructuredQuestionTranscriptText(pendingUserInput)
+        : "";
       broadcastIddSubmitProgress("accepted", "답변 저장됨");
       if (userResponseText) {
         markWorkspaceSetupFirstInput("structured_input");
     }
       if (userResponseText) {
+        if (isOfficeHoursStructuredInputResponse
+            && shouldAppendOfficeHoursStructuredQuestionMessage(
+              session.messages,
+              officeHoursStructuredQuestionText,
+            )) {
+          session.messages.push(
+            makeMessage({
+              role: "assistant",
+              provider: session.provider,
+              content: officeHoursStructuredQuestionText,
+              state: "final",
+            }),
+          );
+        }
         session.messages.push(
           makeMessage({
             role: "user",
@@ -1487,16 +1520,35 @@ async function handleClientMessage(socket, payload) {
         provider: session.provider,
         request_id: requestId,
         response_count: Array.isArray(payload.responses) ? payload.responses.length : 0,
-    });
-    broadcast({ type: "session_updated", session });
+      });
       const hasSelectedStructuredOption = response.responses?.some((entry) => entry.selectedOptions?.length);
+      const shouldRunOfficeHoursContinuation = !hasActiveRun
+        && isOfficeHoursStructuredInputResponse
+        && Boolean(userResponseText);
+      if (!shouldRunOfficeHoursContinuation) {
+        broadcast({ type: "session_updated", session });
+      }
+      if (shouldRunOfficeHoursContinuation) {
+        await runPrompt(
+          session,
+          buildOfficeHoursStructuredInputContinuationPrompt({
+            responseText: userResponseText,
+            responseDescription: userResponseDescription,
+          }),
+          {
+            displayUserMessage: false,
+            defaultTitle: session.title,
+          },
+        );
+        return;
+      }
       if (!hasActiveRun && !iddContinuationPromptForRun && hasSelectedStructuredOption) {
         await appendVisibleAssistantMessage(
           session.id,
           buildStructuredInputConfirmation(response),
         );
         return;
-    }
+      }
       if (!hasActiveRun && (userResponseText || iddContinuationPromptForRun)) {
         let continuationSpecialistInjection = "";
         let continuationSelection = null;
@@ -2035,6 +2087,8 @@ async function runPrompt(
     const officeHoursRuntimeForRun = session.runtime?.officeHours?.active === true
       ? { ...session.runtime.officeHours, context: officeHoursContext }
       : null;
+    let officeHoursStructuredInputRequested = false;
+    let officeHoursStructuredInputAnswered = false;
     let routedSpecialist = specialist;
     let systemPromptOverride = "";
     if (officeHoursContext && !routedSpecialist) {
@@ -2155,6 +2209,12 @@ async function runPrompt(
         setAssistantText(session, assistantMessage.id, content);
       },
       onToolEvent: (event) => {
+        if (officeHoursContext && isOfficeHoursStructuredInputToolEvent(event)) {
+          officeHoursStructuredInputRequested = true;
+          if (isSuccessfulStructuredInputToolEvent(event)) {
+            officeHoursStructuredInputAnswered = true;
+          }
+        }
         const { phase, toolName, payload, toolCallKey } = event;
         emitAgentEvent(session, assistantMessage.id, canonicalToolEvent(event));
         broadcast({
@@ -2179,6 +2239,9 @@ async function runPrompt(
         broadcast({ type: "session_updated", session });
       },
       onRunEvent: (event) => {
+        if (officeHoursContext && isStructuredInputResponseRunEvent(event)) {
+          officeHoursStructuredInputAnswered = true;
+        }
         emitAgentEvent(session, assistantMessage.id, {
           eventType: "run.timing",
           phase: event.phase,
@@ -2208,8 +2271,16 @@ async function runPrompt(
     recordMessageTiming(session, assistantMessage, runStartedAt, "provider.call_finished");
 
     assistantMessage.state = "final";
-  session.status = "idle";
-  session.error = null;
+    session.status = session.pendingUserInput ? "awaiting_input" : "idle";
+    session.error = null;
+    if (officeHoursContext) {
+      await ensureOfficeHoursStructuredPromptCard(session, assistantMessage, {
+        sawStructuredInputRequest: officeHoursStructuredInputRequested,
+        structuredInputAnswered: officeHoursStructuredInputAnswered,
+        context: officeHoursContext,
+        source: "office_hours_continuation",
+      });
+    }
     emitAgentEvent(session, assistantMessage.id, {
       eventType: "run.completed",
       provider: session.provider,
@@ -3128,6 +3199,70 @@ function activeOfficeHoursContext(session = null) {
   return clampOfficeHoursContext(officeHours.context || "");
 }
 
+async function ensureOfficeHoursStructuredPromptCard(session, assistantMessage, {
+  sawStructuredInputRequest = false,
+  structuredInputAnswered = false,
+  context = "",
+  source = "provider_result",
+} = {}) {
+  if (!session || !assistantMessage) return null;
+  if (session.pendingUserInput) return null;
+  if (structuredInputAnswered) return null;
+  if (isOfficeHoursWriteDesignDocContext(context)
+    && /generated_by:\s*office-hours|handoff_for:\s*plan-ceo-review|CEO Review Handoff/i.test(String(assistantMessage.content || ""))) {
+    return null;
+  }
+  const payload = buildOfficeHoursStructuredPromptPayload({
+    sessionId: session.id,
+    provider: session.provider,
+    assistantMessage,
+    mode: OFFICE_HOURS_FALLBACK_MODE,
+    allowDefaultQuestion: true,
+    context,
+  });
+  if (!payload) return null;
+
+  const request = await createUserInputRequest(appSupportPath, payload);
+  session.pendingUserInput = request;
+  session.status = "awaiting_input";
+  session.error = null;
+  if (assistantMessage.inlineDecision) {
+    delete assistantMessage.inlineDecision;
+  }
+  telemetry.captureEvent("mac_sidecar_office_hours_structured_card_fallback", {
+    session_id: session.id,
+    provider: session.provider,
+    mode: payload.generation?.mode || "",
+    source,
+    saw_structured_input_request: sawStructuredInputRequest,
+    structured_input_answered: structuredInputAnswered,
+  });
+  return request;
+}
+
+function isSuccessfulStructuredInputToolEvent(event = {}) {
+  if (!event || event.phase !== "result") return false;
+  const payload = event.payload && typeof event.payload === "object" ? event.payload : {};
+  const status = String(payload.status || "").toLowerCase();
+  if (status === "failed" || status === "error" || status === "cancelled" || status === "canceled") {
+    return false;
+  }
+  const errorMessage = String(payload.errorMessage || payload.error || "").trim();
+  if (errorMessage) return false;
+  return true;
+}
+
+function isStructuredInputResponseRunEvent(event = {}) {
+  const phase = String(event?.phase || "");
+  if (phase !== "provider.claude.user_input_received") return false;
+  return isOfficeHoursStructuredInputToolEvent({
+    toolName: event.toolName,
+    payload: {
+      requestedToolName: event.toolName,
+    },
+  });
+}
+
 function selectOfficeHoursSpecialist({ context = "", lastAnswer = "" } = {}) {
   return selectSpecialist({
     bipSetupGate: currentBipSetupGate(),
@@ -3172,38 +3307,41 @@ async function runOfficeHours(session, {
     state: "streaming",
   });
 
-  session.messages.push(
-    makeMessage({ role: "user", provider: session.provider, content: visiblePrompt, state: "final" }),
-    assistantMessage,
-  );
-  if (!session.title || session.title === "New Session") {
-    session.title = "Office Hours";
-  }
-  session.status = "running";
-  session.error = null;
-  session.pendingUserInput = null;
-  session.runtime = attachOfficeHoursRuntime(session.runtime, officeHoursRuntime);
-  touch(session);
-  await persistSessions();
-  broadcast({ type: "session_updated", session });
-
   state.activeRuns.set(session.id, {
     runKey,
     abortController,
     stop: null,
   });
 
-  telemetry.captureEvent("mac_sidecar_office_hours_started", {
-    session_id: session.id,
-    provider: session.provider,
-    source: officeHoursRuntime.source,
-    context_length: officeHoursRuntime.context.length,
-  });
-
   try {
-    state.activeRuns.get(session.id).stop = async () => {
-      abortController.abort();
-    };
+    const activeRun = state.activeRuns.get(session.id);
+    if (activeRun?.runKey === runKey) {
+      activeRun.stop = async () => {
+        abortController.abort();
+      };
+    }
+
+    session.messages.push(
+      makeMessage({ role: "user", provider: session.provider, content: visiblePrompt, state: "final" }),
+      assistantMessage,
+    );
+    if (!session.title || session.title === "New Session") {
+      session.title = "Office Hours";
+    }
+    session.status = "running";
+    session.error = null;
+    session.pendingUserInput = null;
+    session.runtime = attachOfficeHoursRuntime(session.runtime, officeHoursRuntime);
+    touch(session);
+    await persistSessions();
+    broadcast({ type: "session_updated", session });
+
+    telemetry.captureEvent("mac_sidecar_office_hours_started", {
+      session_id: session.id,
+      provider: session.provider,
+      source: officeHoursRuntime.source,
+      context_length: officeHoursRuntime.context.length,
+    });
 
     const officeHoursSelection = selectOfficeHoursSpecialist({
       context: officeHoursRuntime.context,
@@ -3223,6 +3361,8 @@ async function runOfficeHours(session, {
     const officeHoursSpecialistInjection = buildSpecialistInjection(officeHoursSelection, {
       provider: session.provider,
     });
+    let officeHoursStructuredInputRequested = false;
+    let officeHoursStructuredInputAnswered = false;
     const result = await runProviderStream({
       provider: session.provider,
       sessionRuntime: session.runtime,
@@ -3237,6 +3377,12 @@ async function runOfficeHours(session, {
       onTextDelta: (text) => appendAssistantText(session, assistantMessage.id, text),
       onTextReplace: (text) => setAssistantText(session, assistantMessage.id, text),
       onToolEvent: (toolEvent) => {
+        if (isOfficeHoursStructuredInputToolEvent(toolEvent)) {
+          officeHoursStructuredInputRequested = true;
+          if (isSuccessfulStructuredInputToolEvent(toolEvent)) {
+            officeHoursStructuredInputAnswered = true;
+          }
+        }
         broadcast({
           type: "tool_event",
           sessionId: session.id,
@@ -3259,6 +3405,11 @@ async function runOfficeHours(session, {
         context: officeHoursRuntime.context,
         provider: session.provider,
       }),
+      onRunEvent: (event) => {
+        if (isStructuredInputResponseRunEvent(event)) {
+          officeHoursStructuredInputAnswered = true;
+        }
+      },
     });
 
     session.runtime = attachOfficeHoursRuntime(
@@ -3266,8 +3417,14 @@ async function runOfficeHours(session, {
       officeHoursRuntime,
     );
     assistantMessage.state = "final";
-    session.status = "idle";
+    session.status = session.pendingUserInput ? "awaiting_input" : "idle";
     session.error = null;
+    await ensureOfficeHoursStructuredPromptCard(session, assistantMessage, {
+      sawStructuredInputRequest: officeHoursStructuredInputRequested,
+      structuredInputAnswered: officeHoursStructuredInputAnswered,
+      context: officeHoursRuntime.context,
+      source: "office_hours_start",
+    });
   } catch (error) {
     if (abortController.signal.aborted || error?.name === "AbortError") {
       telemetry.captureEvent("mac_sidecar_office_hours_aborted", {
@@ -3303,11 +3460,17 @@ async function runOfficeHours(session, {
         provider: session.provider,
       });
     }
-    state.activeRuns.delete(session.id);
+    const activeRun = state.activeRuns.get(session.id);
+    const stillCurrentRun = activeRun?.runKey === runKey;
+    if (stillCurrentRun) {
+      state.activeRuns.delete(session.id);
+    }
     touch(session);
     await persistSessions();
     broadcast({ type: "session_updated", session });
-    scheduleQueuedPromptRun(session);
+    if (stillCurrentRun || !state.activeRuns.has(session.id)) {
+      scheduleQueuedPromptRun(session);
+    }
   }
 }
 
@@ -7795,7 +7958,6 @@ async function runDay1ChoiceFrontierSynthesis({ scanRoot, deterministicPlan }) {
     { provider: "codex", model: DAY1_CHOICE_CODEX_MODEL },
     { provider: "gemini", model: DAY1_CHOICE_GEMINI_MODEL },
   ];
-  broadcastWorkspaceScanProgress(scanRoot, "frontier 선택지 생성 중");
   const prompt = buildDay1AlignmentComposerPrompt(deterministicPlan);
   const results = await Promise.allSettled(
     providers.map(({ provider, model }) =>
@@ -7834,42 +7996,67 @@ async function runDay1ChoiceFrontierProvider({ provider, model, scanRoot, prompt
   }
 
   const abortController = new AbortController();
-  const timeout = setTimeout(() => abortController.abort(), DAY1_CHOICE_PROVIDER_TIMEOUT_MS);
   let responseText = "";
+  let providerTimedOut = false;
   try {
-    await runProviderStream({
-      provider,
-      prompt,
-      model,
-      workspaceRoot: scanRoot,
+    return await runWithSoftTimeout({
+      timeoutMs: DAY1_CHOICE_PROVIDER_TIMEOUT_MS,
       abortController,
-      executionMode: "idd_question_synthesis",
-      systemPromptOverride: [
-        "You synthesize high-quality Day 1 customer-discovery choices for agentic30.",
-        "Work only from the deterministic plan and evidence embedded in the prompt.",
-        "Do not use tools, inspect files, browse the web, or ask follow-up questions.",
-        "Return only valid JSON matching the requested schema.",
-      ].join("\n"),
-      onTextDelta: (text) => {
-        responseText += text;
-      },
-      onTextReplace: (text) => {
-        responseText = text;
-      },
-      onRunEvent: (event) => {
-        if (event.once) return;
-        telemetry.captureEvent("mac_sidecar_day1_choice_frontier_phase", {
+      onTimeout: () => {
+        providerTimedOut = true;
+        telemetry.captureEvent("mac_sidecar_day1_choice_frontier_provider_timeout", {
           provider,
           model,
-          phase: event.phase,
+          scan_root: scanRoot,
+          timeout_ms: DAY1_CHOICE_PROVIDER_TIMEOUT_MS,
         });
       },
+      onLateError: (error) => {
+        telemetry.captureException(error, {
+          operation: "runDay1ChoiceFrontierProviderLateError",
+          provider,
+          model,
+          scan_root: scanRoot,
+        });
+      },
+      operation: async () => {
+        await runProviderStream({
+          provider,
+          prompt,
+          model,
+          workspaceRoot: scanRoot,
+          abortController,
+          executionMode: "idd_question_synthesis",
+          systemPromptOverride: [
+            "You synthesize high-quality Day 1 customer-discovery choices for agentic30.",
+            "Work only from the deterministic plan and evidence embedded in the prompt.",
+            "Do not use tools, inspect files, browse the web, or ask follow-up questions.",
+            "Return only valid JSON matching the requested schema.",
+          ].join("\n"),
+          onTextDelta: (text) => {
+            if (providerTimedOut) return;
+            responseText += text;
+          },
+          onTextReplace: (text) => {
+            if (providerTimedOut) return;
+            responseText = text;
+          },
+          onRunEvent: (event) => {
+            if (providerTimedOut || event.once) return;
+            telemetry.captureEvent("mac_sidecar_day1_choice_frontier_phase", {
+              provider,
+              model,
+              phase: event.phase,
+            });
+          },
+        });
+        return {
+          provider,
+          model,
+          text: responseText,
+        };
+      },
     });
-    return {
-      provider,
-      model,
-      text: responseText,
-    };
   } catch (error) {
     telemetry.captureException(error, {
       operation: "runDay1ChoiceFrontierProvider",
@@ -7878,8 +8065,6 @@ async function runDay1ChoiceFrontierProvider({ provider, model, scanRoot, prompt
       scan_root: scanRoot,
     });
     return null;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -9390,6 +9575,7 @@ function setAssistantText(session, messageId, content) {
     }
     }
   }
+  resolvedContent = stripTrailingRubricFocusMetadata(resolvedContent);
   if (
     typeof resolvedContent === "string"
     && !extractedDecision
@@ -9402,6 +9588,7 @@ function setAssistantText(session, messageId, content) {
       extractedDecision = inferred.decision;
     }
   }
+  resolvedContent = stripTrailingRubricFocusMetadata(resolvedContent);
 
   message.content = resolvedContent;
   if (extractedDecision) {
@@ -9413,6 +9600,7 @@ function setAssistantText(session, messageId, content) {
     sessionId: session.id,
     messageId,
     content: resolvedContent,
+    state: message.state,
   });
   // `message_replaced` only carries content; the SwiftUI client needs a full
   // session refresh when inlineDecision metadata changes.
@@ -9591,8 +9779,11 @@ function makeMessage({
       if (inferred.decision) {
         resolvedDecision = inferred.decision;
         resolvedContent = inferred.text;
+      }
     }
-    }
+  }
+  if (role === "assistant" || role === "system") {
+    resolvedContent = stripTrailingRubricFocusMetadata(resolvedContent);
   }
 
   // Mutual exclusion enforcement (P1 from plan-eng-review codex pass).

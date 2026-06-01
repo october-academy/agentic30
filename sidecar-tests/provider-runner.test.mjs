@@ -330,6 +330,32 @@ test("buildCodexConfig gives memory_chat both QMD and internal BIP MCP access", 
   assert.ok(config.mcp_servers.agentic30_sidecar);
   assert.match(config.mcp_servers.agentic30_sidecar.args.join(" "), /mcp-server\.mjs/);
   assert.equal(config.mcp_servers.agentic30_sidecar.env.AGENTIC30_APPROVED_TOOL_EXECUTION, "0");
+  assert.equal(config.mcp_servers.agentic30_sidecar.default_tools_approval_mode, "approve");
+  assert.equal(config.mcp_servers.agentic30_sidecar.tool_timeout_sec, 1800);
+  assert.ok(config.mcp_servers.agentic30_sidecar.enabled_tools.includes("agentic30_request_user_input"));
+  assert.ok(config.mcp_servers.agentic30_sidecar.enabled_tools.includes("list_workspace_files"));
+  assert.equal(config.mcp_servers.agentic30_sidecar.enabled_tools.includes("gws_gmail_send"), false);
+  assert.equal(config.mcp_servers.agentic30_sidecar.enabled_tools.includes("record_rubric_assessment"), false);
+  if (config.mcp_servers.qmd) {
+    assert.equal(config.mcp_servers.qmd.default_tools_approval_mode, "approve");
+    assert.equal(config.mcp_servers.qmd.tool_timeout_sec, 60);
+  }
+});
+
+test("buildCodexConfig keeps approved agentic internal MCP broad but auto-approved", () => {
+  const config = buildCodexConfig({
+    systemPromptText: "system",
+    executionMode: "agentic",
+    sessionIdForMcp: "session",
+    workspaceRoot: "/tmp/workspace",
+    approvedToolExecution: true,
+  });
+
+  assert.ok(config.mcp_servers.agentic30_sidecar);
+  assert.equal(config.mcp_servers.agentic30_sidecar.env.AGENTIC30_APPROVED_TOOL_EXECUTION, "1");
+  assert.equal(config.mcp_servers.agentic30_sidecar.default_tools_approval_mode, "approve");
+  assert.equal(config.mcp_servers.agentic30_sidecar.tool_timeout_sec, 1800);
+  assert.equal("enabled_tools" in config.mcp_servers.agentic30_sidecar, false);
 });
 
 test("buildCodexConfig adds read-only PostHog MCP for tool-capable sessions", () => {
@@ -347,6 +373,8 @@ test("buildCodexConfig adds read-only PostHog MCP for tool-capable sessions", ()
     assert.match(config.mcp_servers.posthog.url, /^https:\/\/mcp\.posthog\.com\/mcp\?/);
     assert.match(config.mcp_servers.posthog.url, /readonly=1/);
     assert.equal(config.mcp_servers.posthog.bearer_token_env_var, POSTHOG_MCP_TOKEN_ENV_VAR);
+    assert.equal(config.mcp_servers.posthog.default_tools_approval_mode, "approve");
+    assert.equal(config.mcp_servers.posthog.tool_timeout_sec, 60);
     assert.equal(JSON.stringify(config.mcp_servers.posthog).includes("phx_test"), false);
   } finally {
     restoreEnv("POSTHOG_API_KEY", previous);

@@ -271,11 +271,11 @@ test("buildSpecialistInjection returns the inline decision contract for null sel
 
 const VENDOR_BOTH = { claude: { exists: true }, codex: { exists: true } };
 
-test("buildSpecialistInjection injects rubric_focus on the vendor-skill path", () => {
+test("buildSpecialistInjection injects rubric guidance on the vendor-skill path", () => {
   // Even when the vendor SKILL.md drives content (and selection.promptText is
   // intentionally dropped), Agentic30's local question-quality contract and
   // alignment rubric instruction must survive so the response carries a sharp
-  // decision card plus rubric_focus axis selection back.
+  // decision card without leaking internal rubric metadata to the user.
   const selection = selectSpecialist({
     bipSetupGate: planningGate,
     doc: { type: "icp", title: "ICP" },
@@ -289,23 +289,24 @@ test("buildSpecialistInjection injects rubric_focus on the vendor-skill path", (
   assert.match(injection, /제품 이름, 대상 유저, 해결 문제, 제품 목적/);
   assert.match(injection, /실제 이름, 역할, 상황/);
   assert.match(injection, /수요 증거, 현재 대안, 실제 사람, 가장 작은 wedge/);
-  assert.match(injection, /rubric_focus/, "vendor path missing rubric_focus");
   assert.match(injection, /clout/, "office-hours rubric clout axis missing");
   assert.match(injection, /Alignment rubric/);
+  assert.match(injection, /metadata 키를 사용자-facing 답변에 출력하지 않는다/);
+  assert.doesNotMatch(injection, /rubric_focus/);
   // Regression guard: vendor path must NOT echo the inline buildPrompt body.
   assert.doesNotMatch(injection, /Demand reality/);
   assert.doesNotMatch(injection, /Auto-routed specialist/);
 });
 
-test("buildSpecialistInjection injects rubric_focus on the fallback path", () => {
+test("buildSpecialistInjection injects rubric guidance on the fallback path", () => {
   const selection = selectSpecialist({
     bipSetupGate: planningGate,
     doc: { type: "icp", title: "ICP" },
   });
   const injection = buildSpecialistInjection({ ...selection, vendor: NO_VENDOR });
   assert.match(injection, /Agentic30 question quality contract/);
-  assert.match(injection, /rubric_focus/);
   assert.match(injection, /clout/);
+  assert.doesNotMatch(injection, /rubric_focus/);
   // Fallback path keeps both the auto-routed header and the rubric block.
   assert.match(injection, /Auto-routed specialist/);
 });
@@ -433,7 +434,8 @@ test("buildSpecialistInjection({provider:'claude'}) takes vendor path when only 
   );
   assert.doesNotMatch(injection, /Auto-routed specialist/);
   assert.doesNotMatch(injection, /Demand reality/);
-  assert.match(injection, /rubric_focus/);
+  assert.match(injection, /Alignment rubric/);
+  assert.doesNotMatch(injection, /rubric_focus/);
 });
 
 test("buildSpecialistInjection({provider:'codex'}) takes vendor path when only codex vendor exists", () => {
@@ -447,7 +449,8 @@ test("buildSpecialistInjection({provider:'codex'}) takes vendor path when only c
   );
   assert.doesNotMatch(injection, /Auto-routed specialist/);
   assert.doesNotMatch(injection, /Demand reality/);
-  assert.match(injection, /rubric_focus/);
+  assert.match(injection, /Alignment rubric/);
+  assert.doesNotMatch(injection, /rubric_focus/);
 });
 
 test("buildSpecialistInjection({provider:'claude'}) falls back when only codex vendor exists", () => {

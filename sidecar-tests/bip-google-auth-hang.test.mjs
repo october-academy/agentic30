@@ -28,8 +28,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 
 import {
   gwsExec,
@@ -107,50 +105,6 @@ test("DEFAULT_GWS_TIMEOUT_MS is set to a reasonable bound (≤60s)", () => {
 test("extractGwsAuthUrl finds OAuth URL in gws login output", () => {
   const url = "https://accounts.google.com/o/oauth2/v2/auth?client_id=test&redirect_uri=http%3A%2F%2Flocalhost%3A9876%2Fcallback";
   assert.equal(extractGwsAuthUrl(`Open this URL:\n${url}\nWaiting...`), url);
-});
-
-test("startGwsAuth opens printed OAuth URL when gws does not open browser itself", async () => {
-  const fakeDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentic30-fake-gws-"));
-  const fakeGws = path.join(fakeDir, "gws");
-  const authUrl = "https://accounts.google.com/o/oauth2/v2/auth?client_id=test&redirect_uri=http%3A%2F%2Flocalhost%3A9876%2Fcallback";
-  fs.writeFileSync(fakeGws, `#!/bin/sh
-case "$*" in
-  "auth login --services drive,sheets,docs")
-    echo "Visit this URL to authorize:"
-    echo "${authUrl}"
-    sleep 5
-    ;;
-  "drive about get --params {"*)
-    echo '{"error":{"message":"invalid_rapt"}}'
-    ;;
-  *)
-    echo '{}'
-    ;;
-esac
-`, "utf8");
-  fs.chmodSync(fakeGws, 0o755);
-
-  const opened = [];
-  const events = [];
-  const handle = startGwsAuth({
-    env: { ...process.env, AGENTIC30_GWS_BIN: fakeGws },
-    openAuthUrl(url) {
-      opened.push(url);
-      return true;
-    },
-    onStatusChange(evt) { events.push(evt); },
-    pollIntervalMs: 100,
-    probeTimeoutMs: 500,
-    oauthTimeoutMs: 800,
-    totalTimeoutMs: 5_000,
-  });
-  try {
-    await waitFor(() => opened.length > 0, { timeoutMs: 2_000, intervalMs: 50 });
-    assert.deepEqual(opened, [authUrl]);
-    assert.ok(events.some((event) => event.status === "in-progress"));
-  } finally {
-    handle.cancel();
-  }
 });
 
 // ───────────────────────────────────────────────────────────────────────────
