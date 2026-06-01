@@ -18,7 +18,9 @@ const BUILD_STAMP = path.join(BUILD_DIR, ".build-stamp.json");
 const SOURCE_NODE_MODULES = path.join(PACKAGE_ROOT, "node_modules");
 const DIST_NODE_MODULES = path.join(DIST_DIR, "node_modules");
 const LOCAL_BUN_BIN = path.join(PACKAGE_ROOT, "node_modules", ".bin", "bun");
-const NODE_RUNTIME_CACHE_DIR = path.join(PACKAGE_ROOT, ".omx", "node-runtime");
+const NODE_RUNTIME_CACHE_DIR =
+  process.env.AGENTIC30_NODE_RUNTIME_CACHE_DIR ||
+  path.join(PACKAGE_ROOT, ".omx", "node-runtime");
 const NODE_RUNTIME_VERSION = "24.15.0";
 
 const NODE_RUNTIME_ARCHIVES = [
@@ -211,6 +213,7 @@ async function ensureBundledNodeRuntime() {
 async function cachedNodeRuntimeArchive(runtime) {
   const cacheDir = path.join(NODE_RUNTIME_CACHE_DIR, `v${NODE_RUNTIME_VERSION}`);
   const archivePath = path.join(cacheDir, runtime.archive);
+  const partialPath = `${archivePath}.tmp-${process.pid}`;
   await mkdir(cacheDir, { recursive: true });
 
   if (existsSync(archivePath) && await fileMatchesSha256(archivePath, runtime.sha256)) {
@@ -219,11 +222,9 @@ async function cachedNodeRuntimeArchive(runtime) {
 
   const url = `https://nodejs.org/dist/v${NODE_RUNTIME_VERSION}/${runtime.archive}`;
   console.log(`[build-sidecar] downloading ${runtime.archive}`);
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`download failed for ${url}: ${response.status} ${response.statusText}`);
-  }
-  await writeFile(archivePath, Buffer.from(await response.arrayBuffer()));
+  await rm(partialPath, { force: true });
+  await downloadRuntimeArchive(url, partialPath);
+  await rename(partialPath, archivePath);
 
   if (!await fileMatchesSha256(archivePath, runtime.sha256)) {
     await rm(archivePath, { force: true });
@@ -231,6 +232,66 @@ async function cachedNodeRuntimeArchive(runtime) {
   }
 
   return archivePath;
+}
+
+async function downloadRuntimeArchive(url, outputPath) {
+  if (existsSync("/usr/bin/curl")) {
+    try {
+      await run(
+        "/usr/bin/curl",
+        [
+          "--fail",
+          "--location",
+          "--show-error",
+          "--silent",
+          "--retry",
+          "5",
+          "--retry-all-errors",
+          "--retry-delay",
+          "2",
+          "--connect-timeout",
+          "30",
+          "--max-time",
+          "300",
+          "--output",
+          outputPath,
+          url,
+        ],
+        PACKAGE_ROOT
+      );
+      return;
+    } catch (error) {
+      await rm(outputPath, { force: true });
+      throw error;
+    }
+  }
+
+  let lastError;
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(120_000),
+      });
+      if (!response.ok) {
+        throw new Error(`download failed for ${url}: ${response.status} ${response.statusText}`);
+      }
+      await writeFile(outputPath, Buffer.from(await response.arrayBuffer()));
+      return;
+    } catch (error) {
+      lastError = error;
+      await rm(outputPath, { force: true });
+      if (attempt < 5) {
+        const delayMs = 2_000 * attempt;
+        console.warn(`[build-sidecar] download retry ${attempt}/5 after ${delayMs}ms: ${error.message}`);
+        await sleep(delayMs);
+      }
+    }
+  }
+  throw lastError;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function fileMatchesSha256(file, expected) {
