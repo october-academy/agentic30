@@ -222,10 +222,11 @@ struct ChatMessageRouteTests {
 struct StructuredPromptSubmissionStateTests {
     private static func makeAssistantMessage(
         _ content: String = "",
-        state: MessageState = .streaming
+        state: MessageState = .streaming,
+        id: String = UUID().uuidString
     ) -> ChatMessage {
         ChatMessage(
-            id: UUID().uuidString,
+            id: id,
             role: .assistant,
             provider: .codex,
             content: content,
@@ -277,7 +278,8 @@ struct StructuredPromptSubmissionStateTests {
         id: String = "structured-session",
         pendingUserInput: StructuredPromptRequest?,
         status: SessionStatus = .awaitingInput,
-        runtime: ChatSessionRuntime? = nil
+        runtime: ChatSessionRuntime? = nil,
+        messages: [ChatMessage] = []
     ) -> ChatSession {
         ChatSession(
             id: id,
@@ -288,7 +290,7 @@ struct StructuredPromptSubmissionStateTests {
             createdAt: Date(),
             updatedAt: Date(),
             error: nil,
-            messages: [],
+            messages: messages,
             pendingUserInput: pendingUserInput,
             runtime: runtime
         )
@@ -328,6 +330,41 @@ struct StructuredPromptSubmissionStateTests {
             ],
             generation: StructuredPromptGeneration(mode: mode, docType: docType)
         )
+    }
+
+    @MainActor @Test func messageReplacementCanRemainStreamingUntilSessionSnapshotFinalizes() throws {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        let messageID = "assistant-streaming-snapshot"
+        var session = Self.makeSession(
+            pendingUserInput: nil,
+            status: .running,
+            messages: [
+                Self.makeAssistantMessage("", state: .streaming, id: messageID),
+            ]
+        )
+        viewModel.replaceSessionsForTesting([session], selectedSessionID: session.id)
+
+        let streamingEvent = try JSONDecoder().decode(SidecarEvent.self, from: Data("""
+        {
+          "type": "message_replaced",
+          "sessionId": "\(session.id)",
+          "messageId": "\(messageID)",
+          "content": "부분 응답",
+          "state": "streaming"
+        }
+        """.utf8))
+        viewModel.applySidecarEventForTesting(streamingEvent)
+
+        #expect(viewModel.selectedSession?.messages.first?.content == "부분 응답")
+        #expect(viewModel.selectedSession?.messages.first?.state == .streaming)
+
+        session.status = .idle
+        session.messages[0].content = "최종 응답"
+        session.messages[0].state = .final
+        viewModel.applySessionUpdatedForTesting(session)
+
+        #expect(viewModel.selectedSession?.messages.first?.content == "최종 응답")
+        #expect(viewModel.selectedSession?.messages.first?.state == .final)
     }
 
     @MainActor @Test func sidecarUnexpectedExitMarksRunningSessionRecoverable() {

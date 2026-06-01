@@ -778,19 +778,19 @@ enum KeychainHelper {
     }
 }
 
-struct Agentic30LocalDataResetOptions: Equatable {
+nonisolated struct Agentic30LocalDataResetOptions: Equatable {
     var includeKnownWorkspaces: Bool = true
     var includeAgentic30QmdIndex: Bool = true
     var removeManagedWorkspaceContent: Bool = true
     var removeAppBundle: Bool = false
 }
 
-struct Agentic30LocalDataResetFailure: Equatable {
+nonisolated struct Agentic30LocalDataResetFailure: Equatable {
     let path: String
     let reason: String
 }
 
-struct Agentic30LocalDataResetReport: Equatable {
+nonisolated struct Agentic30LocalDataResetReport: Equatable {
     let removedDefaultsCount: Int
     let removedKeychainServiceEntries: Bool
     let removedAppSupportPaths: [String]
@@ -845,14 +845,18 @@ enum Agentic30LocalDataResetter {
         qmdDataURLs: [URL]? = nil,
         appBundleURL: URL? = Bundle.main.bundleURL,
         additionalWorkspaceURLs: [URL] = [],
-        resetKeychainStorage: () -> Void = KeychainHelper.resetKeychainStorageForLocalDataReset
+        resetKeychainStorage: (() -> Void)? = nil
     ) -> Agentic30LocalDataResetReport {
         let workspaceURLs = uniqueURLs(
             (options.includeKnownWorkspaces ? WorkspaceSettings.knownWorkspaceURLs(defaults: defaults) : [])
                 + additionalWorkspaceURLs
         )
 
-        resetKeychainStorage()
+        if let resetKeychainStorage {
+            resetKeychainStorage()
+        } else {
+            KeychainHelper.resetKeychainStorageForLocalDataReset()
+        }
         let removedDefaultsCount = KeychainHelper.resetAgentic30Defaults(
             defaults,
             bundleIdentifier: bundleIdentifier
@@ -1091,7 +1095,7 @@ enum Agentic30LocalDataResetter {
         environment["HOME"].flatMap(nonEmptyPathURL) ?? FileManager.default.homeDirectoryForCurrentUser
     }
 
-    private static func nonEmptyPathURL(_ value: String) -> URL? {
+    nonisolated private static func nonEmptyPathURL(_ value: String) -> URL? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         return URL(fileURLWithPath: trimmed, isDirectory: true)

@@ -808,6 +808,7 @@ struct StartupQueuedAction: Identifiable {
 @MainActor
 final class AgenticViewModel: ObservableObject {
     private static let macOnboardingIntroCompletedDefaultsKey = "agentic30.macOnboardingIntroCompleted"
+    private static let macOnboardingIntakeOnlyCompletedDefaultsKey = "agentic30.macOnboardingIntakeOnlyCompleted"
 
     @Published private(set) var sessions: [ChatSession] = []
     @Published var selectedSessionID: String?
@@ -834,6 +835,7 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var macAuthSession: MacAuthSession?
     @Published private(set) var macOnboardingStatus: MacOnboardingStatus = .idle
     @Published private(set) var macOnboardingIntroCompleted: Bool = false
+    @Published private(set) var macOnboardingIntakeOnlyCompleted: Bool = false
     @Published private(set) var localDataResetGeneration: Int = 0
     @Published private(set) var onboardingContext: OnboardingContext?
     @Published private(set) var onboardingContextStatus: OnboardingContextSubmissionStatus = .idle
@@ -899,7 +901,7 @@ final class AgenticViewModel: ObservableObject {
     private let authSessionFactory: WebAuthenticationSessionFactory
     private let activateAppForAuth: @MainActor () -> Void
     private let disablesSidecarStartForTesting: Bool
-    private let localDataResetter: (Agentic30LocalDataResetOptions, [URL]) -> KeychainHelper.LocalDataResetReport
+    private let localDataResetter: @MainActor (Agentic30LocalDataResetOptions, [URL]) -> KeychainHelper.LocalDataResetReport
     private var startupSessionAppearStartedAt: Date?
     private var didRecordStartupSessionAppear = false
 
@@ -1151,10 +1153,10 @@ final class AgenticViewModel: ObservableObject {
         disablesSidecarStartForTesting: Bool = false,
         foundationCurriculumLifecycleController: FoundationCurriculumLifecycleController? = nil,
         sidecar: (any SidecarTransport)? = nil,
-        localDataResetter: @escaping (Agentic30LocalDataResetOptions, [URL]) -> KeychainHelper.LocalDataResetReport = { options, workspaceURLs in
-            let resetKeychainStorage: () -> Void = CommandLine.arguments.contains("--ui-testing-skip-keychain-reset")
+        localDataResetter: @escaping @MainActor (Agentic30LocalDataResetOptions, [URL]) -> KeychainHelper.LocalDataResetReport = { options, workspaceURLs in
+            let resetKeychainStorage: (() -> Void)? = CommandLine.arguments.contains("--ui-testing-skip-keychain-reset")
                 ? {}
-                : KeychainHelper.resetKeychainStorageForLocalDataReset
+                : nil
             return Agentic30LocalDataResetter.reset(
                 options: options,
                 additionalWorkspaceURLs: workspaceURLs,
@@ -1194,6 +1196,7 @@ final class AgenticViewModel: ObservableObject {
             macAuthSession = Self.makeUITestingMacAuthSession(arguments: arguments)
             onboardingContext = Self.makeUITestingOnboardingContext(arguments: arguments)
             macOnboardingIntroCompleted = onboardingContext != nil || Self.loadMacOnboardingIntroCompleted()
+            macOnboardingIntakeOnlyCompleted = Self.loadMacOnboardingIntakeOnlyCompleted()
             applyUITestingIddSetupSeeds(arguments: arguments)
             if let seededDraft = Self.uiTestingArgumentValue("--ui-testing-seed-draft", arguments: arguments) {
                 draft = seededDraft
@@ -1215,6 +1218,7 @@ final class AgenticViewModel: ObservableObject {
             macAuthSession = nil
             onboardingContext = nil
             macOnboardingIntroCompleted = false
+            macOnboardingIntakeOnlyCompleted = false
         } else {
             if arguments.contains("--ui-testing-reset-onboarding") {
                 KeychainHelper.deleteMacAuthSession()
@@ -1225,6 +1229,7 @@ final class AgenticViewModel: ObservableObject {
             macAuthSession = KeychainHelper.loadMacAuthSession()
             onboardingContext = KeychainHelper.loadOnboardingContext()
             macOnboardingIntroCompleted = onboardingContext != nil || Self.loadMacOnboardingIntroCompleted()
+            macOnboardingIntakeOnlyCompleted = Self.loadMacOnboardingIntakeOnlyCompleted()
         }
         #else
         if arguments.contains("--ui-testing-reset-onboarding") {
@@ -1236,6 +1241,7 @@ final class AgenticViewModel: ObservableObject {
         macAuthSession = KeychainHelper.loadMacAuthSession()
         onboardingContext = KeychainHelper.loadOnboardingContext()
         macOnboardingIntroCompleted = onboardingContext != nil || Self.loadMacOnboardingIntroCompleted()
+        macOnboardingIntakeOnlyCompleted = Self.loadMacOnboardingIntakeOnlyCompleted()
         #endif
 
         if let session = macAuthSession, session.shouldRefreshSoon {
@@ -1244,6 +1250,7 @@ final class AgenticViewModel: ObservableObject {
         if let onboardingContextOverride {
             onboardingContext = onboardingContextOverride
             macOnboardingIntroCompleted = true
+            macOnboardingIntakeOnlyCompleted = !WorkspaceSettings.hasExplicitWorkspace
         }
 
         restoreFoundationProgress(arguments: arguments)
@@ -1484,16 +1491,29 @@ final class AgenticViewModel: ObservableObject {
         defaults.bool(forKey: macOnboardingIntroCompletedDefaultsKey)
     }
 
+    private static func loadMacOnboardingIntakeOnlyCompleted(defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: macOnboardingIntakeOnlyCompletedDefaultsKey)
+    }
+
     private static func saveMacOnboardingIntroCompleted(defaults: UserDefaults = .standard) {
         defaults.set(true, forKey: macOnboardingIntroCompletedDefaultsKey)
+    }
+
+    private static func saveMacOnboardingIntakeOnlyCompleted(defaults: UserDefaults = .standard) {
+        defaults.set(true, forKey: macOnboardingIntakeOnlyCompletedDefaultsKey)
     }
 
     private static func resetMacOnboardingIntroCompleted(defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: macOnboardingIntroCompletedDefaultsKey)
     }
 
+    private static func resetMacOnboardingIntakeOnlyCompleted(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: macOnboardingIntakeOnlyCompletedDefaultsKey)
+    }
+
     private static func resetMacOnboardingState(defaults: UserDefaults = .standard) {
         resetMacOnboardingIntroCompleted(defaults: defaults)
+        resetMacOnboardingIntakeOnlyCompleted(defaults: defaults)
         defaults.removeObject(forKey: IntakeV2Store.stateDefaultsKey)
         defaults.removeObject(forKey: IntakeV2Store.legacyStateDefaultsKey)
         defaults.removeObject(forKey: IntakeV2SourceManager.sourcesDefaultsKey)
@@ -1510,7 +1530,7 @@ final class AgenticViewModel: ObservableObject {
             "source": source,
         ], authSession: macAuthSession)
 
-        guard !requiresMacOnboarding else {
+        guard canStartSidecar else {
             bipNotificationOpenRequest = nil
             return
         }
@@ -1655,9 +1675,13 @@ final class AgenticViewModel: ObservableObject {
         if usesInlineUITestStubResponses {
             return false
         }
-        return !WorkspaceSettings.hasExplicitWorkspace
+        return !(WorkspaceSettings.hasExplicitWorkspace || macOnboardingIntakeOnlyCompleted)
             || onboardingContext == nil
             || !macOnboardingIntroCompleted
+    }
+
+    var canStartSidecar: Bool {
+        !requiresMacOnboarding && WorkspaceSettings.hasExplicitWorkspace
     }
 
     var needsProjectWorkspace: Bool {
@@ -1690,7 +1714,7 @@ final class AgenticViewModel: ObservableObject {
     }
 
     var canQueueStartupAction: Bool {
-        !requiresMacOnboarding && selectedSession == nil
+        canStartSidecar && selectedSession == nil
     }
 
     var isAnalyzeAdsCommand: Bool {
@@ -1716,6 +1740,11 @@ final class AgenticViewModel: ObservableObject {
             && onboardingContext != nil
         guard !requiresMacOnboarding || canStartForOnboardingPrefetch else {
             connectionLabel = needsOnboardingContext ? "Complete local setup" : "Choose a project workspace"
+            isConnected = false
+            return
+        }
+        guard WorkspaceSettings.hasExplicitWorkspace else {
+            connectionLabel = "Choose a project workspace"
             isConnected = false
             return
         }
@@ -1793,7 +1822,7 @@ final class AgenticViewModel: ObservableObject {
     }
 
     func reconnectSidecar() {
-        guard !requiresMacOnboarding else { return }
+        guard canStartSidecar else { return }
         PostHogTelemetry.capture("mac_sidecar_reconnect_requested", authSession: macAuthSession)
         connectionLabel = "Reconnecting sidecar..."
         lastError = nil
@@ -1822,7 +1851,11 @@ final class AgenticViewModel: ObservableObject {
     }
 
     @discardableResult
-    func createSession(provider: AgentProvider? = nil, source: String? = nil) -> Bool {
+    func createSession(
+        provider: AgentProvider? = nil,
+        source: String? = nil,
+        suppressBootstrapIntake: Bool = false
+    ) -> Bool {
         let resolvedProvider = provider ?? selectedProvider
         let model = preferredModel(for: resolvedProvider)
         var properties: [String: Any] = [
@@ -1843,7 +1876,11 @@ final class AgenticViewModel: ObservableObject {
             "provider": resolvedProvider.rawValue,
             "model": model,
         ]
-        if !iddSetupComplete {
+        if let source = source?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !source.isEmpty {
+            payload["source"] = source
+        }
+        if suppressBootstrapIntake || !iddSetupComplete {
             payload["suppressBootstrapIntake"] = true
         }
         return sidecar.send(payload: payload)
@@ -1851,24 +1888,53 @@ final class AgenticViewModel: ObservableObject {
 
     @discardableResult
     func ensureOfficeHoursSession() -> Bool {
-        if selectedSession != nil {
-            officeHoursSessionCreateInFlight = false
+        #if DEBUG
+        if installUITestingOfficeHoursRunningSessionIfNeeded() {
             return true
         }
-        #if DEBUG
         if installUITestingOfficeHoursStructuredPromptSessionIfNeeded() {
             return true
         }
         #endif
+        if let selectedSession, canUseSessionForOfficeHours(selectedSession) {
+            officeHoursSessionCreateInFlight = false
+            return true
+        }
         guard isConnected else { return false }
         guard !officeHoursSessionCreateInFlight else { return false }
 
         officeHoursSessionCreateInFlight = true
-        if createSession(provider: selectedProvider, source: "day1_step_office_hours") {
+        if createSession(
+            provider: selectedProvider,
+            source: "office_hours_screen",
+            suppressBootstrapIntake: true
+        ) {
             return false
         }
         officeHoursSessionCreateInFlight = false
         return false
+    }
+
+    func canUseSessionForOfficeHours(_ session: ChatSession) -> Bool {
+        if session.runtime?.officeHours?.active == true {
+            return true
+        }
+        if let pendingUserInput = session.pendingUserInput {
+            return pendingUserInput.title?.caseInsensitiveCompare("Office Hours") == .orderedSame
+                || pendingUserInput.generation?.mode?.hasPrefix("office_hours") == true
+        }
+        if session.title.range(of: "Office Hours", options: [.caseInsensitive, .diacriticInsensitive]) != nil {
+            return true
+        }
+        if session.messages.isEmpty {
+            return true
+        }
+        return session.messages.allSatisfy { message in
+            guard message.role == .user else { return false }
+            let content = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            return content.caseInsensitiveCompare(OfficeHoursTranscriptRow.syntheticStartPrompt) == .orderedSame
+                || content.caseInsensitiveCompare(OfficeHoursTranscriptRow.legacySyntheticStartPrompt) == .orderedSame
+        }
     }
 
     @discardableResult
@@ -2035,7 +2101,11 @@ final class AgenticViewModel: ObservableObject {
     }
 
     @discardableResult
-    func startOfficeHours(sessionID: String, context: String) -> Bool {
+    func startOfficeHours(
+        sessionID: String,
+        context: String,
+        source: String = "office_hours_screen"
+    ) -> Bool {
         let trimmedSessionID = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSessionID.isEmpty else { return false }
         guard isConnected else {
@@ -2044,12 +2114,13 @@ final class AgenticViewModel: ObservableObject {
         }
 
         let trimmedContext = context.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSource = source.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "office_hours_screen"
         PostHogTelemetry.capture(
             "mac_office_hours_start_requested",
             properties: [
                 "session_id": trimmedSessionID,
                 "context_length": trimmedContext.count,
-                "source": "day1_step",
+                "source": trimmedSource,
             ],
             authSession: macAuthSession
         )
@@ -2057,7 +2128,7 @@ final class AgenticViewModel: ObservableObject {
         return sidecar.send(payload: [
             "type": "office_hours_start",
             "sessionId": trimmedSessionID,
-            "source": "day1_step",
+            "source": trimmedSource,
             "visiblePrompt": "Office Hours",
             "context": trimmedContext,
         ])
@@ -3521,6 +3592,8 @@ final class AgenticViewModel: ObservableObject {
     func setProjectWorkspace(_ url: URL) {
         clearStartupQueuedAction()
         WorkspaceSettings.store(url)
+        Self.resetMacOnboardingIntakeOnlyCompleted()
+        macOnboardingIntakeOnlyCompleted = false
         foundationProgressStore = nil
         restoreFoundationProgress(arguments: CommandLine.arguments)
         workspaceRoot = url.path
@@ -3548,6 +3621,8 @@ final class AgenticViewModel: ObservableObject {
         onboardingContext = context
         onboardingContextStatus = .idle
         WorkspaceSettings.store(url)
+        Self.resetMacOnboardingIntakeOnlyCompleted()
+        macOnboardingIntakeOnlyCompleted = false
         workspaceRoot = url.path
         requestedInitialBipGate = false
         requestedInitialBipMission = false
@@ -3581,6 +3656,8 @@ final class AgenticViewModel: ObservableObject {
         onboardingContext = context
         onboardingContextStatus = .idle
         WorkspaceSettings.clear()
+        Self.resetMacOnboardingIntakeOnlyCompleted()
+        macOnboardingIntakeOnlyCompleted = false
         workspaceRoot = ""
         requestedInitialBipGate = false
         requestedInitialBipMission = false
@@ -3626,10 +3703,26 @@ final class AgenticViewModel: ObservableObject {
         signOutMacAuth()
         KeychainHelper.deleteOnboardingContext()
         Self.resetMacOnboardingIntroCompleted()
+        Self.resetMacOnboardingIntakeOnlyCompleted()
         macOnboardingIntroCompleted = false
+        macOnboardingIntakeOnlyCompleted = false
         onboardingContext = nil
         onboardingContextStatus = .idle
         activeOnboardingWorkspacePrefetchFingerprint = nil
+    }
+
+    func completeIntakeOnlyOnboarding(openWorkspace: Bool = false) {
+        Self.saveMacOnboardingIntakeOnlyCompleted()
+        macOnboardingIntakeOnlyCompleted = true
+        connectionLabel = "Choose a project workspace"
+        isConnected = false
+        if started {
+            selectedSessionID = nil
+            sidecar.stop()
+            started = false
+        }
+        completeMacOnboardingIntro(openWorkspace: openWorkspace)
+        PostHogTelemetry.capture("mac_onboarding_intake_only_completed", authSession: macAuthSession)
     }
 
     func completeMacOnboardingIntro(openWorkspace: Bool = false) {
@@ -3642,7 +3735,7 @@ final class AgenticViewModel: ObservableObject {
         if !requiresMacOnboarding {
             ensureFoundationStarted()
         }
-        if !started, !requiresMacOnboarding {
+        if !started, canStartSidecar {
             hydrateWorkspaceRootFromSettingsIfAvailable()
             start()
         }
@@ -3671,7 +3764,7 @@ final class AgenticViewModel: ObservableObject {
             ], authSession: macAuthSession)
             // Local persistence done. Server sync to /api/profile/onboarding-context is a follow-up.
             sendAuthContextToSidecar()
-            if !started, !requiresMacOnboarding {
+            if !started, canStartSidecar {
                 hydrateWorkspaceRootFromSettingsIfAvailable()
                 start()
             }
@@ -4107,7 +4200,7 @@ final class AgenticViewModel: ObservableObject {
                   let content = event.content else { return }
             updateMessage(sessionID: sessionID, messageID: messageID) { message in
                 message.content = content
-                message.state = .final
+                message.state = event.state ?? .final
             }
             refreshPresentationState()
         case "foundation_first_prompt":
@@ -4137,7 +4230,12 @@ final class AgenticViewModel: ObservableObject {
             )
             scanResult = nil
         case "workspace_scan_progress":
-            isScanning = true
+            // Background Day 1 enrichment can report late progress after the
+            // foreground scan result. Do not reopen the scan gate unless a new
+            // workspace_scan_started event has reset the result first.
+            if scanResult == nil {
+                isScanning = true
+            }
             setScanProgress(
                 event.progressText ?? scanProgressMessage,
                 stage: event.stage,
@@ -4947,7 +5045,11 @@ final class AgenticViewModel: ObservableObject {
         guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-structured-prompt") else {
             return false
         }
-        guard selectedSession == nil else { return true }
+        if let selectedSession,
+           selectedSession.pendingUserInput?.title?.caseInsensitiveCompare("Office Hours") == .orderedSame
+            || selectedSession.pendingUserInput?.generation?.mode?.hasPrefix("office_hours") == true {
+            return true
+        }
 
         let now = Date()
         let sessionID = "ui-test-office-hours-\(UUID().uuidString)"
@@ -4976,6 +5078,80 @@ final class AgenticViewModel: ObservableObject {
                 startupTiming: nil,
                 iddDocumentType: "day1_step",
                 iddMode: "office_hours"
+            )
+        )
+        sessions = [session]
+        selectedSessionID = sessionID
+        officeHoursSessionCreateInFlight = false
+        refreshPresentationState()
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    @discardableResult
+    private func installUITestingOfficeHoursRunningSessionIfNeeded() -> Bool {
+        #if DEBUG
+        guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-running") else {
+            return false
+        }
+        if let selectedSession,
+           selectedSession.title.range(of: "Office Hours", options: [.caseInsensitive, .diacriticInsensitive]) != nil,
+           selectedSession.status == .running {
+            return true
+        }
+
+        let now = Date()
+        let startedAt = ISO8601DateFormatter().string(from: now)
+        let sessionID = "ui-test-office-hours-running-\(UUID().uuidString)"
+        let session = ChatSession(
+            id: sessionID,
+            title: "Office Hours",
+            provider: selectedProvider,
+            model: preferredModel(for: selectedProvider),
+            status: .running,
+            createdAt: now,
+            updatedAt: now,
+            error: nil,
+            messages: [
+                ChatMessage(
+                    id: "ui-test-office-hours-context",
+                    role: .user,
+                    provider: selectedProvider,
+                    content: OfficeHoursTranscriptRow.syntheticStartPrompt,
+                    state: .final,
+                    createdAt: now,
+                    error: nil,
+                    bipMissionChoices: nil,
+                    providerAuthActions: nil
+                ),
+                ChatMessage(
+                    id: "ui-test-office-hours-answer",
+                    role: .user,
+                    provider: selectedProvider,
+                    content: "시간을 반복 낭비함",
+                    state: .final,
+                    createdAt: now,
+                    error: nil,
+                    bipMissionChoices: nil,
+                    providerAuthActions: nil
+                ),
+            ],
+            pendingUserInput: nil,
+            runtime: ChatSessionRuntime(
+                codexThreadId: nil,
+                codexThreadMeta: nil,
+                codexWarm: nil,
+                startupTiming: nil,
+                iddDocumentType: "day1_step",
+                iddMode: "office_hours",
+                officeHours: OfficeHoursRuntime(
+                    active: true,
+                    source: "ui_testing_running",
+                    startedAt: startedAt,
+                    context: "UI test Office Hours running state"
+                )
             )
         )
         sessions = [session]
@@ -6847,7 +7023,7 @@ struct FoundationProgressSnapshot: Codable, Hashable {
     }
 }
 
-enum FoundationCurriculumPresentationDestination: Hashable {
+nonisolated enum FoundationCurriculumPresentationDestination: Hashable {
     case curriculumDay(Int)
     case graduation
 }
@@ -7215,6 +7391,7 @@ private extension AgenticViewModel {
         macAuthSession = nil
         macOnboardingStatus = .idle
         macOnboardingIntroCompleted = false
+        macOnboardingIntakeOnlyCompleted = false
         onboardingContext = nil
         onboardingContextStatus = .idle
         bipCoach = nil
@@ -7525,6 +7702,7 @@ struct SidecarEvent: Decodable {
     let messageId: String?
     let delta: String?
     let content: String?
+    let state: MessageState?
     let workspaceRoot: String?
     let session: ChatSession?
     let sessions: [ChatSession]?
@@ -7628,6 +7806,7 @@ struct SidecarEvent: Decodable {
         messageId: String?,
         delta: String?,
         content: String?,
+        state: MessageState? = nil,
         workspaceRoot: String?,
         session: ChatSession?,
         sessions: [ChatSession]?,
@@ -7711,6 +7890,7 @@ struct SidecarEvent: Decodable {
         self.messageId = messageId
         self.delta = delta
         self.content = content
+        self.state = state
         self.workspaceRoot = workspaceRoot
         self.session = session
         self.sessions = sessions
@@ -8067,6 +8247,7 @@ extension SidecarEvent {
         case sessionId
         case requestId
         case messageId
+        case state
         case delta
         case content
         case workspaceRoot
@@ -8162,6 +8343,7 @@ extension SidecarEvent {
         sessionId = Self.decodeIfPresent(String.self, from: container, forKey: .sessionId)
         requestId = Self.decodeIfPresent(String.self, from: container, forKey: .requestId)
         messageId = Self.decodeIfPresent(String.self, from: container, forKey: .messageId)
+        state = Self.decodeIfPresent(MessageState.self, from: container, forKey: .state)
         delta = Self.decodeIfPresent(String.self, from: container, forKey: .delta)
         content = Self.decodeIfPresent(String.self, from: container, forKey: .content)
         workspaceRoot = Self.decodeIfPresent(String.self, from: container, forKey: .workspaceRoot)

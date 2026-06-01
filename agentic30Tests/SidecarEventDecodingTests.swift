@@ -146,6 +146,26 @@ struct SidecarEventDecodingTests {
         #expect(event.sessions?.first?.pendingUserInput?.questions.first?.allowFreeText == true)
     }
 
+    @MainActor @Test func decodesStreamingStateOnMessageReplacedEvent() throws {
+        let payload = """
+        {
+          "type": "message_replaced",
+          "sessionId": "session-1",
+          "messageId": "message-1",
+          "content": "partial snapshot",
+          "state": "streaming"
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "message_replaced")
+        #expect(event.sessionId == "session-1")
+        #expect(event.messageId == "message-1")
+        #expect(event.content == "partial snapshot")
+        #expect(event.state == .streaming)
+    }
+
     @MainActor @Test func decodesConnectionErrorPayload() throws {
         let payload = """
         {

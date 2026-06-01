@@ -185,6 +185,7 @@ struct IntakeV2FolderPickView: View {
 
     @State private var fileCount: Int = 0
     @State private var didCopyAgentPrompt = false
+    @State private var isPresentingFolderPicker = false
 
     var body: some View {
         IntakeV2PinnedStepScaffold { _ in
@@ -244,12 +245,13 @@ struct IntakeV2FolderPickView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "folder")
                                 .font(.system(size: 13, weight: .semibold))
-                            Text(store.folderURL == nil ? "직접 선택" : "다른 폴더 선택")
+                            Text(folderPickButtonTitle)
                                 .font(.system(size: 13, weight: .medium, design: .rounded))
                         }
                         .foregroundStyle(IntakeV2Color.textSecondary)
                     }
                     .buttonStyle(.plain)
+                    .disabled(isPresentingFolderPicker)
                     .accessibilityIdentifier("intakeV2.folderPickButton")
 
                     if store.folderURL == nil {
@@ -416,33 +418,85 @@ struct IntakeV2FolderPickView: View {
         store.persist()
         OnboardingWorkspaceRequestStore().removeRequest(id: request.id)
         OnboardingNonceStore().invalidate()
+        PostHogTelemetry.capture("mac_onboarding_folder_selected", properties: [
+            "source": "helper_request",
+            "workspace_root": url.path,
+            "file_count": fileCount,
+        ])
     }
 
     private func chooseFolder() {
         #if DEBUG
         if let url = uiTestingWorkspacePickerURL() {
-            store.folderURL = url
-            fileCount = (try? FileManager.default.contentsOfDirectory(atPath: url.path).count) ?? 0
-            store.persist()
+            applySelectedFolder(url)
             return
         }
         #endif
+
+        guard !isPresentingFolderPicker else { return }
+        isPresentingFolderPicker = true
+        PostHogTelemetry.capture("mac_onboarding_folder_picker_opened", properties: [
+            "had_existing_folder": store.folderURL != nil,
+        ])
 
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.level = .modalPanel
         panel.message = "agentic30이 읽을 폴더를 선택해주세요"
-        if panel.runModal() == .OK, let url = panel.url {
-            store.folderURL = url
-            fileCount = (try? FileManager.default.contentsOfDirectory(atPath: url.path).count) ?? 0
-            store.persist()
+        panel.directoryURL = store.folderURL ?? FileManager.default.homeDirectoryForCurrentUser
+
+        NSApp.activate(ignoringOtherApps: true)
+        let completion: (NSApplication.ModalResponse) -> Void = { response in
+            isPresentingFolderPicker = false
+            guard response == .OK, let url = panel.url else {
+                PostHogTelemetry.capture("mac_onboarding_folder_picker_cancelled")
+                return
+            }
+            applySelectedFolder(url)
+        }
+
+        if let window = Self.folderPickerPresentationWindow() {
+            panel.beginSheetModal(for: window, completionHandler: completion)
+        } else {
+            panel.begin(completionHandler: completion)
+        }
+    }
+
+    private var folderPickButtonTitle: String {
+        if isPresentingFolderPicker { return "폴더 선택 중" }
+        return store.folderURL == nil ? "직접 선택" : "다른 폴더 선택"
+    }
+
+    private func applySelectedFolder(_ url: URL) {
+        store.folderURL = url
+        fileCount = (try? FileManager.default.contentsOfDirectory(atPath: url.path).count) ?? 0
+        store.persist()
+        PostHogTelemetry.capture("mac_onboarding_folder_selected", properties: [
+            "source": "picker",
+            "workspace_root": url.path,
+            "file_count": fileCount,
+        ])
+    }
+
+    private static func folderPickerPresentationWindow() -> NSWindow? {
+        if let keyWindow = NSApp.keyWindow, keyWindow.isVisible {
+            return keyWindow
+        }
+        if let mainWindow = NSApp.mainWindow, mainWindow.isVisible {
+            return mainWindow
+        }
+        return NSApp.windows.first { window in
+            window.isVisible && !window.isMiniaturized
         }
     }
 
     private func skipFolderSelection() {
         store.folderURL = nil
         store.persist()
+        PostHogTelemetry.capture("mac_onboarding_folder_skipped")
         onNext()
     }
 

@@ -340,6 +340,14 @@ struct ChatSessionRuntime: Codable, Hashable {
     var startupTiming: StartupTimingState?
     var iddDocumentType: String?
     var iddMode: String?
+    var officeHours: OfficeHoursRuntime?
+}
+
+struct OfficeHoursRuntime: Codable, Hashable {
+    var active: Bool?
+    var source: String?
+    var startedAt: String?
+    var context: String?
 }
 
 struct CodexThreadMeta: Codable, Hashable {
@@ -465,6 +473,18 @@ struct StructuredPromptRequest: Identifiable, Codable, Hashable {
                 if let nextIntent = option.nextIntent {
                     fields.append(nextIntent)
                 }
+                if let risk = option.risk {
+                    fields.append(risk)
+                }
+                if let evidenceTarget = option.evidenceTarget {
+                    fields.append(evidenceTarget)
+                }
+                if let mapsTo = option.mapsTo {
+                    fields.append(mapsTo)
+                }
+                if let failureMode = option.failureMode {
+                    fields.append(failureMode)
+                }
             }
         }
         let haystack = fields.joined(separator: "\n")
@@ -530,6 +550,7 @@ struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
     let header: String
     var question: String
     let helperText: String?
+    let highlightPhrases: [String]?
     let options: [StructuredPromptOption]?
     let multiSelect: Bool?
     let allowFreeText: Bool?
@@ -547,12 +568,14 @@ struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
         allowFreeText: Bool?,
         requiresFreeText: Bool?,
         freeTextPlaceholder: String?,
-        textMode: StructuredPromptTextMode?
+        textMode: StructuredPromptTextMode?,
+        highlightPhrases: [String]? = nil
     ) {
         self.questionId = questionId
         self.header = header
         self.question = question
         self.helperText = helperText
+        self.highlightPhrases = highlightPhrases
         self.options = options
         self.multiSelect = multiSelect
         self.allowFreeText = allowFreeText
@@ -574,7 +597,8 @@ struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
             allowFreeText: allowFreeText,
             requiresFreeText: requiresFreeText,
             freeTextPlaceholder: freeTextPlaceholder,
-            textMode: textMode
+            textMode: textMode,
+            highlightPhrases: highlightPhrases
         )
     }
 
@@ -600,6 +624,10 @@ struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
         case header
         case question
         case helperText
+        case highlight
+        case highlights
+        case highlightPhrases
+        case highlightPhrasesSnake = "highlight_phrases"
         case options
         case multiSelect
         case allowFreeText
@@ -616,6 +644,7 @@ struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
         header = try container.decode(String.self, forKey: .header)
         question = try container.decode(String.self, forKey: .question)
         helperText = try container.decodeIfPresent(String.self, forKey: .helperText)
+        highlightPhrases = Self.decodeHighlightPhrases(from: container)
         options = try container.decodeIfPresent([StructuredPromptOption].self, forKey: .options)
         multiSelect = try container.decodeIfPresent(Bool.self, forKey: .multiSelect)
         allowFreeText = try container.decodeIfPresent(Bool.self, forKey: .allowFreeText)
@@ -630,12 +659,27 @@ struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
         try container.encode(header, forKey: .header)
         try container.encode(question, forKey: .question)
         try container.encodeIfPresent(helperText, forKey: .helperText)
+        try container.encodeIfPresent(highlightPhrases, forKey: .highlightPhrases)
         try container.encodeIfPresent(options, forKey: .options)
         try container.encodeIfPresent(multiSelect, forKey: .multiSelect)
         try container.encodeIfPresent(allowFreeText, forKey: .allowFreeText)
         try container.encodeIfPresent(requiresFreeText, forKey: .requiresFreeText)
         try container.encodeIfPresent(freeTextPlaceholder, forKey: .freeTextPlaceholder)
         try container.encodeIfPresent(textMode, forKey: .textMode)
+    }
+
+    private static func decodeHighlightPhrases(
+        from container: KeyedDecodingContainer<CodingKeys>
+    ) -> [String]? {
+        for key in [CodingKeys.highlightPhrases, .highlightPhrasesSnake, .highlights, .highlight] {
+            if let values = try? container.decodeIfPresent([String].self, forKey: key) {
+                return values
+            }
+            if let value = try? container.decodeIfPresent(String.self, forKey: key) {
+                return [value]
+            }
+        }
+        return nil
     }
 }
 
@@ -644,6 +688,83 @@ struct StructuredPromptOption: Codable, Hashable {
     let description: String
     let preview: String?
     let nextIntent: String?
+
+    /// Office Hours decision-brief metadata. These fields are optional so older
+    /// providers and fixtures keep decoding, while richer cards can surface why
+    /// an option is recommended and what evidence it captures.
+    let recommended: Bool?
+    let risk: String?
+    let evidenceTarget: String?
+    let mapsTo: String?
+    let failureMode: String?
+
+    init(
+        label: String,
+        description: String,
+        preview: String? = nil,
+        nextIntent: String? = nil,
+        recommended: Bool? = nil,
+        risk: String? = nil,
+        evidenceTarget: String? = nil,
+        mapsTo: String? = nil,
+        failureMode: String? = nil
+    ) {
+        self.label = label
+        self.description = description
+        self.preview = preview
+        self.nextIntent = nextIntent
+        self.recommended = recommended
+        self.risk = risk
+        self.evidenceTarget = evidenceTarget
+        self.mapsTo = mapsTo
+        self.failureMode = failureMode
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case label
+        case description
+        case preview
+        case nextIntent
+        case nextIntentSnake = "next_intent"
+        case recommended
+        case risk
+        case evidenceTarget
+        case evidenceTargetSnake = "evidence_target"
+        case mapsTo
+        case mapsToSnake = "maps_to"
+        case failureMode
+        case failureModeSnake = "failure_mode"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        label = try container.decode(String.self, forKey: .label)
+        description = try container.decode(String.self, forKey: .description)
+        preview = try container.decodeIfPresent(String.self, forKey: .preview)
+        nextIntent = try container.decodeIfPresent(String.self, forKey: .nextIntent)
+            ?? container.decodeIfPresent(String.self, forKey: .nextIntentSnake)
+        recommended = try container.decodeIfPresent(Bool.self, forKey: .recommended)
+        risk = try container.decodeIfPresent(String.self, forKey: .risk)
+        evidenceTarget = try container.decodeIfPresent(String.self, forKey: .evidenceTarget)
+            ?? container.decodeIfPresent(String.self, forKey: .evidenceTargetSnake)
+        mapsTo = try container.decodeIfPresent(String.self, forKey: .mapsTo)
+            ?? container.decodeIfPresent(String.self, forKey: .mapsToSnake)
+        failureMode = try container.decodeIfPresent(String.self, forKey: .failureMode)
+            ?? container.decodeIfPresent(String.self, forKey: .failureModeSnake)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(label, forKey: .label)
+        try container.encode(description, forKey: .description)
+        try container.encodeIfPresent(preview, forKey: .preview)
+        try container.encodeIfPresent(nextIntent, forKey: .nextIntent)
+        try container.encodeIfPresent(recommended, forKey: .recommended)
+        try container.encodeIfPresent(risk, forKey: .risk)
+        try container.encodeIfPresent(evidenceTarget, forKey: .evidenceTarget)
+        try container.encodeIfPresent(mapsTo, forKey: .mapsTo)
+        try container.encodeIfPresent(failureMode, forKey: .failureMode)
+    }
 }
 
 enum StructuredPromptTextMode: String, Codable {
@@ -669,7 +790,7 @@ struct WorkspaceOnboardingHypothesis: Codable, Hashable {
 /// Adaptive Day 1 ICP plan generated during onboarding workspace scan. This is
 /// intentionally project-shaped rather than hardcoding the old
 /// distance/tools/stuck/last-7-days axes.
-struct Day1IcpPlan: Codable, Hashable {
+nonisolated struct Day1IcpPlan: Codable, Hashable {
     let schemaVersion: Int
     let source: String?
     let generatedAt: String?
@@ -683,7 +804,7 @@ struct Day1IcpPlan: Codable, Hashable {
     let firstInterviewMessage: FirstInterviewMessage
 }
 
-struct Day1IcpSignals: Codable, Hashable {
+nonisolated struct Day1IcpSignals: Codable, Hashable {
     let productName: String?
     let currentIcpGuess: String?
     let likelyUsers: [String]
@@ -694,13 +815,13 @@ struct Day1IcpSignals: Codable, Hashable {
     let confidence: String?
 }
 
-struct Day1IcpEvidenceRef: Codable, Hashable {
+nonisolated struct Day1IcpEvidenceRef: Codable, Hashable {
     let path: String
     let reason: String?
     let quote: String?
 }
 
-struct Day1IcpQuestion: Codable, Hashable {
+nonisolated struct Day1IcpQuestion: Codable, Hashable {
     let id: String
     let dimension: String
     let title: String
@@ -734,7 +855,7 @@ struct Day1IcpQuestion: Codable, Hashable {
     }
 }
 
-struct Day1IcpQuestionOption: Codable, Hashable {
+nonisolated struct Day1IcpQuestionOption: Codable, Hashable {
     let id: String
     let label: String
     let description: String
@@ -765,7 +886,7 @@ struct Day1IcpQuestionOption: Codable, Hashable {
     }
 }
 
-struct IcpDraft: Codable, Hashable {
+nonisolated struct IcpDraft: Codable, Hashable {
     let description: String
     let criteria: [String]
     let whyTheyMatter: [String]
@@ -776,20 +897,20 @@ struct IcpDraft: Codable, Hashable {
     let referenceCustomersToFind: [String]
 }
 
-struct Day1AntiIcp: Codable, Hashable {
+nonisolated struct Day1AntiIcp: Codable, Hashable {
     let summary: String
     let rules: [AntiIcpRule]
     let politeInterestGuardrails: [String]
 }
 
-struct AntiIcpRule: Codable, Hashable {
+nonisolated struct AntiIcpRule: Codable, Hashable {
     let id: String
     let label: String
     let reason: String
     let evidenceRef: String?
 }
 
-struct FirstInterviewMessage: Codable, Hashable {
+nonisolated struct FirstInterviewMessage: Codable, Hashable {
     let channel: String
     let recipientPlaceholder: String
     let subject: String?
@@ -1495,7 +1616,7 @@ struct NewsMarketRadarSourceRef: Codable, Hashable, Identifiable {
     }
 }
 
-struct BipResearchSnapshot: Codable, Hashable {
+nonisolated struct BipResearchSnapshot: Codable, Hashable {
     let schemaVersion: Int
     let contentLocale: String?
     let promptProfile: String?
@@ -1641,7 +1762,7 @@ struct BipResearchSnapshot: Codable, Hashable {
     }
 }
 
-struct BipResearchStatus: Codable, Hashable {
+nonisolated struct BipResearchStatus: Codable, Hashable {
     let state: String
     let lastSuccessAt: Date?
     let stale: Bool?
@@ -1656,7 +1777,7 @@ struct BipResearchStatus: Codable, Hashable {
     let partialFailures: [BipResearchPartialFailure]?
 }
 
-struct BipResearchPartialFailure: Codable, Hashable, Identifiable {
+nonisolated struct BipResearchPartialFailure: Codable, Hashable, Identifiable {
     let laneId: String
     let laneTitle: String
     let error: String
@@ -1666,7 +1787,7 @@ struct BipResearchPartialFailure: Codable, Hashable, Identifiable {
     }
 }
 
-struct BipResearchSignal: Codable, Hashable, Identifiable {
+nonisolated struct BipResearchSignal: Codable, Hashable, Identifiable {
     let id: String
     let title: String
     let subtitle: String?
@@ -1674,7 +1795,7 @@ struct BipResearchSignal: Codable, Hashable, Identifiable {
     let tone: String?
 }
 
-struct BipResearchTag: Codable, Hashable, Identifiable {
+nonisolated struct BipResearchTag: Codable, Hashable, Identifiable {
     let title: String
     let tone: String?
 
@@ -1683,7 +1804,7 @@ struct BipResearchTag: Codable, Hashable, Identifiable {
     }
 }
 
-struct BipResearchCandidate: Codable, Hashable, Identifiable {
+nonisolated struct BipResearchCandidate: Codable, Hashable, Identifiable {
     let id: String
     let title: String
     let sourceLabel: String?
@@ -1750,7 +1871,7 @@ struct BipResearchCandidate: Codable, Hashable, Identifiable {
     }
 }
 
-struct BipResearchSourceRef: Codable, Hashable, Identifiable {
+nonisolated struct BipResearchSourceRef: Codable, Hashable, Identifiable {
     let id: String?
     let sourceType: String
     let platform: String?

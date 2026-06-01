@@ -149,7 +149,7 @@ struct SourceCatalogItem: Identifiable, Hashable {
     }
 }
 
-enum IntakeSourceIconKind: Hashable {
+nonisolated enum IntakeSourceIconKind: Hashable {
     case asset(String)
     case composite([String])
     case symbol(String)

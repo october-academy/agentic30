@@ -347,6 +347,13 @@ final class agentic30UITests: XCTestCase {
         XCTAssertFalse(elementWithIdentifier(in: app, "intakeV2.firstDecisionCard").exists)
         XCTAssertFalse(elementWithIdentifier(in: app, "intakeV2.todoListWindow").exists)
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
+
+        clickCenter(of: openInbox)
+        XCTAssertTrue(elementWithIdentifier(in: app, "workspace.surface").waitForExistence(timeout: 10))
+        XCTAssertFalse(elementWithIdentifier(in: app, "intakeV2.openInboxButton").exists)
+        XCTAssertFalse(elementWithIdentifier(in: app, "intakeV2.bootLogDetails").exists)
+        XCTAssertFalse(elementWithIdentifier(in: app, "intakeV2.bootLog.elapsed").exists)
+        XCTAssertTrue(app.debugDescription.contains("먼저 도울 사람을 정해요"))
     }
 
     @MainActor
@@ -1027,10 +1034,8 @@ final class agentic30UITests: XCTestCase {
         resetDirectory(at: workspacePath)
         resetDirectory(at: appSupportPath)
 
-        var launchedApps: [XCUIApplication] = []
         hideKnownInterferingApplications()
         addTeardownBlock {
-            launchedApps.forEach { $0.terminate() }
             self.unhideKnownInterferingApplications()
             self.removeDirectory(at: workspacePath)
             self.removeDirectory(at: appSupportPath)
@@ -1050,7 +1055,9 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
         ], environment: environment)
-        launchedApps.append(firstLaunch)
+        addTeardownBlock {
+            firstLaunch.terminate()
+        }
         firstLaunch.activate()
 
         XCTAssertTrue(elementWithIdentifier(in: firstLaunch, "opendesign.day.shell").waitForExistence(timeout: 10))
@@ -1067,7 +1074,9 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
         ], environment: environment)
-        launchedApps.append(relaunched)
+        addTeardownBlock {
+            relaunched.terminate()
+        }
         relaunched.activate()
 
         let shell = elementWithIdentifier(in: relaunched, "opendesign.day.shell")
@@ -1550,35 +1559,14 @@ final class agentic30UITests: XCTestCase {
         }
 
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
+        XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.realProjectTest").exists)
+        XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.main").exists)
 
         completeOpenDesignDayInterviews(in: app)
 
         let finalConfirm = elementWithIdentifier(in: app, "opendesign.day.final.confirm")
         XCTAssertTrue(waitForOpenDesignMainHittable(finalConfirm, in: app, timeout: 6))
         clickCenter(of: finalConfirm)
-        let officeHoursMain = elementWithIdentifier(in: app, "opendesign.officeHours.main")
-        if !officeHoursMain.waitForExistence(timeout: 5) {
-            attachScreenshot(from: app, named: "OpenDesign Office Hours Missing After Completion")
-            attachText(app.debugDescription, named: "OpenDesign Office Hours Missing Tree")
-        }
-        XCTAssertTrue(officeHoursMain.exists)
-        let structuredPrompt = elementWithIdentifier(in: app, "assistant.structuredPrompt")
-        XCTAssertTrue(structuredPrompt.waitForExistence(timeout: 5))
-        let structuredContinue = app.buttons["assistant.structuredContinueButton"]
-        XCTAssertTrue(structuredContinue.waitForExistence(timeout: 5))
-        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Incomplete", timeout: 3))
-        let structuredChoice = app.buttons["assistant.structuredChoice.office_hours_scope.5명 대화 예약"]
-        XCTAssertTrue(waitUntilHittable(structuredChoice, timeout: 5))
-        clickCenter(of: structuredChoice)
-        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Ready", timeout: 3))
-        let readyStructuredContinue = app.buttons["assistant.structuredContinueButton"]
-        XCTAssertTrue(waitUntilHittable(readyStructuredContinue, timeout: 5))
-        readyStructuredContinue.click()
-        XCTAssertTrue(waitForElementToDisappear(structuredPrompt, timeout: 5))
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.promptComposer").waitForExistence(timeout: 5))
-        let advanceToDay2 = app.buttons["opendesign.officeHours.advanceToDay2"]
-        XCTAssertTrue(waitUntilHittable(advanceToDay2, timeout: 5))
-        clickCenter(of: advanceToDay2)
         let day2Main = elementWithIdentifier(in: app, "opendesign.day2.main")
         if !day2Main.waitForExistence(timeout: 5) {
             attachScreenshot(from: app, named: "OpenDesign Day2 Missing After Completion")
@@ -1588,6 +1576,37 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["시장 신호 읽기"].waitForExistence(timeout: 3))
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.task.day1", containing: "done", timeout: 3))
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.task.day2", containing: "active", timeout: 3))
+        XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.main").exists)
+
+        let officeHoursRail = app.buttons["opendesign.day.rail.item.office-hours"]
+        XCTAssertTrue(waitUntilHittable(officeHoursRail, timeout: 5))
+        clickCenter(of: officeHoursRail)
+
+        let officeHoursMain = elementWithIdentifier(in: app, "opendesign.officeHours.main")
+        XCTAssertTrue(officeHoursMain.waitForExistence(timeout: 5))
+        let officeHoursSessions = elementWithIdentifier(in: app, "opendesign.officeHours.sessions")
+        let officeHoursMeta = elementWithIdentifier(in: app, "opendesign.officeHours.meta")
+        XCTAssertTrue(officeHoursSessions.waitForExistence(timeout: 5))
+        XCTAssertTrue(officeHoursMeta.waitForExistence(timeout: 5))
+        XCTAssertEqual(officeHoursSessions.frame.width, 240, accuracy: 2)
+        XCTAssertEqual(officeHoursMeta.frame.width, 280, accuracy: 2)
+        XCTAssertEqual(officeHoursSessions.frame.maxX, officeHoursMain.frame.minX, accuracy: 2)
+        XCTAssertEqual(officeHoursMain.frame.maxX, officeHoursMeta.frame.minX, accuracy: 2)
+        let structuredPrompt = elementWithIdentifier(in: app, "assistant.structuredPrompt")
+        XCTAssertTrue(structuredPrompt.waitForExistence(timeout: 5))
+        let structuredContinue = app.buttons["assistant.structuredContinueButton"]
+        XCTAssertTrue(structuredContinue.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Incomplete", timeout: 3))
+        let structuredChoice = app.buttons["assistant.structuredChoice.office_hours_scope.5명 대화 예약"]
+        XCTAssertTrue(waitUntilHittable(structuredChoice, timeout: 5))
+        clickCenter(of: structuredChoice)
+        XCTAssertTrue(waitForElementToDisappear(structuredPrompt, timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.submittedPrompt").waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.promptComposer").waitForExistence(timeout: 5))
+        let todayRail = app.buttons["opendesign.day.rail.item.today"]
+        XCTAssertTrue(waitUntilHittable(todayRail, timeout: 5))
+        clickCenter(of: todayRail)
+        XCTAssertTrue(day2Main.waitForExistence(timeout: 5))
 
         let day2Meta = elementWithIdentifier(in: app, "opendesign.day2.meta")
         let day2MetaToggle = app.buttons["opendesign.day2.meta.toggle"]
@@ -1600,6 +1619,50 @@ final class agentic30UITests: XCTestCase {
         clickCenter(of: day2MetaToggle)
         XCTAssertTrue(waitForElementToDisappear(day2Meta, timeout: 3))
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day2.meta.toggle", containing: "열기", timeout: 2))
+    }
+
+    @MainActor
+    func testOfficeHoursRunningStateShowsLiveStatus() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-office-hours-running-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-office-hours-running-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-seed-office-hours-running",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
+        completeOpenDesignDayInterviews(in: app)
+
+        let officeHoursRail = app.buttons["opendesign.day.rail.item.office-hours"]
+        XCTAssertTrue(waitUntilHittable(officeHoursRail, timeout: 5))
+        clickCenter(of: officeHoursRail)
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.main").waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.questionLoader").waitForExistence(timeout: 5))
+        XCTAssertFalse(elementWithIdentifier(in: app, "assistant.structuredPrompt").exists)
     }
 
     @MainActor
@@ -1796,17 +1859,13 @@ final class agentic30UITests: XCTestCase {
                 return
             }
         }
-        guard waitForButtonLabel(in: app, identifier: "opendesign.day.final.confirm", containing: "Office Hours", timeout: 3) else {
+        guard waitForButtonLabel(in: app, identifier: "opendesign.day.final.confirm", containing: "Day 2", timeout: 3) else {
             XCTFail("after save confirm=\(app.buttons["opendesign.day.final.confirm"].label)")
             return
         }
         clickCenter(of: finalConfirm)
-        let officeHoursMain = elementWithIdentifier(in: app, "opendesign.officeHours.main")
-        XCTAssertTrue(officeHoursMain.waitForExistence(timeout: 5))
-        let advanceToDay2 = app.buttons["opendesign.officeHours.advanceToDay2"]
-        XCTAssertTrue(waitUntilHittable(advanceToDay2, timeout: 5))
-        clickCenter(of: advanceToDay2)
         XCTAssertTrue(day2Main.waitForExistence(timeout: 5))
+        XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.main").exists)
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.task.day1", containing: "done", timeout: 3))
     }
 

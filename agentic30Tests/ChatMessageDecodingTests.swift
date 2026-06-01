@@ -154,6 +154,42 @@ struct ChatMessageDecodingTests {
         #expect(decoded.providerAuthActions == nil)
     }
 
+    @MainActor @Test func decodesOfficeHoursOptionDecisionBriefMetadata() throws {
+        let payload = """
+        {
+          "header": "Observation",
+          "question_id": "office_hours_observation",
+          "question": "도움 없이 막히는 모습을 본 적이 있나요?",
+          "helperText": null,
+          "options": [
+            {
+              "label": "직접 관찰함",
+              "description": "가장 강한 사용 증거입니다.",
+              "recommended": true,
+              "risk": "관찰 대상이 ICP가 아니면 판단이 흐려집니다.",
+              "evidence_target": "막힌 단계와 예상 밖 행동",
+              "maps_to": "Q5 Observation",
+              "failure_mode": "surprise가 없으면 데모였을 수 있습니다."
+            }
+          ],
+          "multiSelect": false,
+          "allowFreeText": true,
+          "requiresFreeText": false,
+          "freeTextPlaceholder": "직접 입력",
+          "textMode": "short"
+        }
+        """.data(using: .utf8)!
+
+        let question = try Self.makeDecoder().decode(StructuredPromptQuestion.self, from: payload)
+        let option = try #require(question.options?.first)
+
+        #expect(option.recommended == true)
+        #expect(option.risk == "관찰 대상이 ICP가 아니면 판단이 흐려집니다.")
+        #expect(option.evidenceTarget == "막힌 단계와 예상 밖 행동")
+        #expect(option.mapsTo == "Q5 Observation")
+        #expect(option.failureMode == "surprise가 없으면 데모였을 수 있습니다.")
+    }
+
     /// Malformed inline decision (missing required `question` field) must
     /// surface as a decoding error so the SSE layer can decide how to recover.
     /// The sidecar already drops invalid payloads before they cross the wire,
@@ -233,5 +269,40 @@ struct ChatMessageDecodingTests {
         let question = try Self.makeDecoder().decode(StructuredPromptQuestion.self, from: payload)
         #expect(question.id == "day1-question-1")
         #expect(question.question == "누구를 인터뷰하나요?")
+    }
+
+    @MainActor @Test func structuredPromptQuestionDecodesOpenDesignHighlightShapes() throws {
+        let stringPayload = """
+        {
+          "header": "질문",
+          "question": "가장 강한 수요 증거가 뭐야?",
+          "highlight": "수요 증거",
+          "helperText": null,
+          "options": null,
+          "multiSelect": false,
+          "allowFreeText": true,
+          "freeTextPlaceholder": null,
+          "textMode": "short"
+        }
+        """.data(using: .utf8)!
+        let arrayPayload = """
+        {
+          "header": "질문",
+          "question": "더 필수적이 돼, 아니면 덜 필수적이 돼?",
+          "highlight_phrases": ["더 필수적", "덜 필수적"],
+          "helperText": null,
+          "options": null,
+          "multiSelect": false,
+          "allowFreeText": true,
+          "freeTextPlaceholder": null,
+          "textMode": "short"
+        }
+        """.data(using: .utf8)!
+
+        let stringQuestion = try Self.makeDecoder().decode(StructuredPromptQuestion.self, from: stringPayload)
+        let arrayQuestion = try Self.makeDecoder().decode(StructuredPromptQuestion.self, from: arrayPayload)
+
+        #expect(stringQuestion.highlightPhrases == ["수요 증거"])
+        #expect(arrayQuestion.highlightPhrases == ["더 필수적", "덜 필수적"])
     }
 }

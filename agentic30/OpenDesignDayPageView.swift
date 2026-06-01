@@ -2,6 +2,23 @@ import AppKit
 import Combine
 import SwiftUI
 
+enum OpenDesignCopy {
+    static let officeHoursTitle = "Office Hours"
+    static let officeHoursShortTitle = "오피스 아워"
+
+    static func visibleOfficeHoursTitle(_ title: String?, fallback: String = officeHoursTitle) -> String {
+        let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return fallback }
+        if trimmed.caseInsensitiveCompare("Office Hours") == .orderedSame {
+            return officeHoursTitle
+        }
+        if trimmed.caseInsensitiveCompare("Office Hours intake") == .orderedSame {
+            return "오피스 아워 입력 (Office Hours intake)"
+        }
+        return trimmed
+    }
+}
+
 struct OpenDesignDayContent {
     struct RailItem: Identifiable, Hashable {
         let id: String
@@ -11,9 +28,10 @@ struct OpenDesignDayContent {
         let hasNewDot: Bool
         let route: Route
 
-        enum Route: Hashable {
+        nonisolated enum Route: Hashable {
             case today
             case search
+            case officeHours
             case settings
             case inert
         }
@@ -351,6 +369,63 @@ struct OpenDesignDayContent {
         let meta: String
     }
 
+    static let developmentOnlyReferenceRailItemIDs: Set<String> = [
+        "projects",
+        "interviews",
+        "bip",
+        "news",
+        "history",
+    ]
+
+    static let developmentOnlyReferenceSearchItemIDs: Set<String> = [
+        "page-projects",
+        "page-interviews",
+        "page-bip",
+        "page-news",
+        "page-history",
+    ]
+
+    static var showsDevelopmentOnlyReferencePages: Bool {
+        #if DEBUG
+            return true
+        #else
+            return false
+        #endif
+    }
+
+    static func visibleRailItems(
+        _ items: [RailItem],
+        showsDevelopmentOnlyReferencePages: Bool = Self.showsDevelopmentOnlyReferencePages
+    ) -> [RailItem] {
+        guard !showsDevelopmentOnlyReferencePages else { return items }
+        return items.filter { !developmentOnlyReferenceRailItemIDs.contains($0.id) }
+    }
+
+    static func visibleSearchItems(
+        _ items: [SearchItem],
+        showsDevelopmentOnlyReferencePages: Bool = Self.showsDevelopmentOnlyReferencePages
+    ) -> [SearchItem] {
+        guard !showsDevelopmentOnlyReferencePages else { return items }
+        return items.filter { !developmentOnlyReferenceSearchItemIDs.contains($0.id) }
+    }
+
+    static func makeRailItems(
+        todayTitle: String,
+        showsDevelopmentOnlyReferencePages: Bool = Self.showsDevelopmentOnlyReferencePages
+    ) -> [RailItem] {
+        visibleRailItems([
+            RailItem(id: "today", title: todayTitle, systemImage: "calendar", isActive: true, hasNewDot: false, route: .today),
+            RailItem(id: "office-hours", title: OpenDesignCopy.officeHoursTitle, systemImage: "bubble.left.and.bubble.right.fill", isActive: false, hasNewDot: false, route: .officeHours),
+            RailItem(id: "search", title: "검색", systemImage: "magnifyingglass", isActive: false, hasNewDot: false, route: .search),
+            RailItem(id: "projects", title: "프로젝트", systemImage: "folder", isActive: false, hasNewDot: false, route: .inert),
+            RailItem(id: "settings", title: "설정", systemImage: "gearshape", isActive: false, hasNewDot: false, route: .settings),
+            RailItem(id: "interviews", title: "인터뷰", systemImage: "bubble.left.and.bubble.right", isActive: false, hasNewDot: false, route: .inert),
+            RailItem(id: "bip", title: "BIP 로그", systemImage: "doc.text", isActive: false, hasNewDot: false, route: .inert),
+            RailItem(id: "news", title: "뉴스", systemImage: "newspaper", isActive: false, hasNewDot: true, route: .inert),
+            RailItem(id: "history", title: "히스토리", systemImage: "clock.arrow.circlepath", isActive: false, hasNewDot: false, route: .inert),
+        ], showsDevelopmentOnlyReferencePages: showsDevelopmentOnlyReferencePages)
+    }
+
     var lockingFutureDays: OpenDesignDayContent {
         OpenDesignDayContent(
             railItems: railItems,
@@ -642,16 +717,7 @@ struct OpenDesignDayContent {
     }
 
     static let day1 = OpenDesignDayContent(
-        railItems: [
-            RailItem(id: "today", title: "오늘 · Day 1", systemImage: "calendar", isActive: true, hasNewDot: false, route: .today),
-            RailItem(id: "search", title: "검색", systemImage: "magnifyingglass", isActive: false, hasNewDot: false, route: .search),
-            RailItem(id: "projects", title: "프로젝트", systemImage: "folder", isActive: false, hasNewDot: false, route: .inert),
-            RailItem(id: "settings", title: "설정", systemImage: "gearshape", isActive: false, hasNewDot: false, route: .settings),
-            RailItem(id: "interviews", title: "인터뷰", systemImage: "bubble.left.and.bubble.right", isActive: false, hasNewDot: false, route: .inert),
-            RailItem(id: "bip", title: "BIP 로그", systemImage: "doc.text", isActive: false, hasNewDot: false, route: .inert),
-            RailItem(id: "news", title: "뉴스", systemImage: "newspaper", isActive: false, hasNewDot: true, route: .inert),
-            RailItem(id: "history", title: "히스토리", systemImage: "clock.arrow.circlepath", isActive: false, hasNewDot: false, route: .inert),
-        ],
+        railItems: makeRailItems(todayTitle: "오늘 · Day 1"),
         taskGroups: [
             TaskGroup(
                 id: "week1",
@@ -796,16 +862,7 @@ struct OpenDesignDayContent {
     )
 
     static let day2 = OpenDesignDayContent(
-        railItems: [
-            RailItem(id: "today", title: "오늘 · Day 2", systemImage: "calendar", isActive: true, hasNewDot: false, route: .today),
-            RailItem(id: "search", title: "검색", systemImage: "magnifyingglass", isActive: false, hasNewDot: false, route: .search),
-            RailItem(id: "projects", title: "프로젝트", systemImage: "folder", isActive: false, hasNewDot: false, route: .inert),
-            RailItem(id: "settings", title: "설정", systemImage: "gearshape", isActive: false, hasNewDot: false, route: .settings),
-            RailItem(id: "interviews", title: "인터뷰", systemImage: "bubble.left.and.bubble.right", isActive: false, hasNewDot: false, route: .inert),
-            RailItem(id: "bip", title: "BIP 로그", systemImage: "doc.text", isActive: false, hasNewDot: false, route: .inert),
-            RailItem(id: "news", title: "뉴스", systemImage: "newspaper", isActive: false, hasNewDot: true, route: .inert),
-            RailItem(id: "history", title: "히스토리", systemImage: "clock.arrow.circlepath", isActive: false, hasNewDot: false, route: .inert),
-        ],
+        railItems: makeRailItems(todayTitle: "오늘 · Day 2"),
         taskGroups: [
             TaskGroup(
                 id: "week1",
@@ -1437,8 +1494,10 @@ struct OpenDesignDayContent {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    static func makeSearchItems() -> [SearchItem] {
-        [
+    static func makeSearchItems(
+        showsDevelopmentOnlyReferencePages: Bool = Self.showsDevelopmentOnlyReferencePages
+    ) -> [SearchItem] {
+        visibleSearchItems([
             SearchItem(id: "page-today", kind: .page, title: "오늘 · Day 1", subtitle: "ICP 좁히기", day: nil, systemImage: "scope", isActive: true, isLocked: false, lockNote: nil, targetSectionID: "top", route: .today),
             SearchItem(id: "page-search", kind: .page, title: "검색", subtitle: "전체 페이지 · 과제 찾기", day: nil, systemImage: "magnifyingglass", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .search),
             SearchItem(id: "page-projects", kind: .page, title: "프로젝트", subtitle: "활성 3개 · 소스 루트 여러 개 관리", day: nil, systemImage: "folder", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
@@ -1465,7 +1524,7 @@ struct OpenDesignDayContent {
             SearchItem(id: "section-picker", kind: .section, title: "ICP 4지선다", subtitle: "직접 만날 사람 후보", day: nil, systemImage: "scope", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "interview1-options", route: .today),
             SearchItem(id: "section-final", kind: .section, title: "핵심 가설 확정", subtitle: "다음 검증 기준", day: nil, systemImage: "target", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "final-icp", route: .today),
             SearchItem(id: "section-guide", kind: .section, title: "진행 가이드", subtitle: "Day 1 흐름 보기", day: nil, systemImage: "sparkles", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "top", route: .today),
-        ]
+        ], showsDevelopmentOnlyReferencePages: showsDevelopmentOnlyReferencePages)
     }
 
     static func makeMarketSearchItems() -> [SearchItem] {
@@ -1967,7 +2026,7 @@ enum OpenDesignSectionAnchor: String, CaseIterable, Hashable {
     }
 }
 
-enum OpenDesignScrollPlacement: Equatable {
+nonisolated enum OpenDesignScrollPlacement: Equatable {
     case sectionContext
     case nextAction
 
@@ -2045,7 +2104,7 @@ enum OpenDesignIntroStage: Int, Comparable {
     }
 }
 
-enum OpenDesignWorkflowNavigationDirection: Equatable {
+nonisolated enum OpenDesignWorkflowNavigationDirection: Equatable {
     case forward
     case backward
     case neutral
@@ -2099,7 +2158,7 @@ struct OpenDesignDayInteractionState: Equatable {
         revisionSteps = revisionSteps.intersection(validStepIDs)
         lockedPrefillStepIDs = lockedPrefillStepIDs.intersection(validStepIDs)
 
-        let workflowUpperBound = dayCompleted ? officeHoursStepID : finalStepID
+        let workflowUpperBound = finalStepID
         activeStepID = min(max(activeStepID, 0), workflowUpperBound)
         maxUnlockedStepID = min(max(maxUnlockedStepID, 0), workflowUpperBound)
         if !validStepIDs.contains(1) {
@@ -2113,17 +2172,13 @@ struct OpenDesignDayInteractionState: Equatable {
         totalInterviewSteps + 1
     }
 
-    var officeHoursStepID: Int {
-        totalInterviewSteps + 2
-    }
-
     var workflowStepCount: Int {
-        totalInterviewSteps + 3
+        totalInterviewSteps + 2
     }
 
     var normalizedActiveStepID: Int {
         if dayCompleted {
-            return min(max(activeStepID, finalStepID), officeHoursStepID)
+            return finalStepID
         }
         if allInterviewsSubmitted {
             return min(max(activeStepID, finalStepID), finalStepID)
@@ -2134,7 +2189,7 @@ struct OpenDesignDayInteractionState: Equatable {
     }
 
     var maxReachableStepID: Int {
-        if dayCompleted { return officeHoursStepID }
+        if dayCompleted { return finalStepID }
         if allInterviewsSubmitted { return finalStepID }
         if !missionAccepted { return 0 }
         return min(max(maxUnlockedStepID, highestVisibleInterviewStep), totalInterviewSteps)
@@ -2354,7 +2409,7 @@ struct OpenDesignDayInteractionState: Equatable {
     }
 
     mutating func focusWorkflowStep(_ stepID: Int) {
-        let bounded = min(max(stepID, 0), officeHoursStepID)
+        let bounded = min(max(stepID, 0), finalStepID)
         guard isWorkflowStepUnlocked(bounded) else { return }
         workflowNavigationDirection = OpenDesignWorkflowNavigationDirection.direction(from: normalizedActiveStepID, to: bounded)
         activeStepID = bounded
@@ -2392,7 +2447,6 @@ struct OpenDesignDayInteractionState: Equatable {
     func isWorkflowStepUnlocked(_ stepID: Int) -> Bool {
         if stepID == 0 { return true }
         if stepID == finalStepID { return allInterviewsSubmitted || dayCompleted }
-        if stepID == officeHoursStepID { return dayCompleted }
         guard (1...totalInterviewSteps).contains(stepID) else { return false }
         return missionAccepted && stepID <= maxReachableStepID
     }
@@ -3085,7 +3139,7 @@ struct OpenDesignDayPageView: View {
     let openNewsSettings: () -> Void
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
-    let officeHoursStepCard: AnyView?
+    let officeHoursScreen: AnyView?
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
     let day1HandoffError: String?
@@ -3099,6 +3153,7 @@ struct OpenDesignDayPageView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding private var interaction: OpenDesignDayInteractionState
     @Binding private var selectedReferencePage: OpenDesignReferencePageKind?
+    @Binding private var isOfficeHoursPresented: Bool
     @State private var isSearchPresented = false
     @State private var searchQuery = ""
     @State private var selectedSearchIndex = 0
@@ -3113,6 +3168,7 @@ struct OpenDesignDayPageView: View {
         content: OpenDesignDayContent = .day1,
         interaction: Binding<OpenDesignDayInteractionState>,
         selectedReferencePage: Binding<OpenDesignReferencePageKind?> = .constant(nil),
+        isOfficeHoursPresented: Binding<Bool> = .constant(false),
         openSettings: @escaping () -> Void,
         submitStructuredPromptChoice: @escaping (OpenDesignDayAnswerSubmission) -> Void = { _ in },
         newsMarketRadar: NewsMarketRadarSnapshot = .empty,
@@ -3124,7 +3180,7 @@ struct OpenDesignDayPageView: View {
         openNewsSettings: @escaping () -> Void = {},
         day1DocPreviews: [IddDocPreview] = [],
         day1HandoffPromptCard: AnyView? = nil,
-        officeHoursStepCard: AnyView? = nil,
+        officeHoursScreen: AnyView? = nil,
         activeDay1HandoffDocType: String? = nil,
         pendingDay1HandoffDocType: String? = nil,
         day1HandoffError: String? = nil,
@@ -3138,6 +3194,7 @@ struct OpenDesignDayPageView: View {
         self.content = content
         _interaction = interaction
         _selectedReferencePage = selectedReferencePage
+        _isOfficeHoursPresented = isOfficeHoursPresented
         self.openSettings = openSettings
         self.submitStructuredPromptChoice = submitStructuredPromptChoice
         self.newsMarketRadar = newsMarketRadar
@@ -3149,7 +3206,7 @@ struct OpenDesignDayPageView: View {
         self.openNewsSettings = openNewsSettings
         self.day1DocPreviews = day1DocPreviews
         self.day1HandoffPromptCard = day1HandoffPromptCard
-        self.officeHoursStepCard = officeHoursStepCard
+        self.officeHoursScreen = officeHoursScreen
         self.activeDay1HandoffDocType = activeDay1HandoffDocType
         self.pendingDay1HandoffDocType = pendingDay1HandoffDocType
         self.day1HandoffError = day1HandoffError
@@ -3180,6 +3237,7 @@ struct OpenDesignDayPageView: View {
                     content: content,
                     interaction: $interaction,
                     selectedReferencePage: selectedReferencePage,
+                    isOfficeHoursPresented: isOfficeHoursPresented,
                     pendingScrollRequest: $pendingScrollRequest,
                     searchPulseTarget: $searchPulseTarget,
                     layout: layout,
@@ -3195,7 +3253,7 @@ struct OpenDesignDayPageView: View {
                     openNewsSettings: openNewsSettings,
                     day1DocPreviews: day1DocPreviews,
                     day1HandoffPromptCard: day1HandoffPromptCard,
-                    officeHoursStepCard: officeHoursStepCard,
+                    officeHoursScreen: officeHoursScreen,
                     activeDay1HandoffDocType: activeDay1HandoffDocType,
                     pendingDay1HandoffDocType: pendingDay1HandoffDocType,
                     day1HandoffError: day1HandoffError,
@@ -3368,11 +3426,13 @@ struct OpenDesignDayPageView: View {
            let dayNumber = openDesignFoundationDayNumber(taskID: item.id) {
             closeSearch()
             selectedReferencePage = nil
+            isOfficeHoursPresented = false
             selectDay(dayNumber)
             return
         }
         if let referencePage = OpenDesignReferencePageKind(searchItemID: item.id) {
             selectedReferencePage = referencePage
+            isOfficeHoursPresented = false
             closeSearch()
             return
         }
@@ -3381,12 +3441,17 @@ struct OpenDesignDayPageView: View {
         case .settings:
             closeSearch()
             selectedReferencePage = nil
+            isOfficeHoursPresented = false
             openSettings()
         case .search:
             openSearch()
+        case .officeHours:
+            closeSearch()
+            openOfficeHoursFromRail()
         case .today, .inert:
             closeSearch()
             selectedReferencePage = nil
+            isOfficeHoursPresented = false
             let target = OpenDesignSectionAnchor(rawValue: item.targetSectionID ?? "") ?? .top
             revealIntroIfNeeded(for: target)
             focusWorkflowStepIfNeeded(for: target)
@@ -3418,27 +3483,42 @@ struct OpenDesignDayPageView: View {
 
     private func activateRailItem(_ item: OpenDesignDayContent.RailItem) {
         if item.id == "today" {
-            selectedReferencePage = nil
-            requestScroll(to: .top)
+            openTodayFromRail()
             return
         }
 
         if let referencePage = OpenDesignReferencePageKind(railItemID: item.id) {
             selectedReferencePage = referencePage
+            isOfficeHoursPresented = false
             return
         }
 
         switch item.route {
         case .settings:
             selectedReferencePage = nil
+            isOfficeHoursPresented = false
             openSettings()
         case .search:
             openSearch()
+        case .officeHours:
+            openOfficeHoursFromRail()
         case .today:
-            selectedReferencePage = nil
-            requestScroll(to: .top)
+            openTodayFromRail()
         case .inert:
             break
+        }
+    }
+
+    private func openTodayFromRail() {
+        selectedReferencePage = nil
+        isOfficeHoursPresented = false
+        requestScroll(to: .top)
+    }
+
+    private func openOfficeHoursFromRail() {
+        selectedReferencePage = nil
+        withAnimation(.spring(response: reduceMotion ? 0 : 0.24, dampingFraction: 0.90)) {
+            isOfficeHoursPresented = true
         }
     }
 
@@ -3473,6 +3553,7 @@ struct OpenDesignDayPageView: View {
     }
 
     private func submitActiveStep() {
+        guard !isOfficeHoursPresented else { return }
         if advanceIntroIfNeeded() {
             return
         }
@@ -3589,14 +3670,17 @@ struct OpenDesignDayPageView: View {
     private func completeDayAction() {
         completeDayLocally()
         requestDayCompletionOnce()
+        if content.market == nil {
+            advanceToNextDay()
+        }
     }
 
     private func completeDayLocally() {
         let shouldRunBurst = !interaction.dayCompleted && !reduceMotion
         withAnimation(.spring(response: reduceMotion ? 0 : 0.30, dampingFraction: 0.88)) {
             interaction.dayCompleted = true
-            interaction.activeStepID = interaction.officeHoursStepID
-            interaction.maxUnlockedStepID = interaction.officeHoursStepID
+            interaction.activeStepID = interaction.finalStepID
+            interaction.maxUnlockedStepID = interaction.finalStepID
         }
         if shouldRunBurst {
             runCompletionBurst()
@@ -3642,7 +3726,7 @@ struct OpenDesignDayPageView: View {
 
         let progress: String
         if interaction.dayCompleted {
-            progress = "STEP \(interaction.workflowStepCount) / \(interaction.workflowStepCount) · Office Hours"
+            progress = "STEP \(interaction.workflowStepCount) / \(interaction.workflowStepCount) · Day 1 완료"
         } else if interaction.allInterviewsSubmitted {
             progress = "STEP \(interaction.finalStepID + 1) / \(interaction.workflowStepCount) · 핵심 가설 확정 대기"
         } else {
@@ -3708,6 +3792,7 @@ struct OpenDesignDayShell: View {
     let content: OpenDesignDayContent
     @Binding var interaction: OpenDesignDayInteractionState
     let selectedReferencePage: OpenDesignReferencePageKind?
+    let isOfficeHoursPresented: Bool
     @Binding var pendingScrollRequest: OpenDesignScrollRequest?
     @Binding var searchPulseTarget: String?
     let layout: OpenDesignDayLayoutMetrics
@@ -3723,7 +3808,7 @@ struct OpenDesignDayShell: View {
     let openNewsSettings: () -> Void
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
-    let officeHoursStepCard: AnyView?
+    let officeHoursScreen: AnyView?
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
     let day1HandoffError: String?
@@ -3752,6 +3837,10 @@ struct OpenDesignDayShell: View {
                         ? refreshNewsMarketRadar
                         : selectedReferencePage == .bipLog ? refreshBipResearch : nil
                 )
+            } else if isOfficeHoursPresented {
+                OpenDesignOfficeHoursTitlebar(
+                    openSearch: toggleSearch
+                )
             } else if let market = content.market {
                 OpenDesignMarketTitlebar(
                     market: market,
@@ -3773,6 +3862,7 @@ struct OpenDesignDayShell: View {
                 ZStack {
                     OpenDesignRailView(
                         content: content,
+                        isOfficeHoursPresented: isOfficeHoursPresented,
                         railWidth: layout.railWidth,
                         selectedReferencePage: selectedReferencePage,
                         activate: activateRailItem
@@ -3799,6 +3889,16 @@ struct OpenDesignDayShell: View {
                         openNewsSettings: openNewsSettings
                     )
                     .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.995)))
+                } else if isOfficeHoursPresented {
+                    if let officeHoursScreen {
+                        officeHoursScreen
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.995)))
+                    } else {
+                        OpenDesignOfficeHoursUnavailableView()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .transition(.opacity)
+                    }
                 } else {
                     if layout.showsTaskSidebar {
                         ZStack {
@@ -3840,7 +3940,6 @@ struct OpenDesignDayShell: View {
                             advanceToNextDay: advanceToNextDay,
                             day1DocPreviews: day1DocPreviews,
                             day1HandoffPromptCard: day1HandoffPromptCard,
-                            officeHoursStepCard: officeHoursStepCard,
                             activeDay1HandoffDocType: activeDay1HandoffDocType,
                             pendingDay1HandoffDocType: pendingDay1HandoffDocType,
                             day1HandoffError: day1HandoffError,
@@ -4011,6 +4110,74 @@ private struct OpenDesignDayTitlebar: View {
     }
 }
 
+private struct OpenDesignOfficeHoursTitlebar: View {
+    let openSearch: () -> Void
+
+    var body: some View {
+        ZStack {
+            HStack(spacing: 8) {
+                Spacer(minLength: 82)
+                Text("Agentic30")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Text("/")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                Text(OpenDesignCopy.officeHoursTitle)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 4) {
+                Spacer()
+                OpenDesignToolbarButton(
+                    systemImage: "magnifyingglass",
+                    label: "검색 · ⌘ K",
+                    keyboardKey: "k",
+                    accessibilityIdentifier: "opendesign.officeHours.search",
+                    action: openSearch
+                )
+                OpenDesignToolbarButton(
+                    systemImage: "square.and.arrow.down",
+                    label: "문서 내보내기",
+                    accessibilityIdentifier: "opendesign.officeHours.export",
+                    action: {}
+                )
+                OpenDesignToolbarButton(
+                    systemImage: "sidebar.right",
+                    label: "우측 패널",
+                    isOn: true,
+                    accessibilityIdentifier: "opendesign.officeHours.panel",
+                    action: {}
+                )
+            }
+            .padding(.trailing, 12)
+        }
+        .frame(height: 36)
+        .background(OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+}
+
+private struct OpenDesignOfficeHoursUnavailableView: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("오피스 아워 화면을 준비할 수 없습니다.")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fg)
+            Text("Day 1 컨텍스트가 준비되면 다시 열어 주세요.")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+        }
+        .padding(28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .background(OpenDesignDayColor.bg)
+        .accessibilityIdentifier("opendesign.officeHours.unavailable")
+    }
+}
+
 private struct OpenDesignToolbarButton: View {
     let systemImage: String
     let label: String
@@ -4058,9 +4225,20 @@ private struct OpenDesignToolbarButton: View {
 
 private struct OpenDesignRailView: View {
     let content: OpenDesignDayContent
+    let isOfficeHoursPresented: Bool
     let railWidth: CGFloat
     let selectedReferencePage: OpenDesignReferencePageKind?
     let activate: (OpenDesignDayContent.RailItem) -> Void
+
+    private var activeItemID: String {
+        if isOfficeHoursPresented {
+            return "office-hours"
+        }
+        if let selectedReferencePage {
+            return selectedReferencePage.railItemID
+        }
+        return "today"
+    }
 
     var body: some View {
         VStack(spacing: 2) {
@@ -4068,7 +4246,7 @@ private struct OpenDesignRailView: View {
                 OpenDesignRailButton(
                     item: item,
                     railWidth: railWidth,
-                    isActive: selectedReferencePage.map { item.id == $0.railItemID } ?? (item.id == "today")
+                    isActive: item.id == activeItemID
                 ) {
                     activate(item)
                 }
@@ -4522,7 +4700,7 @@ struct OpenDesignInlineSegment: Hashable {
     }
 }
 
-struct OpenDesignInlineMarkdownEmphasisRun: Hashable {
+nonisolated struct OpenDesignInlineMarkdownEmphasisRun: Hashable {
     let text: String
     let isEmphasized: Bool
 }
@@ -5932,7 +6110,6 @@ private struct OpenDesignDayMainView: View {
     let advanceToNextDay: () -> Void
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
-    let officeHoursStepCard: AnyView?
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
     let day1HandoffError: String?
@@ -5986,7 +6163,6 @@ private struct OpenDesignDayMainView: View {
                                     advanceToNextDay: advanceToNextDay,
                                     day1DocPreviews: day1DocPreviews,
                                     day1HandoffPromptCard: day1HandoffPromptCard,
-                                    officeHoursStepCard: officeHoursStepCard,
                                     activeDay1HandoffDocType: activeDay1HandoffDocType,
                                     pendingDay1HandoffDocType: pendingDay1HandoffDocType,
                                     day1HandoffError: day1HandoffError,
@@ -6431,7 +6607,6 @@ private struct OpenDesignDayStepWorkspaceView: View {
     let advanceToNextDay: () -> Void
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
-    let officeHoursStepCard: AnyView?
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
     let day1HandoffError: String?
@@ -6485,14 +6660,6 @@ private struct OpenDesignDayStepWorkspaceView: View {
                     activeStepAnchor
                 }
                 .id("active-step-\(activeInterviewStep.id)")
-            } else if interaction.normalizedActiveStepID == interaction.officeHoursStepID,
-                      let officeHoursStepCard {
-                officeHoursStepCard
-                    .transition(workflowPhaseTransition)
-                    .overlay(alignment: .topLeading) {
-                        activeStepAnchor
-                    }
-                    .id("active-step-office-hours")
             } else if interaction.allInterviewsSubmitted {
                 OpenDesignHypothesisConfirmationCard(
                     content: content,
@@ -6790,14 +6957,7 @@ private struct OpenDesignStepper: View {
             isCurrent: interaction.normalizedActiveStepID == interaction.finalStepID,
             isUnlocked: interaction.isWorkflowStepUnlocked(interaction.finalStepID)
         )
-        let officeHours = StepItem(
-            id: interaction.officeHoursStepID,
-            title: "Office Hours",
-            isDone: false,
-            isCurrent: interaction.normalizedActiveStepID == interaction.officeHoursStepID,
-            isUnlocked: interaction.isWorkflowStepUnlocked(interaction.officeHoursStepID)
-        )
-        return [start] + questions + [final, officeHours]
+        return [start] + questions + [final]
     }
 
     var body: some View {
@@ -7997,7 +8157,7 @@ private struct OpenDesignHypothesisConfirmationCard: View {
             return "4개 문서 저장"
         }
         if interaction.dayCompleted {
-            return "Office Hours 열기 ↵"
+            return "Day 2로 이동 ↵"
         }
         if let alignmentPlan = content.alignmentPlan {
             if alignmentPlan.signals.evidenceRefs.isEmpty {
@@ -8006,9 +8166,9 @@ private struct OpenDesignHypothesisConfirmationCard: View {
             if !alignmentPlan.qualityGate.passed {
                 return "부족한 항목 다시 고르기"
             }
-            return "Office Hours로 넘기기 ↵"
+            return "Day 1 완료 → Day 2 ↵"
         }
-        return "가설 확정 → Office Hours ↵"
+        return "가설 확정 → Day 2 ↵"
     }
 
     private var confirmButtonDisabled: Bool {
@@ -8044,7 +8204,7 @@ private struct OpenDesignHypothesisConfirmationCard: View {
                 Text("Day 1이 완료됐습니다.")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(OpenDesignDayColor.fg)
-                Text("다음 STEP에서 이 가설을 바탕으로 Office Hours 대화를 시작합니다.")
+                Text("오피스 아워는 좌측 rail의 별도 화면에서 언제든 열 수 있습니다.")
                     .font(.system(size: 12.5, weight: .regular))
                     .foregroundStyle(OpenDesignDayColor.fgSecondary)
             }
@@ -8072,6 +8232,8 @@ private struct OpenDesignHypothesisConfirmationCard: View {
         }
         if !interaction.dayCompleted {
             completeDayAction()
+        } else {
+            advanceToNextDay()
         }
     }
 
@@ -8221,7 +8383,7 @@ private struct OpenDesignMetaPanelView: View {
                             }
                     }
                     .frame(height: 3)
-                    Text("\(interaction.missionAccepted ? "●" : "○") 시작    \(interaction.missionAccepted ? "●" : "○") 질문    \(interaction.allInterviewsSubmitted ? "●" : "○") 확정    \(interaction.dayCompleted ? "●" : "○") Office Hours")
+                    Text("\(interaction.missionAccepted ? "●" : "○") 시작    \(interaction.missionAccepted ? "●" : "○") 질문    \(interaction.dayCompleted ? "●" : "○") 확정")
                         .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(OpenDesignDayColor.muted)
                 }

@@ -54,6 +54,136 @@ struct OpenDesignDayContentTests {
         #expect(rows[0].lineLimit == nil)
     }
 
+    @Test func officeHoursVisibleRowsDropStreamingPlaceholderWhileQuestionLoads() {
+        let session = makeChatSession(
+            status: .running,
+            messages: [
+                makeChatMessage(id: "streaming", role: .assistant, content: "", state: .streaming),
+            ]
+        )
+
+        let rows = OfficeHoursLiveStatusPolicy.visibleRows(in: session)
+
+        #expect(rows.isEmpty)
+    }
+
+    @Test func officeHoursVisibleRowsDropStreamingAssistantRowsWhenQuestionExists() {
+        let session = makeChatSession(
+            status: .awaitingInput,
+            messages: [
+                makeChatMessage(id: "start", role: .user, content: OfficeHoursTranscriptRow.syntheticStartPrompt),
+                makeChatMessage(id: "answer", role: .user, content: "실제 한 사람의 시간 손실"),
+                makeChatMessage(id: "streaming", role: .assistant, content: "", state: .streaming),
+                makeChatMessage(id: "assistant", role: .assistant, content: "이미 받은 답변 요약", state: .streaming),
+            ],
+            pendingUserInput: makeOfficeHoursPrompt(sessionID: "session")
+        )
+
+        let rows = OfficeHoursLiveStatusPolicy.visibleRows(in: session)
+
+        #expect(rows.map(\.id) == ["office-hours-context-start", "answer"])
+        #expect(rows.map(\.kind) == [.contextLoaded, .user])
+        #expect(rows.contains(where: \.isStreamingPlaceholder) == false)
+        #expect(rows.last?.content == "실제 한 사람의 시간 손실")
+    }
+
+    @Test func officeHoursLiveStatusPolicyShowsDetachedPanelOnlyWithoutStreamingAssistantRow() {
+        let runningWithoutAssistant = makeChatSession(
+            status: .running,
+            messages: [
+                makeChatMessage(id: "answer", role: .user, content: "시간을 반복 낭비함"),
+            ]
+        )
+        let rowsWithoutAssistant = OfficeHoursTranscriptRow.rows(from: runningWithoutAssistant.messages)
+        #expect(OfficeHoursLiveStatusPolicy.shouldShowDetachedLiveStatus(
+            in: runningWithoutAssistant,
+            rows: rowsWithoutAssistant
+        ))
+
+        let runningWithStreamingAssistant = makeChatSession(
+            status: .running,
+            messages: [
+                makeChatMessage(id: "answer", role: .user, content: "시간을 반복 낭비함"),
+                makeChatMessage(id: "assistant", role: .assistant, content: "다음 질문은", state: .streaming),
+            ]
+        )
+        let rowsWithAssistant = OfficeHoursLiveStatusPolicy.visibleRows(in: runningWithStreamingAssistant)
+        #expect(OfficeHoursLiveStatusPolicy.shouldShowDetachedLiveStatus(
+            in: runningWithStreamingAssistant,
+            rows: rowsWithAssistant
+        ))
+        #expect(rowsWithAssistant.map(\.id) == ["answer"])
+
+        let awaitingInput = makeChatSession(status: .awaitingInput)
+        #expect(!OfficeHoursLiveStatusPolicy.shouldShowDetachedLiveStatus(in: awaitingInput, rows: []))
+    }
+
+    @Test func officeHoursTimelineBuilderPlacesActiveLoaderAfterSubmittedPrompt() {
+        let prompt = makeOfficeHoursPrompt(sessionID: "session", requestId: "request-1")
+        let submission = AgenticViewModel.StructuredPromptSubmission(
+            question: prompt.questions[0].question,
+            selectedOptions: ["돈을 내겠다고 했다"],
+            freeText: "실제 결제 대화로 이어짐"
+        )
+        let snapshot = OfficeHoursSubmittedPromptSnapshot(
+            sessionId: "session",
+            requestId: prompt.requestId,
+            prompt: prompt,
+            submissions: [submission],
+            submittedAt: Date(timeIntervalSince1970: 1)
+        )
+        let loading = OfficeHoursLoadingSnapshot(
+            sessionId: "session",
+            requestId: prompt.requestId,
+            startedAt: Date(timeIntervalSince1970: 2)
+        )
+        let rows = OfficeHoursTranscriptRow.rows(from: [
+            makeChatMessage(id: "question", role: .assistant, content: prompt.questions[0].question),
+            makeChatMessage(id: "answer", role: .user, content: "돈을 내겠다고 했다 — 실제 결제 대화로 이어짐"),
+        ])
+
+        let items = OfficeHoursTimelineBuilder.items(
+            rows: rows,
+            submittedSnapshots: [snapshot],
+            activeLoading: loading
+        )
+
+        #expect(items == [.submittedPrompt(snapshot), .loading(loading)])
+    }
+
+    @Test func officeHoursLoadingPolicyHidesSubmittedLoaderWhenNextPromptArrives() {
+        let firstPrompt = makeOfficeHoursPrompt(sessionID: "session", requestId: "request-1")
+        let nextPrompt = makeOfficeHoursPrompt(sessionID: "session", requestId: "request-2")
+        let submission = AgenticViewModel.StructuredPromptSubmission(
+            question: firstPrompt.questions[0].question,
+            selectedOptions: ["돈을 내겠다고 했다"],
+            freeText: ""
+        )
+        let snapshot = OfficeHoursSubmittedPromptSnapshot(
+            sessionId: "session",
+            requestId: firstPrompt.requestId,
+            prompt: firstPrompt,
+            submissions: [submission],
+            submittedAt: Date(timeIntervalSince1970: 1)
+        )
+        let loading = OfficeHoursLoadingSnapshot(
+            sessionId: "session",
+            requestId: firstPrompt.requestId,
+            startedAt: Date(timeIntervalSince1970: 2)
+        )
+        let session = makeChatSession(status: .awaitingInput, pendingUserInput: nextPrompt)
+        let visibleLoading = OfficeHoursLoadingPolicy.visibleLoading(for: session, loading: loading)
+
+        let items = OfficeHoursTimelineBuilder.items(
+            rows: [],
+            submittedSnapshots: [snapshot],
+            activeLoading: visibleLoading
+        )
+
+        #expect(visibleLoading == nil)
+        #expect(items == [.submittedPrompt(snapshot)])
+    }
+
     private func makeChatMessage(
         id: String,
         role: MessageRole,
@@ -72,6 +202,108 @@ struct OpenDesignDayContentTests {
             providerAuthActions: nil,
             inlineDecision: nil
         )
+    }
+
+    private func makeChatSession(
+        id: String = "session",
+        provider: AgentProvider = .codex,
+        status: SessionStatus = .idle,
+        messages: [ChatMessage] = [],
+        pendingUserInput: StructuredPromptRequest? = nil
+    ) -> ChatSession {
+        ChatSession(
+            id: id,
+            title: "Office Hours",
+            provider: provider,
+            model: AgentModelCatalog.defaultModelID(for: provider),
+            status: status,
+            createdAt: Date(),
+            updatedAt: Date(),
+            error: nil,
+            messages: messages,
+            pendingUserInput: pendingUserInput,
+            runtime: nil
+        )
+    }
+
+    private func makeOfficeHoursPrompt(
+        sessionID: String,
+        requestId: String = "office-hours-prompt"
+    ) -> StructuredPromptRequest {
+        StructuredPromptRequest(
+            requestId: requestId,
+            sessionId: sessionID,
+            toolName: "agentic30_request_user_input",
+            title: "Office Hours",
+            createdAt: Date(),
+            questions: [
+                StructuredPromptQuestion(
+                    questionId: "office_hours_forcing_question",
+                    header: "질문",
+                    question: "가장 먼저 검증할 고객 신호는 무엇인가요?",
+                    helperText: nil,
+                    options: nil,
+                    multiSelect: false,
+                    allowFreeText: true,
+                    requiresFreeText: false,
+                    freeTextPlaceholder: nil,
+                    textMode: .short
+                ),
+            ],
+            generation: StructuredPromptGeneration(mode: "office_hours_fallback", docType: "day1_step")
+        )
+    }
+
+    @Test func officeHoursRealProjectTestRequiresFreshIdleSession() {
+        let fresh = makeChatSession()
+        #expect(OfficeHoursRealProjectTestSessionPolicy.canStartTest(in: fresh, provider: .codex))
+        #expect(!OfficeHoursRealProjectTestSessionPolicy.canStartTest(in: nil, provider: .codex))
+
+        let pending = makeChatSession(
+            status: .awaitingInput,
+            pendingUserInput: makeOfficeHoursPrompt(sessionID: "session")
+        )
+        #expect(!OfficeHoursRealProjectTestSessionPolicy.canStartTest(in: pending, provider: .codex))
+
+        let previousConversation = makeChatSession(messages: [
+            makeChatMessage(id: "assistant-1", role: .assistant, content: "첫 질문입니다."),
+        ])
+        #expect(!OfficeHoursRealProjectTestSessionPolicy.canStartTest(in: previousConversation, provider: .codex))
+
+        let running = makeChatSession(status: .running)
+        #expect(!OfficeHoursRealProjectTestSessionPolicy.canStartTest(in: running, provider: .codex))
+
+        let wrongProvider = makeChatSession(provider: .claude)
+        #expect(!OfficeHoursRealProjectTestSessionPolicy.canStartTest(in: wrongProvider, provider: .codex))
+    }
+
+    @Test func officeHoursAutoStartPolicyBlocksWhileRealProjectTestOwnsSession() {
+        let fresh = makeChatSession(id: "office-hours-session")
+
+        #expect(OfficeHoursAutoStartPolicy.canAutoStart(
+            in: fresh,
+            startedSessionIDs: [],
+            realProjectTestBusy: false,
+            realProjectSessionCreateRequested: false
+        ))
+        #expect(!OfficeHoursAutoStartPolicy.canAutoStart(
+            in: fresh,
+            startedSessionIDs: [],
+            realProjectTestBusy: true,
+            realProjectSessionCreateRequested: false
+        ))
+        #expect(!OfficeHoursAutoStartPolicy.canAutoStart(
+            in: fresh,
+            startedSessionIDs: [],
+            realProjectTestBusy: false,
+            realProjectSessionCreateRequested: true
+        ))
+        #expect(!OfficeHoursAutoStartPolicy.canAutoStart(
+            in: fresh,
+            startedSessionIDs: ["office-hours-session"],
+            realProjectTestBusy: false,
+            realProjectSessionCreateRequested: false
+        ))
     }
 
     @Test func inlineMarkdownEmphasisParserSplitsSingleRun() {
@@ -165,6 +397,7 @@ struct OpenDesignDayContentTests {
 
         #expect(content.railItems.map(\.title) == [
             "오늘 · Day 1",
+            OpenDesignCopy.officeHoursTitle,
             "검색",
             "프로젝트",
             "설정",
@@ -178,6 +411,76 @@ struct OpenDesignDayContentTests {
         #expect(firstTask?.title == "먼저 도울 사람을 정해요")
         #expect(content.interviewSteps.count == 4)
         #expect(content.interviewSteps.first?.options.count == 4)
+    }
+
+    @Test func developmentVisibilityIncludesUnfinishedReferencePages() {
+        let railIDs = OpenDesignDayContent.makeRailItems(
+            todayTitle: "오늘 · Day 1",
+            showsDevelopmentOnlyReferencePages: true
+        ).map(\.id)
+        let pageIDs = OpenDesignDayContent.makeSearchItems(
+            showsDevelopmentOnlyReferencePages: true
+        )
+        .filter { $0.kind == .page }
+        .map(\.id)
+
+        #expect(railIDs == [
+            "today",
+            "office-hours",
+            "search",
+            "projects",
+            "settings",
+            "interviews",
+            "bip",
+            "news",
+            "history",
+        ])
+        #expect(pageIDs == [
+            "page-today",
+            "page-search",
+            "page-projects",
+            "page-settings",
+            "page-interviews",
+            "page-bip",
+            "page-news",
+            "page-history",
+        ])
+    }
+
+    @Test func productionVisibilityFiltersUnfinishedReferencePages() {
+        let allRailIDs = Set(OpenDesignDayContent.makeRailItems(
+            todayTitle: "오늘 · Day 1",
+            showsDevelopmentOnlyReferencePages: true
+        ).map(\.id))
+        let productionRailIDs = OpenDesignDayContent.makeRailItems(
+            todayTitle: "오늘 · Day 1",
+            showsDevelopmentOnlyReferencePages: false
+        ).map(\.id)
+        let allPageIDs = Set(OpenDesignDayContent.makeSearchItems(
+            showsDevelopmentOnlyReferencePages: true
+        )
+        .filter { $0.kind == .page }
+        .map(\.id))
+        let productionPageIDs = OpenDesignDayContent.makeSearchItems(
+            showsDevelopmentOnlyReferencePages: false
+        )
+        .filter { $0.kind == .page }
+        .map(\.id)
+
+        #expect(productionRailIDs == [
+            "today",
+            "office-hours",
+            "search",
+            "settings",
+        ])
+        #expect(allRailIDs.subtracting(Set(productionRailIDs)) == OpenDesignDayContent.developmentOnlyReferenceRailItemIDs)
+
+        #expect(productionPageIDs == [
+            "page-today",
+            "page-search",
+            "page-settings",
+        ])
+        #expect(allPageIDs.subtracting(Set(productionPageIDs)) == OpenDesignDayContent.developmentOnlyReferenceSearchItemIDs)
     }
 
     @Test func day2MarketFixtureMatchesOpenDesignDashboard() {
@@ -1112,10 +1415,10 @@ struct OpenDesignDayContentTests {
         #expect(state.progressPercent == 90)
 
         state.dayCompleted = true
-        state.activeStepID = state.officeHoursStepID
-        state.maxUnlockedStepID = state.officeHoursStepID
-        #expect(state.normalizedActiveStepID == state.officeHoursStepID)
-        #expect(state.isWorkflowStepUnlocked(state.officeHoursStepID))
+        state.activeStepID = state.finalStepID
+        state.maxUnlockedStepID = state.finalStepID
+        #expect(state.normalizedActiveStepID == state.finalStepID)
+        #expect(state.isWorkflowStepUnlocked(state.finalStepID))
         #expect(state.progressStepCount == state.workflowStepCount)
         #expect(state.progressPercent == 100)
     }
@@ -1123,11 +1426,10 @@ struct OpenDesignDayContentTests {
     @Test func stepWorkflowSupportsFocusBackAdvanceAndReset() {
         var state = OpenDesignDayInteractionState(totalInterviewSteps: 3)
 
-        #expect(state.workflowStepCount == 6)
+        #expect(state.workflowStepCount == 5)
         #expect(state.workflowNavigationDirection == .neutral)
         #expect(state.isWorkflowStepUnlocked(0))
         #expect(!state.isWorkflowStepUnlocked(1))
-        #expect(!state.isWorkflowStepUnlocked(state.officeHoursStepID))
 
         state.acceptMissionForStepFlow()
         #expect(state.workflowNavigationDirection == .forward)
@@ -1156,13 +1458,12 @@ struct OpenDesignDayContentTests {
         #expect(state.workflowNavigationDirection == .forward)
         #expect(state.normalizedActiveStepID == state.finalStepID)
         #expect(state.isWorkflowStepUnlocked(state.finalStepID))
-        #expect(!state.isWorkflowStepUnlocked(state.officeHoursStepID))
 
         state.dayCompleted = true
-        state.maxUnlockedStepID = state.officeHoursStepID
-        state.focusWorkflowStep(state.officeHoursStepID)
-        #expect(state.normalizedActiveStepID == state.officeHoursStepID)
-        #expect(state.isWorkflowStepUnlocked(state.officeHoursStepID))
+        state.maxUnlockedStepID = state.finalStepID
+        state.focusWorkflowStep(state.finalStepID)
+        #expect(state.normalizedActiveStepID == state.finalStepID)
+        #expect(state.isWorkflowStepUnlocked(state.finalStepID))
 
         state.moveToPreviousWorkflowStep()
         #expect(state.normalizedActiveStepID == state.finalStepID)

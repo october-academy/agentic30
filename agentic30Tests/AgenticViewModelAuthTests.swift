@@ -21,6 +21,8 @@ private final class FakeWebAuthenticationSessionHandle: WebAuthenticationSession
 
 private final class FakeSidecarTransport: SidecarTransport {
     var onEvent: ((SidecarEvent) -> Void)?
+    private(set) var startCallCount = 0
+    private(set) var stopCallCount = 0
     private(set) var sentPayloads: [[String: Any]] = []
 
     private let workspaceRoot: String
@@ -51,9 +53,13 @@ private final class FakeSidecarTransport: SidecarTransport {
         self.workspaceRoot = workspaceRoot
     }
 
-    func start() {}
+    func start() {
+        startCallCount += 1
+    }
 
-    func stop() {}
+    func stop() {
+        stopCallCount += 1
+    }
 
     @discardableResult
     func send(payload: [String: Any]) -> Bool {
@@ -882,6 +888,83 @@ struct AgenticViewModelAuthTests {
         #expect(viewModel.onboardingContext?.workMode == .sideProject)
     }
 
+    @Test @MainActor func completingIntakeOnlyOnboardingOpensStaticWorkspaceWithoutStartingSidecar() throws {
+        let productionLegacyProvider = WorkspaceSettings.legacyWorkspaceProvider
+        WorkspaceSettings.legacyWorkspaceProvider = { "" }
+        WorkspaceSettings.clear()
+        KeychainHelper.deleteOnboardingContext()
+        defer {
+            WorkspaceSettings.clear()
+            WorkspaceSettings.legacyWorkspaceProvider = productionLegacyProvider
+            KeychainHelper.deleteOnboardingContext()
+        }
+
+        let sidecar = FakeSidecarTransport(workspaceRoot: "")
+        let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
+        viewModel.resetFoundationProgressForTesting()
+        let context = OnboardingContext.make(
+            workMode: .sideProject,
+            role: .productManager,
+            projectStage: .ideaOnly,
+            isolationLevel: .projectFolder
+        )
+
+        viewModel.prepareIntakeOnlyOnboarding(context: context)
+        viewModel.submitOnboardingContext(context)
+        viewModel.completeIntakeOnlyOnboarding(openWorkspace: true)
+
+        #expect(viewModel.requiresMacOnboarding == false)
+        #expect(viewModel.needsProjectWorkspace == true)
+        #expect(viewModel.canStartSidecar == false)
+        #expect(!WorkspaceSettings.hasExplicitWorkspace)
+        #expect(viewModel.workspaceRoot.isEmpty)
+        #expect(viewModel.isConnected == false)
+        #expect(viewModel.activeSurface == .workspace)
+        #expect(viewModel.foundationStartedAt != nil)
+        #expect(sidecar.startCallCount == 0)
+    }
+
+    @Test @MainActor func selectingWorkspaceAfterIntakeOnlyCompletionEnablesSidecarStart() throws {
+        let productionLegacyProvider = WorkspaceSettings.legacyWorkspaceProvider
+        WorkspaceSettings.legacyWorkspaceProvider = { "" }
+        WorkspaceSettings.clear()
+        KeychainHelper.deleteOnboardingContext()
+        let workspaceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-intake-only-upgrade-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+        defer {
+            WorkspaceSettings.clear()
+            WorkspaceSettings.legacyWorkspaceProvider = productionLegacyProvider
+            KeychainHelper.deleteOnboardingContext()
+            try? FileManager.default.removeItem(at: workspaceURL)
+        }
+
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspaceURL.path)
+        let viewModel = AgenticViewModel(sidecar: sidecar, activateAppForAuth: {})
+        viewModel.resetFoundationProgressForTesting()
+        let context = OnboardingContext.make(
+            workMode: .sideProject,
+            role: .developer,
+            projectStage: .building,
+            isolationLevel: .projectFolder
+        )
+
+        viewModel.prepareIntakeOnlyOnboarding(context: context)
+        viewModel.submitOnboardingContext(context)
+        viewModel.completeIntakeOnlyOnboarding(openWorkspace: true)
+        #expect(viewModel.canStartSidecar == false)
+
+        viewModel.setProjectWorkspace(workspaceURL)
+
+        #expect(viewModel.requiresMacOnboarding == false)
+        #expect(viewModel.needsProjectWorkspace == false)
+        #expect(viewModel.canStartSidecar == true)
+        #expect(WorkspaceSettings.hasExplicitWorkspace)
+        #expect(viewModel.workspaceRoot == workspaceURL.path)
+        #expect(sidecar.startCallCount == 1)
+        #expect(viewModel.isScanning == true)
+    }
+
     @Test @MainActor func completingPrefetchedOnboardingOpensWorkspaceSurfaceAndAnchorsFoundation() throws {
         let workspaceURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("agentic30-prefetch-complete-\(UUID().uuidString)", isDirectory: true)
@@ -1398,9 +1481,77 @@ struct AgenticViewModelAuthTests {
         let payload = try #require(sidecar.sentPayloads.first)
         #expect(payload["type"] as? String == "office_hours_start")
         #expect(payload["sessionId"] as? String == "session-1")
-        #expect(payload["source"] as? String == "day1_step")
+        #expect(payload["source"] as? String == "office_hours_screen")
         #expect(payload["visiblePrompt"] as? String == "Office Hours")
         #expect(payload["context"] as? String == "project + Day 1 answers")
+    }
+
+    @Test @MainActor func officeHoursRealProjectTestStartSendsSourcePayload() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 1
+        )
+        sidecar.resetSentPayloads()
+
+        let sent = viewModel.startOfficeHours(
+            sessionID: "session-1",
+            context: "real project context",
+            source: "office_hours_screen_real_project_test"
+        )
+
+        #expect(sent)
+        let payload = try #require(sidecar.sentPayloads.first)
+        #expect(payload["type"] as? String == "office_hours_start")
+        #expect(payload["source"] as? String == "office_hours_screen_real_project_test")
+        #expect(payload["context"] as? String == "real project context")
+    }
+
+    @Test @MainActor func lateFrontierWorkspaceScanProgressDoesNotReopenOfficeHoursScanGate() async throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = AgenticViewModel(
+            onboardingContextOverride: Self.makeOnboardingContext(),
+            sidecar: sidecar,
+            activateAppForAuth: {}
+        )
+        viewModel.start()
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: workspace.path)
+        sidecar.resetSentPayloads()
+
+        try sidecar.emit(Self.workspaceScanResultPayload(workspaceRoot: workspace.path))
+        try await Task.sleep(nanoseconds: 10_000_000)
+        #expect(viewModel.isScanning == false)
+        #expect(viewModel.scanResult != nil)
+
+        try sidecar.emit("""
+        {
+          "type": "workspace_scan_progress",
+          "scanRoot": "\(workspace.path)",
+          "progressText": "frontier 선택지 생성 중"
+        }
+        """)
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        #expect(viewModel.isScanning == false)
+        #expect(viewModel.scanResult != nil)
+        #expect(viewModel.scanProgressMessage == "frontier 선택지 생성 중")
+
+        sidecar.resetSentPayloads()
+        let sent = viewModel.startOfficeHours(
+            sessionID: "session-1",
+            context: "real project context",
+            source: "office_hours_screen_real_project_test"
+        )
+
+        #expect(sent)
+        let payload = try #require(sidecar.sentPayloads.first)
+        #expect(payload["type"] as? String == "office_hours_start")
+        #expect(payload["source"] as? String == "office_hours_screen_real_project_test")
     }
 
     @Test @MainActor func officeHoursStepEnsureSessionCreatesSessionWhenConnected() throws {
@@ -1420,6 +1571,54 @@ struct AgenticViewModelAuthTests {
         #expect(payload["type"] as? String == "create_session")
         #expect(payload["provider"] as? String == AgentProvider.codex.rawValue)
         #expect(payload["model"] as? String == AgentModelCatalog.defaultModelID(for: .codex))
+        #expect(payload["source"] as? String == "office_hours_screen")
+        #expect(payload["suppressBootstrapIntake"] as? Bool == true)
+    }
+
+    @Test @MainActor func officeHoursStepRejectsBootstrapIntakeSession() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: FakeSidecarTransport(workspaceRoot: workspace.path),
+            workspace: workspace,
+            currentDay: 1
+        )
+        let bootstrapPrompt = StructuredPromptRequest(
+            requestId: "bootstrap-request",
+            sessionId: "bootstrap-session",
+            toolName: "initial_intake",
+            title: "시작하기",
+            createdAt: Date(),
+            questions: [
+                StructuredPromptQuestion(
+                    questionId: "start",
+                    header: "시작",
+                    question: "무엇부터 시작할까요?",
+                    helperText: nil,
+                    options: nil,
+                    multiSelect: false,
+                    allowFreeText: false,
+                    requiresFreeText: false,
+                    freeTextPlaceholder: nil,
+                    textMode: .short
+                ),
+            ]
+        )
+        let session = ChatSession(
+            id: "bootstrap-session",
+            title: "Codex Assistant",
+            provider: .codex,
+            model: AgentModelCatalog.defaultModelID(for: .codex),
+            status: .awaitingInput,
+            createdAt: Date(),
+            updatedAt: Date(),
+            error: nil,
+            messages: [],
+            pendingUserInput: bootstrapPrompt,
+            runtime: nil
+        )
+
+        #expect(!viewModel.canUseSessionForOfficeHours(session))
     }
 
     @Test @MainActor func officeHoursStepEnsureSessionDoesNotDuplicateCreateWhileInFlight() throws {
