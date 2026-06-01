@@ -107,6 +107,8 @@ async function main() {
       patches: [
         "header-comment-strip",
         "preamble-replace-lean",
+        "fence-aware-section-strip",
+        "artifacts-sync-strip",
         "interactive-section-strip",
         "frontmatter-augment",
         "websearch-allowed-tools-strip",

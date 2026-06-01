@@ -16,7 +16,10 @@ const STRIP_SECTIONS = [
   "## Preamble (run first)",
   "## Plan Mode Safe Operations",
   "## Skill Invocation During Plan Mode",
+  "## Skill routing",
   "## AskUserQuestion Format",
+  "## Artifacts Sync (skill start)",
+  "## Artifacts Sync",
   "## GBrain Sync (skill start)",
   "## GBrain Sync",
   "## Model-Specific Behavioral Patch (claude)",
@@ -33,9 +36,14 @@ const FORBIDDEN_PATTERNS = [
   /gstack-brain-sync/,
   /gstack-telemetry-log/,
   /gstack-update-check/,
+  /gstack-artifacts-init/,
+  /ARTIFACTS_SYNC/,
   /## GBrain Sync/,
-  /## Privacy stop-gate/,
+  /Privacy stop-gate/,
   /## Telemetry/,
+  /## Skill routing/,
+  /Then commit the change/,
+  /git rm -r \.claude\/skills\/gstack/,
 ];
 
 const LEAN_PREAMBLE = `## Preamble (run first)
@@ -121,21 +129,70 @@ export function stripSections(body, sectionHeadings) {
 }
 
 function stripOneSection(body, heading) {
-  const escaped = escapeRegExp(heading);
-  const startRe = new RegExp(`(^|\\n)${escaped}[^\\n]*\\n`);
-  const startMatch = startRe.exec(body);
-  if (!startMatch) return body;
-  const startIndex = startMatch.index + (startMatch[1] === "" ? 0 : 1);
-  const afterHeadingIndex = startIndex + (startMatch[0].length - (startMatch[1] === "" ? 0 : 1));
-  const nextHeadingRe = /\n## [^\n]+\n/g;
-  nextHeadingRe.lastIndex = afterHeadingIndex;
-  const nextMatch = nextHeadingRe.exec(body);
-  const endIndex = nextMatch ? nextMatch.index + 1 : body.length;
+  const startIndex = findSectionHeadingIndex(body, heading);
+  if (startIndex === -1) return body;
+  const afterHeadingIndex = lineEndIndex(body, startIndex);
+  const nextHeadingIndex = findNextSecondLevelHeadingIndex(body, afterHeadingIndex);
+  const endIndex = nextHeadingIndex === -1 ? body.length : nextHeadingIndex;
   return `${body.slice(0, startIndex)}${body.slice(endIndex)}`;
 }
 
-function escapeRegExp(text) {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function findSectionHeadingIndex(markdown, heading, fromIndex = 0) {
+  return findLineIndexOutsideFences(markdown, fromIndex, (line) =>
+    isSectionHeadingLine(line, heading),
+  );
+}
+
+function findNextSecondLevelHeadingIndex(markdown, fromIndex = 0) {
+  return findLineIndexOutsideFences(markdown, fromIndex, (line) =>
+    /^## [^\n]/.test(line),
+  );
+}
+
+function findLineIndexOutsideFences(markdown, fromIndex, predicate) {
+  let inFence = false;
+  let fenceMarker = "";
+  let offset = 0;
+
+  while (offset < markdown.length) {
+    const nextNewline = markdown.indexOf("\n", offset);
+    const lineEnd = nextNewline === -1 ? markdown.length : nextNewline;
+    const line = markdown.slice(offset, lineEnd);
+    const fence = fenceLineMarker(line);
+
+    if (fence) {
+      if (!inFence) {
+        inFence = true;
+        fenceMarker = fence;
+      } else if (fence === fenceMarker) {
+        inFence = false;
+        fenceMarker = "";
+      }
+    } else if (!inFence && offset >= fromIndex && predicate(line)) {
+      return offset;
+    }
+
+    if (nextNewline === -1) break;
+    offset = lineEnd + 1;
+  }
+
+  return -1;
+}
+
+function isSectionHeadingLine(line, heading) {
+  if (!line.startsWith(heading)) return false;
+  const rest = line.slice(heading.length);
+  return rest === "" || /^[\s(#]/.test(rest);
+}
+
+function fenceLineMarker(line) {
+  const match = line.trimStart().match(/^(```+|~~~+)/);
+  return match ? match[1][0] : "";
+}
+
+function lineEndIndex(text, lineStart) {
+  const newlineIndex = text.indexOf("\n", lineStart);
+  return newlineIndex === -1 ? text.length : newlineIndex + 1;
 }
 
 export function augmentFrontmatter(frontmatter, { provider, vendorVersion }) {

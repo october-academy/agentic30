@@ -1,7 +1,7 @@
 {
   "gstackCommit": "675717e3200d8f54b7e179a3425a21bdae33414b",
   "gstackTag": null,
-  "fetchedAt": "2026-04-29T00:46:48.339Z",
+  "fetchedAt": "2026-05-31T12:37:37.713Z",
   "skills": [
     "office-hours",
     "plan-ceo-review",
@@ -16,6 +16,8 @@
   "patches": [
     "header-comment-strip",
     "preamble-replace-lean",
+    "fence-aware-section-strip",
+    "artifacts-sync-strip",
     "interactive-section-strip",
     "frontmatter-augment",
     "websearch-allowed-tools-strip",

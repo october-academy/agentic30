@@ -54,6 +54,16 @@ Format reference for AskUserQuestion calls — strip me.
 ~/.claude/skills/gstack/bin/gstack-brain-sync --once
 \`\`\`
 
+## Artifacts Sync (skill start)
+
+\`\`\`bash
+echo "ARTIFACTS_SYNC: off"
+~/.claude/skills/gstack/bin/gstack-brain-sync --once
+~/.claude/skills/gstack/bin/gstack-artifacts-init
+\`\`\`
+
+Privacy stop-gate: ask once.
+
 ## Phase 1: Context Gathering
 
 Real workflow content. Call AskUserQuestion to ask the user about their idea.
@@ -91,7 +101,11 @@ test("Claude variant: strips preamble + telemetry, preserves AskUserQuestion in 
   assert.match(result, /AskUserQuestion/);
 
   assert.doesNotMatch(result, /## GBrain Sync/);
+  assert.doesNotMatch(result, /## Artifacts Sync/);
   assert.doesNotMatch(result, /gstack-brain-sync/);
+  assert.doesNotMatch(result, /gstack-artifacts-init/);
+  assert.doesNotMatch(result, /ARTIFACTS_SYNC/);
+  assert.doesNotMatch(result, /Privacy stop-gate/);
   assert.doesNotMatch(result, /gstack-telemetry-log/);
   assert.doesNotMatch(result, /gstack-update-check/);
   assert.doesNotMatch(result, /## Telemetry/);
@@ -147,6 +161,30 @@ test("stripSections is a no-op when heading is absent", () => {
   const input = "## Real\nbody\n## Other\nmore\n";
   const out = stripSections(input, ["## Missing"]);
   assert.equal(out, input);
+});
+
+test("stripSections ignores headings inside fenced code while finding section end", () => {
+  const input = [
+    "## Skill Invocation During Plan Mode",
+    "If A: Append this section to the end of CLAUDE.md:",
+    "```markdown",
+    "",
+    "## Skill routing",
+    "",
+    "When the user's request matches an available skill, invoke it.",
+    "```",
+    "Then commit the change: `git add CLAUDE.md && git commit -m \"chore\"`",
+    "",
+    "## Phase 1: Context Gathering",
+    "Real workflow content.",
+    "",
+  ].join("\n");
+  const out = stripSections(input, ["## Skill Invocation During Plan Mode"]);
+
+  assert.doesNotMatch(out, /## Skill routing/);
+  assert.doesNotMatch(out, /Then commit the change/);
+  assert.match(out, /## Phase 1: Context Gathering/);
+  assert.match(out, /Real workflow content/);
 });
 
 test("augmentFrontmatter inserts vendor keys without disturbing existing ones", () => {
