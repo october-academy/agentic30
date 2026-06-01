@@ -633,6 +633,9 @@ final class SidecarBridge: SidecarTransport {
     private func makeProcessEnvironment(nodeURL: URL) -> [String: String] {
         var environment = nodeResolver.makeEnvironment(nodeURL: nodeURL)
         environment["AGENTIC30_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
+        for (key, value) in PostHogTelemetry.sidecarEnvironmentOverrides() {
+            environment[key] = value
+        }
         if environment["AGENTIC30_QMD_INDEX"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
             environment["AGENTIC30_QMD_INDEX"] = Agentic30LocalDataResetter.qmdIndexName
         }

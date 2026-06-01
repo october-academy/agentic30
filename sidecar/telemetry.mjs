@@ -3,6 +3,12 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { getAuthContextSummary } from "./auth-context.mjs";
 
+const DISABLE_TELEMETRY_ENV_KEY = "AGENTIC30_DISABLE_TELEMETRY";
+const ENABLE_DEV_TELEMETRY_ENV_KEY = "AGENTIC30_ENABLE_DEV_TELEMETRY";
+const TELEMETRY_ENVIRONMENT_ENV_KEY = "AGENTIC30_TELEMETRY_ENVIRONMENT";
+const BUILD_CONFIGURATION_ENV_KEY = "AGENTIC30_BUILD_CONFIGURATION";
+const INTERNAL_TRAFFIC_ENV_KEY = "AGENTIC30_INTERNAL_TRAFFIC";
+
 export function resolveIngestBaseURL(rawHost) {
   const trimmed = String(rawHost || "").trim() || "https://us.posthog.com";
   const normalized = trimmed.includes("://") ? trimmed : `https://${trimmed}`;
@@ -19,6 +25,73 @@ export function resolveIngestBaseURL(rawHost) {
   if (host === "eu.posthog.com") return `${scheme}://eu.i.posthog.com`;
   if (host === "us.i.posthog.com" || host === "eu.i.posthog.com") return `${scheme}://${host}`;
   return `${scheme}://${host}`;
+}
+
+function truthy(value) {
+  return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+}
+
+function falsy(value) {
+  return ["0", "false", "no", "off"].includes(String(value || "").trim().toLowerCase());
+}
+
+function normalizeTelemetryEnvironment(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "";
+  if (normalized === "prod") return "production";
+  if (normalized === "dev") return "development";
+  return normalized;
+}
+
+function normalizeBuildConfiguration(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "";
+  if (normalized === "development") return "debug";
+  if (normalized === "prod" || normalized === "production") return "release";
+  return normalized;
+}
+
+function inferDevelopmentSidecar({ environment, sidecarRoot }) {
+  if (truthy(environment.AGENTIC30_FORCE_DEVELOPMENT_TELEMETRY_CONTEXT)) return true;
+  if (normalizeTelemetryEnvironment(environment[TELEMETRY_ENVIRONMENT_ENV_KEY]) === "development") return true;
+  if (normalizeBuildConfiguration(environment[BUILD_CONFIGURATION_ENV_KEY]) === "debug") return true;
+  if (String(environment.NODE_ENV || "").trim().toLowerCase() === "development") return true;
+  if (String(environment.npm_lifecycle_event || "") === "sidecar") return true;
+
+  const root = String(sidecarRoot || "").replace(/\\/g, "/");
+  if (!root) return false;
+  return !root.includes(".app/Contents/Resources/");
+}
+
+export function resolveTelemetryRuntimePolicy({
+  environment = process.env,
+  sidecarRoot = process.env.AGENTIC30_SIDECAR_ROOT || "",
+} = {}) {
+  const isDevelopment = inferDevelopmentSidecar({ environment, sidecarRoot });
+  const telemetryEnvironment =
+    normalizeTelemetryEnvironment(environment[TELEMETRY_ENVIRONMENT_ENV_KEY])
+    || (isDevelopment ? "development" : "production");
+  const buildConfiguration =
+    normalizeBuildConfiguration(environment[BUILD_CONFIGURATION_ENV_KEY])
+    || (isDevelopment ? "debug" : "release");
+
+  let isInternalTraffic = telemetryEnvironment !== "production" || buildConfiguration !== "release";
+  if (truthy(environment[INTERNAL_TRAFFIC_ENV_KEY])) {
+    isInternalTraffic = true;
+  } else if (falsy(environment[INTERNAL_TRAFFIC_ENV_KEY])) {
+    isInternalTraffic = false;
+  }
+
+  const isDevelopmentTelemetryEnabled = truthy(environment[ENABLE_DEV_TELEMETRY_ENV_KEY]);
+  return {
+    telemetryEnvironment,
+    buildConfiguration,
+    isInternalTraffic,
+    isDevelopmentTelemetryEnabled,
+    isSuppressed:
+      truthy(environment[DISABLE_TELEMETRY_ENV_KEY])
+      || (isInternalTraffic && !isDevelopmentTelemetryEnabled),
+  };
 }
 
 const SUFFIX_ONLY_KEYS = new Set([
@@ -185,11 +258,22 @@ function normalizeError(error) {
   }
 }
 
-export function createTelemetryClient({ appSupportPath, workspaceRoot }) {
+export function createTelemetryClient({
+  appSupportPath,
+  workspaceRoot,
+  environment = process.env,
+  sidecarRoot = process.env.AGENTIC30_SIDECAR_ROOT || "",
+}) {
   const distinctIdPath = path.join(appSupportPath, "posthog-telemetry.json");
   let anonymousDistinctId = loadOrCreateDistinctId(distinctIdPath);
 
+  function runtimePolicy() {
+    return resolveTelemetryRuntimePolicy({ environment, sidecarRoot });
+  }
+
   function loadConfig() {
+    if (runtimePolicy().isSuppressed) return null;
+
     const configPath = path.join(appSupportPath, "ad-config.json");
     let config = null;
     try {
@@ -197,11 +281,11 @@ export function createTelemetryClient({ appSupportPath, workspaceRoot }) {
     } catch {}
 
     const configuredKey =
-      process.env.POSTHOG_PROJECT_API_KEY
+      environment.POSTHOG_PROJECT_API_KEY
       || config?.posthog?.projectApiKey
       || (String(config?.posthog?.apiKey || "").startsWith("phc_") ? config?.posthog?.apiKey : "");
     const configuredHost =
-      process.env.POSTHOG_HOST
+      environment.POSTHOG_HOST
       || config?.posthog?.host
       || "https://us.posthog.com";
 
@@ -218,8 +302,13 @@ export function createTelemetryClient({ appSupportPath, workspaceRoot }) {
 
   function baseProperties(extra = {}) {
     const auth = getAuthContextSummary();
+    const policy = runtimePolicy();
     return sanitizeTelemetryProperties({
       source: "mac-sidecar",
+      telemetry_source: "mac_sidecar",
+      telemetry_environment: policy.telemetryEnvironment,
+      build_configuration: policy.buildConfiguration,
+      is_internal_traffic: policy.isInternalTraffic,
       platform: process.platform,
       arch: process.arch,
       node_version: process.version,

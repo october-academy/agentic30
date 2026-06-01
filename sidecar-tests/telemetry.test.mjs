@@ -3,8 +3,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createTelemetryClient } from "../sidecar/telemetry.mjs";
+import { createTelemetryClient, resolveTelemetryRuntimePolicy } from "../sidecar/telemetry.mjs";
 import { clearAuthContext, setAuthContext } from "../sidecar/auth-context.mjs";
+
+const productionTelemetryEnvironment = {
+  AGENTIC30_TELEMETRY_ENVIRONMENT: "production",
+  AGENTIC30_BUILD_CONFIGURATION: "release",
+  AGENTIC30_INTERNAL_TRAFFIC: "0",
+};
 
 test("telemetry adopts a Mac-supplied anonymous distinct id and persists it", async () => {
   const appSupportPath = fs.mkdtempSync(path.join(os.tmpdir(), "agentic30-telemetry-distinct-"));
@@ -30,6 +36,7 @@ test("telemetry adopts a Mac-supplied anonymous distinct id and persists it", as
     const telemetry = createTelemetryClient({
       appSupportPath,
       workspaceRoot: "/Users/october/prj/agentic30",
+      environment: productionTelemetryEnvironment,
     });
 
     const sidecarGenerated = telemetry.getAnonymousDistinctId();
@@ -101,6 +108,7 @@ test("telemetry sanitizes auth email, raw keys, and absolute paths", async () =>
     const telemetry = createTelemetryClient({
       appSupportPath,
       workspaceRoot: "/Users/october/prj/agentic30",
+      environment: productionTelemetryEnvironment,
     });
 
     telemetry.captureEvent("test_event", {
@@ -113,6 +121,10 @@ test("telemetry sanitizes auth email, raw keys, and absolute paths", async () =>
     assert.equal(captured.properties.auth_user_id, "user-1");
     assert.equal(captured.properties.auth_email_domain, "example.com");
     assert.equal(captured.properties.workspace_basename, "agentic30");
+    assert.equal(captured.properties.telemetry_source, "mac_sidecar");
+    assert.equal(captured.properties.telemetry_environment, "production");
+    assert.equal(captured.properties.build_configuration, "release");
+    assert.equal(captured.properties.is_internal_traffic, false);
     assert.equal(captured.properties.scan_basename, "secret-repo");
     assert.equal(captured.properties.payment_key_suffix, "567890");
     assert.equal(captured.properties.doc_path, "docs/ICP.md");
@@ -124,4 +136,122 @@ test("telemetry sanitizes auth email, raw keys, and absolute paths", async () =>
     clearAuthContext();
     fs.rmSync(appSupportPath, { recursive: true, force: true });
   }
+});
+
+test("development sidecar telemetry is suppressed unless explicitly enabled", async () => {
+  const appSupportPath = fs.mkdtempSync(path.join(os.tmpdir(), "agentic30-telemetry-dev-"));
+  const originalFetch = globalThis.fetch;
+  let fetchCount = 0;
+
+  try {
+    fs.writeFileSync(
+      path.join(appSupportPath, "ad-config.json"),
+      JSON.stringify({
+        posthog: {
+          projectApiKey: "phc_test_123",
+          host: "https://us.posthog.com",
+        },
+      }),
+    );
+
+    globalThis.fetch = async () => {
+      fetchCount += 1;
+      return new Response("{}", { status: 200 });
+    };
+
+    const telemetry = createTelemetryClient({
+      appSupportPath,
+      workspaceRoot: "/Users/october/prj/agentic30",
+      environment: {
+        AGENTIC30_TELEMETRY_ENVIRONMENT: "development",
+        AGENTIC30_BUILD_CONFIGURATION: "debug",
+        AGENTIC30_INTERNAL_TRAFFIC: "1",
+      },
+    });
+
+    telemetry.captureEvent("dev_event");
+    telemetry.captureException(new Error("dev boom"));
+    assert.equal(fetchCount, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(appSupportPath, { recursive: true, force: true });
+  }
+});
+
+test("development sidecar opt-in keeps internal traffic tags", async () => {
+  const appSupportPath = fs.mkdtempSync(path.join(os.tmpdir(), "agentic30-telemetry-dev-opt-in-"));
+  const originalFetch = globalThis.fetch;
+  let captured = null;
+
+  try {
+    fs.writeFileSync(
+      path.join(appSupportPath, "ad-config.json"),
+      JSON.stringify({
+        posthog: {
+          projectApiKey: "phc_test_123",
+          host: "https://us.posthog.com",
+        },
+      }),
+    );
+
+    globalThis.fetch = async (_url, init) => {
+      captured = JSON.parse(String(init?.body));
+      return new Response("{}", { status: 200 });
+    };
+
+    const telemetry = createTelemetryClient({
+      appSupportPath,
+      workspaceRoot: "/Users/october/prj/agentic30",
+      environment: {
+        AGENTIC30_ENABLE_DEV_TELEMETRY: "1",
+        AGENTIC30_TELEMETRY_ENVIRONMENT: "development",
+        AGENTIC30_BUILD_CONFIGURATION: "debug",
+        AGENTIC30_INTERNAL_TRAFFIC: "1",
+      },
+    });
+
+    telemetry.captureEvent("dev_event");
+    assert.equal(captured.event, "dev_event");
+    assert.equal(captured.properties.telemetry_source, "mac_sidecar");
+    assert.equal(captured.properties.telemetry_environment, "development");
+    assert.equal(captured.properties.build_configuration, "debug");
+    assert.equal(captured.properties.is_internal_traffic, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(appSupportPath, { recursive: true, force: true });
+  }
+});
+
+test("telemetry runtime policy classifies production and development contexts", () => {
+  assert.deepEqual(
+    resolveTelemetryRuntimePolicy({
+      environment: productionTelemetryEnvironment,
+      sidecarRoot: "/Applications/agentic30.app/Contents/Resources/sidecar",
+    }),
+    {
+      telemetryEnvironment: "production",
+      buildConfiguration: "release",
+      isInternalTraffic: false,
+      isDevelopmentTelemetryEnabled: false,
+      isSuppressed: false,
+    },
+  );
+
+  assert.deepEqual(
+    resolveTelemetryRuntimePolicy({
+      environment: {
+        AGENTIC30_ENABLE_DEV_TELEMETRY: "1",
+        AGENTIC30_TELEMETRY_ENVIRONMENT: "development",
+        AGENTIC30_BUILD_CONFIGURATION: "debug",
+      },
+      sidecarRoot: "/Users/october/prj/agentic30-public/sidecar",
+    }),
+    {
+      telemetryEnvironment: "development",
+      buildConfiguration: "debug",
+      isInternalTraffic: true,
+      isDevelopmentTelemetryEnabled: true,
+      isSuppressed: false,
+    },
+  );
 });

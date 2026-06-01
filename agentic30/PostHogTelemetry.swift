@@ -1,7 +1,7 @@
 import Foundation
 import PostHog
 
-struct PostHogTelemetryConfig: Equatable {
+nonisolated struct PostHogTelemetryConfig: Equatable {
     /// Public PostHog project token for the Agentic30 project. This is safe to
     /// ship in client apps because it can only write capture events to public
     /// ingest endpoints; never replace it with a personal API key.
@@ -10,6 +10,61 @@ struct PostHogTelemetryConfig: Equatable {
 
     let projectAPIKey: String
     let host: String
+}
+
+struct PostHogTelemetryRuntimePolicy: Equatable {
+    static let disableTelemetryEnvironmentKey = "AGENTIC30_DISABLE_TELEMETRY"
+    static let enableDevelopmentTelemetryEnvironmentKey = "AGENTIC30_ENABLE_DEV_TELEMETRY"
+    static let telemetryEnvironmentEnvironmentKey = "AGENTIC30_TELEMETRY_ENVIRONMENT"
+    static let buildConfigurationEnvironmentKey = "AGENTIC30_BUILD_CONFIGURATION"
+    static let internalTrafficEnvironmentKey = "AGENTIC30_INTERNAL_TRAFFIC"
+
+    let telemetryEnvironment: String
+    let buildConfiguration: String
+    let isInternalTraffic: Bool
+    let isDevelopmentTelemetryEnabled: Bool
+    let isSuppressed: Bool
+
+    var environmentVariables: [String: String] {
+        [
+            Self.telemetryEnvironmentEnvironmentKey: telemetryEnvironment,
+            Self.buildConfigurationEnvironmentKey: buildConfiguration,
+            Self.internalTrafficEnvironmentKey: isInternalTraffic ? "1" : "0",
+        ]
+    }
+
+    static func resolve(
+        isDebugBuild: Bool,
+        environment: [String: String],
+        arguments: [String]
+    ) -> PostHogTelemetryRuntimePolicy {
+        let telemetryEnvironment = isDebugBuild ? "development" : "production"
+        let buildConfiguration = isDebugBuild ? "debug" : "release"
+        let isDevelopmentTelemetryEnabled = isTruthy(environment[enableDevelopmentTelemetryEnvironmentKey])
+        let isSuppressed = isTruthy(environment[disableTelemetryEnvironmentKey])
+            || arguments.contains(where: { $0.hasPrefix("--ui-testing-") })
+            || environment["XCTestConfigurationFilePath"] != nil
+            || arguments.contains(where: { $0.contains(".xctest") })
+            || (isDebugBuild && !isDevelopmentTelemetryEnabled)
+
+        return PostHogTelemetryRuntimePolicy(
+            telemetryEnvironment: telemetryEnvironment,
+            buildConfiguration: buildConfiguration,
+            isInternalTraffic: isDebugBuild,
+            isDevelopmentTelemetryEnabled: isDevelopmentTelemetryEnabled,
+            isSuppressed: isSuppressed
+        )
+    }
+
+    private static func isTruthy(_ value: String?) -> Bool {
+        guard let value else { return false }
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 struct PostHogTelemetryCapture {
@@ -46,7 +101,10 @@ final class PostHogSDKTelemetryClient: PostHogTelemetrySDKClient {
     private(set) var configuredConfig: PostHogTelemetryConfig?
 
     func setup(config: PostHogTelemetryConfig, disabled: Bool) {
-        if configuredConfig != nil {
+        let wasConfigured = configuredConfig != nil
+        configuredConfig = config
+
+        if wasConfigured {
             PostHogSDK.shared.close()
         }
 
@@ -62,22 +120,17 @@ final class PostHogSDKTelemetryClient: PostHogTelemetrySDKClient {
         sdkConfig.errorTrackingConfig.autoCapture = true
         sdkConfig.logs.serviceName = "agentic30-mac"
         sdkConfig.logs.serviceVersion = PostHogTelemetry.appVersionDescription()
-        #if DEBUG
-            sdkConfig.logs.environment = "development"
-        #else
-            sdkConfig.logs.environment = "production"
-        #endif
+        sdkConfig.logs.environment = PostHogTelemetry.currentTelemetryEnvironment
         sdkConfig.setBeforeSend { event in
-            event.properties = PostHogTelemetrySanitizer.sanitize(event.properties)
+            event.properties = PostHogTelemetry.sanitizeAndAttachRuntimeProperties(event.properties)
             return event
         }
         sdkConfig.logs.setBeforeSend { record in
-            record.attributes = PostHogTelemetrySanitizer.sanitize(record.attributes)
+            record.attributes = PostHogTelemetry.sanitizeAndAttachRuntimeProperties(record.attributes)
             return record
         }
 
         PostHogSDK.shared.setup(sdkConfig)
-        configuredConfig = config
 
         if disabled {
             PostHogSDK.shared.optOut()
@@ -274,7 +327,7 @@ enum PostHogTelemetrySanitizer {
 }
 
 enum PostHogHostResolver {
-    static func ingestBaseURL(for rawHost: String) -> URL? {
+    nonisolated static func ingestBaseURL(for rawHost: String) -> URL? {
         let trimmed = rawHost.trimmingCharacters(in: .whitespacesAndNewlines)
         let candidate = trimmed.isEmpty ? PostHogTelemetryConfig.defaultHost : trimmed
         let normalized = candidate.contains("://") ? candidate : "https://\(candidate)"
@@ -313,6 +366,17 @@ enum PostHogTelemetry {
     private static let captureOnceLock = NSLock()
     private static let clientLock = NSLock()
     private static let defaultClient = PostHogSDKTelemetryClient()
+    private static var activeConfig: PostHogTelemetryConfig?
+    private static var activeDisabled: Bool?
+    private static var isConfiguring = false
+    private static var configurationGeneration = 0
+
+    private enum ClientConfigurationAction {
+        case setup(config: PostHogTelemetryConfig, disabled: Bool, generation: Int)
+        case optOut
+        case optIn
+        case none
+    }
 
     static var captureSink: ((PostHogTelemetryCapture) -> Void)?
     static var configurationProvider: (() -> PostHogTelemetryConfig?)?
@@ -346,6 +410,36 @@ enum PostHogTelemetry {
         captureSink = nil
         configurationProvider = nil
         sdkClient = defaultClient
+        clientLock.lock()
+        activeConfig = nil
+        activeDisabled = nil
+        isConfiguring = false
+        configurationGeneration = 0
+        clientLock.unlock()
+    }
+
+    static var currentTelemetryEnvironment: String {
+        currentRuntimePolicy.telemetryEnvironment
+    }
+
+    static func sidecarEnvironmentOverrides() -> [String: String] {
+        var overrides = currentRuntimePolicy.environmentVariables
+        if isTelemetryDisabledByUser
+            || ProcessInfo.processInfo.environment[PostHogTelemetryRuntimePolicy.disableTelemetryEnvironmentKey] == "1" {
+            overrides[PostHogTelemetryRuntimePolicy.disableTelemetryEnvironmentKey] = "1"
+        }
+        return overrides
+    }
+
+    static func sanitizeAndAttachRuntimeProperties(_ properties: [String: Any]) -> [String: Any] {
+        var sanitized = PostHogTelemetrySanitizer.sanitize(properties)
+        for (key, value) in runtimeProperties() {
+            sanitized[key] = value
+        }
+        if sanitized["platform"] == nil {
+            sanitized["platform"] = "macos"
+        }
+        return sanitized
     }
 
     static func setup(force: Bool = false) {
@@ -542,12 +636,7 @@ enum PostHogTelemetry {
 
     static func setTelemetryDisabledByUser(_ disabled: Bool) {
         UserDefaults.standard.set(disabled, forKey: telemetryDisabledDefaultsKey)
-        guard ensureConfigured() else { return }
-        if disabled {
-            sdkClient.optOut()
-        } else {
-            sdkClient.optIn()
-        }
+        _ = ensureConfigured()
     }
 
     static func loadConfigForTesting() -> PostHogTelemetryConfig? {
@@ -556,18 +645,48 @@ enum PostHogTelemetry {
 
     private static func ensureConfigured(force: Bool = false) -> Bool {
         guard let config = loadConfig() else { return false }
+        let disabled = sdkDisabledState
 
+        let action: ClientConfigurationAction
         clientLock.lock()
-        defer { clientLock.unlock() }
-
-        if force || sdkClient.configuredConfig != config {
-            sdkClient.setup(config: config, disabled: isDisabledForCurrentProcess)
-        } else if isDisabledForCurrentProcess {
-            sdkClient.optOut()
-        } else {
-            sdkClient.optIn()
+        if !force,
+           isConfiguring,
+           activeConfig == config,
+           activeDisabled == disabled {
+            clientLock.unlock()
+            return !disabled || configurationProvider != nil
         }
-        return !isDisabledForCurrentProcess || configurationProvider != nil
+
+        if force || activeConfig != config || sdkClient.configuredConfig != config {
+            activeConfig = config
+            activeDisabled = disabled
+            isConfiguring = true
+            configurationGeneration += 1
+            action = .setup(config: config, disabled: disabled, generation: configurationGeneration)
+        } else if activeDisabled != disabled {
+            activeDisabled = disabled
+            action = disabled ? .optOut : .optIn
+        } else {
+            action = .none
+        }
+        clientLock.unlock()
+
+        switch action {
+        case .setup(let config, let disabled, let generation):
+            sdkClient.setup(config: config, disabled: disabled)
+            clientLock.lock()
+            if activeConfig == config, configurationGeneration == generation {
+                isConfiguring = false
+            }
+            clientLock.unlock()
+        case .optOut:
+            sdkClient.optOut()
+        case .optIn:
+            sdkClient.optIn()
+        case .none:
+            break
+        }
+        return !disabled || configurationProvider != nil
     }
 
     private static func loadConfig() -> PostHogTelemetryConfig? {
@@ -575,7 +694,7 @@ enum PostHogTelemetry {
             return configurationProvider().flatMap(normalizedConfig)
         }
 
-        guard !isDisabledForCurrentProcess else { return nil }
+        guard !isTelemetrySuppressedForCurrentProcess else { return nil }
 
         let settings = KeychainHelper.loadSettings()
         let resolvedProjectKey = settings.posthogProjectAPIKey.nonEmpty
@@ -623,11 +742,33 @@ enum PostHogTelemetry {
     }
 
     private static var isDisabledForCurrentProcess: Bool {
-        ProcessInfo.processInfo.environment["AGENTIC30_DISABLE_TELEMETRY"] == "1"
+        isTelemetrySuppressedForCurrentProcess
             || isTelemetryDisabledByUser
-            || CommandLine.arguments.contains(where: { $0.hasPrefix("--ui-testing-") })
-            || ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-            || CommandLine.arguments.contains(where: { $0.contains(".xctest") })
+    }
+
+    private static var currentRuntimePolicy: PostHogTelemetryRuntimePolicy {
+        PostHogTelemetryRuntimePolicy.resolve(
+            isDebugBuild: isDebugBuild,
+            environment: ProcessInfo.processInfo.environment,
+            arguments: CommandLine.arguments
+        )
+    }
+
+    private static var isDebugBuild: Bool {
+        #if DEBUG
+            return true
+        #else
+            return false
+        #endif
+    }
+
+    private static var isTelemetrySuppressedForCurrentProcess: Bool {
+        currentRuntimePolicy.isSuppressed
+    }
+
+    private static var sdkDisabledState: Bool {
+        isTelemetryDisabledByUser
+            || (configurationProvider == nil && isTelemetrySuppressedForCurrentProcess)
     }
 
     private static var hasConfiguredCaptureSink: Bool {
@@ -719,11 +860,23 @@ enum PostHogTelemetry {
     }
 
     private static func eventProperties(_ properties: [String: Any]) -> [String: Any] {
-        properties.merging([
+        let defaults: [String: Any] = [
             "$lib": "mac",
             "$lib_version": appVersionDescription(),
             "platform": "macos",
-        ]) { _, new in new }
+        ].merging(runtimeProperties()) { _, new in new }
+
+        return properties.merging(defaults) { _, new in new }
+    }
+
+    private static func runtimeProperties() -> [String: Any] {
+        let policy = currentRuntimePolicy
+        return [
+            "telemetry_environment": policy.telemetryEnvironment,
+            "build_configuration": policy.buildConfiguration,
+            "is_internal_traffic": policy.isInternalTraffic,
+            "telemetry_source": "mac_app",
+        ]
     }
 
     private static func distinctID(for authSession: MacAuthSession?) -> String {
@@ -751,7 +904,7 @@ enum PostHogTelemetry {
 }
 
 private extension String {
-    var nonEmpty: String? {
+    nonisolated var nonEmpty: String? {
         trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : self
     }
 }

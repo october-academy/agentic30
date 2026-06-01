@@ -31,6 +31,56 @@ final class PostHogTelemetryTests: XCTestCase {
         XCTAssertEqual(PostHogTelemetry.loadConfigForTesting()?.host, "https://us.i.posthog.com")
     }
 
+    func testRuntimePolicySuppressesDebugTelemetryUnlessEnabled() {
+        let suppressed = PostHogTelemetryRuntimePolicy.resolve(
+            isDebugBuild: true,
+            environment: [:],
+            arguments: []
+        )
+
+        XCTAssertEqual(suppressed.telemetryEnvironment, "development")
+        XCTAssertEqual(suppressed.buildConfiguration, "debug")
+        XCTAssertTrue(suppressed.isInternalTraffic)
+        XCTAssertFalse(suppressed.isDevelopmentTelemetryEnabled)
+        XCTAssertTrue(suppressed.isSuppressed)
+
+        let enabled = PostHogTelemetryRuntimePolicy.resolve(
+            isDebugBuild: true,
+            environment: [
+                PostHogTelemetryRuntimePolicy.enableDevelopmentTelemetryEnvironmentKey: "1",
+            ],
+            arguments: []
+        )
+
+        XCTAssertEqual(enabled.telemetryEnvironment, "development")
+        XCTAssertEqual(enabled.buildConfiguration, "debug")
+        XCTAssertTrue(enabled.isInternalTraffic)
+        XCTAssertTrue(enabled.isDevelopmentTelemetryEnabled)
+        XCTAssertFalse(enabled.isSuppressed)
+        XCTAssertEqual(
+            enabled.environmentVariables[PostHogTelemetryRuntimePolicy.internalTrafficEnvironmentKey],
+            "1"
+        )
+    }
+
+    func testRuntimePolicyAllowsReleaseProductionTelemetry() {
+        let policy = PostHogTelemetryRuntimePolicy.resolve(
+            isDebugBuild: false,
+            environment: [:],
+            arguments: []
+        )
+
+        XCTAssertEqual(policy.telemetryEnvironment, "production")
+        XCTAssertEqual(policy.buildConfiguration, "release")
+        XCTAssertFalse(policy.isInternalTraffic)
+        XCTAssertFalse(policy.isDevelopmentTelemetryEnabled)
+        XCTAssertFalse(policy.isSuppressed)
+        XCTAssertEqual(
+            policy.environmentVariables[PostHogTelemetryRuntimePolicy.internalTrafficEnvironmentKey],
+            "0"
+        )
+    }
+
     func testSanitizerMasksSensitiveFieldsLocalPathsAndContent() {
         let sanitized = PostHogTelemetrySanitizer.sanitize([
             "payment_key": "payment-fixture-1234567890",
@@ -76,6 +126,68 @@ final class PostHogTelemetryTests: XCTestCase {
         XCTAssertEqual(client.captures.first?.properties["workspace_basename"] as? String, "agentic30")
         XCTAssertEqual(client.captures.first?.properties["prompt"] as? String, "[redacted]")
         XCTAssertEqual(client.captures.first?.properties["platform"] as? String, "macos")
+        XCTAssertEqual(client.captures.first?.properties["telemetry_source"] as? String, "mac_app")
+        #if DEBUG
+            XCTAssertEqual(client.captures.first?.properties["telemetry_environment"] as? String, "development")
+            XCTAssertEqual(client.captures.first?.properties["build_configuration"] as? String, "debug")
+            XCTAssertEqual(client.captures.first?.properties["is_internal_traffic"] as? Bool, true)
+        #else
+            XCTAssertEqual(client.captures.first?.properties["telemetry_environment"] as? String, "production")
+            XCTAssertEqual(client.captures.first?.properties["build_configuration"] as? String, "release")
+            XCTAssertEqual(client.captures.first?.properties["is_internal_traffic"] as? Bool, false)
+        #endif
+    }
+
+    func testSetupAllowsReentrantCaptureWithoutDeadlock() {
+        let client = CapturingPostHogClient()
+        let setupFinished = expectation(description: "PostHog setup finishes")
+        PostHogTelemetry.sdkClient = client
+        PostHogTelemetry.configurationProvider = {
+            PostHogTelemetryConfig(projectAPIKey: "phc_test", host: "https://us.posthog.com")
+        }
+        client.onSetup = { _, _ in
+            _ = PostHogTelemetry.capture("mac_reentrant_probe")
+        }
+        defer { PostHogTelemetry.resetTestingHooks() }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            PostHogTelemetry.setup()
+            setupFinished.fulfill()
+        }
+
+        wait(for: [setupFinished], timeout: 1.0)
+        XCTAssertEqual(client.setupConfigs.count, 1)
+        XCTAssertEqual(client.captures.map(\.event), ["mac_reentrant_probe"])
+
+        XCTAssertTrue(PostHogTelemetry.capture("mac_after_setup_probe"))
+        XCTAssertEqual(client.setupConfigs.count, 1)
+        XCTAssertEqual(client.captures.map(\.event), [
+            "mac_reentrant_probe",
+            "mac_after_setup_probe",
+        ])
+    }
+
+    func testUserOptOutTogglesWithoutSetupRecursion() {
+        let client = CapturingPostHogClient()
+        let originalDisabled = PostHogTelemetry.isTelemetryDisabledByUser
+        UserDefaults.standard.set(false, forKey: PostHogTelemetry.telemetryDisabledDefaultsKey)
+        PostHogTelemetry.sdkClient = client
+        PostHogTelemetry.configurationProvider = {
+            PostHogTelemetryConfig(projectAPIKey: "phc_test", host: "https://us.posthog.com")
+        }
+        defer {
+            UserDefaults.standard.set(originalDisabled, forKey: PostHogTelemetry.telemetryDisabledDefaultsKey)
+            PostHogTelemetry.resetTestingHooks()
+        }
+
+        PostHogTelemetry.setup()
+        PostHogTelemetry.setTelemetryDisabledByUser(true)
+        PostHogTelemetry.setTelemetryDisabledByUser(false)
+
+        XCTAssertEqual(client.setupConfigs.count, 1)
+        XCTAssertEqual(client.setupDisabledFlags, [false])
+        XCTAssertEqual(client.optOutCount, 1)
+        XCTAssertEqual(client.optInCount, 1)
     }
 
     func testCaptureOnceDedupesByOnceKeyAndLeavesQueueToSDK() {
@@ -248,11 +360,13 @@ private final class CapturingPostHogClient: PostHogTelemetrySDKClient {
     private(set) var optOutCount = 0
     private(set) var optInCount = 0
     private(set) var flushCount = 0
+    var onSetup: ((PostHogTelemetryConfig, Bool) -> Void)?
 
     func setup(config: PostHogTelemetryConfig, disabled: Bool) {
         configuredConfig = config
         setupConfigs.append(config)
         setupDisabledFlags.append(disabled)
+        onSetup?(config, disabled)
     }
 
     func capture(_ event: String, distinctId: String, properties: [String: Any]) {
