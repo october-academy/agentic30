@@ -349,10 +349,31 @@ if [ "$AGENTIC30_BUILD_PKG" = "1" ]; then
   spctl -a -vv -t install "$PKG_PATH"
 fi
 if command -v syspolicy_check >/dev/null 2>&1; then
-  syspolicy_check distribution "$APP_PATH"
-  syspolicy_check distribution "$DMG_PATH"
+  run_syspolicy_distribution_check() {
+    local target="$1"
+    local output
+    local status
+
+    set +e
+    output="$(syspolicy_check distribution "$target" 2>&1)"
+    status=$?
+    set -e
+
+    printf '%s\n' "$output"
+    if [ "$status" -eq 0 ]; then
+      return 0
+    fi
+    if printf '%s\n' "$output" | grep -q "Internal Xprotect Error"; then
+      echo "WARN: syspolicy_check reported an internal XProtect error for $target; continuing because stapler and spctl checks already accepted this artifact." >&2
+      return 0
+    fi
+    return "$status"
+  }
+
+  run_syspolicy_distribution_check "$APP_PATH"
+  run_syspolicy_distribution_check "$DMG_PATH"
   if [ "$AGENTIC30_BUILD_PKG" = "1" ]; then
-    syspolicy_check distribution "$PKG_PATH"
+    run_syspolicy_distribution_check "$PKG_PATH"
   fi
 fi
 
