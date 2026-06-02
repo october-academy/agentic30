@@ -251,6 +251,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
+    @MainActor
     func openWorkspaceWindow() {
         if makeWorkspaceWindowKey() {
             NSApp.activate(ignoringOtherApps: true)
@@ -274,6 +275,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         focusWorkspaceWindow()
     }
 
+    @MainActor
     private func openBipNotification(intent: BipNotificationIntent, source: String) {
         openWorkspaceWindow()
         viewModel.requestBipNotificationOpen(intent: intent, source: source)
@@ -352,6 +354,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
+    @MainActor
     private func makeUpdaterController() -> SPUStandardUpdaterController? {
         let configuration = Self.sparkleConfiguration()
         viewModel.configureAppUpdates(
@@ -480,6 +483,7 @@ extension AppDelegate: SPUUpdaterDelegate {
         )
     }
 
+    @MainActor
     private func updateTelemetryProperties(for item: SUAppcastItem) -> [String: Any] {
         [
             "version": item.versionString,

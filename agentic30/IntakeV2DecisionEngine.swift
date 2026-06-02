@@ -13,6 +13,7 @@ struct IntakeSnapshot: Equatable {
     let evidenceLevels: [OnboardingIsolationLevel]
     let folderURL: URL?
 
+    @MainActor
     static func from(store: IntakeV2Store) -> IntakeSnapshot {
         IntakeSnapshot(
             workmode: store.workmode,
