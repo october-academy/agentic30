@@ -399,7 +399,7 @@ enum IntakeV2CommitmentLevel: String, Codable, CaseIterable, Hashable {
 }
 
 extension OnboardingIsolationLevel {
-    static let intakeV2EvidenceChoices: [OnboardingIsolationLevel] = [
+    nonisolated static let intakeV2EvidenceChoices: [OnboardingIsolationLevel] = [
         .workLog,
         .occasional,
         .weeklyLoop,
@@ -561,7 +561,7 @@ final class IntakeV2Store: ObservableObject {
         persist()
     }
 
-    static func normalizedEvidenceLevels(_ levels: [OnboardingIsolationLevel]) -> [OnboardingIsolationLevel] {
+    nonisolated static func normalizedEvidenceLevels(_ levels: [OnboardingIsolationLevel]) -> [OnboardingIsolationLevel] {
         let selected = Set(levels)
         if selected.contains(.community) {
             return [.community]

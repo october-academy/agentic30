@@ -8096,16 +8096,16 @@ private enum RealisticConfettiParticleShape {
         let sinRotation = CGFloat(sin(rotation))
         let halfWidth = width / 2
         let halfHeight = height / 2
-        let corners = [
+        let sourceCorners: [CGPoint] = [
             CGPoint(x: -halfWidth, y: -halfHeight),
             CGPoint(x: halfWidth, y: -halfHeight),
             CGPoint(x: halfWidth, y: halfHeight),
-            CGPoint(x: -halfWidth, y: halfHeight)
-        ].map { point in
-            CGPoint(
-                x: center.x + point.x * cosRotation - point.y * sinRotation,
-                y: center.y + point.x * sinRotation + point.y * cosRotation
-            )
+            CGPoint(x: -halfWidth, y: halfHeight),
+        ]
+        let corners: [CGPoint] = sourceCorners.map { point in
+            let rotatedX = center.x + point.x * cosRotation - point.y * sinRotation
+            let rotatedY = center.y + point.x * sinRotation + point.y * cosRotation
+            return CGPoint(x: rotatedX, y: rotatedY)
         }
 
         var path = Path()

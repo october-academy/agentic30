@@ -69,6 +69,7 @@ struct agentic30App: App {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let viewModel = AgenticViewModel()
 
@@ -84,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private(set) var wasLaunchedAtLogin = false
 
-    static let initialWorkspaceMaximizeDefaultsKey = "agentic30.workspaceWindow.initialInstallMaximizeApplied.v1"
+    nonisolated static let initialWorkspaceMaximizeDefaultsKey = "agentic30.workspaceWindow.initialInstallMaximizeApplied.v1"
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         Agentic30Theme.current.applyAppKitAppearance()
@@ -184,7 +185,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    static func shouldMaximizeWorkspaceWindowOnLaunch(
+    nonisolated static func shouldMaximizeWorkspaceWindowOnLaunch(
         isFirstLaunchEver: Bool,
         isUITesting: Bool,
         defaults: UserDefaults = .standard
