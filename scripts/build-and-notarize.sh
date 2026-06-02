@@ -15,6 +15,8 @@ set -euo pipefail
 #   SPARKLE_GENERATE_APPCAST_BIN — path to Sparkle's generate_appcast tool
 # Optional:
 #   AGENTIC30_BUNDLE_ARCH     — arm64 or x64 (defaults to current machine arch)
+#   AGENTIC30_BUILD_PKG       — 1 to also build/sign/notarize PKG (requires INSTALLER_SIGN_IDENTITY)
+#   AGENTIC30_BUILD_APPCAST   — 1 to also generate Sparkle appcast (requires SPARKLE_GENERATE_APPCAST_BIN)
 #   POSTHOG_PROJECT_API_KEY — PostHog project token embedded for launch telemetry
 #   POSTHOG_HOST           — PostHog app/ingest host (defaults to https://us.posthog.com)
 # Apple-ID + app-specific password path is unused (notarytool now authenticates
@@ -23,8 +25,8 @@ set -euo pipefail
 # Output:
 #   build/export/agentic30.app — signed + notarized + stapled
 #   build/agentic30-$AGENTIC30_BUNDLE_ARCH.dmg — signed + notarized + stapled fallback archive
-#   build/agentic30-$AGENTIC30_BUNDLE_ARCH.pkg — signed + notarized + stapled primary installer
-#   build/appcast/             — Sparkle appcast staging folder
+#   build/agentic30-$AGENTIC30_BUNDLE_ARCH.pkg — optional signed + notarized + stapled installer
+#   build/appcast/             — optional Sparkle appcast staging folder
 #
 # Manual smoke test (5/11 EOD checkpoint per /plan-eng-review D2):
 #   open build/export/agentic30.app
@@ -49,13 +51,18 @@ fi
 required_vars=(
   DEVELOPMENT_TEAM
   CODE_SIGN_IDENTITY
-  INSTALLER_SIGN_IDENTITY
   ASC_API_KEY_PATH
   ASC_KEY_ID
   ASC_ISSUER_ID
-  SPARKLE_PUBLIC_ED_KEY
-  SPARKLE_GENERATE_APPCAST_BIN
 )
+AGENTIC30_BUILD_PKG="${AGENTIC30_BUILD_PKG:-0}"
+AGENTIC30_BUILD_APPCAST="${AGENTIC30_BUILD_APPCAST:-0}"
+if [ "$AGENTIC30_BUILD_PKG" = "1" ]; then
+  required_vars+=(INSTALLER_SIGN_IDENTITY)
+fi
+if [ "$AGENTIC30_BUILD_APPCAST" = "1" ]; then
+  required_vars+=(SPARKLE_GENERATE_APPCAST_BIN)
+fi
 missing=0
 for var in "${required_vars[@]}"; do
   if [ -z "${!var:-}" ]; then
@@ -72,6 +79,7 @@ if [[ "$POSTHOG_PROJECT_API_KEY" != phc_* ]]; then
 fi
 
 POSTHOG_HOST="${POSTHOG_HOST:-https://us.posthog.com}"
+SPARKLE_PUBLIC_ED_KEY="${SPARKLE_PUBLIC_ED_KEY:-}"
 host_arch="$(uname -m)"
 case "${AGENTIC30_BUNDLE_ARCH:-$host_arch}" in
   arm64|aarch64)
@@ -216,59 +224,81 @@ xcrun stapler staple "$DMG_PATH"
 xcrun stapler validate "$DMG_PATH"
 
 echo "[9/10] Creating + signing + notarizing PKG..."
-pkgbuild \
-  --component "$APP_PATH" \
-  --install-location /Applications \
-  --identifier october-academy.agentic30 \
-  --version "$bundle_version" \
-  "$COMPONENT_PKG_PATH"
-productbuild \
-  --package "$COMPONENT_PKG_PATH" \
-  --sign "$INSTALLER_SIGN_IDENTITY" \
-  "$PKG_PATH"
-xcrun notarytool submit "$PKG_PATH" \
-  --key "$ASC_API_KEY_PATH" \
-  --key-id "$ASC_KEY_ID" \
-  --issuer "$ASC_ISSUER_ID" \
-  --wait
-xcrun stapler staple "$PKG_PATH"
-xcrun stapler validate "$PKG_PATH"
+if [ "$AGENTIC30_BUILD_PKG" = "1" ]; then
+  pkgbuild \
+    --component "$APP_PATH" \
+    --install-location /Applications \
+    --identifier october-academy.agentic30 \
+    --version "$bundle_version" \
+    "$COMPONENT_PKG_PATH"
+  productbuild \
+    --package "$COMPONENT_PKG_PATH" \
+    --sign "$INSTALLER_SIGN_IDENTITY" \
+    "$PKG_PATH"
+  xcrun notarytool submit "$PKG_PATH" \
+    --key "$ASC_API_KEY_PATH" \
+    --key-id "$ASC_KEY_ID" \
+    --issuer "$ASC_ISSUER_ID" \
+    --wait
+  xcrun stapler staple "$PKG_PATH"
+  xcrun stapler validate "$PKG_PATH"
+else
+  echo "[9/10] Skipping PKG (set AGENTIC30_BUILD_PKG=1 to enable)."
+fi
 
 echo "[9.5/10] Running Gatekeeper distribution checks..."
 spctl -a -vv -t exec "$APP_PATH"
 spctl -a -vv -t open --context context:primary-signature "$DMG_PATH"
-spctl -a -vv -t install "$PKG_PATH"
+if [ "$AGENTIC30_BUILD_PKG" = "1" ]; then
+  spctl -a -vv -t install "$PKG_PATH"
+fi
 if command -v syspolicy_check >/dev/null 2>&1; then
   syspolicy_check distribution "$APP_PATH"
   syspolicy_check distribution "$DMG_PATH"
-  syspolicy_check distribution "$PKG_PATH"
+  if [ "$AGENTIC30_BUILD_PKG" = "1" ]; then
+    syspolicy_check distribution "$PKG_PATH"
+  fi
 fi
 
 echo "[10/10] Generating Sparkle appcast staging folder..."
-appcast_dmg="$APPCAST_DIR/agentic30-$bundle_version-${AGENTIC30_BUNDLE_ARCH}.dmg"
-ditto "$DMG_PATH" "$appcast_dmg"
-if [ -n "${SPARKLE_RELEASE_NOTES_PATH:-}" ]; then
-  cp "$SPARKLE_RELEASE_NOTES_PATH" "${appcast_dmg}.md"
+if [ "$AGENTIC30_BUILD_APPCAST" = "1" ]; then
+  appcast_dmg="$APPCAST_DIR/agentic30-$bundle_version-${AGENTIC30_BUNDLE_ARCH}.dmg"
+  ditto "$DMG_PATH" "$appcast_dmg"
+  if [ -n "${SPARKLE_RELEASE_NOTES_PATH:-}" ]; then
+    cp "$SPARKLE_RELEASE_NOTES_PATH" "${appcast_dmg}.md"
+  fi
+  generate_appcast_args=()
+  if [ -n "${SPARKLE_DOWNLOAD_URL_PREFIX:-}" ]; then
+    generate_appcast_args+=(--download-url-prefix "$SPARKLE_DOWNLOAD_URL_PREFIX")
+  fi
+  "$SPARKLE_GENERATE_APPCAST_BIN" "${generate_appcast_args[@]}" "$APPCAST_DIR"
+else
+  echo "[10/10] Skipping appcast (set AGENTIC30_BUILD_APPCAST=1 to enable)."
 fi
-generate_appcast_args=()
-if [ -n "${SPARKLE_DOWNLOAD_URL_PREFIX:-}" ]; then
-  generate_appcast_args+=(--download-url-prefix "$SPARKLE_DOWNLOAD_URL_PREFIX")
-fi
-"$SPARKLE_GENERATE_APPCAST_BIN" "${generate_appcast_args[@]}" "$APPCAST_DIR"
 
 echo ""
 echo "✅ DONE"
 echo "  app:  $APP_PATH"
 echo "  dmg:  $DMG_PATH"
-echo "  pkg:  $PKG_PATH"
-echo "  appcast: $APPCAST_DIR"
+if [ "$AGENTIC30_BUILD_PKG" = "1" ]; then
+  echo "  pkg:  $PKG_PATH"
+fi
+if [ "$AGENTIC30_BUILD_APPCAST" = "1" ]; then
+  echo "  appcast: $APPCAST_DIR"
+fi
 echo ""
 echo "Smoke tests:"
 echo "  open $APP_PATH"
 echo "  spctl --assess --verbose=2 --type execute $APP_PATH"
 echo "  spctl --assess --verbose=2 --type open --context context:primary-signature $DMG_PATH"
-echo "  spctl --assess --verbose=2 --type install $PKG_PATH"
+if [ "$AGENTIC30_BUILD_PKG" = "1" ]; then
+  echo "  spctl --assess --verbose=2 --type install $PKG_PATH"
+fi
 echo ""
 echo "Upload to GitHub Releases (5/12 launch):"
-echo "  gh release create v\$(date +%Y%m%d-%H%M) $PKG_PATH $DMG_PATH \\"
+if [ "$AGENTIC30_BUILD_PKG" = "1" ]; then
+  echo "  gh release create v\$(date +%Y%m%d-%H%M) $PKG_PATH $DMG_PATH \\"
+else
+  echo "  gh release create v\$(date +%Y%m%d-%H%M) $DMG_PATH \\"
+fi
 echo "    --title \"agentic30 preview\" --notes-file CHANGELOG.md"
