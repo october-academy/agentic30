@@ -1262,6 +1262,11 @@ struct SidecarProviderSDKEnvironment: Codable, Hashable {
     let version: String?
     let packageRoot: String?
     let entrypointPath: String?
+    let cliSource: String?
+    let cliPath: String?
+    let cliVersion: String?
+    let cliArch: String?
+    let minimumVersionSatisfied: Bool?
     let message: String?
 }
 
@@ -1994,6 +1999,11 @@ extension SidecarDiagnostics {
             lines.append("- Codex: \(environment.codex.available ? "available" : "unavailable") (\(environment.codex.source)) - \(environment.codex.message)")
             if let sdk = environment.codex.sdk {
                 lines.append("  SDK: \(sdk.available ? "available" : "unavailable") \(sdk.packageName ?? "Codex SDK") \(sdk.version ?? "") - \(sdk.entrypointPath ?? "unknown")")
+                if let cliSource = sdk.cliSource {
+                    let version = sdk.cliVersion.map { " \($0)" } ?? ""
+                    let arch = sdk.cliArch.map { " \($0)" } ?? ""
+                    lines.append("  CLI: \(cliSource)\(version)\(arch) - \(sdk.cliPath ?? "unknown")")
+                }
             }
             if let gemini = environment.gemini {
                 lines.append("- Gemini: \(gemini.available ? "available" : "unavailable") (\(gemini.source)) - \(gemini.message)")

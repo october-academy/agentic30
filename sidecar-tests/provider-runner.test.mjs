@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -24,6 +25,7 @@ import {
   resetProviderSettingsForTest,
   resolveClaudeModel,
   resolveCodexBinaryPath,
+  resolveCodexCli,
   resolveCodexModel,
   resolveCodexReasoningEffort,
   resolveGeminiModel,
@@ -62,7 +64,10 @@ test("provider connection state reports SDK and CLI entrypoint health", () => {
 
   assert.equal(codex.sdk.packageName, "@openai/codex-sdk");
   assert.equal(codex.sdk.available, true);
-  assert.match(codex.sdk.entrypointPath, /\/codex\/codex(?:\.exe)?$/);
+  assert.equal(codex.sdk.cliPath, codex.sdk.entrypointPath);
+  assert.ok(["env", "shell", "common-path", "bundled"].includes(codex.sdk.cliSource));
+  assert.match(codex.sdk.cliPath, /codex(?:\.exe)?$/);
+  assert.equal(codex.sdk.minimumVersionSatisfied, true);
   assert.match(codex.sdk.version, /^\d+\.\d+\.\d+/);
 
   assert.equal(gemini.sdk.packageName, "@google/genai");
@@ -284,9 +289,73 @@ test("resolveClaudeModel falls back to DEFAULT_CLAUDE_MODEL and honors overrides
   }
 });
 
-test("resolveCodexBinaryPath uses Codex platform package layout", () => {
+test("resolveCodexCli prefers explicit env override", async () => {
+  const fixture = await createCodexResolverFixture();
+  const envCodex = path.join(fixture.root, "bin", "codex-env");
+  await fs.mkdir(path.dirname(envCodex), { recursive: true });
+  await fs.writeFile(envCodex, "");
+
+  const cli = resolveCodexCli({
+    env: { AGENTIC30_CODEX_BINARY: envCodex },
+    packageRootResolver: fixture.packageRootResolver,
+    shellLookup: () => fixture.shellCodex,
+    commonPaths: [],
+    spawnSyncImpl: fixture.versionProbe(new Map([
+      [envCodex, "codex 0.125.3"],
+      [fixture.shellCodex, "codex 0.125.3"],
+      [fixture.bundledCodex, "codex 0.125.3"],
+    ])),
+  });
+
+  assert.equal(cli.path, envCodex);
+  assert.equal(cli.source, "env");
+  assert.equal(cli.version, "0.125.3");
+});
+
+test("resolveCodexCli reuses system Codex before bundled binary", async () => {
+  const fixture = await createCodexResolverFixture();
+
+  const cli = resolveCodexCli({
+    env: {},
+    packageRootResolver: fixture.packageRootResolver,
+    shellLookup: () => fixture.shellCodex,
+    commonPaths: [],
+    spawnSyncImpl: fixture.versionProbe(new Map([
+      [fixture.shellCodex, "codex 0.125.1"],
+      [fixture.bundledCodex, "codex 0.125.1"],
+    ])),
+  });
+
+  assert.equal(cli.path, fixture.shellCodex);
+  assert.equal(cli.source, "shell");
+});
+
+test("resolveCodexCli falls back to bundled Codex when system Codex is too old", async () => {
+  const fixture = await createCodexResolverFixture();
+
+  const cli = resolveCodexCli({
+    env: {},
+    packageRootResolver: fixture.packageRootResolver,
+    shellLookup: () => fixture.shellCodex,
+    commonPaths: [],
+    spawnSyncImpl: fixture.versionProbe(new Map([
+      [fixture.shellCodex, "codex 0.124.9"],
+      [fixture.bundledCodex, "codex 0.125.0"],
+    ])),
+  });
+
+  assert.equal(cli.path, fixture.bundledCodex);
+  assert.equal(cli.source, "bundled");
+  assert.equal(cli.minimumVersionSatisfied, true);
+});
+
+test("resolveCodexBinaryPath uses Codex platform package layout", async () => {
+  const fixture = await createCodexResolverFixture();
   const binaryPath = resolveCodexBinaryPath({
-    packageRootResolver: (...segments) => path.join("/tmp", "node_modules", ...segments),
+    packageRootResolver: fixture.packageRootResolver,
+    shellLookup: () => "",
+    commonPaths: [],
+    spawnSyncImpl: fixture.versionProbe(new Map([[fixture.bundledCodex, "codex 0.125.0"]])),
   });
 
   assert.match(binaryPath, /node_modules\/@openai\/codex-(darwin|linux|win32)-(arm64|x64)\/vendor\//);
@@ -295,17 +364,74 @@ test("resolveCodexBinaryPath uses Codex platform package layout", () => {
 
 test("resolveCodexBinaryPath reports missing Codex packages clearly", () => {
   assert.throws(
-    () => resolveCodexBinaryPath({ packageRootResolver: () => null }),
+    () => resolveCodexBinaryPath({
+      packageRootResolver: () => null,
+      shellLookup: () => "",
+      commonPaths: [],
+    }),
     (error) => {
       assert.equal(error.name, "CodexBinaryNotInstalledError");
       assert.equal(error.code, CODEX_BINARY_NOT_INSTALLED_ERROR_CODE);
       assert.match(error.message, /Codex binary not installed/);
       assert.match(error.message, /@openai\/codex-sdk/);
       assert.doesNotMatch(error.message, /ERR_INVALID_ARG_TYPE/);
+      assert.deepEqual(error.rejectedCandidates, []);
       return true;
     },
   );
 });
+
+async function createCodexResolverFixture() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-codex-resolver-"));
+  const nodeModules = path.join(root, "node_modules");
+  const sdkRoot = path.join(nodeModules, "@openai", "codex-sdk");
+  const platformPackage = `codex-${process.platform}-${process.arch}`;
+  const bundledRoot = path.join(nodeModules, "@openai", platformPackage);
+  const triple = codexTestTargetTriple();
+  const bundledCodex = path.join(
+    bundledRoot,
+    "vendor",
+    triple,
+    "codex",
+    process.platform === "win32" ? "codex.exe" : "codex",
+  );
+  const shellCodex = path.join(root, "bin", "codex");
+
+  await fs.mkdir(path.dirname(bundledCodex), { recursive: true });
+  await fs.mkdir(path.dirname(shellCodex), { recursive: true });
+  await fs.mkdir(sdkRoot, { recursive: true });
+  await fs.writeFile(path.join(sdkRoot, "package.json"), JSON.stringify({ version: "0.125.0" }));
+  await fs.writeFile(bundledCodex, "");
+  await fs.writeFile(shellCodex, "");
+
+  return {
+    root,
+    bundledCodex,
+    shellCodex,
+    packageRootResolver: (...segments) => {
+      const candidate = path.join(nodeModules, ...segments);
+      return fsSync.existsSync(candidate) ? candidate : null;
+    },
+    versionProbe:
+      (versions) =>
+      (command) => ({
+        status: versions.has(command) ? 0 : 1,
+        stdout: versions.get(command) || "",
+        stderr: "",
+      }),
+  };
+}
+
+function codexTestTargetTriple() {
+  const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
+  const platform =
+    process.platform === "darwin"
+      ? "apple-darwin"
+      : process.platform === "win32"
+        ? "pc-windows-msvc"
+        : "unknown-linux-musl";
+  return `${arch}-${platform}`;
+}
 
 test("buildCodexConfig isolates sidecar runs from global Codex notifier", () => {
   const config = buildCodexConfig({

@@ -22,6 +22,8 @@ const NODE_RUNTIME_CACHE_DIR =
   process.env.AGENTIC30_NODE_RUNTIME_CACHE_DIR ||
   path.join(PACKAGE_ROOT, ".omx", "node-runtime");
 const NODE_RUNTIME_VERSION = "24.15.0";
+const BUNDLE_ARCH = normalizeBundleArch(process.env.AGENTIC30_BUNDLE_ARCH || process.arch);
+const TARGET_ARCHES = BUNDLE_ARCH === "universal" ? ["arm64", "x64"] : [BUNDLE_ARCH];
 
 const NODE_RUNTIME_ARCHIVES = [
   {
@@ -47,10 +49,12 @@ const ENTRY_POINTS = [
 
 // External packages kept unbundled because they ship native binaries or
 // load resources via __dirname-relative paths that bundling would break.
-const EXTERNAL_PACKAGES = [
+const BASE_EXTERNAL_PACKAGES = [
   "@anthropic-ai/claude-agent-sdk",
   "@openai/codex-sdk",
   "@openai/codex",
+];
+const ARCH_EXTERNAL_PACKAGES = [
   "@openai/codex-darwin-arm64",
   "@openai/codex-darwin-x64",
   "@img/sharp-darwin-arm64",
@@ -58,6 +62,14 @@ const EXTERNAL_PACKAGES = [
   "@img/sharp-libvips-darwin-arm64",
   "@img/sharp-libvips-darwin-x64",
 ];
+const EXTERNAL_PACKAGES = [
+  ...BASE_EXTERNAL_PACKAGES,
+  ...ARCH_EXTERNAL_PACKAGES.filter((pkg) =>
+    TARGET_ARCHES.some((arch) => pkg.endsWith(`-${arch}`))
+  ),
+];
+const EXTERNAL_PACKAGE_SET = new Set(EXTERNAL_PACKAGES);
+const ARCH_EXTERNAL_PACKAGE_SET = new Set(ARCH_EXTERNAL_PACKAGES);
 
 // CLI packages invoked as standalone sidecars need their runtime dependency
 // closure copied because they are not bundled into the main entry points.
@@ -92,6 +104,31 @@ const NATIVE_BUILD_ARTIFACT_EXTENSIONS = new Set([
   ".a",
   ".o",
 ]);
+
+const PRUNED_FILE_EXTENSIONS = new Set([
+  ".map",
+]);
+
+const PRUNED_DIR_NAMES = new Set([
+  ".github",
+  "__tests__",
+  "docs",
+  "doc",
+  "examples",
+  "example",
+  "test",
+  "tests",
+]);
+
+function normalizeBundleArch(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "arm64" || normalized === "x64" || normalized === "universal") {
+    return normalized;
+  }
+  throw new Error(
+    `AGENTIC30_BUNDLE_ARCH must be arm64, x64, or universal; received ${JSON.stringify(value)}`
+  );
+}
 
 function run(cmd, args, cwd) {
   return new Promise((resolve, reject) => {
@@ -159,6 +196,7 @@ async function copyExternals() {
 
 async function copyPackageClosure(pkg, seen) {
   if (seen.has(pkg)) return;
+  if (!shouldCopyPackage(pkg)) return;
 
   const src = packagePath(SOURCE_NODE_MODULES, pkg);
   if (!existsSync(src)) return;
@@ -176,6 +214,10 @@ async function copyPackageClosure(pkg, seen) {
   }
 }
 
+function shouldCopyPackage(pkg) {
+  return !ARCH_EXTERNAL_PACKAGE_SET.has(pkg) || EXTERNAL_PACKAGE_SET.has(pkg);
+}
+
 async function copyPackage(pkg, src) {
   const dest = packagePath(DIST_NODE_MODULES, pkg);
   await mkdir(path.dirname(dest), { recursive: true });
@@ -186,7 +228,7 @@ async function ensureBundledNodeRuntime() {
   const runtimeRoot = path.join(DIST_DIR, "runtime");
   await mkdir(runtimeRoot, { recursive: true });
 
-  for (const runtime of NODE_RUNTIME_ARCHIVES) {
+  for (const runtime of NODE_RUNTIME_ARCHIVES.filter((entry) => TARGET_ARCHES.includes(entry.arch))) {
     const archivePath = await cachedNodeRuntimeArchive(runtime);
     const extractRoot = path.join(BUILD_DIR, `node-runtime-${runtime.arch}`);
     const extractedDir = path.join(
@@ -336,12 +378,14 @@ async function computeBuildFingerprint() {
       version: 1,
       entryPoints: ENTRY_POINTS,
       externalPackages: EXTERNAL_PACKAGES,
+      bundleArch: BUNDLE_ARCH,
+      targetArchs: TARGET_ARCHES,
       sidecarCliPackages: SIDECAR_CLI_PACKAGES,
       nonDarwinPlatforms: NON_DARWIN_PLATFORMS,
       nativeBuildArtifactDirs: [...NATIVE_BUILD_ARTIFACT_DIRS],
       nativeBuildArtifactExtensions: [...NATIVE_BUILD_ARTIFACT_EXTENSIONS],
       nodeRuntimeVersion: NODE_RUNTIME_VERSION,
-      nodeRuntimeArchives: NODE_RUNTIME_ARCHIVES,
+      nodeRuntimeArchives: NODE_RUNTIME_ARCHIVES.filter((entry) => TARGET_ARCHES.includes(entry.arch)),
     })
   );
 
@@ -456,6 +500,50 @@ async function stripNativeBuildArtifacts(root) {
   }
 }
 
+async function pruneBundleCruft(root) {
+  const stack = [root];
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (PRUNED_DIR_NAMES.has(entry.name)) {
+          await rm(full, { recursive: true, force: true });
+          continue;
+        }
+        stack.push(full);
+      } else if (entry.isFile() && PRUNED_FILE_EXTENSIONS.has(path.extname(entry.name))) {
+        await rm(full, { force: true });
+      }
+    }
+  }
+}
+
+async function logTopLevelSizes(root) {
+  const entries = await readdir(root, { withFileTypes: true });
+  const sizes = [];
+  for (const entry of entries) {
+    const full = path.join(root, entry.name);
+    sizes.push({
+      name: entry.name,
+      size: entry.isDirectory() ? await directorySize(full) : (await stat(full)).size,
+    });
+  }
+  sizes
+    .sort((a, b) => b.size - a.size)
+    .slice(0, 8)
+    .forEach((item) => {
+      console.log(`[build-sidecar] size ${item.name}: ${(item.size / 1024 / 1024).toFixed(1)} MB`);
+    });
+}
+
 async function directorySize(dir) {
   let total = 0;
   const stack = [dir];
@@ -488,6 +576,7 @@ async function main() {
     return;
   }
 
+  console.log(`[build-sidecar] bundle arch: ${BUNDLE_ARCH} (${TARGET_ARCHES.join(", ")})`);
   await ensureDependencies();
   console.log("[build-sidecar] cleaning dist...");
   await clean();
@@ -501,8 +590,11 @@ async function main() {
   await stripNonDarwinBinaries(DIST_NODE_MODULES);
   console.log("[build-sidecar] stripping native build artifacts...");
   await stripNativeBuildArtifacts(DIST_NODE_MODULES);
+  console.log("[build-sidecar] pruning bundle cruft...");
+  await pruneBundleCruft(DIST_NODE_MODULES);
   const size = await directorySize(DIST_DIR);
   await writeBuildStamp(fingerprint, size);
+  await logTopLevelSizes(DIST_DIR);
   console.log(`[build-sidecar] done. dist size: ${(size / 1024 / 1024).toFixed(1)} MB`);
 }
 

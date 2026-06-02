@@ -14,6 +14,7 @@ set -euo pipefail
 #   SPARKLE_PUBLIC_ED_KEY — public EdDSA key embedded in Info.plist
 #   SPARKLE_GENERATE_APPCAST_BIN — path to Sparkle's generate_appcast tool
 # Optional:
+#   AGENTIC30_BUNDLE_ARCH     — arm64 or x64 (defaults to current machine arch)
 #   POSTHOG_PROJECT_API_KEY — PostHog project token embedded for launch telemetry
 #   POSTHOG_HOST           — PostHog app/ingest host (defaults to https://us.posthog.com)
 # Apple-ID + app-specific password path is unused (notarytool now authenticates
@@ -21,8 +22,8 @@ set -euo pipefail
 #
 # Output:
 #   build/export/agentic30.app — signed + notarized + stapled
-#   build/agentic30.dmg        — signed + notarized + stapled fallback archive
-#   build/agentic30.pkg        — signed + notarized + stapled primary installer
+#   build/agentic30-$AGENTIC30_BUNDLE_ARCH.dmg — signed + notarized + stapled fallback archive
+#   build/agentic30-$AGENTIC30_BUNDLE_ARCH.pkg — signed + notarized + stapled primary installer
 #   build/appcast/             — Sparkle appcast staging folder
 #
 # Manual smoke test (5/11 EOD checkpoint per /plan-eng-review D2):
@@ -71,14 +72,30 @@ if [[ "$POSTHOG_PROJECT_API_KEY" != phc_* ]]; then
 fi
 
 POSTHOG_HOST="${POSTHOG_HOST:-https://us.posthog.com}"
+host_arch="$(uname -m)"
+case "${AGENTIC30_BUNDLE_ARCH:-$host_arch}" in
+  arm64|aarch64)
+    AGENTIC30_BUNDLE_ARCH="arm64"
+    XCODE_ARCH="arm64"
+    ;;
+  x64|x86_64)
+    AGENTIC30_BUNDLE_ARCH="x64"
+    XCODE_ARCH="x86_64"
+    ;;
+  *)
+    echo "ERROR: AGENTIC30_BUNDLE_ARCH must be arm64 or x64" >&2
+    exit 2
+    ;;
+esac
+export AGENTIC30_BUNDLE_ARCH
 
 ARCHIVE_PATH="build/agentic30.xcarchive"
 EXPORT_PATH="build/export"
 APP_PATH="$EXPORT_PATH/agentic30.app"
-DMG_PATH="build/agentic30.dmg"
+DMG_PATH="build/agentic30-${AGENTIC30_BUNDLE_ARCH}.dmg"
 DMG_STAGING="build/dmg-staging"
 COMPONENT_PKG_PATH="build/agentic30-component.pkg"
-PKG_PATH="build/agentic30.pkg"
+PKG_PATH="build/agentic30-${AGENTIC30_BUNDLE_ARCH}.pkg"
 APPCAST_DIR="${SPARKLE_APPCAST_DIR:-build/appcast}"
 EXPORT_OPTIONS="build/ExportOptions.plist"
 ENTITLEMENTS="agentic30/agentic30.entitlements"
@@ -107,13 +124,14 @@ cat > "$EXPORT_OPTIONS" <<EOF
 </plist>
 EOF
 
-echo "[3/10] xcodebuild archive (Hardened Runtime + entitlements)..."
+echo "[3/10] xcodebuild archive (arch=${AGENTIC30_BUNDLE_ARCH}, Hardened Runtime + entitlements)..."
 xcodebuild archive \
   -project agentic30.xcodeproj \
   -scheme agentic30 \
   -configuration Release \
   -archivePath "$ARCHIVE_PATH" \
   -destination 'generic/platform=macOS' \
+  ARCHS="$XCODE_ARCH" \
   ENABLE_HARDENED_RUNTIME=YES \
   CODE_SIGN_ENTITLEMENTS="$ENTITLEMENTS" \
   CODE_SIGN_IDENTITY="$CODE_SIGN_IDENTITY" \
@@ -227,7 +245,7 @@ if command -v syspolicy_check >/dev/null 2>&1; then
 fi
 
 echo "[10/10] Generating Sparkle appcast staging folder..."
-appcast_dmg="$APPCAST_DIR/agentic30-$bundle_version.dmg"
+appcast_dmg="$APPCAST_DIR/agentic30-$bundle_version-${AGENTIC30_BUNDLE_ARCH}.dmg"
 ditto "$DMG_PATH" "$appcast_dmg"
 if [ -n "${SPARKLE_RELEASE_NOTES_PATH:-}" ]; then
   cp "$SPARKLE_RELEASE_NOTES_PATH" "${appcast_dmg}.md"

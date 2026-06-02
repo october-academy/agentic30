@@ -37,7 +37,9 @@ struct NodeExecutableResolver {
         throw NSError(
             domain: "NodeExecutableResolver",
             code: 1,
-            userInfo: [NSLocalizedDescriptionKey: "Could not find a usable node executable."]
+            userInfo: [
+                NSLocalizedDescriptionKey: "Could not find a usable node executable. Checked bundled current-architecture Node, NODE_BINARY, login shell PATH, Homebrew, mise, asdf, and Volta."
+            ]
         )
     }
 

@@ -102,6 +102,11 @@ struct SidecarEventDecodingTests {
                 "version": "0.125.0",
                 "packageRoot": "/repo/node_modules/@openai/codex-sdk",
                 "entrypointPath": "/repo/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex/codex",
+                "cliSource": "bundled",
+                "cliPath": "/repo/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex/codex",
+                "cliVersion": "0.125.0",
+                "cliArch": "arm64",
+                "minimumVersionSatisfied": true,
                 "message": "Codex SDK and CLI binary are installed"
               }
             },
@@ -137,6 +142,8 @@ struct SidecarEventDecodingTests {
         #expect(event.environment?.claude.sdk?.packageName == "@anthropic-ai/claude-agent-sdk")
         #expect(event.environment?.codex.source == "local-session")
         #expect(event.environment?.codex.sdk?.available == true)
+        #expect(event.environment?.codex.sdk?.cliSource == "bundled")
+        #expect(event.environment?.codex.sdk?.minimumVersionSatisfied == true)
         #expect(event.environment?.gemini?.source == "api-key")
         #expect(event.environment?.gemini?.sdk?.packageName == "@google/genai")
         #expect(event.environment?.acp?.available == true)
@@ -894,7 +901,12 @@ struct SidecarEventDecodingTests {
                   "available": true,
                   "packageName": "@openai/codex-sdk",
                   "version": "0.125.0",
-                  "entrypointPath": "/repo/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex/codex"
+                  "entrypointPath": "/repo/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex/codex",
+                  "cliSource": "bundled",
+                  "cliPath": "/repo/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex/codex",
+                  "cliVersion": "0.125.0",
+                  "cliArch": "arm64",
+                  "minimumVersionSatisfied": true
                 }
               },
               "acp": {
@@ -928,6 +940,7 @@ struct SidecarEventDecodingTests {
         #expect(event.diagnostics?.environment?.claude.available == true)
         #expect(event.diagnostics?.environment?.claude.sdk?.entrypointPath?.hasSuffix("cli.js") == true)
         #expect(event.diagnostics?.environment?.codex.sdk?.packageName == "@openai/codex-sdk")
+        #expect(event.diagnostics?.environment?.codex.sdk?.cliSource == "bundled")
         #expect(event.diagnostics?.preflight?.status == "warning")
         #expect(event.diagnostics?.preflight?.checks.first?.id == "provider-auth")
     }

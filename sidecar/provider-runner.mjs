@@ -28,6 +28,7 @@ process.env.AGENTIC30_SIDECAR_ROOT ??= sidecarRoot;
 const DEFAULT_CODEX_MODEL = "gpt-5.5";
 const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
 export const CODEX_BINARY_NOT_INSTALLED_ERROR_CODE = "ERR_CODEX_BINARY_NOT_INSTALLED";
+const CODEX_CLI_VERSION_TIMEOUT_MS = 2500;
 const DEFAULT_CLAUDE_MODEL = "claude-opus-4-7";
 const MINI_ACTION_EXECUTION_ONLY_MODE = "mini_action_execution_only";
 const CODEX_REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
@@ -403,10 +404,10 @@ function getProviderSdkState(provider) {
 
   const packageName = "@openai/codex-sdk";
   const packageRoot = resolveInstalledPackageRoot("@openai", "codex-sdk");
-  let binaryPath = null;
+  let codexCli = null;
   let binaryError = null;
   try {
-    binaryPath = resolveCodexBinaryPath();
+    codexCli = resolveCodexCli();
   } catch (error) {
     if (error?.code !== CODEX_BINARY_NOT_INSTALLED_ERROR_CODE) {
       throw error;
@@ -414,17 +415,22 @@ function getProviderSdkState(provider) {
     binaryError = error;
   }
   const packageJson = readPackageJson(packageRoot);
-  const binaryInstalled = Boolean(binaryPath && fsSync.existsSync(binaryPath));
+  const binaryInstalled = Boolean(codexCli?.path && fsSync.existsSync(codexCli.path));
   return {
     available: binaryInstalled,
     packageName,
     version: packageJson?.version ?? null,
     packageRoot,
-    entrypointPath: binaryPath,
+    entrypointPath: codexCli?.path ?? null,
+    cliSource: codexCli?.source ?? "missing",
+    cliPath: codexCli?.path ?? null,
+    cliVersion: codexCli?.version ?? null,
+    cliArch: codexCli?.arch ?? null,
+    minimumVersionSatisfied: codexCli?.minimumVersionSatisfied ?? false,
     message: binaryError?.message
       ?? (binaryInstalled
-        ? "Codex SDK and CLI binary are installed"
-        : "Codex CLI binary is missing"),
+        ? `Codex SDK and CLI binary are installed (${codexCli.source})`
+        : "Codex CLI not found; install Codex or use bundled build"),
   };
 }
 
@@ -881,8 +887,9 @@ async function runCodexAttempt({
   });
   const codexEnv = buildCodexEnv();
   const apiKey = readApiKey("codex", codexEnv);
+  const codexCli = resolveCodexCli();
   const codexOptions = {
-    codexPathOverride: resolveCodexBinaryPath(),
+    codexPathOverride: codexCli.path,
     env: codexEnv,
     config: buildCodexConfig({
       systemPromptText,
@@ -909,7 +916,13 @@ async function runCodexAttempt({
   onRunEvent?.({ phase: "provider.codex.sdk_loaded" });
   const codex = new Codex(codexOptions);
   const resolvedModel = resolveCodexModel(model);
-  onRunEvent?.({ phase: "provider.codex.client_created", model: resolvedModel });
+  onRunEvent?.({
+    phase: "provider.codex.client_created",
+    model: resolvedModel,
+    cliSource: codexCli.source,
+    cliVersion: codexCli.version,
+    cliArch: codexCli.arch,
+  });
 
   const threadOptions = {
     model: resolvedModel,
@@ -1830,18 +1843,72 @@ async function runTextOnlyProvider({
   onTextReplace?.(text);
 }
 
-export function resolveCodexBinaryPath({
+export function resolveCodexCli({
+  env = process.env,
   packageRootResolver = resolveExistingInstalledPackageRoot,
+  fsImpl = fsSync,
+  spawnSyncImpl = spawnSync,
+  shellLookup = defaultCodexShellLookup,
+  commonPaths = defaultCodexCommonPaths(os.homedir()),
 } = {}) {
-  const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
-  const platform =
-    process.platform === "darwin"
-      ? "apple-darwin"
-      : process.platform === "win32"
-        ? "pc-windows-msvc"
-        : "unknown-linux-musl";
+  const minimumVersion = resolveMinimumCodexCliVersion({ packageRootResolver });
+  const bundledCandidate = resolveBundledCodexCandidate({ packageRootResolver, fsImpl });
+  const candidates = [
+    env.AGENTIC30_CODEX_BINARY
+      ? { path: env.AGENTIC30_CODEX_BINARY, source: "env" }
+      : null,
+    shellLookup ? { path: shellLookup(), source: "shell" } : null,
+    ...commonPaths.map((candidate) => ({ path: candidate, source: "common-path" })),
+    bundledCandidate,
+  ].filter((candidate) => candidate?.path);
+
+  const rejected = [];
+  for (const candidate of candidates) {
+    const resolvedPath = expandHome(candidate.path, os.homedir());
+    if (!fsImpl.existsSync(resolvedPath)) {
+      rejected.push({ ...candidate, path: resolvedPath, reason: "missing" });
+      continue;
+    }
+    const version = readCodexCliVersion(resolvedPath, { spawnSyncImpl });
+    const minimumVersionSatisfied = isMinimumVersionSatisfied(version, minimumVersion);
+    if (!minimumVersionSatisfied) {
+      rejected.push({
+        ...candidate,
+        path: resolvedPath,
+        version,
+        reason: `version ${version || "unknown"} is below ${minimumVersion}`,
+      });
+      continue;
+    }
+    return {
+      path: resolvedPath,
+      source: candidate.source,
+      version,
+      arch: process.arch,
+      valid: true,
+      minimumVersion,
+      minimumVersionSatisfied,
+    };
+  }
+
+  const error = buildCodexBinaryNotInstalledError({
+    targetTriple: codexTargetTriple(),
+    platformPackage: resolveCodexPlatformPackageName(codexTargetTriple()),
+  });
+  error.rejectedCandidates = rejected;
+  throw error;
+}
+
+export function resolveCodexBinaryPath(options = {}) {
+  return resolveCodexCli(options).path;
+}
+
+function resolveBundledCodexCandidate({
+  packageRootResolver = resolveExistingInstalledPackageRoot,
+  fsImpl = fsSync,
+} = {}) {
+  const targetTriple = codexTargetTriple();
   const binary = process.platform === "win32" ? "codex.exe" : "codex";
-  const targetTriple = `${arch}-${platform}`;
   const platformPackage = resolveCodexPlatformPackageName(targetTriple);
   const packageRoots = [
     platformPackage ? packageRootResolver("@openai", platformPackage) : null,
@@ -1851,19 +1918,99 @@ export function resolveCodexBinaryPath({
 
   for (const packageRoot of packageRoots) {
     const candidate = path.join(packageRoot, "vendor", targetTriple, "codex", binary);
-    if (fsSync.existsSync(candidate)) {
-      return candidate;
+    if (fsImpl.existsSync(candidate)) {
+      return { path: candidate, source: "bundled" };
+    }
+    const pencilStyleCandidate = path.join(packageRoot, "vendor", targetTriple, "bin", binary);
+    if (fsImpl.existsSync(pencilStyleCandidate)) {
+      return { path: pencilStyleCandidate, source: "bundled" };
     }
   }
 
   if (packageRoots.length === 0) {
-    throw buildCodexBinaryNotInstalledError({
-      targetTriple,
-      platformPackage,
-    });
+    return null;
   }
 
-  return path.join(packageRoots[0], "vendor", targetTriple, "codex", binary);
+  return { path: path.join(packageRoots[0], "vendor", targetTriple, "codex", binary), source: "bundled" };
+}
+
+function codexTargetTriple() {
+  const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
+  const platform =
+    process.platform === "darwin"
+      ? "apple-darwin"
+      : process.platform === "win32"
+        ? "pc-windows-msvc"
+        : "unknown-linux-musl";
+  return `${arch}-${platform}`;
+}
+
+function defaultCodexShellLookup() {
+  if (process.platform === "win32") return "";
+  try {
+    const result = spawnSync("/bin/zsh", ["-lc", "command -v codex"], {
+      encoding: "utf8",
+      timeout: 1500,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return result.status === 0 ? String(result.stdout || "").trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+function defaultCodexCommonPaths(homeDir) {
+  return [
+    "/opt/homebrew/bin/codex",
+    "/usr/local/bin/codex",
+    path.join(homeDir, ".bun", "bin", "codex"),
+    path.join(homeDir, ".npm-global", "bin", "codex"),
+    path.join(homeDir, ".local", "bin", "codex"),
+  ];
+}
+
+function expandHome(candidatePath, homeDir) {
+  const value = String(candidatePath || "").trim();
+  if (value === "~") return homeDir;
+  if (value.startsWith("~/")) return path.join(homeDir, value.slice(2));
+  return value;
+}
+
+function readCodexCliVersion(binaryPath, { spawnSyncImpl = spawnSync } = {}) {
+  try {
+    const result = spawnSyncImpl(binaryPath, ["--version"], {
+      encoding: "utf8",
+      timeout: CODEX_CLI_VERSION_TIMEOUT_MS,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const text = `${result.stdout || ""}\n${result.stderr || ""}`;
+    return parseSemver(text);
+  } catch {
+    return null;
+  }
+}
+
+function resolveMinimumCodexCliVersion({ packageRootResolver = resolveExistingInstalledPackageRoot } = {}) {
+  const packageRoot = packageRootResolver("@openai", "codex-sdk");
+  const packageJson = packageRoot ? readPackageJson(packageRoot) : null;
+  return parseSemver(packageJson?.version) || "0.0.0";
+}
+
+function parseSemver(value) {
+  const match = String(value || "").match(/(\d+)\.(\d+)\.(\d+)/);
+  return match ? `${match[1]}.${match[2]}.${match[3]}` : null;
+}
+
+function isMinimumVersionSatisfied(version, minimumVersion) {
+  if (!minimumVersion || minimumVersion === "0.0.0") return true;
+  if (!version) return false;
+  const current = version.split(".").map(Number);
+  const minimum = minimumVersion.split(".").map(Number);
+  for (let i = 0; i < 2; i += 1) {
+    if ((current[i] || 0) > (minimum[i] || 0)) return true;
+    if ((current[i] || 0) < (minimum[i] || 0)) return false;
+  }
+  return true;
 }
 
 function buildCodexBinaryNotInstalledError({ targetTriple, platformPackage }) {

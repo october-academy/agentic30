@@ -71,6 +71,7 @@ import { buildPreflightReport } from "./preflight.mjs";
 import {
   buildCodexEnv,
   buildGeminiEnv,
+  resolveCodexBinaryPath,
   resolveCodexModel,
   resolveGeminiModel,
   getProviderAuthState,
@@ -9133,52 +9134,6 @@ async function runCreateDoc(docRoot, docType) {
       docType,
       error: formatError(error),
     });
-  }
-}
-
-function resolveCodexBinaryPath() {
-  const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
-  const platform =
-    process.platform === "darwin"
-      ? "apple-darwin"
-      : process.platform === "win32"
-        ? "pc-windows-msvc"
-        : "unknown-linux-musl";
-  const binary = process.platform === "win32" ? "codex.exe" : "codex";
-  const targetTriple = `${arch}-${platform}`;
-  const platformPackage = resolveCodexPlatformPackageName(targetTriple);
-  const packageRoots = [
-    platformPackage ? resolveInstalledPackageRoot("@openai", platformPackage) : null,
-    resolveInstalledPackageRoot("@openai", "codex"),
-    resolveInstalledPackageRoot("@openai", "codex-sdk"),
-  ].filter(Boolean);
-
-  for (const packageRoot of packageRoots) {
-    const candidate = path.join(packageRoot, "vendor", targetTriple, "codex", binary);
-    if (fsSync.existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  return path.join(packageRoots[0], "vendor", targetTriple, "codex", binary);
-}
-
-function resolveCodexPlatformPackageName(targetTriple) {
-  switch (targetTriple) {
-    case "aarch64-apple-darwin":
-      return "codex-darwin-arm64";
-    case "x86_64-apple-darwin":
-      return "codex-darwin-x64";
-    case "aarch64-unknown-linux-musl":
-      return "codex-linux-arm64";
-    case "x86_64-unknown-linux-musl":
-      return "codex-linux-x64";
-    case "aarch64-pc-windows-msvc":
-      return "codex-win32-arm64";
-    case "x86_64-pc-windows-msvc":
-      return "codex-win32-x64";
-    default:
-      return null;
   }
 }
 
