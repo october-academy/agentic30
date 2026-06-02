@@ -6,7 +6,7 @@
 |---|---|
 | Direct Developer ID only | The current release plan targets Developer ID signed and notarized PKG distribution with a DMG fallback. Mac App Store distribution is not supported yet. |
 | App Sandbox disabled | The app launches a Node child process and accesses user-selected workspaces. Full App Sandbox support requires a sidecar architecture redesign. |
-| Sparkle feed is self-hosted | Sparkle is wired to `https://agentic30.app/appcast.xml`; release operations must publish the generated appcast and update archives there. |
+| Sparkle feed is self-hosted | Sparkle is wired to `https://updates.agentic30.app/appcast.xml`; the `agentic30-sparkle` Cloudflare R2 bucket is connected to that custom domain in the `agentic30.app` zone, and the release script stages, verifies, and can upload `appcast.xml` plus the update DMG through Wrangler. Keep the old apex feed available during migration for already shipped builds. |
 | Notarization requires Apple credentials | The release script automates archive/notarize/staple checks, but it still requires local Developer ID and App Store Connect credentials. |
 
 ## Runtime

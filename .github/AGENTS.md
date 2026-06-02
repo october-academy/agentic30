@@ -4,13 +4,15 @@
 # .github
 
 ## Purpose
-GitHub repository metadata: pull request template and issue templates. No CI workflows are committed here today — Swift and sidecar test commands are run locally per `CONTRIBUTING.md`.
+GitHub repository metadata: pull request template, issue templates, public-safety checks, and release automation workflows.
 
 ## Key Files
 
 | File | Description |
 |------|-------------|
 | `PULL_REQUEST_TEMPLATE.md` | PR description scaffolding |
+| `workflows/secret-scanning.yml` | Public-safety and secret scanning checks |
+| `workflows/release.yml` | Tag/manual release workflow for Xcode Cloud or local macOS builder publishing |
 
 ## Subdirectories
 

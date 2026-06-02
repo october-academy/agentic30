@@ -73,13 +73,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let viewModel = AgenticViewModel()
 
     private let workspaceWindowTitle = "Agentic30"
+    private static let updateBlockedErrorDomain = "Agentic30SparkleUpdateCheck"
     private var openWorkspaceHandler: (() -> Void)?
     private var pendingWorkspaceOpen = false
     private(set) var shouldMaximizeWorkspaceWindowOnFirstAppear = AppDelegate.shouldMaximizeWorkspaceWindowOnLaunch(
         isFirstLaunchEver: !PostHogTelemetry.hasPreviouslyGeneratedDistinctID,
         isUITesting: AppDelegate.isUITestingLaunch()
     )
-    private lazy var updaterController: SPUStandardUpdaterController? = Self.makeUpdaterController()
+    private lazy var updaterController: SPUStandardUpdaterController? = makeUpdaterController()
 
     private(set) var wasLaunchedAtLogin = false
 
@@ -231,6 +232,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.runModal()
             return
         }
+        guard updaterController.updater.canCheckForUpdates else {
+            let alert = NSAlert()
+            alert.messageText = "An update check is already in progress."
+            alert.informativeText = "Sparkle is already checking, downloading, or preparing an update. Try again after the current update session finishes."
+            alert.alertStyle = .informational
+            alert.runModal()
+            return
+        }
         updaterController.checkForUpdates(sender)
     }
 
@@ -302,19 +311,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private static func makeUpdaterController() -> SPUStandardUpdaterController? {
-        guard let publicKey = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String else {
-            return nil
-        }
+    private struct SparkleConfiguration {
+        var configured: Bool
+        var feedURL: String
+        var publicKey: String
+        var automaticChecksEnabled: Bool
+        var automaticDownloadsEnabled: Bool
+    }
+
+    static func hasUsableSparklePublicKey(_ publicKey: String?) -> Bool {
+        guard let publicKey else { return false }
         let trimmedPublicKey = publicKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedPublicKey.isEmpty, !trimmedPublicKey.contains("$(") else {
+        return !trimmedPublicKey.isEmpty && !trimmedPublicKey.contains("$(")
+    }
+
+    static func updateCheckBlockReason(isUITestingLaunch: Bool, hasUsablePublicKey: Bool) -> String? {
+        #if DEBUG
+        if isUITestingLaunch {
+            return "Update checks are disabled during UI tests."
+        }
+        #endif
+        if !hasUsablePublicKey {
+            return "Release builds must include a Sparkle public EdDSA key."
+        }
+        return nil
+    }
+
+    private static func sparkleConfiguration(bundle: Bundle = .main) -> SparkleConfiguration {
+        let publicKey = bundle.object(forInfoDictionaryKey: "SUPublicEDKey") as? String
+        let feedURL = bundle.object(forInfoDictionaryKey: "SUFeedURL") as? String
+            ?? AppUpdateState.defaultFeedURL
+        let automaticChecksEnabled = (bundle.object(forInfoDictionaryKey: "SUEnableAutomaticChecks") as? Bool) ?? false
+        let automaticDownloadsEnabled = (bundle.object(forInfoDictionaryKey: "SUAutomaticallyUpdate") as? Bool) ?? false
+        return SparkleConfiguration(
+            configured: hasUsableSparklePublicKey(publicKey),
+            feedURL: feedURL,
+            publicKey: publicKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+            automaticChecksEnabled: automaticChecksEnabled,
+            automaticDownloadsEnabled: automaticDownloadsEnabled
+        )
+    }
+
+    private func makeUpdaterController() -> SPUStandardUpdaterController? {
+        let configuration = Self.sparkleConfiguration()
+        viewModel.configureAppUpdates(
+            configured: configuration.configured,
+            feedURL: configuration.feedURL,
+            automaticChecksEnabled: configuration.automaticChecksEnabled,
+            automaticDownloadsEnabled: configuration.automaticDownloadsEnabled
+        )
+        guard configuration.configured else {
             return nil
         }
-        return SPUStandardUpdaterController(
+        let controller = SPUStandardUpdaterController(
             startingUpdater: true,
-            updaterDelegate: nil,
+            updaterDelegate: self,
             userDriverDelegate: nil
         )
+        viewModel.configureAppUpdates(
+            configured: true,
+            feedURL: configuration.feedURL,
+            automaticChecksEnabled: controller.updater.automaticallyChecksForUpdates,
+            automaticDownloadsEnabled: controller.updater.automaticallyDownloadsUpdates
+        )
+        return controller
     }
 
     #if DEBUG
@@ -326,6 +386,109 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     #endif
+}
+
+extension AppDelegate: SPUUpdaterDelegate {
+    func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {
+        let configuration = Self.sparkleConfiguration()
+        if let reason = Self.updateCheckBlockReason(
+            isUITestingLaunch: Self.isUITestingLaunch(),
+            hasUsablePublicKey: configuration.configured
+        ) {
+            viewModel.recordAppUpdateBlocked(reason)
+            throw NSError(
+                domain: Self.updateBlockedErrorDomain,
+                code: configuration.configured ? 1 : 2,
+                userInfo: [NSLocalizedDescriptionKey: reason]
+            )
+        }
+
+        viewModel.recordAppUpdateCheckStarted()
+    }
+
+    func updater(_ updater: SPUUpdater, didFinishLoading appcast: SUAppcast) {
+        viewModel.recordAppUpdateAppcastLoaded(itemCount: appcast.items.count)
+        PostHogTelemetry.capture(
+            "mac_update_appcast_loaded",
+            properties: [
+                "item_count": appcast.items.count,
+                "feed_url": viewModel.appUpdateState.feedURL,
+            ],
+            authSession: viewModel.macAuthSession
+        )
+    }
+
+    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        viewModel.recordAppUpdateAvailable(
+            version: item.versionString,
+            displayVersion: item.displayVersionString
+        )
+        PostHogTelemetry.capture(
+            "mac_update_available",
+            properties: updateTelemetryProperties(for: item),
+            authSession: viewModel.macAuthSession
+        )
+    }
+
+    func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: Error) {
+        viewModel.recordAppUpdateLatest()
+        PostHogTelemetry.capture(
+            "mac_update_not_found",
+            properties: [
+                "error_description": error.localizedDescription,
+                "feed_url": viewModel.appUpdateState.feedURL,
+            ],
+            authSession: viewModel.macAuthSession
+        )
+    }
+
+    func updater(_ updater: SPUUpdater, didDownloadUpdate item: SUAppcastItem) {
+        viewModel.recordAppUpdateDownloaded(
+            version: item.versionString,
+            displayVersion: item.displayVersionString
+        )
+    }
+
+    func updater(_ updater: SPUUpdater, willInstallUpdate item: SUAppcastItem) {
+        viewModel.recordAppUpdateInstalling(
+            version: item.versionString,
+            displayVersion: item.displayVersionString
+        )
+    }
+
+    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
+        if let error {
+            viewModel.recordAppUpdateError(error.localizedDescription)
+            PostHogTelemetry.capture(
+                "mac_update_error",
+                properties: [
+                    "error_description": error.localizedDescription,
+                    "feed_url": viewModel.appUpdateState.feedURL,
+                ],
+                authSession: viewModel.macAuthSession
+            )
+        }
+
+        PostHogTelemetry.capture(
+            "mac_update_cycle_finished",
+            properties: [
+                "had_error": error != nil,
+                "feed_url": viewModel.appUpdateState.feedURL,
+                "last_result": viewModel.appUpdateState.lastResult.statusText,
+            ],
+            authSession: viewModel.macAuthSession
+        )
+    }
+
+    private func updateTelemetryProperties(for item: SUAppcastItem) -> [String: Any] {
+        [
+            "version": item.versionString,
+            "display_version": item.displayVersionString,
+            "title": item.title ?? "",
+            "download_url": item.fileURL?.absoluteString ?? "",
+            "feed_url": viewModel.appUpdateState.feedURL,
+        ]
+    }
 }
 
 extension AppDelegate: UNUserNotificationCenterDelegate {

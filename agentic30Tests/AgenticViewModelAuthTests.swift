@@ -915,13 +915,13 @@ struct AgenticViewModelAuthTests {
 
         #expect(viewModel.requiresMacOnboarding == false)
         #expect(viewModel.needsProjectWorkspace == true)
-        #expect(viewModel.canStartSidecar == false)
+        #expect(viewModel.canStartSidecar == true)
         #expect(!WorkspaceSettings.hasExplicitWorkspace)
         #expect(viewModel.workspaceRoot.isEmpty)
         #expect(viewModel.isConnected == false)
         #expect(viewModel.activeSurface == .workspace)
         #expect(viewModel.foundationStartedAt != nil)
-        #expect(sidecar.startCallCount == 0)
+        #expect(sidecar.startCallCount == 1)
     }
 
     @Test @MainActor func selectingWorkspaceAfterIntakeOnlyCompletionEnablesSidecarStart() throws {
@@ -952,7 +952,8 @@ struct AgenticViewModelAuthTests {
         viewModel.prepareIntakeOnlyOnboarding(context: context)
         viewModel.submitOnboardingContext(context)
         viewModel.completeIntakeOnlyOnboarding(openWorkspace: true)
-        #expect(viewModel.canStartSidecar == false)
+        #expect(viewModel.canStartSidecar == true)
+        #expect(sidecar.startCallCount == 1)
 
         viewModel.setProjectWorkspace(workspaceURL)
 
@@ -961,7 +962,8 @@ struct AgenticViewModelAuthTests {
         #expect(viewModel.canStartSidecar == true)
         #expect(WorkspaceSettings.hasExplicitWorkspace)
         #expect(viewModel.workspaceRoot == workspaceURL.path)
-        #expect(sidecar.startCallCount == 1)
+        #expect(sidecar.stopCallCount == 1)
+        #expect(sidecar.startCallCount == 2)
         #expect(viewModel.isScanning == true)
     }
 

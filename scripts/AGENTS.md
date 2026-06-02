@@ -12,6 +12,10 @@ Build, sync, preflight, and verification scripts wired into `package.json`. Cove
 |------|-------------|
 | `build-sidecar.mjs` | Bundles the sidecar for inclusion in the Mac app DMG (`npm run build:sidecar`) |
 | `preflight-bundle.mjs` | Bundle preflight checks (`npm run preflight:bundle`) |
+| `asc-xcode-cloud-release.mjs` | App Store Connect/Xcode Cloud build wait + artifact download helper for release workflow |
+| `check-release-automation.sh` | Preflight for local/Xcode Cloud/GitHub Actions release configuration |
+| `publish-github-release.sh` | Publishes appcast/DMG/PKG artifacts to GitHub Releases |
+| `upload-sparkle-r2.sh` | Uploads Sparkle appcast artifacts to Cloudflare R2 |
 | `sync-gstack.mjs` | Pulls gstack assets into `sidecar/vendor/gstack/` per `gstack-pin.json` (`npm run sync:gstack`) |
 | `gstack-pin.json` | Pinned gstack version + integrity metadata consumed by `sync-gstack.mjs` |
 | `patch-gstack-skill.mjs` | Patches a vendored gstack skill into a sidecar specialist |

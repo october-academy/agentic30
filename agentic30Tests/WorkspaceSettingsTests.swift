@@ -643,6 +643,58 @@ final class WorkspaceSettingsTests: XCTestCase {
     }
 }
 
+@MainActor
+final class SparkleUpdateTests: XCTestCase {
+    func testSparklePublicKeyValidationRejectsMissingPlaceholderAndEmptyValues() {
+        XCTAssertFalse(AppDelegate.hasUsableSparklePublicKey(nil))
+        XCTAssertFalse(AppDelegate.hasUsableSparklePublicKey(""))
+        XCTAssertFalse(AppDelegate.hasUsableSparklePublicKey("   \n"))
+        XCTAssertFalse(AppDelegate.hasUsableSparklePublicKey("$(SPARKLE_PUBLIC_ED_KEY)"))
+        XCTAssertTrue(AppDelegate.hasUsableSparklePublicKey("abcd1234-public-key"))
+    }
+
+    func testDefaultSparkleFeedUsesUpdatesSubdomain() {
+        XCTAssertEqual(AppUpdateState.defaultFeedURL, "https://updates.agentic30.app/appcast.xml")
+    }
+
+    func testUpdateChecksAreBlockedDuringUITestingLaunch() {
+        XCTAssertEqual(
+            AppDelegate.updateCheckBlockReason(isUITestingLaunch: true, hasUsablePublicKey: true),
+            "Update checks are disabled during UI tests."
+        )
+        XCTAssertNil(AppDelegate.updateCheckBlockReason(isUITestingLaunch: false, hasUsablePublicKey: true))
+    }
+
+    func testAppUpdateResultFormatsUserFacingState() {
+        let available = AppUpdateResult.updateAvailable(version: "7", displayVersion: "1.0.6")
+        let downloaded = AppUpdateResult.downloaded(version: "7", displayVersion: "1.0.6")
+        let latest = AppUpdateResult.latest
+
+        XCTAssertEqual(available.statusText, "Available 1.0.6 (7)")
+        XCTAssertTrue(available.detailText.contains("A newer build is available"))
+        XCTAssertEqual(downloaded.statusText, "Downloaded 1.0.6 (7)")
+        XCTAssertEqual(latest.statusText, "Latest")
+        XCTAssertEqual(latest.detailText, "The installed build is current.")
+    }
+
+    func testAppUpdateConfigurationRecordsUnavailableReleaseKeyState() {
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true, activateAppForAuth: {})
+
+        viewModel.configureAppUpdates(
+            configured: false,
+            feedURL: AppUpdateState.defaultFeedURL,
+            automaticChecksEnabled: true,
+            automaticDownloadsEnabled: true
+        )
+
+        XCTAssertFalse(viewModel.appUpdateState.configured)
+        XCTAssertTrue(viewModel.appUpdateState.automaticChecksEnabled)
+        XCTAssertTrue(viewModel.appUpdateState.automaticDownloadsEnabled)
+        XCTAssertEqual(viewModel.appUpdateState.lastResult.statusText, "Blocked")
+        XCTAssertTrue(viewModel.appUpdateState.lastResult.detailText.contains("Sparkle public EdDSA key"))
+    }
+}
+
 final class WorkspaceInitialWindowSizingTests: XCTestCase {
     private var defaults: UserDefaults!
     private var suiteName: String!

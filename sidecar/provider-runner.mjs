@@ -21,6 +21,11 @@ import {
   buildPostHogClaudeMcpConfigFromSources,
   buildPostHogCodexMcpConfigFromSources,
 } from "./posthog-mcp-config.mjs";
+import {
+  applyCloudflareCodexEnvFromSources,
+  buildCloudflareClaudeMcpConfigFromSources,
+  buildCloudflareCodexMcpConfigFromSources,
+} from "./cloudflare-mcp-config.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sidecarRoot = path.resolve(__dirname);
@@ -475,6 +480,7 @@ async function runClaudeProvider({
     ...(allowsProviderPermissionBypass({ executionMode, approvedToolExecution }) ? buildNotionMcpConfig() : {}),
     ...(usesQmdMcp(executionMode) ? buildQmdMcpConfig({ sidecarRoot }) : {}),
     ...(usesPostHogMcp(executionMode) ? buildPostHogClaudeMcpConfigFromSources({ appSupportPath, env: providerEnv }) : {}),
+    ...(usesCloudflareMcp(executionMode) ? buildCloudflareClaudeMcpConfigFromSources({ appSupportPath, env: providerEnv }) : {}),
   };
   const env = {
     ...providerEnv,
@@ -1260,6 +1266,9 @@ export function buildCodexConfig({
       ...(usesPostHogMcp(executionMode)
         ? withCodexMcpApproval(buildPostHogCodexMcpConfigFromSources({ appSupportPath, env: posthogEnv }))
         : {}),
+      ...(usesCloudflareMcp(executionMode)
+        ? withCodexMcpApproval(buildCloudflareCodexMcpConfigFromSources({ appSupportPath, env: posthogEnv }))
+        : {}),
     },
     ...(codexVendor?.exists
       ? {
@@ -1276,7 +1285,7 @@ export function buildCodexConfig({
 export function buildCodexEnv(baseEnv = process.env) {
   ensureIsolatedCodexHome();
   const providerEnv = buildProviderEnv("codex", baseEnv);
-  const env = applyPostHogCodexEnvFromSources({
+  const env = applyCloudflareCodexEnvFromSources(applyPostHogCodexEnvFromSources({
     PATH: providerEnv.PATH || "/usr/bin:/bin:/usr/sbin:/sbin",
     HOME: providerEnv.HOME || os.homedir(),
     TMPDIR: providerEnv.TMPDIR || os.tmpdir(),
@@ -1296,7 +1305,7 @@ export function buildCodexEnv(baseEnv = process.env) {
     AGENTIC30_CODEX_REASONING_EFFORT: providerEnv.AGENTIC30_CODEX_REASONING_EFFORT,
     CODEX_REASONING_EFFORT: providerEnv.CODEX_REASONING_EFFORT,
     MODEL_REASONING_EFFORT: providerEnv.MODEL_REASONING_EFFORT,
-  }, { appSupportPath, env: providerEnv });
+  }, { appSupportPath, env: providerEnv }), { appSupportPath, env: providerEnv });
   if (providerEnv.CODEX_API_KEY) env.CODEX_API_KEY = providerEnv.CODEX_API_KEY;
   if (providerEnv.OPENAI_API_KEY) env.OPENAI_API_KEY = providerEnv.OPENAI_API_KEY;
   for (const key of Object.keys(env)) {
@@ -2415,6 +2424,10 @@ function usesQmdMcp(executionMode = "") {
 }
 
 function usesPostHogMcp(executionMode = "") {
+  return usesInternalMcp(executionMode) || usesQmdMcp(executionMode);
+}
+
+function usesCloudflareMcp(executionMode = "") {
   return usesInternalMcp(executionMode) || usesQmdMcp(executionMode);
 }
 

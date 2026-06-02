@@ -22,6 +22,23 @@ This checklist is for local dogfood releases of the macOS menu bar app. Public D
 5. Confirm a local Day 1 Mission card appears within 2-5 minutes.
 6. Configure Google Docs/Sheets and verify proof capture setup separately.
 
+## Sparkle Update Smoke
+
+1. Install the previous signed and notarized build into `/Applications`.
+2. Run `wrangler login`, then run `scripts/setup-sparkle-r2.sh` once to create/connect the `agentic30-sparkle` R2 bucket to `updates.agentic30.app` in the verified `agentic30.app` zone (`b770693582734b1854ac556acd00823f`).
+3. Build a newer release with a greater `CFBundleVersion` using `scripts/build-and-notarize.sh`; the script must embed `SPARKLE_PUBLIC_ED_KEY`, generate `build/appcast/appcast.xml`, and stage `build/appcast/agentic30-<build>-<arch>.dmg`.
+4. Set `SPARKLE_DOWNLOAD_URL_PREFIX=https://updates.agentic30.app/` and `AGENTIC30_UPLOAD_APPCAST_R2=1` so the release script uploads `appcast.xml`, the staged DMG, and any generated release-notes `.md` to the `agentic30-sparkle` R2 bucket through Wrangler.
+5. Before a real appcast is uploaded, confirm routing with a temporary R2 object; `https://updates.agentic30.app/appcast.xml` may correctly return `404` while the file is absent. After upload, confirm `appcast.xml` and the referenced DMG URL return `200`.
+6. Launch the older `/Applications` build and use Settings or the app menu `Check for Updates...`.
+7. Confirm Sparkle finds the newer build, validates the signed feed/archive, downloads the update, and completes the standard install/relaunch flow after user approval.
+
+## Automated Release
+
+- See `docs/release-automation.md` for the tag-triggered GitHub Actions workflow, Xcode Cloud builder integration, required secrets/variables, and local fallback path.
+- Pushing a `v*` tag starts the GitHub release workflow; the default builder waits for the matching Xcode Cloud archive to pass, then runs the local notarized release script on a GitHub-hosted macOS runner, uploads Sparkle files to R2, and publishes GitHub Release assets.
+- Manual `workflow_dispatch` can choose the `local` builder to run `scripts/build-and-notarize.sh` on a GitHub-hosted macOS runner when signing secrets and Sparkle tooling are configured.
+- Confirm the GitHub secret `CLOUDFLARE_API_TOKEN` is present before tag release; it must allow R2 object reads/writes for the `agentic30-sparkle` bucket.
+
 ## Launch Funnel Telemetry
 
 - The Mac app ships with the Agentic30 PostHog project token embedded so launch telemetry works from Xcode and signed builds without local secrets. This is a public capture token, not a personal API key: it can write events to PostHog ingest but cannot read analytics data or modify project settings. Never embed a personal API key in the app. `POSTHOG_PROJECT_API_KEY` and `POSTHOG_HOST` can still override the defaults for a custom build, and `scripts/build-and-notarize.sh` verifies the exported app contains a `phc_…` token. The Settings opt-out toggle (`agentic30.posthog.telemetryDisabled` UserDefault) lets end users disable per-device.
@@ -39,4 +56,5 @@ This checklist is for local dogfood releases of the macOS menu bar app. Public D
 - Supportable diagnostics export.
 - Clear privacy copy for local project access, provider calls, and Google proof reads.
 - Fresh macOS user smoke with no local Node.js installed: install PKG, launch, confirm sidecar starts from the bundled runtime and no Gatekeeper “Open Anyway” path is required.
-- Sparkle smoke from an older notarized build installed in `/Applications` to a newer notarized DMG referenced by `https://agentic30.app/appcast.xml`.
+- Sparkle smoke from an older notarized build installed in `/Applications` to a newer notarized DMG referenced by `https://updates.agentic30.app/appcast.xml`, including background download and user-approved install/relaunch.
+- Keep `https://agentic30.app/appcast.xml` available or redirected during the transition so previously shipped builds that still point at the apex feed are not stranded.

@@ -88,6 +88,7 @@ The v1 distribution target is direct Developer ID distribution, not Mac App Stor
 See:
 
 - [docs/release-checklist.md](docs/release-checklist.md)
+- [docs/release-automation.md](docs/release-automation.md)
 - [docs/known-limitations.md](docs/known-limitations.md)
 - [docs/diagnostics-guide.md](docs/diagnostics-guide.md)
 - [docs/first-run-walkthrough.md](docs/first-run-walkthrough.md)

@@ -1086,12 +1086,25 @@ struct SettingsView: View {
     }
 
     private var appUpdatesSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionHeader(title: "Updates", configured: true)
+        let updateState = viewModel.appUpdateState
+        return VStack(alignment: .leading, spacing: 16) {
+            sectionHeader(title: "Updates", configured: updateState.configured)
 
             Text("Agentic30 checks the signed update feed in the background. You can also check manually.")
                 .font(.system(size: 13, weight: .medium, design: .rounded))
                 .foregroundStyle(settingsText.opacity(0.48))
+
+            VStack(alignment: .leading, spacing: 10) {
+                appUpdateRow(label: "Status", value: updateState.lastResult.statusText)
+                appUpdateRow(label: "Details", value: updateState.lastResult.detailText)
+                appUpdateRow(label: "Current", value: updateState.currentVersionSummary)
+                appUpdateRow(label: "Feed", value: updateState.feedURL)
+                appUpdateRow(label: "Last checked", value: updateState.lastCheckSummary)
+                appUpdateRow(label: "Automatic checks", value: updateState.automaticChecksEnabled ? "On" : "Off")
+                appUpdateRow(label: "Background download", value: updateState.automaticDownloadsEnabled ? "On" : "Off")
+            }
+            .padding(12)
+            .background(settingsRounded(fill: settingsText.opacity(0.035), stroke: settingsText.opacity(0.08), radius: 8))
 
             Button {
                 NotificationCenter.default.post(name: .agenticCheckForUpdatesRequested, object: nil)
@@ -1112,6 +1125,21 @@ struct SettingsView: View {
         }
         .padding(20)
         .background(cardBackground)
+    }
+
+    private func appUpdateRow(label: String, value: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(label)
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(settingsText.opacity(0.42))
+                .frame(width: 132, alignment: .leading)
+            Text(value)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(settingsText.opacity(0.78))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
     }
 
     private var localDataResetSection: some View {

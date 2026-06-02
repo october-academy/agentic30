@@ -140,6 +140,111 @@ struct WorkspaceScanProgressSnapshot: Equatable {
     }
 }
 
+enum AppUpdateResult: Equatable {
+    case neverChecked
+    case checking
+    case latest
+    case updateAvailable(version: String, displayVersion: String?)
+    case downloaded(version: String, displayVersion: String?)
+    case installing(version: String, displayVersion: String?)
+    case blocked(String)
+    case error(String)
+
+    var statusText: String {
+        switch self {
+        case .neverChecked:
+            return "Never checked"
+        case .checking:
+            return "Checking"
+        case .latest:
+            return "Latest"
+        case .updateAvailable(let version, let displayVersion):
+            return "Available \(Self.versionLabel(version: version, displayVersion: displayVersion))"
+        case .downloaded(let version, let displayVersion):
+            return "Downloaded \(Self.versionLabel(version: version, displayVersion: displayVersion))"
+        case .installing(let version, let displayVersion):
+            return "Installing \(Self.versionLabel(version: version, displayVersion: displayVersion))"
+        case .blocked:
+            return "Blocked"
+        case .error:
+            return "Error"
+        }
+    }
+
+    var detailText: String {
+        switch self {
+        case .neverChecked:
+            return "Sparkle has not completed an update check yet."
+        case .checking:
+            return "Checking the signed appcast feed."
+        case .latest:
+            return "The installed build is current."
+        case .updateAvailable(let version, let displayVersion):
+            return "A newer build is available: \(Self.versionLabel(version: version, displayVersion: displayVersion))."
+        case .downloaded(let version, let displayVersion):
+            return "Update \(Self.versionLabel(version: version, displayVersion: displayVersion)) is downloaded and ready for Sparkle's install flow."
+        case .installing(let version, let displayVersion):
+            return "Sparkle is preparing to install \(Self.versionLabel(version: version, displayVersion: displayVersion))."
+        case .blocked(let reason):
+            return reason
+        case .error(let message):
+            return message
+        }
+    }
+
+    private static func versionLabel(version: String, displayVersion: String?) -> String {
+        guard let displayVersion, !displayVersion.isEmpty, displayVersion != version else {
+            return version
+        }
+        return "\(displayVersion) (\(version))"
+    }
+}
+
+struct AppUpdateState: Equatable {
+    var configured: Bool
+    var feedURL: String
+    var automaticChecksEnabled: Bool
+    var automaticDownloadsEnabled: Bool
+    var lastCheckAt: Date?
+    var lastResult: AppUpdateResult
+    var latestVersion: String?
+    var latestDisplayVersion: String?
+    var lastError: String?
+
+    static let defaultFeedURL = "https://updates.agentic30.app/appcast.xml"
+
+    static let unavailable = AppUpdateState(
+        configured: false,
+        feedURL: defaultFeedURL,
+        automaticChecksEnabled: false,
+        automaticDownloadsEnabled: false,
+        lastCheckAt: nil,
+        lastResult: .blocked("Release builds must include a Sparkle public EdDSA key."),
+        latestVersion: nil,
+        latestDisplayVersion: nil,
+        lastError: nil
+    )
+
+    var currentVersionSummary: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "dev"
+        let build = info?["CFBundleVersion"] as? String ?? "local"
+        return "\(version) (\(build))"
+    }
+
+    var lastCheckSummary: String {
+        guard let lastCheckAt else { return "Never" }
+        return Self.dateFormatter.string(from: lastCheckAt)
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
+}
+
 struct IntakeV2BootLogState: Equatable {
     struct Line: Identifiable, Equatable {
         let id: String
@@ -816,6 +921,7 @@ final class AgenticViewModel: ObservableObject {
     @Published var draft = ""
     @Published private(set) var environment = SidecarEnvironment.placeholder
     @Published private(set) var sidecarDiagnostics: SidecarDiagnostics?
+    @Published private(set) var appUpdateState: AppUpdateState = .unavailable
     @Published private(set) var connectionLabel = "Starting sidecar..."
     @Published private(set) var isConnected = false
     @Published private(set) var workspaceRoot = ""
@@ -1145,6 +1251,76 @@ final class AgenticViewModel: ObservableObject {
         if sendProjectContextRefresh(refresh) {
             pendingProjectContextRefresh = nil
         }
+    }
+
+    func configureAppUpdates(
+        configured: Bool,
+        feedURL: String,
+        automaticChecksEnabled: Bool,
+        automaticDownloadsEnabled: Bool
+    ) {
+        appUpdateState.configured = configured
+        appUpdateState.feedURL = feedURL
+        appUpdateState.automaticChecksEnabled = automaticChecksEnabled
+        appUpdateState.automaticDownloadsEnabled = automaticDownloadsEnabled
+        if !configured {
+            appUpdateState.lastResult = .blocked("Release builds must include a Sparkle public EdDSA key.")
+        }
+    }
+
+    func recordAppUpdateCheckStarted() {
+        appUpdateState.lastCheckAt = Date()
+        appUpdateState.lastResult = .checking
+        appUpdateState.lastError = nil
+    }
+
+    func recordAppUpdateAppcastLoaded(itemCount: Int) {
+        appUpdateState.lastCheckAt = Date()
+        if appUpdateState.lastResult == .neverChecked {
+            appUpdateState.lastResult = .checking
+        }
+    }
+
+    func recordAppUpdateAvailable(version: String, displayVersion: String?) {
+        appUpdateState.lastCheckAt = Date()
+        appUpdateState.latestVersion = version
+        appUpdateState.latestDisplayVersion = displayVersion
+        appUpdateState.lastError = nil
+        appUpdateState.lastResult = .updateAvailable(version: version, displayVersion: displayVersion)
+    }
+
+    func recordAppUpdateDownloaded(version: String, displayVersion: String?) {
+        appUpdateState.lastCheckAt = Date()
+        appUpdateState.latestVersion = version
+        appUpdateState.latestDisplayVersion = displayVersion
+        appUpdateState.lastError = nil
+        appUpdateState.lastResult = .downloaded(version: version, displayVersion: displayVersion)
+    }
+
+    func recordAppUpdateInstalling(version: String, displayVersion: String?) {
+        appUpdateState.lastCheckAt = Date()
+        appUpdateState.latestVersion = version
+        appUpdateState.latestDisplayVersion = displayVersion
+        appUpdateState.lastError = nil
+        appUpdateState.lastResult = .installing(version: version, displayVersion: displayVersion)
+    }
+
+    func recordAppUpdateLatest() {
+        appUpdateState.lastCheckAt = Date()
+        appUpdateState.lastError = nil
+        appUpdateState.lastResult = .latest
+    }
+
+    func recordAppUpdateBlocked(_ reason: String) {
+        appUpdateState.lastCheckAt = Date()
+        appUpdateState.lastError = reason
+        appUpdateState.lastResult = .blocked(reason)
+    }
+
+    func recordAppUpdateError(_ message: String) {
+        appUpdateState.lastCheckAt = Date()
+        appUpdateState.lastError = message
+        appUpdateState.lastResult = .error(message)
     }
 
     init(
@@ -1681,7 +1857,7 @@ final class AgenticViewModel: ObservableObject {
     }
 
     var canStartSidecar: Bool {
-        !requiresMacOnboarding && WorkspaceSettings.hasExplicitWorkspace
+        !requiresMacOnboarding
     }
 
     var needsProjectWorkspace: Bool {
@@ -1740,11 +1916,6 @@ final class AgenticViewModel: ObservableObject {
             && onboardingContext != nil
         guard !requiresMacOnboarding || canStartForOnboardingPrefetch else {
             connectionLabel = needsOnboardingContext ? "Complete local setup" : "Choose a project workspace"
-            isConnected = false
-            return
-        }
-        guard WorkspaceSettings.hasExplicitWorkspace else {
-            connectionLabel = "Choose a project workspace"
             isConnected = false
             return
         }
@@ -4666,7 +4837,9 @@ final class AgenticViewModel: ObservableObject {
     private func requestInitialBipGateIfNeeded() {
         guard isConnected, !requestedInitialBipGate else { return }
         requestedInitialBipGate = true
-        requestBipSetupGate(autoStart: false)
+        let shouldAutoStartProjectlessInterview = macOnboardingIntakeOnlyCompleted
+            && !WorkspaceSettings.hasExplicitWorkspace
+        requestBipSetupGate(autoStart: shouldAutoStartProjectlessInterview)
     }
 
     private func updateBipSetupGate(from event: SidecarEvent) {

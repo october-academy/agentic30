@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Upload Sparkle appcast artifacts to the Cloudflare R2 bucket that serves
+# https://updates.agentic30.app/.
+#
+# Optional environment:
+#   BUILD_ENV_FILE              — env file to source (defaults to secrets/build.env)
+#   SPARKLE_APPCAST_DIR         — appcast staging folder (defaults to build/appcast)
+#   SPARKLE_R2_BUCKET           — R2 bucket name (defaults to agentic30-sparkle)
+#   SPARKLE_PUBLIC_BASE_URL     — public base URL (defaults to https://updates.agentic30.app/)
+#   SPARKLE_WRANGLER_BIN        — wrangler executable (defaults to wrangler)
+#   SPARKLE_WRANGLER_REMOTE     — 1 to force remote R2 writes (defaults to 1)
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+ENV_FILE="${BUILD_ENV_FILE:-$ROOT/secrets/build.env}"
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+else
+  echo "WARN: $ENV_FILE not found; expecting env vars to be exported inline." >&2
+fi
+
+SPARKLE_APPCAST_DIR="${SPARKLE_APPCAST_DIR:-build/appcast}"
+SPARKLE_R2_BUCKET="${SPARKLE_R2_BUCKET:-agentic30-sparkle}"
+SPARKLE_PUBLIC_BASE_URL="${SPARKLE_PUBLIC_BASE_URL:-https://updates.agentic30.app/}"
+SPARKLE_WRANGLER_BIN="${SPARKLE_WRANGLER_BIN:-wrangler}"
+SPARKLE_WRANGLER_REMOTE="${SPARKLE_WRANGLER_REMOTE:-1}"
+
+case "$SPARKLE_PUBLIC_BASE_URL" in
+  */) ;;
+  *) SPARKLE_PUBLIC_BASE_URL="${SPARKLE_PUBLIC_BASE_URL}/" ;;
+esac
+
+if ! command -v "$SPARKLE_WRANGLER_BIN" >/dev/null 2>&1; then
+  echo "ERROR: wrangler executable not found: $SPARKLE_WRANGLER_BIN" >&2
+  exit 2
+fi
+if ! "$SPARKLE_WRANGLER_BIN" whoami >/dev/null 2>&1; then
+  echo "ERROR: wrangler is not authenticated; run 'wrangler login' or provide a valid Wrangler auth context" >&2
+  exit 2
+fi
+if ! "$SPARKLE_WRANGLER_BIN" r2 bucket info "$SPARKLE_R2_BUCKET" >/dev/null 2>&1; then
+  echo "ERROR: R2 bucket '$SPARKLE_R2_BUCKET' does not exist or is not accessible; run scripts/setup-sparkle-r2.sh first" >&2
+  exit 2
+fi
+
+appcast_xml="$SPARKLE_APPCAST_DIR/appcast.xml"
+[ -f "$appcast_xml" ] || { echo "ERROR: missing $appcast_xml" >&2; exit 1; }
+
+dmg_count="$(find "$SPARKLE_APPCAST_DIR" -maxdepth 1 -type f -name 'agentic30-*.dmg' | wc -l | tr -d '[:space:]')"
+if [ "$dmg_count" != "1" ]; then
+  echo "ERROR: expected exactly one agentic30-*.dmg in $SPARKLE_APPCAST_DIR, found $dmg_count" >&2
+  exit 1
+fi
+appcast_dmg="$(find "$SPARKLE_APPCAST_DIR" -maxdepth 1 -type f -name 'agentic30-*.dmg' | sort | head -n 1)"
+
+if ! grep -Fq "$SPARKLE_PUBLIC_BASE_URL" "$appcast_xml"; then
+  echo "ERROR: appcast.xml does not reference $SPARKLE_PUBLIC_BASE_URL" >&2
+  exit 1
+fi
+
+upload_object() {
+  local file_path="$1"
+  local object_key="$2"
+  local content_type="$3"
+  local cache_control="$4"
+  local remote_args=()
+  if [ "$SPARKLE_WRANGLER_REMOTE" = "1" ]; then
+    remote_args+=(--remote)
+  fi
+  "$SPARKLE_WRANGLER_BIN" r2 object put "${SPARKLE_R2_BUCKET}/${object_key}" \
+    --file "$file_path" \
+    --content-type "$content_type" \
+    --cache-control "$cache_control" \
+    "${remote_args[@]}"
+}
+
+verify_url() {
+  local url="$1"
+  curl -fsSI "$url" >/dev/null
+}
+
+echo "Uploading Sparkle artifacts to R2 bucket: $SPARKLE_R2_BUCKET"
+upload_object "$appcast_xml" "appcast.xml" "application/xml" "public, max-age=0, must-revalidate"
+
+dmg_name="$(basename "$appcast_dmg")"
+upload_object "$appcast_dmg" "$dmg_name" "application/x-apple-diskimage" "public, max-age=31536000, immutable"
+
+notes_path="${appcast_dmg}.md"
+if [ -f "$notes_path" ]; then
+  upload_object "$notes_path" "$(basename "$notes_path")" "text/markdown; charset=utf-8" "public, max-age=31536000, immutable"
+fi
+
+echo "Verifying public Sparkle URLs..."
+verify_url "${SPARKLE_PUBLIC_BASE_URL}appcast.xml"
+verify_url "${SPARKLE_PUBLIC_BASE_URL}${dmg_name}"
+if [ -f "$notes_path" ]; then
+  verify_url "${SPARKLE_PUBLIC_BASE_URL}$(basename "$notes_path")"
+fi
+
+echo "Sparkle R2 upload complete:"
+echo "  ${SPARKLE_PUBLIC_BASE_URL}appcast.xml"
+echo "  ${SPARKLE_PUBLIC_BASE_URL}${dmg_name}"
+if [ -f "$notes_path" ]; then
+  echo "  ${SPARKLE_PUBLIC_BASE_URL}$(basename "$notes_path")"
+fi
