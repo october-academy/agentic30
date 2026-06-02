@@ -39,6 +39,7 @@ env:
   SPARKLE_UPDATE_DOMAIN: updates.agentic30.app
   SPARKLE_WRANGLER_BIN: wrangler
   SPARKLE_WRANGLER_REMOTE: "1"
+  CLOUDFLARE_ACCOUNT_ID: 3c03f4b8151b812cd2662d4fb9d30b1f
 
 jobs:
   resolve:
