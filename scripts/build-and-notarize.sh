@@ -107,6 +107,7 @@ PKG_PATH="build/agentic30-${AGENTIC30_BUNDLE_ARCH}.pkg"
 APPCAST_DIR="${SPARKLE_APPCAST_DIR:-build/appcast}"
 EXPORT_OPTIONS="build/ExportOptions.plist"
 ENTITLEMENTS="agentic30/agentic30.entitlements"
+ENTITLEMENTS_PATH="$ROOT/$ENTITLEMENTS"
 
 mkdir -p build
 
@@ -141,7 +142,7 @@ xcodebuild archive \
   -destination 'generic/platform=macOS' \
   ARCHS="$XCODE_ARCH" \
   ENABLE_HARDENED_RUNTIME=YES \
-  CODE_SIGN_ENTITLEMENTS="$ENTITLEMENTS" \
+  CODE_SIGN_ENTITLEMENTS="$ENTITLEMENTS_PATH" \
   CODE_SIGN_IDENTITY="$CODE_SIGN_IDENTITY" \
   CODE_SIGN_STYLE=Manual \
   DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
@@ -178,7 +179,7 @@ if [ -d "$SIDECAR_BUNDLE" ]; then
   # Re-sign the .app after the bundle mutation so the seal stays consistent.
   codesign --force --sign "$CODE_SIGN_IDENTITY" \
     --options runtime --timestamp \
-    --entitlements "$ENTITLEMENTS" \
+    --entitlements "$ENTITLEMENTS_PATH" \
     "$APP_PATH"
 fi
 
