@@ -1043,15 +1043,12 @@ struct OfficeHoursLoadingSnapshot: Identifiable, Hashable {
 
 enum OfficeHoursTimelineItem: Identifiable, Hashable {
     case row(OfficeHoursTranscriptRow)
-    case submittedPrompt(OfficeHoursSubmittedPromptSnapshot)
     case loading(OfficeHoursLoadingSnapshot)
 
     var id: String {
         switch self {
         case .row(let row):
             return "row-\(row.id)"
-        case .submittedPrompt(let snapshot):
-            return "submitted-\(snapshot.requestId)"
         case .loading(let snapshot):
             return "loading-\(snapshot.requestId)"
         }
@@ -1064,30 +1061,11 @@ struct OfficeHoursTimelineBuilder {
         submittedSnapshots snapshots: [OfficeHoursSubmittedPromptSnapshot],
         activeLoading loading: OfficeHoursLoadingSnapshot?
     ) -> [OfficeHoursTimelineItem] {
-        guard !snapshots.isEmpty else {
-            var items = rows.map(OfficeHoursTimelineItem.row)
-            if let loading {
-                items.append(.loading(loading))
-            }
-            return items
-        }
-
-        var insertedRequestIds = Set<String>()
         var items: [OfficeHoursTimelineItem] = []
 
         for row in rows {
-            if let snapshot = snapshots.first(where: { snapshot in
-                !insertedRequestIds.contains(snapshot.requestId)
-                    && (snapshot.matchesTranscriptQuestion(row.content) || snapshot.matchesTranscriptAnswer(row.content))
-            }) {
-                items.append(.submittedPrompt(snapshot))
-                insertedRequestIds.insert(snapshot.requestId)
-                continue
-            }
-
             if snapshots.contains(where: { snapshot in
-                insertedRequestIds.contains(snapshot.requestId)
-                    && (snapshot.matchesTranscriptQuestion(row.content) || snapshot.matchesTranscriptAnswer(row.content))
+                snapshot.matchesTranscriptQuestion(row.content) || snapshot.matchesTranscriptAnswer(row.content)
             }) {
                 continue
             }
@@ -1095,22 +1073,8 @@ struct OfficeHoursTimelineBuilder {
             items.append(.row(row))
         }
 
-        for snapshot in snapshots where !insertedRequestIds.contains(snapshot.requestId) {
-            items.append(.submittedPrompt(snapshot))
-            insertedRequestIds.insert(snapshot.requestId)
-        }
-
         if let loading {
-            if let submittedIndex = items.firstIndex(where: { item in
-                if case .submittedPrompt(let snapshot) = item {
-                    return snapshot.requestId == loading.requestId
-                }
-                return false
-            }) {
-                items.insert(.loading(loading), at: items.index(after: submittedIndex))
-            } else {
-                items.append(.loading(loading))
-            }
+            items.append(.loading(loading))
         }
 
         return items
@@ -2288,9 +2252,6 @@ struct ContentView: View {
                         case .row(let row):
                             officeHoursTranscriptRow(row, session: session)
                                 .id(row.id)
-                        case .submittedPrompt(let snapshot):
-                            officeHoursSubmittedPromptBlock(snapshot, session: session)
-                                .id(snapshot.id)
                         case .loading:
                             officeHoursQuestionLoader(
                                 title: officeHoursTransitionLoaderTitle(session: session),
@@ -2767,245 +2728,6 @@ struct ContentView: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(markdown, forType: .string)
         didCopyOfficeHoursPlanCeoReview = true
-    }
-
-    private func officeHoursSubmittedPromptBlock(
-        _ snapshot: OfficeHoursSubmittedPromptSnapshot,
-        session: ChatSession
-    ) -> some View {
-        let question = snapshot.prompt.questions.first
-        let snapshots = officeHoursSubmittedPromptSnapshots(for: session)
-        let questionNumber = (snapshots.firstIndex(where: { $0.requestId == snapshot.requestId }) ?? 0) + 1
-        let total = snapshot.prompt.generation?.dimensionTotal ?? selectedOfficeHoursMode.questionCount
-        let title = question?.header.nonEmpty ?? snapshot.prompt.generation?.signalLabel?.nonEmpty ?? "forcing question"
-        return VStack(alignment: .leading, spacing: 12) {
-            officeHoursSectionHeader("질문 \(questionNumber) — \(title)", meta: "\(questionNumber) / \(total)")
-            if let question {
-                officeHoursSubmittedQuestionStatementCard(question: question, index: questionNumber, total: total)
-            }
-            officeHoursSubmittedStructuredPrompt(snapshot)
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("opendesign.officeHours.submittedPrompt")
-    }
-
-    private func officeHoursSubmittedQuestionStatementCard(
-        question: StructuredPromptQuestion,
-        index: Int,
-        total: Int
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("질문")
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(OpenDesignDayColor.accent)
-                    .tracking(1.2)
-                    .textCase(.uppercase)
-                Spacer(minLength: 0)
-                Text("\(index) / \(total)")
-                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(OpenDesignDayColor.accent)
-                    .padding(.horizontal, 8)
-                    .frame(height: 20)
-                    .background(Capsule().fill(OpenDesignDayColor.accentDim))
-                    .overlay(Capsule().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
-            }
-
-            officeHoursQuestionStatementText(question, typewrites: false)
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 18)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [OpenDesignDayColor.surface, OpenDesignDayColor.surface2],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(OpenDesignDayColor.border, lineWidth: 1)
-                )
-        )
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(OpenDesignDayColor.accent)
-                .frame(width: 3)
-                .shadow(color: OpenDesignDayColor.accent.opacity(0.45), radius: 7)
-        }
-    }
-
-    private func officeHoursSubmittedStructuredPrompt(_ snapshot: OfficeHoursSubmittedPromptSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(snapshot.prompt.questions.enumerated()), id: \.element.id) { index, question in
-                if index > 0 {
-                    Rectangle()
-                        .fill(OpenDesignDayColor.borderSoft)
-                        .frame(height: 1)
-                }
-                officeHoursSubmittedStructuredQuestion(question, snapshot: snapshot)
-            }
-
-            HStack(spacing: 12) {
-                Text("제출 완료")
-                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
-                    .tracking(0.4)
-                Text("— \(snapshot.answerSummary)")
-                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(OpenDesignDayColor.accent)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                HStack(spacing: 8) {
-                    Text("제출됨")
-                    Text("✓")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .padding(.horizontal, 5)
-                        .frame(height: 16)
-                }
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(OpenDesignDayColor.mutedDeep)
-                .padding(.horizontal, 16)
-                .frame(height: 30)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(OpenDesignDayColor.surface2)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(OpenDesignDayColor.borderSoft, lineWidth: 1)
-                        )
-                )
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-            .background(OpenDesignDayColor.bgDeep)
-            .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .top)
-        }
-        .background(OpenDesignDayColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(OpenDesignDayColor.borderSoft, lineWidth: 1)
-        )
-    }
-
-    private func officeHoursSubmittedStructuredQuestion(
-        _ question: StructuredPromptQuestion,
-        snapshot: OfficeHoursSubmittedPromptSnapshot
-    ) -> some View {
-        let response = officeHoursSubmittedResponse(for: question, in: snapshot)
-        let pickedCount = response?.selectedOptions.isEmpty == false ? 1 : 0
-        return VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                HStack(spacing: 8) {
-                    RoundedRectangle(cornerRadius: 2, style: .continuous)
-                        .fill(OpenDesignDayColor.accent)
-                        .frame(width: 4, height: 14)
-                    Text("하나 선택")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(OpenDesignDayColor.fg)
-                }
-                Spacer(minLength: 0)
-                HStack(spacing: 4) {
-                    Text("\(pickedCount)")
-                        .foregroundStyle(OpenDesignDayColor.accent)
-                    Text("/ 1")
-                        .foregroundStyle(OpenDesignDayColor.muted)
-                }
-                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-            .background(OpenDesignDayColor.surface2)
-            .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
-
-            VStack(spacing: 2) {
-                ForEach(Array((question.options ?? []).enumerated()), id: \.element.label) { optionIndex, option in
-                    officeHoursSubmittedOptionRow(
-                        option,
-                        optionIndex: optionIndex,
-                        isSubmitted: response?.selectedOptions.contains(option.label) == true
-                    )
-                }
-            }
-            .padding(6)
-        }
-    }
-
-    private func officeHoursSubmittedResponse(
-        for question: StructuredPromptQuestion,
-        in snapshot: OfficeHoursSubmittedPromptSnapshot
-    ) -> AgenticViewModel.StructuredPromptSubmission? {
-        snapshot.submissions.first { submission in
-            submission.question.officeHoursNormalizedTranscriptText == question.question.officeHoursNormalizedTranscriptText
-        } ?? snapshot.submissions.first
-    }
-
-    private func officeHoursSubmittedOptionRow(
-        _ option: StructuredPromptOption,
-        optionIndex: Int,
-        isSubmitted: Bool
-    ) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Text(isSubmitted ? "✓" : "\(optionIndex + 1)")
-                .font(.system(size: isSubmitted ? 13 : 11.5, weight: .semibold, design: .monospaced))
-                .foregroundStyle(isSubmitted ? OpenDesignDayColor.bgDeep : OpenDesignDayColor.muted)
-                .frame(width: 24, height: 24)
-                .background(Circle().fill(isSubmitted ? OpenDesignDayColor.accent : OpenDesignDayColor.bgDeep))
-                .overlay(Circle().stroke(isSubmitted ? OpenDesignDayColor.accent : OpenDesignDayColor.border, lineWidth: 1))
-                .overlay {
-                    if isSubmitted {
-                        Circle()
-                            .stroke(OpenDesignDayColor.accent.opacity(0.18), lineWidth: 3)
-                            .frame(width: 30, height: 30)
-                    }
-                }
-                .padding(.top, 1)
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(option.label)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(OpenDesignDayColor.fg)
-                    if isSubmitted {
-                        Text("제출됨")
-                            .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                            .foregroundStyle(OpenDesignDayColor.bgDeep)
-                            .padding(.horizontal, 7)
-                            .frame(height: 17)
-                            .background(Capsule().fill(OpenDesignDayColor.accent))
-                    }
-                }
-                .fixedSize(horizontal: false, vertical: true)
-
-                Text(option.description)
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(isSubmitted ? OpenDesignDayColor.fgSecondary : OpenDesignDayColor.muted)
-                    .lineSpacing(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 0)
-
-            Text(isSubmitted ? "제출됨" : (option.preview?.nonEmpty ?? option.nextIntent?.nonEmpty ?? "select"))
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(isSubmitted ? OpenDesignDayColor.fgSecondary : OpenDesignDayColor.mutedDeep)
-                .lineLimit(1)
-                .padding(.top, 4)
-                .frame(minWidth: 76, alignment: .trailing)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 11)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isSubmitted ? OpenDesignDayColor.accentDim : Color.clear)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(isSubmitted ? OpenDesignDayColor.accentLine : Color.clear, lineWidth: 1)
-                )
-        )
     }
 
     private func officeHoursPendingPromptBlock(_ prompt: StructuredPromptRequest, session: ChatSession) -> some View {

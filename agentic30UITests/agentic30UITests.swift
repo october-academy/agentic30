@@ -1601,7 +1601,7 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(waitUntilHittable(structuredChoice, timeout: 5))
         clickCenter(of: structuredChoice)
         XCTAssertTrue(waitForElementToDisappear(structuredPrompt, timeout: 5))
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.submittedPrompt").waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.questionLoader").waitForExistence(timeout: 5))
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.promptComposer").waitForExistence(timeout: 5))
         let todayRail = app.buttons["opendesign.day.rail.item.today"]
         XCTAssertTrue(waitUntilHittable(todayRail, timeout: 5))

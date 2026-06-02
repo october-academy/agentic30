@@ -118,7 +118,7 @@ struct OpenDesignDayContentTests {
         #expect(!OfficeHoursLiveStatusPolicy.shouldShowDetachedLiveStatus(in: awaitingInput, rows: []))
     }
 
-    @Test func officeHoursTimelineBuilderPlacesActiveLoaderAfterSubmittedPrompt() {
+    @Test func officeHoursTimelineBuilderShowsOnlyActiveLoaderAfterSubmittedPrompt() {
         let prompt = makeOfficeHoursPrompt(sessionID: "session", requestId: "request-1")
         let submission = AgenticViewModel.StructuredPromptSubmission(
             question: prompt.questions[0].question,
@@ -148,7 +148,7 @@ struct OpenDesignDayContentTests {
             activeLoading: loading
         )
 
-        #expect(items == [.submittedPrompt(snapshot), .loading(loading)])
+        #expect(items == [.loading(loading)])
     }
 
     @Test func officeHoursLoadingPolicyHidesSubmittedLoaderWhenNextPromptArrives() {
@@ -181,7 +181,7 @@ struct OpenDesignDayContentTests {
         )
 
         #expect(visibleLoading == nil)
-        #expect(items == [.submittedPrompt(snapshot)])
+        #expect(items == [])
     }
 
     private func makeChatMessage(
