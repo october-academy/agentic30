@@ -1720,7 +1720,7 @@ async function handleClientMessage(socket, payload) {
       fireAndForget(
         "work_history_fingerprint",
         computeWorkHistoryFingerprint({ workspaceRoot }).then((fingerprint) => {
-          if (fingerprint.headSha && fingerprint.headSha !== snapshot.fingerprint?.headSha) {
+          if (fingerprint.headHash && fingerprint.headHash !== snapshot.fingerprint?.headHash) {
             scheduleWorkHistoryRefresh({ reason: "tab_enter", preferredProvider: payload.preferredProvider });
           }
         }),

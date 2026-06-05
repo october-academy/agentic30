@@ -1157,6 +1157,86 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    func testOpenDesignHistoryPrioritizesRetrospectiveAndKeepsEvidenceTimelineCollapsed() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-opendesign-history-workspace-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-opendesign-history-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-idd-complete",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+            "--ui-testing-stub-work-history-events",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        let openDesignShell = elementWithIdentifier(in: app, "opendesign.day.shell")
+        if !openDesignShell.waitForExistence(timeout: 10) {
+            attachScreenshot(from: app, named: "OpenDesign History Shell Missing")
+            attachText(app.debugDescription, named: "OpenDesign History Shell Missing Tree")
+        }
+        XCTAssertTrue(openDesignShell.exists)
+
+        let historyRailItem = elementWithIdentifier(in: app, "opendesign.day.rail.item.history")
+        XCTAssertTrue(historyRailItem.waitForExistence(timeout: 3))
+        clickCenter(of: historyRailItem)
+
+        let main = elementWithIdentifier(in: app, "opendesign.reference.history.main")
+        let retrospective = elementWithIdentifier(in: app, "opendesign.reference.history.retrospective")
+        let evidenceTimeline = elementWithIdentifier(in: app, "opendesign.reference.history.evidenceTimeline")
+        if !retrospective.waitForExistence(timeout: 5) || !evidenceTimeline.exists {
+            attachScreenshot(from: app, named: "OpenDesign History Retrospective Missing")
+            attachText(app.debugDescription, named: "OpenDesign History Retrospective Missing Tree")
+        }
+        XCTAssertTrue(main.exists)
+        XCTAssertTrue(retrospective.exists)
+        XCTAssertTrue(evidenceTimeline.exists)
+        XCTAssertTrue(app.staticTexts["이번 주 판단"].exists)
+        XCTAssertTrue(app.staticTexts["핵심 인사이트"].exists)
+        XCTAssertTrue(app.staticTexts["다음 행동"].exists)
+        XCTAssertLessThan(retrospective.frame.minY, evidenceTimeline.frame.minY)
+        XCTAssertLessThanOrEqual(
+            retrospective.frame.maxY,
+            evidenceTimeline.frame.minY + 2,
+            "History retrospective card must render above the evidence timeline without overlap"
+        )
+
+        let weeklyEvidence = elementWithIdentifier(in: app, "opendesign.reference.history.weekly")
+        XCTAssertFalse(weeklyEvidence.exists)
+        clickCenter(of: evidenceTimeline)
+        if !weeklyEvidence.waitForExistence(timeout: 3) {
+            attachScreenshot(from: app, named: "OpenDesign History Evidence Timeline Collapsed")
+            attachText(app.debugDescription, named: "OpenDesign History Evidence Timeline Tree")
+        }
+        XCTAssertTrue(weeklyEvidence.exists)
+
+        let metaToggle = app.buttons["opendesign.reference.meta.toggle"]
+        XCTAssertTrue(metaToggle.exists)
+        clickCenter(of: metaToggle)
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.reference.history.meta").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["근거 커버리지"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["프롬프트 원문은 연결 근거로만 사용하고 화면·저장본에는 남기지 않아요."].waitForExistence(timeout: 3))
+    }
+
+    @MainActor
     func testOpenDesignNewsRailRemainsActiveAfterRadarStatusAndResultEvents() throws {
         let runID = UUID().uuidString
         let workspacePath = "/tmp/agentic30-ui-opendesign-news-route-workspace-\(runID)"

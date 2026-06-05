@@ -1631,7 +1631,7 @@ struct NewsMarketRadarSourceRef: Codable, Hashable, Identifiable {
 }
 
 // MARK: - Work History (History 탭 · 이번 주 회고)
-// Sidecar source of truth: sidecar/work-history.mjs (schemaVersion 1).
+// Sidecar source of truth: sidecar/work-history.mjs (schemaVersion 2).
 // Time = AI session wall-clock only; commits are activity/evidence. References
 // shown on screen are changed paths + session time ranges + confidence —
 // commit SHAs stay sidecar-side as linking evidence.
@@ -1648,9 +1648,85 @@ nonisolated struct WorkHistorySnapshot: Codable, Hashable {
     let days: [WorkHistoryDay]
     let unclassified: [WorkHistoryUnclassifiedSession]
     let weekly: WorkHistoryWeekly
+    let retrospective: WorkHistoryRetrospective
+
+    init(
+        schemaVersion: Int,
+        generatedAt: Date?,
+        weekStart: String,
+        weekEnd: String,
+        status: WorkHistoryStatus,
+        github: WorkHistoryGitHub,
+        totals: WorkHistoryTotals,
+        areas: [WorkHistoryArea],
+        days: [WorkHistoryDay],
+        unclassified: [WorkHistoryUnclassifiedSession],
+        weekly: WorkHistoryWeekly,
+        retrospective: WorkHistoryRetrospective = .empty
+    ) {
+        self.schemaVersion = schemaVersion
+        self.generatedAt = generatedAt
+        self.weekStart = weekStart
+        self.weekEnd = weekEnd
+        self.status = status
+        self.github = github
+        self.totals = totals
+        self.areas = areas
+        self.days = days
+        self.unclassified = unclassified
+        self.weekly = weekly
+        self.retrospective = retrospective
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case generatedAt
+        case weekStart
+        case weekEnd
+        case status
+        case github
+        case totals
+        case areas
+        case days
+        case unclassified
+        case weekly
+        case retrospective
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        self.generatedAt = try container.decodeIfPresent(Date.self, forKey: .generatedAt)
+        self.weekStart = try container.decodeIfPresent(String.self, forKey: .weekStart) ?? ""
+        self.weekEnd = try container.decodeIfPresent(String.self, forKey: .weekEnd) ?? ""
+        self.status = try container.decodeIfPresent(WorkHistoryStatus.self, forKey: .status) ?? Self.empty.status
+        self.github = try container.decodeIfPresent(WorkHistoryGitHub.self, forKey: .github) ?? Self.empty.github
+        self.totals = try container.decodeIfPresent(WorkHistoryTotals.self, forKey: .totals) ?? Self.empty.totals
+        self.areas = try container.decodeIfPresent([WorkHistoryArea].self, forKey: .areas) ?? []
+        self.days = try container.decodeIfPresent([WorkHistoryDay].self, forKey: .days) ?? []
+        self.unclassified = try container.decodeIfPresent([WorkHistoryUnclassifiedSession].self, forKey: .unclassified) ?? []
+        self.weekly = try container.decodeIfPresent(WorkHistoryWeekly.self, forKey: .weekly) ?? Self.empty.weekly
+        self.retrospective = try container.decodeIfPresent(WorkHistoryRetrospective.self, forKey: .retrospective) ?? .empty
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encodeIfPresent(generatedAt, forKey: .generatedAt)
+        try container.encode(weekStart, forKey: .weekStart)
+        try container.encode(weekEnd, forKey: .weekEnd)
+        try container.encode(status, forKey: .status)
+        try container.encode(github, forKey: .github)
+        try container.encode(totals, forKey: .totals)
+        try container.encode(areas, forKey: .areas)
+        try container.encode(days, forKey: .days)
+        try container.encode(unclassified, forKey: .unclassified)
+        try container.encode(weekly, forKey: .weekly)
+        try container.encode(retrospective, forKey: .retrospective)
+    }
 
     static let empty = WorkHistorySnapshot(
-        schemaVersion: 1,
+        schemaVersion: 2,
         generatedAt: nil,
         weekStart: "",
         weekEnd: "",
@@ -1676,7 +1752,8 @@ nonisolated struct WorkHistorySnapshot: Codable, Hashable {
         areas: [],
         days: [],
         unclassified: [],
-        weekly: WorkHistoryWeekly(headline: "", coachNotes: [], nextActions: [])
+        weekly: WorkHistoryWeekly(headline: "", coachNotes: [], nextActions: []),
+        retrospective: .empty
     )
 
     var isRefreshing: Bool { status.state == "refreshing" }
@@ -1716,7 +1793,8 @@ nonisolated struct WorkHistorySnapshot: Codable, Hashable {
             areas: areas,
             days: days,
             unclassified: unclassified,
-            weekly: weekly
+            weekly: weekly,
+            retrospective: retrospective
         )
     }
 }
@@ -1815,6 +1893,69 @@ nonisolated struct WorkHistoryWeekly: Codable, Hashable {
     let headline: String
     let coachNotes: [String]
     let nextActions: [WorkHistoryNextAction]
+}
+
+nonisolated struct WorkHistoryRetrospective: Codable, Hashable {
+    let headline: String
+    let verdict: String
+    let insights: [WorkHistoryInsight]
+    let riskFlags: [WorkHistoryRiskFlag]
+    let nextActions: [WorkHistoryRetrospectiveNextAction]
+    let evidenceMix: [WorkHistoryEvidenceMix]
+
+    static let empty = WorkHistoryRetrospective(
+        headline: "",
+        verdict: "continue",
+        insights: [],
+        riskFlags: [],
+        nextActions: [],
+        evidenceMix: [
+            WorkHistoryEvidenceMix(source: "ai_session", label: "AI 세션", count: 0, status: "missing"),
+            WorkHistoryEvidenceMix(source: "git_github", label: "git/GitHub", count: 0, status: "missing"),
+            WorkHistoryEvidenceMix(source: "workspace_docs", label: "워크스페이스 문서", count: 0, status: "missing"),
+            WorkHistoryEvidenceMix(source: "interview", label: "인터뷰", count: 0, status: "missing"),
+            WorkHistoryEvidenceMix(source: "bip", label: "BIP", count: 0, status: "missing"),
+            WorkHistoryEvidenceMix(source: "mission", label: "미션", count: 0, status: "missing"),
+            WorkHistoryEvidenceMix(source: "curriculum", label: "커리큘럼", count: 0, status: "missing"),
+        ]
+    )
+
+    var hasContent: Bool {
+        !headline.isEmpty || !insights.isEmpty || !riskFlags.isEmpty || !nextActions.isEmpty
+    }
+}
+
+nonisolated struct WorkHistoryInsight: Codable, Hashable, Identifiable {
+    let id: String
+    let claim: String
+    let whyItMatters: String
+    let confidence: String
+    let evidenceRefs: [String]
+}
+
+nonisolated struct WorkHistoryRiskFlag: Codable, Hashable, Identifiable {
+    let id: String
+    let label: String
+    let severity: String
+    let reason: String
+    let evidenceRefs: [String]
+}
+
+nonisolated struct WorkHistoryRetrospectiveNextAction: Codable, Hashable, Identifiable {
+    let text: String
+    let evidence: String
+    let insightId: String?
+
+    var id: String { "\(insightId ?? "retrospective"):\(text):\(evidence)" }
+}
+
+nonisolated struct WorkHistoryEvidenceMix: Codable, Hashable, Identifiable {
+    let source: String
+    let label: String
+    let count: Int
+    let status: String
+
+    var id: String { source }
 }
 
 nonisolated struct BipResearchSnapshot: Codable, Hashable {
