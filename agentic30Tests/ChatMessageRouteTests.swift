@@ -274,6 +274,41 @@ struct StructuredPromptSubmissionStateTests {
         )
     }
 
+    private static func makeOfficeHoursDemandPrompt(
+        sessionId: String = "office-hours-session",
+        requestId: String = "office-hours-demand-request"
+    ) -> StructuredPromptRequest {
+        StructuredPromptRequest(
+            requestId: requestId,
+            sessionId: sessionId,
+            toolName: "agentic30_request_user_input",
+            title: "Office Hours",
+            createdAt: Date(),
+            questions: [
+                StructuredPromptQuestion(
+                    questionId: "office_hours_demand_evidence",
+                    header: "수요 증거",
+                    question: "Agentic30 수요를 실제 행동으로 확인한 가장 강한 증거는 무엇인가요?",
+                    helperText: nil,
+                    options: [
+                        "실제 결제/계약이 있었다",
+                        "구매 조건이 구체적으로 확인됐다",
+                        "현재 대안에 돈/시간을 쓰고 있다",
+                        "관심만 있거나 아직 증거가 없다",
+                    ].map {
+                        StructuredPromptOption(label: $0, description: "설명", preview: nil, nextIntent: nil)
+                    },
+                    multiSelect: false,
+                    allowFreeText: false,
+                    requiresFreeText: false,
+                    freeTextPlaceholder: nil,
+                    textMode: .short
+                ),
+            ],
+            generation: StructuredPromptGeneration(mode: "office_hours", docType: "day1_step")
+        )
+    }
+
     private static func makeSession(
         id: String = "structured-session",
         pendingUserInput: StructuredPromptRequest?,
@@ -453,6 +488,31 @@ struct StructuredPromptSubmissionStateTests {
         #expect(submissions.count == 1)
         #expect(submissions[0].selectedOptions == ["Provider"])
         #expect(submissions[0].freeText == "macOS 메뉴바 앱을 쓰는 1인 개발자")
+    }
+
+    @MainActor @Test func officeHoursDemandEvidenceCardIsSingleClick() {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        let prompt = Self.makeOfficeHoursDemandPrompt()
+        let demandQuestion = prompt.questions[0]
+
+        viewModel.replaceSessionsForTesting(
+            [Self.makeSession(pendingUserInput: prompt)],
+            selectedSessionID: prompt.sessionId
+        )
+        viewModel.synchronizeStructuredPromptDrafts(with: prompt)
+
+        #expect(prompt.questions.count == 1)
+        #expect(demandQuestion.options?.count == 4)
+        #expect(demandQuestion.allowFreeText == false)
+        #expect(demandQuestion.requiresFreeText == false)
+        #expect(viewModel.canSubmitStructuredPrompt(prompt) == false)
+
+        viewModel.toggleStructuredPromptOption("실제 결제/계약이 있었다", for: demandQuestion, in: prompt)
+        #expect(viewModel.canSubmitStructuredPrompt(prompt) == true)
+
+        let submissions = viewModel.structuredPromptSubmissions(for: prompt)
+        #expect(submissions.count == 1)
+        #expect(submissions[0].selectedOptions == ["실제 결제/계약이 있었다"])
     }
 
     @MainActor @Test func foundationPromptMatchesCurrentDocOnly() {

@@ -214,6 +214,35 @@ struct SidecarEventDecodingTests {
         #expect(event.foundCount == 4)
     }
 
+    @MainActor @Test func decodesOfficeHoursStatusPayload() throws {
+        let payload = """
+        {
+          "type": "office_hours_status",
+          "sessionId": "session-1",
+          "messageId": "message-1",
+          "requestId": "request-1",
+          "stage": "provider_starting",
+          "title": "다음 질문 준비 중",
+          "detail": "프로젝트 맥락에 맞는 질문을 준비하고 있습니다.",
+          "progressText": "프로젝트 맥락에 맞는 질문 준비 중",
+          "elapsedMs": 42
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        let status = try #require(event.officeHoursLiveStatus)
+
+        #expect(event.type == "office_hours_status")
+        #expect(status.sessionId == "session-1")
+        #expect(status.stage == "provider_starting")
+        #expect(status.title == "다음 질문 준비 중")
+        #expect(status.detail == "프로젝트 맥락에 맞는 질문을 준비하고 있습니다.")
+        #expect(status.progressText == "프로젝트 맥락에 맞는 질문 준비 중")
+        #expect(status.messageId == "message-1")
+        #expect(status.requestId == "request-1")
+        #expect(status.elapsedMs == 42)
+    }
+
     @MainActor @Test func decodesRubricQuarantineListPayload() throws {
         // R6 / CCG-Codex: protocol drift safety net for the quarantine list
         // wire shape. If sidecar emit shape changes, this test catches the
@@ -1402,6 +1431,169 @@ struct SidecarEventDecodingTests {
         #expect(event.bipResearchStatus?.stage == "running_provider_research")
         #expect(event.bipResearchStatus?.stepIndex == 4)
         #expect(event.bipResearchStatus?.partialFailures?.first?.laneId == "bip")
+    }
+
+    @MainActor @Test func decodesWorkHistoryResultPayload() throws {
+        // History 탭 주간 회고 스냅샷. sidecar/work-history.mjs의
+        // buildWeeklyWorkHistorySnapshot 출력 형태를 그대로 고정한다.
+        let payload = """
+        {
+          "type": "work_history_result",
+          "workHistory": {
+            "schemaVersion": 1,
+            "generatedAt": "2026-06-05T03:00:00.000Z",
+            "weekStart": "2026-06-01",
+            "weekEnd": "2026-06-07",
+            "status": {
+              "state": "ready",
+              "lastSuccessAt": "2026-06-05T03:00:00.000Z",
+              "stale": false,
+              "error": null,
+              "reason": "manual"
+            },
+            "github": { "connected": true, "prCount": 1, "issueCount": 0, "releaseCount": 1 },
+            "totals": {
+              "aiMinutes": 120,
+              "unclassifiedMinutes": 30,
+              "myCommitCount": 1,
+              "otherCommitCount": 2,
+              "sessionCount": 2,
+              "activeDays": 1
+            },
+            "areas": [
+              {
+                "id": "sidecar",
+                "name": "사이드카",
+                "aiMinutes": 90,
+                "commitCount": 1,
+                "sessionCount": 1,
+                "paths": ["sidecar/index.mjs"],
+                "confidence": "high",
+                "inference": "heuristic"
+              }
+            ],
+            "days": [
+              {
+                "date": "2026-06-01",
+                "weekday": "월",
+                "aiMinutes": 90,
+                "areas": [
+                  {
+                    "areaId": "sidecar",
+                    "name": "사이드카",
+                    "summary": "사이드카에 AI 세션 1시간 30분을 투입해 커밋 1건으로 마무리했어요.",
+                    "nextActions": [
+                      { "text": "라우트 테스트 보강", "evidence": "sidecar/index.mjs 변경", "areaName": "사이드카" }
+                    ],
+                    "aiMinutes": 90,
+                    "sessionRanges": [
+                      { "start": "2026-06-01T04:00:00.000Z", "end": "2026-06-01T05:30:00.000Z", "provider": "claude" }
+                    ],
+                    "paths": ["sidecar/index.mjs"],
+                    "commitCount": 1,
+                    "confidence": "high"
+                  }
+                ],
+                "referenceEvents": [
+                  { "kind": "pr", "title": "PR #7 History tab", "actor": "zettalyst", "at": "2026-06-01T10:00:00.000Z" }
+                ]
+              }
+            ],
+            "unclassified": [
+              {
+                "provider": "codex",
+                "date": "2026-06-02",
+                "start": "2026-06-02T04:00:00.000Z",
+                "end": "2026-06-02T04:30:00.000Z",
+                "minutes": 30,
+                "paths": ["scripts/spike.mjs"]
+              }
+            ],
+            "weekly": {
+              "headline": "이번 주 AI 세션 2시간 · 커밋 1건",
+              "coachNotes": ["커밋으로 이어지지 않은 세션이 1개(30분) 있어요."],
+              "nextActions": [
+                { "text": "미분류 세션 마무리", "evidence": "세션 1건 · 수정 파일 1개", "areaName": null }
+              ]
+            },
+            "fingerprint": { "headSha": "aaa111" }
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "work_history_result")
+        #expect(event.workHistory?.weekStart == "2026-06-01")
+        #expect(event.workHistory?.status.state == "ready")
+        #expect(event.workHistory?.github.connected == true)
+        #expect(event.workHistory?.totals.aiMinutes == 120)
+        #expect(event.workHistory?.areas.first?.id == "sidecar")
+        #expect(event.workHistory?.days.first?.weekday == "월")
+        #expect(event.workHistory?.days.first?.areas.first?.sessionRanges.first?.provider == "claude")
+        #expect(event.workHistory?.days.first?.areas.first?.nextActions.first?.evidence == "sidecar/index.mjs 변경")
+        #expect(event.workHistory?.days.first?.referenceEvents.first?.kind == "pr")
+        #expect(event.workHistory?.unclassified.first?.minutes == 30)
+        #expect(event.workHistory?.weekly.headline.contains("AI 세션") == true)
+        #expect(event.workHistory?.hasData == true)
+        #expect(event.workHistory?.requiresGitHub == false)
+    }
+
+    @MainActor @Test func decodesWorkHistoryStatusObject() throws {
+        let payload = """
+        {
+          "type": "work_history_status",
+          "status": {
+            "state": "refreshing",
+            "lastSuccessAt": null,
+            "stale": true,
+            "error": null,
+            "reason": "tab_enter",
+            "stage": "collect_sessions",
+            "progressText": "AI 세션 로그를 읽는 중",
+            "elapsedMs": 1200
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "work_history_status")
+        #expect(event.workHistoryStatus?.state == "refreshing")
+        #expect(event.workHistoryStatus?.reason == "tab_enter")
+        #expect(event.workHistoryStatus?.stage == "collect_sessions")
+        #expect(event.workHistoryStatus?.elapsedMs == 1200)
+
+        // 진행 상태 병합이 기존 스냅샷 데이터를 보존하는지 고정.
+        let merged = WorkHistorySnapshot.empty.applying(status: event.workHistoryStatus!)
+        #expect(merged.status.state == "refreshing")
+        #expect(merged.status.progressText == "AI 세션 로그를 읽는 중")
+    }
+
+    @MainActor @Test func decodesWorkHistoryGitHubRequiredState() throws {
+        let payload = """
+        {
+          "type": "work_history_result",
+          "workHistory": {
+            "schemaVersion": 1,
+            "generatedAt": "2026-06-05T03:00:00.000Z",
+            "weekStart": "2026-06-01",
+            "weekEnd": "2026-06-07",
+            "status": { "state": "github_required", "lastSuccessAt": null, "stale": false, "error": null, "reason": "manual" },
+            "github": { "connected": false, "prCount": 0, "issueCount": 0, "releaseCount": 0 },
+            "totals": { "aiMinutes": 0, "unclassifiedMinutes": 0, "myCommitCount": 0, "otherCommitCount": 0, "sessionCount": 0, "activeDays": 0 },
+            "areas": [],
+            "days": [],
+            "unclassified": [],
+            "weekly": { "headline": "", "coachNotes": [], "nextActions": [] }
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.workHistory?.requiresGitHub == true)
+        #expect(event.workHistory?.github.connected == false)
     }
 
     private var decoder: JSONDecoder {

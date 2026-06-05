@@ -219,7 +219,6 @@ struct ChatMessage: Identifiable, Codable, Hashable {
 
 struct OfficeHoursTranscriptRow: Identifiable, Hashable {
     enum Kind: String, Hashable {
-        case contextLoaded
         case user
         case assistant
         case system
@@ -227,7 +226,6 @@ struct OfficeHoursTranscriptRow: Identifiable, Hashable {
 
     nonisolated static var syntheticStartPrompt: String { "Office Hours" }
     nonisolated static var legacySyntheticStartPrompt: String { "Day999 Office Hours" }
-    nonisolated static var contextLoadedCopy: String { "Day 1 맥락을 불러왔습니다." }
 
     let id: String
     let kind: Kind
@@ -240,7 +238,6 @@ struct OfficeHoursTranscriptRow: Identifiable, Hashable {
 
     var isUser: Bool { kind == .user }
     var isAssistant: Bool { kind == .assistant || kind == .system }
-    var isContextLoaded: Bool { kind == .contextLoaded }
     var isStreamingPlaceholder: Bool {
         isAssistant
             && state == .streaming
@@ -261,16 +258,7 @@ struct OfficeHoursTranscriptRow: Identifiable, Hashable {
                trimmedContent.caseInsensitiveCompare(Self.syntheticStartPrompt) == .orderedSame
                || trimmedContent.caseInsensitiveCompare(Self.legacySyntheticStartPrompt) == .orderedSame
            ) {
-            return OfficeHoursTranscriptRow(
-                id: "office-hours-context-\(message.id)",
-                kind: .contextLoaded,
-                role: message.role,
-                provider: message.provider,
-                content: Self.contextLoadedCopy,
-                state: message.state,
-                error: nil,
-                lineLimit: 1
-            )
+            return nil
         }
 
         switch message.role {
@@ -348,6 +336,27 @@ struct OfficeHoursRuntime: Codable, Hashable {
     var source: String?
     var startedAt: String?
     var context: String?
+}
+
+struct OfficeHoursLiveStatus: Hashable {
+    let sessionId: String
+    let stage: String
+    let title: String?
+    let detail: String?
+    let progressText: String?
+    let messageId: String?
+    let requestId: String?
+    let elapsedMs: Int?
+    let updatedAt: Date
+
+    var isTerminal: Bool {
+        switch stage {
+        case "completed", "failed", "aborted":
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 struct CodexThreadMeta: Codable, Hashable {
@@ -1619,6 +1628,193 @@ struct NewsMarketRadarSourceRef: Codable, Hashable, Identifiable {
     var stableID: String {
         url ?? path ?? id ?? title
     }
+}
+
+// MARK: - Work History (History 탭 · 이번 주 회고)
+// Sidecar source of truth: sidecar/work-history.mjs (schemaVersion 1).
+// Time = AI session wall-clock only; commits are activity/evidence. References
+// shown on screen are changed paths + session time ranges + confidence —
+// commit SHAs stay sidecar-side as linking evidence.
+
+nonisolated struct WorkHistorySnapshot: Codable, Hashable {
+    let schemaVersion: Int
+    let generatedAt: Date?
+    let weekStart: String
+    let weekEnd: String
+    let status: WorkHistoryStatus
+    let github: WorkHistoryGitHub
+    let totals: WorkHistoryTotals
+    let areas: [WorkHistoryArea]
+    let days: [WorkHistoryDay]
+    let unclassified: [WorkHistoryUnclassifiedSession]
+    let weekly: WorkHistoryWeekly
+
+    static let empty = WorkHistorySnapshot(
+        schemaVersion: 1,
+        generatedAt: nil,
+        weekStart: "",
+        weekEnd: "",
+        status: WorkHistoryStatus(
+            state: "idle",
+            lastSuccessAt: nil,
+            stale: nil,
+            error: nil,
+            reason: nil,
+            stage: nil,
+            progressText: nil,
+            elapsedMs: nil
+        ),
+        github: WorkHistoryGitHub(connected: false, prCount: 0, issueCount: 0, releaseCount: 0),
+        totals: WorkHistoryTotals(
+            aiMinutes: 0,
+            unclassifiedMinutes: 0,
+            myCommitCount: 0,
+            otherCommitCount: 0,
+            sessionCount: 0,
+            activeDays: 0
+        ),
+        areas: [],
+        days: [],
+        unclassified: [],
+        weekly: WorkHistoryWeekly(headline: "", coachNotes: [], nextActions: [])
+    )
+
+    var isRefreshing: Bool { status.state == "refreshing" }
+    var requiresGitHub: Bool { status.state == "github_required" }
+    var hasData: Bool { generatedAt != nil && !days.isEmpty }
+
+    var statusLabel: String {
+        switch status.state {
+        case "refreshing": return "인덱싱 중"
+        case "ready": return status.stale == true ? "캐시됨" : "최신"
+        case "failed": return "오류"
+        case "github_required": return "GitHub 연결 필요"
+        case "empty": return "데이터 없음"
+        default: return "대기"
+        }
+    }
+
+    /// Merge a server-pushed progress status while keeping snapshot data.
+    func applying(status newStatus: WorkHistoryStatus) -> WorkHistorySnapshot {
+        WorkHistorySnapshot(
+            schemaVersion: schemaVersion,
+            generatedAt: generatedAt,
+            weekStart: weekStart,
+            weekEnd: weekEnd,
+            status: WorkHistoryStatus(
+                state: newStatus.state,
+                lastSuccessAt: newStatus.lastSuccessAt ?? status.lastSuccessAt,
+                stale: newStatus.stale ?? status.stale,
+                error: newStatus.error ?? status.error,
+                reason: newStatus.reason,
+                stage: newStatus.stage ?? status.stage,
+                progressText: newStatus.progressText ?? status.progressText,
+                elapsedMs: newStatus.elapsedMs ?? status.elapsedMs
+            ),
+            github: github,
+            totals: totals,
+            areas: areas,
+            days: days,
+            unclassified: unclassified,
+            weekly: weekly
+        )
+    }
+}
+
+nonisolated struct WorkHistoryStatus: Codable, Hashable {
+    let state: String
+    let lastSuccessAt: Date?
+    let stale: Bool?
+    let error: String?
+    let reason: String?
+    let stage: String?
+    let progressText: String?
+    let elapsedMs: Int?
+}
+
+nonisolated struct WorkHistoryGitHub: Codable, Hashable {
+    let connected: Bool
+    let prCount: Int
+    let issueCount: Int
+    let releaseCount: Int
+}
+
+nonisolated struct WorkHistoryTotals: Codable, Hashable {
+    let aiMinutes: Int
+    let unclassifiedMinutes: Int
+    let myCommitCount: Int
+    let otherCommitCount: Int
+    let sessionCount: Int
+    let activeDays: Int
+}
+
+nonisolated struct WorkHistoryArea: Codable, Hashable, Identifiable {
+    let id: String
+    let name: String
+    let aiMinutes: Int
+    let commitCount: Int
+    let sessionCount: Int
+    let paths: [String]
+    let confidence: String
+    let inference: String?
+}
+
+nonisolated struct WorkHistoryDay: Codable, Hashable, Identifiable {
+    let date: String
+    let weekday: String
+    let aiMinutes: Int
+    let areas: [WorkHistoryDayArea]
+    let referenceEvents: [WorkHistoryReferenceEvent]
+
+    var id: String { date }
+}
+
+nonisolated struct WorkHistoryDayArea: Codable, Hashable, Identifiable {
+    let areaId: String
+    let name: String
+    let summary: String
+    let nextActions: [WorkHistoryNextAction]
+    let aiMinutes: Int
+    let sessionRanges: [WorkHistorySessionRange]
+    let paths: [String]
+    let commitCount: Int
+    let confidence: String
+
+    var id: String { areaId }
+}
+
+nonisolated struct WorkHistorySessionRange: Codable, Hashable {
+    let start: String?
+    let end: String?
+    let provider: String
+}
+
+nonisolated struct WorkHistoryNextAction: Codable, Hashable {
+    let text: String
+    let evidence: String
+    let areaName: String?
+}
+
+nonisolated struct WorkHistoryReferenceEvent: Codable, Hashable {
+    let kind: String
+    let title: String
+    let actor: String?
+    let at: String?
+}
+
+nonisolated struct WorkHistoryUnclassifiedSession: Codable, Hashable {
+    let provider: String
+    let date: String
+    let start: String?
+    let end: String?
+    let minutes: Int
+    let paths: [String]
+}
+
+nonisolated struct WorkHistoryWeekly: Codable, Hashable {
+    let headline: String
+    let coachNotes: [String]
+    let nextActions: [WorkHistoryNextAction]
 }
 
 nonisolated struct BipResearchSnapshot: Codable, Hashable {

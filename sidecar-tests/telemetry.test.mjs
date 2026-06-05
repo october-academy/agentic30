@@ -12,6 +12,47 @@ const productionTelemetryEnvironment = {
   AGENTIC30_INTERNAL_TRAFFIC: "0",
 };
 
+test("telemetry resolves capture config from POSTHOG_PROJECT_API_KEY/POSTHOG_HOST env (the path the Mac shell uses)", async () => {
+  // The Mac shell forwards the resolved key/host via env, NOT ad-config.json.
+  // Regression guard for the gap where the sidecar found no key and dropped
+  // every `mac_sidecar_*` event in production.
+  const appSupportPath = fs.mkdtempSync(path.join(os.tmpdir(), "agentic30-telemetry-env-"));
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = null;
+  let captured = null;
+
+  try {
+    clearAuthContext();
+    // Intentionally NO ad-config.json is written here.
+    globalThis.fetch = async (url, init) => {
+      capturedUrl = String(url);
+      captured = JSON.parse(String(init?.body));
+      return new Response("{}", { status: 200 });
+    };
+
+    const telemetry = createTelemetryClient({
+      appSupportPath,
+      workspaceRoot: "/Users/october/prj/agentic30",
+      environment: {
+        ...productionTelemetryEnvironment,
+        POSTHOG_PROJECT_API_KEY: "phc_env_path",
+        POSTHOG_HOST: "https://us.i.posthog.com",
+      },
+    });
+
+    telemetry.captureEvent("mac_sidecar_env_path_probe");
+
+    assert.ok(captured, "captureEvent must send when the key is supplied via env");
+    assert.equal(captured.api_key, "phc_env_path");
+    assert.equal(captured.event, "mac_sidecar_env_path_probe");
+    assert.equal(capturedUrl, "https://us.i.posthog.com/capture/");
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearAuthContext();
+    fs.rmSync(appSupportPath, { recursive: true, force: true });
+  }
+});
+
 test("telemetry adopts a Mac-supplied anonymous distinct id and persists it", async () => {
   const appSupportPath = fs.mkdtempSync(path.join(os.tmpdir(), "agentic30-telemetry-distinct-"));
   const originalFetch = globalThis.fetch;

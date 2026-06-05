@@ -619,6 +619,34 @@ async function isDir(p) {
 // Public entry point
 // ---------------------------------------------------------------------------
 
+/// Raw normalized events (redacted, workspace-confined paths) for callers that
+/// need session-level granularity — e.g. the work-history weekly indexer.
+/// `sinceMs` is an absolute cutoff; pass `since` strings to the digest entry
+/// point instead. Same READ-ONLY / REDACTED / BOUNDED contract as the digest.
+export async function collectAgentWorkEvents({
+  workspaceRoot,
+  homeDir = os.homedir(),
+  sinceMs = 0,
+  now = new Date(),
+  includeAgentic30 = false,
+} = {}) {
+  if (!workspaceRoot) return [];
+  const absWorkspace = path.resolve(workspaceRoot);
+
+  const [claude, codex] = await Promise.all([
+    collectClaudeEvents({ homeDir, absWorkspace, sinceMs, includeAgentic30 }).catch(() => ({ events: [], warnings: ["claude-failed"] })),
+    collectCodexEvents({ homeDir, absWorkspace, sinceMs, now }).catch(() => ({ events: [], warnings: ["codex-failed"] })),
+  ]);
+
+  return [...claude.events, ...codex.events]
+    .map((e) => {
+      if (e.kind !== "file_edit") return e;
+      const rel = confineWorkspacePath(e.path, absWorkspace);
+      return rel ? { ...e, path: rel } : null;
+    })
+    .filter(Boolean);
+}
+
 export async function collectAgentWorkHistory({
   workspaceRoot,
   homeDir = os.homedir(),
@@ -628,22 +656,15 @@ export async function collectAgentWorkHistory({
   enabled = true,
 } = {}) {
   if (!enabled || !workspaceRoot) return emptyDigest();
-  const absWorkspace = path.resolve(workspaceRoot);
   const sinceMs = parseSinceMs(since, now);
-
-  const [claude, codex] = await Promise.all([
-    collectClaudeEvents({ homeDir, absWorkspace, sinceMs, includeAgentic30 }).catch(() => ({ events: [], warnings: ["claude-failed"] })),
-    collectCodexEvents({ homeDir, absWorkspace, sinceMs, now }).catch(() => ({ events: [], warnings: ["codex-failed"] })),
-  ]);
-
-  const events = [...claude.events, ...codex.events]
-    .map((e) => {
-      if (e.kind !== "file_edit") return e;
-      const rel = confineWorkspacePath(e.path, absWorkspace);
-      return rel ? { ...e, path: rel } : null;
-    })
-    .filter(Boolean);
+  const events = await collectAgentWorkEvents({
+    workspaceRoot,
+    homeDir,
+    sinceMs,
+    now,
+    includeAgentic30,
+  });
   const digest = buildAgentHistoryDigest(events, { sinceMs, now });
-  digest.warnings = [...claude.warnings, ...codex.warnings];
+  digest.warnings = [];
   return digest;
 }

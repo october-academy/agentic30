@@ -683,7 +683,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-disable-sidecar",
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
-            "--ui-testing-workspace-window-size=1360x820",
+            "--ui-testing-workspace-window-size=1360x835",
         ], environment: [
             "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
@@ -922,7 +922,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-disable-sidecar",
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
-            "--ui-testing-workspace-window-size=1360x820",
+            "--ui-testing-workspace-window-size=1360x835",
         ], environment: [
             "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
@@ -1594,15 +1594,67 @@ final class agentic30UITests: XCTestCase {
         XCTAssertEqual(officeHoursMain.frame.maxX, officeHoursMeta.frame.minX, accuracy: 2)
         let structuredPrompt = elementWithIdentifier(in: app, "assistant.structuredPrompt")
         XCTAssertTrue(structuredPrompt.waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.intro.title").waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.context").waitForExistence(timeout: 5))
         let structuredContinue = app.buttons["assistant.structuredContinueButton"]
         XCTAssertTrue(structuredContinue.waitForExistence(timeout: 5))
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Incomplete", timeout: 3))
-        let structuredChoice = app.buttons["assistant.structuredChoice.office_hours_scope.5명 대화 예약"]
-        XCTAssertTrue(waitUntilHittable(structuredChoice, timeout: 5))
+        movePointerAwayFromContent()
+        attachWindowScreenshot(from: app, named: "Office Hours SwiftUI Q1 Active")
+        let structuredChoice = app.buttons["assistant.structuredChoice.office_hours_demand_evidence.돈을 냈거나 제안함"]
+        XCTAssertTrue(scrollElementToVisible(
+            structuredChoice,
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+        ))
         clickCenter(of: structuredChoice)
-        XCTAssertTrue(waitForElementToDisappear(structuredPrompt, timeout: 5))
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.questionLoader").waitForExistence(timeout: 5))
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.promptComposer").waitForExistence(timeout: 5))
+        let submittedLoader = elementWithIdentifier(in: app, "opendesign.officeHours.questionLoader")
+        XCTAssertTrue(submittedLoader.waitForExistence(timeout: 2))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.runState", containing: "다음 질문 생성 중", timeout: 3))
+        attachWindowScreenshot(from: app, named: "Office Hours SwiftUI Q1 Locked Loader")
+        let submittedPrompt = elementWithIdentifier(in: app, "opendesign.officeHours.submittedPrompt.ui-test-office-hours-request")
+        XCTAssertTrue(submittedPrompt.waitForExistence(timeout: 5))
+        let submittedChoice = elementWithIdentifier(in: app, "opendesign.officeHours.submittedChoice.office_hours_demand_evidence.돈을 냈거나 제안함")
+        XCTAssertTrue(submittedChoice.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.submittedChoice.office_hours_demand_evidence.돈을 냈거나 제안함", containing: "제출됨", timeout: 3))
+        movePointerAwayFromContent()
+        attachWindowScreenshot(from: app, named: "Office Hours SwiftUI Q1 Locked Awaiting Q2")
+        let nextStructuredChoice = app.buttons["assistant.structuredChoice.office_hours_status_quo.스프레드시트와 메신저"]
+        XCTAssertTrue(nextStructuredChoice.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.runState", containing: "/office-hours 실행 중", timeout: 3))
+        movePointerAwayFromContent()
+        attachWindowScreenshot(from: app, named: "Office Hours SwiftUI Q1 Submitted Q2 Active")
+        XCTAssertTrue(waitUntilHittable(nextStructuredChoice, timeout: 5))
+        let remainingOfficeHoursChoices = [
+            ("office_hours_status_quo", "스프레드시트와 메신저", "ui-test-office-hours-request-2"),
+            ("office_hours_human", "이름과 회사까지 안다", "ui-test-office-hours-request-3"),
+            ("office_hours_wedge", "유료 파일럿 1건", "ui-test-office-hours-request-4"),
+            ("office_hours_observation", "직접 관찰했다", "ui-test-office-hours-request-5"),
+            ("office_hours_future_fit", "더 필수적이다", "ui-test-office-hours-request-6"),
+        ]
+        for (questionId, label, requestId) in remainingOfficeHoursChoices {
+            let choice = app.buttons["assistant.structuredChoice.\(questionId).\(label)"]
+            XCTAssertTrue(choice.waitForExistence(timeout: 8))
+            RunLoop.current.run(until: Date().addingTimeInterval(0.7))
+            if !choice.isHittable {
+                XCTAssertTrue(scrollElementToVisible(
+                    choice,
+                    in: app,
+                    timeout: 4,
+                    scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+                ))
+            }
+            clickCenter(of: choice)
+            let lockedCard = elementWithIdentifier(in: app, "opendesign.officeHours.submittedPrompt.\(requestId)")
+            XCTAssertTrue(lockedCard.waitForExistence(timeout: 8))
+            XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.submittedChoice.\(questionId).\(label)", containing: "제출됨", timeout: 3))
+        }
+        let officeHoursDocReady = elementWithIdentifier(in: app, "opendesign.officeHours.docReady")
+        XCTAssertTrue(officeHoursDocReady.waitForExistence(timeout: 8))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.bridgeStatus", containing: "doc ready", timeout: 3))
+        RunLoop.current.run(until: Date().addingTimeInterval(1.0))
+        attachWindowScreenshot(from: app, named: "Office Hours SwiftUI Final Doc")
         let todayRail = app.buttons["opendesign.day.rail.item.today"]
         XCTAssertTrue(waitUntilHittable(todayRail, timeout: 5))
         clickCenter(of: todayRail)
@@ -1661,7 +1713,12 @@ final class agentic30UITests: XCTestCase {
         clickCenter(of: officeHoursRail)
 
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.main").waitForExistence(timeout: 5))
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.questionLoader").waitForExistence(timeout: 5))
+        let questionLoaders = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier == %@", "opendesign.officeHours.questionLoader"))
+        XCTAssertLessThanOrEqual(questionLoaders.count, 1)
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.liveStatus").waitForExistence(timeout: 5))
+        movePointerAwayFromContent()
+        attachWindowScreenshot(from: app, named: "Office Hours SwiftUI Running Status")
         XCTAssertFalse(elementWithIdentifier(in: app, "assistant.structuredPrompt").exists)
     }
 
@@ -3417,6 +3474,12 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    private func movePointerAwayFromContent() {
+        CGWarpMouseCursorPosition(CGPoint(x: 2, y: 2))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+    }
+
+    @MainActor
     private func scrollElementToVisible(
         _ element: XCUIElement,
         in app: XCUIApplication,
@@ -3434,10 +3497,8 @@ final class agentic30UITests: XCTestCase {
             } else {
                 scrollView = app.scrollViews.firstMatch
             }
-            if scrollView.exists {
+            if scrollView.exists && scrollView.isHittable {
                 scrollUp(in: scrollView)
-            } else {
-                app.swipeUp()
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.15))
         } while Date() < deadline
@@ -3583,6 +3644,27 @@ final class agentic30UITests: XCTestCase {
     @MainActor
     private func attachScreenshot(from app: XCUIApplication, named name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    @MainActor
+    private func attachWindowScreenshot(from app: XCUIApplication, named name: String) {
+        let window = app.windows.firstMatch
+        let surface = elementWithIdentifier(in: app, "workspace.surface")
+        let shell = elementWithIdentifier(in: app, "opendesign.day.shell")
+        let screenshot: XCUIScreenshot
+        if surface.waitForExistence(timeout: 2), surface.frame.height > 300 {
+            screenshot = surface.screenshot()
+        } else if shell.waitForExistence(timeout: 1) {
+            screenshot = shell.screenshot()
+        } else if window.waitForExistence(timeout: 1) {
+            screenshot = window.screenshot()
+        } else {
+            screenshot = app.screenshot()
+        }
+        let attachment = XCTAttachment(screenshot: screenshot)
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)

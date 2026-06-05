@@ -1673,6 +1673,97 @@ struct AgenticViewModelAuthTests {
         #expect(sidecar.sentPayloads.isEmpty)
     }
 
+    @Test @MainActor func officeHoursLiveStatusUpdatesPreviewAndClearsWhenQuestionArrives() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: FakeSidecarTransport(workspaceRoot: workspace.path),
+            workspace: workspace,
+            currentDay: 1
+        )
+        var session = ChatSession(
+            id: "office-hours-session",
+            title: "Office Hours",
+            provider: .codex,
+            model: AgentModelCatalog.defaultModelID(for: .codex),
+            status: .running,
+            createdAt: Date(),
+            updatedAt: Date(),
+            error: nil,
+            messages: [],
+            pendingUserInput: nil,
+            runtime: ChatSessionRuntime(
+                codexThreadId: nil,
+                codexThreadMeta: nil,
+                codexWarm: nil,
+                startupTiming: nil,
+                iddDocumentType: nil,
+                iddMode: nil,
+                officeHours: OfficeHoursRuntime(
+                    active: true,
+                    source: "office_hours_screen",
+                    startedAt: "2026-06-03T00:00:00.000Z",
+                    context: "real context"
+                )
+            )
+        )
+        viewModel.applySessionUpdatedForTesting(session)
+
+        viewModel.applyOfficeHoursLiveStatusForTesting(
+            sessionId: session.id,
+            stage: "provider_starting",
+            title: "다음 질문 준비 중",
+            detail: "프로젝트 맥락에 맞는 질문을 준비하고 있습니다.",
+            progressText: "프로젝트 맥락에 맞는 질문 준비 중",
+            elapsedMs: 42
+        )
+
+        let status = try #require(viewModel.officeHoursLiveStatus(for: session.id))
+        #expect(status.stage == "provider_starting")
+        #expect(status.title == "다음 질문 준비 중")
+        #expect(status.detail == "프로젝트 맥락에 맞는 질문을 준비하고 있습니다.")
+        #expect(status.elapsedMs == 42)
+        #expect(viewModel.sidecarOutputPreview(for: session.id).last == "프로젝트 맥락에 맞는 질문 준비 중")
+
+        session.status = .awaitingInput
+        session.pendingUserInput = StructuredPromptRequest(
+            requestId: "request-1",
+            sessionId: session.id,
+            toolName: "agentic30_request_user_input",
+            title: "Office Hours",
+            createdAt: Date(),
+            questions: [
+                StructuredPromptQuestion(
+                    questionId: "office_hours_demand_evidence",
+                    header: "수요 증거",
+                    question: "가장 강한 증거는 무엇인가요?",
+                    helperText: nil,
+                    options: [
+                        StructuredPromptOption(
+                            label: "실제 결제/계약이 있었다",
+                            description: "돈이 이미 움직였습니다.",
+                            preview: nil
+                        ),
+                        StructuredPromptOption(
+                            label: "관심만 있거나 아직 증거가 없다",
+                            description: "첫 행동 증거가 필요합니다.",
+                            preview: nil
+                        ),
+                    ],
+                    multiSelect: false,
+                    allowFreeText: false,
+                    requiresFreeText: false,
+                    freeTextPlaceholder: nil,
+                    textMode: .short
+                ),
+            ],
+            generation: StructuredPromptGeneration(mode: "office_hours", docType: "day1_step")
+        )
+        viewModel.applySessionUpdatedForTesting(session)
+
+        #expect(viewModel.officeHoursLiveStatus(for: session.id) == nil)
+    }
+
     @Test @MainActor func missionBeforeSessionQueuesStartupAction() throws {
         let workspaceURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("agentic30-startup-mission-\(UUID().uuidString)", isDirectory: true)

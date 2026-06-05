@@ -39,7 +39,7 @@ export async function recordRubricAssessment({
     try {
       telemetry.captureEvent(TELEMETRY_EVENT_RECORDED, {
         day: saved.day,
-        axisCount: Object.keys(saved.axes).length,
+        axis_count: Object.keys(saved.axes).length,
       });
     } catch {
       // Telemetry failures must never block persistence.

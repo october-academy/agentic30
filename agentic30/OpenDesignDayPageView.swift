@@ -4,7 +4,7 @@ import SwiftUI
 
 enum OpenDesignCopy {
     static let officeHoursTitle = "Office Hours"
-    static let officeHoursShortTitle = "오피스 아워"
+    static let officeHoursShortTitle = "오피스아워"
 
     static func visibleOfficeHoursTitle(_ title: String?, fallback: String = officeHoursTitle) -> String {
         let trimmed = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -13,7 +13,7 @@ enum OpenDesignCopy {
             return officeHoursTitle
         }
         if trimmed.caseInsensitiveCompare("Office Hours intake") == .orderedSame {
-            return "오피스 아워 입력 (Office Hours intake)"
+            return "오피스아워 입력 (Office Hours intake)"
         }
         return trimmed
     }
@@ -415,9 +415,9 @@ struct OpenDesignDayContent {
     ) -> [RailItem] {
         visibleRailItems([
             RailItem(id: "today", title: todayTitle, systemImage: "calendar", isActive: true, hasNewDot: false, route: .today),
-            RailItem(id: "office-hours", title: OpenDesignCopy.officeHoursTitle, systemImage: "bubble.left.and.bubble.right.fill", isActive: false, hasNewDot: false, route: .officeHours),
             RailItem(id: "search", title: "검색", systemImage: "magnifyingglass", isActive: false, hasNewDot: false, route: .search),
             RailItem(id: "projects", title: "프로젝트", systemImage: "folder", isActive: false, hasNewDot: false, route: .inert),
+            RailItem(id: "office-hours", title: OpenDesignCopy.officeHoursTitle, systemImage: "text.bubble", isActive: false, hasNewDot: false, route: .officeHours),
             RailItem(id: "settings", title: "설정", systemImage: "gearshape", isActive: false, hasNewDot: false, route: .settings),
             RailItem(id: "interviews", title: "인터뷰", systemImage: "bubble.left.and.bubble.right", isActive: false, hasNewDot: false, route: .inert),
             RailItem(id: "bip", title: "BIP 로그", systemImage: "doc.text", isActive: false, hasNewDot: false, route: .inert),
@@ -3137,6 +3137,9 @@ struct OpenDesignDayPageView: View {
     let refreshBipResearch: () -> Void
     let prepareBipResearch: () -> Void
     let openNewsSettings: () -> Void
+    let workHistory: WorkHistorySnapshot
+    let refreshWorkHistory: () -> Void
+    let prepareWorkHistory: () -> Void
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
     let officeHoursScreen: AnyView?
@@ -3178,6 +3181,9 @@ struct OpenDesignDayPageView: View {
         refreshBipResearch: @escaping () -> Void = {},
         prepareBipResearch: @escaping () -> Void = {},
         openNewsSettings: @escaping () -> Void = {},
+        workHistory: WorkHistorySnapshot = .empty,
+        refreshWorkHistory: @escaping () -> Void = {},
+        prepareWorkHistory: @escaping () -> Void = {},
         day1DocPreviews: [IddDocPreview] = [],
         day1HandoffPromptCard: AnyView? = nil,
         officeHoursScreen: AnyView? = nil,
@@ -3204,6 +3210,9 @@ struct OpenDesignDayPageView: View {
         self.refreshBipResearch = refreshBipResearch
         self.prepareBipResearch = prepareBipResearch
         self.openNewsSettings = openNewsSettings
+        self.workHistory = workHistory
+        self.refreshWorkHistory = refreshWorkHistory
+        self.prepareWorkHistory = prepareWorkHistory
         self.day1DocPreviews = day1DocPreviews
         self.day1HandoffPromptCard = day1HandoffPromptCard
         self.officeHoursScreen = officeHoursScreen
@@ -3251,6 +3260,9 @@ struct OpenDesignDayPageView: View {
                     refreshBipResearch: refreshBipResearch,
                     prepareBipResearch: prepareBipResearch,
                     openNewsSettings: openNewsSettings,
+                    workHistory: workHistory,
+                    refreshWorkHistory: refreshWorkHistory,
+                    prepareWorkHistory: prepareWorkHistory,
                     day1DocPreviews: day1DocPreviews,
                     day1HandoffPromptCard: day1HandoffPromptCard,
                     officeHoursScreen: officeHoursScreen,
@@ -3806,6 +3818,9 @@ struct OpenDesignDayShell: View {
     let refreshBipResearch: () -> Void
     let prepareBipResearch: () -> Void
     let openNewsSettings: () -> Void
+    let workHistory: WorkHistorySnapshot
+    let refreshWorkHistory: () -> Void
+    let prepareWorkHistory: () -> Void
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
     let officeHoursScreen: AnyView?
@@ -3870,7 +3885,7 @@ struct OpenDesignDayShell: View {
                 }
                 .frame(width: layout.railWidth)
                 .frame(maxHeight: .infinity)
-                .background(OpenDesignDayColor.bg)
+                .background(isOfficeHoursPresented ? OpenDesignOfficeHoursColor.bg : OpenDesignDayColor.bg)
                 .zIndex(20)
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("opendesign.day.rail")
@@ -3886,7 +3901,10 @@ struct OpenDesignDayShell: View {
                         bipResearch: bipResearch,
                         refreshBipResearch: refreshBipResearch,
                         prepareBipResearch: prepareBipResearch,
-                        openNewsSettings: openNewsSettings
+                        openNewsSettings: openNewsSettings,
+                        workHistory: workHistory,
+                        refreshWorkHistory: refreshWorkHistory,
+                        prepareWorkHistory: prepareWorkHistory
                     )
                     .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.995)))
                 } else if isOfficeHoursPresented {
@@ -3973,7 +3991,7 @@ struct OpenDesignDayShell: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(OpenDesignDayColor.bg)
+        .background(isOfficeHoursPresented ? OpenDesignOfficeHoursColor.bg : OpenDesignDayColor.bg)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("opendesign.day.shell")
     }
@@ -4115,17 +4133,21 @@ private struct OpenDesignOfficeHoursTitlebar: View {
 
     var body: some View {
         ZStack {
+            OpenDesignOfficeHoursTrafficLights()
+                .padding(.leading, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
             HStack(spacing: 8) {
                 Spacer(minLength: 82)
                 Text("Agentic30")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(OpenDesignDayColor.fg)
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
                 Text("/")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    .foregroundStyle(OpenDesignOfficeHoursColor.mutedDeep)
                 Text(OpenDesignCopy.officeHoursTitle)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
@@ -4136,12 +4158,14 @@ private struct OpenDesignOfficeHoursTitlebar: View {
                     systemImage: "magnifyingglass",
                     label: "검색 · ⌘ K",
                     keyboardKey: "k",
+                    usesOfficeHoursPalette: true,
                     accessibilityIdentifier: "opendesign.officeHours.search",
                     action: openSearch
                 )
                 OpenDesignToolbarButton(
                     systemImage: "square.and.arrow.down",
                     label: "문서 내보내기",
+                    usesOfficeHoursPalette: true,
                     accessibilityIdentifier: "opendesign.officeHours.export",
                     action: {}
                 )
@@ -4149,6 +4173,7 @@ private struct OpenDesignOfficeHoursTitlebar: View {
                     systemImage: "sidebar.right",
                     label: "우측 패널",
                     isOn: true,
+                    usesOfficeHoursPalette: true,
                     accessibilityIdentifier: "opendesign.officeHours.panel",
                     action: {}
                 )
@@ -4156,8 +4181,48 @@ private struct OpenDesignOfficeHoursTitlebar: View {
             .padding(.trailing, 12)
         }
         .frame(height: 36)
-        .background(OpenDesignDayColor.bg)
-        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+        .background(OpenDesignOfficeHoursColor.bg)
+        .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1), alignment: .bottom)
+    }
+}
+
+private struct OpenDesignOfficeHoursTrafficLights: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            OpenDesignOfficeHoursWindowButton(
+                color: Color(red: 1.0, green: 0.37, blue: 0.34),
+                label: "닫기",
+                action: { NSApp.keyWindow?.close() }
+            )
+            OpenDesignOfficeHoursWindowButton(
+                color: Color(red: 1.0, green: 0.77, blue: 0.27),
+                label: "최소화",
+                action: { NSApp.keyWindow?.miniaturize(nil) }
+            )
+            OpenDesignOfficeHoursWindowButton(
+                color: Color(red: 0.31, green: 0.80, blue: 0.38),
+                label: "확대",
+                action: { NSApp.keyWindow?.zoom(nil) }
+            )
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct OpenDesignOfficeHoursWindowButton: View {
+    let color: Color
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Circle()
+                .fill(color)
+                .frame(width: 11, height: 11)
+        }
+        .buttonStyle(.plain)
+        .help(label)
+        .accessibilityLabel(label)
     }
 }
 
@@ -4184,10 +4249,27 @@ private struct OpenDesignToolbarButton: View {
     var isOn = false
     var keyboardKey: KeyEquivalent?
     var keyboardModifiers: EventModifiers = .command
+    var usesOfficeHoursPalette = false
     var accessibilityIdentifier: String? = nil
     let action: () -> Void
 
     @State private var isHovered = false
+
+    private var foregroundColor: Color {
+        usesOfficeHoursPalette ? OpenDesignOfficeHoursColor.fg : OpenDesignDayColor.fg
+    }
+
+    private var mutedColor: Color {
+        usesOfficeHoursPalette ? OpenDesignOfficeHoursColor.muted : OpenDesignDayColor.muted
+    }
+
+    private var hoverColor: Color {
+        usesOfficeHoursPalette ? OpenDesignOfficeHoursColor.selected : OpenDesignDayColor.hover
+    }
+
+    private var borderColor: Color {
+        usesOfficeHoursPalette ? OpenDesignOfficeHoursColor.borderSoft : OpenDesignDayColor.borderSoft
+    }
 
     var body: some View {
         Group {
@@ -4205,15 +4287,15 @@ private struct OpenDesignToolbarButton: View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(isOn || isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.muted)
+                .foregroundStyle(isOn || isHovered ? foregroundColor : mutedColor)
                 .frame(width: 26, height: 24)
                 .background(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(isOn || isHovered ? OpenDesignDayColor.hover : Color.clear)
+                        .fill(isOn || isHovered ? hoverColor : Color.clear)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(isOn || isHovered ? OpenDesignDayColor.borderSoft : Color.clear, lineWidth: 1)
+                        .stroke(isOn || isHovered ? borderColor : Color.clear, lineWidth: 1)
                 )
         }
         .buttonStyle(OpenDesignInteractiveButtonStyle())
@@ -4246,7 +4328,8 @@ private struct OpenDesignRailView: View {
                 OpenDesignRailButton(
                     item: item,
                     railWidth: railWidth,
-                    isActive: item.id == activeItemID
+                    isActive: item.id == activeItemID,
+                    usesOfficeHoursPalette: isOfficeHoursPresented
                 ) {
                     activate(item)
                 }
@@ -4256,16 +4339,16 @@ private struct OpenDesignRailView: View {
 
             Text("Z")
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundStyle(OpenDesignDayColor.accent)
+                .foregroundStyle(isOfficeHoursPresented ? OpenDesignOfficeHoursColor.accent : OpenDesignDayColor.accent)
                 .frame(width: 30, height: 30)
-                .background(Circle().fill(OpenDesignDayColor.accentDim))
-                .overlay(Circle().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
+                .background(Circle().fill(isOfficeHoursPresented ? OpenDesignOfficeHoursColor.accentDim : OpenDesignDayColor.accentDim))
+                .overlay(Circle().stroke(isOfficeHoursPresented ? OpenDesignOfficeHoursColor.accentLine : OpenDesignDayColor.accentLine, lineWidth: 1))
                 .help("zettalyst")
         }
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(OpenDesignDayColor.bg)
-        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .trailing)
+        .background(isOfficeHoursPresented ? OpenDesignOfficeHoursColor.bg : OpenDesignDayColor.bg)
+        .overlay(Rectangle().fill(isOfficeHoursPresented ? OpenDesignOfficeHoursColor.borderSoft : OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .trailing)
         .accessibilityElement(children: .contain)
     }
 }
@@ -4274,10 +4357,31 @@ private struct OpenDesignRailButton: View {
     let item: OpenDesignDayContent.RailItem
     let railWidth: CGFloat
     let isActive: Bool
+    let usesOfficeHoursPalette: Bool
     let action: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
+
+    private var foregroundColor: Color {
+        usesOfficeHoursPalette ? OpenDesignOfficeHoursColor.fg : OpenDesignDayColor.fg
+    }
+
+    private var mutedColor: Color {
+        usesOfficeHoursPalette ? OpenDesignOfficeHoursColor.muted : OpenDesignDayColor.muted
+    }
+
+    private var selectedColor: Color {
+        usesOfficeHoursPalette ? OpenDesignOfficeHoursColor.selected : OpenDesignDayColor.selected
+    }
+
+    private var bgColor: Color {
+        usesOfficeHoursPalette ? OpenDesignOfficeHoursColor.bg : OpenDesignDayColor.bg
+    }
+
+    private var accentColor: Color {
+        usesOfficeHoursPalette ? OpenDesignOfficeHoursColor.accent : OpenDesignDayColor.accent
+    }
 
     private var railGutter: CGFloat {
         max(0, (railWidth - 36) / 2)
@@ -4289,20 +4393,20 @@ private struct OpenDesignRailButton: View {
                 ZStack(alignment: .topTrailing) {
                     Image(systemName: item.systemImage)
                         .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(isActive || isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.muted)
+                        .foregroundStyle(isActive || isHovered ? foregroundColor : mutedColor)
                         .frame(width: 36, height: 36)
                         .openDesignHoverRow(
                             isHovered: isHovered,
                             isActive: isActive,
                             cornerRadius: 8,
-                            activeFill: OpenDesignDayColor.selected,
+                            activeFill: selectedColor,
                             hoverBorder: Color.clear,
                             activeBorder: Color.clear
                         )
                         .overlay(alignment: .leading) {
                             if isActive {
                                 RoundedRectangle(cornerRadius: 2, style: .continuous)
-                                    .fill(OpenDesignDayColor.accent)
+                                    .fill(accentColor)
                                     .frame(width: 2, height: 20)
                                     .offset(x: -railGutter)
                             }
@@ -4310,9 +4414,9 @@ private struct OpenDesignRailButton: View {
 
                     if item.hasNewDot {
                         Circle()
-                            .fill(OpenDesignDayColor.accent)
+                            .fill(accentColor)
                             .frame(width: 6, height: 6)
-                            .overlay(Circle().stroke(OpenDesignDayColor.bg, lineWidth: 2))
+                            .overlay(Circle().stroke(bgColor, lineWidth: 2))
                             .offset(x: -4, y: 5)
                     }
                 }
@@ -4325,7 +4429,7 @@ private struct OpenDesignRailButton: View {
             .accessibilityValue(isActive ? "active" : "inactive")
 
             if isHovered {
-                OpenDesignRailTooltip(title: item.title, id: item.id)
+                OpenDesignRailTooltip(title: item.title, id: item.id, usesOfficeHoursPalette: usesOfficeHoursPalette)
                     .offset(x: 44)
                     .transition(.opacity)
                     .zIndex(10)
@@ -4340,21 +4444,34 @@ private struct OpenDesignRailButton: View {
 private struct OpenDesignRailTooltip: View {
     let title: String
     let id: String
+    let usesOfficeHoursPalette: Bool
+
+    private var foregroundColor: Color {
+        usesOfficeHoursPalette ? OpenDesignOfficeHoursColor.fg : OpenDesignDayColor.fg
+    }
+
+    private var elevatedColor: Color {
+        usesOfficeHoursPalette ? OpenDesignOfficeHoursColor.surface2 : OpenDesignDayColor.elevated
+    }
+
+    private var borderColor: Color {
+        usesOfficeHoursPalette ? OpenDesignOfficeHoursColor.border : OpenDesignDayColor.border
+    }
 
     var body: some View {
         Text(title)
             .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(OpenDesignDayColor.fg)
+            .foregroundStyle(foregroundColor)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 8)
             .frame(height: 24)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(OpenDesignDayColor.elevated)
+                    .fill(elevatedColor)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(OpenDesignDayColor.border, lineWidth: 1)
+                            .stroke(borderColor, lineWidth: 1)
                     )
             )
             .allowsHitTesting(false)

@@ -52,6 +52,12 @@ import {
   normalizeWorkspaceOnboardingHypothesis,
 } from "./onboarding-hypothesis.mjs";
 import { collectAgentWorkHistory } from "./agent-work-history.mjs";
+import {
+  WORK_HISTORY_REFRESH_INTERVAL_MS,
+  loadWorkHistorySnapshot,
+  refreshWorkHistory,
+  computeWorkHistoryFingerprint,
+} from "./work-history.mjs";
 import { buildDay1SituationSummary } from "./generate-day1-situation-summary.mjs";
 import { extractWorkspaceEvidence } from "./workspace-signal-extractor.mjs";
 import { isSecretPath, redactSecrets } from "./workspace-safety.mjs";
@@ -80,6 +86,7 @@ import {
   updateProviderSettings,
 } from "./provider-runner.mjs";
 import { runWithSoftTimeout } from "./frontier-soft-timeout.mjs";
+import { selectScanProviderTargets } from "./scan-provider-select.mjs";
 import {
   extractInlineDecision,
   inferInlineDecisionFromPlainText,
@@ -201,15 +208,15 @@ import {
   CODEX_STRUCTURED_INPUT_TOOL,
 } from "./structured-input-tools.mjs";
 import {
-  OFFICE_HOURS_FALLBACK_MODE,
+  buildOfficeHoursInlineStructuredPromptPayload,
   buildOfficeHoursStructuredQuestionTranscriptText,
   buildOfficeHoursStructuredInputContinuationPrompt,
-  buildOfficeHoursStructuredPromptPayload,
   isOfficeHoursStructuredInputMode,
   isOfficeHoursStructuredInputToolEvent,
+  normalizeOfficeHoursStructuredPromptRequest,
   shouldAppendOfficeHoursStructuredQuestionMessage,
   stripTrailingRubricFocusMetadata,
-} from "./office-hours-card-fallback.mjs";
+} from "./office-hours-structured-input.mjs";
 import {
   clearUserInputArtifacts,
   createUserInputRequest,
@@ -290,6 +297,20 @@ const DAY1_CHOICE_CLAUDE_MODEL = process.env.AGENTIC30_DAY1_CHOICE_CLAUDE_MODEL 
 const DAY1_CHOICE_CODEX_MODEL = process.env.AGENTIC30_DAY1_CHOICE_CODEX_MODEL || "gpt-5.5";
 const DAY1_CHOICE_GEMINI_MODEL = process.env.AGENTIC30_DAY1_CHOICE_GEMINI_MODEL || "gemini-3.5-flash";
 const DAY1_CHOICE_PROVIDER_TIMEOUT_MS = 45_000;
+// Provider→model maps for the agent-backed workspace scan and Day 1 alignment
+// synthesis. selectScanProviderTargets() narrows these to the single provider
+// the user picked in settings (preferredProvider), falling back to the full set
+// only when no settings provider is supplied.
+const WORKSPACE_SCAN_MODEL_BY_PROVIDER = {
+  claude: WORKSPACE_SCAN_CLAUDE_MODEL,
+  codex: WORKSPACE_SCAN_CODEX_MODEL,
+  gemini: WORKSPACE_SCAN_GEMINI_MODEL,
+};
+const DAY1_CHOICE_MODEL_BY_PROVIDER = {
+  claude: DAY1_CHOICE_CLAUDE_MODEL,
+  codex: DAY1_CHOICE_CODEX_MODEL,
+  gemini: DAY1_CHOICE_GEMINI_MODEL,
+};
 const CHAT_BIP_CONTEXT_MAX_CHARS = 60000;
 const CHAT_BIP_LOCAL_DOC_MAX_CHARS = 12000;
 const CHAT_BIP_EXTERNAL_DOC_MAX_CHARS = 12000;
@@ -326,6 +347,9 @@ const state = {
   bipResearchRefreshPromise: null,
   bipResearchProgress: null,
   bipResearchProgressStartedAt: null,
+  workHistoryRefreshPromise: null,
+  workHistoryProgress: null,
+  workHistoryProgressStartedAt: null,
   integrationSettings: {
     exaApiKey: "",
   },
@@ -552,7 +576,7 @@ async function handleQuarantineRestoreWithReason(socket, payload) {
     });
   telemetry.captureEvent("mac_sidecar_rubric_quarantine_restored_with_reason", {
       remaining: result.remainingInvalidCount,
-      duplicateAvoided: result.duplicateAvoided ?? false,
+      duplicate_avoided: result.duplicateAvoided ?? false,
     });
     send(socket, { type: "rubric_quarantine_restored", result });
     await broadcastQuarantineList(socket);
@@ -692,6 +716,18 @@ fireAndForget("refreshPersistedBipCoachReadinessOnBoot", refreshPersistedBipCoac
 const userInputPoll = setInterval(() => {
   fireAndForget("syncPendingUserInputRequests", syncPendingUserInputRequests());
 }, 250);
+// History tab: hourly low-frequency background reindex (interview round 32).
+// Tab-entry catch-up and the manual button arrive via work_history_get/refresh.
+const workHistoryPoll = setInterval(() => {
+  fireAndForget(
+    "workHistoryHourlyRefresh",
+    Promise.resolve(scheduleWorkHistoryRefresh({
+      reason: "background",
+      preferredProvider: state.bipCoach?.config?.provider || "",
+    })),
+  );
+}, WORK_HISTORY_REFRESH_INTERVAL_MS);
+workHistoryPoll.unref?.();
 
 const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
 let shutdownStarted = false;
@@ -833,6 +869,7 @@ async function shutdown() {
   clearClientDisconnectTimer();
   clearInterval(parentProcessPoll);
   clearInterval(userInputPoll);
+  clearInterval(workHistoryPoll);
   for (const run of state.activeRuns.values()) {
     run.abortController.abort();
     await run.stop?.();
@@ -1667,6 +1704,37 @@ async function handleClientMessage(socket, payload) {
       });
       return;
     }
+    case "work_history_get": {
+      const snapshot = await loadWorkHistorySnapshot({ workspaceRoot });
+      send(socket, { type: "work_history_result", workHistory: snapshot });
+      if (state.workHistoryRefreshPromise && state.workHistoryProgress) {
+        send(socket, { type: "work_history_status", status: state.workHistoryProgress });
+        return;
+      }
+      // Tab-entry reindex policy: stale by age/week → refresh now; otherwise a
+      // cheap head-sha fingerprint detects new commits since the last index.
+      if (snapshot.status?.stale) {
+        scheduleWorkHistoryRefresh({ reason: "tab_enter", preferredProvider: payload.preferredProvider });
+        return;
+      }
+      fireAndForget(
+        "work_history_fingerprint",
+        computeWorkHistoryFingerprint({ workspaceRoot }).then((fingerprint) => {
+          if (fingerprint.headSha && fingerprint.headSha !== snapshot.fingerprint?.headSha) {
+            scheduleWorkHistoryRefresh({ reason: "tab_enter", preferredProvider: payload.preferredProvider });
+          }
+        }),
+      );
+      return;
+    }
+    case "work_history_refresh": {
+      scheduleWorkHistoryRefresh({
+        reason: payload.reason || "manual",
+        targetSocket: socket,
+        preferredProvider: payload.preferredProvider,
+      });
+      return;
+    }
     case "bip_research_get": {
       const dayNumber = Number.parseInt(payload.dayNumber ?? payload.day ?? 1, 10) || 1;
       const exaRoutes = resolveNewsMarketRadarExaRoutes({
@@ -1747,6 +1815,7 @@ async function handleClientMessage(socket, payload) {
       runWorkspaceScan(root, {
         sessionId: payload.sessionId,
         prompt: payload.prompt,
+        preferredProvider: payload.preferredProvider,
     });
       return;
     }
@@ -1762,7 +1831,7 @@ async function handleClientMessage(socket, payload) {
         return;
     }
       broadcast({ type: "doc_creation_started", docType });
-      runCreateDoc(root, docType);
+      runCreateDoc(root, docType, { preferredProvider: payload.preferredProvider });
       return;
     }
     case "bip_coach_get_state": {
@@ -2078,20 +2147,29 @@ async function runPrompt(
     stop: null,
   });
 
+  let officeHoursContext = "";
+  let officeHoursRuntimeForRun = null;
+
   try {
     state.activeRuns.get(session.id).stop = async () => {
       abortController.abort();
     };
 
     let route = classifyChatExecutionRoute(prompt, { executionIntent });
-    const officeHoursContext = activeOfficeHoursContext(session);
-    const officeHoursRuntimeForRun = session.runtime?.officeHours?.active === true
+    officeHoursContext = activeOfficeHoursContext(session);
+    officeHoursRuntimeForRun = session.runtime?.officeHours?.active === true
       ? { ...session.runtime.officeHours, context: officeHoursContext }
       : null;
-    let officeHoursStructuredInputRequested = false;
     let officeHoursStructuredInputAnswered = false;
     let routedSpecialist = specialist;
     let systemPromptOverride = "";
+    if (officeHoursContext) {
+      emitOfficeHoursStatus(session, {
+        stage: "context_loaded",
+        messageId: assistantMessage.id,
+        elapsedMs: performance.now() - runStartedAt,
+      });
+    }
     if (officeHoursContext && !routedSpecialist) {
       if (route.executionMode === "fast_chat" || route.executionMode === "instant_chat") {
         route = {
@@ -2106,6 +2184,11 @@ async function runPrompt(
       routedSpecialist = selectOfficeHoursSpecialist({
         context: officeHoursContext,
         lastAnswer: prompt,
+      });
+      emitOfficeHoursStatus(session, {
+        stage: "specialist_routed",
+        messageId: assistantMessage.id,
+        elapsedMs: performance.now() - runStartedAt,
       });
       const officeHoursSpecialistInjection = buildSpecialistInjection(routedSpecialist, {
         provider: session.provider,
@@ -2179,6 +2262,13 @@ async function runPrompt(
     });
     emitChatRunPhase(session, assistantMessage.id, route.contextSummary);
     emitChatRunPhase(session, assistantMessage.id, `provider=${session.provider} model=${session.model || "default"} starting_stream`);
+    if (officeHoursContext) {
+      emitOfficeHoursStatus(session, {
+        stage: "provider_starting",
+        messageId: assistantMessage.id,
+        elapsedMs: performance.now() - runStartedAt,
+      });
+    }
     recordMessageTiming(session, assistantMessage, runStartedAt, "provider.call_start", {
       provider: session.provider,
       executionMode: route.executionMode,
@@ -2211,9 +2301,18 @@ async function runPrompt(
       },
       onToolEvent: (event) => {
         if (officeHoursContext && isOfficeHoursStructuredInputToolEvent(event)) {
-          officeHoursStructuredInputRequested = true;
           if (isSuccessfulStructuredInputToolEvent(event)) {
             officeHoursStructuredInputAnswered = true;
+          }
+        }
+        if (officeHoursContext) {
+          const status = mapOfficeHoursToolEventToStatus(event);
+          if (status) {
+            emitOfficeHoursStatus(session, {
+              ...status,
+              messageId: assistantMessage.id,
+              elapsedMs: performance.now() - runStartedAt,
+            });
           }
         }
         const { phase, toolName, payload, toolCallKey } = event;
@@ -2242,6 +2341,16 @@ async function runPrompt(
       onRunEvent: (event) => {
         if (officeHoursContext && isStructuredInputResponseRunEvent(event)) {
           officeHoursStructuredInputAnswered = true;
+        }
+        if (officeHoursContext) {
+          const status = mapOfficeHoursRunEventToStatus(event);
+          if (status) {
+            emitOfficeHoursStatus(session, {
+              ...status,
+              messageId: assistantMessage.id,
+              elapsedMs: performance.now() - runStartedAt,
+            });
+          }
         }
         emitAgentEvent(session, assistantMessage.id, {
           eventType: "run.timing",
@@ -2275,11 +2384,24 @@ async function runPrompt(
     session.status = session.pendingUserInput ? "awaiting_input" : "idle";
     session.error = null;
     if (officeHoursContext) {
-      await ensureOfficeHoursStructuredPromptCard(session, assistantMessage, {
-        sawStructuredInputRequest: officeHoursStructuredInputRequested,
-        structuredInputAnswered: officeHoursStructuredInputAnswered,
-        context: officeHoursContext,
-        source: "office_hours_continuation",
+      if (!officeHoursStructuredInputAnswered && assistantMessage.inlineDecision) {
+        emitOfficeHoursStatus(session, {
+          stage: "structured_input_requested",
+          messageId: assistantMessage.id,
+          elapsedMs: performance.now() - runStartedAt,
+        });
+      }
+      const request = officeHoursStructuredInputAnswered
+        ? null
+        : await promoteOfficeHoursInlineDecisionPromptCard(session, assistantMessage, {
+            context: officeHoursContext,
+            source: "office_hours_continuation",
+          });
+      emitOfficeHoursStatus(session, {
+        stage: session.pendingUserInput ? "question_ready" : "completed",
+        messageId: assistantMessage.id,
+        requestId: request?.requestId || session.pendingUserInput?.requestId || null,
+        elapsedMs: performance.now() - runStartedAt,
       });
     }
     emitAgentEvent(session, assistantMessage.id, {
@@ -2296,6 +2418,13 @@ async function runPrompt(
       assistantMessage.state = "final";
     session.status = "idle";
       session.error = null;
+      if (officeHoursContext) {
+        emitOfficeHoursStatus(session, {
+          stage: "aborted",
+          messageId: assistantMessage.id,
+          elapsedMs: performance.now() - runStartedAt,
+        });
+      }
     } else {
       telemetry.captureException(error, {
         operation: "runPrompt",
@@ -2314,8 +2443,17 @@ async function runPrompt(
       if (!assistantMessage.content) {
         assistantMessage.content = assistantMessage.error;
     }
-    session.status = "error";
+      session.status = "error";
       session.error = assistantMessage.error;
+      if (officeHoursContext) {
+        emitOfficeHoursStatus(session, {
+          stage: "failed",
+          detail: assistantMessage.error,
+          progressText: assistantMessage.error,
+          messageId: assistantMessage.id,
+          elapsedMs: performance.now() - runStartedAt,
+        });
+      }
       emitAgentEvent(session, assistantMessage.id, {
         eventType: "run.failed",
         error: assistantMessage.error,
@@ -3200,43 +3338,178 @@ function activeOfficeHoursContext(session = null) {
   return clampOfficeHoursContext(officeHours.context || "");
 }
 
-async function ensureOfficeHoursStructuredPromptCard(session, assistantMessage, {
-  sawStructuredInputRequest = false,
-  structuredInputAnswered = false,
+const OFFICE_HOURS_STATUS_COPY = Object.freeze({
+  context_loaded: {
+    title: "답변 확인 중",
+    detail: "방금 답변과 프로젝트 정보를 확인하고 있습니다.",
+    progressText: "질문에 필요한 맥락 확인 중",
+  },
+  specialist_routed: {
+    title: "다음 질문 방향 정하는 중",
+    detail: "무엇을 더 물어보면 좋을지 고르고 있습니다.",
+    progressText: "다음 질문 방향 정하는 중",
+  },
+  provider_starting: {
+    title: "다음 질문 준비 중",
+    detail: "프로젝트 맥락에 맞는 질문을 준비하고 있습니다.",
+    progressText: "프로젝트 맥락에 맞는 질문 준비 중",
+  },
+  provider_thinking: {
+    title: "다음 질문 준비 중",
+    detail: "방금 답한 내용을 바탕으로 이어서 물어볼 질문을 정리하고 있습니다.",
+    progressText: "방금 답변을 바탕으로 다음 질문 준비 중",
+  },
+  tool_running: {
+    title: "선택지 준비 중",
+    detail: "고를 수 있는 답변 후보를 만들고 있습니다.",
+    progressText: "답변 후보 준비 중",
+  },
+  structured_input_requested: {
+    title: "질문 화면 여는 중",
+    detail: "곧 다음 질문이 선택지와 함께 표시됩니다.",
+    progressText: "다음 질문 화면 여는 중",
+  },
+  question_ready: {
+    title: "다음 질문 준비 완료",
+    detail: "선택하거나 직접 입력하면 이어서 진행합니다.",
+    progressText: "다음 질문 준비 완료",
+  },
+  completed: {
+    title: "응답 정리 중",
+    detail: "방금 답변을 저장하고 화면 상태를 정리하고 있습니다.",
+    progressText: "응답 정리 중",
+  },
+  failed: {
+    title: "질문 준비 실패",
+    detail: "오류 내용을 화면에 반영하고 있습니다.",
+    progressText: "질문 준비 실패",
+  },
+  aborted: {
+    title: "질문 준비 중단됨",
+    detail: "요청을 멈추고 화면 상태를 정리하고 있습니다.",
+    progressText: "질문 준비 중단됨",
+  },
+});
+
+function clampOfficeHoursStatusText(value, maxLength = 240) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  return text.length > maxLength ? `${text.slice(0, Math.max(0, maxLength - 1)).trim()}…` : text;
+}
+
+function emitOfficeHoursStatus(session, {
+  stage,
+  title = "",
+  detail = "",
+  progressText = "",
+  messageId = null,
+  requestId = null,
+  elapsedMs = null,
+} = {}) {
+  if (!session?.id || !stage) return;
+  const stageCopy = OFFICE_HOURS_STATUS_COPY[stage] || {};
+  const resolvedTitle = clampOfficeHoursStatusText(title || stageCopy.title || "", 120);
+  const resolvedDetail = clampOfficeHoursStatusText(detail || stageCopy.detail || "", 240);
+  const resolvedProgressText = clampOfficeHoursStatusText(progressText || stageCopy.progressText || resolvedDetail || resolvedTitle, 240);
+  if (!resolvedTitle && !resolvedDetail && !resolvedProgressText) return;
+  broadcast({
+    type: "office_hours_status",
+    sessionId: session.id,
+    stage,
+    title: resolvedTitle,
+    detail: resolvedDetail,
+    progressText: resolvedProgressText,
+    ...(messageId ? { messageId } : {}),
+    ...(requestId ? { requestId } : {}),
+    ...(Number.isFinite(elapsedMs) ? { elapsedMs: Math.max(0, Math.round(elapsedMs)) } : {}),
+  });
+}
+
+function mapOfficeHoursRunEventToStatus(event = {}) {
+  const phase = String(event?.phase || "");
+  if (!phase) return null;
+  if (
+    phase === "provider.claude.awaiting_user_input"
+    || phase === "provider.stub_user_input_request"
+  ) {
+    return {
+      stage: "structured_input_requested",
+      requestId: event.requestId || null,
+    };
+  }
+  if (
+    phase.endsWith(".stream_opened")
+    || phase.endsWith(".run_streamed_call_start")
+    || phase === "provider.entry"
+  ) {
+    return { stage: "provider_starting" };
+  }
+  if (
+    phase.endsWith(".first_event")
+    || phase.endsWith(".event.turn_started")
+    || phase.endsWith(".turn_started")
+    || phase.endsWith(".prepare_start")
+    || phase.endsWith(".config_built")
+  ) {
+    return { stage: "provider_thinking" };
+  }
+  return null;
+}
+
+function mapOfficeHoursToolEventToStatus(event = {}) {
+  if (isOfficeHoursStructuredInputToolEvent(event)) {
+    return {
+      stage: event.phase === "result" ? "structured_input_requested" : "tool_running",
+    };
+  }
+  if (event?.phase === "thinking") {
+    return { stage: "provider_thinking" };
+  }
+  if (event?.phase === "use" || event?.phase === "input_delta" || event?.phase === "progress") {
+    return { stage: "tool_running" };
+  }
+  return null;
+}
+
+function isOfficeHoursStructuredRequest(request = null) {
+  if (!request || typeof request !== "object") return false;
+  if (isOfficeHoursStructuredInputMode(request.generation?.mode)) return true;
+  return String(request.title || "").trim().toLowerCase() === "office hours";
+}
+
+async function promoteOfficeHoursInlineDecisionPromptCard(session, assistantMessage, {
   context = "",
   source = "provider_result",
 } = {}) {
   if (!session || !assistantMessage) return null;
   if (session.pendingUserInput) return null;
-  if (structuredInputAnswered) return null;
   if (isOfficeHoursWriteDesignDocContext(context)
     && /generated_by:\s*office-hours|handoff_for:\s*plan-ceo-review|CEO Review Handoff/i.test(String(assistantMessage.content || ""))) {
     return null;
   }
-  const payload = buildOfficeHoursStructuredPromptPayload({
+  const payload = buildOfficeHoursInlineStructuredPromptPayload({
     sessionId: session.id,
     provider: session.provider,
     assistantMessage,
-    mode: OFFICE_HOURS_FALLBACK_MODE,
-    allowDefaultQuestion: true,
     context,
   });
   if (!payload) return null;
 
-  const request = await createUserInputRequest(appSupportPath, payload);
+  const request = await createUserInputRequest(
+    appSupportPath,
+    normalizeOfficeHoursStructuredPromptRequest(payload),
+  );
   session.pendingUserInput = request;
   session.status = "awaiting_input";
   session.error = null;
   if (assistantMessage.inlineDecision) {
     delete assistantMessage.inlineDecision;
   }
-  telemetry.captureEvent("mac_sidecar_office_hours_structured_card_fallback", {
+  telemetry.captureEvent("mac_sidecar_office_hours_inline_structured_card", {
     session_id: session.id,
     provider: session.provider,
     mode: payload.generation?.mode || "",
     source,
-    saw_structured_input_request: sawStructuredInputRequest,
-    structured_input_answered: structuredInputAnswered,
   });
   return request;
 }
@@ -3300,6 +3573,7 @@ async function runOfficeHours(session, {
   const officeHoursRuntime = buildOfficeHoursRuntime(context, source);
   const visiblePrompt = String(originalPrompt || "Office Hours").trim() || "Office Hours";
   const abortController = new AbortController();
+  const runStartedAt = performance.now();
   const runKey = randomUUID();
   const assistantMessage = makeMessage({
     role: "assistant",
@@ -3336,6 +3610,11 @@ async function runOfficeHours(session, {
     touch(session);
     await persistSessions();
     broadcast({ type: "session_updated", session });
+    emitOfficeHoursStatus(session, {
+      stage: "context_loaded",
+      messageId: assistantMessage.id,
+      elapsedMs: performance.now() - runStartedAt,
+    });
 
     telemetry.captureEvent("mac_sidecar_office_hours_started", {
       session_id: session.id,
@@ -3347,6 +3626,11 @@ async function runOfficeHours(session, {
     const officeHoursSelection = selectOfficeHoursSpecialist({
       context: officeHoursRuntime.context,
       lastAnswer: visiblePrompt,
+    });
+    emitOfficeHoursStatus(session, {
+      stage: "specialist_routed",
+      messageId: assistantMessage.id,
+      elapsedMs: performance.now() - runStartedAt,
     });
     telemetry.captureEvent("mac_sidecar_specialist_routed", {
       session_id: session.id,
@@ -3362,8 +3646,12 @@ async function runOfficeHours(session, {
     const officeHoursSpecialistInjection = buildSpecialistInjection(officeHoursSelection, {
       provider: session.provider,
     });
-    let officeHoursStructuredInputRequested = false;
     let officeHoursStructuredInputAnswered = false;
+    emitOfficeHoursStatus(session, {
+      stage: "provider_starting",
+      messageId: assistantMessage.id,
+      elapsedMs: performance.now() - runStartedAt,
+    });
     const result = await runProviderStream({
       provider: session.provider,
       sessionRuntime: session.runtime,
@@ -3379,10 +3667,17 @@ async function runOfficeHours(session, {
       onTextReplace: (text) => setAssistantText(session, assistantMessage.id, text),
       onToolEvent: (toolEvent) => {
         if (isOfficeHoursStructuredInputToolEvent(toolEvent)) {
-          officeHoursStructuredInputRequested = true;
           if (isSuccessfulStructuredInputToolEvent(toolEvent)) {
             officeHoursStructuredInputAnswered = true;
           }
+        }
+        const status = mapOfficeHoursToolEventToStatus(toolEvent);
+        if (status) {
+          emitOfficeHoursStatus(session, {
+            ...status,
+            messageId: assistantMessage.id,
+            elapsedMs: performance.now() - runStartedAt,
+          });
         }
         broadcast({
           type: "tool_event",
@@ -3410,6 +3705,14 @@ async function runOfficeHours(session, {
         if (isStructuredInputResponseRunEvent(event)) {
           officeHoursStructuredInputAnswered = true;
         }
+        const status = mapOfficeHoursRunEventToStatus(event);
+        if (status) {
+          emitOfficeHoursStatus(session, {
+            ...status,
+            messageId: assistantMessage.id,
+            elapsedMs: performance.now() - runStartedAt,
+          });
+        }
       },
     });
 
@@ -3420,11 +3723,24 @@ async function runOfficeHours(session, {
     assistantMessage.state = "final";
     session.status = session.pendingUserInput ? "awaiting_input" : "idle";
     session.error = null;
-    await ensureOfficeHoursStructuredPromptCard(session, assistantMessage, {
-      sawStructuredInputRequest: officeHoursStructuredInputRequested,
-      structuredInputAnswered: officeHoursStructuredInputAnswered,
-      context: officeHoursRuntime.context,
-      source: "office_hours_start",
+    if (!officeHoursStructuredInputAnswered && assistantMessage.inlineDecision) {
+      emitOfficeHoursStatus(session, {
+        stage: "structured_input_requested",
+        messageId: assistantMessage.id,
+        elapsedMs: performance.now() - runStartedAt,
+      });
+    }
+    const request = officeHoursStructuredInputAnswered
+      ? null
+      : await promoteOfficeHoursInlineDecisionPromptCard(session, assistantMessage, {
+          context: officeHoursRuntime.context,
+          source: "office_hours_start",
+        });
+    emitOfficeHoursStatus(session, {
+      stage: session.pendingUserInput ? "question_ready" : "completed",
+      messageId: assistantMessage.id,
+      requestId: request?.requestId || session.pendingUserInput?.requestId || null,
+      elapsedMs: performance.now() - runStartedAt,
     });
   } catch (error) {
     if (abortController.signal.aborted || error?.name === "AbortError") {
@@ -3435,6 +3751,11 @@ async function runOfficeHours(session, {
       assistantMessage.state = "final";
       session.status = "idle";
       session.error = null;
+      emitOfficeHoursStatus(session, {
+        stage: "aborted",
+        messageId: assistantMessage.id,
+        elapsedMs: performance.now() - runStartedAt,
+      });
     } else {
       telemetry.captureException(error, {
         operation: "runOfficeHours",
@@ -3448,6 +3769,13 @@ async function runOfficeHours(session, {
       }
       session.status = "error";
       session.error = formatError(error);
+      emitOfficeHoursStatus(session, {
+        stage: "failed",
+        detail: formatError(error),
+        progressText: formatError(error),
+        messageId: assistantMessage.id,
+        elapsedMs: performance.now() - runStartedAt,
+      });
       broadcast({
         type: "error",
         sessionId: session.id,
@@ -3585,9 +3913,16 @@ async function runOfficeHoursDocs(session, topic, originalPrompt) {
       assistantMessage.error = formatError(error);
       if (!assistantMessage.content) {
         assistantMessage.content = `Office Hours docs failed: ${formatError(error)}`;
-    }
-    session.status = "error";
+      }
+      session.status = "error";
       session.error = formatError(error);
+      emitOfficeHoursStatus(session, {
+        stage: "failed",
+        detail: formatError(error),
+        progressText: formatError(error),
+        messageId: assistantMessage.id,
+        elapsedMs: performance.now() - runStartedAt,
+      });
       broadcast({
         type: "error",
         sessionId: session.id,
@@ -4798,7 +5133,7 @@ async function refreshBipCoachEvidence() {
     // Emit token expiry event so the app can show a re-auth banner
     if (isInvalidRapt(error)) {
       broadcast({ type: "bip_token_expired", message: userError });
-      telemetry.captureEvent("mac_bip_token_expired", { during_action: "evidence_refresh" });
+      telemetry.captureEvent("mac_sidecar_bip_token_expired", { during_action: "evidence_refresh" });
     }
   } finally {
     state.bipCoachRunning = false;
@@ -6879,17 +7214,18 @@ async function refreshProjectContextFromRequest(payload = {}) {
   const root = requestedRoot ? path.resolve(requestedRoot) : workspaceRoot;
   const reason = String(payload.reason || "manual").trim() || "manual";
   const completedDay = payload.completedDay ?? payload.completed_day ?? null;
+  const preferredProvider = payload.preferredProvider ?? payload.preferred_provider ?? "";
   let scanResult = await findWorkspaceDocsLocally(root).catch(() => null);
   let onboardingHypothesis = await deriveWorkspaceOnboardingHypothesisLocally(root, {
     docPaths: scanResult || currentBipConfig()?.workspace || {},
   }).catch(() => null);
 
   if (reason === "day_completed") {
-    const agentResults = await Promise.allSettled([
-      runWorkspaceScanAgent({ provider: "claude", model: WORKSPACE_SCAN_CLAUDE_MODEL, scanRoot: root }),
-      runWorkspaceScanAgent({ provider: "codex", model: WORKSPACE_SCAN_CODEX_MODEL, scanRoot: root }),
-      runWorkspaceScanAgent({ provider: "gemini", model: WORKSPACE_SCAN_GEMINI_MODEL, scanRoot: root }),
-    ]);
+    const agentResults = await Promise.allSettled(
+      selectScanProviderTargets(preferredProvider, WORKSPACE_SCAN_MODEL_BY_PROVIDER).map(
+        ({ provider, model }) => runWorkspaceScanAgent({ provider, model, scanRoot: root }),
+      ),
+    );
     const parsedAgentResults = agentResults
       .filter((result) => result.status === "fulfilled" && result.value)
       .map((result) => result.value);
@@ -7107,60 +7443,7 @@ async function startIddDocumentQueueOnce({
   return session;
 }
 
-async function recoverStalledIddInterviewIfNeeded(sessionId, { provider = "codex", docType = null } = {}) {
-  const session = state.sessions.get(sessionId);
-  if (!session?.runtime?.iddDocumentType) return false;
-  if (session.pendingUserInput) return false;
-  if (docType && state.iddSetup?.drafts?.[docType]?.trim()) return false;
-
-  const lastAssistant = [...(session.messages || [])]
-    .reverse()
-    .find((message) => message?.role === "assistant");
-  const lastContent = String(lastAssistant?.content || "").trim();
-  const message = lastContent
-    ? `인터뷰 질문 카드 준비가 중단됐습니다: ${lastContent}`
-    : "인터뷰 질문 카드 준비가 중단됐습니다. 다시 시작해 주세요.";
-
-  state.iddSetup = await persistIddSetupState(
-    workspaceRoot,
-    setIddSetupError(state.iddSetup, {
-      provider,
-      docType,
-      message,
-    }),
-  );
-
-  if (lastAssistant && lastAssistant.state !== "error") {
-    lastAssistant.state = "error";
-    lastAssistant.error = message;
-  } else if (!lastAssistant) {
-    session.messages.push(makeMessage({
-      role: "assistant",
-      provider: session.provider,
-      content: message,
-      state: "error",
-    }));
-  }
-  session.status = "error";
-  session.error = message;
-  session.runtime = {
-    ...(session.runtime || {}),
-    iddPendingAdaptiveContinuation: null,
-  };
-  touch(session);
-  state.sessions.set(session.id, session);
-  await persistSessions();
-
-  broadcast({
-    type: "idd_setup_state",
-    ...serializeIddSetupFields(state.iddSetup),
-    ...serializeBipSetupGate(currentBipSetupGate()),
-  });
-  broadcast({ type: "session_updated", session });
-  return true;
-}
-
-async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) {
+async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferredProvider = "" } = {}) {
   try {
     broadcastWorkspaceScanProgress(scanRoot, "scan.local · 로컬 문서 후보를 읽는 중", {
       stage: "local",
@@ -7198,9 +7481,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
         scan_root: scanRoot,
         found_count: localFoundCount,
         onboarding_hypothesis_confidence: localOnboardingHypothesis.confidence,
-        claude_model: WORKSPACE_SCAN_CLAUDE_MODEL,
-        codex_model: WORKSPACE_SCAN_CODEX_MODEL,
-        gemini_model: WORKSPACE_SCAN_GEMINI_MODEL,
+        scan_provider: normalizeProviderName(preferredProvider) || "frontier",
         agent_result_count: 0,
         provider_verification_skipped: true,
       });
@@ -7286,6 +7567,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
         scanRoot,
         deterministicPlan: day1AlignmentPlan,
         compatibilityIcpPlan: day1IcpPlan,
+        preferredProvider,
       });
       return;
     }
@@ -7302,23 +7584,11 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
         foundCount: localFoundCount,
       },
     );
-    const agentResults = await Promise.allSettled([
-      runWorkspaceScanAgent({
-        provider: "claude",
-        model: WORKSPACE_SCAN_CLAUDE_MODEL,
-        scanRoot,
-      }),
-      runWorkspaceScanAgent({
-        provider: "codex",
-        model: WORKSPACE_SCAN_CODEX_MODEL,
-        scanRoot,
-      }),
-      runWorkspaceScanAgent({
-        provider: "gemini",
-        model: WORKSPACE_SCAN_GEMINI_MODEL,
-        scanRoot,
-      }),
-    ]);
+    const agentResults = await Promise.allSettled(
+      selectScanProviderTargets(preferredProvider, WORKSPACE_SCAN_MODEL_BY_PROVIDER).map(
+        ({ provider, model }) => runWorkspaceScanAgent({ provider, model, scanRoot }),
+      ),
+    );
     const parsedAgentResults = agentResults
       .filter((result) => result.status === "fulfilled" && result.value)
       .map((result) => result.value);
@@ -7341,9 +7611,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
       scan_root: scanRoot,
       found_count: foundCount,
       onboarding_hypothesis_confidence: onboardingHypothesis.confidence,
-      claude_model: WORKSPACE_SCAN_CLAUDE_MODEL,
-      codex_model: WORKSPACE_SCAN_CODEX_MODEL,
-      gemini_model: WORKSPACE_SCAN_GEMINI_MODEL,
+      scan_provider: normalizeProviderName(preferredProvider) || "frontier",
       agent_result_count: parsedAgentResults.length,
     });
     markWorkspaceSetupScanSucceeded(scanRoot, {
@@ -7417,6 +7685,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "" } = {}) 
       scanRoot,
       deterministicPlan: day1AlignmentPlan,
       compatibilityIcpPlan: day1IcpPlan,
+      preferredProvider,
     });
   } catch (error) {
     telemetry.captureException(error, {
@@ -7921,7 +8190,7 @@ function countWorkspaceScanResults(result) {
  * event only refreshes the UI if a richer valid plan arrives; the legacy
  * day1IcpPlan remains attached as a compatibility fallback.
  */
-function triggerDay1AlignmentPlanBroadcast({ scanRoot, deterministicPlan, compatibilityIcpPlan = null }) {
+function triggerDay1AlignmentPlanBroadcast({ scanRoot, deterministicPlan, compatibilityIcpPlan = null, preferredProvider = "" }) {
   if (!scanRoot || !deterministicPlan) return;
   if (process.env.AGENTIC30_TEST_STUB_PROVIDER === "1") return;
   Promise.resolve()
@@ -7929,6 +8198,7 @@ function triggerDay1AlignmentPlanBroadcast({ scanRoot, deterministicPlan, compat
       const frontierResults = await runDay1ChoiceFrontierSynthesis({
         scanRoot,
         deterministicPlan,
+        preferredProvider,
       });
       return composeDay1AlignmentPlan({
         workspaceRoot: scanRoot,
@@ -7953,12 +8223,8 @@ function triggerDay1AlignmentPlanBroadcast({ scanRoot, deterministicPlan, compat
     });
 }
 
-async function runDay1ChoiceFrontierSynthesis({ scanRoot, deterministicPlan }) {
-  const providers = [
-    { provider: "claude", model: DAY1_CHOICE_CLAUDE_MODEL },
-    { provider: "codex", model: DAY1_CHOICE_CODEX_MODEL },
-    { provider: "gemini", model: DAY1_CHOICE_GEMINI_MODEL },
-  ];
+async function runDay1ChoiceFrontierSynthesis({ scanRoot, deterministicPlan, preferredProvider = "" }) {
+  const providers = selectScanProviderTargets(preferredProvider, DAY1_CHOICE_MODEL_BY_PROVIDER);
   const prompt = buildDay1AlignmentComposerPrompt(deterministicPlan);
   const results = await Promise.allSettled(
     providers.map(({ provider, model }) =>
@@ -7977,9 +8243,7 @@ async function runDay1ChoiceFrontierSynthesis({ scanRoot, deterministicPlan }) {
     telemetry.captureEvent("mac_sidecar_day1_choice_frontier_completed", {
       scan_root: scanRoot,
       provider_count: fulfilled.length,
-      claude_model: DAY1_CHOICE_CLAUDE_MODEL,
-      codex_model: DAY1_CHOICE_CODEX_MODEL,
-      gemini_model: DAY1_CHOICE_GEMINI_MODEL,
+      providers: providers.map(({ provider }) => provider).join(","),
     });
   }
   return fulfilled;
@@ -8267,6 +8531,174 @@ async function runNewsMarketRadarRefresh({
     return failed;
   } finally {
     clearInterval(progressHeartbeat);
+  }
+}
+
+const WORK_HISTORY_PROVIDER_TIMEOUT_MS = 180_000;
+
+function buildWorkHistoryProgressStatus(progress = {}, { reason, startedAt, stale = false } = {}) {
+  return {
+    state: "refreshing",
+    lastSuccessAt: null,
+    stale,
+    error: null,
+    reason: reason || null,
+    stage: progress.stage || null,
+    progressText: progress.progressText || null,
+    elapsedMs: startedAt ? Date.now() - startedAt : null,
+  };
+}
+
+function scheduleWorkHistoryRefresh({ reason = "manual", targetSocket = null, preferredProvider = "" } = {}) {
+  const normalizedReason = ["manual", "tab_enter", "background"].includes(reason)
+    ? reason
+    : "manual";
+  if (state.workHistoryRefreshPromise) {
+    const status = buildWorkHistoryProgressStatus(state.workHistoryProgress || {}, {
+      reason: normalizedReason,
+      startedAt: state.workHistoryProgressStartedAt,
+      stale: true,
+    });
+    state.workHistoryProgress = status;
+    send(targetSocket, { type: "work_history_status", status });
+    return state.workHistoryRefreshPromise;
+  }
+  const promise = runWorkHistoryRefresh({ reason: normalizedReason, targetSocket, preferredProvider }).finally(() => {
+    state.workHistoryRefreshPromise = null;
+    state.workHistoryProgress = null;
+    state.workHistoryProgressStartedAt = null;
+  });
+  state.workHistoryRefreshPromise = promise;
+  return promise;
+}
+
+/// One-shot Claude pass that refines the deterministic weekly snapshot (area
+/// names + coach summaries). No tools/MCP; strict-JSON contract; any failure
+/// falls back to the deterministic snapshot inside composeWorkHistorySnapshot.
+async function runWorkHistoryClaudeRefinement(prompt) {
+  const packagePath = resolveInstalledPackageRoot("@anthropic-ai", "claude-agent-sdk");
+  const cliPath = path.join(packagePath, "cli.js");
+  const env = buildClaudeAgentEnv();
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), WORK_HISTORY_PROVIDER_TIMEOUT_MS);
+  const options = {
+    pathToClaudeCodeExecutable: cliPath,
+    executable: process.execPath,
+    env,
+    cwd: workspaceRoot,
+    maxTurns: 1,
+    includePartialMessages: false,
+    abortController,
+    systemPrompt: [
+      "You refine a weekly work retrospective for Agentic30's History tab.",
+      "Korean coach tone. Never invent data; never change numbers.",
+      "Return strict JSON only.",
+    ].join("\n"),
+  };
+  let text = "";
+  try {
+    const stream = query({ prompt, options });
+    for await (const event of stream) {
+      if (event.type === "assistant" && event.message?.content) {
+        for (const content of event.message.content) {
+          if (content.type === "text" && content.text) {
+            text += content.text;
+          }
+        }
+      }
+      if (event.type === "result" && event.result) {
+        text += `\n${event.result}`;
+      }
+    }
+    return text;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/// Provider-aware one-shot refinement for non-Claude providers. Text-only
+/// (isolated_read_only → no tools/MCP); strict-JSON contract is embedded in the
+/// prompt because the text-only path does not forward a separate system prompt.
+/// Any failure falls back to the deterministic snapshot in composeWorkHistorySnapshot.
+async function runWorkHistoryProviderRefinement(prompt, { provider, model = "" } = {}) {
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), WORK_HISTORY_PROVIDER_TIMEOUT_MS);
+  let text = "";
+  try {
+    const guardedPrompt = [
+      "You refine a weekly work retrospective for Agentic30's History tab.",
+      "Korean coach tone. Never invent data; never change numbers.",
+      "Return strict JSON only.",
+      "",
+      prompt,
+    ].join("\n");
+    await runProviderStream({
+      provider,
+      prompt: guardedPrompt,
+      model,
+      workspaceRoot,
+      abortController,
+      executionMode: "isolated_read_only",
+      onTextDelta: (chunk) => { text += String(chunk || ""); },
+      onTextReplace: (replacement) => { text = String(replacement || ""); },
+    });
+    return text;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function runWorkHistoryRefresh({ reason = "manual", targetSocket = null, preferredProvider = "" } = {}) {
+  const startedAt = Date.now();
+  state.workHistoryProgressStartedAt = startedAt;
+  // Honor the user's settings-selected provider. Default to claude only when no
+  // provider is supplied, preserving prior behavior for older clients.
+  const provider = normalizeProviderName(preferredProvider) || "claude";
+  const emitProgress = (progress = {}) => {
+    const status = buildWorkHistoryProgressStatus(progress, { reason, startedAt });
+    state.workHistoryProgress = status;
+    broadcast({ type: "work_history_status", status });
+    return status;
+  };
+  emitProgress({ stage: "start", progressText: "이번 주 작업 기록을 인덱싱하는 중" });
+  try {
+    const snapshot = await refreshWorkHistory({
+      workspaceRoot,
+      reason,
+      queryImpl: (prompt) => provider === "claude"
+        ? runWorkHistoryClaudeRefinement(prompt)
+        : runWorkHistoryProviderRefinement(prompt, { provider }),
+      onProgress: emitProgress,
+    });
+    broadcast({ type: "work_history_result", workHistory: snapshot });
+    telemetry.captureEvent("mac_sidecar_work_history_refresh_completed", {
+      reason,
+      duration_ms: Date.now() - startedAt,
+      ai_minutes: snapshot.totals?.aiMinutes || 0,
+      my_commit_count: snapshot.totals?.myCommitCount || 0,
+      session_count: snapshot.totals?.sessionCount || 0,
+      unclassified_count: snapshot.unclassified?.length || 0,
+      github_connected: Boolean(snapshot.github?.connected),
+      status: snapshot.status?.state || "",
+    });
+    return snapshot;
+  } catch (error) {
+    telemetry.captureException(error, { operation: "work_history_refresh", reason });
+    const cached = await loadWorkHistorySnapshot({ workspaceRoot });
+    const failed = {
+      ...cached,
+      status: {
+        ...cached.status,
+        state: "failed",
+        stale: true,
+        error: formatError(error),
+        reason,
+      },
+    };
+    const payload = { type: "work_history_result", workHistory: failed };
+    if (targetSocket) send(targetSocket, payload);
+    else broadcast(payload);
+    return failed;
   }
 }
 
@@ -8938,13 +9370,16 @@ function extractGeminiResponseText(response) {
   return text;
 }
 
-async function runCreateDoc(docRoot, docType) {
-  const authState = getProviderAuthState("claude");
+async function runCreateDoc(docRoot, docType, { preferredProvider = "" } = {}) {
+  // Honor the user's settings-selected provider. Default to claude only when no
+  // provider is supplied (older Mac client), which preserves prior behavior.
+  const provider = normalizeProviderName(preferredProvider) || "claude";
+  const authState = getProviderAuthState(provider);
   if (!authState.available) {
   broadcast({
       type: "doc_creation_result",
       docType,
-      error: "Claude is not available. " + authState.message,
+      error: `${provider} is not available. ` + authState.message,
     });
     return;
   }
@@ -9027,10 +9462,6 @@ async function runCreateDoc(docRoot, docType) {
   }
 
   try {
-    const packagePath = resolveInstalledPackageRoot("@anthropic-ai", "claude-agent-sdk");
-    const cliPath = path.join(packagePath, "cli.js");
-    const env = buildClaudeAgentEnv();
-
     const systemPrompt = [
       "You are a project document generator. Your job is to explore the given workspace,",
       "understand the project's purpose, tech stack, and current state, then create a specific document.",
@@ -9050,17 +9481,6 @@ async function runCreateDoc(docRoot, docType) {
     ].join("\n");
 
     const abortController = new AbortController();
-    const options = {
-      pathToClaudeCodeExecutable: cliPath,
-      executable: process.execPath,
-      env,
-      cwd: docRoot,
-      maxTurns: 12,
-      systemPrompt,
-      allowDangerouslySkipPermissions: true,
-      permissionMode: "bypassPermissions",
-      abortController,
-    };
 
   const prompt = [
       `${template.guide}`,
@@ -9068,33 +9488,21 @@ async function runCreateDoc(docRoot, docType) {
       `Explore this workspace first, then write the document and save it to "${template.filename}".`,
     ].join("\n");
 
-    const stream = query({
+    await runProviderStream({
+      provider,
       prompt,
-      options,
-    });
-    for await (const event of stream) {
-      if (event.type === "assistant" && event.message?.content) {
-        for (const content of event.message.content) {
-          if (content.type === "tool_use") {
-            const name = content.name || "tool";
-            const input = content.input || {};
-            let detail = "";
-            if (name === "Read" || name === "Glob") {
-              detail = input.file_path || input.pattern || "";
-            } else if (name === "Bash") {
-              const cmd = String(input.command || "");
-              detail = cmd.length > 60 ? cmd.slice(0, 57) + "..." : cmd;
-            } else if (name === "Write" || name === "Edit") {
-              detail = input.file_path || "";
-            } else if (name === "Grep") {
-              detail = input.pattern || "";
-            }
-            const text = detail ? `${name}: ${detail}` : name;
-            broadcast({ type: "doc_creation_progress", docType, progressText: text });
-          }
+      workspaceRoot: docRoot,
+      abortController,
+      executionMode: "agentic",
+      approvedToolExecution: true,
+      systemPromptOverride: systemPrompt,
+      onToolEvent: (toolEvent) => {
+        const summary = formatChatToolEvent(toolEvent);
+        if (summary) {
+          broadcast({ type: "doc_creation_progress", docType, progressText: summary });
         }
-    }
-    }
+      },
+    });
 
     // Verify the file was created
     const createdPath = path.resolve(docRoot, template.filename);
@@ -9536,6 +9944,7 @@ function setAssistantText(session, messageId, content) {
     && !extractedDecision
     && !message.inlineDecision
     && !session.pendingUserInput
+    && !activeOfficeHoursContext(session)
   ) {
     const inferred = inferInlineDecisionFromPlainText(resolvedContent);
     if (inferred.decision) {
@@ -9729,7 +10138,7 @@ function makeMessage({
     if (extracted.decision) {
       resolvedDecision = extracted.decision;
       resolvedContent = extracted.text;
-    } else {
+    } else if (!activeOfficeHoursContext(session)) {
       const inferred = inferInlineDecisionFromPlainText(resolvedContent);
       if (inferred.decision) {
         resolvedDecision = inferred.decision;
@@ -9927,10 +10336,19 @@ async function syncPendingUserInputRequests() {
     }
     if (session.pendingUserInput?.requestId === request.requestId) continue;
 
-    session.pendingUserInput = attachIddAdaptiveContinuationToRequest(session, request);
+    const nextRequest = session.runtime?.officeHours?.active === true
+      ? normalizeOfficeHoursStructuredPromptRequest(request)
+      : request;
+    session.pendingUserInput = attachIddAdaptiveContinuationToRequest(session, nextRequest);
     session.status = "awaiting_input";
     touch(session);
     changedSessions.add(session.id);
+    if (isOfficeHoursStructuredRequest(session.pendingUserInput)) {
+      emitOfficeHoursStatus(session, {
+        stage: "question_ready",
+        requestId: request.requestId,
+      });
+    }
   }
 
   for (const session of state.sessions.values()) {
@@ -10601,12 +11019,12 @@ async function handleBipReadinessAction(request) {
     // Telemetry: row_completed (once per transition to done)
     if (status === "done" && bipReadinessUserFacingRows.has(id) && !bipReadinessCompletedRows.has(id)) {
       bipReadinessCompletedRows.add(id);
-      telemetry.captureEvent("mac_bip_readiness_row_completed", { row_id: id });
+      telemetry.captureEvent("mac_sidecar_bip_readiness_row_completed", { row_id: id });
 
       // all_complete fires when all user-facing BIP setup rows are done
       if (bipReadinessCompletedRows.size === bipReadinessUserFacingRows.size && bipReadinessViewedAt != null) {
         const total_duration_ms_from_view = Date.now() - bipReadinessViewedAt;
-        telemetry.captureEvent("mac_bip_readiness_all_complete", { total_duration_ms_from_view });
+        telemetry.captureEvent("mac_sidecar_bip_readiness_all_complete", { total_duration_ms_from_view });
         bipReadinessViewedAt = null;
         bipReadinessCompletedRows.clear();
     }
@@ -10614,7 +11032,7 @@ async function handleBipReadinessAction(request) {
 
     // Telemetry: row_failed
     if (status === "blocked" && error) {
-      telemetry.captureEvent("mac_bip_readiness_row_failed", {
+      telemetry.captureEvent("mac_sidecar_bip_readiness_row_failed", {
         row_id: id,
         error_kind: error.kind || "unknown",
     });
@@ -10644,7 +11062,7 @@ async function handleBipReadinessAction(request) {
       currentMission: null,
       lastError: null,
     });
-    await persistAndBroadcastBipCoach("mac_bip_readiness_resource_connected", {
+    await persistAndBroadcastBipCoach("mac_sidecar_bip_readiness_resource_connected", {
       row_id: id,
       kind,
       has_doc: Boolean(config.docId),
@@ -10680,7 +11098,7 @@ async function handleBipReadinessAction(request) {
         bipReadinessCompletedRows.add(row.id);
     }
     }
-  telemetry.captureEvent("mac_bip_readiness_card_viewed", { initial_completion });
+  telemetry.captureEvent("mac_sidecar_bip_readiness_card_viewed", { initial_completion });
     return;
   }
 
@@ -10720,7 +11138,7 @@ async function handleBipReadinessAction(request) {
 
   function completeGwsAuth(authStartedAt) {
     activeAuthCancels.delete("gwsAuth");
-  telemetry.captureEvent("mac_bip_readiness_row_completed", {
+  telemetry.captureEvent("mac_sidecar_bip_readiness_row_completed", {
       row_id: "gwsAuth",
       duration_ms: Date.now() - authStartedAt,
     });
@@ -10734,7 +11152,7 @@ async function handleBipReadinessAction(request) {
     const existing = activeAuthCancels.get("gwsAuth");
     if (existing) existing();
 
-  telemetry.captureEvent("mac_bip_readiness_row_started", { row_id: "gwsAuth" });
+  telemetry.captureEvent("mac_sidecar_bip_readiness_row_started", { row_id: "gwsAuth" });
     const authStartedAt = Date.now();
 
     emitRow("gwsAuth", "in-progress", "저장된 Google Workspace 연결을 확인하는 중...");
@@ -10795,7 +11213,7 @@ async function handleBipReadinessAction(request) {
       detail: "npm 설치 중",
       log: "npm install -g @googleworkspace/cli",
     });
-  telemetry.captureEvent("mac_bip_readiness_row_started", { row_id: "gwsInstall" });
+  telemetry.captureEvent("mac_sidecar_bip_readiness_row_started", { row_id: "gwsInstall" });
     const installStartedAt = Date.now();
     installGws({
       env: process.env,
@@ -10804,7 +11222,7 @@ async function handleBipReadinessAction(request) {
       },
       onComplete({ success, error }) {
         if (success) {
-          telemetry.captureEvent("mac_bip_readiness_row_completed", {
+          telemetry.captureEvent("mac_sidecar_bip_readiness_row_completed", {
             row_id: "gwsInstall",
             duration_ms: Date.now() - installStartedAt,
           });
@@ -10861,7 +11279,7 @@ async function handleBipReadinessAction(request) {
     const sourceId = kind === "doc" ? BIP_TEMPLATE_DOC_ID : BIP_TEMPLATE_SHEET_ID;
     const title = kind === "doc" ? "Agentic30 업무일지" : "Agentic30 게시글 일지";
     emitRow(rowId, "in-progress", "템플릿을 내 Drive에 복사 중");
-  telemetry.captureEvent("mac_bip_readiness_row_started", { row_id: rowId, action: "copy_template" });
+  telemetry.captureEvent("mac_sidecar_bip_readiness_row_started", { row_id: rowId, action: "copy_template" });
     const copyStartedAt = Date.now();
     const result = await copyTemplateToDrive({
       env: process.env,
@@ -10880,7 +11298,7 @@ async function handleBipReadinessAction(request) {
     });
     if (result.ok) {
       await persistConnectedBipResource(rowId, kind, result);
-      telemetry.captureEvent("mac_bip_readiness_row_completed", {
+      telemetry.captureEvent("mac_sidecar_bip_readiness_row_completed", {
         row_id: rowId,
         duration_ms: Date.now() - copyStartedAt,
     });
@@ -10911,7 +11329,7 @@ async function handleBipReadinessAction(request) {
     const url = String(actionPayload.url || "").trim();
     const kind = rowId === "docUrl" ? "doc" : "sheet";
     emitRow(rowId, "in-progress", "권한 확인 중");
-  telemetry.captureEvent("mac_bip_readiness_row_started", { row_id: rowId });
+  telemetry.captureEvent("mac_sidecar_bip_readiness_row_started", { row_id: rowId });
     const validateStartedAt = Date.now();
     validateUrl({ env: process.env, url, kind }).then((result) => {
       if (result.ok) {
@@ -10919,7 +11337,7 @@ async function handleBipReadinessAction(request) {
           ...result,
           url,
         }).then(() => {
-          telemetry.captureEvent("mac_bip_readiness_row_completed", {
+          telemetry.captureEvent("mac_sidecar_bip_readiness_row_completed", {
             row_id: rowId,
             duration_ms: Date.now() - validateStartedAt,
           });

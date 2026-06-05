@@ -8,6 +8,14 @@ nonisolated struct PostHogTelemetryConfig: Equatable {
     static let publicProjectAPIKey = "phc_IXc1t2XtX4u1lOK8XHuiuE7Z0IwjiQSMxmG1rDWgMgA"
     static let defaultHost = "https://us.i.posthog.com"
 
+    /// Environment variable names the Node sidecar reads to resolve its own
+    /// PostHog capture config (`sidecar/telemetry.mjs`). The Swift shell must
+    /// forward the resolved values via `PostHogTelemetry.sidecarEnvironmentOverrides()`:
+    /// the sidecar has no embedded fallback key, so without this it silently
+    /// drops every event.
+    static let projectAPIKeyEnvironmentKey = "POSTHOG_PROJECT_API_KEY"
+    static let hostEnvironmentKey = "POSTHOG_HOST"
+
     let projectAPIKey: String
     let host: String
 }
@@ -424,9 +432,19 @@ enum PostHogTelemetry {
 
     static func sidecarEnvironmentOverrides() -> [String: String] {
         var overrides = currentRuntimePolicy.environmentVariables
-        if isTelemetryDisabledByUser
-            || ProcessInfo.processInfo.environment[PostHogTelemetryRuntimePolicy.disableTelemetryEnvironmentKey] == "1" {
+        let disabledByUserOrEnv = isTelemetryDisabledByUser
+            || ProcessInfo.processInfo.environment[PostHogTelemetryRuntimePolicy.disableTelemetryEnvironmentKey] == "1"
+        if disabledByUserOrEnv {
             overrides[PostHogTelemetryRuntimePolicy.disableTelemetryEnvironmentKey] = "1"
+        }
+        // Forward the same capture key/host the Swift SDK resolved (including the
+        // public build fallback) so the sidecar can emit too. Without this the
+        // sidecar's loadConfig() finds no phc_ key and drops every event.
+        // loadConfig() already returns nil when telemetry is suppressed for this
+        // process, so dev/test builds stay silent automatically.
+        if !disabledByUserOrEnv, let config = loadConfig() {
+            overrides[PostHogTelemetryConfig.projectAPIKeyEnvironmentKey] = config.projectAPIKey
+            overrides[PostHogTelemetryConfig.hostEnvironmentKey] = config.host
         }
         return overrides
     }

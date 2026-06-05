@@ -104,7 +104,13 @@ async function handleNotification(method, params) {
 
 function createSession(params) {
   const cwd = path.resolve(params.cwd || process.cwd());
-  const provider = params.sessionConfig?.provider === "claude" ? "claude" : "codex";
+  // Honor any explicitly selected provider (including gemini); default to codex
+  // only for unset/unknown values. The old `=== "claude" ? "claude" : "codex"`
+  // ternary silently downgraded a gemini selection to codex.
+  const requestedProvider = String(params.sessionConfig?.provider || "").trim().toLowerCase();
+  const provider = ["claude", "codex", "gemini"].includes(requestedProvider)
+    ? requestedProvider
+    : "codex";
   const model = typeof params.sessionConfig?.model === "string" ? params.sessionConfig.model : "";
   const sessionId = `sess_${randomUUID().replace(/-/g, "")}`;
 

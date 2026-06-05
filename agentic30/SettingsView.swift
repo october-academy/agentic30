@@ -1335,23 +1335,23 @@ struct SettingsView: View {
             HStack(alignment: .center, spacing: 14) {
                 providerIcon(provider)
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 7) {
                     Text(providerSettingsTitle(provider))
                         .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.88))
+                        .foregroundStyle(settingsText.opacity(0.9))
 
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill((status?.available ?? false) ? Agentic30BrandColor.greenBright : Color(red: 0.96, green: 0.78, blue: 0.54))
-                            .frame(width: 7, height: 7)
-                        Text(providerStatusLabel(status))
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .foregroundStyle(settingsText.opacity(0.54))
-                            .lineLimit(1)
-                    }
+                    providerStatusBadge(provider: provider, status: status)
                 }
 
                 Spacer(minLength: 0)
+            }
+
+            if let detail = providerStatusDetail(status) {
+                Text(detail)
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(settingsText.opacity(0.5))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("settings.\(provider.rawValue).statusDetail")
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -1408,10 +1408,11 @@ struct SettingsView: View {
             Button(action: saveAgentSettingsValues) {
                 Text("Save Agent Settings")
                     .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.9))
+                    .foregroundStyle(settingsAccentColor)
                     .padding(.horizontal, 24)
                     .padding(.vertical, 10)
-                    .background(Capsule().fill(settingsText.opacity(0.18)))
+                    .background(Capsule().fill(settingsAccentColor.opacity(0.15)))
+                    .overlay(Capsule().stroke(settingsAccentColor.opacity(0.32), lineWidth: 1))
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("settings.agents.saveButton")
@@ -1440,11 +1441,25 @@ struct SettingsView: View {
             symbol = "diamond"
         }
 
+        let accent = providerAccentColor(provider)
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
         return Image(systemName: symbol)
             .font(.system(size: 21, weight: .semibold))
-            .foregroundStyle(settingsText.opacity(0.75))
+            .foregroundStyle(accent)
             .frame(width: 44, height: 44)
-            .background(settingsText.opacity(0.085), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(accent.opacity(0.14), in: shape)
+            .overlay(shape.stroke(accent.opacity(0.24), lineWidth: 1))
+    }
+
+    private func providerAccentColor(_ provider: AgentProvider) -> Color {
+        switch provider {
+        case .claude:
+            return OpenDesignDayColor.amber
+        case .codex:
+            return OpenDesignDayColor.accent
+        case .gemini:
+            return OpenDesignDayColor.sky
+        }
     }
 
     private func providerSettingsTitle(_ provider: AgentProvider) -> String {
@@ -1481,9 +1496,52 @@ struct SettingsView: View {
         }
     }
 
-    private func providerStatusLabel(_ status: SidecarProviderEnvironment?) -> String {
-        guard let status else { return "Checking local auth" }
-        return "\(status.available ? "Ready" : "Not ready") · \(status.message)"
+    private struct ProviderStatusBadgeStyle {
+        let label: String
+        let dot: Color
+        let text: Color
+    }
+
+    private func providerStatusBadgeStyle(_ status: SidecarProviderEnvironment?) -> ProviderStatusBadgeStyle {
+        guard let status else {
+            let muted = OpenDesignDayColor.muted
+            return ProviderStatusBadgeStyle(label: "Checking status…", dot: muted, text: muted)
+        }
+        if status.available {
+            let green = Agentic30BrandColor.greenBright
+            return ProviderStatusBadgeStyle(label: "Connected", dot: green, text: green)
+        }
+        let amber = OpenDesignDayColor.amber
+        // White-theme amber is too light to read as text, so deepen it for the label.
+        let amberText = Agentic30Theme.current == .white
+            ? Color(red: 0.66, green: 0.46, blue: 0.09)
+            : amber
+        return ProviderStatusBadgeStyle(label: "Not connected", dot: amber, text: amberText)
+    }
+
+    private func providerStatusBadge(provider: AgentProvider, status: SidecarProviderEnvironment?) -> some View {
+        let style = providerStatusBadgeStyle(status)
+        let capsule = Capsule(style: .continuous)
+        return HStack(spacing: 6) {
+            Circle()
+                .fill(style.dot)
+                .frame(width: 6, height: 6)
+            Text(style.label)
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(style.text)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)
+        .background(capsule.fill(style.dot.opacity(0.12)))
+        .overlay(capsule.stroke(style.dot.opacity(0.24), lineWidth: 1))
+        .accessibilityIdentifier("settings.\(provider.rawValue).statusBadge")
+    }
+
+    private func providerStatusDetail(_ status: SidecarProviderEnvironment?) -> String? {
+        guard let status else { return nil }
+        let message = status.message.trimmingCharacters(in: .whitespacesAndNewlines)
+        return message.isEmpty ? nil : message
     }
 
     private func authModeMenu(provider: AgentProvider, selection: Binding<String>) -> some View {

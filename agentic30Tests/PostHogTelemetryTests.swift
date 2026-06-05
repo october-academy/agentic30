@@ -31,6 +31,45 @@ final class PostHogTelemetryTests: XCTestCase {
         XCTAssertEqual(PostHogTelemetry.loadConfigForTesting()?.host, "https://us.i.posthog.com")
     }
 
+    func testSidecarEnvironmentOverridesForwardResolvedProjectKeyAndHost() {
+        // Regression guard: the Node sidecar has no embedded fallback key, so the
+        // Swift shell must hand it the resolved capture key/host. Without this
+        // every sidecar `mac_sidecar_*` event is silently dropped.
+        let disabledKey = PostHogTelemetry.telemetryDisabledDefaultsKey
+        let wasDisabled = UserDefaults.standard.bool(forKey: disabledKey)
+        UserDefaults.standard.set(false, forKey: disabledKey)
+        PostHogTelemetry.configurationProvider = {
+            PostHogTelemetryConfig(projectAPIKey: "phc_sidecar_forward", host: "https://us.posthog.com")
+        }
+        defer {
+            PostHogTelemetry.resetTestingHooks()
+            UserDefaults.standard.set(wasDisabled, forKey: disabledKey)
+        }
+
+        let overrides = PostHogTelemetry.sidecarEnvironmentOverrides()
+        XCTAssertEqual(
+            overrides[PostHogTelemetryConfig.projectAPIKeyEnvironmentKey],
+            "phc_sidecar_forward",
+            "sidecar must receive the resolved capture key or it silently drops every event"
+        )
+        XCTAssertEqual(
+            overrides[PostHogTelemetryConfig.hostEnvironmentKey],
+            "https://us.i.posthog.com",
+            "host must be forwarded as the normalized ingest base URL"
+        )
+    }
+
+    func testSidecarEnvironmentOverridesOmitKeyWhenTelemetrySuppressed() {
+        // With no configuration provider, the XCTest process is telemetry-suppressed,
+        // so loadConfig() returns nil and no capture key must leak to the sidecar.
+        PostHogTelemetry.resetTestingHooks()
+        let overrides = PostHogTelemetry.sidecarEnvironmentOverrides()
+        XCTAssertNil(
+            overrides[PostHogTelemetryConfig.projectAPIKeyEnvironmentKey],
+            "suppressed processes (tests/dev builds) must not forward a capture key"
+        )
+    }
+
     func testRuntimePolicySuppressesDebugTelemetryUnlessEnabled() {
         let suppressed = PostHogTelemetryRuntimePolicy.resolve(
             isDebugBuild: true,
