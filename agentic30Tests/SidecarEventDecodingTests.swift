@@ -412,7 +412,7 @@ struct SidecarEventDecodingTests {
         {
           "type": "bip_coach_state",
           "bipCoach": {
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "updatedAt": "2026-04-24T06:00:00.000Z",
             "sessionId": "session-1",
             "config": {
@@ -1516,7 +1516,38 @@ struct SidecarEventDecodingTests {
                 { "text": "미분류 세션 마무리", "evidence": "세션 1건 · 수정 파일 1개", "areaName": null }
               ]
             },
-            "fingerprint": { "headSha": "aaa111" }
+            "retrospective": {
+              "headline": "이번 주 작업은 진척보다 먼저 닫아야 할 루프가 보입니다.",
+              "verdict": "close_loop",
+              "insights": [
+                {
+                  "id": "focus-sidecar",
+                  "claim": "사이드카에 이번 주 작업 에너지가 가장 많이 모였습니다.",
+                  "whyItMatters": "이 집중이 고객 증거나 다음 실험으로 이어지는지 확인해야 합니다.",
+                  "confidence": "high",
+                  "evidenceRefs": ["사이드카 · AI 1시간 30분 · 커밋 1건", "sidecar/index.mjs"]
+                }
+              ],
+              "riskFlags": [
+                {
+                  "id": "unclassified",
+                  "label": "미분류 세션",
+                  "severity": "watch",
+                  "reason": "커밋으로 이어지지 않은 AI 세션 1개가 남아 있습니다.",
+                  "evidenceRefs": ["미분류 30분"]
+                }
+              ],
+              "nextActions": [
+                { "text": "미분류 세션을 커밋으로 닫거나 버린 작업으로 표시하세요.", "evidence": "미분류 30분", "insightId": "unclassified-loop" }
+              ],
+              "evidenceMix": [
+                { "source": "ai_session", "label": "AI 세션", "count": 2, "status": "connected" },
+                { "source": "git_github", "label": "git/GitHub", "count": 4, "status": "connected" },
+                { "source": "workspace_docs", "label": "워크스페이스 문서", "count": 2, "status": "connected" },
+                { "source": "interview", "label": "인터뷰", "count": 0, "status": "missing" }
+              ]
+            },
+            "fingerprint": { "headHash": "f3552f14" }
           }
         }
         """
@@ -1535,8 +1566,41 @@ struct SidecarEventDecodingTests {
         #expect(event.workHistory?.days.first?.referenceEvents.first?.kind == "pr")
         #expect(event.workHistory?.unclassified.first?.minutes == 30)
         #expect(event.workHistory?.weekly.headline.contains("AI 세션") == true)
+        #expect(event.workHistory?.retrospective.verdict == "close_loop")
+        #expect(event.workHistory?.retrospective.insights.first?.evidenceRefs.first?.contains("사이드카") == true)
+        #expect(event.workHistory?.retrospective.riskFlags.first?.label == "미분류 세션")
+        #expect(event.workHistory?.retrospective.nextActions.first?.insightId == "unclassified-loop")
+        #expect(event.workHistory?.retrospective.evidenceMix.first?.source == "ai_session")
         #expect(event.workHistory?.hasData == true)
         #expect(event.workHistory?.requiresGitHub == false)
+    }
+
+    @MainActor @Test func decodesLegacyWorkHistoryV1PayloadWithoutRetrospective() throws {
+        let payload = """
+        {
+          "type": "work_history_result",
+          "workHistory": {
+            "schemaVersion": 1,
+            "generatedAt": "2026-06-05T03:00:00.000Z",
+            "weekStart": "2026-06-01",
+            "weekEnd": "2026-06-07",
+            "status": { "state": "ready", "lastSuccessAt": "2026-06-05T03:00:00.000Z", "stale": false, "error": null, "reason": "manual" },
+            "github": { "connected": true, "prCount": 0, "issueCount": 0, "releaseCount": 0 },
+            "totals": { "aiMinutes": 10, "unclassifiedMinutes": 0, "myCommitCount": 1, "otherCommitCount": 0, "sessionCount": 1, "activeDays": 1 },
+            "areas": [],
+            "days": [],
+            "unclassified": [],
+            "weekly": { "headline": "legacy", "coachNotes": [], "nextActions": [] }
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.workHistory?.schemaVersion == 1)
+        #expect(event.workHistory?.retrospective.verdict == "continue")
+        #expect(event.workHistory?.retrospective.insights.isEmpty == true)
+        #expect(event.workHistory?.weekly.headline == "legacy")
     }
 
     @MainActor @Test func decodesWorkHistoryStatusObject() throws {

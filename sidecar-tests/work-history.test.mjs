@@ -18,6 +18,9 @@ import {
   inferFeatureAreas,
   buildAreaDaySummary,
   buildNextActions,
+  buildWorkHistoryRetrospective,
+  normalizeWorkHistoryRetrospective,
+  collectWorkspaceEvidenceSignals,
   buildWeeklyWorkHistorySnapshot,
   emptyWorkHistorySnapshot,
   applyWorkHistoryRefinement,
@@ -276,6 +279,7 @@ function fixtureSnapshot({ connected = true } = {}) {
 test("buildWeeklyWorkHistorySnapshot aggregates AI time into areas, commits as activity", () => {
   const snapshot = fixtureSnapshot();
   assert.equal(snapshot.schemaVersion, WORK_HISTORY_SCHEMA_VERSION);
+  assert.equal(snapshot.schemaVersion, 2);
   assert.equal(snapshot.weekStart, "2026-06-01");
   assert.equal(snapshot.status.state, "ready");
 
@@ -319,13 +323,23 @@ test("buildWeeklyWorkHistorySnapshot aggregates AI time into areas, commits as a
   for (const action of snapshot.weekly.nextActions) {
     assert.ok(action.evidence);
   }
+  assert.ok(snapshot.retrospective.headline);
+  assert.equal(snapshot.retrospective.verdict, "close_loop");
+  assert.ok(snapshot.retrospective.insights.length >= 1);
+  assert.ok(snapshot.retrospective.insights.every((insight) => insight.evidenceRefs.length > 0));
+  assert.ok(snapshot.retrospective.riskFlags.some((risk) => risk.id === "unclassified"));
+  assert.ok(snapshot.retrospective.nextActions.some((action) => action.insightId === "unclassified-loop"));
+  assert.ok(snapshot.retrospective.evidenceMix.some((source) => source.source === "ai_session" && source.count === 2));
 
   // Round 34: no raw prompt/output text is persisted anywhere.
   const serialized = JSON.stringify(snapshot);
   assert.ok(!serialized.includes("sidecar add route"));
   assert.ok(!serialized.includes("다른 실험"));
-  // Round 13: commit SHAs stay out of the on-screen day/area references.
-  assert.ok(!JSON.stringify(snapshot.days).includes("aaa111"));
+  assert.ok(!serialized.includes("npm test"));
+  // Round 13 + v2: raw commit SHAs stay out of persisted/displayed snapshot.
+  assert.ok(!serialized.includes("aaa111"));
+  assert.ok(snapshot.fingerprint.headHash);
+  assert.equal(snapshot.fingerprint.headSha, undefined);
 });
 
 test("buildWeeklyWorkHistorySnapshot reports github_required when gh is unavailable", () => {
@@ -339,6 +353,8 @@ test("emptyWorkHistorySnapshot carries seven weekday rows", () => {
   assert.equal(empty.days.length, 7);
   assert.deepEqual(empty.days.map((d) => d.weekday), ["월", "화", "수", "목", "금", "토", "일"]);
   assert.equal(empty.status.state, "empty");
+  assert.equal(empty.retrospective.verdict, "continue");
+  assert.equal(empty.retrospective.evidenceMix.length, 7);
 });
 
 // ---------------------------------------------------------------------------
@@ -367,6 +383,58 @@ test("applyWorkHistoryRefinement renames areas and rewrites text fields only", (
   // Numbers stay deterministic.
   assert.equal(tuesday.areas[0].aiMinutes, 90);
   assert.equal(refined.totals.aiMinutes, snapshot.totals.aiMinutes);
+});
+
+test("applyWorkHistoryRefinement discards retrospective insights without evidence refs", () => {
+  const snapshot = fixtureSnapshot();
+  const refined = applyWorkHistoryRefinement(snapshot, {
+    retrospective: {
+      headline: "회고 인사이트",
+      verdict: "rebalance",
+      insights: [
+        { id: "no-evidence", claim: "근거 없는 주장", whyItMatters: "표시되면 안 됨", evidenceRefs: [] },
+        { id: "with-evidence", claim: "근거 있는 주장", whyItMatters: "다음 행동을 바꿉니다.", confidence: "high", evidenceRefs: ["sidecar/index.mjs"] },
+      ],
+      riskFlags: [],
+      nextActions: [{ text: "근거 있는 행동", evidence: "sidecar/index.mjs", insightId: "with-evidence" }],
+      evidenceMix: [{ source: "ai_session", count: 999, status: "connected" }],
+    },
+  });
+
+  assert.equal(refined.retrospective.headline, "회고 인사이트");
+  assert.equal(refined.retrospective.verdict, "rebalance");
+  assert.deepEqual(refined.retrospective.insights.map((insight) => insight.id), ["with-evidence"]);
+  assert.equal(refined.retrospective.insights[0].confidence, "high");
+  // Evidence mix is deterministic and cannot be rewritten by the provider pass.
+  assert.equal(
+    refined.retrospective.evidenceMix.find((item) => item.source === "ai_session").count,
+    snapshot.retrospective.evidenceMix.find((item) => item.source === "ai_session").count,
+  );
+});
+
+test("buildWorkHistoryRetrospective surfaces evidence mix and customer-evidence gap", () => {
+  const snapshot = fixtureSnapshot();
+  const retrospective = buildWorkHistoryRetrospective({
+    snapshot,
+    github: { connected: true, prs: [], issues: [], releases: [] },
+    workspaceEvidence: { workspaceDocsCount: 2, interviewCount: 0, bipCount: 0, missionCount: 0, curriculumCount: 1 },
+  });
+
+  assert.ok(retrospective.insights.some((insight) => insight.id === "customer-evidence-gap"));
+  assert.ok(retrospective.riskFlags.some((risk) => risk.id === "customer-evidence-gap"));
+  assert.equal(retrospective.evidenceMix.find((item) => item.source === "workspace_docs").count, 2);
+  assert.equal(retrospective.evidenceMix.find((item) => item.source === "interview").status, "missing");
+});
+
+test("normalizeWorkHistoryRetrospective falls back when all refined insights lack evidence", () => {
+  const fallback = fixtureSnapshot().retrospective;
+  const normalized = normalizeWorkHistoryRetrospective({
+    headline: "bad refinement",
+    insights: [{ id: "bad", claim: "bad", evidenceRefs: [] }],
+  }, fallback);
+
+  assert.equal(normalized.headline, "bad refinement");
+  assert.deepEqual(normalized.insights.map((insight) => insight.id), fallback.insights.map((insight) => insight.id));
 });
 
 test("composeWorkHistorySnapshot falls back to deterministic on bad agent output", async () => {
@@ -432,6 +500,31 @@ test("persist/load round-trips and flags staleness by week and age", async () =>
       tzOffsetMinutes: KST,
     });
     assert.equal(nextWeek.status.stale, true);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("loadWorkHistorySnapshot migrates v1 cache to v2 with retrospective and hashed fingerprint", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "work-history-v1-"));
+  try {
+    const v1 = { ...fixtureSnapshot(), schemaVersion: 1, retrospective: undefined, fingerprint: { headSha: "aaa111" } };
+    const cachePath = resolveWorkHistoryCachePath(dir);
+    await fs.mkdir(path.dirname(cachePath), { recursive: true });
+    await fs.writeFile(cachePath, JSON.stringify(v1));
+
+    const loaded = await loadWorkHistorySnapshot({
+      workspaceRoot: dir,
+      now: new Date("2026-06-05T12:10:00+09:00"),
+      tzOffsetMinutes: KST,
+    });
+
+    assert.equal(loaded.schemaVersion, 2);
+    assert.ok(loaded.retrospective.headline);
+    assert.ok(loaded.retrospective.evidenceMix.length >= 7);
+    assert.ok(loaded.fingerprint.headHash);
+    assert.equal(loaded.fingerprint.headSha, undefined);
+    assert.equal(JSON.stringify(loaded).includes("aaa111"), false);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
@@ -560,6 +653,27 @@ test("collectGeminiAgentEvents returns [] when logs are missing", async () => {
   assert.deepEqual(events, []);
 });
 
+test("collectWorkspaceEvidenceSignals counts local evidence source files best-effort", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "work-history-evidence-"));
+  try {
+    await fs.mkdir(path.join(dir, "docs"), { recursive: true });
+    await fs.mkdir(path.join(dir, "interviews"), { recursive: true });
+    await fs.mkdir(path.join(dir, "bip"), { recursive: true });
+    await fs.writeFile(path.join(dir, "docs", "SPEC.md"), "# spec");
+    await fs.writeFile(path.join(dir, "interviews", "call.md"), "transcript");
+    await fs.writeFile(path.join(dir, "bip", "post.json"), "{}");
+
+    const signals = await collectWorkspaceEvidenceSignals({ workspaceRoot: dir });
+
+    assert.equal(signals.workspaceDocsCount, 1);
+    assert.equal(signals.interviewCount, 1);
+    assert.equal(signals.bipCount, 1);
+    assert.equal(signals.curriculumCount, 1);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // refreshWorkHistory end-to-end with injected collaborators
 // ---------------------------------------------------------------------------
@@ -590,6 +704,7 @@ test("refreshWorkHistory assembles and persists a snapshot from injected sources
         { provider: "claude", sessionId: "s", ts: t + 45 * 60_000, kind: "command", cmd: "npm test" },
       ],
       geminiEventsImpl: async () => [],
+      workspaceEvidenceImpl: async () => ({ workspaceDocsCount: 1, interviewCount: 1, bipCount: 0, missionCount: 0, curriculumCount: 1 }),
       onProgress: (p) => stages.push(p.stage),
     });
     assert.equal(snapshot.status.state, "ready");
@@ -600,6 +715,9 @@ test("refreshWorkHistory assembles and persists a snapshot from injected sources
     const persisted = JSON.parse(await fs.readFile(resolveWorkHistoryCachePath(dir), "utf8"));
     assert.equal(persisted.schemaVersion, WORK_HISTORY_SCHEMA_VERSION);
     assert.equal(persisted.totals.aiMinutes, 45);
+    assert.equal(persisted.retrospective.evidenceMix.find((item) => item.source === "interview").count, 1);
+    assert.equal(JSON.stringify(persisted).includes("aaa111"), false);
+    assert.equal(JSON.stringify(persisted).includes("npm test"), false);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }

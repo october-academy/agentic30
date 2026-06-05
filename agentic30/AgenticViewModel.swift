@@ -3081,7 +3081,7 @@ final class AgenticViewModel: ObservableObject {
         }
         didEmitUITestingWorkHistoryEvents = true
         let snapshot = WorkHistorySnapshot(
-            schemaVersion: 1,
+            schemaVersion: 2,
             generatedAt: Date(timeIntervalSince1970: 1_780_000_000),
             weekStart: "2026-06-01",
             weekEnd: "2026-06-07",
@@ -3181,6 +3181,51 @@ final class AgenticViewModel: ObservableObject {
                         evidence: "세션 2026-06-02T13:00:00.000Z–2026-06-02T13:30:00.000Z · 수정 파일 1개",
                         areaName: nil
                     ),
+                ]
+            ),
+            retrospective: WorkHistoryRetrospective(
+                headline: "사이드카 라우팅은 닫을 수 있지만 미분류 세션 정리가 필요합니다.",
+                verdict: "close_loop",
+                insights: [
+                    WorkHistoryInsight(
+                        id: "sidecar-focus",
+                        claim: "사이드카 라우팅 집중은 실제 커밋으로 이어졌습니다.",
+                        whyItMatters: "집중 시간이 산출물로 이어진 영역이라 다음 주에는 테스트로 루프를 닫을 수 있습니다.",
+                        confidence: "high",
+                        evidenceRefs: ["사이드카 라우팅 1시간 45분", "커밋 3건"]
+                    ),
+                    WorkHistoryInsight(
+                        id: "unclassified-loop",
+                        claim: "미분류 Codex 세션은 아직 결정으로 연결되지 않았습니다.",
+                        whyItMatters: "진행 중 작업인지 폐기할 탐색인지 표시하지 않으면 회고가 시간 기록에 머뭅니다.",
+                        confidence: "medium",
+                        evidenceRefs: ["미분류 30분", "scripts/spike.mjs"]
+                    ),
+                ],
+                riskFlags: [
+                    WorkHistoryRiskFlag(
+                        id: "unclassified-session",
+                        label: "미분류 세션",
+                        severity: "medium",
+                        reason: "Codex 세션 30분이 커밋이나 PR 근거와 연결되지 않았습니다.",
+                        evidenceRefs: ["2026-06-02 13:00-13:30", "scripts/spike.mjs"]
+                    ),
+                ],
+                nextActions: [
+                    WorkHistoryRetrospectiveNextAction(
+                        text: "미분류 세션을 마무리하고 라우트 테스트를 추가하세요.",
+                        evidence: "scripts/spike.mjs 상태와 sidecar 라우팅 테스트 결과",
+                        insightId: "unclassified-loop"
+                    ),
+                ],
+                evidenceMix: [
+                    WorkHistoryEvidenceMix(source: "ai_session", label: "AI 세션", count: 3, status: "covered"),
+                    WorkHistoryEvidenceMix(source: "git_github", label: "git/GitHub", count: 4, status: "covered"),
+                    WorkHistoryEvidenceMix(source: "workspace_docs", label: "워크스페이스 문서", count: 1, status: "partial"),
+                    WorkHistoryEvidenceMix(source: "interview", label: "인터뷰", count: 0, status: "missing"),
+                    WorkHistoryEvidenceMix(source: "bip", label: "BIP", count: 0, status: "missing"),
+                    WorkHistoryEvidenceMix(source: "mission", label: "미션", count: 0, status: "missing"),
+                    WorkHistoryEvidenceMix(source: "curriculum", label: "커리큘럼", count: 0, status: "missing"),
                 ]
             )
         )

@@ -21,9 +21,9 @@
 //   - AI session boundary (round 19, delegated): tool-recorded session id,
 //     first→last event timestamp; sessions crossing midnight split per day.
 //   - Storage (round 34, delegated): derived data only — summaries, areas,
-//     paths, time ranges. Raw prompts/outputs stay in ~/.claude / ~/.codex /
-//     ~/.gemini and are re-scanned per index run; they are used in-memory for
-//     linking and then discarded. Snapshot lives in <workspace>/.agentic30/.
+//     paths, time ranges, retrospective projection. Raw prompts/outputs and
+//     raw commit SHAs stay in-memory and are discarded. Snapshot lives in
+//     <workspace>/.agentic30/.
 //   - GitHub: gh CLI is the source for remote data; when gh is missing or
 //     unauthenticated the snapshot reports status.state = "github_required"
 //     (round 39: GitHub 연결을 요구).
@@ -46,16 +46,30 @@ import { execFile } from "node:child_process";
 import { atomicWriteJson } from "./atomic-store.mjs";
 import { collectAgentWorkEvents } from "./agent-work-history.mjs";
 
-export const WORK_HISTORY_SCHEMA_VERSION = 1;
+export const WORK_HISTORY_SCHEMA_VERSION = 2;
 export const WORK_HISTORY_REFRESH_INTERVAL_MS = 60 * 60 * 1000; // hourly background reindex
 export const WORK_HISTORY_EXEC_TIMEOUT_MS = 20_000;
 export const WORK_HISTORY_MAX_COMMITS = 400;
 export const WORK_HISTORY_MAX_REFERENCE_EVENTS_PER_DAY = 12;
 export const WORK_HISTORY_MAX_PATHS_PER_AREA = 8;
 export const WORK_HISTORY_MAX_NEXT_ACTIONS = 3;
+export const WORK_HISTORY_MAX_RETROSPECTIVE_INSIGHTS = 3;
+export const WORK_HISTORY_MAX_RISK_FLAGS = 4;
 
 const WEEKDAY_LABELS_KO = ["월", "화", "수", "목", "금", "토", "일"];
 const DAY_MS = 86_400_000;
+const RETROSPECTIVE_VERDICTS = new Set(["continue", "rebalance", "close_loop", "pivot", "stop"]);
+const RETROSPECTIVE_CONFIDENCE = new Set(["high", "medium", "low"]);
+const RETROSPECTIVE_RISK_SEVERITY = new Set(["info", "watch", "blocker"]);
+const EVIDENCE_SOURCE_DEFS = Object.freeze([
+  { source: "ai_session", label: "AI 세션" },
+  { source: "git_github", label: "git/GitHub" },
+  { source: "workspace_docs", label: "워크스페이스 문서" },
+  { source: "interview", label: "인터뷰" },
+  { source: "bip", label: "BIP" },
+  { source: "mission", label: "미션" },
+  { source: "curriculum", label: "커리큘럼" },
+]);
 
 // ---------------------------------------------------------------------------
 // Local-week time helpers (pure; tzOffsetMinutes is Date#getTimezoneOffset())
@@ -429,6 +443,357 @@ export function buildNextActions({ unclassifiedSessions = [], openPrs = [] } = {
 }
 
 // ---------------------------------------------------------------------------
+// Retrospective projection (pure)
+// ---------------------------------------------------------------------------
+
+function cleanString(value, max = 240) {
+  return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+function normalizeConfidence(value, fallback = "medium") {
+  const normalized = cleanString(value, 20).toLowerCase();
+  return RETROSPECTIVE_CONFIDENCE.has(normalized) ? normalized : fallback;
+}
+
+function normalizeVerdict(value, fallback = "continue") {
+  const normalized = cleanString(value, 40).toLowerCase();
+  return RETROSPECTIVE_VERDICTS.has(normalized) ? normalized : fallback;
+}
+
+function normalizeRiskSeverity(value, fallback = "watch") {
+  const normalized = cleanString(value, 20).toLowerCase();
+  return RETROSPECTIVE_RISK_SEVERITY.has(normalized) ? normalized : fallback;
+}
+
+function normalizeEvidenceRefs(value, fallback = []) {
+  const refs = Array.isArray(value) ? value : fallback;
+  return refs
+    .map((ref) => cleanString(ref, 180))
+    .filter(Boolean)
+    .slice(0, 6);
+}
+
+function sha256Short(value) {
+  const text = String(value || "");
+  if (!text) return null;
+  return crypto.createHash("sha256").update(text).digest("hex").slice(0, 16);
+}
+
+function pathEvidence(paths = [], fallback = "") {
+  const shown = shortPathList((paths || []).filter(Boolean), 3);
+  return shown || fallback;
+}
+
+export function buildWorkHistoryEvidenceMix({
+  snapshot = {},
+  github = {},
+  workspaceEvidence = {},
+} = {}) {
+  const counts = {
+    ai_session: Number(snapshot.totals?.sessionCount || 0),
+    git_github:
+      Number(snapshot.totals?.myCommitCount || 0)
+      + Number(snapshot.totals?.otherCommitCount || 0)
+      + Number(github.prs?.length || snapshot.github?.prCount || 0)
+      + Number(github.issues?.length || snapshot.github?.issueCount || 0)
+      + Number(github.releases?.length || snapshot.github?.releaseCount || 0),
+    workspace_docs: Number(workspaceEvidence.workspaceDocsCount ?? workspaceEvidence.docsCount ?? 0),
+    interview: Number(workspaceEvidence.interviewCount ?? 0),
+    bip: Number(workspaceEvidence.bipCount ?? 0),
+    mission: Number(workspaceEvidence.missionCount ?? 0),
+    curriculum: Number(workspaceEvidence.curriculumCount ?? 0),
+  };
+  return EVIDENCE_SOURCE_DEFS.map((def) => {
+    const count = Math.max(0, Math.trunc(counts[def.source] || 0));
+    let status = count > 0 ? "connected" : "missing";
+    if (def.source === "git_github" && snapshot.github?.connected === false) status = "github_required";
+    return {
+      source: def.source,
+      label: def.label,
+      count,
+      status,
+    };
+  });
+}
+
+export function emptyWorkHistoryRetrospective() {
+  return {
+    headline: "",
+    verdict: "continue",
+    insights: [],
+    riskFlags: [],
+    nextActions: [],
+    evidenceMix: EVIDENCE_SOURCE_DEFS.map((def) => ({
+      source: def.source,
+      label: def.label,
+      count: 0,
+      status: "missing",
+    })),
+  };
+}
+
+function topAreaFocusInsight(snapshot, topArea) {
+  if (!topArea || !(topArea.aiMinutes > 0 || topArea.commitCount > 0)) return null;
+  return {
+    id: `focus-${topArea.id}`,
+    claim: `${topArea.name}에 이번 주 작업 에너지가 가장 많이 모였습니다.`,
+    whyItMatters: "이 집중이 고객 증거나 다음 실험으로 이어지는지 확인해야 다음 주 우선순위를 방어할 수 있습니다.",
+    confidence: topArea.confidence === "high" ? "high" : "medium",
+    evidenceRefs: [
+      `${topArea.name} · AI ${formatMinutes(topArea.aiMinutes)} · 커밋 ${topArea.commitCount}건`,
+      pathEvidence(topArea.paths, "변경 경로 없음"),
+    ].filter(Boolean),
+  };
+}
+
+function unclassifiedInsight(snapshot) {
+  if (!snapshot.unclassified?.length) return null;
+  return {
+    id: "unclassified-loop",
+    claim: `커밋으로 닫히지 않은 AI 세션이 ${snapshot.unclassified.length}개 남아 있습니다.`,
+    whyItMatters: "진행 중 실험인지 버릴 스파이크인지 정하지 않으면 다음 주 회고가 같은 불확실성을 반복합니다.",
+    confidence: "high",
+    evidenceRefs: [
+      `미분류 ${formatMinutes(snapshot.totals?.unclassifiedMinutes || 0)}`,
+      ...snapshot.unclassified.slice(0, 3).map((session) => (
+        `${session.provider} ${session.date} · ${formatMinutes(session.minutes)} · ${pathEvidence(session.paths, "수정 파일 없음")}`
+      )),
+    ],
+  };
+}
+
+function customerEvidenceGapInsight(snapshot, evidenceMix) {
+  if (!snapshot.hasData && !(snapshot.generatedAt || snapshot.totals?.aiMinutes || snapshot.totals?.myCommitCount)) return null;
+  const customerCount = evidenceMix
+    .filter((item) => ["interview", "bip", "mission"].includes(item.source))
+    .reduce((sum, item) => sum + Number(item.count || 0), 0);
+  if (customerCount > 0) return null;
+  return {
+    id: "customer-evidence-gap",
+    claim: "이번 주 근거가 코드와 세션 기록에 치우쳐 있습니다.",
+    whyItMatters: "Agentic30의 판단 기준은 만든 양이 아니라 고객 행동 증거입니다. 다음 행동은 외부 반응을 남기는 쪽으로 좁혀야 합니다.",
+    confidence: "medium",
+    evidenceRefs: [
+      `AI 세션 ${formatMinutes(snapshot.totals?.aiMinutes || 0)}`,
+      `내 커밋 ${snapshot.totals?.myCommitCount || 0}건`,
+      "인터뷰/BIP/미션 근거 0건",
+    ],
+  };
+}
+
+function buildRetrospectiveRisks({ snapshot, topArea, openPrs = [], evidenceMix = [] } = {}) {
+  const risks = [];
+  if (snapshot.unclassified?.length) {
+    risks.push({
+      id: "unclassified",
+      label: "미분류 세션",
+      severity: "watch",
+      reason: `커밋으로 이어지지 않은 AI 세션 ${snapshot.unclassified.length}개가 남아 있습니다.`,
+      evidenceRefs: [`미분류 ${formatMinutes(snapshot.totals?.unclassifiedMinutes || 0)}`],
+    });
+  }
+  if (topArea && snapshot.totals?.aiMinutes > 0) {
+    const ratio = topArea.aiMinutes / snapshot.totals.aiMinutes;
+    if (ratio >= 0.7 && snapshot.areas.length > 1) {
+      risks.push({
+        id: "focus-imbalance",
+        label: "작업 편중",
+        severity: "info",
+        reason: `${topArea.name}이 전체 AI 세션의 ${Math.round(ratio * 100)}%를 차지합니다.`,
+        evidenceRefs: [`${topArea.name} ${formatMinutes(topArea.aiMinutes)}`],
+      });
+    }
+  }
+  if (openPrs.length) {
+    risks.push({
+      id: "open-pr",
+      label: "열린 PR",
+      severity: "watch",
+      reason: `열려 있는 PR ${openPrs.length}건이 다음 판단 전에 닫혀야 합니다.`,
+      evidenceRefs: openPrs.slice(0, 3).map((pr) => `PR #${pr.number} ${pr.title || ""}`.trim()),
+    });
+  }
+  const customerCount = evidenceMix
+    .filter((item) => ["interview", "bip", "mission"].includes(item.source))
+    .reduce((sum, item) => sum + Number(item.count || 0), 0);
+  if (snapshot.totals?.aiMinutes > 0 && customerCount === 0) {
+    risks.push({
+      id: "customer-evidence-gap",
+      label: "고객 증거 부족",
+      severity: "watch",
+      reason: "이번 주 표시 가능한 인터뷰/BIP/미션 근거가 없습니다.",
+      evidenceRefs: ["인터뷰/BIP/미션 근거 0건"],
+    });
+  }
+  return risks.slice(0, WORK_HISTORY_MAX_RISK_FLAGS);
+}
+
+function retrospectiveActionFromRisk(risk) {
+  if (!risk) return null;
+  switch (risk.id) {
+  case "unclassified":
+    return {
+      text: "미분류 세션을 커밋으로 닫거나 버린 작업으로 표시하세요.",
+      evidence: risk.evidenceRefs[0] || risk.reason,
+      insightId: "unclassified-loop",
+    };
+  case "open-pr":
+    return {
+      text: "열린 PR을 리뷰/머지/보류 중 하나로 정리하세요.",
+      evidence: risk.evidenceRefs[0] || risk.reason,
+      insightId: "open-pr",
+    };
+  case "customer-evidence-gap":
+    return {
+      text: "이번 주 작업이 고객 반응으로 이어졌는지 인터뷰, BIP, 미션 증거 중 하나를 남기세요.",
+      evidence: risk.evidenceRefs[0] || risk.reason,
+      insightId: "customer-evidence-gap",
+    };
+  default:
+    return null;
+  }
+}
+
+export function buildWorkHistoryRetrospective({
+  snapshot = {},
+  github = {},
+  workspaceEvidence = {},
+} = {}) {
+  const empty = emptyWorkHistoryRetrospective();
+  const hasActivity = Boolean(
+    snapshot.generatedAt
+      || snapshot.totals?.aiMinutes
+      || snapshot.totals?.myCommitCount
+      || snapshot.totals?.sessionCount,
+  );
+  const evidenceMix = buildWorkHistoryEvidenceMix({ snapshot, github, workspaceEvidence });
+  if (!hasActivity) {
+    return {
+      ...empty,
+      headline: "이번 주 회고를 만들 근거가 아직 부족해요.",
+      evidenceMix,
+    };
+  }
+
+  const topArea = (snapshot.areas || [])[0] || null;
+  const openPrs = (github.prs || []).filter((pr) => String(pr.state || "").toUpperCase() === "OPEN");
+  const risks = buildRetrospectiveRisks({ snapshot, topArea, openPrs, evidenceMix });
+  const insights = [
+    topAreaFocusInsight(snapshot, topArea),
+    unclassifiedInsight(snapshot),
+    customerEvidenceGapInsight(snapshot, evidenceMix),
+  ]
+    .filter(Boolean)
+    .filter((insight) => insight.evidenceRefs?.length)
+    .slice(0, WORK_HISTORY_MAX_RETROSPECTIVE_INSIGHTS);
+
+  let verdict = "continue";
+  if (risks.some((risk) => risk.id === "unclassified" || risk.id === "open-pr")) {
+    verdict = "close_loop";
+  } else if (risks.some((risk) => risk.id === "customer-evidence-gap" || risk.id === "focus-imbalance")) {
+    verdict = "rebalance";
+  }
+
+  const defaultAction = topArea ? {
+    text: `${topArea.name}의 이번 주 진척을 고객 증거 또는 다음 실험과 연결하세요.`,
+    evidence: `${topArea.name} · AI ${formatMinutes(topArea.aiMinutes)} · 커밋 ${topArea.commitCount}건`,
+    insightId: `focus-${topArea.id}`,
+  } : null;
+  const nextActions = [
+    ...risks.map(retrospectiveActionFromRisk).filter(Boolean),
+    defaultAction,
+  ]
+    .filter(Boolean)
+    .slice(0, WORK_HISTORY_MAX_NEXT_ACTIONS);
+
+  const headline = verdict === "close_loop"
+    ? "이번 주 작업은 진척보다 먼저 닫아야 할 루프가 보입니다."
+    : verdict === "rebalance"
+      ? "이번 주 작업은 만들기 쪽으로 충분히 움직였고, 다음 판단은 근거 균형입니다."
+      : "이번 주 작업은 이어갈 수 있지만, 다음 행동은 증거로 좁혀야 합니다.";
+
+  return normalizeWorkHistoryRetrospective({
+    headline,
+    verdict,
+    insights,
+    riskFlags: risks,
+    nextActions,
+    evidenceMix,
+  }, empty);
+}
+
+export function normalizeWorkHistoryRetrospective(value = {}, fallback = emptyWorkHistoryRetrospective()) {
+  const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const fallbackMix = Array.isArray(fallback.evidenceMix) && fallback.evidenceMix.length
+    ? fallback.evidenceMix
+    : emptyWorkHistoryRetrospective().evidenceMix;
+  const normalizedInsightItems = Array.isArray(raw.insights)
+    ? raw.insights
+      .map((item, index) => {
+        const evidenceRefs = normalizeEvidenceRefs(item?.evidenceRefs ?? item?.evidence_refs);
+        if (!evidenceRefs.length) return null;
+        return {
+          id: cleanString(item?.id, 80) || `insight-${index + 1}`,
+          claim: cleanString(item?.claim ?? item?.text, 220),
+          whyItMatters: cleanString(item?.whyItMatters ?? item?.why_it_matters ?? item?.reason, 300),
+          confidence: normalizeConfidence(item?.confidence, "medium"),
+          evidenceRefs,
+        };
+      })
+      .filter((item) => item && item.claim)
+      .slice(0, WORK_HISTORY_MAX_RETROSPECTIVE_INSIGHTS)
+    : null;
+  const insights = normalizedInsightItems && normalizedInsightItems.length
+    ? normalizedInsightItems
+    : fallback.insights || [];
+  const riskFlags = Array.isArray(raw.riskFlags ?? raw.risk_flags)
+    ? (raw.riskFlags ?? raw.risk_flags)
+      .map((item, index) => {
+        const evidenceRefs = normalizeEvidenceRefs(item?.evidenceRefs ?? item?.evidence_refs);
+        return {
+          id: cleanString(item?.id, 80) || `risk-${index + 1}`,
+          label: cleanString(item?.label ?? item?.title, 80),
+          severity: normalizeRiskSeverity(item?.severity, "watch"),
+          reason: cleanString(item?.reason ?? item?.body, 260),
+          evidenceRefs,
+        };
+      })
+      .filter((item) => item.label && item.reason)
+      .slice(0, WORK_HISTORY_MAX_RISK_FLAGS)
+    : fallback.riskFlags || [];
+  const nextActions = Array.isArray(raw.nextActions ?? raw.next_actions)
+    ? (raw.nextActions ?? raw.next_actions)
+      .map((item) => ({
+        text: cleanString(item?.text ?? item?.action, 240),
+        evidence: cleanString(item?.evidence, 220),
+        insightId: cleanString(item?.insightId ?? item?.insight_id, 80) || null,
+      }))
+      .filter((item) => item.text && item.evidence)
+      .slice(0, WORK_HISTORY_MAX_NEXT_ACTIONS)
+    : fallback.nextActions || [];
+  const evidenceMix = Array.isArray(raw.evidenceMix ?? raw.evidence_mix)
+    ? EVIDENCE_SOURCE_DEFS.map((def) => {
+      const match = (raw.evidenceMix ?? raw.evidence_mix).find((item) => item?.source === def.source) || {};
+      const count = Math.max(0, Math.trunc(Number(match.count || 0)));
+      return {
+        source: def.source,
+        label: cleanString(match.label, 80) || def.label,
+        count,
+        status: cleanString(match.status, 40) || (count > 0 ? "connected" : "missing"),
+      };
+    })
+    : fallbackMix;
+  return {
+    headline: cleanString(raw.headline, 220) || fallback.headline || "",
+    verdict: normalizeVerdict(raw.verdict, fallback.verdict || "continue"),
+    insights,
+    riskFlags,
+    nextActions,
+    evidenceMix,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Snapshot assembly (pure)
 // ---------------------------------------------------------------------------
 
@@ -469,7 +834,8 @@ export function emptyWorkHistorySnapshot({ now = new Date(), tzOffsetMinutes = 0
     })),
     unclassified: [],
     weekly: { headline: "", coachNotes: [], nextActions: [] },
-    fingerprint: { headSha: null },
+    retrospective: emptyWorkHistoryRetrospective(),
+    fingerprint: { headHash: null },
   };
 }
 
@@ -482,12 +848,13 @@ export function buildWeeklyWorkHistorySnapshot({
   commits = [],
   github = { connected: false, prs: [], issues: [], releases: [] },
   headSha = null,
+  workspaceEvidence = {},
   reason = "manual",
 } = {}) {
   const week = localWeekRange(now, { tzOffsetMinutes });
   const snapshot = emptyWorkHistorySnapshot({ now, tzOffsetMinutes });
   snapshot.generatedAt = new Date(now instanceof Date ? now.getTime() : now).toISOString();
-  snapshot.fingerprint = { headSha: headSha || null };
+  snapshot.fingerprint = { headHash: sha256Short(headSha) };
 
   const inWeek = (ts) => Number.isFinite(ts) && ts >= week.weekStartMs && ts < week.weekEndMs;
   const weekSessions = sessions.filter(
@@ -715,6 +1082,11 @@ export function buildWeeklyWorkHistorySnapshot({
     coachNotes,
     nextActions: buildNextActions({ unclassifiedSessions: unclassified, openPrs }),
   };
+  snapshot.retrospective = buildWorkHistoryRetrospective({
+    snapshot,
+    github,
+    workspaceEvidence,
+  });
 
   snapshot.status = {
     state: github.connected ? "ready" : "github_required",
@@ -803,6 +1175,22 @@ export function applyWorkHistoryRefinement(snapshot, refinement) {
     }
     renamed.weekly = weekly;
   }
+  if (refinement.retrospective && typeof refinement.retrospective === "object") {
+    renamed.retrospective = normalizeWorkHistoryRetrospective(
+      {
+        ...refinement.retrospective,
+        // Evidence coverage is deterministic collector output. Provider text
+        // may not rewrite counts or source status.
+        evidenceMix: renamed.retrospective?.evidenceMix || snapshot.retrospective?.evidenceMix,
+      },
+      renamed.retrospective || snapshot.retrospective || emptyWorkHistoryRetrospective(),
+    );
+  } else {
+    renamed.retrospective = normalizeWorkHistoryRetrospective(
+      renamed.retrospective || snapshot.retrospective,
+      emptyWorkHistoryRetrospective(),
+    );
+  }
   return renamed;
 }
 
@@ -830,17 +1218,39 @@ export function buildWorkHistoryRefinementPrompt(snapshot) {
     })),
     unclassified: snapshot.unclassified,
     totals: snapshot.totals,
+    retrospective: {
+      headline: snapshot.retrospective?.headline || "",
+      verdict: snapshot.retrospective?.verdict || "continue",
+      insights: (snapshot.retrospective?.insights || []).map((insight) => ({
+        id: insight.id,
+        claim: insight.claim,
+        whyItMatters: insight.whyItMatters,
+        confidence: insight.confidence,
+        evidenceRefs: insight.evidenceRefs,
+      })),
+      riskFlags: (snapshot.retrospective?.riskFlags || []).map((risk) => ({
+        id: risk.id,
+        label: risk.label,
+        severity: risk.severity,
+        reason: risk.reason,
+        evidenceRefs: risk.evidenceRefs,
+      })),
+      nextActions: snapshot.retrospective?.nextActions || [],
+      evidenceMix: snapshot.retrospective?.evidenceMix || [],
+    },
   };
   return [
     "당신은 1인 개발자의 주간 회고 코치입니다. 아래 결정적(deterministic) 주간 작업 데이터로",
-    "기능 영역 이름과 일별 요약을 다듬어 strict JSON으로만 답하세요.",
+    "기능 영역 이름, 일별 요약, retrospective 텍스트를 다듬어 strict JSON으로만 답하세요.",
     "규칙:",
     "- 영역 이름은 데이터에 보이는 파일/디렉토리에서 추론한 기능 이름(한국어)으로. 새 영역 생성 금지.",
     "- 요약은 코치 문체: 성과 중심, 미완료/리스크는 데이터에 근거가 있을 때만 지적.",
     "- nextActions는 명확한 근거(evidence 필드에 데이터 출처 명시)가 있을 때만. 추측 금지.",
+    "- retrospective.insights는 evidenceRefs가 비어 있으면 무효입니다.",
+    "- retrospective.evidenceMix의 count/status/source는 절대 바꾸지 마세요.",
     "- 숫자(시간/커밋 수)는 절대 바꾸지 마세요.",
     "출력 스키마:",
-    '{"areaNames":{"<areaId>":"이름"},"days":[{"date":"YYYY-MM-DD","areas":[{"areaId":"...","summary":"...","nextActions":[{"text":"...","evidence":"..."}]}]}],"weekly":{"headline":"...","coachNotes":["..."],"nextActions":[{"text":"...","evidence":"...","areaName":"..."}]}}',
+    '{"areaNames":{"<areaId>":"이름"},"days":[{"date":"YYYY-MM-DD","areas":[{"areaId":"...","summary":"...","nextActions":[{"text":"...","evidence":"..."}]}]}],"weekly":{"headline":"...","coachNotes":["..."],"nextActions":[{"text":"...","evidence":"...","areaName":"..."}]},"retrospective":{"headline":"...","verdict":"continue|rebalance|close_loop|pivot|stop","insights":[{"id":"existing-or-new-id","claim":"...","whyItMatters":"...","confidence":"high|medium|low","evidenceRefs":["..."]}],"riskFlags":[{"id":"...","label":"...","severity":"info|watch|blocker","reason":"...","evidenceRefs":["..."]}],"nextActions":[{"text":"...","evidence":"...","insightId":"..."}]}}',
     "데이터:",
     JSON.stringify(compact),
   ].join("\n");
@@ -901,7 +1311,9 @@ export async function loadWorkHistorySnapshot({
   } catch {
     return empty;
   }
-  if (!parsed || parsed.schemaVersion !== WORK_HISTORY_SCHEMA_VERSION) return empty;
+  if (!parsed || typeof parsed !== "object") return empty;
+  if (![1, WORK_HISTORY_SCHEMA_VERSION].includes(parsed.schemaVersion)) return empty;
+  parsed = migrateWorkHistorySnapshot(parsed, { now, tzOffsetMinutes });
   const week = localWeekRange(now, { tzOffsetMinutes });
   const sameWeek = parsed.weekStart === week.weekStart;
   const generatedAtMs = Date.parse(parsed.generatedAt || "");
@@ -914,6 +1326,25 @@ export async function loadWorkHistorySnapshot({
       stale: !sameWeek || !fresh,
     },
   };
+}
+
+export function migrateWorkHistorySnapshot(snapshot, { now = new Date(), tzOffsetMinutes = 0 } = {}) {
+  if (!snapshot || typeof snapshot !== "object") {
+    return emptyWorkHistorySnapshot({ now, tzOffsetMinutes });
+  }
+  const migrated = {
+    ...emptyWorkHistorySnapshot({ now, tzOffsetMinutes }),
+    ...snapshot,
+    schemaVersion: WORK_HISTORY_SCHEMA_VERSION,
+  };
+  const headHash = snapshot.fingerprint?.headHash
+    || sha256Short(snapshot.fingerprint?.headSha);
+  migrated.fingerprint = { headHash };
+  migrated.retrospective = normalizeWorkHistoryRetrospective(
+    snapshot.retrospective,
+    buildWorkHistoryRetrospective({ snapshot: migrated, github: migrated.github }),
+  );
+  return migrated;
 }
 
 // ---------------------------------------------------------------------------
@@ -1077,6 +1508,54 @@ export async function collectGeminiAgentEvents({
   return events;
 }
 
+async function countFilesInDir({ root, dir, exts = null, fsImpl = fs } = {}) {
+  const target = path.join(root, dir);
+  let entries = [];
+  try {
+    entries = await fsImpl.readdir(target, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  let count = 0;
+  for (const entry of entries) {
+    if (entry.name.startsWith(".")) continue;
+    const fullRel = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      count += await countFilesInDir({ root, dir: fullRel, exts, fsImpl });
+    } else if (!exts || exts.has(path.extname(entry.name).toLowerCase())) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+export async function collectWorkspaceEvidenceSignals({
+  workspaceRoot,
+  fsImpl = fs,
+} = {}) {
+  const root = path.resolve(String(workspaceRoot || "."));
+  const textExts = new Set([".md", ".mdx", ".txt", ".json", ".jsonl", ".csv"]);
+  const [workspaceDocsCount, interviewCount, bipCount] = await Promise.all([
+    countFilesInDir({ root, dir: "docs", exts: textExts, fsImpl }),
+    countFilesInDir({ root, dir: "interviews", exts: textExts, fsImpl }),
+    countFilesInDir({ root, dir: "bip", exts: textExts, fsImpl }),
+  ]);
+  let agenticStateCount = 0;
+  try {
+    const names = await fsImpl.readdir(path.join(root, ".agentic30"));
+    agenticStateCount = names.filter((name) => /\.(json|jsonl)$/i.test(name)).length;
+  } catch {
+    agenticStateCount = 0;
+  }
+  return {
+    workspaceDocsCount,
+    interviewCount,
+    bipCount,
+    missionCount: agenticStateCount,
+    curriculumCount: workspaceDocsCount > 0 ? 1 : 0,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Fingerprint (cheap change detection for tab-entry reindex)
 // ---------------------------------------------------------------------------
@@ -1084,7 +1563,8 @@ export async function collectGeminiAgentEvents({
 export async function computeWorkHistoryFingerprint({ workspaceRoot, execImpl = defaultExec } = {}) {
   const cwd = path.resolve(String(workspaceRoot || "."));
   const head = await execImpl("git", ["log", "--all", "-1", "--format=%H"], { cwd });
-  return { headSha: head.ok ? head.stdout.trim() || null : null };
+  const headSha = head.ok ? head.stdout.trim() || null : null;
+  return { headHash: sha256Short(headSha) };
 }
 
 // ---------------------------------------------------------------------------
@@ -1102,6 +1582,7 @@ export async function refreshWorkHistory({
   fsImpl = fs,
   agentEventsImpl = collectAgentWorkEvents,
   geminiEventsImpl = collectGeminiAgentEvents,
+  workspaceEvidenceImpl = collectWorkspaceEvidenceSignals,
   onProgress = () => {},
 } = {}) {
   if (!workspaceRoot) {
@@ -1130,12 +1611,16 @@ export async function refreshWorkHistory({
   const geminiEventsPromise = Promise.resolve(
     geminiEventsImpl({ homeDir, workspaceRoot, sinceMs: week.weekStartMs, fsImpl }),
   ).catch(() => []);
+  const workspaceEvidencePromise = Promise.resolve(
+    workspaceEvidenceImpl({ workspaceRoot, fsImpl }),
+  ).catch(() => ({}));
 
-  const [git, github, agentEvents, geminiEvents] = await Promise.all([
+  const [git, github, agentEvents, geminiEvents, workspaceEvidence] = await Promise.all([
     gitPromise,
     ghPromise,
     agentEventsPromise,
     geminiEventsPromise,
+    workspaceEvidencePromise,
   ]);
 
   onProgress({ stage: "assemble", progressText: "기능 영역과 요일별 타임라인을 구성 중" });
@@ -1147,6 +1632,7 @@ export async function refreshWorkHistory({
     commits: git.commits,
     github,
     headSha: git.headSha,
+    workspaceEvidence,
     reason,
   });
 
