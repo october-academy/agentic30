@@ -826,14 +826,13 @@ enum ChatMessageRoute: Equatable {
             }
         }
 
-        /// Does this sub-workflow require the Claude provider? `/analyze-ads`
-        /// and `/foundation-summary` both lean on Claude Agent SDK
-        /// (Read/Glob/Grep tooling) for evidence-grounded outputs; the
-        /// others run on whichever provider the session is using.
+        /// Does this sub-workflow require the Claude provider? These routes
+        /// lean on Claude Agent SDK tooling or Claude-specific prompt runners;
+        /// the others run on whichever provider the session is using.
         var requiresClaudeProvider: Bool {
             switch self {
-            case .analyzeAds, .foundationSummary: return true
-            case .bipDraft, .officeHoursDocs, .monetizationAsk: return false
+            case .analyzeAds, .bipDraft, .foundationSummary: return true
+            case .officeHoursDocs, .monetizationAsk: return false
             }
         }
     }

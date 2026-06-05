@@ -214,8 +214,8 @@ struct ChatMessageRouteTests {
         #expect(ChatMessageRoute.SubWorkflow.monetizationAsk.requiresClaudeProvider == false)
     }
 
-    @MainActor @Test func bipDraftDoesNotRequireClaudeProvider() {
-        #expect(ChatMessageRoute.SubWorkflow.bipDraft.requiresClaudeProvider == false)
+    @MainActor @Test func bipDraftRequiresClaudeProvider() {
+        #expect(ChatMessageRoute.SubWorkflow.bipDraft.requiresClaudeProvider == true)
     }
 }
 

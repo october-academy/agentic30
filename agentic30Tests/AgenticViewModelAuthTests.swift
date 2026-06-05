@@ -1463,6 +1463,39 @@ struct AgenticViewModelAuthTests {
         #expect(viewModel.startupQueuedAction?.summary == "Day 1에서 먼저 볼 고객 증거를 정리해줘")
     }
 
+    @Test @MainActor func bipDraftInCodexSessionFailsBeforeSidecarSend() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 1
+        )
+        let session = ChatSession(
+            id: "codex-session",
+            title: "Codex Assistant",
+            provider: .codex,
+            model: AgentModelCatalog.defaultModelID(for: .codex),
+            status: .idle,
+            createdAt: Date(),
+            updatedAt: Date(),
+            error: nil,
+            messages: [],
+            pendingUserInput: nil,
+            runtime: nil
+        )
+        viewModel.replaceSessionsForTesting([session], selectedSessionID: session.id)
+        sidecar.resetSentPayloads()
+        viewModel.draft = "/bip-draft 오늘 배운 점"
+
+        viewModel.sendPrompt()
+
+        #expect(viewModel.lastError == "/bip-draft requires a Claude session")
+        #expect(viewModel.draft == "/bip-draft 오늘 배운 점")
+        #expect(sidecar.sentPayloads.isEmpty)
+    }
+
     @Test @MainActor func officeHoursStepStartSendsContextPayload() throws {
         let (workspace, cleanup) = try Self.installTemporaryWorkspace()
         defer { cleanup() }
