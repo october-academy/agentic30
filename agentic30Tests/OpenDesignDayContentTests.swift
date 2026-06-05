@@ -4,27 +4,23 @@ import Testing
 @testable import agentic30
 
 struct OpenDesignDayContentTests {
-    @Test func officeHoursTranscriptRowsConvertSyntheticStartPromptToContextRow() {
+    @Test func officeHoursTranscriptRowsHideSyntheticStartPrompt() {
         let rows = OfficeHoursTranscriptRow.rows(from: [
             makeChatMessage(id: "start", role: .user, content: "Office Hours"),
             makeChatMessage(id: "answer", role: .assistant, content: "현재 강한 가설은 이렇습니다."),
         ])
 
-        #expect(rows.count == 2)
-        #expect(rows[0].kind == .contextLoaded)
-        #expect(rows[0].content == OfficeHoursTranscriptRow.contextLoadedCopy)
-        #expect(rows[0].lineLimit == 1)
-        #expect(rows[1].kind == .assistant)
+        #expect(rows.count == 1)
+        #expect(rows[0].kind == .assistant)
+        #expect(rows[0].content == "현재 강한 가설은 이렇습니다.")
     }
 
-    @Test func officeHoursTranscriptRowsSupportLegacySyntheticStartPrompt() {
+    @Test func officeHoursTranscriptRowsHideLegacySyntheticStartPrompt() {
         let rows = OfficeHoursTranscriptRow.rows(from: [
             makeChatMessage(id: "legacy-start", role: .user, content: "Day999 Office Hours"),
         ])
 
-        #expect(rows.count == 1)
-        #expect(rows[0].kind == .contextLoaded)
-        #expect(rows[0].content == OfficeHoursTranscriptRow.contextLoadedCopy)
+        #expect(rows.isEmpty)
     }
 
     @Test func officeHoursTranscriptRowsKeepLongUserAndAssistantTextUntruncated() {
@@ -81,8 +77,8 @@ struct OpenDesignDayContentTests {
 
         let rows = OfficeHoursLiveStatusPolicy.visibleRows(in: session)
 
-        #expect(rows.map(\.id) == ["office-hours-context-start", "answer"])
-        #expect(rows.map(\.kind) == [.contextLoaded, .user])
+        #expect(rows.map(\.id) == ["answer"])
+        #expect(rows.map(\.kind) == [.user])
         #expect(rows.contains(where: \.isStreamingPlaceholder) == false)
         #expect(rows.last?.content == "실제 한 사람의 시간 손실")
     }
@@ -118,7 +114,28 @@ struct OpenDesignDayContentTests {
         #expect(!OfficeHoursLiveStatusPolicy.shouldShowDetachedLiveStatus(in: awaitingInput, rows: []))
     }
 
-    @Test func officeHoursTimelineBuilderShowsOnlyActiveLoaderAfterSubmittedPrompt() {
+    @Test func officeHoursLoaderCopyOnlyUsesLiveStatus() {
+        let status = OfficeHoursLiveStatus(
+            sessionId: "session",
+            stage: "provider_starting",
+            title: "다음 질문 준비 중",
+            detail: "프로젝트 맥락에 맞는 질문을 준비하고 있습니다.",
+            progressText: "프로젝트 맥락에 맞는 질문 준비 중",
+            messageId: nil,
+            requestId: nil,
+            elapsedMs: 42,
+            updatedAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let live = OfficeHoursLoaderCopy.resolve(status: status)
+        let empty = OfficeHoursLoaderCopy.resolve(status: nil)
+
+        #expect(live?.title == "다음 질문 준비 중")
+        #expect(live?.detail == "프로젝트 맥락에 맞는 질문을 준비하고 있습니다.")
+        #expect(empty == nil)
+    }
+
+    @Test func officeHoursTimelineBuilderShowsSubmittedCardBeforeActiveLoader() {
         let prompt = makeOfficeHoursPrompt(sessionID: "session", requestId: "request-1")
         let submission = AgenticViewModel.StructuredPromptSubmission(
             question: prompt.questions[0].question,
@@ -145,13 +162,74 @@ struct OpenDesignDayContentTests {
         let items = OfficeHoursTimelineBuilder.items(
             rows: rows,
             submittedSnapshots: [snapshot],
-            activeLoading: loading
+            activeLoading: loading,
+            fallbackTotal: 6
         )
 
-        #expect(items == [.loading(loading)])
+        #expect(items.count == 2)
+        if case .submittedPrompt(let card)? = items.first {
+            #expect(card.snapshot == snapshot)
+            #expect(card.index == 1)
+            #expect(card.total == 6)
+        } else {
+            #expect(Bool(false))
+        }
+        if case .loading(let itemLoading)? = items.dropFirst().first {
+            #expect(itemLoading == loading)
+        } else {
+            #expect(Bool(false))
+        }
+        #expect(items.filter {
+            if case .row = $0 { return true }
+            return false
+        }.isEmpty)
     }
 
-    @Test func officeHoursLoadingPolicyHidesSubmittedLoaderWhenNextPromptArrives() {
+    @Test func officeHoursTimelineBuilderKeepsAssistantOutputThatMentionsSubmittedAnswer() {
+        let prompt = makeOfficeHoursPrompt(sessionID: "session", requestId: "request-1")
+        let submission = AgenticViewModel.StructuredPromptSubmission(
+            question: prompt.questions[0].question,
+            selectedOptions: ["돈을 내겠다고 했다"],
+            freeText: ""
+        )
+        let snapshot = OfficeHoursSubmittedPromptSnapshot(
+            sessionId: "session",
+            requestId: prompt.requestId,
+            prompt: prompt,
+            submissions: [submission],
+            submittedAt: Date(timeIntervalSince1970: 1)
+        )
+        let rows = OfficeHoursTranscriptRow.rows(from: [
+            makeChatMessage(id: "answer", role: .user, content: "돈을 내겠다고 했다"),
+            makeChatMessage(
+                id: "provider-output",
+                role: .assistant,
+                content: "돈을 내겠다고 했다라는 답을 기준으로 다음 검증 단계를 좁힙니다."
+            ),
+        ])
+
+        let items = OfficeHoursTimelineBuilder.items(
+            rows: rows,
+            submittedSnapshots: [snapshot],
+            activeLoading: nil,
+            fallbackTotal: 6
+        )
+
+        #expect(items.count == 2)
+        if case .submittedPrompt(let card)? = items.first {
+            #expect(card.snapshot == snapshot)
+        } else {
+            #expect(Bool(false))
+        }
+        if case .row(let row)? = items.dropFirst().first {
+            #expect(row.id == "provider-output")
+            #expect(row.kind == .assistant)
+        } else {
+            #expect(Bool(false))
+        }
+    }
+
+    @Test func officeHoursLoadingPolicyKeepsSubmittedCardWhenNextPromptArrives() {
         let firstPrompt = makeOfficeHoursPrompt(sessionID: "session", requestId: "request-1")
         let nextPrompt = makeOfficeHoursPrompt(sessionID: "session", requestId: "request-2")
         let submission = AgenticViewModel.StructuredPromptSubmission(
@@ -177,11 +255,74 @@ struct OpenDesignDayContentTests {
         let items = OfficeHoursTimelineBuilder.items(
             rows: [],
             submittedSnapshots: [snapshot],
+            activeLoading: visibleLoading,
+            fallbackTotal: 6
+        )
+
+        #expect(visibleLoading == nil)
+        #expect(items.count == 1)
+        if case .submittedPrompt(let card)? = items.first {
+            #expect(card.snapshot == snapshot)
+            #expect(card.index == 1)
+            #expect(card.total == 6)
+        } else {
+            #expect(Bool(false))
+        }
+    }
+
+    @Test func officeHoursInitialSyntheticLoaderIsSingleTimelineItemForRunningEmptyTranscript() {
+        let session = makeChatSession(
+            status: .running,
+            messages: [
+                makeChatMessage(id: "start", role: .user, content: OfficeHoursTranscriptRow.syntheticStartPrompt),
+                makeChatMessage(id: "assistant", role: .assistant, content: "", state: .streaming),
+            ]
+        )
+        let loading = OfficeHoursLoadingSnapshot(
+            sessionId: "session",
+            requestId: "office-hours-start-session",
+            startedAt: Date(timeIntervalSince1970: 2)
+        )
+        let rows = OfficeHoursLiveStatusPolicy.visibleRows(in: session)
+        let visibleLoading = OfficeHoursLoadingPolicy.visibleLoading(for: session, loading: loading)
+
+        let items = OfficeHoursTimelineBuilder.items(
+            rows: rows,
+            submittedSnapshots: [],
+            activeLoading: visibleLoading
+        )
+
+        #expect(rows.isEmpty)
+        #expect(items.count == 1)
+        if case .loading(let itemLoading)? = items.first {
+            #expect(itemLoading == loading)
+        } else {
+            #expect(Bool(false))
+        }
+        #expect(items.filter {
+            if case .loading = $0 { return true }
+            return false
+        }.count == 1)
+    }
+
+    @Test func officeHoursInitialSyntheticLoaderHidesWhenPendingPromptArrives() {
+        let prompt = makeOfficeHoursPrompt(sessionID: "session", requestId: "request-2")
+        let session = makeChatSession(status: .awaitingInput, pendingUserInput: prompt)
+        let loading = OfficeHoursLoadingSnapshot(
+            sessionId: "session",
+            requestId: "office-hours-start-session",
+            startedAt: Date(timeIntervalSince1970: 2)
+        )
+        let visibleLoading = OfficeHoursLoadingPolicy.visibleLoading(for: session, loading: loading)
+
+        let items = OfficeHoursTimelineBuilder.items(
+            rows: OfficeHoursLiveStatusPolicy.visibleRows(in: session),
+            submittedSnapshots: [],
             activeLoading: visibleLoading
         )
 
         #expect(visibleLoading == nil)
-        #expect(items == [])
+        #expect(items.isEmpty)
     }
 
     private func makeChatMessage(
@@ -250,7 +391,7 @@ struct OpenDesignDayContentTests {
                     textMode: .short
                 ),
             ],
-            generation: StructuredPromptGeneration(mode: "office_hours_fallback", docType: "day1_step")
+            generation: StructuredPromptGeneration(mode: "office_hours", docType: "day1_step")
         )
     }
 
@@ -386,6 +527,31 @@ struct OpenDesignDayContentTests {
         #expect(narrow.openDesignGridColumnCount == 2)
     }
 
+    @Test func officeHoursScreenLayoutMatchesHtmlBreakpoints() {
+        let wide = OfficeHoursScreenLayout(width: 1360)
+        #expect(wide.showsSessions)
+        #expect(wide.showsMeta)
+        #expect(wide.sessionsWidth == 240)
+        #expect(wide.metaWidth == 280)
+        #expect(wide.mainPadding == 28)
+
+        let noMeta = OfficeHoursScreenLayout(width: 1180)
+        #expect(noMeta.showsSessions)
+        #expect(!noMeta.showsMeta)
+        #expect(noMeta.sessionsWidth == 240)
+        #expect(noMeta.mainPadding == 28)
+
+        let noSessions = OfficeHoursScreenLayout(width: 900)
+        #expect(!noSessions.showsSessions)
+        #expect(!noSessions.showsMeta)
+        #expect(noSessions.mainPadding == 28)
+
+        let mobile = OfficeHoursScreenLayout(width: 640)
+        #expect(!mobile.showsSessions)
+        #expect(!mobile.showsMeta)
+        #expect(mobile.mainPadding == 16)
+    }
+
     @Test func increasedContrastStrengthensOpenDesignChrome() {
         #expect(OpenDesignAccessibilityMetrics.borderLineWidth(isIncreasedContrast: false) == 1)
         #expect(OpenDesignAccessibilityMetrics.borderLineWidth(isIncreasedContrast: true) == 1.5)
@@ -397,9 +563,9 @@ struct OpenDesignDayContentTests {
 
         #expect(content.railItems.map(\.title) == [
             "오늘 · Day 1",
-            OpenDesignCopy.officeHoursTitle,
             "검색",
             "프로젝트",
+            OpenDesignCopy.officeHoursTitle,
             "설정",
             "인터뷰",
             "BIP 로그",
@@ -426,9 +592,9 @@ struct OpenDesignDayContentTests {
 
         #expect(railIDs == [
             "today",
-            "office-hours",
             "search",
             "projects",
+            "office-hours",
             "settings",
             "interviews",
             "bip",
@@ -469,8 +635,8 @@ struct OpenDesignDayContentTests {
 
         #expect(productionRailIDs == [
             "today",
-            "office-hours",
             "search",
+            "office-hours",
             "settings",
         ])
         #expect(allRailIDs.subtracting(Set(productionRailIDs)) == OpenDesignDayContent.developmentOnlyReferenceRailItemIDs)

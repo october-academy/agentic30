@@ -986,12 +986,14 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var submittedStructuredPromptBySession: [String: StructuredPromptSubmissionState] = [:]
     @Published private(set) var structuredPromptDraftBySession: [String: StructuredPromptDraftState] = [:]
     @Published private(set) var sidecarOutputLogs: [String: [String]] = [:]
+    @Published private(set) var officeHoursLiveStatusBySession: [String: OfficeHoursLiveStatus] = [:]
     @Published private(set) var bipNotificationOpenRequest: BipNotificationOpenRequest?
     @Published private(set) var startupQueuedAction: StartupQueuedAction?
     @Published private(set) var startupSessionAppearElapsedMs: Int?
     @Published private(set) var reviewDayDashboardViewModel: ReviewDayDashboardViewModel?
     @Published private(set) var newsMarketRadar: NewsMarketRadarSnapshot = .empty
     @Published private(set) var bipResearch: BipResearchSnapshot = .empty
+    @Published private(set) var workHistory: WorkHistorySnapshot = .empty
     /// First-launch wall-clock timestamp that anchors the Foundation phase
     /// Day N/30 counter. The value is mirrored from `foundationProgressState`,
     /// which is persisted per workspace/app-support rather than globally.
@@ -1089,6 +1091,7 @@ final class AgenticViewModel: ObservableObject {
     private var lastBipResearchViewedAt: Date?
     #if DEBUG
     private var didEmitUITestingNewsMarketRadarEvents = false
+    private var didEmitUITestingWorkHistoryEvents = false
     #endif
     /// Idempotency guard for the AI-driven Foundation Day 0/2-7 first prompt.
     /// Keyed by `"<sessionId>:day-<day>"` so the same opener is never injected
@@ -1243,6 +1246,7 @@ final class AgenticViewModel: ObservableObject {
             "completedDay": refresh.completedDay,
             "unlockedDay": refresh.unlockedDay,
             "workspaceRoot": refresh.workspaceRoot,
+            "preferredProvider": selectedProvider.rawValue,
         ])
     }
 
@@ -1802,6 +1806,11 @@ final class AgenticViewModel: ObservableObject {
 
     func sidecarOutputPreview(for sessionID: String) -> [String] {
         sidecarOutputLogs[sessionID] ?? []
+    }
+
+    func officeHoursLiveStatus(for sessionID: String?) -> OfficeHoursLiveStatus? {
+        guard let sessionID else { return nil }
+        return officeHoursLiveStatusBySession[sessionID]
     }
 
     var intakeV2BootLogState: IntakeV2BootLogState {
@@ -2659,6 +2668,7 @@ final class AgenticViewModel: ObservableObject {
         sidecar.send(payload: [
             "type": "scan_workspace",
             "root": root,
+            "preferredProvider": selectedProvider.rawValue,
         ])
     }
 
@@ -3031,6 +3041,213 @@ final class AgenticViewModel: ObservableObject {
         guard shouldRefreshNewsMarketRadarForDisplay else { return }
         refreshNewsMarketRadar(reason: "daily", force: false)
     }
+
+    func requestWorkHistory() {
+        guard isConnected else { return }
+        sidecar.send(payload: [
+            "type": "work_history_get",
+            "preferredProvider": selectedProvider.rawValue,
+        ])
+    }
+
+    func refreshWorkHistory(reason: String = "manual") {
+        guard isConnected else { return }
+        PostHogTelemetry.capture("mac_work_history_refresh_requested", properties: [
+            "reason": reason,
+        ], authSession: macAuthSession)
+        sidecar.send(payload: [
+            "type": "work_history_refresh",
+            "reason": reason,
+            "preferredProvider": selectedProvider.rawValue,
+        ])
+    }
+
+    /// History 탭 진입 시 호출. 사이드카가 캐시 스냅샷을 즉시 돌려주고,
+    /// 주가 바뀌었거나 1시간이 지났거나 새 커밋이 감지되면 재인덱싱한다.
+    func prepareWorkHistoryForDisplay() {
+        #if DEBUG
+        if emitUITestingWorkHistoryEventsIfRequested() { return }
+        #endif
+        requestWorkHistory()
+    }
+
+    #if DEBUG
+    private func emitUITestingWorkHistoryEventsIfRequested() -> Bool {
+        guard CommandLine.arguments.contains("--ui-testing-stub-work-history-events") else {
+            return false
+        }
+        guard !didEmitUITestingWorkHistoryEvents else {
+            return true
+        }
+        didEmitUITestingWorkHistoryEvents = true
+        let snapshot = WorkHistorySnapshot(
+            schemaVersion: 1,
+            generatedAt: Date(timeIntervalSince1970: 1_780_000_000),
+            weekStart: "2026-06-01",
+            weekEnd: "2026-06-07",
+            status: WorkHistoryStatus(
+                state: "ready",
+                lastSuccessAt: Date(timeIntervalSince1970: 1_780_000_000),
+                stale: false,
+                error: nil,
+                reason: "manual",
+                stage: nil,
+                progressText: nil,
+                elapsedMs: nil
+            ),
+            github: WorkHistoryGitHub(connected: true, prCount: 1, issueCount: 0, releaseCount: 0),
+            totals: WorkHistoryTotals(
+                aiMinutes: 135,
+                unclassifiedMinutes: 30,
+                myCommitCount: 3,
+                otherCommitCount: 1,
+                sessionCount: 3,
+                activeDays: 2
+            ),
+            areas: [
+                WorkHistoryArea(
+                    id: "sidecar",
+                    name: "사이드카 라우팅",
+                    aiMinutes: 105,
+                    commitCount: 3,
+                    sessionCount: 2,
+                    paths: ["sidecar/index.mjs", "sidecar/work-history.mjs"],
+                    confidence: "high",
+                    inference: "agent"
+                ),
+            ],
+            days: [
+                WorkHistoryDay(
+                    date: "2026-06-01",
+                    weekday: "월",
+                    aiMinutes: 105,
+                    areas: [
+                        WorkHistoryDayArea(
+                            areaId: "sidecar",
+                            name: "사이드카 라우팅",
+                            summary: "사이드카 라우팅에 AI 세션 1시간 45분을 투입해 커밋 3건으로 마무리했어요.",
+                            nextActions: [
+                                WorkHistoryNextAction(
+                                    text: "라우트 테스트를 보강하세요.",
+                                    evidence: "sidecar/index.mjs 변경",
+                                    areaName: "사이드카 라우팅"
+                                ),
+                            ],
+                            aiMinutes: 105,
+                            sessionRanges: [
+                                WorkHistorySessionRange(
+                                    start: "2026-06-01T10:00:00.000Z",
+                                    end: "2026-06-01T11:45:00.000Z",
+                                    provider: "claude"
+                                ),
+                            ],
+                            paths: ["sidecar/index.mjs", "sidecar/work-history.mjs"],
+                            commitCount: 3,
+                            confidence: "high"
+                        ),
+                    ],
+                    referenceEvents: [
+                        WorkHistoryReferenceEvent(
+                            kind: "pr",
+                            title: "PR #7 History tab",
+                            actor: "zettalyst",
+                            at: "2026-06-01T12:00:00.000Z"
+                        ),
+                    ]
+                ),
+                WorkHistoryDay(date: "2026-06-02", weekday: "화", aiMinutes: 30, areas: [], referenceEvents: []),
+                WorkHistoryDay(date: "2026-06-03", weekday: "수", aiMinutes: 0, areas: [], referenceEvents: []),
+                WorkHistoryDay(date: "2026-06-04", weekday: "목", aiMinutes: 0, areas: [], referenceEvents: []),
+                WorkHistoryDay(date: "2026-06-05", weekday: "금", aiMinutes: 0, areas: [], referenceEvents: []),
+                WorkHistoryDay(date: "2026-06-06", weekday: "토", aiMinutes: 0, areas: [], referenceEvents: []),
+                WorkHistoryDay(date: "2026-06-07", weekday: "일", aiMinutes: 0, areas: [], referenceEvents: []),
+            ],
+            unclassified: [
+                WorkHistoryUnclassifiedSession(
+                    provider: "codex",
+                    date: "2026-06-02",
+                    start: "2026-06-02T13:00:00.000Z",
+                    end: "2026-06-02T13:30:00.000Z",
+                    minutes: 30,
+                    paths: ["scripts/spike.mjs"]
+                ),
+            ],
+            weekly: WorkHistoryWeekly(
+                headline: "이번 주 AI 세션 2시간 15분 · 커밋 3건 · 가장 많은 시간: 사이드카 라우팅 (1시간 45분)",
+                coachNotes: ["커밋으로 이어지지 않은 세션이 1개(30분) 있어요 — 진행 중이라면 마무리 지점을 정해두세요."],
+                nextActions: [
+                    WorkHistoryNextAction(
+                        text: "커밋으로 이어지지 않은 codex 세션 작업(scripts/spike.mjs)을 마무리하거나 정리하세요.",
+                        evidence: "세션 2026-06-02T13:00:00.000Z–2026-06-02T13:30:00.000Z · 수정 파일 1개",
+                        areaName: nil
+                    ),
+                ]
+            )
+        )
+        handle(SidecarEvent(
+            type: "work_history_result",
+            message: nil,
+            sessionId: nil,
+            messageId: nil,
+            delta: nil,
+            content: nil,
+            workspaceRoot: nil,
+            session: nil,
+            sessions: nil,
+            environment: nil,
+            diagnostics: nil,
+            bipCoach: nil,
+            bipSetupReady: nil,
+            day: nil,
+            firstPrompt: nil,
+            missingLocalDocs: nil,
+            missingExternalRequirements: nil,
+            nextIddDocumentType: nil,
+            nextIddDocumentTitle: nil,
+            bipSetupGateMessage: nil,
+            scanRoot: nil,
+            icp: nil,
+            spec: nil,
+            values: nil,
+            designSystem: nil,
+            adr: nil,
+            goal: nil,
+            docs: nil,
+            sheet: nil,
+            onboardingHypothesis: nil,
+            error: nil,
+            docType: nil,
+            docPath: nil,
+            progressText: nil,
+            notionConnected: nil,
+            success: nil,
+            disconnected: nil,
+            authUrl: nil,
+            rowId: nil,
+            status: nil,
+            detail: nil,
+            log: nil,
+            readinessError: nil,
+            bipTokenExpiredMessage: nil,
+            resourceName: nil,
+            resourceUrl: nil,
+            stage: nil,
+            provider: nil,
+            sheetRowsRead: nil,
+            docCharsRead: nil,
+            elapsedMs: nil,
+            phase: nil,
+            toolName: nil,
+            summary: nil,
+            items: nil,
+            result: nil,
+            weeklyRitualPrompt: nil,
+            requestEmit: nil,
+            workHistory: snapshot
+        ))
+        return true
+    }
+    #endif
 
     func requestBipResearch(dayNumber: Int? = nil, curriculumDay: [String: Any]? = nil) {
         guard isConnected else { return }
@@ -4246,6 +4463,7 @@ final class AgenticViewModel: ObservableObject {
             "type": "create_doc",
             "docType": type,
             "root": workspaceRoot,
+            "preferredProvider": selectedProvider.rawValue,
         ])
     }
 
@@ -4273,6 +4491,7 @@ final class AgenticViewModel: ObservableObject {
         case "ready":
             if let sessions = event.sessions {
                 self.sessions = sessions.sorted(by: { $0.updatedAt > $1.updatedAt })
+                reconcileOfficeHoursLiveStatuses(with: self.sessions)
             }
             if let environment = event.environment {
                 self.environment = environment
@@ -4315,6 +4534,7 @@ final class AgenticViewModel: ObservableObject {
         case "sessions_snapshot":
             if let sessions = event.sessions {
                 self.sessions = sessions.sorted(by: { $0.updatedAt > $1.updatedAt })
+                reconcileOfficeHoursLiveStatuses(with: self.sessions)
                 ensureSelection()
                 if selectedSession != nil {
                     officeHoursSessionCreateInFlight = false
@@ -4379,6 +4599,9 @@ final class AgenticViewModel: ObservableObject {
             // here; inject as the seeded assistant opener for the matching
             // session. Idempotent + persistence-safe via deterministic ID.
             handleFoundationFirstPromptEvent(event)
+        case "office_hours_status":
+            applyOfficeHoursLiveStatus(from: event)
+            refreshPresentationState()
         case "tool_event":
             guard let sessionID = event.sessionId else { return }
             appendSidecarOutput(sessionID: sessionID, event: event)
@@ -4539,6 +4762,14 @@ final class AgenticViewModel: ObservableObject {
                     workspaceEvidenceRefs: newsMarketRadar.workspaceEvidenceRefs,
                     lanes: newsMarketRadar.lanes
                 )
+            }
+        case "work_history_result":
+            if let snapshot = event.workHistory {
+                workHistory = snapshot
+            }
+        case "work_history_status":
+            if let status = event.workHistoryStatus {
+                workHistory = workHistory.applying(status: status)
             }
         case "bip_research_result":
             if let snapshot = event.bipResearch {
@@ -5166,50 +5397,286 @@ final class AgenticViewModel: ObservableObject {
         guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-structured-prompt") else {
             return nil
         }
-        return StructuredPromptRequest(
+        return Self.makeUITestingOfficeHoursStructuredPrompt(
+            sessionID: requestedSessionID,
             requestId: "ui-test-office-hours-request",
-            sessionId: requestedSessionID,
-            toolName: "agentic30_request_user_input",
-            title: "Office Hours",
             createdAt: createdAt,
-            questions: [
-                StructuredPromptQuestion(
-                    questionId: "office_hours_scope",
-                    header: "고객 접점",
-                    question: "이번 주 실제 고객 접점 범위는 어디까지 잡겠습니까?",
-                    helperText: "선택지는 sidecar structured input으로만 렌더링합니다.",
-                    options: [
-                        StructuredPromptOption(
-                            label: "5명 대화 예약",
-                            description: "실제 후보 5명에게 연락하고 대화 시간을 잡습니다.",
-                            preview: nil,
-                            nextIntent: "book_five_customer_calls"
-                        ),
-                        StructuredPromptOption(
-                            label: "3명 문제 인터뷰",
-                            description: "문제 강도와 현재 대안을 확인하는 짧은 인터뷰를 합니다.",
-                            preview: nil,
-                            nextIntent: "run_three_problem_interviews"
-                        ),
-                        StructuredPromptOption(
-                            label: "1명 유료 제안",
-                            description: "가장 강한 후보에게 유료 파일럿을 제안합니다.",
-                            preview: nil,
-                            nextIntent: "make_one_paid_offer"
-                        ),
-                    ],
-                    multiSelect: false,
-                    allowFreeText: true,
-                    requiresFreeText: false,
-                    freeTextPlaceholder: "예: 5명에게 연락하고 2명 이상 통화 예약",
-                    textMode: .short
-                )
-            ],
-            generation: StructuredPromptGeneration(mode: "office_hours", docType: "day1_step")
+            step: 1
         )
         #else
         return nil
         #endif
+    }
+
+    private static func makeUITestingOfficeHoursStructuredPrompt(
+        sessionID requestedSessionID: String,
+        requestId: String,
+        createdAt: Date,
+        step: Int
+    ) -> StructuredPromptRequest {
+        let prompt: StructuredPromptQuestion
+        let signalId: String
+        let signalLabel: String
+
+        switch step {
+        case 2:
+            signalId = "status_quo"
+            signalLabel = "STATUS QUO"
+            prompt = StructuredPromptQuestion(
+                questionId: "office_hours_status_quo",
+                header: "STATUS QUO",
+                question: "사용자는 지금 이 문제를 어떻게 해결하고 있어? 도구, 사람, 시간, 비용까지 현재 workaround를 써줘.",
+                helperText: nil,
+                options: [
+                    StructuredPromptOption(
+                        label: "스프레드시트와 메신저",
+                        description: "시트, Notion, Slack, 카톡처럼 흩어진 수동 조합.",
+                        preview: "duct tape",
+                        nextIntent: "spreadsheet_slack"
+                    ),
+                    StructuredPromptOption(
+                        label: "사람이 직접 처리",
+                        description: "운영자, PM, 인턴, 외주가 반복 업무를 사람 손으로 처리.",
+                        preview: "labor",
+                        nextIntent: "manual_labor"
+                    ),
+                    StructuredPromptOption(
+                        label: "기존 SaaS 우회 사용",
+                        description: "목적이 다른 도구를 억지로 맞춰 쓰는 상태.",
+                        preview: "tool gap",
+                        nextIntent: "misfit_saas"
+                    ),
+                    StructuredPromptOption(
+                        label: "아무것도 안 함",
+                        description: "실제로는 안 풀고 지나간다. 통증이 약할 수 있는 위험 신호.",
+                        preview: "red flag",
+                        nextIntent: "no_status_quo"
+                    ),
+                ],
+                multiSelect: false,
+                allowFreeText: true,
+                requiresFreeText: false,
+                freeTextPlaceholder: "예: Notion 표, Slack DM, 주 3시간 수동 리포트로 버티고 있어요.",
+                textMode: .short,
+                highlightPhrases: ["도구, 사람, 시간, 비용"]
+            )
+        case 3:
+            signalId = "human"
+            signalLabel = "HUMAN"
+            prompt = StructuredPromptQuestion(
+                questionId: "office_hours_human",
+                header: "HUMAN",
+                question: "이번 주 안에 DM·메시지·통화 1통을 실제로 요청할 수 있는 사람은 누구야? 이름, 역할, 실패 비용을 적어줘.",
+                helperText: nil,
+                options: [
+                    StructuredPromptOption(
+                        label: "이름과 회사까지 안다",
+                        description: "이번 주 바로 연락할 수 있는 실제 후보가 있다.",
+                        preview: "specific",
+                        nextIntent: "named_person"
+                    ),
+                    StructuredPromptOption(
+                        label: "역할과 상황은 안다",
+                        description: "직함, 팀, 실패 비용은 있지만 아직 특정 이름은 없다.",
+                        preview: "close",
+                        nextIntent: "role_known"
+                    ),
+                    StructuredPromptOption(
+                        label: "고객군만 안다",
+                        description: "SMB, 개발자, 마케터처럼 아직 너무 넓다.",
+                        preview: "broad",
+                        nextIntent: "category_only"
+                    ),
+                    StructuredPromptOption(
+                        label: "아직 모른다",
+                        description: "문제보다 솔루션에서 출발했을 가능성이 크다.",
+                        preview: "reset",
+                        nextIntent: "unknown_user"
+                    ),
+                ],
+                multiSelect: false,
+                allowFreeText: true,
+                requiresFreeText: false,
+                freeTextPlaceholder: "예: 50명 규모 물류 스타트업의 Ops Lead, 매주 고객 리포트 때문에 야근합니다.",
+                textMode: .short,
+                highlightPhrases: ["DM·메시지·통화 1통"]
+            )
+        case 4:
+            signalId = "wedge"
+            signalLabel = "WEDGE"
+            prompt = StructuredPromptQuestion(
+                questionId: "office_hours_wedge",
+                header: "WEDGE",
+                question: "이번 주에 돈을 받을 수 있는 가장 작은 버전은 뭐야? 플랫폼 말고 하나의 workflow로 말해줘.",
+                helperText: nil,
+                options: [
+                    StructuredPromptOption(
+                        label: "유료 파일럿 1건",
+                        description: "한 고객에게 직접 돈을 받고 결과물을 제공한다.",
+                        preview: "paid",
+                        nextIntent: "paid_pilot"
+                    ),
+                    StructuredPromptOption(
+                        label: "주간 리포트",
+                        description: "설정 없는 결과물로 가치부터 보여준다.",
+                        preview: "concierge",
+                        nextIntent: "weekly_report"
+                    ),
+                    StructuredPromptOption(
+                        label: "단일 자동화",
+                        description: "전체 플랫폼이 아니라 한 반복 작업만 자동화한다.",
+                        preview: "workflow",
+                        nextIntent: "single_automation"
+                    ),
+                    StructuredPromptOption(
+                        label: "클릭 데모 먼저",
+                        description: "돈보다 승인, 이해, 사용 의향을 먼저 검증해야 한다.",
+                        preview: "demo",
+                        nextIntent: "demo_first"
+                    ),
+                ],
+                multiSelect: false,
+                allowFreeText: true,
+                requiresFreeText: false,
+                freeTextPlaceholder: "예: 매주 월요일 경쟁사 변화 리포트 1장을 대신 만들어주는 paid pilot.",
+                textMode: .short,
+                highlightPhrases: ["돈을 받을 수 있는 가장 작은 버전"]
+            )
+        case 5:
+            signalId = "observation"
+            signalLabel = "OBSERVATION"
+            prompt = StructuredPromptQuestion(
+                questionId: "office_hours_observation",
+                header: "OBSERVATION",
+                question: "누군가가 말없이 쓰는 걸 본 적 있어? 예상과 달랐던 행동이 하나라도 있었는지 적어줘.",
+                helperText: nil,
+                options: [
+                    StructuredPromptOption(
+                        label: "직접 관찰했다",
+                        description: "옆에서 지켜봤고 예상과 다른 행동을 봤다.",
+                        preview: "best",
+                        nextIntent: "watched_user"
+                    ),
+                    StructuredPromptOption(
+                        label: "녹화나 로그만 봤다",
+                        description: "행동 데이터는 있으나 맥락 질문은 아직 못 했다.",
+                        preview: "partial",
+                        nextIntent: "reviewed_logs"
+                    ),
+                    StructuredPromptOption(
+                        label: "데모 콜만 했다",
+                        description: "사용자가 실제로 쓰는 장면은 아직 못 봤다.",
+                        preview: "weak",
+                        nextIntent: "demo_only"
+                    ),
+                    StructuredPromptOption(
+                        label: "아직 없다",
+                        description: "다음 과제는 build가 아니라 observation일 가능성이 높다.",
+                        preview: "assignment",
+                        nextIntent: "no_observation"
+                    ),
+                ],
+                multiSelect: false,
+                allowFreeText: true,
+                requiresFreeText: false,
+                freeTextPlaceholder: "예: 사용자가 설정을 안 보고 바로 export부터 찾았어요.",
+                textMode: .short,
+                highlightPhrases: ["말없이 쓰는 걸 본 적"]
+            )
+        case 6:
+            signalId = "future_fit"
+            signalLabel = "FUTURE FIT"
+            prompt = StructuredPromptQuestion(
+                questionId: "office_hours_future_fit",
+                header: "FUTURE FIT",
+                question: "3년 뒤 세상이 달라졌을 때 이 제품은 더 필수적이 돼, 아니면 덜 필수적이 돼? 왜 그런지 한 문장으로.",
+                helperText: nil,
+                options: [
+                    StructuredPromptOption(
+                        label: "더 필수적이다",
+                        description: "사용자의 세계 변화가 제품 의존도를 키운다.",
+                        preview: "thesis",
+                        nextIntent: "more_essential"
+                    ),
+                    StructuredPromptOption(
+                        label: "덜 필수적일 수 있다",
+                        description: "범용 AI나 incumbent가 같은 문제를 흡수할 위험이 있다.",
+                        preview: "risk",
+                        nextIntent: "less_essential"
+                    ),
+                    StructuredPromptOption(
+                        label: "방향이 아직 불명확",
+                        description: "가설은 있지만 어떤 변화가 이기는지 더 봐야 한다.",
+                        preview: "open",
+                        nextIntent: "future_unclear"
+                    ),
+                ],
+                multiSelect: false,
+                allowFreeText: true,
+                requiresFreeText: false,
+                freeTextPlaceholder: "예: 팀이 작아질수록 리서치와 실행을 한 사람이 같이 해야 해서 더 필수적입니다.",
+                textMode: .short,
+                highlightPhrases: ["더 필수적", "덜 필수적"]
+            )
+        default:
+            signalId = "demand"
+            signalLabel = "DEMAND"
+            prompt = StructuredPromptQuestion(
+                questionId: "office_hours_demand_evidence",
+                header: "DEMAND",
+                question: "가장 강한 수요 증거가 뭐야? 관심 말고, 없어지면 실제로 곤란해지는 행동이나 돈의 증거.",
+                helperText: nil,
+                options: [
+                    StructuredPromptOption(
+                        label: "돈을 냈거나 제안함",
+                        description: "유료 파일럿, 선결제, 예산 배정처럼 비용이 걸린 신호.",
+                        preview: "strong",
+                        nextIntent: "paid_demand"
+                    ),
+                    StructuredPromptOption(
+                        label: "업무에 이미 의존함",
+                        description: "프로토타입, 수작업 결과물, 리포트를 반복해서 쓰는 상태.",
+                        preview: "behavior",
+                        nextIntent: "workflow_dependency"
+                    ),
+                    StructuredPromptOption(
+                        label: "강한 workaround 있음",
+                        description: "Excel, Slack, 사람, 외주로 억지로 해결하는 현재 대안.",
+                        preview: "status quo",
+                        nextIntent: "workaround_cost"
+                    ),
+                    StructuredPromptOption(
+                        label: "아직 실제 증거 없음",
+                        description: "아이디어나 waitlist 수준이라 첫 검증 과제가 필요한 상태.",
+                        preview: "honest",
+                        nextIntent: "no_evidence_yet"
+                    ),
+                ],
+                multiSelect: false,
+                allowFreeText: true,
+                requiresFreeText: false,
+                freeTextPlaceholder: "예: 3명이 매주 같은 수작업을 하고 있고 1명은 유료 파일럿을 물어봤어요.",
+                textMode: .short,
+                highlightPhrases: ["행동이나 돈의 증거"]
+            )
+        }
+
+        return StructuredPromptRequest(
+            requestId: requestId,
+            sessionId: requestedSessionID,
+            toolName: "agentic30_request_user_input",
+            title: "Office Hours",
+            createdAt: createdAt,
+            questions: [prompt],
+            generation: StructuredPromptGeneration(
+                mode: "office_hours",
+                docType: "day1_step",
+                signalId: signalId,
+                signalLabel: signalLabel,
+                dimensionStepIndex: step,
+                dimensionTotal: 6
+            )
+        )
     }
 
     @discardableResult
@@ -5589,21 +6056,34 @@ final class AgenticViewModel: ObservableObject {
             return false
         }
 
-        sessions[sessionIndex].pendingUserInput = nil
-        sessions[sessionIndex].status = .idle
+        let currentStep = prompt.generation?.dimensionStepIndex ?? (requestId == "ui-test-office-hours-request" ? 1 : 6)
+        let totalSteps = prompt.generation?.dimensionTotal ?? 6
+        if currentStep < totalSteps {
+            let nextStep = currentStep + 1
+            sessions[sessionIndex].pendingUserInput = Self.makeUITestingOfficeHoursStructuredPrompt(
+                sessionID: sessionId,
+                requestId: "ui-test-office-hours-request-\(nextStep)",
+                createdAt: .now,
+                step: nextStep
+            )
+            sessions[sessionIndex].status = .awaitingInput
+        } else {
+            sessions[sessionIndex].pendingUserInput = nil
+            sessions[sessionIndex].status = .idle
+            sessions[sessionIndex].messages.append(ChatMessage(
+                id: UUID().uuidString,
+                role: .assistant,
+                provider: sessions[sessionIndex].provider,
+                content: "선택지를 확인했어요. 이제 채팅으로 이어갈 수 있습니다.",
+                state: .final,
+                createdAt: .now,
+                error: nil,
+                bipMissionChoices: nil,
+                providerAuthActions: nil
+            ))
+        }
         sessions[sessionIndex].error = nil
         sessions[sessionIndex].updatedAt = .now
-        sessions[sessionIndex].messages.append(ChatMessage(
-            id: UUID().uuidString,
-            role: .assistant,
-            provider: sessions[sessionIndex].provider,
-            content: "선택지를 확인했어요. 이제 채팅으로 이어갈 수 있습니다.",
-            state: .final,
-            createdAt: .now,
-            error: nil,
-            bipMissionChoices: nil,
-            providerAuthActions: nil
-        ))
         submittedStructuredPromptBySession.removeValue(forKey: sessionId)
         structuredPromptDraftBySession.removeValue(forKey: sessionId)
         refreshPresentationState()
@@ -6082,12 +6562,39 @@ final class AgenticViewModel: ObservableObject {
         )
         updateStructuredPromptSubmissionProgress(from: event)
     }
+
+    func applyOfficeHoursLiveStatusForTesting(
+        sessionId: String,
+        stage: String,
+        title: String? = nil,
+        detail: String? = nil,
+        progressText: String? = nil,
+        requestId: String? = nil,
+        elapsedMs: Int? = nil
+    ) {
+        let status = OfficeHoursLiveStatus(
+            sessionId: sessionId,
+            stage: stage,
+            title: title,
+            detail: detail,
+            progressText: progressText,
+            messageId: nil,
+            requestId: requestId,
+            elapsedMs: elapsedMs,
+            updatedAt: .now
+        )
+        officeHoursLiveStatusBySession[sessionId] = status
+        if let progressText {
+            appendSidecarOutput(sessionID: sessionId, summary: progressText)
+        }
+    }
     #endif
 
     private func upsert(_ session: ChatSession) {
         let session = sessionByApplyingCurriculumQuestionReframeGuards(to: sanitizedSessionSnapshot(session))
         reconcileStructuredPromptSubmissionState(with: session)
         reconcileStructuredPromptDraftState(with: session)
+        reconcileOfficeHoursLiveStatus(with: session)
         if let index = sessions.firstIndex(where: { $0.id == session.id }) {
             sessions[index] = mergeSessionSnapshot(session, into: sessions[index])
         } else {
@@ -6553,6 +7060,11 @@ final class AgenticViewModel: ObservableObject {
     private func appendSidecarOutput(sessionID: String, event: SidecarEvent) {
         let summary = (event.summary ?? event.fallbackToolSummary)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        appendSidecarOutput(sessionID: sessionID, summary: summary)
+    }
+
+    private func appendSidecarOutput(sessionID: String, summary: String) {
+        let summary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !summary.isEmpty else { return }
 
         var logs = sidecarOutputLogs[sessionID] ?? []
@@ -6563,6 +7075,30 @@ final class AgenticViewModel: ObservableObject {
             logs.removeFirst(logs.count - 24)
         }
         sidecarOutputLogs[sessionID] = logs
+    }
+
+    private func applyOfficeHoursLiveStatus(from event: SidecarEvent) {
+        guard let status = event.officeHoursLiveStatus else { return }
+        officeHoursLiveStatusBySession[status.sessionId] = status
+        if let progressText = status.progressText {
+            appendSidecarOutput(sessionID: status.sessionId, summary: progressText)
+        }
+    }
+
+    private func reconcileOfficeHoursLiveStatus(with session: ChatSession) {
+        guard officeHoursLiveStatusBySession[session.id] != nil else { return }
+        if session.pendingUserInput != nil || session.status == .idle || session.status == .error {
+            officeHoursLiveStatusBySession.removeValue(forKey: session.id)
+        }
+    }
+
+    private func reconcileOfficeHoursLiveStatuses(with sessions: [ChatSession]) {
+        guard !officeHoursLiveStatusBySession.isEmpty else { return }
+        let sessionsByID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
+        officeHoursLiveStatusBySession = officeHoursLiveStatusBySession.filter { sessionID, _ in
+            guard let session = sessionsByID[sessionID] else { return false }
+            return session.pendingUserInput == nil && session.status == .running
+        }
     }
 
     private func refreshPresentationState() {
@@ -7869,6 +8405,7 @@ struct FoundationFirstPrompt: Decodable, Hashable {
 
 struct SidecarEvent: Decodable {
     let type: String
+    let title: String?
     let message: String?
     let sessionId: String?
     let requestId: String?
@@ -7970,9 +8507,12 @@ struct SidecarEvent: Decodable {
     let newsMarketRadarStatus: NewsMarketRadarStatus?
     let bipResearch: BipResearchSnapshot?
     let bipResearchStatus: BipResearchStatus?
+    let workHistory: WorkHistorySnapshot?
+    let workHistoryStatus: WorkHistoryStatus?
 
     init(
         type: String,
+        title: String? = nil,
         message: String?,
         sessionId: String?,
         requestId: String? = nil,
@@ -8054,9 +8594,12 @@ struct SidecarEvent: Decodable {
         newsMarketRadar: NewsMarketRadarSnapshot? = nil,
         newsMarketRadarStatus: NewsMarketRadarStatus? = nil,
         bipResearch: BipResearchSnapshot? = nil,
-        bipResearchStatus: BipResearchStatus? = nil
+        bipResearchStatus: BipResearchStatus? = nil,
+        workHistory: WorkHistorySnapshot? = nil,
+        workHistoryStatus: WorkHistoryStatus? = nil
     ) {
         self.type = type
+        self.title = title
         self.message = message
         self.sessionId = sessionId
         self.requestId = requestId
@@ -8139,6 +8682,8 @@ struct SidecarEvent: Decodable {
         self.newsMarketRadarStatus = newsMarketRadarStatus
         self.bipResearch = bipResearch
         self.bipResearchStatus = bipResearchStatus
+        self.workHistory = workHistory
+        self.workHistoryStatus = workHistoryStatus
     }
 
     var bipMissionProgress: BipMissionProgress? {
@@ -8367,6 +8912,25 @@ struct BipMissionProgress: Hashable {
 }
 
 extension SidecarEvent {
+    var officeHoursLiveStatus: OfficeHoursLiveStatus? {
+        guard type == "office_hours_status",
+              let sessionId = sessionId?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty,
+              let stage = stage?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty else {
+            return nil
+        }
+        return OfficeHoursLiveStatus(
+            sessionId: sessionId,
+            stage: stage,
+            title: title?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty,
+            detail: detail?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty,
+            progressText: progressText?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty,
+            messageId: messageId?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty,
+            requestId: requestId?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty,
+            elapsedMs: elapsedMs,
+            updatedAt: .now
+        )
+    }
+
     var fallbackToolSummary: String {
         if type == "agent_event" {
             return summary ?? ""
@@ -8416,6 +8980,7 @@ enum BipMissionProgressStep: String, CaseIterable {
 extension SidecarEvent {
     private enum CodingKeys: String, CodingKey {
         case type
+        case title
         case message
         case sessionId
         case requestId
@@ -8506,12 +9071,14 @@ extension SidecarEvent {
         case reframedVariantID = "reframed_variant"
         case newsMarketRadar
         case bipResearch
+        case workHistory
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
 
         type = try container.decode(String.self, forKey: .type)
+        title = Self.decodeIfPresent(String.self, from: container, forKey: .title)
         message = Self.decodeIfPresent(String.self, from: container, forKey: .message)
         sessionId = Self.decodeIfPresent(String.self, from: container, forKey: .sessionId)
         requestId = Self.decodeIfPresent(String.self, from: container, forKey: .requestId)
@@ -8607,6 +9174,8 @@ extension SidecarEvent {
         newsMarketRadarStatus = Self.decodeIfPresent(NewsMarketRadarStatus.self, from: container, forKey: .status)
         bipResearch = Self.decodeIfPresent(BipResearchSnapshot.self, from: container, forKey: .bipResearch)
         bipResearchStatus = Self.decodeIfPresent(BipResearchStatus.self, from: container, forKey: .status)
+        workHistory = Self.decodeIfPresent(WorkHistorySnapshot.self, from: container, forKey: .workHistory)
+        workHistoryStatus = Self.decodeIfPresent(WorkHistoryStatus.self, from: container, forKey: .status)
     }
 
     private static func decodeIfPresent<T: Decodable>(

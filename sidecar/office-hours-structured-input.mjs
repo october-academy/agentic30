@@ -3,204 +3,66 @@ import {
   isStructuredInputToolName,
 } from "./structured-input-tools.mjs";
 
-export const OFFICE_HOURS_FALLBACK_MODE = "office_hours_fallback";
 export const OFFICE_HOURS_INLINE_MODE = "office_hours_inline";
 
 const OFFICE_HOURS_STRUCTURED_MODES = new Set([
   "office_hours",
-  OFFICE_HOURS_FALLBACK_MODE,
   OFFICE_HOURS_INLINE_MODE,
 ]);
 
 const DEFAULT_OFFICE_HOURS_QUESTION =
-  "누가 이 문제에 이미 돈, 시간, 우회 수단을 쓰고 있다는 가장 강한 증거는 무엇인가요?";
+  "Agentic30 수요를 실제 행동으로 확인한 가장 강한 증거는 무엇인가요?";
 
-const DEFAULT_OFFICE_HOURS_OPTIONS = Object.freeze([
+const DEMAND_EVIDENCE_QUESTION_ID = "office_hours_demand_evidence";
+const DEMAND_EVIDENCE_OPTIONS = Object.freeze([
   Object.freeze({
-    label: "돈/결제 신호",
-    description: "이미 돈을 냈거나 유료 제안에 답할 후보를 기준으로 검증합니다.",
+    label: "실제 결제/계약이 있었다",
+    description: "돈이 이미 움직였으므로 가장 강한 증거입니다. 다음 검증은 구매자가 ICP와 맞는지입니다.",
+    nextIntent: "actual_payment_or_contract",
     recommended: true,
-    risk: "관심 표현만 수요로 착각하는 리스크를 줄입니다.",
-    evidenceTarget: "결제, 유료 제안 응답, 예산 보유 같은 돈의 증거",
+    risk: "결제 주체와 날짜가 없으면 말뿐인 관심으로 낮춰 봐야 합니다.",
+    evidenceTarget: "실명, 날짜, 결제 또는 계약 절차",
     mapsTo: "Q1 Demand Reality",
-    failureMode: "돈 신호가 없으면 이번 주 검증 행동으로 내려야 합니다.",
+    failureMode: "돈이 움직였다는 사실을 못 쓰면 구매 조건 이하로 낮춥니다.",
   }),
   Object.freeze({
-    label: "시간/우회 수단",
-    description: "현재 시간을 쓰거나 수작업으로 해결하는 사람의 비용을 확인합니다.",
-    risk: "시간 비용이 작으면 nice-to-have일 가능성이 큽니다.",
-    evidenceTarget: "주당 시간, 수작업, 기존 도구 조합",
-    mapsTo: "Q2 Status Quo",
-    failureMode: "우회 수단이 없으면 문제 강도부터 다시 봅니다.",
+    label: "구매 조건이 구체적으로 확인됐다",
+    description: "가격, 범위, 일정 조건이 있으면 다음 검증은 실제 결제 전환입니다.",
+    nextIntent: "concrete_purchase_conditions",
+    risk: "실제 결제 전환 전까지는 의향 신호에 머뭅니다.",
+    evidenceTarget: "가격, 범위, 구매 시점, 결제권자 중 하나 이상",
+    mapsTo: "Q1 Demand Reality",
+    failureMode: "조건이 구체적이지 않으면 관심 신호로 낮춥니다.",
   }),
   Object.freeze({
-    label: "실사용 관찰",
-    description: "옆에서 실제 워크플로가 막히는 장면을 보고 다음 실험을 정합니다.",
-    risk: "데모콜이나 설문은 실제 사용 마찰을 가립니다.",
-    evidenceTarget: "도움 없이 막힌 단계, 예상과 다른 행동",
-    mapsTo: "Q5 Observation",
-    failureMode: "관찰이 없으면 assignment는 기능 추가가 아니라 관찰입니다.",
+    label: "현재 대안에 돈/시간을 쓰고 있다",
+    description: "유료 대안이나 반복 행동이 있어도 전환 이유와 대체 우위는 남습니다.",
+    nextIntent: "paid_or_time_current_alternative",
+    risk: "현재 방식이 충분히 싸거나 익숙하면 전환 동기가 약할 수 있습니다.",
+    evidenceTarget: "현재 대안 비용, 반복 시간, 우회 수단",
+    mapsTo: "Q1 Demand Reality",
+    failureMode: "돈이나 반복 시간이 작으면 관심 신호로 낮춥니다.",
   }),
   Object.freeze({
-    label: "증거 없음",
-    description: "근거가 부족하다고 인정하고 오늘 바로 확인할 가장 작은 행동을 고릅니다.",
-    risk: "근거 없이 계속 만들면 build-first 루프로 돌아갑니다.",
-    evidenceTarget: "이번 주 연락/관찰/유료 제안 계획",
-    mapsTo: "Evidence Gap",
-    failureMode: "증거 공백을 숨기면 Office Hours 진단이 무의미해집니다.",
+    label: "관심만 있거나 아직 증거가 없다",
+    description: "칭찬, 가격 질문, 막연한 관심은 수요가 아니며 첫 행동 증거가 필요합니다.",
+    nextIntent: "verbal_interest_or_no_evidence",
+    risk: "오늘 답으로는 수요 판단이 불가능합니다.",
+    evidenceTarget: "실명 3명의 현재 대안, 지출, 첫 결제 조건",
+    mapsTo: "Q1 Demand Reality",
+    failureMode: "실제 행동 없이 제품을 만들면 수요 공백이 남습니다.",
   }),
 ]);
-
-const OFFICE_HOURS_INTENT_OPTION_SETS = Object.freeze({
-  stage: Object.freeze([
-    Object.freeze({
-      label: "Pre-product",
-      description: "아직 사용자가 없으면 수요, 현재 대안, 가장 절박한 사람부터 확인합니다.",
-      recommended: false,
-      risk: "사용자 없이 wedge부터 정하면 가설이 너무 빨리 굳습니다.",
-      evidenceTarget: "실제 사용자 전 단계라는 명시적 상태",
-      mapsTo: "stage:pre_product",
-      failureMode: "stage를 잘못 고르면 질문 routing이 빗나갑니다.",
-      nextIntent: "stage_pre_product",
-    }),
-    Object.freeze({
-      label: "Has users",
-      description: "사용자는 있지만 결제 전이면 status quo, 이번 주 wedge, 관찰 증거를 우선합니다.",
-      recommended: true,
-      risk: "관심/사용을 결제로 착각하면 수요 강도를 과대평가합니다.",
-      evidenceTarget: "사용자 존재, 무과금, 반복/완료 행동",
-      mapsTo: "stage:has_users",
-      failureMode: "결제 전 단계의 가장 큰 공백은 관찰과 paid intent입니다.",
-      nextIntent: "stage_has_users",
-    }),
-    Object.freeze({
-      label: "Has paying customers",
-      description: "결제자가 있으면 가장 작은 유료 wedge, 관찰 surprise, future-fit을 봅니다.",
-      risk: "초기 결제를 넓은 시장 신호로 과대해석할 수 있습니다.",
-      evidenceTarget: "결제자, 사용 확장, 깨졌을 때의 반응",
-      mapsTo: "stage:has_paying_customers",
-      failureMode: "결제자가 구체적이지 않으면 has-users로 낮춰 봐야 합니다.",
-      nextIntent: "stage_has_paying_customers",
-    }),
-    Object.freeze({
-      label: "Engineering/infra",
-      description: "시장 세션이 아니라 내부 workflow라면 현재 대안과 가장 작은 greenlight demo만 봅니다.",
-      risk: "비즈니스 질문을 억지로 묻는 낭비를 줄입니다.",
-      evidenceTarget: "내부 sponsor, 반복 업무, 승인 기준",
-      mapsTo: "stage:engineering_infra",
-      failureMode: "sponsor가 없으면 internal project도 수요가 약합니다.",
-      nextIntent: "stage_engineering_infra",
-    }),
-  ]),
-  status_quo: Object.freeze([
-    Object.freeze({
-      label: "수작업",
-      description: "반복 복사, 정리, 추적 같은 손작업이면 시간 비용을 바로 측정할 수 있습니다.",
-      recommended: true,
-      risk: "시간 비용이 작으면 결제 근거가 약합니다.",
-      evidenceTarget: "주당 시간, 반복 횟수, 실수 비용",
-      mapsTo: "Q2 Status Quo",
-      failureMode: "수작업 비용을 못 대면 problem intensity가 약합니다.",
-    }),
-    Object.freeze({
-      label: "기존 도구 조합",
-      description: "여러 앱을 이어 붙이는 우회라면 전환 비용과 깨지는 지점을 확인합니다.",
-      risk: "기존 조합이 충분히 좋으면 새 제품이 끼어들기 어렵습니다.",
-      evidenceTarget: "현재 쓰는 도구, 연결 마찰, 실패 단계",
-      mapsTo: "Q2 Status Quo",
-      failureMode: "대체재가 강하면 wedge를 더 좁혀야 합니다.",
-    }),
-    Object.freeze({
-      label: "그냥 방치",
-      description: "아무것도 하지 않는다면 왜 방치해도 되는지와 실제 손실을 먼저 봅니다.",
-      risk: "방치 가능한 문제는 유료 수요가 아닐 수 있습니다.",
-      evidenceTarget: "방치 결과, 놓친 돈/시간/평판",
-      mapsTo: "Q2 Status Quo",
-      failureMode: "손실이 없으면 다른 문제로 reframing해야 합니다.",
-    }),
-  ]),
-  wedge: Object.freeze([
-    Object.freeze({
-      label: "이번 주 유료 한 가지",
-      description: "가장 작은 paid workflow를 골라 full platform 도피를 막습니다.",
-      recommended: true,
-      risk: "너무 작게 잡으면 장기 비전 증거는 부족할 수 있습니다.",
-      evidenceTarget: "이번 주 결제 가능 feature/workflow",
-      mapsTo: "Q4 Narrowest Wedge",
-      failureMode: "한 가지로 줄지 않으면 value prop이 아직 흐립니다.",
-    }),
-    Object.freeze({
-      label: "수동 concierge",
-      description: "자동화 없이 직접 결과를 만들어 paid intent와 결과 만족도를 먼저 봅니다.",
-      risk: "수동 운영 비용은 제품화 전에 별도 검증이 필요합니다.",
-      evidenceTarget: "수동 제공 결과, 결제/반복 의사",
-      mapsTo: "Q4 Narrowest Wedge",
-      failureMode: "수동으로도 가치가 없으면 자동화해도 약합니다.",
-    }),
-    Object.freeze({
-      label: "전체 플랫폼",
-      description: "비전은 보존하지만 이번 주 수요 검증에는 가장 느린 선택입니다.",
-      risk: "아키텍처 애착이 고객 가치보다 앞설 수 있습니다.",
-      evidenceTarget: "작게 쪼갤 수 없는 이유",
-      mapsTo: "Q4 Red Flag",
-      failureMode: "플랫폼만 가능하다는 답은 wedge를 다시 물어야 합니다.",
-    }),
-  ]),
-  observation: Object.freeze([
-    Object.freeze({
-      label: "직접 관찰함",
-      description: "도움 없이 막힌 장면과 예상 밖 행동이 있으면 가장 강한 사용 증거입니다.",
-      recommended: true,
-      risk: "관찰 대상이 ICP가 아니면 제품 판단을 흐릴 수 있습니다.",
-      evidenceTarget: "누가, 어디서, 어떤 단계에서 막혔는지",
-      mapsTo: "Q5 Observation",
-      failureMode: "surprise가 없으면 관찰이 아니라 데모였을 수 있습니다.",
-    }),
-    Object.freeze({
-      label: "인터뷰/설문만 있음",
-      description: "pain은 들었지만 실제 workflow friction은 아직 검증되지 않았습니다.",
-      risk: "말한 것과 실제 행동이 다를 수 있습니다.",
-      evidenceTarget: "관찰로 확인해야 할 단계",
-      mapsTo: "Q5 Observation Gap",
-      failureMode: "다음 assignment는 직접 관찰입니다.",
-    }),
-    Object.freeze({
-      label: "아직 못 봄",
-      description: "가장 큰 공백을 인정하고 이번 주 관찰 assignment로 내려야 합니다.",
-      risk: "기능 추가가 관찰 부족을 가릴 수 있습니다.",
-      evidenceTarget: "관찰할 ICP, workflow, 완료 기준",
-      mapsTo: "Q5 Observation Gap",
-      failureMode: "관찰 없이 진단을 닫으면 가정이 남습니다.",
-    }),
-  ]),
-  alternatives: Object.freeze([
-    Object.freeze({
-      label: "최소안",
-      description: "가장 작은 변경으로 이번 주 evidence gap 하나를 닫습니다.",
-      recommended: true,
-      risk: "장기 구조는 덜 예쁠 수 있지만 검증 속도가 빠릅니다.",
-      evidenceTarget: "하나의 관찰/결제/완료 신호",
-      mapsTo: "Alternatives:minimal",
-      failureMode: "최소안도 실행이 크면 다시 쪼갭니다.",
-    }),
-    Object.freeze({
-      label: "이상안",
-      description: "원본 office-hours 흐름을 가장 완전하게 구현해 장기 품질을 높입니다.",
-      risk: "초기 구현 범위가 커져 실사용 검증이 늦어질 수 있습니다.",
-      evidenceTarget: "전체 세션 품질과 회귀 테스트",
-      mapsTo: "Alternatives:ideal",
-      failureMode: "품질보다 범위가 앞서면 shipping이 늦습니다.",
-    }),
-    Object.freeze({
-      label: "다른 관점",
-      description: "질문 품질보다 사용자 관찰/문서화 workflow를 먼저 좁히는 접근입니다.",
-      risk: "원본 parity는 늦지만 실제 사용 증거에 더 가까울 수 있습니다.",
-      evidenceTarget: "관찰 assignment completion",
-      mapsTo: "Alternatives:lateral",
-      failureMode: "세션 구조 개선이 뒤로 밀릴 수 있습니다.",
-    }),
-  ]),
-});
+const KNOWN_OFFICE_HOURS_INTENTS = new Set([
+  "demand",
+  "stage",
+  "status_quo",
+  "wedge",
+  "observation",
+  "premise",
+  "alternatives",
+  "future_fit",
+]);
 
 export function officeHoursStructuredInputToolName(provider = "codex") {
   return String(provider || "").toLowerCase() === "claude"
@@ -222,6 +84,23 @@ export function isOfficeHoursStructuredInputToolEvent(event = {}) {
   ].some((value) => isStructuredInputToolName(value));
 }
 
+export function normalizeOfficeHoursStructuredPromptRequest(request = {}) {
+  if (!request || typeof request !== "object") return request;
+  const questions = Array.isArray(request.questions) ? request.questions : [];
+  let changed = false;
+  const normalizedQuestions = questions.map((question) => {
+    if (!isDemandEvidenceQuestion(question)) return question;
+    changed = true;
+    return normalizeDemandEvidenceQuestion(question);
+  });
+  return changed
+    ? {
+        ...request,
+        questions: normalizedQuestions,
+      }
+    : request;
+}
+
 export function stripTrailingRubricFocusMetadata(content = "") {
   let cleaned = String(content ?? "");
   let previous;
@@ -233,28 +112,6 @@ export function stripTrailingRubricFocusMetadata(content = "") {
     );
   } while (cleaned !== previous);
   return cleaned.trim();
-}
-
-export function defaultOfficeHoursFallbackOptions(intent = "") {
-  const key = normalizeOfficeHoursIntent(intent);
-  const options = OFFICE_HOURS_INTENT_OPTION_SETS[key] || DEFAULT_OFFICE_HOURS_OPTIONS;
-  return options.map((option) => ({ ...option }));
-}
-
-export function extractOfficeHoursQuestion(content = "") {
-  const cleaned = stripTrailingRubricFocusMetadata(content);
-  const lines = cleaned
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const questionLine = [...lines]
-    .reverse()
-    .find((line) => isLikelyOfficeHoursQuestion(line));
-  return questionLine || "";
-}
-
-export function hasLikelyOfficeHoursQuestion(content = "") {
-  return Boolean(extractOfficeHoursQuestion(content));
 }
 
 export function buildOfficeHoursStructuredQuestionTranscriptText(promptRequest = {}) {
@@ -275,29 +132,28 @@ export function shouldAppendOfficeHoursStructuredQuestionMessage(messages = [], 
   return !normalizedAssistant.includes(normalizedQuestion);
 }
 
-export function buildOfficeHoursStructuredPromptPayload({
+export function buildOfficeHoursInlineStructuredPromptPayload({
   sessionId,
   provider = "codex",
   assistantMessage = null,
-  mode = OFFICE_HOURS_FALLBACK_MODE,
-  allowDefaultQuestion = true,
   context = "",
 } = {}) {
   if (!sessionId) return null;
   const inlineDecision = assistantMessage?.inlineDecision || null;
-  const hasInlineDecision = Boolean(inlineDecision);
-  const resolvedMode = hasInlineDecision ? OFFICE_HOURS_INLINE_MODE : mode;
-  const extractedQuestion = extractOfficeHoursQuestion(assistantMessage?.content || "");
+  if (!inlineDecision) return null;
   const defaultQuestion = buildContextualOfficeHoursQuestion(context);
-  const question = cleanOfficeHoursQuestion(hasInlineDecision
-    ? String(inlineDecision.question || "").trim() || defaultQuestion
-    : extractedQuestion || defaultQuestion);
+  const question = cleanOfficeHoursQuestion(
+    String(inlineDecision.question || "").trim() || defaultQuestion,
+  );
   const intent = resolveOfficeHoursQuestionIntent({
     inlineDecision,
     question,
     assistantContent: assistantMessage?.content || "",
   });
-  const options = normalizeOfficeHoursOptions(inlineDecision?.options, intent);
+  const options = normalizeOfficeHoursOptions(inlineDecision?.options);
+  const allowFreeText = inlineDecision.allowFreeText === true;
+  const requiresFreeText = inlineDecision.requiresFreeText === true;
+  if (options.length < 2 && !allowFreeText) return null;
   const highlightPhrases = normalizeOfficeHoursHighlightPhrases(
     inlineDecision?.highlightPhrases
       || inlineDecision?.highlight_phrases
@@ -307,36 +163,45 @@ export function buildOfficeHoursStructuredPromptPayload({
     options,
   );
 
-  if (!hasInlineDecision && !extractedQuestion && !allowDefaultQuestion) {
-    return null;
-  }
+  const questions = [
+    {
+      questionId: resolveOfficeHoursQuestionId(inlineDecision, intent),
+      header: String(inlineDecision?.header || "").trim().slice(0, 32) || officeHoursIntentHeader(intent),
+      question,
+      helperText:
+        String(inlineDecision?.helperText || inlineDecision?.helper_text || "").trim().slice(0, 280)
+        || "선택지로 답하면 Office Hours가 이어집니다.",
+      ...(highlightPhrases.length ? { highlightPhrases } : {}),
+      ...(options.length ? { options } : {}),
+      multiSelect: inlineDecision.multiSelect === true,
+      allowFreeText,
+      requiresFreeText,
+      ...(inlineDecision.freeTextPlaceholder || inlineDecision.free_text_placeholder
+        ? {
+            freeTextPlaceholder: String(
+              inlineDecision.freeTextPlaceholder || inlineDecision.free_text_placeholder,
+            ).trim().slice(0, 280),
+          }
+        : {}),
+      textMode: inlineDecision.textMode === "long" ? "long" : "short",
+    },
+  ];
 
-  return {
+  const payload = {
     sessionId,
     toolName: officeHoursStructuredInputToolName(provider),
     title: "Office Hours",
-    questions: [
-      {
-        questionId: resolveOfficeHoursQuestionId(inlineDecision, intent),
-        header: String(inlineDecision?.header || "").trim().slice(0, 32) || officeHoursIntentHeader(intent),
-        question,
-        helperText: "선택지로 답하거나 직접 입력하면 Office Hours가 이어집니다.",
-        ...(highlightPhrases.length ? { highlightPhrases } : {}),
-        options,
-        multiSelect: false,
-        allowFreeText: true,
-        requiresFreeText: false,
-        freeTextPlaceholder: "예: 이번 주 3명에게 유료 제안을 보내고 답변을 기록",
-        textMode: "short",
-      },
-    ],
+    questions,
     generation: {
-      mode: resolvedMode,
+      mode: OFFICE_HOURS_INLINE_MODE,
       docType: "day1_step",
       signalId: resolveOfficeHoursSignalId(inlineDecision, intent),
       signalLabel: officeHoursSignalLabel(intent),
     },
   };
+  return normalizeOfficeHoursIntent(intent) === "demand"
+    ? normalizeOfficeHoursStructuredPromptRequest(payload)
+    : payload;
 }
 
 export function buildOfficeHoursStructuredInputContinuationPrompt({
@@ -379,8 +244,43 @@ export function buildContextualOfficeHoursQuestion(context = "") {
   return DEFAULT_OFFICE_HOURS_QUESTION;
 }
 
-function normalizeOfficeHoursOptions(options, intent = "") {
-  if (!Array.isArray(options)) return defaultOfficeHoursFallbackOptions(intent);
+function isDemandEvidenceQuestion(question = {}) {
+  const id = String(question?.questionId || question?.question_id || question?.id || "")
+    .trim()
+    .toLowerCase();
+  if (id === DEMAND_EVIDENCE_QUESTION_ID) return true;
+  const text = [
+    question?.header,
+    question?.question,
+  ].filter(Boolean).join("\n").toLowerCase();
+  return /수요|demand/.test(text)
+    && /증거|evidence|실제 행동|strongest/.test(text);
+}
+
+function normalizeDemandEvidenceQuestion(question = {}) {
+  return {
+    ...question,
+    questionId: String(
+      question.questionId
+        || question.question_id
+        || question.id
+        || DEMAND_EVIDENCE_QUESTION_ID,
+    ).trim().slice(0, 96) || DEMAND_EVIDENCE_QUESTION_ID,
+    header: String(question.header || "").trim().slice(0, 32) || "수요 증거",
+    question: cleanOfficeHoursQuestion(
+      String(question.question || "").trim() || DEFAULT_OFFICE_HOURS_QUESTION,
+    ),
+    options: DEMAND_EVIDENCE_OPTIONS.map((option) => ({ ...option })),
+    multiSelect: false,
+    allowFreeText: false,
+    requiresFreeText: false,
+    freeTextPlaceholder: undefined,
+    textMode: question.textMode === "long" ? "long" : "short",
+  };
+}
+
+function normalizeOfficeHoursOptions(options) {
+  if (!Array.isArray(options)) return [];
   const normalized = options
     .map((option) => {
       const label = String(option?.label || "").trim();
@@ -406,9 +306,9 @@ function normalizeOfficeHoursOptions(options, intent = "") {
       };
     })
     .filter(Boolean)
-    .slice(0, 4);
+    .slice(0, 7);
 
-  return normalized.length >= 2 ? normalized : defaultOfficeHoursFallbackOptions(intent);
+  return normalized;
 }
 
 function resolveOfficeHoursQuestionIntent({
@@ -433,7 +333,7 @@ function resolveOfficeHoursQuestionIntent({
     inlineDecision?.header,
   ].filter(Boolean).join("\n").toLowerCase();
   if (/demand|수요|증거|누가.*원하|관심 말고|돈.*시간.*우회|would.*upset/.test(haystack)) {
-    return "";
+    return "demand";
   }
   if (/stage|단계|pre[-_ ]?product|has users|paying customers|제품 단계|사용자.*있|결제/.test(haystack)) {
     return "stage";
@@ -462,6 +362,7 @@ function resolveOfficeHoursQuestionIntent({
 function normalizeOfficeHoursIntent(value = "") {
   const text = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
   if (!text) return "";
+  if (text.includes("demand") || text.includes("q1") || text.includes("수요")) return "demand";
   if (text.includes("stage")) return "stage";
   if (text.includes("status_quo") || text.includes("status") || text.includes("q2")) return "status_quo";
   if (text.includes("wedge") || text.includes("q4")) return "wedge";
@@ -469,7 +370,7 @@ function normalizeOfficeHoursIntent(value = "") {
   if (text.includes("premise")) return "premise";
   if (text.includes("alternative")) return "alternatives";
   if (text.includes("future") || text.includes("q6")) return "future_fit";
-  return text in OFFICE_HOURS_INTENT_OPTION_SETS ? text : "";
+  return KNOWN_OFFICE_HOURS_INTENTS.has(text) ? text : "";
 }
 
 function resolveOfficeHoursQuestionId(inlineDecision, intent = "") {
@@ -483,8 +384,9 @@ function resolveOfficeHoursQuestionId(inlineDecision, intent = "") {
   const key = normalizeOfficeHoursIntent(intent);
   if (key === "premise") return "office_hours_premise_challenge";
   if (key === "alternatives") return "office_hours_alternatives";
+  if (key === "demand") return DEMAND_EVIDENCE_QUESTION_ID;
   if (key) return `office_hours_${key}`;
-  return "office_hours_forcing_question";
+  return DEMAND_EVIDENCE_QUESTION_ID;
 }
 
 function resolveOfficeHoursSignalId(inlineDecision, intent = "") {
@@ -499,6 +401,8 @@ function resolveOfficeHoursSignalId(inlineDecision, intent = "") {
 
 function officeHoursIntentHeader(intent = "") {
   switch (normalizeOfficeHoursIntent(intent)) {
+    case "demand":
+      return "수요 증거";
     case "stage":
       return "제품 단계";
     case "status_quo":
@@ -520,6 +424,8 @@ function officeHoursIntentHeader(intent = "") {
 
 function officeHoursSignalLabel(intent = "") {
   switch (normalizeOfficeHoursIntent(intent)) {
+    case "demand":
+      return "Office Hours Q1 Demand Evidence";
     case "stage":
       return "Office Hours product stage";
     case "status_quo":
@@ -535,7 +441,7 @@ function officeHoursSignalLabel(intent = "") {
     case "future_fit":
       return "Office Hours Q6 Future-Fit";
     default:
-      return "Office Hours forcing question";
+      return "Office Hours Q1 Demand Evidence";
   }
 }
 
@@ -636,11 +542,4 @@ function cleanOfficeHoursQuestion(value = "") {
     .trim();
   if (text.length <= 400) return text;
   return `${text.slice(0, 398).replace(/[?？.,，。;；:\s]+$/g, "").trim()}?`;
-}
-
-function isLikelyOfficeHoursQuestion(line = "") {
-  const text = String(line || "").trim();
-  if (!text || text.length > 420) return false;
-  return /[?？]$/.test(text)
-    || /(무엇인가요|무엇입니까|어떤 .*(?:인가요|입니까|까요|주세요)|누가 .*(?:인가요|입니까|까요)|언제 .*(?:인가요|입니까|까요)|어디.*(?:인가요|입니까|까요)|어떻게.*(?:인가요|입니까|까요|나요)|왜 .*(?:인가요|입니까|까요)|알려\s*주세요|정해\s*주세요|골라\s*주세요|고르세요|선택(?:해\s*주세요|하세요))/i.test(text);
 }

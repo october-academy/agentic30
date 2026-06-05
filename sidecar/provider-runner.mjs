@@ -15,7 +15,11 @@ import {
 import {
   CODEX_STRUCTURED_INPUT_TOOL,
 } from "./structured-input-tools.mjs";
-import { INLINE_DECISION_CONTRACT } from "./inline-decision.mjs";
+import {
+  INLINE_DECISION_CONTRACT,
+  INLINE_DECISION_SENTINEL_END,
+  INLINE_DECISION_SENTINEL_START,
+} from "./inline-decision.mjs";
 import {
   applyPostHogCodexEnvFromSources,
   buildPostHogClaudeMcpConfigFromSources,
@@ -739,31 +743,52 @@ export function isClaudeMutatingTool(toolName = "") {
 function normalizeClaudeQuestions(questions) {
   if (!Array.isArray(questions)) return [];
   return questions
-    .map((question) => ({
-      question: String(question?.question || "").trim(),
-      header: String(question?.header || "Question").trim().slice(0, 12) || "Question",
-      options: Array.isArray(question?.options)
+    .map((question) => {
+      const options = Array.isArray(question?.options)
         ? question.options
             .map((option) => ({
               label: String(option?.label || "").trim(),
               description: String(option?.description || "").trim(),
               ...(option?.preview ? { preview: String(option.preview) } : {}),
+              ...(option?.nextIntent || option?.next_intent
+                ? { nextIntent: String(option.nextIntent || option.next_intent).trim().slice(0, 160) }
+                : {}),
+              ...(typeof option?.recommended === "boolean" ? { recommended: option.recommended } : {}),
+              ...(option?.risk ? { risk: String(option.risk).trim().slice(0, 280) } : {}),
+              ...(option?.evidenceTarget || option?.evidence_target
+                ? { evidenceTarget: String(option.evidenceTarget || option.evidence_target).trim().slice(0, 280) }
+                : {}),
+              ...(option?.mapsTo || option?.maps_to
+                ? { mapsTo: String(option.mapsTo || option.maps_to).trim().slice(0, 160) }
+                : {}),
+              ...(option?.failureMode || option?.failure_mode
+                ? { failureMode: String(option.failureMode || option.failure_mode).trim().slice(0, 280) }
+                : {}),
             }))
             .filter((option) => {
               return option.label
                 && option.description
                 && !isOtherTextOptionLabel(option.label);
             })
-            .slice(0, 4)
-        : [],
-      multiSelect: Boolean(question?.multiSelect),
-      allowFreeText: Boolean(question?.allowFreeText),
-      requiresFreeText: Boolean(question?.requiresFreeText),
-      ...(question?.helperText ? { helperText: String(question.helperText).trim().slice(0, 280) } : {}),
-      ...(question?.freeTextPlaceholder ? { freeTextPlaceholder: String(question.freeTextPlaceholder).trim().slice(0, 280) } : {}),
-      ...(question?.textMode === "long" ? { textMode: "long" } : {}),
-    }))
-    .filter((question) => question.question && question.options.length >= 2)
+            .slice(0, 7)
+        : [];
+      const allowFreeText = Boolean(question?.allowFreeText);
+      return {
+        ...(question?.questionId || question?.question_id || question?.id
+          ? { questionId: String(question.questionId || question.question_id || question.id).trim().slice(0, 96) }
+          : {}),
+        question: String(question?.question || "").trim(),
+        header: String(question?.header || "Question").trim().slice(0, 32) || "Question",
+        options,
+        multiSelect: Boolean(question?.multiSelect),
+        allowFreeText,
+        requiresFreeText: Boolean(question?.requiresFreeText),
+        ...(question?.helperText ? { helperText: String(question.helperText).trim().slice(0, 280) } : {}),
+        ...(question?.freeTextPlaceholder ? { freeTextPlaceholder: String(question.freeTextPlaceholder).trim().slice(0, 280) } : {}),
+        ...(question?.textMode === "long" ? { textMode: "long" } : {}),
+      };
+    })
+    .filter((question) => question.question && (question.options.length >= 2 || question.allowFreeText))
     .slice(0, 4);
 }
 
@@ -1527,6 +1552,39 @@ export function resolveCodexReasoningEffort({ executionMode = "", prompt = "" } 
 function buildStubResponse(prompt) {
   const contexts = extractStubContextFiles(prompt);
   const value = String(prompt || "");
+  if (/Agentic30 Day 1 STEP Office Hours|Office Hours를 시작한다/i.test(value)) {
+    return [
+      "Office Hours 질문을 선택지 카드로 준비했습니다.",
+      INLINE_DECISION_SENTINEL_START,
+      JSON.stringify({
+        header: "수요 증거",
+        question: "Agentic30 수요를 실제 행동으로 확인한 가장 강한 증거는 무엇인가요?",
+        helperText: "느낌이나 칭찬이 아니라 날짜와 행동으로 설명할 수 있는 증거를 고릅니다.",
+        options: [
+          {
+            label: "실제 결제/계약이 있었다",
+            description: "돈이 이미 움직였으므로 가장 강한 수요 증거입니다.",
+          },
+          {
+            label: "구매 조건이 구체적으로 확인됐다",
+            description: "가격, 범위, 일정 조건이 있으면 다음 검증은 실제 결제 전환입니다.",
+          },
+          {
+            label: "현재 대안에 돈/시간을 쓰고 있다",
+            description: "유료 대안이나 반복 행동이 있어도 전환 이유와 대체 우위는 남습니다.",
+          },
+          {
+            label: "관심만 있거나 아직 증거가 없다",
+            description: "칭찬, 가격 질문, 막연한 관심은 수요가 아니며 첫 행동 증거가 필요합니다.",
+          },
+        ],
+        multiSelect: false,
+        allowFreeText: false,
+        textMode: "short",
+      }),
+      INLINE_DECISION_SENTINEL_END,
+    ].join("\n");
+  }
   if (/ICP\.md 문서 어디에 있어\?/i.test(value) && value.includes("ICP doc: docs/ICP.md")) {
     return "`ICP.md`는 현재 BIP 설정 기준으로 `docs/ICP.md`에 있습니다.";
   }

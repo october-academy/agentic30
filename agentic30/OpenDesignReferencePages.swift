@@ -4539,6 +4539,9 @@ struct OpenDesignReferenceShell: View {
     var refreshBipResearch: () -> Void = {}
     var prepareBipResearch: () -> Void = {}
     var openNewsSettings: () -> Void = {}
+    var workHistory: WorkHistorySnapshot = .empty
+    var refreshWorkHistory: () -> Void = {}
+    var prepareWorkHistory: () -> Void = {}
 
     private var page: OpenDesignReferencePageModel {
         OpenDesignReferenceCatalog.page(kind)
@@ -4566,7 +4569,13 @@ struct OpenDesignReferenceShell: View {
                 openSettings: openNewsSettings
             )
         } else if kind == .history {
-            OpenDesignHistoryShell(layout: layout, openSearch: openSearch)
+            OpenDesignHistoryShell(
+                layout: layout,
+                openSearch: openSearch,
+                snapshot: workHistory,
+                refresh: refreshWorkHistory,
+                prepare: prepareWorkHistory
+            )
         } else if kind == .projects {
             OpenDesignProjectsShell(layout: layout, openSearch: openSearch)
         } else if kind == .settings {
@@ -6648,256 +6657,91 @@ private func openDesignInterviewSummaryText() -> AttributedString {
     return text
 }
 
-private enum OpenDesignHistoryFilter: String, CaseIterable, Identifiable {
-    case all
-    case interview
-    case bip
-    case code
-    case mission
-    case curriculum
+// MARK: - History (이번 주 회고 · sidecar/work-history.mjs 실데이터)
+// 인터뷰 계약: 요일별(월~일) 타임라인 + 기능 영역별 하루 요약(코치 문체,
+// 다음 액션 포함). 시간은 AI 세션 wall-clock만, 커밋은 활동량/근거.
+// 레퍼런스는 변경 파일·디렉토리 + AI 세션 시간대 + 신뢰도만 노출(커밋 SHA 숨김).
+// 미분류/진행 중 세션은 별도 표시, GitHub 미연결 시 연결 요구.
 
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .all: return "전체"
-        case .interview: return "인터뷰"
-        case .bip: return "BIP 로그"
-        case .code: return "코드 · GitHub"
-        case .mission: return "과제"
-        case .curriculum: return "커리큘럼"
-        }
+private enum OpenDesignHistoryFormat {
+    static func minutes(_ minutes: Int) -> String {
+        let m = max(0, minutes)
+        if m < 60 { return "\(m)분" }
+        let h = m / 60
+        let rest = m % 60
+        return rest == 0 ? "\(h)시간" : "\(h)시간 \(rest)분"
     }
 
-    var count: Int {
-        switch self {
-        case .all: return 14
-        case .interview: return 6
-        case .bip: return 0
-        case .code: return 4
-        case .mission: return 1
-        case .curriculum: return 3
-        }
-    }
-
-    var tone: OpenDesignReferenceTone {
-        switch self {
-        case .all, .interview: return .accent
-        case .bip: return .violet
-        case .code: return .sky
-        case .mission: return .amber
-        case .curriculum: return .rose
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .all: return "circle.grid.2x2"
-        case .interview: return "mic"
-        case .bip: return "doc.text"
-        case .code: return "chevron.left.forwardslash.chevron.right"
-        case .mission: return "star"
-        case .curriculum: return "checkmark.square"
-        }
-    }
-
-    func matches(_ event: OpenDesignHistoryEvent) -> Bool {
-        self == .all || event.filter == self
-    }
-}
-
-private struct OpenDesignHistorySidebarTask: Identifiable {
-    enum State { case progress, pending, locked }
-
-    let id: String
-    let title: String
-    let day: String
-    let meta: String
-    let state: State
-}
-
-private struct OpenDesignHistorySidebarGroup: Identifiable {
-    let id: String
-    let title: String
-    let meta: String
-    let tasks: [OpenDesignHistorySidebarTask]
-}
-
-private struct OpenDesignHistoryEvent: Identifiable {
-    let id: String
-    let filter: OpenDesignHistoryFilter
-    let kicker: String
-    let time: String
-    let title: String
-    let body: String
-    let tags: [OpenDesignReferenceChip]
-    let source: String?
-    let delta: String?
-    let isFuture: Bool
-
-    init(
-        id: String,
-        filter: OpenDesignHistoryFilter,
-        kicker: String,
-        time: String,
-        title: String,
-        body: String,
-        tags: [OpenDesignReferenceChip] = [],
-        source: String? = nil,
-        delta: String? = nil,
-        isFuture: Bool = false
-    ) {
-        self.id = id
-        self.filter = filter
-        self.kicker = kicker
-        self.time = time
-        self.title = title
-        self.body = body
-        self.tags = tags
-        self.source = source
-        self.delta = delta
-        self.isFuture = isFuture
-    }
-}
-
-private struct OpenDesignHistoryGroup: Identifiable {
-    enum State { case today, yesterday, past, future }
-
-    let id: String
-    let title: String
-    let iso: String
-    let count: String
-    let state: State
-    let events: [OpenDesignHistoryEvent]
-}
-
-private struct OpenDesignHistoryMetric: Identifiable {
-    let id: String
-    let label: String
-    let value: String
-    let unit: String?
-    let isAccent: Bool
-}
-
-private struct OpenDesignHistoryHeatmapDay: Identifiable {
-    let id: String
-    let level: Int
-    let count: Int
-    let label: String
-    let isToday: Bool
-    let isLocked: Bool
-}
-
-private struct OpenDesignHistorySourceBreakdown: Identifiable {
-    let id: OpenDesignHistoryFilter
-    let title: String
-    let count: Int
-}
-
-private enum OpenDesignHistoryCatalog {
-    static let sidebarGroups: [OpenDesignHistorySidebarGroup] = [
-        .init(id: "week1", title: "Week 1 — Foundation", meta: "1 / 7", tasks: [
-            .init(id: "day1", title: "먼저 도울 사람을 정해요", day: "Day 1", meta: "ICP · 인터뷰 1/3", state: .progress),
-            .init(id: "day2", title: "시장 신호 읽기", day: "Day 2", meta: "Market", state: .pending),
-            .init(id: "day3", title: "Mom Test 인터뷰 ×3", day: "Day 3", meta: "Interview", state: .pending),
-            .init(id: "day4", title: "10× 웨지 찾기", day: "Day 4", meta: "Wedge", state: .pending),
-            .init(id: "day5", title: "수요 신호 측정", day: "Day 5", meta: "Demand", state: .pending),
-            .init(id: "day6", title: "Ask 한 줄로 압축", day: "Day 6", meta: "Ask", state: .pending),
-            .init(id: "day7", title: "Go / No-Go 결정 게이트", day: "Day 7", meta: "Gate", state: .pending),
-        ]),
-        .init(id: "week2", title: "Week 2 — Build", meta: "잠금 해제 D7", tasks: [
-            .init(id: "day8", title: "MVP 코어 4시간 빌드", day: "Day 8", meta: "Build", state: .locked),
-            .init(id: "day9", title: "첫 5명 초대 초안", day: "Day 9", meta: "Outreach", state: .locked),
-            .init(id: "day10", title: "랜딩 카피 & Above-fold", day: "Day 10", meta: "Landing", state: .locked),
-        ]),
-        .init(id: "week3", title: "Week 3 — Acquire", meta: "잠금 해제 D14", tasks: [
-            .init(id: "day15", title: "BIP 채널 첫 포스트", day: "Day 15", meta: "BIP", state: .locked),
-        ]),
-        .init(id: "week4", title: "Week 4 — Revenue", meta: "잠금 해제 D21", tasks: [
-            .init(id: "day22", title: "첫 매출 ask · Pricing", day: "Day 22", meta: "Revenue", state: .locked),
-        ]),
-    ]
-
-    static let metrics: [OpenDesignHistoryMetric] = [
-        .init(id: "day", label: "완료 Day", value: "1", unit: "/ 30", isAccent: true),
-        .init(id: "evidence", label: "Evidence", value: "14", unit: nil, isAccent: false),
-        .init(id: "active", label: "활동일", value: "5", unit: "/ 15d", isAccent: false),
-    ]
-
-    static let groups: [OpenDesignHistoryGroup] = [
-        .init(id: "today", title: "오늘", iso: "2026-05-16 · 금", count: "6 events", state: .today, events: [
-            .init(id: "today-code-spec", filter: .code, kicker: "CODE · SPEC.md", time: "14:48:02", title: "후보 1명 자동 저장", body: "Day 1 인터뷰 4단계가 모두 제출되어 candidate.icp 블록이 갱신됐어요. channel=ex-colleague, tools=cursor, stuck=build-loop, last7d=restart.", tags: [.init("Day 1"), .init("+18", tone: .accent), .init("-3", tone: .rose)], source: "docs/SPEC.md", delta: "+18 / -3"),
-            .init(id: "today-interview-4", filter: .interview, kicker: "INTERVIEW 4/4 · 지난 7일", time: "14:45:21", title: "\"또 새로 시작\"", body: "\"지난 프로젝트는 절반쯤에서 멈췄고, 새 레포·새 디자인으로 또 한 번 출발했다.\" Mom Test 통과. 인터뷰 3의 빌드 루프 가설이 실제 행동으로 확정됐어요.", tags: [.init("Day 1"), .init("last7d=restart", tone: .sky)], source: "+1 evidence"),
-            .init(id: "today-interview-3", filter: .interview, kicker: "INTERVIEW 3/4 · 막힌 단계", time: "14:42:09", title: "\"빌드 단계\" · \"검증 없이 5번 빌드\"", body: "어제 Zoom 인터뷰 transcript와 정확히 일치하는 패턴을 골랐어요. wedge 후보가 \"빌드를 끝까지 끌고 가는 보조\"로 좁혀집니다.", tags: [.init("Day 1"), .init("stuck=build-loop", tone: .sky)]),
-            .init(id: "today-interview-2", filter: .interview, kicker: "INTERVIEW 2/4 · 도구", time: "14:38:33", title: "\"Cursor 메인\"", body: "매일 쓰는 도구는 Cursor. 결제 의향이 가장 안정적인 풀이고, Day 3 인터뷰 3통의 모수도 충분합니다.", tags: [.init("Day 1"), .init("tools=cursor", tone: .sky)]),
-            .init(id: "today-interview-1", filter: .interview, kicker: "INTERVIEW 1/4 · 거리", time: "14:35:11", title: "\"전 직장 출신 1인 개발자\"", body: "4지선다 3번. 관계 신뢰는 높고 Mom Test 함정도 높지만, 5명이면 인터뷰 3통은 즉시 가능합니다. 그중 \"AI로 무한 빌드 동료\"부터 시작.", tags: [.init("Day 1"), .init("channel=ex-colleague", tone: .sky)]),
-            .init(id: "today-mission", filter: .mission, kicker: "MISSION · Day 1 수락", time: "14:32:50", title: "첫 인터뷰 1통 할 사람을 한 명 고르기", body: "오리엔테이션 → 미션 수락 → 인터뷰 4단계 시퀀스 시작. 예상 3분 → 실제 16분.", tags: [.init("Day 1"), .init("STEP 2 → 3", tone: .amber)]),
-        ]),
-        .init(id: "yesterday", title: "어제", iso: "2026-05-15 · 목", count: "3 events", state: .yesterday, events: [
-            .init(id: "yesterday-code", filter: .code, kicker: "CODE · 2 files · commit a3f9c1d", time: "22:14:08", title: "SPEC.md · ICP.md 정리", body: "\"프로젝트와 실행 기록을 연결하면, 당신을 위한 30일 커리큘럼이 나온다.\" 제품 한 줄과 핵심 고객 가설을 정리.", tags: [.init("+142", tone: .accent), .init("-87", tone: .rose)], source: "docs/SPEC.md, docs/ICP.md", delta: "+142 / -87"),
-            .init(id: "yesterday-zoom", filter: .interview, kicker: "INTERVIEW · Zoom transcript", time: "21:30:00", title: "장지창 · 45분", body: "답변자 본인이 \"검증 없이 5번 빌드\"한 사례. sidecar가 자동 요약 + 통증 키워드 5개를 추출했어요.", tags: [.init("+5 keywords", tone: .sky)], source: "interviews/2026-05-15-zoom.md · 6.7KB · 45:02"),
-            .init(id: "yesterday-scope", filter: .curriculum, kicker: "CURRICULUM · scope-cut", time: "17:42:03", title: "Q2 wedge: Foundation Day 0-3 먼저 닫기", body: "Day 4-7 / Day 8-30은 daily dogfood 가능한 뒤 확장. /bip-draft, /analyze-ads는 regression만 방지하고 통합 우선순위는 낮춤.", source: "docs/SPEC.md §4"),
-        ]),
-        .init(id: "this-week", title: "이번 주 초", iso: "2026-05-11 → 14", count: "3 events", state: .past, events: [
-            .init(id: "week-anti-icp", filter: .interview, kicker: "INTERVIEW · Anti-ICP 신호", time: "2026-05-13 · 11:28", title: "\"언젠가 써볼게요\" · Threads DM 3건", body: "게이트가 자동으로 \"언젠가\" 패턴을 Anti-ICP로 분류하고 후속 콜드 DM 큐에서 제외했어요.", tags: [.init("3 leads", tone: .sky), .init("queue=-3", tone: .rose)]),
-            .init(id: "week-release", filter: .curriculum, kicker: "CURRICULUM · release-gate", time: "2026-05-12 · 19:55", title: "App Store 출시는 Foundation 검증 이후", body: "Hardened Runtime · Developer ID · notarization · Sparkle appcast 검증은 public distribution 직전 release blocker로 정리.", source: "docs/release-checklist.md"),
-            .init(id: "week-preflight", filter: .code, kicker: "CODE · sidecar · commit 7b1e22f", time: "2026-05-11 · 10:02", title: "sidecar preflight 통과 · provider routing 정상", body: "Claude Code 로그인 + Codex 로그인 양쪽 다 OK. NODE_BINARY는 mise 경로 우선. diagnostics snapshot이 token을 노출하지 않는지 sanitized review 통과.", tags: [.init("preflight=ok", tone: .accent)], source: "sidecar/preflight.mjs"),
-        ]),
-        .init(id: "setup", title: "설치 · Day 0", iso: "2026-05-02 · 목", count: "2 events", state: .past, events: [
-            .init(id: "setup-project", filter: .code, kicker: "CODE · 프로젝트 연결", time: "14:55:00", title: "~/code/agentic30-public 프로젝트 지정", body: "워크스페이스 watch 디렉토리: {docs, interviews, bip, work}. 첫 sidecar 부팅 3.2s, Keychain에 Anthropic 토큰 저장.", tags: [.init("v0.1.0", tone: .accent)], source: "github.com/zettalyst/agentic30-public"),
-            .init(id: "setup-curriculum", filter: .curriculum, kicker: "CURRICULUM · 30일 시작", time: "14:52:00", title: "Phase 4개 · Day 0-30 잠금 해제 룰 확정", body: "Foundation (0-7) → Build (8-17) → Launch (18-24) → Grow (25-30). 각 Day는 Adaptive 출력으로 생성됨.", tags: [.init("phase=4", tone: .rose), .init("unlock-rule=daily", tone: .rose)]),
-        ]),
-        .init(id: "future", title: "내일 — 잠금 해제 예정", iso: "2026-05-17 → Day 2 · Day 30", count: "29 locked", state: .future, events: [
-            .init(id: "future-day2", filter: .curriculum, kicker: "LOCKED · Day 2 · unlocks 00:00", time: "예정 · 30분", title: "시장 신호 읽기", body: "Day 1 ICP 후보 1명을 기준으로, sidecar가 Threads/IH 키워드 3개를 자동 추출해 검색 큐에 올립니다.", isFuture: true),
-            .init(id: "future-day3", filter: .curriculum, kicker: "LOCKED · Day 3 · ETA 5/18", time: "예정 · 60분", title: "Mom Test 인터뷰 ×3", body: "\"전 직장 출신 + Cursor + 빌드 단계에서 멈춤\" 풀 5명에서 3명에게 DM. 인터뷰 질문은 어제 transcript의 통증 키워드로 자동 생성.", isFuture: true),
-        ]),
-    ]
-
-    static let heatmapDays: [OpenDesignHistoryHeatmapDay] = {
-        let observed: [(String, Int, Int, String, Bool)] = [
-            ("2026-05-02", 2, 2, "Day 0 · 설치", false), ("2026-05-03", 0, 0, "", false), ("2026-05-04", 1, 1, "sidecar 테스트", false), ("2026-05-05", 0, 0, "", false), ("2026-05-06", 0, 0, "", false), ("2026-05-07", 1, 2, "SPEC 초안", false), ("2026-05-08", 0, 0, "", false), ("2026-05-09", 0, 0, "", false), ("2026-05-10", 0, 0, "", false), ("2026-05-11", 2, 1, "preflight 통과", false), ("2026-05-12", 1, 1, "release-gate", false), ("2026-05-13", 1, 1, "Anti-ICP 3건", false), ("2026-05-14", 0, 0, "", false), ("2026-05-15", 3, 3, "Zoom 인터뷰 + SPEC 정리", false), ("2026-05-16", 4, 6, "오늘 · Day 1 완료", true),
-        ]
-        var days = observed.map { OpenDesignHistoryHeatmapDay(id: $0.0, level: $0.1, count: $0.2, label: $0.3, isToday: $0.4, isLocked: false) }
-        for day in 17...31 {
-            days.append(.init(id: "2026-05-\(String(format: "%02d", day))", level: 0, count: 0, label: "잠금", isToday: false, isLocked: true))
-        }
-        return days
+    private static let isoParser: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
     }()
 
-    static let sourceBreakdown: [OpenDesignHistorySourceBreakdown] = [
-        .init(id: .interview, title: "인터뷰 · transcript", count: 6),
-        .init(id: .bip, title: "BIP 로그 · 게시", count: 0),
-        .init(id: .code, title: "코드 · GitHub commit", count: 4),
-        .init(id: .mission, title: "과제 · Day 미션", count: 1),
-        .init(id: .curriculum, title: "커리큘럼 · 결정", count: 3),
-    ]
+    private static let isoParserNoFraction: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
+    static func localTime(_ iso: String?) -> String? {
+        guard let iso, !iso.isEmpty else { return nil }
+        guard let date = isoParser.date(from: iso) ?? isoParserNoFraction.date(from: iso) else {
+            return nil
+        }
+        return timeFormatter.string(from: date)
+    }
+
+    static func sessionRange(_ range: WorkHistorySessionRange) -> String {
+        let start = localTime(range.start) ?? "—"
+        let end = localTime(range.end) ?? "—"
+        return "\(start)–\(end)"
+    }
+
+    static func providerLabel(_ provider: String) -> String {
+        switch provider {
+        case "claude": return "Claude"
+        case "codex": return "Codex"
+        case "gemini": return "Gemini"
+        default: return provider
+        }
+    }
+
+    static func confidenceLabel(_ confidence: String) -> String {
+        switch confidence {
+        case "high": return "신뢰도 높음"
+        case "medium": return "신뢰도 중간"
+        default: return "추정"
+        }
+    }
+
+    static func confidenceTone(_ confidence: String) -> Color {
+        switch confidence {
+        case "high": return OpenDesignDayColor.accent
+        case "medium": return OpenDesignDayColor.amber
+        default: return OpenDesignDayColor.muted
+        }
+    }
 }
 
 private struct OpenDesignHistoryShell: View {
     let layout: OpenDesignDayLayoutMetrics
     let openSearch: () -> Void
+    var snapshot: WorkHistorySnapshot = .empty
+    var refresh: () -> Void = {}
+    var prepare: () -> Void = {}
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var selectedFilter: OpenDesignHistoryFilter = .all
-
-    private var visibleGroups: [OpenDesignHistoryGroup] {
-        OpenDesignHistoryCatalog.groups.compactMap { group in
-            let events = group.events.filter(selectedFilter.matches(_:))
-            guard !events.isEmpty else { return nil }
-            return OpenDesignHistoryGroup(
-                id: group.id,
-                title: group.title,
-                iso: group.iso,
-                count: group.count,
-                state: group.state,
-                events: events
-            )
-        }
-    }
 
     var body: some View {
         if layout.showsTaskSidebar {
-            OpenDesignHistorySidebarView(openSearch: openSearch)
+            OpenDesignHistorySidebarView(snapshot: snapshot)
                 .frame(width: layout.taskSidebarWidth)
                 .frame(maxHeight: .infinity)
                 .background(OpenDesignDayColor.bg)
@@ -6907,14 +6751,15 @@ private struct OpenDesignHistoryShell: View {
 
         OpenDesignHistoryMainView(
             layout: layout,
-            selectedFilter: $selectedFilter,
-            visibleGroups: visibleGroups
+            snapshot: snapshot,
+            refresh: refresh
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("opendesign.reference.history.main")
+        .onAppear { prepare() }
 
         if layout.showsMetaPanel {
-            OpenDesignHistoryMetaPanelView(selectedFilter: $selectedFilter)
+            OpenDesignHistoryMetaPanelView(snapshot: snapshot)
                 .frame(width: layout.metaPanelWidth)
                 .frame(maxHeight: .infinity)
                 .background(OpenDesignDayColor.bg)
@@ -6923,221 +6768,221 @@ private struct OpenDesignHistoryShell: View {
     }
 }
 
+// MARK: 좌측 — "어디에 시간을 썼나" 주간 합계 + 기능 영역 순위
+
 private struct OpenDesignHistorySidebarView: View {
-    let openSearch: () -> Void
+    let snapshot: WorkHistorySnapshot
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Text("30일 챌린지")
-                    .font(.system(size: 12, weight: .medium))
+            VStack(alignment: .leading, spacing: 4) {
+                Text("이번 주")
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(OpenDesignDayColor.fg)
-                Text("1 / 30")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(OpenDesignDayColor.muted)
-                    .padding(.horizontal, 6)
-                    .frame(height: 18)
-                    .background(Capsule().fill(OpenDesignDayColor.surface))
-                Spacer(minLength: 0)
-            }
-            .padding(.top, 10)
-            .padding(.horizontal, 12)
-            .padding(.bottom, 8)
-
-            Button(action: openSearch) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 10, weight: .medium))
-                    Text("과제 검색")
-                        .lineLimit(1)
-                    Spacer(minLength: 6)
-                    Text("⌘ K")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
-                }
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(OpenDesignDayColor.fgSecondary)
-                .padding(.horizontal, 10)
-                .frame(height: 32)
-                .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 6))
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 8)
-            .padding(.bottom, 6)
-
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(OpenDesignHistoryCatalog.sidebarGroups) { group in
-                        HStack {
-                            Text(group.title)
-                            Spacer()
-                            Text(group.meta)
-                        }
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .textCase(.uppercase)
-                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
-                        .padding(.top, group.id == "week1" ? 8 : 14)
-                        .padding(.horizontal, 8)
-                        .padding(.bottom, 6)
-
-                        ForEach(group.tasks) { task in
-                            OpenDesignHistorySidebarTaskRow(task: task)
-                        }
-                    }
-                }
-                .padding(.horizontal, 6)
-                .padding(.bottom, 14)
-            }
-        }
-        .background(OpenDesignDayColor.bg)
-        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .trailing)
-    }
-}
-
-private struct OpenDesignHistorySidebarTaskRow: View {
-    let task: OpenDesignHistorySidebarTask
-    @State private var isHovered = false
-
-    private var isLocked: Bool {
-        if case .locked = task.state { return true }
-        return false
-    }
-
-    var body: some View {
-        Button(action: {}) {
-            HStack(alignment: .top, spacing: 9) {
-                OpenDesignHistoryTaskStatusView(state: task.state)
-                    .frame(width: 18, height: 18)
-                    .padding(.top, 4)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(task.title)
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(titleColor)
-                        .lineLimit(1)
-                    HStack(spacing: 6) {
-                        Text(task.day)
-                            .foregroundStyle(isLocked ? OpenDesignDayColor.mutedDeep : OpenDesignDayColor.accent)
-                        Text("·")
-                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
-                        Text(task.meta)
-                            .lineLimit(1)
-                    }
+                Text(snapshot.hasData ? "\(snapshot.weekStart) → \(snapshot.weekEnd)" : "월–일 · 로컬 시간대")
                     .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                     .foregroundStyle(OpenDesignDayColor.muted)
-                }
-                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(height: 52)
-            .background(referenceRounded(fill: isHovered && !isLocked ? OpenDesignDayColor.hover : Color.clear, stroke: Color.clear, radius: 6))
-            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .disabled(isLocked)
-        .onHover { isHovered = $0 }
-        .opacity(isLocked ? 0.55 : 1)
-        .accessibilityLabel("\(task.day), \(task.title), \(isLocked ? "잠김" : task.meta)")
-    }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 18)
+            .frame(height: 64)
+            .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
 
-    private var titleColor: Color {
-        if isLocked { return OpenDesignDayColor.muted }
-        return isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary
-    }
-}
-
-private struct OpenDesignHistoryTaskStatusView: View {
-    let state: OpenDesignHistorySidebarTask.State
-
-    var body: some View {
-        switch state {
-        case .progress:
-            Circle()
-                .trim(from: 0.18, to: 0.86)
-                .stroke(OpenDesignDayColor.accent, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
-                .rotationEffect(.degrees(32))
-                .overlay(Circle().stroke(OpenDesignDayColor.muted.opacity(0.38), lineWidth: 1.2))
-        case .pending:
-            Circle()
-                .stroke(OpenDesignDayColor.mutedDeep, lineWidth: 1.5)
-                .frame(width: 10, height: 10)
-        case .locked:
-            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                .fill(OpenDesignDayColor.mutedDeep)
-                .frame(width: 8, height: 8)
-        }
-    }
-}
-
-private struct OpenDesignHistoryMainView: View {
-    let layout: OpenDesignDayLayoutMetrics
-    @Binding var selectedFilter: OpenDesignHistoryFilter
-    let visibleGroups: [OpenDesignHistoryGroup]
-
-    var body: some View {
-        ScrollViewReader { proxy in
-            VStack(spacing: 0) {
-                OpenDesignHistoryHeaderView(horizontalPadding: layout.mainHorizontalPadding) {
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        proxy.scrollTo("history.group.today", anchor: .top)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        OpenDesignHistoryStatRow(
+                            label: "AI 세션",
+                            value: OpenDesignHistoryFormat.minutes(snapshot.totals.aiMinutes),
+                            isAccent: true
+                        )
+                        OpenDesignHistoryStatRow(
+                            label: "내 커밋",
+                            value: "\(snapshot.totals.myCommitCount)건",
+                            isAccent: false
+                        )
+                        OpenDesignHistoryStatRow(
+                            label: "활동일",
+                            value: "\(snapshot.totals.activeDays) / 7일",
+                            isAccent: false
+                        )
+                        if snapshot.totals.unclassifiedMinutes > 0 {
+                            OpenDesignHistoryStatRow(
+                                label: "미분류",
+                                value: OpenDesignHistoryFormat.minutes(snapshot.totals.unclassifiedMinutes),
+                                isAccent: false
+                            )
+                        }
                     }
-                }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 12))
 
-                OpenDesignHistoryFilterBar(selectedFilter: $selectedFilter, horizontalPadding: layout.mainHorizontalPadding)
+                    if !snapshot.areas.isEmpty {
+                        Text("어디에 시간을 썼나")
+                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                            .textCase(.uppercase)
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                            .padding(.horizontal, 4)
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        OpenDesignHistorySummaryBanner(layout: layout)
-                            .padding(.bottom, 22)
-
-                        if visibleGroups.isEmpty {
-                            OpenDesignHistoryEmptyFilterView(filter: selectedFilter)
-                                .padding(.top, 6)
-                        } else {
-                            ForEach(visibleGroups) { group in
-                                OpenDesignHistoryTimelineGroupView(group: group)
-                                    .id("history.group.\(group.id)")
+                        VStack(spacing: 6) {
+                            ForEach(snapshot.areas) { area in
+                                OpenDesignHistoryAreaRankRow(
+                                    area: area,
+                                    maxMinutes: snapshot.areas.map(\.aiMinutes).max() ?? 0
+                                )
                             }
                         }
                     }
-                    .frame(maxWidth: 880, alignment: .leading)
-                    .padding(.horizontal, layout.mainHorizontalPadding)
-                    .padding(.top, 22)
-                    .padding(.bottom, 40)
-                    .frame(maxWidth: .infinity)
                 }
-                .background(OpenDesignDayColor.bg)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 16)
+            }
+        }
+    }
+}
+
+private struct OpenDesignHistoryStatRow: View {
+    let label: String
+    let value: String
+    let isAccent: Bool
+
+    var body: some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.muted)
+            Spacer(minLength: 8)
+            Text(value)
+                .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(isAccent ? OpenDesignDayColor.accent : OpenDesignDayColor.fg)
+        }
+    }
+}
+
+private struct OpenDesignHistoryAreaRankRow: View {
+    let area: WorkHistoryArea
+    let maxMinutes: Int
+
+    private var ratio: CGFloat {
+        guard maxMinutes > 0 else { return 0 }
+        return CGFloat(area.aiMinutes) / CGFloat(maxMinutes)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(area.name)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Text(OpenDesignHistoryFormat.minutes(area.aiMinutes))
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+            }
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(OpenDesignDayColor.borderSoft)
+                    Capsule()
+                        .fill(OpenDesignDayColor.accent)
+                        .frame(width: max(3, geometry.size.width * ratio))
+                }
+            }
+            .frame(height: 4)
+            HStack(spacing: 6) {
+                Text("커밋 \(area.commitCount)건")
+                Text("·").foregroundStyle(OpenDesignDayColor.mutedDeep)
+                Text(OpenDesignHistoryFormat.confidenceLabel(area.confidence))
+                    .foregroundStyle(OpenDesignHistoryFormat.confidenceTone(area.confidence))
+            }
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .foregroundStyle(OpenDesignDayColor.muted)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(area.name), \(OpenDesignHistoryFormat.minutes(area.aiMinutes)), 커밋 \(area.commitCount)건")
+    }
+}
+
+// MARK: 중앙 — 요일별 타임라인
+
+private struct OpenDesignHistoryMainView: View {
+    let layout: OpenDesignDayLayoutMetrics
+    let snapshot: WorkHistorySnapshot
+    let refresh: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            OpenDesignHistoryHeaderView(
+                horizontalPadding: layout.mainHorizontalPadding,
+                snapshot: snapshot,
+                refresh: refresh
+            )
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if snapshot.requiresGitHub {
+                        OpenDesignHistoryGitHubRequiredView(refresh: refresh)
+                            .padding(.top, 24)
+                    } else if !snapshot.hasData {
+                        OpenDesignHistoryEmptyStateView(snapshot: snapshot, refresh: refresh)
+                            .padding(.top, 24)
+                    } else {
+                        OpenDesignHistoryWeeklyBanner(weekly: snapshot.weekly, status: snapshot.status)
+                            .padding(.bottom, 20)
+
+                        ForEach(snapshot.days) { day in
+                            OpenDesignHistoryDayGroupView(
+                                day: day,
+                                unclassified: snapshot.unclassified.filter { $0.date == day.date }
+                            )
+                            .id("history.day.\(day.date)")
+                        }
+                    }
+                }
+                .frame(maxWidth: 880, alignment: .leading)
+                .padding(.horizontal, layout.mainHorizontalPadding)
+                .padding(.top, 22)
+                .padding(.bottom, 40)
+                .frame(maxWidth: .infinity)
             }
             .background(OpenDesignDayColor.bg)
         }
+        .background(OpenDesignDayColor.bg)
     }
 }
 
 private struct OpenDesignHistoryHeaderView: View {
     let horizontalPadding: CGFloat
-    let jumpToToday: () -> Void
+    let snapshot: WorkHistorySnapshot
+    let refresh: () -> Void
     @State private var isHovered = false
 
     var body: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("Evidence 타임라인")
+                Text("이번 주 회고")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(OpenDesignDayColor.fg)
                     .lineLimit(1)
 
                 HStack(spacing: 8) {
                     Circle()
-                        .fill(OpenDesignDayColor.accent)
+                        .fill(snapshot.isRefreshing ? OpenDesignDayColor.amber : OpenDesignDayColor.accent)
                         .frame(width: 5, height: 5)
                         .shadow(color: OpenDesignDayColor.accent.opacity(0.5), radius: 4)
-                    Text("14").foregroundStyle(OpenDesignDayColor.fgSecondary)
-                    Text("events")
-                    Text("·").foregroundStyle(OpenDesignDayColor.mutedDeep)
-                    Text("2026-05-02 → 오늘")
-                    Text("·").foregroundStyle(OpenDesignDayColor.mutedDeep)
-                    Text("agentic30-public").foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    Text(snapshot.statusLabel).foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    if snapshot.hasData {
+                        Text("·").foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        Text("\(snapshot.weekStart) → \(snapshot.weekEnd)")
+                    }
+                    if snapshot.isRefreshing, let progressText = snapshot.status.progressText {
+                        Text("·").foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        Text(progressText).lineLimit(1)
+                    }
                 }
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundStyle(OpenDesignDayColor.muted)
@@ -7146,11 +6991,11 @@ private struct OpenDesignHistoryHeaderView: View {
 
             Spacer(minLength: 10)
 
-            Button(action: jumpToToday) {
+            Button(action: refresh) {
                 HStack(spacing: 6) {
-                    Image(systemName: "forward")
+                    Image(systemName: snapshot.isRefreshing ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
                         .font(.system(size: 11, weight: .semibold))
-                    Text("오늘로 이동")
+                    Text(snapshot.isRefreshing ? "인덱싱 중…" : "다시 인덱싱")
                         .lineLimit(1)
                 }
                 .font(.system(size: 11.5, weight: .semibold))
@@ -7160,8 +7005,10 @@ private struct OpenDesignHistoryHeaderView: View {
                 .background(referenceRounded(fill: isHovered ? OpenDesignDayColor.accentStrong : OpenDesignDayColor.accent, stroke: Color.clear, radius: 8))
             }
             .buttonStyle(.plain)
+            .disabled(snapshot.isRefreshing)
             .onHover { isHovered = $0 }
-            .accessibilityLabel("오늘로 이동")
+            .accessibilityLabel("다시 인덱싱")
+            .accessibilityIdentifier("opendesign.reference.history.refresh")
         }
         .padding(.horizontal, horizontalPadding)
         .frame(height: 70)
@@ -7170,337 +7017,372 @@ private struct OpenDesignHistoryHeaderView: View {
     }
 }
 
-private struct OpenDesignHistoryFilterBar: View {
-    @Binding var selectedFilter: OpenDesignHistoryFilter
-    let horizontalPadding: CGFloat
+private struct OpenDesignHistoryWeeklyBanner: View {
+    let weekly: WorkHistoryWeekly
+    let status: WorkHistoryStatus
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(OpenDesignHistoryFilter.allCases) { filter in
-                    OpenDesignHistoryFilterChip(filter: filter, isSelected: selectedFilter == filter) {
-                        selectedFilter = filter
+        VStack(alignment: .leading, spacing: 10) {
+            if !weekly.headline.isEmpty {
+                Text(weekly.headline)
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(weekly.coachNotes, id: \.self) { note in
+                HStack(alignment: .top, spacing: 7) {
+                    Circle()
+                        .fill(OpenDesignDayColor.accent)
+                        .frame(width: 4, height: 4)
+                        .padding(.top, 6)
+                    Text(note)
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if !weekly.nextActions.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("다음 액션")
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .textCase(.uppercase)
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    ForEach(weekly.nextActions, id: \.self) { action in
+                        OpenDesignHistoryNextActionRow(action: action)
                     }
                 }
-            }
-            .padding(.horizontal, horizontalPadding)
-            .frame(height: 48)
-        }
-        .background(OpenDesignDayColor.bg)
-        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
-    }
-}
-
-private struct OpenDesignHistoryFilterChip: View {
-    let filter: OpenDesignHistoryFilter
-    let isSelected: Bool
-    let select: () -> Void
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: select) {
-            HStack(spacing: 7) {
-                Circle()
-                    .fill(filter.tone.color)
-                    .frame(width: 6, height: 6)
-                    .shadow(color: isSelected ? filter.tone.color.opacity(0.45) : Color.clear, radius: 4)
-                Text(filter.title)
-                    .lineLimit(1)
-                Text("\(filter.count)")
-                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(isSelected ? filter.tone.color : OpenDesignDayColor.muted)
-            }
-            .font(.system(size: 11.5, weight: .medium))
-            .foregroundStyle(isSelected ? filter.tone.color : isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
-            .padding(.horizontal, 11)
-            .frame(height: 28)
-            .background(
-                Capsule()
-                    .fill(isSelected ? filter.tone.dim : isHovered ? OpenDesignDayColor.hover : OpenDesignDayColor.surface)
-                    .overlay(Capsule().stroke(isSelected ? filter.tone.line : OpenDesignDayColor.borderSoft, lineWidth: 1))
-            )
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-        .accessibilityLabel("\(filter.title), \(filter.count)개")
-    }
-}
-
-private struct OpenDesignHistorySummaryBanner: View {
-    let layout: OpenDesignDayLayoutMetrics
-
-    var body: some View {
-        Group {
-            if layout.showsMetaPanel {
-                HStack(alignment: .center, spacing: 18) {
-                    copy
-                    Spacer(minLength: 12)
-                    metrics
-                }
-            } else {
-                VStack(alignment: .leading, spacing: 14) {
-                    copy
-                    metrics
-                }
+                .padding(.top, 2)
             }
         }
-        .padding(.leading, 16)
-        .padding(.trailing, 16)
-        .padding(.vertical, 14)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(referenceAccentEdgeCard(stroke: OpenDesignDayColor.border, accent: OpenDesignDayColor.accent, cornerRadius: 12))
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 14))
+        .accessibilityIdentifier("opendesign.reference.history.weekly")
     }
+}
 
-    private var copy: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("Foundation Loop이 처음으로 닫혔어요 · Day 1 완료")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(OpenDesignDayColor.fg)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("2026-05-16 14:48 · ICP 후보 1명이 SPEC.md에 자동 저장됨 · Day 2가 곧 열립니다")
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundStyle(OpenDesignDayColor.muted)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
+private struct OpenDesignHistoryNextActionRow: View {
+    let action: WorkHistoryNextAction
 
-    private var metrics: some View {
-        HStack(spacing: 0) {
-            ForEach(OpenDesignHistoryCatalog.metrics) { metric in
-                OpenDesignHistoryMetricView(metric: metric)
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "arrow.turn.down.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.amber)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(action.text)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("근거 · \(action.evidence)")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 }
 
-private struct OpenDesignHistoryMetricView: View {
-    let metric: OpenDesignHistoryMetric
+private struct OpenDesignHistoryDayGroupView: View {
+    let day: WorkHistoryDay
+    let unclassified: [WorkHistoryUnclassifiedSession]
+
+    private var isEmptyDay: Bool {
+        day.areas.isEmpty && day.referenceEvents.isEmpty && unclassified.isEmpty
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(metric.label)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .textCase(.uppercase)
-                .foregroundStyle(OpenDesignDayColor.muted)
-            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(metric.value)
-                    .font(.system(size: 16, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(metric.isAccent ? OpenDesignDayColor.accent : OpenDesignDayColor.fg)
-                if let unit = metric.unit {
-                    Text(unit)
-                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text(day.weekday)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(day.aiMinutes > 0 ? OpenDesignDayColor.accent : OpenDesignDayColor.fgSecondary)
+                Text(day.date)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                if day.aiMinutes > 0 {
+                    Text("AI \(OpenDesignHistoryFormat.minutes(day.aiMinutes))")
+                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.accent)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(OpenDesignDayColor.accentDim))
+                }
+                Spacer(minLength: 0)
+            }
+
+            if isEmptyDay {
+                Text("기록 없음")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    .padding(.leading, 2)
+            } else {
+                ForEach(day.areas) { area in
+                    OpenDesignHistoryAreaCardView(area: area)
+                }
+                ForEach(unclassified, id: \.self) { session in
+                    OpenDesignHistoryUnclassifiedRow(session: session)
+                }
+                if !day.referenceEvents.isEmpty {
+                    OpenDesignHistoryReferenceEventsView(events: day.referenceEvents)
+                }
+            }
+        }
+        .padding(.bottom, 22)
+    }
+}
+
+private struct OpenDesignHistoryAreaCardView: View {
+    let area: WorkHistoryDayArea
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                Text(area.name)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                    .lineLimit(1)
+                Text(OpenDesignHistoryFormat.confidenceLabel(area.confidence))
+                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OpenDesignHistoryFormat.confidenceTone(area.confidence))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Capsule().stroke(OpenDesignHistoryFormat.confidenceTone(area.confidence).opacity(0.45), lineWidth: 1))
+                Spacer(minLength: 8)
+                if area.aiMinutes > 0 {
+                    Text(OpenDesignHistoryFormat.minutes(area.aiMinutes))
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                }
+                if area.commitCount > 0 {
+                    Text("커밋 \(area.commitCount)")
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(OpenDesignDayColor.muted)
                 }
             }
-        }
-        .padding(.horizontal, 14)
-        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .leading)
-    }
-}
 
-private struct OpenDesignHistoryEmptyFilterView: View {
-    let filter: OpenDesignHistoryFilter
+            if !area.summary.isEmpty {
+                Text(area.summary)
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("\(filter.title) 이벤트가 아직 없어요")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(OpenDesignDayColor.fg)
-            Text("필터를 전체로 바꾸면 Foundation Loop의 모든 evidence 흐름을 볼 수 있습니다.")
-                .font(.system(size: 12, weight: .regular))
-                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+            ForEach(area.nextActions, id: \.self) { action in
+                OpenDesignHistoryNextActionRow(action: action)
+            }
+
+            // 레퍼런스: 변경 파일·디렉토리 + AI 세션 시간대 (커밋 SHA는 표기하지 않음)
+            VStack(alignment: .leading, spacing: 4) {
+                if !area.paths.isEmpty {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                            .padding(.top, 2)
+                        Text(area.paths.joined(separator: " · "))
+                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                if !area.sessionRanges.isEmpty {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                            .padding(.top, 2)
+                        Text(
+                            area.sessionRanges
+                                .map { "\(OpenDesignHistoryFormat.providerLabel($0.provider)) \(OpenDesignHistoryFormat.sessionRange($0))" }
+                                .joined(separator: " · ")
+                        )
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 12))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(area.name), \(OpenDesignHistoryFormat.minutes(area.aiMinutes))")
     }
 }
 
-private struct OpenDesignHistoryTimelineGroupView: View {
-    let group: OpenDesignHistoryGroup
+private struct OpenDesignHistoryUnclassifiedRow: View {
+    let session: WorkHistoryUnclassifiedSession
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                Circle()
-                    .fill(group.state == .future ? Color.clear : OpenDesignDayColor.bg)
-                    .frame(width: 12, height: 12)
-                    .overlay(Circle().stroke(pinColor, lineWidth: 2))
-                    .shadow(color: group.state == .today ? OpenDesignDayColor.accent.opacity(0.45) : Color.clear, radius: 4)
-                    .padding(.leading, 10)
-
-                Text(group.title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(group.state == .future ? OpenDesignDayColor.muted : OpenDesignDayColor.fg)
-                Text(group.iso)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(group.state == .future ? OpenDesignDayColor.mutedDeep : OpenDesignDayColor.muted)
-
-                Spacer(minLength: 8)
-
-                Text(group.count)
-                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(OpenDesignDayColor.muted)
-                    .padding(.horizontal, 8)
-                    .frame(height: 20)
-                    .background(Capsule().fill(OpenDesignDayColor.surface))
-                    .overlay(Capsule().stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
-            }
-            .padding(.leading, 2)
-
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(group.events) { event in
-                    OpenDesignHistoryEventRowView(event: event)
+        HStack(alignment: .top, spacing: 8) {
+            Text("미분류 · 진행 중")
+                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.amber)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(OpenDesignDayColor.amberDim))
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(OpenDesignHistoryFormat.providerLabel(session.provider))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    Text("\(OpenDesignHistoryFormat.localTime(session.start) ?? "—")–\(OpenDesignHistoryFormat.localTime(session.end) ?? "—")")
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                    Text(OpenDesignHistoryFormat.minutes(session.minutes))
+                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                }
+                if !session.paths.isEmpty {
+                    Text(session.paths.joined(separator: " · "))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .padding(.leading, 16)
-            .overlay(alignment: .leading) {
-                Rectangle()
-                    .fill(LinearGradient(colors: [OpenDesignDayColor.borderSoft, Color.clear], startPoint: .top, endPoint: .bottom))
-                    .frame(width: 1)
-                    .padding(.leading, 15)
-                    .padding(.vertical, 5)
-            }
+            Spacer(minLength: 0)
         }
-        .padding(.bottom, 28)
-    }
-
-    private var pinColor: Color {
-        switch group.state {
-        case .today: return OpenDesignDayColor.accent
-        case .yesterday: return OpenDesignDayColor.muted
-        case .past: return OpenDesignDayColor.mutedDeep
-        case .future: return OpenDesignDayColor.borderStrong
-        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface.opacity(0.6), stroke: OpenDesignDayColor.amber.opacity(0.25), radius: 12))
     }
 }
 
-private struct OpenDesignHistoryEventRowView: View {
-    let event: OpenDesignHistoryEvent
+private struct OpenDesignHistoryReferenceEventsView: View {
+    let events: [WorkHistoryReferenceEvent]
+
+    private func icon(_ kind: String) -> String {
+        switch kind {
+        case "pr": return "arrow.triangle.pull"
+        case "issue": return "exclamationmark.circle"
+        case "release": return "shippingbox"
+        default: return "person.2"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("참고 이벤트")
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .textCase(.uppercase)
+                .foregroundStyle(OpenDesignDayColor.mutedDeep)
+            ForEach(events, id: \.self) { event in
+                HStack(spacing: 6) {
+                    Image(systemName: icon(event.kind))
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    Text(event.title)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                        .lineLimit(1)
+                    if let actor = event.actor, !actor.isEmpty {
+                        Text(actor)
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 2)
+    }
+}
+
+// MARK: 상태 화면 — GitHub 연결 요구 / 빈 상태
+
+private struct OpenDesignHistoryGitHubRequiredView: View {
+    let refresh: () -> Void
     @State private var isHovered = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: event.isFuture ? "lock" : event.filter.systemImage)
-                .font(.system(size: event.isFuture ? 10 : 11, weight: .semibold))
-                .foregroundStyle(event.isFuture ? OpenDesignDayColor.mutedDeep : event.filter.tone.color)
-                .frame(width: 22, height: 22)
-                .background(dotBackground)
-                .zIndex(1)
-
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(event.kicker)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .textCase(.uppercase)
-                        .foregroundStyle(event.isFuture ? OpenDesignDayColor.mutedDeep : event.filter.tone.color)
-                        .lineLimit(1)
-                    Spacer(minLength: 8)
-                    Text(event.time)
-                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                        .foregroundStyle(OpenDesignDayColor.muted)
-                        .lineLimit(1)
-                }
-
-                Text(event.title)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(event.isFuture ? OpenDesignDayColor.fgSecondary : OpenDesignDayColor.fg)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Text(event.body)
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundStyle(event.isFuture ? OpenDesignDayColor.muted : OpenDesignDayColor.fgSecondary)
-                    .lineSpacing(3)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if !event.tags.isEmpty || event.source != nil || event.delta != nil {
-                    FlowLayout(spacing: 6, lineSpacing: 6) {
-                        ForEach(event.tags) { tag in
-                            OpenDesignReferenceChipView(chip: tag, isActive: tag.id == "Day 1")
-                        }
-                        if let source = event.source {
-                            OpenDesignHistorySourcePill(source: source)
-                        }
-                        if let delta = event.delta {
-                            OpenDesignHistoryDeltaPill(delta: delta)
-                        }
-                    }
-                    .padding(.top, 1)
-                }
+        VStack(spacing: 14) {
+            Image(systemName: "link.badge.plus")
+                .font(.system(size: 30, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.muted)
+            Text("GitHub 연결이 필요해요")
+                .font(.system(size: 14.5, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fg)
+            Text("이번 주 회고는 GitHub의 브랜치·PR·이슈·릴리즈까지 함께 봅니다.\n터미널에서 `gh auth login`으로 GitHub CLI를 연결한 뒤 다시 시도하세요.")
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(action: refresh) {
+                Text("연결 확인 후 다시 인덱싱")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.bgDeep)
+                    .padding(.horizontal, 14)
+                    .frame(height: 28)
+                    .background(referenceRounded(fill: isHovered ? OpenDesignDayColor.accentStrong : OpenDesignDayColor.accent, stroke: Color.clear, radius: 8))
             }
-            .padding(EdgeInsets(top: 11, leading: 14, bottom: 11, trailing: 14))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(cardBackground)
-            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .buttonStyle(.plain)
             .onHover { isHovered = $0 }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(event.kicker), \(event.title), \(event.time)")
-    }
-
-    private var dotBackground: some View {
-        Circle()
-            .fill(event.isFuture ? Color.clear : event.filter.tone.dim)
-            .overlay(
-                Circle()
-                    .stroke(
-                        event.isFuture ? OpenDesignDayColor.borderSoft : event.filter.tone.line,
-                        style: StrokeStyle(lineWidth: 1, dash: event.isFuture ? [3, 3] : [])
-                    )
-            )
-    }
-
-    private var cardBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
-        return shape
-            .fill(event.isFuture ? Color.clear : isHovered ? OpenDesignDayColor.elevated : OpenDesignDayColor.surface)
-            .overlay(
-                shape.stroke(
-                    isHovered && !event.isFuture ? OpenDesignDayColor.border : OpenDesignDayColor.borderSoft,
-                    style: StrokeStyle(lineWidth: 1, dash: event.isFuture ? [4, 4] : [])
-                )
-            )
-            .opacity(event.isFuture ? 0.72 : 1)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 56)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 14))
+        .accessibilityIdentifier("opendesign.reference.history.githubRequired")
     }
 }
 
-private struct OpenDesignHistorySourcePill: View {
-    let source: String
+private struct OpenDesignHistoryEmptyStateView: View {
+    let snapshot: WorkHistorySnapshot
+    let refresh: () -> Void
+    @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "doc.text")
-                .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(OpenDesignDayColor.muted)
-            Text(source)
-                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                .foregroundStyle(OpenDesignDayColor.fgSecondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+        VStack(spacing: 14) {
+            if snapshot.isRefreshing {
+                ProgressView()
+                    .controlSize(.small)
+                Text(snapshot.status.progressText ?? "이번 주 작업 기록을 인덱싱하는 중")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+            } else {
+                Image(systemName: "calendar.badge.clock")
+                    .font(.system(size: 30, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                Text("아직 이번 주 기록이 없어요")
+                    .font(.system(size: 14.5, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Text("AI 세션 로그(Claude·Codex·Gemini)와 git·GitHub 활동을 모아\n기능 영역별 주간 회고를 만들어 드립니다.")
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(action: refresh) {
+                    Text("지금 인덱싱")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.bgDeep)
+                        .padding(.horizontal, 14)
+                        .frame(height: 28)
+                        .background(referenceRounded(fill: isHovered ? OpenDesignDayColor.accentStrong : OpenDesignDayColor.accent, stroke: Color.clear, radius: 8))
+                }
+                .buttonStyle(.plain)
+                .onHover { isHovered = $0 }
+                if let error = snapshot.status.error, !error.isEmpty {
+                    Text(error)
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.rose)
+                        .lineLimit(2)
+                }
+            }
         }
-        .padding(.horizontal, 7)
-        .frame(height: 22)
-        .background(Capsule().fill(OpenDesignDayColor.bgDarker))
-        .overlay(Capsule().stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 56)
+        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 14))
+        .accessibilityIdentifier("opendesign.reference.history.empty")
     }
 }
 
-private struct OpenDesignHistoryDeltaPill: View {
-    let delta: String
-
-    var body: some View {
-        Text(delta)
-            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-            .foregroundStyle(OpenDesignDayColor.accent)
-            .padding(.horizontal, 7)
-            .frame(height: 22)
-            .background(Capsule().fill(OpenDesignDayColor.accentDim))
-            .overlay(Capsule().stroke(OpenDesignDayColor.accentLine, lineWidth: 1))
-    }
-}
+// MARK: 우측 — 미분류 전체 + GitHub 연결 현황
 
 private struct OpenDesignHistoryMetaPanelView: View {
-    @Binding var selectedFilter: OpenDesignHistoryFilter
+    let snapshot: WorkHistorySnapshot
 
     var body: some View {
         ScrollView {
@@ -7509,143 +7391,50 @@ private struct OpenDesignHistoryMetaPanelView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(OpenDesignDayColor.fg)
 
-                OpenDesignHistoryHeatmapCard()
+                VStack(alignment: .leading, spacing: 8) {
+                    OpenDesignHistoryStatRow(
+                        label: "GitHub",
+                        value: snapshot.github.connected ? "연결됨" : "연결 필요",
+                        isAccent: snapshot.github.connected
+                    )
+                    if snapshot.github.connected {
+                        OpenDesignHistoryStatRow(label: "PR", value: "\(snapshot.github.prCount)건", isAccent: false)
+                        OpenDesignHistoryStatRow(label: "이슈", value: "\(snapshot.github.issueCount)건", isAccent: false)
+                        OpenDesignHistoryStatRow(label: "릴리즈", value: "\(snapshot.github.releaseCount)건", isAccent: false)
+                    }
+                    OpenDesignHistoryStatRow(
+                        label: "타인/봇 커밋",
+                        value: "\(snapshot.totals.otherCommitCount)건",
+                        isAccent: false
+                    )
+                }
+                .padding(13)
+                .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 12))
 
-                Text("Evidence 소스 · 합 14")
-                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                    .textCase(.uppercase)
+                if !snapshot.unclassified.isEmpty {
+                    Text("미분류 · 진행 중 \(snapshot.unclassified.count)건")
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .textCase(.uppercase)
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        .padding(.top, 2)
+                        .padding(.horizontal, 4)
+
+                    VStack(spacing: 6) {
+                        ForEach(snapshot.unclassified, id: \.self) { session in
+                            OpenDesignHistoryUnclassifiedRow(session: session)
+                        }
+                    }
+                }
+
+                Text("프롬프트 원문은 연결 근거로만 사용하고 화면·저장본에는 남기지 않아요.")
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(OpenDesignDayColor.mutedDeep)
-                    .padding(.top, 2)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 4)
-
-                VStack(spacing: 0) {
-                    ForEach(Array(OpenDesignHistoryCatalog.sourceBreakdown.enumerated()), id: \.element.id) { index, row in
-                        OpenDesignHistoryBreakdownRow(row: row, isSelected: selectedFilter == row.id) {
-                            selectedFilter = row.id
-                        }
-                        if index < OpenDesignHistoryCatalog.sourceBreakdown.count - 1 {
-                            Rectangle()
-                                .fill(OpenDesignDayColor.borderSoft)
-                                .frame(height: 1)
-                                .padding(.leading, 38)
-                        }
-                    }
-                }
-                .padding(6)
-                .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
             }
-            .padding(16)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 16)
         }
-        .background(OpenDesignDayColor.bg)
-        .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .leading)
-    }
-}
-
-private struct OpenDesignHistoryHeatmapCard: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("활동 · 30일")
-                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                    .textCase(.uppercase)
-                    .foregroundStyle(OpenDesignDayColor.muted)
-                Spacer()
-                HStack(alignment: .firstTextBaseline, spacing: 2) {
-                    Text("14")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(OpenDesignDayColor.fg)
-                    Text("events")
-                        .font(.system(size: 10.5, weight: .regular, design: .monospaced))
-                        .foregroundStyle(OpenDesignDayColor.muted)
-                }
-            }
-
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: 10), spacing: 4) {
-                ForEach(OpenDesignHistoryCatalog.heatmapDays) { day in
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(heatmapFill(day))
-                        .aspectRatio(1, contentMode: .fit)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                .stroke(
-                                    day.isToday ? OpenDesignDayColor.accent : OpenDesignDayColor.borderSoft,
-                                    style: StrokeStyle(lineWidth: day.isToday ? 1.5 : 1, dash: day.isLocked ? [3, 3] : [])
-                                )
-                        )
-                        .opacity(day.isLocked ? 0.55 : 1)
-                        .help("\(day.id) · \(day.isLocked ? "잠금" : "\(day.count)건")\(day.label.isEmpty ? "" : " · \(day.label)")")
-                }
-            }
-
-            HStack {
-                Text("적음")
-                Spacer()
-                HStack(spacing: 2) {
-                    ForEach(0...4, id: \.self) { level in
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(heatmapLevelFill(level))
-                            .frame(width: 9, height: 9)
-                            .overlay(RoundedRectangle(cornerRadius: 2, style: .continuous).stroke(OpenDesignDayColor.borderSoft, lineWidth: level == 0 ? 1 : 0))
-                    }
-                }
-                Spacer()
-                Text("많음")
-            }
-            .font(.system(size: 10, weight: .medium, design: .monospaced))
-            .foregroundStyle(OpenDesignDayColor.mutedDeep)
-        }
-        .padding(14)
-        .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 10))
-    }
-
-    private func heatmapFill(_ day: OpenDesignHistoryHeatmapDay) -> Color {
-        day.isLocked ? OpenDesignDayColor.bgDarker : heatmapLevelFill(day.level)
-    }
-
-    private func heatmapLevelFill(_ level: Int) -> Color {
-        switch level {
-        case 1: return OpenDesignDayColor.accent.opacity(0.24)
-        case 2: return OpenDesignDayColor.accent.opacity(0.42)
-        case 3: return OpenDesignDayColor.accent.opacity(0.66)
-        case 4: return OpenDesignDayColor.accent
-        default: return OpenDesignDayColor.bgDarker
-        }
-    }
-}
-
-private struct OpenDesignHistoryBreakdownRow: View {
-    let row: OpenDesignHistorySourceBreakdown
-    let isSelected: Bool
-    let select: () -> Void
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: select) {
-            HStack(spacing: 10) {
-                Image(systemName: row.id.systemImage)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(row.id.tone.color)
-                    .frame(width: 14, height: 14)
-                    .background(referenceRounded(fill: row.id.tone.dim, stroke: row.id.tone.line, radius: 4))
-
-                Text(row.title)
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundStyle(isHovered || isSelected ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
-                    .lineLimit(1)
-
-                Spacer(minLength: 6)
-
-                Text("\(row.count)")
-                    .font(.system(size: 11, weight: row.count == 0 ? .regular : .semibold, design: .monospaced))
-                    .foregroundStyle(row.count == 0 ? OpenDesignDayColor.mutedDeep : OpenDesignDayColor.fg)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(referenceRounded(fill: isSelected ? row.id.tone.dim : isHovered ? OpenDesignDayColor.hover : Color.clear, stroke: Color.clear, radius: 6))
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-        .accessibilityLabel("\(row.title), \(row.count)개")
     }
 }
 

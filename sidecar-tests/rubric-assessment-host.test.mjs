@@ -56,7 +56,7 @@ test("recordRubricAssessment persists, returns saved record + path", async () =>
   assert.ok(stat.isFile());
 });
 
-test("recordRubricAssessment emits telemetry with axisCount + day, no raw scores", async () => {
+test("recordRubricAssessment emits telemetry with axis_count + day, no raw scores", async () => {
   const ws = await tempWorkspace();
   const events = [];
   const telemetry = {
@@ -69,9 +69,9 @@ test("recordRubricAssessment emits telemetry with axisCount + day, no raw scores
   });
   assert.equal(events.length, 1);
   assert.equal(events[0].event, TELEMETRY_EVENT_RECORDED);
-  assert.deepEqual(Object.keys(events[0].props).sort(), ["axisCount", "day"]);
+  assert.deepEqual(Object.keys(events[0].props).sort(), ["axis_count", "day"]);
   assert.equal(events[0].props.day, 0);
-  assert.equal(events[0].props.axisCount, 5);
+  assert.equal(events[0].props.axis_count, 5);
   // Critical: telemetry must NOT carry raw scores or evidence text.
   assert.equal(events[0].props.scores, undefined);
   assert.equal(events[0].props.evidence_refs, undefined);

@@ -173,6 +173,43 @@ test("office_hours_start preserves custom source and ignores duplicate concurren
         && event.sessionId === created.session.id
         && /waiting for the current run/i.test(event.message || ""),
     );
+    await waitForEvent(ws.events, (event) =>
+      event.type === "office_hours_status"
+        && event.sessionId === created.session.id
+        && event.stage === "question_ready",
+    );
+    const pendingInputUpdate = await waitForEvent(ws.events, (event) =>
+      event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.pendingUserInput?.questions?.[0]?.questionId === "office_hours_demand_evidence",
+    );
+    assert.deepEqual(
+      pendingInputUpdate.session.pendingUserInput.questions[0].options.map((option) => option.label),
+      [
+        "실제 결제/계약이 있었다",
+        "구매 조건이 구체적으로 확인됐다",
+        "현재 대안에 돈/시간을 쓰고 있다",
+        "관심만 있거나 아직 증거가 없다",
+      ],
+    );
+    const statusStages = ws.events
+      .filter((event) => event.type === "office_hours_status" && event.sessionId === created.session.id)
+      .map((event) => event.stage);
+    assertStatusOrder(statusStages, [
+      "context_loaded",
+      "specialist_routed",
+      "provider_starting",
+      "structured_input_requested",
+      "question_ready",
+    ]);
+    assert.equal(statusStages.some((stage) => String(stage || "").includes("fallback")), false);
+    const providerStatus = ws.events.find((event) =>
+      event.type === "office_hours_status"
+        && event.sessionId === created.session.id
+        && event.stage === "provider_starting"
+    );
+    assert.equal(providerStatus.progressText, "프로젝트 맥락에 맞는 질문 준비 중");
+    assert.equal(typeof providerStatus.elapsedMs, "number");
     assert.equal(started.session.runtime.officeHours.active, true);
     assert.equal(started.session.runtime.officeHours.source, "day1_real_project_test");
     assert.match(started.session.runtime.officeHours.context, /Revenue analytics dashboard/);
@@ -189,117 +226,6 @@ test("office_hours_start preserves custom source and ignores duplicate concurren
       event.type === "session_updated"
         && event.session?.id === created.session.id
         && event.session?.status === "idle",
-    );
-  } finally {
-    ws?.close();
-    await harness.close();
-  }
-});
-
-test("office_hours structured submission keeps question before visible answer", async () => {
-  const harness = await spawnSidecar();
-  let ws;
-  try {
-    ws = await connectAndCollect(harness);
-
-    ws.send(JSON.stringify({
-      type: "create_session",
-      provider: "codex",
-      model: "gpt-5.4-mini",
-      suppressBootstrapIntake: true,
-    }));
-    const created = await waitForEvent(ws.events, (event) =>
-      event.type === "session_created" && event.session?.status === "idle",
-    );
-
-    ws.send(JSON.stringify({
-      type: "office_hours_start",
-      sessionId: created.session.id,
-      context: [
-        "Project: agentic30 Mac - native macOS menu bar assistant",
-        "Customer: 전업 1인 개발자",
-        "Problem: 공개와 판매를 미루며 시간을 반복 낭비함",
-      ].join("\n"),
-      visiblePrompt: "Office Hours",
-      source: "transcript_regression",
-    }));
-
-    const awaitingQuestion = await waitForEvent(ws.events, (event) =>
-      event.type === "session_updated"
-        && event.session?.id === created.session.id
-        && event.session?.pendingUserInput?.generation?.mode === "office_hours_fallback",
-    );
-    const request = awaitingQuestion.session.pendingUserInput;
-    const questionText = request.questions[0].question;
-    const selectedOption = request.questions[0].options[0].label;
-    const freeText = "이번 주 1명에게 유료 파일럿 제안";
-    const eventCursor = ws.events.length;
-
-    ws.send(JSON.stringify({
-      type: "submit_user_input",
-      sessionId: created.session.id,
-      requestId: request.requestId,
-      responses: [
-        {
-          question: request.questions[0].question,
-          selectedOptions: [selectedOption],
-          freeText,
-        },
-      ],
-    }));
-
-    const firstSubmittedUpdate = await waitForEventAfter(ws.events, eventCursor, (event) =>
-      event.type === "session_updated"
-        && event.session?.id === created.session.id
-        && event.session?.pendingUserInput == null
-        && event.session?.messages?.some((message) =>
-          message.role === "user" && String(message.content || "").includes(freeText)
-        ),
-    );
-    assert.equal(firstSubmittedUpdate.session.status, "running");
-    assert.ok(
-      firstSubmittedUpdate.session.messages.some((message) =>
-        message.role === "assistant"
-          && message.state === "streaming"
-          && String(message.content || "") === ""
-      ),
-      "first post-submit update should include a streaming assistant placeholder",
-    );
-
-    const replacement = await waitForEventAfter(ws.events, eventCursor, (event) =>
-      event.type === "message_replaced"
-        && event.sessionId === created.session.id
-        && event.state === "streaming",
-    );
-    assert.equal(replacement.state, "streaming");
-
-    const submitted = await waitForEventAfter(ws.events, eventCursor, (event) =>
-      event.type === "session_updated"
-        && event.session?.id === created.session.id
-        && event.session?.pendingUserInput == null
-        && event.session?.messages?.some((message) =>
-          message.role === "assistant" && message.content === questionText
-        )
-        && event.session?.messages?.some((message) =>
-          message.role === "user" && String(message.content || "").includes(freeText)
-        ),
-    );
-    const messages = submitted.session.messages;
-    const questionIndex = messages.findIndex((message) =>
-      message.role === "assistant" && message.content === questionText
-    );
-    const answerIndex = messages.findIndex((message) =>
-      message.role === "user" && String(message.content || "").includes(freeText)
-    );
-
-    assert.notEqual(questionIndex, -1);
-    assert.notEqual(answerIndex, -1);
-    assert.ok(questionIndex < answerIndex);
-    assert.equal(
-      messages.filter((message) =>
-        message.role === "assistant" && message.content === questionText
-      ).length,
-      1,
     );
   } finally {
     ws?.close();
@@ -380,6 +306,17 @@ function assertRequestEmitEnvelope(event, expectedEvent) {
   assert.equal(event.event_schema_version, 1);
   assert.equal(typeof event.properties, "object");
   assert.equal(Array.isArray(event.properties), false);
+}
+
+function assertStatusOrder(actualStages, expectedStages) {
+  let cursor = -1;
+  for (const stage of expectedStages) {
+    const next = actualStages.findIndex((candidate, index) =>
+      index > cursor && candidate === stage
+    );
+    assert.notEqual(next, -1, `Expected office_hours_status stage ${stage}; saw ${actualStages.join(", ")}`);
+    cursor = next;
+  }
 }
 
 async function spawnSidecar() {
@@ -480,14 +417,4 @@ async function waitForEvent(events, predicate, timeoutMs = 10_000) {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error(`Timed out waiting for event. Saw: ${events.map((event) => event.type).join(", ")}`);
-}
-
-async function waitForEventAfter(events, startIndex, predicate, timeoutMs = 10_000) {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    const found = events.slice(startIndex).find(predicate);
-    if (found) return found;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error(`Timed out waiting for event after ${startIndex}. Saw: ${events.slice(startIndex).map((event) => event.type).join(", ")}`);
 }
