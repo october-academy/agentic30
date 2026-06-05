@@ -4,7 +4,31 @@ import XCTest
 final class PostHogTelemetryTests: XCTestCase {
     func testPublicProjectTokenIsCaptureOnlyTokenShape() {
         XCTAssertTrue(PostHogTelemetryConfig.publicProjectAPIKey.hasPrefix("phc_"))
+        XCTAssertEqual(PostHogTelemetryConfig.projectTokenEnvironmentKey, "POSTHOG_PROJECT_TOKEN")
+        XCTAssertEqual(PostHogTelemetryConfig.projectAPIKeyEnvironmentKey, "POSTHOG_PROJECT_API_KEY")
+        XCTAssertEqual(PostHogTelemetryConfig.hostEnvironmentKey, "POSTHOG_HOST")
         XCTAssertEqual(PostHogTelemetryConfig.defaultHost, "https://us.i.posthog.com")
+    }
+
+    func testProjectAPIKeyResolutionSupportsBothEnvNamesAndIgnoresPlaceholders() {
+        XCTAssertEqual(
+            PostHogTelemetry.projectAPIKey(fromEnvironment: [
+                PostHogTelemetryConfig.projectTokenEnvironmentKey: "phc_from_token",
+                PostHogTelemetryConfig.projectAPIKeyEnvironmentKey: "phc_from_api_key",
+            ]),
+            "phc_from_api_key"
+        )
+        XCTAssertEqual(
+            PostHogTelemetry.projectAPIKey(fromEnvironment: [
+                PostHogTelemetryConfig.projectTokenEnvironmentKey: "$(POSTHOG_PROJECT_TOKEN)",
+                PostHogTelemetryConfig.projectAPIKeyEnvironmentKey: "phc_from_api_key",
+            ]),
+            "phc_from_api_key"
+        )
+        XCTAssertNil(PostHogTelemetry.projectAPIKey(fromEnvironment: [
+            PostHogTelemetryConfig.projectTokenEnvironmentKey: "phx_personal_api_key",
+            PostHogTelemetryConfig.projectAPIKeyEnvironmentKey: "$(POSTHOG_PROJECT_API_KEY)",
+        ]))
     }
 
     func testUSHostResolvesToUSIngest() {

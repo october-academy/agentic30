@@ -13,6 +13,7 @@ nonisolated struct PostHogTelemetryConfig: Equatable {
     /// forward the resolved values via `PostHogTelemetry.sidecarEnvironmentOverrides()`:
     /// the sidecar has no embedded fallback key, so without this it silently
     /// drops every event.
+    static let projectTokenEnvironmentKey = "POSTHOG_PROJECT_TOKEN"
     static let projectAPIKeyEnvironmentKey = "POSTHOG_PROJECT_API_KEY"
     static let hostEnvironmentKey = "POSTHOG_HOST"
 
@@ -714,23 +715,40 @@ enum PostHogTelemetry {
 
         guard !isTelemetrySuppressedForCurrentProcess else { return nil }
 
+        let environment = ProcessInfo.processInfo.environment
         let settings = KeychainHelper.loadSettings()
-        let resolvedProjectKey = settings.posthogProjectAPIKey.nonEmpty
-            ?? (settings.posthogApiKey.hasPrefix("phc_") ? settings.posthogApiKey : nil)
-            ?? ProcessInfo.processInfo.environment["POSTHOG_PROJECT_TOKEN"]?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .nonEmpty
+        let resolvedProjectKey = projectAPIKey(from: settings.posthogProjectAPIKey)
+            ?? projectAPIKey(from: settings.posthogApiKey)
+            ?? projectAPIKey(fromEnvironment: environment)
             ?? bundleProjectAPIKey
             ?? PostHogTelemetryConfig.publicProjectAPIKey
 
-        let rawHost = settings.posthogHost.nonEmpty
-            ?? ProcessInfo.processInfo.environment["POSTHOG_HOST"]?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .nonEmpty
+        let rawHost = configurationValue(settings.posthogHost)
+            ?? configurationValue(environment[PostHogTelemetryConfig.hostEnvironmentKey])
             ?? bundleHost
             ?? PostHogTelemetryConfig.defaultHost
 
         return normalizedConfig(PostHogTelemetryConfig(projectAPIKey: resolvedProjectKey, host: rawHost))
+    }
+
+    nonisolated static func projectAPIKey(fromEnvironment environment: [String: String]) -> String? {
+        projectAPIKey(from: environment[PostHogTelemetryConfig.projectAPIKeyEnvironmentKey])
+            ?? projectAPIKey(from: environment[PostHogTelemetryConfig.projectTokenEnvironmentKey])
+    }
+
+    nonisolated static func projectAPIKey(from rawValue: String?) -> String? {
+        guard let value = configurationValue(rawValue),
+              value.hasPrefix("phc_")
+        else { return nil }
+        return value
+    }
+
+    nonisolated private static func configurationValue(_ rawValue: String?) -> String? {
+        guard let value = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty,
+              !value.contains("$(")
+        else { return nil }
+        return value
     }
 
     nonisolated private static func normalizedConfig(_ config: PostHogTelemetryConfig) -> PostHogTelemetryConfig? {
@@ -745,18 +763,11 @@ enum PostHogTelemetry {
     /// Settings opt-out toggle. Builds without the xcconfig values leave the
     /// raw `$(...)` placeholder in Info.plist — guarded here.
     private static var bundleProjectAPIKey: String? {
-        guard let raw = (Bundle.main.object(forInfoDictionaryKey: bundleProjectAPIKeyInfoPlistKey) as? String)?.nonEmpty,
-              !raw.contains("$("),
-              raw.hasPrefix("phc_")
-        else { return nil }
-        return raw
+        projectAPIKey(from: Bundle.main.object(forInfoDictionaryKey: bundleProjectAPIKeyInfoPlistKey) as? String)
     }
 
     private static var bundleHost: String? {
-        guard let raw = (Bundle.main.object(forInfoDictionaryKey: bundleHostInfoPlistKey) as? String)?.nonEmpty,
-              !raw.contains("$(")
-        else { return nil }
-        return raw
+        configurationValue(Bundle.main.object(forInfoDictionaryKey: bundleHostInfoPlistKey) as? String)
     }
 
     private static var isDisabledForCurrentProcess: Bool {

@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createTelemetryClient, resolveTelemetryRuntimePolicy } from "../sidecar/telemetry.mjs";
+import {
+  createTelemetryClient,
+  projectTokenFromEnvironment,
+  resolveTelemetryRuntimePolicy,
+} from "../sidecar/telemetry.mjs";
 import { clearAuthContext, setAuthContext } from "../sidecar/auth-context.mjs";
 
 const productionTelemetryEnvironment = {
@@ -11,6 +15,30 @@ const productionTelemetryEnvironment = {
   AGENTIC30_BUILD_CONFIGURATION: "release",
   AGENTIC30_INTERNAL_TRAFFIC: "0",
 };
+
+test("telemetry project token env resolution supports both names and ignores placeholders", () => {
+  assert.equal(
+    projectTokenFromEnvironment({
+      POSTHOG_PROJECT_API_KEY: "phc_from_api_key",
+      POSTHOG_PROJECT_TOKEN: "phc_from_token",
+    }),
+    "phc_from_api_key",
+  );
+  assert.equal(
+    projectTokenFromEnvironment({
+      POSTHOG_PROJECT_API_KEY: "$(POSTHOG_PROJECT_API_KEY)",
+      POSTHOG_PROJECT_TOKEN: "phc_from_token",
+    }),
+    "phc_from_token",
+  );
+  assert.equal(
+    projectTokenFromEnvironment({
+      POSTHOG_PROJECT_API_KEY: "phx_personal_key",
+      POSTHOG_PROJECT_TOKEN: "$(POSTHOG_PROJECT_TOKEN)",
+    }),
+    "",
+  );
+});
 
 test("telemetry resolves capture config from POSTHOG_PROJECT_API_KEY/POSTHOG_HOST env (the path the Mac shell uses)", async () => {
   // The Mac shell forwards the resolved key/host via env, NOT ad-config.json.
@@ -113,6 +141,41 @@ test("telemetry adopts a Mac-supplied anonymous distinct id and persists it", as
   } finally {
     globalThis.fetch = originalFetch;
     clearAuthContext();
+    fs.rmSync(appSupportPath, { recursive: true, force: true });
+  }
+});
+
+test("telemetry can load PostHog project token and host from environment", async () => {
+  const appSupportPath = fs.mkdtempSync(path.join(os.tmpdir(), "agentic30-telemetry-env-"));
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = null;
+  let captured = null;
+
+  try {
+    globalThis.fetch = async (url, init) => {
+      capturedUrl = String(url);
+      captured = JSON.parse(String(init?.body));
+      return new Response("{}", { status: 200 });
+    };
+
+    const telemetry = createTelemetryClient({
+      appSupportPath,
+      workspaceRoot: "/Users/october/prj/agentic30",
+      environment: {
+        ...productionTelemetryEnvironment,
+        POSTHOG_PROJECT_API_KEY: "$(POSTHOG_PROJECT_API_KEY)",
+        POSTHOG_PROJECT_TOKEN: "phc_from_token",
+        POSTHOG_HOST: "https://eu.posthog.com",
+      },
+    });
+
+    telemetry.captureEvent("env_event");
+
+    assert.equal(capturedUrl, "https://eu.i.posthog.com/capture/");
+    assert.equal(captured.api_key, "phc_from_token");
+    assert.equal(captured.event, "env_event");
+  } finally {
+    globalThis.fetch = originalFetch;
     fs.rmSync(appSupportPath, { recursive: true, force: true });
   }
 });

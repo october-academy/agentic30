@@ -8,6 +8,9 @@ const ENABLE_DEV_TELEMETRY_ENV_KEY = "AGENTIC30_ENABLE_DEV_TELEMETRY";
 const TELEMETRY_ENVIRONMENT_ENV_KEY = "AGENTIC30_TELEMETRY_ENVIRONMENT";
 const BUILD_CONFIGURATION_ENV_KEY = "AGENTIC30_BUILD_CONFIGURATION";
 const INTERNAL_TRAFFIC_ENV_KEY = "AGENTIC30_INTERNAL_TRAFFIC";
+const POSTHOG_PROJECT_API_KEY_ENV_KEY = "POSTHOG_PROJECT_API_KEY";
+const POSTHOG_PROJECT_TOKEN_ENV_KEY = "POSTHOG_PROJECT_TOKEN";
+const POSTHOG_HOST_ENV_KEY = "POSTHOG_HOST";
 
 export function resolveIngestBaseURL(rawHost) {
   const trimmed = String(rawHost || "").trim() || "https://us.posthog.com";
@@ -33,6 +36,24 @@ function truthy(value) {
 
 function falsy(value) {
   return ["0", "false", "no", "off"].includes(String(value || "").trim().toLowerCase());
+}
+
+function configValue(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed || trimmed.includes("$(")) return "";
+  return trimmed;
+}
+
+function projectToken(value) {
+  const trimmed = configValue(value);
+  return trimmed.startsWith("phc_") ? trimmed : "";
+}
+
+export function projectTokenFromEnvironment(environment = process.env) {
+  return (
+    projectToken(environment[POSTHOG_PROJECT_API_KEY_ENV_KEY])
+    || projectToken(environment[POSTHOG_PROJECT_TOKEN_ENV_KEY])
+  );
 }
 
 function normalizeTelemetryEnvironment(value) {
@@ -281,12 +302,12 @@ export function createTelemetryClient({
     } catch {}
 
     const configuredKey =
-      environment.POSTHOG_PROJECT_API_KEY
-      || config?.posthog?.projectApiKey
-      || (String(config?.posthog?.apiKey || "").startsWith("phc_") ? config?.posthog?.apiKey : "");
+      projectTokenFromEnvironment(environment)
+      || projectToken(config?.posthog?.projectApiKey)
+      || projectToken(config?.posthog?.apiKey);
     const configuredHost =
-      environment.POSTHOG_HOST
-      || config?.posthog?.host
+      configValue(environment[POSTHOG_HOST_ENV_KEY])
+      || configValue(config?.posthog?.host)
       || "https://us.posthog.com";
 
     if (!configuredKey) return null;

@@ -38,6 +38,10 @@ See [docs/first-run-walkthrough.md](docs/first-run-walkthrough.md) for the full 
   - Claude: local Claude Code login or `ANTHROPIC_API_KEY`
   - Codex: local Codex login or `CODEX_API_KEY` / `OPENAI_API_KEY`
 
+## Telemetry configuration
+
+The PostHog SDK is initialized by the macOS app at launch and the resolved capture config is passed to the Node sidecar. For local telemetry runs, set `POSTHOG_PROJECT_TOKEN` or `POSTHOG_PROJECT_API_KEY` to a PostHog project token (`phc_...`) and optionally set `POSTHOG_HOST` (defaults to US ingest). Placeholder Xcode values and personal API keys are ignored. Debug builds still require `AGENTIC30_ENABLE_DEV_TELEMETRY=1`; `AGENTIC30_DISABLE_TELEMETRY=1` disables both app and sidecar capture.
+
 ## UI E2E Modes
 
 Hermetic UI tests use `--ui-testing-opaque-window` and `AGENTIC30_TEST_STUB_PROVIDER=1` so screenshots are stable and provider auth is not required:

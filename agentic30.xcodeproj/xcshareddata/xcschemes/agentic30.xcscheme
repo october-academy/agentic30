@@ -88,6 +88,11 @@
             isEnabled = "YES">
          </EnvironmentVariable>
          <EnvironmentVariable
+            key = "POSTHOG_PROJECT_API_KEY"
+            value = "$(POSTHOG_PROJECT_API_KEY)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
+         <EnvironmentVariable
             key = "POSTHOG_HOST"
             value = "$(POSTHOG_HOST)"
             isEnabled = "YES">
