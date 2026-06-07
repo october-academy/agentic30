@@ -38,15 +38,3 @@ export function redactRubricStatus(status) {
     recordCount: typeof status.recordCount === "number" ? status.recordCount : 0,
   };
 }
-
-// list_quarantined_records 응답에 들어가는 originalSummary 생성기.
-// raw original payload는 노출하지 않고 식별자 한 줄만.
-export function summarizeOriginalForMcp(original) {
-  if (!original || typeof original !== "object") return null;
-  const sessionId = typeof original.sessionId === "string" ? original.sessionId : null;
-  const day = typeof original.day === "number" ? original.day : null;
-  if (sessionId && day != null) return `${sessionId} · Day ${day}`;
-  if (sessionId) return sessionId;
-  if (day != null) return `Day ${day}`;
-  return null;
-}

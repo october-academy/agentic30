@@ -243,60 +243,6 @@ struct SidecarEventDecodingTests {
         #expect(status.elapsedMs == 42)
     }
 
-    @MainActor @Test func decodesRubricQuarantineListPayload() throws {
-        // R6 / CCG-Codex: protocol drift safety net for the quarantine list
-        // wire shape. If sidecar emit shape changes, this test catches the
-        // Swift-side decoder gap before runtime regression.
-        let payload = """
-        {
-          "type": "rubric_quarantine_list",
-          "items": [
-            {
-              "file": {
-                "path": "/tmp/.agentic30/rubric-assessments.json.invalid-2026-05-08T01-00.json",
-                "name": "rubric-assessments.json.invalid-2026-05-08T01-00.json",
-                "size": 256,
-                "mtimeMs": 1746662400000
-              },
-              "dump": {
-                "sourceFile": "/tmp/.agentic30/rubric-assessments.json",
-                "quarantinedAt": "2026-05-08T01:00:00.000Z",
-                "mtimeMs": 1746662400000,
-                "records": [
-                  {
-                    "index": 0,
-                    "issues": [
-                      {
-                        "path": ["axes", "clout", "evidence_refs"],
-                        "message": "Day 30 requires evidence_refs or no_evidence_reason for axis \\"clout\\""
-                      }
-                    ],
-                    "proposal": {
-                      "kind": "missing_no_evidence_reason",
-                      "axis": "clout",
-                      "suggestion": "Day 30 마감인데 clout 축에 근거가 없습니다."
-                    },
-                    "originalSummary": "session-1 · Day 30"
-                  }
-                ]
-              }
-            }
-          ]
-        }
-        """
-
-        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
-
-        #expect(event.type == "rubric_quarantine_list")
-        #expect(event.items?.count == 1)
-        #expect(event.items?.first?.file.name.hasPrefix("rubric-assessments") == true)
-        #expect(event.items?.first?.dump.records.count == 1)
-        #expect(event.items?.first?.dump.records.first?.proposal?.kind == "missing_no_evidence_reason")
-        #expect(event.items?.first?.dump.records.first?.proposal?.axis == "clout")
-        #expect(event.items?.first?.dump.records.first?.originalSummary == "session-1 · Day 30")
-        #expect(event.items?.first?.dump.records.first?.issues.first?.displayPath == "axes.clout.evidence_refs")
-    }
-
     @MainActor @Test func decodesWeeklyRitualPromptPayload() throws {
         // R6: weekly ritual broadcast surface. Verifies the Mac decoder picks
         // up `prompt` (mapped via CodingKey to weeklyRitualPrompt).
@@ -452,6 +398,19 @@ struct SidecarEventDecodingTests {
           "designSystem": null,
           "adr": "docs/adr",
           "goal": "docs/GOAL.md",
+          "day1GoalSelection": {
+            "schemaVersion": 1,
+            "schema": "agentic30.day1_goal.v1",
+            "goalType": "make_money",
+            "goalText": "SupportLens가 유료 support lead 후보 1명을 검증한다",
+            "customer": "B2B SaaS support lead",
+            "problem": "Slack escalation을 놓침",
+            "validationAction": "유료 파일럿 ask",
+            "evidenceRefs": ["README.md", "docs/ICP.md"],
+            "proofSink": "bip_optional",
+            "sourcePlanFingerprint": "abc123",
+            "selectedAt": "2026-06-06T00:00:00.000Z"
+          },
           "onboardingHypothesis": {
             "productName": "Agentic30",
             "projectKind": "mac_app",
@@ -477,6 +436,10 @@ struct SidecarEventDecodingTests {
         #expect(event.designSystem == nil)
         #expect(event.adr == "docs/adr")
         #expect(event.goal == "docs/GOAL.md")
+        #expect(event.day1GoalSelection?.goalType == .makeMoney)
+        #expect(event.day1GoalSelection?.proofSink == .bipOptional)
+        #expect(event.day1GoalSelection?.customer == "B2B SaaS support lead")
+        #expect(event.day1GoalSelection?.evidenceRefs == ["README.md", "docs/ICP.md"])
         #expect(event.onboardingHypothesis?.confidence == "high")
         #expect(event.onboardingHypothesis?.productName == "Agentic30")
         #expect(event.onboardingHypothesis?.targetUser?.contains("전업 1인 개발자") == true)

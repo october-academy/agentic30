@@ -6,7 +6,7 @@ enum Agentic30Theme: String, CaseIterable, Identifiable, Codable {
     case dark
 
     static let storageKey = "agentic30.appearance.theme.v1"
-    static let defaultTheme: Agentic30Theme = .white
+    static let defaultTheme: Agentic30Theme = .dark
 
     var id: String { rawValue }
 
@@ -19,8 +19,8 @@ enum Agentic30Theme: String, CaseIterable, Identifiable, Codable {
 
     var detail: String {
         switch self {
-        case .white: "day-white.html 기반의 밝은 기본 테마"
-        case .dark: "기존 Agentic30 다크 테마"
+        case .white: "day-white.html 기반의 밝은 테마"
+        case .dark: "Agentic30 기본 다크 테마"
         }
     }
 

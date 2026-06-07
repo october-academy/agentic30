@@ -24,6 +24,7 @@ import {
   buildOfficeHoursChatPrompt,
   buildOfficeHoursChatSystemPrompt,
   clampOfficeHoursContext,
+  isOfficeHoursLockedDay1GoalContext,
   isOfficeHoursWriteDesignDocContext,
 } from "./office-hours-chat-prompt.mjs";
 import {
@@ -66,6 +67,11 @@ import {
   loadProjectContextCache,
   refreshProjectContextCache,
 } from "./project-context-cache.mjs";
+import {
+  buildDay1GoalProjectContext,
+  loadDay1GoalSelection,
+  saveDay1GoalSelection,
+} from "./day1-goal-state.mjs";
 import {
   buildAuthEnv,
   clearAuthContext,
@@ -123,12 +129,6 @@ import {
   todayKey,
 } from "./bip-coach-state.mjs";
 import { buildRitualPrompt } from "./weekly-ritual.mjs";
-import {
-  listQuarantinedFiles,
-  proposeFixForEntry,
-  readQuarantineDump,
-  restoreQuarantinedRecord,
-} from "./quarantine-recovery.mjs";
 import {
   readGoogleDoc,
   readSheetMetadata,
@@ -338,6 +338,7 @@ const state = {
   bipCoach: null,
   iddSetup: null,
   bipCoachRunning: false,
+  day1GoalSelection: null,
   providerAuthRuns: new Map(),
   workspaceOnboardingHypothesis: null,
   curriculumInlineHintState: {},
@@ -400,6 +401,7 @@ state.bipCoach = mergeBipConfigIntoCoachState(
 );
 state.bipCoach = syncBipCoachSessionState();
 state.iddSetup = await loadIddSetupState(workspaceRoot);
+state.day1GoalSelection = await loadDay1GoalSelection({ workspaceRoot });
 await persistBipCoachState(bipCoachFilePath, state.bipCoach);
 const telemetry = createTelemetryClient({ appSupportPath, workspaceRoot });
 setSharedTelemetryClient(telemetry);
@@ -504,123 +506,10 @@ queueMicrotask(() => {
   try { replayPendingRitualOnBoot(); } catch { /* boot best-effort */ }
 });
 
-// R4 quarantine recovery — Mac client surface. Both helpers translate the
-// pure domain in `quarantine-recovery.mjs` into WebSocket events. The Mac
-// app receives them in AgenticViewModel.handleSidecarEvent().
-async function broadcastQuarantineList(socket) {
-  try {
-    const files = await listQuarantinedFiles({ workspaceRoot });
-    const items = [];
-    for (const file of files) {
-      const dump = await readQuarantineDump({ workspaceRoot, quarantinePath: file.path });
-      items.push({
-        file,
-        dump: {
-          ...dump,
-          // The Mac client only needs a label per record, not the raw original
-          // payload. Keep arbitrary user-shape JSON out of the wire.
-          records: dump.records.map((entry) => ({
-            index: entry.index,
-            issues: entry.issues,
-            proposal: entry.proposal,
-            originalSummary: summarizeOriginalRecord(entry.original),
-          })),
-        },
-    });
-    }
-    send(socket, { type: "rubric_quarantine_list", items });
-  } catch (err) {
-    send(socket, {
-      type: "rubric_quarantine_error",
-    stage: "list",
-      message: err?.message || String(err),
-    });
-  }
-}
-
-// Round 6 / CCG-UX: Mac client passes only `honestModeReason` and the entry
-// pointer; sidecar reads the quarantine dump, builds a fixedRecord that
-// preserves original axis scores, and re-uses the existing restore path.
-// This stops the Mac side from owning schema-shape decisions.
 async function handleWeeklyRitualAck(payload) {
   const day = typeof payload?.day === "number" ? payload.day : undefined;
   state.bipCoach = acknowledgePendingRitual(state.bipCoach, { day });
   await persistBipCoachState(bipCoachFilePath, state.bipCoach);
-}
-
-async function handleQuarantineRestoreWithReason(socket, payload) {
-  try {
-    const dump = await readQuarantineDump({
-    workspaceRoot,
-      quarantinePath: payload?.quarantinePath,
-    });
-    const entry = dump.records.find((r) => r.index === payload?.recordIndex);
-    if (!entry) throw new Error("recordIndex not found in quarantine dump");
-    // The sanitized entry from MCP/Mac path drops `original` for privacy. We
-    // need the raw original to preserve scores — read directly here.
-    const rawDump = JSON.parse(
-      await (await import("node:fs/promises")).readFile(dump.quarantinePath, "utf8"),
-    );
-    const rawEntry = rawDump.records?.[payload.recordIndex];
-    if (!rawEntry) throw new Error("raw quarantine entry missing");
-    const fixedRecord = proposeFixForEntry(
-      { ...entry, original: rawEntry.original },
-      payload?.honestModeReason ?? "",
-    );
-    const result = await restoreQuarantinedRecord({
-    workspaceRoot,
-      quarantinePath: dump.quarantinePath,
-      recordIndex: payload?.recordIndex,
-      fixedRecord,
-      expectedMtimeMs: payload?.expectedMtimeMs,
-    });
-  telemetry.captureEvent("mac_sidecar_rubric_quarantine_restored_with_reason", {
-      remaining: result.remainingInvalidCount,
-      duplicate_avoided: result.duplicateAvoided ?? false,
-    });
-    send(socket, { type: "rubric_quarantine_restored", result });
-    await broadcastQuarantineList(socket);
-  } catch (err) {
-    send(socket, {
-      type: "rubric_quarantine_error",
-    stage: "restore_with_reason",
-      message: err?.message || String(err),
-    });
-  }
-}
-
-async function handleQuarantineRestore(socket, payload) {
-  try {
-    const result = await restoreQuarantinedRecord({
-    workspaceRoot,
-      quarantinePath: payload?.quarantinePath,
-      recordIndex: payload?.recordIndex,
-      fixedRecord: payload?.fixedRecord,
-      expectedMtimeMs: payload?.expectedMtimeMs,
-    });
-  telemetry.captureEvent("mac_sidecar_rubric_quarantine_restored", {
-      remaining: result.remainingInvalidCount,
-    });
-    send(socket, { type: "rubric_quarantine_restored", result });
-    // Re-broadcast list so the Mac UI refreshes without a separate roundtrip.
-    await broadcastQuarantineList(socket);
-  } catch (err) {
-    send(socket, {
-      type: "rubric_quarantine_error",
-    stage: "restore",
-      message: err?.message || String(err),
-    });
-  }
-}
-
-function summarizeOriginalRecord(original) {
-  if (!original || typeof original !== "object") return null;
-  const sessionId = typeof original.sessionId === "string" ? original.sessionId : null;
-  const day = typeof original.day === "number" ? original.day : null;
-  if (sessionId && day != null) return `${sessionId} · Day ${day}`;
-  if (sessionId) return sessionId;
-  if (day != null) return `Day ${day}`;
-  return null;
 }
 
 // Weekly ritual fold-in: applyCurriculumDayUpdate atomically updates
@@ -810,6 +699,7 @@ function registerAuthenticatedClient(socket) {
     notionConnected: isNotionConnected(),
     diagnostics: buildSidecarDiagnostics(environment, preflight),
     bipCoach: state.bipCoach,
+    day1GoalSelection: state.day1GoalSelection,
   });
   scheduleQmdMemoryBootstrap();
 
@@ -1662,6 +1552,14 @@ async function handleClientMessage(socket, payload) {
       }
       return;
     }
+    case "day1_goal_get": {
+      await handleDay1GoalGet(socket, payload);
+      return;
+    }
+    case "day1_goal_save": {
+      await handleDay1GoalSave(socket, payload);
+      return;
+    }
     case "project_context_refresh": {
       fireAndForget(
         "project_context_refresh",
@@ -2001,18 +1899,6 @@ async function handleClientMessage(socket, payload) {
     });
       return;
     }
-    case "rubric_quarantine_list_request": {
-      await broadcastQuarantineList(socket);
-      return;
-    }
-    case "rubric_quarantine_restore": {
-      await handleQuarantineRestore(socket, payload);
-      return;
-    }
-    case "rubric_quarantine_restore_with_reason": {
-      await handleQuarantineRestoreWithReason(socket, payload);
-      return;
-    }
     case "weekly_ritual_acknowledged": {
       await handleWeeklyRitualAck(payload);
       return;
@@ -2023,6 +1909,69 @@ async function handleClientMessage(socket, payload) {
         message_type: payload.type || "unknown",
     });
       send(socket, { type: "error", message: `Unknown message type: ${payload.type}` });
+  }
+}
+
+function resolveDay1GoalWorkspaceRoot(payload = {}) {
+  const requestedRoot = String(payload.workspaceRoot || payload.workspace_root || workspaceRoot || "").trim();
+  return requestedRoot ? path.resolve(requestedRoot) : workspaceRoot;
+}
+
+async function handleDay1GoalGet(socket, payload = {}) {
+  const root = resolveDay1GoalWorkspaceRoot(payload);
+  const selection = await loadDay1GoalSelection({ workspaceRoot: root });
+  if (path.resolve(root) === path.resolve(workspaceRoot)) {
+    state.day1GoalSelection = selection;
+  }
+  send(socket, {
+    type: "day1_goal_state",
+    workspaceRoot: root,
+    day1GoalSelection: selection,
+  });
+}
+
+async function handleDay1GoalSave(socket, payload = {}) {
+  const root = resolveDay1GoalWorkspaceRoot(payload);
+  try {
+    const selectionPayload = payload.selection || payload.day1GoalSelection || payload.day1_goal_selection || payload;
+    const selection = await saveDay1GoalSelection({
+      workspaceRoot: root,
+      selection: selectionPayload,
+    });
+    if (path.resolve(root) === path.resolve(workspaceRoot)) {
+      state.day1GoalSelection = selection;
+    }
+    const goalContext = buildDay1GoalProjectContext(selection);
+    const projectContext = await refreshProjectContextCache({
+      workspaceRoot: root,
+      reason: "day1_goal_save",
+      onboardingHypothesis: {
+        ...(state.workspaceOnboardingHypothesis || {}),
+        ...(goalContext || {}),
+      },
+    });
+    telemetry.captureEvent("mac_sidecar_day1_goal_saved", {
+      goal_type: selection.goalType,
+      proof_sink: selection.proofSink,
+      workspace_basename: path.basename(root),
+    });
+    broadcast({
+      type: "day1_goal_state",
+      workspaceRoot: root,
+      day1GoalSelection: selection,
+      projectContext,
+    });
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "day1_goal_save",
+      workspace_root: root,
+    });
+    send(socket, {
+      type: "day1_goal_state",
+      workspaceRoot: root,
+      success: false,
+      error: formatError(error),
+    });
   }
 }
 
@@ -3338,6 +3287,11 @@ function activeOfficeHoursContext(session = null) {
   return clampOfficeHoursContext(officeHours.context || "");
 }
 
+function isLockedDay1GoalOfficeHoursRuntime(officeHours = {}) {
+  return String(officeHours?.source || "") === "day1_interview_goal_locked"
+    || isOfficeHoursLockedDay1GoalContext(officeHours?.context || "");
+}
+
 const OFFICE_HOURS_STATUS_COPY = Object.freeze({
   context_loaded: {
     title: "답변 확인 중",
@@ -3351,13 +3305,13 @@ const OFFICE_HOURS_STATUS_COPY = Object.freeze({
   },
   provider_starting: {
     title: "다음 질문 준비 중",
-    detail: "프로젝트 맥락에 맞는 질문을 준비하고 있습니다.",
-    progressText: "프로젝트 맥락에 맞는 질문 준비 중",
+    detail: "답변과 프로젝트 맥락에 맞는 다음 질문을 준비하고 있습니다.",
+    progressText: "프로젝트 맥락에 맞는 다음 질문 준비 중",
   },
   provider_thinking: {
     title: "다음 질문 준비 중",
-    detail: "방금 답한 내용을 바탕으로 이어서 물어볼 질문을 정리하고 있습니다.",
-    progressText: "방금 답변을 바탕으로 다음 질문 준비 중",
+    detail: "선택한 답변과 입력 내용을 바탕으로 이어서 물어볼 질문을 정리하고 있습니다.",
+    progressText: "답변을 바탕으로 다음 질문 준비 중",
   },
   tool_running: {
     title: "선택지 준비 중",
@@ -3390,6 +3344,47 @@ const OFFICE_HOURS_STATUS_COPY = Object.freeze({
     progressText: "질문 준비 중단됨",
   },
 });
+
+const OFFICE_HOURS_FIRST_QUESTION_STATUS_COPY = Object.freeze({
+  context_loaded: {
+    title: "목표 확인 중",
+    detail: "목표와 프로젝트 정보를 확인하고 있습니다.",
+    progressText: "목표와 프로젝트 정보 확인 중",
+  },
+  specialist_routed: {
+    title: "첫 질문 방향 정하는 중",
+    detail: "가장 먼저 확인할 내용을 고르고 있습니다.",
+    progressText: "첫 질문 방향 정하는 중",
+  },
+  provider_starting: {
+    title: "첫 질문 준비 중",
+    detail: "프로젝트 맥락에 맞는 첫 질문을 준비하고 있습니다.",
+    progressText: "프로젝트 맥락에 맞는 첫 질문 준비 중",
+  },
+  provider_thinking: {
+    title: "첫 질문 준비 중",
+    detail: "목표와 세션 맥락을 바탕으로 확인할 질문을 정리하고 있습니다.",
+    progressText: "목표와 세션 맥락으로 첫 질문 준비 중",
+  },
+  structured_input_requested: {
+    title: "질문 화면 여는 중",
+    detail: "곧 첫 질문이 선택지와 함께 표시됩니다.",
+    progressText: "첫 질문 화면 여는 중",
+  },
+  question_ready: {
+    title: "첫 질문 준비 완료",
+    detail: "선택하거나 직접 입력하면 Office Hours를 시작합니다.",
+    progressText: "첫 질문 준비 완료",
+  },
+});
+
+function officeHoursFirstQuestionStatus(status = {}) {
+  const firstQuestionCopy = OFFICE_HOURS_FIRST_QUESTION_STATUS_COPY[status.stage] || {};
+  return {
+    ...status,
+    ...firstQuestionCopy,
+  };
+}
 
 function clampOfficeHoursStatusText(value, maxLength = 240) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
@@ -3610,7 +3605,10 @@ async function runOfficeHours(session, {
     touch(session);
     await persistSessions();
     broadcast({ type: "session_updated", session });
-    emitOfficeHoursStatus(session, {
+    const emitFirstQuestionOfficeHoursStatus = (status) => {
+      emitOfficeHoursStatus(session, officeHoursFirstQuestionStatus(status));
+    };
+    emitFirstQuestionOfficeHoursStatus({
       stage: "context_loaded",
       messageId: assistantMessage.id,
       elapsedMs: performance.now() - runStartedAt,
@@ -3627,7 +3625,7 @@ async function runOfficeHours(session, {
       context: officeHoursRuntime.context,
       lastAnswer: visiblePrompt,
     });
-    emitOfficeHoursStatus(session, {
+    emitFirstQuestionOfficeHoursStatus({
       stage: "specialist_routed",
       messageId: assistantMessage.id,
       elapsedMs: performance.now() - runStartedAt,
@@ -3647,7 +3645,7 @@ async function runOfficeHours(session, {
       provider: session.provider,
     });
     let officeHoursStructuredInputAnswered = false;
-    emitOfficeHoursStatus(session, {
+    emitFirstQuestionOfficeHoursStatus({
       stage: "provider_starting",
       messageId: assistantMessage.id,
       elapsedMs: performance.now() - runStartedAt,
@@ -3673,7 +3671,7 @@ async function runOfficeHours(session, {
         }
         const status = mapOfficeHoursToolEventToStatus(toolEvent);
         if (status) {
-          emitOfficeHoursStatus(session, {
+          emitFirstQuestionOfficeHoursStatus({
             ...status,
             messageId: assistantMessage.id,
             elapsedMs: performance.now() - runStartedAt,
@@ -3707,7 +3705,7 @@ async function runOfficeHours(session, {
         }
         const status = mapOfficeHoursRunEventToStatus(event);
         if (status) {
-          emitOfficeHoursStatus(session, {
+          emitFirstQuestionOfficeHoursStatus({
             ...status,
             messageId: assistantMessage.id,
             elapsedMs: performance.now() - runStartedAt,
@@ -3724,7 +3722,7 @@ async function runOfficeHours(session, {
     session.status = session.pendingUserInput ? "awaiting_input" : "idle";
     session.error = null;
     if (!officeHoursStructuredInputAnswered && assistantMessage.inlineDecision) {
-      emitOfficeHoursStatus(session, {
+      emitFirstQuestionOfficeHoursStatus({
         stage: "structured_input_requested",
         messageId: assistantMessage.id,
         elapsedMs: performance.now() - runStartedAt,
@@ -3736,7 +3734,32 @@ async function runOfficeHours(session, {
           context: officeHoursRuntime.context,
           source: "office_hours_start",
         });
-    emitOfficeHoursStatus(session, {
+    if (isLockedDay1GoalOfficeHoursRuntime(officeHoursRuntime)
+      && !request
+      && !session.pendingUserInput) {
+      const message = "Day 1 인터뷰 질문을 만들지 못했습니다.";
+      assistantMessage.state = "error";
+      assistantMessage.error = message;
+      if (!assistantMessage.content) {
+        assistantMessage.content = message;
+      }
+      session.status = "error";
+      session.error = message;
+      emitOfficeHoursStatus(session, {
+        stage: "failed",
+        detail: message,
+        progressText: message,
+        messageId: assistantMessage.id,
+        elapsedMs: performance.now() - runStartedAt,
+      });
+      broadcast({
+        type: "error",
+        sessionId: session.id,
+        message,
+      });
+      return;
+    }
+    emitFirstQuestionOfficeHoursStatus({
       stage: session.pendingUserInput ? "question_ready" : "completed",
       messageId: assistantMessage.id,
       requestId: request?.requestId || session.pendingUserInput?.requestId || null,
@@ -7528,6 +7551,10 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
         agentHistory,
         localDiscovery,
       }).catch(() => null);
+      const day1GoalSelection = await loadDay1GoalSelection({ workspaceRoot: scanRoot });
+      if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
+        state.day1GoalSelection = day1GoalSelection;
+      }
       const projectContext = await refreshProjectContextCache({
         workspaceRoot: scanRoot,
         reason: "workspace_scan",
@@ -7562,6 +7589,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
         day1AlignmentPlan,
         day1IcpPlan,
         day1SituationSummary,
+        day1GoalSelection,
       });
       triggerDay1AlignmentPlanBroadcast({
         scanRoot,
@@ -7646,6 +7674,10 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       agentSituationSignals,
       localDiscovery,
     }).catch(() => null);
+    const day1GoalSelection = await loadDay1GoalSelection({ workspaceRoot: scanRoot });
+    if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
+      state.day1GoalSelection = day1GoalSelection;
+    }
     const projectContext = await refreshProjectContextCache({
       workspaceRoot: scanRoot,
       reason: "workspace_scan",
@@ -7680,6 +7712,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       day1AlignmentPlan,
       day1IcpPlan,
       day1SituationSummary,
+      day1GoalSelection,
     });
     triggerDay1AlignmentPlanBroadcast({
       scanRoot,

@@ -15,6 +15,10 @@ export function isOfficeHoursWriteDesignDocContext(context = "") {
     || /Flow contract:\s*fixed Startup design-doc flow/i.test(String(context || ""));
 }
 
+export function isOfficeHoursLockedDay1GoalContext(context = "") {
+  return /DAY1_LOCKED_GOAL|Flow contract:\s*locked Day 1 goal interview/i.test(String(context || ""));
+}
+
 export function buildOfficeHoursChatPrompt({ context = "", userPrompt = "" } = {}) {
   const sections = [
     "Office Hours를 시작한다.",
@@ -42,6 +46,7 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
 } = {}) {
   const structuredInputTool = officeHoursStructuredInputToolName(provider);
   const isWriteDesignDocFlow = isOfficeHoursWriteDesignDocContext(context);
+  const isLockedDay1GoalFlow = isOfficeHoursLockedDay1GoalContext(context);
   const baseRules = [
     "## Agentic30 Day 1 STEP Office Hours",
     "Use the office-hours specialist for this whole session.",
@@ -80,9 +85,21 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
         "After the sixth answer, do not ask Premise Challenge or Alternatives as more structured input. Return generated design-doc markdown with frontmatter generated_by: office-hours and handoff_for: plan-ceo-review, including Problem Statement, Target User, Chosen Wedge, Premise Challenge, Explored Alternatives, Not In Scope, Next action, and CEO Review Handoff.",
       ]
     : [];
+  const lockedDay1GoalRules = isLockedDay1GoalFlow
+    ? [
+        "For the locked Day 1 goal interview, do not ask a mode gate, product-stage gate, or goal-selection question.",
+        "Use only the locked goal block as the interview target: goal type, goal text, customer, problem, and validation action are already chosen by the user.",
+        `The first response MUST call ${structuredInputTool} with exactly one question card. Do not answer only in prose.`,
+        "Ask for the weakest missing evidence behind the locked goal first: money signal for make_money, acquisition/channel signal for get_users, or build workflow/user-success signal for build_product.",
+        "Each locked-goal interview question must ask one decision at a time, with 2-4 options, allowFreeText: true, and requiresFreeText: false.",
+        "Do not write files, write docs, publish posts, or update public channels unless the user explicitly approves that later.",
+        "If BIP proof sink is available, treat it only as a place to record evidence after the interview; do not require BIP setup to continue.",
+      ]
+    : [];
   return [
     ...baseRules,
     ...writeDesignDocRules,
+    ...lockedDay1GoalRules,
     `Workspace root: ${workspaceRootValue || ""}`,
     specialistInjection ? `\n${specialistInjection}` : "",
     context ? `\n## Day 1 STEP Office Hours Context\n${clampOfficeHoursContext(context)}` : "",

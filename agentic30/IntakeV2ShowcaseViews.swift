@@ -1702,6 +1702,7 @@ private struct IntakeSourceIconTile: View {
                 .resizable()
                 .scaledToFit()
                 .frame(width: size * assetScale(for: assetName), height: size * assetScale(for: assetName))
+                .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
         case .composite(let assetNames):
             compositeIcon(assetNames)
         case .symbol(let systemImage):
@@ -1758,6 +1759,8 @@ private struct IntakeSourceIconTile: View {
             return Color(red: 0.871, green: 0.792, blue: 0.671)
         case "BrandAWS":
             return Color(red: 0.091, green: 0.137, blue: 0.190)
+        case "BrandAppleNotes":
+            return Color(red: 0.322, green: 0.322, blue: 0.357)
         case "BrandInstagram":
             return Color(red: 0.051, green: 0.051, blue: 0.055)
         case "BrandThreads", "BrandPaddle":
@@ -1769,25 +1772,27 @@ private struct IntakeSourceIconTile: View {
 
     private func assetScale(for assetName: String, inComposite: Bool = false) -> CGFloat {
         switch assetName {
-        case "BrandDiscord":
-            return inComposite ? 0.72 : 0.82
-        case "BrandNotion":
-            return inComposite ? 0.72 : 0.78
+        case "BrandGitHub",
+             "BrandFigma",
+             "BrandCursor",
+             "BrandClaude",
+             "BrandDiscord",
+             "BrandToss",
+             "BrandStripe",
+             "BrandThreads",
+             "BrandX",
+             "BrandInstagram",
+             "BrandAWS",
+             "BrandGoogleDocs",
+             "BrandGoogleSheets",
+             "BrandNotion",
+             "BrandAppleNotes":
+            return inComposite ? 0.82 : 1.0
         case "BrandPostHog":
-            return inComposite ? 0.70 : 0.74
-        case "BrandStripe":
-            return inComposite ? 0.66 : 0.68
-        case "BrandCursor":
-            return inComposite ? 0.72 : 0.78
-        case "BrandClaude":
-            return inComposite ? 0.72 : 0.76
+            return inComposite ? 0.78 : 0.86
         case "BrandOpenAI":
             return inComposite ? 0.70 : 0.74
-        case "BrandInstagram":
-            return inComposite ? 0.72 : 0.78
-        case "BrandAWS":
-            return inComposite ? 0.78 : 0.82
-        case "BrandGoogleDocs", "BrandGoogleSheets", "BrandGmail", "BrandGoogleCalendar", "BrandGoogleForms":
+        case "BrandGmail", "BrandGoogleCalendar", "BrandGoogleForms":
             return inComposite ? 0.76 : 0.82
         case "BrandPaddle":
             return inComposite ? 0.92 : 0.88

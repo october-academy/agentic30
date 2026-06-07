@@ -1,10 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import {
-  redactRubricStatus,
-  summarizeOriginalForMcp,
-} from "../sidecar/rubric-redact.mjs";
+import { redactRubricStatus } from "../sidecar/rubric-redact.mjs";
 
 // R6-P1A / CCG-Codex: get_rubric_status가 raw evidence/notes/anchor_text/
 // no_evidence_reason을 provider context로 흘려보내면 local-only privacy
@@ -80,22 +77,6 @@ test("redactRubricStatus keeps non-sensitive metadata (sessionId, day, recordedA
   // delta passes through (already non-sensitive).
   assert.equal(redacted.delta[0].delta, 3);
   assert.equal(redacted.recordCount, 2);
-});
-
-test("summarizeOriginalForMcp returns identifier-only string (no raw payload)", () => {
-  // The Mac client uses originalSummary as a list label. raw `original` (사용자
-  // 임의 JSON, 사적 메모 포함 가능) must never appear in MCP results.
-  const summary = summarizeOriginalForMcp({
-    sessionId: "session-x",
-    day: 30,
-    notes: "PRIVATE-NOTE-MUST-NOT-LEAK",
-    axes: { definition: { score: 4 } },
-  });
-  assert.equal(summary, "session-x · Day 30");
-  assert.equal(summarizeOriginalForMcp(null), null);
-  assert.equal(summarizeOriginalForMcp({ sessionId: "x" }), "x");
-  assert.equal(summarizeOriginalForMcp({ day: 30 }), "Day 30");
-  assert.equal(summarizeOriginalForMcp({}), null);
 });
 
 test("redactRubricStatus handles null records and missing axes gracefully", () => {

@@ -557,6 +557,7 @@ final class WorkspaceSettingsTests: XCTestCase {
             day1AlignmentPlan: nil,
             day1IcpPlan: makeDay1IcpPlan(),
             day1SituationSummary: nil,
+            day1GoalSelection: nil,
             error: nil
         )
     }

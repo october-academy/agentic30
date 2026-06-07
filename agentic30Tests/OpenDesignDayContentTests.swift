@@ -4,6 +4,39 @@ import Testing
 @testable import agentic30
 
 struct OpenDesignDayContentTests {
+    @Test func workspaceChromeStyleUsesDay1ChromeForOfficeHoursAndSettingsOnly() {
+        #expect(WorkspaceChromeStyle.resolve(
+            isWorkspaceWindow: true,
+            dayNumber: 1,
+            selectedReferencePage: nil,
+            isOfficeHoursPresented: false
+        ) == .day1OfficeHours)
+        #expect(WorkspaceChromeStyle.resolve(
+            isWorkspaceWindow: true,
+            dayNumber: 1,
+            selectedReferencePage: .settings,
+            isOfficeHoursPresented: false
+        ) == .day1OfficeHours)
+        #expect(WorkspaceChromeStyle.resolve(
+            isWorkspaceWindow: true,
+            dayNumber: 1,
+            selectedReferencePage: .projects,
+            isOfficeHoursPresented: false
+        ) == .standard)
+        #expect(WorkspaceChromeStyle.resolve(
+            isWorkspaceWindow: true,
+            dayNumber: 2,
+            selectedReferencePage: .settings,
+            isOfficeHoursPresented: true
+        ) == .standard)
+        #expect(WorkspaceChromeStyle.resolve(
+            isWorkspaceWindow: false,
+            dayNumber: 1,
+            selectedReferencePage: .settings,
+            isOfficeHoursPresented: true
+        ) == .standard)
+    }
+
     @Test func officeHoursTranscriptRowsHideSyntheticStartPrompt() {
         let rows = OfficeHoursTranscriptRow.rows(from: [
             makeChatMessage(id: "start", role: .user, content: "Office Hours"),
@@ -563,23 +596,19 @@ struct OpenDesignDayContentTests {
 
         #expect(content.railItems.map(\.title) == [
             "오늘 · Day 1",
-            "검색",
-            "프로젝트",
-            OpenDesignCopy.officeHoursTitle,
             "설정",
-            "인터뷰",
-            "BIP 로그",
-            "뉴스",
-            "히스토리",
         ])
         #expect(content.taskGroups.count == 4)
         #expect(content.taskGroups.first?.tasks.count == 7)
         #expect(firstTask?.title == "먼저 도울 사람을 정해요")
+        #expect(content.railItems.first(where: { $0.id == "today" })?.route == .officeHours)
+        #expect(content.searchItems.first(where: { $0.id == "page-today" })?.route == .officeHours)
+        #expect(content.searchItems.first(where: { $0.id == "task-day1" })?.route == .officeHours)
         #expect(content.interviewSteps.count == 4)
         #expect(content.interviewSteps.first?.options.count == 4)
     }
 
-    @Test func developmentVisibilityIncludesUnfinishedReferencePages() {
+    @Test func developmentVisibilityKeepsReferencePagesSearchableWhileRailStaysFocused() {
         let railIDs = OpenDesignDayContent.makeRailItems(
             todayTitle: "오늘 · Day 1",
             showsDevelopmentOnlyReferencePages: true
@@ -592,14 +621,7 @@ struct OpenDesignDayContentTests {
 
         #expect(railIDs == [
             "today",
-            "search",
-            "projects",
-            "office-hours",
             "settings",
-            "interviews",
-            "bip",
-            "news",
-            "history",
         ])
         #expect(pageIDs == [
             "page-today",
@@ -635,11 +657,9 @@ struct OpenDesignDayContentTests {
 
         #expect(productionRailIDs == [
             "today",
-            "search",
-            "office-hours",
             "settings",
         ])
-        #expect(allRailIDs.subtracting(Set(productionRailIDs)) == OpenDesignDayContent.developmentOnlyReferenceRailItemIDs)
+        #expect(allRailIDs == Set(productionRailIDs))
 
         #expect(productionPageIDs == [
             "page-today",
@@ -1274,7 +1294,7 @@ struct OpenDesignDayContentTests {
         #expect(content.rankedSearchItems(query: "day3").first?.title == "Mom Test 인터뷰 ×3")
         #expect(content.rankedSearchItems(query: "3").first?.title == "Mom Test 인터뷰 ×3")
         #expect(content.rankedSearchItems(query: "핵심 가설").first?.id == "section-final")
-        #expect(content.rankedSearchItems(query: "settings").isEmpty)
+        #expect(content.rankedSearchItems(query: "settings").first?.id == "page-settings")
         #expect(content.rankedSearchItems(query: "설정").first?.title == "설정")
         #expect(content.rankedSearchItems(query: "day8").first?.id == "task-day8")
         #expect(content.rankedSearchItems(query: "day8").first?.isLocked == true)
@@ -1941,7 +1961,11 @@ struct OpenDesignDayContentTests {
 
             #expect(OpenDesignReferencePageKind(railItemID: kind.railItemID) == kind)
             #expect(OpenDesignReferencePageKind(searchItemID: searchID) == kind)
-            #expect(railIDs.contains(kind.railItemID))
+            if kind == .settings {
+                #expect(railIDs.contains(kind.railItemID))
+            } else {
+                #expect(!railIDs.contains(kind.railItemID))
+            }
             #expect(pageIDs.contains(searchID))
             #expect(!page.sideGroups.isEmpty)
             #expect(!page.sections.isEmpty)

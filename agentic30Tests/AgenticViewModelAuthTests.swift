@@ -1545,6 +1545,79 @@ struct AgenticViewModelAuthTests {
         #expect(payload["context"] as? String == "real project context")
     }
 
+    @Test @MainActor func day1GoalDraftsSaveThroughSidecarPayload() async throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 1
+        )
+        sidecar.resetSentPayloads()
+
+        try sidecar.emit(Self.workspaceScanResultPayload(workspaceRoot: workspace.path))
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        #expect(viewModel.day1GoalDrafts.map(\.goalType) == [.makeMoney, .getUsers, .buildProduct])
+        let draft = try #require(viewModel.day1GoalDrafts.first(where: { $0.goalType == .makeMoney }))
+        #expect(draft.customer == "B2B SaaS support lead")
+        #expect(draft.problem == "Slack escalation을 놓침")
+        #expect(draft.evidenceRefs.contains("README.md"))
+
+        sidecar.resetSentPayloads()
+        let sent = viewModel.saveDay1GoalDraft(draft, workspaceRoot: workspace.path)
+
+        #expect(sent)
+        #expect(viewModel.day1GoalSelection?.goalType == .makeMoney)
+        #expect(viewModel.scanResult?.day1GoalSelection?.goalType == .makeMoney)
+        let payload = try #require(sidecar.sentPayloads.first)
+        #expect(payload["type"] as? String == "day1_goal_save")
+        #expect(payload["workspaceRoot"] as? String == workspace.path)
+        let selection = try #require(payload["selection"] as? [String: Any])
+        #expect(selection["goalType"] as? String == "make_money")
+        #expect(selection["proofSink"] as? String == "local")
+        #expect(selection["customer"] as? String == "B2B SaaS support lead")
+    }
+
+    @Test @MainActor func day1GoalDraftsPreferConciseAlignmentCustomerSignal() async throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 1
+        )
+
+        try sidecar.emit(Self.workspaceScanResultWithLongAlignmentCustomerPayload(workspaceRoot: workspace.path))
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        let draft = try #require(viewModel.day1GoalDrafts.first)
+        #expect(draft.customer == "전업 1인 개발자 (수익 0원, macOS)")
+        #expect(draft.problem == "만들 줄은 알지만 무엇을 팔아야 하는지 모른다")
+        #expect(draft.goalText.contains("중 \"만들 줄은") == false)
+        #expect(draft.goalText.contains("모른다…") == false)
+    }
+
+    @Test func day1GoalSelectionOfficeHoursContextCopyIsConcise() {
+        let selection = Day1GoalSelection(
+            goalType: .getUsers,
+            goalText: "전업 1인 개발자 (수익 0원, macOS)를 실제 유입/가입 행동으로 모아 만들 줄은 알지만 무엇을 팔아야 하는지, 어떻게 사람을 데려와야 하는지, 오늘 무엇을 검증해야 하는지 모른다 반복 여부를 확인한다.",
+            customer: "전업 1인 개발자 (수익 0원, macOS) 중 \"만들 줄은 알지만 무엇을 팔아야 하는지 모른다\"…",
+            problem: "만들 줄은 알지만 무엇을 팔아야 하는지, 어떻게 사람을 데려와야 하는지, 오늘 무엇을 검증해야 하는지 모른다",
+            validationAction: "지불 의향과 현재 대안을 첫 고객 대화에서 묻는다.",
+            evidenceRefs: ["docs/ICP.md", "docs/SPEC.md"],
+            proofSink: .local,
+            sourcePlanFingerprint: "fixture",
+            selectedAt: "2026-06-07T00:00:00.000Z"
+        )
+
+        #expect(selection.officeHoursPurposeLine == "유저 모으기 · 유입/가입 행동 검증")
+        #expect(selection.officeHoursProgressLine == "전업 1인 개발자 (수익 0원, macOS) · 팔 대상·유입·검증 기준 불명확")
+        #expect(selection.officeHoursOutputLine == "로컬 증거만 유지 · 승인 전 게시/문서 없음")
+    }
+
     @Test @MainActor func lateFrontierWorkspaceScanProgressDoesNotReopenOfficeHoursScanGate() async throws {
         let (workspace, cleanup) = try Self.installTemporaryWorkspace()
         defer { cleanup() }
@@ -1938,6 +2011,122 @@ struct AgenticViewModelAuthTests {
             "confidence": "high"
           },
           "day1IcpPlan": \(planJSON)
+        }
+        """
+    }
+
+    private static func workspaceScanResultWithLongAlignmentCustomerPayload(workspaceRoot: String) -> String {
+        """
+        {
+          "type": "workspace_scan_result",
+          "scanRoot": "\(workspaceRoot)",
+          "icp": "docs/ICP.md",
+          "spec": "docs/SPEC.md",
+          "goal": "docs/GOAL.md",
+          "day1AlignmentPlan": {
+            "schemaVersion": 1,
+            "source": "deterministic",
+            "generatedAt": "2026-06-07T00:00:00.000Z",
+            "confidence": 0.88,
+            "fellBackToDeterministic": false,
+            "projectGoal": "Agentic30은 전업 1인 개발자의 첫 매출 가능성을 검증한다.",
+            "mission": "Day 1 goal test",
+            "signals": {
+              "productName": "Agentic30",
+              "currentIcpGuess": "전업 1인 개발자 (수익 0원, macOS)",
+              "likelyUsers": ["AI 코딩 도구를 쓰는 개발자"],
+              "problem": "만들 줄은 알지만 무엇을 팔아야 하는지 모른다",
+              "currentAlternatives": ["수동 노트"],
+              "evidenceRefs": [
+                { "path": "docs/ICP.md", "reason": "icp", "quote": "전업 1인 개발자 (수익 0원, macOS)" },
+                { "path": "docs/SPEC.md", "reason": "spec", "quote": "만들 줄은 알지만 무엇을 팔아야 하는지 모른다" }
+              ],
+              "missingAssumptions": [],
+              "confidence": "high"
+            },
+            "components": {
+              "icp": {
+                "id": "icp",
+                "title": "고객",
+                "prompt": "고객 후보는 누구인가요?",
+                "helperText": "고객 조건을 고릅니다.",
+                "statement": "전업 1인 개발자 (수익 0원, macOS) 중 \\"만들 줄은 알지만 무엇을 팔아야 하는지 모른다\\" 상황을 지금 해결하려는 고객.",
+                "evidence": ["docs/ICP.md"],
+                "missingAssumptions": [],
+                "options": [
+                  { "id": "solo", "label": "전업 1인 개발자 (수익 0원, macOS)", "description": "첫 고객 후보입니다.", "preview": "고객", "antiSignal": false }
+                ]
+              },
+              "painPoint": {
+                "id": "pain_point",
+                "title": "문제",
+                "prompt": "문제는 무엇인가요?",
+                "helperText": "핵심 문제를 고릅니다.",
+                "statement": "만들 줄은 알지만 무엇을 팔아야 하는지 모른다",
+                "evidence": ["docs/SPEC.md"],
+                "missingAssumptions": [],
+                "options": [
+                  { "id": "pain", "label": "만들 줄은 알지만 무엇을 팔아야 하는지 모른다", "description": "핵심 문제입니다.", "preview": "문제", "antiSignal": false }
+                ]
+              },
+              "outcome": {
+                "id": "outcome",
+                "title": "확인할 행동",
+                "prompt": "확인할 행동은 무엇인가요?",
+                "helperText": "관찰 가능한 행동을 고릅니다.",
+                "statement": "지불 의향과 현재 대안을 첫 고객 대화에서 묻는다.",
+                "evidence": ["docs/GOAL.md"],
+                "missingAssumptions": [],
+                "options": [
+                  { "id": "outcome", "label": "지불 의향과 현재 대안을 첫 고객 대화에서 묻는다.", "description": "행동 신호입니다.", "preview": "확인", "antiSignal": false }
+                ]
+              }
+            },
+            "alignmentStatement": {
+              "statement": "목표: Agentic30은 전업 1인 개발자의 첫 매출 가능성을 검증한다. / 고객: 전업 1인 개발자 (수익 0원, macOS) 중 \\"만들 줄은 알지만 무엇을 팔아야 하는지 모른다\\" 상황을 지금 해결하려는 고객. / 문제: 만들 줄은 알지만 무엇을 팔아야 하는지 모른다 / 확인할 행동: 지불 의향과 현재 대안을 첫 고객 대화에서 묻는다.",
+              "projectGoal": "Agentic30은 전업 1인 개발자의 첫 매출 가능성을 검증한다.",
+              "icp": "전업 1인 개발자 (수익 0원, macOS) 중 \\"만들 줄은 알지만 무엇을 팔아야 하는지 모른다\\" 상황을 지금 해결하려는 고객.",
+              "painPoint": "만들 줄은 알지만 무엇을 팔아야 하는지 모른다",
+              "outcome": "지불 의향과 현재 대안을 첫 고객 대화에서 묻는다."
+            },
+            "qualityGate": {
+              "score": 8.8,
+              "threshold": 7.0,
+              "passed": true,
+              "label": "PASS",
+              "passGate": "specific",
+              "failGate": "missing",
+              "criteria": [
+                { "id": "icp", "label": "고객", "score": 2.0, "maxScore": 2.0, "passed": true, "detail": "specific" }
+              ]
+            },
+            "firstInterviewMessage": {
+              "channel": "DM",
+              "recipientPlaceholder": "{name}",
+              "subject": "Day 1",
+              "bodyTemplate": "최근 무엇을 팔아야 할지 막힌 적이 있나요?",
+              "questions": ["최근 사건은?", "현재 대안은?"]
+            },
+            "day2Handoff": {
+              "title": "Day 2",
+              "body": "시장 신호 확인",
+              "focus": "첫 고객",
+              "nextDayPrompt": "지불 의향 확인",
+              "qualityGateLabel": "PASS 8.8/10"
+            },
+            "signalDigest": {
+              "schemaVersion": 1,
+              "rows": [
+                { "key": "project", "label": "프로젝트", "value": "Agentic30", "tone": "strong" },
+                { "key": "goal", "label": "목표", "value": "첫 매출 가능성 검증", "tone": "body" },
+                { "key": "icp", "label": "고객", "value": "전업 1인 개발자 (수익 0원, macOS)", "tone": "body" },
+                { "key": "pain", "label": "문제", "value": "만들 줄은 알지만 무엇을 팔아야 하는지 모른다", "tone": "mark" },
+                { "key": "outcome", "label": "확인할 행동", "value": "지불 의향과 현재 대안을 첫 고객 대화에서 묻는다.", "tone": "strong" },
+                { "key": "evidence", "label": "근거", "value": "docs/ICP.md, docs/SPEC.md", "tone": "code" }
+              ],
+              "summary": "Day 1 고객 신호"
+            }
+          }
         }
         """
     }

@@ -24,15 +24,7 @@ import {
   getRubricStatus,
 } from "./rubric-assessment-host.mjs";
 import { buildDay30NoGoPrompt } from "./specialists/plan-ceo-review.mjs";
-import {
-  listQuarantinedFiles,
-  readQuarantineDump,
-  restoreQuarantinedRecord,
-} from "./quarantine-recovery.mjs";
-import {
-  redactRubricStatus,
-  summarizeOriginalForMcp,
-} from "./rubric-redact.mjs";
+import { redactRubricStatus } from "./rubric-redact.mjs";
 import {
   isSecretFilename,
   isSecretPath,
@@ -974,78 +966,6 @@ server.tool(
               2,
             ),
           },
-        ],
-      };
-    }
-  },
-);
-
-server.tool(
-  "list_quarantined_records",
-  "List Day-30 schema-invalid rubric records currently held in `<workspace>/.agentic30/*.invalid-*.json`. Each entry includes the original record, the schema issues that rejected it, an `mtimeMs` ETag, and an optional auto-suggest proposal. Use this before `restore_quarantined_record`.",
-  {},
-  async () => {
-    try {
-      const files = await listQuarantinedFiles({ workspaceRoot });
-      const out = [];
-      for (const file of files) {
-        const dump = await readQuarantineDump({ workspaceRoot, quarantinePath: file.path });
-        // Privacy: original payload 자체가 사용자 임의 JSON(notes 포함). MCP 응답
-        // 에는 originalSummary(sessionId · Day N)만 노출. raw original은 sidecar
-        // 내부 또는 Mac WebSocket bridge로만 흐름.
-        out.push({
-          file,
-          dump: {
-            sourceFile: dump.sourceFile,
-            quarantinedAt: dump.quarantinedAt,
-            mtimeMs: dump.mtimeMs,
-            records: dump.records.map((entry) => ({
-              index: entry.index,
-              issues: entry.issues,
-              proposal: entry.proposal,
-              originalSummary: summarizeOriginalForMcp(entry.original),
-            })),
-          },
-        });
-      }
-      return {
-        content: [{ type: "text", text: JSON.stringify({ ok: true, items: out }, null, 2) }],
-      };
-    } catch (err) {
-      return {
-        content: [
-          { type: "text", text: JSON.stringify({ ok: false, error: err?.message || String(err) }, null, 2) },
-        ],
-      };
-    }
-  },
-);
-
-server.tool(
-  "restore_quarantined_record",
-  "Re-import a fixed quarantined rubric record into the canonical store. `fixedRecord` must satisfy RubricAssessmentSchema. Pass `expectedMtimeMs` from the latest `list_quarantined_records` to detect stale views — the call rejects if the quarantine file changed in the meantime. On success the entry is removed from the quarantine file (consume semantics).",
-  {
-    quarantinePath: z.string().min(1),
-    recordIndex: z.number().int().min(0),
-    fixedRecord: z.unknown(),
-    expectedMtimeMs: z.number().optional(),
-  },
-  async ({ quarantinePath, recordIndex, fixedRecord, expectedMtimeMs }) => {
-    try {
-      const result = await restoreQuarantinedRecord({
-        workspaceRoot,
-        quarantinePath,
-        recordIndex,
-        fixedRecord,
-        expectedMtimeMs,
-      });
-      return {
-        content: [{ type: "text", text: JSON.stringify({ ok: true, ...result }, null, 2) }],
-      };
-    } catch (err) {
-      return {
-        content: [
-          { type: "text", text: JSON.stringify({ ok: false, error: err?.message || String(err) }, null, 2) },
         ],
       };
     }

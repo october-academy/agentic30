@@ -284,6 +284,8 @@ enum IntakeSourceIconCatalog {
             return .asset("BrandClaude")
         case .codex:
             return .asset("BrandOpenAI")
+        case .nativeNotes:
+            return .asset("BrandAppleNotes")
         case .gmailEmail:
             return .asset("BrandGmail")
         case .calendarCalls:
@@ -329,7 +331,6 @@ enum IntakeSourceIconCatalog {
         case .lemonSqueezyPaddleGumroad:
             return .composite(["BrandLemonSqueezy", "BrandPaddle", "BrandGumroad"])
         case .localFolder,
-             .nativeNotes,
              .interviewTxt,
              .workLogFolder,
              .interviewTranscriptFolder,

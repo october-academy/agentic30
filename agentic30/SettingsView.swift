@@ -1,98 +1,77 @@
 import SwiftUI
 import AppKit
 
-enum SettingsSection: CaseIterable, Identifiable {
+enum SettingsSection: String, CaseIterable, Identifiable {
+    case workspace
     case appearance
-    case account
-    case agents
-    case adAnalytics
-    case buildInPublic
-    case notion
-    case developerTools
-    case diagnostics
-    case quarantineRecovery
+    case menubar
+    case providers
+    case integrations
+    case privacy
+    case updates
+    case advanced
 
-    var id: Self { self }
+    var id: String { rawValue }
+
+    static func fromIdentifier(_ identifier: String) -> SettingsSection? {
+        SettingsSection(rawValue: identifier)
+    }
 
     var title: String {
         switch self {
+        case .workspace: "Workspace"
         case .appearance: "Appearance"
-        case .account: "Workspace"
-        case .agents: "AI Providers"
-        case .adAnalytics: "Ad Analytics"
-        case .buildInPublic: "Build In Public"
-        case .notion: "Notion"
-        case .developerTools: "Advanced"
-        case .diagnostics: "Privacy & Diagnostics"
-        case .quarantineRecovery: "Quarantine Recovery"
+        case .menubar: "Menu Bar & Notifications"
+        case .providers: "AI Providers"
+        case .integrations: "Integrations"
+        case .privacy: "Privacy & Diagnostics"
+        case .updates: "Updates"
+        case .advanced: "Advanced"
         }
     }
 
     var sidebarTitle: String {
         switch self {
-        case .appearance: "테마"
-        case .account: "워크스페이스"
-        case .agents: "AI 프로바이더"
-        case .adAnalytics: "광고 분석"
-        case .buildInPublic: "Build In Public"
-        case .notion: "Notion"
-        case .developerTools: "고급 & Sidecar"
-        case .diagnostics: "개인정보 & 진단"
-        case .quarantineRecovery: "정직 모드 복구"
+        case .workspace: "워크스페이스"
+        case .appearance: "외관"
+        case .menubar: "메뉴바 & 알림"
+        case .providers: "AI 프로바이더"
+        case .integrations: "연동"
+        case .privacy: "개인정보 & 진단"
+        case .updates: "업데이트"
+        case .advanced: "고급 & Sidecar"
         }
     }
 
     var systemImage: String {
         switch self {
-        case .appearance: "circle.lefthalf.filled"
-        case .account: "person.crop.circle"
-        case .agents: "pencil.and.outline"
-        case .adAnalytics: "chart.bar.xaxis"
-        case .buildInPublic: "hammer.fill"
-        case .notion: "doc.text.fill"
-        case .developerTools: "wrench.and.screwdriver.fill"
-        case .diagnostics: "stethoscope"
-        case .quarantineRecovery: "tray.and.arrow.up"
+        case .workspace: "folder"
+        case .appearance: "globe"
+        case .menubar: "bell"
+        case .providers: "chevron.left.forwardslash.chevron.right"
+        case .integrations: "link"
+        case .privacy: "shield"
+        case .updates: "arrow.triangle.2.circlepath"
+        case .advanced: "terminal"
         }
     }
 
     var accessibilityIdentifier: String {
-        switch self {
-        case .appearance: "appearance"
-        case .account: "account"
-        case .agents: "agents"
-        case .adAnalytics: "adAnalytics"
-        case .buildInPublic: "buildInPublic"
-        case .notion: "notion"
-        case .developerTools: "developerTools"
-        case .diagnostics: "diagnostics"
-        case .quarantineRecovery: "quarantineRecovery"
-        }
+        rawValue
     }
 }
 
 struct SettingsView: View {
     @ObservedObject var viewModel: AgenticViewModel
     private let embeddedInWorkspace: Bool
-    private let showsWorkspaceSettingsSidebar: Bool
     private let returnToWorkspace: (() -> Void)?
     private let selectedSectionOverride: Binding<SettingsSection>?
 
     @Environment(\.openWindow) private var openWindow
 
-    // MARK: - Ad Analytics State
+    // MARK: - Privacy State
 
-    @State private var posthogApiKey = ""
-    @State private var posthogProjectAPIKey = ""
-    @State private var posthogHost = ""
-    @State private var posthogMcpURL = KeychainHelper.Settings.defaultPostHogMcpURL
-    @State private var posthogMcpRegion = KeychainHelper.Settings.defaultPostHogMcpRegion
-    @State private var posthogMcpReadonly = true
-    @State private var posthogMcpFeatures = KeychainHelper.Settings.defaultPostHogMcpFeatures
     @State private var telemetryDisabled = PostHogTelemetry.isTelemetryDisabledByUser
-    @State private var metaAccessToken = ""
-    @State private var metaAdAccountId = ""
-    @State private var adSaveMessage = ""
 
     // MARK: - Agent Settings State
 
@@ -109,34 +88,20 @@ struct SettingsView: View {
     @State private var codexEnvironment = ""
     @State private var geminiEnvironment = ""
     @State private var exaApiKey = ""
-    @State private var agentSettingsSaveMessage = ""
 
-    // MARK: - BIP State
+    // MARK: - Workspace State
 
-    @State private var bipWorkspaceRoot = ""
-    @State private var bipIcpPath = ""
-    @State private var bipSpecPath = ""
-    @State private var bipValuesPath = ""
-    @State private var bipDesignSystemPath = ""
-    @State private var bipAdrPath = ""
-    @State private var bipGoalPath = ""
-    @State private var bipDocsPath = ""
-    @State private var bipSheetPath = ""
-    @State private var bipGdocsUrls = ""
-    @State private var bipGsheetsUrls = ""
-    @State private var bipNotionUrls = ""
-    @State private var bipThreadsHandle = ""
-    @State private var bipXHandle = ""
-    @State private var bipSaveMessage = ""
-    @State private var scanMessage = ""
-    @State private var diagnosticsMessage = ""
-    @State private var developerToolsMessage = ""
+    @State private var workspaceRootPath = ""
+    @State private var advancedToolsMessage = ""
     @State private var confettiTestRunID = 0
-    @State private var confettiTestMessage = ""
-    @State private var resetLocalDataMessage = ""
     @State private var localDataConfirmation: LocalDataConfirmation?
-    @State private var localSelectedSection: SettingsSection = .account
-    @State private var isBackButtonHovered = false
+    @State private var localSelectedSection: SettingsSection = .workspace
+    @State private var hoveredSettingsSection: SettingsSection?
+    @State private var hoveredWorkspacePathChangeButton = false
+    @State private var settingsSearchQuery = ""
+    @State private var settingsBannerVisible = true
+    @State private var settingsSaveMessage = ""
+    @State private var settingsThemeChoice = Agentic30Theme.current == .dark ? "dark" : "light"
     @AppStorage(Agentic30Theme.storageKey) private var appThemeRawValue = Agentic30Theme.defaultTheme.rawValue
 
     private enum LocalDataConfirmation: Identifiable {
@@ -186,12 +151,10 @@ struct SettingsView: View {
         viewModel: AgenticViewModel,
         embeddedInWorkspace: Bool = false,
         selectedSection: Binding<SettingsSection>? = nil,
-        showsWorkspaceSettingsSidebar: Bool = true,
         returnToWorkspace: (() -> Void)? = nil
     ) {
         _viewModel = ObservedObject(wrappedValue: viewModel)
         self.embeddedInWorkspace = embeddedInWorkspace
-        self.showsWorkspaceSettingsSidebar = showsWorkspaceSettingsSidebar
         self.returnToWorkspace = returnToWorkspace
         self.selectedSectionOverride = selectedSection
         #if DEBUG
@@ -210,9 +173,7 @@ struct SettingsView: View {
         guard let rawSection = uiTestingArgumentValue("--ui-testing-open-settings-section") else {
             return nil
         }
-        return SettingsSection.allCases.first { section in
-            section.accessibilityIdentifier == rawSection
-        }
+        return SettingsSection.fromIdentifier(rawSection)
     }
 
     private static func uiTestingArgumentValue(_ name: String) -> String? {
@@ -234,19 +195,6 @@ struct SettingsView: View {
             .onChange(of: viewModel.workspaceRoot) { _, root in
                 syncWorkspaceRoot(root)
             }
-            .onChange(of: viewModel.bipCoach?.updatedAt) { _, _ in
-                syncBipFieldsFromCoach(viewModel.bipCoach, persist: true)
-            }
-            .onChange(of: viewModel.scanResult) { _, _ in
-                if let result = viewModel.scanResult {
-                    applyScanResult(result)
-                }
-            }
-            .onChange(of: viewModel.lastDocCreated?.type) { _, _ in
-                if let created = viewModel.lastDocCreated {
-                    applyDocCreated(type: created.type, path: created.path)
-                }
-            }
             .overlay {
                 ZStack {
                     if let localDataConfirmation {
@@ -258,7 +206,7 @@ struct SettingsView: View {
                         RealisticConfettiBurst(trigger: confettiTestRunID)
                             .id(confettiTestRunID)
                             .allowsHitTesting(false)
-                            .accessibilityIdentifier("settings.developerTools.confettiOverlay")
+                            .accessibilityIdentifier("settings.advanced.confettiOverlay")
                     }
                 }
             }
@@ -292,7 +240,7 @@ struct SettingsView: View {
             HStack(spacing: 0) {
                 if showsNavigation {
                     settingsDesignSidebar
-                        .frame(width: showsMeta ? 240 : 220)
+                        .frame(width: 240)
                         .transition(.opacity)
                 }
 
@@ -322,38 +270,29 @@ struct SettingsView: View {
                 Text("설정")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(settingsText.opacity(0.94))
-                Text("\(SettingsSection.allCases.count)")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(settingsText.opacity(0.44))
-                    .padding(.horizontal, 6)
-                    .frame(height: 18)
-                    .background(Capsule().fill(settingsText.opacity(0.055)))
                 Spacer(minLength: 0)
             }
             .padding(.top, 10)
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
 
-            Button(action: {}) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 10, weight: .medium))
-                    Text("설정 검색")
-                    Spacer()
-                    Text("⌘ K")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(settingsText.opacity(0.28))
-                }
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(settingsText.opacity(0.72))
-                .padding(.horizontal, 10)
-                .frame(height: 30)
-                .background(settingsRounded(fill: settingsText.opacity(0.045), stroke: settingsText.opacity(0.08), radius: 6))
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                TextField("설정 검색", text: $settingsSearchQuery)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11.5, weight: .light))
+                    .foregroundStyle(settingsText)
+                Text("⌘ K")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
             }
-            .buttonStyle(.plain)
+            .padding(.horizontal, 10)
+            .frame(height: 42)
+            .background(settingsRounded(fill: OpenDesignDayColor.surface, stroke: settingsHairline, radius: 6))
             .padding(.horizontal, 8)
             .padding(.bottom, 6)
-            .help("검색은 워크스페이스 팔레트에서 제공됩니다")
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -363,16 +302,18 @@ struct SettingsView: View {
                             .padding(.bottom, 8)
                     }
 
-                    ForEach(settingsNavigationGroups.indices, id: \.self) { index in
-                        let group = settingsNavigationGroups[index]
+                    let groups = settingsNavigationGroups
+                    ForEach(groups.indices, id: \.self) { index in
+                        let group = groups[index]
                         HStack {
                             Text(group.title)
                             Spacer()
                         }
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .textCase(.uppercase)
-                        .foregroundStyle(settingsText.opacity(0.30))
-                        .padding(.top, index == 0 && returnToWorkspace == nil ? 8 : 14)
+                        .tracking(1)
+                        .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                        .padding(.top, index == 0 && returnToWorkspace == nil ? 13 : 14)
                         .padding(.horizontal, 8)
                         .padding(.bottom, 6)
 
@@ -414,68 +355,75 @@ struct SettingsView: View {
     }
 
     private var settingsNavigationGroups: [(title: String, sections: [SettingsSection])] {
+        let query = settingsSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return settingsAllNavigationGroups }
+        return settingsAllNavigationGroups.compactMap { group in
+            let sections = group.sections.filter { section in
+                section.sidebarTitle.localizedCaseInsensitiveContains(query)
+                    || section.title.localizedCaseInsensitiveContains(query)
+                    || section.accessibilityIdentifier.localizedCaseInsensitiveContains(query)
+            }
+            guard !sections.isEmpty else { return nil }
+            return (group.title, sections)
+        }
+    }
+
+    private var settingsAllNavigationGroups: [(title: String, sections: [SettingsSection])] {
         [
-            ("General", [.appearance, .account, .buildInPublic]),
-            ("Agent", [.agents, .adAnalytics, .notion]),
-            ("Trust", [.diagnostics, .developerTools, .quarantineRecovery]),
+            ("General", [.workspace, .appearance, .menubar]),
+            ("Agent", [.providers, .integrations]),
+            ("Trust", [.privacy, .updates, .advanced]),
         ]
     }
 
     private func settingsDesignSidebarRow(_ section: SettingsSection) -> some View {
-        Button {
+        let isActive = section == selectedSection.wrappedValue
+        let isHovered = hoveredSettingsSection == section
+        return Button {
             selectedSection.wrappedValue = section
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: section.systemImage)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(section == selectedSection.wrappedValue ? settingsAccentColor : settingsText.opacity(0.42))
-                    .frame(width: 24, height: 24)
-                    .background(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(section == selectedSection.wrappedValue ? settingsAccentColor.opacity(0.16) : settingsSidebarTone(section).opacity(0.10))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .stroke(section == selectedSection.wrappedValue ? settingsAccentColor.opacity(0.36) : settingsSidebarTone(section).opacity(0.14), lineWidth: 1)
-                            )
-                    )
+                    .font(.system(size: 12.2, weight: .regular))
+                    .symbolRenderingMode(.monochrome)
+                    .foregroundStyle(isActive ? settingsSidebarTone(section) : OpenDesignDayColor.muted)
+                    .frame(width: 22, height: 22)
 
                 Text(section.sidebarTitle)
-                    .font(.system(size: 12.2, weight: .medium))
-                    .foregroundStyle(section == selectedSection.wrappedValue ? settingsText.opacity(0.94) : settingsText.opacity(0.70))
+                    .font(.system(size: 12.5, weight: .light))
+                    .foregroundStyle(isActive || isHovered ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
                     .lineLimit(1)
+                    .layoutPriority(1)
+                    .fixedSize(horizontal: true, vertical: false)
 
                 Spacer(minLength: 6)
-
-                if let badge = settingsSidebarBadge(for: section) {
-                    Text(badge)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(section == selectedSection.wrappedValue ? settingsAccentColor : settingsText.opacity(0.42))
-                        .lineLimit(1)
-                }
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 7.5)
+            .padding(.vertical, 5.5)
             .background(
                 settingsRounded(
-                    fill: section == selectedSection.wrappedValue ? settingsText.opacity(0.095) : Color.clear,
+                    fill: isActive ? OpenDesignDayColor.selected : isHovered ? OpenDesignDayColor.hover : Color.clear,
                     stroke: Color.clear,
-                    radius: 7
+                    radius: 6
                 )
             )
-            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            hoveredSettingsSection = hovering ? section : (hoveredSettingsSection == section ? nil : hoveredSettingsSection)
+        }
         .accessibilityIdentifier("settings.section.\(section.accessibilityIdentifier)")
     }
 
     private func settingsDesignHeader(showsCompactNavigation: Bool) -> some View {
         HStack(spacing: 12) {
             HStack(spacing: 14) {
-                Image(systemName: selectedSection.wrappedValue.systemImage)
+                Image(systemName: "gearshape")
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(settingsAccentColor)
                     .frame(width: 44, height: 44)
-                    .background(settingsRounded(fill: settingsAccentColor.opacity(0.14), stroke: settingsAccentColor.opacity(0.34), radius: 11))
+                    .background(settingsRounded(fill: OpenDesignDayColor.accentDim, stroke: OpenDesignDayColor.accentLine, radius: 11))
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text("설정")
@@ -491,10 +439,10 @@ struct SettingsView: View {
                         Text("Agentic30 · 로컬 우선")
                         Text("·")
                             .foregroundStyle(settingsText.opacity(0.22))
-                        Text(selectedSection.wrappedValue.sidebarTitle)
+                        Text(settingsUserLabel)
                         Text("·")
                             .foregroundStyle(settingsText.opacity(0.22))
-                        Text("변경 사항은 Keychain/UserDefaults에 저장")
+                        Text(settingsSaveMessage.isEmpty ? "변경 사항 자동 저장" : settingsSaveMessage)
                     }
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(settingsText.opacity(0.44))
@@ -525,7 +473,7 @@ struct SettingsView: View {
             }
 
             Button(action: loadAllValues) {
-                Label("새로고침", systemImage: "arrow.clockwise")
+                Label("기본값으로", systemImage: "trash")
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(settingsText.opacity(0.74))
                     .padding(.horizontal, 12)
@@ -534,8 +482,8 @@ struct SettingsView: View {
             }
             .buttonStyle(.plain)
 
-            Button(action: saveCurrentSettingsForSelectedSection) {
-                Label("저장", systemImage: "checkmark")
+            Button(action: saveAllSettingsValues) {
+                Label(settingsSaveMessage.isEmpty ? "모두 저장됨" : settingsSaveMessage, systemImage: "checkmark")
                     .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(Color(red: 0.08, green: 0.12, blue: 0.11))
                     .padding(.horizontal, 14)
@@ -546,6 +494,7 @@ struct SettingsView: View {
                     )
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("settings.saveButton")
         }
         .padding(.horizontal, 28)
         .frame(height: 70)
@@ -567,11 +516,8 @@ struct SettingsView: View {
                     settingsMetaRow("Preflight", viewModel.sidecarDiagnostics?.preflight?.status ?? "unknown")
                 }
 
-                settingsMetaCard(label: "스토리지", isLive: false) {
-                    settingsMetaRow("workspace", shortPath(bipWorkspaceRoot))
-                    settingsMetaRow("ICP", bipIcpPath.isEmpty ? "미설정" : bipIcpPath)
-                    settingsMetaRow("SPEC", bipSpecPath.isEmpty ? "미설정" : bipSpecPath)
-                    settingsMetaRow("BIP", bipThreadsHandle.isEmpty ? "0 handles" : "@\(bipThreadsHandle)")
+                settingsMetaCard(label: "워크스페이스", isLive: WorkspaceSettings.hasExplicitWorkspace) {
+                    settingsMetaRow("workspace", shortPath(workspaceRootPath))
                 }
 
                 Text("빠른 작업")
@@ -582,7 +528,6 @@ struct SettingsView: View {
 
                 settingsMetaAction(title: "진단 스냅샷 내보내기", subtitle: "sanitize · copy", systemImage: "square.and.arrow.down", action: copyDiagnostics)
                 settingsMetaAction(title: "Sidecar 진단 새로고침", subtitle: "preflight · runtime", systemImage: "arrow.clockwise", action: refreshDiagnostics)
-                settingsMetaAction(title: "워크스페이스 재스캔", subtitle: "docs · path", systemImage: "folder.badge.gearshape", action: triggerScan)
 
                 Text("버전")
                     .font(.system(size: 10.5, weight: .medium, design: .monospaced))
@@ -675,42 +620,8 @@ struct SettingsView: View {
         .buttonStyle(.plain)
     }
 
-    private func settingsSidebarBadge(for section: SettingsSection) -> String? {
-        switch section {
-        case .appearance:
-            return Agentic30Theme.normalized(appThemeRawValue).displayName
-        case .account:
-            return loginItemsManager.isEnabled ? "ON" : "Local"
-        case .agents:
-            if providerEnvironment(for: .claude)?.available == true { return "Claude" }
-            if providerEnvironment(for: .codex)?.available == true { return "Codex" }
-            return "setup"
-        case .adAnalytics:
-            return (!posthogApiKey.isEmpty || !metaAccessToken.isEmpty) ? "set" : "OFF"
-        case .buildInPublic:
-            return bipWorkspaceRoot.isEmpty ? "docs" : "root"
-        case .notion:
-            return viewModel.notionConnected ? "ON" : "OAuth"
-        case .developerTools:
-            return "PID"
-        case .diagnostics:
-            return viewModel.sidecarDiagnostics?.preflight?.status ?? "copy"
-        case .quarantineRecovery:
-            return "review"
-        }
-    }
-
     private func settingsSidebarTone(_ section: SettingsSection) -> Color {
-        switch section {
-        case .appearance, .account, .agents:
-            return settingsAccentColor
-        case .adAnalytics, .notion, .developerTools:
-            return Color(red: 0.96, green: 0.78, blue: 0.54)
-        case .buildInPublic:
-            return Color(red: 0.42, green: 0.78, blue: 0.95)
-        case .diagnostics, .quarantineRecovery:
-            return Color(red: 1.0, green: 0.45, blue: 0.42)
-        }
+        settingsAccentColor
     }
 
     private func settingsRounded(fill: Color, stroke: Color, radius: CGFloat) -> some View {
@@ -739,83 +650,9 @@ struct SettingsView: View {
         """
     }
 
-    private var workspaceSettingsSidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                returnToWorkspace?()
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "arrow.left")
-                        .font(.system(size: 14, weight: .regular))
-                        .frame(width: 20, alignment: .center)
-                    Text("앱으로 돌아가기")
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                }
-                .foregroundStyle(settingsText.opacity(isBackButtonHovered ? 0.90 : 0.58))
-                .padding(.horizontal, 10)
-                .frame(height: 40)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(settingsText.opacity(isBackButtonHovered ? 0.075 : 0.0))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(settingsText.opacity(isBackButtonHovered ? 0.12 : 0.0), lineWidth: 1)
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .disabled(returnToWorkspace == nil)
-            .onHover { hovering in
-                isBackButtonHovered = hovering
-            }
-            .animation(.easeOut(duration: 0.12), value: isBackButtonHovered)
-            .padding(.horizontal, 8)
-
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(SettingsSection.allCases) { section in
-                    workspaceSettingsSidebarRow(section)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.top, 6)
-
-            Spacer(minLength: 0)
-        }
-        .frame(width: 236)
-        .background(settingsText.opacity(0.025))
-        .overlay(alignment: .trailing) {
-            Divider().opacity(0.36)
-        }
-    }
-
-    private func workspaceSettingsSidebarRow(_ section: SettingsSection) -> some View {
-        Button {
-            selectedSection.wrappedValue = section
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: section.systemImage)
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 20)
-                Text(section.sidebarTitle)
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            .foregroundStyle(section == selectedSection.wrappedValue ? settingsText.opacity(0.88) : settingsText.opacity(0.58))
-            .padding(.horizontal, 12)
-            .frame(height: 36)
-            .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(section == selectedSection.wrappedValue ? settingsText.opacity(0.10) : Color.clear)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("settings.section.\(section.accessibilityIdentifier)")
+    private var settingsUserLabel: String {
+        let email = viewModel.signedInEmail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return email.isEmpty ? selectedSection.wrappedValue.sidebarTitle : email
     }
 
     private var settingsBackground: Color {
@@ -838,348 +675,1122 @@ struct SettingsView: View {
         OpenDesignDayColor.borderSoft
     }
 
-    private var settingsSectionBar: some View {
-        HStack(spacing: 8) {
-            ForEach(SettingsSection.allCases) { section in
-                Button {
-                    selectedSection.wrappedValue = section
-                } label: {
-                    Label(section.title, systemImage: section.systemImage)
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundStyle(section == selectedSection.wrappedValue ? settingsText.opacity(0.92) : settingsText.opacity(0.5))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(section == selectedSection.wrappedValue ? settingsText.opacity(0.14) : settingsText.opacity(0.04))
-                        )
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("settings.section.\(section.accessibilityIdentifier)")
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 16)
-        .padding(.bottom, 12)
-        .background(OpenDesignDayColor.bgDeep)
-    }
-
     @ViewBuilder
     private var selectedSettingsSection: some View {
-        switch selectedSection.wrappedValue {
-        case .appearance:
-            appearanceTab
-        case .account:
-            accountTab
-        case .agents:
-            agentsTab
-        case .adAnalytics:
-            adAnalyticsTab
-        case .buildInPublic:
-            bipTab
-        case .notion:
-            notionTab
-        case .developerTools:
-            developerToolsTab
-        case .diagnostics:
-            diagnosticsTab
-        case .quarantineRecovery:
-            RubricQuarantineView(viewModel: viewModel)
-        }
+        openDesignSettingsMain
     }
 
-    // MARK: - Appearance Tab
-
-    private var appearanceTab: some View {
-        settingsTabScaffold(
-            title: "Appearance",
-            subtitle: "day-white.html 팔레트를 기본으로 사용하고, 기존 다크 테마도 보존합니다."
-        ) {
-            appearanceThemeSection
-        }
-    }
-
-    private var appearanceThemeSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionHeader(title: "Theme", configured: true)
-
-            Picker("Theme", selection: $appThemeRawValue) {
-                ForEach(Agentic30Theme.allCases) { theme in
-                    Text(theme.displayName)
-                        .tag(theme.rawValue)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .tint(settingsAccentColor)
-            .accessibilityIdentifier("settings.appearance.themePicker")
-            .onChange(of: appThemeRawValue) { _, newValue in
-                let normalized = Agentic30Theme.normalized(newValue)
-                if normalized.rawValue != newValue {
-                    appThemeRawValue = normalized.rawValue
-                }
-                normalized.applyAppKitAppearance()
-            }
-
-            ForEach(Agentic30Theme.allCases) { theme in
-                themePreviewRow(theme)
-            }
-        }
-        .padding(20)
-        .background(cardBackground)
-    }
-
-    private func themePreviewRow(_ theme: Agentic30Theme) -> some View {
-        let isSelected = Agentic30Theme.normalized(appThemeRawValue) == theme
-        return HStack(spacing: 12) {
-            HStack(spacing: 0) {
-                Circle().fill(themePreviewAccent(theme)).frame(width: 12, height: 12)
-                Circle().fill(themePreviewSurface(theme)).frame(width: 12, height: 12)
-                    .overlay(Circle().stroke(themePreviewBorder(theme), lineWidth: 1))
-                Circle().fill(themePreviewText(theme)).frame(width: 12, height: 12)
-            }
-            .frame(width: 44, alignment: .leading)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(theme.displayName)
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.88))
-                Text(theme.detail)
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.50))
-            }
-
-            Spacer(minLength: 0)
-
-            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(isSelected ? settingsAccentColor : settingsText.opacity(0.30))
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(settingsRounded(fill: isSelected ? settingsAccentColor.opacity(0.10) : settingsText.opacity(0.035), stroke: isSelected ? settingsAccentColor.opacity(0.22) : settingsText.opacity(0.08), radius: 8))
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .onTapGesture {
-            appThemeRawValue = theme.rawValue
-            theme.applyAppKitAppearance()
-        }
-        .accessibilityIdentifier("settings.appearance.theme.\(theme.rawValue)")
-    }
-
-    private func themePreviewAccent(_ theme: Agentic30Theme) -> Color {
-        switch theme {
-        case .white: Color(red: 0.0000, green: 0.5144, blue: 0.2936)
-        case .dark: Color(red: 0.2165, green: 0.8352, blue: 0.6244)
-        }
-    }
-
-    private func themePreviewSurface(_ theme: Agentic30Theme) -> Color {
-        switch theme {
-        case .white: Color.white
-        case .dark: Color(red: 0.0544, green: 0.0614, blue: 0.0666)
-        }
-    }
-
-    private func themePreviewText(_ theme: Agentic30Theme) -> Color {
-        switch theme {
-        case .white: Color(red: 0.0769, green: 0.1081, blue: 0.1353)
-        case .dark: Color(red: 0.9410, green: 0.9490, blue: 0.9550)
-        }
-    }
-
-    private func themePreviewBorder(_ theme: Agentic30Theme) -> Color {
-        switch theme {
-        case .white: Color(red: 0.7807, green: 0.8039, blue: 0.8214)
-        case .dark: Color(red: 0.1501, green: 0.1619, blue: 0.1708)
-        }
-    }
-
-    // MARK: - Account Tab
-
-    private var accountTab: some View {
-        settingsTabScaffold(
-            title: "Account",
-            subtitle: "The macOS app runs in local mode. No web account is required."
-        ) {
-            accountConnectionSection
-            launchAtLoginSection
-            appUpdatesSection
-            localDataResetSection
-        }
-    }
-
-    private var accountConnectionSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionHeader(
-                title: "Local Mode",
-                configured: true
-            )
-
-            if let email = viewModel.signedInEmail {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Signed in: \(email)")
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.9))
-                    Text("Sign-in is no longer required. You can clear this stored session and keep using the app locally.")
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.45))
-                }
-
-                HStack(spacing: 10) {
-                    accountButton("Sign out", destructive: true) {
-                        viewModel.signOutMacAuth()
+    private var openDesignSettingsMain: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if settingsBannerVisible {
+                        odSettingsBanner
+                            .padding(.bottom, 22)
                     }
+
+                    odWorkspaceSection
+                    odAppearanceSection
+                    odMenuBarSection
+                    odProvidersSection
+                    odIntegrationsSection
+                    odPrivacySection
+                    odUpdatesSection
+                    odAdvancedSection
+
+                    Color.clear.frame(height: 40)
                 }
-            } else {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Using local mode")
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.9))
-                    Text("Choose a project folder and continue without Google sign-in. Workspace integrations remain separate.")
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.45))
-                }
+                .frame(maxWidth: 820, alignment: .leading)
+                .padding(.horizontal, 28)
+                .padding(.top, 22)
+                .padding(.bottom, 60)
+                .frame(maxWidth: .infinity)
+            }
+            .accessibilityIdentifier("settings.contentScroll")
+            .accessibilityLabel("OpenDesign Settings Main")
+            .background(settingsTabBackground)
+            .onAppear {
+                scrollToSelectedSettingsSection(proxy, animated: false)
+            }
+            .onChange(of: selectedSection.wrappedValue) { _, _ in
+                scrollToSelectedSettingsSection(proxy, animated: true)
             }
         }
-        .padding(20)
-        .background(cardBackground)
+        .accessibilityIdentifier("opendesign.reference.settings.main")
     }
 
-    private func accountButton(
-        _ title: String,
-        destructive: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        let color = destructive ? Color.red : settingsText
-        return Button(action: action) {
-            Text(title)
-                .font(.system(size: 13, weight: .bold, design: .rounded))
-                .foregroundStyle(color.opacity(destructive ? 0.86 : 0.9))
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(Capsule().fill(color.opacity(destructive ? 0.10 : 0.14)))
+    private func scrollToSelectedSettingsSection(_ proxy: ScrollViewProxy, animated: Bool) {
+        let action = {
+            proxy.scrollTo(openDesignAnchor(for: selectedSection.wrappedValue), anchor: .top)
         }
-        .buttonStyle(.plain)
-    }
-
-    private var launchAtLoginSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionHeader(title: "Launch at Login", configured: loginItemsManager.isEnabled)
-
-            Text("Mac에 로그인하면 Agentic30 메뉴바 아이콘이 자동으로 활성화됩니다. 워크스페이스 윈도우는 메뉴바에서 직접 열 수 있습니다.")
-                .font(.system(size: 13, weight: .medium, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.48))
-
-            Toggle(isOn: Binding(
-                get: { loginItemsManager.isEnabled },
-                set: { loginItemsManager.setEnabled($0) }
-            )) {
-                Text("로그인 시 자동 시작")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.86))
-            }
-            .toggleStyle(.switch)
-            .accessibilityIdentifier("settings.account.launchAtLogin.toggle")
+        if animated {
+            withAnimation(.easeInOut(duration: 0.22), action)
+        } else {
+            action()
         }
-        .padding(20)
-        .background(cardBackground)
     }
 
-    private var appUpdatesSection: some View {
-        let updateState = viewModel.appUpdateState
-        return VStack(alignment: .leading, spacing: 16) {
-            sectionHeader(title: "Updates", configured: updateState.configured)
-
-            Text("Agentic30 checks the signed update feed in the background. You can also check manually.")
-                .font(.system(size: 13, weight: .medium, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.48))
-
-            VStack(alignment: .leading, spacing: 10) {
-                appUpdateRow(label: "Status", value: updateState.lastResult.statusText)
-                appUpdateRow(label: "Details", value: updateState.lastResult.detailText)
-                appUpdateRow(label: "Current", value: updateState.currentVersionSummary)
-                appUpdateRow(label: "Feed", value: updateState.feedURL)
-                appUpdateRow(label: "Last checked", value: updateState.lastCheckSummary)
-                appUpdateRow(label: "Automatic checks", value: updateState.automaticChecksEnabled ? "On" : "Off")
-                appUpdateRow(label: "Background download", value: updateState.automaticDownloadsEnabled ? "On" : "Off")
-            }
-            .padding(12)
-            .background(settingsRounded(fill: settingsText.opacity(0.035), stroke: settingsText.opacity(0.08), radius: 8))
-
-            Button {
-                NotificationCenter.default.post(name: .agenticCheckForUpdatesRequested, object: nil)
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.system(size: 13, weight: .semibold))
-                    Text("Check for Updates...")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                }
-                .foregroundStyle(settingsText.opacity(0.9))
-                .padding(.horizontal, 18)
-                .padding(.vertical, 10)
-                .background(Capsule().fill(settingsText.opacity(0.16)))
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("settings.updates.checkForUpdates")
+    private func openDesignAnchor(for section: SettingsSection) -> String {
+        switch section {
+        case .workspace:
+            return "workspace"
+        case .appearance:
+            return "appearance"
+        case .menubar:
+            return "menubar"
+        case .providers:
+            return "providers"
+        case .integrations:
+            return "integrations"
+        case .updates:
+            return "updates"
+        case .privacy:
+            return "privacy"
+        case .advanced:
+            return "advanced"
         }
-        .padding(20)
-        .background(cardBackground)
     }
 
-    private func appUpdateRow(label: String, value: String) -> some View {
+    private var odSettingsBanner: some View {
         HStack(alignment: .top, spacing: 12) {
-            Text(label)
-                .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.42))
-                .frame(width: 132, alignment: .leading)
-            Text(value)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.78))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-    }
+            Image(systemName: "exclamationmark.circle")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.amber)
+                .frame(width: 22, height: 22)
+                .padding(.top, 1)
 
-    private var localDataResetSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionHeader(title: "Local Data", configured: true)
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Reset Agentic30 on this Mac")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.88))
-                Text("Clears Agentic30 UserDefaults, Keychain entries, app support, local sessions, caches, Saved State, onboarding state, the Agentic30 QMD index, .agentic30 folders, and Agentic30-managed Day 1 handoff blocks in known workspaces. Other project files and global Claude/Codex/GWS logins are not deleted.")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.48))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("pre-dogfood 상태입니다.")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(settingsText)
+                Text("외부 텔레메트리·연동·자동 업로드는 기본적으로 모두 꺼져 있어요. 모든 데이터는 ~/Library/Application Support/Agentic30 안에만 머무릅니다.")
+                    .font(.system(size: 12.5, weight: .regular))
+                    .foregroundStyle(settingsSecondaryText)
+                    .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            HStack(spacing: 14) {
-                accountButton("Reset Local Data...", destructive: true) {
-                    localDataConfirmation = .reset
-                }
-                .accessibilityIdentifier("settings.account.resetLocalDataButton")
+            Spacer(minLength: 8)
 
-                accountButton("Uninstall Agentic30...", destructive: true) {
-                    localDataConfirmation = .uninstall
+            Button("닫기") {
+                withAnimation(.easeOut(duration: 0.16)) {
+                    settingsBannerVisible = false
                 }
-                .accessibilityIdentifier("settings.account.uninstallAgentic30Button")
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(OpenDesignDayColor.amber)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(settingsRounded(fill: OpenDesignDayColor.amberDim, stroke: OpenDesignDayColor.amberLine, radius: 10))
+    }
 
-                if !resetLocalDataMessage.isEmpty {
-                    Text(resetLocalDataMessage)
-                        .font(.system(size: 13, weight: .medium, design: .rounded))
-                        .foregroundStyle(resetLocalDataMessage.hasPrefix("Reset failed") ? .red.opacity(0.82) : Agentic30BrandColor.green.opacity(0.8))
-                        .transition(.opacity)
-                        .accessibilityIdentifier("settings.account.resetLocalDataMessage")
+    private var odWorkspaceSection: some View {
+        odSettingsSection(id: "workspace", title: "워크스페이스", meta: "메인 프로젝트", isFirst: true) {
+            odSettingsRowsCard {
+                odSettingsRow(title: "메인 프로젝트", detail: "Adaptive 엔진이 가장 먼저 읽는 폴더. SPEC.md / ICP.md / VALUES.md와 업무 일지가 여기에 누적됩니다.", stacked: true) {
+                    odSettingsPathRow(text: workspacePathDisplay, systemImage: "folder", prefix: workspacePathPrefix, emphasizedTail: workspacePathTail, isStale: false) {
+                        pickFolder()
+                    }
                 }
-
-                Spacer()
             }
         }
-        .padding(20)
-        .background(cardBackground)
+    }
+
+    private var odAppearanceSection: some View {
+        odSettingsSection(id: "appearance", title: "외관", meta: settingsThemeChoice.capitalized) {
+            odSettingsRowsCard {
+                odSettingsRow(title: "테마", detail: "Dark 또는 Light 테마를 즉시 적용합니다.") {
+                    odSettingsSegmented(values: ["Dark", "Light"], selection: $settingsThemeChoice) { value in
+                        let normalized = value.lowercased()
+                        settingsThemeChoice = normalized
+                        appThemeRawValue = normalized == "dark" ? Agentic30Theme.dark.rawValue : Agentic30Theme.white.rawValue
+                        Agentic30Theme.normalized(appThemeRawValue).applyAppKitAppearance()
+                    }
+                }
+            }
+        }
+    }
+
+    private var odMenuBarSection: some View {
+        odSettingsSection(id: "menubar", title: "메뉴바 & 알림", meta: "로그인 항목") {
+            odSettingsRowsCard {
+                odSettingsRow(title: "로그인 시 자동 실행", detail: "macOS 로그인 항목에 추가합니다. Launch Agent — com.octobacademy.agentic30.plist.") {
+                    odSettingsToggle(isOn: Binding(get: { loginItemsManager.isEnabled }, set: { loginItemsManager.setEnabled($0) }))
+                        .accessibilityIdentifier("settings.menubar.launchAtLogin.toggle")
+                }
+            }
+        }
+    }
+
+    private var odProvidersSection: some View {
+        odSettingsSection(id: "providers", title: "AI 프로바이더", meta: "Claude 1순위 · Codex 폴백") {
+            odProviderCard(provider: .claude, authMode: $claudeAuthMode, apiKey: $claudeApiKey, environment: $claudeEnvironment, modelSelection: $claudeModelID)
+            odProviderCard(provider: .codex, authMode: $codexAuthMode, apiKey: $codexApiKey, environment: $codexEnvironment, modelSelection: $codexModelID)
+            odProviderCard(provider: .gemini, authMode: $geminiAuthMode, apiKey: $geminiApiKey, environment: $geminiEnvironment, modelSelection: $geminiModelID)
+
+            odNodeRuntimeCard
+
+            odSettingsRowsCard {
+                odSettingsRow(title: "Exa Research", detail: "News Market Radar fallback key. Provider Exa MCP가 없을 때만 사용합니다.", stacked: true) {
+                    secureAgentField(label: "EXA_API_KEY", placeholder: "exa_...", text: $exaApiKey, identifier: "settings.exa.apiKeyField")
+                }
+            }
+        }
+    }
+
+    private var odNodeRuntimeCard: some View {
+        let runtime = viewModel.sidecarDiagnostics?.runtime
+        let node = runtime?.node?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let nodeText = (node?.isEmpty == false ? node : nil) ?? "unknown"
+        let badge = nodeMajorVersion(nodeText).map { $0 >= 20 ? "20+" : "확인 필요" } ?? "unknown"
+        let badgeColor = nodeMajorVersion(nodeText).map { $0 >= 20 ? settingsAccentColor : OpenDesignDayColor.amber } ?? settingsSubtleText
+
+        return VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 14) {
+                Text("20")
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.sky)
+                    .frame(width: 36, height: 36)
+                    .background(settingsRounded(fill: OpenDesignDayColor.sky.opacity(0.14), stroke: OpenDesignDayColor.sky.opacity(0.30), radius: 8))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Node 런타임")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(settingsText)
+                    Text("Sidecar 바이너리 · NODE_BINARY → 일반 설치 → mise/asdf/Volta → 로그인 셸 PATH")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(settingsSubtleText)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 10)
+
+                odSettingsStatus(badge, color: badgeColor)
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
+            .background(OpenDesignDayColor.surface)
+            .overlay(Rectangle().fill(settingsHairline).frame(height: 1), alignment: .bottom)
+
+            odProviderGridRow(label: "바이너리") {
+                Text(nodeText)
+                    .font(.system(size: 14, weight: .medium, design: .monospaced))
+                    .foregroundStyle(settingsText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+
+            odProviderGridRow(label: "프로세스") {
+                Text("PID \(runtime?.pid.map(String.init) ?? "--") · \(runtime?.platform ?? "unknown") · \(runtime?.arch ?? "unknown")")
+                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .foregroundStyle(settingsSubtleText)
+                    .lineLimit(1)
+            }
+        }
+        .background(settingsRounded(fill: OpenDesignDayColor.bgDarker, stroke: settingsHairline, radius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityIdentifier("settings.nodeRuntime.card")
+    }
+
+    private func nodeMajorVersion(_ node: String) -> Int? {
+        let digits = node
+            .drop(while: { !$0.isNumber })
+            .prefix(while: { $0.isNumber })
+        return Int(digits)
+    }
+
+    private var odIntegrationsSection: some View {
+        odSettingsSection(id: "integrations", title: "연동", meta: "OAuth · API 키 — Keychain 보관") {
+            odSettingsRowsCard {
+                odSettingsRow(title: "Notion", detail: "SPEC.md / ICP.md / VALUES.md 변경분을 지정한 페이지로 양방향 동기화.") {
+                    HStack(spacing: 8) {
+                        odSettingsStatus(viewModel.notionConnected ? "연결됨" : "연결 안 됨", color: viewModel.notionConnected ? settingsAccentColor : settingsSubtleText)
+                        odSettingsGhostButton(title: viewModel.notionConnected ? "해제" : "OAuth 연결", width: 96) {
+                            if viewModel.notionConnected {
+                                viewModel.disconnectNotion()
+                            } else {
+                                viewModel.startNotionOAuth()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var odPrivacySection: some View {
+        odSettingsSection(id: "privacy", title: "개인정보 & 진단", meta: "로컬 우선 · sanitized snapshot only") {
+            odSettingsRowsCard {
+                odSettingsRow(title: "사용량 텔레메트리 (PostHog)", detail: "앱 열기 횟수, Day 도달 일자, 작업 완료/포기 같은 익명 이벤트. opt-in이며 KR1.1 ~ KR4.3 측정에만 쓰입니다.") {
+                    odSettingsToggle(isOn: telemetryEnabledBinding)
+                }
+                odSettingsRow(title: "진단 스냅샷 내보내기", detail: "제출 전 미리보기 — sanitized runtime snapshot을 클립보드로 복사합니다.") {
+                    odSettingsGhostButton(title: "내보내기…", systemImage: "square.and.arrow.down", width: 112, action: copyDiagnostics)
+                }
+                odSettingsRow(title: "모든 로컬 데이터 삭제", detail: "sessions, day-task 히스토리, 캐시. 기록 폴더 자체는 건드리지 않습니다.") {
+                    Button("데이터 초기화…") {
+                        localDataConfirmation = .reset
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.rose)
+                    .padding(.horizontal, 12)
+                    .frame(height: 28)
+                    .background(settingsRounded(fill: OpenDesignDayColor.roseDim, stroke: OpenDesignDayColor.rose.opacity(0.35), radius: 8))
+                    .accessibilityIdentifier("settings.privacy.resetLocalDataButton")
+                }
+            }
+        }
+    }
+
+    private var odUpdatesSection: some View {
+        let updateState = viewModel.appUpdateState
+        return odSettingsSection(id: "updates", title: "업데이트", meta: "Sparkle appcast · Developer ID 서명") {
+            odSettingsRowsCard {
+                odSettingsRow(title: "현재 버전", detail: "Foundation preview — Day 0-3 loop 한정. Day 4-7은 다음 점 릴리즈 예정.") {
+                    HStack(spacing: 8) {
+                        odSettingsStatus(updateState.currentVersionSummary, color: settingsAccentColor)
+                    }
+                }
+                odSettingsRow(title: "자동 업데이트", detail: "Sparkle이 백그라운드에서 appcast를 확인하고 새 버전을 받아옵니다. 설치는 다음 실행 때.") {
+                    odSettingsToggle(isOn: .constant(updateState.automaticChecksEnabled), locked: true)
+                }
+                odSettingsRow(title: "마지막 확인", detail: "appcast.xml을 마지막으로 조회한 시각. \(updateState.lastResult.statusText).") {
+                    HStack(spacing: 8) {
+                        Text(updateState.lastCheckSummary)
+                            .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                            .foregroundStyle(settingsSubtleText)
+                        odSettingsGhostButton(title: "지금 확인", systemImage: "arrow.clockwise", width: 96) {
+                            NotificationCenter.default.post(name: .agenticCheckForUpdatesRequested, object: nil)
+                        }
+                    }
+                }
+                odSettingsRow(title: "서명 확인", detail: "notarization · Hardened Runtime · Developer ID · 모두 통과.") {
+                    odSettingsStatus(updateState.configured ? "검증됨" : "대기", color: updateState.configured ? settingsAccentColor : OpenDesignDayColor.amber)
+                }
+            }
+        }
+    }
+
+    private var odAdvancedSection: some View {
+        odSettingsSection(id: "advanced", title: "고급 & Sidecar", meta: "Sidecar · 진단 · 로그") {
+            odSettingsRowsCard {
+                odSettingsRow(title: "Sidecar 상태", detail: viewModel.isConnected ? "Node sidecar가 살아 있고 stdio + 로컬 HTTP 둘 다 응답 중입니다." : "Node sidecar 연결을 기다리는 중입니다.") {
+                    HStack(spacing: 8) {
+                        odSettingsStatus(viewModel.isConnected ? "실행 중" : "연결 대기", color: viewModel.isConnected ? settingsAccentColor : OpenDesignDayColor.amber)
+                        Text(sidecarRuntimeSummary)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(settingsSubtleText)
+                            .lineLimit(1)
+                        odSettingsGhostButton(title: "새로고침", width: 72, action: refreshDiagnostics)
+                    }
+                }
+                odSettingsRow(title: "로그 폴더", detail: "~/Library/Logs/Agentic30 — 회전 7개 보관.") {
+                    odSettingsGhostButton(title: "Finder에서 열기", systemImage: "arrow.up.right.square", width: 126) {
+                        let path = ("~/Library/Logs/Agentic30" as NSString).expandingTildeInPath
+                        NSWorkspace.shared.open(URL(fileURLWithPath: path, isDirectory: true))
+                    }
+                }
+            }
+
+            odSettingsRowsCard {
+                odSettingsRow(title: "BIP Notifications", detail: "테스트 알림은 실제 macOS 알림 센터 경로를 사용합니다. 배너를 누르면 Agentic30이 열리고 BIP 알림 task surface로 이동합니다.", stacked: true) {
+                    HStack(spacing: 12) {
+                        odSettingsGhostButton(title: "10시 알림 보내기", systemImage: "sun.max.fill", width: 128, identifier: "settings.advanced.sendMorningBipNotification") {
+                            sendTestBipNotification(.morning)
+                        }
+                        odSettingsGhostButton(title: "21시 알림 보내기", systemImage: "moon.fill", width: 128, identifier: "settings.advanced.sendEveningBipNotification") {
+                            sendTestBipNotification(.evening)
+                        }
+                    }
+                    if !advancedToolsMessage.isEmpty {
+                        Text(advancedToolsMessage)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundStyle(Agentic30BrandColor.green.opacity(0.82))
+                            .accessibilityIdentifier("settings.advanced.message")
+                    }
+                }
+                odSettingsRow(title: "UI Motion Test", detail: "앱 화면 전체에 realistic confetti burst를 재생합니다.") {
+                    odSettingsGhostButton(title: "Confetti 테스트", systemImage: "sparkles", width: 120, identifier: "settings.advanced.confettiTestButton") {
+                        playConfettiTest()
+                    }
+                }
+            }
+        }
+    }
+
+    private func odSettingsSection<Content: View>(
+        id: String,
+        title: String,
+        meta: String,
+        isFirst: Bool = false,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(settingsAccentColor)
+                    .frame(width: 4, height: 12)
+                Text(title)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .textCase(.uppercase)
+                    .foregroundStyle(settingsSubtleText)
+                Text(meta)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Rectangle()
+                    .fill(settingsHairline)
+                    .frame(height: 1)
+            }
+            .padding(.top, isFirst ? 10 : 26)
+
+            content()
+        }
+        .id(id)
+    }
+
+    private func odSettingsRowsCard<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(spacing: 0) {
+            content()
+        }
+        .background(settingsRounded(fill: OpenDesignDayColor.surface, stroke: settingsHairline, radius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func odSettingsRow<Trailing: View>(
+        title: String,
+        detail: String,
+        stacked: Bool = false,
+        @ViewBuilder trailing: () -> Trailing
+    ) -> some View {
+        if stacked {
+            VStack(alignment: .leading, spacing: 10) {
+                odSettingsRowCopy(title: title, detail: detail)
+                trailing()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .overlay(Rectangle().fill(settingsHairline).frame(height: 1), alignment: .bottom)
+        } else {
+            HStack(alignment: .center, spacing: 16) {
+                odSettingsRowCopy(title: title, detail: detail)
+
+                Spacer(minLength: 12)
+
+                trailing()
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .overlay(Rectangle().fill(settingsHairline).frame(height: 1), alignment: .bottom)
+        }
+    }
+
+    private func odSettingsRowCopy(title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(settingsText)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(detail)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(settingsSubtleText)
+                .lineSpacing(2.5)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(minWidth: 0, alignment: .leading)
+    }
+
+    private var workspacePathDisplay: String {
+        let root = workspaceRootPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = viewModel.workspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines)
+        let path = root.isEmpty ? fallback : root
+        return path.isEmpty ? "비어 있음" : (path as NSString).abbreviatingWithTildeInPath
+    }
+
+    private var workspacePathTail: String {
+        let display = workspacePathDisplay
+        guard display != "비어 있음" else { return display }
+        return (display as NSString).lastPathComponent
+    }
+
+    private var workspacePathPrefix: String {
+        let display = workspacePathDisplay
+        guard display != "비어 있음" else { return "" }
+
+        let directory = (display as NSString).deletingLastPathComponent
+        guard directory != ".", directory != display else { return "" }
+        return directory == "/" ? directory : "\(directory)/"
+    }
+
+    private func odSettingsPathRow(
+        text: String,
+        systemImage: String,
+        prefix: String,
+        emphasizedTail: String,
+        isStale: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 8) {
+            odSettingsPathPill(text: text, systemImage: systemImage, prefix: prefix, emphasizedTail: emphasizedTail, isStale: isStale)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
+
+            odSettingsPathChangeButton(action: action)
+                .layoutPriority(0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("settings.workspace.mainProject.pathRow")
+    }
+
+    private func odSettingsPathPill(
+        text: String,
+        systemImage: String,
+        prefix: String,
+        emphasizedTail: String,
+        isStale: Bool
+    ) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isStale ? OpenDesignDayColor.amber : settingsSubtleText)
+                .frame(width: 14)
+
+            HStack(spacing: 0) {
+                if !prefix.isEmpty {
+                    Text(prefix)
+                        .foregroundStyle(isStale ? OpenDesignDayColor.amber : settingsSecondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .layoutPriority(0)
+                }
+
+                Text(emphasizedTail)
+                    .foregroundStyle(isStale ? OpenDesignDayColor.amber : settingsAccentColor)
+                    .lineLimit(1)
+                    .layoutPriority(1)
+            }
+            .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 10)
+        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 28, alignment: .leading)
+        .background(settingsRounded(
+            fill: isStale ? OpenDesignDayColor.amberDim : OpenDesignDayColor.bgDarker,
+            stroke: isStale ? OpenDesignDayColor.amberLine : settingsHairline,
+            radius: 7
+        ))
+        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(text)
+        .accessibilityIdentifier("settings.workspace.mainProject.pathPill")
+    }
+
+    private func odSettingsPathChangeButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text("변경…")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(hoveredWorkspacePathChangeButton ? settingsText : settingsSecondaryText)
+                .lineLimit(1)
+                .padding(.horizontal, 12)
+                .frame(height: 28)
+                .background(settingsRounded(
+                    fill: hoveredWorkspacePathChangeButton ? OpenDesignDayColor.hover : Color.clear,
+                    stroke: hoveredWorkspacePathChangeButton ? OpenDesignDayColor.border : settingsHairline,
+                    radius: 8
+                ))
+        }
+        .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: false)
+        .onHover { hoveredWorkspacePathChangeButton = $0 }
+        .accessibilityIdentifier("settings.workspace.mainProject.changeButton")
+    }
+
+    private func odSettingsToggle(
+        isOn: Binding<Bool>,
+        tone: Color? = nil,
+        locked: Bool = false
+    ) -> some View {
+        let activeTone = tone ?? settingsAccentColor
+        return Button {
+            guard !locked else { return }
+            withAnimation(.easeOut(duration: 0.14)) {
+                isOn.wrappedValue.toggle()
+            }
+        } label: {
+            ZStack(alignment: isOn.wrappedValue ? .trailing : .leading) {
+                Capsule()
+                    .fill(isOn.wrappedValue ? activeTone.opacity(0.24) : OpenDesignDayColor.bgDarker)
+                    .overlay(Capsule().stroke(isOn.wrappedValue ? activeTone.opacity(0.46) : settingsHairline, lineWidth: 1))
+                Circle()
+                    .fill(isOn.wrappedValue ? activeTone : OpenDesignDayColor.mutedDeep)
+                    .frame(width: 18, height: 18)
+                    .padding(3)
+                    .shadow(color: isOn.wrappedValue ? activeTone.opacity(0.24) : .clear, radius: 4)
+                if locked {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(OpenDesignDayColor.bgDarker)
+                        .frame(width: 18, height: 18)
+                        .padding(3)
+                        .frame(maxWidth: .infinity, alignment: isOn.wrappedValue ? .trailing : .leading)
+                }
+            }
+            .frame(width: 42, height: 24)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isOn.wrappedValue ? "켜짐" : "꺼짐")
+    }
+
+    private func odSettingsGhostButton(
+        title: String,
+        systemImage: String? = nil,
+        width: CGFloat? = nil,
+        identifier: String? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                Text(title)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+            }
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(settingsText.opacity(0.72))
+            .padding(.horizontal, 10)
+            .frame(width: width, height: 28)
+            .background(settingsRounded(fill: Color.clear, stroke: settingsHairline, radius: 8))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier ?? "")
+    }
+
+    private func odSettingsSegmented(
+        values: [String],
+        selection: Binding<String>,
+        onSelect: ((String) -> Void)? = nil
+    ) -> some View {
+        HStack(spacing: 3) {
+            ForEach(values, id: \.self) { value in
+                let isActive = odSegment(value, matches: selection.wrappedValue)
+                Button {
+                    if let onSelect {
+                        onSelect(value)
+                    } else {
+                        selection.wrappedValue = value
+                    }
+                } label: {
+                    Text(value)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(isActive ? settingsText : settingsSubtleText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                        .padding(.horizontal, 9)
+                        .frame(minHeight: 26)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(isActive ? OpenDesignDayColor.selected : Color.clear)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(settingsRounded(fill: OpenDesignDayColor.bgDarker, stroke: settingsHairline, radius: 8))
+    }
+
+    private func odSegment(_ value: String, matches selection: String) -> Bool {
+        value.caseInsensitiveCompare(selection) == .orderedSame
+            || value.lowercased() == selection.lowercased()
+    }
+
+    private func odSettingsNeutralPill(_ text: String, minWidth: CGFloat = 64) -> some View {
+        Text(text)
+            .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+            .foregroundStyle(settingsSubtleText)
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .frame(minWidth: minWidth, minHeight: 26)
+            .background(Capsule().fill(OpenDesignDayColor.surface2))
+            .overlay(Capsule().stroke(settingsHairline, lineWidth: 1))
+    }
+
+    private func odProviderCard(
+        provider: AgentProvider,
+        authMode: Binding<String>,
+        apiKey: Binding<String>,
+        environment: Binding<String>,
+        modelSelection: Binding<String>
+    ) -> some View {
+        let mode = AgentAuthMode.normalized(authMode.wrappedValue, provider: provider)
+        let status = providerEnvironment(for: provider)
+        let statusStyle = providerStatusBadgeStyle(status)
+
+        return VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 14) {
+                odProviderLogo(provider)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(odProviderDisplayTitle(provider))
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(settingsText)
+                        .accessibilityIdentifier("settings.\(provider.rawValue).apiKeyField")
+                    Text(odProviderSubtitle(provider))
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(settingsSubtleText)
+                        .lineLimit(1)
+                    Text(providerSettingsTitle(provider))
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(settingsSubtleText.opacity(0.78))
+                        .lineLimit(1)
+                    Button {
+                        authMode.wrappedValue = AgentAuthMode.apiKey.rawValue
+                    } label: {
+                        Text(apiKey.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "\(apiKeyLabel(provider)) · 없음" : "\(apiKeyLabel(provider)) · Keychain")
+                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                            .foregroundStyle(settingsSubtleText.opacity(0.68))
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Spacer(minLength: 10)
+
+                odSettingsStatus(statusStyle.label, color: statusStyle.dot)
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
+            .background(OpenDesignDayColor.surface)
+            .overlay(Rectangle().fill(settingsHairline).frame(height: 1), alignment: .bottom)
+
+            VStack(spacing: 0) {
+                odProviderGridRow(label: "인증") {
+                    odProviderAuthRow(provider: provider, mode: mode, status: status, authMode: authMode)
+                }
+
+                odProviderGridRow(label: "API 키 폴백", identifier: "settings.\(provider.rawValue).apiKeyField") {
+                    odProviderApiFallbackRow(provider: provider, apiKey: apiKey)
+                }
+
+                if mode != .local && mode != .apiKey {
+                    odProviderGridRow(label: "환경") {
+                        environmentEditor(
+                            label: environmentLabel(provider: provider, mode: mode),
+                            text: environment,
+                            identifier: "settings.\(provider.rawValue).environmentField"
+                        )
+                    }
+                }
+
+                odProviderGridRow(label: "모델") {
+                    odProviderModelPicker(provider: provider, selection: modelSelection)
+                }
+
+                #if DEBUG
+                if Self.isUITesting {
+                    odProviderGridRow(label: "UI TEST") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            authModeUITestingShortcuts(provider: provider, selection: authMode)
+                            modelUITestingShortcuts(provider: provider, selection: modelSelection)
+                        }
+                    }
+                }
+                #endif
+
+                HStack(spacing: 10) {
+                    providerHelpLinks(provider)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 12)
+            }
+        }
+        .background(settingsRounded(fill: OpenDesignDayColor.bgDarker, stroke: settingsHairline, radius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func odProviderLogo(_ provider: AgentProvider) -> some View {
+        let accent = providerAccentColor(provider)
+        let label: String
+        switch provider {
+        case .claude: label = "A"
+        case .codex: label = "⌥"
+        case .gemini: label = "G"
+        }
+
+        return Text(label)
+            .font(.system(size: provider == .codex ? 15 : 13, weight: .bold, design: .monospaced))
+            .foregroundStyle(provider == .codex ? OpenDesignDayColor.bgDeep : accent)
+            .frame(width: 36, height: 36)
+            .background(settingsRounded(fill: provider == .codex ? settingsSecondaryText : accent.opacity(0.92), stroke: accent.opacity(0.34), radius: 8))
+    }
+
+    @ViewBuilder
+    private func odProviderGridRow<Content: View>(
+        label: String,
+        identifier: String? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        let row = HStack(alignment: .top, spacing: 18) {
+            Text(label)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(settingsSubtleText)
+                .frame(width: 88, alignment: .leading)
+                .padding(.top, 3)
+
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .overlay(Rectangle().fill(settingsHairline).frame(height: 1), alignment: .bottom)
+
+        if let identifier {
+            row.accessibilityIdentifier(identifier)
+        } else {
+            row
+        }
+    }
+
+    private func odProviderDisplayTitle(_ provider: AgentProvider) -> String {
+        provider.title
+    }
+
+    private func odProviderSubtitle(_ provider: AgentProvider) -> String {
+        switch provider {
+        case .claude:
+            return "Adaptive 엔진 · day-task 생성 · transcript 분석"
+        case .codex:
+            return "대체 엔진 · /analyze-ads · 비싼 모델 회피 시 사용"
+        case .gemini:
+            return "장문 컨텍스트 · 리서치/멀티모달 폴백 · 도구 실행 검증"
+        }
+    }
+
+    private func odProviderAuthRow(
+        provider: AgentProvider,
+        mode: AgentAuthMode,
+        status: SidecarProviderEnvironment?,
+        authMode: Binding<String>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(providerStatusDetail(status) ?? providerAuthFallbackText(provider, status: status))
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(settingsText)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .accessibilityIdentifier("settings.\(provider.rawValue).statusDetail")
+
+                        if let source = status?.source, !source.isEmpty {
+                            odSettingsNeutralPill(source, minWidth: 0)
+                        }
+                    }
+
+                    Text(providerPolicyDescription(provider))
+                        .font(.system(size: 11.5, weight: .regular))
+                        .foregroundStyle(settingsSubtleText)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 12)
+
+                authModeMenu(provider: provider, selection: authMode)
+                    .frame(width: 238)
+
+                if mode == .local {
+                    odProviderAuthActionButton(provider: provider, connected: status?.available == true)
+                }
+            }
+
+            if provider == .gemini, let diagnostic = providerEnvironment(for: .gemini)?.geminiAdc, diagnostic.isGcloudMissing {
+                Text("Gemini API key를 쓰면 gcloud 설치 단계를 건너뛸 수 있습니다. aistudio.google.com/apikey")
+                    .font(.system(size: 11.5, weight: .regular))
+                    .foregroundStyle(OpenDesignDayColor.amber)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("settings.gemini.byokHint")
+            }
+
+            if viewModel.providerAuthInProgress == provider {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(viewModel.providerAuthMessage ?? "Authenticating...")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(settingsSubtleText)
+                }
+            }
+        }
+    }
+
+    private func odProviderApiFallbackRow(
+        provider: AgentProvider,
+        apiKey: Binding<String>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
+                ForEach(odProviderApiKeyTokens(provider), id: \.self) { token in
+                    odEnvironmentToken(token)
+                }
+
+                Text(apiKey.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? providerApiKeyMissingText(provider) : "Keychain 설정됨")
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(settingsSubtleText)
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+            }
+
+            secureAgentField(
+                label: apiKeyLabel(provider),
+                placeholder: apiKeyPlaceholder(provider),
+                text: apiKey,
+                identifier: "settings.\(provider.rawValue).apiKeyField"
+            )
+        }
+    }
+
+    private func odProviderModelPicker(
+        provider: AgentProvider,
+        selection: Binding<String>
+    ) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Menu {
+                Section(providerFamilyLabel(provider)) {
+                    ForEach(AgentModelCatalog.options(for: provider)) { option in
+                        Button {
+                            selection.wrappedValue = option.id
+                        } label: {
+                            HStack {
+                                Text(option.label)
+                                if option.id == selection.wrappedValue {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Text(AgentModelCatalog.label(for: selection.wrappedValue, provider: provider))
+                        .font(.system(size: 14, weight: .medium, design: .monospaced))
+                        .foregroundStyle(settingsText)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    Spacer(minLength: 8)
+
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(settingsSubtleText)
+                }
+                .padding(.horizontal, 14)
+                .frame(width: 270, height: 34)
+                .background(fieldBackground)
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("settings.\(provider.rawValue).modelPicker")
+
+            Text("· \(providerModelHint(provider))")
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(settingsSubtleText)
+                .lineLimit(1)
+
+            Text(selection.wrappedValue)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                .lineLimit(1)
+                .accessibilityIdentifier("settings.\(provider.rawValue).modelID")
+        }
+    }
+
+    private func odProviderAuthActionButton(provider: AgentProvider, connected: Bool) -> some View {
+        Button {
+            beginLocalProviderAuth(provider)
+        } label: {
+            Text(providerAuthActionTitle(provider, connected: connected))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(connected ? settingsText.opacity(0.78) : OpenDesignDayColor.bgDeep)
+                .padding(.horizontal, 14)
+                .frame(height: 32)
+                .background(
+                    settingsRounded(
+                        fill: connected ? Color.clear : settingsAccentColor,
+                        stroke: connected ? settingsHairline : Color.clear,
+                        radius: 9
+                    )
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("settings.\(provider.rawValue).openAuthButton")
+    }
+
+    private func beginLocalProviderAuth(_ provider: AgentProvider) {
+        if provider == .gemini {
+            Task { @MainActor in
+                let opened = await viewModel.attemptOpenGeminiAdcLogin()
+                if !opened {
+                    let brewAvailable = await Task.detached(priority: .userInitiated) {
+                        AgenticViewModel.detectBrewAvailable()
+                    }.value
+                    presentGcloudMissingAlert(brewAvailable: brewAvailable)
+                }
+            }
+        } else {
+            viewModel.startProviderLogin(provider)
+        }
+    }
+
+    private func providerAuthActionTitle(_ provider: AgentProvider, connected: Bool) -> String {
+        if provider == .gemini {
+            return connected ? "ADC 다시 로그인" : "ADC 로그인"
+        }
+        return connected ? "다시 로그인" : "로그인"
+    }
+
+    private func providerAuthFallbackText(_ provider: AgentProvider, status: SidecarProviderEnvironment?) -> String {
+        if status?.available == true {
+            return "\(provider.title) runtime ready"
+        }
+        switch provider {
+        case .claude:
+            return "로컬 Claude Code 세션 · 발견 안 됨"
+        case .codex:
+            return "로컬 Codex 세션 · 발견 안 됨"
+        case .gemini:
+            return "Google AI Studio API 키 · 발견 안 됨"
+        }
+    }
+
+    private func providerPolicyDescription(_ provider: AgentProvider) -> String {
+        switch provider {
+        case .claude:
+            return "1순위 · 실패 시 Codex 폴백"
+        case .codex:
+            return "폴백 · 코드/분석 전용"
+        case .gemini:
+            return "대체 모델 · ADC 또는 API key"
+        }
+    }
+
+    private func odProviderApiKeyTokens(_ provider: AgentProvider) -> [String] {
+        switch provider {
+        case .claude:
+            return ["ANTHROPIC_API_KEY"]
+        case .codex:
+            return ["OPENAI_API_KEY", "CODEX_API_KEY"]
+        case .gemini:
+            return ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+        }
+    }
+
+    private func providerApiKeyMissingText(_ provider: AgentProvider) -> String {
+        provider == .claude ? "환경변수 없음" : "둘 다 없음"
+    }
+
+    private func providerModelHint(_ provider: AgentProvider) -> String {
+        switch provider {
+        case .claude:
+            return "adaptive thinking"
+        case .codex:
+            return "인증 후 선택 가능"
+        case .gemini:
+            return "인증 후 선택 가능"
+        }
+    }
+
+    private func odEnvironmentToken(_ token: String) -> some View {
+        Text(token)
+            .font(.system(size: 12, weight: .medium, design: .monospaced))
+            .foregroundStyle(settingsAccentColor)
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .frame(height: 24)
+            .background(settingsRounded(fill: OpenDesignDayColor.surface2, stroke: settingsHairline, radius: 5))
+    }
+
+    @ViewBuilder
+    private func providerHelpLinks(_ provider: AgentProvider) -> some View {
+        if let quickstartURL = providerQuickstartURL(provider) {
+            Link("Get started", destination: quickstartURL)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(providerAccentColor(provider))
+        }
+        if let configURL = providerConfigURL(provider) {
+            Link("Configure", destination: configURL)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(settingsText.opacity(0.62))
+        }
+    }
+
+    private func odSettingsStatus(_ text: String, color: Color) -> some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(color)
+                .frame(width: 6, height: 6)
+            Text(text)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .font(.system(size: 10, weight: .medium, design: .monospaced))
+        .foregroundStyle(color)
+        .padding(.horizontal, 8)
+        .frame(height: 22)
+        .background(Capsule().fill(color.opacity(0.12)))
+        .overlay(Capsule().stroke(color.opacity(0.28), lineWidth: 1))
+    }
+
+    private var telemetryEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { !telemetryDisabled },
+            set: { setTelemetryEnabled($0) }
+        )
+    }
+
+    private func setTelemetryEnabled(_ enabled: Bool) {
+        let disabled = !enabled
+        guard telemetryDisabled != disabled else { return }
+        if disabled {
+            PostHogTelemetry.captureBlocking(
+                "mac_settings_telemetry_pref_changed",
+                properties: ["disabled": true]
+            )
+            PostHogTelemetry.setTelemetryDisabledByUser(true)
+            telemetryDisabled = true
+        } else {
+            PostHogTelemetry.setTelemetryDisabledByUser(false)
+            telemetryDisabled = false
+            PostHogTelemetry.capture(
+                "mac_settings_telemetry_pref_changed",
+                properties: ["disabled": false]
+            )
+        }
+    }
+
+    private var sidecarRuntimeSummary: String {
+        guard let runtime = viewModel.sidecarDiagnostics?.runtime else {
+            return "PID -- · node unknown"
+        }
+        let pid = runtime.pid.map(String.init) ?? "--"
+        let arch = runtime.arch ?? "unknown"
+        return "PID \(pid) · \(arch)"
     }
 
     private func localDataConfirmationDialog(_ confirmation: LocalDataConfirmation) -> some View {
@@ -1244,211 +1855,7 @@ struct SettingsView: View {
         }
         .zIndex(20)
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("settings.account.localDataConfirmation")
-    }
-
-    // MARK: - Agents Tab
-
-    private var agentsTab: some View {
-        settingsTabScaffold(
-            title: "Agents",
-            subtitle: "Configure Claude, Codex, and Gemini for Agentic30."
-        ) {
-            agentProviderSection(
-                provider: .claude,
-                authMode: $claudeAuthMode,
-                apiKey: $claudeApiKey,
-                environment: $claudeEnvironment,
-                modelSelection: $claudeModelID
-            )
-
-            agentProviderSection(
-                provider: .codex,
-                authMode: $codexAuthMode,
-                apiKey: $codexApiKey,
-                environment: $codexEnvironment,
-                modelSelection: $codexModelID
-            )
-
-            agentProviderSection(
-                provider: .gemini,
-                authMode: $geminiAuthMode,
-                apiKey: $geminiApiKey,
-                environment: $geminiEnvironment,
-                modelSelection: $geminiModelID
-            )
-
-            exaResearchSection
-
-            saveAgentSettingsSection
-        }
-    }
-
-    private var exaResearchSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center, spacing: 14) {
-                Image(systemName: "newspaper.fill")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(Agentic30BrandColor.green.opacity(0.92))
-                    .frame(width: 34, height: 34)
-                    .background(Circle().fill(Agentic30BrandColor.green.opacity(0.16)))
-                    .overlay(Circle().stroke(Agentic30BrandColor.green.opacity(0.25), lineWidth: 1))
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Exa Market Research")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.88))
-                    Text(exaApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Provider Exa MCP is used first. Add this only as a fallback." : "News Market Radar can fall back to this Exa API key.")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.52))
-                }
-                Spacer(minLength: 0)
-            }
-
-            secureAgentField(
-                label: "EXA_API_KEY",
-                placeholder: "exa_...",
-                text: $exaApiKey,
-                identifier: "settings.exa.apiKeyField"
-            )
-
-            Text("Fallback only for the News tab's Market Radar when Codex, Claude Code, or Gemini does not already expose Exa MCP. Queries may include the product name, public URL, and explicit competitors; raw Day answers and local excerpts stay on this Mac.")
-                .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.44))
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(20)
-        .background(cardBackground)
-    }
-
-    private func agentProviderSection(
-        provider: AgentProvider,
-        authMode: Binding<String>,
-        apiKey: Binding<String>,
-        environment: Binding<String>,
-        modelSelection: Binding<String>
-    ) -> some View {
-        let mode = AgentAuthMode.normalized(authMode.wrappedValue, provider: provider)
-        let status = providerEnvironment(for: provider)
-
-        return VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .center, spacing: 14) {
-                providerIcon(provider)
-
-                VStack(alignment: .leading, spacing: 7) {
-                    Text(providerSettingsTitle(provider))
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.9))
-
-                    providerStatusBadge(provider: provider, status: status)
-                }
-
-                Spacer(minLength: 0)
-            }
-
-            if let detail = providerStatusDetail(status) {
-                Text(detail)
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.5))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("settings.\(provider.rawValue).statusDetail")
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Authenticate with")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.64))
-
-                authModeMenu(provider: provider, selection: authMode)
-
-                #if DEBUG
-                if Self.isUITesting {
-                    authModeUITestingShortcuts(provider: provider, selection: authMode)
-                }
-                #endif
-            }
-
-            agentAuthFields(
-                provider: provider,
-                mode: mode,
-                apiKey: apiKey,
-                environment: environment
-            )
-
-            modelPickerRow(
-                provider: provider,
-                selection: modelSelection
-            )
-
-            #if DEBUG
-            if Self.isUITesting {
-                modelUITestingShortcuts(provider: provider, selection: modelSelection)
-            }
-            #endif
-
-            HStack(spacing: 10) {
-                if let quickstartURL = providerQuickstartURL(provider) {
-                    Link("Get started", destination: quickstartURL)
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.68))
-                }
-                if let configURL = providerConfigURL(provider) {
-                    Link("Configure", destination: configURL)
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.68))
-                }
-            }
-        }
-        .padding(20)
-        .background(cardBackground)
-    }
-
-    private var saveAgentSettingsSection: some View {
-        HStack(spacing: 14) {
-            Button(action: saveAgentSettingsValues) {
-                Text("Save Agent Settings")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(settingsAccentColor)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 10)
-                    .background(Capsule().fill(settingsAccentColor.opacity(0.15)))
-                    .overlay(Capsule().stroke(settingsAccentColor.opacity(0.32), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("settings.agents.saveButton")
-
-            if !agentSettingsSaveMessage.isEmpty {
-                Text(agentSettingsSaveMessage)
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(Agentic30BrandColor.green.opacity(0.8))
-                    .transition(.opacity)
-                    .accessibilityIdentifier("settings.agents.saveMessage")
-            }
-
-            Spacer()
-        }
-        .padding(.horizontal, 4)
-    }
-
-    private func providerIcon(_ provider: AgentProvider) -> some View {
-        let symbol: String
-        switch provider {
-        case .claude:
-            symbol = "sparkle"
-        case .codex:
-            symbol = "hexagon"
-        case .gemini:
-            symbol = "diamond"
-        }
-
-        let accent = providerAccentColor(provider)
-        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
-        return Image(systemName: symbol)
-            .font(.system(size: 21, weight: .semibold))
-            .foregroundStyle(accent)
-            .frame(width: 44, height: 44)
-            .background(accent.opacity(0.14), in: shape)
-            .overlay(shape.stroke(accent.opacity(0.24), lineWidth: 1))
+        .accessibilityIdentifier("settings.privacy.localDataConfirmation")
     }
 
     private func providerAccentColor(_ provider: AgentProvider) -> Color {
@@ -1505,37 +1912,18 @@ struct SettingsView: View {
     private func providerStatusBadgeStyle(_ status: SidecarProviderEnvironment?) -> ProviderStatusBadgeStyle {
         guard let status else {
             let muted = OpenDesignDayColor.muted
-            return ProviderStatusBadgeStyle(label: "Checking status…", dot: muted, text: muted)
+            return ProviderStatusBadgeStyle(label: "확인 중", dot: muted, text: muted)
         }
         if status.available {
             let green = Agentic30BrandColor.greenBright
-            return ProviderStatusBadgeStyle(label: "Connected", dot: green, text: green)
+            return ProviderStatusBadgeStyle(label: "연결됨", dot: green, text: green)
         }
         let amber = OpenDesignDayColor.amber
         // White-theme amber is too light to read as text, so deepen it for the label.
         let amberText = Agentic30Theme.current == .white
             ? Color(red: 0.66, green: 0.46, blue: 0.09)
             : amber
-        return ProviderStatusBadgeStyle(label: "Not connected", dot: amber, text: amberText)
-    }
-
-    private func providerStatusBadge(provider: AgentProvider, status: SidecarProviderEnvironment?) -> some View {
-        let style = providerStatusBadgeStyle(status)
-        let capsule = Capsule(style: .continuous)
-        return HStack(spacing: 6) {
-            Circle()
-                .fill(style.dot)
-                .frame(width: 6, height: 6)
-            Text(style.label)
-                .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundStyle(style.text)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 4)
-        .background(capsule.fill(style.dot.opacity(0.12)))
-        .overlay(capsule.stroke(style.dot.opacity(0.24), lineWidth: 1))
-        .accessibilityIdentifier("settings.\(provider.rawValue).statusBadge")
+        return ProviderStatusBadgeStyle(label: "로그인 안 됨", dot: amber, text: amberText)
     }
 
     private func providerStatusDetail(_ status: SidecarProviderEnvironment?) -> String? {
@@ -1563,19 +1951,19 @@ struct SettingsView: View {
         } label: {
             HStack(spacing: 10) {
                 Text(authModeLabel(selectedMode, provider: provider))
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.9))
+                    .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(settingsText)
                     .lineLimit(1)
+                    .truncationMode(.tail)
 
                 Spacer(minLength: 12)
 
                 Image(systemName: "chevron.down")
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(settingsText.opacity(0.42))
+                    .foregroundStyle(settingsSubtleText)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .frame(height: 34)
             .background(fieldBackground)
         }
         .menuStyle(.button)
@@ -1593,89 +1981,6 @@ struct SettingsView: View {
             return "Your local Google credentials (gcloud ADC)"
         default:
             return mode.title
-        }
-    }
-
-    @ViewBuilder
-    private func agentAuthFields(
-        provider: AgentProvider,
-        mode: AgentAuthMode,
-        apiKey: Binding<String>,
-        environment: Binding<String>
-    ) -> some View {
-        switch mode {
-        case .local:
-            localAuthActions(provider)
-        case .apiKey:
-            secureAgentField(
-                label: apiKeyLabel(provider),
-                placeholder: apiKeyPlaceholder(provider),
-                text: apiKey,
-                identifier: "settings.\(provider.rawValue).apiKeyField"
-            )
-        case .bedrock, .vertex, .foundry, .custom:
-            environmentEditor(
-                label: environmentLabel(provider: provider, mode: mode),
-                text: environment,
-                identifier: "settings.\(provider.rawValue).environmentField"
-            )
-        }
-    }
-
-    @ViewBuilder
-    private func localAuthActions(_ provider: AgentProvider) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(localAuthDescription(provider))
-                .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.44))
-                .fixedSize(horizontal: false, vertical: true)
-
-            Button {
-                if provider == .gemini {
-                    Task { @MainActor in
-                        let opened = await viewModel.attemptOpenGeminiAdcLogin()
-                        if !opened {
-                            let brewAvailable = await Task.detached(priority: .userInitiated) {
-                                AgenticViewModel.detectBrewAvailable()
-                            }.value
-                            presentGcloudMissingAlert(brewAvailable: brewAvailable)
-                        }
-                    }
-                } else {
-                    viewModel.startProviderLogin(provider)
-                }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: provider == .gemini ? "terminal" : "person.crop.circle.badge.checkmark")
-                        .font(.system(size: 12, weight: .bold))
-                    Text(provider == .gemini ? "Run gcloud ADC login" : "Open \(provider.title) Auth")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                }
-                .foregroundStyle(settingsText.opacity(0.86))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Capsule().fill(settingsText.opacity(0.12)))
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("settings.\(provider.rawValue).openAuthButton")
-
-            if provider == .gemini, let diagnostic = providerEnvironment(for: .gemini)?.geminiAdc, diagnostic.isGcloudMissing {
-                Text("팁: Gemini API key를 쓰면 gcloud 설치 단계를 건너뛸 수 있습니다. (aistudio.google.com/apikey)")
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.6))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("settings.gemini.byokHint")
-            }
-
-            if viewModel.providerAuthInProgress == provider {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text(viewModel.providerAuthMessage ?? "Authenticating...")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.55))
-                }
-            }
         }
     }
 
@@ -1732,17 +2037,6 @@ struct SettingsView: View {
         }
     }
 
-    private func localAuthDescription(_ provider: AgentProvider) -> String {
-        switch provider {
-        case .claude:
-            return "Uses the local Claude Code login and settings.json on this Mac."
-        case .codex:
-            return "Uses the local Codex login and config.toml on this Mac."
-        case .gemini:
-            return "Uses Google Application Default Credentials (`gcloud auth application-default login`) on this Mac."
-        }
-    }
-
     private func apiKeyLabel(_ provider: AgentProvider) -> String {
         switch provider {
         case .claude:
@@ -1786,16 +2080,19 @@ struct SettingsView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label)
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.6))
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .textCase(.uppercase)
+                .foregroundStyle(settingsSubtleText)
             SecureField(placeholder, text: text)
                 .textFieldStyle(.plain)
-                .font(.system(size: 14, weight: .medium, design: .monospaced))
-                .foregroundStyle(settingsText.opacity(0.9))
-                .padding(12)
+                .font(.system(size: 13.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(settingsText)
+                .padding(.horizontal, 12)
+                .frame(height: 34)
                 .background(fieldBackground)
                 .accessibilityIdentifier(identifier)
         }
+        .accessibilityIdentifier(identifier)
     }
 
     private func environmentEditor(
@@ -1805,19 +2102,20 @@ struct SettingsView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label)
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.6))
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .textCase(.uppercase)
+                .foregroundStyle(settingsSubtleText)
             TextEditor(text: text)
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(settingsText.opacity(0.9))
+                .foregroundStyle(settingsText)
                 .scrollContentBackground(.hidden)
                 .frame(minHeight: 86)
                 .padding(8)
                 .background(fieldBackground)
                 .accessibilityIdentifier(identifier)
             Text("One KEY=VALUE pair per line.")
-                .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.36))
+                .font(.system(size: 11, weight: .regular))
+                .foregroundStyle(settingsSubtleText)
         }
     }
 
@@ -1840,67 +2138,6 @@ struct SettingsView: View {
             return URL(string: "https://developers.openai.com/codex/config-basic")
         case .gemini:
             return URL(string: "https://github.com/googleapis/js-genai")
-        }
-    }
-
-    private func modelPickerRow(
-        provider: AgentProvider,
-        selection: Binding<String>
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(provider.subtitle)
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.72))
-                    Text(providerFamilyLabel(provider))
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.34))
-                }
-
-                Spacer(minLength: 12)
-
-                Menu {
-                    Section(providerFamilyLabel(provider)) {
-                        ForEach(AgentModelCatalog.options(for: provider)) { option in
-                            Button {
-                                selection.wrappedValue = option.id
-                            } label: {
-                                HStack {
-                                    Text(option.label)
-                                    if option.id == selection.wrappedValue {
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 10) {
-                        Text(AgentModelCatalog.label(for: selection.wrappedValue, provider: provider))
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
-                            .foregroundStyle(settingsText.opacity(0.9))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(settingsText.opacity(0.42))
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .frame(width: 230, alignment: .leading)
-                    .background(fieldBackground)
-                }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("settings.\(provider.rawValue).modelPicker")
-            }
-
-            Text(selection.wrappedValue)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundStyle(settingsText.opacity(0.36))
-                .accessibilityIdentifier("settings.\(provider.rawValue).modelID")
         }
     }
 
@@ -1972,879 +2209,15 @@ struct SettingsView: View {
     }
     #endif
 
-    // MARK: - Ad Analytics Tab
-
-    private var adAnalyticsTab: some View {
-        settingsTabScaffold(
-            title: "Ad Analytics Settings",
-            subtitle: "Configure API keys for /analyze-ads command. Environment variables take priority over these values."
-        ) {
-            posthogSection
-            metaSection
-            adActionsSection
-        }
-    }
-
-    // MARK: - BIP Tab
-
-    private var bipTab: some View {
-        settingsTabScaffold(
-            title: "Build In Public",
-            subtitle: "Configure project docs, Google Docs/Sheets evidence, and Threads for daily public execution."
-        ) {
-            workspaceSection
-            externalDocsSection
-            socialSection
-            bipActionsSection
-        }
-    }
-
-    // MARK: - Notion Tab
-
-    private var notionTab: some View {
-        settingsTabScaffold(
-            title: "Notion",
-            subtitle: "Connect your Notion workspace via the official Notion MCP server. Uses OAuth — no API key needed."
-        ) {
-            notionConnectionSection
-            notionInfoSection
-        }
-    }
-
-    // MARK: - Notion Section
-
-    private var notionConnectionSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionHeader(title: "Connection", configured: viewModel.notionConnected)
-
-            if viewModel.notionConnected {
-                // Connected state
-                HStack(spacing: 12) {
-                    Circle()
-                        .fill(Agentic30BrandColor.green.opacity(0.8))
-                        .frame(width: 8, height: 8)
-                    Text("Connected to Notion")
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.9))
-                    Spacer()
-                    Button(action: {
-                        viewModel.disconnectNotion()
-                    }) {
-                        Text("Disconnect")
-                            .font(.system(size: 13, weight: .bold, design: .rounded))
-                            .foregroundStyle(.red.opacity(0.8))
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(Capsule().fill(Color.red.opacity(0.1)))
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                Text("Notion tools are available in all Claude and Codex sessions.")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.45))
-
-            } else if viewModel.notionOAuthInProgress {
-                // OAuth in progress
-                HStack(spacing: 12) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(settingsText.opacity(0.6))
-                    Text("Waiting for authorization...")
-                        .font(.system(size: 14, weight: .medium, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.7))
-                }
-
-            } else {
-                // Disconnected state
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Not connected")
-                        .font(.system(size: 14, weight: .medium, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.5))
-
-                    Button(action: {
-                        viewModel.startNotionOAuth()
-                    }) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "link.badge.plus")
-                            Text("Connect to Notion")
-                        }
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.9))
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 10)
-                        .background(Capsule().fill(settingsText.opacity(0.18)))
-                    }
-                    .buttonStyle(.plain)
-
-                    if let error = viewModel.notionOAuthError {
-                        Text(error)
-                            .font(.system(size: 12, weight: .medium, design: .rounded))
-                            .foregroundStyle(.red.opacity(0.8))
-                    }
-                }
-            }
-        }
-        .padding(20)
-        .background(cardBackground)
-    }
-
-    private var notionInfoSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionHeader(title: "How It Works", configured: false)
-
-            VStack(alignment: .leading, spacing: 12) {
-                notionInfoRow(
-                    icon: "1.circle.fill",
-                    text: "Click \"Connect to Notion\" — a sign-in window will appear"
-                )
-                notionInfoRow(
-                    icon: "2.circle.fill",
-                    text: "Sign in to Notion and grant workspace access"
-                )
-                notionInfoRow(
-                    icon: "3.circle.fill",
-                    text: "The window closes automatically — all sessions now have Notion read/write"
-                )
-            }
-
-            Text("OAuth tokens are stored locally and refreshed automatically.")
-                .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.35))
-        }
-        .padding(20)
-        .background(cardBackground)
-    }
-
-    // MARK: - Developer Tools Tab
-
-    private var developerToolsTab: some View {
-        settingsTabScaffold(
-            title: "Developer Tools",
-            subtitle: "Trigger local app flows without waiting for scheduled automation."
-        ) {
-            notificationTestSection
-            confettiTestSection
-        }
-    }
-
-    private var notificationTestSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionHeader(title: "BIP Notifications", configured: true)
-
-            Text("테스트 알림은 실제 macOS 알림 센터 경로를 사용합니다. 배너를 누르면 Agentic30이 열리고 BIP 알림 task surface로 이동합니다.")
-                .font(.system(size: 13, weight: .medium, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.50))
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack(spacing: 12) {
-                developerToolButton(
-                    title: "10시 알림 보내기",
-                    systemImage: "sun.max.fill",
-                    identifier: "settings.developerTools.sendMorningBipNotification"
-                ) {
-                    sendTestBipNotification(.morning)
-                }
-
-                developerToolButton(
-                    title: "21시 알림 보내기",
-                    systemImage: "moon.fill",
-                    identifier: "settings.developerTools.sendEveningBipNotification"
-                ) {
-                    sendTestBipNotification(.evening)
-                }
-            }
-
-            if !developerToolsMessage.isEmpty {
-                Text(developerToolsMessage)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Agentic30BrandColor.green.opacity(0.82))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .transition(.opacity)
-                    .accessibilityIdentifier("settings.developerTools.message")
-            }
-        }
-        .padding(20)
-        .background(cardBackground)
-    }
-
-    private var confettiTestSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionHeader(title: "UI Motion Test", configured: confettiTestRunID > 0)
-            confettiTestControls
-        }
-        .padding(20)
-        .background(cardBackground)
-    }
-
-    private var confettiTestControls: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text("앱 화면 전체에 realistic confetti burst를 재생합니다.")
-                .font(.system(size: 13, weight: .medium, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.50))
-                .fixedSize(horizontal: false, vertical: true)
-
-            developerToolButton(
-                title: "Confetti 테스트",
-                systemImage: "sparkles",
-                identifier: "settings.developerTools.confettiTestButton"
-            ) {
-                playConfettiTest()
-            }
-
-            if !confettiTestMessage.isEmpty {
-                Text(confettiTestMessage)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Agentic30BrandColor.green.opacity(0.82))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .transition(.opacity)
-                    .accessibilityIdentifier("settings.developerTools.confettiTestMessage")
-            }
-        }
-    }
-
-    private func developerToolButton(
-        title: String,
-        systemImage: String,
-        identifier: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 13, weight: .semibold))
-                Text(title)
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-            }
-            .foregroundStyle(settingsText.opacity(0.9))
-            .padding(.horizontal, 18)
-            .padding(.vertical, 10)
-            .background(Capsule().fill(settingsText.opacity(0.16)))
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier(identifier)
-    }
-
-    // MARK: - Diagnostics Tab
-
-    private var diagnosticsTab: some View {
-        settingsTabScaffold(
-            title: "Diagnostics",
-            subtitle: "Copy a redacted runtime snapshot for debugging sidecar, provider, storage, and preflight issues."
-        ) {
-            diagnosticsSummarySection
-            diagnosticsActionsSection
-            diagnosticsReportSection
-        }
-    }
-
-    private var diagnosticsSummarySection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionHeader(
-                title: "Sidecar Health",
-                configured: viewModel.sidecarDiagnostics?.preflight?.status == "ok"
-            )
-
-            if let diagnostics = viewModel.sidecarDiagnostics {
-                diagnosticsRow(label: "Generated", value: diagnostics.generatedAt.description)
-                diagnosticsRow(label: "Node", value: diagnostics.runtime.node ?? "unknown")
-                diagnosticsRow(label: "Sessions", value: "\(diagnostics.sessions.total) total, \(diagnostics.sessions.activeRuns) active")
-                diagnosticsRow(label: "Preflight", value: diagnostics.preflight?.status ?? "unknown")
-
-                if let checks = diagnostics.preflight?.checks {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(checks) { check in
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("[\(check.status)] \(check.title)")
-                                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                                    .foregroundStyle(color(for: check.status).opacity(0.95))
-                                if let message = check.message {
-                                    Text(message)
-                                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                        .foregroundStyle(settingsText.opacity(0.45))
-                                        .lineLimit(2)
-                                }
-                                if let recovery = check.recovery {
-                                    Text(recovery)
-                                        .font(.system(size: 11, weight: .medium, design: .rounded))
-                                        .foregroundStyle(settingsText.opacity(0.5))
-                                }
-                            }
-                            .padding(10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(settingsText.opacity(0.04))
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        }
-                    }
-                }
-            } else {
-                Text("Diagnostics are not available until the sidecar connects.")
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.5))
-            }
-        }
-        .padding(20)
-        .background(cardBackground)
-    }
-
-    private var diagnosticsActionsSection: some View {
-        HStack(spacing: 14) {
-            Button(action: refreshDiagnostics) {
-                Text("Refresh")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.9))
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 10)
-                    .background(Capsule().fill(settingsText.opacity(0.18)))
-            }
-            .buttonStyle(.plain)
-
-            Button(action: copyDiagnostics) {
-                Text("Copy Diagnostics")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.75))
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 10)
-                    .background(Capsule().fill(settingsText.opacity(0.08)))
-            }
-            .buttonStyle(.plain)
-
-            if !diagnosticsMessage.isEmpty {
-                Text(diagnosticsMessage)
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(Agentic30BrandColor.green.opacity(0.8))
-                    .transition(.opacity)
-            }
-
-            Spacer()
-        }
-    }
-
-    private var diagnosticsReportSection: some View {
-        ScrollView {
-            Text(viewModel.diagnosticsReport)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundStyle(settingsText.opacity(0.58))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
-                .padding(14)
-        }
-        .frame(minHeight: 220)
-        .background(fieldBackground)
-    }
-
-    private func diagnosticsRow(label: String, value: String) -> some View {
-        HStack(alignment: .top) {
-            Text(label)
-                .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.5))
-                .frame(width: 96, alignment: .leading)
-            Text(value)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(settingsText.opacity(0.74))
-                .lineLimit(2)
-            Spacer(minLength: 0)
-        }
-    }
-
-    private func notionInfoRow(icon: String, text: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(settingsText.opacity(0.5))
-                .frame(width: 22)
-            Text(text)
-                .font(.system(size: 13, weight: .medium, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.7))
-        }
-    }
-
-    // MARK: - PostHog Section
-
-    private var posthogSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionHeader(
-                title: "PostHog",
-                configured: !posthogApiKey.isEmpty || !posthogProjectAPIKey.isEmpty
-            )
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("MCP / Personal API Key")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.6))
-                SecureField("phx_...", text: $posthogApiKey)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 14, weight: .medium, design: .monospaced))
-                    .foregroundStyle(settingsText.opacity(0.9))
-                    .padding(12)
-                    .background(fieldBackground)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Project API Key")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.6))
-                SecureField("phc_...", text: $posthogProjectAPIKey)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 14, weight: .medium, design: .monospaced))
-                    .foregroundStyle(settingsText.opacity(0.9))
-                    .padding(12)
-                    .background(fieldBackground)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("PostHog API Host")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.6))
-                TextField("https://us.posthog.com", text: $posthogHost)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 14, weight: .medium, design: .monospaced))
-                    .foregroundStyle(settingsText.opacity(0.9))
-                    .padding(12)
-                    .background(fieldBackground)
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text("MCP Endpoint")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.6))
-
-                Picker("MCP Region", selection: $posthogMcpRegion) {
-                    Text("US").tag("us")
-                    Text("EU").tag("eu")
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .tint(settingsAccentColor)
-                .onChange(of: posthogMcpRegion) { _, newValue in
-                    if posthogMcpURL == KeychainHelper.Settings.defaultPostHogMcpURL
-                        || posthogMcpURL == KeychainHelper.Settings.defaultPostHogEuMcpURL
-                        || posthogMcpURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        if newValue == "eu" {
-                            posthogMcpURL = KeychainHelper.Settings.defaultPostHogEuMcpURL
-                        } else {
-                            posthogMcpURL = KeychainHelper.Settings.defaultPostHogMcpURL
-                        }
-                    }
-                }
-
-                TextField("https://mcp.posthog.com/mcp", text: $posthogMcpURL)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 14, weight: .medium, design: .monospaced))
-                    .foregroundStyle(settingsText.opacity(0.9))
-                    .padding(12)
-                    .background(fieldBackground)
-
-                Toggle(isOn: $posthogMcpReadonly) {
-                    Text("Read-only MCP tools")
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.86))
-                }
-                .toggleStyle(.switch)
-                .tint(Agentic30BrandColor.green)
-
-                TextField(KeychainHelper.Settings.defaultPostHogMcpFeatures, text: $posthogMcpFeatures)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(settingsText.opacity(0.84))
-                    .padding(12)
-                    .background(fieldBackground)
-            }
-
-            Text("`phx_`/`pha_` key는 MCP 조회용이고, 앱/sidecar 이벤트 수집은 `phc_` project key를 사용합니다. Codex CLI 동기화는 토큰 원문 대신 `POSTHOG_MCP_API_KEY` env var를 참조합니다.")
-                .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.44))
-
-            if !posthogApiKey.isEmpty && posthogProjectAPIKey.isEmpty {
-                Text("MCP/조회는 설정되었지만 앱 이벤트 수집은 아직 비활성 상태입니다. `phc_` project key를 추가하거나, 비워두면 빌드 기본값을 사용합니다.")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(.orange.opacity(0.78))
-            }
-
-            Divider().padding(.vertical, 4)
-
-            Toggle(isOn: $telemetryDisabled) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("이 디바이스에서 telemetry 비활성화")
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.86))
-                    Text("켜면 PostHog 이벤트 전송이 즉시 중단됩니다. distinct_id는 보존되어 재활성화 시 동일 사용자로 묶입니다.")
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.5))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .toggleStyle(.switch)
-            .tint(Agentic30BrandColor.green)
-            .onChange(of: telemetryDisabled) { _, newValue in
-                // When user is DISABLING, fire the event first (and block briefly)
-                // while telemetry is still enabled, otherwise loadConfig() returns
-                // nil and we'd lose the opt-out signal entirely.
-                if newValue {
-                    PostHogTelemetry.captureBlocking(
-                        "mac_settings_telemetry_pref_changed",
-                        properties: ["disabled": true]
-                    )
-                    PostHogTelemetry.setTelemetryDisabledByUser(true)
-                } else {
-                    PostHogTelemetry.setTelemetryDisabledByUser(false)
-                    PostHogTelemetry.capture(
-                        "mac_settings_telemetry_pref_changed",
-                        properties: ["disabled": false]
-                    )
-                }
-            }
-        }
-        .padding(20)
-        .background(cardBackground)
-    }
-
-    // MARK: - Meta Section
-
-    private var metaSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionHeader(title: "Meta Ads", configured: !metaAccessToken.isEmpty && !metaAdAccountId.isEmpty)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Access Token")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.6))
-                SecureField("EAA...", text: $metaAccessToken)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 14, weight: .medium, design: .monospaced))
-                    .foregroundStyle(settingsText.opacity(0.9))
-                    .padding(12)
-                    .background(fieldBackground)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Ad Account ID")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.6))
-                TextField("act_123456789", text: $metaAdAccountId)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 14, weight: .medium, design: .monospaced))
-                    .foregroundStyle(settingsText.opacity(0.9))
-                    .padding(12)
-                    .background(fieldBackground)
-            }
-        }
-        .padding(20)
-        .background(cardBackground)
-    }
-
-    // MARK: - Workspace Section
-
-    private var workspaceSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionHeader(title: "Project Workspace", configured: !bipWorkspaceRoot.isEmpty)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Workspace Root")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.6))
-                HStack(spacing: 8) {
-                    TextField("/Users/you/project", text: $bipWorkspaceRoot)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 14, weight: .medium, design: .monospaced))
-                        .foregroundStyle(settingsText.opacity(0.9))
-                        .padding(12)
-                        .background(fieldBackground)
-
-                    Button(action: pickFolder) {
-                        Image(systemName: "folder")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(settingsText.opacity(0.6))
-                            .padding(12)
-                            .background(fieldBackground)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button(action: triggerScan) {
-                        if viewModel.isScanning {
-                            ProgressView()
-                                .controlSize(.small)
-                                .padding(8)
-                                .background(fieldBackground)
-                        } else {
-                            Image(systemName: "sparkle.magnifyingglass")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(settingsText.opacity(0.6))
-                                .padding(12)
-                                .background(fieldBackground)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(bipWorkspaceRoot.isEmpty || viewModel.isScanning)
-                    .help("Agent scans workspace for docs")
-                }
-            }
-
-        if viewModel.isScanning {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.mini)
-                    Text(scanProgressText)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(Color(red: 0.96, green: 0.78, blue: 0.54).opacity(0.9))
-                }
-
-                if !scanProgressLogLines.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(scanProgressLogLines, id: \.self) { line in
-                            Text("• \(line)")
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundStyle(settingsText.opacity(0.48))
-                                .lineLimit(2)
-                                .textSelection(.enabled)
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(fieldBackground)
-                }
-            }
-            .transition(.opacity)
-        }
-
-            if !scanMessage.isEmpty {
-                Text(scanMessage)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.9))
-                    .transition(.opacity)
-            }
-
-            docField(label: "ICP", placeholder: "docs/ICP.md", text: $bipIcpPath, docType: "icp", detectedPath: viewModel.scanResult?.icp)
-            docField(label: "SPEC", placeholder: "docs/SPEC.md", text: $bipSpecPath, docType: "spec", detectedPath: viewModel.scanResult?.spec)
-            docField(label: "VALUES", placeholder: "docs/VALUES.md", text: $bipValuesPath, docType: "values", detectedPath: viewModel.scanResult?.values)
-            docField(label: "Design System", placeholder: "docs/DESIGN_SYSTEM.md", text: $bipDesignSystemPath, docType: "designSystem", detectedPath: viewModel.scanResult?.designSystem)
-            docField(label: "ADR", placeholder: "docs/ADR.md", text: $bipAdrPath, docType: "adr", detectedPath: viewModel.scanResult?.adr)
-            docField(label: "Goal", placeholder: "docs/GOAL.md", text: $bipGoalPath, docType: "goal", detectedPath: viewModel.scanResult?.goal)
-            docField(label: "Docs", placeholder: "docs/DOCS.md", text: $bipDocsPath, docType: "docs", detectedPath: viewModel.scanResult?.docs)
-            docField(label: "Sheet", placeholder: "docs/SHEET.md", text: $bipSheetPath, docType: "sheet", detectedPath: viewModel.scanResult?.sheet)
-
-            Text("Paths relative to workspace root. Agent auto-detects on scan.")
-                .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.35))
-        }
-        .padding(20)
-        .background(cardBackground)
-    }
-
-    // MARK: - External Docs Section
-
-    private var externalDocsSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionHeader(
-                title: "External Documents",
-                configured: !bipGdocsUrls.isEmpty || !bipGsheetsUrls.isEmpty || !bipNotionUrls.isEmpty
-            )
-
-            Text("처음 설정은 Chat Assistant 안의 오늘 실행 카드에서 진행하세요. 이 영역은 고급 사용자용 수동 연결입니다.")
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.58))
-                .fixedSize(horizontal: false, vertical: true)
-
-            settingsField(label: "Google Docs 수동 연결 URL", placeholder: "https://docs.google.com/... (comma-separated)", text: $bipGdocsUrls)
-            settingsField(label: "Google Sheets 수동 연결 URL", placeholder: "https://docs.google.com/spreadsheets/... (comma-separated)", text: $bipGsheetsUrls)
-            settingsField(label: "Notion Pages", placeholder: "https://notion.so/... (comma-separated)", text: $bipNotionUrls)
-
-            Text("Chat Assistant 안의 오늘 실행 카드가 업무일지 Doc과 게시글 Sheet 템플릿을 내 Drive에 복사하고 자동 연결합니다. 수동 URL은 복구나 이전 연결 유지가 필요할 때만 사용하세요.")
-                .font(.system(size: 12, weight: .medium, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.42))
-        }
-        .padding(20)
-        .background(cardBackground)
-    }
-
-    // MARK: - Social Section
-
-    private var socialSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionHeader(
-                title: "Social Media",
-                configured: !bipThreadsHandle.isEmpty || !bipXHandle.isEmpty
-            )
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Threads")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.6))
-                HStack(spacing: 0) {
-                    Text("@")
-                        .font(.system(size: 14, weight: .medium, design: .monospaced))
-                        .foregroundStyle(settingsText.opacity(0.4))
-                        .padding(.leading, 12)
-                    TextField("handle", text: $bipThreadsHandle)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 14, weight: .medium, design: .monospaced))
-                        .foregroundStyle(settingsText.opacity(0.9))
-                        .padding(12)
-                }
-                .background(fieldBackground)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("X (Twitter)")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.6))
-                HStack(spacing: 0) {
-                    Text("@")
-                        .font(.system(size: 14, weight: .medium, design: .monospaced))
-                        .foregroundStyle(settingsText.opacity(0.4))
-                        .padding(.leading, 12)
-                    TextField("handle", text: $bipXHandle)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 14, weight: .medium, design: .monospaced))
-                        .foregroundStyle(settingsText.opacity(0.9))
-                        .padding(12)
-                }
-                .background(fieldBackground)
-            }
-        }
-        .padding(20)
-        .background(cardBackground)
-    }
-
-    // MARK: - Actions
-
-    private var adActionsSection: some View {
-        HStack(spacing: 14) {
-            Button(action: saveAdValues) {
-                Text("Save")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.9))
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 10)
-                    .background(Capsule().fill(settingsText.opacity(0.18)))
-            }
-            .buttonStyle(.plain)
-
-            Button(action: clearAdValues) {
-                Text("Clear All")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.5))
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 10)
-                    .background(Capsule().fill(settingsText.opacity(0.06)))
-            }
-            .buttonStyle(.plain)
-
-            if !adSaveMessage.isEmpty {
-                Text(adSaveMessage)
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(Agentic30BrandColor.green.opacity(0.8))
-                    .transition(.opacity)
-            }
-
-            Spacer()
-        }
-    }
-
-    private var bipActionsSection: some View {
-        HStack(spacing: 14) {
-            Button(action: saveBipValues) {
-                Text("Save")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.9))
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 10)
-                    .background(Capsule().fill(settingsText.opacity(0.18)))
-            }
-            .buttonStyle(.plain)
-
-            Button(action: clearBipValues) {
-                Text("Clear All")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.5))
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 10)
-                    .background(Capsule().fill(settingsText.opacity(0.06)))
-            }
-            .buttonStyle(.plain)
-
-            if !bipSaveMessage.isEmpty {
-                Text(bipSaveMessage)
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundStyle(Agentic30BrandColor.green.opacity(0.8))
-                    .transition(.opacity)
-            }
-
-            Spacer()
-        }
-    }
-
     // MARK: - Helpers
 
-    private func saveCurrentSettingsForSelectedSection() {
-        switch selectedSection.wrappedValue {
-        case .agents:
-            saveAgentSettingsValues()
-        case .adAnalytics:
-            saveAdValues()
-        case .buildInPublic:
-            saveBipValues()
-        default:
-            let settings = currentSettings()
-            try? KeychainHelper.saveSettings(settings)
-            KeychainHelper.syncAllConfigFiles(from: settings)
-            viewModel.syncProviderSettingsToSidecar(settings)
-        }
-    }
-
-    private func settingsTabScaffold<Content: View>(
-        title: String,
-        subtitle: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: settingsSectionSpacing) {
-                content()
-            }
-            .frame(maxWidth: 820, alignment: .leading)
-            .padding(.horizontal, embeddedInWorkspace ? 28 : 28)
-            .padding(.vertical, embeddedInWorkspace ? 22 : 22)
-            .frame(maxWidth: .infinity)
-        }
-        .accessibilityIdentifier("settings.contentScroll")
-        .background(settingsTabBackground)
-    }
-
-    private func settingsPageHeader(title: String, subtitle: String) -> some View {
-        VStack(alignment: .leading, spacing: embeddedInWorkspace ? 10 : 8) {
-            if embeddedInWorkspace {
-                HStack(spacing: 8) {
-                    Text("Settings")
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundStyle(settingsAccentColor)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(Capsule().fill(settingsAccentColor.opacity(0.13)))
-
-                    Text(selectedSection.wrappedValue.sidebarTitle)
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundStyle(settingsText.opacity(0.52))
-                }
-            }
-
-            Text(title)
-                .font(.system(size: embeddedInWorkspace ? 27 : 26, weight: .bold, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.96))
-                .fixedSize(horizontal: false, vertical: true)
-
-            Text(subtitle)
-                .font(.system(size: embeddedInWorkspace ? 14 : 14, weight: embeddedInWorkspace ? .semibold : .medium, design: .rounded))
-                .foregroundStyle(settingsText.opacity(embeddedInWorkspace ? 0.58 : 0.50))
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(embeddedInWorkspace ? 18 : 0)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            if embeddedInWorkspace {
-                cardBackground
-            }
-        }
+    private func saveAllSettingsValues() {
+        let settings = currentSettings()
+        try? KeychainHelper.saveSettings(settings)
+        KeychainHelper.syncAllConfigFiles(from: settings)
+        PostHogTelemetry.reloadConfiguration()
+        viewModel.syncProviderSettingsToSidecar(settings)
+        showMessage($settingsSaveMessage, text: "저장됨")
     }
 
     @ViewBuilder
@@ -2852,203 +2225,14 @@ struct SettingsView: View {
         settingsBackground.ignoresSafeArea()
     }
 
-    private var settingsSectionSpacing: CGFloat {
-        embeddedInWorkspace ? 16 : 24
-    }
-
     private var settingsAccentColor: Color {
         OpenDesignDayColor.accent
     }
 
-    private func settingsField(label: String, placeholder: String, text: Binding<String>) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label)
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.6))
-            TextField(placeholder, text: text)
-                .textFieldStyle(.plain)
-                .font(.system(size: 14, weight: .medium, design: .monospaced))
-                .foregroundStyle(settingsText.opacity(0.9))
-                .padding(12)
-                .background(fieldBackground)
-        }
-    }
-
-    private var scanProgressText: String {
-        let text = viewModel.scanProgressMessage.trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? "Agent is exploring your workspace..." : text
-    }
-
-    private var scanProgressLogLines: [String] {
-        Array(viewModel.scanProgressLogs.suffix(8))
-    }
-
-    private func localDocExists(_ relativePath: String) -> Bool {
-        let trimmedRoot = bipWorkspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedPath = relativePath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedRoot.isEmpty, !trimmedPath.isEmpty else { return false }
-
-        let rootURL = URL(fileURLWithPath: trimmedRoot, isDirectory: true).standardizedFileURL
-        let candidateURL = URL(fileURLWithPath: trimmedPath, relativeTo: rootURL).standardizedFileURL
-        guard candidateURL.path == rootURL.path || candidateURL.path.hasPrefix(rootURL.path + "/") else {
-            return false
-        }
-
-        var isDirectory: ObjCBool = false
-        return FileManager.default.fileExists(atPath: candidateURL.path, isDirectory: &isDirectory)
-            && !isDirectory.boolValue
-    }
-
-    private func docField(label: String, placeholder: String, text: Binding<String>, docType: String, detectedPath: String?) -> some View {
-        let hasScanned = viewModel.scanResult != nil && viewModel.scanResult?.error == nil
-        let configuredPath = text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let detected = detectedPath != nil
-        let exists = configuredPath.isEmpty ? false : localDocExists(configuredPath)
-        let missing = hasScanned && !detected && !exists
-        let creating = viewModel.isCreatingDoc == docType
-
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Text(label)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(settingsText.opacity(0.6))
-                if detected {
-                    Text("auto-detected")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(Agentic30BrandColor.greenBright)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule()
-                                .fill(Agentic30BrandColor.greenBright.opacity(0.15))
-                        )
-                } else if exists {
-                    Text("verified")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(Agentic30BrandColor.greenBright)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule()
-                                .fill(Agentic30BrandColor.greenBright.opacity(0.15))
-                        )
-                } else if missing {
-                    Text("not found")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color(red: 0.96, green: 0.78, blue: 0.54))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule()
-                                .fill(Color(red: 0.96, green: 0.78, blue: 0.54).opacity(0.15))
-                        )
-                }
-                Spacer()
-                if creating {
-                    HStack(spacing: 4) {
-                        ProgressView()
-                            .controlSize(.mini)
-                        Text(viewModel.docCreationLogs.last ?? "Starting agent...")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundStyle(settingsText.opacity(0.5))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                } else if missing {
-                    Button { createDoc(type: docType) } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "sparkles")
-                            Text("Create")
-                        }
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(Agentic30BrandColor.greenBright)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule()
-                                .fill(Agentic30BrandColor.greenBright.opacity(0.12))
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(viewModel.isCreatingDoc != nil)
-                }
-            }
-            TextField(placeholder, text: text)
-                .textFieldStyle(.plain)
-                .font(.system(size: 14, weight: .medium, design: .monospaced))
-                .foregroundStyle(settingsText.opacity(0.9))
-                .padding(12)
-                .background(fieldBackground)
-
-            if !configuredPath.isEmpty && !exists {
-                Text("Missing at \(configuredPath) relative to workspace root.")
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(Color(red: 0.96, green: 0.78, blue: 0.54).opacity(0.84))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if creating && !viewModel.docCreationLogs.isEmpty {
-                ScrollViewReader { proxy in
-                    ScrollView(.vertical, showsIndicators: true) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            ForEach(Array(viewModel.docCreationLogs.enumerated()), id: \.offset) { idx, log in
-                                Text(log)
-                                    .id(idx)
-                            }
-                        }
-                        .font(.system(size: 10, weight: .regular, design: .monospaced))
-                        .foregroundStyle(settingsText.opacity(0.4))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
-                    }
-                    .frame(maxHeight: 80)
-                    .background(settingsText.opacity(0.03))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .onChange(of: viewModel.docCreationLogs.count) {
-                        withAnimation {
-                            proxy.scrollTo(viewModel.docCreationLogs.count - 1, anchor: .bottom)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func sectionHeader(title: String, configured: Bool) -> some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(configured ? Agentic30BrandColor.greenBright : settingsText.opacity(0.18))
-                .frame(width: 9, height: 9)
-            Text(title)
-                .font(.system(size: 16, weight: .bold, design: .rounded))
-                .foregroundStyle(settingsText.opacity(0.84))
-        }
-    }
-
-    private func color(for status: String) -> Color {
-        switch status {
-        case "ok":
-            return Agentic30BrandColor.greenBright
-        case "warning":
-            return Color(red: 0.96, green: 0.78, blue: 0.54)
-        case "failed":
-            return Color(red: 1.0, green: 0.45, blue: 0.42)
-        default:
-            return settingsText.opacity(0.5)
-        }
-    }
-
     private var fieldBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: 7, style: .continuous)
         return shape
-            .fill(OpenDesignDayColor.surface)
-            .overlay(shape.stroke(settingsHairline, lineWidth: 1))
-    }
-
-    private var cardBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
-        return shape
-            .fill(OpenDesignDayColor.surface)
+            .fill(OpenDesignDayColor.bgDarker)
             .overlay(shape.stroke(settingsHairline, lineWidth: 1))
     }
 
@@ -3059,37 +2243,27 @@ struct SettingsView: View {
         panel.allowsMultipleSelection = false
         panel.message = "Select your project workspace root"
         if panel.runModal() == .OK, let url = panel.url {
-            bipWorkspaceRoot = url.path
+            workspaceRootPath = url.path
             viewModel.setProjectWorkspace(url)
         }
     }
 
-    private func triggerScan() {
-        guard !bipWorkspaceRoot.isEmpty else { return }
-        viewModel.scanWorkspace(root: bipWorkspaceRoot)
-    }
-
-    private func createDoc(type: String) {
-        guard !bipWorkspaceRoot.isEmpty else { return }
-        viewModel.createDocument(type: type, workspaceRoot: bipWorkspaceRoot)
-    }
-
     private func refreshDiagnostics() {
         viewModel.requestDiagnostics()
-        showMessage($diagnosticsMessage, text: "Requested")
+        showMessage($settingsSaveMessage, text: "진단 요청됨")
     }
 
     private func copyDiagnostics() {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(viewModel.diagnosticsReport, forType: .string)
-        showMessage($diagnosticsMessage, text: "Copied")
+        showMessage($settingsSaveMessage, text: "진단 복사됨")
     }
 
     private func sendTestBipNotification(_ intent: BipNotificationIntent) {
         Task {
             let message = await viewModel.sendTestBipNotification(intent: intent)
-            showMessage($developerToolsMessage, text: message)
+            showMessage($advancedToolsMessage, text: message)
         }
     }
 
@@ -3097,74 +2271,7 @@ struct SettingsView: View {
         withAnimation(.easeOut(duration: 0.12)) {
             confettiTestRunID += 1
         }
-        showMessage($confettiTestMessage, text: "Confetti 테스트를 재생했습니다.")
-    }
-
-    private func applyDocCreated(type: String, path: String) {
-        switch type {
-        case "icp": bipIcpPath = path
-        case "spec": bipSpecPath = path
-        case "values": bipValuesPath = path
-        case "designSystem": bipDesignSystemPath = path
-        case "adr": bipAdrPath = path
-        case "goal": bipGoalPath = path
-        case "docs": bipDocsPath = path
-        case "sheet": bipSheetPath = path
-        default: break
-        }
-        saveBipValues()
-        showMessage($scanMessage, text: "\(type.uppercased()) document created")
-    }
-
-    private func applyScanResult(_ result: AgenticViewModel.WorkspaceScanResult) {
-        if let error = result.error {
-            showMessage($scanMessage, text: "Scan failed: \(error)")
-            return
-        }
-
-        var found = 0
-        if let path = result.icp, bipIcpPath != path {
-            bipIcpPath = path
-            found += 1
-        }
-        if let path = result.spec, bipSpecPath != path {
-            bipSpecPath = path
-            found += 1
-        }
-        if let path = result.values, bipValuesPath != path {
-            bipValuesPath = path
-            found += 1
-        }
-        if let path = result.designSystem, bipDesignSystemPath != path {
-            bipDesignSystemPath = path
-            found += 1
-        }
-        if let path = result.adr, bipAdrPath != path {
-            bipAdrPath = path
-            found += 1
-        }
-        if let path = result.goal, bipGoalPath != path {
-            bipGoalPath = path
-            found += 1
-        }
-        if let path = result.docs, bipDocsPath != path {
-            bipDocsPath = path
-            found += 1
-        }
-        if let path = result.sheet, bipSheetPath != path {
-            bipSheetPath = path
-            found += 1
-        }
-
-        let total = [result.icp, result.spec, result.values, result.designSystem, result.adr, result.goal, result.docs, result.sheet]
-            .compactMap { $0 }.count
-
-        if total > 0 {
-            saveBipValues()
-            showMessage($scanMessage, text: "\(total) doc(s) found, \(found) path(s) updated")
-        } else {
-            showMessage($scanMessage, text: "No docs detected — fill paths manually")
-        }
+        showMessage($settingsSaveMessage, text: "Confetti 재생됨")
     }
 
     // MARK: - Load / Save / Clear
@@ -3194,29 +2301,7 @@ struct SettingsView: View {
         s.codexEnvironment = codexEnvironment
         s.geminiEnvironment = geminiEnvironment
         s.exaApiKey = exaApiKey
-        s.posthogApiKey = posthogApiKey
-        s.posthogProjectAPIKey = posthogProjectAPIKey
-        s.posthogHost = posthogHost
-        s.posthogMcpURL = posthogMcpURL
-        s.posthogMcpRegion = posthogMcpRegion
-        s.posthogMcpReadonly = posthogMcpReadonly
-        s.posthogMcpFeatures = posthogMcpFeatures
-        s.metaAccessToken = metaAccessToken
-        s.metaAdAccountId = metaAdAccountId
-        s.bipWorkspaceRoot = bipWorkspaceRoot
-        s.bipIcpPath = bipIcpPath
-        s.bipSpecPath = bipSpecPath
-        s.bipValuesPath = bipValuesPath
-        s.bipDesignSystemPath = bipDesignSystemPath
-        s.bipAdrPath = bipAdrPath
-        s.bipGoalPath = bipGoalPath
-        s.bipDocsPath = bipDocsPath
-        s.bipSheetPath = bipSheetPath
-        s.bipGdocsUrls = bipGdocsUrls
-        s.bipGsheetsUrls = bipGsheetsUrls
-        s.bipNotionUrls = bipNotionUrls
-        s.bipThreadsHandle = bipThreadsHandle
-        s.bipXHandle = bipXHandle
+        s.bipWorkspaceRoot = workspaceRootPath
         return s
     }
 
@@ -3272,216 +2357,24 @@ struct SettingsView: View {
             }
         }
         #endif
-        posthogApiKey = s.posthogApiKey
-        posthogProjectAPIKey = s.posthogProjectAPIKey
-        posthogHost = s.posthogHost
-        posthogMcpURL = s.posthogMcpURL
-        posthogMcpRegion = s.posthogMcpRegion
-        posthogMcpReadonly = s.posthogMcpReadonly
-        posthogMcpFeatures = s.posthogMcpFeatures
-        metaAccessToken = s.metaAccessToken
-        metaAdAccountId = s.metaAdAccountId
-        bipWorkspaceRoot = s.bipWorkspaceRoot
-        bipIcpPath = s.bipIcpPath
-        bipSpecPath = s.bipSpecPath
-        bipValuesPath = s.bipValuesPath
-        bipDesignSystemPath = s.bipDesignSystemPath
-        bipAdrPath = s.bipAdrPath
-        bipGoalPath = s.bipGoalPath
-        bipDocsPath = s.bipDocsPath
-        bipSheetPath = s.bipSheetPath
-        bipGdocsUrls = s.bipGdocsUrls
-        bipGsheetsUrls = s.bipGsheetsUrls
-        bipNotionUrls = s.bipNotionUrls
-        bipThreadsHandle = s.bipThreadsHandle
-        bipXHandle = s.bipXHandle
+        workspaceRootPath = s.bipWorkspaceRoot
     }
 
     private func loadAllValues() {
         let settings = KeychainHelper.loadSettings()
         applySettings(settings)
-        bipWorkspaceRoot = WorkspaceSettings.displayPath(legacyFallback: settings.bipWorkspaceRoot)
-        syncBipFieldsFromCoach(viewModel.bipCoach, persist: true)
+        workspaceRootPath = WorkspaceSettings.displayPath(legacyFallback: settings.bipWorkspaceRoot)
         viewModel.syncProviderSettingsToSidecar(settings)
-    }
-
-    private func saveAgentSettingsValues() {
-        let settings = currentSettings()
-        try? KeychainHelper.saveSettings(settings)
-        viewModel.syncProviderSettingsToSidecar(settings)
-        PostHogTelemetry.capture("mac_settings_agents_saved", properties: [
-            "claude_model": settings.preferredClaudeModel,
-            "codex_model": settings.preferredCodexModel,
-            "gemini_model": settings.preferredGeminiModel,
-            "claude_auth_mode": settings.claudeAuthMode,
-            "codex_auth_mode": settings.codexAuthMode,
-            "gemini_auth_mode": settings.geminiAuthMode,
-            "claude_api_key_configured": !settings.claudeApiKey.isEmpty,
-            "codex_api_key_configured": !settings.codexApiKey.isEmpty,
-            "gemini_api_key_configured": !settings.geminiApiKey.isEmpty,
-            "exa_api_key_configured": !settings.exaApiKey.isEmpty,
-        ])
-        showMessage($agentSettingsSaveMessage, text: "Saved")
     }
 
     private func syncWorkspaceRoot(_ root: String) {
         guard WorkspaceSettings.hasExplicitWorkspace else { return }
         let explicitPath = WorkspaceSettings.resolvedURL().path
-        let previousRoot = bipWorkspaceRoot
         if !root.isEmpty {
-            bipWorkspaceRoot = root
+            workspaceRootPath = root
         } else {
-            bipWorkspaceRoot = explicitPath
+            workspaceRootPath = explicitPath
         }
-        if previousRoot != bipWorkspaceRoot {
-            bipIcpPath = ""
-            bipSpecPath = ""
-            bipValuesPath = ""
-            bipDesignSystemPath = ""
-            bipAdrPath = ""
-            bipGoalPath = ""
-            bipDocsPath = ""
-            bipSheetPath = ""
-            scanMessage = "Workspace changed. Scanning for project docs..."
-        }
-    }
-
-    private func syncBipFieldsFromCoach(_ coach: BipCoachState?, persist: Bool) {
-        guard let coach else { return }
-
-        var changed = false
-        if nonEmpty(bipGdocsUrls) == nil, let docUrl = bipCoachDocUrl(from: coach.config) {
-            bipGdocsUrls = docUrl
-            changed = true
-        }
-        if nonEmpty(bipGsheetsUrls) == nil, let sheetUrl = bipCoachSheetUrl(from: coach.config) {
-            bipGsheetsUrls = sheetUrl
-            changed = true
-        }
-        if nonEmpty(bipThreadsHandle) == nil, let threadsHandle = nonEmpty(coach.config.threadsHandle) {
-            bipThreadsHandle = threadsHandle
-            changed = true
-        }
-
-        guard persist, changed else { return }
-
-        var settings = KeychainHelper.loadSettings()
-        settings.bipGdocsUrls = bipGdocsUrls
-        settings.bipGsheetsUrls = bipGsheetsUrls
-        settings.bipThreadsHandle = bipThreadsHandle
-        try? KeychainHelper.saveSettings(settings)
-        KeychainHelper.syncBipConfigFile(from: settings)
-    }
-
-    private func bipCoachDocUrl(from config: BipCoachConfig) -> String? {
-        if let docUrl = nonEmpty(config.docUrl) {
-            return docUrl
-        }
-        if let docId = nonEmpty(config.docId) {
-            return "https://docs.google.com/document/d/\(docId)/edit"
-        }
-        return nil
-    }
-
-    private func bipCoachSheetUrl(from config: BipCoachConfig) -> String? {
-        if let sheetUrl = nonEmpty(config.sheetUrl) {
-            return sheetUrl
-        }
-        if let sheetId = nonEmpty(config.sheetId) {
-            return "https://docs.google.com/spreadsheets/d/\(sheetId)/edit"
-        }
-        return nil
-    }
-
-    private func nonEmpty(_ value: String?) -> String? {
-        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !trimmed.isEmpty else {
-            return nil
-        }
-        return trimmed
-    }
-
-    private func saveAdValues() {
-        let settings = currentSettings()
-        try? KeychainHelper.saveSettings(settings)
-        KeychainHelper.syncAdConfigFile(from: settings)
-        PostHogTelemetry.reloadConfiguration()
-        PostHogTelemetry.capture("mac_settings_ad_saved", properties: [
-            "posthog_mcp_configured": !posthogApiKey.isEmpty,
-            "posthog_project_configured": !posthogProjectAPIKey.isEmpty,
-            "posthog_mcp_region": posthogMcpRegion,
-            "posthog_mcp_readonly": posthogMcpReadonly,
-            "meta_configured": !metaAccessToken.isEmpty && !metaAdAccountId.isEmpty,
-        ])
-        showMessage($adSaveMessage, text: "Saved")
-    }
-
-    private func clearAdValues() {
-        PostHogTelemetry.capture("mac_settings_ad_cleared", properties: [
-            "had_posthog_mcp_key": !posthogApiKey.isEmpty,
-            "had_posthog_project_key": !posthogProjectAPIKey.isEmpty,
-            "had_meta_config": !metaAccessToken.isEmpty && !metaAdAccountId.isEmpty,
-        ])
-        posthogApiKey = ""
-        posthogProjectAPIKey = ""
-        posthogHost = ""
-        posthogMcpURL = KeychainHelper.Settings.defaultPostHogMcpURL
-        posthogMcpRegion = KeychainHelper.Settings.defaultPostHogMcpRegion
-        posthogMcpReadonly = true
-        posthogMcpFeatures = KeychainHelper.Settings.defaultPostHogMcpFeatures
-        metaAccessToken = ""
-        metaAdAccountId = ""
-        let settings = currentSettings()
-        try? KeychainHelper.saveSettings(settings)
-        KeychainHelper.syncAdConfigFile(from: settings)
-        PostHogTelemetry.reloadConfiguration()
-        showMessage($adSaveMessage, text: "Cleared")
-    }
-
-    private func saveBipValues() {
-        let settings = currentSettings()
-        try? KeychainHelper.saveSettings(settings)
-        KeychainHelper.syncBipConfigFile(from: settings)
-        if bipWorkspaceRoot.isEmpty {
-            WorkspaceSettings.clear()
-        } else {
-            WorkspaceSettings.store(URL(fileURLWithPath: bipWorkspaceRoot, isDirectory: true))
-        }
-        viewModel.configureBipCoach(
-            threadsHandle: bipThreadsHandle,
-            sheetUrl: firstCSV(bipGsheetsUrls),
-            docUrl: firstCSV(bipGdocsUrls),
-            provider: viewModel.selectedProvider
-        )
-        showMessage($bipSaveMessage, text: "Saved")
-    }
-
-    private func clearBipValues() {
-        bipWorkspaceRoot = ""
-        bipIcpPath = ""
-        bipSpecPath = ""
-        bipValuesPath = ""
-        bipDesignSystemPath = ""
-        bipAdrPath = ""
-        bipGoalPath = ""
-        bipDocsPath = ""
-        bipSheetPath = ""
-        bipGdocsUrls = ""
-        bipGsheetsUrls = ""
-        bipNotionUrls = ""
-        bipThreadsHandle = ""
-        bipXHandle = ""
-        let settings = currentSettings()
-        try? KeychainHelper.saveSettings(settings)
-        KeychainHelper.syncBipConfigFile(from: settings)
-        WorkspaceSettings.clear()
-        viewModel.configureBipCoach(
-            threadsHandle: "",
-            sheetUrl: "",
-            docUrl: "",
-            provider: viewModel.selectedProvider
-        )
-        showMessage($bipSaveMessage, text: "Cleared")
     }
 
     private func resetAgentic30LocalData() {
@@ -3489,9 +2382,9 @@ struct SettingsView: View {
             let report = try viewModel.resetAgentic30LocalUserData()
             loadAllValues()
             openWorkspaceAfterLocalDataReset()
-            showMessage($resetLocalDataMessage, text: localDataResetSummary(report))
+            showMessage($settingsSaveMessage, text: localDataResetSummary(report))
         } catch {
-            showMessage($resetLocalDataMessage, text: "Reset failed: \(error.localizedDescription)")
+            showMessage($settingsSaveMessage, text: "Reset failed: \(error.localizedDescription)")
         }
     }
 
@@ -3512,12 +2405,12 @@ struct SettingsView: View {
             let suffix = report.failures.isEmpty
                 ? " Agentic30 will quit; move the selected app to Trash."
                 : " Cleanup had \(report.failures.count) warning(s). Agentic30 will quit; move the selected app to Trash."
-            showMessage($resetLocalDataMessage, text: "Local data cleared.\(suffix)")
+            showMessage($settingsSaveMessage, text: "Local data cleared.\(suffix)")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                 NSApplication.shared.terminate(nil)
             }
         } catch {
-            showMessage($resetLocalDataMessage, text: "Reset failed: \(error.localizedDescription)")
+            showMessage($settingsSaveMessage, text: "Reset failed: \(error.localizedDescription)")
         }
     }
 
@@ -3539,10 +2432,4 @@ struct SettingsView: View {
         }
     }
 
-    private func firstCSV(_ value: String) -> String {
-        value
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .first(where: { !$0.isEmpty }) ?? ""
-    }
 }

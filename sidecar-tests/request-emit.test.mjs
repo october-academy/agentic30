@@ -173,11 +173,12 @@ test("office_hours_start preserves custom source and ignores duplicate concurren
         && event.sessionId === created.session.id
         && /waiting for the current run/i.test(event.message || ""),
     );
-    await waitForEvent(ws.events, (event) =>
+    const questionReadyStatus = await waitForEvent(ws.events, (event) =>
       event.type === "office_hours_status"
         && event.sessionId === created.session.id
         && event.stage === "question_ready",
     );
+    const questionReadyStatusIndex = ws.events.indexOf(questionReadyStatus);
     const pendingInputUpdate = await waitForEvent(ws.events, (event) =>
       event.type === "session_updated"
         && event.session?.id === created.session.id
@@ -208,7 +209,11 @@ test("office_hours_start preserves custom source and ignores duplicate concurren
         && event.sessionId === created.session.id
         && event.stage === "provider_starting"
     );
-    assert.equal(providerStatus.progressText, "프로젝트 맥락에 맞는 질문 준비 중");
+    assert.equal(providerStatus.title, "첫 질문 준비 중");
+    assert.equal(providerStatus.detail, "프로젝트 맥락에 맞는 첫 질문을 준비하고 있습니다.");
+    assert.equal(providerStatus.progressText, "프로젝트 맥락에 맞는 첫 질문 준비 중");
+    assert.equal(questionReadyStatus.title, "첫 질문 준비 완료");
+    assert.equal(questionReadyStatus.progressText, "첫 질문 준비 완료");
     assert.equal(typeof providerStatus.elapsedMs, "number");
     assert.equal(started.session.runtime.officeHours.active, true);
     assert.equal(started.session.runtime.officeHours.source, "day1_real_project_test");
@@ -221,12 +226,123 @@ test("office_hours_start preserves custom source and ignores duplicate concurren
       1,
     );
 
+    const firstQuestion = pendingInputUpdate.session.pendingUserInput.questions[0];
+    ws.send(JSON.stringify({
+      type: "submit_user_input",
+      sessionId: created.session.id,
+      requestId: pendingInputUpdate.session.pendingUserInput.requestId,
+      responses: [
+        {
+          question: firstQuestion.question,
+          selectedOptions: [firstQuestion.options[0].label],
+          freeText: "",
+        },
+      ],
+    }));
+    const followupProviderStatus = await waitForEvent(ws.events, (event) =>
+      event.type === "office_hours_status"
+        && event.sessionId === created.session.id
+        && event.stage === "provider_starting"
+        && ws.events.indexOf(event) > questionReadyStatusIndex,
+    );
+    assert.equal(followupProviderStatus.title, "다음 질문 준비 중");
+    assert.equal(
+      followupProviderStatus.detail,
+      "답변과 프로젝트 맥락에 맞는 다음 질문을 준비하고 있습니다.",
+    );
+    assert.equal(followupProviderStatus.progressText, "프로젝트 맥락에 맞는 다음 질문 준비 중");
+
     ws.send(JSON.stringify({ type: "stop_session", sessionId: created.session.id }));
     await waitForEvent(ws.events, (event) =>
       event.type === "session_updated"
         && event.session?.id === created.session.id
         && event.session?.status === "idle",
     );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("day1_goal_save/get persists goal state and hydrates scan/project context", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "day1_goal_get",
+      workspaceRoot: harness.workspacePath,
+    }));
+    const initial = await waitForEvent(ws.events, (event) =>
+      event.type === "day1_goal_state"
+        && event.workspaceRoot === harness.workspacePath
+        && event.day1GoalSelection == null,
+    );
+    assert.equal(initial.day1GoalSelection, null);
+    ws.events.length = 0;
+
+    const selection = {
+      goalType: "make_money",
+      goalText: "Support leads will pay to avoid missed Slack escalations.",
+      customer: "B2B support leads",
+      problem: "Slack escalations are missed during handoff.",
+      validationAction: "Ask three support leads for a paid pilot.",
+      evidenceRefs: ["README.md", "docs/ICP.md"],
+      proofSink: "bip_optional",
+      sourcePlanFingerprint: "scan-fingerprint-1",
+      selectedAt: "2026-06-06T00:00:00.000Z",
+      schemaVersion: 1,
+    };
+    ws.send(JSON.stringify({
+      type: "day1_goal_save",
+      workspaceRoot: harness.workspacePath,
+      selection,
+    }));
+    const saved = await waitForEvent(ws.events, (event) =>
+      event.type === "day1_goal_state"
+        && event.workspaceRoot === harness.workspacePath
+        && event.day1GoalSelection?.goalType === "make_money",
+    );
+    assert.equal(saved.day1GoalSelection.proofSink, "bip_optional");
+    assert.equal(saved.projectContext.targetUser, "B2B support leads");
+    assert.equal(saved.projectContext.problem, "Slack escalations are missed during handoff.");
+    assert.equal(saved.projectContext.goal, "Support leads will pay to avoid missed Slack escalations.");
+
+    const goalPath = path.join(harness.workspacePath, ".agentic30", "day1-goal.json");
+    const persistedGoal = JSON.parse(await fs.readFile(goalPath, "utf8"));
+    assert.equal(persistedGoal.goalType, "make_money");
+    assert.equal(persistedGoal.proofSink, "bip_optional");
+
+    const contextPath = path.join(harness.workspacePath, ".agentic30", "project-context.json");
+    const persistedContext = JSON.parse(await fs.readFile(contextPath, "utf8"));
+    assert.equal(persistedContext.targetUser, "B2B support leads");
+    assert.equal(persistedContext.goal, "Support leads will pay to avoid missed Slack escalations.");
+
+    ws.events.length = 0;
+    ws.send(JSON.stringify({
+      type: "day1_goal_get",
+      workspaceRoot: harness.workspacePath,
+    }));
+    await waitForEvent(ws.events, (event) =>
+      event.type === "day1_goal_state"
+        && event.workspaceRoot === harness.workspacePath
+        && event.day1GoalSelection?.sourcePlanFingerprint === "scan-fingerprint-1",
+    );
+
+    ws.events.length = 0;
+    await fs.writeFile(path.join(harness.workspacePath, "README.md"), "# SupportLens\n");
+    ws.send(JSON.stringify({
+      type: "scan_workspace",
+      root: harness.workspacePath,
+      prompt: "scan after goal save",
+    }));
+    const scanResult = await waitForEvent(ws.events, (event) =>
+      event.type === "workspace_scan_result"
+        && event.scanRoot === harness.workspacePath
+        && event.day1GoalSelection?.goalType === "make_money",
+    );
+    assert.equal(scanResult.day1GoalSelection.customer, "B2B support leads");
   } finally {
     ws?.close();
     await harness.close();

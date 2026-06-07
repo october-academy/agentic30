@@ -351,24 +351,22 @@ enum OpenDesignReferenceCatalog {
     static let settings = OpenDesignReferencePageModel(
         kind: .settings,
         sideTitle: "설정",
-        sideBadge: "10",
+        sideBadge: nil,
         sideSearchPlaceholder: "설정 검색",
         sideGroups: [
             .init(title: "General", count: nil, rows: [
-                .init(id: "workspace", title: "워크스페이스", subtitle: nil, badge: "3", leading: "⌂", tone: .accent, isActive: true),
-                .init(id: "appearance", title: "외관 & 액센트", subtitle: nil, badge: "시스템", leading: "◐", tone: .sky, isActive: false),
+                .init(id: "workspace", title: "워크스페이스", subtitle: nil, badge: nil, leading: "⌂", tone: .accent, isActive: true),
+                .init(id: "appearance", title: "외관", subtitle: nil, badge: nil, leading: "◐", tone: .sky, isActive: false),
                 .init(id: "menubar", title: "메뉴바 & 알림", subtitle: nil, badge: nil, leading: "!", tone: .amber, isActive: false),
-                .init(id: "shortcuts", title: "단축키", subtitle: nil, badge: nil, leading: "⌘", tone: .violet, isActive: false),
             ]),
             .init(title: "Agent", count: nil, rows: [
-                .init(id: "providers", title: "AI 프로바이더", subtitle: nil, badge: "Claude", leading: "</>", tone: .accent, isActive: false),
-                .init(id: "records", title: "기록 자동 수집", subtitle: nil, badge: "2 / 6", leading: "◎", tone: .teal, isActive: false),
-                .init(id: "integrations", title: "연동", subtitle: nil, badge: "0 / 3", leading: "∞", tone: .amber, isActive: false),
+                .init(id: "providers", title: "AI 프로바이더", subtitle: nil, badge: nil, leading: "</>", tone: .accent, isActive: false),
+                .init(id: "integrations", title: "연동", subtitle: nil, badge: nil, leading: "∞", tone: .amber, isActive: false),
             ]),
             .init(title: "Trust", count: nil, rows: [
                 .init(id: "privacy", title: "개인정보 & 진단", subtitle: nil, badge: nil, leading: "◇", tone: .rose, isActive: false),
-                .init(id: "updates", title: "업데이트", subtitle: nil, badge: "0.4.2", leading: "↻", tone: .sky, isActive: false),
-                .init(id: "advanced", title: "고급 & Sidecar", subtitle: nil, badge: "PID", leading: "$", tone: .muted, isActive: false),
+                .init(id: "updates", title: "업데이트", subtitle: nil, badge: nil, leading: "↻", tone: .sky, isActive: false),
+                .init(id: "advanced", title: "고급 & Sidecar", subtitle: nil, badge: nil, leading: "$", tone: .muted, isActive: false),
             ]),
         ],
         header: .init(
@@ -386,81 +384,39 @@ enum OpenDesignReferenceCatalog {
             .init(id: "banner", title: "상태", meta: nil, markerTone: .amber, blocks: [
                 .init("predogfood", style: .banner, title: "pre-dogfood 상태입니다.", subtitle: nil, body: "외부 텔레메트리·연동·자동 업로드는 기본적으로 모두 꺼져 있어요. 모든 데이터는 ~/Library/Application Support/Agentic30 안에만 머무릅니다.", chips: [.init("local-first", tone: .accent), .init("sanitize", tone: .amber)]),
             ]),
-            .init(id: "workspace", title: "워크스페이스", meta: "Day 1 · 메인 프로젝트 + 기록 폴더 3개", markerTone: .accent, blocks: [
+            .init(id: "workspace", title: "워크스페이스", meta: "메인 프로젝트", markerTone: .accent, blocks: [
                 .init("workspace-settings", style: .settings, rows: [
                     .init("main", title: "메인 프로젝트", subtitle: "Adaptive 엔진이 가장 먼저 읽는 폴더. SPEC.md / ICP.md / VALUES.md와 업무 일지가 여기에 누적됩니다.", trailing: "~/code/agentic30-public", tone: .accent),
-                    .init("iv", title: "인터뷰 transcript 폴더", subtitle: "Zoom / caret.so / 오프라인 녹음을 .txt · .md · .vtt · .srt 로 떨어뜨리는 곳. 새 파일은 자동으로 sidecar가 분석합니다.", trailing: "~/Documents/agentic30/interviews", tone: .sky),
-                    .init("log", title: "업무 일지 폴더", subtitle: "하루 1파일. 자동 템플릿은 오늘 만든 것 · 막힌 것 · 배운 것 3줄 — 그대로 다음 Day 과제의 컨텍스트가 됩니다.", trailing: "~/Documents/agentic30/log", tone: .teal),
-                    .init("bip", title: "BIP 폴더", subtitle: "Threads·블로그 초안과 발행 후 반응 캡처를 떨어뜨리는 곳. Day 18+ Launch phase에서 풀가동.", trailing: "비어 있음", tone: .amber),
-                    .init("watch", title: "파일 변경 감시", subtitle: "위 4개 경로를 FSEvents로 추적합니다. 끄면 수동 새로고침 — 배터리 5%/시간 절약.", trailing: "ON", tone: .accent),
-                    .init("ignore", title: "무시 패턴", subtitle: "node_modules · .git · dist · .next 외에 추가 패턴.", trailing: "패턴 추가", tone: .muted),
                 ]),
             ]),
-            .init(id: "appearance", title: "외관 & 액센트", meta: "시스템 따름 · Emerald", markerTone: .sky, blocks: [
+            .init(id: "appearance", title: "외관", meta: "Dark · Light", markerTone: .sky, blocks: [
                 .init("appearance-settings", style: .settings, rows: [
-                    .init("theme", title: "테마", subtitle: "시스템을 따르면 macOS 야간 모드 전환 시 자동으로 바뀝니다.", trailing: "System", tone: .sky),
-                    .init("accent", title: "액센트 색", subtitle: "today, progress, picker — 한 가지 색이 모든 강조를 통과합니다.", trailing: "Emerald", tone: .accent),
-                    .init("scale", title: "글자 크기", subtitle: "메뉴바 패널 + 메인 윈도우 둘 다 같이 움직입니다.", trailing: "100%", tone: .muted),
-                    .init("motion", title: "모션 줄이기", subtitle: "tutor 타이핑·페이드인을 끄고 즉시 렌더. prefers-reduced-motion이 켜져 있으면 강제 적용.", trailing: "OFF", tone: .amber),
-                    .init("sidebar", title: "사이드바 너비", subtitle: "30일 챌린지 리스트가 들어가는 가운데 열의 폭.", trailing: "표준 240px", tone: .muted),
+                    .init("theme", title: "테마", subtitle: "Dark 또는 Light 테마를 즉시 적용합니다.", trailing: "Dark", tone: .sky),
                 ]),
             ]),
-            .init(id: "menubar", title: "메뉴바 & 알림", meta: "하루 1번만 — 깊은 작업 보호", markerTone: .amber, blocks: [
+            .init(id: "menubar", title: "메뉴바 & 알림", meta: "로그인 항목", markerTone: .amber, blocks: [
                 .init("menubar-settings", style: .settings, rows: [
-                    .init("always", title: "메뉴바에 항상 표시", subtitle: "상단 우측 메뉴바에 A·30 아이콘이 떠 있게 합니다.", trailing: "ON", tone: .accent),
-                    .init("dock", title: "Dock 아이콘 숨기기", subtitle: "Dock에서 사라지고 메뉴바 전용 앱으로 동작합니다 — 1인 개발자 분들 대부분이 켜둡니다.", trailing: "ON", tone: .accent),
                     .init("login", title: "로그인 시 자동 실행", subtitle: "macOS 로그인 항목에 추가합니다. Launch Agent — com.octobacademy.agentic30.plist.", trailing: "ON", tone: .accent),
-                    .init("daily", title: "일일 체크인 알림", subtitle: "매일 한 번, 그날의 Day 과제를 메뉴바에서 살짝 띄웁니다. 칭찬형이 아니라 \"오늘 무엇을 만들 건가요?\".", trailing: "09:00", tone: .amber),
-                    .init("rhythm", title: "알림 받을 요일", subtitle: "기본은 주 5일. 주말도 작업한다면 토·일까지 켜세요.", trailing: "월-금", tone: .sky),
-                    .init("stuck", title: "무활동 알림 (Stuck check)", subtitle: "N시간 동안 새 기록이 안 들어오면 한 번만 부드럽게 알려줍니다.", trailing: "12시간", tone: .muted),
-                    .init("sound", title: "사운드", subtitle: "모든 알림에 시스템 알림음을 추가합니다.", trailing: "OFF", tone: .muted),
-                ]),
-            ]),
-            .init(id: "shortcuts", title: "단축키", meta: "메뉴바 전용 + 글로벌 4개", markerTone: .violet, blocks: [
-                .init("shortcut-settings", style: .settings, rows: [
-                    .init("toggle", title: "메뉴바 패널 토글", subtitle: "어느 앱에서든 빠르게 오늘 과제를 엽니다.", trailing: "⌥⌘A", tone: .violet),
-                    .init("capture", title: "빠른 기록 추가", subtitle: "선택 영역 또는 클립보드를 한 줄 업무 일지로 떨굽니다.", trailing: "⌥⌘N", tone: .violet),
-                    .init("today", title: "오늘 Day 열기", subtitle: "메인 윈도우로 점프 · 현재 진행 중인 Day로 자동 스크롤.", trailing: "⌥⌘T", tone: .violet),
-                    .init("interview", title: "인터뷰 transcript 드롭", subtitle: "파일 다이얼로그를 열어 .vtt / .srt / .md 한 건을 분석 큐에 넣습니다.", trailing: "⌥⌘I", tone: .violet),
-                    .init("lock", title: "Day 진행 잠금", subtitle: "한 번 켜면 미완료 Day를 건너뛰지 않습니다. 제약이 실력이다 가치를 강제하는 옵션.", trailing: "ON", tone: .accent),
                 ]),
             ]),
             .init(id: "providers", title: "AI 프로바이더", meta: "Claude 1순위 · Codex 폴백", markerTone: .accent, blocks: [
-                .init("provider-order", style: .settings, rows: [
-                    .init("order", title: "실행 순서", subtitle: "왼쪽이 1순위. 첫 번째 프로바이더가 실패하거나 인증이 끊기면 자동으로 오른쪽으로 폴백합니다.", trailing: "Claude → Codex", tone: .accent),
-                ]),
                 .init("providers", style: .cards, rows: [
-                    .init("claude", leading: "A", title: "Claude", subtitle: "Adaptive 엔진 · day-task 생성 · transcript 분석", body: "로컬 Claude Code 세션 연결됨 · claude-opus-4-7 (1M) · 월 42 호출 · 입력 1.6M · 출력 184K · 캐시 적중률 71%", trailing: "연결됨", tone: .accent),
-                    .init("codex", leading: "⌥", title: "Codex", subtitle: "대체 엔진 · /analyze-ads · 비싼 모델 회피 시 사용", body: "로컬 Codex 세션 발견 안 됨 · OPENAI_API_KEY / CODEX_API_KEY 없음 · 인증 후 모델 선택 가능", trailing: "로그인", tone: .amber),
+                    .init("claude", leading: "A", title: "Claude", subtitle: "로컬 인증 또는 API 키 · 모델 선택", body: "Agent settings는 Keychain 저장값과 sidecar provider settings에 동기화됩니다.", trailing: "설정됨", tone: .accent),
+                    .init("codex", leading: "C", title: "Codex", subtitle: "로컬 인증 또는 API 키 · 모델 선택", body: "OpenAI/Codex 인증 방식과 모델 ID를 저장합니다.", trailing: "설정됨", tone: .accent),
+                    .init("gemini", leading: "G", title: "Gemini", subtitle: "API 키 · 모델 선택", body: "Gemini API 키와 모델 ID를 Keychain에 저장합니다.", trailing: "선택", tone: .sky),
+                    .init("exa", leading: "E", title: "Exa Research", subtitle: "News Market Radar fallback key", body: "Provider Exa MCP가 없을 때만 사용하는 fallback API key입니다.", trailing: "Keychain", tone: .amber),
                     .init("node", leading: "20", title: "Node 런타임", subtitle: "/usr/local/bin/node — v20.11.1", body: "Sidecar가 사용하는 Node 바이너리. 20+ 필요. NODE_BINARY → 일반 설치 → mise/asdf/Volta → 로그인 셸 PATH 순으로 탐색합니다.", trailing: "20+", tone: .sky),
-                    .init("cache", leading: "24h", title: "캐시 사용", subtitle: "동일 day-task / 동일 transcript 분석 결과를 24h 캐싱합니다.", body: "끄면 매번 새로 호출 → 비용/시간이 늘어납니다. 월 비용 상한은 $30으로 알림만 보냅니다.", trailing: "ON", tone: .accent),
-                ]),
-            ]),
-            .init(id: "records", title: "기록 자동 수집", meta: "기본은 폴더 watch만 — API 연동은 명시적 opt-in", markerTone: .teal, blocks: [
-                .init("records", style: .rows, rows: [
-                    .init("git", leading: "⌥", title: "Git 커밋 로그", subtitle: "메인 프로젝트의 최근 커밋을 5분마다 읽어 업무 일지 초안으로 보냅니다.", trailing: "활성", tone: .accent),
-                    .init("rss", leading: "RSS", title: "블로그 RSS", subtitle: "발행한 글을 BIP 일지에 자동 append. https://zettalyst.bearblog.dev/feed/", trailing: "활성", tone: .sky),
-                    .init("caret", leading: "C", title: "caret.so transcripts", subtitle: "로컬 transcript 폴더 watch. iCloud 동기화 지원 안 됨 — 로컬 경로만.", trailing: "꺼짐", tone: .muted),
-                    .init("zoom", leading: "Z", title: "Zoom 로컬 녹화", subtitle: "~/Documents/Zoom 에 떨어지는 .vtt 파일을 인터뷰 폴더로 자동 이동.", trailing: "꺼짐", tone: .muted),
-                    .init("granola", leading: "G", title: "Granola", subtitle: "미팅 노트를 자동으로 인터뷰 폴더로 흘려보냅니다.", trailing: "꺼짐", tone: .muted),
-                    .init("threads-rss", leading: "@", title: "Threads 본인 게시글 RSS", subtitle: "공개 게시글과 반응 수치를 BIP 일지에 누적.", trailing: "꺼짐", tone: .muted),
                 ]),
             ]),
             .init(id: "integrations", title: "연동", meta: "OAuth · API 키 — Keychain 보관", markerTone: .amber, blocks: [
                 .init("integrations", style: .rows, rows: [
                     .init("notion", leading: "N", title: "Notion", subtitle: "SPEC.md / ICP.md / VALUES.md 변경분을 지정한 페이지로 양방향 동기화.", trailing: "연결 안 됨", tone: .muted),
-                    .init("threads", leading: "@", title: "Threads (Meta)", subtitle: "Day 18+ Launch phase에서 BIP 게시 초안을 직접 보내기 위한 publishing token.", trailing: "연결 안 됨", tone: .muted),
-                    .init("meta", leading: "M", title: "Meta Ads", subtitle: "/analyze-ads · Day 5 수요 검증과 Day 25+ Grow에서 사용.", trailing: "연결 안 됨", tone: .muted),
                 ]),
-                .init("integration-note", style: .banner, title: "외부 연동은 기본 OFF입니다.", subtitle: "참고", body: "BIP 자동 게시·Meta Ads 데이터 동기화는 Foundation loop가 daily dogfood로 검증된 이후 활성화합니다.", chips: [.init("explicit opt-in", tone: .amber), .init("Keychain", tone: .accent)]),
             ]),
             .init(id: "privacy", title: "개인정보 & 진단", meta: "로컬 우선 · sanitized snapshot only", markerTone: .rose, blocks: [
                 .init("privacy", style: .settings, rows: [
                     .init("posthog", title: "사용량 텔레메트리 (PostHog)", subtitle: "앱 열기 횟수, Day 도달 일자, 작업 완료/포기 같은 익명 이벤트. opt-in이며 KR1.1 ~ KR4.3 측정에만 쓰입니다.", trailing: "OFF", tone: .muted),
-                    .init("crash", title: "크래시 리포트", subtitle: "Swift 또는 Node sidecar가 죽으면 stack trace만 보냅니다. transcript / token 절대 미포함.", trailing: "ON", tone: .accent),
-                    .init("sanitize", title: "진단 스냅샷 sanitize", subtitle: "진단 export 시 token · path · email · 인터뷰 내용을 자동 마스킹합니다. 강제 켜짐.", trailing: "강제 켜짐", tone: .amber),
-                    .init("retention", title: "세션 보관 기간", subtitle: "로컬 sessions / day-task 히스토리. 초과분은 자동으로 삭제됩니다.", trailing: "90일", tone: .muted),
-                    .init("snapshot", title: "진단 스냅샷 내보내기", subtitle: "제출 전 미리보기 — ~/Library/Logs/Agentic30/diagnostic-2026-05-16.zip · 3건.", trailing: "내보내기…", tone: .amber),
+                    .init("snapshot", title: "진단 스냅샷 내보내기", subtitle: "제출 전 미리보기 — sanitized runtime snapshot을 클립보드로 복사합니다.", trailing: "내보내기...", tone: .amber),
                     .init("reset", title: "모든 로컬 데이터 삭제", subtitle: "sessions, day-task 히스토리, 캐시. 기록 폴더 자체는 건드리지 않습니다.", trailing: "데이터 초기화…", tone: .rose),
                 ]),
             ]),
@@ -468,33 +424,28 @@ enum OpenDesignReferenceCatalog {
                 .init("updates", style: .settings, rows: [
                     .init("version", title: "현재 버전", subtitle: "Foundation preview — Day 0-3 loop 한정. Day 4-7은 다음 점 릴리즈 예정.", trailing: "0.4.2 · build 1042", tone: .accent),
                     .init("auto", title: "자동 업데이트", subtitle: "Sparkle이 백그라운드에서 appcast를 확인하고 새 버전을 받아옵니다. 설치는 다음 실행 때.", trailing: "ON", tone: .accent),
-                    .init("channel", title: "채널", subtitle: "Stable은 1주 사이클 · Beta는 거의 매일. Beta는 sidecar 호환성이 깨질 수 있음.", trailing: "Stable", tone: .sky),
                     .init("checked", title: "마지막 확인", subtitle: "appcast.xml을 마지막으로 조회한 시각. 최신 — 0.4.2.", trailing: "5분 전", tone: .muted),
                     .init("signing", title: "서명 확인", subtitle: "notarization · Hardened Runtime · Developer ID · 모두 통과.", trailing: "검증됨", tone: .accent),
                 ]),
             ]),
-            .init(id: "advanced", title: "고급 & Sidecar", meta: "stdio · local HTTP · MCP", markerTone: .muted, blocks: [
+            .init(id: "advanced", title: "고급 & Sidecar", meta: "Sidecar · 진단 · 로그", markerTone: .muted, blocks: [
                 .init("advanced", style: .settings, rows: [
                     .init("state", title: "Sidecar 상태", subtitle: "Node sidecar가 살아 있고 stdio + 로컬 HTTP 둘 다 응답 중입니다.", trailing: "실행 중 · PID 47281", tone: .accent),
-                    .init("transport", title: "통신 채널", subtitle: "기본은 stdio. HTTP는 디버깅 용도로만. 두 채널 모두 켜져 있어도 sandbox 안에서만 listen.", trailing: "stdio", tone: .sky),
-                    .init("mcp", title: "MCP 도구 서버", subtitle: "sidecar/mcp-server.mjs — Adaptive 엔진이 사용할 수 있는 내부 도구 28개.", trailing: "ON", tone: .accent),
-                    .init("acp", title: "ACP 어댑터", subtitle: "Agent Client Protocol — Claude / Codex 양쪽이 같은 envelope을 받게 해주는 어댑터.", trailing: "ON", tone: .accent),
-                    .init("logs", title: "상세 로그", subtitle: "트레이스 레벨까지 기록합니다. 평시엔 끄세요 — 1일에 ~80 MB 까지 늘어납니다.", trailing: "info", tone: .muted),
                     .init("log-folder", title: "로그 폴더", subtitle: "~/Library/Logs/Agentic30 — 회전 7개 보관.", trailing: "Finder에서 열기", tone: .muted),
-                    .init("experiments", title: "실험 기능", subtitle: "미완성 흐름을 켭니다 · 깨질 수 있음. Day 4-7 prototype, mem0 장기 기억, /bip-draft v2.", trailing: "3 / 7", tone: .amber),
+                    .init("bip-notifications", title: "BIP Notifications", subtitle: "테스트 알림은 실제 macOS 알림 센터 경로를 사용합니다.", trailing: "테스트", tone: .amber),
+                    .init("confetti", title: "Confetti 테스트", subtitle: "완료 축하 confetti 렌더링 경로를 즉시 재생합니다.", trailing: "재생", tone: .sky),
                 ]),
             ]),
         ],
         meta: .init(title: "시스템 상태", cards: [
             .init("sidecar", style: .rows, rows: [
                 .init("status", title: "상태", subtitle: "PID 47281 · 업타임 2d 14h · 메모리 86 MB · CPU 0.4%", trailing: "실행 중", tone: .accent),
-                .init("storage", title: "스토리지", subtitle: "sessions 312KB · transcripts 6.7KB · 업무 일지 11KB · BIP 0KB", trailing: "328 KB", tone: .sky),
+                .init("workspace", title: "워크스페이스", subtitle: "~/code/agentic30-public", trailing: "명시됨", tone: .sky),
                 .init("version", title: "버전", subtitle: "app 0.4.2 (1042) · sidecar 0.4.2 · node v20.11.1 · swift 5.10 · macOS 14.5", trailing: "arm64", tone: .muted),
             ]),
             .init("system-actions", style: .rows, rows: [
                 .init("diagnostics", title: "진단 스냅샷 내보내기", subtitle: "sanitize · ZIP", trailing: nil, tone: .amber),
                 .init("restart", title: "Sidecar 재시작", subtitle: "다운타임 ~1초", trailing: nil, tone: .accent),
-                .init("reindex", title: "워크스페이스 재인덱스", subtitle: "모든 path 재스캔", trailing: nil, tone: .sky),
             ]),
             .init("reference-docs", style: .rows, rows: [
                 .init("release", title: "release-checklist.md", subtitle: "배포 전 점검 항목", trailing: nil, tone: .muted),
@@ -4525,6 +4476,7 @@ struct OpenDesignReferenceTitlebar: View {
         .frame(height: 36)
         .background(OpenDesignDayColor.bg)
         .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+        .openDesignWindowTitlebarAccessibility()
     }
 }
 
@@ -4646,14 +4598,6 @@ private struct OpenDesignSettingsSidebarView: View {
                 Text(page.sideTitle)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(OpenDesignDayColor.fg)
-                if let sideBadge = page.sideBadge {
-                    Text(sideBadge)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(OpenDesignDayColor.muted)
-                        .padding(.horizontal, 6)
-                        .frame(height: 18)
-                        .background(Capsule().fill(OpenDesignDayColor.surface))
-                }
                 Spacer(minLength: 0)
             }
             .padding(.top, 10)
@@ -4716,9 +4660,7 @@ private struct OpenDesignSettingsSideRowView: View {
         case "workspace": return "folder"
         case "appearance": return "circle.lefthalf.filled"
         case "menubar": return "bell"
-        case "shortcuts": return "command"
         case "providers": return "chevron.left.forwardslash.chevron.right"
-        case "records": return "smallcircle.circle"
         case "integrations": return "link"
         case "privacy": return "shield"
         case "updates": return "arrow.triangle.2.circlepath"
@@ -4741,22 +4683,6 @@ private struct OpenDesignSettingsSideRowView: View {
                 .lineLimit(1)
 
             Spacer(minLength: 6)
-
-            if let badge = row.badge {
-                Text(badge)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(settingsBadgeForeground(row: row))
-                    .lineLimit(1)
-                    .padding(.horizontal, settingsBadgeHasCapsule(row: row) ? 6 : 0)
-                    .frame(height: settingsBadgeHasCapsule(row: row) ? 20 : nil)
-                    .background {
-                        if settingsBadgeHasCapsule(row: row) {
-                            Capsule()
-                                .fill(settingsBadgeFill(row: row))
-                                .overlay(Capsule().stroke(settingsBadgeStroke(row: row), lineWidth: 1))
-                        }
-                    }
-            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
@@ -4947,10 +4873,8 @@ private struct OpenDesignSettingsBlockView: View {
             OpenDesignSettingsRowsCard(sectionID: sectionID, rows: block.rows)
         case .cards where sectionID == "providers":
             OpenDesignSettingsProviderList(rows: block.rows)
-        case .rows where sectionID == "records" || sectionID == "integrations":
-            OpenDesignSettingsIntegrationCard(sectionID: sectionID, rows: block.rows)
-        case .banner where sectionID == "integrations":
-            OpenDesignSettingsNote(block: block)
+        case .rows where sectionID == "integrations":
+            OpenDesignSettingsIntegrationCard(rows: block.rows)
         default:
             OpenDesignReferenceBlockView(block: block, layout: OpenDesignDayLayoutMetrics(width: 1180))
         }
@@ -5011,10 +4935,6 @@ private struct OpenDesignSettingsRowView: View {
             appearanceControl
         } else if sectionID == "menubar" {
             menubarControl
-        } else if sectionID == "shortcuts" {
-            shortcutControl
-        } else if sectionID == "providers" && row.id == "order" {
-            OpenDesignSettingsSegmented(values: ["Claude", "Codex"], active: "Claude")
         } else if sectionID == "privacy" {
             privacyControl
         } else if sectionID == "updates" {
@@ -5029,21 +4949,14 @@ private struct OpenDesignSettingsRowView: View {
     @ViewBuilder
     private var workspaceControl: some View {
         switch row.id {
-        case "main", "iv", "log", "bip":
+        case "main":
             HStack(spacing: 8) {
                 OpenDesignSettingsPathPill(
                     text: row.trailing ?? "비어 있음",
-                    tone: row.id == "bip" ? .amber : row.tone,
-                    isStale: row.id == "bip"
+                    tone: row.tone,
+                    isStale: false
                 )
                 settingsGhostButton("변경...", width: 70)
-            }
-        case "watch":
-            OpenDesignSettingsToggle(isOn: true)
-        case "ignore":
-            HStack(spacing: 8) {
-                OpenDesignSettingsIgnorePatternChips()
-                settingsGhostButton("+  패턴 추가", width: 112)
             }
         default:
             if let trailing = row.trailing {
@@ -5056,13 +4969,7 @@ private struct OpenDesignSettingsRowView: View {
     private var appearanceControl: some View {
         switch row.id {
         case "theme":
-            OpenDesignSettingsSegmented(values: ["System"], active: "System", tone: .sky)
-        case "accent":
-            OpenDesignSettingsSegmented(values: ["Emerald"], active: "Emerald")
-        case "scale":
-            settingsNeutralPill("100%")
-        case "motion":
-            OpenDesignSettingsToggle(isOn: false, tone: .amber)
+            OpenDesignSettingsSegmented(values: ["Dark", "Light"], active: row.trailing ?? "Dark", tone: .sky)
         default:
             settingsNeutralPill(row.trailing ?? "")
         }
@@ -5071,28 +4978,10 @@ private struct OpenDesignSettingsRowView: View {
     @ViewBuilder
     private var menubarControl: some View {
         switch row.id {
-        case "always", "dock", "login":
+        case "login":
             OpenDesignSettingsToggle(isOn: true)
-        case "daily":
-            settingsTimePill("09:00")
-        case "rhythm":
-            OpenDesignSettingsRhythmDays()
-        case "sound":
-            OpenDesignSettingsToggle(isOn: false)
         default:
             settingsNeutralPill(row.trailing ?? "")
-        }
-    }
-
-    @ViewBuilder
-    private var shortcutControl: some View {
-        if row.id == "lock" {
-            OpenDesignSettingsToggle(isOn: true)
-        } else {
-            HStack(spacing: 8) {
-                OpenDesignShortcutDisplay(value: row.trailing ?? "")
-                settingsGhostButton("변경...", width: 70)
-            }
         }
     }
 
@@ -5101,10 +4990,6 @@ private struct OpenDesignSettingsRowView: View {
         switch row.id {
         case "posthog":
             OpenDesignSettingsToggle(isOn: false)
-        case "crash", "sanitize":
-            OpenDesignSettingsToggle(isOn: true, locked: row.id == "sanitize")
-        case "retention":
-            settingsSelectPill(row.trailing ?? "90일")
         case "reset":
             settingsGhostButton(row.trailing ?? "데이터 초기화...", width: 118, tone: .rose)
         default:
@@ -5124,8 +5009,6 @@ private struct OpenDesignSettingsRowView: View {
             }
         case "auto":
             OpenDesignSettingsToggle(isOn: true)
-        case "channel":
-            OpenDesignSettingsSegmented(values: ["Stable", "Beta"], active: "Stable", tone: .sky)
         case "checked":
             HStack(spacing: 8) {
                 Text("5분 전")
@@ -5149,19 +5032,15 @@ private struct OpenDesignSettingsRowView: View {
                     .foregroundStyle(OpenDesignDayColor.muted)
                 settingsGhostButton("재시작", width: 64)
             }
-        case "transport":
-            OpenDesignSettingsSegmented(values: ["stdio", "HTTP 127.0.0.1:0", "둘 다"], active: "stdio", tone: .sky)
-        case "mcp", "acp":
-            OpenDesignSettingsToggle(isOn: true)
-        case "logs":
-            settingsSelectPill("info")
         case "log-folder":
             settingsGhostButton("Finder에서 열기", systemImage: "arrow.up.right.square", width: 124)
-        case "experiments":
+        case "bip-notifications":
             HStack(spacing: 8) {
-                settingsStatusPill("3 / 7", tone: .amber)
-                settingsGhostButton("목록...", width: 66)
+                settingsGhostButton("Snooze", systemImage: "moon", width: 78)
+                settingsGhostButton("Open", systemImage: "arrow.up.forward.app", width: 72)
             }
+        case "confetti":
+            settingsGhostButton("재생", systemImage: "sparkles", width: 72)
         default:
             if let trailing = row.trailing {
                 settingsStatusPill(trailing, tone: row.tone)
@@ -5205,8 +5084,6 @@ private struct OpenDesignSettingsProviderList: View {
 
                         if row.id == "codex" {
                             settingsGhostButton("로그인", width: 62)
-                        } else if row.id == "cache" {
-                            OpenDesignSettingsToggle(isOn: true)
                         }
                     }
                     .padding(.horizontal, 14)
@@ -5216,7 +5093,7 @@ private struct OpenDesignSettingsProviderList: View {
 
                     VStack(spacing: 0) {
                         providerDetailRow(label: "상태", value: row.body ?? row.subtitle ?? "확인 중")
-                        providerDetailRow(label: "정책", value: row.id == "claude" ? "1순위 · 실패 시 Codex 폴백" : row.id == "codex" ? "폴백 · 분석 전용" : "로컬 런타임")
+                        providerDetailRow(label: "정책", value: providerPolicy(for: row.id))
                     }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 4)
@@ -5243,10 +5120,24 @@ private struct OpenDesignSettingsProviderList: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
     }
+
+    private func providerPolicy(for id: String) -> String {
+        switch id {
+        case "claude":
+            return "로컬 인증 또는 API 키"
+        case "codex":
+            return "로컬 인증 또는 API 키"
+        case "gemini":
+            return "API 키"
+        case "exa":
+            return "fallback API key"
+        default:
+            return "로컬 런타임"
+        }
+    }
 }
 
 private struct OpenDesignSettingsIntegrationCard: View {
-    let sectionID: String
     let rows: [OpenDesignReferenceRow]
 
     var body: some View {
@@ -5272,17 +5163,8 @@ private struct OpenDesignSettingsIntegrationCard: View {
                     }
                     Spacer(minLength: 12)
 
-                    if sectionID == "records" {
-                        settingsStatusPill(row.trailing ?? "꺼짐", tone: row.tone)
-                        if row.tone == .muted {
-                            settingsGhostButton("켜기", width: 54)
-                        } else {
-                            OpenDesignSettingsToggle(isOn: true)
-                        }
-                    } else {
-                        settingsStatusPill(row.trailing ?? "연결 안 됨", tone: .muted)
-                        settingsGhostButton("연결", width: 54)
-                    }
+                    settingsStatusPill(row.trailing ?? "연결 안 됨", tone: .muted)
+                    settingsGhostButton("연결", width: 54)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
@@ -5294,21 +5176,6 @@ private struct OpenDesignSettingsIntegrationCard: View {
         }
         .background(referenceRounded(fill: OpenDesignDayColor.surface, stroke: OpenDesignDayColor.borderSoft, radius: 12))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-}
-
-private struct OpenDesignSettingsNote: View {
-    let block: OpenDesignReferenceBlock
-
-    var body: some View {
-        Text("\(block.subtitle ?? "참고") — \(block.body ?? "")")
-            .font(.system(size: 11.5, weight: .regular))
-            .foregroundStyle(OpenDesignDayColor.muted)
-            .lineSpacing(3)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 4)
-            .padding(.top, -4)
-            .padding(.bottom, 2)
     }
 }
 
@@ -5376,57 +5243,6 @@ private struct OpenDesignSettingsSegmented: View {
     }
 }
 
-private struct OpenDesignSettingsIgnorePatternChips: View {
-    private let patterns = ["node_modules", ".git", "dist", ".next"]
-
-    var body: some View {
-        HStack(spacing: 5) {
-            ForEach(patterns, id: \.self) { pattern in
-                Text(pattern)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(OpenDesignDayColor.accent)
-                    .padding(.horizontal, 5)
-                    .frame(height: 20)
-                    .background(referenceRounded(fill: OpenDesignDayColor.bgDarker, stroke: OpenDesignDayColor.borderSoft, radius: 4))
-            }
-        }
-    }
-}
-
-private struct OpenDesignSettingsRhythmDays: View {
-    private let days = ["월", "화", "수", "목", "금", "토", "일"]
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(days.indices, id: \.self) { index in
-                Text(days[index])
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(index < 5 ? OpenDesignDayColor.accent : OpenDesignDayColor.muted)
-                    .frame(width: 26, height: 26)
-                    .background(referenceRounded(fill: index < 5 ? OpenDesignDayColor.accentDim : OpenDesignDayColor.bgDarker, stroke: index < 5 ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, radius: 6))
-            }
-        }
-    }
-}
-
-private struct OpenDesignShortcutDisplay: View {
-    let value: String
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(Array(value.map(String.init).enumerated()), id: \.offset) { _, key in
-                Text(key)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(OpenDesignDayColor.fg)
-                    .frame(minWidth: 22)
-                    .frame(height: 22)
-                    .padding(.horizontal, key.count > 1 ? 4 : 0)
-                    .background(referenceRounded(fill: OpenDesignDayColor.bgDarker, stroke: OpenDesignDayColor.border, radius: 5))
-            }
-        }
-    }
-}
-
 private struct OpenDesignSettingsMetaPanelView: View {
     var body: some View {
         ScrollView {
@@ -5454,19 +5270,15 @@ private struct OpenDesignSettingsMetaPanelView: View {
                 }
                 .padding(.bottom, 12)
 
-                OpenDesignSettingsMetaCard(label: "스토리지", isLive: false) {
-                    settingsMetaKeyValue("sessions", "312 KB · 24 건")
-                    settingsMetaKeyValue("transcripts", "6.7 KB · 1 건")
-                    settingsMetaKeyValue("업무 일지", "11 KB · 4 건")
-                    settingsMetaKeyValue("BIP", "0 KB · 0 건")
-                    settingsMetaKeyValue("총합", "328 KB", strong: true)
+                OpenDesignSettingsMetaCard(label: "워크스페이스", isLive: false) {
+                    settingsMetaKeyValue("경로", "~/code/agentic30-public", strong: true)
+                    settingsMetaKeyValue("상태", "명시됨")
                 }
                 .padding(.bottom, 26)
 
                 settingsMetaHeading("빠른 작업")
                 settingsMetaAction("진단 스냅샷 내보내기", subtitle: "sanitize · ZIP", systemImage: "square.and.arrow.down")
                 settingsMetaAction("Sidecar 재시작", subtitle: "다운타임 ~ 1초", systemImage: "arrow.clockwise")
-                settingsMetaAction("워크스페이스 재인덱스", subtitle: "모든 path 재스캔", systemImage: "clock.arrow.circlepath")
 
                 settingsMetaHeading("참고 문서")
                     .padding(.top, 18)
@@ -10142,31 +9954,6 @@ private struct OpenDesignReferenceChipView: View {
     }
 }
 
-private func settingsBadgeForeground(row: OpenDesignReferenceSideRow) -> Color {
-    if row.isActive || row.tone != .muted {
-        return row.tone.color
-    }
-    return OpenDesignDayColor.muted
-}
-
-private func settingsBadgeHasCapsule(row: OpenDesignReferenceSideRow) -> Bool {
-    row.badge != nil
-}
-
-private func settingsBadgeFill(row: OpenDesignReferenceSideRow) -> Color {
-    if row.isActive || row.tone == .accent || row.tone == .amber || row.tone == .sky {
-        return row.tone.dim
-    }
-    return OpenDesignDayColor.bgDarker
-}
-
-private func settingsBadgeStroke(row: OpenDesignReferenceSideRow) -> Color {
-    if row.isActive || row.tone == .accent || row.tone == .amber || row.tone == .sky {
-        return row.tone.line
-    }
-    return OpenDesignDayColor.borderSoft
-}
-
 private func settingsInlineText(_ text: String) -> String {
     text
 }
@@ -10197,29 +9984,6 @@ private func settingsNeutralPill(_ text: String) -> some View {
         .frame(minWidth: 118, minHeight: 26)
         .background(Capsule().fill(OpenDesignDayColor.surface2))
         .overlay(Capsule().stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
-}
-
-private func settingsTimePill(_ text: String) -> some View {
-    Text(text)
-        .font(.system(size: 13, weight: .medium, design: .monospaced))
-        .foregroundStyle(OpenDesignDayColor.fg)
-        .padding(.horizontal, 10)
-        .frame(minWidth: 64, minHeight: 28)
-        .background(referenceRounded(fill: OpenDesignDayColor.bgDarker, stroke: OpenDesignDayColor.borderSoft, radius: 7))
-}
-
-private func settingsSelectPill(_ text: String) -> some View {
-    HStack(spacing: 8) {
-        Text(text)
-        Image(systemName: "chevron.up.chevron.down")
-            .font(.system(size: 8, weight: .semibold))
-            .foregroundStyle(OpenDesignDayColor.muted)
-    }
-    .font(.system(size: 12, weight: .medium, design: .monospaced))
-    .foregroundStyle(OpenDesignDayColor.fg)
-    .padding(.horizontal, 12)
-    .frame(minWidth: 82, minHeight: 28)
-    .background(referenceRounded(fill: OpenDesignDayColor.bgDarker, stroke: OpenDesignDayColor.borderSoft, radius: 7))
 }
 
 private func settingsGhostButton(

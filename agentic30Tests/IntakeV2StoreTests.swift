@@ -392,6 +392,7 @@ final class IntakeSourceCatalogTests: XCTestCase {
             .cursor: .asset("BrandCursor"),
             .claudeCode: .asset("BrandClaude"),
             .codex: .asset("BrandOpenAI"),
+            .nativeNotes: .asset("BrandAppleNotes"),
             .gmailEmail: .asset("BrandGmail"),
             .calendarCalls: .asset("BrandGoogleCalendar"),
             .formsSurvey: .asset("BrandGoogleForms"),
@@ -426,7 +427,6 @@ final class IntakeSourceCatalogTests: XCTestCase {
     func test_sourceIconCatalog_keepsGenericSourcesOnSymbolFallbacks() throws {
         let genericSourceIDs: [IntakeSourceID] = [
             .localFolder,
-            .nativeNotes,
             .interviewTxt,
             .workLogFolder,
             .interviewTranscriptFolder,

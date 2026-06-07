@@ -13,6 +13,7 @@ import UserNotifications
 extension Notification.Name {
     static let agenticCheckForUpdatesRequested = Notification.Name("agenticCheckForUpdatesRequested")
     static let agenticOpenDesignSearchRequested = Notification.Name("agenticOpenDesignSearchRequested")
+    static let agenticOpenDesignSettingsRequested = Notification.Name("agenticOpenDesignSettingsRequested")
 }
 
 @main
@@ -42,20 +43,21 @@ struct agentic30App: App {
         .windowResizability(.contentMinSize)
         .defaultLaunchBehavior(CommandLine.arguments.contains { $0.hasPrefix("--ui-testing") } ? .presented : .automatic)
         .commands {
-            CommandGroup(after: .appSettings) {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    appDelegate.openSettingsInWorkspace(source: "app_menu")
+                }
+                .keyboardShortcut(",", modifiers: .command)
+
                 Button("Check for Updates...") {
                     appDelegate.checkForUpdates(nil)
                 }
+
                 Button("Search") {
                     NotificationCenter.default.post(name: .agenticOpenDesignSearchRequested, object: nil)
                 }
                 .keyboardShortcut("k", modifiers: .command)
             }
-        }
-
-        Settings {
-            SettingsView(viewModel: appDelegate.viewModel)
-                .tint(Agentic30BrandColor.green)
         }
 
         MenuBarExtra {
@@ -159,11 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if CommandLine.arguments.contains("--ui-testing-open-settings") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-                self?.closeWorkspaceWindows()
-                NSApp.activate(ignoringOtherApps: true)
-                if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
-                    NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-                }
+                self?.openSettingsInWorkspace(source: "ui_test_launch_argument")
             }
         } else if CommandLine.arguments.contains("--ui-testing-open-workspace") {
             scheduleUITestingWorkspaceOpen()
@@ -265,6 +263,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             pendingWorkspaceOpen = true
             PostHogTelemetry.capture("mac_workspace_open_handler_missing", authSession: viewModel.macAuthSession)
+        }
+    }
+
+    @MainActor
+    func openSettingsInWorkspace(source: String) {
+        PostHogTelemetry.capture(
+            "mac_settings_open_requested",
+            properties: ["source": source],
+            authSession: viewModel.macAuthSession
+        )
+        openWorkspaceWindow()
+        requestOpenDesignSettingsRoute()
+    }
+
+    private func requestOpenDesignSettingsRoute() {
+        NotificationCenter.default.post(name: .agenticOpenDesignSettingsRequested, object: nil)
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .agenticOpenDesignSettingsRequested, object: nil)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            NotificationCenter.default.post(name: .agenticOpenDesignSettingsRequested, object: nil)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            NotificationCenter.default.post(name: .agenticOpenDesignSettingsRequested, object: nil)
         }
     }
 
@@ -647,10 +669,7 @@ private struct StatusMenuContent: View {
                     properties: ["action": "open_settings"],
                     authSession: viewModel.macAuthSession
                 )
-                NSApp.activate(ignoringOtherApps: true)
-                if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
-                    NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-                }
+                appDelegate.openSettingsInWorkspace(source: "menu_bar")
             } label: {
                 Text("Settings…")
             }

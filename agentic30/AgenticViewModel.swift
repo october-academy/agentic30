@@ -909,6 +909,196 @@ struct StartupQueuedAction: Identifiable {
     }
 }
 
+enum Day1GoalType: String, Codable, CaseIterable, Hashable {
+    case makeMoney = "make_money"
+    case getUsers = "get_users"
+    case buildProduct = "build_product"
+
+    var title: String {
+        switch self {
+        case .makeMoney: return "돈 벌기"
+        case .getUsers: return "유저 모으기"
+        case .buildProduct: return "제품 만들기 도움"
+        }
+    }
+
+    var promptHint: String {
+        switch self {
+        case .makeMoney:
+            return "첫 매출, 유료 파일럿, 구매 조건처럼 돈이 움직이는 증거를 확인합니다."
+        case .getUsers:
+            return "마케팅, 채널, referral, waitlist처럼 실제 유입 행동을 확인합니다."
+        case .buildProduct:
+            return "구현, 사용성, workflow 성공처럼 제품을 완성하는 데 필요한 증거를 확인합니다."
+        }
+    }
+}
+
+enum Day1ProofSink: String, Codable, Hashable {
+    case local
+    case bipOptional = "bip_optional"
+}
+
+struct Day1GoalSelection: Codable, Equatable, Hashable {
+    let schemaVersion: Int
+    let schema: String?
+    let goalType: Day1GoalType
+    let goalText: String
+    let customer: String
+    let problem: String
+    let validationAction: String
+    let evidenceRefs: [String]
+    let proofSink: Day1ProofSink
+    let sourcePlanFingerprint: String
+    let selectedAt: String
+
+    init(
+        schemaVersion: Int = 1,
+        schema: String? = "agentic30.day1_goal.v1",
+        goalType: Day1GoalType,
+        goalText: String,
+        customer: String,
+        problem: String,
+        validationAction: String,
+        evidenceRefs: [String],
+        proofSink: Day1ProofSink,
+        sourcePlanFingerprint: String,
+        selectedAt: String
+    ) {
+        self.schemaVersion = schemaVersion
+        self.schema = schema
+        self.goalType = goalType
+        self.goalText = goalText.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.customer = customer.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.problem = problem.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.validationAction = validationAction.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.evidenceRefs = evidenceRefs
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        self.proofSink = proofSink
+        self.sourcePlanFingerprint = sourcePlanFingerprint
+        self.selectedAt = selectedAt
+    }
+
+    var bridgePayload: [String: Any] {
+        [
+            "schemaVersion": schemaVersion,
+            "schema": schema ?? "agentic30.day1_goal.v1",
+            "goalType": goalType.rawValue,
+            "goalText": goalText,
+            "customer": customer,
+            "problem": problem,
+            "validationAction": validationAction,
+            "evidenceRefs": evidenceRefs,
+            "proofSink": proofSink.rawValue,
+            "sourcePlanFingerprint": sourcePlanFingerprint,
+            "selectedAt": selectedAt,
+        ]
+    }
+
+    var officeHoursPurposeLine: String {
+        "\(goalType.title) · \(Self.goalTypeSummary(goalType))"
+    }
+
+    var officeHoursProgressLine: String {
+        "\(Self.customerSummary(customer)) · \(Self.problemSummary(problem))"
+    }
+
+    var officeHoursOutputLine: String {
+        switch proofSink {
+        case .bipOptional:
+            return "BIP 저장 선택 가능 · 승인 전 게시/문서 없음"
+        case .local:
+            return "로컬 증거만 유지 · 승인 전 게시/문서 없음"
+        }
+    }
+
+    private static func goalTypeSummary(_ goalType: Day1GoalType) -> String {
+        switch goalType {
+        case .makeMoney:
+            return "지불 의향 검증"
+        case .getUsers:
+            return "유입/가입 행동 검증"
+        case .buildProduct:
+            return "제품 흐름 검증"
+        }
+    }
+
+    private static func customerSummary(_ value: String) -> String {
+        let text = normalizedDisplayText(value)
+        let separators = [" 중 \"", " 중 “"]
+        let withoutProblemClause = separators.reduce(text) { current, separator in
+            guard let range = current.range(of: separator) else { return current }
+            return String(current[..<range.lowerBound])
+        }
+        return conciseDisplayText(withoutProblemClause.trimmingCharacters(in: .whitespacesAndNewlines), maxLength: 48)
+    }
+
+    private static func problemSummary(_ value: String) -> String {
+        let text = normalizedDisplayText(value)
+        let lower = text.lowercased()
+        if lower.contains("무엇을 팔아야")
+            || lower.contains("누구에게 팔아야")
+            || lower.contains("사람을 데려와야")
+            || lower.contains("오늘 무엇을 검증") {
+            return "팔 대상·유입·검증 기준 불명확"
+        }
+        return conciseDisplayText(text, maxLength: 56)
+    }
+
+    private static func normalizedDisplayText(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"[.。．]+$"#, with: "", options: .regularExpression)
+    }
+
+    private static func conciseDisplayText(_ value: String, maxLength: Int) -> String {
+        let text = normalizedDisplayText(value)
+        guard text.count > maxLength else { return text }
+        let cutIndex = text.index(text.startIndex, offsetBy: max(0, maxLength - 1))
+        let truncated = String(text[..<cutIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return "\(truncated)…"
+    }
+}
+
+struct Day1GoalDraft: Identifiable, Hashable {
+    let goalType: Day1GoalType
+    let goalText: String
+    let customer: String
+    let problem: String
+    let validationAction: String
+    let evidenceRefs: [String]
+    let proofSink: Day1ProofSink
+    let sourcePlanFingerprint: String
+    let isRecommended: Bool
+
+    var id: String { goalType.rawValue }
+
+    var proofSinkLabel: String {
+        switch proofSink {
+        case .local:
+            return "로컬 저장"
+        case .bipOptional:
+            return "증거 저장 가능"
+        }
+    }
+
+    func makeSelection(selectedAt: Date = Date()) -> Day1GoalSelection {
+        Day1GoalSelection(
+            goalType: goalType,
+            goalText: goalText,
+            customer: customer,
+            problem: problem,
+            validationAction: validationAction,
+            evidenceRefs: evidenceRefs,
+            proofSink: proofSink,
+            sourcePlanFingerprint: sourcePlanFingerprint,
+            selectedAt: ISO8601DateFormatter().string(from: selectedAt)
+        )
+    }
+}
+
 @MainActor
 final class AgenticViewModel: ObservableObject {
     private static let macOnboardingIntroCompletedDefaultsKey = "agentic30.macOnboardingIntroCompleted"
@@ -945,6 +1135,8 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var onboardingContext: OnboardingContext?
     @Published private(set) var onboardingContextStatus: OnboardingContextSubmissionStatus = .idle
     @Published private(set) var bipCoach: BipCoachState?
+    @Published private(set) var day1GoalSelection: Day1GoalSelection?
+    @Published private(set) var day1GoalError: String?
     @Published private(set) var isBipCoachRefreshing = false
     @Published private(set) var isBipCoachGenerating = false
     @Published private(set) var isBipCoachCompleting = false
@@ -971,10 +1163,6 @@ final class AgenticViewModel: ObservableObject {
     // cards; on receipt the ViewModel sets the toast and a background task
     // clears it 3 seconds later.
     @Published private(set) var dimensionTransitionToast: DimensionTransitionToast?
-    // R4 — Day 30 schema-invalid records that the sidecar quarantined. Empty
-    // until `requestQuarantineList()` resolves; refreshed on each restore.
-    @Published private(set) var quarantineFiles: [QuarantineFileWithDump] = []
-    @Published private(set) var quarantineRefreshError: String?
     // R6 / CCG-Codex weekly ritual broadcast. The Mac surface for the actual
     // banner/modal is wired in a follow-up round; for now we receive the
     // prompt and expose it as @Published state so SwiftUI views can opt in.
@@ -1025,6 +1213,7 @@ final class AgenticViewModel: ObservableObject {
         let day1AlignmentPlan: Day1AlignmentPlan?
         let day1IcpPlan: Day1IcpPlan?
         let day1SituationSummary: Day1SituationSummary?
+        let day1GoalSelection: Day1GoalSelection?
         let error: String?
 
         var foundArtifactPaths: [String] {
@@ -1039,7 +1228,8 @@ final class AgenticViewModel: ObservableObject {
         func replacing(
             day1AlignmentPlan: Day1AlignmentPlan? = nil,
             day1IcpPlan: Day1IcpPlan? = nil,
-            day1SituationSummary: Day1SituationSummary? = nil
+            day1SituationSummary: Day1SituationSummary? = nil,
+            day1GoalSelection: Day1GoalSelection? = nil
         ) -> WorkspaceScanResult {
             WorkspaceScanResult(
                 icp: icp,
@@ -1054,6 +1244,26 @@ final class AgenticViewModel: ObservableObject {
                 day1AlignmentPlan: day1AlignmentPlan ?? self.day1AlignmentPlan,
                 day1IcpPlan: day1IcpPlan ?? self.day1IcpPlan,
                 day1SituationSummary: day1SituationSummary ?? self.day1SituationSummary,
+                day1GoalSelection: day1GoalSelection ?? self.day1GoalSelection,
+                error: error
+            )
+        }
+
+        func withDay1GoalSelection(_ selection: Day1GoalSelection?) -> WorkspaceScanResult {
+            WorkspaceScanResult(
+                icp: icp,
+                spec: spec,
+                values: values,
+                designSystem: designSystem,
+                adr: adr,
+                goal: goal,
+                docs: docs,
+                sheet: sheet,
+                onboardingHypothesis: onboardingHypothesis,
+                day1AlignmentPlan: day1AlignmentPlan,
+                day1IcpPlan: day1IcpPlan,
+                day1SituationSummary: day1SituationSummary,
+                day1GoalSelection: selection,
                 error: error
             )
         }
@@ -1379,19 +1589,6 @@ final class AgenticViewModel: ObservableObject {
             applyUITestingIddSetupSeeds(arguments: arguments)
             if let seededDraft = Self.uiTestingArgumentValue("--ui-testing-seed-draft", arguments: arguments) {
                 draft = seededDraft
-            }
-            // R6-P3F: load quarantine fixture during init so the surface is
-            // ready before SwiftUI subscribes — start() may not run when the
-            // hermetic test only opens the Settings scene (MenuBarExtra
-            // onAppear fires lazily on user interaction).
-            let fixtureResult = Self.applyUITestingQuarantineFixture(arguments: arguments)
-            switch fixtureResult {
-            case .loaded(let items):
-                quarantineFiles = items
-            case .failed(let reason):
-                quarantineRefreshError = reason
-            case .notRequested:
-                break
             }
         } else if Self.isXCTestHost(arguments: arguments) {
             macAuthSession = nil
@@ -1837,6 +2034,14 @@ final class AgenticViewModel: ObservableObject {
         return coach
     }
 
+    var isDay1BipProofSinkAvailable: Bool {
+        bipCoach?.isConfigured == true
+    }
+
+    var day1GoalDrafts: [Day1GoalDraft] {
+        makeDay1GoalDrafts()
+    }
+
     var isIddSetupBlockingWorkspace: Bool {
         !iddSetupComplete
     }
@@ -1966,12 +2171,6 @@ final class AgenticViewModel: ObservableObject {
                 connectionLabel = "Sidecar disabled for UI tests"
                 isConnected = false
             }
-            // R6-P3F: optional quarantine fixture for hermetic restore-flow
-            // tests. The flag points to a JSON file matching the
-            // `rubric_quarantine_list` event payload — when present we hydrate
-            // `quarantineFiles` directly so SwiftUI can render the surface
-            // without the sidecar bridge.
-            loadQuarantineFixtureIfRequested()
             PostHogTelemetry.capture("mac_sidecar_disabled_for_ui_tests", authSession: macAuthSession)
             return
         }
@@ -2277,6 +2476,62 @@ final class AgenticViewModel: ObservableObject {
         guard !trimmed.isEmpty else { return }
         draft = "Day 1에서 \"\(trimmed)\"을(를) 오늘 실행할 검증 행동으로 고르고 싶어. 한 문장 실행 계획으로 구체화해줘."
         sendPrompt()
+    }
+
+    @discardableResult
+    func requestDay1GoalState(workspaceRoot explicitRoot: String? = nil) -> Bool {
+        guard isConnected else { return false }
+        let root = (explicitRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !root.isEmpty else { return false }
+        return sidecar.send(payload: [
+            "type": "day1_goal_get",
+            "workspaceRoot": root,
+        ])
+    }
+
+    @discardableResult
+    func saveDay1GoalSelection(_ selection: Day1GoalSelection, workspaceRoot explicitRoot: String? = nil) -> Bool {
+        let root = (explicitRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !root.isEmpty else {
+            day1GoalError = "Workspace 경로가 비어 있습니다."
+            return false
+        }
+        guard isConnected else {
+            #if DEBUG
+            if Self.isUITesting(arguments: CommandLine.arguments)
+                && CommandLine.arguments.contains("--ui-testing-disable-sidecar") {
+                applyDay1GoalSelectionLocally(selection, root: root)
+                return true
+            }
+            #endif
+            day1GoalError = "Sidecar 연결 후 목표를 저장할 수 있습니다."
+            return false
+        }
+        applyDay1GoalSelectionLocally(selection, root: root)
+        let sent = sidecar.send(payload: [
+            "type": "day1_goal_save",
+            "workspaceRoot": root,
+            "selection": selection.bridgePayload,
+        ])
+        if !sent {
+            day1GoalError = "목표 저장 요청을 sidecar로 보내지 못했습니다."
+        }
+        return sent
+    }
+
+    private func applyDay1GoalSelectionLocally(_ selection: Day1GoalSelection, root: String) {
+        day1GoalError = nil
+        day1GoalSelection = selection
+        if let current = scanResult {
+            let updated = current.withDay1GoalSelection(selection)
+            scanResult = updated
+            persistWorkspaceScanResultCache(updated, root: root)
+        }
+    }
+
+    @discardableResult
+    func saveDay1GoalDraft(_ draft: Day1GoalDraft, workspaceRoot explicitRoot: String? = nil) -> Bool {
+        saveDay1GoalSelection(draft.makeSelection(), workspaceRoot: explicitRoot)
     }
 
     @discardableResult
@@ -2692,6 +2947,222 @@ final class AgenticViewModel: ObservableObject {
         scanResult?.day1AlignmentPlan != nil || scanResult?.day1IcpPlan != nil
     }
 
+    private func makeDay1GoalDrafts() -> [Day1GoalDraft] {
+        guard scanResult?.day1AlignmentPlan != nil
+            || scanResult?.day1IcpPlan != nil
+            || scanResult?.day1SituationSummary != nil
+            || onboardingContext != nil else {
+            return []
+        }
+
+        let customer = firstNonEmpty([
+            day1GoalCustomerValue(from: scanResult?.day1AlignmentPlan),
+            scanResult?.day1SituationSummary?.project.customer,
+            scanResult?.day1IcpPlan?.signals.currentIcpGuess,
+            scanResult?.onboardingHypothesis?.targetUser,
+            onboardingContext?.businessDescription,
+        ], fallback: "첫 고객 후보")
+        let problem = firstNonEmpty([
+            scanResult?.day1AlignmentPlan?.components.painPoint.statement,
+            scanResult?.day1AlignmentPlan?.alignmentStatement.painPoint,
+            scanResult?.day1SituationSummary?.project.problem,
+            scanResult?.day1IcpPlan?.signals.problem,
+            scanResult?.onboardingHypothesis?.problem,
+            onboardingContext?.currentStage,
+        ], fallback: "검증할 문제")
+        let validationAction = firstNonEmpty([
+            scanResult?.day1AlignmentPlan?.components.outcome.statement,
+            scanResult?.day1AlignmentPlan?.alignmentStatement.outcome,
+            scanResult?.day1SituationSummary?.actions.first?.label,
+            scanResult?.onboardingHypothesis?.purpose,
+            scanResult?.onboardingHypothesis?.goal,
+            onboardingContext?.goal,
+        ], fallback: "이번 주 확인할 행동")
+        let evidenceRefs = day1GoalEvidenceRefs()
+        let proofSink: Day1ProofSink = isDay1BipProofSinkAvailable ? .bipOptional : .local
+        let recommended = recommendedDay1GoalType(
+            customer: customer,
+            problem: problem,
+            validationAction: validationAction
+        )
+        let fingerprint = stableDay1GoalFingerprint(parts: [
+            scanResult?.day1AlignmentPlan?.projectGoal,
+            customer,
+            problem,
+            validationAction,
+            evidenceRefs.joined(separator: "|"),
+            onboardingContext?.goal,
+        ])
+
+        return Day1GoalType.allCases.map { goalType in
+            Day1GoalDraft(
+                goalType: goalType,
+                goalText: day1GoalText(
+                    goalType: goalType,
+                    customer: customer,
+                    problem: problem,
+                    validationAction: validationAction
+                ),
+                customer: customer,
+                problem: problem,
+                validationAction: validationAction,
+                evidenceRefs: evidenceRefs,
+                proofSink: proofSink,
+                sourcePlanFingerprint: fingerprint,
+                isRecommended: goalType == recommended
+            )
+        }
+    }
+
+    private func day1GoalEvidenceRefs() -> [String] {
+        var refs: [String] = []
+        if let plan = scanResult?.day1AlignmentPlan {
+            refs.append(contentsOf: plan.signals.evidenceRefs.map(\.path))
+            refs.append(contentsOf: plan.components.icp.evidence)
+            refs.append(contentsOf: plan.components.painPoint.evidence)
+            refs.append(contentsOf: plan.components.outcome.evidence)
+        }
+        if let plan = scanResult?.day1IcpPlan {
+            refs.append(contentsOf: plan.signals.evidenceRefs.map(\.path))
+        }
+        if let summary = scanResult?.day1SituationSummary {
+            refs.append(contentsOf: summary.project.evidenceRefs)
+            refs.append(contentsOf: summary.diagnosis.evidenceRefs)
+            refs.append(contentsOf: summary.actions.flatMap(\.evidenceRefs))
+        }
+        if let hypothesis = scanResult?.onboardingHypothesis {
+            refs.append(contentsOf: hypothesis.evidence ?? [])
+        }
+        let artifactRefs = scanResult?.foundArtifactPaths ?? []
+        refs.append(contentsOf: artifactRefs)
+
+        var seen = Set<String>()
+        let uniqueRefs: [String] = refs
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { ref in
+                let key = ref.lowercased()
+                if seen.contains(key) { return false }
+                seen.insert(key)
+                return true
+            }
+        return Array(uniqueRefs.prefix(12))
+    }
+
+    private func recommendedDay1GoalType(
+        customer: String,
+        problem: String,
+        validationAction: String
+    ) -> Day1GoalType {
+        let haystack = [
+            onboardingContext?.goal,
+            onboardingContext?.currentStage,
+            onboardingContext?.businessDescription,
+            scanResult?.day1AlignmentPlan?.projectGoal,
+            scanResult?.day1AlignmentPlan?.alignmentStatement.statement,
+            customer,
+            problem,
+            validationAction,
+        ]
+            .compactMap { $0 }
+            .joined(separator: " ")
+            .lowercased()
+
+        if haystack.range(of: #"매출|수익|유료|돈|결제|구매|계약|가격|revenue|paid|pay|purchase|sales|contract"#, options: .regularExpression) != nil {
+            return .makeMoney
+        }
+        if haystack.range(of: #"유저|사용자|가입|마케팅|채널|유입|트래픽|waitlist|signup|acquisition|growth|marketing|users"#, options: .regularExpression) != nil {
+            return .getUsers
+        }
+        return .buildProduct
+    }
+
+    private func day1GoalCustomerValue(from plan: Day1AlignmentPlan?) -> String? {
+        guard let plan else { return nil }
+        return [
+            plan.signalDigest?.rows.first(where: { $0.key == "icp" })?.value,
+            plan.signals.currentIcpGuess,
+            plan.signals.likelyUsers.first,
+            plan.alignmentStatement.icp,
+            plan.components.icp.statement,
+        ]
+            .compactMap(day1GoalCustomerCandidate)
+            .first
+    }
+
+    private func day1GoalCustomerCandidate(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              !day1GoalCustomerLooksLikeDocumentReference(trimmed)
+        else {
+            return nil
+        }
+        return trimmed
+    }
+
+    private func day1GoalCustomerLooksLikeDocumentReference(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        if trimmed.range(
+            of: #"\[[^\]]*\.md[^\]]*\]\([^)]+\)"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil {
+            return true
+        }
+        if trimmed.range(
+            of: #"^(?:\./)?(?:docs/)?[a-z0-9._/-]+\.md(?:#[a-z0-9._-]+)?$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil {
+            return true
+        }
+        return trimmed.range(
+            of: #"\.md\b"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil && trimmed.range(
+            of: #"(문서|매핑|루브릭|reference|참고|company|회사|source|docs?|alignment)"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+    }
+
+    private func day1GoalText(
+        goalType: Day1GoalType,
+        customer: String,
+        problem: String,
+        validationAction: String
+    ) -> String {
+        switch goalType {
+        case .makeMoney:
+            return "\(customer)가 \(problem)에 돈이나 시간을 쓸지 \(validationAction)으로 확인한다."
+        case .getUsers:
+            return "\(customer)를 실제 유입/가입 행동으로 모아 \(problem) 반복 여부를 확인한다."
+        case .buildProduct:
+            return "\(customer)가 \(problem)을 해결하는 제품 흐름에서 막히는 지점을 \(validationAction)으로 확인한다."
+        }
+    }
+
+    private func firstNonEmpty(_ values: [String?], fallback: String) -> String {
+        firstNonEmptyCandidate(values) ?? fallback
+    }
+
+    private func firstNonEmptyCandidate(_ values: [String?]) -> String? {
+        values
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: { !$0.isEmpty })
+    }
+
+    private func stableDay1GoalFingerprint(parts: [String?]) -> String {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        let text = parts
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .joined(separator: "\u{1f}")
+        for byte in text.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return String(format: "%016llx", hash)
+    }
+
     private func workspaceScanResultStore(for root: String) -> WorkspaceScanResultStore {
         #if DEBUG
         if let appSupportURL = Self.workspaceScanResultAppSupportURLOverrideForTesting {
@@ -2709,6 +3180,7 @@ final class AgenticViewModel: ObservableObject {
         workspaceRoot = root
         clearWorkspaceScanTiming()
         scanResult = cached
+        day1GoalSelection = cached.day1GoalSelection
     }
 
     private func persistWorkspaceScanResultCache(_ result: WorkspaceScanResult, root explicitRoot: String? = nil) {
@@ -3283,8 +3755,6 @@ final class AgenticViewModel: ObservableObject {
             phase: nil,
             toolName: nil,
             summary: nil,
-            items: nil,
-            result: nil,
             weeklyRitualPrompt: nil,
             requestEmit: nil,
             workHistory: snapshot
@@ -3420,8 +3890,6 @@ final class AgenticViewModel: ObservableObject {
             phase: nil,
             toolName: nil,
             summary: nil,
-            items: nil,
-            result: nil,
             weeklyRitualPrompt: nil,
             requestEmit: nil,
             newsMarketRadarStatus: status
@@ -3483,8 +3951,6 @@ final class AgenticViewModel: ObservableObject {
                 phase: nil,
                 toolName: nil,
                 summary: nil,
-                items: nil,
-                result: nil,
                 weeklyRitualPrompt: nil,
                 requestEmit: nil,
                 newsMarketRadar: NewsMarketRadarSnapshot(
@@ -3623,37 +4089,6 @@ final class AgenticViewModel: ObservableObject {
             "card_count": newsMarketRadar.cardCount,
             "lane_count": newsMarketRadar.lanes.count,
         ], authSession: macAuthSession)
-    }
-
-    // R4 — quarantine surface. Both methods are no-ops when offline; the
-    // sidecar replies asynchronously with `rubric_quarantine_list` /
-    // `rubric_quarantine_restored` events that the event router below maps
-    // back into `quarantineFiles`.
-    func requestQuarantineList() {
-        guard isConnected else { return }
-        sidecar.send(payload: ["type": "rubric_quarantine_list_request"])
-    }
-
-    func restoreQuarantinedRecord(
-        bundle: QuarantineFileWithDump,
-        entry: QuarantineEntry,
-        honestModeReason: String
-    ) async {
-        guard isConnected else { return }
-        // Round 6 / CCG-UX: send only the user's one-line reason. The sidecar
-        // reads the raw quarantine entry, preserves original axis scores via
-        // `proposeFixForEntry`, and re-validates the resulting record. The Mac
-        // client no longer owns schema-shape decisions (Round 4 composeFixedRecord
-        // built fresh score=1 stubs that overwrote user progress).
-        let trimmedReason = String(honestModeReason.prefix(500))
-        let payload: [String: Any] = [
-            "type": "rubric_quarantine_restore_with_reason",
-            "quarantinePath": bundle.file.path,
-            "recordIndex": entry.index,
-            "expectedMtimeMs": bundle.dump.mtimeMs,
-            "honestModeReason": trimmedReason,
-        ]
-        sidecar.send(payload: payload)
     }
 
     func configureBipCoach(
@@ -4546,6 +4981,7 @@ final class AgenticViewModel: ObservableObject {
             if let bipCoach = event.bipCoach {
                 self.bipCoach = bipCoach
             }
+            day1GoalSelection = event.day1GoalSelection
             workspaceRoot = event.workspaceRoot ?? workspaceRoot
             notionConnected = event.notionConnected ?? false
             connectionLabel = "Connected"
@@ -4706,11 +5142,25 @@ final class AgenticViewModel: ObservableObject {
                 day1AlignmentPlan: event.day1AlignmentPlan,
                 day1IcpPlan: event.day1IcpPlan,
                 day1SituationSummary: event.day1SituationSummary,
+                day1GoalSelection: event.day1GoalSelection,
                 error: event.error
             )
             scanResult = result
+            day1GoalSelection = event.day1GoalSelection
             persistWorkspaceScanResult(event)
             persistWorkspaceScanResultCache(result, root: event.scanRoot)
+        case "day1_goal_state":
+            if event.success == false {
+                day1GoalError = event.error ?? event.message ?? "Day 1 목표를 저장하지 못했습니다."
+                return
+            }
+            day1GoalError = nil
+            day1GoalSelection = event.day1GoalSelection
+            if let current = scanResult {
+                let updated = current.withDay1GoalSelection(event.day1GoalSelection)
+                scanResult = updated
+                persistWorkspaceScanResultCache(updated, root: event.workspaceRoot ?? event.scanRoot)
+            }
         case "doc_creation_started":
             isCreatingDoc = event.docType
             docCreationLogs = []
@@ -4773,6 +5223,7 @@ final class AgenticViewModel: ObservableObject {
                         day1AlignmentPlan: event.day1AlignmentPlan,
                         day1IcpPlan: event.day1IcpPlan,
                         day1SituationSummary: event.day1SituationSummary,
+                        day1GoalSelection: event.day1GoalSelection,
                         error: nil
                     )
                 }
@@ -4999,15 +5450,6 @@ final class AgenticViewModel: ObservableObject {
                     self.environment = environment
                 }
             }
-        case "rubric_quarantine_list":
-            quarantineFiles = event.items ?? []
-            quarantineRefreshError = nil
-        case "rubric_quarantine_restored":
-            // Sidecar will emit a fresh list immediately after, so we just
-            // clear any pending error here. Toast/UX state lives in the view.
-            quarantineRefreshError = nil
-        case "rubric_quarantine_error":
-            quarantineRefreshError = event.message ?? "Quarantine \(event.stage ?? "operation") failed."
         case "weekly_ritual_prompt":
             if let prompt = event.weeklyRitualPrompt {
                 pendingWeeklyRitual = prompt
@@ -5169,80 +5611,6 @@ final class AgenticViewModel: ObservableObject {
 
     private var usesInlineUITestStubResponses: Bool {
         ProcessInfo.processInfo.environment["AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES"] == "1"
-    }
-
-    #if DEBUG
-    enum UITestingFixtureResult {
-        case notRequested
-        case failed(String)
-        case loaded([QuarantineFileWithDump])
-    }
-
-    private static func applyUITestingQuarantineFixture(
-        arguments: [String]
-    ) -> UITestingFixtureResult {
-        let key = "--ui-testing-stub-quarantine-fixture"
-        var path: String? = nil
-        for (idx, arg) in arguments.enumerated() {
-            if arg == key, idx + 1 < arguments.count {
-                path = arguments[idx + 1]; break
-            }
-            if arg.hasPrefix(key + "=") {
-                path = String(arg.dropFirst(key.count + 1)); break
-            }
-        }
-        guard let resolvedPath = path else {
-            return .notRequested
-        }
-        do {
-            let data = try Data(contentsOf: URL(fileURLWithPath: resolvedPath))
-            let event = try JSONDecoder().decode(SidecarEvent.self, from: data)
-            if let items = event.items {
-                return .loaded(items)
-            }
-            return .failed("fixture decoded but items=nil")
-        } catch {
-            return .failed("fixture load failed at \(resolvedPath): \(error)")
-        }
-    }
-    #endif
-
-    private func loadQuarantineFixtureIfRequested() {
-        // R6-P3F: read a SidecarEvent-shaped fixture (rubric_quarantine_list)
-        // from disk and hydrate `quarantineFiles` directly. Used by hermetic
-        // UI tests to drive the restore-flow surface without a live sidecar.
-        let arguments = CommandLine.arguments
-        // Manual scan covers both `--flag=value` and `--flag value` forms,
-        // sidestepping any ambiguity in the helper-resolution path between
-        // the two `uiTestingArgumentValue` definitions in this file.
-        var path: String? = nil
-        let key = "--ui-testing-stub-quarantine-fixture"
-        for (idx, arg) in arguments.enumerated() {
-            if arg == key, idx + 1 < arguments.count {
-                path = arguments[idx + 1]
-                break
-            }
-            if arg.hasPrefix(key + "=") {
-                path = String(arg.dropFirst(key.count + 1))
-                break
-            }
-        }
-        guard let resolvedPath = path else {
-            return
-        }
-        let url = URL(fileURLWithPath: resolvedPath)
-        do {
-            let data = try Data(contentsOf: url)
-            let event = try JSONDecoder().decode(SidecarEvent.self, from: data)
-            if let items = event.items {
-                quarantineFiles = items
-                quarantineRefreshError = nil
-            } else {
-                quarantineRefreshError = "fixture decoded but items=nil"
-            }
-        } catch {
-            quarantineRefreshError = "fixture load failed: \(error)"
-        }
     }
 
     private func ensureInlineUITestStubSession() {
@@ -5727,6 +6095,9 @@ final class AgenticViewModel: ObservableObject {
     private func installUITestingOfficeHoursStructuredPromptSessionIfNeeded() -> Bool {
         #if DEBUG
         guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-structured-prompt") else {
+            return false
+        }
+        guard day1GoalSelection != nil else {
             return false
         }
         if let selectedSession,
@@ -6507,8 +6878,6 @@ final class AgenticViewModel: ObservableObject {
             phase: nil,
             toolName: nil,
             summary: nil,
-            items: nil,
-            result: nil,
             weeklyRitualPrompt: nil,
             requestEmit: nil,
             questionId: questionId,
@@ -6599,8 +6968,6 @@ final class AgenticViewModel: ObservableObject {
             phase: nil,
             toolName: nil,
             summary: nil,
-            items: nil,
-            result: nil,
             weeklyRitualPrompt: nil,
             requestEmit: nil
         )
@@ -7424,6 +7791,7 @@ final class AgenticViewModel: ObservableObject {
             day1AlignmentPlan: usesAlignmentPlan ? makeUITestingDay1AlignmentPlan() : nil,
             day1IcpPlan: makeUITestingDay1IcpPlan(),
             day1SituationSummary: usesSituationSummary ? makeUITestingDay1SituationSummary() : nil,
+            day1GoalSelection: nil,
             error: nil
         )
     }
@@ -8061,7 +8429,7 @@ struct WorkspaceScanResultStore {
         try? FileManager.default.removeItem(at: fileURL)
     }
 
-    private static let schemaVersion = 3
+    private static let schemaVersion = 4
 
     private struct Payload: Codable {
         let schemaVersion: Int
@@ -8167,8 +8535,6 @@ private extension AgenticViewModel {
         iddSetupError = nil
         bipTokenExpired = nil
         bipMissionProgress = nil
-        quarantineFiles = []
-        quarantineRefreshError = nil
         pendingWeeklyRitual = nil
         providerAuthInProgress = nil
         providerAuthMessage = nil
@@ -8499,6 +8865,7 @@ struct SidecarEvent: Decodable {
     let day1AlignmentPlan: Day1AlignmentPlan?
     let day1IcpPlan: Day1IcpPlan?
     let day1SituationSummary: Day1SituationSummary?
+    let day1GoalSelection: Day1GoalSelection?
     let error: String?
 
     // Document creation fields
@@ -8535,12 +8902,6 @@ struct SidecarEvent: Decodable {
     let phase: String?
     let toolName: String?
     let summary: String?
-
-    // R4 quarantine recovery payloads. `stage` (already declared above for
-    // bip_coach_generation_progress) is reused by quarantine error events
-    // ("list" | "restore"); the quarantine result/items are new.
-    let items: [QuarantineFileWithDump]?
-    let result: QuarantineRestoreResult?
     // R6 weekly ritual prompt payload (`weekly_ritual_prompt` event).
     let weeklyRitualPrompt: WeeklyRitualPrompt?
     let requestEmit: SidecarRequestEmit?
@@ -8600,6 +8961,7 @@ struct SidecarEvent: Decodable {
         day1AlignmentPlan: Day1AlignmentPlan? = nil,
         day1IcpPlan: Day1IcpPlan? = nil,
         day1SituationSummary: Day1SituationSummary? = nil,
+        day1GoalSelection: Day1GoalSelection? = nil,
         error: String?,
         docType: String?,
         docPath: String?,
@@ -8628,8 +8990,6 @@ struct SidecarEvent: Decodable {
         phase: String?,
         toolName: String?,
         summary: String?,
-        items: [QuarantineFileWithDump]?,
-        result: QuarantineRestoreResult?,
         weeklyRitualPrompt: WeeklyRitualPrompt?,
         requestEmit: SidecarRequestEmit?,
         questionId: String? = nil,
@@ -8687,6 +9047,7 @@ struct SidecarEvent: Decodable {
         self.day1AlignmentPlan = day1AlignmentPlan
         self.day1IcpPlan = day1IcpPlan
         self.day1SituationSummary = day1SituationSummary
+        self.day1GoalSelection = day1GoalSelection
         self.error = error
         self.docType = docType
         self.docPath = docPath
@@ -8715,8 +9076,6 @@ struct SidecarEvent: Decodable {
         self.phase = phase
         self.toolName = toolName
         self.summary = summary
-        self.items = items
-        self.result = result
         self.weeklyRitualPrompt = weeklyRitualPrompt
         self.requestEmit = requestEmit
         self.questionId = questionId
@@ -8906,12 +9265,6 @@ struct WorkspaceSetupTelemetryGate {
     }
 }
 
-struct QuarantineRestoreResult: Decodable, Hashable {
-    let restoredSessionId: String?
-    let remainingInvalidCount: Int?
-    let quarantinePath: String?
-}
-
 struct WeeklyRitualPrompt: Codable, Hashable {
     // R6 / CCG: surface payload for Day 7/14/21 ritual.
     let ritualKey: String
@@ -9068,6 +9421,7 @@ extension SidecarEvent {
         case day1AlignmentPlan
         case day1IcpPlan
         case day1SituationSummary
+        case day1GoalSelection
         case error
         case docType
         case docPath
@@ -9096,9 +9450,6 @@ extension SidecarEvent {
         case phase
         case toolName
         case summary
-        // R4 quarantine recovery
-        case items
-        case result
         // R6 weekly ritual broadcast
         case weeklyRitualPrompt = "prompt"
         case questionId
@@ -9166,6 +9517,7 @@ extension SidecarEvent {
         day1AlignmentPlan = Self.decodeIfPresent(Day1AlignmentPlan.self, from: container, forKey: .day1AlignmentPlan)
         day1IcpPlan = Self.decodeIfPresent(Day1IcpPlan.self, from: container, forKey: .day1IcpPlan)
         day1SituationSummary = Self.decodeIfPresent(Day1SituationSummary.self, from: container, forKey: .day1SituationSummary)
+        day1GoalSelection = Self.decodeIfPresent(Day1GoalSelection.self, from: container, forKey: .day1GoalSelection)
 
         let stringError = Self.decodeIfPresent(String.self, from: container, forKey: .error)
         let structuredError = Self.decodeIfPresent(BipReadinessError.self, from: container, forKey: .error)
@@ -9198,8 +9550,6 @@ extension SidecarEvent {
         phase = Self.decodeIfPresent(String.self, from: container, forKey: .phase)
         toolName = Self.decodeIfPresent(String.self, from: container, forKey: .toolName)
         summary = Self.decodeIfPresent(String.self, from: container, forKey: .summary)
-        items = Self.decodeIfPresent([QuarantineFileWithDump].self, from: container, forKey: .items)
-        result = Self.decodeIfPresent(QuarantineRestoreResult.self, from: container, forKey: .result)
         weeklyRitualPrompt = Self.decodeIfPresent(WeeklyRitualPrompt.self, from: container, forKey: .weeklyRitualPrompt)
         requestEmit = type == "request_emit" ? try SidecarRequestEmit(from: decoder) : nil
         questionId = Self.decodeIfPresent(String.self, from: container, forKey: .questionId)

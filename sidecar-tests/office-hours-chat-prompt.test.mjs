@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildOfficeHoursChatPrompt,
   buildOfficeHoursChatSystemPrompt,
+  isOfficeHoursLockedDay1GoalContext,
 } from "../sidecar/office-hours-chat-prompt.mjs";
 
 test("office-hours chat prompt is scoped to the Day 1 STEP flow", () => {
@@ -83,6 +84,31 @@ test("office-hours write-design-doc flow fixes startup questions and terminal do
   assert.match(prompt, /After the sixth answer/);
   assert.match(prompt, /generated_by: office-hours/);
   assert.match(prompt, /handoff_for: plan-ceo-review/);
+});
+
+test("office-hours locked Day 1 goal prompt skips gates and requires a structured card", () => {
+  const context = [
+    "DAY1_LOCKED_GOAL",
+    "Flow contract: locked Day 1 goal interview.",
+    "Goal lane: make_money / 돈 벌기",
+    "Goal text: support lead가 Slack 누락에 돈을 낼지 확인한다.",
+    "Customer: B2B support lead",
+    "Problem: Slack escalation을 놓친다",
+    "Validation action: 유료 파일럿 ask",
+  ].join("\n");
+  const prompt = buildOfficeHoursChatSystemPrompt("/workspace", {
+    provider: "codex",
+    context,
+  });
+
+  assert.equal(isOfficeHoursLockedDay1GoalContext(context), true);
+  assert.match(prompt, /locked Day 1 goal interview/);
+  assert.match(prompt, /do not ask a mode gate, product-stage gate, or goal-selection question/);
+  assert.match(prompt, /first response MUST call agentic30_request_user_input/i);
+  assert.match(prompt, /weakest missing evidence/);
+  assert.match(prompt, /money signal for make_money/);
+  assert.match(prompt, /Do not write files, write docs, publish posts/);
+  assert.match(prompt, /BIP proof sink is available/);
 });
 
 test("office-hours chat system prompt routes Claude forcing questions through AskUserQuestion", () => {

@@ -61,7 +61,6 @@ const CODEX_INTERNAL_MCP_READ_ONLY_TOOLS = Object.freeze([
   "gws_sheets_read",
   "gws_docs_read",
   "get_rubric_status",
-  "list_quarantined_records",
 ]);
 const GEMINI_CAPABLE_EXECUTION_MODES = new Set([
   "isolated_read_only",

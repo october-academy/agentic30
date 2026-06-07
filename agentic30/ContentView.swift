@@ -79,7 +79,7 @@ private enum AssistantLiveStatusPanelTone {
 struct OfficeHoursLiveStatusPolicy {
     nonisolated static func visibleRows(in session: ChatSession) -> [OfficeHoursTranscriptRow] {
         let rows = OfficeHoursTranscriptRow.rows(from: session.messages)
-        return rows.filter { !isStreamingAssistantRow($0) }
+        return rows.filter { !isStreamingAssistantRow($0) && !(isAssistantRow($0) && $0.state == .error) }
     }
 
     nonisolated static func shouldShowDetachedLiveStatus(
@@ -1495,6 +1495,24 @@ struct OfficeHoursAutoStartPolicy {
     }
 }
 
+enum WorkspaceChromeStyle: Equatable {
+    case standard
+    case day1OfficeHours
+
+    static func resolve(
+        isWorkspaceWindow: Bool,
+        dayNumber: Int,
+        selectedReferencePage: OpenDesignReferencePageKind?,
+        isOfficeHoursPresented: Bool
+    ) -> WorkspaceChromeStyle {
+        guard isWorkspaceWindow, dayNumber == 1 else { return .standard }
+        if isOfficeHoursPresented || selectedReferencePage == nil || selectedReferencePage == .settings {
+            return .day1OfficeHours
+        }
+        return .standard
+    }
+}
+
 struct ContentView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1522,13 +1540,13 @@ struct ContentView: View {
     @State private var officeHoursRealProjectSessionCreateRequested = false
     @State private var didCopyOfficeHoursRealProjectTestReport = false
     @State private var selectedOfficeHoursMode: OfficeHoursMode = .startup
+    @State private var selectedOfficeHoursGoalType: Day1GoalType?
     @State private var pendingOfficeHoursStartMode: OfficeHoursMode?
     @State private var officeHoursQuestionLoadingStartedAtBySession: [String: Date] = [:]
     @State private var officeHoursSubmittedPromptSnapshotsBySession: [String: [OfficeHoursSubmittedPromptSnapshot]] = [:]
     @State private var officeHoursActiveQuestionLoadersBySession: [String: OfficeHoursLoadingSnapshot] = [:]
     @State private var officeHoursReadyPromptRevealIDs: Set<String> = []
     @State private var didCopyOfficeHoursPlanCeoReview = false
-    @State private var didSaveOfficeHoursDoc = false
     @FocusState private var isOfficeHoursComposerFocused: Bool
     @FocusState private var focusedOfficeHoursStructuredFreeTextID: String?
 
@@ -1555,6 +1573,25 @@ struct ContentView: View {
         self.zoomWorkspaceAction = zoomWorkspaceAction
         self.maximizeWorkspaceOnFirstAppear = maximizeWorkspaceOnFirstAppear
         self.markWorkspaceInitialMaximizeApplied = markWorkspaceInitialMaximizeApplied
+        _selectedOpenDesignReferencePage = State(initialValue: Self.initialOpenDesignReferencePageForUITesting())
+    }
+
+    private static func initialOpenDesignReferencePageForUITesting(
+        arguments: [String] = CommandLine.arguments
+    ) -> OpenDesignReferencePageKind? {
+        guard let rawValue = arguments
+            .first(where: { $0.hasPrefix("--ui-testing-open-design-reference-page=") })?
+            .split(separator: "=", maxSplits: 1)
+            .last
+            .map(String.init)
+        else {
+            return nil
+        }
+
+        return OpenDesignReferencePageKind(railItemID: rawValue)
+            ?? OpenDesignReferencePageKind(searchItemID: rawValue)
+            ?? OpenDesignReferencePageKind(searchItemID: "page-\(rawValue)")
+            ?? OpenDesignReferencePageKind(rawValue: rawValue)
     }
 
     @ViewBuilder
@@ -1567,7 +1604,7 @@ struct ContentView: View {
                     WorkspaceWindowChrome(
                         maximizeOnInitialInstall: maximizeWorkspaceOnFirstAppear,
                         markInitialInstallMaximizeApplied: markWorkspaceInitialMaximizeApplied,
-                        usesOfficeHoursChrome: isOpenDesignOfficeHoursPresented
+                        style: workspaceChromeStyle
                     )
                 } else {
                     WindowChrome()
@@ -1600,6 +1637,10 @@ struct ContentView: View {
             }
             .onChange(of: viewModel.localDataResetGeneration) { _, _ in
                 resetLocalSwiftUIStateAfterLocalDataReset()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .agenticOpenDesignSettingsRequested)) { _ in
+                guard isWorkspaceWindow else { return }
+                openOpenDesignSettingsRoute()
             }
 
         Group {
@@ -1698,6 +1739,15 @@ struct ContentView: View {
         return AgenticCurriculumDay.days.first(where: { $0.day == dayNumber }) ?? AgenticCurriculumDay.days[0]
     }
 
+    private var workspaceChromeStyle: WorkspaceChromeStyle {
+        WorkspaceChromeStyle.resolve(
+            isWorkspaceWindow: isWorkspaceWindow,
+            dayNumber: workspaceOpenDesignDay.day,
+            selectedReferencePage: selectedOpenDesignReferencePage,
+            isOfficeHoursPresented: isOpenDesignOfficeHoursPresented
+        )
+    }
+
     private func curriculumPayload(for day: AgenticCurriculumDay) -> [String: Any] {
         [
             "day": day.day,
@@ -1720,7 +1770,7 @@ struct ContentView: View {
         let shouldUseIntakeOnlyDay1 = day.day == 1
             && !viewModel.isScanning
             && (viewModel.workspaceRoot.isEmpty || viewModel.scanResult?.error?.nonEmpty != nil)
-        let day1Content = personalizedDay1Content ?? (shouldUseIntakeOnlyDay1 ? OpenDesignDayContent.day1 : nil)
+        let day1Content = personalizedDay1Content ?? (day.day == 1 || shouldUseIntakeOnlyDay1 ? OpenDesignDayContent.day1 : nil)
         let officeHoursDay1Content = (personalizedDay1Content ?? OpenDesignDayContent.day1)
             .applyingFoundationProgress(viewModel.foundationProgressState, selectedDay: 1)
             .lockingDaysAfterSecond
@@ -1754,10 +1804,22 @@ struct ContentView: View {
                     selectedReferencePage: $selectedOpenDesignReferencePage,
                     isOfficeHoursPresented: $isOpenDesignOfficeHoursPresented,
                     openSettings: {
-                        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-                            isOpenDesignOfficeHoursPresented = false
-                            selectedOpenDesignReferencePage = .settings
-                        }
+                        openOpenDesignSettingsRoute()
+                    },
+                    settingsScreen: AnyView(
+                        SettingsView(
+                            viewModel: viewModel,
+                            embeddedInWorkspace: true
+                        )
+                        .tint(Agentic30BrandColor.green)
+                    ),
+                    requiresDay1Goal: day.day == 1,
+                    day1GoalDrafts: day.day == 1 ? viewModel.day1GoalDrafts : [],
+                    day1GoalSelection: day.day == 1 ? viewModel.day1GoalSelection : nil,
+                    day1GoalError: day.day == 1 ? viewModel.day1GoalError : nil,
+                    bipProofSinkAvailable: viewModel.isDay1BipProofSinkAvailable,
+                    saveDay1GoalDraft: { draft in
+                        _ = viewModel.saveDay1GoalDraft(draft, workspaceRoot: openDesignInteractionWorkspaceRoot)
                     },
                     submitStructuredPromptChoice: { choice in
                         submitOpenDesignDayChoice(choice, day: day, session: session)
@@ -1782,10 +1844,7 @@ struct ContentView: View {
                         viewModel.prepareBipResearchForDisplay(curriculumDay: bipResearchCurriculum)
                     },
                     openNewsSettings: {
-                        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-                            isOpenDesignOfficeHoursPresented = false
-                            selectedOpenDesignReferencePage = .settings
-                        }
+                        openOpenDesignSettingsRoute()
                     },
                     workHistory: viewModel.workHistory,
                     refreshWorkHistory: {
@@ -1821,7 +1880,8 @@ struct ContentView: View {
                             isOpenDesignOfficeHoursPresented = false
                             viewModel.selectFoundationDay(selectedDay)
                         }
-                    }
+                    },
+                    routesTodayToOfficeHours: day.day == 1
                 )
             } else {
                 OpenDesignDayPlanPreparingView(
@@ -1922,36 +1982,10 @@ struct ContentView: View {
             .padding(.horizontal, 12)
             .frame(height: 40)
 
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("세션 검색")
-                    .font(.system(size: 11.5, weight: .medium))
-                Spacer(minLength: 0)
-            }
-            .foregroundStyle(OpenDesignOfficeHoursColor.muted)
-            .padding(.horizontal, 10)
-            .frame(height: 32)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(OpenDesignOfficeHoursColor.surface)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
-                    )
-            )
-            .padding(.horizontal, 8)
-            .padding(.bottom, 6)
-
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     officeHoursSidebarGroupTitle("Default")
                     officeHoursSidebarModeRow(.startup, session: session)
-
-                    officeHoursSidebarGroupTitle("Recent docs")
-                        .padding(.top, 8)
-                    officeHoursSidebarDocRow(mark: "WD", name: "Wedge strategy follow-up", meta: "draft saved 10:42", badge: "md")
-                    officeHoursSidebarDocRow(mark: "VM", name: "Project visualization map", meta: "open questions 3", badge: "draft")
                 }
                 .padding(.horizontal, 6)
                 .padding(.top, 2)
@@ -2017,10 +2051,6 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("opendesign.officeHours.mode.\(mode.rawValue)")
-    }
-
-    private func officeHoursSidebarDocRow(mark: String, name: String, meta: String, badge: String) -> some View {
-        officeHoursSidebarRow(mark: mark, name: name, meta: meta, badge: badge, isActive: false)
     }
 
     private func officeHoursSidebarRow(
@@ -2139,11 +2169,11 @@ struct ContentView: View {
         let modePicked = officeHoursModePicked(session: session)
         let hasAnswers = officeHoursAnswerCount(session: session) > 0
         return HStack(spacing: 0) {
-            officeHoursStep(index: 1, title: "Startup 준비", isDone: modePicked, isOn: !modePicked)
+            officeHoursStep(index: 1, title: "목표 준비", isDone: modePicked, isOn: !modePicked)
             officeHoursStepSeparator()
             officeHoursStep(index: 2, title: "질문 대화", isDone: hasAnswers && session?.pendingUserInput == nil, isOn: modePicked && session?.pendingUserInput != nil)
             officeHoursStepSeparator()
-            officeHoursStep(index: 3, title: "Design doc 초안", isDone: false, isOn: modePicked && hasAnswers && session?.pendingUserInput == nil)
+            officeHoursStep(index: 3, title: "증거 정리", isDone: false, isOn: modePicked && hasAnswers && session?.pendingUserInput == nil)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 28)
@@ -2225,6 +2255,9 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if modePicked {
                         officeHoursQuestionStage(session: session, day1Content: day1Content)
+                    } else if viewModel.day1GoalSelection == nil {
+                        officeHoursTutorHead()
+                        officeHoursGoalSelectionBlock(session: session, day1Content: day1Content)
                     } else {
                         officeHoursTutorHead()
                         officeHoursIntroContextStack(
@@ -2248,8 +2281,9 @@ struct ContentView: View {
             }
             .background(OpenDesignOfficeHoursColor.bg)
             .accessibilityIdentifier("opendesign.officeHours.main.scroll")
-            .task(id: "auto-start-\(session?.id ?? "none")-\(modePicked)") {
+            .task(id: "auto-start-\(session?.id ?? "none")-\(modePicked)-\(viewModel.day1GoalSelection?.goalType.rawValue ?? "no-goal")") {
                 guard !modePicked, let session else { return }
+                guard viewModel.day1GoalSelection != nil else { return }
                 let delay: UInt64 = reduceMotion ? 0 : 1_680_000_000
                 if delay > 0 {
                     do {
@@ -2301,8 +2335,230 @@ struct ContentView: View {
         .frame(minHeight: 18, alignment: .leading)
     }
 
+    @ViewBuilder
+    private func officeHoursGoalSelectionBlock(
+        session: ChatSession?,
+        day1Content: OpenDesignDayContent
+    ) -> some View {
+        let drafts = viewModel.day1GoalDrafts
+        let activeDraft = officeHoursActiveGoalDraft(drafts: drafts)
+
+        VStack(alignment: .leading, spacing: 14) {
+            officeHoursSectionHeader("목표 확립", meta: "Office Hours · 1 of 3")
+
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text("먼저 오늘의 검증 목표를 잠급니다.")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    if let recommended = drafts.first(where: \.isRecommended) {
+                        officeHoursGoalBadge("추천 \(recommended.goalType.title)", tone: .amber)
+                    }
+                }
+
+                Text("저장한 목표만 기준으로 Office Hours가 첫 질문을 만듭니다. 공개 게시나 문서 작성은 마지막 저장 버튼을 누르기 전까지 하지 않습니다.")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if drafts.isEmpty {
+                    officeHoursGoalEmptyState()
+                } else {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 168), spacing: 8, alignment: .top)],
+                        alignment: .leading,
+                        spacing: 8
+                    ) {
+                        ForEach(drafts) { draft in
+                            officeHoursGoalOptionButton(draft, activeDraft: activeDraft)
+                        }
+                    }
+
+                    if let activeDraft {
+                        VStack(spacing: 1) {
+                            officeHoursGoalDetailRow("목표", activeDraft.goalText, strong: true)
+                            officeHoursGoalDetailRow("고객", activeDraft.customer)
+                            officeHoursGoalDetailRow("문제", activeDraft.problem)
+                            officeHoursGoalDetailRow("확인", activeDraft.validationAction)
+                            officeHoursGoalDetailRow("근거", officeHoursGoalEvidenceSummary(for: activeDraft))
+                        }
+                        .background(OpenDesignOfficeHoursColor.borderSoft)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                        )
+
+                        Button {
+                            saveOfficeHoursGoalAndStart(activeDraft, session: session, day1Content: day1Content)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Text("이 목표로 Office Hours 시작")
+                                    .font(.system(size: 13, weight: .semibold))
+                                Spacer(minLength: 0)
+                                Image(systemName: "arrow.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .foregroundStyle(OpenDesignOfficeHoursColor.bgDeep)
+                            .padding(.horizontal, 14)
+                            .frame(height: 40)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(OpenDesignOfficeHoursColor.accent)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("opendesign.officeHours.goal.save")
+                    }
+                }
+
+                if let error = viewModel.day1GoalError?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !error.isEmpty {
+                    Text(error)
+                        .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(16)
+            .background(openDesignOfficeHoursBackground(cornerRadius: 14, fill: OpenDesignOfficeHoursColor.surface))
+            .overlay(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(OpenDesignOfficeHoursColor.accent)
+                    .frame(width: 3)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("opendesign.officeHours.goal.card")
+    }
+
+    private func officeHoursGoalEmptyState() -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("스캔 또는 온보딩 컨텍스트를 기다리는 중입니다.")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+            Text("컨텍스트가 들어오면 돈 벌기, 유저 모으기, 제품 만들기 도움 중 하나를 바로 고를 수 있습니다.")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(openDesignOfficeHoursBackground(cornerRadius: 10, fill: OpenDesignOfficeHoursColor.surface2))
+    }
+
+    private func officeHoursActiveGoalDraft(drafts: [Day1GoalDraft]) -> Day1GoalDraft? {
+        let type = selectedOfficeHoursGoalType
+            ?? viewModel.day1GoalSelection?.goalType
+            ?? drafts.first(where: \.isRecommended)?.goalType
+            ?? drafts.first?.goalType
+        return drafts.first(where: { $0.goalType == type }) ?? drafts.first
+    }
+
+    private func officeHoursGoalOptionButton(
+        _ draft: Day1GoalDraft,
+        activeDraft: Day1GoalDraft?
+    ) -> some View {
+        let isSelected = activeDraft?.goalType == draft.goalType
+        return Button {
+            selectedOfficeHoursGoalType = draft.goalType
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Text(draft.goalType.title)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    if draft.isRecommended {
+                        officeHoursGoalBadge("추천", tone: .amber)
+                    }
+                }
+                Text(draft.goalType.promptHint)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, minHeight: 96, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? OpenDesignOfficeHoursColor.accentDim : OpenDesignOfficeHoursColor.surface2)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(isSelected ? OpenDesignOfficeHoursColor.accentLine : OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("opendesign.officeHours.goal.option.\(draft.goalType.rawValue)")
+        .accessibilityValue(isSelected ? "active" : "inactive")
+    }
+
+    private enum OfficeHoursGoalBadgeTone: Equatable {
+        case amber
+        case muted
+    }
+
+    private func officeHoursGoalBadge(_ text: String, tone: OfficeHoursGoalBadgeTone) -> some View {
+        let foreground = tone == .amber ? OpenDesignOfficeHoursColor.amber : OpenDesignOfficeHoursColor.muted
+        let background = tone == .amber ? OpenDesignOfficeHoursColor.amberDim : OpenDesignOfficeHoursColor.surface2
+        let border = tone == .amber ? OpenDesignOfficeHoursColor.amber.opacity(0.35) : OpenDesignOfficeHoursColor.borderSoft
+        return Text(text)
+            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+            .foregroundStyle(foreground)
+            .padding(.horizontal, 7)
+            .frame(height: 20)
+            .background(Capsule().fill(background))
+            .overlay(Capsule().stroke(border, lineWidth: 1))
+    }
+
+    private func officeHoursGoalDetailRow(_ key: String, _ value: String, strong: Bool = false) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 14) {
+            Text(key)
+                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                .frame(width: 48, alignment: .leading)
+            Text(value)
+                .font(.system(size: 12.5, weight: strong ? .semibold : .medium))
+                .foregroundStyle(strong ? OpenDesignOfficeHoursColor.fg : OpenDesignOfficeHoursColor.fgSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(OpenDesignOfficeHoursColor.surface)
+    }
+
+    private func officeHoursGoalEvidenceSummary(for draft: Day1GoalDraft) -> String {
+        let summary = draft.evidenceRefs.prefix(3).joined(separator: ", ").trimmingCharacters(in: .whitespacesAndNewlines)
+        return summary.isEmpty ? "scan 근거 없음" : summary
+    }
+
+    private func saveOfficeHoursGoalAndStart(
+        _ draft: Day1GoalDraft,
+        session: ChatSession?,
+        day1Content: OpenDesignDayContent
+    ) {
+        selectedOfficeHoursGoalType = draft.goalType
+        guard viewModel.saveDay1GoalDraft(draft, workspaceRoot: openDesignInteractionWorkspaceRoot) else {
+            return
+        }
+        selectedOfficeHoursMode = .startup
+        DispatchQueue.main.async {
+            pendingOfficeHoursStartMode = .startup
+            _ = viewModel.ensureOfficeHoursSession()
+            continuePendingOfficeHoursStart(
+                session: viewModel.selectedSession ?? session,
+                day1Content: day1Content
+            )
+        }
+    }
+
     private func officeHoursIntroSection() -> some View {
-        let title = "오피스아워를 한 단계씩 좁힙니다."
+        let title = viewModel.day1GoalSelection == nil ? "오피스아워를 한 단계씩 좁힙니다." : "Day 1 목표를 인터뷰로 검증합니다."
         let titleDelay: UInt64 = reduceMotion ? 0 : 120_000_000
         let bodyDelay = reduceMotion
             ? 0
@@ -2323,7 +2579,9 @@ struct ContentView: View {
             )
             .accessibilityIdentifier("opendesign.officeHours.intro.title")
             OfficeHoursTypewriterText(
-                text: "Startup 진단으로 질문이 하나씩 열리고, 답변은 오른쪽 Design doc 초안에 바로 정리됩니다.",
+                text: viewModel.day1GoalSelection == nil
+                    ? "Startup 진단으로 질문이 하나씩 열립니다."
+                    : "확정한 목표만 기준으로 한 번에 하나의 structured input 질문이 열립니다.",
                 font: .system(size: 13.5, weight: .medium),
                 foregroundColor: OpenDesignOfficeHoursColor.fgSecondary,
                 lineSpacing: 3,
@@ -2390,8 +2648,12 @@ struct ContentView: View {
     }
 
     private func officeHoursSignalList() -> some View {
-        let first = "막연한 아이디어를 다음 실행 1개와 design-doc.md 초안으로 압축합니다."
-        let second = "Startup 관점으로 고정해 한 번에 하나의 질문에 답합니다."
+        let first = viewModel.day1GoalSelection.map {
+            $0.officeHoursPurposeLine
+        } ?? "막연한 아이디어를 다음 실행 1개로 압축합니다."
+        let second = viewModel.day1GoalSelection.map {
+            $0.officeHoursProgressLine
+        } ?? "Startup 관점으로 고정해 한 번에 하나의 질문에 답합니다."
         let rowStartDelay: UInt64 = reduceMotion ? 0 : 120_000_000
         let secondDelay = rowStartDelay + OfficeHoursTypewriterTiming.totalDelayNanoseconds(
             for: first,
@@ -2404,13 +2666,14 @@ struct ContentView: View {
             completionMilliseconds: 80
         )
         return VStack(alignment: .leading, spacing: 12) {
-            officeHoursSectionHeader("세션 컨텍스트", meta: "startup + evidence + doc")
+            officeHoursSectionHeader("세션 컨텍스트", meta: viewModel.day1GoalSelection == nil ? "startup + evidence" : "locked goal + evidence")
             VStack(spacing: 1) {
                 officeHoursSignalRow(key: "목적", value: first, typewriterDelayNanoseconds: rowStartDelay)
                 officeHoursSignalRow(key: "진행", value: second, typewriterDelayNanoseconds: secondDelay)
                 officeHoursSignalRow(
                     key: "출력",
-                    value: "문제, 전제, 다음 행동을 오른쪽 패널에서 계속 갱신합니다. 저장 전까지는 초안 상태입니다.",
+                    value: viewModel.day1GoalSelection?.officeHoursOutputLine
+                        ?? "로컬 증거만 유지 · 승인 전 게시/문서 없음",
                     typewriterDelayNanoseconds: thirdDelay
                 )
                 .id(Self.officeHoursQuestionOutputRowID)
@@ -2599,7 +2862,7 @@ struct ContentView: View {
                 Text("\(selectedOfficeHoursMode.label) mode")
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(OpenDesignOfficeHoursColor.fg)
-                Text("\(officeHoursAnswerCount(session: session)) / \(selectedOfficeHoursMode.questionCount) · Design doc")
+                Text("\(officeHoursAnswerCount(session: session)) / \(selectedOfficeHoursMode.questionCount) · 목표 인터뷰")
                     .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                     .foregroundStyle(OpenDesignOfficeHoursColor.muted)
             }
@@ -2696,6 +2959,10 @@ struct ContentView: View {
                     officeHoursRunningStatusBlock(session: session)
                         .id("running-status-\(session.id)")
                         .transition(.opacity.combined(with: .move(edge: .top)))
+                } else if session.status == .error {
+                    officeHoursFailureBlock(session: session, day1Content: day1Content)
+                        .id("office-hours-failure-\(session.id)")
+                        .transition(.officeHoursPromptReveal)
                 } else if !timeline.isEmpty && session.status != .running {
                     if officeHoursIsDocReady(session: session) {
                         officeHoursDocReadyBlock(session: session)
@@ -2730,6 +2997,89 @@ struct ContentView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("opendesign.officeHours.liveStatus")
+    }
+
+    private func officeHoursFailureBlock(
+        session: ChatSession,
+        day1Content: OpenDesignDayContent
+    ) -> some View {
+        let logLines = viewModel.sidecarOutputPreview(for: session.id)
+        let errorText = session.error?.nonEmpty
+            ?? session.messages.last(where: { $0.state == .error })?.error?.nonEmpty
+            ?? session.messages.last(where: { $0.state == .error })?.content.nonEmpty
+            ?? viewModel.lastError?.nonEmpty
+            ?? "provider가 유효한 structured input request를 반환하지 않았습니다."
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.rose)
+                    .frame(width: 22, height: 22)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Day 1 인터뷰 질문을 만들지 못했습니다")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                    Text("\(session.provider.title): \(errorText)")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Button {
+                    retryOfficeHoursAfterFailure(day1Content: day1Content)
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("다시 시도")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundStyle(OpenDesignOfficeHoursColor.bgDeep)
+                    .padding(.horizontal, 11)
+                    .frame(height: 30)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(OpenDesignOfficeHoursColor.accent))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("opendesign.officeHours.failure.retry")
+            }
+
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 6) {
+                    if logLines.isEmpty {
+                        Text("sidecar log excerpt unavailable")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    } else {
+                        ForEach(Array(logLines.suffix(8).enumerated()), id: \.offset) { _, line in
+                            Text(line)
+                                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                                .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+                .padding(.top, 8)
+            } label: {
+                Text("sidecar log excerpt")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+            }
+            .accentColor(OpenDesignOfficeHoursColor.accent)
+            .accessibilityIdentifier("opendesign.officeHours.failure.logs")
+        }
+        .padding(14)
+        .background(openDesignOfficeHoursBackground(cornerRadius: 12, fill: OpenDesignOfficeHoursColor.surface))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.rose)
+                .frame(width: 3)
+                .padding(.vertical, 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("opendesign.officeHours.failure")
     }
 
     private func officeHoursSubmittedPromptSnapshots(for session: ChatSession) -> [OfficeHoursSubmittedPromptSnapshot] {
@@ -2878,7 +3228,7 @@ struct ContentView: View {
             return "\(selectedOfficeHoursMode.label) 첫 질문 생성 중"
         }
         if completed >= selectedOfficeHoursMode.questionCount {
-            return "Design doc 정리 중"
+            return "증거 정리 중"
         }
         return "질문 \(completed + 1) 생성 중"
     }
@@ -2966,6 +3316,9 @@ struct ContentView: View {
                     .padding(.top, 12)
                     .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1), alignment: .top)
 
+                    officeHoursDocumentHandoffBlock(session: session)
+                        .padding(.top, 5.5)
+
                     officeHoursDesignDocExample(session: session)
                         .padding(.top, 5.5)
                 }
@@ -3011,6 +3364,207 @@ struct ContentView: View {
     private func officeHoursCanSaveDoc(session: ChatSession?) -> Bool {
         guard let session else { return false }
         return officeHoursIsDocReady(session: session)
+    }
+
+    private var officeHoursDocumentSpecs: [(type: String, title: String, path: String)] {
+        [
+            ("goal", "GOAL", "docs/GOAL.md"),
+            ("icp", "ICP", "docs/ICP.md"),
+            ("values", "VALUES", "docs/VALUES.md"),
+            ("spec", "SPEC", "docs/SPEC.md"),
+        ]
+    }
+
+    private var officeHoursDocumentHandoffBusy: Bool {
+        viewModel.day1DocHandoffPendingDocType != nil || viewModel.activeDay1HandoffPrompt != nil
+    }
+
+    private var officeHoursDay1DocumentsWritten: Bool {
+        officeHoursDocumentSpecs.allSatisfy { officeHoursDocumentWritten(type: $0.type) }
+    }
+
+    private var officeHoursMetaDocSaveTitle: String {
+        if officeHoursDocumentHandoffBusy { return "저장 중" }
+        if officeHoursDay1DocumentsWritten { return "저장됨" }
+        return "저장"
+    }
+
+    private func officeHoursDocumentWritten(type: String) -> Bool {
+        guard let preview = viewModel.iddDocPreviews.first(where: { $0.type == type }) else {
+            return false
+        }
+        let status = preview.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return status.hasPrefix("written") || status.hasPrefix("approved")
+    }
+
+    private func officeHoursDocumentDetail(type: String, path: String) -> String {
+        if officeHoursDocumentWritten(type: type) {
+            return "\(path) 저장됨"
+        }
+        if viewModel.day1DocHandoffPendingDocType == "all" || viewModel.day1DocHandoffPendingDocType == type {
+            return "\(path) 저장 중"
+        }
+        if viewModel.activeDay1HandoffPrompt?.generation?.docType?.lowercased() == type {
+            return "\(path) 질문 대기"
+        }
+        return "\(path) 저장 대기"
+    }
+
+    private func officeHoursDocumentAccessibilityValue(type: String) -> String {
+        if officeHoursDocumentWritten(type: type) { return "written" }
+        if viewModel.day1DocHandoffPendingDocType != nil { return "saving" }
+        return "waiting"
+    }
+
+    private func officeHoursDocumentHandoffBlock(session: ChatSession) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("문서 저장")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.mutedDeep)
+                    .textCase(.uppercase)
+                Spacer(minLength: 0)
+                Text("\(officeHoursDocumentSpecs.filter { officeHoursDocumentWritten(type: $0.type) }.count)/\(officeHoursDocumentSpecs.count)")
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(officeHoursDay1DocumentsWritten ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.muted)
+            }
+
+            Button {
+                if officeHoursDay1DocumentsWritten {
+                    completeOfficeHoursDay1AndAdvance()
+                } else {
+                    startOfficeHoursDocumentHandoff(session: session)
+                }
+            } label: {
+                Text(officeHoursDocumentHandoffButtonTitle)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(officeHoursDocumentHandoffButtonDisabled ? OpenDesignOfficeHoursColor.mutedDeep : OpenDesignOfficeHoursColor.bgDeep)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 40)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(officeHoursDocumentHandoffButtonDisabled ? OpenDesignOfficeHoursColor.surface2 : OpenDesignOfficeHoursColor.accent)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .stroke(officeHoursDocumentHandoffButtonDisabled ? OpenDesignOfficeHoursColor.borderSoft : Color.clear, lineWidth: 1)
+                            )
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(officeHoursDocumentHandoffButtonDisabled)
+            .accessibilityIdentifier("opendesign.officeHours.docHandoff.confirm")
+
+            VStack(spacing: 7) {
+                ForEach(Array(officeHoursDocumentSpecs.enumerated()), id: \.offset) { _, doc in
+                    officeHoursDocumentRow(type: doc.type, title: doc.title, path: doc.path)
+                }
+            }
+
+            if let error = viewModel.day1DocHandoffError?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !error.isEmpty {
+                Text(error)
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(openDesignOfficeHoursBackground(cornerRadius: 8, fill: OpenDesignOfficeHoursColor.surface2))
+            }
+        }
+        .padding(12)
+        .background(openDesignOfficeHoursBackground(cornerRadius: 10, fill: OpenDesignOfficeHoursColor.bgDeep))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("opendesign.officeHours.docHandoff")
+    }
+
+    private func officeHoursDocumentRow(type: String, title: String, path: String) -> some View {
+        let isWritten = officeHoursDocumentWritten(type: type)
+        let detail = officeHoursDocumentDetail(type: type, path: path)
+        return HStack(spacing: 10) {
+            Text(isWritten ? "✓" : officeHoursDocumentHandoffBusy ? "…" : "•")
+                .font(.system(size: isWritten ? 11 : 10, weight: .bold, design: .monospaced))
+                .foregroundStyle(isWritten ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.mutedDeep)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(OpenDesignOfficeHoursColor.surface2))
+                .overlay(Circle().stroke(isWritten ? OpenDesignOfficeHoursColor.accentLine : OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1))
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(isWritten ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.fg)
+                Text(detail)
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(isWritten ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.mutedDeep)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+        }
+        .padding(.vertical, 1)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title) \(detail)")
+        .accessibilityValue(officeHoursDocumentAccessibilityValue(type: type))
+        .accessibilityIdentifier("opendesign.officeHours.docHandoff.doc.\(type)")
+    }
+
+    private var officeHoursDocumentHandoffButtonTitle: String {
+        if officeHoursDocumentHandoffBusy { return "문서 저장 중" }
+        if officeHoursDay1DocumentsWritten { return "Day 1 완료 → Day 2" }
+        return "4개 문서 저장"
+    }
+
+    private var officeHoursDocumentHandoffButtonDisabled: Bool {
+        officeHoursDocumentHandoffBusy
+    }
+
+    private func startOfficeHoursDocumentHandoff(session: ChatSession) {
+        guard !officeHoursDocumentHandoffBusy else { return }
+        viewModel.startDay1DocHandoff(
+            docType: "all",
+            day1Handoff: officeHoursDay1HandoffPayload(session: session)
+        )
+    }
+
+    private func officeHoursDay1HandoffPayload(session: ChatSession) -> [String: Any] {
+        let doc = officeHoursDesignDocPreview(session: session)
+        let rowValue: (String) -> String = { label in
+            doc.rows.first(where: { $0.label == label })?.body ?? ""
+        }
+        let goalSelection = viewModel.day1GoalSelection
+        let markdown = ([
+            "---",
+            "generated_by: office-hours",
+            "handoff_for: day1-docs",
+            "office_hours_mode: \"\(selectedOfficeHoursMode.label)\"",
+            "---",
+            "",
+            "# \(doc.title)",
+            "",
+            doc.summary,
+            "",
+        ] + doc.rows.flatMap { row in
+            ["## \(row.label)", row.body, ""]
+        }).joined(separator: "\n")
+        let clean: (String?, String) -> String = { value, fallback in
+            let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty ? fallback : trimmed
+        }
+
+        return [
+            "goal": clean(goalSelection?.goalText, doc.summary),
+            "icp": clean(goalSelection?.customer, rowValue("Target User")),
+            "pain": clean(goalSelection?.problem, rowValue("Problem Statement")),
+            "outcome": clean(goalSelection?.validationAction, rowValue("Next action")),
+            "markdown": markdown,
+        ]
+    }
+
+    private func completeOfficeHoursDay1AndAdvance() {
+        _ = viewModel.markFoundationDayCompleted(1)
+        clearOpenDesignReferenceRoute()
+        viewModel.selectFoundationDay(2)
     }
 
     private func officeHoursDesignDocExample(session: ChatSession) -> some View {
@@ -4147,7 +4701,9 @@ struct ContentView: View {
             Text(viewModel.isConnected ? "채팅 세션을 만드는 중입니다." : "채팅 세션을 준비 중입니다.")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(OpenDesignOfficeHoursColor.fg)
-            Text(viewModel.isConnected ? "세션이 만들어지면 Startup 질문을 자동으로 준비합니다." : "Sidecar 연결 후 시작할 수 있습니다.")
+            Text(viewModel.day1GoalSelection == nil
+                ? "목표 확립 후 Day 1 인터뷰 질문을 준비합니다."
+                : viewModel.isConnected ? "세션이 만들어지면 Day 1 인터뷰 질문을 자동으로 준비합니다." : "Sidecar 연결 후 시작할 수 있습니다.")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
         }
@@ -4180,13 +4736,13 @@ struct ContentView: View {
                         VStack(spacing: 0) {
                             officeHoursMetaRunStep(
                                 title: "세션 대기",
-                                detail: "Startup 질문을 자동으로 준비한다.",
+                                detail: "저장된 목표를 불러온다.",
                                 isDone: officeHoursModePicked(session: session),
                                 isLive: !officeHoursModePicked(session: session)
                             )
                             officeHoursMetaRunStep(
-                                title: "Startup 준비",
-                                detail: "고정된 Startup 흐름으로 질문을 준비한다.",
+                                title: "질문 준비",
+                                detail: "목표 기준으로 첫 질문을 준비한다.",
                                 isDone: officeHoursModePicked(session: session),
                                 isLive: pendingOfficeHoursStartMode != nil
                             )
@@ -4197,8 +4753,8 @@ struct ContentView: View {
                                 isLive: session?.pendingUserInput != nil || session?.status == .running
                             )
                             officeHoursMetaRunStep(
-                                title: "Design doc",
-                                detail: "전제, 접근안, 과제를 문서로 정리한다.",
+                                title: "증거 정리",
+                                detail: "답변 근거를 로컬 또는 BIP에 남긴다.",
                                 isDone: false,
                                 isLive: officeHoursAnswerCount(session: session) > 0 && session?.pendingUserInput == nil,
                                 showsDivider: false
@@ -4209,9 +4765,13 @@ struct ContentView: View {
                     officeHoursMetaCard(
                         title: "Design doc 초안",
                         trailing: nil,
-                        actionTitle: didSaveOfficeHoursDoc ? "저장됨" : "저장",
-                        actionDisabled: !officeHoursCanSaveDoc(session: session) || didSaveOfficeHoursDoc,
-                        action: { didSaveOfficeHoursDoc = true },
+                        actionTitle: officeHoursMetaDocSaveTitle,
+                        actionDisabled: !officeHoursCanSaveDoc(session: session) || officeHoursDay1DocumentsWritten || officeHoursDocumentHandoffBusy,
+                        action: {
+                            if let session {
+                                startOfficeHoursDocumentHandoff(session: session)
+                            }
+                        },
                         fixedHeight: 226
                     ) {
                         let previewRows = officeHoursDocPreviewRows(session: session)
@@ -5232,7 +5792,8 @@ struct ContentView: View {
     }
 
     private func officeHoursCanStart(session: ChatSession?) -> Bool {
-        pendingOfficeHoursStartMode == nil && officeHoursSessionCanReceiveStart(session)
+        guard viewModel.day1GoalSelection != nil else { return false }
+        return pendingOfficeHoursStartMode == nil && officeHoursSessionCanReceiveStart(session)
     }
 
     private func officeHoursModePicked(session: ChatSession?) -> Bool {
@@ -5258,6 +5819,9 @@ struct ContentView: View {
         if pendingOfficeHoursStartMode != nil {
             return "첫 질문 생성 중"
         }
+        if viewModel.day1GoalSelection == nil {
+            return "목표 확정 대기"
+        }
         guard let session else {
             return viewModel.isConnected ? "/office-hours 준비됨" : "sidecar 연결 대기"
         }
@@ -5267,7 +5831,7 @@ struct ContentView: View {
                 return "첫 질문 생성 중"
             }
             if completed >= selectedOfficeHoursMode.questionCount {
-                return "design doc 정리 중"
+                return "증거 정리 중"
             }
             return "다음 질문 생성 중"
         }
@@ -5292,11 +5856,12 @@ struct ContentView: View {
             if OfficeHoursTranscriptRow.rows(from: session.messages).isEmpty {
                 return "/office-hours 준비됨"
             }
-            return "design doc 초안 준비됨"
+            return "인터뷰 답변 준비됨"
         }
     }
 
     private func officeHoursRunButtonTitle(session: ChatSession?) -> String {
+        if viewModel.day1GoalSelection == nil { return "목표 확정 필요" }
         if pendingOfficeHoursStartMode != nil { return "준비 중" }
         guard let session else { return "\(selectedOfficeHoursMode.label) 시작" }
         if session.status == .running { return "진행 중" }
@@ -5335,6 +5900,7 @@ struct ContentView: View {
         day1Content: OpenDesignDayContent
     ) {
         selectedOfficeHoursMode = mode
+        guard viewModel.day1GoalSelection != nil else { return }
         guard let session else {
             pendingOfficeHoursStartMode = mode
             viewModel.ensureOfficeHoursSession()
@@ -5348,12 +5914,11 @@ struct ContentView: View {
             officeHoursReadyPromptRevealIDs.filter { !$0.hasPrefix("\(session.id)::") }
         )
         didCopyOfficeHoursPlanCeoReview = false
-        didSaveOfficeHoursDoc = false
         let context = officeHoursContext(day1Content: day1Content, mode: mode)
         if viewModel.startOfficeHours(
             sessionID: session.id,
             context: context,
-            source: "office_hours_screen_\(mode.rawValue)"
+            source: "day1_interview_goal_locked"
         ) {
             officeHoursStartedSessionIDs.insert(session.id)
             startOfficeHoursQuestionLoading(
@@ -5368,6 +5933,12 @@ struct ContentView: View {
         day1Content: OpenDesignDayContent
     ) {
         guard let mode = pendingOfficeHoursStartMode else { return }
+        if let session,
+           session.pendingUserInput != nil {
+            pendingOfficeHoursStartMode = nil
+            officeHoursStartedSessionIDs.insert(session.id)
+            return
+        }
         guard let session else {
             viewModel.ensureOfficeHoursSession()
             return
@@ -5384,12 +5955,18 @@ struct ContentView: View {
         officeHoursActiveQuestionLoadersBySession.removeAll()
         officeHoursReadyPromptRevealIDs.removeAll()
         didCopyOfficeHoursPlanCeoReview = false
-        didSaveOfficeHoursDoc = false
         _ = viewModel.createSession(
             provider: viewModel.selectedProvider,
             source: "office_hours_screen_new_session",
             suppressBootstrapIntake: true
         )
+    }
+
+    private func retryOfficeHoursAfterFailure(day1Content: OpenDesignDayContent) {
+        guard viewModel.day1GoalSelection != nil else { return }
+        let mode = selectedOfficeHoursMode
+        resetOfficeHoursSession()
+        pendingOfficeHoursStartMode = mode
     }
 
     private func startOfficeHoursIfNeeded(
@@ -5403,9 +5980,9 @@ struct ContentView: View {
             realProjectSessionCreateRequested: officeHoursRealProjectSessionCreateRequested
         ) else { return }
 
+        guard viewModel.day1GoalSelection != nil else { return }
         selectedOfficeHoursMode = .startup
         didCopyOfficeHoursPlanCeoReview = false
-        didSaveOfficeHoursDoc = false
         officeHoursReadyPromptRevealIDs = Set(
             officeHoursReadyPromptRevealIDs.filter { !$0.hasPrefix("\(session.id)::") }
         )
@@ -5413,7 +5990,7 @@ struct ContentView: View {
         if viewModel.startOfficeHours(
             sessionID: session.id,
             context: context,
-            source: "office_hours_screen_startup"
+            source: "day1_interview_goal_locked"
         ) {
             officeHoursStartedSessionIDs.insert(session.id)
             startOfficeHoursQuestionLoading(
@@ -5450,11 +6027,38 @@ struct ContentView: View {
             "Office Hours screen context",
             "Workspace: \(openDesignInteractionWorkspaceRoot)",
         ]
+        if let goal = viewModel.day1GoalSelection {
+            lines.append("DAY1_LOCKED_GOAL")
+            lines.append("Flow contract: locked Day 1 goal interview.")
+            lines.append("Goal lane: \(goal.goalType.rawValue) / \(goal.goalType.title)")
+            lines.append("Goal text: \(goal.goalText)")
+            lines.append("Customer: \(goal.customer)")
+            lines.append("Problem: \(goal.problem)")
+            lines.append("Validation action: \(goal.validationAction)")
+            if !goal.evidenceRefs.isEmpty {
+                lines.append("Evidence refs: \(goal.evidenceRefs.joined(separator: ", "))")
+            }
+            lines.append("Proof sink: \(goal.proofSink.rawValue)")
+            if goal.proofSink == .bipOptional {
+                lines.append("BIP proof sink status: configured; evidence can be saved after explicit user approval.")
+                lines.append("Proof checklist: record the interview answer, mark the validation action, attach evidence refs, and do not post publicly unless approved.")
+            } else {
+                lines.append("BIP proof sink status: not configured; continue with local evidence only.")
+            }
+            if let onboarding = viewModel.onboardingContext {
+                lines.append("Onboarding goal: \(onboarding.goal)")
+                lines.append("Onboarding stage: \(onboarding.currentStage)")
+                lines.append("Onboarding business: \(onboarding.businessDescription)")
+                lines.append("Onboarding project stage: \(onboarding.projectStage.rawValue)")
+            }
+        }
         if let mode {
             lines.append("Office Hours mode: \(mode.label)")
             lines.append("Mode goal: \(mode.detail)")
             lines.append("Expected question count: \(mode.questionCount)")
-            lines.append("Design doc assignment: \(mode.assignment)")
+            if viewModel.day1GoalSelection == nil {
+                lines.append("Design doc assignment: \(mode.assignment)")
+            }
         }
 
         if let scanResult = viewModel.scanResult {
@@ -5492,7 +6096,9 @@ struct ContentView: View {
             lines.append(contentsOf: answerLines)
         }
 
-        if let mode {
+        if viewModel.day1GoalSelection != nil {
+            lines.append("Instruction: Run the Day 1 interview only against DAY1_LOCKED_GOAL. The first response must be exactly one structured input card. Ask one question at a time. Do not write files, create docs, publish posts, or edit project files unless the user explicitly approves later.")
+        } else if let mode {
             lines.append("Command: start startup --write-design-doc")
             lines.append("Instruction: Based on the project, scan, workspace evidence, Day 1 Q&A, and selected \(mode.label) mode above, run the office-hours specialist in chat. Start by summarizing the strongest current hypothesis in 3-4 lines, then ask exactly one \(mode.label) office-hours forcing question with structured choices.")
             lines.append("Flow contract: fixed Startup design-doc flow. Do not ask a mode gate, product-stage gate, privacy gate, or smart-skip gate on this screen. Ask the six Startup questions in order when missing: demand, status_quo, human, wedge, observation, future_fit. After the sixth answer, stop asking structured input and return generated design-doc markdown for the local Design doc panel and plan-ceo-review handoff.")
@@ -5594,6 +6200,14 @@ struct ContentView: View {
             officeHoursRealProjectTestState = .starting
             continueOfficeHoursRealProjectTestIfReady(day1Content: day1Content)
         case .starting:
+            guard viewModel.day1GoalSelection != nil else {
+                officeHoursRealProjectTestState = .failed("Day 1 목표를 먼저 확정해야 실제 프로젝트 오피스 아워를 실행할 수 있습니다.")
+                captureOfficeHoursRealProjectTestFailed(
+                    reason: "missing_day1_goal",
+                    day1Content: day1Content
+                )
+                return
+            }
             guard viewModel.isConnected else {
                 officeHoursRealProjectTestState = .failed("Sidecar 연결이 끊겼습니다.")
                 captureOfficeHoursRealProjectTestFailed(
@@ -5618,7 +6232,7 @@ struct ContentView: View {
             if viewModel.startOfficeHours(
                 sessionID: session.id,
                 context: context,
-                source: "office_hours_screen_real_project_test"
+                source: "day1_interview_goal_locked"
             ) {
                 officeHoursStartedSessionIDs.insert(session.id)
                 officeHoursRealProjectTestState = .waitingForFirstQuestion
@@ -6150,6 +6764,13 @@ struct ContentView: View {
         isOpenDesignOfficeHoursPresented = false
     }
 
+    private func openOpenDesignSettingsRoute() {
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+            isOpenDesignOfficeHoursPresented = false
+            selectedOpenDesignReferencePage = .settings
+        }
+    }
+
     private func clearOpenDesignReferenceRouteIfUnsupported(dayNumber: Int) {
         if !OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: dayNumber) {
             clearOpenDesignReferenceRoute()
@@ -6182,6 +6803,7 @@ struct ContentView: View {
         officeHoursRealProjectTestSessionID = nil
         officeHoursRealProjectSessionCreateRequested = false
         didCopyOfficeHoursRealProjectTestReport = false
+        selectedOfficeHoursGoalType = nil
     }
 
     private var openDesignInteractionWorkspaceRoot: String {
@@ -6571,10 +7193,7 @@ struct ContentView: View {
     }
 
     private func openMacSettingsWindow() {
-        NSApp.activate(ignoringOtherApps: true)
-        if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
-            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-        }
+        openOpenDesignSettingsRoute()
     }
 
     // MARK: - BIP Readiness Card (T8)
@@ -9235,7 +9854,7 @@ private struct WindowChrome: NSViewRepresentable {
 private struct WorkspaceWindowChrome: NSViewRepresentable {
     let maximizeOnInitialInstall: Bool
     let markInitialInstallMaximizeApplied: (() -> Void)?
-    let usesOfficeHoursChrome: Bool
+    let style: WorkspaceChromeStyle
 
     final class Coordinator {
         var didApplyInitialInstallMaximize = false
@@ -9263,11 +9882,14 @@ private struct WorkspaceWindowChrome: NSViewRepresentable {
             window.title = "Agentic30"
             window.titleVisibility = .hidden
             window.toolbarStyle = .unifiedCompact
+            window.styleMask.insert(.titled)
             window.styleMask.insert(.fullSizeContentView)
+            window.styleMask.insert(.closable)
+            window.styleMask.insert(.miniaturizable)
+            window.styleMask.insert(.resizable)
             window.isOpaque = true
-            if usesOfficeHoursChrome {
+            if style == .day1OfficeHours {
                 let appearance = NSAppearance(named: .darkAqua)
-                window.styleMask.remove(.titled)
                 window.titlebarAppearsTransparent = true
                 window.appearance = appearance
                 NSApp.appearance = appearance
@@ -9275,7 +9897,6 @@ private struct WorkspaceWindowChrome: NSViewRepresentable {
             } else {
                 let theme = Agentic30Theme.current
                 let appearance = NSAppearance(named: theme.appKitAppearanceName)
-                window.styleMask.insert(.titled)
                 window.titlebarAppearsTransparent = true
                 window.appearance = appearance
                 NSApp.appearance = appearance

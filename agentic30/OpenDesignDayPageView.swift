@@ -411,18 +411,12 @@ struct OpenDesignDayContent {
 
     static func makeRailItems(
         todayTitle: String,
+        todayRoute: RailItem.Route = .today,
         showsDevelopmentOnlyReferencePages: Bool = Self.showsDevelopmentOnlyReferencePages
     ) -> [RailItem] {
         visibleRailItems([
-            RailItem(id: "today", title: todayTitle, systemImage: "calendar", isActive: true, hasNewDot: false, route: .today),
-            RailItem(id: "search", title: "검색", systemImage: "magnifyingglass", isActive: false, hasNewDot: false, route: .search),
-            RailItem(id: "projects", title: "프로젝트", systemImage: "folder", isActive: false, hasNewDot: false, route: .inert),
-            RailItem(id: "office-hours", title: OpenDesignCopy.officeHoursTitle, systemImage: "text.bubble", isActive: false, hasNewDot: false, route: .officeHours),
+            RailItem(id: "today", title: todayTitle, systemImage: "calendar", isActive: true, hasNewDot: false, route: todayRoute),
             RailItem(id: "settings", title: "설정", systemImage: "gearshape", isActive: false, hasNewDot: false, route: .settings),
-            RailItem(id: "interviews", title: "인터뷰", systemImage: "bubble.left.and.bubble.right", isActive: false, hasNewDot: false, route: .inert),
-            RailItem(id: "bip", title: "BIP 로그", systemImage: "doc.text", isActive: false, hasNewDot: false, route: .inert),
-            RailItem(id: "news", title: "뉴스", systemImage: "newspaper", isActive: false, hasNewDot: true, route: .inert),
-            RailItem(id: "history", title: "히스토리", systemImage: "clock.arrow.circlepath", isActive: false, hasNewDot: false, route: .inert),
         ], showsDevelopmentOnlyReferencePages: showsDevelopmentOnlyReferencePages)
     }
 
@@ -620,7 +614,7 @@ struct OpenDesignDayContent {
                 isLocked: state == .locked,
                 lockNote: state == .locked ? unlockNote(forDay: day) : nil,
                 targetSectionID: state == .active ? "top" : nil,
-                route: state == .active ? .today : .inert
+                route: state == .active ? (day == 1 ? .officeHours : .today) : .inert
             )
         }
         return taskItems + baseItems.filter { $0.kind != .task }
@@ -717,7 +711,7 @@ struct OpenDesignDayContent {
     }
 
     static let day1 = OpenDesignDayContent(
-        railItems: makeRailItems(todayTitle: "오늘 · Day 1"),
+        railItems: makeRailItems(todayTitle: "오늘 · Day 1", todayRoute: .officeHours),
         taskGroups: [
             TaskGroup(
                 id: "week1",
@@ -1498,7 +1492,7 @@ struct OpenDesignDayContent {
         showsDevelopmentOnlyReferencePages: Bool = Self.showsDevelopmentOnlyReferencePages
     ) -> [SearchItem] {
         visibleSearchItems([
-            SearchItem(id: "page-today", kind: .page, title: "오늘 · Day 1", subtitle: "ICP 좁히기", day: nil, systemImage: "scope", isActive: true, isLocked: false, lockNote: nil, targetSectionID: "top", route: .today),
+            SearchItem(id: "page-today", kind: .page, title: "오늘 · Day 1", subtitle: "Office Hours", day: nil, systemImage: "scope", isActive: true, isLocked: false, lockNote: nil, targetSectionID: "top", route: .officeHours),
             SearchItem(id: "page-search", kind: .page, title: "검색", subtitle: "전체 페이지 · 과제 찾기", day: nil, systemImage: "magnifyingglass", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .search),
             SearchItem(id: "page-projects", kind: .page, title: "프로젝트", subtitle: "활성 3개 · 소스 루트 여러 개 관리", day: nil, systemImage: "folder", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
             SearchItem(id: "page-settings", kind: .page, title: "설정", subtitle: "워크스페이스 · 프로바이더 · 권한", day: nil, systemImage: "gearshape", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .settings),
@@ -1506,7 +1500,7 @@ struct OpenDesignDayContent {
             SearchItem(id: "page-bip", kind: .page, title: "BIP 로그", subtitle: "Build in Public", day: nil, systemImage: "doc.text", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
             SearchItem(id: "page-news", kind: .page, title: "뉴스", subtitle: "안 읽음 17건 · 큐레이션", day: nil, systemImage: "newspaper", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
             SearchItem(id: "page-history", kind: .page, title: "히스토리 · 타임라인", subtitle: "변경 · 결정 흐름", day: nil, systemImage: "clock.arrow.circlepath", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
-            SearchItem(id: "task-day1", kind: .task, title: "먼저 도울 사람을 정해요", subtitle: "ICP · 인터뷰 1/3", day: "Day 1", systemImage: "circle.dotted", isActive: true, isLocked: false, lockNote: nil, targetSectionID: "top", route: .today),
+            SearchItem(id: "task-day1", kind: .task, title: "먼저 도울 사람을 정해요", subtitle: "Office Hours", day: "Day 1", systemImage: "circle.dotted", isActive: true, isLocked: false, lockNote: nil, targetSectionID: "top", route: .officeHours),
             SearchItem(id: "task-day2", kind: .task, title: "시장 신호 읽기", subtitle: "Market", day: "Day 2", systemImage: "circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
             SearchItem(id: "task-day3", kind: .task, title: "Mom Test 인터뷰 ×3", subtitle: "Interview", day: "Day 3", systemImage: "circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
             SearchItem(id: "task-day4", kind: .task, title: "10× 웨지 찾기", subtitle: "Wedge", day: "Day 4", systemImage: "circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
@@ -1518,12 +1512,12 @@ struct OpenDesignDayContent {
             SearchItem(id: "task-day10", kind: .task, title: "랜딩 카피 & Above-fold", subtitle: "Landing", day: "Day 10", systemImage: "lock", isActive: false, isLocked: true, lockNote: "D7 해제", targetSectionID: nil, route: .inert),
             SearchItem(id: "task-day15", kind: .task, title: "BIP 채널 첫 포스트", subtitle: "BIP", day: "Day 15", systemImage: "lock", isActive: false, isLocked: true, lockNote: "D14 해제", targetSectionID: nil, route: .inert),
             SearchItem(id: "task-day22", kind: .task, title: "첫 매출 ask · Pricing", subtitle: "Revenue", day: "Day 22", systemImage: "lock", isActive: false, isLocked: true, lockNote: "D21 해제", targetSectionID: nil, route: .inert),
-            SearchItem(id: "section-signals", kind: .section, title: "근거", subtitle: "workspace · interviews · BIP", day: nil, systemImage: "waveform.path.ecg", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "signals", route: .today),
-            SearchItem(id: "section-mission", kind: .section, title: "핵심 가설 확정", subtitle: "시작", day: nil, systemImage: "flag", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "mission", route: .today),
-            SearchItem(id: "section-interview1", kind: .section, title: "인터뷰 1 — 거리", subtitle: "3분 · 직감 OK · 바꿀 수 있음", day: nil, systemImage: "bubble.left", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "interview1", route: .today),
-            SearchItem(id: "section-picker", kind: .section, title: "ICP 4지선다", subtitle: "직접 만날 사람 후보", day: nil, systemImage: "scope", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "interview1-options", route: .today),
-            SearchItem(id: "section-final", kind: .section, title: "핵심 가설 확정", subtitle: "다음 검증 기준", day: nil, systemImage: "target", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "final-icp", route: .today),
-            SearchItem(id: "section-guide", kind: .section, title: "진행 가이드", subtitle: "Day 1 흐름 보기", day: nil, systemImage: "sparkles", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "top", route: .today),
+            SearchItem(id: "section-signals", kind: .section, title: "근거", subtitle: "workspace · interviews · BIP", day: nil, systemImage: "waveform.path.ecg", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "signals", route: .officeHours),
+            SearchItem(id: "section-mission", kind: .section, title: "핵심 가설 확정", subtitle: "시작", day: nil, systemImage: "flag", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "mission", route: .officeHours),
+            SearchItem(id: "section-interview1", kind: .section, title: "인터뷰 1 — 거리", subtitle: "3분 · 직감 OK · 바꿀 수 있음", day: nil, systemImage: "bubble.left", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "interview1", route: .officeHours),
+            SearchItem(id: "section-picker", kind: .section, title: "ICP 4지선다", subtitle: "직접 만날 사람 후보", day: nil, systemImage: "scope", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "interview1-options", route: .officeHours),
+            SearchItem(id: "section-final", kind: .section, title: "핵심 가설 확정", subtitle: "다음 검증 기준", day: nil, systemImage: "target", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "final-icp", route: .officeHours),
+            SearchItem(id: "section-guide", kind: .section, title: "진행 가이드", subtitle: "Day 1 흐름 보기", day: nil, systemImage: "sparkles", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "top", route: .officeHours),
         ], showsDevelopmentOnlyReferencePages: showsDevelopmentOnlyReferencePages)
     }
 
@@ -1649,11 +1643,14 @@ struct OpenDesignDayContent {
         let compactQ = q.replacingOccurrences(of: " ", with: "")
         let title = item.title.lowercased()
         let subtitle = item.subtitle.lowercased()
+        let id = item.id.lowercased()
+        let compactID = id.replacingOccurrences(of: "-", with: "")
         let day = (item.day ?? "").lowercased().replacingOccurrences(of: " ", with: "")
         var score = 0
         if title.contains(q) { score += 3 }
         if title.hasPrefix(q) { score += 4 }
         if subtitle.contains(q) { score += 1 }
+        if id.contains(q) || compactID.contains(compactQ) { score += 2 }
         if day == compactQ { score += 8 }
         if day.hasPrefix(compactQ) { score += 3 }
         if let number = dayQuickMatchNumber(from: compactQ), day == "day\(number)" { score += 6 }
@@ -3133,6 +3130,13 @@ struct OpenDesignDayPageView: View {
     let newsMarketRadar: NewsMarketRadarSnapshot
     let refreshNewsMarketRadar: () -> Void
     let prepareNewsMarketRadar: () -> Void
+    let settingsScreen: AnyView?
+    let requiresDay1Goal: Bool
+    let day1GoalDrafts: [Day1GoalDraft]
+    let day1GoalSelection: Day1GoalSelection?
+    let day1GoalError: String?
+    let bipProofSinkAvailable: Bool
+    let saveDay1GoalDraft: (Day1GoalDraft) -> Void
     let bipResearch: BipResearchSnapshot
     let refreshBipResearch: () -> Void
     let prepareBipResearch: () -> Void
@@ -3152,6 +3156,7 @@ struct OpenDesignDayPageView: View {
     let completeDay: () -> Void
     let advanceToNextDay: () -> Void
     let selectDay: (Int) -> Void
+    let routesTodayToOfficeHours: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding private var interaction: OpenDesignDayInteractionState
@@ -3173,6 +3178,13 @@ struct OpenDesignDayPageView: View {
         selectedReferencePage: Binding<OpenDesignReferencePageKind?> = .constant(nil),
         isOfficeHoursPresented: Binding<Bool> = .constant(false),
         openSettings: @escaping () -> Void,
+        settingsScreen: AnyView? = nil,
+        requiresDay1Goal: Bool = false,
+        day1GoalDrafts: [Day1GoalDraft] = [],
+        day1GoalSelection: Day1GoalSelection? = nil,
+        day1GoalError: String? = nil,
+        bipProofSinkAvailable: Bool = false,
+        saveDay1GoalDraft: @escaping (Day1GoalDraft) -> Void = { _ in },
         submitStructuredPromptChoice: @escaping (OpenDesignDayAnswerSubmission) -> Void = { _ in },
         newsMarketRadar: NewsMarketRadarSnapshot = .empty,
         refreshNewsMarketRadar: @escaping () -> Void = {},
@@ -3195,13 +3207,21 @@ struct OpenDesignDayPageView: View {
         startDay1DocHandoff: @escaping (String, [String: Any]) -> Void = { _, _ in },
         completeDay: @escaping () -> Void = {},
         advanceToNextDay: @escaping () -> Void = {},
-        selectDay: @escaping (Int) -> Void = { _ in }
+        selectDay: @escaping (Int) -> Void = { _ in },
+        routesTodayToOfficeHours: Bool = false
     ) {
         self.content = content
         _interaction = interaction
         _selectedReferencePage = selectedReferencePage
         _isOfficeHoursPresented = isOfficeHoursPresented
         self.openSettings = openSettings
+        self.settingsScreen = settingsScreen
+        self.requiresDay1Goal = requiresDay1Goal
+        self.day1GoalDrafts = day1GoalDrafts
+        self.day1GoalSelection = day1GoalSelection
+        self.day1GoalError = day1GoalError
+        self.bipProofSinkAvailable = bipProofSinkAvailable
+        self.saveDay1GoalDraft = saveDay1GoalDraft
         self.submitStructuredPromptChoice = submitStructuredPromptChoice
         self.newsMarketRadar = newsMarketRadar
         self.refreshNewsMarketRadar = refreshNewsMarketRadar
@@ -3225,6 +3245,7 @@ struct OpenDesignDayPageView: View {
         self.completeDay = completeDay
         self.advanceToNextDay = advanceToNextDay
         self.selectDay = selectDay
+        self.routesTodayToOfficeHours = routesTodayToOfficeHours
     }
 
     private var searchResults: [OpenDesignDayContent.SearchItem] {
@@ -3246,16 +3267,24 @@ struct OpenDesignDayPageView: View {
                     content: content,
                     interaction: $interaction,
                     selectedReferencePage: selectedReferencePage,
-                    isOfficeHoursPresented: isOfficeHoursPresented,
+                    isOfficeHoursPresented: effectiveOfficeHoursPresented,
                     pendingScrollRequest: $pendingScrollRequest,
                     searchPulseTarget: $searchPulseTarget,
                     layout: layout,
                     openSearch: openSearch,
                     toggleSearch: toggleSearch,
                     activateRailItem: activateRailItem,
+                    usesDay1WindowChrome: routesTodayToOfficeHours,
                     newsMarketRadar: newsMarketRadar,
                     refreshNewsMarketRadar: refreshNewsMarketRadar,
                     prepareNewsMarketRadar: prepareNewsMarketRadar,
+                    settingsScreen: settingsScreen,
+                    requiresDay1Goal: requiresDay1Goal,
+                    day1GoalDrafts: day1GoalDrafts,
+                    day1GoalSelection: day1GoalSelection,
+                    day1GoalError: day1GoalError,
+                    bipProofSinkAvailable: bipProofSinkAvailable,
+                    saveDay1GoalDraft: saveDay1GoalDraft,
                     bipResearch: bipResearch,
                     refreshBipResearch: refreshBipResearch,
                     prepareBipResearch: prepareBipResearch,
@@ -3438,7 +3467,7 @@ struct OpenDesignDayPageView: View {
            let dayNumber = openDesignFoundationDayNumber(taskID: item.id) {
             closeSearch()
             selectedReferencePage = nil
-            isOfficeHoursPresented = false
+            isOfficeHoursPresented = item.route == .officeHours || (routesTodayToOfficeHours && dayNumber == 1)
             selectDay(dayNumber)
             return
         }
@@ -3462,6 +3491,10 @@ struct OpenDesignDayPageView: View {
             openOfficeHoursFromRail()
         case .today, .inert:
             closeSearch()
+            if routesTodayToOfficeHours {
+                openOfficeHoursFromRail()
+                return
+            }
             selectedReferencePage = nil
             isOfficeHoursPresented = false
             let target = OpenDesignSectionAnchor(rawValue: item.targetSectionID ?? "") ?? .top
@@ -3494,7 +3527,7 @@ struct OpenDesignDayPageView: View {
     }
 
     private func activateRailItem(_ item: OpenDesignDayContent.RailItem) {
-        if item.id == "today" {
+        if item.id == "today", item.route != .officeHours {
             openTodayFromRail()
             return
         }
@@ -3522,6 +3555,10 @@ struct OpenDesignDayPageView: View {
     }
 
     private func openTodayFromRail() {
+        if routesTodayToOfficeHours {
+            openOfficeHoursFromRail()
+            return
+        }
         selectedReferencePage = nil
         isOfficeHoursPresented = false
         requestScroll(to: .top)
@@ -3565,7 +3602,7 @@ struct OpenDesignDayPageView: View {
     }
 
     private func submitActiveStep() {
-        guard !isOfficeHoursPresented else { return }
+        guard !effectiveOfficeHoursPresented else { return }
         if advanceIntroIfNeeded() {
             return
         }
@@ -3798,6 +3835,13 @@ struct OpenDesignDayPageView: View {
             isAntiSignal: option.isAntiSignal
         )
     }
+
+    private var effectiveOfficeHoursPresented: Bool {
+        if selectedReferencePage != nil {
+            return false
+        }
+        return isOfficeHoursPresented || routesTodayToOfficeHours
+    }
 }
 
 struct OpenDesignDayShell: View {
@@ -3811,9 +3855,17 @@ struct OpenDesignDayShell: View {
     let openSearch: () -> Void
     let toggleSearch: () -> Void
     let activateRailItem: (OpenDesignDayContent.RailItem) -> Void
+    let usesDay1WindowChrome: Bool
     let newsMarketRadar: NewsMarketRadarSnapshot
     let refreshNewsMarketRadar: () -> Void
     let prepareNewsMarketRadar: () -> Void
+    let settingsScreen: AnyView?
+    let requiresDay1Goal: Bool
+    let day1GoalDrafts: [Day1GoalDraft]
+    let day1GoalSelection: Day1GoalSelection?
+    let day1GoalError: String?
+    let bipProofSinkAvailable: Bool
+    let saveDay1GoalDraft: (Day1GoalDraft) -> Void
     let bipResearch: BipResearchSnapshot
     let refreshBipResearch: () -> Void
     let prepareBipResearch: () -> Void
@@ -3891,22 +3943,38 @@ struct OpenDesignDayShell: View {
                 .accessibilityIdentifier("opendesign.day.rail")
 
                 if let selectedReferencePage {
-                    OpenDesignReferenceShell(
-                        kind: selectedReferencePage,
-                        layout: layout,
-                        openSearch: openSearch,
-                        newsMarketRadar: newsMarketRadar,
-                        refreshNewsMarketRadar: refreshNewsMarketRadar,
-                        prepareNewsMarketRadar: prepareNewsMarketRadar,
-                        bipResearch: bipResearch,
-                        refreshBipResearch: refreshBipResearch,
-                        prepareBipResearch: prepareBipResearch,
-                        openNewsSettings: openNewsSettings,
-                        workHistory: workHistory,
-                        refreshWorkHistory: refreshWorkHistory,
-                        prepareWorkHistory: prepareWorkHistory
-                    )
-                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.995)))
+                    if selectedReferencePage == .settings, let settingsScreen {
+                        ZStack {
+                            settingsScreen
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                            Color.clear
+                                .frame(width: 1, height: 1)
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel("OpenDesign Settings Main")
+                                .accessibilityIdentifier("opendesign.reference.settings.main")
+                                .allowsHitTesting(false)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.995)))
+                    } else {
+                        OpenDesignReferenceShell(
+                            kind: selectedReferencePage,
+                            layout: layout,
+                            openSearch: openSearch,
+                            newsMarketRadar: newsMarketRadar,
+                            refreshNewsMarketRadar: refreshNewsMarketRadar,
+                            prepareNewsMarketRadar: prepareNewsMarketRadar,
+                            bipResearch: bipResearch,
+                            refreshBipResearch: refreshBipResearch,
+                            prepareBipResearch: prepareBipResearch,
+                            openNewsSettings: openNewsSettings,
+                            workHistory: workHistory,
+                            refreshWorkHistory: refreshWorkHistory,
+                            prepareWorkHistory: prepareWorkHistory
+                        )
+                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.995)))
+                    }
                 } else if isOfficeHoursPresented {
                     if let officeHoursScreen {
                         officeHoursScreen
@@ -3962,6 +4030,12 @@ struct OpenDesignDayShell: View {
                             pendingDay1HandoffDocType: pendingDay1HandoffDocType,
                             day1HandoffError: day1HandoffError,
                             day1SituationSummary: day1SituationSummary,
+                            requiresDay1Goal: requiresDay1Goal,
+                            day1GoalDrafts: day1GoalDrafts,
+                            day1GoalSelection: day1GoalSelection,
+                            day1GoalError: day1GoalError,
+                            bipProofSinkAvailable: bipProofSinkAvailable,
+                            saveDay1GoalDraft: saveDay1GoalDraft,
                             onChooseDay1SituationGoal: onChooseDay1SituationGoal,
                             startDay1DocHandoff: startDay1DocHandoff,
                             layout: layout
@@ -3994,6 +4068,13 @@ struct OpenDesignDayShell: View {
         .background(isOfficeHoursPresented ? OpenDesignOfficeHoursColor.bg : OpenDesignDayColor.bg)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("opendesign.day.shell")
+    }
+}
+
+extension View {
+    func openDesignWindowTitlebarAccessibility() -> some View {
+        accessibilityElement(children: .contain)
+            .accessibilityIdentifier("opendesign.window.titlebar")
     }
 }
 
@@ -4052,6 +4133,7 @@ private struct OpenDesignMarketTitlebar: View {
         .frame(height: 36)
         .background(OpenDesignDayColor.bg)
         .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+        .openDesignWindowTitlebarAccessibility()
     }
 
     private func copyShareSummary() {
@@ -4117,6 +4199,7 @@ private struct OpenDesignDayTitlebar: View {
         .frame(height: 36)
         .background(OpenDesignDayColor.bg)
         .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
+        .openDesignWindowTitlebarAccessibility()
     }
 
     private func copyShareSummary() {
@@ -4133,10 +4216,6 @@ private struct OpenDesignOfficeHoursTitlebar: View {
 
     var body: some View {
         ZStack {
-            OpenDesignOfficeHoursTrafficLights()
-                .padding(.leading, 14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
             HStack(spacing: 8) {
                 Spacer(minLength: 82)
                 Text("Agentic30")
@@ -4183,46 +4262,7 @@ private struct OpenDesignOfficeHoursTitlebar: View {
         .frame(height: 36)
         .background(OpenDesignOfficeHoursColor.bg)
         .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1), alignment: .bottom)
-    }
-}
-
-private struct OpenDesignOfficeHoursTrafficLights: View {
-    var body: some View {
-        HStack(spacing: 8) {
-            OpenDesignOfficeHoursWindowButton(
-                color: Color(red: 1.0, green: 0.37, blue: 0.34),
-                label: "닫기",
-                action: { NSApp.keyWindow?.close() }
-            )
-            OpenDesignOfficeHoursWindowButton(
-                color: Color(red: 1.0, green: 0.77, blue: 0.27),
-                label: "최소화",
-                action: { NSApp.keyWindow?.miniaturize(nil) }
-            )
-            OpenDesignOfficeHoursWindowButton(
-                color: Color(red: 0.31, green: 0.80, blue: 0.38),
-                label: "확대",
-                action: { NSApp.keyWindow?.zoom(nil) }
-            )
-        }
-        .accessibilityElement(children: .contain)
-    }
-}
-
-private struct OpenDesignOfficeHoursWindowButton: View {
-    let color: Color
-    let label: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Circle()
-                .fill(color)
-                .frame(width: 11, height: 11)
-        }
-        .buttonStyle(.plain)
-        .help(label)
-        .accessibilityLabel(label)
+        .openDesignWindowTitlebarAccessibility()
     }
 }
 
@@ -4314,7 +4354,7 @@ private struct OpenDesignRailView: View {
 
     private var activeItemID: String {
         if isOfficeHoursPresented {
-            return "office-hours"
+            return "today"
         }
         if let selectedReferencePage {
             return selectedReferencePage.railItemID
@@ -6214,6 +6254,211 @@ private struct OpenDesignFlowLayout: Layout {
     }
 }
 
+private struct OpenDesignDayGoalSelectionCard: View {
+    let drafts: [Day1GoalDraft]
+    let selection: Day1GoalSelection?
+    let error: String?
+    let bipProofSinkAvailable: Bool
+    let onSave: (Day1GoalDraft) -> Void
+
+    @State private var selectedGoalType: Day1GoalType?
+
+    private var activeDraft: Day1GoalDraft? {
+        let type = selectedGoalType ?? selection?.goalType ?? drafts.first(where: { $0.isRecommended })?.goalType ?? drafts.first?.goalType
+        return drafts.first(where: { $0.goalType == type }) ?? drafts.first
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("목표 확립")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                if selection != nil {
+                    goalBadge("저장됨", tone: .accent)
+                } else if let recommended = drafts.first(where: \.isRecommended) {
+                    goalBadge("추천 \(recommended.goalType.title)", tone: .amber)
+                }
+                Spacer(minLength: 0)
+                goalBadge(bipProofSinkAvailable ? "증거 저장 가능" : "로컬 증거", tone: bipProofSinkAvailable ? .accent : .muted)
+            }
+
+            Text("스캔에서 찾은 고객, 문제, 확인할 행동을 오늘의 Day 1 인터뷰 목표로 잠급니다.")
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(alignment: .top, spacing: 8) {
+                ForEach(drafts) { draft in
+                    goalLaneButton(draft)
+                }
+            }
+
+            if let draft = activeDraft {
+                VStack(spacing: 1) {
+                    goalDetailRow("목표", draft.goalText, strong: true)
+                    goalDetailRow("고객", draft.customer)
+                    goalDetailRow("문제", draft.problem)
+                    goalDetailRow("확인", draft.validationAction)
+                    goalDetailRow("근거", goalEvidenceSummary(for: draft))
+                }
+                .background(OpenDesignDayColor.borderSoft)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(OpenDesignDayColor.borderSoft, lineWidth: 1)
+                )
+
+                HStack(spacing: 10) {
+                    OpenDesignHandoffActionButton(
+                        label: selection?.goalType == draft.goalType ? "목표 잠김" : "이 목표로 확정",
+                        accessibilityIdentifier: "opendesign.day.goal.save",
+                        isDisabled: selection?.goalType == draft.goalType,
+                        showsReturnHint: false,
+                        action: { onSave(draft) }
+                    )
+
+                    if let selection {
+                        Text(selection.goalText)
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(OpenDesignDayColor.muted)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+
+            if let error = error?.trimmingCharacters(in: .whitespacesAndNewlines), !error.isEmpty {
+                Text(error)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.rose)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(16)
+        .background(cardBackground(cornerRadius: 12, fill: OpenDesignDayColor.surface))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(OpenDesignDayColor.accent)
+                .frame(width: 3)
+                .padding(.vertical, 1)
+        }
+        .padding(.bottom, 10)
+        .onAppear {
+            if selectedGoalType == nil {
+                selectedGoalType = selection?.goalType ?? drafts.first(where: { $0.isRecommended })?.goalType ?? drafts.first?.goalType
+            }
+        }
+        .onChange(of: selection?.goalType) { _, type in
+            if let type {
+                selectedGoalType = type
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("opendesign.day.goal.card")
+    }
+
+    private func goalLaneButton(_ draft: Day1GoalDraft) -> some View {
+        let isSelected = activeDraft?.goalType == draft.goalType
+        let isSaved = selection?.goalType == draft.goalType
+        return Button {
+            selectedGoalType = draft.goalType
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Text(draft.goalType.title)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    if isSaved {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(OpenDesignDayColor.accent)
+                    } else if draft.isRecommended {
+                        Text("추천")
+                            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.amber)
+                    }
+                }
+                Text(draft.goalType.promptHint)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, minHeight: 98, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? OpenDesignDayColor.accentDim : OpenDesignDayColor.surface2)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(isSelected ? OpenDesignDayColor.accentLine : OpenDesignDayColor.borderSoft, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("opendesign.day.goal.option.\(draft.goalType.rawValue)")
+    }
+
+    private enum BadgeTone {
+        case accent
+        case amber
+        case muted
+    }
+
+    private func goalBadge(_ text: String, tone: BadgeTone) -> some View {
+        let foreground: Color
+        let background: Color
+        let border: Color
+        switch tone {
+        case .accent:
+            foreground = OpenDesignDayColor.accent
+            background = OpenDesignDayColor.accentDim
+            border = OpenDesignDayColor.accentLine
+        case .amber:
+            foreground = OpenDesignDayColor.amber
+            background = OpenDesignDayColor.amberDim
+            border = OpenDesignDayColor.amber.opacity(0.35)
+        case .muted:
+            foreground = OpenDesignDayColor.muted
+            background = OpenDesignDayColor.surface2
+            border = OpenDesignDayColor.borderSoft
+        }
+        return Text(text)
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .foregroundStyle(foreground)
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(Capsule().fill(background))
+            .overlay(Capsule().stroke(border, lineWidth: 1))
+    }
+
+    private func goalDetailRow(_ key: String, _ value: String, strong: Bool = false) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 14) {
+            Text(key)
+                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .frame(width: 48, alignment: .leading)
+            Text(value)
+                .font(.system(size: 12.5, weight: strong ? .semibold : .medium))
+                .foregroundStyle(strong ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(OpenDesignDayColor.surface)
+    }
+
+    private func goalEvidenceSummary(for draft: Day1GoalDraft) -> String {
+        let summary = draft.evidenceRefs.prefix(3).joined(separator: ", ").trimmingCharacters(in: .whitespacesAndNewlines)
+        return summary.isEmpty ? "scan 근거 없음" : summary
+    }
+}
+
 private struct OpenDesignDayMainView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -6231,6 +6476,12 @@ private struct OpenDesignDayMainView: View {
     let pendingDay1HandoffDocType: String?
     let day1HandoffError: String?
     let day1SituationSummary: Day1SituationSummary?
+    let requiresDay1Goal: Bool
+    let day1GoalDrafts: [Day1GoalDraft]
+    let day1GoalSelection: Day1GoalSelection?
+    let day1GoalError: String?
+    let bipProofSinkAvailable: Bool
+    let saveDay1GoalDraft: (Day1GoalDraft) -> Void
     let onChooseDay1SituationGoal: (String) -> Void
     let startDay1DocHandoff: (String, [String: Any]) -> Void
     let layout: OpenDesignDayLayoutMetrics
@@ -6269,6 +6520,16 @@ private struct OpenDesignDayMainView: View {
                                     onContinue: advancePastSituationSummary
                                 )
                             } else {
+                                if shouldShowGoalSelection {
+                                    OpenDesignDayGoalSelectionCard(
+                                        drafts: day1GoalDrafts,
+                                        selection: day1GoalSelection,
+                                        error: day1GoalError,
+                                        bipProofSinkAvailable: bipProofSinkAvailable,
+                                        onSave: saveDay1GoalDraft
+                                    )
+                                }
+
                                 OpenDesignDayStepWorkspaceView(
                                     content: content,
                                     interaction: $interaction,
@@ -6331,6 +6592,14 @@ private struct OpenDesignDayMainView: View {
         day1SituationSummary != nil && !hasAdvancedPastSituationSummary && !interaction.missionAccepted
     }
 
+    private var shouldShowGoalSelection: Bool {
+        requiresDay1Goal && !day1GoalDrafts.isEmpty
+    }
+
+    private var isDay1GoalMissing: Bool {
+        requiresDay1Goal && day1GoalSelection == nil
+    }
+
     private var startPhaseResumeLabel: String {
         let target = min(max(interaction.highestVisibleInterviewStep, 1), interaction.maxReachableStepID)
         if target <= 1 {
@@ -6387,6 +6656,10 @@ private struct OpenDesignDayMainView: View {
 
     private func advanceWorkflowStep() {
         if !interaction.missionAccepted {
+            guard !isDay1GoalMissing else {
+                pendingScrollRequest = OpenDesignScrollRequest(target: .top)
+                return
+            }
             acceptMission()
             return
         }
@@ -6478,8 +6751,9 @@ private struct OpenDesignDayMainView: View {
 
                 if !interaction.missionAccepted {
                     OpenDesignHandoffActionButton(
-                        label: "시작",
+                        label: isDay1GoalMissing ? "목표 먼저 확정" : "시작",
                         accessibilityIdentifier: "opendesign.day.start",
+                        isDisabled: isDay1GoalMissing,
                         showsReturnHint: false,
                         action: acceptMission
                     )
