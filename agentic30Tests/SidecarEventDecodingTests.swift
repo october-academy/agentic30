@@ -447,6 +447,64 @@ struct SidecarEventDecodingTests {
         #expect(event.error == nil)
     }
 
+    @MainActor @Test func decodesDayProgressState() throws {
+        let payload = """
+        {
+          "type": "day_progress_state",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "currentDay": 7,
+          "dayProgress": {
+            "schemaVersion": 1,
+            "schema": "agentic30.day_progress.v1",
+            "challengeStartedAt": "2026-06-01",
+            "days": {
+              "7": {
+                "day": 7,
+                "kind": "standard",
+                "steps": {
+                  "scan": "done", "retro": "done", "goal": "done",
+                  "interview": "active", "execution": "pending"
+                },
+                "goalText": "Go/No-Go 결정하기",
+                "updatedAt": "2026-06-07T03:00:00.000Z"
+              },
+              "1": {
+                "day": 1,
+                "kind": "day1",
+                "steps": {
+                  "onboarding": "done", "scan": "done", "goal": "done", "first_interview": "done"
+                },
+                "goalText": "먼저 도울 사람 정하기",
+                "updatedAt": "2026-06-01T10:00:00.000Z"
+              }
+            }
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "day_progress_state")
+        #expect(event.dayProgress?.challengeStartedAt == "2026-06-01")
+
+        let day7 = event.dayProgress?.record(forDay: 7)
+        #expect(day7?.kind == .standard)
+        #expect(day7?.steps["interview"] == .active)
+        #expect(day7?.orderedSteps.count == 5)
+        #expect(day7?.orderedSteps.first?.id == "scan")
+        #expect(day7?.completedCount == 3)
+        #expect(day7?.goalText == "Go/No-Go 결정하기")
+
+        let day1 = event.dayProgress?.record(forDay: 1)
+        #expect(day1?.kind == .day1)
+        #expect(day1?.orderedSteps.count == 4)
+        #expect(day1?.orderedSteps.last?.id == "first_interview")
+        #expect(day1?.isComplete == true)
+
+        #expect(event.dayProgress?.recordedDaysDescending.first?.day == 7)
+        #expect(event.error == nil)
+    }
+
     @MainActor @Test func decodesWorkspaceScanResultWithDay1SituationSummary() throws {
         let payload = """
         {

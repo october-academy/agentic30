@@ -73,6 +73,12 @@ import {
   saveDay1GoalSelection,
 } from "./day1-goal-state.mjs";
 import {
+  computeDayNumber,
+  ensureChallengeStart,
+  loadDayProgress,
+  patchDayStep,
+} from "./day-progress-state.mjs";
+import {
   buildAuthEnv,
   clearAuthContext,
   getAuthContextSummary,
@@ -339,6 +345,7 @@ const state = {
   iddSetup: null,
   bipCoachRunning: false,
   day1GoalSelection: null,
+  dayProgress: null,
   providerAuthRuns: new Map(),
   workspaceOnboardingHypothesis: null,
   curriculumInlineHintState: {},
@@ -402,6 +409,7 @@ state.bipCoach = mergeBipConfigIntoCoachState(
 state.bipCoach = syncBipCoachSessionState();
 state.iddSetup = await loadIddSetupState(workspaceRoot);
 state.day1GoalSelection = await loadDay1GoalSelection({ workspaceRoot });
+state.dayProgress = await loadDayProgress({ workspaceRoot });
 await persistBipCoachState(bipCoachFilePath, state.bipCoach);
 const telemetry = createTelemetryClient({ appSupportPath, workspaceRoot });
 setSharedTelemetryClient(telemetry);
@@ -700,6 +708,7 @@ function registerAuthenticatedClient(socket) {
     diagnostics: buildSidecarDiagnostics(environment, preflight),
     bipCoach: state.bipCoach,
     day1GoalSelection: state.day1GoalSelection,
+    dayProgress: state.dayProgress,
   });
   scheduleQmdMemoryBootstrap();
 
@@ -1560,6 +1569,14 @@ async function handleClientMessage(socket, payload) {
       await handleDay1GoalSave(socket, payload);
       return;
     }
+    case "day_progress_get": {
+      await handleDayProgressGet(socket, payload);
+      return;
+    }
+    case "day_progress_patch": {
+      await handleDayProgressPatch(socket, payload);
+      return;
+    }
     case "project_context_refresh": {
       fireAndForget(
         "project_context_refresh",
@@ -1968,6 +1985,64 @@ async function handleDay1GoalSave(socket, payload = {}) {
     });
     send(socket, {
       type: "day1_goal_state",
+      workspaceRoot: root,
+      success: false,
+      error: formatError(error),
+    });
+  }
+}
+
+async function handleDayProgressGet(socket, payload = {}) {
+  const root = resolveDay1GoalWorkspaceRoot(payload);
+  const dayProgress = await loadDayProgress({ workspaceRoot: root });
+  if (path.resolve(root) === path.resolve(workspaceRoot)) {
+    state.dayProgress = dayProgress;
+  }
+  send(socket, {
+    type: "day_progress_state",
+    workspaceRoot: root,
+    dayProgress,
+    currentDay: dayProgress
+      ? computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt })
+      : null,
+  });
+}
+
+async function handleDayProgressPatch(socket, payload = {}) {
+  const root = resolveDay1GoalWorkspaceRoot(payload);
+  try {
+    const dayProgress = await patchDayStep({
+      workspaceRoot: root,
+      day: payload.day ?? payload.dayNumber ?? payload.day_number,
+      stepId: payload.stepId ?? payload.step ?? payload.step_id,
+      status: payload.status,
+      goalText: payload.goalText ?? payload.goal_text,
+      kind: payload.kind,
+    });
+    if (path.resolve(root) === path.resolve(workspaceRoot)) {
+      state.dayProgress = dayProgress;
+    }
+    telemetry.captureEvent("mac_sidecar_day_progress_updated", {
+      day: Number(payload.day ?? payload.dayNumber ?? payload.day_number) || null,
+      step_id: String(payload.stepId ?? payload.step ?? payload.step_id ?? ""),
+      status: String(payload.status ?? ""),
+      workspace_basename: path.basename(root),
+    });
+    broadcast({
+      type: "day_progress_state",
+      workspaceRoot: root,
+      dayProgress,
+      currentDay: dayProgress
+        ? computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt })
+        : null,
+    });
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "day_progress_patch",
+      workspace_root: root,
+    });
+    send(socket, {
+      type: "day_progress_state",
       workspaceRoot: root,
       success: false,
       error: formatError(error),
@@ -7555,6 +7630,18 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
         state.day1GoalSelection = day1GoalSelection;
       }
+      // Anchor the challenge start on first scan (idempotent), then load day progress.
+      let dayProgress = null;
+      try {
+        dayProgress = path.resolve(scanRoot) === path.resolve(workspaceRoot)
+          ? await ensureChallengeStart({ workspaceRoot: scanRoot })
+          : await loadDayProgress({ workspaceRoot: scanRoot });
+      } catch {
+        dayProgress = await loadDayProgress({ workspaceRoot: scanRoot }).catch(() => null);
+      }
+      if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
+        state.dayProgress = dayProgress;
+      }
       const projectContext = await refreshProjectContextCache({
         workspaceRoot: scanRoot,
         reason: "workspace_scan",
@@ -7590,6 +7677,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
         day1IcpPlan,
         day1SituationSummary,
         day1GoalSelection,
+        dayProgress,
       });
       triggerDay1AlignmentPlanBroadcast({
         scanRoot,
@@ -7678,6 +7766,18 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
     if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
       state.day1GoalSelection = day1GoalSelection;
     }
+    // Anchor the challenge start on first scan (idempotent), then load day progress.
+    let dayProgress = null;
+    try {
+      dayProgress = path.resolve(scanRoot) === path.resolve(workspaceRoot)
+        ? await ensureChallengeStart({ workspaceRoot: scanRoot })
+        : await loadDayProgress({ workspaceRoot: scanRoot });
+    } catch {
+      dayProgress = await loadDayProgress({ workspaceRoot: scanRoot }).catch(() => null);
+    }
+    if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
+      state.dayProgress = dayProgress;
+    }
     const projectContext = await refreshProjectContextCache({
       workspaceRoot: scanRoot,
       reason: "workspace_scan",
@@ -7713,6 +7813,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       day1IcpPlan,
       day1SituationSummary,
       day1GoalSelection,
+      dayProgress,
     });
     triggerDay1AlignmentPlanBroadcast({
       scanRoot,

@@ -909,6 +909,124 @@ struct StartupQueuedAction: Identifiable {
     }
 }
 
+// MARK: - Day macro-loop progress (mirrors sidecar/day-progress-state.mjs)
+
+enum DayStepStatus: String, Codable, Hashable {
+    case done
+    case active
+    case pending
+}
+
+enum DayKind: String, Codable, Hashable {
+    case day1
+    case standard
+}
+
+/// Macro loop stages, gated by Day kind (IA: Day1=4 steps, Day2+=5 steps).
+/// Mirrors DAY1_STEPS / STANDARD_STEPS in day-progress-state.mjs.
+enum DayLoopSteps {
+    static let day1: [String] = ["onboarding", "scan", "goal", "first_interview"]
+    static let standard: [String] = ["scan", "retro", "goal", "interview", "execution"]
+
+    static func kind(forDay day: Int) -> DayKind { day == 1 ? .day1 : .standard }
+
+    static func ids(forDay day: Int, kind: DayKind) -> [String] {
+        kind == .day1 ? day1 : standard
+    }
+
+    static func label(for stepId: String) -> String {
+        switch stepId {
+        case "onboarding": return "온보딩"
+        case "scan": return "scan"
+        case "retro": return "회고"
+        case "goal": return "목표"
+        case "interview": return "인터뷰"
+        case "first_interview": return "첫 인터뷰"
+        case "execution": return "실행"
+        default: return stepId
+        }
+    }
+}
+
+struct DayRecord: Codable, Equatable, Hashable {
+    let day: Int
+    let kind: DayKind
+    let steps: [String: DayStepStatus]
+    let goalText: String
+    let updatedAt: String
+
+    init(
+        day: Int,
+        kind: DayKind,
+        steps: [String: DayStepStatus],
+        goalText: String = "",
+        updatedAt: String = ""
+    ) {
+        self.day = day
+        self.kind = kind
+        self.steps = steps
+        self.goalText = goalText
+        self.updatedAt = updatedAt
+    }
+
+    /// Steps in canonical stepper order with resolved labels and statuses.
+    var orderedSteps: [(id: String, label: String, status: DayStepStatus)] {
+        DayLoopSteps.ids(forDay: day, kind: kind).map { id in
+            (id, DayLoopSteps.label(for: id), steps[id] ?? .pending)
+        }
+    }
+
+    var totalCount: Int { DayLoopSteps.ids(forDay: day, kind: kind).count }
+    var completedCount: Int { orderedSteps.filter { $0.status == .done }.count }
+    var isComplete: Bool { completedCount == totalCount }
+}
+
+struct DayProgress: Codable, Equatable, Hashable {
+    let schemaVersion: Int
+    let schema: String?
+    let challengeStartedAt: String?
+    let days: [String: DayRecord]
+
+    init(
+        schemaVersion: Int = 1,
+        schema: String? = "agentic30.day_progress.v1",
+        challengeStartedAt: String? = nil,
+        days: [String: DayRecord] = [:]
+    ) {
+        self.schemaVersion = schemaVersion
+        self.schema = schema
+        self.challengeStartedAt = challengeStartedAt
+        self.days = days
+    }
+
+    func record(forDay day: Int) -> DayRecord? { days[String(day)] }
+
+    /// Recorded days, newest first (past + today). Skipped days have no record.
+    var recordedDaysDescending: [DayRecord] {
+        days.values.sorted { $0.day > $1.day }
+    }
+
+    /// Elapsed-days-from-start + 1, on local calendar dates.
+    /// Mirrors computeDayNumber() in day-progress-state.mjs.
+    func currentDayNumber(now: Date = Date()) -> Int? {
+        guard let start = Self.parseLocalDate(challengeStartedAt) else { return nil }
+        let cal = Calendar.current
+        let startDay = cal.startOfDay(for: start)
+        let today = cal.startOfDay(for: now)
+        let diff = cal.dateComponents([.day], from: startDay, to: today).day ?? 0
+        return diff >= 0 ? diff + 1 : 1
+    }
+
+    private static func parseLocalDate(_ value: String?) -> Date? {
+        guard let value, value.count >= 10 else { return nil }
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.date(from: String(value.prefix(10)))
+    }
+}
+
 enum Day1GoalType: String, Codable, CaseIterable, Hashable {
     case makeMoney = "make_money"
     case getUsers = "get_users"
@@ -1137,6 +1255,7 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var bipCoach: BipCoachState?
     @Published private(set) var day1GoalSelection: Day1GoalSelection?
     @Published private(set) var day1GoalError: String?
+    @Published private(set) var dayProgress: DayProgress?
     @Published private(set) var isBipCoachRefreshing = false
     @Published private(set) var isBipCoachGenerating = false
     @Published private(set) var isBipCoachCompleting = false
@@ -2532,6 +2651,39 @@ final class AgenticViewModel: ObservableObject {
     @discardableResult
     func saveDay1GoalDraft(_ draft: Day1GoalDraft, workspaceRoot explicitRoot: String? = nil) -> Bool {
         saveDay1GoalSelection(draft.makeSelection(), workspaceRoot: explicitRoot)
+    }
+
+    @discardableResult
+    func requestDayProgress(workspaceRoot explicitRoot: String? = nil) -> Bool {
+        guard isConnected else { return false }
+        let root = (explicitRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !root.isEmpty else { return false }
+        return sidecar.send(payload: [
+            "type": "day_progress_get",
+            "workspaceRoot": root,
+        ])
+    }
+
+    @discardableResult
+    func markDayStep(
+        day: Int,
+        stepId: String,
+        status: DayStepStatus,
+        goalText: String? = nil,
+        workspaceRoot explicitRoot: String? = nil
+    ) -> Bool {
+        guard isConnected else { return false }
+        let root = (explicitRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !root.isEmpty else { return false }
+        var payload: [String: Any] = [
+            "type": "day_progress_patch",
+            "workspaceRoot": root,
+            "day": day,
+            "stepId": stepId,
+            "status": status.rawValue,
+        ]
+        if let goalText { payload["goalText"] = goalText }
+        return sidecar.send(payload: payload)
     }
 
     @discardableResult
@@ -5147,6 +5299,7 @@ final class AgenticViewModel: ObservableObject {
             )
             scanResult = result
             day1GoalSelection = event.day1GoalSelection
+            if let dp = event.dayProgress { dayProgress = dp }
             persistWorkspaceScanResult(event)
             persistWorkspaceScanResultCache(result, root: event.scanRoot)
         case "day1_goal_state":
@@ -5161,6 +5314,9 @@ final class AgenticViewModel: ObservableObject {
                 scanResult = updated
                 persistWorkspaceScanResultCache(updated, root: event.workspaceRoot ?? event.scanRoot)
             }
+        case "day_progress_state":
+            if event.success == false { return }
+            if let dp = event.dayProgress { dayProgress = dp }
         case "doc_creation_started":
             isCreatingDoc = event.docType
             docCreationLogs = []
@@ -8866,6 +9022,7 @@ struct SidecarEvent: Decodable {
     let day1IcpPlan: Day1IcpPlan?
     let day1SituationSummary: Day1SituationSummary?
     let day1GoalSelection: Day1GoalSelection?
+    let dayProgress: DayProgress?
     let error: String?
 
     // Document creation fields
@@ -8962,6 +9119,7 @@ struct SidecarEvent: Decodable {
         day1IcpPlan: Day1IcpPlan? = nil,
         day1SituationSummary: Day1SituationSummary? = nil,
         day1GoalSelection: Day1GoalSelection? = nil,
+        dayProgress: DayProgress? = nil,
         error: String?,
         docType: String?,
         docPath: String?,
@@ -9048,6 +9206,7 @@ struct SidecarEvent: Decodable {
         self.day1IcpPlan = day1IcpPlan
         self.day1SituationSummary = day1SituationSummary
         self.day1GoalSelection = day1GoalSelection
+        self.dayProgress = dayProgress
         self.error = error
         self.docType = docType
         self.docPath = docPath
@@ -9422,6 +9581,7 @@ extension SidecarEvent {
         case day1IcpPlan
         case day1SituationSummary
         case day1GoalSelection
+        case dayProgress
         case error
         case docType
         case docPath
@@ -9518,6 +9678,7 @@ extension SidecarEvent {
         day1IcpPlan = Self.decodeIfPresent(Day1IcpPlan.self, from: container, forKey: .day1IcpPlan)
         day1SituationSummary = Self.decodeIfPresent(Day1SituationSummary.self, from: container, forKey: .day1SituationSummary)
         day1GoalSelection = Self.decodeIfPresent(Day1GoalSelection.self, from: container, forKey: .day1GoalSelection)
+        dayProgress = Self.decodeIfPresent(DayProgress.self, from: container, forKey: .dayProgress)
 
         let stringError = Self.decodeIfPresent(String.self, from: container, forKey: .error)
         let structuredError = Self.decodeIfPresent(BipReadinessError.self, from: container, forKey: .error)
