@@ -381,9 +381,6 @@ enum OpenDesignReferenceCatalog {
         ),
         filters: [],
         sections: [
-            .init(id: "banner", title: "상태", meta: nil, markerTone: .amber, blocks: [
-                .init("predogfood", style: .banner, title: "pre-dogfood 상태입니다.", subtitle: nil, body: "외부 텔레메트리·연동·자동 업로드는 기본적으로 모두 꺼져 있어요. 모든 데이터는 ~/Library/Application Support/Agentic30 안에만 머무릅니다.", chips: [.init("local-first", tone: .accent), .init("sanitize", tone: .amber)]),
-            ]),
             .init(id: "workspace", title: "워크스페이스", meta: "메인 프로젝트", markerTone: .accent, blocks: [
                 .init("workspace-settings", style: .settings, rows: [
                     .init("main", title: "메인 프로젝트", subtitle: "Adaptive 엔진이 가장 먼저 읽는 폴더. SPEC.md / ICP.md / VALUES.md와 업무 일지가 여기에 누적됩니다.", trailing: "~/code/agentic30-public", tone: .accent),
@@ -4699,27 +4696,14 @@ private struct OpenDesignSettingsMainView: View {
     let page: OpenDesignReferencePageModel
     let layout: OpenDesignDayLayoutMetrics
 
-    private var bannerBlock: OpenDesignReferenceBlock? {
-        page.sections.first(where: { $0.id == "banner" })?.blocks.first
-    }
-
-    private var contentSections: [OpenDesignReferenceSectionModel] {
-        page.sections.filter { $0.id != "banner" }
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             OpenDesignSettingsHeaderView(header: page.header, horizontalPadding: layout.mainHorizontalPadding)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    if let bannerBlock {
-                        OpenDesignSettingsWarningBanner(block: bannerBlock)
-                            .padding(.bottom, 22)
-                    }
-
-                    ForEach(contentSections.indices, id: \.self) { index in
-                        OpenDesignSettingsSectionView(section: contentSections[index], isFirstContentSection: index == 0)
+                    ForEach(page.sections.indices, id: \.self) { index in
+                        OpenDesignSettingsSectionView(section: page.sections[index], isFirstContentSection: index == 0)
                     }
                 }
                 .frame(maxWidth: 820, alignment: .leading)
@@ -4783,50 +4767,6 @@ private struct OpenDesignSettingsHeaderView: View {
         .frame(height: 70)
         .background(OpenDesignDayColor.bg)
         .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(height: 1), alignment: .bottom)
-    }
-}
-
-private struct OpenDesignSettingsWarningBanner: View {
-    let block: OpenDesignReferenceBlock
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "exclamationmark.circle")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(OpenDesignDayColor.amber)
-                .frame(width: 22, height: 22)
-                .padding(.top, 1)
-
-            Text(bannerText)
-                .font(.system(size: 12.5, weight: .regular))
-                .foregroundStyle(OpenDesignDayColor.fgSecondary)
-                .lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Spacer(minLength: 8)
-
-            Button("닫기", action: {})
-                .buttonStyle(.plain)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(OpenDesignDayColor.amber)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(referenceRounded(fill: OpenDesignDayColor.amberDim, stroke: OpenDesignDayColor.amberLine, radius: 10))
-    }
-
-    private var bannerText: AttributedString {
-        var text = AttributedString("\(block.title ?? "") \(block.body ?? "")")
-        if let range = text.range(of: block.title ?? "") {
-            text[range].foregroundColor = OpenDesignDayColor.fg
-            text[range].font = .system(size: 12.5, weight: .semibold)
-        }
-        if let pathRange = text.range(of: "~/Library/Application Support/Agentic30") {
-            text[pathRange].foregroundColor = OpenDesignDayColor.amber
-            text[pathRange].font = .system(size: 12.5, weight: .medium, design: .monospaced)
-            text[pathRange].backgroundColor = OpenDesignDayColor.bgDarker
-        }
-        return text
     }
 }
 
@@ -5057,12 +4997,28 @@ private struct OpenDesignSettingsProviderList: View {
             ForEach(rows) { row in
                 VStack(spacing: 0) {
                     HStack(spacing: 10) {
-                        Text(row.leading ?? providerInitial(row.title))
-                            .font(.system(size: 12, weight: .bold, design: .monospaced))
-                            .foregroundStyle(providerLogoForeground(row))
-                            .frame(width: 26, height: 26)
-                            .background(providerLogoBackground(row))
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        if let brandImage = providerBrandImageName(forRowID: row.id) {
+                            let fullBleed = providerBrandLogoIsFullBleed(forRowID: row.id)
+                            Image(brandImage)
+                                .resizable()
+                                .interpolation(.high)
+                                .scaledToFit()
+                                .padding(fullBleed ? 0 : 4)
+                                .frame(width: 26, height: 26)
+                                .background(referenceRounded(
+                                    fill: fullBleed ? Color.clear : OpenDesignDayColor.surface2,
+                                    stroke: fullBleed ? Color.clear : OpenDesignDayColor.borderSoft,
+                                    radius: 6))
+                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                .accessibilityLabel(Text(row.title))
+                        } else {
+                            Text(row.leading ?? providerInitial(row.title))
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .foregroundStyle(providerLogoForeground(row))
+                                .frame(width: 26, height: 26)
+                                .background(providerLogoBackground(row))
+                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        }
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(row.title)
@@ -10009,6 +9965,23 @@ private func settingsGhostButton(
 
 private func providerInitial(_ title: String) -> String {
     title.first.map(String.init) ?? "A"
+}
+
+/// Brand-logo asset for a provider/runtime reference row; nil for rows without a
+/// brand mark (e.g. Exa), which render the initial-letter glyph instead.
+private func providerBrandImageName(forRowID id: String) -> String? {
+    switch id {
+    case "claude": return "BrandClaude"
+    case "codex": return "BrandCodex"
+    case "gemini": return "BrandGemini"
+    case "node": return "BrandNodejs"
+    default: return nil
+    }
+}
+
+/// Brand assets that ship their own opaque background (render full-bleed).
+private func providerBrandLogoIsFullBleed(forRowID id: String) -> Bool {
+    id == "claude" || id == "codex"
 }
 
 private func providerLogoForeground(_ row: OpenDesignReferenceRow) -> Color {

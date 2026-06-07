@@ -2,8 +2,8 @@ import SwiftUI
 import AppKit
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case workspace
     case appearance
+    case workspace
     case menubar
     case providers
     case integrations
@@ -99,7 +99,6 @@ struct SettingsView: View {
     @State private var hoveredSettingsSection: SettingsSection?
     @State private var hoveredWorkspacePathChangeButton = false
     @State private var settingsSearchQuery = ""
-    @State private var settingsBannerVisible = true
     @State private var settingsSaveMessage = ""
     @State private var settingsThemeChoice = Agentic30Theme.current == .dark ? "dark" : "light"
     @AppStorage(Agentic30Theme.storageKey) private var appThemeRawValue = Agentic30Theme.defaultTheme.rawValue
@@ -370,7 +369,7 @@ struct SettingsView: View {
 
     private var settingsAllNavigationGroups: [(title: String, sections: [SettingsSection])] {
         [
-            ("General", [.workspace, .appearance, .menubar]),
+            ("General", [.appearance, .workspace, .menubar]),
             ("Agent", [.providers, .integrations]),
             ("Trust", [.privacy, .updates, .advanced]),
         ]
@@ -684,13 +683,8 @@ struct SettingsView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    if settingsBannerVisible {
-                        odSettingsBanner
-                            .padding(.bottom, 22)
-                    }
-
-                    odWorkspaceSection
                     odAppearanceSection
+                    odWorkspaceSection
                     odMenuBarSection
                     odProvidersSection
                     odIntegrationsSection
@@ -751,43 +745,8 @@ struct SettingsView: View {
         }
     }
 
-    private var odSettingsBanner: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "exclamationmark.circle")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(OpenDesignDayColor.amber)
-                .frame(width: 22, height: 22)
-                .padding(.top, 1)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("pre-dogfood 상태입니다.")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(settingsText)
-                Text("외부 텔레메트리·연동·자동 업로드는 기본적으로 모두 꺼져 있어요. 모든 데이터는 ~/Library/Application Support/Agentic30 안에만 머무릅니다.")
-                    .font(.system(size: 12.5, weight: .regular))
-                    .foregroundStyle(settingsSecondaryText)
-                    .lineSpacing(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 8)
-
-            Button("닫기") {
-                withAnimation(.easeOut(duration: 0.16)) {
-                    settingsBannerVisible = false
-                }
-            }
-            .buttonStyle(.plain)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(OpenDesignDayColor.amber)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(settingsRounded(fill: OpenDesignDayColor.amberDim, stroke: OpenDesignDayColor.amberLine, radius: 10))
-    }
-
     private var odWorkspaceSection: some View {
-        odSettingsSection(id: "workspace", title: "워크스페이스", meta: "메인 프로젝트", isFirst: true) {
+        odSettingsSection(id: "workspace", title: "워크스페이스") {
             odSettingsRowsCard {
                 odSettingsRow(title: "메인 프로젝트", detail: "Adaptive 엔진이 가장 먼저 읽는 폴더. SPEC.md / ICP.md / VALUES.md와 업무 일지가 여기에 누적됩니다.", stacked: true) {
                     odSettingsPathRow(text: workspacePathDisplay, systemImage: "folder", prefix: workspacePathPrefix, emphasizedTail: workspacePathTail, isStale: false) {
@@ -799,7 +758,7 @@ struct SettingsView: View {
     }
 
     private var odAppearanceSection: some View {
-        odSettingsSection(id: "appearance", title: "외관", meta: settingsThemeChoice.capitalized) {
+        odSettingsSection(id: "appearance", title: "외관", isFirst: true) {
             odSettingsRowsCard {
                 odSettingsRow(title: "테마", detail: "Dark 또는 Light 테마를 즉시 적용합니다.") {
                     odSettingsSegmented(values: ["Dark", "Light"], selection: $settingsThemeChoice) { value in
@@ -814,7 +773,7 @@ struct SettingsView: View {
     }
 
     private var odMenuBarSection: some View {
-        odSettingsSection(id: "menubar", title: "메뉴바 & 알림", meta: "로그인 항목") {
+        odSettingsSection(id: "menubar", title: "메뉴바 & 알림") {
             odSettingsRowsCard {
                 odSettingsRow(title: "로그인 시 자동 실행", detail: "macOS 로그인 항목에 추가합니다. Launch Agent — com.octobacademy.agentic30.plist.") {
                     odSettingsToggle(isOn: Binding(get: { loginItemsManager.isEnabled }, set: { loginItemsManager.setEnabled($0) }))
@@ -825,7 +784,7 @@ struct SettingsView: View {
     }
 
     private var odProvidersSection: some View {
-        odSettingsSection(id: "providers", title: "AI 프로바이더", meta: "Claude 1순위 · Codex 폴백") {
+        odSettingsSection(id: "providers", title: "AI 프로바이더") {
             odProviderCard(provider: .claude, authMode: $claudeAuthMode, apiKey: $claudeApiKey, environment: $claudeEnvironment, modelSelection: $claudeModelID)
             odProviderCard(provider: .codex, authMode: $codexAuthMode, apiKey: $codexApiKey, environment: $codexEnvironment, modelSelection: $codexModelID)
             odProviderCard(provider: .gemini, authMode: $geminiAuthMode, apiKey: $geminiApiKey, environment: $geminiEnvironment, modelSelection: $geminiModelID)
@@ -849,11 +808,15 @@ struct SettingsView: View {
 
         return VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 14) {
-                Text("20")
-                    .font(.system(size: 13, weight: .bold, design: .monospaced))
-                    .foregroundStyle(OpenDesignDayColor.sky)
+                Image("BrandNodejs")
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .padding(7)
                     .frame(width: 36, height: 36)
-                    .background(settingsRounded(fill: OpenDesignDayColor.sky.opacity(0.14), stroke: OpenDesignDayColor.sky.opacity(0.30), radius: 8))
+                    .background(settingsRounded(fill: OpenDesignDayColor.surface2, stroke: settingsHairline, radius: 8))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .accessibilityLabel(Text("Node.js"))
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Node 런타임")
@@ -903,7 +866,7 @@ struct SettingsView: View {
     }
 
     private var odIntegrationsSection: some View {
-        odSettingsSection(id: "integrations", title: "연동", meta: "OAuth · API 키 — Keychain 보관") {
+        odSettingsSection(id: "integrations", title: "연동") {
             odSettingsRowsCard {
                 odSettingsRow(title: "Notion", detail: "SPEC.md / ICP.md / VALUES.md 변경분을 지정한 페이지로 양방향 동기화.") {
                     HStack(spacing: 8) {
@@ -922,7 +885,7 @@ struct SettingsView: View {
     }
 
     private var odPrivacySection: some View {
-        odSettingsSection(id: "privacy", title: "개인정보 & 진단", meta: "로컬 우선 · sanitized snapshot only") {
+        odSettingsSection(id: "privacy", title: "개인정보 & 진단") {
             odSettingsRowsCard {
                 odSettingsRow(title: "사용량 텔레메트리 (PostHog)", detail: "앱 열기 횟수, Day 도달 일자, 작업 완료/포기 같은 익명 이벤트. opt-in이며 KR1.1 ~ KR4.3 측정에만 쓰입니다.") {
                     odSettingsToggle(isOn: telemetryEnabledBinding)
@@ -948,7 +911,7 @@ struct SettingsView: View {
 
     private var odUpdatesSection: some View {
         let updateState = viewModel.appUpdateState
-        return odSettingsSection(id: "updates", title: "업데이트", meta: "Sparkle appcast · Developer ID 서명") {
+        return odSettingsSection(id: "updates", title: "업데이트") {
             odSettingsRowsCard {
                 odSettingsRow(title: "현재 버전", detail: "Foundation preview — Day 0-3 loop 한정. Day 4-7은 다음 점 릴리즈 예정.") {
                     HStack(spacing: 8) {
@@ -976,7 +939,7 @@ struct SettingsView: View {
     }
 
     private var odAdvancedSection: some View {
-        odSettingsSection(id: "advanced", title: "고급 & Sidecar", meta: "Sidecar · 진단 · 로그") {
+        odSettingsSection(id: "advanced", title: "고급 & Sidecar") {
             odSettingsRowsCard {
                 odSettingsRow(title: "Sidecar 상태", detail: viewModel.isConnected ? "Node sidecar가 살아 있고 stdio + 로컬 HTTP 둘 다 응답 중입니다." : "Node sidecar 연결을 기다리는 중입니다.") {
                     HStack(spacing: 8) {
@@ -1025,7 +988,6 @@ struct SettingsView: View {
     private func odSettingsSection<Content: View>(
         id: String,
         title: String,
-        meta: String,
         isFirst: Bool = false,
         @ViewBuilder content: () -> Content
     ) -> some View {
@@ -1038,11 +1000,6 @@ struct SettingsView: View {
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .textCase(.uppercase)
                     .foregroundStyle(settingsSubtleText)
-                Text(meta)
-                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(OpenDesignDayColor.mutedDeep)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
                 Rectangle()
                     .fill(settingsHairline)
                     .frame(height: 1)
@@ -1424,19 +1381,19 @@ struct SettingsView: View {
     }
 
     private func odProviderLogo(_ provider: AgentProvider) -> some View {
-        let accent = providerAccentColor(provider)
-        let label: String
-        switch provider {
-        case .claude: label = "A"
-        case .codex: label = "⌥"
-        case .gemini: label = "G"
-        }
-
-        return Text(label)
-            .font(.system(size: provider == .codex ? 15 : 13, weight: .bold, design: .monospaced))
-            .foregroundStyle(provider == .codex ? OpenDesignDayColor.bgDeep : accent)
+        let fullBleed = provider.brandLogoIsFullBleed
+        return Image(provider.brandImageName)
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            .padding(fullBleed ? 0 : 7)
             .frame(width: 36, height: 36)
-            .background(settingsRounded(fill: provider == .codex ? settingsSecondaryText : accent.opacity(0.92), stroke: accent.opacity(0.34), radius: 8))
+            .background(settingsRounded(
+                fill: fullBleed ? Color.clear : OpenDesignDayColor.surface2,
+                stroke: fullBleed ? Color.clear : settingsHairline,
+                radius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .accessibilityLabel(Text(provider.title))
     }
 
     @ViewBuilder
