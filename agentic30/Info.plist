@@ -2,8 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>Agentic30PostHogHost</key>
+	<string>$(POSTHOG_HOST)</string>
+	<key>Agentic30PostHogProjectAPIKey</key>
+	<string>$(POSTHOG_PROJECT_API_KEY)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Agentic30</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIconFile</key>
@@ -18,10 +24,8 @@
 	<string>Agentic30</string>
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
-	<key>CFBundleDisplayName</key>
-	<string>Agentic30</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.7</string>
+	<string>1.0.8</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -36,30 +40,26 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>8</string>
-	<key>LSMinimumSystemVersion</key>
-	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<string>9</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>NSHumanReadableCopyright</key>
 	<string></string>
-	<key>SUFeedURL</key>
-	<string>https://updates.agentic30.app/appcast.xml</string>
-	<key>SUEnableAutomaticChecks</key>
-	<true/>
 	<key>SUAutomaticallyUpdate</key>
 	<true/>
-	<key>SUScheduledCheckInterval</key>
-	<integer>21600</integer>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://updates.agentic30.app/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>$(SPARKLE_PUBLIC_ED_KEY)</string>
 	<key>SURequireSignedFeed</key>
 	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>21600</integer>
 	<key>SUVerifyUpdateBeforeExtraction</key>
 	<true/>
-	<key>Agentic30PostHogProjectAPIKey</key>
-	<string>$(POSTHOG_PROJECT_API_KEY)</string>
-	<key>Agentic30PostHogHost</key>
-	<string>$(POSTHOG_HOST)</string>
 </dict>
 </plist>
