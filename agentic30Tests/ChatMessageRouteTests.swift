@@ -425,7 +425,7 @@ struct StructuredPromptSubmissionStateTests {
         #expect(recovered?.status == .error)
         #expect(recovered?.error?.contains("Sidecar stopped unexpectedly") == true)
         #expect(recovered?.messages.last?.state == .error)
-        #expect(recovered?.messages.last?.content.contains("Sidecar stopped before this response completed") == true)
+        #expect(recovered?.messages.last?.content.contains("응답이 끝나기 전에 실행 보조 앱이 중단됐습니다") == true)
     }
 
     @MainActor @Test func structuredPromptSubmissionKeepsPendingInputLocally() {
@@ -561,7 +561,7 @@ struct StructuredPromptSubmissionStateTests {
         viewModel.startDay1DocHandoff(docType: "goal", day1Handoff: [:])
 
         #expect(viewModel.day1DocHandoffPendingDocType == nil)
-        #expect(viewModel.day1DocHandoffError?.contains("Sidecar 연결") == true)
+        #expect(viewModel.day1DocHandoffError?.contains("실행 보조 앱 연결") == true)
     }
 
     @MainActor @Test func day1HandoffSessionReadyDoesNotLeaveWorkspaceSurface() throws {
