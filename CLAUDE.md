@@ -40,9 +40,9 @@ Hermetic UI subset (recommended for CI-style local runs):
 
 ```bash
 xcodebuild test -project agentic30.xcodeproj -scheme agentic30 -destination 'platform=macOS' \
-  -only-testing:agentic30UITests/agentic30UITests/testNativeProjectPickerSelectsDirectory \
-  -only-testing:agentic30UITests/agentic30UITests/testSettingsModelPickersSelectClaudeAndCodexModels \
-  -only-testing:agentic30UITests/agentic30UITests/testSidecarChatFlowHermetic
+  -only-testing:agentic30UITests/agentic30UITests/testSettingsWorkspaceMainProjectMatchesOpenDesignPathRow \
+  -only-testing:agentic30UITests/agentic30UITests/testAgentSettingsModelPickersSaveClaudeCodexAndGeminiModels \
+  -only-testing:agentic30UITests/agentic30UITests/testWorkspaceStartupDay1RoutesToOfficeHours
 ```
 
 Live canaries are opt-in via env vars: `AGENTIC30_RUN_LIVE_PROVIDER_E2E=1`, `AGENTIC30_GOOGLE_E2E_{EMAIL,PASSWORD,TOTP_SECRET}`, `AGENTIC30_MAC_AUTH_BASE_URL`.
