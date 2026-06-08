@@ -22,7 +22,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .workspace: "Workspace"
         case .appearance: "Appearance"
         case .menubar: "Menu Bar & Notifications"
-        case .providers: "AI Providers"
+        case .providers: "AI 연결"
         case .integrations: "Integrations"
         case .privacy: "Privacy & Diagnostics"
         case .updates: "Updates"
@@ -39,7 +39,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .integrations: "연동"
         case .privacy: "개인정보 & 진단"
         case .updates: "업데이트"
-        case .advanced: "고급 & Sidecar"
+        case .advanced: "고급 & 실행 보조 앱"
         }
     }
 
@@ -126,7 +126,7 @@ struct SettingsView: View {
         var message: String {
             switch self {
             case .reset:
-                return "This clears Agentic30 UserDefaults, Keychain entries, app support, local sessions, caches, Saved State, onboarding state, the Agentic30 QMD index, and .agentic30 folders in known workspaces. Other project files and global provider logins are not deleted."
+                return "Agentic30 UserDefaults, Keychain 항목, 앱 지원 파일, 로컬 세션, 캐시, 저장 상태, 온보딩 상태, Agentic30 QMD 색인, 알려진 워크스페이스의 .agentic30 폴더를 삭제합니다. 다른 프로젝트 파일과 전역 AI 연결 로그인은 삭제하지 않습니다."
             case .uninstall:
                 return "This runs the same local data reset, then selects the Agentic30 app in Finder so you can quit the app and move it to Trash. macOS does not run cleanup when an app is deleted directly from Finder."
             }
@@ -508,7 +508,7 @@ struct SettingsView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(settingsText.opacity(0.94))
 
-                settingsMetaCard(label: "Sidecar", isLive: viewModel.isConnected) {
+                settingsMetaCard(label: "실행 보조 앱", isLive: viewModel.isConnected) {
                     settingsMetaRow("상태", viewModel.isConnected ? "실행 중" : "연결 대기")
                     settingsMetaRow("런타임", viewModel.sidecarDiagnostics?.runtime.node ?? "unknown")
                     settingsMetaRow("세션", "\(viewModel.sessions.count)건")
@@ -526,7 +526,7 @@ struct SettingsView: View {
                     .padding(.top, 2)
 
                 settingsMetaAction(title: "진단 스냅샷 내보내기", subtitle: "sanitize · copy", systemImage: "square.and.arrow.down", action: copyDiagnostics)
-                settingsMetaAction(title: "Sidecar 진단 새로고침", subtitle: "preflight · runtime", systemImage: "arrow.clockwise", action: refreshDiagnostics)
+                settingsMetaAction(title: "실행 보조 앱 진단 새로고침", subtitle: "사전 점검 · 런타임", systemImage: "arrow.clockwise", action: refreshDiagnostics)
 
                 Text("버전")
                     .font(.system(size: 10.5, weight: .medium, design: .monospaced))
@@ -644,7 +644,7 @@ struct SettingsView: View {
         let build = info?["CFBundleVersion"] as? String ?? "local"
         return """
         app · \(version) (\(build))
-        sidecar · \(viewModel.sidecarDiagnostics?.preflight?.status ?? "unknown")
+        helper · \(viewModel.sidecarDiagnostics?.preflight?.status ?? "unknown")
         node · \(viewModel.sidecarDiagnostics?.runtime.node ?? "unknown")
         """
     }
@@ -748,7 +748,7 @@ struct SettingsView: View {
     private var odWorkspaceSection: some View {
         odSettingsSection(id: "workspace", title: "워크스페이스") {
             odSettingsRowsCard {
-                odSettingsRow(title: "메인 프로젝트", detail: "Adaptive 엔진이 가장 먼저 읽는 폴더. SPEC.md / ICP.md / VALUES.md와 업무 일지가 여기에 누적됩니다.", stacked: true) {
+                odSettingsRow(title: "메인 프로젝트", detail: "맞춤형 엔진이 가장 먼저 읽는 폴더. SPEC.md / ICP.md / VALUES.md와 업무 일지가 여기에 누적됩니다.", stacked: true) {
                     odSettingsPathRow(text: workspacePathDisplay, systemImage: "folder", prefix: workspacePathPrefix, emphasizedTail: workspacePathTail, isStale: false) {
                         pickFolder()
                     }
@@ -784,7 +784,7 @@ struct SettingsView: View {
     }
 
     private var odProvidersSection: some View {
-        odSettingsSection(id: "providers", title: "AI 프로바이더") {
+            odSettingsSection(id: "providers", title: "AI 연결") {
             odProviderCard(provider: .claude, authMode: $claudeAuthMode, apiKey: $claudeApiKey, environment: $claudeEnvironment, modelSelection: $claudeModelID)
             odProviderCard(provider: .codex, authMode: $codexAuthMode, apiKey: $codexApiKey, environment: $codexEnvironment, modelSelection: $codexModelID)
             odProviderCard(provider: .gemini, authMode: $geminiAuthMode, apiKey: $geminiApiKey, environment: $geminiEnvironment, modelSelection: $geminiModelID)
@@ -792,7 +792,7 @@ struct SettingsView: View {
             odNodeRuntimeCard
 
             odSettingsRowsCard {
-                odSettingsRow(title: "Exa Research", detail: "News Market Radar fallback key. Provider Exa MCP가 없을 때만 사용합니다.", stacked: true) {
+                odSettingsRow(title: "Exa Research", detail: "뉴스 시장 리서치 예비 키입니다. AI 연결의 웹 검색 도구가 없을 때만 사용합니다.", stacked: true) {
                     secureAgentField(label: "EXA_API_KEY", placeholder: "exa_...", text: $exaApiKey, identifier: "settings.exa.apiKeyField")
                 }
             }
@@ -822,7 +822,7 @@ struct SettingsView: View {
                     Text("Node 런타임")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(settingsText)
-                    Text("Sidecar 바이너리 · NODE_BINARY → 일반 설치 → mise/asdf/Volta → 로그인 셸 PATH")
+                    Text("실행 보조 앱 바이너리 · NODE_BINARY → 일반 설치 → mise/asdf/Volta → 로그인 셸 PATH")
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
                         .foregroundStyle(settingsSubtleText)
                         .lineLimit(1)
@@ -939,9 +939,9 @@ struct SettingsView: View {
     }
 
     private var odAdvancedSection: some View {
-        odSettingsSection(id: "advanced", title: "고급 & Sidecar") {
+        odSettingsSection(id: "advanced", title: "고급 & 실행 보조 앱") {
             odSettingsRowsCard {
-                odSettingsRow(title: "Sidecar 상태", detail: viewModel.isConnected ? "Node sidecar가 살아 있고 stdio + 로컬 HTTP 둘 다 응답 중입니다." : "Node sidecar 연결을 기다리는 중입니다.") {
+                odSettingsRow(title: "실행 보조 앱 상태", detail: viewModel.isConnected ? "Node 실행 보조 앱이 살아 있고 stdio + 로컬 HTTP 둘 다 응답 중입니다." : "Node 실행 보조 앱 연결을 기다리는 중입니다.") {
                     HStack(spacing: 8) {
                         odSettingsStatus(viewModel.isConnected ? "실행 중" : "연결 대기", color: viewModel.isConnected ? settingsAccentColor : OpenDesignDayColor.amber)
                         Text(sidecarRuntimeSummary)
@@ -960,7 +960,7 @@ struct SettingsView: View {
             }
 
             odSettingsRowsCard {
-                odSettingsRow(title: "BIP Notifications", detail: "테스트 알림은 실제 macOS 알림 센터 경로를 사용합니다. 배너를 누르면 Agentic30이 열리고 BIP 알림 task surface로 이동합니다.", stacked: true) {
+                odSettingsRow(title: "공개 기록 알림", detail: "테스트 알림은 실제 macOS 알림 센터 경로를 사용합니다. 배너를 누르면 Agentic30이 열리고 공개 기록 알림 작업 화면으로 이동합니다.", stacked: true) {
                     HStack(spacing: 12) {
                         odSettingsGhostButton(title: "10시 알림 보내기", systemImage: "sun.max.fill", width: 128, identifier: "settings.advanced.sendMorningBipNotification") {
                             sendTestBipNotification(.morning)
@@ -1430,7 +1430,7 @@ struct SettingsView: View {
     private func odProviderSubtitle(_ provider: AgentProvider) -> String {
         switch provider {
         case .claude:
-            return "Adaptive 엔진 · day-task 생성 · transcript 분석"
+            return "맞춤형 엔진 · 오늘 할 일 생성 · 대화 기록 분석"
         case .codex:
             return "대체 엔진 · /analyze-ads · 비싼 모델 회피 시 사용"
         case .gemini:
@@ -1624,7 +1624,7 @@ struct SettingsView: View {
 
     private func providerAuthFallbackText(_ provider: AgentProvider, status: SidecarProviderEnvironment?) -> String {
         if status?.available == true {
-            return "\(provider.title) runtime ready"
+            return "\(provider.title) 런타임 준비됨"
         }
         switch provider {
         case .claude:
@@ -1639,11 +1639,11 @@ struct SettingsView: View {
     private func providerPolicyDescription(_ provider: AgentProvider) -> String {
         switch provider {
         case .claude:
-            return "1순위 · 실패 시 Codex 폴백"
+            return "1순위 · 실패 시 Codex 예비 연결"
         case .codex:
-            return "폴백 · 코드/분석 전용"
+            return "예비 연결 · 코드/분석 전용"
         case .gemini:
-            return "대체 모델 · ADC 또는 API key"
+            return "대체 모델 · ADC 또는 API 키"
         }
     }
 
