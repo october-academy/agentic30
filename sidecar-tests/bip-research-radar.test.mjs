@@ -167,7 +167,7 @@ test("BIP research provider prompt requires adaptive X Threads Instagram researc
 
     assert.match(prompt, /X\/Twitter, Threads\(Meta\), and Instagram/);
     assert.match(prompt, /Context\.adaptiveProfile/);
-    assert.match(prompt, /Do not add fixed persona, geography, tool-stack, product-platform/);
+    assert.match(prompt, /Do not add fixed customer-type, geography, tool-stack, product-platform/);
     assert.match(prompt, /Context\.querySeeds as the search plan/);
     assert.match(prompt, new RegExp(BIP_RESEARCH_PROMPT_PROFILE));
   });

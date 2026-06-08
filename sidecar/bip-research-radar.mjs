@@ -33,12 +33,12 @@ const MAX_PROVIDER_PROMPT_CHARS = 40_000;
 const DEFAULT_TARGET_CANDIDATE_COUNT = 18;
 
 const BIP_RESEARCH_PROGRESS_STEPS = Object.freeze([
-  { stage: "checking_exa_route", stepIndex: 1, progressText: "Exa MCP 연결을 확인하는 중" },
+  { stage: "checking_exa_route", stepIndex: 1, progressText: "웹 검색 도구 연결을 확인하는 중" },
   { stage: "loading_project_context", stepIndex: 2, progressText: "프로젝트 컨텍스트 캐시와 오늘 Day 기준을 읽는 중" },
   { stage: "building_research_prompt", stepIndex: 3, progressText: "X/Threads/Instagram 리서치 질문을 구성하는 중" },
-  { stage: "running_provider_research", stepIndex: 4, progressText: "프로바이더 Exa MCP로 공개 게시글을 검색/Fetch하는 중" },
-  { stage: "normalizing_candidates", stepIndex: 5, progressText: "출처가 있는 후보만 BIP 카드로 정리하는 중" },
-  { stage: "saving_results", stepIndex: 6, progressText: "BIP 리서치 결과를 로컬 캐시에 저장하는 중" },
+  { stage: "running_provider_research", stepIndex: 4, progressText: "웹 검색 도구로 공개 게시글을 검색하고 원문을 확인하는 중" },
+  { stage: "normalizing_candidates", stepIndex: 5, progressText: "출처가 있는 후보만 공개 기록 카드로 정리하는 중" },
+  { stage: "saving_results", stepIndex: 6, progressText: "공개 리서치 결과를 로컬 캐시에 저장하는 중" },
 ]);
 
 const BIP_RESEARCH_PROGRESS_BY_STAGE = new Map(
@@ -132,7 +132,7 @@ export async function loadBipResearchSnapshot({
     now,
     context,
     status: configured ? "idle" : "failed",
-    error: configured ? null : "Exa MCP is not configured.",
+    error: configured ? null : "웹 검색 도구가 설정되지 않았습니다.",
     reason: configured ? "not_loaded" : "exa_mcp_missing",
     researchSource: configured ? exaResearchSource : null,
   });
@@ -201,7 +201,7 @@ export async function refreshBipResearch({
           state: "failed",
           lastSuccessAt: previous.status?.lastSuccessAt || null,
           stale: previous.candidates?.length > 0,
-          error: "Exa MCP is not configured.",
+          error: "웹 검색 도구가 설정되지 않았습니다.",
           reason: "exa_mcp_missing",
           researchSource: null,
         },
@@ -234,7 +234,7 @@ export async function refreshBipResearch({
   });
   notifyProgress(onProgress, {
     stage: "running_provider_research",
-    progressText: `Day ${normalizedDay} 기준 공개 소셜 ICP 후보를 검색하는 중`,
+    progressText: `Day ${normalizedDay} 기준 공개 소셜 고객 후보를 검색하는 중`,
     researchSource: primaryRoute?.label || null,
   });
 
@@ -359,7 +359,7 @@ export async function buildBipResearchContext({
       rules: [
         "Every rendered candidate must have at least one fetched X/Twitter, Threads, or Instagram URL sourceRef.",
         "Do not include candidates whose only evidence is local workspace text.",
-        "Use only adaptive query text derived from project context, current Day context, and saved Day answers.",
+        "Use only context-matched query text derived from project context, current Day context, and saved Day answers.",
         "Use X/Twitter, Threads, and Instagram public posts as candidate evidence; other web pages may only support interpretation.",
       ],
     },
@@ -368,16 +368,16 @@ export async function buildBipResearchContext({
 
 export function buildBipResearchProviderPrompt(context = {}) {
   return [
-    "You are Agentic30 BIP Research Radar. Use Exa MCP web_search_advanced_exa and web_fetch_exa for public social research.",
+    "You are Agentic30 public-log research radar. Use Exa MCP web_search_advanced_exa and web_fetch_exa for public social research.",
     "Return ONLY strict JSON. No markdown fences.",
     "",
     "Goal:",
-    "- Find real X/Twitter, Threads(Meta), and Instagram public posts that reveal ICP candidates or market-language signals for the user's current project and current Day curriculum.",
+    "- Find real X/Twitter, Threads(Meta), and Instagram public posts that reveal customer candidates or market-language signals for the user's current project and current Day curriculum.",
     "- Adapt the research to Context.adaptiveProfile, Context.curriculumDay, workspace docs, configured social handles, and prior Day answers.",
     "- The user does not want hardcoded examples. Every rendered candidate must come from actual Exa search + web fetch evidence.",
     "",
     "Search rules:",
-    "- Use Context.querySeeds as the search plan. Do not add fixed persona, geography, tool-stack, product-platform, or public-building assumptions that are absent from Context.adaptiveProfile.",
+    "- Use Context.querySeeds as the search plan. Do not add fixed customer-type, geography, tool-stack, product-platform, or public-building assumptions that are absent from Context.adaptiveProfile.",
     "- Search X/Twitter, Threads(Meta), and Instagram with site filters when possible, then call web_fetch_exa for candidate URLs.",
     "- Context.adaptiveProfile.localeProfile describes inferred language/market priority. Prefer matching-language and matching-market posts first, then use global examples when evidence is sparse or useful for comparison.",
     "- If X direct fetch is blocked, a public mirror such as ThreadReader may be used as the fetched URL, but keep the sourceLabel/platform honest.",
@@ -428,11 +428,11 @@ export function normalizeBipResearchSnapshot(value = {}, {
     dayPhase: day.phase,
     status,
     briefTitle: cleanString(
-      value.briefTitle || value.brief_title || `Day ${day.day} 기준 공개 소셜 게시글에서 ICP 신호를 찾습니다.`,
+      value.briefTitle || value.brief_title || `Day ${day.day} 기준 공개 소셜 게시글에서 고객 후보 신호를 찾습니다.`,
       260,
     ),
     briefBody: cleanString(
-      value.briefBody || value.brief_body || "Exa Search 결과를 Web Fetch로 다시 읽고, 원문 URL이 있는 후보만 BIP 로그에 표시합니다.",
+      value.briefBody || value.brief_body || "웹 자료 검색 결과를 웹 원문 확인으로 다시 읽고, 원문 URL이 있는 후보만 공개 기록에 표시합니다.",
       900,
     ),
     querySummary: cleanString(
@@ -555,7 +555,7 @@ function normalizeCandidate(value = {}, index = 0, { now = new Date() } = {}) {
   const evidenceStrength = normalizeEvidenceStrength(value.evidenceStrength || value.evidence_strength || value.confidence);
   return {
     id: cleanString(value.id || `bip-candidate-${index + 1}`, 180),
-    title: cleanString(value.title || "BIP ICP 후보", 260),
+    title: cleanString(value.title || "공개 기록 고객 후보", 260),
     sourceLabel: cleanString(value.sourceLabel || value.source_label || sourceRefs[0]?.title || platform.toUpperCase(), 120),
     source: cleanString(value.source || value.handle || value.author || sourceRefs[0]?.title || "", 140),
     sourceType: platform,
@@ -564,9 +564,9 @@ function normalizeCandidate(value = {}, index = 0, { now = new Date() } = {}) {
     matchLabel: cleanString(value.matchLabel || value.match_label || matchLabelForStrength(evidenceStrength), 20),
     matchCaption: cleanString(value.matchCaption || value.match_caption || (evidenceStrength === "strong" ? "match" : "watch"), 40),
     quote: cleanString(value.quote || value.excerpt || sourceRefs[0]?.excerpt || "", 1_200),
-    whyTitle: cleanString(value.whyTitle || value.why_title || "왜 ICP 증거인가", 120),
+    whyTitle: cleanString(value.whyTitle || value.why_title || "왜 고객 후보 증거인가", 120),
     whyBody: cleanString(value.whyBody || value.why_body || value.whyItMatters || value.why_it_matters || "", 1_500),
-    usageTitle: cleanString(value.usageTitle || value.usage_title || "BIP 활용", 120),
+    usageTitle: cleanString(value.usageTitle || value.usage_title || "공개 기록 활용", 120),
     usageBody: cleanString(value.usageBody || value.usage_body || value.suggestedAction || value.suggested_action || "", 1_500),
     gap: cleanString(value.gap || value.unknowns || value.unknown || "확인 필요: 전업 여부, 수익 상태, 인터뷰 의향.", 1_000),
     tags: normalizeTags(value.tags || value.chips || [], platform, evidenceStrength),
@@ -620,7 +620,7 @@ function normalizeSignals(values = [], candidates = []) {
   const provided = Array.isArray(values)
     ? values.map((signal, index) => ({
         id: cleanString(signal.id || `signal-${index + 1}`, 120),
-        title: cleanString(signal.title || "ICP 신호", 120),
+        title: cleanString(signal.title || "고객 후보 신호", 120),
         subtitle: cleanString(signal.subtitle || "", 160),
         state: cleanString(signal.state || "seen", 40),
         tone: normalizeTone(signal.tone || signal.state),
@@ -690,7 +690,7 @@ function normalizeExaConfigurationStatus(snapshot, { configured = false, exaRese
         ...snapshot.status,
         state: "failed",
         stale: Boolean(snapshot.candidates?.length),
-        error: "Exa MCP is not configured.",
+        error: "웹 검색 도구가 설정되지 않았습니다.",
         reason: "exa_mcp_missing",
         researchSource: null,
       },
@@ -829,27 +829,27 @@ function summarizeExaResearchRoute(route = {}) {
 function makeProviderSchemaExample() {
   return {
     schemaVersion: BIP_RESEARCH_SCHEMA_VERSION,
-    briefTitle: "Day 8 기준 공개 소셜 게시글에서 ICP 후보를 찾았어요.",
-    briefBody: "워크스페이스 ICP와 오늘 커리큘럼에 맞는 공개 실행 신호만 정리했습니다.",
-    querySummary: "Context.querySeeds에서 사용한 실제 adaptive 검색어 1-2개",
+    briefTitle: "Day 8 기준 공개 소셜 게시글에서 고객 후보를 찾았어요.",
+    briefBody: "워크스페이스 고객 후보와 오늘 커리큘럼에 맞는 공개 실행 신호만 정리했습니다.",
+    querySummary: "검색 기준에서 사용한 실제 맞춤 검색어 1-2개",
     signals: [
-      { id: "social", title: "공개 소셜 기록", subtitle: "real fetched posts", state: "seen", tone: "accent" },
+      { id: "social", title: "공개 소셜 기록", subtitle: "실제 원문 확인", state: "seen", tone: "accent" },
     ],
     candidates: [
       {
         id: "candidate-handle-or-post",
-        title: "후보 이름 — 왜 현재 Day와 ICP에 맞는지",
+        title: "후보 이름 — 왜 현재 Day와 고객 후보에 맞는지",
         sourceLabel: "x",
         source: "@handle",
         sourceType: "x",
         medium: "X thread",
         date: "2026-05-21",
         matchLabel: "강",
-        matchCaption: "match",
-        quote: "Fetched source에서 확인한 짧은 공개 신호.",
-        whyTitle: "왜 ICP 증거인가",
+        matchCaption: "적합",
+        quote: "확인한 원문에서 잡은 짧은 공개 신호.",
+        whyTitle: "왜 고객 후보 증거인가",
         whyBody: "프로젝트/Day 기준과 연결되는 이유.",
-        usageTitle: "BIP 활용",
+        usageTitle: "공개 기록 활용",
         usageBody: "오늘 공개 기록이나 DM에 쓰는 방법.",
         gap: "확인 필요: 수익 상태, 전업 여부, 인터뷰 의향.",
         evidenceStrength: "strong",
@@ -865,7 +865,7 @@ function makeProviderSchemaExample() {
             excerpt: "짧은 fetched excerpt 또는 한국어 요약"
           }
         ],
-        draft: "오늘의 BIP 초안..."
+        draft: "오늘의 공개 기록 초안..."
       }
     ]
   };
@@ -873,7 +873,7 @@ function makeProviderSchemaExample() {
 
 function buildCandidateDraft(value = {}, sourceRefs = []) {
   return [
-    `오늘 BIP 리서치 후보: ${cleanString(value.title || sourceRefs[0]?.title || "공개 게시글", 180)}`,
+    `오늘 공개 기록 리서치 후보: ${cleanString(value.title || sourceRefs[0]?.title || "공개 게시글", 180)}`,
     "",
     `원문 근거: ${cleanString(value.quote || sourceRefs[0]?.excerpt || "", 500)}`,
     `왜 중요한가: ${cleanString(value.whyBody || value.whyItMatters || "", 500)}`,
@@ -932,7 +932,7 @@ function normalizePartialFailures(values = []) {
   return (Array.isArray(values) ? values : [])
     .map((failure) => ({
       laneId: cleanString(failure.laneId || failure.lane_id || failure.id || "bip", 120),
-      laneTitle: cleanString(failure.laneTitle || failure.lane_title || failure.title || "BIP 리서치", 160),
+      laneTitle: cleanString(failure.laneTitle || failure.lane_title || failure.title || "공개 기록 리서치", 160),
       error: cleanString(failure.error || failure.message || "", 500),
     }))
     .filter((failure) => failure.error);
