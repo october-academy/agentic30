@@ -30,6 +30,8 @@
     "release:publish:github": "bash scripts/publish-github-release.sh",
     "release:upload:sparkle": "bash scripts/upload-sparkle-r2.sh",
     "release:preflight": "bash scripts/check-release-automation.sh",
+    "release:verify": "bash scripts/preflight-release.sh",
+    "release:cut": "bash scripts/cut-release.sh",
     "hooks:install": "git config core.hooksPath scripts/git-hooks",
     "hooks:uninstall": "git config --unset core.hooksPath",
     "test:sidecar": "node --test sidecar-tests/**/*.test.mjs"
