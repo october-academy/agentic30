@@ -14,6 +14,11 @@ extension Notification.Name {
     static let agenticCheckForUpdatesRequested = Notification.Name("agenticCheckForUpdatesRequested")
     static let agenticOpenDesignSearchRequested = Notification.Name("agenticOpenDesignSearchRequested")
     static let agenticOpenDesignSettingsRequested = Notification.Name("agenticOpenDesignSettingsRequested")
+    static let agenticShowAppUpdateStatusPanelRequested = Notification.Name("agenticShowAppUpdateStatusPanelRequested")
+}
+
+enum AgenticSettingsRouteNotification {
+    static let sectionUserInfoKey = "section"
 }
 
 @main
@@ -232,11 +237,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         guard updaterController.updater.canCheckForUpdates else {
-            let alert = NSAlert()
-            alert.messageText = "An update check is already in progress."
-            alert.informativeText = "Sparkle is already checking, downloading, or preparing an update. Try again after the current update session finishes."
-            alert.alertStyle = .informational
-            alert.runModal()
+            PostHogTelemetry.capture(
+                "mac_update_check_busy",
+                properties: [
+                    "requires_onboarding": viewModel.requiresMacOnboarding,
+                    "last_result": viewModel.appUpdateState.lastResult.statusText,
+                ],
+                authSession: viewModel.macAuthSession
+            )
+            openWorkspaceWindow()
+            if viewModel.requiresMacOnboarding {
+                requestAppUpdateStatusPanel()
+            } else {
+                requestOpenDesignSettingsRoute(section: .updates)
+            }
             return
         }
         updaterController.checkForUpdates(sender)
@@ -267,26 +281,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor
-    func openSettingsInWorkspace(source: String) {
+    func openSettingsInWorkspace(source: String, section: SettingsSection? = nil) {
         PostHogTelemetry.capture(
             "mac_settings_open_requested",
-            properties: ["source": source],
+            properties: [
+                "source": source,
+                "section": section?.rawValue ?? "default",
+            ],
             authSession: viewModel.macAuthSession
         )
         openWorkspaceWindow()
-        requestOpenDesignSettingsRoute()
+        requestOpenDesignSettingsRoute(section: section)
     }
 
-    private func requestOpenDesignSettingsRoute() {
-        NotificationCenter.default.post(name: .agenticOpenDesignSettingsRequested, object: nil)
+    private func requestOpenDesignSettingsRoute(section: SettingsSection? = nil) {
+        let userInfo = Self.settingsRouteUserInfo(section: section)
+        NotificationCenter.default.post(name: .agenticOpenDesignSettingsRequested, object: nil, userInfo: userInfo)
         DispatchQueue.main.async {
-            NotificationCenter.default.post(name: .agenticOpenDesignSettingsRequested, object: nil)
+            NotificationCenter.default.post(name: .agenticOpenDesignSettingsRequested, object: nil, userInfo: userInfo)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            NotificationCenter.default.post(name: .agenticOpenDesignSettingsRequested, object: nil)
+            NotificationCenter.default.post(name: .agenticOpenDesignSettingsRequested, object: nil, userInfo: userInfo)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            NotificationCenter.default.post(name: .agenticOpenDesignSettingsRequested, object: nil)
+            NotificationCenter.default.post(name: .agenticOpenDesignSettingsRequested, object: nil, userInfo: userInfo)
+        }
+    }
+
+    private static func settingsRouteUserInfo(section: SettingsSection?) -> [AnyHashable: Any]? {
+        guard let section else { return nil }
+        return [AgenticSettingsRouteNotification.sectionUserInfoKey: section.rawValue]
+    }
+
+    private func requestAppUpdateStatusPanel() {
+        NotificationCenter.default.post(name: .agenticShowAppUpdateStatusPanelRequested, object: nil)
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .agenticShowAppUpdateStatusPanelRequested, object: nil)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            NotificationCenter.default.post(name: .agenticShowAppUpdateStatusPanelRequested, object: nil)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            NotificationCenter.default.post(name: .agenticShowAppUpdateStatusPanelRequested, object: nil)
         }
     }
 
@@ -493,6 +529,8 @@ extension AppDelegate: SPUUpdaterDelegate {
                 ],
                 authSession: viewModel.macAuthSession
             )
+        } else {
+            viewModel.recordAppUpdateCycleFinished()
         }
 
         PostHogTelemetry.capture(

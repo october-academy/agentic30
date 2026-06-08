@@ -1733,6 +1733,8 @@ struct ContentView: View {
     @State private var showsBipReadinessAdvanced = false
     @State private var showsInlineBipReadinessSetup = false
     @State private var selectedOpenDesignReferencePage: OpenDesignReferencePageKind?
+    @State private var selectedSettingsSection: SettingsSection = .workspace
+    @State private var showsAppUpdateStatusPanel = false
     @State private var isOpenDesignOfficeHoursPresented = false
     @State private var openDesignDayInteractionStateCache = OpenDesignDayInteractionStateCache()
     @State private var officeHoursStartedSessionIDs: Set<String> = []
@@ -1780,6 +1782,7 @@ struct ContentView: View {
         self.maximizeWorkspaceOnFirstAppear = maximizeWorkspaceOnFirstAppear
         self.markWorkspaceInitialMaximizeApplied = markWorkspaceInitialMaximizeApplied
         _selectedOpenDesignReferencePage = State(initialValue: Self.initialOpenDesignReferencePageForUITesting())
+        _selectedSettingsSection = State(initialValue: Self.initialSettingsSectionForUITesting())
     }
 
     private static func initialOpenDesignReferencePageForUITesting(
@@ -1798,6 +1801,23 @@ struct ContentView: View {
             ?? OpenDesignReferencePageKind(searchItemID: rawValue)
             ?? OpenDesignReferencePageKind(searchItemID: "page-\(rawValue)")
             ?? OpenDesignReferencePageKind(rawValue: rawValue)
+    }
+
+    @MainActor
+    private static func initialSettingsSectionForUITesting(
+        arguments: [String] = CommandLine.arguments
+    ) -> SettingsSection {
+        let argumentName = "--ui-testing-open-settings-section"
+        let rawSection: String?
+        if let index = arguments.firstIndex(of: argumentName), arguments.indices.contains(index + 1) {
+            rawSection = arguments[index + 1]
+        } else {
+            let prefix = "\(argumentName)="
+            rawSection = arguments.first(where: { $0.hasPrefix(prefix) })?
+                .dropFirst(prefix.count)
+                .description
+        }
+        return rawSection.flatMap(SettingsSection.fromIdentifier) ?? .workspace
     }
 
     @ViewBuilder
@@ -1844,9 +1864,29 @@ struct ContentView: View {
             .onChange(of: viewModel.localDataResetGeneration) { _, _ in
                 resetLocalSwiftUIStateAfterLocalDataReset()
             }
-            .onReceive(NotificationCenter.default.publisher(for: .agenticOpenDesignSettingsRequested)) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: .agenticOpenDesignSettingsRequested)) { notification in
                 guard isWorkspaceWindow else { return }
+                if let requestedSection = settingsSection(from: notification) {
+                    selectedSettingsSection = requestedSection
+                }
                 openOpenDesignSettingsRoute()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .agenticShowAppUpdateStatusPanelRequested)) { _ in
+                guard isWorkspaceWindow else { return }
+                showsAppUpdateStatusPanel = true
+            }
+            .onChange(of: viewModel.requiresMacOnboarding) { _, requiresOnboarding in
+                if !requiresOnboarding {
+                    showsAppUpdateStatusPanel = false
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if showsAppUpdateStatusPanel, viewModel.requiresMacOnboarding {
+                    appUpdateStatusPanel
+                        .padding(.top, 28)
+                        .padding(.trailing, 28)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
 
         Group {
@@ -1862,6 +1902,69 @@ struct ContentView: View {
 
     private var isWorkspaceWindow: Bool {
         surfaceOverride == .workspace
+    }
+
+    private func settingsSection(from notification: Notification) -> SettingsSection? {
+        guard let rawSection = notification.userInfo?[AgenticSettingsRouteNotification.sectionUserInfoKey] as? String else {
+            return nil
+        }
+        return SettingsSection.fromIdentifier(rawSection)
+    }
+
+    private var appUpdateStatusPanel: some View {
+        let updateState = viewModel.appUpdateState
+        return HStack(alignment: .top, spacing: 12) {
+            Image(systemName: updateState.isSessionActive ? "arrow.triangle.2.circlepath" : "checkmark.circle")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(updateState.isSessionActive ? Agentic30BrandColor.green : OpenDesignDayColor.muted)
+                .frame(width: 24, height: 24)
+                .background(
+                    Circle()
+                        .fill((updateState.isSessionActive ? Agentic30BrandColor.green : OpenDesignDayColor.muted).opacity(0.16))
+                )
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("업데이트 상태")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                Text(updateState.lastResult.statusText)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(updateState.isSessionActive ? Agentic30BrandColor.green : OpenDesignDayColor.fgSecondary)
+                Text(updateState.lastResult.detailText)
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("마지막 확인 \(updateState.lastCheckSummary)")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    showsAppUpdateStatusPanel = false
+                }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("업데이트 상태 닫기")
+        }
+        .padding(14)
+        .frame(width: 340)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(OpenDesignDayColor.surface.opacity(0.98))
+                .shadow(color: Color.black.opacity(0.18), radius: 18, y: 8)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(OpenDesignDayColor.borderSoft, lineWidth: 1)
+        )
+        .accessibilityIdentifier("appUpdate.statusPanel")
     }
 
     private var activeSurface: AgenticSurface {
@@ -2018,7 +2121,8 @@ struct ContentView: View {
                     settingsScreen: AnyView(
                         SettingsView(
                             viewModel: viewModel,
-                            embeddedInWorkspace: true
+                            embeddedInWorkspace: true,
+                            selectedSection: $selectedSettingsSection
                         )
                         .tint(Agentic30BrandColor.green)
                     ),

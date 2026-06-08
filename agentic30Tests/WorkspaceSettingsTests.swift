@@ -694,6 +694,49 @@ final class SparkleUpdateTests: XCTestCase {
         XCTAssertEqual(viewModel.appUpdateState.lastResult.statusText, "Blocked")
         XCTAssertTrue(viewModel.appUpdateState.lastResult.detailText.contains("Sparkle public EdDSA key"))
     }
+
+    func testAppUpdateSessionLifecycleTracksActiveStateAndPreservesLastResult() {
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true, activateAppForAuth: {})
+
+        viewModel.configureAppUpdates(
+            configured: true,
+            feedURL: AppUpdateState.defaultFeedURL,
+            automaticChecksEnabled: true,
+            automaticDownloadsEnabled: true
+        )
+
+        XCTAssertFalse(viewModel.appUpdateState.isSessionActive)
+
+        viewModel.recordAppUpdateCheckStarted()
+        XCTAssertTrue(viewModel.appUpdateState.isSessionActive)
+        XCTAssertEqual(viewModel.appUpdateState.lastResult, .checking)
+
+        viewModel.recordAppUpdateDownloaded(version: "8", displayVersion: "1.0.7")
+        XCTAssertTrue(viewModel.appUpdateState.isSessionActive)
+        XCTAssertEqual(
+            viewModel.appUpdateState.lastResult,
+            .downloaded(version: "8", displayVersion: "1.0.7")
+        )
+
+        viewModel.recordAppUpdateInstalling(version: "8", displayVersion: "1.0.7")
+        let installingResult = viewModel.appUpdateState.lastResult
+        XCTAssertTrue(viewModel.appUpdateState.isSessionActive)
+
+        viewModel.recordAppUpdateCycleFinished()
+        XCTAssertFalse(viewModel.appUpdateState.isSessionActive)
+        XCTAssertEqual(viewModel.appUpdateState.lastResult, installingResult)
+    }
+
+    func testAppUpdateErrorEndsActiveSession() {
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true, activateAppForAuth: {})
+
+        viewModel.recordAppUpdateCheckStarted()
+        XCTAssertTrue(viewModel.appUpdateState.isSessionActive)
+
+        viewModel.recordAppUpdateError("Download failed")
+        XCTAssertFalse(viewModel.appUpdateState.isSessionActive)
+        XCTAssertEqual(viewModel.appUpdateState.lastResult, .error("Download failed"))
+    }
 }
 
 final class WorkspaceInitialWindowSizingTests: XCTestCase {

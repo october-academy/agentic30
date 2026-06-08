@@ -205,6 +205,7 @@ struct AppUpdateState: Equatable {
     var feedURL: String
     var automaticChecksEnabled: Bool
     var automaticDownloadsEnabled: Bool
+    var isSessionActive: Bool
     var lastCheckAt: Date?
     var lastResult: AppUpdateResult
     var latestVersion: String?
@@ -218,6 +219,7 @@ struct AppUpdateState: Equatable {
         feedURL: defaultFeedURL,
         automaticChecksEnabled: false,
         automaticDownloadsEnabled: false,
+        isSessionActive: false,
         lastCheckAt: nil,
         lastResult: .blocked("Release builds must include a Sparkle public EdDSA key."),
         latestVersion: nil,
@@ -1704,18 +1706,21 @@ final class AgenticViewModel: ObservableObject {
         appUpdateState.automaticChecksEnabled = automaticChecksEnabled
         appUpdateState.automaticDownloadsEnabled = automaticDownloadsEnabled
         if !configured {
+            appUpdateState.isSessionActive = false
             appUpdateState.lastResult = .blocked("Release builds must include a Sparkle public EdDSA key.")
         }
     }
 
     func recordAppUpdateCheckStarted() {
         appUpdateState.lastCheckAt = Date()
+        appUpdateState.isSessionActive = true
         appUpdateState.lastResult = .checking
         appUpdateState.lastError = nil
     }
 
     func recordAppUpdateAppcastLoaded(itemCount: Int) {
         appUpdateState.lastCheckAt = Date()
+        appUpdateState.isSessionActive = true
         if appUpdateState.lastResult == .neverChecked {
             appUpdateState.lastResult = .checking
         }
@@ -1723,6 +1728,7 @@ final class AgenticViewModel: ObservableObject {
 
     func recordAppUpdateAvailable(version: String, displayVersion: String?) {
         appUpdateState.lastCheckAt = Date()
+        appUpdateState.isSessionActive = true
         appUpdateState.latestVersion = version
         appUpdateState.latestDisplayVersion = displayVersion
         appUpdateState.lastError = nil
@@ -1731,6 +1737,7 @@ final class AgenticViewModel: ObservableObject {
 
     func recordAppUpdateDownloaded(version: String, displayVersion: String?) {
         appUpdateState.lastCheckAt = Date()
+        appUpdateState.isSessionActive = true
         appUpdateState.latestVersion = version
         appUpdateState.latestDisplayVersion = displayVersion
         appUpdateState.lastError = nil
@@ -1739,6 +1746,7 @@ final class AgenticViewModel: ObservableObject {
 
     func recordAppUpdateInstalling(version: String, displayVersion: String?) {
         appUpdateState.lastCheckAt = Date()
+        appUpdateState.isSessionActive = true
         appUpdateState.latestVersion = version
         appUpdateState.latestDisplayVersion = displayVersion
         appUpdateState.lastError = nil
@@ -1747,20 +1755,27 @@ final class AgenticViewModel: ObservableObject {
 
     func recordAppUpdateLatest() {
         appUpdateState.lastCheckAt = Date()
+        appUpdateState.isSessionActive = false
         appUpdateState.lastError = nil
         appUpdateState.lastResult = .latest
     }
 
     func recordAppUpdateBlocked(_ reason: String) {
         appUpdateState.lastCheckAt = Date()
+        appUpdateState.isSessionActive = false
         appUpdateState.lastError = reason
         appUpdateState.lastResult = .blocked(reason)
     }
 
     func recordAppUpdateError(_ message: String) {
         appUpdateState.lastCheckAt = Date()
+        appUpdateState.isSessionActive = false
         appUpdateState.lastError = message
         appUpdateState.lastResult = .error(message)
+    }
+
+    func recordAppUpdateCycleFinished() {
+        appUpdateState.isSessionActive = false
     }
 
     init(

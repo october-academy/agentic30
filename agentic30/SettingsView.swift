@@ -921,12 +921,18 @@ struct SettingsView: View {
                 odSettingsRow(title: "자동 업데이트", detail: "Sparkle이 백그라운드에서 appcast를 확인하고 새 버전을 받아옵니다. 설치는 다음 실행 때.") {
                     odSettingsToggle(isOn: .constant(updateState.automaticChecksEnabled), locked: true)
                 }
-                odSettingsRow(title: "마지막 확인", detail: "appcast.xml을 마지막으로 조회한 시각. \(updateState.lastResult.statusText).") {
+                odSettingsRow(title: "마지막 확인", detail: "appcast.xml을 마지막으로 조회한 시각. \(updateState.lastResult.statusText). \(updateState.lastResult.detailText)") {
                     HStack(spacing: 8) {
                         Text(updateState.lastCheckSummary)
                             .font(.system(size: 11.5, weight: .medium, design: .monospaced))
                             .foregroundStyle(settingsSubtleText)
-                        odSettingsGhostButton(title: "지금 확인", systemImage: "arrow.clockwise", width: 96) {
+                        odSettingsGhostButton(
+                            title: updateState.isSessionActive ? "진행 중" : "지금 확인",
+                            systemImage: "arrow.clockwise",
+                            width: 96,
+                            identifier: "settings.updates.checkNowButton",
+                            isDisabled: updateState.isSessionActive
+                        ) {
                             NotificationCenter.default.post(name: .agenticCheckForUpdatesRequested, object: nil)
                         }
                     }
@@ -1214,6 +1220,7 @@ struct SettingsView: View {
         systemImage: String? = nil,
         width: CGFloat? = nil,
         identifier: String? = nil,
+        isDisabled: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -1227,12 +1234,13 @@ struct SettingsView: View {
                     .minimumScaleFactor(0.82)
             }
             .font(.system(size: 11.5, weight: .medium))
-            .foregroundStyle(settingsText.opacity(0.72))
+            .foregroundStyle(settingsText.opacity(isDisabled ? 0.38 : 0.72))
             .padding(.horizontal, 10)
             .frame(width: width, height: 28)
-            .background(settingsRounded(fill: Color.clear, stroke: settingsHairline, radius: 8))
+            .background(settingsRounded(fill: Color.clear, stroke: settingsHairline.opacity(isDisabled ? 0.55 : 1), radius: 8))
         }
         .buttonStyle(.plain)
+        .disabled(isDisabled)
         .accessibilityIdentifier(identifier ?? "")
     }
 
