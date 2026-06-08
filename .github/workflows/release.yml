@@ -7,13 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       builder:
-        description: "Release builder"
+        description: "Release builder. Default 'local' = single build on the GitHub macOS runner (fast). 'xcode-cloud-gated-local' adds an Xcode Cloud validation gate that rebuilds the app (~2x time)."
         type: choice
         options:
+          - local
           - xcode-cloud-gated-local
           - xcode-cloud
-          - local
-        default: xcode-cloud-gated-local
+        default: local
       release_tag:
         description: "Release tag. Defaults to the current tag/ref."
         required: false
@@ -55,7 +55,9 @@ jobs:
         run: |
           set -euo pipefail
           release_tag="${{ github.event.inputs.release_tag || github.ref_name }}"
-          builder="${{ github.event.inputs.builder || 'xcode-cloud-gated-local' }}"
+          # Tag pushes default to the single-build 'local' path. The Xcode Cloud
+          # gate (which rebuilds and discards the archive) is opt-in via dispatch.
+          builder="${{ github.event.inputs.builder || 'local' }}"
           dry_run="${{ github.event.inputs.dry_run || 'false' }}"
           if [ -z "$release_tag" ]; then
             echo "release_tag is required for manual runs outside a tag ref" >&2
@@ -216,6 +218,15 @@ jobs:
 
       - name: Import Developer ID signing identities
         run: bash scripts/import-apple-signing-ci.sh
+
+      - name: Arm Sparkle version guard from live feed
+        shell: bash
+        run: |
+          set -euo pipefail
+          prev="$(curl -fsSL "${SPARKLE_PUBLIC_BASE_URL}appcast.xml" 2>/dev/null \
+            | grep -oE '<sparkle:version>[0-9]+' | grep -oE '[0-9]+' | sort -n | tail -1 || true)"
+          echo "PREVIOUS_BUNDLE_VERSION=${prev}" >> "$GITHUB_ENV"
+          echo "Live Sparkle build version: ${prev:-none}; this build must be strictly greater."
 
       - name: Build, notarize, generate appcast, and upload R2
         run: bash scripts/build-and-notarize.sh
