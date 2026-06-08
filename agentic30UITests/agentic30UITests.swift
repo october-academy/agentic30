@@ -1626,6 +1626,117 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    func testOfficeHoursPastDayShowsCustomerEvidenceReviewSections() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-past-day-review-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-past-day-review-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-office-hours-structured-prompt",
+            "--ui-testing-seed-office-hours-timeline-fixture",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.sessions").waitForExistence(timeout: 6))
+        confirmDay1GoalIfPresent(in: app)
+
+        let day1Row = elementWithIdentifier(in: app, "opendesign.officeHours.timeline.day.1")
+        XCTAssertTrue(day1Row.waitForExistence(timeout: 6))
+        clickCenter(of: day1Row)
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.pastDay.review.verdict.1").waitForExistence(timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.pastDay.review.evidence").waitForExistence(timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.pastDay.review.commitment").waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["빌드로 도피"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["장지창"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["결제 의향 묻기"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["증거 없음"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["다음 약속"].waitForExistence(timeout: 3))
+        movePointerAwayFromContent()
+        attachWindowScreenshot(from: app, named: "Office Hours Past Day Customer Evidence Review")
+    }
+
+    @MainActor
+    func testOfficeHoursCommitmentGateShowsDraftAndRequiresUserConfirmation() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-commitment-gate-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-commitment-gate-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-office-hours-commitment-gate",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.main").waitForExistence(timeout: 6))
+
+        let commitmentBar = elementWithIdentifier(in: app, "opendesign.officeHours.commitmentBar")
+        XCTAssertTrue(scrollElementToVisible(
+            commitmentBar,
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+        ))
+        XCTAssertTrue(app.staticTexts["시스템 초안"].waitForExistence(timeout: 3))
+        let customerField = elementWithIdentifier(in: app, "opendesign.officeHours.commitmentCustomerField")
+        XCTAssertTrue(scrollElementToVisible(
+            customerField,
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+        ))
+        let commitButton = elementWithIdentifier(in: app, "opendesign.officeHours.commitButton")
+        XCTAssertTrue(commitButton.exists)
+        XCTAssertFalse(commitButton.isEnabled)
+        clickCenter(of: customerField)
+        customerField.typeText("Jane")
+        XCTAssertTrue(commitButton.isEnabled)
+        movePointerAwayFromContent()
+        attachWindowScreenshot(from: app, named: "Office Hours Commitment Gate Requires Confirmation")
+    }
+
+    @MainActor
     func testOfficeHoursRunningStateShowsLiveStatus() throws {
         let runID = UUID().uuidString
         let workspacePath = "/tmp/agentic30-ui-office-hours-running-\(runID)"

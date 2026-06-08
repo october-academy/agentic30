@@ -24,6 +24,7 @@ import {
   summarizePredictionCalibration,
   recompileCompiledTruth,
   buildCompiledTruth,
+  buildDayReviews,
   detectAbandonedThreads,
   buildPriorCycle,
   summarizeOfficeHoursMemory,
@@ -65,6 +66,61 @@ test("appendCommitment persists, loads back identically, and is user-origin", as
   // file lives under .agentic30/
   const p = resolveOfficeHoursMemoryPath(ws);
   assert.ok(p.endsWith(path.join(".agentic30", "office-hours-memory.json")));
+  await fs.rm(ws, { recursive: true, force: true });
+});
+
+test("appendCommitment persists structured customer commitment fields", async () => {
+  const ws = await tempWorkspace();
+  const saved = await appendCommitment({
+    workspaceRoot: ws,
+    text: "Jane에게 DM로 결제 의향 묻기 · 증거: screenshot",
+    cycle: 2,
+    day: 2,
+    originText: "확인했어",
+    commitment: {
+      customer: "Jane",
+      channel: "DM",
+      message: "지금 이 문제를 해결하려고 돈을 낼 상황인지 물어보기",
+      expectedEvidenceKind: "screenshot",
+      dueDay: 3,
+      confirmedByUser: true,
+    },
+    now: NOW,
+  });
+  assert.equal(saved.schemaVersion, OFFICE_HOURS_MEMORY_SCHEMA_VERSION);
+  assert.equal(saved.commitments[0].customer, "Jane");
+  assert.equal(saved.commitments[0].channel, "DM");
+  assert.equal(saved.commitments[0].message, "지금 이 문제를 해결하려고 돈을 낼 상황인지 물어보기");
+  assert.equal(saved.commitments[0].expectedEvidenceKind, "screenshot");
+  assert.equal(saved.commitments[0].dueDay, 3);
+  assert.equal(saved.commitments[0].confirmedByUser, true);
+  const loaded = await loadOfficeHoursMemory({ workspaceRoot: ws, now: NOW });
+  assert.deepEqual(loaded.commitments, saved.commitments);
+  await fs.rm(ws, { recursive: true, force: true });
+});
+
+test("appendCommitment rejects unconfirmed structured system draft", async () => {
+  const ws = await tempWorkspace();
+  await assert.rejects(
+    () => appendCommitment({
+      workspaceRoot: ws,
+      text: "Jane에게 DM 보내기",
+      cycle: 2,
+      day: 2,
+      originText: "system draft",
+      commitment: {
+        customer: "Jane",
+        channel: "DM",
+        message: "초안",
+        expectedEvidenceKind: "screenshot",
+        confirmedByUser: false,
+      },
+      now: NOW,
+    }),
+    /confirmed by the user/,
+  );
+  const loaded = await loadOfficeHoursMemory({ workspaceRoot: ws, now: NOW });
+  assert.equal(loaded.commitments.length, 0);
   await fs.rm(ws, { recursive: true, force: true });
 });
 
@@ -244,7 +300,7 @@ test("timeline + cycles prune to MAX_* (oldest dropped), append-only", async () 
   assert.equal(norm.cycles.at(-1).cycle, MAX_CYCLE_LEDGER + 12);
 });
 
-test("migration: schemaVersion:0 / missing-field blob normalizes without throw and bumps to v1", () => {
+test("migration: schemaVersion:0 / missing-field blob normalizes without throw and bumps current schema", () => {
   const legacy = {
     schemaVersion: 0,
     cycles: [{ cycle: 3, lastAssignment: "old" }, { junk: true }, null],
@@ -259,12 +315,84 @@ test("migration: schemaVersion:0 / missing-field blob normalizes without throw a
   assert.equal(norm.cycles[0].cycle, 3);
   assert.equal(norm.commitments.length, 1);
   assert.equal(norm.commitments[0].text, "keep me");
+  assert.equal(norm.commitments[0].customer, "");
+  assert.equal(norm.commitments[0].message, "");
+  assert.equal(norm.commitments[0].confirmedByUser, true);
   assert.ok(Array.isArray(norm.timeline) && norm.timeline.length === 0);
   assert.ok(norm.compiledTruth.text.length <= 2000);
   // garbage input never throws
   assert.doesNotThrow(() => normalizeOfficeHoursMemory(null, { now: NOW }));
   assert.doesNotThrow(() => normalizeOfficeHoursMemory("nope", { now: NOW }));
   assert.doesNotThrow(() => normalizeOfficeHoursMemory(42, { now: NOW }));
+});
+
+test("buildDayReviews flags build_escape when work exists without customer hard evidence", () => {
+  const dayProgress = {
+    challengeStartedAt: "2026-06-08",
+    days: {
+      "1": { day: 1, kind: "day1", steps: { goal: "done", first_interview: "done" }, goalText: "ICP 검증" },
+    },
+  };
+  const memory = makeDefaultOfficeHoursMemory({ now: NOW });
+  const workHistory = {
+    generatedAt: NOW.toISOString(),
+    days: [
+      {
+        date: "2026-06-08",
+        aiMinutes: 90,
+        areas: [{ name: "제품 빌드", aiMinutes: 90, commitCount: 2, paths: ["agentic30/ContentView.swift"] }],
+        referenceEvents: [],
+      },
+    ],
+  };
+  const reviews = buildDayReviews({ dayProgress, memory, workHistory });
+  assert.equal(reviews["1"].status, "build_escape");
+  assert.equal(reviews["1"].verdictLabel, "빌드로 도피");
+  assert.equal(reviews["1"].work.aiMinutes, 90);
+  assert.ok(reviews["1"].missing.includes("hard_evidence"));
+});
+
+test("buildDayReviews clears build_escape when hard customer evidence exists", () => {
+  const dayProgress = {
+    challengeStartedAt: "2026-06-08",
+    days: {
+      "1": { day: 1, kind: "day1", steps: { goal: "done", first_interview: "done" }, goalText: "ICP 검증" },
+    },
+  };
+  const memory = makeDefaultOfficeHoursMemory({ now: NOW });
+  memory.commitments = [
+    {
+      id: "cm-1",
+      cycle: 1,
+      createdDay: 1,
+      createdAt: NOW.toISOString(),
+      text: "Jane에게 DM",
+      customer: "Jane",
+      channel: "DM",
+      message: "결제 의향 묻기",
+      expectedEvidenceKind: "screenshot",
+      dueDay: 2,
+      confirmedByUser: true,
+      status: "met",
+      evidence: { kind: "screenshot", url: "/tmp/proof.png", note: "답장 캡처", gradedCycle: 1, gradedAt: NOW.toISOString() },
+      origin: "user",
+    },
+  ];
+  const workHistory = {
+    generatedAt: NOW.toISOString(),
+    days: [
+      {
+        date: "2026-06-08",
+        aiMinutes: 90,
+        areas: [{ name: "제품 빌드", aiMinutes: 90, commitCount: 2, paths: ["agentic30/ContentView.swift"] }],
+        referenceEvents: [],
+      },
+    ],
+  };
+  const reviews = buildDayReviews({ dayProgress, memory, workHistory });
+  assert.equal(reviews["1"].status, "hard_evidence_confirmed");
+  assert.equal(reviews["1"].customerEvidence[0].customer, "Jane");
+  assert.equal(reviews["1"].customerEvidence[0].evidence.kind, "screenshot");
 });
 
 test("injectable now: no wall-clock — timestamps derive from the injected now", async () => {
@@ -298,6 +426,16 @@ test("classifyInterviewGate: block-once-then-confession on interview/first_inter
   assert.equal(classifyInterviewGate({ stepId: "interview", status: "done" }).mode, "block");
   assert.equal(classifyInterviewGate({ stepId: "first_interview", status: "done" }).mode, "block");
   assert.equal(classifyInterviewGate({ stepId: "interview", status: "done", commitmentText: "DM 5개" }).mode, "commit");
+  assert.equal(classifyInterviewGate({
+    stepId: "interview",
+    status: "done",
+    commitment: { customer: "Jane", message: "DM 보내기", expectedEvidenceKind: "screenshot", confirmedByUser: true },
+  }).mode, "commit");
+  assert.equal(classifyInterviewGate({
+    stepId: "interview",
+    status: "done",
+    commitment: { customer: "Jane", message: "DM 보내기", expectedEvidenceKind: "screenshot", confirmedByUser: false },
+  }).mode, "block");
   assert.equal(classifyInterviewGate({ stepId: "first_interview", status: "done", confession: "오늘 못 보냄" }).mode, "confess");
   // a concrete commitment wins over a confession when both are present
   assert.equal(classifyInterviewGate({ stepId: "interview", status: "done", commitmentText: "DM", confession: "x" }).mode, "commit");

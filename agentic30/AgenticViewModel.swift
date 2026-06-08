@@ -1064,6 +1064,147 @@ struct OfficeHoursMemorySummary: Codable, Equatable, Hashable {
     }
 }
 
+struct CommitmentDraft: Codable, Equatable, Hashable {
+    let customer: String
+    let channel: String
+    let message: String
+    let expectedEvidenceKind: String
+    let dueDay: Int?
+    let confirmedByUser: Bool
+
+    init(
+        customer: String,
+        channel: String,
+        message: String,
+        expectedEvidenceKind: String,
+        dueDay: Int? = nil,
+        confirmedByUser: Bool = true
+    ) {
+        self.customer = customer
+        self.channel = channel
+        self.message = message
+        self.expectedEvidenceKind = expectedEvidenceKind
+        self.dueDay = dueDay
+        self.confirmedByUser = confirmedByUser
+    }
+
+    var payload: [String: Any] {
+        var output: [String: Any] = [
+            "customer": customer,
+            "channel": channel,
+            "message": message,
+            "expectedEvidenceKind": expectedEvidenceKind,
+            "confirmedByUser": confirmedByUser,
+        ]
+        if let dueDay { output["dueDay"] = dueDay }
+        return output
+    }
+}
+
+struct CommitmentEvidence: Codable, Equatable, Hashable {
+    let kind: String
+    let url: String
+    let note: String
+    let gradedCycle: Int?
+    let gradedAt: String?
+}
+
+struct CommitmentRecord: Codable, Equatable, Hashable, Identifiable {
+    let id: String
+    let cycle: Int
+    let day: Int
+    let createdAt: String
+    let text: String
+    let customer: String
+    let channel: String
+    let message: String
+    let expectedEvidenceKind: String
+    let dueDay: Int?
+    let confirmedByUser: Bool
+    let status: String
+    let evidence: CommitmentEvidence?
+}
+
+typealias CustomerEvidenceItem = CommitmentRecord
+
+struct DayReviewWorkArea: Codable, Equatable, Hashable, Identifiable {
+    var id: String { name }
+    let name: String
+    let aiMinutes: Int
+    let commitCount: Int
+    let paths: [String]
+}
+
+struct DayReviewWorkSummary: Codable, Equatable, Hashable {
+    let available: Bool
+    let date: String
+    let aiMinutes: Int
+    let commitCount: Int
+    let referenceEventCount: Int
+    let hasWork: Bool
+    let areas: [DayReviewWorkArea]
+}
+
+struct DayReview: Codable, Equatable, Hashable {
+    let schemaVersion: Int
+    let day: Int
+    let status: String
+    let verdictLabel: String
+    let verdictTone: String
+    let summary: String
+    let customerEvidence: [CustomerEvidenceItem]
+    let commitments: [CommitmentRecord]
+    let nextCommitment: CommitmentRecord?
+    let missing: [String]
+    let work: DayReviewWorkSummary?
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion, day, status, verdictLabel, verdictTone, summary
+        case customerEvidence, commitments, nextCommitment, missing, work
+    }
+
+    init(
+        schemaVersion: Int = 1,
+        day: Int,
+        status: String,
+        verdictLabel: String,
+        verdictTone: String,
+        summary: String,
+        customerEvidence: [CustomerEvidenceItem] = [],
+        commitments: [CommitmentRecord] = [],
+        nextCommitment: CommitmentRecord? = nil,
+        missing: [String] = [],
+        work: DayReviewWorkSummary? = nil
+    ) {
+        self.schemaVersion = schemaVersion
+        self.day = day
+        self.status = status
+        self.verdictLabel = verdictLabel
+        self.verdictTone = verdictTone
+        self.summary = summary
+        self.customerEvidence = customerEvidence
+        self.commitments = commitments
+        self.nextCommitment = nextCommitment
+        self.missing = missing
+        self.work = work
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        day = try c.decodeIfPresent(Int.self, forKey: .day) ?? 0
+        status = try c.decodeIfPresent(String.self, forKey: .status) ?? "customer_evidence_missing"
+        verdictLabel = try c.decodeIfPresent(String.self, forKey: .verdictLabel) ?? "고객 증거 미기록"
+        verdictTone = try c.decodeIfPresent(String.self, forKey: .verdictTone) ?? "muted"
+        summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        customerEvidence = try c.decodeIfPresent([CustomerEvidenceItem].self, forKey: .customerEvidence) ?? []
+        commitments = try c.decodeIfPresent([CommitmentRecord].self, forKey: .commitments) ?? []
+        nextCommitment = try c.decodeIfPresent(CommitmentRecord.self, forKey: .nextCommitment)
+        missing = try c.decodeIfPresent([String].self, forKey: .missing) ?? []
+        work = try c.decodeIfPresent(DayReviewWorkSummary.self, forKey: .work)
+    }
+}
+
 struct DayProgress: Codable, Equatable, Hashable {
     let schemaVersion: Int
     let schema: String?
@@ -1356,6 +1497,7 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var day1GoalSelection: Day1GoalSelection?
     @Published private(set) var day1GoalError: String?
     @Published private(set) var dayProgress: DayProgress?
+    @Published private(set) var dayReviews: [String: DayReview] = [:]
     /// Cycle#N office-hours memory summary (compiled truth + open/abandoned threads),
     /// delivered additively on `day_progress_state`. Drives the retro read-back surface.
     @Published private(set) var officeHoursMemory: OfficeHoursMemorySummary?
@@ -2509,6 +2651,9 @@ final class AgenticViewModel: ObservableObject {
     @discardableResult
     func ensureOfficeHoursSession() -> Bool {
         #if DEBUG
+        if installUITestingOfficeHoursCommitmentGateSessionIfNeeded() {
+            return true
+        }
         if installUITestingOfficeHoursRunningSessionIfNeeded() {
             return true
         }
@@ -2794,6 +2939,7 @@ final class AgenticViewModel: ObservableObject {
         status: DayStepStatus,
         goalText: String? = nil,
         commitmentText: String? = nil,
+        commitment: CommitmentDraft? = nil,
         confession: String? = nil,
         predictionText: String? = nil,
         predictionVerdict: String? = nil,
@@ -2815,6 +2961,9 @@ final class AgenticViewModel: ObservableObject {
         // typed next customer action (user-origin), or the reason they're holding the gate.
         if let commitmentText, !commitmentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             payload["commitmentText"] = commitmentText
+        }
+        if let commitment {
+            payload["commitment"] = commitment.payload
         }
         if let confession, !confession.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             payload["confession"] = confession
@@ -5313,6 +5462,7 @@ final class AgenticViewModel: ObservableObject {
             }
             day1GoalSelection = event.day1GoalSelection
             if let dp = event.dayProgress { dayProgress = dp }
+            if let reviews = event.dayReviews { dayReviews = reviews }
             workspaceRoot = event.workspaceRoot ?? workspaceRoot
             notionConnected = event.notionConnected ?? false
             connectionLabel = "Connected"
@@ -5479,6 +5629,7 @@ final class AgenticViewModel: ObservableObject {
             scanResult = result
             day1GoalSelection = event.day1GoalSelection
             if let dp = event.dayProgress { dayProgress = dp }
+            if let reviews = event.dayReviews { dayReviews = reviews }
             persistWorkspaceScanResult(event)
             persistWorkspaceScanResultCache(result, root: event.scanRoot)
         case "day1_goal_state":
@@ -5496,6 +5647,7 @@ final class AgenticViewModel: ObservableObject {
         case "day_progress_state":
             if event.success == false { return }
             if let dp = event.dayProgress { dayProgress = dp }
+            if let reviews = event.dayReviews { dayReviews = reviews }
             if let memory = event.officeHoursMemory { officeHoursMemory = memory }
             // Interview gate: surface the soft nudge when a close was withheld; clear it on
             // any non-blocked update so it disappears once the founder commits or confesses.
@@ -6437,12 +6589,182 @@ final class AgenticViewModel: ObservableObject {
         )
     }
 
+    // Seeds a two-day DayProgress (Day 2 today, Day 1 incomplete past record) so the
+    // Office Hours timeline sidebar renders the cumulative Day list for screenshots.
+    // challengeStartedAt is yesterday-local so currentDayNumber() resolves to Day 2
+    // on any run date. Gated on its own flag; no-op otherwise.
+    private func seedUITestingTimelineFixtureIfNeeded() {
+        #if !DEBUG
+        return
+        #else
+        guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-timeline-fixture") else { return }
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd"
+        let now = Date()
+        let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now) ?? now
+        let startedAt = formatter.string(from: yesterday)
+        let day1 = DayRecord(
+            day: 1,
+            kind: .day1,
+            steps: ["onboarding": .done, "scan": .done, "goal": .active, "first_interview": .pending],
+            goalText: "목표와 고객 핵심 가설을 만든다",
+            updatedAt: startedAt
+        )
+        let day2 = DayRecord(
+            day: 2,
+            kind: .standard,
+            steps: ["scan": .done, "retro": .done, "goal": .done, "interview": .active, "execution": .pending],
+            goalText: "전업 1인 개발자 (수익 0원, macOS 메뉴바 AI 비서)",
+            updatedAt: formatter.string(from: now)
+        )
+        dayProgress = DayProgress(
+            challengeStartedAt: startedAt,
+            days: ["1": day1, "2": day2]
+        )
+        let commitment = CommitmentRecord(
+            id: "ui-test-commitment-day-1",
+            cycle: 1,
+            day: 1,
+            createdAt: "\(startedAt)T09:00:00.000Z",
+            text: "장지창에게 DM로 결제 의향 묻기 · 증거: screenshot",
+            customer: "장지창",
+            channel: "DM",
+            message: "결제 의향 묻기",
+            expectedEvidenceKind: "screenshot",
+            dueDay: 2,
+            confirmedByUser: true,
+            status: "open",
+            evidence: nil
+        )
+        dayReviews = [
+            "1": DayReview(
+                day: 1,
+                status: "build_escape",
+                verdictLabel: "빌드로 도피",
+                verdictTone: "danger",
+                summary: "AI 작업 75분이 있었지만 고객 하드 증거가 없습니다. 다음 고객 접촉으로 닫아야 합니다.",
+                customerEvidence: [commitment],
+                commitments: [commitment],
+                nextCommitment: commitment,
+                missing: ["hard_evidence"],
+                work: DayReviewWorkSummary(
+                    available: true,
+                    date: startedAt,
+                    aiMinutes: 75,
+                    commitCount: 3,
+                    referenceEventCount: 1,
+                    hasWork: true,
+                    areas: [
+                        DayReviewWorkArea(
+                            name: "제품 빌드",
+                            aiMinutes: 75,
+                            commitCount: 3,
+                            paths: ["agentic30/ContentView.swift"]
+                        )
+                    ]
+                )
+            )
+        ]
+        #endif
+    }
+
+    @discardableResult
+    private func installUITestingOfficeHoursCommitmentGateSessionIfNeeded() -> Bool {
+        #if DEBUG
+        guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-commitment-gate") else {
+            return false
+        }
+        if let selectedSession,
+           selectedSession.title.range(of: "Office Hours", options: [.caseInsensitive, .diacriticInsensitive]) != nil,
+           selectedSession.pendingUserInput == nil,
+           selectedSession.status == .idle {
+            return true
+        }
+
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd"
+        let today = formatter.string(from: Date())
+        dayProgress = DayProgress(
+            challengeStartedAt: today,
+            days: [
+                "1": DayRecord(
+                    day: 1,
+                    kind: .day1,
+                    steps: ["onboarding": .done, "scan": .done, "goal": .done, "first_interview": .active],
+                    goalText: "전업 1인 개발자에게 고객 증거를 만들게 한다",
+                    updatedAt: today
+                )
+            ]
+        )
+
+        let now = Date()
+        let sessionID = "ui-test-office-hours-commitment-\(UUID().uuidString)"
+        func answer(_ index: Int, _ content: String) -> ChatMessage {
+            ChatMessage(
+                id: "ui-test-office-hours-answer-\(index)",
+                role: .user,
+                provider: selectedProvider,
+                content: content,
+                state: .final,
+                createdAt: now.addingTimeInterval(TimeInterval(index)),
+                error: nil,
+                bipMissionChoices: nil,
+                providerAuthActions: nil
+            )
+        }
+        let session = ChatSession(
+            id: sessionID,
+            title: "Office Hours",
+            provider: selectedProvider,
+            model: preferredModel(for: selectedProvider),
+            status: .idle,
+            createdAt: now,
+            updatedAt: now,
+            error: nil,
+            messages: [
+                answer(1, "돈을 냈거나 제안함"),
+                answer(2, "스프레드시트와 메신저"),
+                answer(3, "장지창, 전업 1인 개발자, 수익 전환이 막혀 있음"),
+                answer(4, "유료 파일럿 1건"),
+                answer(5, "직접 관찰했다"),
+                answer(6, "더 필수적이다"),
+            ],
+            pendingUserInput: nil,
+            runtime: ChatSessionRuntime(
+                codexThreadId: nil,
+                codexThreadMeta: nil,
+                codexWarm: nil,
+                startupTiming: nil,
+                iddDocumentType: "day1_step",
+                iddMode: "office_hours"
+            )
+        )
+        sessions = [session]
+        selectedSessionID = sessionID
+        officeHoursSessionCreateInFlight = false
+        refreshPresentationState()
+        return true
+        #else
+        return false
+        #endif
+    }
+
     @discardableResult
     private func installUITestingOfficeHoursStructuredPromptSessionIfNeeded() -> Bool {
         #if DEBUG
         guard CommandLine.arguments.contains("--ui-testing-seed-office-hours-structured-prompt") else {
             return false
         }
+        // Day timeline fixture: seed a cumulative Day list (Day 2 today + a past
+        // Day 1 record) so the sidebar focus-highlight can be screenshotted. Runs
+        // before the goal guard so the timeline renders even pre-goal-confirm.
+        seedUITestingTimelineFixtureIfNeeded()
         guard day1GoalSelection != nil else {
             return false
         }
@@ -9213,6 +9535,7 @@ struct SidecarEvent: Decodable {
     let day1SituationSummary: Day1SituationSummary?
     let day1GoalSelection: Day1GoalSelection?
     let dayProgress: DayProgress?
+    let dayReviews: [String: DayReview]?
     let officeHoursMemory: OfficeHoursMemorySummary?
     // Interview-gate block fields (day_progress_state): when the founder tries to close a
     // gated interview step without naming a next customer action, the sidecar withholds the
@@ -9317,6 +9640,7 @@ struct SidecarEvent: Decodable {
         day1SituationSummary: Day1SituationSummary? = nil,
         day1GoalSelection: Day1GoalSelection? = nil,
         dayProgress: DayProgress? = nil,
+        dayReviews: [String: DayReview]? = nil,
         officeHoursMemory: OfficeHoursMemorySummary? = nil,
         needsCommitment: Bool? = nil,
         gatedStep: String? = nil,
@@ -9407,6 +9731,7 @@ struct SidecarEvent: Decodable {
         self.day1SituationSummary = day1SituationSummary
         self.day1GoalSelection = day1GoalSelection
         self.dayProgress = dayProgress
+        self.dayReviews = dayReviews
         self.officeHoursMemory = officeHoursMemory
         self.needsCommitment = needsCommitment
         self.gatedStep = gatedStep
@@ -9785,6 +10110,7 @@ extension SidecarEvent {
         case day1SituationSummary
         case day1GoalSelection
         case dayProgress
+        case dayReviews
         case officeHoursMemory
         case needsCommitment
         case gatedStep
@@ -9885,6 +10211,7 @@ extension SidecarEvent {
         day1SituationSummary = Self.decodeIfPresent(Day1SituationSummary.self, from: container, forKey: .day1SituationSummary)
         day1GoalSelection = Self.decodeIfPresent(Day1GoalSelection.self, from: container, forKey: .day1GoalSelection)
         dayProgress = Self.decodeIfPresent(DayProgress.self, from: container, forKey: .dayProgress)
+        dayReviews = Self.decodeIfPresent([String: DayReview].self, from: container, forKey: .dayReviews)
         officeHoursMemory = Self.decodeIfPresent(OfficeHoursMemorySummary.self, from: container, forKey: .officeHoursMemory)
         needsCommitment = Self.decodeIfPresent(Bool.self, from: container, forKey: .needsCommitment)
         gatedStep = Self.decodeIfPresent(String.self, from: container, forKey: .gatedStep)

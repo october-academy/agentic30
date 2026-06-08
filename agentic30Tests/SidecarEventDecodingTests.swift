@@ -514,6 +514,67 @@ struct SidecarEventDecodingTests {
         #expect(event.error == nil)
         // Additive/optional: a day_progress_state with no officeHoursMemory decodes to nil.
         #expect(event.officeHoursMemory == nil)
+        #expect(event.dayReviews == nil)
+    }
+
+    @MainActor @Test func decodesDayProgressStateWithDayReviews() throws {
+        let payload = """
+        {
+          "type": "day_progress_state",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "currentDay": 3,
+          "dayReviews": {
+            "2": {
+              "schemaVersion": 1,
+              "day": 2,
+              "status": "build_escape",
+              "verdictLabel": "빌드로 도피",
+              "verdictTone": "danger",
+              "summary": "AI 작업 90분이 있었지만 고객 하드 증거가 없습니다.",
+              "customerEvidence": [
+                {
+                  "id": "cm-2",
+                  "cycle": 2,
+                  "day": 2,
+                  "createdAt": "2026-06-09T09:00:00.000Z",
+                  "text": "Jane에게 DM로 결제 의향 묻기",
+                  "customer": "Jane",
+                  "channel": "DM",
+                  "message": "결제 의향 묻기",
+                  "expectedEvidenceKind": "screenshot",
+                  "dueDay": 3,
+                  "confirmedByUser": true,
+                  "status": "open",
+                  "evidence": null
+                }
+              ],
+              "commitments": [],
+              "nextCommitment": null,
+              "missing": ["hard_evidence"],
+              "work": {
+                "available": true,
+                "date": "2026-06-09",
+                "aiMinutes": 90,
+                "commitCount": 2,
+                "referenceEventCount": 0,
+                "hasWork": true,
+                "areas": [
+                  { "name": "제품 빌드", "aiMinutes": 90, "commitCount": 2, "paths": ["agentic30/ContentView.swift"] }
+                ]
+              }
+            }
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        let review = try #require(event.dayReviews?["2"])
+        #expect(review.status == "build_escape")
+        #expect(review.verdictLabel == "빌드로 도피")
+        #expect(review.customerEvidence.first?.customer == "Jane")
+        #expect(review.customerEvidence.first?.expectedEvidenceKind == "screenshot")
+        #expect(review.work?.aiMinutes == 90)
+        #expect(review.work?.areas.first?.paths == ["agentic30/ContentView.swift"])
     }
 
     @MainActor @Test func decodesDayProgressStateWithOfficeHoursMemory() throws {

@@ -84,6 +84,7 @@ import {
   appendCycle,
   appendPrediction,
   buildPriorCycle,
+  buildDayReviews,
   classifyInterviewGate,
   formatPriorCycleOpening,
   gradePrediction,
@@ -2013,7 +2014,14 @@ async function handleDay1GoalSave(socket, payload = {}) {
         if (path.resolve(root) === path.resolve(workspaceRoot)) {
           state.dayProgress = updated;
         }
-        broadcast({ type: "day_progress_state", workspaceRoot: root, dayProgress: updated, currentDay });
+        broadcast({
+          type: "day_progress_state",
+          workspaceRoot: root,
+          dayProgress: updated,
+          currentDay,
+          officeHoursMemory: await loadOfficeHoursMemorySummary(root, currentDay),
+          dayReviews: await loadOfficeHoursDayReviews(root, updated),
+        });
       }
     } catch (progressError) {
       telemetry.captureException(progressError, {
@@ -2050,6 +2058,7 @@ async function handleDayProgressGet(socket, payload = {}) {
     dayProgress,
     currentDay,
     officeHoursMemory: await loadOfficeHoursMemorySummary(root, currentDay),
+    dayReviews: await loadOfficeHoursDayReviews(root, dayProgress),
   });
 }
 
@@ -2062,6 +2071,31 @@ async function loadOfficeHoursMemorySummary(root, currentDay) {
   } catch {
     return null;
   }
+}
+
+async function loadOfficeHoursDayReviews(root, dayProgress) {
+  if (!dayProgress) return null;
+  try {
+    const [memory, workHistory] = await Promise.all([
+      loadOfficeHoursMemory({ workspaceRoot: root }),
+      loadWorkHistorySnapshot({ workspaceRoot: root }),
+    ]);
+    return buildDayReviews({ dayProgress, memory, workHistory });
+  } catch {
+    return null;
+  }
+}
+
+function formatStructuredCommitmentText(commitment) {
+  if (!commitment || typeof commitment !== "object" || Array.isArray(commitment)) return "";
+  const customer = String(commitment.customer || "").replace(/\s+/g, " ").trim();
+  const channel = String(commitment.channel || "").replace(/\s+/g, " ").trim();
+  const message = String(commitment.message || "").replace(/\s+/g, " ").trim();
+  const evidence = String(commitment.expectedEvidenceKind || commitment.expected_evidence_kind || "").replace(/\s+/g, " ").trim();
+  if (!customer || !message) return "";
+  const channelPart = channel ? `${channel}로 ` : "";
+  const evidencePart = evidence ? ` · 증거: ${evidence}` : "";
+  return `${customer}에게 ${channelPart}${message}${evidencePart}`.slice(0, 500);
 }
 
 // calibration-lite write path, invoked from the interview-close commit branch. Grades the
@@ -2094,6 +2128,9 @@ async function handleDayProgressPatch(socket, payload = {}) {
   const status = payload.status;
   const day = payload.day ?? payload.dayNumber ?? payload.day_number;
   const commitmentText = payload.commitmentText ?? payload.commitment_text;
+  const structuredCommitment = payload.commitment && typeof payload.commitment === "object" && !Array.isArray(payload.commitment)
+    ? payload.commitment
+    : null;
   const confession = payload.confession;
   // calibration-lite (optional, additive): a one-line forecast for this cycle, and/or a
   // retrospective verdict on the prior cycle's still-open forecast. Absent = no-op.
@@ -2103,7 +2140,7 @@ async function handleDayProgressPatch(socket, payload = {}) {
     // Interview/first_interview completion gate (founder decision: block-once-then-
     // confession). The single anti-displacement chokepoint identified by the
     // first_interview-evidence-gate trace.
-    const gate = classifyInterviewGate({ stepId, status, commitmentText, confession });
+    const gate = classifyInterviewGate({ stepId, status, commitmentText, commitment: structuredCommitment, confession });
     if (gate.mode === "block") {
       // Do NOT mark the step done — the founder must name one next customer action,
       // or confess they're holding the gate. Return current (unchanged) progress.
@@ -2118,6 +2155,7 @@ async function handleDayProgressPatch(socket, payload = {}) {
         gatedStep: String(stepId || ""),
         message: "이 인터뷰를 닫기 전에 다음 한 가지 고객 행동을 약속해줘. 정 못 하면 그 이유를 남겨도 통과돼.",
         officeHoursMemory: await loadOfficeHoursMemorySummary(root, currentDay),
+        dayReviews: await loadOfficeHoursDayReviews(root, current),
       });
       telemetry.captureEvent("mac_sidecar_interview_gate_blocked", {
         step_id: String(stepId || ""),
@@ -2143,8 +2181,16 @@ async function handleDayProgressPatch(socket, payload = {}) {
     // user-origin: commitmentText is the founder's own typed next customer action.
     const cycleNo = Number.parseInt(day, 10) || null;
     if (gate.mode === "commit" && cycleNo) {
-      await appendCommitment({ workspaceRoot: root, text: commitmentText, cycle: cycleNo, day: cycleNo, originText: commitmentText });
-      await appendCycle({ workspaceRoot: root, cycle: cycleNo, day: cycleNo, step: stepId, outcome: "success", lastAssignment: commitmentText });
+      const resolvedCommitmentText = formatStructuredCommitmentText(structuredCommitment) || String(commitmentText || "").trim();
+      await appendCommitment({
+        workspaceRoot: root,
+        text: resolvedCommitmentText,
+        cycle: cycleNo,
+        day: cycleNo,
+        originText: resolvedCommitmentText,
+        commitment: structuredCommitment ?? undefined,
+      });
+      await appendCycle({ workspaceRoot: root, cycle: cycleNo, day: cycleNo, step: stepId, outcome: "success", lastAssignment: resolvedCommitmentText });
       await applyPredictionPatch({ workspaceRoot: root, cycle: cycleNo, predictionText, predictionVerdict });
       await recompileCompiledTruth({ workspaceRoot: root });
     } else if (gate.mode === "confess" && cycleNo) {
@@ -2172,6 +2218,7 @@ async function handleDayProgressPatch(socket, payload = {}) {
       dayProgress,
       currentDay,
       officeHoursMemory: await loadOfficeHoursMemorySummary(root, currentDay),
+      dayReviews: await loadOfficeHoursDayReviews(root, dayProgress),
     });
   } catch (error) {
     telemetry.captureException(error, {

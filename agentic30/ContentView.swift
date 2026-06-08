@@ -2344,37 +2344,49 @@ struct ContentView: View {
     // confession, leaving the reason). Submitting routes through markDayStep ->
     // day_progress_patch -> the sidecar interview gate (commit / confess).
     @ViewBuilder
-    private func officeHoursCommitmentBar() -> some View {
+    private func officeHoursCommitmentBar(session: ChatSession?) -> some View {
         if let day = viewModel.dayProgress?.currentDayNumber() {
             let stepId = day == 1 ? "first_interview" : "interview"
-            if viewModel.dayProgress?.record(forDay: day)?.steps[stepId] == .active {
-                OfficeHoursCommitmentBarView(
-                    // Scope the gate nudge to the step that was actually held (gatedStep).
-                    gateMessage: (viewModel.commitmentGateStep == nil || viewModel.commitmentGateStep == stepId)
-                        ? viewModel.commitmentGateMessage : nil,
-                    pendingPrediction: viewModel.officeHoursMemory?.pendingPrediction,
-                    onCommit: { text, prediction, verdict in
-                        _ = viewModel.markDayStep(
-                            day: day,
-                            stepId: stepId,
-                            status: .done,
-                            commitmentText: text,
-                            predictionText: prediction,
-                            predictionVerdict: verdict
-                        )
-                    },
-                    onConfess: { reason, verdict in
-                        // A confess-close still grades the prior forecast (verdict), it just
-                        // opens no new commitment/prediction.
-                        _ = viewModel.markDayStep(
-                            day: day,
-                            stepId: stepId,
-                            status: .done,
-                            confession: reason,
-                            predictionVerdict: verdict
-                        )
-                    }
-                )
+            let stepActive = viewModel.dayProgress?.record(forDay: day)?.steps[stepId] == .active
+            // 끝에서만 등장: forcing question을 전부 제출한 뒤에야 닫기-약속 게이트를 흐름의
+            // 종착지로 보여준다. 진행 중(1~5/6)에는 메인 인터뷰 흐름과 경쟁하지 않도록 숨긴다.
+            let allQuestionsAnswered = officeHoursAnswerCount(session: session) >= selectedOfficeHoursMode.questionCount
+            if stepActive && allQuestionsAnswered {
+                // 마지막 질문 답변과 약속 게이트 사이에 호흡을 둔다 — 연한 구분선으로 '이제
+                // 인터뷰 마무리'로의 전환을 분리(질문 흐름과 종료 흐름을 한 박자 띄운다).
+                VStack(spacing: 18) {
+                    Rectangle()
+                        .fill(OpenDesignOfficeHoursColor.borderSoft)
+                        .frame(height: 1)
+                        .padding(.top, 6)
+                    OfficeHoursCommitmentBarView(
+                        // Scope the gate nudge to the step that was actually held (gatedStep).
+                        gateMessage: (viewModel.commitmentGateStep == nil || viewModel.commitmentGateStep == stepId)
+                            ? viewModel.commitmentGateMessage : nil,
+                        pendingPrediction: viewModel.officeHoursMemory?.pendingPrediction,
+                        onCommit: { commitment, prediction, verdict in
+                            _ = viewModel.markDayStep(
+                                day: day,
+                                stepId: stepId,
+                                status: .done,
+                                commitment: commitment,
+                                predictionText: prediction,
+                                predictionVerdict: verdict
+                            )
+                        },
+                        onConfess: { reason, verdict in
+                            // A confess-close still grades the prior forecast (verdict), it just
+                            // opens no new commitment/prediction.
+                            _ = viewModel.markDayStep(
+                                day: day,
+                                stepId: stepId,
+                                status: .done,
+                                confession: reason,
+                                predictionVerdict: verdict
+                            )
+                        }
+                    )
+                }
             }
         }
     }
@@ -2780,7 +2792,6 @@ struct ContentView: View {
                 officeHoursHeader(session: session)
                 officeHoursStepper(session: session)
                 officeHoursMainScroll(session: session, day1Content: day1Content, layout: layout)
-                officeHoursCommitmentBar()
             }
         }
         .frame(maxHeight: .infinity, alignment: .top)
@@ -2809,6 +2820,7 @@ struct ContentView: View {
         let goal = record?.goalText.nonEmpty ?? officeHoursBackboneGoal(forDay: day)
         let steps = record?.displaySteps ?? []
         let complete = record?.isDisplayComplete ?? false
+        let review = viewModel.dayReviews[String(day)]
         let markFg = complete ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.amber
         let markBg = complete ? OpenDesignOfficeHoursColor.accentDim : OpenDesignOfficeHoursColor.amberDim
         let markBorder = complete ? OpenDesignOfficeHoursColor.accentLine : OpenDesignOfficeHoursColor.amber.opacity(0.4)
@@ -2861,9 +2873,12 @@ struct ContentView: View {
             .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1), alignment: .bottom)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        officeHoursSidebarGroupTitle("목표")
+                VStack(alignment: .leading, spacing: 16) {
+                    officeHoursPastDayVerdictSection(day: day, review: review)
+                    officeHoursPastDayEvidenceSection(review: review)
+                    officeHoursPastDayCommitmentSection(review: review)
+
+                    officeHoursPastDaySection(title: "목표", identifier: "opendesign.officeHours.pastDay.goal.\(day)") {
                         Text(goal)
                             .font(.system(size: 14, weight: .regular))
                             .foregroundStyle(OpenDesignOfficeHoursColor.fg)
@@ -2871,8 +2886,7 @@ struct ContentView: View {
                     }
 
                     if !steps.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
-                            officeHoursSidebarGroupTitle("진행")
+                        officeHoursPastDaySection(title: "진행", identifier: "opendesign.officeHours.pastDay.progress.\(day)") {
                             ForEach(steps.indices, id: \.self) { index in
                                 let step = steps[index]
                                 HStack(spacing: 11) {
@@ -2906,6 +2920,175 @@ struct ContentView: View {
         .background(OpenDesignOfficeHoursColor.bg)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("opendesign.officeHours.pastDay.\(day)")
+    }
+
+    private func officeHoursPastDayVerdictSection(day: Int, review: DayReview?) -> some View {
+        let label = review?.verdictLabel.nonEmpty ?? "고객 증거 미기록"
+        let summary = review?.summary.nonEmpty ?? "이 Day에는 고객 증거가 기록되지 않았습니다."
+        let tone = review?.verdictTone ?? "muted"
+        let toneColor = officeHoursPastDayToneColor(tone)
+        return officeHoursPastDaySection(title: "실행 판정", identifier: "opendesign.officeHours.pastDay.review.verdict.\(day)") {
+            HStack(alignment: .top, spacing: 12) {
+                Text(officeHoursPastDayVerdictGlyph(review?.status))
+                    .font(.system(size: 16, weight: .bold, design: .monospaced))
+                    .foregroundStyle(toneColor)
+                    .frame(width: 28, height: 28)
+                    .background(Circle().fill(toneColor.opacity(0.14)))
+                    .overlay(Circle().stroke(toneColor.opacity(0.42), lineWidth: 1))
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(label)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                    Text(summary)
+                        .font(.system(size: 12.5, weight: .regular))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let work = review?.work, work.hasWork {
+                        Text("AI 작업 \(work.aiMinutes)분 · 커밋 \(work.commitCount)건 · 참조 \(work.referenceEventCount)개")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                            .lineLimit(1)
+                    }
+                }
+            }
+        }
+    }
+
+    private func officeHoursPastDayEvidenceSection(review: DayReview?) -> some View {
+        officeHoursPastDaySection(title: "고객 증거", identifier: "opendesign.officeHours.pastDay.review.evidence") {
+            let evidence = review?.customerEvidence ?? []
+            if evidence.isEmpty {
+                Text("고객 증거 미기록")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("고객명, 보낸 메시지, 반응, URL/스크린샷/결제 같은 하드 증거가 아직 이 Day에 연결되지 않았습니다.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(evidence) { item in
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 8) {
+                            Text(item.customer.nonEmpty ?? "고객 미기록")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                            if let channel = item.channel.nonEmpty {
+                                Text(channel)
+                                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(OpenDesignOfficeHoursColor.accent)
+                                    .padding(.horizontal, 6)
+                                    .frame(height: 18)
+                                    .background(Capsule().fill(OpenDesignOfficeHoursColor.accentDim))
+                            }
+                            Spacer(minLength: 0)
+                            Text(item.evidence == nil ? "증거 없음" : "증거 있음")
+                                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(item.evidence == nil ? OpenDesignOfficeHoursColor.amber : OpenDesignOfficeHoursColor.accent)
+                        }
+                        Text(item.message.nonEmpty ?? item.text)
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let proof = item.evidence {
+                            Text(officeHoursEvidenceLine(proof))
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+    }
+
+    private func officeHoursPastDayCommitmentSection(review: DayReview?) -> some View {
+        officeHoursPastDaySection(title: "다음 약속", identifier: "opendesign.officeHours.pastDay.review.commitment") {
+            if let commitment = review?.nextCommitment ?? review?.commitments.last {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(commitment.text)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        officeHoursPastDayChip("고객 \(commitment.customer.nonEmpty ?? "미기록")", tone: commitment.customer.isEmpty ? "warning" : "success")
+                        officeHoursPastDayChip("증거 \(commitment.expectedEvidenceKind.nonEmpty ?? "미기록")", tone: commitment.expectedEvidenceKind.isEmpty ? "warning" : "success")
+                        if let due = commitment.dueDay {
+                            officeHoursPastDayChip("Day \(due) 전", tone: "muted")
+                        }
+                    }
+                    if commitment.evidence == nil {
+                        Text("아직 완료 증거가 없습니다. 다음 Day 시작 전에 하드 증거로 닫아야 합니다.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            } else {
+                Text("다음 고객 행동 약속이 없습니다.")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+            }
+        }
+    }
+
+    private func officeHoursPastDaySection<Content: View>(
+        title: String,
+        identifier: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            officeHoursSidebarGroupTitle(title)
+            content()
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(OpenDesignOfficeHoursColor.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(identifier)
+    }
+
+    private func officeHoursPastDayChip(_ text: String, tone: String) -> some View {
+        let color = officeHoursPastDayToneColor(tone)
+        return Text(text)
+            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+            .foregroundStyle(color)
+            .padding(.horizontal, 7)
+            .frame(height: 20)
+            .background(Capsule().fill(color.opacity(0.14)))
+            .overlay(Capsule().stroke(color.opacity(0.35), lineWidth: 1))
+    }
+
+    private func officeHoursPastDayToneColor(_ tone: String) -> Color {
+        switch tone {
+        case "success": return OpenDesignOfficeHoursColor.accent
+        case "danger": return OpenDesignOfficeHoursColor.rose
+        case "warning": return OpenDesignOfficeHoursColor.amber
+        default: return OpenDesignOfficeHoursColor.muted
+        }
+    }
+
+    private func officeHoursPastDayVerdictGlyph(_ status: String?) -> String {
+        switch status {
+        case "hard_evidence_confirmed": return "✓"
+        case "build_escape": return "!"
+        case "commitment_unproven": return "?"
+        case "blocked": return "…"
+        default: return "○"
+        }
+    }
+
+    private func officeHoursEvidenceLine(_ evidence: CommitmentEvidence) -> String {
+        let locator = evidence.url.nonEmpty ?? evidence.note.nonEmpty ?? "locator 없음"
+        return "\(evidence.kind) · \(locator)"
     }
 
     private func officeHoursHeader(session: ChatSession?) -> some View {
@@ -3071,6 +3254,7 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if modePicked {
                         officeHoursQuestionStage(session: session, day1Content: day1Content)
+                        officeHoursCommitmentBar(session: session)
                     } else if viewModel.day1GoalSelection == nil {
                         officeHoursTutorHead()
                         officeHoursGoalSelectionBlock(session: session, day1Content: day1Content)
@@ -10875,25 +11059,40 @@ private struct OfficeHoursCommitmentBarView: View {
     /// The prior cycle's still-open forecast (calibration-lite). When present, the bar offers
     /// a verdict at close; nil/empty hides the grade row.
     var pendingPrediction: String? = nil
-    /// (commitment, predictionText?, predictionVerdict?) — the latter two are calibration-lite.
-    let onCommit: (String, String?, String?) -> Void
+    /// (structured commitment, predictionText?, predictionVerdict?) — the latter two are calibration-lite.
+    let onCommit: (CommitmentDraft, String?, String?) -> Void
     /// (confessionReason, predictionVerdict?) — a confess-close still grades the prior forecast.
     let onConfess: (String, String?) -> Void
 
-    @State private var draft: String = ""
+    @State private var customerDraft: String = ""
+    @State private var channelDraft: String = "DM"
+    @State private var draft: String = "지금 가장 큰 미확인 가설을 확인하고, 실제 사용/결제 행동으로 이어지는지 물어보기"
+    @State private var expectedEvidenceKind: String = "screenshot"
     @State private var predictionDraft: String = ""
     @State private var gradeVerdict: String? = nil
     @State private var showConfess: Bool = false
     @State private var confessDraft: String = ""
 
+    private var trimmedCustomer: String { customerDraft.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var trimmedChannel: String { channelDraft.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var trimmedDraft: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var trimmedConfess: String { confessDraft.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var trimmedPrediction: String { predictionDraft.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     private func submitCommit() {
-        guard !trimmedDraft.isEmpty else { return }
-        onCommit(trimmedDraft, trimmedPrediction.isEmpty ? nil : trimmedPrediction, gradeVerdict)
-        draft = ""
+        guard !trimmedCustomer.isEmpty, !trimmedDraft.isEmpty else { return }
+        let commitment = CommitmentDraft(
+            customer: trimmedCustomer,
+            channel: trimmedChannel.isEmpty ? "DM" : trimmedChannel,
+            message: trimmedDraft,
+            expectedEvidenceKind: expectedEvidenceKind,
+            confirmedByUser: true
+        )
+        onCommit(commitment, trimmedPrediction.isEmpty ? nil : trimmedPrediction, gradeVerdict)
+        customerDraft = ""
+        channelDraft = "DM"
+        draft = "지금 가장 큰 미확인 가설을 확인하고, 실제 사용/결제 행동으로 이어지는지 물어보기"
+        expectedEvidenceKind = "screenshot"
         predictionDraft = ""
         gradeVerdict = nil
     }
@@ -10907,10 +11106,37 @@ private struct OfficeHoursCommitmentBarView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
+            // 헤더는 forcing-question 카드의 언어를 미러링 — 닫기 게이트가 '분리된 바닥 바'가
+            // 아니라 인터뷰 흐름의 마지막 단계 카드로 읽히게 한다.
+            HStack(spacing: 8) {
+                Text("마지막 단계")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                    .tracking(1.2)
+                    .textCase(.uppercase)
+                Spacer(minLength: 0)
+                Text("약속")
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                    .padding(.horizontal, 8)
+                    .frame(height: 20)
+                    .background(Capsule().fill(OpenDesignOfficeHoursColor.amberDim))
+                    .overlay(Capsule().stroke(OpenDesignOfficeHoursColor.amber.opacity(0.40), lineWidth: 1))
+            }
             Text("이 인터뷰를 닫기 전에 — 다음 한 가지 고객 행동을 약속해줘.")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 13.5, weight: .medium))
+                .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("시스템 초안")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                Text("고객 1명에게 미확인 가설을 확인하고, 스크린샷/URL/결제 같은 증거로 닫기")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let gateMessage, !gateMessage.isEmpty {
                 // The gate held a close: a soft, non-blocking nudge (not an error).
                 HStack(alignment: .top, spacing: 6) {
@@ -10940,15 +11166,35 @@ private struct OfficeHoursCommitmentBarView: View {
                 .accessibilityIdentifier("opendesign.officeHours.predictionGrade")
             }
             HStack(spacing: 8) {
-                TextField("예: Joe에게 DM 보내기 · 장지창에게 결제 의향 묻기", text: $draft)
+                TextField("고객명 또는 회사", text: $customerDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 13))
+                    .accessibilityIdentifier("opendesign.officeHours.commitmentCustomerField")
+                TextField("채널", text: $channelDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 13))
+                    .frame(width: 90)
+                    .accessibilityIdentifier("opendesign.officeHours.commitmentChannelField")
+            }
+            HStack(spacing: 8) {
+                TextField("보낼 메시지", text: $draft)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 13))
                     .onSubmit(submitCommit)
                     .accessibilityIdentifier("opendesign.officeHours.commitmentField")
-                Button("약속하고 닫기", action: submitCommit)
+                Picker("", selection: $expectedEvidenceKind) {
+                    Text("스크린샷").tag("screenshot")
+                    Text("URL").tag("url")
+                    Text("결제").tag("payment")
+                    Text("커밋").tag("commit")
+                }
+                .labelsHidden()
+                .frame(width: 112)
+                .accessibilityIdentifier("opendesign.officeHours.commitmentEvidenceKind")
+                Button("확인하고 닫기", action: submitCommit)
                     .buttonStyle(.borderedProminent)
                     .tint(Agentic30BrandColor.green)
-                    .disabled(trimmedDraft.isEmpty)
+                    .disabled(trimmedCustomer.isEmpty || trimmedDraft.isEmpty)
                     .accessibilityIdentifier("opendesign.officeHours.commitButton")
             }
             // calibration-lite capture (optional): one forecast for this cycle.
@@ -10978,12 +11224,31 @@ private struct OfficeHoursCommitmentBarView: View {
             }
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        .padding(.vertical, 18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.03))
-        .overlay(alignment: .top) {
-            Rectangle().fill(Color.primary.opacity(0.06)).frame(height: 1)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [OpenDesignOfficeHoursColor.surface, OpenDesignOfficeHoursColor.surface2],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+        )
+        .overlay(alignment: .leading) {
+            // 좌측 바는 amber + 글로우 제거 — 카드 틀은 질문과 같되 '질문 아님, 마무리'를
+            // 색으로 신호한다(forcing-question의 초록 accent·글로우와 구분).
+            Rectangle()
+                .fill(OpenDesignOfficeHoursColor.amber)
+                .frame(width: 3)
         }
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(OpenDesignOfficeHoursColor.border, lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("opendesign.officeHours.commitmentBar")
     }
 }

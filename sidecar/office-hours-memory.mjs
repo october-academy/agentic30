@@ -16,7 +16,7 @@ import { resolveAgentic30Dir } from "./news-market-radar.mjs";
 // impossible to hide. See memory project_office_hours_day_memory.
 //
 // Schema bumps require a normalize-from-prior migration test (office-hours-memory.test.mjs).
-export const OFFICE_HOURS_MEMORY_SCHEMA_VERSION = 1;
+export const OFFICE_HOURS_MEMORY_SCHEMA_VERSION = 2;
 export const OFFICE_HOURS_MEMORY_SCHEMA = "agentic30.office_hours_memory.v1";
 
 // Caps — no unbounded growth (curriculum-answer-log convention).
@@ -77,6 +77,13 @@ export async function appendCommitment({
   cycle,
   day,
   originText,
+  commitment,
+  customer,
+  channel,
+  message,
+  expectedEvidenceKind,
+  dueDay,
+  confirmedByUser,
   now = new Date(),
 } = {}) {
   assertWorkspace(workspaceRoot, "office_hours_memory_append_commitment");
@@ -84,6 +91,13 @@ export async function appendCommitment({
   const cleanedText = cleanString(text, MAX_FIELD_CHARS);
   if (!cleanedText) throw new Error("appendCommitment requires non-empty commitment text.");
   const cycleNo = clampInt(cycle, 1, MAX_CYCLE_LEDGER * 4, 1);
+  const structured = normalizeCommitmentFields(mergeDefined(
+    commitment && typeof commitment === "object" && !Array.isArray(commitment) ? commitment : {},
+    { customer, channel, message, expectedEvidenceKind, dueDay, confirmedByUser },
+  ), { fallbackDueDay: clampInt(day, 1, 400, cycleNo) + 1 });
+  if (structured.hasExplicitStructuredDraft && structured.confirmedByUser !== true) {
+    throw new Error("appendCommitment: structured commitment must be confirmed by the user.");
+  }
   const filePath = resolveOfficeHoursMemoryPath(workspaceRoot);
   return withFileLock(filePath, async () => {
     const memory = await loadOfficeHoursMemory({ workspaceRoot, now });
@@ -96,6 +110,12 @@ export async function appendCommitment({
       status: "open",
       evidence: null,
       origin: "user",
+      customer: structured.customer,
+      channel: structured.channel,
+      message: structured.message,
+      expectedEvidenceKind: structured.expectedEvidenceKind,
+      dueDay: structured.dueDay,
+      confirmedByUser: structured.confirmedByUser,
     };
     memory.commitments = [...memory.commitments, commitment];
     return persistOfficeHoursMemory({ workspaceRoot, memory, now });
@@ -445,14 +465,67 @@ export function isGatedInterviewStep(stepId) {
   return GATED_INTERVIEW_STEPS.includes(String(stepId || ""));
 }
 
-export function classifyInterviewGate({ stepId, status, commitmentText, confession } = {}) {
+export function classifyInterviewGate({ stepId, status, commitmentText, commitment, confession } = {}) {
   const isDone = String(status || "").trim().toLowerCase() === "done";
   if (!isGatedInterviewStep(stepId) || !isDone) {
     return { gated: false, mode: "passthrough" };
   }
   if (cleanString(commitmentText)) return { gated: true, mode: "commit" };
+  if (hasConfirmedStructuredCommitment(commitment)) return { gated: true, mode: "commit" };
   if (cleanString(confession)) return { gated: true, mode: "confess" };
   return { gated: true, mode: "block" };
+}
+
+// Pure: synthesize the per-Day customer-evidence review payload attached to
+// day_progress_state. This is additive UI data; the source of truth remains
+// day-progress + office-hours-memory + work-history.
+export function buildDayReviews({ dayProgress, memory, workHistory } = {}) {
+  const days = dayProgress?.days && typeof dayProgress.days === "object" && !Array.isArray(dayProgress.days)
+    ? dayProgress.days
+    : {};
+  const reviews = {};
+  for (const [key, record] of Object.entries(days)) {
+    const day = clampInt(record?.day ?? key, 1, 400, null);
+    if (!day) continue;
+    const commitments = (memory?.commitments ?? [])
+      .filter((commitment) => clampInt(commitment.createdDay ?? commitment.cycle, 1, 400, null) === day)
+      .map(commitmentToReviewRecord);
+    const cycles = (memory?.cycles ?? []).filter((cycle) => clampInt(cycle.day ?? cycle.cycle, 1, 400, null) === day);
+    const work = workSummaryForDay({ workHistory, dayProgress, day });
+    const hasHardEvidence = commitments.some((commitment) => Boolean(commitment.evidence));
+    const hasUnprovenCommitment = commitments.some((commitment) =>
+      !commitment.evidence && ["open", "missed", "abandoned"].includes(commitment.status),
+    );
+    const hasCustomerDetails = commitments.some((commitment) =>
+      Boolean(cleanString(commitment.customer) && cleanString(commitment.message)),
+    );
+    const blockedCycle = cycles.find((cycle) => cycle.outcome === "blocked" || cycle.outcome === "abort") ?? null;
+
+    const missing = [];
+    if (!hasCustomerDetails) missing.push("customer_evidence");
+    if (!hasHardEvidence) missing.push("hard_evidence");
+    if (!commitments.length) missing.push("next_commitment");
+
+    const status = hasHardEvidence
+      ? "hard_evidence_confirmed"
+      : (work.hasWork ? "build_escape"
+        : (hasUnprovenCommitment ? "commitment_unproven"
+          : (blockedCycle ? "blocked" : "customer_evidence_missing")));
+    reviews[String(day)] = {
+      schemaVersion: 1,
+      day,
+      status,
+      verdictLabel: verdictLabelForStatus(status),
+      verdictTone: verdictToneForStatus(status),
+      summary: reviewSummaryForStatus(status, { work, commitments, blockedCycle }),
+      customerEvidence: commitments.filter((commitment) => commitment.customer || commitment.message || commitment.evidence),
+      commitments,
+      nextCommitment: commitments.find((commitment) => !commitment.evidence && commitment.status === "open") ?? null,
+      missing,
+      work,
+    };
+  }
+  return reviews;
 }
 
 // ── Normalization (tolerance-first; accepts old/corrupt input, coerces to current) ──
@@ -562,6 +635,7 @@ function normalizeCommitment(value = {}, { now = new Date() } = {}) {
   const text = cleanString(value.text, MAX_FIELD_CHARS);
   if (!text) return null;
   const cycle = clampInt(value.cycle, 1, MAX_CYCLE_LEDGER * 4, 1);
+  const structured = normalizeCommitmentFields(value, { fallbackDueDay: null });
   return {
     id: cleanString(value.id, 180) || makeId("cm", cycle, text, now),
     cycle,
@@ -573,6 +647,12 @@ function normalizeCommitment(value = {}, { now = new Date() } = {}) {
     // Load trusts the local file by design: the user-origin gate's threat model is
     // MODEL/TOOL fabrication at append time, not the human who owns this workspace.
     origin: "user",
+    customer: structured.customer,
+    channel: structured.channel,
+    message: structured.message,
+    expectedEvidenceKind: structured.expectedEvidenceKind,
+    dueDay: structured.dueDay,
+    confirmedByUser: structured.confirmedByUser,
   };
 }
 
@@ -607,6 +687,143 @@ function normalizeEvidence(value, { now = new Date(), gradedCycle } = {}) {
     gradedCycle: Number.isInteger(value.gradedCycle ?? gradedCycle) ? (value.gradedCycle ?? gradedCycle) : null,
     gradedAt: normalizeIsoDate(value.gradedAt, now),
   };
+}
+
+function normalizeCommitmentFields(value = {}, { fallbackDueDay = null } = {}) {
+  const input = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const expected = cleanToken(input.expectedEvidenceKind ?? input.expected_evidence_kind);
+  const due = clampInt(input.dueDay ?? input.due_day, 1, 400, fallbackDueDay);
+  const customer = cleanString(input.customer, MAX_FIELD_CHARS);
+  const channel = cleanString(input.channel, 80);
+  const message = cleanString(input.message, MAX_FIELD_CHARS);
+  const hasExplicitStructuredDraft = ["customer", "channel", "message", "expectedEvidenceKind", "expected_evidence_kind", "dueDay", "due_day", "confirmedByUser", "confirmed_by_user"]
+    .some((key) => Object.prototype.hasOwnProperty.call(input, key));
+  const rawConfirmed = input.confirmedByUser ?? input.confirmed_by_user;
+  return {
+    customer,
+    channel,
+    message,
+    expectedEvidenceKind: EVIDENCE_KINDS.has(expected) ? expected : "",
+    dueDay: due,
+    confirmedByUser: rawConfirmed === undefined ? true : rawConfirmed === true,
+    hasExplicitStructuredDraft,
+  };
+}
+
+function hasConfirmedStructuredCommitment(commitment) {
+  const structured = normalizeCommitmentFields(commitment);
+  return structured.confirmedByUser === true
+    && Boolean(structured.customer)
+    && Boolean(structured.message)
+    && Boolean(structured.expectedEvidenceKind);
+}
+
+function commitmentToReviewRecord(commitment = {}) {
+  const evidence = commitment.evidence
+    ? {
+        kind: commitment.evidence.kind,
+        url: commitment.evidence.url,
+        note: commitment.evidence.note,
+        gradedCycle: commitment.evidence.gradedCycle,
+        gradedAt: commitment.evidence.gradedAt,
+      }
+    : null;
+  return {
+    id: cleanString(commitment.id, 180),
+    cycle: clampInt(commitment.cycle, 1, MAX_CYCLE_LEDGER * 4, 1),
+    day: clampInt(commitment.createdDay ?? commitment.cycle, 1, 400, 1),
+    createdAt: cleanString(commitment.createdAt, 80),
+    text: cleanString(commitment.text, MAX_FIELD_CHARS),
+    customer: cleanString(commitment.customer, MAX_FIELD_CHARS),
+    channel: cleanString(commitment.channel, 80),
+    message: cleanString(commitment.message || commitment.text, MAX_FIELD_CHARS),
+    expectedEvidenceKind: cleanToken(commitment.expectedEvidenceKind),
+    dueDay: Number.isInteger(commitment.dueDay) ? commitment.dueDay : null,
+    confirmedByUser: commitment.confirmedByUser !== false,
+    status: COMMITMENT_STATUSES.has(commitment.status) ? commitment.status : "open",
+    evidence,
+  };
+}
+
+function workSummaryForDay({ workHistory, dayProgress, day } = {}) {
+  const date = dateKeyForChallengeDay(dayProgress?.challengeStartedAt, day);
+  const available = Boolean(workHistory?.generatedAt && Array.isArray(workHistory.days));
+  const dayEntry = available
+    ? workHistory.days.find((entry) => entry?.date === date)
+    : null;
+  const areas = (dayEntry?.areas ?? []).map((area) => ({
+    name: cleanString(area.name, 120),
+    aiMinutes: clampInt(area.aiMinutes, 0, 10_000, 0),
+    commitCount: clampInt(area.commitCount, 0, 10_000, 0),
+    paths: toArray(area.paths).map((p) => cleanString(p, 160)).filter(Boolean).slice(0, 6),
+  }));
+  const commitCount = areas.reduce((sum, area) => sum + area.commitCount, 0);
+  const aiMinutes = clampInt(dayEntry?.aiMinutes, 0, 10_000, 0);
+  const referenceEventCount = toArray(dayEntry?.referenceEvents).length;
+  return {
+    available,
+    date,
+    aiMinutes,
+    commitCount,
+    referenceEventCount,
+    hasWork: available && (aiMinutes > 0 || commitCount > 0 || referenceEventCount > 0 || areas.length > 0),
+    areas,
+  };
+}
+
+function dateKeyForChallengeDay(challengeStartedAt, day) {
+  const match = String(challengeStartedAt || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match || !day) return "";
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  date.setDate(date.getDate() + day - 1);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function verdictLabelForStatus(status) {
+  switch (status) {
+    case "hard_evidence_confirmed": return "하드 증거 확인됨";
+    case "build_escape": return "빌드로 도피";
+    case "commitment_unproven": return "약속 미증거";
+    case "blocked": return "못 한 이유 기록됨";
+    case "customer_evidence_missing":
+    default:
+      return "고객 증거 미기록";
+  }
+}
+
+function verdictToneForStatus(status) {
+  switch (status) {
+    case "hard_evidence_confirmed": return "success";
+    case "build_escape": return "danger";
+    case "commitment_unproven":
+    case "blocked":
+      return "warning";
+    case "customer_evidence_missing":
+    default:
+      return "muted";
+  }
+}
+
+function reviewSummaryForStatus(status, { work, commitments, blockedCycle } = {}) {
+  switch (status) {
+    case "hard_evidence_confirmed":
+      return "고객 행동 약속이 확인 가능한 증거로 닫혔습니다.";
+    case "build_escape":
+      return `AI 작업 ${work?.aiMinutes ?? 0}분이 있었지만 고객 하드 증거가 없습니다. 다음 고객 접촉으로 닫아야 합니다.`;
+    case "commitment_unproven":
+      return "고객 행동 약속은 남겼지만 아직 URL/스크린샷/결제 같은 하드 증거가 없습니다.";
+    case "blocked":
+      return cleanString(blockedCycle?.note, MAX_FIELD_CHARS) || "고객 행동을 못 한 이유를 남기고 닫았습니다.";
+    case "customer_evidence_missing":
+    default:
+      return commitments?.length
+        ? "약속은 있지만 고객명/메시지/증거 기준이 부족합니다."
+        : "이 Day에는 고객 증거가 기록되지 않았습니다.";
+  }
 }
 
 // ── small pure helpers ─────────────────────────────────────────────────────────
@@ -670,8 +887,20 @@ function toArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function mergeDefined(base = {}, overlay = {}) {
+  const next = { ...base };
+  for (const [key, value] of Object.entries(overlay)) {
+    if (value !== undefined) next[key] = value;
+  }
+  return next;
+}
+
 function cleanString(value = "", maxLength = MAX_FIELD_CHARS) {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function cleanToken(value = "") {
+  return String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 80);
 }
 
 function clampInt(value, min, max, fallback) {
