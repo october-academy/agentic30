@@ -245,10 +245,10 @@ test("renderer handles malformed turnHistory entries without crashing", () => {
 test("rendered body lists anti-pattern invariants verbatim", () => {
   const body = renderMonetizationAskResultMarkdown(buildCompletedState());
   assert.match(body, /Anti-pattern check/);
-  assert.match(body, /웨이팅리스트/);
+  assert.match(body, /대기 신청자/);
   assert.match(body, /무료 가입/);
-  assert.match(body, /verbatim/);
-  assert.match(body, /1명 named/);
+  assert.match(body, /원문 그대로/);
+  assert.match(body, /실제 이름이 있는 1명/);
 });
 
 test("rendered body includes traceability footer with attempt counts", () => {

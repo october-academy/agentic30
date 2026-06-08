@@ -132,8 +132,8 @@ export function renderMonetizationAskResultMarkdown(state, { now = () => new Dat
   lines.push("# monetization-ask 결과 (Day 6)");
   lines.push("");
   lines.push(
-    "> Foundation Phase Day 6 — 1명 named target에게 명시적 결제 요청 후 응답을 verbatim으로 캡처. " +
-      "웨이팅리스트 / 관심 표명 / 무료 가입은 monetization proof 아니야.",
+    "> 초기 검증 단계 Day 6 — 실제 사람 1명에게 명시적 결제 요청 후 응답을 원문 그대로 캡처. " +
+      "대기 신청자 / 관심 표명 / 무료 가입은 결제 의사 증거가 아니야.",
   );
   lines.push("");
 
@@ -195,11 +195,11 @@ export function renderMonetizationAskResultMarkdown(state, { now = () => new Dat
 
   // ───────────── anti-pattern checklist (mirrors MONETIZATION_ASK_META.invariants)
   lines.push("## Anti-pattern check");
-  lines.push("- 웨이팅리스트는 monetization proof 아님.");
-  lines.push("- 관심 표명 / \"재밌다\" / \"나중에 살게\"는 proof 아님.");
-  lines.push("- 무료 가입 / 무료 체험만은 proof 아님 (이후 결제 합의 없으면).");
-  lines.push("- 응답은 요약·해석 금지, verbatim 그대로.");
-  lines.push("- 타겟은 1명 named individual, 집합명사·페르소나 금지.");
+  lines.push("- 대기 신청자는 결제 의사 증거가 아님.");
+  lines.push("- 관심 표명 / \"재밌다\" / \"나중에 살게\"는 증거 아님.");
+  lines.push("- 무료 가입 / 무료 체험만은 증거 아님 (이후 결제 합의 없으면).");
+  lines.push("- 응답은 요약·해석 금지, 원문 그대로.");
+  lines.push("- 대상은 실제 이름이 있는 1명, 집합명사·대표 고객상 금지.");
   lines.push("");
 
   // ───────────── traceability footer (KR4.1 / KR4.2)
