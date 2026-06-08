@@ -2526,7 +2526,10 @@ struct ContentView: View {
         let goal = record?.goalText.nonEmpty ?? officeHoursBackboneGoal(forDay: day)
         let complete = record?.isDisplayComplete ?? false
         let incomplete = !isToday && record != nil && !complete
-        let isSelected = !isToday && selectedTimelineDay == day
+        // Focus highlight follows the single row the main column is showing: today
+        // when nothing is selected, otherwise the chosen past day. Without this,
+        // today kept its own fill while a past day also lit up — two focused rows.
+        let isSelected = isToday ? (selectedTimelineDay == nil) : (selectedTimelineDay == day)
         let style: OfficeHoursTimelineRowStyle = isToday ? .today : (incomplete ? .incomplete : .done)
 
         let meta: String
@@ -2582,8 +2585,10 @@ struct ContentView: View {
             markBorder = OpenDesignOfficeHoursColor.accentLine
             badgeColor = OpenDesignOfficeHoursColor.accent
             metaColor = OpenDesignOfficeHoursColor.accent
-            rowBg = OpenDesignOfficeHoursColor.selected
-            rowBorder = OpenDesignOfficeHoursColor.borderSoft
+            // Today stays identifiable via its green accent mark/meta; the focus
+            // fill is applied below only when today is the row on screen.
+            rowBg = Color.clear
+            rowBorder = Color.clear
             nameColor = OpenDesignOfficeHoursColor.fg
         case .done:
             markFg = OpenDesignOfficeHoursColor.fgSecondary
@@ -2604,7 +2609,8 @@ struct ContentView: View {
             rowBorder = Color.clear
             nameColor = OpenDesignOfficeHoursColor.fgSecondary
         }
-        // Past-day selection highlight (today already carries its own selected fill).
+        // Single focus fill: applied to whichever row the main column is showing
+        // (today when nothing is selected, else the chosen past day).
         if isSelected {
             rowBg = OpenDesignOfficeHoursColor.selected
             rowBorder = OpenDesignOfficeHoursColor.borderSoft
