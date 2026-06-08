@@ -427,7 +427,7 @@ test("structured IDD continuation prompt uses agentic route for Codex MCP tools"
     const structuredPrompt = [
       "IDD 문서 인터뷰를 시작합니다: ICP",
       "사용자가 host UI의 구조화 입력 카드에서 첫 ICP 신호 질문에 답했습니다.",
-      "추가 결정이나 누락 정보가 필요하면 반드시 agentic30_request_user_input MCP 도구로 한 질문씩 이어가세요.",
+      "추가 결정이나 누락 정보가 필요하면 반드시 agentic30_request_user_input 도구 연결로 한 질문씩 이어가세요.",
     ].join("\n");
 
     ws.send(JSON.stringify({
@@ -511,7 +511,7 @@ test("Codex IDD queue generates GOAL questions through host-owned structured inp
 
     const iddCreated = await waitForEvent(events, (event) =>
       event.type === "session_created"
-      && event.session?.title === "Foundation Setup: GOAL"
+      && event.session?.title === "초기 설정: GOAL"
     );
     assert.equal(iddCreated.session.status, "awaiting_input");
     assert.equal(iddCreated.session.pendingUserInput?.toolName, "agentic30_request_user_input");
@@ -524,13 +524,13 @@ test("Codex IDD queue generates GOAL questions through host-owned structured inp
 
     assert.equal(iddReady.session.status, "awaiting_input");
     assert.equal(iddReady.session.pendingUserInput?.toolName, "agentic30_request_user_input");
-    assert.equal(iddReady.session.pendingUserInput?.title, "GOAL 정하기");
+    assert.equal(iddReady.session.pendingUserInput?.title, "목표 정하기");
     assert.equal(iddReady.session.pendingUserInput?.generation?.mode, "host_structured");
     assert.equal(iddReady.session.pendingUserInput?.generation?.docType, "goal");
     assert.equal(iddReady.session.runtime?.iddDocumentType, "goal");
     assert.equal(iddReady.session.messages.length, 0);
     assert.ok(iddReady.session.runtime?.pendingIddContinuation?.prompt);
-    assert.match(iddReady.session.pendingUserInput.questions[0].question, /가장 먼저 검증하거나 달성하려는 GOAL/);
+    assert.match(iddReady.session.pendingUserInput.questions[0].question, /가장 먼저 검증하거나 달성하려는 목표/);
     assert.equal(iddReady.session.pendingUserInput.questions[0].requiresFreeText, false);
     assert.doesNotMatch(
       JSON.stringify(iddReady.session),
@@ -676,20 +676,20 @@ test("BIP setup auto-start starts IDD before mission choices unlock", async () =
       && event.session?.pendingUserInput?.toolName === "agentic30_request_user_input"
     );
 
-    assert.equal(iddReady.session.pendingUserInput.title, "ICP 1/4");
+    assert.equal(iddReady.session.pendingUserInput.title, "고객 후보 1/4");
     assert.equal(iddReady.session.pendingUserInput.generation?.mode, "host_structured");
     assert.equal(iddReady.session.pendingUserInput.generation?.docType, "icp");
     assert.match(iddReady.session.pendingUserInput.questions[0].question, /가장 먼저 인터뷰할 .*유형/);
     const iddCreated = events.find((event) =>
       event.type === "session_created"
-      && event.session?.title === "Foundation Setup: ICP"
+      && event.session?.title === "초기 설정: 고객 후보"
     );
     assert.equal(iddCreated?.session.status, "awaiting_input");
     assert.equal(iddCreated?.session.pendingUserInput?.toolName, "agentic30_request_user_input");
     assert.equal(events.some((event) => event.type === "bip_coach_generation_completed"), false);
     assert.equal(events.some((event) =>
       event.type === "session_created"
-      && event.session?.title === "Foundation Setup: ICP"
+      && event.session?.title === "초기 설정: 고객 후보"
     ), true);
     await closeWebSocket(ws);
     ws = null;
@@ -748,7 +748,7 @@ test("IDD start uses sidecar agent synthesized structured question when availabl
 
     const iddReady = await waitForEvent(events, (event) =>
       event.type === "session_updated"
-      && event.session?.title === "Foundation Setup: ICP"
+      && event.session?.title === "초기 설정: 고객 후보"
       && event.session?.status === "awaiting_input"
       && event.session?.pendingUserInput?.generation?.mode === "sidecar_agent_synthesized"
     );
@@ -1006,7 +1006,7 @@ test("IDD follow-up uses sidecar agent synthesis instead of host template when a
 
     const iddReady = await waitForEvent(events, (event) =>
       event.type === "session_updated"
-      && event.session?.title === "Foundation Setup: VALUES"
+      && event.session?.title === "초기 설정: VALUES"
       && event.session?.status === "awaiting_input"
       && event.session?.pendingUserInput?.generation?.mode === "sidecar_agent_synthesized"
     );
@@ -1110,7 +1110,7 @@ test("recoverable IDD setup error retry creates host question without provider r
 
     const iddReady = await waitForEvent(events, (event) =>
       event.type === "session_updated"
-      && event.session?.title === "Foundation Setup: ICP"
+      && event.session?.title === "초기 설정: 고객 후보"
       && event.session?.status === "awaiting_input"
       && event.session?.pendingUserInput?.toolName === "agentic30_request_user_input"
     );
@@ -1127,10 +1127,14 @@ test("recoverable IDD setup error retry creates host question without provider r
       ),
       false,
     );
-    const setupState = events.findLast?.((event) => event.type === "idd_setup_state")
-      || [...events].reverse().find((event) => event.type === "idd_setup_state");
-    assert.equal(setupState?.iddSetupStatus, "interviewing");
-    assert.equal(setupState?.iddSetupError, null);
+    // idd_setup_state may land after the awaiting_input update under load; wait
+    // for the interviewing state rather than reading the latest event eagerly.
+    const setupState = await waitForEvent(events, (event) =>
+      event.type === "idd_setup_state"
+      && event.iddSetupStatus === "interviewing"
+    );
+    assert.equal(setupState.iddSetupStatus, "interviewing");
+    assert.equal(setupState.iddSetupError, null);
     await closeWebSocket(ws);
     ws = null;
   } finally {
@@ -1193,13 +1197,17 @@ test("IDD auto-start resumes persisted interviewing state without showing setup 
 
     const created = await waitForEvent(events, (event) =>
       event.type === "session_created"
-      && event.session?.title === "Foundation Setup: ICP"
+      && event.session?.title === "초기 설정: 고객 후보"
       && event.session?.pendingUserInput?.toolName === "agentic30_request_user_input"
     );
     assertContainsShape(created, fixture.events.find((event) => event.type === "session_created"), "autostart session event");
 
-    const setupState = events.findLast?.((event) => event.type === "idd_setup_state")
-      || [...events].reverse().find((event) => event.type === "idd_setup_state");
+    // The idd_setup_state event can trail session_created under load; wait for the
+    // interviewing state instead of reading the latest event immediately.
+    const setupState = await waitForEvent(events, (event) =>
+      event.type === "idd_setup_state"
+      && event.iddSetupStatus === "interviewing"
+    );
     assertContainsShape(setupState, fixture.events.find((event) => event.type === "idd_setup_state"), "autostart setup event");
     await closeWebSocket(ws);
     ws = null;
@@ -1260,7 +1268,7 @@ test("IDD auto-start resumes the persisted current document instead of the first
 
     const created = await waitForEvent(events, (event) =>
       event.type === "session_created"
-      && event.session?.title === "Foundation Setup: VALUES"
+      && event.session?.title === "초기 설정: VALUES"
       && event.session?.pendingUserInput?.toolName === "agentic30_request_user_input"
     );
     assert.equal(created.session.pendingUserInput.generation?.docType, "values");
@@ -1293,7 +1301,7 @@ test("IDD auto-start recovers legacy stale setup error caused by interrupted int
     setupError: {
       provider: "codex",
       docType: "icp",
-      message: "이전 Foundation Setup 인터뷰가 완료 이벤트 없이 중단됐습니다. 다시 시도해 주세요.",
+      message: "이전 초기 설정 인터뷰가 완료 이벤트 없이 중단됐습니다. 다시 시도해 주세요.",
       recoverable: true,
     },
   });
@@ -1335,15 +1343,20 @@ test("IDD auto-start recovers legacy stale setup error caused by interrupted int
 
     const created = await waitForEvent(events, (event) =>
       event.type === "session_created"
-      && event.session?.title === "Foundation Setup: ICP"
+      && event.session?.title === "초기 설정: 고객 후보"
       && event.session?.pendingUserInput?.toolName === "agentic30_request_user_input"
     );
     assert.equal(created.session.pendingUserInput.generation?.docType, "icp");
 
-    const setupState = events.findLast?.((event) => event.type === "idd_setup_state")
-      || [...events].reverse().find((event) => event.type === "idd_setup_state");
-    assert.equal(setupState?.iddSetupStatus, "interviewing");
-    assert.equal(setupState?.iddSetupError, null);
+    // The recovered idd_setup_state event can arrive after session_created under
+    // load, so wait for the terminal interviewing state instead of reading the
+    // latest event immediately (order-independent — avoids a flaky undefined read).
+    const setupState = await waitForEvent(events, (event) =>
+      event.type === "idd_setup_state"
+      && event.iddSetupStatus === "interviewing"
+    );
+    assert.equal(setupState.iddSetupStatus, "interviewing");
+    assert.equal(setupState.iddSetupError, null);
     await closeWebSocket(ws);
     ws = null;
   } finally {
@@ -1431,7 +1444,7 @@ test("IDD auto-start preserves persisted setup error until explicit retry", asyn
   assert.equal(stderr.trim(), "");
 });
 
-test("concurrent IDD start requests create only one Foundation Setup session", async () => {
+test("concurrent IDD start requests create only one initial setup session", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-concurrent-start-workspace-"));
   const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-concurrent-start-app-"));
   await writeDay1Fixture(root, appSupportPath);
@@ -1469,21 +1482,21 @@ test("concurrent IDD start requests create only one Foundation Setup session", a
 
     const created = await waitForEvent(events, (event) =>
       event.type === "session_created"
-      && event.session?.title === "Foundation Setup: ICP"
+      && event.session?.title === "초기 설정: 고객 후보"
       && event.session?.pendingUserInput?.toolName === "agentic30_request_user_input"
     );
     await assertNoEventUntil(
       events,
       (event) =>
         event.type === "session_created"
-        && event.session?.title === "Foundation Setup: ICP"
+        && event.session?.title === "초기 설정: 고객 후보"
         && event.session?.id !== created.session.id,
       400,
-      "duplicate Foundation Setup session",
+      "duplicate initial setup session",
     );
 
     const createdIds = new Set(events
-      .filter((event) => event.type === "session_created" && event.session?.title === "Foundation Setup: ICP")
+      .filter((event) => event.type === "session_created" && event.session?.title === "초기 설정: 고객 후보")
       .map((event) => event.session.id));
     assert.equal(createdIds.size, 1);
     await closeWebSocket(ws);

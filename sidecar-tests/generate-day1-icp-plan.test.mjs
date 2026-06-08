@@ -14,6 +14,7 @@ import {
   generateDay1IcpPlan,
   normalizeDay1AlignmentPlan,
   normalizeDay1IcpPlan,
+  normalizeEmphasis,
 } from "../sidecar/generate-day1-icp-plan.mjs";
 import { deriveWorkspaceOnboardingHypothesisLocally } from "../sidecar/onboarding-hypothesis.mjs";
 
@@ -1590,4 +1591,163 @@ test("normalizer rejects fixed-schema invalid plans", () => {
   assert.equal(normalizeDay1IcpPlan({ mission: "x", signals: {}, questions: [{ dimension: "distance" }] }), null);
   assert.equal(normalizeDay1AlignmentPlan(null), null);
   assert.equal(normalizeDay1AlignmentPlan({ projectGoal: "x", components: {} }), null);
+});
+
+test("normalizeEmphasis validates phrases, styles, substring, dedup, and cap", () => {
+  const text = "파일 config.json 의 마감일은 금요일이고 핵심 수치는 100명입니다";
+  const emphasis = normalizeEmphasis(
+    [
+      { phrase: "  config.json ", style: "code" },
+      { phrase: "마감일은 금요일", style: "mark" },
+      { phrase: "100명", style: "strong" },
+      { phrase: "100명", style: "strong" }, // duplicate dropped
+      { phrase: "존재하지 않는 구절", style: "mark" }, // not a substring -> dropped
+      { phrase: "수치", style: "unknown-style" }, // unsupported style -> mark
+      { phrase: "   ", style: "code" }, // empty after trim -> dropped
+    ],
+    text,
+  );
+
+  assert.deepEqual(emphasis, [
+    { phrase: "config.json", style: "code" },
+    { phrase: "마감일은 금요일", style: "mark" },
+    { phrase: "100명", style: "strong" },
+    { phrase: "수치", style: "mark" },
+  ]);
+});
+
+test("normalizeEmphasis caps at five spans and tolerates empty/non-array input", () => {
+  const text = "a b c d e f g";
+  const capped = normalizeEmphasis(
+    ["a", "b", "c", "d", "e", "f", "g"].map((phrase) => ({ phrase, style: "strong" })),
+    text,
+  );
+  assert.equal(capped.length, 5);
+  assert.deepEqual(normalizeEmphasis(undefined, "anything"), []);
+  assert.deepEqual(normalizeEmphasis([], "anything"), []);
+  assert.deepEqual(normalizeEmphasis("not an object", "anything"), []);
+  // The `kind` alias resolves to style; a single object is accepted.
+  assert.deepEqual(normalizeEmphasis({ phrase: "a", kind: "code" }, "a b"), [
+    { phrase: "a", style: "code" },
+  ]);
+});
+
+test("Day 1 alignment normalizer carries style-aware emphasis on component, option, and signal row", async () => {
+  const root = await tempWorkspace();
+  try {
+    const deterministicPlan = await generateDay1AlignmentPlan({
+      workspaceRoot: root,
+      scanResult: {},
+      onboardingHypothesis: {
+        productName: "Agentic30",
+        targetUser: "전업 1인 개발자 (수익 0원, macOS)",
+        problem: "무엇을 팔아야 할지 모른다",
+        goal: "첫 유료 고객 후보를 검증한다",
+        confidence: "high",
+      },
+    });
+
+    const icpStatement = deterministicPlan.components.icp.statement;
+    const icpOptionLabel = deterministicPlan.components.icp.options[0].label;
+    // Use real substrings of the actual statement/label so emphasis survives.
+    const statementPhrase = icpStatement.slice(0, Math.min(4, icpStatement.length));
+    const optionPhrase = icpOptionLabel.slice(0, Math.min(4, icpOptionLabel.length));
+
+    const normalized = normalizeDay1AlignmentPlan({
+      ...deterministicPlan,
+      components: {
+        ...deterministicPlan.components,
+        icp: {
+          ...deterministicPlan.components.icp,
+          emphasis: [
+            { phrase: statementPhrase, style: "strong" },
+            { phrase: "이 문장에 없는 구절", style: "mark" }, // dropped (not substring)
+          ],
+          options: deterministicPlan.components.icp.options.map((option, index) =>
+            index === 0
+              ? {
+                  ...option,
+                  emphasis: [
+                    { phrase: optionPhrase, style: "code" },
+                    { phrase: optionPhrase, style: "code" }, // duplicate dropped
+                  ],
+                }
+              : option,
+          ),
+        },
+      },
+      signalDigest: {
+        ...deterministicPlan.signalDigest,
+        rows: deterministicPlan.signalDigest.rows.map((row) =>
+          row.key === "icp"
+            ? {
+                ...row,
+                emphasis: [
+                  { phrase: row.value.slice(0, Math.min(4, row.value.length)), style: "mark" },
+                  { phrase: "행의 값에 없음", style: "strong" }, // dropped
+                ],
+              }
+            : row,
+        ),
+      },
+    });
+
+    assert.ok(normalized, "plan should normalize");
+    const icpEmphasis = normalized.components.icp.emphasis;
+    assert.ok(Array.isArray(icpEmphasis) && icpEmphasis.length === 1);
+    assert.equal(icpEmphasis[0].style, "strong");
+    assert.ok(
+      normalized.components.icp.statement.includes(icpEmphasis[0].phrase),
+      "component emphasis phrase must be a statement substring",
+    );
+
+    const optionEmphasis = normalized.components.icp.options[0].emphasis;
+    assert.ok(Array.isArray(optionEmphasis) && optionEmphasis.length === 1);
+    assert.equal(optionEmphasis[0].style, "code");
+    assert.ok(normalized.components.icp.options[0].label.includes(optionEmphasis[0].phrase));
+
+    const icpRow = normalized.signalDigest.rows.find((row) => row.key === "icp");
+    assert.ok(Array.isArray(icpRow.emphasis) && icpRow.emphasis.length === 1);
+    assert.equal(icpRow.emphasis[0].style, "mark");
+    assert.ok(icpRow.value.includes(icpRow.emphasis[0].phrase));
+
+    // highlightPhrases stay intact for back-compat consumers.
+    assert.ok(Array.isArray(normalized.components.icp.highlightPhrases));
+    assert.ok(normalized.components.icp.highlightPhrases.length >= 1);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Day 1 alignment plan omits emphasis key when none is provided (back-compat)", async () => {
+  const root = await tempWorkspace();
+  try {
+    const plan = await generateDay1AlignmentPlan({
+      workspaceRoot: root,
+      scanResult: {},
+      onboardingHypothesis: {
+        productName: "Agentic30",
+        targetUser: "전업 1인 개발자 (수익 0원, macOS)",
+        problem: "무엇을 팔아야 할지 모른다",
+        goal: "첫 유료 고객 후보를 검증한다",
+        confidence: "high",
+      },
+    });
+
+    // Deterministic plans carry no emphasis; the key must be absent so the Mac
+    // renderer falls back to the legacy highlightPhrases path.
+    assert.equal("emphasis" in plan.components.icp, false);
+    assert.equal("emphasis" in plan.components.painPoint, false);
+    assert.equal("emphasis" in plan.components.outcome, false);
+    for (const option of plan.components.icp.options) {
+      assert.equal("emphasis" in option, false);
+    }
+    for (const row of plan.signalDigest.rows) {
+      assert.equal("emphasis" in row, false);
+    }
+    // Legacy highlightPhrases remain populated.
+    assert.ok(plan.components.icp.highlightPhrases.length >= 1);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });

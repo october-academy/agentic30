@@ -601,11 +601,38 @@ struct OpenDesignDayContentTests {
         #expect(content.taskGroups.count == 4)
         #expect(content.taskGroups.first?.tasks.count == 7)
         #expect(firstTask?.title == "먼저 도울 사람을 정해요")
+        #expect(firstTask?.meta == "고객 후보 · 인터뷰 4문항")
         #expect(content.railItems.first(where: { $0.id == "today" })?.route == .officeHours)
         #expect(content.searchItems.first(where: { $0.id == "page-today" })?.route == .officeHours)
         #expect(content.searchItems.first(where: { $0.id == "task-day1" })?.route == .officeHours)
         #expect(content.interviewSteps.count == 4)
+        #expect(content.interviewSteps.first?.score == "1 / 4")
         #expect(content.interviewSteps.first?.options.count == 4)
+    }
+
+    @Test func day1GoalProductNameUsesProjectSourceOrderAndFallback() {
+        #expect(openDesignDay1GoalProductName(
+            situationSummaryName: " Agentic30 ",
+            alignmentProductName: "SupportLens",
+            icpProductName: "PhotoVault"
+        ) == "Agentic30")
+        #expect(openDesignDay1GoalProductName(
+            situationSummaryName: nil,
+            alignmentProductName: " SupportLens ",
+            icpProductName: "PhotoVault"
+        ) == "SupportLens")
+        #expect(openDesignDay1GoalProductName(
+            situationSummaryName: nil,
+            alignmentProductName: nil,
+            icpProductName: " PhotoVault "
+        ) == "PhotoVault")
+        #expect(openDesignDay1GoalProductName(
+            situationSummaryName: " ",
+            alignmentProductName: nil,
+            icpProductName: nil
+        ) == "이 프로젝트")
+        #expect(openDesignDay1GoalSubject("Agentic30") == "Agentic30이")
+        #expect(openDesignDay1GoalSubject("이 프로젝트") == "이 프로젝트가")
     }
 
     @Test func developmentVisibilityKeepsReferencePagesSearchableWhileRailStaysFocused() {
@@ -766,8 +793,8 @@ struct OpenDesignDayContentTests {
             let content = OpenDesignDayContent.personalized(from: makePlan(questionCount: count))
 
             #expect(content.interviewSteps.count == count)
-            #expect(content.interviewSteps.first?.title.contains("Must-have") == true)
-            #expect(content.taskGroups.first?.tasks.first?.meta == "ICP · adaptive \(count)Q")
+            #expect(content.interviewSteps.first?.title.contains("필수 조건") == true)
+            #expect(content.taskGroups.first?.tasks.first?.meta == "고객 후보 · 맞춤 \(count)Q")
             #expect(content.plan?.signals.productName == "SupportLens")
             #expect(!content.searchItems.contains { $0.title.contains("거리") || $0.subtitle.contains("1/3") })
         }
@@ -1019,10 +1046,10 @@ struct OpenDesignDayContentTests {
         let draft = content.draft(for: state)
 
         #expect(draft.markdown.contains("Day 1 핵심 가설"))
-        #expect(draft.markdown.contains("Based on: workspace scan + user selections"))
+        #expect(draft.markdown.contains("기준: 워크스페이스 확인 + 사용자 선택"))
         #expect(draft.markdown.contains("## 확정"))
         #expect(draft.markdown.contains("## 선택 기록"))
-        #expect(draft.markdown.contains("Quality Gate"))
+        #expect(draft.markdown.contains("품질 점수"))
         #expect(draft.markdown.contains("목표:"))
         #expect(draft.markdown.contains("고객:"))
         #expect(draft.markdown.contains("문제:"))
@@ -1142,7 +1169,7 @@ struct OpenDesignDayContentTests {
         #expect(content.plan?.signals.productName == "SupportLens")
         #expect(content.interviewSteps.count == 4)
         #expect(content.interviewSteps.allSatisfy { $0.criteria.isEmpty })
-        #expect(content.taskGroups.first?.tasks.first?.title == "ICP v0 질문을 정해요")
+        #expect(content.taskGroups.first?.tasks.first?.title == "고객 후보 질문을 정해요")
     }
 
     @Test func personalizedIfAvailableReturnsNilWithoutRuntimePlan() {
@@ -1291,8 +1318,8 @@ struct OpenDesignDayContentTests {
     @Test func searchRankingMatchesDayAliasesAndSections() {
         let content = OpenDesignDayContent.day1
 
-        #expect(content.rankedSearchItems(query: "day3").first?.title == "Mom Test 인터뷰 ×3")
-        #expect(content.rankedSearchItems(query: "3").first?.title == "Mom Test 인터뷰 ×3")
+        #expect(content.rankedSearchItems(query: "day3").first?.title == "실제 행동 인터뷰 ×3")
+        #expect(content.rankedSearchItems(query: "3").first?.title == "실제 행동 인터뷰 ×3")
         #expect(content.rankedSearchItems(query: "핵심 가설").first?.id == "section-final")
         #expect(content.rankedSearchItems(query: "settings").first?.id == "page-settings")
         #expect(content.rankedSearchItems(query: "설정").first?.title == "설정")
@@ -1885,8 +1912,8 @@ struct OpenDesignDayContentTests {
 
         let draft = content.draft(for: state)
 
-        #expect(draft.markdown.contains("- 필수 입력: 프로젝트 path, 업무 일지, 인터뷰 transcript, BIP 기록"))
-        #expect(draft.recommendation == "Day 3 Mom Test 인터뷰 첫 후보로 올리고, transcript와 업무 일지를 docs/ICP.md의 evidence 섹션에 연결한다.")
+        #expect(draft.markdown.contains("- 필수 입력: 프로젝트 path, 업무 일지, 인터뷰 원문, 공개 기록"))
+        #expect(draft.recommendation == "Day 3 실제 행동 인터뷰 첫 후보로 올리고, 인터뷰 원문과 업무 일지를 docs/ICP.md의 증거 섹션에 연결한다.")
         #expect(!draft.isAntiSignal)
     }
 
@@ -2032,9 +2059,9 @@ struct OpenDesignDayContentTests {
             dayTitle: "Day 1",
             dayPhase: "foundation",
             status: bipResearchStatus(state: state),
-            briefTitle: "Day 1 기준 X/Threads 공개 게시글에서 ICP 신호를 찾습니다.",
-            briefBody: "Exa Search 결과를 Web Fetch로 다시 읽습니다.",
-            querySummary: "site:x.com OR site:threads.net ICP",
+            briefTitle: "Day 1 기준 X/Threads 공개 게시글에서 고객 후보 신호를 찾습니다.",
+            briefBody: "웹 검색 결과를 원문 확인으로 다시 읽습니다.",
+            querySummary: "site:x.com OR site:threads.net 고객 후보",
             candidateTargetCount: 18,
             workspaceEvidenceRefs: [],
             signals: signals,
@@ -2049,9 +2076,9 @@ struct OpenDesignDayContentTests {
             stale: false,
             error: nil,
             reason: "daily",
-            researchSource: "Codex Exa MCP",
+            researchSource: "Codex 웹 검색 도구",
             stage: "running_provider_research",
-            progressText: "Codex Exa MCP로 공개 근거를 검색하는 중",
+            progressText: "Codex 웹 검색 도구로 공개 근거를 검색하는 중",
             elapsedMs: nil,
             stepIndex: 4,
             stepCount: 6,

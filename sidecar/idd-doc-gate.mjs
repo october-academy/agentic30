@@ -15,7 +15,7 @@ export const DAY1_HANDOFF_MARKER_END = "<!-- agentic30:day1-handoff:end -->";
 export const IDD_FOUNDATION_DOCS = [
   {
     type: "icp",
-    title: "ICP",
+    title: "고객 후보",
     canonicalPath: "docs/ICP.md",
     aliases: ["docs/ICP.md"],
     focus: "ideal customer profile, anti-ICP, current alternatives, buying trigger, validation signals",
@@ -49,26 +49,26 @@ export const IDD_AMBIGUITY_THRESHOLD = 20;
 
 const IDD_RUBRIC_SIGNALS = {
   icp: [
-    { id: "narrow_segment", label: "ICP가 좁은 세그먼트로 표현되어야 합니다.", dimension: "specificity" },
+    { id: "narrow_segment", label: "고객 후보가 좁은 고객군으로 표현되어야 합니다.", dimension: "specificity" },
     { id: "reachable_person", label: "이번 주 연락 가능한 실제 사람/계정이 필요합니다.", dimension: "evidence" },
     { id: "current_alternative", label: "현재 대안이나 우회 행동이 필요합니다.", dimension: "evidence" },
     { id: "pressure_cost", label: "시간, 돈, 평판 중 어떤 압박이 있는지 필요합니다.", dimension: "evidence" },
   ],
   goal: [
-    { id: "proof_target", label: "이번 주 proof target이 필요합니다.", dimension: "scope" },
+    { id: "proof_target", label: "이번 주 검증 기준이 필요합니다.", dimension: "scope" },
     { id: "metric", label: "진척을 판단할 측정 지표가 필요합니다.", dimension: "evidence" },
     { id: "threshold", label: "기준값, 목표값, 기한 중 하나가 필요합니다.", dimension: "specificity" },
     { id: "failure_condition", label: "실패 판정 조건이 필요합니다.", dimension: "risk" },
   ],
   values: [
-    { id: "tradeoff", label: "가치가 바꾸는 실제 tradeoff가 필요합니다.", dimension: "risk" },
+    { id: "tradeoff", label: "가치가 바꾸는 실제 우선순위 선택이 필요합니다.", dimension: "risk" },
     { id: "rejected_option", label: "이 원칙 때문에 포기할 선택지가 필요합니다.", dimension: "scope" },
     { id: "trigger", label: "언제 이 원칙을 적용하는지 필요합니다.", dimension: "specificity" },
     { id: "violation_example", label: "위반 예시나 금지 행동이 필요합니다.", dimension: "risk" },
   ],
   spec: [
-    { id: "user_workflow", label: "한 사용자의 실제 workflow가 필요합니다.", dimension: "specificity" },
-    { id: "mvp_wedge", label: "이번 주 만들 가장 작은 MVP wedge가 필요합니다.", dimension: "scope" },
+    { id: "user_workflow", label: "한 사용자의 실제 작업 흐름이 필요합니다.", dimension: "specificity" },
+    { id: "mvp_wedge", label: "이번 주 만들 가장 작은 첫 버전 범위가 필요합니다.", dimension: "scope" },
     { id: "non_goal", label: "첫 버전에서 하지 않을 일이 필요합니다.", dimension: "scope" },
     { id: "observable_success", label: "관찰 가능한 성공 기준이 필요합니다.", dimension: "evidence" },
     { id: "core_risk", label: "틀리면 무너지는 핵심 리스크가 필요합니다.", dimension: "risk" },
@@ -85,7 +85,7 @@ const IDD_DIMENSIONS = [
 export const BIP_REQUIRED_LOCAL_DOCS = [
   {
     type: "icp",
-    title: "ICP",
+    title: "고객 후보",
     canonicalPath: "docs/ICP.md",
     aliases: ["docs/ICP.md"],
     focus: "ideal customer profile, anti-ICP, current alternatives, buying trigger, validation signals",
@@ -239,7 +239,7 @@ export function normalizeIddSetupState(value = {}) {
     lastProvider: typeof value.lastProvider === "string" ? value.lastProvider : null,
     providerRecovery: value.providerRecovery && typeof value.providerRecovery === "object" ? value.providerRecovery : null,
     setupError: value.setupError && typeof value.setupError === "object" ? {
-      message: String(value.setupError.message || "Foundation Setup 질문 카드 준비가 중단됐습니다."),
+      message: String(value.setupError.message || "초기 설정 질문 카드 준비가 중단됐습니다."),
       provider: typeof value.setupError.provider === "string" ? value.setupError.provider : null,
       docType: IDD_FOUNDATION_DOC_TYPES.includes(value.setupError.docType) ? value.setupError.docType : null,
       recoverable: value.setupError.recoverable !== false,
@@ -295,8 +295,12 @@ export function isIddSetupApproved(state) {
 }
 
 export const ICP_CONTEXT_INTRO = {
-  title: "ICP (Ideal Customer Profile)",
-  body: "ICP는 가장 먼저 집중할 이상적 고객 유형입니다. 처음부터 완벽하게 쓰기보다, 이번 주 실제로 연락하고 인터뷰할 수 있는 좁은 고객 후보 하나를 고르면 됩니다.",
+  // Lead with the JARGON 바꿔쓰기 term for beginners, but keep the full term in
+  // parentheses: this is the teaching panel whose linked resources are English
+  // "Ideal Customer Profile" articles, and isMissingIcpContextIntro() uses the
+  // full term as the signature of a properly-decorated card.
+  title: "고객 후보 (Ideal Customer Profile)",
+  body: "가장 먼저 집중할 고객 유형입니다. 처음부터 완벽하게 쓰기보다, 이번 주 실제로 연락하고 인터뷰할 수 있는 좁은 고객 후보 하나를 고르면 됩니다.",
   bullets: [
     "상황: 직함보다 지금 어떤 문제 상황에 있는지",
     "트리거: 언제 그 문제가 더 급해지는지",
@@ -310,19 +314,19 @@ export const ICP_RECOMMENDED_RESOURCES = [
     title: "Creating an Ideal Customer Profile transformed our company",
     source: "PostHog",
     url: "https://posthog.com/newsletter/ideal-customer-profile-framework",
-    description: "ICP와 persona의 차이, 좁은 ICP가 전략에 주는 영향을 설명합니다.",
+    description: "고객 후보와 대표 고객상의 차이, 좁은 고객 후보가 전략에 주는 영향을 설명합니다.",
   },
   {
     title: "How we found our Ideal Customer Profile",
     source: "PostHog",
     url: "https://posthog.com/founders/creating-ideal-customer-profile",
-    description: "PostHog가 needs/haves와 reference customers로 ICP를 좁힌 과정입니다.",
+    description: "PostHog가 필요, 현재 행동, 먼저 물어볼 사람을 기준으로 고객 후보를 좁힌 과정입니다.",
   },
   {
     title: "Defining our ICP is the most important thing we ever did",
     source: "Product for Engineers",
     url: "https://newsletter.posthog.com/p/defining-our-icp-is-the-most-important",
-    description: "ICP를 빨리 세우고 테스트해야 하는 이유를 다룹니다.",
+    description: "고객 후보를 빨리 세우고 테스트해야 하는 이유를 다룹니다.",
   },
 ];
 
@@ -339,7 +343,7 @@ export function decorateIcpStructuredInput(input) {
 
 export const ICP_IDD_INITIAL_INPUT = {
   toolName: CODEX_STRUCTURED_INPUT_TOOL,
-  title: "ICP 1/4",
+  title: "고객 후보 1/4",
   intro: ICP_CONTEXT_INTRO,
   resources: ICP_RECOMMENDED_RESOURCES,
   questions: [
@@ -373,6 +377,10 @@ export const ICP_IDD_INITIAL_INPUT = {
   ],
 };
 
+// These fingerprints match the *historical* static IDD output that older
+// builds persisted/cached. They must stay verbatim to the legacy copy so a
+// stale cached card is still detected and regenerated — do NOT jargon-rewrite
+// them (the live builder no longer emits this text at all).
 const LEGACY_STATIC_IDD_FINGERPRINTS = [
   "가장 절박한 하위 ICP",
 ];
@@ -423,8 +431,8 @@ export function isStaleGenericHostIddUserInputRequest(request) {
   return optionLabels.some((label) =>
     [
       "퇴사 후 수익 0원 1인 개발자",
-      "에이전트로 MVP 만든 개발자",
-      "인터뷰/BIP 기록 의향 있음",
+      "에이전트로 첫 버전을 만든 개발자",
+      "인터뷰/공개 기록 의향 있음",
     ].includes(label)
   );
 }
@@ -508,7 +516,7 @@ export function buildAdaptiveIcpInitialInput({
   const personalizedOptions = buildAdaptiveOptions({ hypothesis, primaryUser, onboardingContext });
   return {
     toolName: CODEX_STRUCTURED_INPUT_TOOL,
-    title: "ICP 1/4",
+    title: "고객 후보 1/4",
     questions: [
       {
         header: "첫 고객",
@@ -555,26 +563,26 @@ function buildGoalIddInitialInput(doc) {
   const canonicalPath = String(doc?.canonicalPath || "docs/GOAL.md").trim();
   return {
     toolName: CODEX_STRUCTURED_INPUT_TOOL,
-    title: "GOAL 정하기",
+    title: "목표 정하기",
     questions: [
       {
-        header: "이번 주 GOAL",
-        helperText: `먼저 검증할 목표를 정합니다. proof target, 지표, 실패 조건은 다음 카드에서 좁힙니다. 저장: ${canonicalPath}`,
-        question: "이번 주에 가장 먼저 검증하거나 달성하려는 GOAL은 무엇인가요?",
+        header: "이번 주 목표",
+        helperText: `먼저 검증할 목표를 정합니다. 검증 기준, 지표, 실패 조건은 다음 카드에서 좁힙니다. 저장: ${canonicalPath}`,
+        question: "이번 주에 가장 먼저 검증하거나 달성하려는 목표는 무엇인가요?",
         options: [
           {
             label: "첫 고객 반응 확인",
-            description: "ICP가 이 문제에 답변, 미팅, 사용 시도 같은 실제 반응을 보이는지 봅니다.",
+            description: "고객 후보가 이 문제에 답변, 미팅, 사용 시도 같은 실제 반응을 보이는지 봅니다.",
             nextIntent: "goal_customer_response",
           },
           {
             label: "문제 강도 확인",
-            description: "ICP가 현재 대안의 시간, 돈, 평판 비용을 실제로 겪는지 봅니다.",
+            description: "고객 후보가 현재 대안의 시간, 돈, 평판 비용을 실제로 겪는지 봅니다.",
             nextIntent: "goal_problem_intensity",
           },
           {
             label: "가장 작은 해결책 확인",
-            description: "이번 주 만들 수 있는 작은 wedge가 한 사용자에게 충분히 유용한지 봅니다.",
+            description: "이번 주 만들 수 있는 작은 첫 버전이 한 사용자에게 충분히 유용한지 봅니다.",
             nextIntent: "goal_smallest_solution",
           },
         ],
@@ -592,12 +600,12 @@ function buildValuesIddInitialInput(doc) {
   const canonicalPath = String(doc?.canonicalPath || "docs/VALUES.md").trim();
   return {
     toolName: CODEX_STRUCTURED_INPUT_TOOL,
-    title: "VALUES 정하기",
+    title: "원칙 정하기",
     questions: [
       {
         header: "결정 원칙",
         helperText: `이번 주 의사결정에서 무엇을 포기할지 먼저 정합니다. 저장: ${canonicalPath}`,
-        question: "이번 주 어떤 상황에서 반드시 지킬 tradeoff나 거절 기준은 무엇인가요?",
+        question: "이번 주 어떤 상황에서 반드시 지킬 우선순위 선택이나 거절 기준은 무엇인가요?",
         options: [
           {
             label: "속도보다 증거",
@@ -629,21 +637,21 @@ function buildSpecIddInitialInput(doc) {
   const canonicalPath = String(doc?.canonicalPath || "docs/SPEC.md").trim();
   return {
     toolName: CODEX_STRUCTURED_INPUT_TOOL,
-    title: "SPEC 정하기",
+    title: "첫 버전 정하기",
     questions: [
       {
-        header: "MVP 흐름",
-        helperText: `한 사용자가 끝내야 할 workflow와 첫 버전 범위를 고정합니다. 저장: ${canonicalPath}`,
-        question: "이번 주 첫 버전에서 사용자가 반드시 끝내야 하는 핵심 workflow는 무엇인가요?",
+        header: "첫 버전 흐름",
+        helperText: `한 사용자가 끝내야 할 작업 흐름과 첫 버전 범위를 고정합니다. 저장: ${canonicalPath}`,
+        question: "이번 주 첫 버전에서 사용자가 반드시 끝내야 하는 핵심 작업 흐름은 무엇인가요?",
         options: [
           {
             label: "첫 질문에 답하기",
-            description: "Foundation 질문이 안정적으로 나타나고 사용자가 답변을 제출합니다.",
+            description: "기초 질문이 안정적으로 나타나고 사용자가 답변을 제출합니다.",
             nextIntent: "spec_first_question_flow",
           },
           {
             label: "4문서 승인하기",
-            description: "ICP, GOAL, VALUES, SPEC 초안을 검토하고 Day 1 Mission을 엽니다.",
+            description: "고객 후보, 목표, 원칙, 첫 버전 초안을 검토하고 Day 1 미션을 엽니다.",
             nextIntent: "spec_approve_foundation_docs",
           },
           {
@@ -755,7 +763,7 @@ function followupCopyForSignal(doc, signalId, signalLabel, state = null) {
   const bySignal = {
     narrow_segment: {
       header: "좁히기",
-      question: "이 ICP를 바로 문서에 쓸 수 있게 가장 좁은 고객 세그먼트로 다시 말하면 누구인가요?",
+      question: "이 고객 후보를 바로 문서에 쓸 수 있게 가장 좁은 고객군으로 다시 말하면 누구인가요?",
       placeholder: "예: 유료 고객 0명이고 macOS에서 Codex를 쓰는 전업 1인 개발자",
       options: [
         { label: "상황으로 좁히기", description: "직업보다 현재 압박과 프로젝트 단계로 좁힙니다.", nextIntent: signalId },
@@ -798,14 +806,14 @@ function followupCopyForSignal(doc, signalId, signalLabel, state = null) {
       question: "방금 정한 GOAL이 계속 밀어붙일 가치가 있다고 판단하려면 이번 주 어떤 증거가 필요하나요?",
       placeholder: "예: 전업 1인 개발자 3명이 첫 인터뷰 카드에 답하고 다음 미션을 저장한다",
       options: [
-        { label: "문제 증거", description: "ICP가 이 문제를 실제로 겪고 지금 해결하려는지 봅니다.", nextIntent: signalId },
+        { label: "문제 증거", description: "고객 후보가 이 문제를 실제로 겪고 지금 해결하려는지 봅니다.", nextIntent: signalId },
         { label: "수요 증거", description: "응답, 미팅, 결제 의향처럼 비용을 내는 pull을 봅니다.", nextIntent: signalId },
         { label: "사용 행동 증거", description: "누가 제품이나 수동 대안을 통해 핵심 행동을 끝냈는지 봅니다.", nextIntent: signalId },
       ],
     },
     metric: {
       header: "지표",
-      question: "그 proof target을 어떤 숫자 하나로 판단할 건가요?",
+      question: "그 검증 기준을 어떤 숫자 하나로 판단할 건가요?",
       placeholder: "예: 인터뷰 카드 완료 3명, 답변 재시도율 50% 이하, 첫 미션 저장 2건",
       options: [
         { label: "완료 수", description: "몇 명/몇 건이 끝냈는지 봅니다.", nextIntent: signalId },
@@ -816,7 +824,7 @@ function followupCopyForSignal(doc, signalId, signalLabel, state = null) {
     failure_condition: {
       header: "실패 조건",
       question: "이번 주 어떤 결과가 나오면 이 목표는 실패라고 판단하나요?",
-      placeholder: "예: 연락 5명 중 0명이 과거 행동을 말하지 못하면 ICP를 다시 좁힌다",
+      placeholder: "예: 연락 5명 중 0명이 과거 행동을 말하지 못하면 고객 후보를 다시 좁힌다",
       options: [
         { label: "응답 없음", description: "접근했지만 반응이 없는 경우입니다.", nextIntent: signalId },
         { label: "행동 증거 없음", description: "좋다는 말만 있고 과거 행동이 없습니다.", nextIntent: signalId },
@@ -1050,7 +1058,7 @@ function genericIddUserFacingFocus(doc) {
 function genericIddPurposeFor(doc, canonicalPath, focus) {
   switch (doc?.type) {
     case "spec":
-      return "문제, 가치, MVP 범위, 성공 기준을 한곳에 묶어 이번 주에 무엇을 만들지 흐리지 않게 하는 것";
+      return "문제, 가치, 첫 버전 범위, 성공 기준을 한곳에 묶어 이번 주에 무엇을 만들지 흐리지 않게 하는 것";
     case "values":
       return "결정 원칙과 하지 않을 일을 정해서 매번 취향이나 기분으로 방향이 바뀌지 않게 하는 것";
     case "designSystem":
@@ -1205,7 +1213,7 @@ function defaultSelfOptionLabel(onboardingContext) {
 
 function freeTextPlaceholderFor(primaryUser, hypothesis = null) {
   if (isAgentic30IcpContext(hypothesis, primaryUser)) {
-    return "예: 퇴사 후 3개월째, AI로 MVP는 만들었지만 유료 고객이 없는 개발자";
+    return "예: 퇴사 후 3개월째, AI로 첫 버전은 만들었지만 유료 고객이 없는 개발자";
   }
   if (primaryUser) {
     return `예: ${shortenLabel(primaryUser)} 중 이번 주 바로 연락 가능한 사람`;
@@ -1276,8 +1284,8 @@ export function buildIddContinuationPrompt({
   const specialistBlock = specialistInjection
     ? String(specialistInjection).trim()
     : [
-        "- office-hours 방식: 실제 수요, 현재 대안, 가장 절박한 사람, 가장 작은 유료/사용 가능 wedge를 묻고 추상 답변이면 실제 사람/상황/증거로 좁히세요.",
-        "- plan-ceo-review 방식: 선택지에는 최소안, 이상안, 다른 관점을 함께 두고 추천 이유와 트레이드오프를 설명하세요.",
+        "- office-hours 방식: 실제 수요, 현재 대안, 가장 절박한 사람, 가장 작은 유료/사용 가능 진입점을 묻고 추상 답변이면 실제 사람/상황/증거로 좁히세요.",
+        "- plan-ceo-review 방식: 선택지에는 최소안, 이상안, 다른 관점을 함께 두고 추천 이유와 우선순위 선택을 설명하세요.",
         "- design-review 방식: 관찰한 UI/문서/흐름에 대해 'I notice / I wonder / What if / I think because' 구조로 증거 기반 후속 질문을 만드세요.",
         "- devex-review 방식: Time to Hello World, 다음 행동의 명확성, 에러가 문제/원인/해결책을 알려주는지처럼 측정 가능한 개발자 경험 기준을 묻고 점수나 기준을 남기세요.",
       ].join("\n");
@@ -1289,7 +1297,7 @@ export function buildIddContinuationPrompt({
     answer || "(응답 텍스트 없음)",
     "",
     "이 답변을 인터뷰 입력으로 사용하세요. 방금 답한 질문이나 같은 선택지 라벨을 반복하지 마세요.",
-    "다음 질문은 반드시 현재 프로젝트의 실제 맥락에 맞춰 Adaptive/Personalized 인터뷰로 새로 생성하세요.",
+    "다음 질문은 반드시 현재 프로젝트의 실제 맥락에 맞춰 맞춤 인터뷰로 새로 생성하세요.",
     "- 먼저 README, docs, package/config, 주요 소스, 최근 git 변경에서 관찰한 사실을 조합해 제품/사용자/제약 가설을 세우세요.",
     "- 질문은 제품 이름, 대상 유저, 해결 문제, 제품 목적을 확인한 뒤 그 진단의 가장 약한 부분을 검증하는 한 가지로 좁히고, question/options/freeTextPlaceholder에 관찰한 프로젝트 맥락을 반영하세요.",
     "- 어떤 프로젝트에도 붙일 수 있는 범용 질문이나 템플릿 질문을 반복하지 마세요.",
@@ -1297,12 +1305,12 @@ export function buildIddContinuationPrompt({
     "",
     specialistBlock,
     "",
-    "- gstack 정렬 축을 매 질문에 적용하세요: 톤은 직접적이고 증거 중심, 단위는 한 질문=한 결정, 기준은 수요/범위/UX/DX/리스크, 사용 위치는 BIP 문서 완성 직전의 게이트, 실패 방지는 범용 문서/빈 결정/조용한 누락 차단입니다.",
+    "- gstack 정렬 축을 매 질문에 적용하세요: 톤은 직접적이고 증거 중심, 단위는 한 질문=한 결정, 기준은 수요/범위/UX/DX/리스크, 사용 위치는 공개 기록 문서 완성 직전의 기준, 실패 방지는 범용 문서/빈 결정/조용한 누락 차단입니다.",
     "- 대안/리스크/증거/실패 모드가 보이지 않는 질문은 좋은 IDD 질문이 아닙니다. 더 좁혀서 무엇을 선택해야 하는지, 어떤 근거가 있는지, 잘못 고르면 어떤 문서 실패가 생기는지 드러내세요.",
-    "- 답변은 반드시 대상 문서의 섹션, 결정, Open Risks, 다음 BIP 공개 글감 중 하나로 연결하세요.",
-    `- 추가 결정이나 누락 정보가 필요하면 반드시 ${CODEX_STRUCTURED_INPUT_TOOL} MCP 도구로 한 질문 + 2-4개 후보 options + allowFreeText: true + freeTextPlaceholder를 담아 이어가세요. 사용자는 선택지 또는 기타 자유 입력 중 하나로 답할 수 있습니다. 이 구조화 입력은 host UI에서 request_user_input 카드로 표시됩니다.`,
+    "- 답변은 반드시 대상 문서의 섹션, 결정, Open Risks, 다음 공개 기록 글감 중 하나로 연결하세요.",
+    `- 추가 결정이나 누락 정보가 필요하면 반드시 ${CODEX_STRUCTURED_INPUT_TOOL} 도구 연결로 한 질문 + 2-4개 후보 options + allowFreeText: true + freeTextPlaceholder를 담아 이어가세요. 사용자는 선택지 또는 기타 자유 입력 중 하나로 답할 수 있습니다. 이 구조화 입력은 host UI에서 request_user_input 카드로 표시됩니다.`,
     "- 도구 호출 자체가 실패하면 같은 질문을 prose/번호 목록으로 대신 출력하지 말고 중단하세요.",
-    "- Pushback 즉시 적용: 사용자의 답이 \"개발자/창업자/엔터프라이즈\" 같은 집합명사이면 다음 question을 회사명·직함·주당 시간으로 좁히고, \"다들 좋다고 한다/웨이팅리스트\" 류 사회적 증거이면 결제·문의·고장 시 분노로 받고, \"풀 플랫폼이 필요하다\" 류 광범위 비전이면 이번 주 결제 가능한 한 가지로 좁히세요. 사랑은 수요가 아닙니다.",
+    "- Pushback 즉시 적용: 사용자의 답이 \"개발자/창업자/엔터프라이즈\" 같은 집합명사이면 다음 question을 회사명·직함·주당 시간으로 좁히고, \"다들 좋다고 한다/대기 신청자가 있다\" 류 사회적 증거이면 결제·문의·고장 시 분노로 받고, \"풀 플랫폼이 필요하다\" 류 광범위 비전이면 이번 주 결제 가능한 한 가지로 좁히세요. 사랑은 수요가 아닙니다.",
     "- Anti-Sycophancy: \"흥미로운 접근이에요\", \"여러 방법이 있어요\" 같은 칭찬 표현은 금지. 정중체는 유지하되 \"이 가정은 미확인이에요\" / \"근거가 부족해요\" 같은 사실 진술로 받으세요.",
   ].join("\n");
 }
@@ -1369,14 +1377,14 @@ export function deriveLocalDocReadinessRows(workspaceRoot, options = {}) {
       status: iddState.status === "approved" ? "done" : (iddState.drafts?.[doc.type]?.trim() ? "in-progress" : "pending"),
       detail: iddState.status === "approved"
         ? `${doc.title} 문서 승인됨: ${doc.canonicalPath}`
-        : `${doc.canonicalPath} 문서를 Foundation Setup에서 승인해야 해요.`,
+        : `${doc.canonicalPath} 문서를 초기 설정에서 승인해야 해요.`,
       ...(iddState.status === "approved" ? { resourceName: doc.title, resourceUrl: doc.canonicalPath } : {}),
     }));
   }
   return IDD_FOUNDATION_DOCS.map((doc) => ({
     id: localDocRowId(doc.type),
     status: "pending",
-    detail: `${doc.canonicalPath} 문서를 Foundation Setup에서 승인해야 해요.`,
+    detail: `${doc.canonicalPath} 문서를 초기 설정에서 승인해야 해요.`,
   }));
 }
 
@@ -1435,7 +1443,7 @@ export function getBipSetupGateStatus({ workspaceRoot, bipCoachState, bipConfig 
 export function summarizeBipSetupGate(status) {
   if (status?.iddSetupStatus && status.iddSetupStatus !== "approved") {
     const nextTitle = status.nextLocalDoc ? genericIddUserFacingTitle(status.nextLocalDoc) : "문서 미리보기";
-    return `Foundation Setup이 먼저 필요합니다. ${nextTitle} 기준을 승인해야 오늘 미션을 만들 수 있어요.`;
+    return `초기 설정이 먼저 필요합니다. ${nextTitle} 기준을 승인해야 오늘 미션을 만들 수 있어요.`;
   }
   const missingLocal = (status?.missingLocalDocs ?? []).map((doc) => genericIddUserFacingTitle(doc)).join(", ");
   const missingExternal = (status?.missingExternalRequirements ?? []).map((item) => item.title).join(", ");
@@ -1443,7 +1451,7 @@ export function summarizeBipSetupGate(status) {
   if (missingLocal) parts.push(`로컬 문서: ${missingLocal}`);
   if (missingExternal) parts.push(`외부 연결: ${missingExternal}`);
   return parts.length
-    ? `Foundation 문서는 승인되었습니다. ${parts.join(" / ")} 연결은 추천 품질을 높이는 선택 단계입니다.`
+    ? `초기 검증 문서는 승인되었습니다. ${parts.join(" / ")} 연결은 추천 품질을 높이는 선택 단계입니다.`
     : "오늘 공개 실행 준비가 완료되었습니다.";
 }
 
@@ -1848,7 +1856,7 @@ export function setIddSetupError(state, { provider = "codex", docType = null, me
     setupError: {
       provider,
       docType,
-      message: String(message || "Foundation Setup 질문 카드 준비가 중단됐습니다. 다시 시도해 주세요."),
+      message: String(message || "초기 설정 질문 카드 준비가 중단됐습니다. 다시 시도해 주세요."),
       recoverable: true,
     },
     updatedAt: new Date().toISOString(),
@@ -1888,7 +1896,7 @@ export function buildIddApprovalSummary(state) {
   const normalized = normalizeIddSetupState(state);
   const paths = IDD_FOUNDATION_DOCS.map((doc) => doc.canonicalPath).join(", ");
   return [
-    "Foundation Setup이 승인되었습니다.",
+    "초기 설정이 승인되었습니다.",
     "",
     `작성된 문서: ${paths}`,
     `Ambiguity: ${normalized.ambiguityScore}%`,
@@ -1921,7 +1929,7 @@ export function day1HandoffDocByType(type) {
 export function buildDay1HandoffResponseText(doc, { day1Handoff = {} } = {}) {
   const title = doc?.title || "Document";
   const goal = cleanHandoffField(day1Handoff.goal) || "이번 주 첫 고객 반응 검증";
-  const icp = cleanHandoffField(day1Handoff.icp) || "Day 1에서 고른 좁은 첫 고객 세그먼트";
+  const icp = cleanHandoffField(day1Handoff.icp) || "Day 1에서 고른 좁은 첫 고객군";
   const pain = cleanHandoffField(day1Handoff.pain) || "현재 대안과 압박 비용이 아직 약한 가정";
   const outcome = cleanHandoffField(day1Handoff.outcome) || "이번 주 관찰 가능한 완료 행동";
   const qualityScore = cleanHandoffField(day1Handoff.qualityScore);
@@ -1929,7 +1937,7 @@ export function buildDay1HandoffResponseText(doc, { day1Handoff = {} } = {}) {
   switch (doc?.type) {
     case "goal":
       return [
-        `이번 주 proof target은 ${goal}입니다.`,
+        `이번 주 검증 기준은 ${goal}입니다.`,
         `판단 지표는 ${outcome}의 응답 수, 완료 전환, 실제 사용 신호입니다.`,
         "목표값은 금요일까지 최소 3명에게 연락하고 1명 이상의 구체적 과거 행동을 확인하는 것입니다.",
         "실패 조건은 연락한 후보가 모두 응답하지 않거나 문제를 현재 해결 중이라고 말하지 못하면 피벗하는 것입니다.",
@@ -1937,24 +1945,24 @@ export function buildDay1HandoffResponseText(doc, { day1Handoff = {} } = {}) {
       ].filter(Boolean).join("\n");
     case "icp":
       return [
-        `좁은 세그먼트는 ${icp}입니다.`,
+        `좁은 고객군은 ${icp}입니다.`,
         "이번 주 연락 가능한 실제 사람은 기존 동료, 커뮤니티 계정, DM으로 닿을 수 있는 후보 3명입니다.",
-        `현재 대안은 ${pain}을 노션, 스프레드시트, Slack, 수작업 복사 같은 workflow로 우회하는 것입니다.`,
+        `현재 대안은 ${pain}을 노션, 스프레드시트, Slack, 수작업 복사 같은 작업 흐름으로 우회하는 것입니다.`,
         "압박 비용은 주 3시간 이상의 지연, 도구 비용, 평판 리스크 중 하나로 확인합니다.",
       ].join("\n");
     case "values":
       return [
-        `이번 주 tradeoff는 ${goal}보다 넓은 플랫폼 확장을 우선하지 않는 것입니다.`,
+        `이번 주 우선순위 선택은 ${goal}보다 넓은 플랫폼 확장을 우선하지 않는 것입니다.`,
         "포기할 선택지는 자동화, 예쁜 대시보드, 다중 Day 확장처럼 증거 없이 범위를 키우는 일입니다.",
-        `적용 trigger는 ${outcome}이 관찰되지 않았는데 새 기능을 추가하고 싶어지는 상황입니다.`,
+        `적용 조건은 ${outcome}이 관찰되지 않았는데 새 기능을 추가하고 싶어지는 상황입니다.`,
         "위반 예시는 인터뷰, 응답, 사용 행동 없이 SPEC 범위를 키우는 것입니다.",
       ].join("\n");
     case "spec":
       return [
-        `한 사용자의 실제 workflow는 가설 확인, ${icp} 선택, ${outcome} 저장까지 이어지는 단계입니다.`,
-        "이번 주 MVP wedge는 Day 1 확정에서 네 개 foundation 문서를 저장하고 Day 2 검증으로 넘기는 가장 작은 v0입니다.",
-        "non-goal은 완전 자동 문서 편집기, 새 provider 실행, 모든 문서 세부 인터뷰를 첫 경로에 넣는 것입니다.",
-        `관찰 가능한 성공 기준은 사용자가 ${outcome}을 끝내고 GOAL/ICP/VALUES/SPEC가 저장된 상태를 보는 것입니다.`,
+        `한 사용자의 실제 작업 흐름은 가설 확인, ${icp} 선택, ${outcome} 저장까지 이어지는 단계입니다.`,
+        "이번 주 첫 버전 범위는 Day 1 확정에서 네 개 기초 문서를 저장하고 Day 2 검증으로 넘기는 가장 작은 버전입니다.",
+        "하지 않을 일은 완전 자동 문서 편집기, 새 AI 실행, 모든 문서 세부 인터뷰를 첫 경로에 넣는 것입니다.",
+        `관찰 가능한 성공 기준은 사용자가 ${outcome}을 끝내고 GOAL/ICP/VALUES/SPEC 문서가 저장된 상태를 보는 것입니다.`,
         `핵심 리스크는 ${pain}이 실제 구매/사용 압박이 아니라면 이 가설이 틀리는 것입니다.`,
       ].join("\n");
     default:
@@ -2179,7 +2187,7 @@ function buildIddDraftDocument(doc, transcriptEntry, { transcript = [], provider
   return [
     `# ${title}`,
     "",
-    `> Generated through Agentic30 IDD setup. Provider path: ${provider}.`,
+    `> Agentic30 초기 설정에서 생성됨. AI 실행 경로: ${provider}.`,
     "",
     "## Core Decision",
     decision,
@@ -2197,13 +2205,13 @@ function buildIddDraftDocument(doc, transcriptEntry, { transcript = [], provider
     "",
     "## Non-Goals",
     "- Do not expand scope before the first narrow validation signal is observed.",
-    "- Do not treat generic interest as demand.",
+    "- Do not treat vague interest as demand.",
     "- Do not add platform features that do not support this week's decision.",
     "",
     "## Decision Boundaries",
     "- If the next action does not create user evidence this week, defer it.",
     "- If the scope cannot be explained in one sentence, narrow it before building.",
-    "- If the tradeoff is unclear, record the rejected option and the evidence needed to revisit it.",
+    "- If the priority choice is unclear, record the rejected option and the evidence needed to revisit it.",
     "",
     "## Pressure-Pass Follow-Up",
     pressurePass,
@@ -2219,11 +2227,11 @@ function buildIddDraftDocument(doc, transcriptEntry, { transcript = [], provider
 function pressurePassFor(doc) {
   switch (doc?.type) {
     case "icp":
-      return "Name one reachable person or account that fits this ICP. If none exists, the ICP is still too broad.";
+      return "Name one reachable person or account that fits this customer candidate. If none exists, the customer candidate is still too broad.";
     case "goal":
-      return "Cut the goal to one weekly proof target. If it cannot be measured this week, it is not the current goal.";
+      return "Cut the goal to one weekly validation target. If it cannot be measured this week, it is not the current goal.";
     case "values":
-      return "Pick the rule that will hurt most when applied. If no tradeoff hurts, the value is decorative.";
+      return "Pick the rule that will hurt most when applied. If no priority choice hurts, the value is decorative.";
     case "spec":
       return "Remove one feature from the first version. If nothing can be removed, the spec is still a wishlist.";
     default:
@@ -2234,7 +2242,7 @@ function pressurePassFor(doc) {
 function openAssumptionsFor(doc, transcript = []) {
   const base = {
     icp: [
-      "The selected ICP is reachable this week.",
+      "The selected customer candidate is reachable this week.",
       "The current alternative is painful enough to discuss or pay for.",
     ],
     goal: [
@@ -2246,7 +2254,7 @@ function openAssumptionsFor(doc, transcript = []) {
       "The non-goals are strict enough to prevent scope drift.",
     ],
     spec: [
-      "The MVP scope solves the core problem without extra platform work.",
+      "The first-version scope solves the core problem without extra platform work.",
       "The success criteria can be observed by the target user.",
     ],
   };
@@ -2261,8 +2269,8 @@ function unresolvedAssumptionsForDrafts(drafts = {}) {
     return missing.map((doc) => `${doc.title} decision is not approved yet.`);
   }
   return [
-    "Validate the ICP with one named reachable user.",
-    "Confirm the SPEC scope survives one real user workflow.",
+    "Validate the customer candidate with one named reachable user.",
+    "Confirm the SPEC scope survives one real user flow.",
   ];
 }
 
@@ -2274,7 +2282,7 @@ export function buildIddDocumentPrompt(doc, {
 } = {}) {
   const toolInstruction = provider === "claude"
     ? "사용자의 결정이나 누락 정보가 필요하면 반드시 AskUserQuestionTool(AskUserQuestion)을 사용하세요."
-    : `사용자의 결정이나 누락 정보가 필요하면 반드시 ${CODEX_STRUCTURED_INPUT_TOOL} MCP 도구를 사용하세요. 이 구조화 입력은 host UI에서 request_user_input 카드로 표시됩니다.`;
+    : `사용자의 결정이나 누락 정보가 필요하면 반드시 ${CODEX_STRUCTURED_INPUT_TOOL} 도구 연결을 사용하세요. 이 구조화 입력은 host UI에서 request_user_input 카드로 표시됩니다.`;
   const structuredToolName = provider === "claude"
     ? "AskUserQuestionTool(AskUserQuestion)"
     : CODEX_STRUCTURED_INPUT_TOOL;
@@ -2305,17 +2313,17 @@ export function buildIddDocumentPrompt(doc, {
     `- ${structuredToolName} 호출이 필요한 상황에서 같은 내용을 prose/번호 목록으로 대신 묻지 마세요. 도구 호출 자체가 실패하면 같은 질문을 prose/번호 목록으로 대신 출력하지 말고 중단하세요.`,
     "- 도구 질문은 question/options/allowFreeText/freeTextPlaceholder/textMode를 채워 1개 질문 단위로 만드세요. 후보 options는 2-4개로 제한하고, allowFreeText=true를 둡니다. 선택지와 한 줄 근거를 동시에 요구하지 말고, 선택지 또는 기타 자유 입력 중 하나로 답하게 하세요. 후보군 없이 자유입력만 묻지 마세요.",
     "- 금지 예: \"1. 반복 사용 2. 도입 준비 3. 먼저 요청함\" 같은 번호 목록을 assistant 메시지로 출력하는 것.",
-    "- legacy static 질문 금지: title=\"ICP 1/4\", question=\"이번 주 바로 인터뷰할 첫 고객은 누구인가요?\", option=\"가장 절박한 하위 ICP\"를 그대로 쓰면 실패입니다.",
-    "- 첫 질문은 반드시 관찰한 repo 사실을 포함하세요. 예: agentic30-public의 SwiftUI macOS 앱과 Node sidecar 구조, Codex/Claude provider 전환, 30일 커리큘럼, docs/ICP.md 같은 실제 맥락 중 하나 이상.",
+    "- 예전 고정 질문 금지: title=\"고객 후보 1/4\", question=\"이번 주 바로 인터뷰할 첫 고객은 누구인가요?\", option=\"가장 절박한 하위 고객 후보\"를 그대로 쓰면 실패입니다.",
+    "- 첫 질문은 반드시 관찰한 repo 사실을 포함하세요. 예: agentic30-public의 SwiftUI macOS 앱과 Node 실행 보조 앱 구조, Codex/Claude AI 연결 전환, 30일 커리큘럼, docs/ICP.md 같은 실제 맥락 중 하나 이상.",
     "- 이 세션에서는 이 문서 하나만 다룹니다. 다른 문서 인터뷰를 섞지 마세요.",
     "- 질문은 한 번에 하나의 고레버리지 질문으로 하세요.",
-    "- 첫 질문도 host가 미리 만든 고정 질문이 아닙니다. 반드시 sidecar MCP 도구로 워크스페이스를 살펴본 뒤 프로젝트 상태에 맞춰 새로 생성하세요.",
-    "- 뻔한 질문 대신 문제 정의, 핵심 가치, 타겟 사용자, 사용자 여정, 비즈니스 모델, 경쟁 환경, 기술 제약, MVP 우선순위, 우려 사항, 트레이드오프를 깊게 파고드세요.",
+    "- 첫 질문도 host가 미리 만든 고정 질문이 아닙니다. 반드시 실행 보조 앱의 워크스페이스 도구로 프로젝트 폴더를 살펴본 뒤 프로젝트 상태에 맞춰 새로 생성하세요.",
+    "- 뻔한 질문 대신 문제 정의, 핵심 가치, 타깃 사용자, 사용자 여정, 비즈니스 모델, 경쟁 환경, 기술 제약, 첫 버전 우선순위, 우려 사항, 우선순위 선택을 깊게 파고드세요.",
     "",
     "Pushback 표준 응답 (gstack /office-hours 패턴 5종):",
     "- 모호한 시장 → 구체성 강제. 사용자가 \"개발자\", \"창업자\", \"엔터프라이즈\" 같은 집합명사로 답하면 다음 question은 회사명/직함/주당 시간/구체 작업으로 좁히는 형태로 강제하세요. 예: \"그 개발자가 어떤 회사의 어떤 역할에서 주당 몇 시간을 [task]에 쓰는데? 한 명만 이름을 알려주세요.\"",
-    "- 사회적 증거 → 수요 검증. \"다들 좋다고 한다\", \"웨이팅리스트가 있다\"는 답이 나오면 다음 question을 \"돈을 내겠다고 한 사람? 출시 시점을 물어본 사람? 프로토타입이 고장 났을 때 화낸 사람?\"으로 강제하세요. 사랑은 수요가 아닙니다.",
-    "- 플랫폼 비전 → 웨지 도전. \"풀 플랫폼이 필요하다\"는 답이 나오면 다음 question을 \"이번 주 한 사용자가 결제할 가장 작은 한 가지가 뭐예요?\"로 좁히세요.",
+    "- 사회적 증거 → 수요 검증. \"다들 좋다고 한다\", \"대기 신청자가 있다\"는 답이 나오면 다음 question을 \"돈을 내겠다고 한 사람? 출시 시점을 물어본 사람? 프로토타입이 고장 났을 때 화낸 사람?\"으로 강제하세요. 사랑은 수요가 아닙니다.",
+    "- 플랫폼 비전 → 작은 유료 진입점 도전. \"풀 플랫폼이 필요하다\"는 답이 나오면 다음 question을 \"이번 주 한 사용자가 결제할 가장 작은 한 가지가 뭐예요?\"로 좁히세요.",
     "- 성장률 통계 → 비전 검증. \"시장이 N% 성장 중\"이라는 답에는 \"같은 통계는 모든 경쟁자가 인용해요. 너의 thesis는 뭐예요?\"로 받으세요.",
     "- 정의되지 않은 용어 → 정밀도 요구. \"끊김 없는\", \"더 좋은\", \"seamless\" 같은 형용사가 나오면 \"어떤 단계에서 이탈해요? 이탈률 몇 %? 직접 관찰해본 적 있어요?\"로 측정 가능한 기준을 요구하세요.",
     "",
@@ -2328,15 +2336,15 @@ export function buildIddDocumentPrompt(doc, {
     "1. 남은 모순 — 답변끼리 충돌하는 부분이 있는지.",
     "2. 누락된 증거 — 결정에 근거가 없는 항목이 있는지.",
     "3. 가장 위험한 가정 — 틀리면 문서 전체가 무너지는 한 가지.",
-    "4. 다음 BIP 공개 글감 한 문장 — 이번 인터뷰에서 BIP 포스트로 공개할 한 문장.",
+    "4. 다음 공개 기록 글감 한 문장 — 이번 인터뷰에서 공개 글로 남길 한 문장.",
     "5. 이번 주 단 하나의 구체 행동 — 전략이 아니라 행동. \"이번 주에 [구체 인물]을 만나서 [구체 질문] 확인하기\" 같은 형태. 답변에서 도출되지 않으면 다음 질문에서 반드시 요청하세요.",
     "",
-    "Adaptive/Personalized 인터뷰 규칙:",
-    "- 질문을 만들기 전에 반드시 sidecar MCP의 list_workspace_files, read_workspace_file, search_workspace 중 2개 이상을 사용해 현재 프로젝트의 README, docs, package/config, 주요 소스, 최근 git 변경을 확인하세요. 도구를 쓰지 못하면 질문하지 말고 실패 상태를 설명하세요.",
-    "- 매 질문은 관찰한 프로젝트 사실에 연결되어야 합니다. 예: 실제 기능명, 화면, 사용자 흐름, 통합 서비스, 기술 제약, 최근 구현 변경, 설정된 BIP 문서 경로.",
+    "맞춤 인터뷰 규칙:",
+    "- 질문을 만들기 전에 반드시 실행 보조 앱의 list_workspace_files, read_workspace_file, search_workspace 중 2개 이상을 사용해 현재 프로젝트의 README, docs, package/config, 주요 소스, 최근 git 변경을 확인하세요. 도구를 쓰지 못하면 질문하지 말고 실패 상태를 설명하세요.",
+    "- 매 질문은 관찰한 프로젝트 사실에 연결되어야 합니다. 예: 실제 기능명, 화면, 사용자 흐름, 통합 서비스, 기술 제약, 최근 구현 변경, 설정된 공개 기록 문서 경로.",
     "- 사용자의 직전 답변을 다음 질문의 입력으로 삼아 선택지와 자유 입력 placeholder를 조정하세요.",
-    "- 사용자가 모를 수 있는 내부 용어(ICP, ADR, BIP, MVP 등)는 질문 본문에서 먼저 쓰지 말고 쉬운 말로 풀어 쓰세요. 필요한 경우 괄호로만 짧게 보충하세요.",
-    "- 답이 넓으면 더 좁히고, 답이 추상적이면 실제 사용자/상황/증거를 요구하고, 답이 모순되면 트레이드오프를 드러내는 질문으로 이어가세요.",
+    "- 사용자가 모를 수 있는 내부 용어(ICP, ADR, BIP, MVP 등)는 질문 본문에서 먼저 쓰지 말고 쉬운 말로 풀어 쓰세요. 필요한 경우 괄호로만 짧게 보충하세요. 기준 용어표는 docs/JARGON.md입니다.",
+    "- 답이 넓으면 더 좁히고, 답이 추상적이면 실제 사용자/상황/증거를 요구하고, 답이 모순되면 우선순위 선택을 드러내는 질문으로 이어가세요.",
     "- 어떤 프로젝트에도 그대로 붙일 수 있는 범용 질문, 체크리스트식 질문, 템플릿 문구를 금지합니다.",
     ...(doc?.type === "designSystem"
       ? [
@@ -2349,7 +2357,7 @@ export function buildIddDocumentPrompt(doc, {
     ...(specialistInjection
       ? ["- 위에서 라우팅된 specialist 모드의 사고 방식을 그대로 한 가지 질문으로 옮기세요. 다른 specialist를 동시에 흉내내지 마세요."]
       : [
-        "- gstack office-hours 벤치마크: 질문은 실제 수요, 현재 대안, 특정 사람, 가장 작은 wedge를 검증해야 합니다. \"사용자\" 같은 범주 답변을 받으면 실제 이름/역할/상황/증거로 좁히세요.",
+        "- gstack office-hours 벤치마크: 질문은 실제 수요, 현재 대안, 특정 사람, 가장 작은 유료 진입점을 검증해야 합니다. \"사용자\" 같은 범주 답변을 받으면 실제 이름/역할/상황/증거로 좁히세요.",
         "- gstack plan-ceo-review 벤치마크: 결정이 필요한 순간에는 최소안/이상안/대안 관점을 제시하고, 추천안과 잘못 골랐을 때의 리스크를 함께 적으세요.",
         "- gstack design-review 벤치마크: 시각/문서/흐름 판단은 관찰에서 시작하세요. \"I notice\", \"I wonder\", \"What if\", \"I think ... because\" 식의 증거 기반 사고를 한국어 질문으로 녹이세요.",
         "- gstack devex-review 벤치마크: 개발자 경험은 추측하지 말고 TTHW(Time to Hello World), 단계 수, 에러 메시지의 문제/원인/해결책, 다음 행동의 명확성처럼 측정 가능한 기준으로 묻고 기록하세요.",
@@ -2358,14 +2366,14 @@ export function buildIddDocumentPrompt(doc, {
     "- 질문에는 대안/리스크/증거/실패 모드가 드러나야 합니다. 사용자가 답하면 어떤 대안이 선택되고, 어떤 리스크가 남고, 어떤 증거가 문서에 들어가며, 무엇이 실패로 기록되는지 알 수 있어야 합니다.",
     "- 에러나 DX 마찰을 다룰 때는 problem/cause/fix 관점으로 묻고, 근거가 없으면 추측하지 말고 증거 출처를 요청하세요.",
     "- 가능하면 추천 선택지를 암시하되 사용자가 반대할 수 있게 만드세요. 추천 이유는 관찰한 프로젝트 사실이나 직전 답변에 연결되어야 합니다.",
-    "- 문서 작성 전 마지막에는 리뷰 체크를 수행하세요: 남은 모순, 누락된 증거, 가장 위험한 가정, 다음 BIP 미션에서 공개해도 되는 한 문장 요약을 확인하세요.",
+    "- 문서 작성 전 마지막에는 리뷰 체크를 수행하세요: 남은 모순, 누락된 증거, 가장 위험한 가정, 다음 공개 기록 미션에서 공개해도 되는 한 문장 요약을 확인하세요.",
     "",
     "gstack 정렬 매트릭스:",
     "- 톤: IDD는 친절한 문서화 톤을 유지하되 gstack처럼 직접적이고 증거 중심이어야 합니다. 칭찬보다 관찰, 추측보다 근거, 애매한 답변보다 재질문을 우선하세요.",
     "- 단위: IDD의 기본 단위는 문서 하나가 아니라 질문 하나입니다. 한 질문은 한 결정만 닫아야 하며, 여러 결정을 묶어 묻지 마세요.",
-    "- 기준: 질문마다 어떤 기준을 검증하는지 내부적으로 태그하세요. 가능한 기준은 수요 증거, 현재 대안, 좁은 wedge, 범위 선택, UX 신뢰, DX 마찰, 운영 리스크, 공개 가능한 BIP 증거입니다.",
-    `- 사용 위치: 이 플로우는 구현 리뷰가 아니라 BIP 미션 전 문서 게이트입니다. 답변은 곧바로 ${doc.canonicalPath}의 섹션, 결정, 리스크, 다음 BIP 공개 글감으로 변환되어야 합니다.`,
-    "- 답변은 대상 문서의 섹션, 결정, 리스크, 다음 BIP 공개 글감 중 하나로 연결되어야 합니다.",
+    "- 기준: 질문마다 어떤 기준을 검증하는지 내부적으로 태그하세요. 가능한 기준은 수요 증거, 현재 대안, 작은 유료 진입점, 범위 선택, UX 신뢰, DX 마찰, 운영 리스크, 공개 가능한 실행 증거입니다.",
+    `- 사용 위치: 이 흐름은 구현 리뷰가 아니라 공개 기록 미션 전 문서 점검입니다. 답변은 곧바로 ${doc.canonicalPath}의 섹션, 결정, 리스크, 다음 공개 글감으로 변환되어야 합니다.`,
+    "- 답변은 대상 문서의 섹션, 결정, 리스크, 다음 공개 기록 글감 중 하나로 연결되어야 합니다.",
     "- 실패 방지: 빈 문서, 누구에게나 붙는 템플릿 문장, 결정 없는 목록, 근거 없는 성공 기준, 조용히 빠진 리스크를 실패로 취급하세요. 발견하면 다음 질문에서 반드시 좁히거나 문서의 Open Risks에 남기세요.",
     "- 기존 문서나 README가 있으면 먼저 읽고, 이미 있는 포맷/톤/섹션을 보존하세요.",
     "- 충분히 명확해질 때까지 인터뷰를 계속하고, 끝나면 한국어 Markdown으로 파일을 생성/업데이트하세요.",

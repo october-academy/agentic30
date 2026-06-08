@@ -15,6 +15,7 @@ import {
   buildIddContinuationPrompt,
   buildIddDocumentPrompt,
   calculateIddAmbiguityRubric,
+  decorateIcpStructuredInput,
   dedupeIddAgentOptions,
   deriveLocalDocReadinessRows,
   docTypeFromLocalRowId,
@@ -124,7 +125,7 @@ test("IDD follow-up targets the highest missing signal for the current document"
   const input = buildIddFollowupStructuredInputForDoc(doc, state);
 
   assert.equal(input.toolName, "agentic30_request_user_input");
-  assert.equal(input.title, "ICP · 직접 만날 사람");
+  assert.equal(input.title, "고객 후보 · 직접 만날 사람");
   assert.equal(input.generation?.docType, "icp");
   assert.equal(input.generation?.signalId, "reachable_person");
   assert.equal(input.generation?.signalLabel, "직접 만날 사람");
@@ -319,18 +320,18 @@ test("initial IDD structured inputs are document-specific for GOAL, VALUES, and 
     forceHostStructuredInput: true,
   });
 
-  assert.equal(goal.title, "GOAL 정하기");
-  assert.match(goal.questions[0].question, /GOAL/);
+  assert.equal(goal.title, "목표 정하기");
+  assert.match(goal.questions[0].question, /목표/);
   assert.match(goal.questions[0].helperText, /proof target|목표/);
   assert.equal(goal.questions[0].requiresFreeText, false);
 
-  assert.equal(values.title, "VALUES 정하기");
+  assert.equal(values.title, "원칙 정하기");
   assert.match(values.questions[0].question, /tradeoff|거절 기준/);
   assert.match(values.questions[0].freeTextPlaceholder, /신뢰/);
   assert.equal(values.questions[0].requiresFreeText, false);
 
-  assert.equal(spec.title, "SPEC 정하기");
-  assert.match(spec.questions[0].question, /핵심 workflow/);
+  assert.equal(spec.title, "첫 버전 정하기");
+  assert.match(spec.questions[0].question, /핵심 작업 흐름/);
   assert.match(spec.questions[0].freeTextPlaceholder, /Day 1 미션/);
   assert.equal(spec.questions[0].requiresFreeText, false);
 });
@@ -638,10 +639,10 @@ test("IDD prompt routes choice-based interview questions through plan-style stru
   assert.doesNotMatch(prompt, /structured input unavailable/);
   assert.match(prompt, /같은 질문을 prose\/번호 목록으로 대신 출력하지 말고 중단/);
   assert.match(prompt, /후보군 없이 자유입력만 묻지 마세요/);
-  assert.match(prompt, /legacy static 질문 금지/);
+  assert.match(prompt, /예전 고정 질문 금지/);
   assert.match(prompt, /첫 질문은 반드시 관찰한 repo 사실/);
-  assert.match(prompt, /agentic30-public의 SwiftUI macOS 앱과 Node sidecar 구조/);
-  assert.match(prompt, /Adaptive\/Personalized 인터뷰 규칙/);
+  assert.match(prompt, /agentic30-public의 SwiftUI macOS 앱과 Node 실행 보조 앱 구조/);
+  assert.match(prompt, /맞춤 인터뷰 규칙/);
   assert.match(prompt, /list_workspace_files, read_workspace_file, search_workspace 중 2개 이상/);
   assert.match(prompt, /README, docs, package\/config, 주요 소스, 최근 git 변경/);
   assert.match(prompt, /실제 기능명, 화면, 사용자 흐름/);
@@ -649,7 +650,7 @@ test("IDD prompt routes choice-based interview questions through plan-style stru
   assert.match(prompt, /어떤 프로젝트에도 그대로 붙일 수 있는 범용 질문/);
   assert.match(prompt, /Review-grade 질문 규칙/);
   assert.match(prompt, /office-hours 벤치마크/);
-  assert.match(prompt, /실제 수요, 현재 대안, 특정 사람, 가장 작은 wedge/);
+  assert.match(prompt, /실제 수요, 현재 대안, 특정 사람, 가장 작은 유료 진입점/);
   assert.match(prompt, /plan-ceo-review 벤치마크/);
   assert.match(prompt, /최소안\/이상안\/대안 관점/);
   assert.match(prompt, /design-review 벤치마크/);
@@ -665,9 +666,9 @@ test("IDD prompt routes choice-based interview questions through plan-style stru
   assert.match(prompt, /톤: IDD는 친절한 문서화 톤을 유지하되 gstack처럼 직접적이고 증거 중심/);
   assert.match(prompt, /단위: IDD의 기본 단위는 문서 하나가 아니라 질문 하나/);
   assert.match(prompt, /기준: 질문마다 어떤 기준을 검증하는지/);
-  assert.match(prompt, /수요 증거, 현재 대안, 좁은 wedge, 범위 선택, UX 신뢰, DX 마찰, 운영 리스크, 공개 가능한 BIP 증거/);
-  assert.match(prompt, /사용 위치: 이 플로우는 구현 리뷰가 아니라 BIP 미션 전 문서 게이트/);
-  assert.match(prompt, /문서의 섹션, 결정, 리스크, 다음 BIP 공개 글감/);
+  assert.match(prompt, /수요 증거, 현재 대안, 작은 유료 진입점, 범위 선택, UX 신뢰, DX 마찰, 운영 리스크, 공개 가능한 실행 증거/);
+  assert.match(prompt, /사용 위치: 이 흐름은 구현 리뷰가 아니라 공개 기록 미션 전 문서 점검/);
+  assert.match(prompt, /섹션, 결정, 리스크, 다음 공개 글감/);
   assert.match(prompt, /Open Risks/);
   assert.match(prompt, /실패 방지: 빈 문서, 누구에게나 붙는 템플릿 문장, 결정 없는 목록/);
 });
@@ -779,6 +780,68 @@ test("ICP structured input without explainer context is detected for regeneratio
   }), false);
 });
 
+test("provider_adaptive ICP continuation request is decorated so it does not restart-loop", () => {
+  // Mirrors attachIddAdaptiveContinuationToRequest() in sidecar/index.mjs: the
+  // continuation path takes a provider-built structured-input request (no intro /
+  // resources) and stamps generation.mode = "provider_adaptive". Before the fix it
+  // returned that request undecorated, so isMissingIcpContextIntro() flagged it and
+  // shouldRestartIddQuestionRequest() restarted it into the same undecorated state.
+  const providerRequest = {
+    toolName: "agentic30_request_user_input",
+    title: "고객 후보 2/4",
+    questions: [
+      {
+        header: "트리거",
+        question: "그 고객이 이 문제를 가장 급하게 느끼는 순간은 언제인가요?",
+        options: [
+          { label: "출시 직후 반응이 없을 때", description: "초기 트래픽이 죽어 있을 때" },
+          { label: "환불/이탈이 보일 때", description: "이미 쓰던 사람이 떠날 때" },
+        ],
+      },
+    ],
+  };
+
+  // The base request the continuation path builds before decoration.
+  const baseRequest = {
+    ...providerRequest,
+    generation: { mode: "provider_adaptive", docType: "icp" },
+  };
+  // Latent bug: an undecorated provider_adaptive ICP card is flagged for restart.
+  assert.equal(isMissingIcpContextIntro(baseRequest), true);
+
+  // Fix: decorate ICP continuation requests, matching the host_structured and
+  // sidecar_agent_synthesized paths.
+  const decorated = decorateIcpStructuredInput(baseRequest);
+  assert.equal(isMissingIcpContextIntro(decorated), false);
+
+  // Decoration must preserve the provider_adaptive generation metadata and the
+  // provider's question so the Mac UI still renders the adaptive card.
+  assert.equal(decorated.generation.mode, "provider_adaptive");
+  assert.equal(decorated.generation.docType, "icp");
+  assert.equal(decorated.questions.length, 1);
+  assert.match(decorated.questions[0].question, /가장 급하게 느끼는 순간/);
+
+  // Idempotent: a second decoration keeps the same canonical intro/resources and
+  // still passes the gate (decorateIcpStructuredInput is safe to re-apply).
+  const reDecorated = decorateIcpStructuredInput(decorated);
+  assert.equal(isMissingIcpContextIntro(reDecorated), false);
+  assert.equal(reDecorated.intro, decorated.intro);
+  assert.deepEqual(
+    reDecorated.resources.map((resource) => resource.url),
+    decorated.resources.map((resource) => resource.url),
+  );
+
+  // A provider that already supplied its own valid resources is left untouched.
+  const providerSuppliedResources = decorateIcpStructuredInput({
+    ...baseRequest,
+    resources: [{ title: "내 글", url: "https://example.com/icp" }],
+  });
+  assert.deepEqual(
+    providerSuppliedResources.resources.map((resource) => resource.url),
+    ["https://example.com/icp"],
+  );
+});
+
 test("IDD adaptive interview rules apply to ICP, VALUES, GOAL, ADR, and DESIGN prompts", () => {
   const docs = ["icp", "values", "goal", "adr", "designSystem"]
     .map((type) => BIP_REQUIRED_LOCAL_DOCS.find((item) => item.type === type));
@@ -787,7 +850,7 @@ test("IDD adaptive interview rules apply to ICP, VALUES, GOAL, ADR, and DESIGN p
 
   for (const doc of docs) {
     const prompt = buildIddDocumentPrompt(doc, { provider: "codex", workspaceRoot: "/workspace" });
-    assert.match(prompt, /Adaptive\/Personalized 인터뷰 규칙/, doc.type);
+    assert.match(prompt, /맞춤 인터뷰 규칙/, doc.type);
     assert.match(prompt, /README, docs, package\/config, 주요 소스, 최근 git 변경/, doc.type);
     assert.match(prompt, /매 질문은 관찰한 프로젝트 사실에 연결/, doc.type);
     assert.match(prompt, /어떤 프로젝트에도 그대로 붙일 수 있는 범용 질문/, doc.type);
@@ -814,8 +877,8 @@ test("Codex ICP IDD initial input is host-side agentic30_request_user_input with
   });
 
   assert.equal(input.toolName, "agentic30_request_user_input");
-  assert.equal(input.title, "ICP 1/4");
-  assert.match(input.intro?.title || "", /ICP \(Ideal Customer Profile\)/);
+  assert.equal(input.title, "고객 후보 1/4");
+  assert.match(input.intro?.title || "", /고객 후보 \(Ideal Customer Profile\)/);
   assert.match(input.intro?.body || "", /이번 주 실제로 연락하고 인터뷰/);
   assert.ok(input.intro?.bullets?.some((bullet) => bullet.includes("현재 대안")));
   assert.deepEqual(
@@ -873,10 +936,10 @@ test("Codex GOAL IDD initial input asks for the goal before proof target", () =>
   const question = input.questions[0];
 
   assert.equal(input.toolName, "agentic30_request_user_input");
-  assert.equal(input.title, "GOAL 정하기");
-  assert.equal(question.header, "이번 주 GOAL");
-  assert.match(question.helperText, /proof target, 지표, 실패 조건은 다음 카드/);
-  assert.match(question.question, /가장 먼저 검증하거나 달성하려는 GOAL/);
+  assert.equal(input.title, "목표 정하기");
+  assert.equal(question.header, "이번 주 목표");
+  assert.match(question.helperText, /검증 기준, 지표, 실패 조건은 다음 카드/);
+  assert.match(question.question, /가장 먼저 검증하거나 달성하려는 목표/);
   assert.equal(question.requiresFreeText, false);
   assert.deepEqual(
     question.options.map((option) => option.label),
@@ -958,7 +1021,7 @@ test("IDD continuation prompt carries structured response and prevents repeating
   assert.match(prompt, /직전 구조화 답변/);
   assert.match(prompt, /반복 사용 — B2B SaaS 창업팀/);
   assert.match(prompt, /방금 답한 질문이나 같은 선택지 라벨을 반복하지 마세요/);
-  assert.match(prompt, /현재 프로젝트의 실제 맥락에 맞춰 Adaptive\/Personalized 인터뷰/);
+  assert.match(prompt, /현재 프로젝트의 실제 맥락에 맞춰 맞춤 인터뷰/);
   assert.match(prompt, /README, docs, package\/config, 주요 소스, 최근 git 변경/);
   assert.match(prompt, /범용 질문이나 템플릿 질문/);
   assert.match(prompt, /decision brief/);
@@ -972,13 +1035,13 @@ test("IDD continuation prompt carries structured response and prevents repeating
   assert.match(prompt, /톤은 직접적이고 증거 중심/);
   assert.match(prompt, /한 질문=한 결정/);
   assert.match(prompt, /수요\/범위\/UX\/DX\/리스크/);
-  assert.match(prompt, /BIP 문서 완성 직전의 게이트/);
+  assert.match(prompt, /공개 기록 문서 완성 직전의 기준/);
   assert.match(prompt, /범용 문서\/빈 결정\/조용한 누락 차단/);
   assert.match(prompt, /대안\/리스크\/증거\/실패 모드/);
   assert.match(prompt, /어떤 근거가 있는지/);
   assert.match(prompt, /어떤 문서 실패가 생기는지/);
-  assert.match(prompt, /대상 문서의 섹션, 결정, Open Risks, 다음 BIP 공개 글감/);
-  assert.match(prompt, /agentic30_request_user_input MCP 도구/);
+  assert.match(prompt, /대상 문서의 섹션, 결정, Open Risks, 다음 공개 기록 글감/);
+  assert.match(prompt, /agentic30_request_user_input 도구 연결/);
   assert.match(prompt, /request_user_input 카드/);
   assert.match(prompt, /2-4개 후보 options/);
   assert.doesNotMatch(prompt, /requiresFreeText: true/);
@@ -993,7 +1056,7 @@ test("IDD document prompt embeds gstack pushback patterns, anti-sycophancy, and 
   assert.match(prompt, /Pushback 표준 응답/);
   assert.match(prompt, /모호한 시장 → 구체성 강제/);
   assert.match(prompt, /사회적 증거 → 수요 검증/);
-  assert.match(prompt, /플랫폼 비전 → 웨지 도전/);
+  assert.match(prompt, /플랫폼 비전 → 작은 유료 진입점 도전/);
   assert.match(prompt, /성장률 통계 → 비전 검증/);
   assert.match(prompt, /정의되지 않은 용어 → 정밀도 요구/);
   assert.match(prompt, /사랑은 수요가 아닙니다/);
@@ -1005,7 +1068,7 @@ test("IDD document prompt embeds gstack pushback patterns, anti-sycophancy, and 
   assert.match(prompt, /마무리 리뷰 체크/);
   assert.match(prompt, /남은 모순/);
   assert.match(prompt, /가장 위험한 가정/);
-  assert.match(prompt, /다음 BIP 공개 글감 한 문장/);
+  assert.match(prompt, /다음 공개 기록 미션에서 공개해도 되는 한 문장/);
   assert.match(prompt, /이번 주 단 하나의 구체 행동/);
 });
 
@@ -1160,7 +1223,7 @@ test("ICP follow-up stamps isLastSignalForDoc and dimensionTransitioned for the 
   const inputLast = buildIddFollowupStructuredInputForDoc(doc, stepped);
   assert.equal(inputLast.generation?.signalId, "pressure_cost");
   assert.equal(inputLast.generation?.signalLabel, "고통과 시급성");
-  assert.equal(inputLast.title, "ICP · 고통과 시급성");
+  assert.equal(inputLast.title, "고객 후보 · 고통과 시급성");
   assert.equal(inputLast.generation?.isLastSignalForDoc, true);
   assert.equal(inputLast.generation?.dimensionTransitioned, true);
   assert.equal(inputLast.generation?.previousSignalLabel, "기존의 방식");

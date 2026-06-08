@@ -100,11 +100,23 @@ const HighlightPhrasesSchema = z.array(
   z.string().trim().min(1).max(HIGHLIGHT_PHRASE_MAX_CHARS)
 ).min(1).max(HIGHLIGHT_PHRASE_MAX_COUNT);
 
+// Stage 2: style-aware dynamic emphasis. Shared vocabulary with the Swift
+// `EmphasisStyle` (strong/mark/code). `emphasis` is optional on every surface;
+// when absent, rendering falls back to the legacy `highlightPhrases` path.
+const EMPHASIS_STYLES = Object.freeze(["strong", "mark", "code"]);
+const EMPHASIS_MAX_COUNT = 5;
+const EmphasisSpanSchema = z.object({
+  phrase: z.string().trim().min(1).max(HIGHLIGHT_PHRASE_MAX_CHARS),
+  style: z.enum(EMPHASIS_STYLES),
+}).passthrough();
+const EmphasisSchema = z.array(EmphasisSpanSchema).max(EMPHASIS_MAX_COUNT);
+
 const AlignmentOptionSchema = z.object({
   id: z.string().optional(),
   label: z.string().min(1),
   description: z.string().min(1),
   highlightPhrases: HighlightPhrasesSchema,
+  emphasis: EmphasisSchema.optional(),
   preview: z.string().optional(),
   antiSignal: z.boolean().optional(),
   evidenceLabel: z.string().optional(),
@@ -116,6 +128,7 @@ const AlignmentComponentSchema = z.object({
   title: z.string().min(1),
   prompt: z.string().min(1),
   highlightPhrases: HighlightPhrasesSchema,
+  emphasis: EmphasisSchema.optional(),
   helperText: z.string().optional(),
   statement: z.string().min(1),
   evidence: z.array(z.string()).optional(),
@@ -134,6 +147,7 @@ const SignalDigestRowSchema = z.object({
   label: z.string().min(1).max(24),
   value: z.string().min(1),
   tone: z.enum(["body", "strong", "mark", "code", "muted", "accent"]).optional(),
+  emphasis: EmphasisSchema.optional(),
 }).passthrough();
 
 export const Day1SignalDigestSchema = z.object({
@@ -1864,7 +1878,7 @@ function buildMission(signals) {
   const product = signals.productName || "이 프로젝트";
   const target = signals.currentIcpGuess || "잠재 고객";
   const problem = signals.problem || USER_FACING_GENERIC_PROBLEM;
-  return `${product}의 ICP v0를 PostHog식으로 좁힙니다. ${target}라는 가설을 need / have / don't need 기준으로 검증 가능하게 만들고, "${problem}"을 실제로 겪는 reference customer를 찾을 질문과 docs/ICP.md 초안을 만듭니다.`;
+  return `${product}의 고객 후보를 PostHog식으로 좁힙니다. ${target}라는 가설을 필요 / 현재 행동 / 제외 신호 기준으로 검증 가능하게 만들고, "${problem}"을 실제로 겪는 사람을 먼저 찾을 질문과 docs/ICP.md 초안을 만듭니다.`;
 }
 
 function buildProjectGoal({ signals, onboardingHypothesis, evidence }) {
@@ -2120,12 +2134,19 @@ function normalizeSignalDigest(value, plan = null) {
   if (!parsed.success) return null;
   return {
     schemaVersion: DAY1_SIGNAL_DIGEST_SCHEMA_VERSION,
-    rows: parsed.data.rows.map((row) => ({
-      key: row.key,
-      label: signalDigestLabel(row.key, row.label),
-      value: sanitizeSignalDigestRowValue(row.key, row.value, plan),
-      tone: cleanToken(row.tone),
-    })),
+    rows: parsed.data.rows.map((row) => {
+      const sanitizedValue = sanitizeSignalDigestRowValue(row.key, row.value, plan);
+      // Emphasis phrases must be substrings of the sanitized display value the
+      // row actually renders, not the raw model value.
+      const emphasis = normalizeEmphasis(row.emphasis, sanitizedValue);
+      return {
+        key: row.key,
+        label: signalDigestLabel(row.key, row.label),
+        value: sanitizedValue,
+        tone: cleanToken(row.tone),
+        ...(emphasis.length ? { emphasis } : {}),
+      };
+    }),
     summary: cleanText(parsed.data.summary),
   };
 }
@@ -2589,7 +2610,7 @@ function questionForDimension(dimension, signals) {
   switch (dimension) {
   case "must_have":
     return {
-      title: "질문 — Must-have 조건",
+      title: "질문 — 필수 조건",
       prompt: `${product}의 좋은 고객이라면 이미 갖고 있어야 하는 조건은 무엇인가요?`,
       helperText: "직함보다 '좋은 고객이면 이미 가지고 있는 조건'을 고릅니다.",
       freeTextPlaceholder: "예: 이미 같은 문제를 매주 직접 처리하고 있는 팀",
@@ -2611,8 +2632,8 @@ function questionForDimension(dimension, signals) {
     };
   case "core_need":
     return {
-      title: "질문 — Core need",
-      prompt: `이 ICP가 ${product}를 써야 하는 가장 날카로운 need는 무엇인가요?`,
+      title: "질문 — 핵심 필요",
+      prompt: `이 고객 후보가 ${product}를 써야 하는 가장 날카로운 필요는 무엇인가요?`,
       helperText: "해결하면 좋다가 아니라, 해결하지 않으면 지금 비용이 나는 문제를 고릅니다.",
       freeTextPlaceholder: "예: 고객 대응 전에 매번 로그를 뒤져야 해서 배포가 늦어짐",
       options: evidenceBackedQuestionOptions([
@@ -2623,8 +2644,8 @@ function questionForDimension(dimension, signals) {
           optionFromCandidate(candidate, "목표/결과 문서에서 이어지는 need입니다.", "Outcome")
         ),
       ], {
-        fallbackLabel: "직접 입력: scan보다 더 정확한 core need",
-        fallbackDescription: "need 근거가 부족하면 최근 비용/반복 사건 기준으로 씁니다.",
+        fallbackLabel: "직접 입력: scan보다 더 정확한 핵심 필요",
+        fallbackDescription: "필요 근거가 부족하면 최근 비용/반복 사건 기준으로 씁니다.",
         fallbackPreview: "직접 입력",
       }),
     };
@@ -2632,7 +2653,7 @@ function questionForDimension(dimension, signals) {
     return {
       title: "질문 — 현재 대안",
       prompt: "좋은 고객은 오늘 이 문제를 무엇으로 버티고 있나요?",
-      helperText: "대체재가 선명할수록 가격, 메시지, wedge가 같이 좁아집니다.",
+      helperText: "대체재가 선명할수록 가격, 메시지, 유료 진입점이 같이 좁아집니다.",
       freeTextPlaceholder: "예: Notion 템플릿 + 수동 CSV export",
       options: evidenceBackedQuestionOptions(
         bank.alternatives.slice(0, 4).map((candidate) =>
@@ -2649,7 +2670,7 @@ function questionForDimension(dimension, signals) {
     return {
       title: "질문 — 사용자와 구매자",
       prompt: "처음 써볼 사람과 돈/승인을 결정할 사람은 같은가요?",
-      helperText: "초기 ICP는 sales cycle이 짧아야 테스트 속도가 납니다.",
+      helperText: "초기 고객 후보는 구매/승인 흐름이 짧아야 테스트 속도가 납니다.",
       freeTextPlaceholder: "예: 개발자가 바로 카드 결제 가능하지만 보안 승인은 CTO가 봄",
       options: evidenceBackedQuestionOptions(
         bank.buyerSignals.slice(0, 4).map((candidate) =>
@@ -2665,7 +2686,7 @@ function questionForDimension(dimension, signals) {
   case "activation_or_success_signal":
     return {
       title: "질문 — 성공 신호",
-      prompt: "이 ICP가 맞다면 어떤 행동이 가장 먼저 보여야 하나요?",
+      prompt: "이 고객 후보가 맞다면 어떤 행동이 가장 먼저 보여야 하나요?",
       helperText: "말보다 activation/retention으로 검증할 수 있는 행동을 고릅니다.",
       freeTextPlaceholder: "예: 첫 세션에서 팀원 2명을 초대하고 같은 작업을 반복 실행",
       options: evidenceBackedQuestionOptions(
@@ -2698,7 +2719,7 @@ function questionForDimension(dimension, signals) {
     };
   case "bad_fit_boundary":
     return {
-      title: "질문 — Anti-ICP 경계",
+      title: "질문 — 제외 신호",
       prompt: "이번 주 인터뷰에서 제외해야 할 신호는 무엇인가요?",
       helperText: "polite interest를 걸러야 Day 3 인터뷰가 실제 학습으로 이어집니다.",
       freeTextPlaceholder: "예: 데모에는 반응하지만 최근 사건, 대체재, 예산이 모두 없음",
@@ -2707,7 +2728,7 @@ function questionForDimension(dimension, signals) {
           optionFromCandidate(candidate, "scan에서 보이는 제외/공백 신호입니다.", "Exclude", true)
         ),
         {
-          fallbackLabel: "직접 입력: 제외할 Anti-ICP 신호",
+          fallbackLabel: "직접 입력: 제외할 신호",
           fallbackDescription: "제외 신호 근거가 부족하면 인터뷰에서 걸러낼 조건을 직접 씁니다.",
           fallbackPreview: "직접 입력",
           antiSignal: true,
@@ -2717,9 +2738,9 @@ function questionForDimension(dimension, signals) {
   case "reference_customer":
   default:
     return {
-      title: "질문 — Reference customer",
-      prompt: "이 ICP v0를 이번 주에 누구에게 먼저 검증할 수 있나요?",
-      helperText: "완벽한 대표 고객보다 바로 물어볼 수 있는 reference customer가 필요합니다.",
+      title: "질문 — 먼저 물어볼 사람",
+      prompt: "이 고객 후보를 이번 주에 누구에게 먼저 검증할 수 있나요?",
+      helperText: "완벽한 대표 고객보다 바로 물어볼 수 있는 사람이 필요합니다.",
       freeTextPlaceholder: "예: 최근 같은 문제를 공개적으로 말한 팀 리드 1명",
       options: referenceCustomerOptions(signals, user, bank),
     };
@@ -2772,18 +2793,18 @@ function optionDescriptionWithEvidence(description, evidenceLabel, evidenceLimit
 
 function referenceCustomerOptions(signals, user, bank = scanEvidenceBankForSignals(signals)) {
   const options = bank.referenceCustomers.slice(0, 4).map((candidate) =>
-    optionFromCandidate(candidate, "scan의 고객 후보를 실제 사람으로 바꿉니다.", "Reference")
+    optionFromCandidate(candidate, "scan의 고객 후보를 실제 사람으로 바꿉니다.", "사람")
   );
   if (options.length === 0 && user && user !== "잠재 고객") {
     options.push(optionFromCandidate(
       limitedCandidate(`${user} 중 이번 주 20분 인터뷰 가능한 1명`, "reference_customer"),
-      "reference customer 근거가 부족하면 실제 이름/채널로 보정합니다.",
+      "먼저 물어볼 사람의 근거가 부족하면 실제 이름/채널로 보정합니다.",
       "직접 입력",
     ));
   }
   return ensureEvidenceBackedOptions(options, {
     fallbackLabel: "직접 입력: 이번 주 20분 인터뷰를 요청할 수 있는 한 사람",
-    fallbackDescription: "reference customer 근거가 부족하면 이름이나 채널까지 직접 적습니다.",
+    fallbackDescription: "먼저 물어볼 사람의 근거가 부족하면 이름이나 채널까지 직접 적습니다.",
     fallbackPreview: "직접 입력",
   });
 }
@@ -2794,14 +2815,14 @@ function buildIcpDraft(signals, questions) {
   return {
     description: `${target} 중 ${problem}을 지금 해결하려는 고객.`,
     criteria: [
-      "need가 오늘의 업무/매출/리스크에 연결된다",
+      "필요가 오늘의 업무/매출/리스크에 연결된다",
       "현재 대안이나 반복 행동이 있다",
       "이번 주 20분 인터뷰를 요청할 수 있다",
     ],
     whyTheyMatter: [
-      "초기 ICP는 넓은 persona가 아니라 테스트 가능한 고객 조건이어야 한다",
-      "현재 대안과 지불/시간 비용이 있어야 pricing과 wedge를 배울 수 있다",
-      "reference customer가 빠르게 잡혀야 Day 3 인터뷰 품질이 올라간다",
+      "초기 고객 후보는 넓은 페르소나가 아니라 테스트 가능한 고객 조건이어야 한다",
+      "현재 대안과 지불/시간 비용이 있어야 가격과 유료 진입점을 배울 수 있다",
+      "먼저 물어볼 사람이 빠르게 잡혀야 Day 3 인터뷰 품질이 올라간다",
     ],
     needs: [
       problem,
@@ -2813,7 +2834,7 @@ function buildIcpDraft(signals, questions) {
     ].filter(Boolean),
     dontNeeds: [
       "막연한 관심만 있고 최근 사건이 없는 사용자",
-      "사용자는 아니지만 의견만 주는 proxy persona",
+      "사용자는 아니지만 의견만 주는 대리 응답자",
     ],
     evidence: (signals.evidenceRefs || []).map((ref) => `${ref.path}: ${ref.reason}`),
     referenceCustomersToFind: questions
@@ -2825,24 +2846,24 @@ function buildIcpDraft(signals, questions) {
 
 function buildAntiIcp(signals) {
   return {
-    summary: "좋은 반응보다 실제 need/have/behavior가 없으면 Day 3 인터뷰 대상에서 제외합니다.",
+    summary: "좋은 반응보다 실제 필요/현재 행동/확인할 행동이 없으면 Day 3 인터뷰 대상에서 제외합니다.",
     rules: [
       {
         id: "polite_interest",
         label: "\"흥미롭네요\"만 말하고 최근 사건이 없음",
-        reason: "polite interest는 PMF/ICP 신호가 아니라 대화 예절일 수 있습니다.",
+        reason: "polite interest는 실제 고객 신호가 아니라 대화 예절일 수 있습니다.",
         evidenceRef: null,
       },
       {
         id: "no_current_alternative",
         label: "현재 대안, 반복 행동, 시간/돈 비용이 없음",
-        reason: "대체재가 없으면 pricing과 wedge를 검증하기 어렵습니다.",
+        reason: "대체재가 없으면 가격과 유료 진입점을 검증하기 어렵습니다.",
         evidenceRef: null,
       },
       {
         id: "proxy_persona",
         label: "문제를 직접 겪지 않는 조언자/구경꾼",
-        reason: `${signals.productName || "제품"}의 초기 persona를 흐립니다.`,
+        reason: `${signals.productName || "제품"}의 초기 고객 후보를 흐립니다.`,
         evidenceRef: null,
       },
     ],
@@ -2862,10 +2883,10 @@ function buildFirstInterviewMessage(signals, questions) {
   return {
     channel: "DM/email/Slack",
     recipientPlaceholder: "{name}",
-    subject: `${product} ICP v0 인터뷰 요청`,
+    subject: `${product} 고객 후보 인터뷰 요청`,
     bodyTemplate: [
       "안녕하세요 {name}님,",
-      `${product}의 첫 ICP를 좁히는 중인데, ${target} 중에서 "${problem}"을 실제로 겪는 분을 찾고 있습니다.`,
+      `${product}의 첫 고객 후보를 좁히는 중인데, ${target} 중에서 "${problem}"을 실제로 겪는 분을 찾고 있습니다.`,
       "이번 주 20분만 짧게 여쭤볼 수 있을까요? 제품 소개보다 지금 쓰는 대안과 최근 사건을 듣고 싶습니다.",
       "",
       "질문은 세 가지만 드릴게요:",
@@ -2952,6 +2973,7 @@ export function buildDay1AlignmentComposerPrompt(plan) {
     "Every option must include a non-empty description, evidenceLabel, and evidenceLimited boolean. Evidence-backed descriptions should say why this option is a strong Day 1 choice; weak options should explain the missing signal.",
     "Every component and every option must include highlightPhrases: an array of 1-5 exact substrings from its prompt, statement, or label that should be highlighted in the UI. Use short display phrases, not whole paragraphs.",
     "For component highlightPhrases, prefer these if present in the prompt: 고객 -> [\"첫 고객 후보\", \"고객 후보\"], 문제 -> [\"비용을 치르는 문제\", \"문제\"], 확인할 행동 -> [\"행동 신호\", \"확인할 행동\", \"검증 행동\"]. For option highlightPhrases, use the shortest decision-critical substring of the label; do not use the whole label unless the label is already very short. Never split a balanced parenthetical group or a Korean/English word token; include both parentheses and complete 어절 when they are part of the highlighted text.",
+    "Optionally add emphasis: an array of up to 5 {phrase, style} objects for style-aware inline highlighting, in addition to highlightPhrases (keep highlightPhrases as-is for back-compat). For a component, each phrase must be an exact substring of its statement; for an option, an exact substring of its label; for a signalDigest row, an exact substring of that row's value. style is one of: strong (key nouns, numbers, quoted phrases), mark (a warning, deadline, or single critical phrase), code (file names, paths, code tokens). File names and paths must use code. Omit emphasis entirely rather than inventing phrases that are not exact substrings.",
     "Do not use direct-input, scan-needed, schema, upload, transcript-entry, file-entry, or product-input placeholders as selectable options.",
     "Every component prompt must be understandable in the Day 1 card and should ask for a concrete customer, pain, or behavior signal.",
     "Do not put \"Day 2\" or \"Day2\" in component prompts, helper text, or option labels/descriptions. Reserve Day 2 wording for day2Handoff only.",
@@ -3090,6 +3112,11 @@ function normalizeAlignmentComponent(value, fallbackId) {
     ).filter(Boolean).slice(0, 5)
     : [];
   if (!prompt || !statement || options.length < 2) return null;
+  // Emphasis phrases must be substrings of the statement they style.
+  const emphasis = normalizeEmphasis(
+    value.emphasis || value.emphasis_spans,
+    statement,
+  );
   return {
     id,
     title,
@@ -3098,6 +3125,7 @@ function normalizeAlignmentComponent(value, fallbackId) {
       value.highlightPhrases || value.highlight_phrases,
       alignmentComponentHighlightPhrases(id)
     ),
+    ...(emphasis.length ? { emphasis } : {}),
     helperText: cleanText(value.helperText || value.helper_text),
     statement,
     evidence: normalizeStringArray(value.evidence).slice(0, 8),
@@ -3111,6 +3139,11 @@ function normalizeAlignmentOption(value, index) {
   const label = cleanText(value.label || value.title);
   if (!label) return null;
   const evidenceLabel = cleanText(value.evidenceLabel || value.evidence_label);
+  // Emphasis phrases must be substrings of the option label they style.
+  const emphasis = normalizeEmphasis(
+    value.emphasis || value.emphasis_spans,
+    label,
+  );
   return {
     id: cleanToken(value.id) || `o${index + 1}`,
     label,
@@ -3119,6 +3152,7 @@ function normalizeAlignmentOption(value, index) {
       value.highlightPhrases || value.highlight_phrases,
       label
     ),
+    ...(emphasis.length ? { emphasis } : {}),
     preview: cleanText(value.preview),
     antiSignal: Boolean(value.antiSignal || value.anti_signal),
     evidenceLabel,
@@ -3149,10 +3183,27 @@ function sanitizeNormalizedAlignmentComponents(components, { signals, projectGoa
     .filter(Boolean);
   if (!icp || !painPoint || !outcome) return null;
   return {
-    icp: { ...components.icp, statement: icp },
-    painPoint: { ...components.painPoint, statement: painPoint, options: painOptions },
-    outcome: { ...components.outcome, statement: outcome, options: outcomeOptions },
+    icp: reattachComponentEmphasis({ ...components.icp, statement: icp }),
+    painPoint: reattachComponentEmphasis({ ...components.painPoint, statement: painPoint, options: painOptions }),
+    outcome: reattachComponentEmphasis({ ...components.outcome, statement: outcome, options: outcomeOptions }),
   };
+}
+
+// Re-validate component emphasis against the (possibly rewritten) sanitized
+// statement so every span stays an exact substring. Strips the key when nothing
+// survives, keeping the legacy highlightPhrases path intact.
+function reattachComponentEmphasis(component) {
+  if (!component || !Array.isArray(component.emphasis) || component.emphasis.length === 0) {
+    if (component && "emphasis" in component) {
+      const { emphasis, ...rest } = component;
+      return rest;
+    }
+    return component;
+  }
+  const emphasis = normalizeEmphasis(component.emphasis, component.statement);
+  if (emphasis.length) return { ...component, emphasis };
+  const { emphasis: _dropped, ...rest } = component;
+  return rest;
 }
 
 function normalizeAlignmentStatement(value, { projectGoal, components, signals } = {}) {
@@ -3909,6 +3960,35 @@ function cleanHighlightPhraseArray(value) {
       .filter((item) => item.length <= HIGHLIGHT_PHRASE_MAX_CHARS),
     (item) => item.toLowerCase()
   ).slice(0, HIGHLIGHT_PHRASE_MAX_COUNT);
+}
+
+// Stage 2: validate and normalize dynamic emphasis spans. Each span is
+// { phrase, style }. `phrase` is trimmed and, when `text` is provided, must be a
+// case-insensitive substring of it so the Mac renderer can actually match it.
+// Unknown/unsupported styles fall back to "mark". Dedups by phrase and caps at
+// five spans, mirroring `normalizeOfficeHoursEmphasis`. Returns [] when nothing
+// survives so callers can omit the key (back-compat: legacy highlightPhrases).
+export function normalizeEmphasis(raw, text = "") {
+  const list = Array.isArray(raw) ? raw : raw && typeof raw === "object" ? [raw] : [];
+  const source = cleanText(text);
+  const hasSource = source.length > 0;
+  const lowerSource = source.toLowerCase();
+  const seen = new Set();
+  const normalized = [];
+  for (const entry of list) {
+    if (!entry || typeof entry !== "object") continue;
+    const phrase = cleanText(entry.phrase || entry.text);
+    if (!phrase || phrase.length > HIGHLIGHT_PHRASE_MAX_CHARS) continue;
+    if (hasSource && !lowerSource.includes(phrase.toLowerCase())) continue;
+    const key = phrase.toLowerCase();
+    if (seen.has(key)) continue;
+    const rawStyle = String(entry.style || entry.kind || "").trim().toLowerCase();
+    const style = EMPHASIS_STYLES.includes(rawStyle) ? rawStyle : "mark";
+    seen.add(key);
+    normalized.push({ phrase, style });
+    if (normalized.length >= EMPHASIS_MAX_COUNT) break;
+  }
+  return normalized;
 }
 
 function expandHighlightPhraseFallbacks(value) {

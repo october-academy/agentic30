@@ -15,11 +15,11 @@
     {
       "type": "session_created",
       "session": {
-        "title": "Foundation Setup: ICP",
+        "title": "초기 설정: 고객 후보",
         "status": "awaiting_input",
         "pendingUserInput": {
           "toolName": "agentic30_request_user_input",
-          "title": "ICP 1/4",
+          "title": "고객 후보 1/4",
           "generation": {
             "mode": "host_structured",
             "docType": "icp"
@@ -49,7 +49,7 @@
               "multiSelect": false,
               "allowFreeText": true,
               "requiresFreeText": false,
-              "freeTextPlaceholder": "예: 퇴사 후 3개월째, AI로 MVP는 만들었지만 유료 고객이 없는 개발자",
+              "freeTextPlaceholder": "예: 퇴사 후 3개월째, AI로 첫 버전은 만들었지만 유료 고객이 없는 개발자",
               "textMode": "short"
             }
           ]
@@ -60,7 +60,7 @@
       "type": "session_updated",
       "session": {
         "id": "idd-session-1",
-        "title": "Foundation Setup: ICP",
+        "title": "초기 설정: 고객 후보",
         "provider": "codex",
         "model": "",
         "status": "awaiting_input",
@@ -72,11 +72,11 @@
           "requestId": "request-icp-1",
           "sessionId": "idd-session-1",
           "toolName": "agentic30_request_user_input",
-          "title": "ICP 1/4",
+          "title": "고객 후보 1/4",
           "createdAt": "2026-04-27T01:00:01.000Z",
           "intro": {
-            "title": "ICP (Ideal Customer Profile)",
-            "body": "ICP는 가장 먼저 집중할 이상적 고객 유형입니다. 처음부터 완벽하게 쓰기보다, 이번 주 실제로 연락하고 인터뷰할 수 있는 좁은 고객 후보 하나를 고르면 됩니다.",
+            "title": "고객 후보",
+            "body": "가장 먼저 집중할 고객 유형입니다. 처음부터 완벽하게 쓰기보다, 이번 주 실제로 연락하고 인터뷰할 수 있는 좁은 고객 후보 하나를 고르면 됩니다.",
             "bullets": [
               "상황: 직함보다 지금 어떤 문제 상황에 있는지",
               "현재 대안: 지금 어떤 수작업이나 도구로 버티는지"
@@ -119,7 +119,7 @@
               "multiSelect": false,
               "allowFreeText": true,
               "requiresFreeText": false,
-              "freeTextPlaceholder": "예: 퇴사 후 3개월째, AI로 MVP는 만들었지만 유료 고객이 없는 개발자",
+              "freeTextPlaceholder": "예: 퇴사 후 3개월째, AI로 첫 버전은 만들었지만 유료 고객이 없는 개발자",
               "textMode": "short"
             }
           ]
@@ -128,7 +128,7 @@
           "pendingIddContinuation": {
             "requestId": "request-icp-1",
             "docType": "icp",
-            "prompt": "IDD 문서 인터뷰를 시작합니다: ICP"
+            "prompt": "IDD 문서 인터뷰를 시작합니다: 고객 후보"
           }
         }
       }
