@@ -1613,7 +1613,7 @@ struct AgenticViewModelAuthTests {
             selectedAt: "2026-06-07T00:00:00.000Z"
         )
 
-        #expect(selection.officeHoursPurposeLine == "유저 모으기 · 유입/가입 행동 검증")
+        #expect(selection.officeHoursPurposeLine == "첫 100명 사용자 모으기 · 유입/가입 행동 검증")
         #expect(selection.officeHoursProgressLine == "전업 1인 개발자 (수익 0원, macOS) · 팔 대상·유입·검증 기준 불명확")
         #expect(selection.officeHoursOutputLine == "로컬 증거만 유지 · 승인 전 게시/문서 없음")
     }

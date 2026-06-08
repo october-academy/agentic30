@@ -455,7 +455,7 @@ struct OpenDesignDayContent {
                     systemImage: "lock",
                     isActive: item.isActive,
                     isLocked: true,
-                    lockNote: item.lockNote ?? "Foundation Setup",
+                    lockNote: item.lockNote ?? "초기 설정",
                     targetSectionID: item.targetSectionID,
                     route: item.route
                 )
@@ -567,8 +567,8 @@ struct OpenDesignDayContent {
     }
 
     private static let taskWeekSpecs: [WeekTaskSpec] = [
-        WeekTaskSpec(id: "week1", title: "Week 1 — Foundation", week: 1, days: 1...7),
-        WeekTaskSpec(id: "week2", title: "Week 2 — Build", week: 2, days: 8...14),
+        WeekTaskSpec(id: "week1", title: "Week 1 — 초기 검증", week: 1, days: 1...7),
+        WeekTaskSpec(id: "week2", title: "Week 2 — 만들기", week: 2, days: 8...14),
         WeekTaskSpec(id: "week3", title: "Week 3 — Acquire", week: 3, days: 15...21),
         WeekTaskSpec(id: "week4", title: "Week 4 — Revenue", week: 4, days: 22...30),
     ]
@@ -715,26 +715,26 @@ struct OpenDesignDayContent {
         taskGroups: [
             TaskGroup(
                 id: "week1",
-                title: "Week 1 — Foundation",
+                title: "Week 1 — 초기 검증",
                 meta: "1 / 7",
                 tasks: [
-                    TaskItem(id: "day1", title: "먼저 도울 사람을 정해요", day: "Day 1", meta: "ICP · 인터뷰 1/3", state: .active),
-                    TaskItem(id: "day2", title: "시장 신호 읽기", day: "Day 2", meta: "Market", state: .pending),
-                    TaskItem(id: "day3", title: "Mom Test 인터뷰 ×3", day: "Day 3", meta: "Interview", state: .pending),
-                    TaskItem(id: "day4", title: "10× 웨지 찾기", day: "Day 4", meta: "Wedge", state: .pending),
+                    TaskItem(id: "day1", title: "먼저 도울 사람을 정해요", day: "Day 1", meta: "고객 후보 · 인터뷰 4문항", state: .active),
+                    TaskItem(id: "day2", title: "시장 신호 읽기", day: "Day 2", meta: "시장", state: .pending),
+                    TaskItem(id: "day3", title: "실제 행동 인터뷰 ×3", day: "Day 3", meta: "인터뷰", state: .pending),
+                    TaskItem(id: "day4", title: "10× 첫 진입점 찾기", day: "Day 4", meta: "진입점", state: .pending),
                     TaskItem(id: "day5", title: "수요 신호 측정", day: "Day 5", meta: "Demand", state: .pending),
                     TaskItem(id: "day6", title: "Ask 한 줄로 압축", day: "Day 6", meta: "Ask", state: .pending),
-                    TaskItem(id: "day7", title: "Go / No-Go 결정 게이트", day: "Day 7", meta: "Gate", state: .pending),
+                    TaskItem(id: "day7", title: "계속/중단 결정 기준", day: "Day 7", meta: "기준", state: .pending),
                 ]
             ),
             TaskGroup(
                 id: "week2",
-                title: "Week 2 — Build",
+                title: "Week 2 — 만들기",
                 meta: "잠금 해제 D7",
                 tasks: [
-                    TaskItem(id: "day8", title: "MVP 코어 4시간 빌드", day: "Day 8", meta: "Build", state: .locked),
-                    TaskItem(id: "day9", title: "첫 5명 초대 초안", day: "Day 9", meta: "Outreach", state: .locked),
-                    TaskItem(id: "day10", title: "랜딩 카피 & Above-fold", day: "Day 10", meta: "Landing", state: .locked),
+                    TaskItem(id: "day8", title: "첫 버전 핵심 4시간 빌드", day: "Day 8", meta: "만들기", state: .locked),
+                    TaskItem(id: "day9", title: "첫 5명 초대 초안", day: "Day 9", meta: "연락", state: .locked),
+                    TaskItem(id: "day10", title: "소개 페이지 첫 화면 문구", day: "Day 10", meta: "소개 페이지", state: .locked),
                 ]
             ),
             TaskGroup(
@@ -742,7 +742,7 @@ struct OpenDesignDayContent {
                 title: "Week 3 — Acquire",
                 meta: "잠금 해제 D14",
                 tasks: [
-                    TaskItem(id: "day15", title: "BIP 채널 첫 포스트", day: "Day 15", meta: "BIP", state: .locked),
+                    TaskItem(id: "day15", title: "공개 기록 첫 글", day: "Day 15", meta: "공개 기록", state: .locked),
                 ]
             ),
             TaskGroup(
@@ -750,19 +750,19 @@ struct OpenDesignDayContent {
                 title: "Week 4 — Revenue",
                 meta: "잠금 해제 D21",
                 tasks: [
-                    TaskItem(id: "day22", title: "첫 매출 ask · Pricing", day: "Day 22", meta: "Revenue", state: .locked),
+                    TaskItem(id: "day22", title: "첫 매출 요청 · 가격", day: "Day 22", meta: "매출", state: .locked),
                 ]
             ),
         ],
         contextTitle: "오늘은 첫 고객 1명을 정하는 게 목표예요.",
-        contextBody: "30일 챌린지의 첫 결과는 \"유저 100명 + 첫 매출\"이지만, Day 1은 그보다 더 좁은 문제부터 풉니다. 이번 주에 진짜로 인터뷰 한 통을 할 만큼 가까운 1명이 누구인지 정하는 것. 이 한 명이 ICP의 후보가 되고, 이번 주 인터뷰·랜딩·웨지의 기준점이 됩니다.",
+        contextBody: "30일 챌린지의 첫 결과는 \"유저 100명 + 첫 매출\"이지만, Day 1은 그보다 더 좁은 문제부터 풉니다. 이번 주에 진짜로 인터뷰 한 통을 할 만큼 가까운 1명이 누구인지 정하는 것. 이 한 명이 고객 후보가 되고, 이번 주 인터뷰·랜딩·막힌 지점 판단의 기준점이 됩니다.",
         mission: Mission(
             markedTitle: "한 명",
             titleSuffix: "만 골라요.",
-            body: "다짜고짜 \"ICP가 누구냐\"고 묻는 건 어려우니, 4지선다 → 짧은 인터뷰 3번 → 한 명으로 좁히기 순서로 진행할게요. 다 끝나면 docs/ICP.md에 쓸 문서 초안을 먼저 보여줘요.",
+            body: "다짜고짜 \"고객이 누구냐\"고 묻는 건 어려우니, 선택지 질문 4문항 → 한 명으로 좁히기 순서로 진행할게요. 다 끝나면 docs/ICP.md에 쓸 문서 초안을 먼저 보여줘요.",
             rules: [
                 "이번 주 실제 대화로 이어질 수 있어야 해요.",
-                "칭찬형 답이 아니라 진짜 시간을 쓰는 사람이어야 해요 — Mom Test 기준.",
+                "칭찬형 답이 아니라 진짜 시간을 쓰는 사람이어야 해요.",
                 "한 줄로 묘사할 수 있어야 해요 — \"AI로 빌드하는 사람\"은 너무 넓어요.",
             ],
             footnote: "수락하면 4지선다 인터뷰가 열려요 · 약 3분",
@@ -775,7 +775,7 @@ struct OpenDesignDayContent {
                 title: "인터뷰 1 — 거리",
                 meta: "3분 · 직감 OK · 바꿀 수 있음",
                 label: "질문 · 이 답이 다음 인터뷰 단계를 정합니다",
-                score: "1 / 3",
+                score: "1 / 4",
                 statementPrefix: "이번 주 안에 ",
                 markedStatement: "실제 대화 1번",
                 statementSuffix: "으로 이어질 수 있는 1인 개발자 유형은 누구인가요?",
@@ -794,7 +794,7 @@ struct OpenDesignDayContent {
                 id: 2,
                 title: "인터뷰 2 — 도구",
                 meta: "3분 · 매일 쓰는 AI 코딩 도구",
-                label: "질문 · 도구 사용 패턴이 ICP의 두 번째 축",
+                label: "질문 · 도구 사용 패턴이 고객 후보의 두 번째 축",
                 score: "2 / 4",
                 statementPrefix: "이 1인 개발자가 ",
                 markedStatement: "매일 무엇으로 코드를 쓰는지",
@@ -807,18 +807,18 @@ struct OpenDesignDayContent {
                     InterviewOption(id: 1, title: "Cursor — 메인 에디터", detail: "VS Code 기반 + 채팅. 자동완성과 Composer가 주력. 결제 의향이 가장 안정적인 풀.", tail: "대세 · 유료"),
                     InterviewOption(id: 2, title: "Claude Code — 터미널 중심", detail: "장기 작업·멀티파일 리팩터링에 강함. 사용량이 늘수록 토큰 비용이 핵심 고통이 됩니다.", tail: "신규 · 폭증"),
                     InterviewOption(id: 3, title: "둘 다 — 작업 분리", detail: "편집은 Cursor, 큰 변경은 Claude Code. 비용 추적과 컨텍스트 동기화가 가장 큰 마찰점.", tail: "실사용 ↑"),
-                    InterviewOption(id: 4, title: "비코딩 — PM / 디자인 / 마케팅", detail: "코드는 거의 안 쓰고 AI 에이전트만 굴립니다. 모수는 작지만 도구 의존도가 가장 높은 엣지 ICP.", tail: "엣지 ICP"),
+                    InterviewOption(id: 4, title: "비코딩 — PM / 디자인 / 마케팅", detail: "코드는 거의 안 쓰고 AI 에이전트만 굴립니다. 모수는 작지만 도구 의존도가 가장 높은 엣지 고객 후보입니다.", tail: "엣지 고객"),
                 ]
             ),
             InterviewStep(
                 id: 3,
                 title: "인터뷰 3 — 막힌 단계",
                 meta: "3분 · 지난 7일 멈춘 지점",
-                label: "질문 · 어디서 멈추는지가 wedge를 결정합니다",
+                label: "질문 · 어디서 멈추는지가 막힌 지점을 결정합니다",
                 score: "3 / 4",
                 statementPrefix: "지난 7일에 이 사람이 ",
                 markedStatement: "가장 오래 멈췄던 한 단계",
-                statementSuffix: "가 우리가 풀 wedge를 결정합니다.",
+                statementSuffix: "가 우리가 먼저 풀 막힌 지점을 결정합니다.",
                 criteria: ["\"전반적으로 막힌다\" 답변은 거름", "7일 안에 일어난 한 사건", "단계 이름이 명확해야 진짜"],
                 prompt: "지난 7일에 가장 오래 멈춘 단계",
                 progressLabel: "7일 안의 한 사건",
@@ -826,28 +826,28 @@ struct OpenDesignDayContent {
                 options: [
                     InterviewOption(id: 1, title: "아이디어 — 뭘 만들지", detail: "도구는 준비됐는데 다음에 뭘 빌드할지가 정해지지 않아 시작 자체를 못 합니다.", tail: "가장 흔함"),
                     InterviewOption(id: 2, title: "빌드 — 코드/디자인 끝까지", detail: "시작은 했지만 절반쯤에서 멈추고 새 프로젝트로 옮겨갑니다. AI로 무한 빌드의 함정.", tail: "핵심 통증"),
-                    InterviewOption(id: 3, title: "검증 — 사람한테 보여주기", detail: "코드는 끝났지만 누군가에게 보여주는 단계로 넘어가지 못합니다. 인터뷰 자체를 회피.", tail: "wedge 후보"),
+                    InterviewOption(id: 3, title: "검증 — 사람한테 보여주기", detail: "코드는 끝났지만 누군가에게 보여주는 단계로 넘어가지 못합니다. 인터뷰 자체를 회피.", tail: "검증 후보"),
                     InterviewOption(id: 4, title: "출시·매출 — 결제 받기", detail: "출시는 했는데 첫 결제까지 가지 못합니다. 가격·체크아웃·신뢰 중 하나에서 막힙니다.", tail: "돈 직결"),
                 ]
             ),
             InterviewStep(
                 id: 4,
                 title: "인터뷰 4 — 지난 7일 행동",
-                meta: "3분 · Mom Test · 칭찬형 답변 거르기",
+                meta: "3분 · 칭찬형 답변 거르기",
                 label: "질문 · 말 대신 실제 한 행동만",
                 score: "4 / 4",
                 statementPrefix: "지난 7일에 ",
                 markedStatement: "실제로 한 행동",
                 statementSuffix: " 하나만 골라 주세요. \"할 거예요\" / \"좋네요\"는 빼고요.",
-                criteria: ["\"언젠가\" / \"곧\" → 자동 Anti-ICP", "진짜 시간을 쓴 행동만", "없으면 4번을 고르세요"],
+                criteria: ["\"언젠가\" / \"곧\" → 제외 신호", "진짜 시간을 쓴 행동만", "없으면 4번을 고르세요"],
                 prompt: "지난 7일에 실제로 한 행동",
                 progressLabel: "한 사건",
                 submitLabel: "이 행동으로 제출",
                 options: [
                     InterviewOption(id: 1, title: "새 프로젝트를 또 시작했다", detail: "지난 프로젝트는 절반쯤에서 멈췄고, 새 레포·새 디자인·새 아이디어로 또 한 번 출발했습니다.", tail: "빌드 루프"),
                     InterviewOption(id: 2, title: "실사용자 1명을 만났다", detail: "인터뷰·콜·DM 등으로 실제 사람의 답을 들었습니다. 가장 강한 신호.", tail: "진짜 신호 ↑"),
-                    InterviewOption(id: 3, title: "출시를 시도했다", detail: "포스트·결제 링크·랜딩 등 사람들에게 보여지는 행동을 1건 이상 했습니다.", tail: "wedge 검증"),
-                    InterviewOption(id: 4, title: "아무 행동도 안 했다", detail: "계획·고민만 7일을 보냈습니다. 솔직한 답 — Anti-ICP 게이트의 출발점이 됩니다.", tail: "Anti-ICP", isAntiSignal: true),
+                    InterviewOption(id: 3, title: "출시를 시도했다", detail: "포스트·결제 링크·랜딩 등 사람들에게 보여지는 행동을 1건 이상 했습니다.", tail: "검증 신호"),
+                    InterviewOption(id: 4, title: "아무 행동도 안 했다", detail: "계획·고민만 7일을 보냈습니다. 솔직한 답 — 제외 신호를 확인하는 출발점이 됩니다.", tail: "제외 신호", isAntiSignal: true),
                 ]
             ),
         ],
@@ -860,26 +860,26 @@ struct OpenDesignDayContent {
         taskGroups: [
             TaskGroup(
                 id: "week1",
-                title: "Week 1 — Foundation",
+                title: "Week 1 — 초기 검증",
                 meta: "2 / 7",
                 tasks: [
-                    TaskItem(id: "day1", title: "먼저 도울 사람을 정해요", day: "Day 1", meta: "ICP", state: .done),
-                    TaskItem(id: "day2", title: "시장 신호 읽기", day: "Day 2", meta: "Market · +8", state: .active),
-                    TaskItem(id: "day3", title: "Mom Test 인터뷰 ×3", day: "Day 3", meta: "Interview", state: .pending),
-                    TaskItem(id: "day4", title: "10× 웨지 찾기", day: "Day 4", meta: "Wedge", state: .pending),
+                    TaskItem(id: "day1", title: "먼저 도울 사람을 정해요", day: "Day 1", meta: "고객 후보", state: .done),
+                    TaskItem(id: "day2", title: "시장 신호 읽기", day: "Day 2", meta: "시장 · +8", state: .active),
+                    TaskItem(id: "day3", title: "실제 행동 인터뷰 ×3", day: "Day 3", meta: "인터뷰", state: .pending),
+                    TaskItem(id: "day4", title: "10× 첫 진입점 찾기", day: "Day 4", meta: "진입점", state: .pending),
                     TaskItem(id: "day5", title: "수요 신호 측정", day: "Day 5", meta: "Demand", state: .pending),
                     TaskItem(id: "day6", title: "Ask 한 줄로 압축", day: "Day 6", meta: "Ask", state: .pending),
-                    TaskItem(id: "day7", title: "Go / No-Go 결정 게이트", day: "Day 7", meta: "Gate", state: .pending),
+                    TaskItem(id: "day7", title: "계속/중단 결정 기준", day: "Day 7", meta: "기준", state: .pending),
                 ]
             ),
             TaskGroup(
                 id: "week2",
-                title: "Week 2 — Build",
+                title: "Week 2 — 만들기",
                 meta: "잠금 해제 D7",
                 tasks: [
-                    TaskItem(id: "day8", title: "MVP 코어 4시간 빌드", day: "Day 8", meta: "Build", state: .locked),
-                    TaskItem(id: "day9", title: "첫 5명 초대 초안", day: "Day 9", meta: "Outreach", state: .locked),
-                    TaskItem(id: "day10", title: "랜딩 카피 & Above-fold", day: "Day 10", meta: "Landing", state: .locked),
+                    TaskItem(id: "day8", title: "첫 버전 핵심 4시간 빌드", day: "Day 8", meta: "만들기", state: .locked),
+                    TaskItem(id: "day9", title: "첫 5명 초대 초안", day: "Day 9", meta: "연락", state: .locked),
+                    TaskItem(id: "day10", title: "소개 페이지 첫 화면 문구", day: "Day 10", meta: "소개 페이지", state: .locked),
                 ]
             ),
             TaskGroup(
@@ -887,7 +887,7 @@ struct OpenDesignDayContent {
                 title: "Week 3 — Acquire",
                 meta: "잠금 해제 D14",
                 tasks: [
-                    TaskItem(id: "day15", title: "BIP 채널 첫 포스트", day: "Day 15", meta: "BIP", state: .locked),
+                    TaskItem(id: "day15", title: "공개 기록 첫 글", day: "Day 15", meta: "공개 기록", state: .locked),
                 ]
             ),
             TaskGroup(
@@ -895,12 +895,12 @@ struct OpenDesignDayContent {
                 title: "Week 4 — Revenue",
                 meta: "잠금 해제 D21",
                 tasks: [
-                    TaskItem(id: "day22", title: "첫 매출 ask · Pricing", day: "Day 22", meta: "Revenue", state: .locked),
+                    TaskItem(id: "day22", title: "첫 매출 요청 · 가격", day: "Day 22", meta: "매출", state: .locked),
                 ]
             ),
         ],
-        contextTitle: "오늘은 Day 1 ICP 후보가 실제 시장 신호를 갖는지 확인합니다.",
-        contextBody: "키워드 빈도, 대안 갭, 인용 가능한 게시물을 함께 보고 내일 Mom Test 인터뷰 질문으로 이어질 시장 빈 자리를 잠급니다.",
+        contextTitle: "오늘은 Day 1 고객 후보가 실제 시장 신호를 갖는지 확인합니다.",
+        contextBody: "키워드 빈도, 대안 공백, 인용 가능한 게시물을 함께 보고 내일 실제 행동 인터뷰 질문으로 이어질 시장 빈 자리를 잠급니다.",
         mission: Mission(
             markedTitle: "키워드 3개",
             titleSuffix: "를 잠가요.",
@@ -910,7 +910,7 @@ struct OpenDesignDayContent {
                 "대안은 무료/강의/커뮤니티/도구를 섞어 실제 선택지를 봅니다.",
                 "강한 인용은 원문 뉘앙스를 보존해 인터뷰 질문으로 바꿉니다.",
             ],
-            footnote: "Day 2 마무리 시 Day 3 Mom Test 인터뷰로 이동",
+            footnote: "Day 2 마무리 시 Day 3 실제 행동 인터뷰로 이동",
             acceptLabel: "시장 신호 보기",
             acceptedLabel: "시장 신호 확인됨"
         ),
@@ -920,9 +920,9 @@ struct OpenDesignDayContent {
         market: Market(
             dayNumber: 2,
             title: "시장 신호 읽기",
-            titlebarTitle: "Day 2 · Foundation",
+            titlebarTitle: "Day 2 · 초기 검증",
             titlebarDetail: "Market Signals",
-            subtitleParts: ["Market · Day 2", "키워드 3개 잠금", "크롤 12분 전 갱신"],
+            subtitleParts: ["시장 · Day 2", "키워드 3개 잠금", "크롤 12분 전 갱신"],
             primaryActionTitle: "Day 2 마무리",
             sourceTabs: [
                 MarketSourceTab(id: "threads", title: "Threads", count: "142"),
@@ -943,10 +943,10 @@ struct OpenDesignDayContent {
                 MarketKeyword(id: "burnout", title: "번아웃", count: "18", size: 16, heat: .mid),
                 MarketKeyword(id: "macos", title: "macOS · M3", count: "14", size: 15, heat: .cool),
                 MarketKeyword(id: "claude", title: "Claude Code", count: "14", size: 15, heat: .cool),
-                MarketKeyword(id: "pmf", title: "PMF", count: "12", size: 14, heat: .cool),
+                MarketKeyword(id: "pmf", title: "시장 적합", count: "12", size: 14, heat: .cool),
                 MarketKeyword(id: "interview", title: "고객 인터뷰", count: "12", size: 14, heat: .cool),
                 MarketKeyword(id: "funding", title: "투자", count: "9", size: 13, heat: .cold),
-                MarketKeyword(id: "saas-template", title: "SaaS 템플릿", count: "7", size: 13, heat: .cold),
+                MarketKeyword(id: "saas-template", title: "구독형 웹 도구 템플릿", count: "7", size: 13, heat: .cold),
                 MarketKeyword(id: "team", title: "팀빌딩", count: "5", size: 13, heat: .cold),
             ],
             signalCards: [
@@ -957,7 +957,7 @@ struct OpenDesignDayContent {
             alternatives: [
                 MarketAlternative(id: "ph", initials: "PH", name: "Product Hunt 런칭", kind: "1회성", fit: 22, strengths: ["큰 노출", "PR"], gaps: ["검증 X", "1회성"], monthlyCost: "$0"),
                 MarketAlternative(id: "lean", initials: "LE", name: "Lean Canvas + 멘토링", kind: "온라인 코스", fit: 48, strengths: ["프레임워크", "동료"], gaps: ["실행 미흡"], monthlyCost: "$49"),
-                MarketAlternative(id: "mom", initials: "MT", name: "Mom Test 책 + 노션", kind: "스스로", fit: 54, strengths: ["질문 품질"], gaps: ["혼자 함", "강제 X"], monthlyCost: "$15"),
+                MarketAlternative(id: "mom", initials: "MT", name: "실제 행동 질문 책 + 노션", kind: "스스로", fit: 54, strengths: ["질문 품질"], gaps: ["혼자 함", "강제 X"], monthlyCost: "$15"),
                 MarketAlternative(id: "ih", initials: "IH", name: "Indie Hackers 그룹", kind: "커뮤니티", fit: 42, strengths: ["동료 압력"], gaps: ["한국 X", "시차"], monthlyCost: "$0"),
                 MarketAlternative(id: "cc", initials: "CC", name: "Claude Code · Cursor", kind: "도구", fit: 18, strengths: ["빌드 속도"], gaps: ["고객 X", "검증 X"], monthlyCost: "$60"),
                 MarketAlternative(id: "yc", initials: "YC", name: "YC Startup School", kind: "강의·과제", fit: 62, strengths: ["강제 과제"], gaps: ["영어", "팀 가정"], monthlyCost: "$0"),
@@ -969,7 +969,7 @@ struct OpenDesignDayContent {
                     .body("전업 1인 개발자에게는 "),
                     .strong("한국어 + 30일 강제 과제 + 매일 인터뷰 1건"),
                     .body("이 합쳐진 도구가 없다. 가장 가까운 대안 YC Startup School은 영어·팀 가정·일간 리듬 부재. "),
-                    .mark("Mom Test 책 + 일일 캐리"),
+                    .mark("실제 행동 질문 책 + 일일 캐리"),
                     .body("를 한 묶음으로 묶으면 1인 솔로 시장의 정중앙이 비어 있다."),
                 ],
                 criteria: [
@@ -983,7 +983,7 @@ struct OpenDesignDayContent {
                 MarketPost(id: "kn", source: "Threads", author: "@knot.indie", age: "3일 전", bodySegments: [.body("\"새 프로젝트만 4번째인데, 이번에도 "), .mark("'팔릴까?'"), .body(" 단계에서 또 닫음. 검증을 누가 시켜줬으면 좋겠다.\"")], engagement: "▲ 142", comments: "댓글 38", strength: "신호 강", initials: "@kn", tone: .accent),
                 MarketPost(id: "jay", source: "Indie Hackers", author: "jay.solo", age: "1주 전", bodySegments: [.body("\"YC Startup School은 좋은데 팀 가정이 너무 강해서, "), .mark("전업 1인"), .body("한테는 안 맞음. 일간 과제만 똑같이 받고 싶다.\"")], engagement: "▲ 92", comments: "댓글 24", strength: "신호 강", initials: "jay", tone: .violet),
                 MarketPost(id: "hy", source: "Threads", author: "@hyemin.dev", age: "5일 전", bodySegments: [.body("\"퇴사하고 5개월. "), .mark("수익 0원"), .body("인 동료 모아 인터뷰 강제 챌린지 같이 해보고 싶음. 한국어로.\"")], engagement: "▲ 78", comments: "댓글 31", strength: "신호 강", initials: "@hy", tone: .accent),
-                MarketPost(id: "cm", source: "X / Twitter", author: "@cmoon.indie", age: "4일 전", bodySegments: [.body("\"Mom Test 책 5번 읽었는데 혼자 하면 결국 변명함. "), .mark("30분 매일 강제"), .body("되는 환경이 필요해.\"")], engagement: "▲ 64", comments: "댓글 18", strength: "신호 강", initials: "@cm", tone: .sky),
+                MarketPost(id: "cm", source: "X / Twitter", author: "@cmoon.indie", age: "4일 전", bodySegments: [.body("\"실제 행동 질문 책 5번 읽었는데 혼자 하면 결국 변명함. "), .mark("30분 매일 강제"), .body("되는 환경이 필요해.\"")], engagement: "▲ 64", comments: "댓글 18", strength: "신호 강", initials: "@cm", tone: .sky),
                 MarketPost(id: "yj", source: "Threads", author: "@yujin.makes", age: "2일 전", bodySegments: [.body("\"AI 코딩으로 새 프로젝트 시작은 3시간이면 됨. 근데 거기서 끝남. 다음 단계 가는 동료가 필요함.\"")], engagement: "▲ 51", comments: "댓글 14", strength: "신호 중", initials: "@yj", tone: .accent),
             ],
             signalStrength: MarketSignalStrength(
@@ -994,7 +994,7 @@ struct OpenDesignDayContent {
                     MarketScoreRow(id: "keyword", title: "키워드 빈도", fraction: 0.84, value: "8.4"),
                     MarketScoreRow(id: "gap", title: "대안 갭", fraction: 0.78, value: "7.8"),
                     MarketScoreRow(id: "korean", title: "한국어 시장", fraction: 0.92, value: "9.2"),
-                    MarketScoreRow(id: "wedge", title: "웨지 신호", fraction: 0.54, value: "5.4"),
+                    MarketScoreRow(id: "wedge", title: "첫 진입점 신호", fraction: 0.54, value: "5.4"),
                     MarketScoreRow(id: "pricing", title: "가격대 명확", fraction: 0.62, value: "6.2"),
                 ]
             ),
@@ -1005,12 +1005,12 @@ struct OpenDesignDayContent {
             ],
             topAlternatives: [
                 MarketMiniMetric(id: "yc", label: "YC Startup School", value: "62%", isLeader: true),
-                MarketMiniMetric(id: "mom", label: "Mom Test 책", value: "54%", isLeader: false),
+                MarketMiniMetric(id: "mom", label: "실제 행동 질문 책", value: "54%", isLeader: false),
                 MarketMiniMetric(id: "lean", label: "Lean Canvas 멘토링", value: "48%", isLeader: false),
                 MarketMiniMetric(id: "ih", label: "IH 그룹", value: "42%", isLeader: false),
                 MarketMiniMetric(id: "ph", label: "PH 런칭", value: "22%", isLeader: false),
             ],
-            nextDay: MarketNextDay(badge: "03", title: "Mom Test 인터뷰 ×3", subtitle: "박주영 + 2명 후보 · 질문 5개")
+            nextDay: MarketNextDay(badge: "03", title: "실제 행동 인터뷰 ×3", subtitle: "박주영 + 2명 후보 · 질문 5개")
         )
     )
 
@@ -1070,9 +1070,9 @@ struct OpenDesignDayContent {
                         guard task.id == "day1" else { return task }
                         return TaskItem(
                             id: task.id,
-                            title: isAlignment ? "30일 목표와 방향을 정해요" : "ICP v0 질문을 정해요",
+                            title: isAlignment ? "30일 목표와 방향을 정해요" : "고객 후보 질문을 정해요",
                             day: task.day,
-                            meta: isAlignment ? "가설 · 목표+3요소" : "ICP · adaptive \(steps.count)Q",
+                            meta: isAlignment ? "가설 · 목표+3요소" : "고객 후보 · 맞춤 \(steps.count)Q",
                             state: task.state
                         )
                     }
@@ -1080,23 +1080,23 @@ struct OpenDesignDayContent {
             },
             contextTitle: isAlignment
                 ? "\(productName)의 핵심 가설"
-                : "\(productName)의 ICP v0",
+                : "\(productName)의 고객 후보 v0",
             contextBody: isAlignment
                 ? "목표·고객·문제·검증 행동을 한 문장으로 맞춥니다."
                 : "\(target) 가설을 \(problem) 기준으로 좁힙니다.",
             mission: Mission(
-                markedTitle: isAlignment ? "핵심 가설" : "ICP v0",
+                markedTitle: isAlignment ? "핵심 가설" : "고객 후보",
                 titleSuffix: isAlignment ? "을 Day 2에 넘길 만큼 선명하게 만들어요." : "를 검증 가능하게 좁혀요.",
                 body: alignmentPlan?.mission ?? plan.mission,
                 rules: [
                     isAlignment ? "목표·고객·문제·행동을 분리합니다." : "need / have / don't need를 분리합니다.",
                     isAlignment ? "다음 검증 기준이 문장 안에 있어야 합니다." : "현재 대안, 반복 행동, 비용 신호를 우선합니다.",
-                    isAlignment ? "마지막에 품질 점수를 확인합니다." : "마지막에 docs/ICP.md와 Anti-ICP를 확인합니다.",
+                    isAlignment ? "마지막에 품질 점수를 확인합니다." : "마지막에 docs/ICP.md와 제외 신호를 확인합니다.",
                 ],
                 footnote: isAlignment
                     ? "질문 \(steps.count)개 · 약 3분"
-                    : "수락하면 scan 기반 adaptive 질문 \(steps.count)개가 열려요 · 약 3분",
-                acceptLabel: isAlignment ? "미션 수락하고 핵심 가설 시작 ↵" : "미션 수락하고 ICP 질문 시작 ↵",
+                    : "수락하면 스캔 기반 맞춤 질문 \(steps.count)개가 열려요 · 약 3분",
+                acceptLabel: isAlignment ? "미션 수락하고 핵심 가설 시작 ↵" : "미션 수락하고 고객 질문 시작 ↵",
                 acceptedLabel: "미션 수락됨 ✓"
             ),
             interviewSteps: steps,
@@ -1394,7 +1394,7 @@ struct OpenDesignDayContent {
                 id: stepID,
                 dimension: question.dimension,
                 title: "질문 \(stepID) — \(dimensionTitle)",
-                meta: "adaptive · \(dimensionTitle)",
+                meta: "맞춤 · \(dimensionTitle)",
                 label: "질문 · 프로젝트 scan 기반",
                 score: "\(stepID) / \(total)",
                 statementPrefix: "",
@@ -1465,15 +1465,15 @@ struct OpenDesignDayContent {
         case "icp": return "고객"
         case "pain_point": return "문제"
         case "outcome": return "확인할 행동"
-        case "must_have": return "Must-have"
-        case "core_need": return "Core need"
+        case "must_have": return "필수 조건"
+        case "core_need": return "핵심 필요"
         case "current_alternative": return "현재 대안"
         case "buyer_user": return "사용자/구매자"
         case "activation_or_success_signal": return "성공 신호"
         case "willingness_to_pay": return "지불 의향"
-        case "bad_fit_boundary": return "Anti-ICP"
-        case "reference_customer": return "Reference customer"
-        default: return "ICP 조건"
+        case "bad_fit_boundary": return "제외 신호"
+        case "reference_customer": return "먼저 물어볼 사람"
+        default: return "고객 조건"
         }
     }
 
@@ -1495,27 +1495,27 @@ struct OpenDesignDayContent {
             SearchItem(id: "page-today", kind: .page, title: "오늘 · Day 1", subtitle: "Office Hours", day: nil, systemImage: "scope", isActive: true, isLocked: false, lockNote: nil, targetSectionID: "top", route: .officeHours),
             SearchItem(id: "page-search", kind: .page, title: "검색", subtitle: "전체 페이지 · 과제 찾기", day: nil, systemImage: "magnifyingglass", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .search),
             SearchItem(id: "page-projects", kind: .page, title: "프로젝트", subtitle: "활성 3개 · 소스 루트 여러 개 관리", day: nil, systemImage: "folder", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
-            SearchItem(id: "page-settings", kind: .page, title: "설정", subtitle: "워크스페이스 · 프로바이더 · 권한", day: nil, systemImage: "gearshape", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .settings),
-            SearchItem(id: "page-interviews", kind: .page, title: "인터뷰", subtitle: "Mom Test · 노트", day: nil, systemImage: "bubble.left.and.bubble.right", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
-            SearchItem(id: "page-bip", kind: .page, title: "BIP 로그", subtitle: "Build in Public", day: nil, systemImage: "doc.text", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
+            SearchItem(id: "page-settings", kind: .page, title: "설정", subtitle: "워크스페이스 · AI 연결 · 권한", day: nil, systemImage: "gearshape", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .settings),
+            SearchItem(id: "page-interviews", kind: .page, title: "인터뷰", subtitle: "실제 행동 질문 · 노트", day: nil, systemImage: "bubble.left.and.bubble.right", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
+            SearchItem(id: "page-bip", kind: .page, title: "공개 기록", subtitle: "공개 실행 기록", day: nil, systemImage: "doc.text", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
             SearchItem(id: "page-news", kind: .page, title: "뉴스", subtitle: "안 읽음 17건 · 큐레이션", day: nil, systemImage: "newspaper", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
             SearchItem(id: "page-history", kind: .page, title: "히스토리 · 타임라인", subtitle: "변경 · 결정 흐름", day: nil, systemImage: "clock.arrow.circlepath", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
             SearchItem(id: "task-day1", kind: .task, title: "먼저 도울 사람을 정해요", subtitle: "Office Hours", day: "Day 1", systemImage: "circle.dotted", isActive: true, isLocked: false, lockNote: nil, targetSectionID: "top", route: .officeHours),
-            SearchItem(id: "task-day2", kind: .task, title: "시장 신호 읽기", subtitle: "Market", day: "Day 2", systemImage: "circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
-            SearchItem(id: "task-day3", kind: .task, title: "Mom Test 인터뷰 ×3", subtitle: "Interview", day: "Day 3", systemImage: "circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
-            SearchItem(id: "task-day4", kind: .task, title: "10× 웨지 찾기", subtitle: "Wedge", day: "Day 4", systemImage: "circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
+            SearchItem(id: "task-day2", kind: .task, title: "시장 신호 읽기", subtitle: "시장", day: "Day 2", systemImage: "circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
+            SearchItem(id: "task-day3", kind: .task, title: "실제 행동 인터뷰 ×3", subtitle: "인터뷰", day: "Day 3", systemImage: "circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
+            SearchItem(id: "task-day4", kind: .task, title: "10× 첫 진입점 찾기", subtitle: "진입점", day: "Day 4", systemImage: "circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
             SearchItem(id: "task-day5", kind: .task, title: "수요 신호 측정", subtitle: "Demand", day: "Day 5", systemImage: "circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
             SearchItem(id: "task-day6", kind: .task, title: "Ask 한 줄로 압축", subtitle: "Ask", day: "Day 6", systemImage: "circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
-            SearchItem(id: "task-day7", kind: .task, title: "Go / No-Go 결정 게이트", subtitle: "Gate", day: "Day 7", systemImage: "circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
-            SearchItem(id: "task-day8", kind: .task, title: "MVP 코어 4시간 빌드", subtitle: "Build", day: "Day 8", systemImage: "lock", isActive: false, isLocked: true, lockNote: "D7 해제", targetSectionID: nil, route: .inert),
-            SearchItem(id: "task-day9", kind: .task, title: "첫 5명 초대 초안", subtitle: "Outreach", day: "Day 9", systemImage: "lock", isActive: false, isLocked: true, lockNote: "D7 해제", targetSectionID: nil, route: .inert),
-            SearchItem(id: "task-day10", kind: .task, title: "랜딩 카피 & Above-fold", subtitle: "Landing", day: "Day 10", systemImage: "lock", isActive: false, isLocked: true, lockNote: "D7 해제", targetSectionID: nil, route: .inert),
-            SearchItem(id: "task-day15", kind: .task, title: "BIP 채널 첫 포스트", subtitle: "BIP", day: "Day 15", systemImage: "lock", isActive: false, isLocked: true, lockNote: "D14 해제", targetSectionID: nil, route: .inert),
-            SearchItem(id: "task-day22", kind: .task, title: "첫 매출 ask · Pricing", subtitle: "Revenue", day: "Day 22", systemImage: "lock", isActive: false, isLocked: true, lockNote: "D21 해제", targetSectionID: nil, route: .inert),
-            SearchItem(id: "section-signals", kind: .section, title: "근거", subtitle: "workspace · interviews · BIP", day: nil, systemImage: "waveform.path.ecg", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "signals", route: .officeHours),
+            SearchItem(id: "task-day7", kind: .task, title: "계속/중단 결정 기준", subtitle: "기준", day: "Day 7", systemImage: "circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert),
+            SearchItem(id: "task-day8", kind: .task, title: "첫 버전 핵심 4시간 빌드", subtitle: "만들기", day: "Day 8", systemImage: "lock", isActive: false, isLocked: true, lockNote: "D7 해제", targetSectionID: nil, route: .inert),
+            SearchItem(id: "task-day9", kind: .task, title: "첫 5명 초대 초안", subtitle: "연락", day: "Day 9", systemImage: "lock", isActive: false, isLocked: true, lockNote: "D7 해제", targetSectionID: nil, route: .inert),
+            SearchItem(id: "task-day10", kind: .task, title: "소개 페이지 첫 화면 문구", subtitle: "소개 페이지", day: "Day 10", systemImage: "lock", isActive: false, isLocked: true, lockNote: "D7 해제", targetSectionID: nil, route: .inert),
+            SearchItem(id: "task-day15", kind: .task, title: "공개 기록 첫 글", subtitle: "공개 기록", day: "Day 15", systemImage: "lock", isActive: false, isLocked: true, lockNote: "D14 해제", targetSectionID: nil, route: .inert),
+            SearchItem(id: "task-day22", kind: .task, title: "첫 매출 요청 · 가격", subtitle: "매출", day: "Day 22", systemImage: "lock", isActive: false, isLocked: true, lockNote: "D21 해제", targetSectionID: nil, route: .inert),
+            SearchItem(id: "section-signals", kind: .section, title: "근거", subtitle: "workspace · interviews · 공개 기록", day: nil, systemImage: "waveform.path.ecg", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "signals", route: .officeHours),
             SearchItem(id: "section-mission", kind: .section, title: "핵심 가설 확정", subtitle: "시작", day: nil, systemImage: "flag", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "mission", route: .officeHours),
             SearchItem(id: "section-interview1", kind: .section, title: "인터뷰 1 — 거리", subtitle: "3분 · 직감 OK · 바꿀 수 있음", day: nil, systemImage: "bubble.left", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "interview1", route: .officeHours),
-            SearchItem(id: "section-picker", kind: .section, title: "ICP 4지선다", subtitle: "직접 만날 사람 후보", day: nil, systemImage: "scope", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "interview1-options", route: .officeHours),
+            SearchItem(id: "section-picker", kind: .section, title: "고객 후보 4지선다", subtitle: "직접 만날 사람 후보", day: nil, systemImage: "scope", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "interview1-options", route: .officeHours),
             SearchItem(id: "section-final", kind: .section, title: "핵심 가설 확정", subtitle: "다음 검증 기준", day: nil, systemImage: "target", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "final-icp", route: .officeHours),
             SearchItem(id: "section-guide", kind: .section, title: "진행 가이드", subtitle: "Day 1 흐름 보기", day: nil, systemImage: "sparkles", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "top", route: .officeHours),
         ], showsDevelopmentOnlyReferencePages: showsDevelopmentOnlyReferencePages)
@@ -1529,16 +1529,16 @@ struct OpenDesignDayContent {
                 case "page-today":
                     return SearchItem(id: item.id, kind: item.kind, title: "오늘 · Day 2", subtitle: "Market Signals", day: nil, systemImage: "scope", isActive: true, isLocked: false, lockNote: nil, targetSectionID: "top", route: .today)
                 case "task-day1":
-                    return SearchItem(id: item.id, kind: item.kind, title: item.title, subtitle: "ICP · 완료", day: item.day, systemImage: "checkmark.circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert)
+                    return SearchItem(id: item.id, kind: item.kind, title: item.title, subtitle: "고객 후보 · 완료", day: item.day, systemImage: "checkmark.circle", isActive: false, isLocked: false, lockNote: nil, targetSectionID: nil, route: .inert)
                 case "task-day2":
-                    return SearchItem(id: item.id, kind: item.kind, title: item.title, subtitle: "Market · +8", day: item.day, systemImage: "circle.dotted", isActive: true, isLocked: false, lockNote: nil, targetSectionID: "top", route: .today)
+                    return SearchItem(id: item.id, kind: item.kind, title: item.title, subtitle: "시장 · +8", day: item.day, systemImage: "circle.dotted", isActive: true, isLocked: false, lockNote: nil, targetSectionID: "top", route: .today)
                 default:
                     return item
                 }
             }
 
         items.append(contentsOf: [
-            SearchItem(id: "section-market-keywords", kind: .section, title: "지난 30일 키워드", subtitle: "ICP 코호트 · 총 287 멘션", day: nil, systemImage: "text.magnifyingglass", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "market-keywords", route: .today),
+            SearchItem(id: "section-market-keywords", kind: .section, title: "지난 30일 키워드", subtitle: "고객 후보 묶음 · 총 287 멘션", day: nil, systemImage: "text.magnifyingglass", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "market-keywords", route: .today),
             SearchItem(id: "section-market-sources", kind: .section, title: "소스별 신호", subtitle: "Threads · IH · X", day: nil, systemImage: "chart.line.uptrend.xyaxis", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "market-sources", route: .today),
             SearchItem(id: "section-market-alternatives", kind: .section, title: "대안 비교 매트릭스", subtitle: "7개 대안 · 갭 비교", day: nil, systemImage: "tablecells", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "market-alternatives", route: .today),
             SearchItem(id: "section-market-gap", kind: .section, title: "시장 빈 자리", subtitle: "한국어 + 30일 강제 과제", day: nil, systemImage: "scope", isActive: false, isLocked: false, lockNote: nil, targetSectionID: "market-gap", route: .today),
@@ -1558,8 +1558,8 @@ struct OpenDesignDayContent {
                 items.append(SearchItem(
                     id: item.id,
                     kind: item.kind,
-                    title: "ICP v0 질문을 정해요",
-                    subtitle: "ICP · adaptive \(steps.count)Q",
+                    title: "고객 후보 질문을 정해요",
+                    subtitle: "고객 후보 · 맞춤 \(steps.count)Q",
                     day: item.day,
                     systemImage: item.systemImage,
                     isActive: item.isActive,
@@ -2577,9 +2577,9 @@ struct OpenDesignDayDraft: Equatable {
             return alignmentPlan.qualityGate.failGate
         }
         if isAntiSignal {
-            return "현재 후보는 Anti-ICP 경계에 걸립니다. Day 3 인터뷰 대상에 넣기 전 실제 행동 증거를 한 번 더 확인한다."
+            return "현재 후보는 제외 신호에 걸립니다. Day 3 인터뷰 대상에 넣기 전 실제 행동 증거를 한 번 더 확인한다."
         }
-        return "Day 3 Mom Test 인터뷰 첫 후보로 올리고, transcript와 업무 일지를 docs/ICP.md의 evidence 섹션에 연결한다."
+        return "Day 3 실제 행동 인터뷰 첫 후보로 올리고, 인터뷰 원문과 업무 일지를 docs/ICP.md의 증거 섹션에 연결한다."
     }
 
     var markdown: String {
@@ -2590,25 +2590,25 @@ struct OpenDesignDayDraft: Equatable {
             return personalizedMarkdown(plan: plan)
         }
         return """
-        # Ideal Customer Profile
+        # 고객 후보
 
-        > Write target: docs/ICP.md
-        > Source: Day 1 interview flow
+        > 기록 위치: docs/ICP.md
+        > 출처: Day 1 질문 흐름
 
-        ## Our ICP
+        ## 이번 주 고객 후보
         이번 주 바로 연락할 수 있는 "\(distance)" 중, "\(tool)"를 매일 쓰고 "\(stuck)"에서 멈춘 macOS 1인 개발자.
 
-        ## Evidence from Day 1
+        ## Day 1 근거
         - 거리: \(distance)
         - 도구: \(tool)
         - 막힌 단계: \(stuck)
         - 지난 7일 행동: \(action)
-        - 필수 입력: 프로젝트 path, 업무 일지, 인터뷰 transcript, BIP 기록
+        - 필수 입력: 프로젝트 path, 업무 일지, 인터뷰 원문, 공개 기록
 
-        ## Anti-ICP guardrail
+        ## 제외 신호
         "언젠가", "좋네요"만 말하고 지난 7일 실제 행동이 없으면 Day 3 인터뷰 대상에서 제외한다.
 
-        ## Next action
+        ## 다음 행동
         \(recommendation)
         """
     }
@@ -2638,14 +2638,14 @@ struct OpenDesignDayDraft: Equatable {
         if let plan {
             let firstRule = plan.antiIcp.rules.first?.label ?? "최근 사건과 현재 대안이 없는 후보"
             if isAntiSignal {
-                return "선택한 답변이 Anti-ICP 경계에 걸립니다. \(plan.antiIcp.summary) \(firstRule)을 확인하고, 실제 need/have/behavior가 없으면 Day 3 인터뷰에서 제외하세요."
+                return "선택한 답변이 제외 신호에 걸립니다. \(plan.antiIcp.summary) \(firstRule)을 확인하고, 실제 필요/현재 행동/확인할 행동이 없으면 Day 3 인터뷰에서 제외하세요."
             }
-            return "\(plan.antiIcp.summary) 첫 guardrail: \(firstRule)"
+            return "\(plan.antiIcp.summary) 첫 제외 기준: \(firstRule)"
         }
         if isAntiSignal {
-            return "지난 7일 행동 없음 신호가 있어 Day 3 인터뷰 전에 실제 사건을 한 번 더 확인하세요. 박주영이 \"언젠가 해볼게요\" 또는 \"좋은 아이디어네요\"로 답하면 후보 교체. Mom Test 기준 그대로."
+            return "지난 7일 행동 없음 신호가 있어 Day 3 인터뷰 전에 실제 사건을 한 번 더 확인하세요. 박주영이 \"언젠가 해볼게요\" 또는 \"좋은 아이디어네요\"로 답하면 후보 교체."
         }
-        return "좋은 신호는 지난주에 같은 문제로 시간을 쓴 사건입니다. 박주영이 \"언젠가 해볼게요\" 또는 \"좋은 아이디어네요\"로 답하면 후보 교체. Mom Test 기준 그대로."
+        return "좋은 신호는 지난주에 같은 문제로 시간을 쓴 사건입니다. 박주영이 \"언젠가 해볼게요\" 또는 \"좋은 아이디어네요\"로 답하면 후보 교체."
     }
 
     private func alignmentMarkdown(plan: Day1AlignmentPlan) -> String {
@@ -2658,9 +2658,9 @@ struct OpenDesignDayDraft: Equatable {
         return """
         # Day 1 핵심 가설
 
-        > Source: Day 1 alignment flow
-        > Based on: workspace scan + user selections
-        > Write target: docs/GOAL.md, docs/ICP.md, docs/SPEC.md
+        > 출처: Day 1 목표 정렬 흐름
+        > 기준: 워크스페이스 확인 + 사용자 선택
+        > 기록 위치: docs/GOAL.md, docs/ICP.md, docs/SPEC.md
 
         ## 확정
         - 목표: \(snapshot.goal)
@@ -2677,8 +2677,8 @@ struct OpenDesignDayDraft: Equatable {
         ## 남은 가정
         \(assumptionLines.joined(separator: "\n"))
 
-        ## Quality Gate
-        Score: \(String(format: "%.1f", plan.qualityGate.score))/10 · \(plan.qualityGate.label)
+        ## 품질 점수
+        점수: \(String(format: "%.1f", plan.qualityGate.score))/10 · \(plan.qualityGate.label)
         \(criteria.joined(separator: "\n"))
 
         ## Day 2 검증 기준
@@ -2810,18 +2810,18 @@ struct OpenDesignDayDraft: Equatable {
             ? ["- 아직 선택된 답변 없음"]
             : selectedAnswers.map { "- \($0.title): \($0.value)" }
         return """
-        # Ideal Customer Profile
+        # 고객 후보
 
-        > Write target: docs/ICP.md
-        > Source: Day 1 adaptive scan plan
+        > 기록 위치: docs/ICP.md
+        > 출처: Day 1 맞춤 확인 계획
 
-        ## Description
+        ## 설명
         \(plan.icpDraft.description)
 
-        ## Criteria
+        ## 기준
         \(markdownList(plan.icpDraft.criteria))
 
-        ## Why they matter
+        ## 중요한 이유
         \(markdownList(plan.icpDraft.whyTheyMatter))
 
         ## Needs
@@ -2836,13 +2836,13 @@ struct OpenDesignDayDraft: Equatable {
         ## Day 1 selections
         \(selectedLines.joined(separator: "\n"))
 
-        ## Evidence
+        ## 근거
         \(markdownList(plan.icpDraft.evidence))
 
-        ## Reference customers to find
+        ## 먼저 물어볼 사람
         \(markdownList(plan.icpDraft.referenceCustomersToFind))
 
-        ## Anti-ICP guardrail
+        ## 제외 신호 guardrail
         \(plan.antiIcp.summary)
         \(markdownList(plan.antiIcp.rules.map { "\($0.label) — \($0.reason)" }))
         """
@@ -3146,7 +3146,7 @@ struct OpenDesignDayPageView: View {
     let prepareWorkHistory: () -> Void
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
-    let officeHoursScreen: AnyView?
+    let officeHoursScreen: ((Bool) -> AnyView)?
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
     let day1HandoffError: String?
@@ -3171,6 +3171,7 @@ struct OpenDesignDayPageView: View {
     @State private var requestedDayCompletionID: String?
     @State private var keyboardMonitor: Any?
     @State private var isRightSidebarExpanded = false
+    @State private var isOfficeHoursRightSidebarExpanded = true
 
     init(
         content: OpenDesignDayContent = .day1,
@@ -3198,7 +3199,7 @@ struct OpenDesignDayPageView: View {
         prepareWorkHistory: @escaping () -> Void = {},
         day1DocPreviews: [IddDocPreview] = [],
         day1HandoffPromptCard: AnyView? = nil,
-        officeHoursScreen: AnyView? = nil,
+        officeHoursScreen: ((Bool) -> AnyView)? = nil,
         activeDay1HandoffDocType: String? = nil,
         pendingDay1HandoffDocType: String? = nil,
         day1HandoffError: String? = nil,
@@ -3261,6 +3262,11 @@ struct OpenDesignDayPageView: View {
                 width: geometry.size.width,
                 isMetaPanelExpanded: isRightSidebarExpanded
             )
+            let officeHoursContentWidth = max(0, geometry.size.width - layout.railWidth)
+            let officeHoursLayout = OfficeHoursScreenLayout(
+                width: officeHoursContentWidth,
+                isMetaPanelExpanded: isOfficeHoursRightSidebarExpanded
+            )
 
             ZStack {
                 OpenDesignDayShell(
@@ -3295,6 +3301,8 @@ struct OpenDesignDayPageView: View {
                     day1DocPreviews: day1DocPreviews,
                     day1HandoffPromptCard: day1HandoffPromptCard,
                     officeHoursScreen: officeHoursScreen,
+                    isOfficeHoursRightSidebarExpanded: isOfficeHoursRightSidebarExpanded,
+                    isOfficeHoursRightSidebarVisible: officeHoursLayout.showsMeta,
                     activeDay1HandoffDocType: activeDay1HandoffDocType,
                     pendingDay1HandoffDocType: pendingDay1HandoffDocType,
                     day1HandoffError: day1HandoffError,
@@ -3307,7 +3315,10 @@ struct OpenDesignDayPageView: View {
                     advanceToNextDay: advanceToNextDay,
                     selectDay: selectDay,
                     shareSummary: dayShareSummary,
-                    toggleRightSidebar: toggleRightSidebar
+                    toggleRightSidebar: toggleRightSidebar,
+                    toggleOfficeHoursRightSidebar: {
+                        toggleOfficeHoursRightSidebar(isCurrentlyVisible: officeHoursLayout.showsMeta)
+                    }
                 )
 
                 Color.clear
@@ -3656,6 +3667,17 @@ struct OpenDesignDayPageView: View {
         }
     }
 
+    private func toggleOfficeHoursRightSidebar(isCurrentlyVisible: Bool) {
+        let nextValue = !isCurrentlyVisible
+        if reduceMotion {
+            isOfficeHoursRightSidebarExpanded = nextValue
+        } else {
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                isOfficeHoursRightSidebarExpanded = nextValue
+            }
+        }
+    }
+
     private func advanceIntroIfNeeded() -> Bool {
         if !interaction.missionAccepted {
             acceptMission()
@@ -3788,7 +3810,7 @@ struct OpenDesignDayPageView: View {
         }.joined(separator: "\n")
 
         return """
-        Agentic30 Day 1 · Foundation / ICP 좁히기
+        Agentic30 Day 1 · 초기 검증 / 고객 후보 좁히기
         먼저 도울 사람을 정해요
         진행: \(progress) · \(interaction.progressStepCount)/\(interaction.workflowStepCount) · \(interaction.progressPercent)%
 
@@ -3875,7 +3897,9 @@ struct OpenDesignDayShell: View {
     let prepareWorkHistory: () -> Void
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
-    let officeHoursScreen: AnyView?
+    let officeHoursScreen: ((Bool) -> AnyView)?
+    let isOfficeHoursRightSidebarExpanded: Bool
+    let isOfficeHoursRightSidebarVisible: Bool
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
     let day1HandoffError: String?
@@ -3889,6 +3913,7 @@ struct OpenDesignDayShell: View {
     let selectDay: (Int) -> Void
     let shareSummary: String
     let toggleRightSidebar: () -> Void
+    let toggleOfficeHoursRightSidebar: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -3906,7 +3931,9 @@ struct OpenDesignDayShell: View {
                 )
             } else if isOfficeHoursPresented {
                 OpenDesignOfficeHoursTitlebar(
-                    openSearch: toggleSearch
+                    openSearch: toggleSearch,
+                    isRightSidebarVisible: isOfficeHoursRightSidebarVisible,
+                    toggleRightSidebar: toggleOfficeHoursRightSidebar
                 )
             } else if let market = content.market {
                 OpenDesignMarketTitlebar(
@@ -3977,7 +4004,7 @@ struct OpenDesignDayShell: View {
                     }
                 } else if isOfficeHoursPresented {
                     if let officeHoursScreen {
-                        officeHoursScreen
+                        officeHoursScreen(isOfficeHoursRightSidebarExpanded)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.995)))
                     } else {
@@ -4157,13 +4184,13 @@ private struct OpenDesignDayTitlebar: View {
         ZStack {
             HStack(spacing: 8) {
                 Spacer(minLength: 82)
-                Text("Day 1 · Foundation")
+                Text("Day 1 · 초기 검증")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(OpenDesignDayColor.fg)
                 Text("/")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(OpenDesignDayColor.mutedDeep)
-                Text("ICP 좁히기")
+                Text("고객 후보 좁히기")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(OpenDesignDayColor.fgSecondary)
                 Spacer(minLength: 0)
@@ -4213,6 +4240,8 @@ private struct OpenDesignDayTitlebar: View {
 
 private struct OpenDesignOfficeHoursTitlebar: View {
     let openSearch: () -> Void
+    let isRightSidebarVisible: Bool
+    let toggleRightSidebar: () -> Void
 
     var body: some View {
         ZStack {
@@ -4242,19 +4271,12 @@ private struct OpenDesignOfficeHoursTitlebar: View {
                     action: openSearch
                 )
                 OpenDesignToolbarButton(
-                    systemImage: "square.and.arrow.down",
-                    label: "문서 내보내기",
-                    usesOfficeHoursPalette: true,
-                    accessibilityIdentifier: "opendesign.officeHours.export",
-                    action: {}
-                )
-                OpenDesignToolbarButton(
                     systemImage: "sidebar.right",
-                    label: "우측 패널",
-                    isOn: true,
+                    label: isRightSidebarVisible ? "우측 사이드바 닫기" : "우측 사이드바 열기",
+                    isOn: isRightSidebarVisible,
                     usesOfficeHoursPalette: true,
                     accessibilityIdentifier: "opendesign.officeHours.panel",
-                    action: {}
+                    action: toggleRightSidebar
                 )
             }
             .padding(.trailing, 12)
@@ -5277,7 +5299,90 @@ func openDesignHighlightedAttributedText(
     return value
 }
 
-private func openDesignAttributedText(
+/// Style-aware dynamic emphasis renderer (Stage 2). Matches each `EmphasisSpan`
+/// phrase in `text` (longest-first, non-overlapping, case/diacritic-insensitive,
+/// like `openDesignHighlightedAttributedText`) and styles it strong/mark/code
+/// using the day palette. When `emphasis` is empty, callers should keep using
+/// the legacy `highlightPhrases` path; this returns plain body text in that case.
+func openDesignEmphasisAttributedText(
+    _ text: String,
+    emphasis: [EmphasisSpan],
+    bodySize: CGFloat,
+    bodyWeight: Font.Weight = .regular,
+    bodyColor: Color = OpenDesignDayColor.fgSecondary
+) -> AttributedString {
+    func bodyRun(_ value: Substring) -> AttributedString {
+        var run = AttributedString(String(value))
+        run.font = .system(size: bodySize, weight: bodyWeight)
+        run.foregroundColor = bodyColor
+        return run
+    }
+
+    let normalized = emphasis
+        .map { (phrase: $0.phrase.trimmingCharacters(in: .whitespacesAndNewlines), style: $0.style) }
+        .filter { !$0.phrase.isEmpty }
+        .sorted { $0.phrase.count > $1.phrase.count }
+
+    guard !text.isEmpty, !normalized.isEmpty else {
+        var base = AttributedString(text)
+        base.font = .system(size: bodySize, weight: bodyWeight)
+        base.foregroundColor = bodyColor
+        return base
+    }
+
+    var styledRanges: [(range: Range<String.Index>, style: EmphasisStyle)] = []
+    for entry in normalized {
+        var searchRange = text.startIndex..<text.endIndex
+        while let range = text.range(
+            of: entry.phrase,
+            options: [.caseInsensitive, .diacriticInsensitive],
+            range: searchRange
+        ) {
+            if !styledRanges.contains(where: { $0.range.overlaps(range) }) {
+                styledRanges.append((range, entry.style))
+            }
+            searchRange = range.upperBound..<text.endIndex
+        }
+    }
+    styledRanges.sort { $0.range.lowerBound < $1.range.lowerBound }
+
+    guard !styledRanges.isEmpty else {
+        var base = AttributedString(text)
+        base.font = .system(size: bodySize, weight: bodyWeight)
+        base.foregroundColor = bodyColor
+        return base
+    }
+
+    var result = AttributedString()
+    var cursor = text.startIndex
+    for entry in styledRanges {
+        if cursor < entry.range.lowerBound {
+            result += bodyRun(text[cursor..<entry.range.lowerBound])
+        }
+        var run = AttributedString(String(text[entry.range]))
+        switch entry.style {
+        case .strong:
+            run.font = .system(size: bodySize, weight: .semibold)
+            run.foregroundColor = OpenDesignDayColor.fg
+        case .mark:
+            run.font = .system(size: bodySize, weight: .semibold)
+            run.foregroundColor = OpenDesignDayColor.amber
+            run.backgroundColor = OpenDesignDayColor.amberDim
+        case .code:
+            run.font = .system(size: bodySize, weight: .medium, design: .monospaced)
+            run.foregroundColor = OpenDesignDayColor.accent
+            run.backgroundColor = OpenDesignDayColor.bgDarker
+        }
+        result += run
+        cursor = entry.range.upperBound
+    }
+    if cursor < text.endIndex {
+        result += bodyRun(text[cursor...])
+    }
+    return result
+}
+
+func openDesignAttributedText(
     _ segments: [OpenDesignInlineSegment],
     bodySize: CGFloat,
     bodyWeight: Font.Weight = .regular,
@@ -5448,7 +5553,7 @@ private struct OpenDesignMarketMainView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        OpenDesignSectionHeader(title: "지난 30일 키워드 — ICP \"전업 1인 개발자\" 코호트", meta: market.keywordMeta)
+                        OpenDesignSectionHeader(title: "지난 30일 키워드 — 고객 후보 \"전업 1인 개발자\" 묶음", meta: market.keywordMeta)
                             .openDesignSearchPulse(id: "market-keywords", isActive: isSearchPulseActive("market-keywords"))
                             .id("market-keywords")
 
@@ -6296,11 +6401,9 @@ private struct OpenDesignDayGoalSelectionCard: View {
 
             if let draft = activeDraft {
                 VStack(spacing: 1) {
+                    goalDetailRow("고객", draft.customer, emphasis: draft.customerEmphasis)
+                    goalDetailRow("문제", draft.problem, emphasis: draft.problemEmphasis)
                     goalDetailRow("목표", draft.goalText, strong: true)
-                    goalDetailRow("고객", draft.customer)
-                    goalDetailRow("문제", draft.problem)
-                    goalDetailRow("확인", draft.validationAction)
-                    goalDetailRow("근거", goalEvidenceSummary(for: draft))
                 }
                 .background(OpenDesignDayColor.borderSoft)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -6382,9 +6485,12 @@ private struct OpenDesignDayGoalSelectionCard: View {
                             .foregroundStyle(OpenDesignDayColor.amber)
                     }
                 }
-                Text(draft.goalType.promptHint)
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(OpenDesignDayColor.muted)
+                Text(openDesignAttributedText(
+                    [.body(draft.goalType.promptHint)],
+                    bodySize: 11.5,
+                    bodyWeight: .medium,
+                    bodyColor: OpenDesignDayColor.muted
+                ))
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -6436,26 +6542,40 @@ private struct OpenDesignDayGoalSelectionCard: View {
             .overlay(Capsule().stroke(border, lineWidth: 1))
     }
 
-    private func goalDetailRow(_ key: String, _ value: String, strong: Bool = false) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 14) {
+    private func goalDetailRow(
+        _ key: String,
+        _ value: String,
+        strong: Bool = false,
+        emphasis: [EmphasisSpan] = []
+    ) -> some View {
+        let baseColor = strong ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary
+        let baseWeight: Font.Weight = strong ? .semibold : .medium
+        return HStack(alignment: .firstTextBaseline, spacing: 14) {
             Text(key)
                 .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                 .foregroundStyle(OpenDesignDayColor.fgSecondary)
                 .frame(width: 48, alignment: .leading)
-            Text(value)
-                .font(.system(size: 12.5, weight: strong ? .semibold : .medium))
-                .foregroundStyle(strong ? OpenDesignDayColor.fg : OpenDesignDayColor.fgSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            Group {
+                if emphasis.isEmpty {
+                    Text(value)
+                        .font(.system(size: 12.5, weight: baseWeight))
+                        .foregroundStyle(baseColor)
+                } else {
+                    Text(openDesignEmphasisAttributedText(
+                        value,
+                        emphasis: emphasis,
+                        bodySize: 12.5,
+                        bodyWeight: baseWeight,
+                        bodyColor: baseColor
+                    ))
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(OpenDesignDayColor.surface)
-    }
-
-    private func goalEvidenceSummary(for draft: Day1GoalDraft) -> String {
-        let summary = draft.evidenceRefs.prefix(3).joined(separator: ", ").trimmingCharacters(in: .whitespacesAndNewlines)
-        return summary.isEmpty ? "scan 근거 없음" : summary
     }
 }
 
@@ -6864,7 +6984,7 @@ private struct OpenDesignDayMainView: View {
             let refs = plan.signals.evidenceRefs.map(\.path).prefix(2).joined(separator: ", ")
             let missing = plan.signals.missingAssumptions.prefix(2).joined(separator: ", ")
             return [
-                ("ICP 가설", [.body(plan.signals.currentIcpGuess ?? "아직 없음")]),
+                ("고객 후보 가설", [.body(plan.signals.currentIcpGuess ?? "아직 없음")]),
                 ("핵심 문제", [.mark(plan.signals.problem ?? "가설 필요")]),
                 ("근거/빈칸", [.code(refs.isEmpty ? "evidence 없음" : refs), .body(missing.isEmpty ? "" : " · missing \(missing)")]),
             ]
@@ -6876,7 +6996,7 @@ private struct OpenDesignDayMainView: View {
                     .body("오늘 만든 것 "),
                     .strong("0건"),
                     .body(", 막힌 것 "),
-                    .mark("\"ICP가 너무 넓다\""),
+                    .mark("\"고객 후보가 너무 넓다\""),
                     .body(", 배운 것 "),
                     .strong("\"강의만 보는 동료 ≠ AI로 무한 빌드하는 동료\""),
                     .body("."),
@@ -6887,13 +7007,13 @@ private struct OpenDesignDayMainView: View {
                 [
                     .body("Zoom "),
                     .strong("1건"),
-                    .body(" (45분, transcript 6.7KB). 답변자 본인이 "),
+                    .body(" (45분, 인터뷰 원문 6.7KB). 답변자 본인이 "),
                     .strong("\"검증 없이 5번 빌드\""),
                     .body("한 사례."),
                 ]
             ),
             (
-                "BIP",
+                "공개 기록",
                 [
                     .strong("Threads 0건"),
                     .body(", "),
@@ -6913,6 +7033,12 @@ private struct OpenDesignDayMainView: View {
         alignmentPlan: Day1AlignmentPlan
     ) -> [OpenDesignSignalSegment] {
         let value = openDesignDisplaySignalDigestValue(for: row, alignmentPlan: alignmentPlan)
+        // Stage 2: split the row value into style-aware spans when the sidecar
+        // attached emphasis that actually matches the displayed value. Falls back
+        // to the legacy single-style tone mapping otherwise.
+        if let emphasized = Self.signalEmphasisSegments(value: value, emphasis: row.emphasis) {
+            return emphasized
+        }
         switch row.tone?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "strong", "accent":
             return [.strong(value)]
@@ -6932,6 +7058,61 @@ private struct OpenDesignDayMainView: View {
                 return [.body(value)]
             }
         }
+    }
+
+    /// Split `value` into ordered body/styled signal segments from emphasis spans
+    /// (longest-first, non-overlapping, case/diacritic-insensitive). Returns nil
+    /// when there is no emphasis or no span matches, so the caller keeps the
+    /// legacy single-style tone path.
+    private static func signalEmphasisSegments(
+        value: String,
+        emphasis: [EmphasisSpan]?
+    ) -> [OpenDesignSignalSegment]? {
+        guard let emphasis, !emphasis.isEmpty, !value.isEmpty else { return nil }
+        let normalized = emphasis
+            .map { (phrase: $0.phrase.trimmingCharacters(in: .whitespacesAndNewlines), style: $0.style) }
+            .filter { !$0.phrase.isEmpty }
+            .sorted { $0.phrase.count > $1.phrase.count }
+        guard !normalized.isEmpty else { return nil }
+
+        var styledRanges: [(range: Range<String.Index>, style: EmphasisStyle)] = []
+        for entry in normalized {
+            var searchRange = value.startIndex..<value.endIndex
+            while let range = value.range(
+                of: entry.phrase,
+                options: [.caseInsensitive, .diacriticInsensitive],
+                range: searchRange
+            ) {
+                if !styledRanges.contains(where: { $0.range.overlaps(range) }) {
+                    styledRanges.append((range, entry.style))
+                }
+                searchRange = range.upperBound..<value.endIndex
+            }
+        }
+        guard !styledRanges.isEmpty else { return nil }
+        styledRanges.sort { $0.range.lowerBound < $1.range.lowerBound }
+
+        var segments: [OpenDesignSignalSegment] = []
+        var cursor = value.startIndex
+        for entry in styledRanges {
+            if cursor < entry.range.lowerBound {
+                segments.append(.body(String(value[cursor..<entry.range.lowerBound])))
+            }
+            let chunk = String(value[entry.range])
+            switch entry.style {
+            case .strong:
+                segments.append(.strong(chunk))
+            case .mark:
+                segments.append(.mark(chunk))
+            case .code:
+                segments.append(.code(chunk))
+            }
+            cursor = entry.range.upperBound
+        }
+        if cursor < value.endIndex {
+            segments.append(.body(String(value[cursor...])))
+        }
+        return segments
     }
 
     private static func displayProjectDigestValue(_ value: String) -> String {
@@ -8075,12 +8256,16 @@ private struct OpenDesignHypothesisSummaryRow: Identifiable {
     let label: String
     let value: String
     let highlightPhrases: [String]
+    /// Style-aware dynamic emphasis spans (Stage 2). When empty, the row renders
+    /// via the legacy `highlightPhrases` single-style (amber) path.
+    let emphasis: [EmphasisSpan]
 
-    init(id: String, label: String, value: String, highlightPhrases: [String] = []) {
+    init(id: String, label: String, value: String, highlightPhrases: [String] = [], emphasis: [EmphasisSpan] = []) {
         self.id = id
         self.label = label
         self.value = value
         self.highlightPhrases = highlightPhrases
+        self.emphasis = emphasis
     }
 }
 
@@ -8100,7 +8285,7 @@ private struct OpenDesignDayDocumentStep: Identifiable {
     static func ordered(previews: [IddDocPreview]) -> [OpenDesignDayDocumentStep] {
         let order = [
             ("goal", "GOAL", "docs/GOAL.md"),
-            ("icp", "ICP", "docs/ICP.md"),
+            ("icp", "고객 후보", "docs/ICP.md"),
             ("values", "VALUES", "docs/VALUES.md"),
             ("spec", "SPEC", "docs/SPEC.md"),
         ]
@@ -8161,19 +8346,22 @@ private struct OpenDesignHypothesisConfirmationCard: View {
                     id: "icp",
                     label: "고객",
                     value: icpValue,
-                    highlightPhrases: selectedOptionHighlightPhrases(stepID: 1) ?? alignmentPlan.components.icp.highlightPhrases ?? []
+                    highlightPhrases: selectedOptionHighlightPhrases(stepID: 1) ?? alignmentPlan.components.icp.highlightPhrases ?? [],
+                    emphasis: hypothesisRowEmphasis(component: alignmentPlan.components.icp)
                 ),
                 OpenDesignHypothesisSummaryRow(
                     id: "pain",
                     label: "문제",
                     value: painValue,
-                    highlightPhrases: selectedOptionHighlightPhrases(stepID: 2) ?? alignmentPlan.components.painPoint.highlightPhrases ?? []
+                    highlightPhrases: selectedOptionHighlightPhrases(stepID: 2) ?? alignmentPlan.components.painPoint.highlightPhrases ?? [],
+                    emphasis: hypothesisRowEmphasis(component: alignmentPlan.components.painPoint)
                 ),
                 OpenDesignHypothesisSummaryRow(
                     id: "outcome",
                     label: "확인할 행동",
                     value: outcomeValue,
-                    highlightPhrases: selectedOptionHighlightPhrases(stepID: 3) ?? alignmentPlan.components.outcome.highlightPhrases ?? []
+                    highlightPhrases: selectedOptionHighlightPhrases(stepID: 3) ?? alignmentPlan.components.outcome.highlightPhrases ?? [],
+                    emphasis: hypothesisRowEmphasis(component: alignmentPlan.components.outcome)
                 ),
             ]
         }
@@ -8334,22 +8522,47 @@ private struct OpenDesignHypothesisConfirmationCard: View {
         }
     }
 
+    /// Choose the style-aware emphasis renderer when the row carries `emphasis`
+    /// spans that actually match the value; otherwise keep the legacy
+    /// `highlightPhrases` amber-highlight path (back-compat).
+    private func hypothesisRowAttributedValue(_ row: OpenDesignHypothesisSummaryRow) -> AttributedString {
+        let bodyWeight: Font.Weight = row.id == "icp" ? .semibold : .regular
+        let matchingEmphasis = row.emphasis.filter { span in
+            let phrase = span.phrase.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !phrase.isEmpty else { return false }
+            return row.value.range(
+                of: phrase,
+                options: [.caseInsensitive, .diacriticInsensitive]
+            ) != nil
+        }
+        if !matchingEmphasis.isEmpty {
+            return openDesignEmphasisAttributedText(
+                row.value,
+                emphasis: matchingEmphasis,
+                bodySize: 13.5,
+                bodyWeight: bodyWeight,
+                bodyColor: OpenDesignDayColor.fgSecondary
+            )
+        }
+        return openDesignHighlightedAttributedText(
+            row.value,
+            phrases: row.highlightPhrases,
+            bodySize: 13.5,
+            bodyWeight: bodyWeight,
+            bodyColor: OpenDesignDayColor.fgSecondary,
+            highlightWeight: .semibold,
+            highlightColor: OpenDesignDayColor.amber,
+            highlightBackground: OpenDesignDayColor.amberDim
+        )
+    }
+
     private func hypothesisRow(_ row: OpenDesignHypothesisSummaryRow) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(row.label)
                 .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                 .foregroundStyle(OpenDesignDayColor.muted)
                 .frame(width: 68, alignment: .leading)
-            Text(openDesignHighlightedAttributedText(
-                row.value,
-                phrases: row.highlightPhrases,
-                bodySize: 13.5,
-                bodyWeight: row.id == "icp" ? .semibold : .regular,
-                bodyColor: OpenDesignDayColor.fgSecondary,
-                highlightWeight: .semibold,
-                highlightColor: OpenDesignDayColor.amber,
-                highlightBackground: OpenDesignDayColor.amberDim
-            ))
+            Text(hypothesisRowAttributedValue(row))
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -8535,6 +8748,15 @@ private struct OpenDesignHypothesisConfirmationCard: View {
             return nil
         }
         return openDesignOptionTitleHighlightPhrases(option.highlightPhrases, for: option.title)
+    }
+
+    /// Style-aware dynamic emphasis for a hypothesis row (Stage 2). Sourced from
+    /// the alignment component's statement-level emphasis spans. The renderer
+    /// only styles phrases that are actual substrings of the displayed value, so
+    /// when an option override changes the value, non-matching spans degrade to
+    /// plain text — preserving the legacy look.
+    private func hypothesisRowEmphasis(component: Day1AlignmentComponent) -> [EmphasisSpan] {
+        component.emphasis ?? []
     }
 
     private var confirmButtonTitle: String {
@@ -9267,7 +9489,7 @@ private struct OpenDesignSearchPaletteView: View {
                                     Text("결과 없음")
                                         .font(.system(size: 13, weight: .medium))
                                         .foregroundStyle(OpenDesignDayColor.fg)
-                                    Text("“day 3”, “인터뷰”, “BIP” 같은 키워드를 시도해보세요.")
+                                    Text("“day 3”, “인터뷰”, “공개 기록” 같은 키워드를 시도해보세요.")
                                         .font(.system(size: 12.5, weight: .regular))
                                         .foregroundStyle(OpenDesignDayColor.muted)
                                 }
@@ -9526,7 +9748,7 @@ private func openDesignGuideAttributedText(_ body: String) -> AttributedString {
     }
 
     for needle in [
-        "ICP 한 문장",
+        "고객 후보 한 문장",
         "후보 1명",
         "작은 계약",
         "\"좋네요\"",

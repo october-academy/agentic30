@@ -16,6 +16,7 @@ import {
   normalizeDayRecord,
   loadDayProgress,
   patchDayStep,
+  setDayActiveStep,
   ensureChallengeStart,
   resolveDayProgressPath,
 } from "../sidecar/day-progress-state.mjs";
@@ -148,6 +149,63 @@ test("ensureChallengeStart records once and is idempotent", async () => {
     // file on disk reflects the stable start
     const onDisk = JSON.parse(await fs.readFile(resolveDayProgressPath(ws), "utf8"));
     assert.equal(onDisk.challengeStartedAt, "2026-06-01");
+  } finally {
+    await fs.rm(ws, { recursive: true, force: true });
+  }
+});
+
+test("setDayActiveStep marks earlier steps done and the target active", async () => {
+  const ws = await tmpWorkspace();
+  try {
+    const now = new Date(2026, 5, 7, 9, 0, 0);
+    // scan complete → goal active on a standard day (Day 7)
+    const afterScan = await setDayActiveStep({ workspaceRoot: ws, day: 7, stepId: "goal", goalText: "Go/No-Go 결정하기", now });
+    const d7 = afterScan.days["7"];
+    assert.equal(d7.steps.scan, "done");
+    assert.equal(d7.steps.retro, "done"); // auto-completed (no dedicated screen)
+    assert.equal(d7.steps.goal, "active");
+    assert.equal(d7.steps.interview, "pending");
+    assert.equal(d7.steps.execution, "pending");
+    assert.equal(d7.goalText, "Go/No-Go 결정하기");
+    assert.equal(afterScan.challengeStartedAt, "2026-06-07");
+
+    // goal confirmed → interview active, goal now done
+    const afterGoal = await setDayActiveStep({ workspaceRoot: ws, day: 7, stepId: "interview", now: new Date(2026, 5, 7, 10, 0, 0) });
+    const g7 = afterGoal.days["7"];
+    assert.equal(g7.steps.goal, "done");
+    assert.equal(g7.steps.interview, "active");
+    assert.equal(g7.steps.execution, "pending");
+  } finally {
+    await fs.rm(ws, { recursive: true, force: true });
+  }
+});
+
+test("setDayActiveStep is monotonic — a re-scan never regresses past progress", async () => {
+  const ws = await tmpWorkspace();
+  try {
+    const now = new Date(2026, 5, 7, 9, 0, 0);
+    await setDayActiveStep({ workspaceRoot: ws, day: 7, stepId: "interview", now }); // advanced to interview
+    // a later re-scan targets the earlier "goal" step — must NOT pull back
+    const afterRescan = await setDayActiveStep({ workspaceRoot: ws, day: 7, stepId: "goal", now: new Date(2026, 5, 7, 11, 0, 0) });
+    const d7 = afterRescan.days["7"];
+    assert.equal(d7.steps.goal, "done");      // stays done
+    assert.equal(d7.steps.interview, "active"); // stays active (no regression)
+  } finally {
+    await fs.rm(ws, { recursive: true, force: true });
+  }
+});
+
+test("setDayActiveStep on Day 1 uses the day1 step set", async () => {
+  const ws = await tmpWorkspace();
+  try {
+    const now = new Date(2026, 5, 1, 9, 0, 0);
+    const afterGoal = await setDayActiveStep({ workspaceRoot: ws, day: 1, stepId: "first_interview", now });
+    const d1 = afterGoal.days["1"];
+    assert.deepEqual(Object.keys(d1.steps), ["onboarding", "scan", "goal", "first_interview"]);
+    assert.equal(d1.steps.onboarding, "done");
+    assert.equal(d1.steps.scan, "done");
+    assert.equal(d1.steps.goal, "done");
+    assert.equal(d1.steps.first_interview, "active");
   } finally {
     await fs.rm(ws, { recursive: true, force: true });
   }

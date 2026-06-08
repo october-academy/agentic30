@@ -739,8 +739,30 @@ final class agentic30UITests: XCTestCase {
         XCTAssertFalse(app.buttons["opendesign.day.mission.accept"].exists)
         XCTAssertFalse(app.buttons["opendesign.day.share"].exists)
         XCTAssertFalse(app.buttons["opendesign.day.meta.toggle"].exists)
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.export").exists)
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.panel").exists)
+        XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.export").exists)
+        let officeHoursPanelToggle = app.buttons["opendesign.officeHours.panel"]
+        XCTAssertTrue(officeHoursPanelToggle.exists)
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.panel", containing: "닫기", timeout: 2))
+        assertOpenDesignResponsiveColumns(
+            surface: workspaceSurface.frame,
+            rail: rail.frame,
+            tasks: sessions.frame,
+            main: main.frame,
+            meta: meta.frame,
+            expectedRailWidth: 52,
+            expectedTaskSidebarWidth: 240,
+            expectedMetaPanelWidth: 280
+        )
+        let expandedOfficeHoursMainMaxX = main.frame.maxX
+
+        clickCenter(of: officeHoursPanelToggle)
+        XCTAssertTrue(waitForElementToDisappear(meta, timeout: 3))
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.panel", containing: "열기", timeout: 2))
+        XCTAssertGreaterThanOrEqual(main.frame.maxX, expandedOfficeHoursMainMaxX + 280 - 24)
+
+        clickCenter(of: officeHoursPanelToggle)
+        XCTAssertTrue(waitForElementFrameWidth(meta, width: 280, timeout: 5))
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.panel", containing: "닫기", timeout: 2))
         assertOpenDesignResponsiveColumns(
             surface: workspaceSurface.frame,
             rail: rail.frame,
@@ -2150,7 +2172,16 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
-    func testWorkspaceStartupShowsOpenDesignDayAndLocksFutureNavigation() throws {
+    func testWorkspaceStartupDay1RoutesToOfficeHours() throws {
+        // Day 1 workspace startup routes to the Office Hours screen, NOT the
+        // 30-day task grid. This is the intended chrome: routesTodayToOfficeHours
+        // (day == 1) → effectiveOfficeHoursPresented in OpenDesignDayShell renders
+        // the office-hours column instead of the task sidebar.
+        //
+        // NOTE: the former grid + future-Day lock-navigation coverage (day7 locked,
+        // week2 → day8) only applies on day >= 2, where the grid renders. Restoring
+        // it needs a dayNumber>=2 seed flag (seed foundation completedDays), which
+        // does not exist yet — track that as a separate day>=2 grid-navigation test.
         let workspacePath = "/tmp/agentic30-ui-startup-queue-\(UUID().uuidString)"
         resetDirectory(at: workspacePath)
         let app = launchApp(arguments: [
@@ -2170,37 +2201,13 @@ final class agentic30UITests: XCTestCase {
             self.removeDirectory(at: workspacePath)
         }
 
+        // The Day shell renders, and on Day 1 routes to the Office Hours main column.
         XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.shell"].waitForExistence(timeout: 10))
-        let day1Task = app.descendants(matching: .any)["opendesign.day.task.day1"]
-        let day2Task = app.descendants(matching: .any)["opendesign.day.task.day2"]
-        let day7Task = app.descendants(matching: .any)["opendesign.day.task.day7"]
-        XCTAssertTrue(day1Task.waitForExistence(timeout: 3))
-        XCTAssertTrue(day2Task.exists)
-        XCTAssertTrue(day7Task.exists)
-        XCTAssertFalse(element(day2Task, contains: "locked"))
-        XCTAssertTrue(element(day7Task, contains: "locked"))
+        XCTAssertTrue(app.descendants(matching: .any)["opendesign.officeHours.main"].waitForExistence(timeout: 10))
 
-        clickCenter(of: day7Task)
-
-        let workspaceDay7Identifier = ["workspace", "day", "7"].joined(separator: ".")
-        XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.shell"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)[workspaceDay7Identifier].waitForExistence(timeout: 1))
-        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.task.day7", containing: "locked", timeout: 2))
-
-        let week2Group = app.descendants(matching: .any)["opendesign.day.taskGroup.week2"]
-        let day8Task = app.descendants(matching: .any)["opendesign.day.task.day8"]
-        XCTAssertTrue(week2Group.exists)
-        XCTAssertFalse(day8Task.exists)
-
-        clickCenter(of: week2Group)
-
-        XCTAssertTrue(day8Task.waitForExistence(timeout: 3))
-        XCTAssertTrue(day8Task.label.contains("잠금"))
-
-        clickCenter(of: day8Task)
-
-        XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.shell"].exists)
-        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.task.day8", containing: "locked", timeout: 2))
+        // The 30-day task grid (and its task identifiers) is therefore absent on Day 1.
+        XCTAssertFalse(app.descendants(matching: .any)["opendesign.day.task.day1"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["opendesign.day.tasks"].exists)
     }
 
     @MainActor
@@ -2229,6 +2236,12 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(app.buttons["opendesign.officeHours.goal.option.make_money"].exists, file: file, line: line)
         XCTAssertTrue(app.buttons["opendesign.officeHours.goal.option.get_users"].exists, file: file, line: line)
         XCTAssertTrue(app.buttons["opendesign.officeHours.goal.option.build_product"].exists, file: file, line: line)
+
+        // No goal is selected by default, so the start button stays disabled until
+        // the user taps an option. Pick one before driving the start button.
+        let makeMoneyOption = app.buttons["opendesign.officeHours.goal.option.make_money"]
+        XCTAssertTrue(waitForOpenDesignMainHittable(makeMoneyOption, in: app, timeout: 5), file: file, line: line)
+        clickCenter(of: makeMoneyOption)
 
         let saveButton = app.buttons["opendesign.officeHours.goal.save"]
         XCTAssertTrue(waitForOpenDesignMainHittable(saveButton, in: app, timeout: 5), file: file, line: line)
@@ -2649,6 +2662,19 @@ final class agentic30UITests: XCTestCase {
                 file: file,
                 line: line
             )
+            if let expectedMetaPanelWidth {
+                let expandedMainMaxX = mainColumn.frame.maxX
+                let panelToggle = app.buttons["opendesign.officeHours.panel"]
+                XCTAssertTrue(panelToggle.waitForExistence(timeout: 2), file: file, line: line)
+                XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.panel", containing: "닫기", timeout: 2), file: file, line: line)
+                clickCenter(of: panelToggle)
+                XCTAssertTrue(waitForElementToDisappear(meta, timeout: 3), file: file, line: line)
+                XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.panel", containing: "열기", timeout: 2), file: file, line: line)
+                XCTAssertGreaterThanOrEqual(mainColumn.frame.maxX, expandedMainMaxX + expectedMetaPanelWidth - 24, file: file, line: line)
+                clickCenter(of: panelToggle)
+                XCTAssertTrue(waitForElementFrameWidth(meta, width: expectedMetaPanelWidth, timeout: 5), file: file, line: line)
+                XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.panel", containing: "닫기", timeout: 2), file: file, line: line)
+            }
         } else {
             XCTAssertTrue(
                 waitForElementToDisappear(sessions, timeout: 3),

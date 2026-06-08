@@ -50,7 +50,7 @@ enum OpenDesignReferencePageKind: String, CaseIterable, Hashable, Identifiable {
         case .projects: return "프로젝트"
         case .settings: return "설정"
         case .interviews: return "인터뷰"
-        case .bipLog: return "BIP 로그"
+        case .bipLog: return "공개 기록"
         case .news: return "뉴스"
         case .history: return "히스토리"
         }
@@ -60,8 +60,8 @@ enum OpenDesignReferencePageKind: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .projects: return "포트폴리오 + 소스 루트"
         case .settings: return "워크스페이스"
-        case .interviews: return "장지창 · Mom Test 1"
-        case .bipLog: return "Exa X/Twitter · Threads(Meta) 동적 리서치"
+        case .interviews: return "장지창 · 실제 행동 인터뷰 1"
+        case .bipLog: return "웹 자료 검색 · X/Twitter · Threads(Meta)"
         case .news: return "안 읽음 17건"
         case .history: return "회고 인사이트"
         }
@@ -256,9 +256,9 @@ enum OpenDesignReferenceCatalog {
 
     private static let projectSidebar = [
         OpenDesignReferenceSideGroup(title: "활성", count: "3", rows: [
-            .init(id: "a3", title: "Agentic30 (creator dogfood)", subtitle: "Foundation · macOS · 소스 3", badge: "D1/30", leading: "A3", tone: .accent, isActive: true),
-            .init(id: "loop", title: "LoopJournal", subtitle: "Foundation · Web + macOS · 소스 2", badge: "D4/30", leading: "LJ", tone: .amber, isActive: false),
-            .init(id: "devtrace", title: "DevTrace", subtitle: "Build · Desktop app · 소스 4", badge: "D9/30", leading: "DT", tone: .sky, isActive: false),
+            .init(id: "a3", title: "Agentic30 (직접 사용 중)", subtitle: "초기 검증 · macOS · 소스 3", badge: "D1/30", leading: "A3", tone: .accent, isActive: true),
+            .init(id: "loop", title: "LoopJournal", subtitle: "초기 검증 · Web + macOS · 소스 2", badge: "D4/30", leading: "LJ", tone: .amber, isActive: false),
+            .init(id: "devtrace", title: "DevTrace", subtitle: "만들기 · Desktop app · 소스 4", badge: "D9/30", leading: "DT", tone: .sky, isActive: false),
         ]),
         OpenDesignReferenceSideGroup(title: "보관함", count: "2", rows: [
             .init(id: "qmd", title: "qmd-support · iOS 학습", subtitle: "완주 · 2026-03 · 28/30", badge: "완주", leading: "QMD", tone: .violet, isActive: false),
@@ -271,7 +271,7 @@ enum OpenDesignReferenceCatalog {
         OpenDesignReferenceSideGroup(title: "템플릿", count: "3", rows: [
             .init(id: "tpl-ios", title: "iOS 구독앱 30일", subtitle: "ASO · 페이월 · paid learning", badge: "템플릿", leading: "iOS", tone: .sky, isActive: false),
             .init(id: "tpl-android", title: "Android 광고앱 30일", subtitle: "CPI · AdMob · Play Console", badge: "템플릿", leading: "AD", tone: .violet, isActive: false),
-            .init(id: "tpl-web", title: "Web SaaS 30일", subtitle: "랜딩 · waitlist · 결제", badge: "템플릿", leading: "Web", tone: .muted, isActive: false),
+            .init(id: "tpl-web", title: "구독형 웹 도구 30일", subtitle: "소개 페이지 · 대기 신청자 · 결제", badge: "템플릿", leading: "Web", tone: .muted, isActive: false),
         ]),
     ]
 
@@ -284,8 +284,8 @@ enum OpenDesignReferenceCatalog {
         header: .init(
             badge: "A3",
             systemImage: nil,
-            title: "Agentic30 (creator dogfood)",
-            subtitleParts: ["Foundation", "Day 1 / 30", "macOS 메뉴바 앱", "소스 코드 3개", "마지막 활동 4분 전"],
+            title: "Agentic30 (직접 사용 중)",
+            subtitleParts: ["초기 검증", "Day 1 / 30", "macOS 메뉴바 앱", "소스 코드 3개", "마지막 활동 4분 전"],
             actions: [
                 .init(id: "switch", title: "프로젝트 전환", systemImage: "sidebar.left", tone: .ghost),
                 .init(id: "today", title: "오늘 화면 열기", systemImage: "chevron.right", tone: .accent),
@@ -293,55 +293,55 @@ enum OpenDesignReferenceCatalog {
         ),
         filters: [],
         sections: [
-            .init(id: "overview", title: "개요", meta: "Day 1 of 30 · Foundation 진행 중", markerTone: .accent, blocks: [
-                .init("overview-banner", style: .banner, title: "오늘은 Day 1 · ICP 좁히기예요.", subtitle: "다음 게이트는 Day 3 인터뷰 5건까지 6일.", body: "Foundation phase는 아직 3%입니다. 지금 중요한 건 완성된 제품보다 이번 주 실제로 인터뷰할 수 있는 한 명을 고정하는 것입니다.", chips: [.init("완료 0", tone: .accent), .init("진행 중 1", tone: .amber), .init("인터뷰 0 / 5", tone: .sky), .init("BIP 0 / 14", tone: .muted)]),
-                .init("calendar", style: .calendar, title: "30일 캘린더", subtitle: "Foundation · Build · Launch · Grow"),
+            .init(id: "overview", title: "개요", meta: "Day 1 of 30 · 초기 검증 진행 중", markerTone: .accent, blocks: [
+                .init("overview-banner", style: .banner, title: "오늘은 Day 1 · 고객 후보를 좁히는 날이에요.", subtitle: "다음 기준은 Day 3 인터뷰 5건까지 6일.", body: "초기 검증 단계는 아직 3%입니다. 지금 중요한 건 완성된 제품보다 이번 주 실제로 인터뷰할 수 있는 한 명을 고정하는 것입니다.", chips: [.init("완료 0", tone: .accent), .init("진행 중 1", tone: .amber), .init("인터뷰 0 / 5", tone: .sky), .init("공개 기록 0 / 14", tone: .muted)]),
+                .init("calendar", style: .calendar, title: "30일 캘린더", subtitle: "초기 검증 · 만들기 · 공개 · 성장"),
                 .init("stats", style: .metrics, rows: [
                     .init("days", title: "0 / 30", subtitle: "완료한 Day", trailing: "Day 1 진행 중", tone: .amber),
-                    .init("interviews", title: "1 / 5", subtitle: "인터뷰 transcript", trailing: "+1 어제", tone: .accent),
-                    .init("bip", title: "0 / 14", subtitle: "BIP 게시글", trailing: "미시작", tone: .muted),
+                    .init("interviews", title: "1 / 5", subtitle: "인터뷰 원문", trailing: "+1 어제", tone: .accent),
+                    .init("bip", title: "0 / 14", subtitle: "공개 기록 글", trailing: "미시작", tone: .muted),
                     .init("roots", title: "3", subtitle: "소스 코드 루트", trailing: "watch 활성", tone: .sky),
                 ]),
             ]),
-            .init(id: "gates", title: "Phase 게이트", meta: "진행 통과 조건 · Q2 wedge는 Foundation", markerTone: .accent, blocks: [
+            .init(id: "gates", title: "단계 기준", meta: "진행 통과 조건 · Q2 진입점은 초기 검증", markerTone: .accent, blocks: [
                 .init("phase-gates", style: .rows, rows: [
-                    .init("f", leading: "F", title: "Foundation 게이트", subtitle: "D7 · 인터뷰 5건 · 통증 가설 1 · ICP 1줄 정의", trailing: "진행 중", tone: .accent),
-                    .init("b", leading: "B", title: "Build 게이트", subtitle: "D17 · 핵심 기능 1개 · 30초 첫 가치 경험", trailing: "대기", tone: .sky),
-                    .init("l", leading: "L", title: "Launch 게이트", subtitle: "D24 · 60초 데모 · 강한 의도 신호 1", trailing: "대기", tone: .amber),
-                    .init("g", leading: "G", title: "Grow 게이트", subtitle: "D30 · continue / pivot / kill 판정", trailing: "대기", tone: .violet),
+                    .init("f", leading: "F", title: "초기 검증 기준", subtitle: "D7 · 인터뷰 5건 · 통증 가설 1 · 고객 후보 1줄 정의", trailing: "진행 중", tone: .accent),
+                    .init("b", leading: "B", title: "만들기 기준", subtitle: "D17 · 핵심 기능 1개 · 30초 첫 가치 경험", trailing: "대기", tone: .sky),
+                    .init("l", leading: "L", title: "공개 기준", subtitle: "D24 · 60초 시연 · 강한 의도 신호 1", trailing: "대기", tone: .amber),
+                    .init("g", leading: "G", title: "성장 기준", subtitle: "D30 · 계속 / 전환 / 중단 판정", trailing: "대기", tone: .violet),
                 ]),
             ]),
             .init(id: "basics", title: "프로젝트 기본 정보", meta: "사용자 입력 · 언제든 수정 가능", markerTone: .accent, blocks: [
                 .init("project-basics", style: .settings, rows: [
-                    .init("one-line", title: "한 문장 요약", subtitle: "전업 1인 개발자가 자기 프로젝트와 실행 기록을 근거로 30일 안에 PMF 검증 방향을 좁히도록 돕는다", trailing: "필수", tone: .accent),
-                    .init("icp", title: "타깃 사용자 (ICP)", subtitle: "전업 1인 개발자 · macOS 사용 · 수익 0원 · 30일 스프린트 실행 의향", trailing: "정의됨", tone: .accent),
+                    .init("one-line", title: "한 문장 요약", subtitle: "전업 1인 개발자가 자기 프로젝트와 실행 기록을 근거로 30일 안에 시장 적합 방향을 좁히도록 돕는다", trailing: "필수", tone: .accent),
+                    .init("icp", title: "고객 후보", subtitle: "전업 1인 개발자 · macOS 사용 · 수익 0원 · 30일 스프린트 실행 의향", trailing: "정의됨", tone: .accent),
                     .init("platform", title: "제품 플랫폼", subtitle: "macOS 메뉴바 앱 · 커리큘럼 대상 제품 플랫폼은 iOS/Android/Web/Mac 자유", trailing: "macOS", tone: .sky),
-                    .init("hypothesis", title: "현재 가설", subtitle: "실제 기록을 분석한 adaptive 과제가 generic 강의보다 다음 행동을 더 잘 만든다", trailing: "검증 중", tone: .amber),
-                    .init("evidence", title: "증거 채널", subtitle: "고객 인터뷰 · BIP · 업무 일지 · creator dogfood", trailing: "4채널", tone: .accent),
+                    .init("hypothesis", title: "현재 가설", subtitle: "실제 기록을 분석한 맞춤 과제가 일반 강의보다 다음 행동을 더 잘 만든다", trailing: "검증 중", tone: .amber),
+                    .init("evidence", title: "증거 채널", subtitle: "고객 인터뷰 · 공개 기록 · 업무 일지 · 직접 사용 기록", trailing: "4채널", tone: .accent),
                 ]),
             ]),
             .init(id: "paths", title: "프로젝트 경로", meta: "소스 코드 3개 + 자료 폴더 2개 · 이 프로젝트에서만 watch", markerTone: .accent, blocks: [
                 .init("paths-list", style: .rows, rows: [
                     .init("app", leading: "⌘", title: "소스 코드 경로 1 · 제품 앱", subtitle: "~/code/agentic30-desktop · SwiftUI 메뉴바 앱 · 마지막 커밋 4분 전", trailing: "워치 활성", tone: .accent),
-                    .init("sidecar", leading: "</>", title: "소스 코드 경로 2 · Agent sidecar", subtitle: "~/code/agentic30-sidecar · provider adapters / local index", trailing: "+2 unstaged", tone: .accent),
-                    .init("public", leading: "WEB", title: "소스 코드 경로 3 · 공개 웹/문서", subtitle: "~/code/agentic30-public · landing / docs / preview fixtures", trailing: "클린", tone: .sky),
-                    .init("interviews", leading: "IV", title: "인터뷰 transcript 폴더", subtitle: "~/Documents/Agentic30/agentic30/interviews · .txt / .md / .vtt / .srt", trailing: "1 / 5", tone: .amber),
-                    .init("journal", leading: "MD", title: "업무 일지 / BIP 폴더", subtitle: "~/Documents/Agentic30/agentic30/journal · 오늘 만든 것 / 막힌 것 / 배운 것", trailing: "3 파일", tone: .teal),
+                    .init("sidecar", leading: "</>", title: "소스 코드 경로 2 · 실행 보조 앱", subtitle: "~/code/agentic30-sidecar · AI 연결 / 로컬 색인", trailing: "+2 unstaged", tone: .accent),
+                    .init("public", leading: "WEB", title: "소스 코드 경로 3 · 공개 웹/문서", subtitle: "~/code/agentic30-public · 소개 페이지 / 문서 / 미리보기 자료", trailing: "클린", tone: .sky),
+                    .init("interviews", leading: "IV", title: "인터뷰 원문 폴더", subtitle: "~/Documents/Agentic30/agentic30/interviews · .txt / .md / .vtt / .srt", trailing: "1 / 5", tone: .amber),
+                    .init("journal", leading: "MD", title: "업무 일지 / 공개 기록 폴더", subtitle: "~/Documents/Agentic30/agentic30/journal · 오늘 만든 것 / 막힌 것 / 배운 것", trailing: "3 파일", tone: .teal),
                 ]),
             ]),
             .init(id: "activity", title: "최근 활동", meta: "이 프로젝트만 · 12개 항목 · 자동 기록", markerTone: .accent, blocks: [
                 .init("project-timeline", style: .timeline, rows: [
-                    .init("task", leading: "4분 전", title: "Day 1 과제 생성", subtitle: "ICP 좁히기 (3개 변형) · Claude Sonnet 4.6 · 312ms", tone: .accent),
+                    .init("task", leading: "4분 전", title: "Day 1 과제 생성", subtitle: "고객 후보 좁히기 (3개 변형) · Claude Sonnet 4.6 · 312ms", tone: .accent),
                     .init("interview", leading: "어제", title: "인터뷰 1건 추가 — 장지창 (29분)", subtitle: "자동 분석 · 통증 후보 3개 추출", tone: .sky),
-                    .init("spec", leading: "7일 전", title: "SPEC.md 갱신 — Q2 wedge를 Day 0-3로 좁힘", subtitle: "+14 / -8 · 한 문장 요약 변경 없음", tone: .violet),
-                    .init("journal", leading: "어제", title: "업무 일지 작성 — 오늘 막힌 것 1건", subtitle: "provider 응답 latency, sub-workflow 라우팅", tone: .amber),
+                    .init("spec", leading: "7일 전", title: "SPEC.md 갱신 — Q2 진입점을 Day 0-3로 좁힘", subtitle: "+14 / -8 · 한 문장 요약 변경 없음", tone: .violet),
+                    .init("journal", leading: "어제", title: "업무 일지 작성 — 오늘 막힌 것 1건", subtitle: "AI 연결 응답 지연, 보조 작업 라우팅", tone: .amber),
                 ]),
             ]),
         ],
         meta: .init(title: "프로젝트 포트폴리오", cards: [
-            .init("portfolio-health", style: .banner, title: "30일 진행률 · 모든 활성", subtitle: "14 / 90 day · 3 projects", body: "Foundation 2개, Build 1개가 활성입니다. Launch/Grow 프로젝트는 아직 없습니다.", chips: [.init("F · 2", tone: .accent), .init("B · 1", tone: .sky), .init("인터뷰 5 / 15", tone: .amber)]),
+            .init("portfolio-health", style: .banner, title: "30일 진행률 · 모든 활성", subtitle: "14 / 90 day · 3 projects", body: "초기 검증 2개, 만들기 1개가 활성입니다. 공개/성장 프로젝트는 아직 없습니다.", chips: [.init("초기 검증 · 2", tone: .accent), .init("만들기 · 1", tone: .sky), .init("인터뷰 5 / 15", tone: .amber)]),
             .init("portfolio-actions", style: .rows, rows: [
-                .init("today", title: "오늘 화면으로", subtitle: "Day 1 · ICP 좁히기", trailing: "↵", tone: .accent),
+                .init("today", title: "오늘 화면으로", subtitle: "Day 1 · 고객 후보 좁히기", trailing: "↵", tone: .accent),
                 .init("new", title: "새 30일 프로젝트", subtitle: "템플릿 또는 백지에서 시작", trailing: "⌘N", tone: .sky),
                 .init("interview", title: "인터뷰 추가", subtitle: "다음 게이트까지 4건", trailing: "⌘I", tone: .amber),
             ]),
@@ -360,13 +360,13 @@ enum OpenDesignReferenceCatalog {
                 .init(id: "menubar", title: "메뉴바 & 알림", subtitle: nil, badge: nil, leading: "!", tone: .amber, isActive: false),
             ]),
             .init(title: "Agent", count: nil, rows: [
-                .init(id: "providers", title: "AI 프로바이더", subtitle: nil, badge: nil, leading: "</>", tone: .accent, isActive: false),
+                .init(id: "providers", title: "AI 연결", subtitle: nil, badge: nil, leading: "</>", tone: .accent, isActive: false),
                 .init(id: "integrations", title: "연동", subtitle: nil, badge: nil, leading: "∞", tone: .amber, isActive: false),
             ]),
             .init(title: "Trust", count: nil, rows: [
                 .init(id: "privacy", title: "개인정보 & 진단", subtitle: nil, badge: nil, leading: "◇", tone: .rose, isActive: false),
                 .init(id: "updates", title: "업데이트", subtitle: nil, badge: nil, leading: "↻", tone: .sky, isActive: false),
-                .init(id: "advanced", title: "고급 & Sidecar", subtitle: nil, badge: nil, leading: "$", tone: .muted, isActive: false),
+                .init(id: "advanced", title: "고급 & 실행 보조 앱", subtitle: nil, badge: nil, leading: "$", tone: .muted, isActive: false),
             ]),
         ],
         header: .init(
@@ -383,7 +383,7 @@ enum OpenDesignReferenceCatalog {
         sections: [
             .init(id: "workspace", title: "워크스페이스", meta: "메인 프로젝트", markerTone: .accent, blocks: [
                 .init("workspace-settings", style: .settings, rows: [
-                    .init("main", title: "메인 프로젝트", subtitle: "Adaptive 엔진이 가장 먼저 읽는 폴더. SPEC.md / ICP.md / VALUES.md와 업무 일지가 여기에 누적됩니다.", trailing: "~/code/agentic30-public", tone: .accent),
+                    .init("main", title: "메인 프로젝트", subtitle: "맞춤형 엔진이 가장 먼저 읽는 폴더. SPEC.md / ICP.md / VALUES.md와 업무 일지가 여기에 누적됩니다.", trailing: "~/code/agentic30-public", tone: .accent),
                 ]),
             ]),
             .init(id: "appearance", title: "외관", meta: "Dark · Light", markerTone: .sky, blocks: [
@@ -396,13 +396,13 @@ enum OpenDesignReferenceCatalog {
                     .init("login", title: "로그인 시 자동 실행", subtitle: "macOS 로그인 항목에 추가합니다. Launch Agent — com.octobacademy.agentic30.plist.", trailing: "ON", tone: .accent),
                 ]),
             ]),
-            .init(id: "providers", title: "AI 프로바이더", meta: "Claude 1순위 · Codex 폴백", markerTone: .accent, blocks: [
+            .init(id: "providers", title: "AI 연결", meta: "Claude 1순위 · Codex 예비 연결", markerTone: .accent, blocks: [
                 .init("providers", style: .cards, rows: [
-                    .init("claude", leading: "A", title: "Claude", subtitle: "로컬 인증 또는 API 키 · 모델 선택", body: "Agent settings는 Keychain 저장값과 sidecar provider settings에 동기화됩니다.", trailing: "설정됨", tone: .accent),
+                    .init("claude", leading: "A", title: "Claude", subtitle: "로컬 인증 또는 API 키 · 모델 선택", body: "에이전트 설정은 Keychain 저장값과 실행 보조 앱의 AI 연결 설정에 동기화됩니다.", trailing: "설정됨", tone: .accent),
                     .init("codex", leading: "C", title: "Codex", subtitle: "로컬 인증 또는 API 키 · 모델 선택", body: "OpenAI/Codex 인증 방식과 모델 ID를 저장합니다.", trailing: "설정됨", tone: .accent),
                     .init("gemini", leading: "G", title: "Gemini", subtitle: "API 키 · 모델 선택", body: "Gemini API 키와 모델 ID를 Keychain에 저장합니다.", trailing: "선택", tone: .sky),
-                    .init("exa", leading: "E", title: "Exa Research", subtitle: "News Market Radar fallback key", body: "Provider Exa MCP가 없을 때만 사용하는 fallback API key입니다.", trailing: "Keychain", tone: .amber),
-                    .init("node", leading: "20", title: "Node 런타임", subtitle: "/usr/local/bin/node — v20.11.1", body: "Sidecar가 사용하는 Node 바이너리. 20+ 필요. NODE_BINARY → 일반 설치 → mise/asdf/Volta → 로그인 셸 PATH 순으로 탐색합니다.", trailing: "20+", tone: .sky),
+                    .init("exa", leading: "E", title: "Exa Research", subtitle: "뉴스 시장 리서치 예비 키", body: "AI 연결의 웹 검색 도구가 없을 때만 사용하는 예비 API 키입니다.", trailing: "Keychain", tone: .amber),
+                    .init("node", leading: "20", title: "Node 런타임", subtitle: "/usr/local/bin/node — v20.11.1", body: "실행 보조 앱이 사용하는 Node 바이너리. 20+ 필요. NODE_BINARY → 일반 설치 → mise/asdf/Volta → 로그인 셸 PATH 순으로 탐색합니다.", trailing: "20+", tone: .sky),
                 ]),
             ]),
             .init(id: "integrations", title: "연동", meta: "OAuth · API 키 — Keychain 보관", markerTone: .amber, blocks: [
@@ -413,23 +413,23 @@ enum OpenDesignReferenceCatalog {
             .init(id: "privacy", title: "개인정보 & 진단", meta: "로컬 우선 · sanitized snapshot only", markerTone: .rose, blocks: [
                 .init("privacy", style: .settings, rows: [
                     .init("posthog", title: "사용량 텔레메트리 (PostHog)", subtitle: "앱 열기 횟수, Day 도달 일자, 작업 완료/포기 같은 익명 이벤트. opt-in이며 KR1.1 ~ KR4.3 측정에만 쓰입니다.", trailing: "OFF", tone: .muted),
-                    .init("snapshot", title: "진단 스냅샷 내보내기", subtitle: "제출 전 미리보기 — sanitized runtime snapshot을 클립보드로 복사합니다.", trailing: "내보내기...", tone: .amber),
+                    .init("snapshot", title: "진단 스냅샷 내보내기", subtitle: "제출 전 미리보기 — 민감 정보가 제거된 실행 상태를 클립보드로 복사합니다.", trailing: "내보내기...", tone: .amber),
                     .init("reset", title: "모든 로컬 데이터 삭제", subtitle: "sessions, day-task 히스토리, 캐시. 기록 폴더 자체는 건드리지 않습니다.", trailing: "데이터 초기화…", tone: .rose),
                 ]),
             ]),
             .init(id: "updates", title: "업데이트", meta: "Sparkle appcast · Developer ID 서명", markerTone: .sky, blocks: [
                 .init("updates", style: .settings, rows: [
-                    .init("version", title: "현재 버전", subtitle: "Foundation preview — Day 0-3 loop 한정. Day 4-7은 다음 점 릴리즈 예정.", trailing: "0.4.2 · build 1042", tone: .accent),
+                    .init("version", title: "현재 버전", subtitle: "초기 검증 미리보기 — Day 0-3 흐름 한정. Day 4-7은 다음 점 릴리즈 예정.", trailing: "0.4.2 · build 1042", tone: .accent),
                     .init("auto", title: "자동 업데이트", subtitle: "Sparkle이 백그라운드에서 appcast를 확인하고 새 버전을 받아옵니다. 설치는 다음 실행 때.", trailing: "ON", tone: .accent),
                     .init("checked", title: "마지막 확인", subtitle: "appcast.xml을 마지막으로 조회한 시각. 최신 — 0.4.2.", trailing: "5분 전", tone: .muted),
                     .init("signing", title: "서명 확인", subtitle: "notarization · Hardened Runtime · Developer ID · 모두 통과.", trailing: "검증됨", tone: .accent),
                 ]),
             ]),
-            .init(id: "advanced", title: "고급 & Sidecar", meta: "Sidecar · 진단 · 로그", markerTone: .muted, blocks: [
+            .init(id: "advanced", title: "고급 & 실행 보조 앱", meta: "실행 보조 앱 · 진단 · 로그", markerTone: .muted, blocks: [
                 .init("advanced", style: .settings, rows: [
-                    .init("state", title: "Sidecar 상태", subtitle: "Node sidecar가 살아 있고 stdio + 로컬 HTTP 둘 다 응답 중입니다.", trailing: "실행 중 · PID 47281", tone: .accent),
+                    .init("state", title: "실행 보조 앱 상태", subtitle: "Node 실행 보조 앱이 살아 있고 stdio + 로컬 HTTP 둘 다 응답 중입니다.", trailing: "실행 중 · PID 47281", tone: .accent),
                     .init("log-folder", title: "로그 폴더", subtitle: "~/Library/Logs/Agentic30 — 회전 7개 보관.", trailing: "Finder에서 열기", tone: .muted),
-                    .init("bip-notifications", title: "BIP Notifications", subtitle: "테스트 알림은 실제 macOS 알림 센터 경로를 사용합니다.", trailing: "테스트", tone: .amber),
+                    .init("bip-notifications", title: "공개 기록 알림", subtitle: "테스트 알림은 실제 macOS 알림 센터 경로를 사용합니다.", trailing: "테스트", tone: .amber),
                     .init("confetti", title: "Confetti 테스트", subtitle: "완료 축하 confetti 렌더링 경로를 즉시 재생합니다.", trailing: "재생", tone: .sky),
                 ]),
             ]),
@@ -438,11 +438,11 @@ enum OpenDesignReferenceCatalog {
             .init("sidecar", style: .rows, rows: [
                 .init("status", title: "상태", subtitle: "PID 47281 · 업타임 2d 14h · 메모리 86 MB · CPU 0.4%", trailing: "실행 중", tone: .accent),
                 .init("workspace", title: "워크스페이스", subtitle: "~/code/agentic30-public", trailing: "명시됨", tone: .sky),
-                .init("version", title: "버전", subtitle: "app 0.4.2 (1042) · sidecar 0.4.2 · node v20.11.1 · swift 5.10 · macOS 14.5", trailing: "arm64", tone: .muted),
+                .init("version", title: "버전", subtitle: "app 0.4.2 (1042) · 실행 보조 앱 0.4.2 · node v20.11.1 · swift 5.10 · macOS 14.5", trailing: "arm64", tone: .muted),
             ]),
             .init("system-actions", style: .rows, rows: [
                 .init("diagnostics", title: "진단 스냅샷 내보내기", subtitle: "sanitize · ZIP", trailing: nil, tone: .amber),
-                .init("restart", title: "Sidecar 재시작", subtitle: "다운타임 ~1초", trailing: nil, tone: .accent),
+                .init("restart", title: "실행 보조 앱 재시작", subtitle: "다운타임 ~1초", trailing: nil, tone: .accent),
             ]),
             .init("reference-docs", style: .rows, rows: [
                 .init("release", title: "release-checklist.md", subtitle: "배포 전 점검 항목", trailing: nil, tone: .muted),
@@ -476,18 +476,18 @@ enum OpenDesignReferenceCatalog {
             badge: "JC",
             systemImage: nil,
             title: "장지창",
-            subtitleParts: ["2026-04-22 19:30", "Zoom · 45분", "Day 1 · 1 / 3"],
+            subtitleParts: ["2026-04-22 19:30", "Zoom · 45분", "Day 1 · 1 / 4"],
             actions: [
                 .init(id: "followups", title: "후속 질문 생성", systemImage: nil, tone: .ghost),
                 .init(id: "spec", title: "SPEC.md에 반영", systemImage: nil, tone: .accent),
             ]
         ),
-        filters: [.init("요약"), .init("인용 12", tone: .sky), .init("후속 7", tone: .amber), .init("Transcript", tone: .muted)],
+        filters: [.init("요약"), .init("인용 12", tone: .sky), .init("후속 7", tone: .amber), .init("대화 기록", tone: .muted)],
         sections: [
             .init(id: "summary", title: "요약", meta: nil, markerTone: .accent, blocks: [
-                .init("summary-card", style: .banner, title: "5번 빌드 → 0매출", subtitle: "강한 신호 · Mom Test 4/5 통과", body: "패턴을 본인이 자각했지만, \"검증 없이 또 만들 것 같다\"는 회피 신호가 강합니다. 핵심 통증은 \"누가 쓸지를 모른다\"로 압축됩니다.", chips: [.init("신호 8/10"), .init("ICP 적합 매우 높음"), .init("주의 1", tone: .amber)]),
+                .init("summary-card", style: .banner, title: "5번 빌드 → 0매출", subtitle: "강한 신호 · 실제 행동 질문 4/5 통과", body: "패턴을 본인이 자각했지만, \"검증 없이 또 만들 것 같다\"는 회피 신호가 강합니다. 핵심 통증은 \"누가 쓸지를 모른다\"로 압축됩니다.", chips: [.init("신호 8/10"), .init("고객 후보 적합 매우 높음"), .init("주의 1", tone: .amber)]),
             ]),
-            .init(id: "signals", title: "추출 신호", meta: "Mom Test · 4 카테고리", markerTone: .accent, blocks: [
+            .init(id: "signals", title: "추출 신호", meta: "실제 행동 질문 · 4 카테고리", markerTone: .accent, blocks: [
                 .init("signal-grid", style: .cards, rows: [
                     .init("pain", title: "통증", subtitle: "\"뭘 만들지 보다 누가 쓸지를 모른다.\"", body: "5건 인용 · 하루 3시간 검증 회피", tone: .rose),
                     .init("alt", title: "현재 대안", subtitle: "YouTube 인디해커 · Threads · ChatGPT", body: "3건 언급 · 구조 없음", tone: .sky),
@@ -495,7 +495,7 @@ enum OpenDesignReferenceCatalog {
                     .init("pay", title: "지불 의사", subtitle: "Cursor $20/mo · Claude Code $200/mo", body: "툴은 결제 · 결과는 0원", tone: .amber),
                 ]),
             ]),
-            .init(id: "mom", title: "Mom Test 점검", meta: nil, markerTone: .amber, blocks: [
+            .init(id: "mom", title: "실제 행동 질문 점검", meta: nil, markerTone: .amber, blocks: [
                 .init("mom-rules", style: .rows, title: "품질 양호 — 한 가지 주의 항목", rows: [
                     .init("r1", leading: "✓", title: "의견이 아니라 행동을 물었다", trailing: "7회", tone: .accent),
                     .init("r2", leading: "✓", title: "미래 약속이 아니라 과거 사실을 받았다", trailing: "4회", tone: .accent),
@@ -507,8 +507,8 @@ enum OpenDesignReferenceCatalog {
                 .init("quote-list", style: .quotes, rows: [
                     .init("q1", leading: "02:18", title: "AI로 다섯 번 만들었어요. 한 번도 안 팔렸어요.", subtitle: "Pain", trailing: "강한 통증", tone: .rose),
                     .init("q2", leading: "07:42", title: "지난 6개월에 다섯 개 출시. 가입 누계 11명, 매출은 0원.", subtitle: "Past", trailing: "과거 행동", tone: .accent),
-                    .init("q3", leading: "12:55", title: "\"만들기 전에, 누가 쓸 사람인지를 모르겠다\"는 거예요.", subtitle: "Wedge", trailing: "핵심 통증", tone: .rose),
-                    .init("q4", leading: "28:34", title: "오 그거 좋은데요? 저 해볼래요.", subtitle: "Anti-pattern", trailing: "Mom Test 위반", tone: .amber),
+                    .init("q3", leading: "12:55", title: "\"만들기 전에, 누가 쓸 사람인지를 모르겠다\"는 거예요.", subtitle: "첫 진입점", trailing: "핵심 통증", tone: .rose),
+                    .init("q4", leading: "28:34", title: "오 그거 좋은데요? 저 해볼래요.", subtitle: "피해야 할 답변", trailing: "실제 행동 질문 위반", tone: .amber),
                 ]),
             ]),
             .init(id: "followups", title: "Day 3 후속 질문", meta: "3 필수", markerTone: .accent, blocks: [
@@ -518,11 +518,11 @@ enum OpenDesignReferenceCatalog {
                     .init("f3", leading: "3", title: "\"오늘 뭘 해야 다음 주가 좋아질지\" 막힐 때 마지막으로 어디서 답을 찾았어요?", subtitle: "현재 대안의 구체적 행동", tone: .accent),
                 ]),
             ]),
-            .init(id: "diff", title: "SPEC · ICP 갱신 제안", meta: nil, markerTone: .teal, blocks: [
+            .init(id: "diff", title: "SPEC · 고객 후보 문서 갱신 제안", meta: nil, markerTone: .teal, blocks: [
                 .init("diff", style: .diff, title: "ICP.md · SPEC.md §2", rows: [
                     .init("d1", leading: "5", title: "## Our ICP: 전업 1인 개발자 (수익 0원)", tone: .muted),
                     .init("d2", leading: "7", title: "- 에이전트 코딩 도구로 만들 수 있는, 이미 전업한 1인 개발자.", tone: .rose),
-                    .init("d3", leading: "7", title: "+ 특히 \"AI로 계속 새로 만드는데 한 번도 안 팔린\" 서브세그.", tone: .accent),
+                    .init("d3", leading: "7", title: "+ 특히 \"AI로 계속 새로 만드는데 한 번도 안 팔린\" 좁은 고객군.", tone: .accent),
                     .init("d4", leading: "10", title: "+ 6개월에 3개+ 출시, 가입 20명 미만, 매출 0원", tone: .accent),
                 ]),
             ]),
@@ -536,7 +536,7 @@ enum OpenDesignReferenceCatalog {
             .init("themes", style: .rows, title: "반복 테마", rows: [
                 .init("t1", title: "\"누가 쓸지를 모른다\"", trailing: "3 / 3", tone: .accent),
                 .init("t2", title: "N번 빌드 → 0매출", trailing: "3 / 3", tone: .accent),
-                .init("t3", title: "Adaptive 핏", trailing: "2 / 3", tone: .amber),
+                .init("t3", title: "맞춤 과제 적합", trailing: "2 / 3", tone: .amber),
                 .init("t4", title: "툴 자비 결제", trailing: "2 / 3", tone: .amber),
             ]),
             .init("upcoming", style: .rows, title: "예정 인터뷰", rows: [
@@ -560,35 +560,35 @@ enum OpenDesignReferenceCatalog {
                 .init(id: "threads", title: "Threads (Meta)", subtitle: nil, badge: "0", leading: "@", tone: .violet, isActive: false),
                 .init(id: "needs", title: "워치리스트", subtitle: nil, badge: "0", leading: "!", tone: .amber, isActive: false),
             ]),
-            .init(title: "ICP 신호", count: "3", rows: [
+            .init(title: "고객 후보 신호", count: "3", rows: [
                 .init(id: "social", title: "X/Threads 공개 기록", subtitle: "fetch 기반", badge: "live", leading: "01", tone: .accent, isActive: false),
                 .init(id: "day", title: "오늘 Day 커리큘럼", subtitle: "Day 1-30", badge: "live", leading: "02", tone: .sky, isActive: false),
                 .init(id: "gap", title: "확인할 공백", subtitle: "전업 · 매출 · 인터뷰", badge: "ask", leading: "03", tone: .amber, isActive: false),
             ]),
         ],
         header: .init(
-            badge: "BIP",
+            badge: "공개 기록",
             systemImage: "doc.text",
-            title: "BIP 로그 · ICP 리서치",
-            subtitleParts: ["Exa Search + Web Fetch", "오늘 Day와 프로젝트 설정 기준"],
+            title: "공개 기록 · 고객 후보 리서치",
+            subtitleParts: ["웹 자료 검색 + 원문 확인", "오늘 Day와 프로젝트 설정 기준"],
             actions: [
                 .init(id: "draft", title: "초안", systemImage: "doc.text", tone: .ghost),
                 .init(id: "research", title: "다시 리서치", systemImage: "arrow.clockwise", tone: .accent),
             ]
         ),
-        filters: [.init("전체 0"), .init("강한 적합 0", tone: .accent), .init("X 0", tone: .sky), .init("Threads(Meta) 0", tone: .violet), .init("워치리스트 0", tone: .amber)],
+        filters: [.init("전체 0"), .init("강한 적합 0", tone: .accent), .init("X 0", tone: .sky), .init("Threads(Meta) 0", tone: .violet), .init("관심 후보 0", tone: .amber)],
         sections: [
-            .init(id: "brief", title: "ICP 리서치 큐", meta: "Exa Search + Web Fetch · X/Threads", markerTone: .accent, blocks: [
-                .init("research-brief", style: .banner, title: "X와 Threads 공개 게시글에서 ICP 신호를 찾습니다.", subtitle: "auto research run", body: "검색 기준은 사용자가 설정한 프로젝트 문서와 오늘 진행 Day입니다.", chips: [.init("리서치 대기"), .init("실제 URL 필요", tone: .accent), .init("설정 필요", tone: .amber)]),
+            .init(id: "brief", title: "고객 후보 리서치 큐", meta: "웹 자료 검색 + 원문 확인 · X/Threads", markerTone: .accent, blocks: [
+                .init("research-brief", style: .banner, title: "X와 Threads 공개 게시글에서 고객 후보 신호를 찾습니다.", subtitle: "자동 리서치", body: "검색 기준은 사용자가 설정한 프로젝트 문서와 오늘 진행 Day입니다.", chips: [.init("리서치 대기"), .init("실제 URL 필요", tone: .accent), .init("설정 필요", tone: .amber)]),
             ]),
-            .init(id: "research", title: "리서치된 게시글", meta: "원문 하이라이트 + ICP 근거", markerTone: .sky, blocks: [
+            .init(id: "research", title: "리서치된 게시글", meta: "원문 하이라이트 + 고객 후보 근거", markerTone: .sky, blocks: [
                 .init("research-list", style: .articles, rows: []),
             ]),
-            .init(id: "draft", title: "BIP 초안", meta: "선택 후보를 기반으로 자동 생성", markerTone: .amber, blocks: [
-                .init("draft", style: .draft, title: "선택 후보 없음", body: "후보 카드에서 “BIP 초안에 반영”을 누르면, 실제 X/Threads 리서치 결과를 오늘의 공개 기록으로 바꿉니다.\n\n형식:\n1. 원문에서 잡은 ICP 증거\n2. 왜 인터뷰 후보인지\n3. DM에서 확인할 공백 1개"),
+            .init(id: "draft", title: "공개 기록 초안", meta: "선택 후보를 기반으로 자동 생성", markerTone: .amber, blocks: [
+                .init("draft", style: .draft, title: "선택 후보 없음", body: "후보 카드에서 “공개 기록 초안에 반영”을 누르면, 실제 X/Threads 리서치 결과를 오늘의 공개 기록으로 바꿉니다.\n\n형식:\n1. 원문에서 잡은 고객 후보 증거\n2. 왜 인터뷰 후보인지\n3. DM에서 확인할 공백 1개"),
             ]),
         ],
-        meta: .init(title: "ICP 후보", cards: [
+        meta: .init(title: "고객 후보", cards: [
             .init("candidate-progress", style: .banner, title: "0 / 18 후보", subtitle: "다음 액션 · Exa 리서치 실행", body: "수익 상태, 전업 여부, 인터뷰 의향 공백을 확인하면 인터뷰 큐로 승격합니다.", chips: [.init("live", tone: .accent), .init("gap", tone: .amber), .init("ask", tone: .sky)]),
         ])
     )
@@ -607,7 +607,7 @@ enum OpenDesignReferenceCatalog {
                 .init(id: "customer", title: "고객이 먼저다", subtitle: nil, badge: "6", leading: "●", tone: .accent, isActive: false),
                 .init(id: "ship", title: "불완전해도 공개", subtitle: nil, badge: "3", leading: "●", tone: .sky, isActive: false),
                 .init(id: "numbers", title: "숫자로 결정", subtitle: nil, badge: "4", leading: "●", tone: .rose, isActive: false),
-                .init(id: "adaptive", title: "Adaptive over Static", subtitle: nil, badge: "3", leading: "●", tone: .teal, isActive: false),
+                .init(id: "adaptive", title: "맞춤형이 일반형보다 낫다", subtitle: nil, badge: "3", leading: "●", tone: .teal, isActive: false),
             ]),
             .init(title: "출처", count: nil, rows: [
                 .init(id: "essay", title: "에세이 · 핸드북", subtitle: nil, badge: "7", leading: "PH", tone: .teal, isActive: false),
@@ -626,23 +626,23 @@ enum OpenDesignReferenceCatalog {
                 .init(id: "read", title: "모두 읽음 처리", systemImage: "checkmark", tone: .accent),
             ]
         ),
-        filters: [.init("전체 14"), .init("제약 4", tone: .amber), .init("고객 6", tone: .accent), .init("공개 3", tone: .sky), .init("숫자 4", tone: .rose), .init("Adaptive 3", tone: .teal)],
+        filters: [.init("전체 14"), .init("제약 4", tone: .amber), .init("고객 6", tone: .accent), .init("공개 3", tone: .sky), .init("숫자 4", tone: .rose), .init("맞춤 3", tone: .teal)],
         sections: [
-            .init(id: "takeaway", title: "오늘의 한 줄", meta: "Day 1 — ICP · 첫 인터뷰를 정하는 중", markerTone: .amber, blocks: [
+            .init(id: "takeaway", title: "오늘의 한 줄", meta: "Day 1 — 고객 후보 · 첫 인터뷰를 정하는 중", markerTone: .amber, blocks: [
                 .init("takeaway", style: .banner, title: "아이디어를 묻지 마세요.", subtitle: "Rob Fitzpatrick · The Mom Test, Ch. 1 · 22분 읽기", body: "지난주에 이 문제 때문에 실제로 뭘 했는지 물으세요. 칭찬은 데이터가 아닙니다.", chips: [.init("오늘 인터뷰 질문에 반영"), .init("VALUES.md에 인용 저장", tone: .amber)]),
             ]),
-            .init(id: "customer", title: "고객이 먼저다", meta: "Value 2 · 6건 · ICP가 첫 매출 0원일 때 가장 자주 비는 자료", markerTone: .accent, blocks: [
+            .init(id: "customer", title: "고객이 먼저다", meta: "Value 2 · 6건 · 첫 매출 0원일 때 고객 후보가 가장 자주 비는 자료", markerTone: .accent, blocks: [
                 .init("customer-articles", style: .articles, rows: [
                     .init("mom", leading: "MT", title: "The Mom Test — 엄마도 거짓말한다", subtitle: "momtestbook.com · 책 · Ch. 1-3 · 22분", body: "Day 1 적용: \"지난주에 이 문제 때문에 뭘 시도했나요?\" 칭찬형 답이 사라지고, 진짜 시간을 쓴 사람만 남습니다.", trailing: "오늘 고정", tone: .accent, chips: [.init("고객"), .init("숫자", tone: .rose)]),
-                    .init("ph", leading: "PH", title: "Your entire strategy is downstream of your ICP", subtitle: "posthog.com/handbook · 8분", body: "ICP가 가격, 기능, 마케팅 채널, 콘텐츠 톤, UI 스타일을 결정합니다. 모르는 사람을 위해 만들면 모든 결정이 흐릿해집니다.", tone: .teal, chips: [.init("고객"), .init("Adaptive", tone: .teal)]),
+                    .init("ph", leading: "PH", title: "Your entire strategy is downstream of your ICP", subtitle: "posthog.com/handbook · 8분", body: "고객 후보가 가격, 기능, 마케팅 채널, 콘텐츠 톤, UI 스타일을 결정합니다. 모르는 사람을 위해 만들면 모든 결정이 흐릿해집니다.", tone: .teal, chips: [.init("고객"), .init("맞춤", tone: .teal)]),
                     .init("pg", leading: "PG", title: "Do Things That Don't Scale", subtitle: "paulgraham.com · 에세이 · 15분", body: "첫 30일은 자동화보다 1대1 손작업이 빠릅니다. 첫 5명에게 메뉴바 앱을 직접 설치해 주세요.", tone: .amber, chips: [.init("고객"), .init("제약", tone: .amber)]),
                     .init("yc", leading: "YC", title: "How to Talk to Users", subtitle: "Startup School · 강연 · 32분", body: "지금 가장 큰 문제 1개, 마지막 발생 시점, 그때 어떻게 해결했는가. 이 3개로 시작하세요.", tone: .sky, chips: [.init("고객"), .init("숫자", tone: .rose)]),
                 ]),
             ]),
             .init(id: "constraint", title: "제약이 실력이다", meta: "Value 1 · 4건 · 30일 안에 끝나려면 뭘 빼야 하는가", markerTone: .amber, blocks: [
                 .init("constraint-articles", style: .articles, rows: [
-                    .init("calm", leading: "CC", title: "Calm Company — VC 없이도 충분하다", subtitle: "calmcompany.fund · 매니페스토 · 7분", body: "30일 목표를 투자 유치가 아니라 첫 매출 1원으로 잡으세요.", tone: .amber, chips: [.init("제약", tone: .amber), .init("Adaptive", tone: .teal)]),
-                    .init("levels", leading: "LV", title: "Nomad List — 한 명, 단일 SQLite, $1.5M ARR", subtitle: "levels.io · 실전 케이스", body: "스택은 모트가 아닙니다. 모트는 고객과의 거리입니다.", tone: .amber, chips: [.init("제약", tone: .amber), .init("고객")]),
+                    .init("calm", leading: "CC", title: "Calm Company — VC 없이도 충분하다", subtitle: "calmcompany.fund · 매니페스토 · 7분", body: "30일 목표를 투자 유치가 아니라 첫 매출 1원으로 잡으세요.", tone: .amber, chips: [.init("제약", tone: .amber), .init("맞춤", tone: .teal)]),
+                    .init("levels", leading: "LV", title: "Nomad List — 한 명, 단일 SQLite, 연간 반복 매출 $1.5M", subtitle: "levels.io · 실전 케이스", body: "스택은 방어력이 아닙니다. 방어력은 고객과의 거리입니다.", tone: .amber, chips: [.init("제약", tone: .amber), .init("고객")]),
                 ]),
             ]),
         ],
@@ -651,12 +651,12 @@ enum OpenDesignReferenceCatalog {
                 .init("customer", title: "고객이 먼저다", trailing: "6 / 14", tone: .accent),
                 .init("constraint", title: "제약이 실력이다", trailing: "4 / 14", tone: .amber),
                 .init("numbers", title: "숫자로 결정", trailing: "4 / 14", tone: .rose),
-                .init("adaptive", title: "Adaptive over Static", trailing: "3 / 14", tone: .teal),
+                .init("adaptive", title: "맞춤형이 일반형보다 낫다", trailing: "3 / 14", tone: .teal),
             ]),
             .init("recommend", style: .rows, title: "오늘 추천 3건", rows: [
                 .init("r1", leading: "01", title: "The Mom Test — 엄마도 거짓말한다", subtitle: "고객 · 22분 · 인터뷰 직전", tone: .accent),
                 .init("r2", leading: "02", title: "YC — How to Talk to Users", subtitle: "고객 · 32분 · 3개 질문 템플릿", tone: .sky),
-                .init("r3", leading: "03", title: "PostHog — Downstream of ICP", subtitle: "Adaptive · 8분 · ICP 정의 직전", tone: .teal),
+                .init("r3", leading: "03", title: "PostHog — Downstream of ICP", subtitle: "맞춤 · 8분 · 고객 후보 정의 직전", tone: .teal),
             ]),
         ])
     )
@@ -667,15 +667,15 @@ enum OpenDesignReferenceCatalog {
         sideBadge: "1 / 30",
         sideSearchPlaceholder: "과제 검색",
         sideGroups: [
-            .init(title: "Week 1 — Foundation", count: "1 / 7", rows: [
-                .init(id: "day1", title: "먼저 도울 사람을 정해요", subtitle: "Day 1 · ICP · 인터뷰 1/3", badge: nil, leading: "◌", tone: .accent, isActive: false),
-                .init(id: "day2", title: "시장 신호 읽기", subtitle: "Day 2 · Market", badge: nil, leading: "○", tone: .muted, isActive: false),
-                .init(id: "day3", title: "Mom Test 인터뷰 ×3", subtitle: "Day 3 · Interview", badge: nil, leading: "○", tone: .muted, isActive: false),
-                .init(id: "day4", title: "10× 웨지 찾기", subtitle: "Day 4 · Wedge", badge: nil, leading: "○", tone: .muted, isActive: false),
+            .init(title: "Week 1 — 초기 검증", count: "1 / 7", rows: [
+                .init(id: "day1", title: "먼저 도울 사람을 정해요", subtitle: "Day 1 · 고객 후보 · 인터뷰 4문항", badge: nil, leading: "◌", tone: .accent, isActive: false),
+                .init(id: "day2", title: "시장 신호 읽기", subtitle: "Day 2 · 시장", badge: nil, leading: "○", tone: .muted, isActive: false),
+                .init(id: "day3", title: "실제 행동 인터뷰 ×3", subtitle: "Day 3 · 인터뷰", badge: nil, leading: "○", tone: .muted, isActive: false),
+                .init(id: "day4", title: "10× 진입점 찾기", subtitle: "Day 4 · 진입점", badge: nil, leading: "○", tone: .muted, isActive: false),
             ]),
-            .init(title: "Week 2 — Build", count: "잠금 해제 D7", rows: [
-                .init(id: "day8", title: "MVP 코어 4시간 빌드", subtitle: "Day 8 · Build", badge: "잠금", leading: "⌧", tone: .muted, isActive: false),
-                .init(id: "day9", title: "첫 5명 초대 초안", subtitle: "Day 9 · Outreach", badge: "잠금", leading: "⌧", tone: .muted, isActive: false),
+            .init(title: "Week 2 — 만들기", count: "잠금 해제 D7", rows: [
+                .init(id: "day8", title: "첫 버전 핵심 4시간 빌드", subtitle: "Day 8 · 만들기", badge: "잠금", leading: "⌧", tone: .muted, isActive: false),
+                .init(id: "day9", title: "첫 5명 초대 초안", subtitle: "Day 9 · 연락", badge: "잠금", leading: "⌧", tone: .muted, isActive: false),
             ]),
         ],
         header: .init(
@@ -685,16 +685,16 @@ enum OpenDesignReferenceCatalog {
             subtitleParts: ["14 events", "2026-05-02 → 오늘", "agentic30-public"],
             actions: [.init(id: "today", title: "오늘로 이동", systemImage: "forward", tone: .accent)]
         ),
-        filters: [.init("전체 14"), .init("인터뷰 6", tone: .sky), .init("BIP 로그 0", tone: .amber), .init("코드 · GitHub 4", tone: .accent), .init("과제 1", tone: .violet), .init("커리큘럼 3", tone: .teal)],
+        filters: [.init("전체 14"), .init("인터뷰 6", tone: .sky), .init("공개 기록 0", tone: .amber), .init("코드 · GitHub 4", tone: .accent), .init("과제 1", tone: .violet), .init("커리큘럼 3", tone: .teal)],
         sections: [
             .init(id: "summary", title: "요약", meta: nil, markerTone: .accent, blocks: [
-                .init("banner", style: .banner, title: "Foundation Loop이 처음으로 닫혔어요 · Day 1 완료", subtitle: "2026-05-16 14:48", body: "ICP 후보 1명이 SPEC.md에 자동 저장됨 · Day 2가 곧 열립니다.", chips: [.init("완료 Day 1 / 30"), .init("Evidence 14", tone: .sky), .init("활동일 5 / 15d", tone: .amber)]),
+                .init("banner", style: .banner, title: "초기 검증 흐름이 처음으로 닫혔어요 · Day 1 완료", subtitle: "2026-05-16 14:48", body: "고객 후보 1명이 SPEC.md에 자동 저장됨 · Day 2가 곧 열립니다.", chips: [.init("완료 Day 1 / 30"), .init("증거 14", tone: .sky), .init("활동일 5 / 15d", tone: .amber)]),
             ]),
             .init(id: "today", title: "오늘", meta: "2026-05-16 · 금 · 6 events", markerTone: .accent, blocks: [
                 .init("today-events", style: .timeline, rows: [
                     .init("code", leading: "14:48:02", title: "후보 1명 자동 저장", subtitle: "SPEC.md · candidate.icp 블록 갱신 · +18 / -3", body: "channel=ex-colleague, tools=cursor, stuck=build-loop, last7d=restart", tone: .accent),
-                    .init("iv4", leading: "14:45:21", title: "\"또 새로 시작\"", subtitle: "INTERVIEW 4/4 · 지난 7일", body: "Mom Test 통과. 빌드 루프 가설이 실제 행동으로 확정됐어요.", tone: .sky),
-                    .init("iv3", leading: "14:42:09", title: "\"빌드 단계\" · \"검증 없이 5번 빌드\"", subtitle: "INTERVIEW 3/4 · 막힌 단계", body: "wedge 후보가 빌드를 끝까지 끌고 가는 보조로 좁혀집니다.", tone: .sky),
+                    .init("iv4", leading: "14:45:21", title: "\"또 새로 시작\"", subtitle: "INTERVIEW 4/4 · 지난 7일", body: "실제 행동 질문 통과. 빌드 루프 가설이 실제 행동으로 확정됐어요.", tone: .sky),
+                    .init("iv3", leading: "14:42:09", title: "\"빌드 단계\" · \"검증 없이 5번 빌드\"", subtitle: "INTERVIEW 3/4 · 막힌 단계", body: "막힌 지점 후보가 빌드를 끝까지 끌고 가는 보조로 좁혀집니다.", tone: .sky),
                     .init("iv2", leading: "14:38:33", title: "\"Cursor 메인\"", subtitle: "INTERVIEW 2/4 · 도구", body: "결제 의향이 안정적인 풀이고 Day 3 인터뷰 모수도 충분합니다.", tone: .sky),
                     .init("mission", leading: "14:32:50", title: "첫 인터뷰 1통 할 사람을 한 명 고르기", subtitle: "MISSION · Day 1 수락", body: "예상 3분 → 실제 16분.", tone: .violet),
                 ]),
@@ -702,22 +702,22 @@ enum OpenDesignReferenceCatalog {
             .init(id: "yesterday", title: "어제", meta: "2026-05-15 · 목 · 3 events", markerTone: .sky, blocks: [
                 .init("yesterday-events", style: .timeline, rows: [
                     .init("spec", leading: "22:14:08", title: "SPEC.md · ICP.md 정리", subtitle: "제품 한 줄 확정 · +142 / -87", tone: .accent),
-                    .init("zoom", leading: "21:30:00", title: "장지창 · 45분", subtitle: "Zoom transcript · 검증 없이 5번 빌드", tone: .sky),
-                    .init("scope", leading: "17:42:03", title: "Q2 wedge: Foundation Day 0-3 먼저 닫기", subtitle: "Day 4-7 / Day 8-30은 dogfood 이후 확장", tone: .teal),
+                    .init("zoom", leading: "21:30:00", title: "장지창 · 45분", subtitle: "Zoom 대화 기록 · 검증 없이 5번 빌드", tone: .sky),
+                    .init("scope", leading: "17:42:03", title: "Q2 진입점: 초기 검증 Day 0-3 먼저 닫기", subtitle: "Day 4-7 / Day 8-30은 직접 사용해본 뒤 확장", tone: .teal),
                 ]),
             ]),
             .init(id: "future", title: "내일 — 잠금 해제 예정", meta: "2026-05-17 → Day 2 · Day 30", markerTone: .muted, blocks: [
                 .init("future-events", style: .timeline, rows: [
-                    .init("day2", leading: "LOCKED", title: "시장 신호 읽기", subtitle: "Day 1 ICP 후보 1명을 기준으로 Threads/IH 키워드 3개 추출", tone: .muted),
-                    .init("day3", leading: "ETA 5/18", title: "Mom Test 인터뷰 ×3", subtitle: "전 직장 출신 + Cursor + 빌드 단계에서 멈춤 풀 5명", tone: .muted),
+                    .init("day2", leading: "LOCKED", title: "시장 신호 읽기", subtitle: "Day 1 고객 후보 1명을 기준으로 Threads/IH 키워드 3개 추출", tone: .muted),
+                    .init("day3", leading: "ETA 5/18", title: "실제 행동 인터뷰 ×3", subtitle: "전 직장 출신 + Cursor + 빌드 단계에서 멈춤 풀 5명", tone: .muted),
                 ]),
             ]),
         ],
         meta: .init(title: "요약", cards: [
             .init("heatmap", style: .heatmap, title: "활동 · 30일", subtitle: "14 events"),
-            .init("sources", style: .rows, title: "Evidence 소스 · 합 14", rows: [
-                .init("iv", title: "인터뷰 · transcript", trailing: "6", tone: .sky),
-                .init("bip", title: "BIP 로그 · 게시", trailing: "0", tone: .amber),
+            .init("sources", style: .rows, title: "증거 소스 · 합 14", rows: [
+                .init("iv", title: "인터뷰 · 원문", trailing: "6", tone: .sky),
+                .init("bip", title: "공개 기록 · 게시", trailing: "0", tone: .amber),
                 .init("code", title: "코드 · GitHub commit", trailing: "4", tone: .accent),
                 .init("mission", title: "과제 · Day 미션", trailing: "1", tone: .violet),
                 .init("curriculum", title: "커리큘럼 · 결정", trailing: "3", tone: .teal),
@@ -901,7 +901,7 @@ private extension OpenDesignBipCandidate {
             evidenceStrength: researchCandidate.evidenceStrength
         )
         let tags = researchCandidate.tags.isEmpty
-            ? [OpenDesignReferenceChip(researchCandidate.sourceLabel ?? "BIP", tone: sourceTone)]
+            ? [OpenDesignReferenceChip(researchCandidate.sourceLabel ?? "공개 기록", tone: sourceTone)]
             : researchCandidate.tags.map { tag in
                 OpenDesignReferenceChip(
                     tag.title,
@@ -916,16 +916,16 @@ private extension OpenDesignBipCandidate {
         self.init(
             id: researchCandidate.id,
             matchLabel: researchCandidate.matchLabel ?? OpenDesignBipFilter.matchLabel(for: researchCandidate.evidenceStrength),
-            matchCaption: researchCandidate.matchCaption ?? "match",
+            matchCaption: researchCandidate.matchCaption ?? "적합",
             sourceLabel: researchCandidate.sourceLabel ?? sourceType.uppercased(),
             title: researchCandidate.title,
             source: researchCandidate.source ?? researchCandidate.sourceRefs.first?.title ?? "공개 게시글",
             date: researchCandidate.date ?? researchCandidate.sourceRefs.first?.publishedAt ?? "날짜 미상",
             medium: researchCandidate.medium ?? OpenDesignBipFilter.defaultMedium(for: sourceType),
             quote: openDesignBipAttributed(researchCandidate.quote ?? researchCandidate.sourceRefs.first?.excerpt ?? "원문 excerpt가 비어 있습니다."),
-            whyTitle: researchCandidate.whyTitle ?? "왜 ICP 증거인가",
+            whyTitle: researchCandidate.whyTitle ?? "왜 고객 후보 증거인가",
             whyBody: openDesignBipAttributed(researchCandidate.whyBody ?? "프로젝트 기준과 오늘 Day에 맞는 공개 신호입니다."),
-            usageTitle: researchCandidate.usageTitle ?? "BIP 활용",
+            usageTitle: researchCandidate.usageTitle ?? "공개 기록 활용",
             usageBody: researchCandidate.usageBody ?? "오늘의 공개 기록 또는 DM 후보로 전환합니다.",
             gap: openDesignBipAttributed(researchCandidate.gap ?? "확인 필요: 전업 여부, 수익 상태, 인터뷰 의향."),
             filters: filters,
@@ -1037,10 +1037,10 @@ private enum OpenDesignNewsCatalog {
     ]
 
     static let sections: [OpenDesignNewsSection] = [
-        .init(id: "customer", title: "고객이 먼저다", meta: "Value 2 · 6건 · ICP가 첫 매출 0원일 때 가장 자주 비는 자료", tone: .accent),
+        .init(id: "customer", title: "고객이 먼저다", meta: "Value 2 · 6건 · 첫 매출 0원일 때 고객 후보가 가장 자주 비는 자료", tone: .accent),
         .init(id: "constraint", title: "제약이 실력이다", meta: "Value 1 · 4건 · 30일 안에 끝나려면 뭘 빼야 하는가", tone: .amber),
-        .init(id: "ship", title: "불완전해도 공개하라", meta: "Value 3 · 3건 · BIP 첫 포스트 전에 읽을 자료", tone: .sky),
-        .init(id: "numbers", title: "숫자로 결정하라", meta: "Value 4 · 4건 · Day 7 Go/No-Go 게이트에 쓸 기준", tone: .rose),
+        .init(id: "ship", title: "불완전해도 공개하라", meta: "Value 3 · 3건 · 첫 공개 기록 전에 읽을 자료", tone: .sky),
+        .init(id: "numbers", title: "숫자로 결정하라", meta: "Value 4 · 4건 · Day 7 계속/중단 결정에 쓸 기준", tone: .rose),
         .init(id: "alone", title: "혼자지만 고립되지 마라", meta: "Value 5 · 2건 · 외부 교정 장치", tone: .violet),
     ]
 
@@ -1080,7 +1080,7 @@ private enum OpenDesignNewsCatalog {
             original: "PostHog Handbook · \"Who we build for\"",
             quote: nil,
             takeLead: "왜 보세요",
-            takeBody: "VALUES.md 5번 항목의 외부 교정 장치 정의가 여기서 출발합니다. ICP가 가격, 기능, 마케팅 채널, 콘텐츠 톤, UI 스타일을 결정합니다.",
+            takeBody: "VALUES.md 5번 항목의 외부 교정 장치 정의가 여기서 출발합니다. 고객 후보가 가격, 기능, 마케팅 채널, 콘텐츠 톤, UI 스타일을 결정합니다.",
             applyWhen: "Day 1 · Day 2",
             values: [.customer, .adaptive],
             type: .sourceEssay,
@@ -1099,7 +1099,7 @@ private enum OpenDesignNewsCatalog {
             title: "Do Things That Don't Scale",
             original: "Paul Graham · 2013-07 · Y Combinator",
             quote: "Stripe의 창업자들은 한 명씩 노트북을 들고 가서 직접 설치해 줬다. 사인업 후 그 자리에서 키 발급과 API 연결을 끝냈다.",
-            takeLead: "ICP가 자주 빼먹는 것",
+            takeLead: "고객 후보가 자주 빼먹는 것",
             takeBody: "전업 1인 개발자는 자동화부터 만듭니다. 처음 30일은 자동화보다 1대1 손작업이 빠릅니다. 첫 5명에게 메뉴바 앱을 직접 설치해 주세요.",
             applyWhen: "Day 8 · Day 18+",
             values: [.customer, .constraint],
@@ -1158,9 +1158,9 @@ private enum OpenDesignNewsCatalog {
             time: "18분",
             title: "The Minimalist Entrepreneur — 100명이 사랑하는 제품",
             original: "Sahil Lavingia · Gumroad 창업자 · 2021",
-            quote: "100명의 사랑하는 고객은 10,000명의 가벼운 호감보다 더 가치 있습니다. Cohort 1을 잡아야 Cohort 2가 옵니다.",
-            takeLead: "PMF 정의",
-            takeBody: "VALUES.md 4번의 PMF 기준이 유저 100명과 첫 매출인 이유입니다. Day 7 Go/No-Go에서 이 숫자를 떠올리세요.",
+            quote: "100명의 사랑하는 고객은 10,000명의 가벼운 호감보다 더 가치 있습니다. 첫 사용자 묶음을 잡아야 다음 사용자 묶음이 옵니다.",
+            takeLead: "시장 적합 기준",
+            takeBody: "VALUES.md 4번의 시장 적합 기준이 사용자 100명과 첫 매출인 이유입니다. Day 7 계속/중단 결정에서 이 숫자를 떠올리세요.",
             applyWhen: "Day 7 · Day 22+",
             values: [.customer, .constraint],
             type: .sourceBook,
@@ -1179,7 +1179,7 @@ private enum OpenDesignNewsCatalog {
             title: "Calm Company — VC 없이도 충분하다",
             original: "Tyler Tringas · MicroAcquire · Earnest Capital",
             quote: nil,
-            takeLead: "ICP에게 직접",
+            takeLead: "고객 후보에게 직접",
             takeBody: "전업 1인 개발자는 투자 받아야 진짜라는 환각을 가집니다. 30일 목표를 투자가 아니라 첫 매출 1원으로 잡으세요.",
             applyWhen: "Day 22+",
             values: [.constraint, .adaptive],
@@ -1216,11 +1216,11 @@ private enum OpenDesignNewsCatalog {
             source: "levels.io/buy/",
             typeLabel: "실전 케이스",
             time: "5분 · 데이터",
-            title: "Nomad List — 한 명, 단일 SQLite, $1.5M ARR",
+            title: "Nomad List — 한 명, 단일 SQLite, 연간 반복 매출 $1.5M",
             original: "Pieter Levels (@levelsio) · 2014-현재 · public revenue dashboard",
             quote: "React, Postgres, Redis, Kubernetes 없이 PHP 파일 하나와 SQLite로 혼자 $1.5M/year를 만든다는 사례입니다.",
-            takeLead: "스택은 모트가 아니다",
-            takeBody: "인프라 페티시를 버리세요. ICP인 1인 개발자가 가장 자주 잃는 시간은 올바른 스택 고민입니다. 모트는 고객과의 거리입니다.",
+            takeLead: "스택은 방어력이 아니다",
+            takeBody: "인프라 집착을 버리세요. 고객 후보인 1인 개발자가 가장 자주 잃는 시간은 올바른 스택 고민입니다. 방어력은 고객과의 거리입니다.",
             applyWhen: "Day 8-17",
             values: [.constraint, .adaptive],
             type: .sourceCase,
@@ -1280,7 +1280,7 @@ private enum OpenDesignNewsCatalog {
             original: "Naval Ravikant · AngelList · 2018-05-31 thread",
             quote: nil,
             takeLead: "1인 개발자의 레버리지",
-            takeBody: "코드와 미디어는 0의 한계비용이고, 1인 개발자가 동시에 굴릴 수 있는 유일한 두 가지입니다. BIP는 부가가 아니라 필수 레버리지입니다.",
+            takeBody: "코드와 미디어는 0의 한계비용이고, 1인 개발자가 동시에 굴릴 수 있는 유일한 두 가지입니다. 공개 기록은 부가가 아니라 필수 지렛대입니다.",
             applyWhen: "Day 18-30",
             values: [.ship, .constraint],
             type: .sourceEssay,
@@ -1296,7 +1296,7 @@ private enum OpenDesignNewsCatalog {
             source: "indiehackers.com/post",
             typeLabel: "실전 케이스",
             time: "9분",
-            title: "Threads BIP 30일 챌린지 — 0 follower → 첫 사용자 12명",
+            title: "Threads 공개 기록 30일 챌린지 — 0 follower → 첫 사용자 12명",
             original: "Indie Hackers community submission · 2025-Q1",
             quote: nil,
             takeLead: "참고 곡선",
@@ -1316,11 +1316,11 @@ private enum OpenDesignNewsCatalog {
             source: "lennysnewsletter.com",
             typeLabel: "리서치",
             time: "10분",
-            title: "Sean Ellis PMF 설문 — 40% 룰의 실제 데이터",
+            title: "Sean Ellis 시장 적합 설문 — 40% 룰의 실제 데이터",
             original: "Lenny Rachitsky · 2022 · 230개 스타트업 분석",
-            quote: "제품을 더 이상 쓸 수 없으면 매우 실망할 사용자가 40% 이상이면 PMF가 있다는 단일 질문 프레임입니다.",
-            takeLead: "측정 가능한 PMF",
-            takeBody: "PMF가 막연하다면 이 질문 하나로 측정하세요. Day 30 사용자 100명이면 50명에게 보내고 40% 이상이 매우 실망이면 Go.",
+            quote: "제품을 더 이상 쓸 수 없으면 매우 실망할 사용자가 40% 이상이면 시장 적합 신호가 있다는 단일 질문 프레임입니다.",
+            takeLead: "측정 가능한 시장 적합 기준",
+            takeBody: "시장 적합 기준이 막연하다면 이 질문 하나로 측정하세요. Day 30 사용자 100명이면 50명에게 보내고 40% 이상이 매우 실망이면 계속 진행입니다.",
             applyWhen: "Day 25-30",
             values: [.numbers],
             type: .sourceEssay,
@@ -1340,7 +1340,7 @@ private enum OpenDesignNewsCatalog {
             original: "Patrick McKenzie (patio11) · Stripe Atlas",
             quote: nil,
             takeLead: "가격은 정체성",
-            takeBody: "같은 코드를 비즈니스 결과물로 포지셔닝하면 가격 기준이 달라집니다. ICP가 저축 소진 중이라면 가격이 모든 결정의 시작입니다.",
+            takeBody: "같은 코드를 비즈니스 결과물로 포지셔닝하면 가격 기준이 달라집니다. 고객 후보가 저축 소진 중이라면 가격이 모든 결정의 시작입니다.",
             applyWhen: "Day 22-24",
             values: [.numbers, .adaptive],
             type: .sourceEssay,
@@ -1397,13 +1397,13 @@ private enum OpenDesignNewsCatalog {
         .init(id: .ship, title: "불완전해도 공개", count: "3 / 14", progress: 0.38, tone: .sky),
         .init(id: .numbers, title: "숫자로 결정", count: "4 / 14", progress: 0.50, tone: .rose),
         .init(id: .alone, title: "고립되지 마라", count: "2 / 14", progress: 0.25, tone: .violet),
-        .init(id: .adaptive, title: "Adaptive over Static", count: "3 / 14", progress: 0.38, tone: .teal),
+        .init(id: .adaptive, title: "맞춤형이 일반형보다 낫다", count: "3 / 14", progress: 0.38, tone: .teal),
     ]
 
     static let recommendations: [OpenDesignNewsRecommendation] = [
         .init(id: "r1", rank: "01", title: "The Mom Test — 엄마도 거짓말한다", meta: "고객 · 22분 · 인터뷰 직전", tone: .accent),
         .init(id: "r2", rank: "02", title: "YC — How to Talk to Users", meta: "고객 · 32분 · 3개 질문 템플릿", tone: .sky),
-        .init(id: "r3", rank: "03", title: "PostHog — Downstream of ICP", meta: "Adaptive · 8분 · ICP 정의 직전", tone: .teal),
+        .init(id: "r3", rank: "03", title: "PostHog — Downstream of ICP", meta: "맞춤 · 8분 · 고객 후보 정의 직전", tone: .teal),
     ]
 
     static let sources: [OpenDesignNewsSource] = [
@@ -1465,7 +1465,7 @@ private struct OpenDesignBipLogShell: View {
                     )
                     Color.clear
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("OpenDesign BIP Log Side")
+                    .accessibilityLabel("OpenDesign 공개 기록 사이드")
                         .accessibilityIdentifier("opendesign.reference.bipLog.side")
                         .allowsHitTesting(false)
                 }
@@ -1492,7 +1492,7 @@ private struct OpenDesignBipLogShell: View {
                 )
                 Color.clear
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("OpenDesign BIP Log Main")
+                    .accessibilityLabel("OpenDesign 공개 기록 메인")
                     .accessibilityIdentifier("opendesign.reference.bipLog.main")
                     .allowsHitTesting(false)
             }
@@ -1601,7 +1601,7 @@ private struct OpenDesignBipSidebarView: View {
                     }
 
                     if visibility.showsSidebarSignalSection {
-                        OpenDesignBipSidebarSection(title: "ICP 신호", count: "\(signals.count)") {
+                        OpenDesignBipSidebarSection(title: "고객 후보 신호", count: "\(signals.count)") {
                             ForEach(signals) { signal in
                                 OpenDesignBipSignalRow(signal: signal)
                             }
@@ -1730,7 +1730,7 @@ private struct OpenDesignBipSidebarProgress: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(alignment: .firstTextBaseline) {
-                Text("ICP 후보")
+                Text("고객 후보")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .textCase(.uppercase)
                     .foregroundStyle(OpenDesignDayColor.muted)
@@ -1765,7 +1765,7 @@ private struct OpenDesignBipSidebarProgress: View {
                     .foregroundStyle(OpenDesignDayColor.muted)
                 Text(candidateCount > 0 ? "상위 후보" : "리서치 대기")
                     .foregroundStyle(OpenDesignDayColor.fgSecondary)
-                Text(candidateCount > 0 ? "· DM 후보화" : "· Exa 필요")
+                Text(candidateCount > 0 ? "· DM 후보화" : "· 웹 검색 설정 필요")
                     .foregroundStyle(OpenDesignDayColor.muted)
             }
             .font(.system(size: 10.5, weight: .medium, design: .monospaced))
@@ -1821,7 +1821,7 @@ private struct OpenDesignBipMainView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         OpenDesignBipSectionHeader(
-                            title: "ICP 리서치 큐",
+                            title: "고객 후보 리서치 큐",
                             meta: "Day \(snapshot.dayNumber) · \(snapshot.statusLabel)",
                             tone: .accent
                         )
@@ -1847,14 +1847,14 @@ private struct OpenDesignBipMainView: View {
                             HStack(alignment: .center, spacing: 10) {
                                 OpenDesignBipSectionHeader(
                                     title: "리서치된 게시글",
-                                    meta: "원문 하이라이트 + ICP 근거",
+                                    meta: "원문 하이라이트 + 고객 후보 근거",
                                     tone: .sky
                                 )
                                 Spacer(minLength: 10)
                                 HStack(spacing: 2) {
                                     Text("정렬")
                                         .foregroundStyle(OpenDesignDayColor.muted)
-                                    Text("ICP 적합도순")
+                                    Text("고객 후보 적합도순")
                                         .fontWeight(.semibold)
                                         .foregroundStyle(OpenDesignDayColor.fgSecondary)
                                 }
@@ -1887,7 +1887,7 @@ private struct OpenDesignBipMainView: View {
 
                         if visibility.showsDraftSection {
                             OpenDesignBipSectionHeader(
-                                title: "BIP 초안",
+                                title: "공개 기록 초안",
                                 meta: "선택 후보를 기반으로 자동 생성",
                                 tone: .amber
                             )
@@ -1951,7 +1951,7 @@ private struct OpenDesignBipHeaderView: View {
                 .background(referenceRounded(fill: OpenDesignDayColor.accentDim, stroke: OpenDesignDayColor.accentLine, radius: 11))
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("BIP 로그 · ICP 리서치")
+                Text("공개 기록 · 고객 후보 리서치")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(OpenDesignDayColor.fg)
                     .lineLimit(1)
@@ -1959,7 +1959,7 @@ private struct OpenDesignBipHeaderView: View {
                     Circle()
                         .fill(OpenDesignDayColor.accent)
                         .frame(width: 5, height: 5)
-                    headerMeta("Exa Search + Web Fetch · 후보 \(snapshot.candidateCount)명")
+                    headerMeta("웹 자료 검색 + 원문 확인 · 후보 \(snapshot.candidateCount)명")
                     headerSeparator
                     headerMeta("Day \(snapshot.dayNumber) · \(snapshot.status.researchSource ?? snapshot.statusLabel)")
                 }
@@ -2048,7 +2048,7 @@ private struct OpenDesignBipFilterBar: View {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(OpenDesignDayColor.muted)
-                    TextField("ICP 증거 검색", text: $searchQuery)
+                    TextField("고객 후보 증거 검색", text: $searchQuery)
                         .textFieldStyle(.plain)
                         .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(OpenDesignDayColor.fg)
@@ -2148,16 +2148,16 @@ private struct OpenDesignBipBriefCard: View {
         VStack(alignment: .leading, spacing: 13) {
             HStack(alignment: .top, spacing: 18) {
                 VStack(alignment: .leading, spacing: 7) {
-                    Text("auto research run")
+                    Text("자동 리서치")
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .textCase(.uppercase)
                         .foregroundStyle(OpenDesignDayColor.accent)
-                    Text(snapshot.briefTitle ?? "공개 소셜 게시글에서 ICP 신호를 찾습니다.")
+                    Text(snapshot.briefTitle ?? "공개 소셜 게시글에서 고객 후보 신호를 찾습니다.")
                         .font(.system(size: 20, weight: .regular))
                         .foregroundStyle(OpenDesignDayColor.fg)
                         .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text(snapshot.briefBody ?? "Exa Search 결과를 Web Fetch로 다시 읽고, 실제 원문 URL이 있는 후보만 표시합니다.")
+                    Text(snapshot.briefBody ?? "웹 자료 검색 결과를 원문 확인으로 다시 읽고, 실제 원문 URL이 있는 후보만 표시합니다.")
                         .font(.system(size: 13, weight: .regular))
                         .foregroundStyle(OpenDesignDayColor.fgSecondary)
                         .lineSpacing(4)
@@ -2169,7 +2169,7 @@ private struct OpenDesignBipBriefCard: View {
                     Text("\(snapshot.candidateCount)")
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(OpenDesignDayColor.fg)
-                    Text("강한 적합 \(strongCount) · 워치리스트 \(watchCount)")
+                    Text("강한 적합 \(strongCount) · 관심 후보 \(watchCount)")
                 }
                 .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                 .foregroundStyle(OpenDesignDayColor.muted)
@@ -2179,7 +2179,7 @@ private struct OpenDesignBipBriefCard: View {
             HStack(alignment: .top, spacing: 9) {
                 Text("exa>")
                     .foregroundStyle(OpenDesignDayColor.accent)
-                Text(snapshot.querySummary?.isEmpty == false ? snapshot.querySummary! : "adaptive social research query")
+                Text(snapshot.querySummary?.isEmpty == false ? snapshot.querySummary! : "상황 맞춤 소셜 리서치 검색어")
                     .foregroundStyle(OpenDesignDayColor.fgSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -2265,7 +2265,7 @@ private struct OpenDesignBipProgressState: View {
     private var progressMeta: String {
         let step = status.stepIndex.map { "\($0)" } ?? "?"
         let count = status.stepCount.map { "\($0)" } ?? "?"
-        return "\(status.researchSource ?? "Exa MCP") · \(step)/\(count)"
+        return "\(status.researchSource ?? "웹 검색 도구") · \(step)/\(count)"
     }
 }
 
@@ -2274,15 +2274,15 @@ private struct OpenDesignBipNoExaRouteState: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Exa MCP 설정이 필요합니다.")
+            Text("웹 검색 도구 설정이 필요합니다.")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(OpenDesignDayColor.fg)
-            Text("BIP 리서치는 실제 X/Threads 검색과 fetch 결과만 표시합니다. Codex/Claude/Gemini의 Exa MCP 또는 Settings의 Exa fallback key를 설정하세요.")
+            Text("공개 기록 리서치는 실제 X/Threads 검색과 원문 확인 결과만 표시합니다. Codex/Claude/Gemini의 웹 검색 도구 또는 Settings의 Exa 예비 키를 설정하세요.")
                 .font(.system(size: 12.5, weight: .regular))
                 .foregroundStyle(OpenDesignDayColor.fgSecondary)
                 .lineSpacing(4)
             Button(action: openSettings) {
-                Text("Settings 열기")
+                Text("설정 열기")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(OpenDesignDayColor.bgDeep)
                     .padding(.horizontal, 12)
@@ -2302,7 +2302,7 @@ private struct OpenDesignBipEmptyState: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            Text("아직 표시할 BIP 후보가 없습니다.")
+            Text("아직 표시할 공개 기록 후보가 없습니다.")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(OpenDesignDayColor.fg)
             Text("다시 리서치를 실행하면 오늘 Day와 프로젝트 문서 기준으로 X/Threads 후보를 새로 찾습니다.")
@@ -2390,7 +2390,7 @@ private struct OpenDesignBipCandidateCard: View {
 
             HStack(spacing: 8) {
                 Button(action: select) {
-                    Text(isSelected ? "초안 반영됨" : "BIP 초안에 반영")
+                    Text(isSelected ? "초안 반영됨" : "공개 기록 초안에 반영")
                         .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(isSelected ? OpenDesignDayColor.bgDeep : OpenDesignDayColor.accent)
                         .padding(.horizontal, 11)
@@ -2501,10 +2501,10 @@ private struct OpenDesignBipDraftPanel: View {
 
     private var draftText: String {
         selectedCandidate?.draft ?? """
-        후보 카드에서 “BIP 초안에 반영”을 누르면, 실제 X/Threads 리서치 결과를 오늘의 공개 기록으로 바꿉니다.
+        후보 카드에서 “공개 기록 초안에 반영”을 누르면, 실제 X/Threads 리서치 결과를 오늘의 공개 기록으로 바꿉니다.
 
         형식:
-        1. 원문에서 잡은 ICP 증거
+        1. 원문에서 잡은 고객 후보 증거
         2. 왜 인터뷰 후보인지
         3. DM에서 확인할 공백 1개
         """
@@ -2512,7 +2512,7 @@ private struct OpenDesignBipDraftPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(selectedCandidate.map { "\($0.source) · BIP 초안" } ?? "선택 후보 없음")
+            Text(selectedCandidate.map { "\($0.source) · 공개 기록 초안" } ?? "선택 후보 없음")
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(OpenDesignDayColor.fg)
 
@@ -2910,10 +2910,10 @@ private struct NewsMarketRadarNoExaRouteState: View {
             Image(systemName: "key.slash")
                 .font(.system(size: 20, weight: .bold))
                 .foregroundStyle(OpenDesignDayColor.amber)
-            Text("Exa MCP 연결이 필요합니다")
+            Text("웹 검색 도구 연결이 필요합니다")
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundStyle(OpenDesignDayColor.fg)
-            Text("리서치 레이더는 Codex, Claude Code, Gemini에 연결된 Exa MCP를 우선 사용합니다. 없을 때만 설정의 EXA_API_KEY 대체 경로를 사용합니다.")
+            Text("리서치 레이더는 Codex, Claude Code, Gemini에 연결된 웹 검색 도구를 우선 사용합니다. 없을 때만 설정의 EXA_API_KEY 대체 경로를 사용합니다.")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(OpenDesignDayColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -3314,10 +3314,10 @@ private struct NewsMarketRadarProgressStep: Identifiable {
 }
 
 private let newsMarketRadarProgressSteps: [NewsMarketRadarProgressStep] = [
-    .init(id: "checking_exa_route", order: 1, title: "연결 확인", fallbackDetail: "Exa MCP 연결을 확인하는 중"),
+    .init(id: "checking_exa_route", order: 1, title: "연결 확인", fallbackDetail: "웹 검색 도구 연결을 확인하는 중"),
     .init(id: "loading_workspace_evidence", order: 2, title: "근거 수집", fallbackDetail: "워크스페이스 근거와 일차 답변을 읽는 중"),
     .init(id: "building_research_prompt", order: 3, title: "질문 구성", fallbackDetail: "리서치 질문을 구성하는 중"),
-    .init(id: "running_provider_research", order: 4, title: "Exa 검색", fallbackDetail: "프로바이더 Exa MCP로 공개 근거를 검색하는 중"),
+    .init(id: "running_provider_research", order: 4, title: "웹 검색", fallbackDetail: "웹 검색 도구로 공개 근거를 검색하는 중"),
     .init(id: "normalizing_cards", order: 5, title: "카드 정리", fallbackDetail: "근거를 가정별 카드로 정리하는 중"),
     .init(id: "saving_results", order: 6, title: "저장", fallbackDetail: "리서치 결과를 로컬 캐시에 저장하는 중"),
 ]
@@ -3825,7 +3825,7 @@ private struct OpenDesignNewsTakeawayHero: View {
                     .padding(.horizontal, 8)
                     .frame(height: 20)
                     .background(Capsule().fill(OpenDesignDayColor.amberDim).overlay(Capsule().stroke(OpenDesignDayColor.amberLine, lineWidth: 1)))
-                Text("DAY 1 — ICP · 첫 인터뷰를 정하는 중")
+                Text("DAY 1 — 고객 후보 · 첫 인터뷰를 정하는 중")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(OpenDesignDayColor.amber)
                     .tracking(1.2)
@@ -3840,7 +3840,7 @@ private struct OpenDesignNewsTakeawayHero: View {
             FlowLayout(spacing: 8, lineSpacing: 4) {
                 metaText("— Rob Fitzpatrick")
                 metaSeparator
-                metaText("The Mom Test, Ch. 1", emphasized: true)
+                metaText("실제 행동 질문 · Ch. 1", emphasized: true)
                 metaSeparator
                 metaText("22분 읽기")
                 metaSeparator
@@ -4143,7 +4143,7 @@ private struct OpenDesignNewsMetaPanelView: View {
                     .foregroundStyle(OpenDesignDayColor.muted)
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("VALUES.md의 6개 원칙을 외부 1차 자료로 보강했어요. 이번 주는 ICP가 Day 1-7 Foundation 단계라, 고객 인터뷰 · 첫 매출 · BIP 첫 포스트에 직접 쓸 수 있는 자료를 우선 큐레이션했습니다.")
+                    Text("VALUES.md의 6개 원칙을 외부 1차 자료로 보강했어요. 이번 주는 고객 후보가 Day 1-7 초기 검증 단계라, 고객 인터뷰 · 첫 매출 · 공개 기록 첫 글에 직접 쓸 수 있는 자료를 우선 큐레이션했습니다.")
                         .font(.system(size: 12, weight: .regular))
                         .foregroundStyle(OpenDesignDayColor.fgSecondary)
                         .lineSpacing(4)
@@ -5208,7 +5208,7 @@ private struct OpenDesignSettingsMetaPanelView: View {
                     .foregroundStyle(OpenDesignDayColor.fg)
                     .padding(.bottom, 10)
 
-                OpenDesignSettingsMetaCard(label: "Sidecar", isLive: true) {
+                OpenDesignSettingsMetaCard(label: "실행 보조 앱", isLive: true) {
                     settingsMetaKeyValue("상태", "실행 중", strong: true)
                     settingsMetaKeyValue("PID", "47281")
                     settingsMetaKeyValue("업타임", "2d 14h")
@@ -5234,7 +5234,7 @@ private struct OpenDesignSettingsMetaPanelView: View {
 
                 settingsMetaHeading("빠른 작업")
                 settingsMetaAction("진단 스냅샷 내보내기", subtitle: "sanitize · ZIP", systemImage: "square.and.arrow.down")
-                settingsMetaAction("Sidecar 재시작", subtitle: "다운타임 ~ 1초", systemImage: "arrow.clockwise")
+                settingsMetaAction("실행 보조 앱 재시작", subtitle: "다운타임 ~ 1초", systemImage: "arrow.clockwise")
 
                 settingsMetaHeading("참고 문서")
                     .padding(.top, 18)
@@ -5246,7 +5246,7 @@ private struct OpenDesignSettingsMetaPanelView: View {
                     .padding(.top, 18)
                 Text("""
                 app · 0.4.2 (1042) · arm64
-                sidecar · 0.4.2
+                실행 보조 앱 · 0.4.2
                 node · v20.11.1
                 swift · 5.10
                 macOS · 14.5
@@ -5577,10 +5577,10 @@ private struct OpenDesignInterviewsMain: View {
                     OpenDesignInterviewSectionHeader(title: "요약")
                     summaryCard
 
-                    OpenDesignInterviewSectionHeader(title: "추출 신호", meta: "Mom Test · 4 카테고리")
+                    OpenDesignInterviewSectionHeader(title: "추출 신호", meta: "실제 행동 질문 · 4 카테고리")
                     signalGrid
 
-                    OpenDesignInterviewSectionHeader(title: "Mom Test 점검")
+                    OpenDesignInterviewSectionHeader(title: "실제 행동 질문 점검")
                     momTestCard
 
                     OpenDesignInterviewSectionHeader(title: "핵심 인용", meta: "4 / 12")
@@ -5591,7 +5591,7 @@ private struct OpenDesignInterviewsMain: View {
                     OpenDesignInterviewSectionHeader(title: "Day 3 후속 질문", meta: "3 필수")
                     followupCard
 
-                    OpenDesignInterviewSectionHeader(title: "SPEC · ICP 갱신 제안")
+                    OpenDesignInterviewSectionHeader(title: "SPEC · 고객 후보 문서 갱신 제안")
                     diffCard
                 }
                 .frame(maxWidth: 820, alignment: .leading)
@@ -5638,7 +5638,7 @@ private struct OpenDesignInterviewsMain: View {
                         Text("Zoom · 45분")
                         Text("·")
                             .foregroundStyle(OpenDesignDayColor.mutedDeep)
-                        Text("Day 1 · 1 / 3")
+                        Text("Day 1 · 1 / 4")
                     }
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(OpenDesignDayColor.muted)
@@ -5718,8 +5718,8 @@ private struct OpenDesignInterviewsMain: View {
 
             HStack(spacing: 18) {
                 summaryMetric("신호", "강 · 8/10")
-                summaryMetric("Mom Test", "4/5 통과")
-                summaryMetric("ICP 적합", "매우 높음")
+                summaryMetric("실제 행동 질문", "4/5 통과")
+                summaryMetric("고객 후보 적합", "매우 높음")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 12)
@@ -5834,7 +5834,7 @@ private struct OpenDesignInterviewsMain: View {
             OpenDesignInterviewQuoteRow(time: "02:18", kind: "Pain", quote: "AI로 다섯 번 만들었어요. 한 번도 안 팔렸어요. 다음엔 안 만들고 싶은데, 안 만들면 또 불안하더라구요. 그래서 그냥 또 만들어요.", speaker: "장지창", chip: "강한 통증", tone: .rose)
             OpenDesignInterviewQuoteRow(time: "07:42", kind: "Past", quote: "지난 6개월에 다섯 개 출시. 가입 누계 11명, 매출은 다 합쳐서 0원.", speaker: "장지창", chip: "과거 행동", tone: .sky)
             OpenDesignInterviewQuoteRow(time: "12:55", kind: "Wedge", quote: "뭘 만들지가 어려운 게 아니에요. 진짜 어려운 건 \"만들기 전에, 누가 쓸 사람인지를 모르겠다\"는 거예요.", speaker: "장지창", chip: "핵심 통증", tone: .rose)
-            OpenDesignInterviewQuoteRow(time: "28:34", kind: "Anti-pattern", quote: "Agentic30라는 30일 챌린지를 만들려고...\n오 그거 좋은데요? 저 해볼래요.", speaker: "나 / 장지창", chip: "Mom Test 위반", tone: .amber)
+            OpenDesignInterviewQuoteRow(time: "28:34", kind: "피해야 할 답변", quote: "Agentic30라는 30일 챌린지를 만들려고...\n오 그거 좋은데요? 저 해볼래요.", speaker: "나 / 장지창", chip: "실제 행동 질문 위반", tone: .amber)
         }
         .padding(.bottom, 8)
     }
@@ -5842,7 +5842,7 @@ private struct OpenDesignInterviewsMain: View {
     private var quoteFoot: some View {
         HStack(spacing: 8) {
             Text("나머지 8개 인용 ·")
-            Text("transcript 전체 보기 (6.7KB)")
+            Text("인터뷰 원문 전체 보기 (6.7KB)")
                 .foregroundStyle(OpenDesignDayColor.accent)
         }
         .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -7680,48 +7680,48 @@ private struct OpenDesignProjectMetaRow: Identifiable {
 private enum OpenDesignProjectsCatalog {
     static let stats: [OpenDesignProjectStat] = [
         .init(id: "days", label: "완료한 Day", value: "0", suffix: "/ 30", delta: "→ Day 1 진행 중", tone: .muted, isFlat: true),
-        .init(id: "interviews", label: "인터뷰 transcript", value: "1", suffix: "/ 5 게이트", delta: "+ 1 어제", tone: .accent, isFlat: false),
-        .init(id: "bip", label: "BIP 게시글", value: "0", suffix: "/ 14 권장", delta: "— 미시작", tone: .muted, isFlat: true),
+        .init(id: "interviews", label: "인터뷰 원문", value: "1", suffix: "/ 5 기준", delta: "+ 1 어제", tone: .accent, isFlat: false),
+        .init(id: "bip", label: "공개 기록 글", value: "0", suffix: "/ 14 권장", delta: "— 미시작", tone: .muted, isFlat: true),
         .init(id: "roots", label: "소스 코드 루트", value: "3", suffix: "/ watch 활성", delta: "+ 2 보조 레포", tone: .accent, isFlat: false),
     ]
 
     static let basics: [OpenDesignProjectKV] = [
-        .init(id: "summary", key: "한 문장 요약", value: "전업 1인 개발자가 자기 프로젝트와 실행 기록을 근거로 30일 안에 PMF 검증 방향을 좁히도록 돕는다", status: "필수", tone: .muted),
-        .init(id: "icp", key: "타깃 사용자 (ICP)", value: "전업 1인 개발자 · macOS 사용 · 수익 0원 · 30일 스프린트 실행 의향 (상세는 ICP.md)", status: "정의됨", tone: .accent),
+        .init(id: "summary", key: "한 문장 요약", value: "전업 1인 개발자가 자기 프로젝트와 실행 기록을 근거로 30일 안에 시장 적합 검증 방향을 좁히도록 돕는다", status: "필수", tone: .muted),
+        .init(id: "icp", key: "고객 후보", value: "전업 1인 개발자 · macOS 사용 · 수익 0원 · 30일 스프린트 실행 의향 (상세는 ICP.md)", status: "정의됨", tone: .accent),
         .init(id: "platform", key: "제품 플랫폼", value: "macOS 메뉴바 앱 · 커리큘럼 대상 제품 플랫폼은 iOS/Android/Web/Mac 자유", status: "macOS", tone: .accent),
-        .init(id: "hypothesis", key: "현재 가설", value: "\"만들 줄은 알지만 무엇을 만들어야 팔리는지 모르는\" 1인 개발자가, 실제 기록을 분석한 adaptive 과제가 generic 강의보다 다음 행동을 더 잘 만든다 — Day 0-3에서 검증", status: "검증 중", tone: .amber),
-        .init(id: "model", key: "수익 모델 가설", value: "— 미설정 — Foundation 통과 후 Day 8+ Build phase에서 결정", status: "대기", tone: .muted),
-        .init(id: "evidence", key: "증거 채널", value: "고객 인터뷰 · BIP (Threads) · 업무 일지 · 사용자 사용 패턴 (creator dogfood)", status: "4채널", tone: .accent),
+        .init(id: "hypothesis", key: "현재 가설", value: "\"만들 줄은 알지만 무엇을 만들어야 팔리는지 모르는\" 1인 개발자가, 실제 기록을 분석한 맞춤 과제가 일반 강의보다 다음 행동을 더 잘 만든다 — Day 0-3에서 검증", status: "검증 중", tone: .amber),
+        .init(id: "model", key: "수익 모델 가설", value: "— 미설정 — 초기 검증 통과 후 Day 8+ 만들기 단계에서 결정", status: "대기", tone: .muted),
+        .init(id: "evidence", key: "증거 채널", value: "고객 인터뷰 · 공개 기록 (Threads) · 업무 일지 · 직접 사용 패턴", status: "4채널", tone: .accent),
     ]
 
     static let paths: [OpenDesignProjectPath] = [
         .init(id: "app", systemImage: "folder", name: "소스 코드 경로 1 · 제품 앱", requirement: "필수", path: "~/code/agentic30-desktop", hint: "SwiftUI 메뉴바 앱 · 마지막 커밋 4분 전", statusParts: ["● 워치 활성", "312 파일", "git: main · 클린"], isSource: true, tone: .accent),
-        .init(id: "sidecar", systemImage: "chevron.left.forwardslash.chevron.right", name: "소스 코드 경로 2 · Agent sidecar", requirement: "필수", path: "~/code/agentic30-sidecar", hint: "watcher / provider adapters / local index", statusParts: ["● 워치 활성", "148 파일", "git: main · +2 unstaged"], isSource: true, tone: .accent),
-        .init(id: "public", systemImage: "globe", name: "소스 코드 경로 3 · 공개 웹/문서", requirement: "선택", path: "~/code/agentic30-public", hint: "landing / docs / preview fixtures", statusParts: ["● 워치 활성", "152 파일", "git: main · 클린"], isSource: true, tone: .sky),
-        .init(id: "interviews", systemImage: "bubble.left.and.bubble.right", name: "인터뷰 transcript 폴더", requirement: "필수", path: "~/Documents/Agentic30/agentic30/interviews", hint: ".txt / .md / .vtt / .srt", statusParts: ["● 워치 활성", "1 / 5 게이트", "최근 어제"], isSource: false, tone: .accent),
-        .init(id: "journal", systemImage: "doc.text", name: "업무 일지 / BIP 폴더", requirement: "선택", path: "~/Documents/Agentic30/agentic30/journal", hint: nil, statusParts: ["● 워치 활성", "3 파일", "오늘 만든 것 / 막힌 것 / 배운 것"], isSource: false, tone: .accent),
+        .init(id: "sidecar", systemImage: "chevron.left.forwardslash.chevron.right", name: "소스 코드 경로 2 · 실행 보조 앱", requirement: "필수", path: "~/code/agentic30-sidecar", hint: "파일 감시 / AI 연결 / 로컬 색인", statusParts: ["● 워치 활성", "148 파일", "git: main · +2 unstaged"], isSource: true, tone: .accent),
+        .init(id: "public", systemImage: "globe", name: "소스 코드 경로 3 · 공개 웹/문서", requirement: "선택", path: "~/code/agentic30-public", hint: "소개 페이지 / 문서 / 미리보기 자료", statusParts: ["● 워치 활성", "152 파일", "git: main · 클린"], isSource: true, tone: .sky),
+        .init(id: "interviews", systemImage: "bubble.left.and.bubble.right", name: "인터뷰 원문 폴더", requirement: "필수", path: "~/Documents/Agentic30/agentic30/interviews", hint: ".txt / .md / .vtt / .srt", statusParts: ["● 워치 활성", "1 / 5 기준", "최근 어제"], isSource: false, tone: .accent),
+        .init(id: "journal", systemImage: "doc.text", name: "업무 일지 / 공개 기록 폴더", requirement: "선택", path: "~/Documents/Agentic30/agentic30/journal", hint: nil, statusParts: ["● 워치 활성", "3 파일", "오늘 만든 것 / 막힌 것 / 배운 것"], isSource: false, tone: .accent),
     ]
 
     static let docs: [OpenDesignProjectDoc] = [
-        .init(id: "spec", mark: "MD", name: "SPEC.md", location: "~/code/agentic30-public/docs", subtitle: "제품 한 문장 · ICP · Core Loop · MVP 스코프 · 열린 질문 · v2026-05-07", age: "방금 동기화", pin: "핀 · 컨텍스트", isPinned: true, tone: .accent),
+        .init(id: "spec", mark: "MD", name: "SPEC.md", location: "~/code/agentic30-public/docs", subtitle: "제품 한 문장 · 고객 후보 · 핵심 반복 흐름 · 첫 버전 범위 · 열린 질문 · v2026-05-07", age: "방금 동기화", pin: "핀 · 컨텍스트", isPinned: true, tone: .accent),
         .init(id: "icp", mark: "MD", name: "ICP.md", location: "~/code/agentic30-public/docs", subtitle: "타깃 고객 정의 · 전업 1인 개발자 · macOS · 수익 0원", age: "2일 전", pin: "핀 · 컨텍스트", isPinned: true, tone: .accent),
-        .init(id: "goal", mark: "MD", name: "GOAL.md", location: "~/code/agentic30-public/docs", subtitle: "2026 Q2 Product Focus · Foundation loop 동작 · 4 Objective", age: "7일 전", pin: "핀 · 컨텍스트", isPinned: true, tone: .accent),
-        .init(id: "interview", mark: "VTT", name: "2026-05-15 장지창 인터뷰", location: "~/Documents/Agentic30/agentic30/interviews", subtitle: "29분 · 한국어 · 분석 완료 · Day 1 ICP 좁히기에 반영됨", age: "어제", pin: "핀 · 컨텍스트", isPinned: true, tone: .violet),
-        .init(id: "values", mark: "MD", name: "VALUES.md", location: "~/code/agentic30-public/docs", subtitle: "행동 원칙 · adaptive 출력의 tone을 결정", age: "7일 전", pin: "핀 안 됨", isPinned: false, tone: .sky),
+        .init(id: "goal", mark: "MD", name: "GOAL.md", location: "~/code/agentic30-public/docs", subtitle: "2026 Q2 제품 집중 목표 · 초기 검증 흐름 동작 · 4개 목표", age: "7일 전", pin: "핀 · 컨텍스트", isPinned: true, tone: .accent),
+        .init(id: "interview", mark: "VTT", name: "2026-05-15 장지창 인터뷰", location: "~/Documents/Agentic30/agentic30/interviews", subtitle: "29분 · 한국어 · 분석 완료 · Day 1 고객 후보 좁히기에 반영됨", age: "어제", pin: "핀 · 컨텍스트", isPinned: true, tone: .violet),
+        .init(id: "values", mark: "MD", name: "VALUES.md", location: "~/code/agentic30-public/docs", subtitle: "행동 원칙 · 맞춤 출력의 톤을 결정", age: "7일 전", pin: "핀 안 됨", isPinned: false, tone: .sky),
     ]
 
     static let timeline: [OpenDesignProjectTimelineEvent] = [
-        .init(id: "task", title: "Day 1 과제 생성", emphasis: "ICP 좁히기 (3개 변형)", subtitle: "provider Claude · Sonnet 4.6 · 312ms · 입력 2.1KB · 결과 도구로 전달됨", time: "4분 전", tone: .accent),
+        .init(id: "task", title: "Day 1 과제 생성", emphasis: "고객 후보 좁히기 (3개 변형)", subtitle: "Claude Sonnet 4.6 · 312ms · 입력 2.1KB · 결과 도구로 전달됨", time: "4분 전", tone: .accent),
         .init(id: "interview", title: "인터뷰 1건 추가", emphasis: "장지창 (29분)", subtitle: "파일 2026-05-15-jangjichang.vtt · 자동 분석 · 통증 후보 3개 추출", time: "어제 19:42", tone: .sky),
-        .init(id: "spec", title: "SPEC.md 갱신", emphasis: "Q2 wedge를 Day 0-3로 좁힘", subtitle: "변경 +14 / -8 · 한 문장 요약 변경 없음 · ICP 추가", time: "7일 전", tone: .violet),
-        .init(id: "journal", title: "업무 일지 작성", emphasis: "오늘 막힌 것 1건", subtitle: "~/journal/2026-05-15.md · provider 응답 latency, sub-workflow 라우팅", time: "어제 22:10", tone: .amber),
-        .init(id: "created", title: "프로젝트 생성", emphasis: nil, subtitle: "소스 코드 / 인터뷰 / 일지 path 지정 · Foundation Day 0 시작", time: "2026-05-16 09:00", tone: .accent),
+        .init(id: "spec", title: "SPEC.md 갱신", emphasis: "Q2 진입점을 Day 0-3로 좁힘", subtitle: "변경 +14 / -8 · 한 문장 요약 변경 없음 · 고객 후보 추가", time: "7일 전", tone: .violet),
+        .init(id: "journal", title: "업무 일지 작성", emphasis: "오늘 막힌 것 1건", subtitle: "~/journal/2026-05-15.md · 응답 지연, 보조 작업 라우팅", time: "어제 22:10", tone: .amber),
+        .init(id: "created", title: "프로젝트 생성", emphasis: nil, subtitle: "소스 코드 / 인터뷰 / 일지 경로 지정 · 초기 검증 Day 0 시작", time: "2026-05-16 09:00", tone: .accent),
         .init(id: "more", title: "10개 더 보기 …", emphasis: nil, subtitle: "", time: "", tone: .muted),
     ]
 
     static let workflows: [OpenDesignProjectKV] = [
         .init(id: "office", key: "/office-hours-docs", value: "Day 1, 3에서 사용 · 문제 정의 / spec 작성 보조", status: "활성", tone: .accent),
-        .init(id: "bip", key: "/bip-draft", value: "Day 18-24에서 사용 · 오늘 한 일을 BIP 게시글로 변환 — Foundation에서는 regression만 방지", status: "대기", tone: .muted),
+        .init(id: "bip", key: "/bip-draft", value: "Day 18-24에서 사용 · 오늘 한 일을 공개 기록 글로 변환 — 초기 검증에서는 회귀만 방지", status: "대기", tone: .muted),
         .init(id: "ads", key: "/analyze-ads", value: "Day 5 + Day 25+에서 사용 · Meta Ads 캠페인/소재 분석 — Codex 미연결로 일부 비활성", status: "조건부", tone: .amber),
         .init(id: "qmd", key: "/qmd-support", value: "QuickMemoDeck 학습 회상용 · 이 프로젝트와는 무관해서 오프", status: "꺼짐", tone: .muted),
     ]
@@ -7965,7 +7965,7 @@ private struct OpenDesignProjectsMainView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     OpenDesignProjectsSectionHeader(
                         title: "개요",
-                        meta: "Day 1 of 30 · Foundation 진행 중",
+                        meta: "Day 1 of 30 · 초기 검증 진행 중",
                         tone: .accent
                     )
                     .accessibilityIdentifier("opendesign.reference.projects.overview")
@@ -7977,7 +7977,7 @@ private struct OpenDesignProjectsMainView: View {
 
                     OpenDesignProjectsSectionHeader(
                         title: "Phase 게이트",
-                        meta: "진행 통과 조건 · Q2 wedge는 Foundation",
+                        meta: "진행 통과 조건 · Q2 진입점은 초기 검증",
                         tone: .accent
                     )
                     OpenDesignProjectsGateList()
@@ -8014,7 +8014,7 @@ private struct OpenDesignProjectsMainView: View {
                     OpenDesignProjectTimeline()
 
                     OpenDesignProjectsSectionHeader(
-                        title: "연결된 sub-workflow",
+                        title: "연결된 보조 작업",
                         meta: "Phase별 자동 활성 / 비활성",
                         tone: .accent
                     )
@@ -8049,7 +8049,7 @@ private struct OpenDesignProjectsHeaderView: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 10) {
-                        Text("Agentic30 (creator dogfood)")
+                        Text("Agentic30 (직접 사용 중)")
                             .font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(OpenDesignDayColor.fg)
                             .lineLimit(1)
@@ -8066,7 +8066,7 @@ private struct OpenDesignProjectsHeaderView: View {
                         Circle()
                             .fill(OpenDesignDayColor.accent)
                             .frame(width: 5, height: 5)
-                        Text("Foundation ·")
+                        Text("초기 검증 ·")
                         Text("Day 1 / 30")
                             .foregroundStyle(OpenDesignDayColor.fgSecondary)
                         Text("·")
@@ -8168,11 +8168,11 @@ private struct OpenDesignProjectsOverviewCard: View {
                 OpenDesignProjectsProgressRing(progress: 0.033, label: "3%")
 
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Foundation · Day 0-7")
+                    Text("초기 검증 · Day 0-7")
                         .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(OpenDesignDayColor.accent)
                         .textCase(.uppercase)
-                    Text("오늘은 Day 1 · ICP 좁히기예요. 다음 게이트는 Day 3 인터뷰 5건까지 6일.")
+                    Text("오늘은 Day 1 · 고객 후보 좁히기예요. 다음 기준은 Day 3 인터뷰 5건까지 6일.")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(OpenDesignDayColor.fg)
                         .lineSpacing(2.5)
@@ -8183,7 +8183,7 @@ private struct OpenDesignProjectsOverviewCard: View {
                         OpenDesignProjectsMetaToken("● 진행 중 1", tone: .amber)
                         OpenDesignProjectsMetaToken("남은 일수 29", tone: .muted)
                         OpenDesignProjectsMetaToken("인터뷰 0 / 5", tone: .muted)
-                        OpenDesignProjectsMetaToken("BIP 0 / 14", tone: .muted)
+                        OpenDesignProjectsMetaToken("공개 기록 0 / 14", tone: .muted)
                     }
                 }
 
@@ -8281,10 +8281,10 @@ private struct OpenDesignProjectsDayStrip: View {
             OpenDesignProjectsPhaseBar()
 
             FlowLayout(spacing: 14, lineSpacing: 7) {
-                OpenDesignProjectsPhaseLegend(title: "Foundation", detail: "D0-7", tone: .accent)
-                OpenDesignProjectsPhaseLegend(title: "Build", detail: "D8-17", tone: .violet)
-                OpenDesignProjectsPhaseLegend(title: "Launch", detail: "D18-24", tone: .sky)
-                OpenDesignProjectsPhaseLegend(title: "Grow", detail: "D25-30", tone: .amber)
+                OpenDesignProjectsPhaseLegend(title: "초기 검증", detail: "D0-7", tone: .accent)
+                OpenDesignProjectsPhaseLegend(title: "만들기", detail: "D8-17", tone: .violet)
+                OpenDesignProjectsPhaseLegend(title: "공개", detail: "D18-24", tone: .sky)
+                OpenDesignProjectsPhaseLegend(title: "성장", detail: "D25-30", tone: .amber)
             }
             .padding(.top, 2)
         }
@@ -8427,10 +8427,10 @@ private struct OpenDesignProjectStatCard: View {
 
 private struct OpenDesignProjectsGateList: View {
     private let rows: [(mark: String, title: String, day: String, subtitle: String, progress: CGFloat, status: String, tone: OpenDesignReferenceTone, isCurrent: Bool)] = [
-        ("F", "Foundation 게이트", "D7", "인터뷰 5건 · 통증 가설 1 · ICP 1줄 정의", 0.14, "진행 중", .accent, true),
-        ("B", "Build 게이트", "D17", "핵심 기능 1개 · 30초 첫 가치 경험 · 결제/스토어 dry run", 0, "대기", .violet, false),
-        ("L", "Launch 게이트", "D24", "60초 데모 · 첫 유료 또는 강한 의도 신호 1 · BIP 14편", 0, "대기", .sky, false),
-        ("G", "Grow 게이트", "D30", "유입/스토어 지표 · ASO/소재 1회 loop · continue/pivot/kill 판정", 0, "대기", .amber, false),
+        ("F", "초기 검증 기준", "D7", "인터뷰 5건 · 통증 가설 1 · 고객 후보 1줄 정의", 0.14, "진행 중", .accent, true),
+        ("B", "만들기 기준", "D17", "핵심 기능 1개 · 30초 첫 가치 경험 · 결제/스토어 사전 점검", 0, "대기", .violet, false),
+        ("L", "공개 기준", "D24", "60초 시연 · 첫 유료 또는 강한 의도 신호 1 · 공개 기록 14편", 0, "대기", .sky, false),
+        ("G", "성장 기준", "D30", "유입/스토어 지표 · ASO/소재 1회 반복 · 계속/전환/중단 판정", 0, "대기", .amber, false),
     ]
 
     var body: some View {
@@ -8512,10 +8512,10 @@ private struct OpenDesignProjectsBasicsCard: View {
                     .background(referenceRounded(fill: OpenDesignDayColor.accentDim, stroke: OpenDesignDayColor.accentLine, radius: 7))
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Agentic30 (creator dogfood)")
+                    Text("Agentic30 (직접 사용 중)")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(OpenDesignDayColor.fg)
-                    Text("local-first macOS 메뉴바 AI assistant · SwiftUI + Node sidecar")
+                    Text("로컬 우선 macOS 메뉴바 AI 도우미 · SwiftUI + Node 실행 보조 앱")
                         .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(OpenDesignDayColor.muted)
                         .lineLimit(1)
@@ -8532,7 +8532,7 @@ private struct OpenDesignProjectsBasicsCard: View {
             OpenDesignProjectKVList(rows: OpenDesignProjectsCatalog.basics)
 
             HStack(spacing: 8) {
-                Text("한 문장과 ICP는 매주 다시 봅니다. Day 7 게이트에서 의무 갱신.")
+                Text("한 문장과 고객 후보는 매주 다시 봅니다. Day 7 기준에서 의무 갱신.")
                     .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                     .foregroundStyle(OpenDesignDayColor.muted)
                     .lineLimit(2)
@@ -8805,7 +8805,7 @@ private struct OpenDesignProjectWorkflowCard: View {
                 .padding(.vertical, 4)
 
             HStack(spacing: 8) {
-                Text("활성 sub-workflow는 Phase 전환 시 자동 갱신.")
+                Text("활성 보조 작업은 단계 전환 시 자동 갱신.")
                     .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                     .foregroundStyle(OpenDesignDayColor.muted)
                 Spacer(minLength: 8)
@@ -8895,11 +8895,11 @@ private struct OpenDesignProjectsMetaPanelView: View {
                     .padding(.horizontal, 4)
                     .padding(.bottom, 8)
 
-                OpenDesignProjectsQuickAction(systemImage: "chevron.right", title: "오늘 화면으로", subtitle: "Day 1 · ICP 좁히기", shortcut: "↵", tone: .accent)
+                OpenDesignProjectsQuickAction(systemImage: "chevron.right", title: "오늘 화면으로", subtitle: "Day 1 · 고객 후보 좁히기", shortcut: "↵", tone: .accent)
                 OpenDesignProjectsQuickAction(systemImage: "plus", title: "새 30일 프로젝트", subtitle: "템플릿 또는 백지에서 시작", shortcut: "⌘N", tone: .sky)
                 OpenDesignProjectsQuickAction(systemImage: "sidebar.left", title: "프로젝트 전환", subtitle: "활성/보관함 가로질러 검색", shortcut: "⌘P", tone: .muted)
                 OpenDesignProjectsQuickAction(systemImage: "bubble.left.and.bubble.right", title: "인터뷰 추가", subtitle: ".vtt / .txt drop · 다음 게이트까지 4건", shortcut: "⌘I", tone: .amber)
-                OpenDesignProjectsQuickAction(systemImage: "gearshape", title: "설정 열기", subtitle: "워크스페이스 · 프로바이더 · 권한", shortcut: "⌘E", tone: .muted)
+                OpenDesignProjectsQuickAction(systemImage: "gearshape", title: "설정 열기", subtitle: "워크스페이스 · AI 연결 · 권한", shortcut: "⌘E", tone: .muted)
             }
             .padding(16)
         }
@@ -9466,7 +9466,7 @@ private struct OpenDesignReferenceBlockView: View {
                     .textCase(.uppercase)
                     .foregroundStyle(OpenDesignDayColor.muted)
                 Spacer()
-                Text("Foundation · Build · Launch · Grow")
+                Text("초기 검증 · 만들기 · 공개 · 성장")
                     .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                     .foregroundStyle(OpenDesignDayColor.mutedDeep)
             }

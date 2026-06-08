@@ -119,6 +119,74 @@ export async function patchDayStep({
   });
 }
 
+// Advance the day loop to `stepId`: mark it active and every earlier step done.
+// MONOTONIC — never regresses: if the record is already further along than
+// `stepId`, the furthest reached step stays active (earlier-stage events like a
+// re-scan can't undo later progress). Earlier stages with no dedicated screen in
+// the current scope (onboarding/retro) are auto-completed when the loop passes them.
+export async function setDayActiveStep({
+  workspaceRoot,
+  day,
+  stepId,
+  goalText,
+  now = new Date(),
+} = {}) {
+  if (!workspaceRoot || typeof workspaceRoot !== "string") {
+    throw new Error("setDayActiveStep requires workspaceRoot.");
+  }
+  const dayNum = normalizeDayInt(day);
+  if (!dayNum) {
+    throw new Error("setDayActiveStep requires a valid day number.");
+  }
+  const kind = dayKindForDay(dayNum);
+  const defs = stepDefsForDay(dayNum, kind);
+  if (!defs.includes(stepId)) {
+    throw new Error(`setDayActiveStep: unknown step "${stepId}" for ${kind} Day ${dayNum}.`);
+  }
+
+  const filePath = resolveDayProgressPath(workspaceRoot);
+  return withFileLock(filePath, async () => {
+    const current = (await loadDayProgress({ workspaceRoot })) ?? makeDefaultDayProgress();
+    if (!current.challengeStartedAt) {
+      current.challengeStartedAt = localDateKey(now);
+    }
+    const key = String(dayNum);
+    const record = current.days[key] ?? makeDayRecord(dayNum, kind, now);
+    record.kind = kind;
+    record.steps = applyActiveStep(record.steps, defs, stepId);
+    if (typeof goalText === "string" && goalText.trim()) {
+      record.goalText = cleanString(goalText, 200);
+    }
+    record.updatedAt = now.toISOString();
+    current.days[key] = record;
+    const normalized = normalizeDayProgress(current, { now });
+    await atomicWriteJson(filePath, normalized);
+    return normalized;
+  });
+}
+
+function applyActiveStep(steps, defs, stepId) {
+  const targetIdx = defs.indexOf(stepId);
+  if (targetIdx < 0) return { ...steps };
+  // Furthest step already touched (done/active) — never regress behind it.
+  let furthest = -1;
+  defs.forEach((id, i) => {
+    if (steps[id] === "done" || steps[id] === "active") furthest = i;
+  });
+  const activeIdx = Math.max(targetIdx, furthest);
+  const next = { ...steps };
+  defs.forEach((id, i) => {
+    if (i < activeIdx) {
+      next[id] = "done";
+    } else if (i === activeIdx) {
+      next[id] = next[id] === "done" ? "done" : "active";
+    } else {
+      next[id] = next[id] ?? "pending";
+    }
+  });
+  return next;
+}
+
 // Elapsed-days-from-start + 1 (start day = Day 1), compared on LOCAL calendar
 // dates only (decision: local YYYY-MM-DD) — consistent with work-history
 // wall-clock/day-split. Returns null when no challenge start is recorded yet.
