@@ -16,9 +16,9 @@ test("office-hours docs system prompt targets strategy docs and structured intak
   assert.match(prompt, /request_user_input/);
   assert.match(prompt, /2-4 candidate options/);
   assert.match(prompt, /product name, target user, problem, and purpose/);
-  assert.match(prompt, /Demand reality/);
-  assert.match(prompt, /Status quo/);
-  assert.match(prompt, /Narrowest wedge/);
+  assert.match(prompt, /실제 수요 증거/);
+  assert.match(prompt, /현재 대안/);
+  assert.match(prompt, /가장 작은 유료 진입점/);
   assert.doesNotMatch(prompt, /\bdeep interview\b/i);
 });
 

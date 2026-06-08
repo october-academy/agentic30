@@ -154,6 +154,109 @@ struct ChatMessageDecodingTests {
         #expect(decoded.providerAuthActions == nil)
     }
 
+    /// Backward compatibility: a chat message written before the emphasis
+    /// channel existed decodes cleanly with `emphasis == nil`, so the bubble
+    /// renders plain text exactly as before.
+    @MainActor @Test func decodesLegacyMessageWithoutEmphasis() throws {
+        let payload = """
+        {
+          "id": "msg-noemph",
+          "role": "assistant",
+          "provider": "claude",
+          "content": "강조 없는 평범한 응답입니다.",
+          "state": "final",
+          "createdAt": "2026-06-07T10:00:00.000Z",
+          "error": null
+        }
+        """.data(using: .utf8)!
+
+        let message = try Self.makeDecoder().decode(ChatMessage.self, from: payload)
+        #expect(message.emphasis == nil)
+        #expect(message.content == "강조 없는 평범한 응답입니다.")
+
+        // The transcript row factory carries an empty emphasis list, which the
+        // bubble renderer treats as the plain-text path.
+        let row = try #require(OfficeHoursTranscriptRow.rows(from: [message]).first)
+        #expect(row.emphasis.isEmpty)
+    }
+
+    /// Forward path: when sidecar attaches free-response emphasis spans, the
+    /// SwiftUI client decodes style-aware spans and forwards them to the
+    /// transcript row for inline rendering.
+    @MainActor @Test func decodesMessageWithChatEmphasis() throws {
+        let payload = """
+        {
+          "id": "msg-emph",
+          "role": "assistant",
+          "provider": "codex",
+          "content": "오늘 마감은 6월 4일까지입니다. config.json 파일을 확인하세요.",
+          "state": "final",
+          "createdAt": "2026-06-07T10:01:00.000Z",
+          "error": null,
+          "emphasis": [
+            { "phrase": "6월 4일", "style": "mark" },
+            { "phrase": "config.json", "style": "code" },
+            { "phrase": "오늘 마감", "style": "strong" }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let message = try Self.makeDecoder().decode(ChatMessage.self, from: payload)
+        let emphasis = try #require(message.emphasis)
+        #expect(emphasis.count == 3)
+        #expect(emphasis[0] == EmphasisSpan(phrase: "6월 4일", style: .mark))
+        #expect(emphasis[1] == EmphasisSpan(phrase: "config.json", style: .code))
+        #expect(emphasis[2] == EmphasisSpan(phrase: "오늘 마감", style: .strong))
+
+        let row = try #require(OfficeHoursTranscriptRow.rows(from: [message]).first)
+        #expect(row.emphasis.count == 3)
+        #expect(row.emphasis[1].style == .code)
+    }
+
+    /// Unknown wire styles fall back to `.mark` so a future style never breaks
+    /// chat decoding.
+    @MainActor @Test func decodesChatEmphasisWithUnknownStyleFallback() throws {
+        let payload = """
+        {
+          "id": "msg-emph-unknown",
+          "role": "assistant",
+          "provider": "codex",
+          "content": "강조 스타일 폴백 확인 문장.",
+          "state": "final",
+          "createdAt": "2026-06-07T10:02:00.000Z",
+          "error": null,
+          "emphasis": [
+            { "phrase": "강조 스타일", "style": "rainbow" }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let message = try Self.makeDecoder().decode(ChatMessage.self, from: payload)
+        let emphasis = try #require(message.emphasis)
+        #expect(emphasis[0].style == .mark)
+    }
+
+    /// Encode → decode round trip preserves the chat emphasis contract across
+    /// the SSE boundary.
+    @MainActor @Test func roundTripsChatEmphasis() throws {
+        let original = ChatMessage(
+            id: "msg-emph-rt",
+            role: .assistant,
+            provider: .codex,
+            content: "round trip with config.json highlighted",
+            state: .final,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_500),
+            emphasis: [EmphasisSpan(phrase: "config.json", style: .code)]
+        )
+
+        let data = try Self.makeEncoder().encode(original)
+        let decoded = try Self.makeDecoder().decode(ChatMessage.self, from: data)
+
+        let emphasis = try #require(decoded.emphasis)
+        #expect(emphasis == [EmphasisSpan(phrase: "config.json", style: .code)])
+        #expect(decoded.inlineDecision == nil)
+    }
+
     @MainActor @Test func decodesOfficeHoursOptionDecisionBriefMetadata() throws {
         let payload = """
         {

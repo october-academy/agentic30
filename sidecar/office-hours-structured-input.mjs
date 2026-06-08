@@ -17,7 +17,7 @@ const DEMAND_EVIDENCE_QUESTION_ID = "office_hours_demand_evidence";
 const DEMAND_EVIDENCE_OPTIONS = Object.freeze([
   Object.freeze({
     label: "실제 결제/계약이 있었다",
-    description: "돈이 이미 움직였으므로 가장 강한 증거입니다. 다음 검증은 구매자가 ICP와 맞는지입니다.",
+    description: "돈이 이미 움직였으므로 가장 강한 증거입니다. 다음 검증은 구매자가 고객 후보와 맞는지입니다.",
     nextIntent: "actual_payment_or_contract",
     recommended: true,
     risk: "결제 주체와 날짜가 없으면 말뿐인 관심으로 낮춰 봐야 합니다.",
@@ -162,6 +162,12 @@ export function buildOfficeHoursInlineStructuredPromptPayload({
     question,
     options,
   );
+  const emphasis = normalizeOfficeHoursEmphasis(
+    inlineDecision?.emphasis
+      || inlineDecision?.emphasis_spans
+      || inlineDecision?.emphasisSpans,
+    question,
+  );
 
   const questions = [
     {
@@ -172,6 +178,7 @@ export function buildOfficeHoursInlineStructuredPromptPayload({
         String(inlineDecision?.helperText || inlineDecision?.helper_text || "").trim().slice(0, 280)
         || "선택지로 답하면 Office Hours가 이어집니다.",
       ...(highlightPhrases.length ? { highlightPhrases } : {}),
+      ...(emphasis.length ? { emphasis } : {}),
       ...(options.length ? { options } : {}),
       multiSelect: inlineDecision.multiSelect === true,
       allowFreeText,
@@ -211,7 +218,7 @@ export function buildOfficeHoursStructuredInputContinuationPrompt({
   const lines = [
     "Office Hours structured-card answer received.",
     "Use this answer as the user's latest Office Hours response and continue the YC forcing-question conversation.",
-    "Do not end with a generic confirmation. If another decision or missing input is needed, ask the next forcing question through the host structured input tool with 2-4 options and allowFreeText: true.",
+    "Do not end with a vague confirmation. If another decision or missing input is needed, ask the next forcing question through the host structured input tool with 2-4 options and allowFreeText: true.",
     "",
     "## User structured-card answer",
     String(responseText || "").trim() || "(empty)",
@@ -221,6 +228,26 @@ export function buildOfficeHoursStructuredInputContinuationPrompt({
     lines.push("", "## Selected option evidence hints", description);
   }
   return lines.join("\n");
+}
+
+// Resolve a picked option back into a single hint string for the agent SDK.
+// The card UI deliberately hides risk / evidence target / failure mode to stay
+// scannable; this folds that same reasoning into the context the model receives
+// alongside the user's choice so it can steer the next forcing question. Options
+// without metadata (most non–Office-Hours cards) collapse to the description
+// alone, preserving the prior behaviour.
+export function formatSelectedOptionEvidenceHint(option = {}) {
+  if (!option || typeof option !== "object") return "";
+  const description = String(option.description || "").trim();
+  if (!description) return "";
+  const risk = String(option.risk || "").trim();
+  const evidenceTarget = String(option.evidenceTarget || option.evidence_target || "").trim();
+  const failureMode = String(option.failureMode || option.failure_mode || "").trim();
+  const extras = [];
+  if (risk) extras.push(`리스크: ${risk}`);
+  if (evidenceTarget) extras.push(`근거: ${evidenceTarget}`);
+  if (failureMode) extras.push(`실패 조건: ${failureMode}`);
+  return extras.length ? `${description} (${extras.join(" · ")})` : description;
 }
 
 export function buildContextualOfficeHoursQuestion(context = "") {
@@ -408,15 +435,15 @@ function officeHoursIntentHeader(intent = "") {
     case "status_quo":
       return "현재 대안";
     case "wedge":
-      return "가장 좁은 wedge";
+      return "가장 좁은 첫 진입점";
     case "observation":
       return "직접 관찰";
     case "premise":
-      return "Premise Challenge";
+      return "전제 확인";
     case "alternatives":
-      return "Alternatives";
+      return "대안 비교";
     case "future_fit":
-      return "Future-fit";
+      return "앞으로 더 중요해질 이유";
     default:
       return "수요 증거";
   }
@@ -425,23 +452,23 @@ function officeHoursIntentHeader(intent = "") {
 function officeHoursSignalLabel(intent = "") {
   switch (normalizeOfficeHoursIntent(intent)) {
     case "demand":
-      return "Office Hours Q1 Demand Evidence";
+      return "Office Hours Q1 수요 증거";
     case "stage":
-      return "Office Hours product stage";
+      return "Office Hours 제품 단계";
     case "status_quo":
-      return "Office Hours Q2 Status Quo";
+      return "Office Hours Q2 현재 대안";
     case "wedge":
-      return "Office Hours Q4 Narrowest Wedge";
+      return "Office Hours Q4 가장 좁은 첫 진입점";
     case "observation":
-      return "Office Hours Q5 Observation";
+      return "Office Hours Q5 직접 관찰";
     case "premise":
-      return "Office Hours Premise Challenge";
+      return "Office Hours 전제 확인";
     case "alternatives":
-      return "Office Hours Alternatives";
+      return "Office Hours 대안 비교";
     case "future_fit":
-      return "Office Hours Q6 Future-Fit";
+      return "Office Hours Q6 앞으로 더 중요해질 이유";
     default:
-      return "Office Hours Q1 Demand Evidence";
+      return "Office Hours Q1 수요 증거";
   }
 }
 
@@ -473,6 +500,94 @@ function normalizeOfficeHoursHighlightPhrases(value, question = "", options = []
       return true;
     })
     .slice(0, 5);
+}
+
+const OFFICE_HOURS_EMPHASIS_STYLES = new Set(["strong", "mark", "code"]);
+
+// Validate and normalize dynamic emphasis spans the LLM attached to a question.
+// Each span is { phrase, style }: phrase must be a non-empty trimmed string and,
+// when `text` is provided, a case-insensitive substring of it (so the Mac
+// renderer can actually match it). Unknown/unsupported styles fall back to
+// "mark". Dedups by phrase and caps at five spans to keep statements scannable.
+export function normalizeOfficeHoursEmphasis(raw, text = "") {
+  const list = Array.isArray(raw) ? raw : raw && typeof raw === "object" ? [raw] : [];
+  const source = String(text || "");
+  const hasSource = source.length > 0;
+  const lowerSource = source.toLowerCase();
+  const seen = new Set();
+  const normalized = [];
+  for (const entry of list) {
+    if (!entry || typeof entry !== "object") continue;
+    const phrase = String(entry.phrase || entry.text || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!phrase) continue;
+    if (hasSource && !lowerSource.includes(phrase.toLowerCase())) continue;
+    const key = phrase.toLowerCase();
+    if (seen.has(key)) continue;
+    const rawStyle = String(entry.style || entry.kind || "").trim().toLowerCase();
+    const style = OFFICE_HOURS_EMPHASIS_STYLES.has(rawStyle) ? rawStyle : "mark";
+    seen.add(key);
+    normalized.push({ phrase, style });
+    if (normalized.length >= 5) break;
+  }
+  return normalized;
+}
+
+// Sentinel tokens for embedding dynamic emphasis spans inside an Office Hours
+// free-response chat reply. Provider SDKs do not expose a metadata side-channel,
+// so — mirroring INLINE_DECISION_SENTINEL — the LLM rides the text channel and
+// emits an emphasis block; the host strips it before showing the message.
+//
+// Wire contract:
+//   <visible reply body>
+//   ===EMPHASIS===
+//   [{ "phrase": "<exact substring of the body>", "style": "strong|mark|code" }]
+//   ===END===
+//
+// The block may appear anywhere. `phrase` MUST be an exact (case-insensitive)
+// substring of the cleaned reply body or it is dropped by
+// `normalizeOfficeHoursEmphasis`. Unknown styles fall back to "mark". Capped at
+// five spans. Reuses the END token from the inline_decision contract so the
+// two wire formats share a single closing delimiter.
+export const OFFICE_HOURS_EMPHASIS_SENTINEL_START = "===EMPHASIS===";
+export const OFFICE_HOURS_EMPHASIS_SENTINEL_END = "===END===";
+
+// Extracts an emphasis array from a chat free-response body. Returns
+// `{ text, emphasis }` where `text` is the input with the sentinel block
+// removed and `emphasis` is the normalized span list (substring-matched against
+// the cleaned text, deduped, max 5). When no sentinel is present, or JSON parse
+// fails, or no span survives normalization, returns the original text unchanged
+// and an empty `emphasis` array so the SwiftUI client renders plain text.
+export function extractOfficeHoursChatEmphasis(text, { logger = console } = {}) {
+  if (typeof text !== "string" || !text.length) {
+    return { text: text ?? "", emphasis: [] };
+  }
+  const startIdx = text.indexOf(OFFICE_HOURS_EMPHASIS_SENTINEL_START);
+  if (startIdx === -1) {
+    return { text, emphasis: [] };
+  }
+  const afterStart = startIdx + OFFICE_HOURS_EMPHASIS_SENTINEL_START.length;
+  const endIdx = text.indexOf(OFFICE_HOURS_EMPHASIS_SENTINEL_END, afterStart);
+  if (endIdx === -1) {
+    logger.warn?.("[office-hours-emphasis] sentinel start without matching end");
+    return { text, emphasis: [] };
+  }
+  const jsonStr = text.slice(afterStart, endIdx).trim();
+  let payload;
+  try {
+    payload = JSON.parse(jsonStr);
+  } catch (err) {
+    logger.warn?.(`[office-hours-emphasis] sentinel JSON parse failed: ${err.message}`);
+    return { text, emphasis: [] };
+  }
+  const before = text.slice(0, startIdx);
+  const after = text.slice(endIdx + OFFICE_HOURS_EMPHASIS_SENTINEL_END.length);
+  const cleanedText = `${before.replace(/\s+$/, "")}${
+    before && after.replace(/^\s+/, "") ? "\n\n" : ""
+  }${after.replace(/^\s+/, "")}`.trim();
+  const emphasis = normalizeOfficeHoursEmphasis(payload, cleanedText);
+  return { text: cleanedText, emphasis };
 }
 
 function optionHighlightCandidates(label = "") {

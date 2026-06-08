@@ -2,12 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   OFFICE_HOURS_INLINE_MODE,
+  OFFICE_HOURS_EMPHASIS_SENTINEL_END,
+  OFFICE_HOURS_EMPHASIS_SENTINEL_START,
   buildContextualOfficeHoursQuestion,
   buildOfficeHoursInlineStructuredPromptPayload,
   buildOfficeHoursStructuredQuestionTranscriptText,
   buildOfficeHoursStructuredInputContinuationPrompt,
+  extractOfficeHoursChatEmphasis,
+  formatSelectedOptionEvidenceHint,
   isOfficeHoursStructuredInputMode,
   isOfficeHoursStructuredInputToolEvent,
+  normalizeOfficeHoursEmphasis,
   normalizeOfficeHoursStructuredPromptRequest,
   shouldAppendOfficeHoursStructuredQuestionMessage,
   stripTrailingRubricFocusMetadata,
@@ -241,14 +246,214 @@ test("Office Hours transcript helpers preserve structured question once", () => 
   );
 });
 
-test("Office Hours continuation prompt prevents generic confirmation after structured submission", () => {
+test("Office Hours continuation prompt prevents vague confirmation after structured submission", () => {
   const prompt = buildOfficeHoursStructuredInputContinuationPrompt({
     responseText: "실제 결제/계약이 있었다",
     responseDescription: "돈이 이미 움직였습니다.",
   });
 
   assert.match(prompt, /Office Hours structured-card answer received/);
-  assert.match(prompt, /Do not end with a generic confirmation/);
+  assert.match(prompt, /Do not end with a vague confirmation/);
   assert.match(prompt, /host structured input tool/);
   assert.match(prompt, /실제 결제\/계약이 있었다/);
+});
+
+test("formatSelectedOptionEvidenceHint folds risk/evidence/failure into the agent context", () => {
+  const hint = formatSelectedOptionEvidenceHint({
+    label: "실제 결제/계약이 있었다",
+    description: "돈이 이미 움직였습니다.",
+    risk: "결제 주체가 ICP가 아닐 수 있습니다.",
+    evidenceTarget: "실명, 날짜, 결제 절차",
+    failureMode: "돈이 움직였다는 사실을 못 쓰면 구매 조건 이하로 낮춥니다.",
+  });
+  assert.match(hint, /^돈이 이미 움직였습니다\. \(/);
+  assert.match(hint, /리스크: 결제 주체가 ICP가 아닐 수 있습니다\./);
+  assert.match(hint, /근거: 실명, 날짜, 결제 절차/);
+  assert.match(hint, /실패 조건: 돈이 움직였다는 사실을 못 쓰면 구매 조건 이하로 낮춥니다\./);
+
+  // snake_case metadata is accepted as well.
+  assert.match(
+    formatSelectedOptionEvidenceHint({
+      description: "조건이 구체적입니다.",
+      evidence_target: "가격, 범위, 구매 시점",
+      failure_mode: "조건이 모호하면 관심으로 낮춥니다.",
+    }),
+    /근거: 가격, 범위, 구매 시점.*실패 조건: 조건이 모호하면 관심으로 낮춥니다\./,
+  );
+
+  // Options without metadata collapse to the description alone (back-compat).
+  assert.equal(
+    formatSelectedOptionEvidenceHint({ label: "관심만 있다", description: "아직 증거가 없습니다." }),
+    "아직 증거가 없습니다.",
+  );
+  // Empty/description-less options yield nothing.
+  assert.equal(formatSelectedOptionEvidenceHint({ label: "no desc" }), "");
+  assert.equal(formatSelectedOptionEvidenceHint(), "");
+});
+
+test("normalizeOfficeHoursEmphasis validates phrases, styles, substring, dedup, and cap", () => {
+  const text = "파일 config.json 의 마감일은 금요일이고 핵심 수치는 100명입니다";
+  const emphasis = normalizeOfficeHoursEmphasis(
+    [
+      { phrase: "  config.json ", style: "code" },
+      { phrase: "마감일은 금요일", style: "mark" },
+      { phrase: "100명", style: "strong" },
+      { phrase: "100명", style: "strong" }, // duplicate dropped
+      { phrase: "존재하지 않는 구절", style: "mark" }, // not a substring -> dropped
+      { phrase: "수치", style: "unknown-style" }, // unsupported style -> mark
+      { phrase: "   ", style: "code" }, // empty after trim -> dropped
+    ],
+    text,
+  );
+
+  assert.deepEqual(emphasis, [
+    { phrase: "config.json", style: "code" },
+    { phrase: "마감일은 금요일", style: "mark" },
+    { phrase: "100명", style: "strong" },
+    { phrase: "수치", style: "mark" },
+  ]);
+});
+
+test("normalizeOfficeHoursEmphasis caps at five spans", () => {
+  const text = "a b c d e f g";
+  const emphasis = normalizeOfficeHoursEmphasis(
+    ["a", "b", "c", "d", "e", "f", "g"].map((phrase) => ({ phrase, style: "strong" })),
+    text,
+  );
+  assert.equal(emphasis.length, 5);
+});
+
+test("normalizeOfficeHoursEmphasis returns [] for non-array/empty input", () => {
+  assert.deepEqual(normalizeOfficeHoursEmphasis(undefined, "anything"), []);
+  assert.deepEqual(normalizeOfficeHoursEmphasis([], "anything"), []);
+  assert.deepEqual(normalizeOfficeHoursEmphasis("not an object", "anything"), []);
+});
+
+test("Office Hours inline decision forwards normalized emphasis alongside highlightPhrases", () => {
+  const question = "config.json 파일에 마감일을 기록했나요?";
+  const payload = buildOfficeHoursInlineStructuredPromptPayload({
+    sessionId: "session-emphasis",
+    provider: "claude",
+    assistantMessage: {
+      content: "다음 증거를 확인할까요?",
+      inlineDecision: {
+        header: "현재 대안",
+        intent: "status_quo",
+        question,
+        helperText: "한 가지 증거만 고르세요.",
+        highlightPhrases: ["config.json"],
+        emphasis: [
+          { phrase: "config.json", style: "code" },
+          { phrase: "마감일", style: "mark" },
+          { phrase: "없는 구절", style: "strong" }, // not in text -> dropped
+        ],
+        options: [
+          { label: "기록했다", description: "증거가 있습니다." },
+          { label: "아직 안 했다", description: "증거가 없습니다." },
+        ],
+        allowFreeText: true,
+      },
+    },
+  });
+
+  assert.ok(payload, "payload should be produced");
+  const built = payload.questions[0];
+  // highlightPhrases remains for back-compat.
+  assert.deepEqual(built.highlightPhrases, ["config.json"]);
+  // emphasis carries style-aware spans, drops the non-substring entry.
+  assert.deepEqual(built.emphasis, [
+    { phrase: "config.json", style: "code" },
+    { phrase: "마감일", style: "mark" },
+  ]);
+});
+
+test("Office Hours inline decision omits emphasis key when none survive normalization", () => {
+  const payload = buildOfficeHoursInlineStructuredPromptPayload({
+    sessionId: "session-no-emphasis",
+    provider: "claude",
+    assistantMessage: {
+      content: "다음 증거를 확인할까요?",
+      inlineDecision: {
+        header: "현재 대안",
+        intent: "status_quo",
+        question: "지금은 무엇으로 버티고 있나요?",
+        options: [
+          { label: "수작업", description: "직접 합니다." },
+          { label: "다른 도구", description: "유료 도구를 씁니다." },
+        ],
+        allowFreeText: true,
+      },
+    },
+  });
+
+  assert.ok(payload, "payload should be produced");
+  assert.equal("emphasis" in payload.questions[0], false);
+});
+
+test("extractOfficeHoursChatEmphasis strips the sentinel block and normalizes spans", () => {
+  const reply = [
+    "오늘 마감은 6월 4일까지입니다. config.json 파일을 먼저 확인하세요.",
+    "",
+    OFFICE_HOURS_EMPHASIS_SENTINEL_START,
+    JSON.stringify([
+      { phrase: "6월 4일", style: "mark" },
+      { phrase: "config.json", style: "code" },
+      { phrase: "오늘 마감", style: "strong" },
+    ]),
+    OFFICE_HOURS_EMPHASIS_SENTINEL_END,
+  ].join("\n");
+
+  const { text, emphasis } = extractOfficeHoursChatEmphasis(reply);
+
+  assert.equal(text, "오늘 마감은 6월 4일까지입니다. config.json 파일을 먼저 확인하세요.");
+  assert.equal(text.includes(OFFICE_HOURS_EMPHASIS_SENTINEL_START), false);
+  assert.equal(text.includes(OFFICE_HOURS_EMPHASIS_SENTINEL_END), false);
+  assert.deepEqual(emphasis, [
+    { phrase: "6월 4일", style: "mark" },
+    { phrase: "config.json", style: "code" },
+    { phrase: "오늘 마감", style: "strong" },
+  ]);
+});
+
+test("extractOfficeHoursChatEmphasis drops spans that are not substrings of the cleaned body", () => {
+  const reply = [
+    "핵심은 실제 결제 증거입니다.",
+    OFFICE_HOURS_EMPHASIS_SENTINEL_START,
+    JSON.stringify([
+      { phrase: "실제 결제", style: "strong" },
+      { phrase: "존재하지 않는 구절", style: "mark" },
+    ]),
+    OFFICE_HOURS_EMPHASIS_SENTINEL_END,
+  ].join("\n");
+
+  const { text, emphasis } = extractOfficeHoursChatEmphasis(reply);
+
+  assert.equal(text, "핵심은 실제 결제 증거입니다.");
+  assert.deepEqual(emphasis, [{ phrase: "실제 결제", style: "strong" }]);
+});
+
+test("extractOfficeHoursChatEmphasis is a no-op when no sentinel is present", () => {
+  const reply = "평범한 자유 응답입니다. 강조 없음.";
+  const { text, emphasis } = extractOfficeHoursChatEmphasis(reply);
+  assert.equal(text, reply);
+  assert.deepEqual(emphasis, []);
+});
+
+test("extractOfficeHoursChatEmphasis tolerates malformed sentinel JSON without throwing", () => {
+  const reply = [
+    "본문은 보존되어야 합니다.",
+    OFFICE_HOURS_EMPHASIS_SENTINEL_START,
+    "{ not valid json",
+    OFFICE_HOURS_EMPHASIS_SENTINEL_END,
+  ].join("\n");
+
+  const { text, emphasis } = extractOfficeHoursChatEmphasis(reply, { logger: { warn: () => {} } });
+
+  assert.equal(text, reply);
+  assert.deepEqual(emphasis, []);
+});
+
+test("extractOfficeHoursChatEmphasis returns empty for non-string input", () => {
+  assert.deepEqual(extractOfficeHoursChatEmphasis(undefined), { text: "", emphasis: [] });
+  assert.deepEqual(extractOfficeHoursChatEmphasis(""), { text: "", emphasis: [] });
 });

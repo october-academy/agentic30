@@ -335,8 +335,8 @@ struct SidecarEventDecodingTests {
         #expect(event.type == "session_updated")
         #expect(event.session?.status == .awaitingInput)
         #expect(event.session?.pendingUserInput?.toolName == "agentic30_request_user_input")
-        #expect(event.session?.pendingUserInput?.title == "ICP 1/4")
-        #expect(event.session?.pendingUserInput?.intro?.title == "ICP (Ideal Customer Profile)")
+        #expect(event.session?.pendingUserInput?.title == "고객 후보 1/4")
+        #expect(event.session?.pendingUserInput?.intro?.title == "고객 후보")
         #expect(event.session?.pendingUserInput?.intro?.body?.contains("실제로 연락하고 인터뷰") == true)
         #expect(event.session?.pendingUserInput?.intro?.bullets?.contains("현재 대안: 지금 어떤 수작업이나 도구로 버티는지") == true)
         #expect(event.session?.pendingUserInput?.resources?.first?.source == "PostHog")
@@ -501,8 +501,148 @@ struct SidecarEventDecodingTests {
         #expect(day1?.orderedSteps.last?.id == "first_interview")
         #expect(day1?.isComplete == true)
 
+        // Day-1 stepper/badge display layer drops the intro stages (onboarding, scan)
+        // while the data axis above keeps all four. Day 2+ stays on the full loop.
+        #expect(day1?.displaySteps.map({ $0.id }) == ["goal", "first_interview"])
+        #expect(day1?.displayTotalCount == 2)
+        #expect(day1?.displayCompletedCount == 2)
+        #expect(day1?.isDisplayComplete == true)
+        #expect(day7?.displaySteps.count == 5)
+        #expect(day7?.displayCompletedCount == 3)
+
         #expect(event.dayProgress?.recordedDaysDescending.first?.day == 7)
         #expect(event.error == nil)
+        // Additive/optional: a day_progress_state with no officeHoursMemory decodes to nil.
+        #expect(event.officeHoursMemory == nil)
+    }
+
+    @MainActor @Test func decodesDayProgressStateWithOfficeHoursMemory() throws {
+        let payload = """
+        {
+          "type": "day_progress_state",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "currentDay": 9,
+          "needsCommitment": true,
+          "gatedStep": "interview",
+          "dayProgress": {
+            "schemaVersion": 1,
+            "schema": "agentic30.day_progress.v1",
+            "challengeStartedAt": "2026-06-01",
+            "days": {}
+          },
+          "officeHoursMemory": {
+            "compiledTruth": "Cycle 8 (Day 8). 마지막 약속: \\"DM 5개 보내기\\".",
+            "openThreads": ["DM 5개 보내기"],
+            "abandonedThreads": ["DM 5개 보내기 — 2 사이클 silent"]
+          }
+        }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.type == "day_progress_state")
+        #expect(event.officeHoursMemory?.compiledTruth?.contains("DM 5개 보내기") == true)
+        #expect(event.officeHoursMemory?.openThreads == ["DM 5개 보내기"])
+        #expect(event.officeHoursMemory?.abandonedThreads.first?.contains("2 사이클 silent") == true)
+    }
+
+    @MainActor @Test func decodesOfficeHoursMemoryToleratesMissingArrays() throws {
+        // Tolerant decode: a summary with only compiledTruth still decodes (arrays default []).
+        let payload = """
+        { "type": "day_progress_state", "officeHoursMemory": { "compiledTruth": "x" } }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.officeHoursMemory?.compiledTruth == "x")
+        #expect(event.officeHoursMemory?.openThreads == [])
+        #expect(event.officeHoursMemory?.abandonedThreads == [])
+    }
+
+    @MainActor @Test func decodesDayProgressStateInterviewGateBlock() throws {
+        // Block-mode payload: the sidecar withholds an interview close and asks for one
+        // next customer action (handleDayProgressPatch gate.mode == "block", index.mjs).
+        let payload = """
+        {
+          "type": "day_progress_state",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "currentDay": 9,
+          "needsCommitment": true,
+          "gatedStep": "interview",
+          "message": "이 인터뷰를 닫기 전에 다음 한 가지 고객 행동을 약속해줘. 정 못 하면 그 이유를 남겨도 통과돼."
+        }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.type == "day_progress_state")
+        #expect(event.needsCommitment == true)
+        #expect(event.gatedStep == "interview")
+        #expect(event.message?.contains("다음 한 가지 고객 행동") == true)
+    }
+
+    @MainActor @Test func decodesDayProgressStateWithoutGateLeavesNeedsCommitmentNil() throws {
+        // Additive/optional: a normal (non-blocked) day_progress_state omits the gate fields,
+        // so needsCommitment/gatedStep decode to nil and the bar shows no nudge.
+        let payload = """
+        { "type": "day_progress_state", "currentDay": 3 }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.needsCommitment == nil)
+        #expect(event.gatedStep == nil)
+    }
+
+    @MainActor @Test func decodesOfficeHoursMemoryCalibrationFields() throws {
+        // calibration-lite read-back: "예측 적중 N/M" + the open forecast awaiting a verdict.
+        let payload = """
+        {
+          "type": "day_progress_state",
+          "officeHoursMemory": {
+            "compiledTruth": "Cycle 10.",
+            "calibrationLine": "예측 적중 1/3 — 2개 빗나갔어.",
+            "pendingPrediction": "5명 중 2명 답장"
+          }
+        }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.officeHoursMemory?.calibrationLine == "예측 적중 1/3 — 2개 빗나갔어.")
+        #expect(event.officeHoursMemory?.pendingPrediction == "5명 중 2명 답장")
+        #expect(event.officeHoursMemory?.hasContent == true)
+        #expect(event.officeHoursMemory?.hasPendingPrediction == true)
+    }
+
+    @MainActor @Test func officeHoursMemoryCalibrationFieldsDefaultNilWhenAbsent() throws {
+        // Additive/optional: a summary without calibration fields leaves them nil and keeps
+        // the banner/grade surfaces hidden (screenshot-stable on cold brains).
+        let payload = """
+        { "type": "day_progress_state", "officeHoursMemory": { "compiledTruth": "x" } }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.officeHoursMemory?.calibrationLine == nil)
+        #expect(event.officeHoursMemory?.pendingPrediction == nil)
+        #expect(event.officeHoursMemory?.hasPendingPrediction == false)
+    }
+
+    @MainActor @Test func day1DisplayStepsHideIntroStagesMidLoop() {
+        // Screenshot state: onboarding/scan auto-done, 목표 active, 첫 인터뷰 pending.
+        // The stepper + sidebar badge must hide the intro stages and count only the
+        // two user-facing stages (→ "0/2"), while the data axis keeps all four.
+        let day1 = DayRecord(
+            day: 1,
+            kind: .day1,
+            steps: ["onboarding": .done, "scan": .done, "goal": .active, "first_interview": .pending]
+        )
+        #expect(day1.orderedSteps.count == 4)
+        #expect(day1.completedCount == 2)
+        #expect(day1.displaySteps.map({ $0.id }) == ["goal", "first_interview"])
+        #expect(day1.displaySteps.first?.label == "목표")
+        #expect(day1.displayTotalCount == 2)
+        #expect(day1.displayCompletedCount == 0)
+        #expect(day1.isDisplayComplete == false)
+
+        // Day 2+ (standard) is unaffected — the full macro loop stays visible.
+        let day7 = DayRecord(
+            day: 7,
+            kind: .standard,
+            steps: ["scan": .done, "retro": .done, "goal": .active, "interview": .pending, "execution": .pending]
+        )
+        #expect(day7.displaySteps.map({ $0.id }) == ["scan", "retro", "goal", "interview", "execution"])
+        #expect(day7.displayTotalCount == 5)
+        #expect(day7.displayCompletedCount == 2)
     }
 
     @MainActor @Test func decodesWorkspaceScanResultWithDay1SituationSummary() throws {
@@ -830,6 +970,136 @@ struct SidecarEventDecodingTests {
         let legacyEvent = try decoder.decode(SidecarEvent.self, from: Data(legacyPayload.utf8))
         #expect(legacyEvent.day1AlignmentPlan?.signalDigest == nil)
         #expect(legacyEvent.day1AlignmentPlan?.qualityGate.score == 8.4)
+    }
+
+    @MainActor @Test func day1AlignmentComponentDecodesEmphasisSpans() throws {
+        let payload = """
+        {
+          "id": "icp",
+          "title": "고객",
+          "prompt": "이 목표를 검증하려면 누구를 확인하나요?",
+          "highlightPhrases": ["support lead"],
+          "emphasis": [
+            { "phrase": "support lead", "style": "strong" },
+            { "phrase": "docs/ICP.md", "style": "code" }
+          ],
+          "statement": "support lead 고객을 docs/ICP.md 기준으로 확인",
+          "evidence": [],
+          "missingAssumptions": [],
+          "options": []
+        }
+        """.data(using: .utf8)!
+
+        let component = try JSONDecoder().decode(Day1AlignmentComponent.self, from: payload)
+        // highlightPhrases stays available for back-compat consumers.
+        #expect(component.highlightPhrases == ["support lead"])
+        #expect(component.emphasis?.count == 2)
+        #expect(component.emphasis?[0] == EmphasisSpan(phrase: "support lead", style: .strong))
+        #expect(component.emphasis?[1] == EmphasisSpan(phrase: "docs/ICP.md", style: .code))
+    }
+
+    @MainActor @Test func day1AlignmentComponentDecodesSnakeEmphasisAndUnknownStyleFallback() throws {
+        let payload = """
+        {
+          "id": "pain_point",
+          "title": "문제",
+          "prompt": "가장 압축된 문제는?",
+          "highlight_phrases": ["Slack 누락"],
+          "emphasis_spans": [
+            { "phrase": "Slack 누락", "kind": "mark" },
+            { "phrase": "마감", "style": "spotlight" }
+          ],
+          "statement": "Slack 누락이 반복되고 마감 직전에 터진다",
+          "options": []
+        }
+        """.data(using: .utf8)!
+
+        let component = try JSONDecoder().decode(Day1AlignmentComponent.self, from: payload)
+        // snake_case highlight + emphasis aliases both resolve.
+        #expect(component.highlightPhrases == ["Slack 누락"])
+        #expect(component.emphasis?.count == 2)
+        #expect(component.emphasis?[0] == EmphasisSpan(phrase: "Slack 누락", style: .mark))
+        // Unknown style falls back to `.mark`.
+        #expect(component.emphasis?[1] == EmphasisSpan(phrase: "마감", style: .mark))
+    }
+
+    @MainActor @Test func day1AlignmentComponentWithoutEmphasisIsBackCompat() throws {
+        let payload = """
+        {
+          "id": "outcome",
+          "title": "확인할 행동",
+          "prompt": "어떤 행동 신호를 보나요?",
+          "highlightPhrases": ["행동 신호"],
+          "statement": "행동 신호를 더 빨리 판단한다",
+          "options": []
+        }
+        """.data(using: .utf8)!
+
+        let component = try JSONDecoder().decode(Day1AlignmentComponent.self, from: payload)
+        // No emphasis -> nil, renderer falls back to the legacy highlightPhrases path.
+        #expect(component.emphasis == nil)
+        #expect(component.highlightPhrases == ["행동 신호"])
+    }
+
+    @MainActor @Test func day1IcpQuestionOptionDecodesEmphasisSpans() throws {
+        let payload = """
+        {
+          "id": "o1",
+          "label": "AI 코딩 도구를 쓰는 개발자",
+          "description": "현재 고객",
+          "highlightPhrases": ["AI 코딩 도구"],
+          "emphasis": [
+            { "phrase": "AI 코딩 도구", "style": "strong" }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let option = try JSONDecoder().decode(Day1IcpQuestionOption.self, from: payload)
+        #expect(option.highlightPhrases == ["AI 코딩 도구"])
+        #expect(option.emphasis?.count == 1)
+        #expect(option.emphasis?[0] == EmphasisSpan(phrase: "AI 코딩 도구", style: .strong))
+    }
+
+    @MainActor @Test func day1IcpQuestionOptionWithoutEmphasisIsBackCompat() throws {
+        let payload = """
+        {
+          "id": "o2",
+          "label": "관심만 있음",
+          "description": "행동 없음",
+          "highlight_phrases": ["관심만"]
+        }
+        """.data(using: .utf8)!
+
+        let option = try JSONDecoder().decode(Day1IcpQuestionOption.self, from: payload)
+        #expect(option.emphasis == nil)
+        #expect(option.highlightPhrases == ["관심만"])
+    }
+
+    @MainActor @Test func day1SignalDigestRowDecodesEmphasisAndBackCompat() throws {
+        let withEmphasis = """
+        {
+          "key": "pain",
+          "label": "문제",
+          "value": "urgent Slack escalation을 놓침",
+          "tone": "mark",
+          "emphasis": [
+            { "phrase": "Slack escalation", "style": "code" }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let row = try JSONDecoder().decode(Day1SignalDigestRow.self, from: withEmphasis)
+        #expect(row.tone == "mark")
+        #expect(row.emphasis?.count == 1)
+        #expect(row.emphasis?[0] == EmphasisSpan(phrase: "Slack escalation", style: .code))
+
+        let legacy = """
+        { "key": "icp", "label": "고객", "value": "support lead", "tone": "body" }
+        """.data(using: .utf8)!
+        let legacyRow = try JSONDecoder().decode(Day1SignalDigestRow.self, from: legacy)
+        // No emphasis -> nil, row keeps its single-style tone rendering.
+        #expect(legacyRow.emphasis == nil)
+        #expect(legacyRow.tone == "body")
     }
 
     @MainActor @Test func decodesWorkspaceScanResultWithError() throws {
@@ -1161,7 +1431,7 @@ struct SidecarEventDecodingTests {
               "stale": false,
               "error": null,
               "reason": "manual",
-              "researchSource": "Codex Exa MCP",
+              "researchSource": "Codex 웹 검색 도구",
               "partialFailures": [
                 {
                   "laneId": "channel",
@@ -1214,7 +1484,7 @@ struct SidecarEventDecodingTests {
 
         #expect(event.type == "news_market_radar_result")
         #expect(event.newsMarketRadar?.status.state == "ready")
-        #expect(event.newsMarketRadar?.status.researchSource == "Codex Exa MCP")
+        #expect(event.newsMarketRadar?.status.researchSource == "Codex 웹 검색 도구")
         #expect(event.newsMarketRadar?.status.partialFailures?.first?.laneId == "channel")
         #expect(event.newsMarketRadar?.status.partialFailures?.first?.laneTitle == "채널")
         #expect(event.newsMarketRadar?.lanes.first?.id == "alternatives_pricing")
@@ -1296,9 +1566,9 @@ struct SidecarEventDecodingTests {
             "stale": false,
             "error": null,
             "reason": "daily",
-            "researchSource": "Gemini Exa MCP",
+            "researchSource": "Gemini 웹 검색 도구",
             "stage": "running_provider_research",
-            "progressText": "Gemini Exa MCP로 공개 근거를 검색하는 중",
+            "progressText": "Gemini 웹 검색 도구로 공개 근거를 검색하는 중",
             "elapsedMs": 4210,
             "stepIndex": 4,
             "stepCount": 6,
@@ -1319,9 +1589,9 @@ struct SidecarEventDecodingTests {
         #expect(event.status == nil)
         #expect(event.newsMarketRadarStatus?.state == "refreshing")
         #expect(event.newsMarketRadarStatus?.reason == "daily")
-        #expect(event.newsMarketRadarStatus?.researchSource == "Gemini Exa MCP")
+        #expect(event.newsMarketRadarStatus?.researchSource == "Gemini 웹 검색 도구")
         #expect(event.newsMarketRadarStatus?.stage == "running_provider_research")
-        #expect(event.newsMarketRadarStatus?.progressText == "Gemini Exa MCP로 공개 근거를 검색하는 중")
+        #expect(event.newsMarketRadarStatus?.progressText == "Gemini 웹 검색 도구로 공개 근거를 검색하는 중")
         #expect(event.newsMarketRadarStatus?.elapsedMs == 4210)
         #expect(event.newsMarketRadarStatus?.stepIndex == 4)
         #expect(event.newsMarketRadarStatus?.stepCount == 6)
@@ -1340,7 +1610,7 @@ struct SidecarEventDecodingTests {
             "generatedAt": "2026-05-21T00:00:00.000Z",
             "nextRefreshAfter": "2026-05-22T00:00:00.000Z",
             "dayNumber": 8,
-            "dayTitle": "MVP를 핵심 기능 1개로 자른다",
+            "dayTitle": "첫 버전을 핵심 기능 1개로 자른다",
             "dayPhase": "build",
             "status": {
               "state": "ready",
@@ -1348,7 +1618,7 @@ struct SidecarEventDecodingTests {
               "stale": false,
               "error": null,
               "reason": "manual",
-              "researchSource": "Codex Exa MCP"
+              "researchSource": "Codex 웹 검색 도구"
             },
             "briefTitle": "Day 8 기준 X/Threads 후보",
             "briefBody": "실제 fetch 결과만 표시합니다.",
@@ -1376,9 +1646,9 @@ struct SidecarEventDecodingTests {
                 "matchLabel": "강",
                 "matchCaption": "match",
                 "quote": "Claude Code로 빌드 과정을 공개합니다.",
-                "whyTitle": "왜 ICP 증거인가",
+                "whyTitle": "왜 고객 후보 증거인가",
                 "whyBody": "macOS agentic coding 워크플로와 맞습니다.",
-                "usageTitle": "BIP 활용",
+                "usageTitle": "공개 기록 활용",
                 "usageBody": "DM 후보로 저장합니다.",
                 "gap": "전업 여부 확인",
                 "tags": [
@@ -1397,7 +1667,7 @@ struct SidecarEventDecodingTests {
                     "excerpt": "Fetched excerpt"
                   }
                 ],
-                "draft": "오늘 BIP 초안",
+                "draft": "오늘 공개 기록 초안",
                 "evidenceStrength": "strong"
               }
             ]
@@ -1425,17 +1695,17 @@ struct SidecarEventDecodingTests {
             "stale": false,
             "error": null,
             "reason": "daily",
-            "researchSource": "Codex Exa MCP",
+            "researchSource": "Codex 웹 검색 도구",
             "stage": "running_provider_research",
-            "progressText": "X/Threads ICP 후보를 검색하는 중",
+            "progressText": "X/Threads 고객 후보를 검색하는 중",
             "elapsedMs": 3100,
             "stepIndex": 4,
             "stepCount": 6,
             "partialFailures": [
               {
                 "laneId": "bip",
-                "laneTitle": "BIP 리서치",
-                "error": "provider timeout"
+                "laneTitle": "공개 기록 리서치",
+                "error": "AI 연결 응답 지연"
               }
             ]
           }
@@ -1448,7 +1718,7 @@ struct SidecarEventDecodingTests {
         #expect(event.status == nil)
         #expect(event.bipResearchStatus?.state == "refreshing")
         #expect(event.bipResearchStatus?.reason == "daily")
-        #expect(event.bipResearchStatus?.researchSource == "Codex Exa MCP")
+        #expect(event.bipResearchStatus?.researchSource == "Codex 웹 검색 도구")
         #expect(event.bipResearchStatus?.stage == "running_provider_research")
         #expect(event.bipResearchStatus?.stepIndex == 4)
         #expect(event.bipResearchStatus?.partialFailures?.first?.laneId == "bip")
@@ -1679,6 +1949,83 @@ struct SidecarEventDecodingTests {
 
         #expect(event.workHistory?.requiresGitHub == true)
         #expect(event.workHistory?.github.connected == false)
+    }
+
+    @MainActor @Test func structuredPromptQuestionDecodesEmphasisSpans() throws {
+        let payload = """
+        {
+          "header": "현재 대안",
+          "question": "config.json 파일에 마감일을 기록했나요?",
+          "highlight_phrases": ["config.json"],
+          "emphasis": [
+            { "phrase": "config.json", "style": "code" },
+            { "phrase": "마감일", "style": "mark" },
+            { "phrase": "기록", "style": "strong" }
+          ],
+          "helperText": null,
+          "options": null,
+          "multiSelect": false,
+          "allowFreeText": true,
+          "freeTextPlaceholder": null,
+          "textMode": "short"
+        }
+        """.data(using: .utf8)!
+
+        let question = try JSONDecoder().decode(StructuredPromptQuestion.self, from: payload)
+        // highlightPhrases remains available for back-compat consumers.
+        #expect(question.highlightPhrases == ["config.json"])
+        #expect(question.emphasis?.count == 3)
+        #expect(question.emphasis?[0] == EmphasisSpan(phrase: "config.json", style: .code))
+        #expect(question.emphasis?[1] == EmphasisSpan(phrase: "마감일", style: .mark))
+        #expect(question.emphasis?[2] == EmphasisSpan(phrase: "기록", style: .strong))
+    }
+
+    @MainActor @Test func structuredPromptQuestionDecodesEmphasisSpansSnakeCaseKeyAndUnknownStyle() throws {
+        let payload = """
+        {
+          "header": "질문",
+          "question": "어떤 증거가 가장 강한가요?",
+          "emphasis_spans": [
+            { "phrase": "증거", "kind": "strong" },
+            { "phrase": "가장 강한", "style": "spotlight" }
+          ],
+          "helperText": null,
+          "options": null,
+          "multiSelect": false,
+          "allowFreeText": true,
+          "freeTextPlaceholder": null,
+          "textMode": "short"
+        }
+        """.data(using: .utf8)!
+
+        let question = try JSONDecoder().decode(StructuredPromptQuestion.self, from: payload)
+        #expect(question.emphasis?.count == 2)
+        // `kind` alias resolves to the style.
+        #expect(question.emphasis?[0] == EmphasisSpan(phrase: "증거", style: .strong))
+        // Unknown/unsupported style falls back to `.mark`.
+        #expect(question.emphasis?[1] == EmphasisSpan(phrase: "가장 강한", style: .mark))
+    }
+
+    @MainActor @Test func structuredPromptQuestionWithoutEmphasisPreservesHighlightPhrasesBackCompat() throws {
+        let payload = """
+        {
+          "header": "질문",
+          "question": "가장 강한 수요 증거가 뭐야?",
+          "highlight_phrases": ["수요 증거"],
+          "helperText": null,
+          "options": null,
+          "multiSelect": false,
+          "allowFreeText": true,
+          "freeTextPlaceholder": null,
+          "textMode": "short"
+        }
+        """.data(using: .utf8)!
+
+        let question = try JSONDecoder().decode(StructuredPromptQuestion.self, from: payload)
+        // No emphasis -> nil, so the renderer falls back to the legacy
+        // single-style highlightPhrases path (green accent chip).
+        #expect(question.emphasis == nil)
+        #expect(question.highlightPhrases == ["수요 증거"])
     }
 
     private var decoder: JSONDecoder {

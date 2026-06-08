@@ -239,6 +239,14 @@ struct ChatMessage: Identifiable, Codable, Hashable {
     /// producer (sidecar). Backward compatible: messages without this field
     /// decode with `inlineDecision: nil`.
     var inlineDecision: StructuredPromptQuestion? = nil
+    /// Style-aware inline emphasis spans for a free-text assistant reply. The
+    /// sidecar extracts these from an `===EMPHASIS===` sentinel block in the
+    /// reply body (see `extractOfficeHoursChatEmphasis`) and ships the visible
+    /// body in `content` plus the spans here. When non-empty, the transcript
+    /// bubble renders each `phrase` in its own style (strong/mark/code) reusing
+    /// the Office Hours emphasis vocabulary; when nil/empty the bubble renders
+    /// `content` as plain text exactly as before (backward compatible).
+    var emphasis: [EmphasisSpan]? = nil
 }
 
 struct OfficeHoursTranscriptRow: Identifiable, Hashable {
@@ -259,6 +267,10 @@ struct OfficeHoursTranscriptRow: Identifiable, Hashable {
     let state: MessageState?
     let error: String?
     let lineLimit: Int?
+    /// Style-aware emphasis spans forwarded from `ChatMessage.emphasis`. Empty
+    /// for user rows and for assistant rows without emphasis, in which case the
+    /// bubble renders plain text (backward compatible).
+    var emphasis: [EmphasisSpan] = []
 
     var isUser: Bool { kind == .user }
     var isAssistant: Bool { kind == .assistant || kind == .system }
@@ -317,7 +329,8 @@ struct OfficeHoursTranscriptRow: Identifiable, Hashable {
                 content: trimmedContent.isEmpty ? fallbackContent : trimmedContent,
                 state: message.state,
                 error: trimmedError,
-                lineLimit: nil
+                lineLimit: nil,
+                emphasis: message.emphasis ?? []
             )
         }
     }
@@ -578,12 +591,79 @@ struct StructuredPromptGeneration: Codable, Hashable {
     }
 }
 
+/// Inline emphasis style vocabulary shared verbatim with the sidecar
+/// (`strong`/`mark`/`code`). Unknown/unsupported wire values fall back to
+/// `.mark` so a future style never crashes decoding.
+enum EmphasisStyle: String, Codable, Hashable {
+    case strong
+    case mark
+    case code
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = EmphasisStyle(rawValue: raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) ?? .mark
+    }
+}
+
+/// A single dynamic emphasis span: a phrase the LLM wants emphasized plus the
+/// style to render it in. Decodes both camelCase and snake_case keys so either
+/// provider wire shape works.
+struct EmphasisSpan: Codable, Hashable {
+    let phrase: String
+    let style: EmphasisStyle
+
+    init(phrase: String, style: EmphasisStyle) {
+        self.phrase = phrase
+        self.style = style
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case phrase
+        case text
+        case style
+        case kind
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        phrase = try container.decodeIfPresent(String.self, forKey: .phrase)
+            ?? container.decode(String.self, forKey: .text)
+        style = try container.decodeIfPresent(EmphasisStyle.self, forKey: .style)
+            ?? container.decodeIfPresent(EmphasisStyle.self, forKey: .kind)
+            ?? .mark
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(phrase, forKey: .phrase)
+        try container.encode(style, forKey: .style)
+    }
+
+    /// Shared back-compat list decoder: tries each candidate key in order and
+    /// returns the first non-empty span array, or nil when the field is absent.
+    /// Reused by every Stage 2 model that carries `emphasis` (+ `emphasis_spans`
+    /// snake alias) so decoding stays identical across surfaces.
+    static func decodeList<Key: CodingKey>(
+        from container: KeyedDecodingContainer<Key>,
+        keys: [Key]
+    ) -> [EmphasisSpan]? {
+        for key in keys {
+            if let values = try? container.decodeIfPresent([EmphasisSpan].self, forKey: key),
+               !values.isEmpty {
+                return values
+            }
+        }
+        return nil
+    }
+}
+
 struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
     let questionId: String?
     let header: String
     var question: String
     let helperText: String?
     let highlightPhrases: [String]?
+    let emphasis: [EmphasisSpan]?
     let options: [StructuredPromptOption]?
     let multiSelect: Bool?
     let allowFreeText: Bool?
@@ -602,13 +682,15 @@ struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
         requiresFreeText: Bool?,
         freeTextPlaceholder: String?,
         textMode: StructuredPromptTextMode?,
-        highlightPhrases: [String]? = nil
+        highlightPhrases: [String]? = nil,
+        emphasis: [EmphasisSpan]? = nil
     ) {
         self.questionId = questionId
         self.header = header
         self.question = question
         self.helperText = helperText
         self.highlightPhrases = highlightPhrases
+        self.emphasis = emphasis
         self.options = options
         self.multiSelect = multiSelect
         self.allowFreeText = allowFreeText
@@ -631,7 +713,8 @@ struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
             requiresFreeText: requiresFreeText,
             freeTextPlaceholder: freeTextPlaceholder,
             textMode: textMode,
-            highlightPhrases: highlightPhrases
+            highlightPhrases: highlightPhrases,
+            emphasis: emphasis
         )
     }
 
@@ -661,6 +744,8 @@ struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
         case highlights
         case highlightPhrases
         case highlightPhrasesSnake = "highlight_phrases"
+        case emphasis
+        case emphasisSpans = "emphasis_spans"
         case options
         case multiSelect
         case allowFreeText
@@ -678,6 +763,7 @@ struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
         question = try container.decode(String.self, forKey: .question)
         helperText = try container.decodeIfPresent(String.self, forKey: .helperText)
         highlightPhrases = Self.decodeHighlightPhrases(from: container)
+        emphasis = Self.decodeEmphasis(from: container)
         options = try container.decodeIfPresent([StructuredPromptOption].self, forKey: .options)
         multiSelect = try container.decodeIfPresent(Bool.self, forKey: .multiSelect)
         allowFreeText = try container.decodeIfPresent(Bool.self, forKey: .allowFreeText)
@@ -693,6 +779,7 @@ struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
         try container.encode(question, forKey: .question)
         try container.encodeIfPresent(helperText, forKey: .helperText)
         try container.encodeIfPresent(highlightPhrases, forKey: .highlightPhrases)
+        try container.encodeIfPresent(emphasis, forKey: .emphasis)
         try container.encodeIfPresent(options, forKey: .options)
         try container.encodeIfPresent(multiSelect, forKey: .multiSelect)
         try container.encodeIfPresent(allowFreeText, forKey: .allowFreeText)
@@ -710,6 +797,18 @@ struct StructuredPromptQuestion: Identifiable, Codable, Hashable {
             }
             if let value = try? container.decodeIfPresent(String.self, forKey: key) {
                 return [value]
+            }
+        }
+        return nil
+    }
+
+    private static func decodeEmphasis(
+        from container: KeyedDecodingContainer<CodingKeys>
+    ) -> [EmphasisSpan]? {
+        for key in [CodingKeys.emphasis, .emphasisSpans] {
+            if let values = try? container.decodeIfPresent([EmphasisSpan].self, forKey: key),
+               !values.isEmpty {
+                return values
             }
         }
         return nil
@@ -893,6 +992,10 @@ nonisolated struct Day1IcpQuestionOption: Codable, Hashable {
     let label: String
     let description: String
     let highlightPhrases: [String]?
+    /// Style-aware dynamic emphasis spans (Stage 2). When nil/empty, rendering
+    /// falls back to the legacy single-style `highlightPhrases` path, preserving
+    /// the historical look for older cached scans.
+    let emphasis: [EmphasisSpan]?
     let preview: String?
     let antiSignal: Bool?
     let evidenceLabel: String?
@@ -903,6 +1006,7 @@ nonisolated struct Day1IcpQuestionOption: Codable, Hashable {
         label: String,
         description: String,
         highlightPhrases: [String]? = nil,
+        emphasis: [EmphasisSpan]? = nil,
         preview: String? = nil,
         antiSignal: Bool? = nil,
         evidenceLabel: String? = nil,
@@ -912,10 +1016,53 @@ nonisolated struct Day1IcpQuestionOption: Codable, Hashable {
         self.label = label
         self.description = description
         self.highlightPhrases = highlightPhrases
+        self.emphasis = emphasis
         self.preview = preview
         self.antiSignal = antiSignal
         self.evidenceLabel = evidenceLabel
         self.evidenceLimited = evidenceLimited
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case description
+        case highlightPhrases
+        case highlightPhrasesSnake = "highlight_phrases"
+        case emphasis
+        case emphasisSpans = "emphasis_spans"
+        case preview
+        case antiSignal
+        case evidenceLabel
+        case evidenceLimited
+    }
+
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        label = try container.decode(String.self, forKey: .label)
+        description = try container.decode(String.self, forKey: .description)
+        highlightPhrases = (try? container.decodeIfPresent([String].self, forKey: .highlightPhrases))
+            ?? (try? container.decodeIfPresent([String].self, forKey: .highlightPhrasesSnake))
+            ?? nil
+        emphasis = EmphasisSpan.decodeList(from: container, keys: [.emphasis, .emphasisSpans])
+        preview = try container.decodeIfPresent(String.self, forKey: .preview)
+        antiSignal = try container.decodeIfPresent(Bool.self, forKey: .antiSignal)
+        evidenceLabel = try container.decodeIfPresent(String.self, forKey: .evidenceLabel)
+        evidenceLimited = try container.decodeIfPresent(Bool.self, forKey: .evidenceLimited)
+    }
+
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(label, forKey: .label)
+        try container.encode(description, forKey: .description)
+        try container.encodeIfPresent(highlightPhrases, forKey: .highlightPhrases)
+        try container.encodeIfPresent(emphasis, forKey: .emphasis)
+        try container.encodeIfPresent(preview, forKey: .preview)
+        try container.encodeIfPresent(antiSignal, forKey: .antiSignal)
+        try container.encodeIfPresent(evidenceLabel, forKey: .evidenceLabel)
+        try container.encodeIfPresent(evidenceLimited, forKey: .evidenceLimited)
     }
 }
 
@@ -1157,6 +1304,45 @@ struct Day1SignalDigestRow: Codable, Hashable {
     let label: String
     let value: String
     let tone: String?
+    /// Style-aware dynamic emphasis spans for the row value (Stage 2). When
+    /// nil/empty, the row renders as a single `tone`-styled segment exactly as
+    /// before, preserving the legacy signal mapping.
+    let emphasis: [EmphasisSpan]?
+
+    init(key: String, label: String, value: String, tone: String? = nil, emphasis: [EmphasisSpan]? = nil) {
+        self.key = key
+        self.label = label
+        self.value = value
+        self.tone = tone
+        self.emphasis = emphasis
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case key
+        case label
+        case value
+        case tone
+        case emphasis
+        case emphasisSpans = "emphasis_spans"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        key = try container.decode(String.self, forKey: .key)
+        label = try container.decode(String.self, forKey: .label)
+        value = try container.decode(String.self, forKey: .value)
+        tone = try container.decodeIfPresent(String.self, forKey: .tone)
+        emphasis = EmphasisSpan.decodeList(from: container, keys: [.emphasis, .emphasisSpans])
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(key, forKey: .key)
+        try container.encode(label, forKey: .label)
+        try container.encode(value, forKey: .value)
+        try container.encodeIfPresent(tone, forKey: .tone)
+        try container.encodeIfPresent(emphasis, forKey: .emphasis)
+    }
 }
 
 struct Day1AlignmentComponents: Codable, Hashable {
@@ -1170,6 +1356,10 @@ struct Day1AlignmentComponent: Codable, Hashable {
     let title: String
     let prompt: String
     let highlightPhrases: [String]?
+    /// Style-aware dynamic emphasis spans for the component statement (Stage 2).
+    /// When nil/empty, rendering falls back to the legacy `highlightPhrases`
+    /// single-style path, preserving the historical look.
+    let emphasis: [EmphasisSpan]?
     let helperText: String?
     let statement: String
     let evidence: [String]
@@ -1181,6 +1371,7 @@ struct Day1AlignmentComponent: Codable, Hashable {
         title: String,
         prompt: String,
         highlightPhrases: [String]? = nil,
+        emphasis: [EmphasisSpan]? = nil,
         helperText: String?,
         statement: String,
         evidence: [String],
@@ -1191,11 +1382,57 @@ struct Day1AlignmentComponent: Codable, Hashable {
         self.title = title
         self.prompt = prompt
         self.highlightPhrases = highlightPhrases
+        self.emphasis = emphasis
         self.helperText = helperText
         self.statement = statement
         self.evidence = evidence
         self.missingAssumptions = missingAssumptions
         self.options = options
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case prompt
+        case highlightPhrases
+        case highlightPhrasesSnake = "highlight_phrases"
+        case emphasis
+        case emphasisSpans = "emphasis_spans"
+        case helperText
+        case statement
+        case evidence
+        case missingAssumptions
+        case options
+    }
+
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        prompt = try container.decode(String.self, forKey: .prompt)
+        highlightPhrases = (try? container.decodeIfPresent([String].self, forKey: .highlightPhrases))
+            ?? (try? container.decodeIfPresent([String].self, forKey: .highlightPhrasesSnake))
+            ?? nil
+        emphasis = EmphasisSpan.decodeList(from: container, keys: [.emphasis, .emphasisSpans])
+        helperText = try container.decodeIfPresent(String.self, forKey: .helperText)
+        statement = try container.decode(String.self, forKey: .statement)
+        evidence = try container.decodeIfPresent([String].self, forKey: .evidence) ?? []
+        missingAssumptions = try container.decodeIfPresent([String].self, forKey: .missingAssumptions) ?? []
+        options = try container.decodeIfPresent([Day1IcpQuestionOption].self, forKey: .options) ?? []
+    }
+
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(prompt, forKey: .prompt)
+        try container.encodeIfPresent(highlightPhrases, forKey: .highlightPhrases)
+        try container.encodeIfPresent(emphasis, forKey: .emphasis)
+        try container.encodeIfPresent(helperText, forKey: .helperText)
+        try container.encode(statement, forKey: .statement)
+        try container.encode(evidence, forKey: .evidence)
+        try container.encode(missingAssumptions, forKey: .missingAssumptions)
+        try container.encode(options, forKey: .options)
     }
 }
 

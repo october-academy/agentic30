@@ -77,7 +77,21 @@ import {
   ensureChallengeStart,
   loadDayProgress,
   patchDayStep,
+  setDayActiveStep,
 } from "./day-progress-state.mjs";
+import {
+  appendCommitment,
+  appendCycle,
+  appendPrediction,
+  buildPriorCycle,
+  classifyInterviewGate,
+  formatPriorCycleOpening,
+  gradePrediction,
+  latestUnresolvedPrediction,
+  loadOfficeHoursMemory,
+  recompileCompiledTruth,
+  summarizeOfficeHoursMemory,
+} from "./office-hours-memory.mjs";
 import {
   buildAuthEnv,
   clearAuthContext,
@@ -217,9 +231,13 @@ import {
   buildOfficeHoursInlineStructuredPromptPayload,
   buildOfficeHoursStructuredQuestionTranscriptText,
   buildOfficeHoursStructuredInputContinuationPrompt,
+  extractOfficeHoursChatEmphasis,
+  formatSelectedOptionEvidenceHint,
   isOfficeHoursStructuredInputMode,
   isOfficeHoursStructuredInputToolEvent,
   normalizeOfficeHoursStructuredPromptRequest,
+  OFFICE_HOURS_EMPHASIS_SENTINEL_END,
+  OFFICE_HOURS_EMPHASIS_SENTINEL_START,
   shouldAppendOfficeHoursStructuredQuestionMessage,
   stripTrailingRubricFocusMetadata,
 } from "./office-hours-structured-input.mjs";
@@ -1419,7 +1437,7 @@ async function handleClientMessage(socket, payload) {
             session.messages.push(makeMessage({
               role: "assistant",
               provider: session.provider,
-              content: "Foundation Setup preview is ready. Review the four documents and approve them before Day 1 Mission unlocks.",
+              content: "초기 설정 미리보기가 준비됐습니다. 문서 4개를 확인하고 승인하면 Day 1 미션을 열 수 있습니다.",
               state: "final",
             }));
           }
@@ -1978,6 +1996,31 @@ async function handleDay1GoalSave(socket, payload = {}) {
       day1GoalSelection: selection,
       projectContext,
     });
+    // Goal confirmed → advance the day loop to the interview step.
+    try {
+      // Anchor unconditionally (idempotent) so a missing/legacy null start can't silently
+      // skip the interview advance — mirrors the scan paths.
+      const dp = await ensureChallengeStart({ workspaceRoot: root });
+      const currentDay = computeDayNumber({ challengeStartedAt: dp.challengeStartedAt });
+      if (currentDay) {
+        const interviewStep = currentDay === 1 ? "first_interview" : "interview";
+        const updated = await setDayActiveStep({
+          workspaceRoot: root,
+          day: currentDay,
+          stepId: interviewStep,
+          goalText: selection.goalText,
+        });
+        if (path.resolve(root) === path.resolve(workspaceRoot)) {
+          state.dayProgress = updated;
+        }
+        broadcast({ type: "day_progress_state", workspaceRoot: root, dayProgress: updated, currentDay });
+      }
+    } catch (progressError) {
+      telemetry.captureException(progressError, {
+        operation: "day1_goal_save_day_progress",
+        workspace_root: root,
+      });
+    }
   } catch (error) {
     telemetry.captureException(error, {
       operation: "day1_goal_save",
@@ -1998,43 +2041,137 @@ async function handleDayProgressGet(socket, payload = {}) {
   if (path.resolve(root) === path.resolve(workspaceRoot)) {
     state.dayProgress = dayProgress;
   }
+  const currentDay = dayProgress
+    ? computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt })
+    : null;
   send(socket, {
     type: "day_progress_state",
     workspaceRoot: root,
     dayProgress,
-    currentDay: dayProgress
-      ? computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt })
-      : null,
+    currentDay,
+    officeHoursMemory: await loadOfficeHoursMemorySummary(root, currentDay),
   });
+}
+
+// Compact office-hours memory summary for the additive `officeHoursMemory` field on the
+// day_progress_state broadcast (Swift OfficeHoursMemorySummary). Fail-open to null.
+async function loadOfficeHoursMemorySummary(root, currentDay) {
+  try {
+    const memory = await loadOfficeHoursMemory({ workspaceRoot: root });
+    return summarizeOfficeHoursMemory(memory, { currentCycle: currentDay ?? undefined });
+  } catch {
+    return null;
+  }
+}
+
+// calibration-lite write path, invoked from the interview-close commit branch. Grades the
+// PRIOR unresolved forecast (founder's retrospective verdict) BEFORE capturing this cycle's
+// forecast, so "latest unresolved" never targets the one we are about to add. Both inputs
+// are optional — absent = no-op (additive/non-breaking). A bad verdict string is swallowed
+// so it can never break the interview close.
+async function applyPredictionPatch({ workspaceRoot, cycle, predictionText, predictionVerdict }) {
+  const verdict = typeof predictionVerdict === "string" ? predictionVerdict.trim() : "";
+  if (verdict) {
+    const memory = await loadOfficeHoursMemory({ workspaceRoot });
+    const target = latestUnresolvedPrediction(memory);
+    if (target) {
+      try {
+        await gradePrediction({ workspaceRoot, predictionId: target.id, verdict, gradedCycle: cycle });
+      } catch (error) {
+        telemetry.captureException(error, { operation: "office_hours_grade_prediction" });
+      }
+    }
+  }
+  const claim = typeof predictionText === "string" ? predictionText.trim() : "";
+  if (claim) {
+    await appendPrediction({ workspaceRoot, claim, cycle, originText: claim });
+  }
 }
 
 async function handleDayProgressPatch(socket, payload = {}) {
   const root = resolveDay1GoalWorkspaceRoot(payload);
+  const stepId = payload.stepId ?? payload.step ?? payload.step_id;
+  const status = payload.status;
+  const day = payload.day ?? payload.dayNumber ?? payload.day_number;
+  const commitmentText = payload.commitmentText ?? payload.commitment_text;
+  const confession = payload.confession;
+  // calibration-lite (optional, additive): a one-line forecast for this cycle, and/or a
+  // retrospective verdict on the prior cycle's still-open forecast. Absent = no-op.
+  const predictionText = payload.predictionText ?? payload.prediction_text;
+  const predictionVerdict = payload.predictionVerdict ?? payload.prediction_verdict;
   try {
+    // Interview/first_interview completion gate (founder decision: block-once-then-
+    // confession). The single anti-displacement chokepoint identified by the
+    // first_interview-evidence-gate trace.
+    const gate = classifyInterviewGate({ stepId, status, commitmentText, confession });
+    if (gate.mode === "block") {
+      // Do NOT mark the step done — the founder must name one next customer action,
+      // or confess they're holding the gate. Return current (unchanged) progress.
+      const current = await loadDayProgress({ workspaceRoot: root });
+      const currentDay = current ? computeDayNumber({ challengeStartedAt: current.challengeStartedAt }) : null;
+      send(socket, {
+        type: "day_progress_state",
+        workspaceRoot: root,
+        dayProgress: current,
+        currentDay,
+        needsCommitment: true,
+        gatedStep: String(stepId || ""),
+        message: "이 인터뷰를 닫기 전에 다음 한 가지 고객 행동을 약속해줘. 정 못 하면 그 이유를 남겨도 통과돼.",
+        officeHoursMemory: await loadOfficeHoursMemorySummary(root, currentDay),
+      });
+      telemetry.captureEvent("mac_sidecar_interview_gate_blocked", {
+        step_id: String(stepId || ""),
+        workspace_basename: path.basename(root),
+      });
+      return;
+    }
+    // Patch the step FIRST: patchDayStep validates day/step and throws on a day-kind
+    // mismatch or out-of-range day BEFORE any memory write, so a rejected patch never
+    // orphans a commitment/cycle that would read back as a real closed cycle.
     const dayProgress = await patchDayStep({
       workspaceRoot: root,
-      day: payload.day ?? payload.dayNumber ?? payload.day_number,
-      stepId: payload.stepId ?? payload.step ?? payload.step_id,
-      status: payload.status,
+      day,
+      stepId,
+      status,
       goalText: payload.goalText ?? payload.goal_text,
       kind: payload.kind,
     });
     if (path.resolve(root) === path.resolve(workspaceRoot)) {
       state.dayProgress = dayProgress;
     }
+    // The step is now validly completed — record the memory side-effects.
+    // user-origin: commitmentText is the founder's own typed next customer action.
+    const cycleNo = Number.parseInt(day, 10) || null;
+    if (gate.mode === "commit" && cycleNo) {
+      await appendCommitment({ workspaceRoot: root, text: commitmentText, cycle: cycleNo, day: cycleNo, originText: commitmentText });
+      await appendCycle({ workspaceRoot: root, cycle: cycleNo, day: cycleNo, step: stepId, outcome: "success", lastAssignment: commitmentText });
+      await applyPredictionPatch({ workspaceRoot: root, cycle: cycleNo, predictionText, predictionVerdict });
+      await recompileCompiledTruth({ workspaceRoot: root });
+    } else if (gate.mode === "confess" && cycleNo) {
+      // gate-held-as-win: outcome `blocked` mirrors gstack's abort/blocked ledger. The
+      // confession is the note, NOT the next assignment — don't label the excuse a commitment.
+      await appendCycle({ workspaceRoot: root, cycle: cycleNo, day: cycleNo, step: stepId, outcome: "blocked", note: confession, lastAssignment: "" });
+      // calibration-lite: still grade the prior forecast on a confess-close (grade-only — a
+      // confession opens no new commitment, so no new prediction is captured here).
+      await applyPredictionPatch({ workspaceRoot: root, cycle: cycleNo, predictionText: undefined, predictionVerdict });
+      await recompileCompiledTruth({ workspaceRoot: root });
+    }
     telemetry.captureEvent("mac_sidecar_day_progress_updated", {
-      day: Number(payload.day ?? payload.dayNumber ?? payload.day_number) || null,
-      step_id: String(payload.stepId ?? payload.step ?? payload.step_id ?? ""),
-      status: String(payload.status ?? ""),
+      day: Number(day) || null,
+      step_id: String(stepId ?? ""),
+      status: String(status ?? ""),
+      gate_mode: gate.mode,
       workspace_basename: path.basename(root),
     });
+    const currentDay = dayProgress
+      ? computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt })
+      : null;
     broadcast({
       type: "day_progress_state",
       workspaceRoot: root,
       dayProgress,
-      currentDay: dayProgress
-        ? computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt })
-        : null,
+      currentDay,
+      officeHoursMemory: await loadOfficeHoursMemorySummary(root, currentDay),
     });
   } catch (error) {
     telemetry.captureException(error, {
@@ -3345,6 +3482,22 @@ function buildOfficeHoursRuntime(context = "", source = "manual") {
   };
 }
 
+// Cycle#N read-back: the prior interview's assignment + hard-evidence demand + costume
+// detector, injected into the office-hours CONTEXT (survives vendor SKILL.md routing).
+// Empty on a cold brain. Reads office-hours-memory, never writes. Fail-open: any error
+// yields "" so the interview always proceeds.
+async function buildOfficeHoursCyclePreamble() {
+  try {
+    const dp = state.dayProgress ?? (await loadDayProgress({ workspaceRoot }));
+    const currentDay = dp ? computeDayNumber({ challengeStartedAt: dp.challengeStartedAt }) : null;
+    if (!currentDay) return "";
+    const memory = await loadOfficeHoursMemory({ workspaceRoot });
+    return formatPriorCycleOpening(buildPriorCycle(memory, { currentCycle: currentDay }));
+  } catch {
+    return "";
+  }
+}
+
 function attachOfficeHoursRuntime(runtime = {}, officeHours = null) {
   if (!officeHours) return runtime || {};
   return {
@@ -3676,6 +3829,13 @@ async function runOfficeHours(session, {
     session.status = "running";
     session.error = null;
     session.pendingUserInput = null;
+    // Cycle#N read-back, injected into the office-hours context AFTER the dedup slot is
+    // reserved (state.activeRuns.set above) so the concurrent-start guard window stays
+    // synchronous. Fail-open: empty preamble (cold brain / any error) leaves context as-is.
+    const cyclePreamble = await buildOfficeHoursCyclePreamble();
+    if (cyclePreamble) {
+      officeHoursRuntime.context = clampOfficeHoursContext(`${cyclePreamble}\n\n${officeHoursRuntime.context}`);
+    }
     session.runtime = attachOfficeHoursRuntime(session.runtime, officeHoursRuntime);
     touch(session);
     await persistSessions();
@@ -5311,7 +5471,7 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
   if (!gate.iddSetupComplete) {
     await startIddDocumentQueue({ gate, sessionId, provider });
   await setBipCoachError(
-      "Foundation Setup을 먼저 승인해야 Day 1 Mission 후보를 만들 수 있습니다.",
+      "초기 설정을 먼저 승인해야 Day 1 Mission 후보를 만들 수 있습니다.",
     "mac_sidecar_idd_setup_required",
     );
     return;
@@ -5396,7 +5556,7 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
           evidence: {
             ...state.bipCoach.evidence,
             source: "sidecar_gws",
-            summary: state.bipCoach.evidence?.summary || "Sidecar가 Google Sheet 전체 범위와 업무일지 Doc 전체 payload를 한 번 읽고 미션 생성에 사용했습니다.",
+            summary: state.bipCoach.evidence?.summary || "실행 보조 앱이 Google Sheet 전체 범위와 업무일지 Doc 전체 내용을 한 번 읽고 미션 생성에 사용했습니다.",
             provider: candidate,
             fallbackUsed: candidate !== preferredProvider,
             elapsedMs: Date.now() - startedAt,
@@ -6388,7 +6548,7 @@ async function createHostIddQuestionRequest(session, doc, {
   previousRequestId = null,
   progressText = "질문 카드 준비 완료",
   iddMode = session?.runtime?.iddMode || null,
-  titlePrefix = iddMode === "day1_handoff" ? "Day 1 Handoff" : "Foundation Setup",
+  titlePrefix = iddMode === "day1_handoff" ? "Day 1 인계" : "초기 설정",
 } = {}) {
   if (!session?.id || !doc?.type) {
     throw new Error("Host IDD question requires a session and document type.");
@@ -6517,7 +6677,7 @@ async function synthesizeIddQuestionWithSidecarAgent(session, doc, fallbackInput
         abortController: controller,
         executionMode: "idd_question_synthesis",
         systemPromptOverride: [
-          "You synthesize one structured customer-discovery question for agentic30 Foundation Setup.",
+          "You synthesize one structured customer-discovery question for agentic30 initial setup.",
           "You do not use tools. Work only from the workspace facts embedded in the prompt.",
           "Return only valid JSON matching the requested schema.",
         ].join("\n"),
@@ -6648,7 +6808,7 @@ function iddAgentSynthesisBrief(doc) {
           { label: "AI로 제품은 만들었지만 고객이 없는 개발자", description: "why this segment is a strong first interview target", nextIntent: "agent_built_no_customers" },
           { label: "여러 번 출시했지만 반응이 약했던 개발자", description: "why this segment is a strong first interview target", nextIntent: "weak_launch_response" },
         ],
-        placeholder: "예: 퇴사 후 3개월째, AI로 MVP는 만들었지만 유료 고객이 없는 개발자",
+        placeholder: "예: 퇴사 후 3개월째, AI로 첫 버전은 만들었지만 유료 고객이 없는 개발자",
       };
   }
 }
@@ -6675,7 +6835,7 @@ async function buildIddAgentSynthesisPrompt(doc, fallbackInput, {
   return [
     "Return exactly one JSON object. No markdown. No prose.",
     "",
-    `Task: create the ${stageLabel} Foundation Setup ${doc.title} question card for the app builder.`,
+    `Task: create the ${stageLabel} initial setup ${doc.title} question card for the app builder.`,
     brief.taskLine,
     "The question must be dynamic and project-adaptive, not a template with variables filled in.",
     brief.evidenceLine,
@@ -6993,7 +7153,7 @@ function attachIddAdaptiveContinuationToRequest(session, request) {
 
   const nextDoc = IDD_FOUNDATION_DOCS.find((doc) => doc.type === pending.docType)
     || requiredDocByType(pending.docType);
-  const nextRequest = {
+  const baseRequest = {
     ...allowOtherTextForIddQuestions(request),
     generation: {
       ...(request.generation && typeof request.generation === "object" ? request.generation : {}),
@@ -7001,6 +7161,17 @@ function attachIddAdaptiveContinuationToRequest(session, request) {
       docType: pending.docType,
     },
   };
+  // Parity with the host_structured (initialIddStructuredInputForDoc) and
+  // sidecar_agent_synthesized (parseIddAgentSynthesis) paths: an ICP card must
+  // carry the canonical intro + recommended resources. Without this,
+  // isMissingIcpContextIntro() flags the provider_adaptive card as incomplete and
+  // shouldRestartIddQuestionRequest() restarts it — back into the same undecorated
+  // state — an infinite regenerate loop. decorateIcpStructuredInput is idempotent
+  // and only fills intro/resources when absent, so it is safe on a provider-built
+  // request.
+  const nextRequest = pending.docType === "icp"
+    ? decorateIcpStructuredInput(baseRequest)
+    : baseRequest;
   session.runtime = {
     ...(session.runtime || {}),
     iddDocumentType: pending.docType,
@@ -7012,7 +7183,7 @@ function attachIddAdaptiveContinuationToRequest(session, request) {
     iddPendingAdaptiveContinuation: null,
     iddAdaptiveRegenerationInFlight: false,
   };
-  session.title = `Foundation Setup: ${nextDoc.title}`;
+  session.title = `초기 설정: ${nextDoc.title}`;
   broadcast({
     type: "idd_setup_progress",
     sessionId: session.id,
@@ -7030,7 +7201,8 @@ function isIddInterviewSession(session) {
     session?.runtime?.iddDocumentType
       || session?.runtime?.pendingIddContinuation?.docType
       || session?.runtime?.iddPendingAdaptiveContinuation?.docType
-      || String(session?.title || "").startsWith("Foundation Setup:"),
+      || String(session?.title || "").startsWith("Foundation Setup:")
+      || String(session?.title || "").startsWith("초기 설정:"),
   );
 }
 
@@ -7471,7 +7643,7 @@ async function startIddDocumentQueueOnce({
 
   const session = createSession(seed);
   const userFacingTitle = genericIddUserFacingTitle(nextDoc);
-  session.title = `Foundation Setup: ${nextDoc.title}`;
+  session.title = `초기 설정: ${nextDoc.title}`;
   session.runtime = {
     ...(session.runtime || {}),
     iddDocumentType: nextDoc.type,
@@ -7500,7 +7672,7 @@ async function startIddDocumentQueueOnce({
     state.iddSetup = await persistIddSetupState(workspaceRoot, setIddSetupError(state.iddSetup, {
       provider: seed.provider,
       docType: nextDoc.type,
-      message: error?.message || "Foundation Setup 질문 카드를 준비하지 못했어요.",
+      message: error?.message || "초기 설정 질문 카드를 준비하지 못했어요.",
     }));
     await setBipCoachError(
       `${message} ${userFacingTitle} 질문 카드 준비가 멈췄어요. 다시 시도할 수 있어요.`,
@@ -7630,12 +7802,18 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
         state.day1GoalSelection = day1GoalSelection;
       }
-      // Anchor the challenge start on first scan (idempotent), then load day progress.
+      // Scan complete: anchor challenge start, then advance the day loop to `goal`.
       let dayProgress = null;
       try {
-        dayProgress = path.resolve(scanRoot) === path.resolve(workspaceRoot)
-          ? await ensureChallengeStart({ workspaceRoot: scanRoot })
-          : await loadDayProgress({ workspaceRoot: scanRoot });
+        if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
+          const seeded = await ensureChallengeStart({ workspaceRoot: scanRoot });
+          const currentDay = computeDayNumber({ challengeStartedAt: seeded.challengeStartedAt });
+          dayProgress = currentDay
+            ? await setDayActiveStep({ workspaceRoot: scanRoot, day: currentDay, stepId: "goal", goalText: day1GoalSelection?.goalText })
+            : seeded;
+        } else {
+          dayProgress = await loadDayProgress({ workspaceRoot: scanRoot });
+        }
       } catch {
         dayProgress = await loadDayProgress({ workspaceRoot: scanRoot }).catch(() => null);
       }
@@ -7766,12 +7944,18 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
     if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
       state.day1GoalSelection = day1GoalSelection;
     }
-    // Anchor the challenge start on first scan (idempotent), then load day progress.
+    // Scan complete: anchor challenge start, then advance the day loop to `goal`.
     let dayProgress = null;
     try {
-      dayProgress = path.resolve(scanRoot) === path.resolve(workspaceRoot)
-        ? await ensureChallengeStart({ workspaceRoot: scanRoot })
-        : await loadDayProgress({ workspaceRoot: scanRoot });
+      if (path.resolve(scanRoot) === path.resolve(workspaceRoot)) {
+        const seeded = await ensureChallengeStart({ workspaceRoot: scanRoot });
+        const currentDay = computeDayNumber({ challengeStartedAt: seeded.challengeStartedAt });
+        dayProgress = currentDay
+          ? await setDayActiveStep({ workspaceRoot: scanRoot, day: currentDay, stepId: "goal", goalText: day1GoalSelection?.goalText })
+          : seeded;
+      } else {
+        dayProgress = await loadDayProgress({ workspaceRoot: scanRoot });
+      }
     } catch {
       dayProgress = await loadDayProgress({ workspaceRoot: scanRoot }).catch(() => null);
     }
@@ -9003,7 +9187,7 @@ async function runNewsMarketRadarProviderResearch({
   for (const [routeIndex, route] of routes.entries()) {
     const provider = normalizeProviderName(route.provider);
     if (!provider) {
-      providerErrors.push(`${route.label || "Exa MCP"} 사용 불가: provider가 설정되지 않았습니다`);
+      providerErrors.push(`${route.label || "웹 검색 도구"} 사용 불가: AI 연결이 설정되지 않았습니다`);
       continue;
     }
     const authState = getProviderAuthState(provider);
@@ -9011,7 +9195,7 @@ async function runNewsMarketRadarProviderResearch({
       providerErrors.push(`${providerLabel(provider)} 사용 불가: ${authState.message || authState.source || "설정되지 않음"}`);
       continue;
     }
-    const routeLabel = route.label || `${providerLabel(provider)} Exa MCP`;
+    const routeLabel = route.label || `${providerLabel(provider)} 웹 검색 도구`;
     if (typeof onProgress === "function") {
       onProgress({
         stage: "running_provider_research",
@@ -9028,7 +9212,7 @@ async function runNewsMarketRadarProviderResearch({
       return {
         text,
         provider,
-        researchSource: route.label || `${providerLabel(provider)} Exa MCP`,
+        researchSource: route.label || `${providerLabel(provider)} 웹 검색 도구`,
         exaResearchRoute: redactExaResearchRoute(route),
       };
     } catch (error) {
@@ -9039,7 +9223,7 @@ async function runNewsMarketRadarProviderResearch({
         onProgress({
           stage: "running_provider_research",
           progressText: hasNextRoute
-            ? `${routeLabel} 실패: ${formattedError}. 다음 Exa MCP 제공자를 확인하는 중`
+            ? `${routeLabel} 실패: ${formattedError}. 다음 웹 검색 도구 연결을 확인하는 중`
             : `${routeLabel} 실패: ${formattedError}`,
           researchSource: routeLabel,
         });
@@ -9047,7 +9231,7 @@ async function runNewsMarketRadarProviderResearch({
     }
   }
 
-  throw new Error(`Exa MCP 리서치를 완료한 provider가 없습니다. ${providerErrors.join(" | ")}`);
+  throw new Error(`웹 검색 도구 리서치를 완료한 AI 연결이 없습니다. ${providerErrors.join(" | ")}`);
 }
 
 async function runNewsMarketRadarProviderSynthesis({
@@ -9483,7 +9667,7 @@ function buildMcpClientTransport(config = {}) {
       },
     });
   }
-  throw new Error("Exa MCP route is missing url or command.");
+  throw new Error("웹 검색 도구 연결에 URL 또는 실행 명령이 없습니다.");
 }
 
 function extractGeminiResponseText(response) {
@@ -10088,9 +10272,33 @@ function setAssistantText(session, messageId, content) {
   }
   resolvedContent = stripTrailingRubricFocusMetadata(resolvedContent);
 
+  // Wire-level emphasis extraction for free-response chat replies. Like the
+  // inline_decision sentinel above, the LLM emits an ===EMPHASIS=== block; the
+  // host strips it from the visible body and attaches the normalized spans to
+  // `message.emphasis` so the SwiftUI client renders style-aware inline
+  // emphasis. Mutually exclusive with inline_decision: when this turn produced
+  // a decision card the free-text body is just the question, so we skip.
+  let extractedEmphasis = null;
+  if (
+    typeof resolvedContent === "string"
+    && !extractedDecision
+    && !message.inlineDecision
+    && resolvedContent.includes(OFFICE_HOURS_EMPHASIS_SENTINEL_START)
+    && resolvedContent.includes(OFFICE_HOURS_EMPHASIS_SENTINEL_END)
+  ) {
+    const extracted = extractOfficeHoursChatEmphasis(resolvedContent);
+    resolvedContent = extracted.text;
+    if (extracted.emphasis.length) {
+      extractedEmphasis = extracted.emphasis;
+    }
+  }
+
   message.content = resolvedContent;
   if (extractedDecision) {
     message.inlineDecision = extractedDecision;
+  }
+  if (extractedEmphasis) {
+    message.emphasis = extractedEmphasis;
   }
   touch(session);
   broadcast({
@@ -10101,8 +10309,8 @@ function setAssistantText(session, messageId, content) {
     state: message.state,
   });
   // `message_replaced` only carries content; the SwiftUI client needs a full
-  // session refresh when inlineDecision metadata changes.
-  if (extractedDecision) {
+  // session refresh when inlineDecision or emphasis metadata changes.
+  if (extractedDecision || extractedEmphasis) {
   broadcast({ type: "session_updated", session });
   }
 }
@@ -10284,6 +10492,24 @@ function makeMessage({
     resolvedContent = stripTrailingRubricFocusMetadata(resolvedContent);
   }
 
+  // Wire-level emphasis extraction for free-response chat replies (see
+  // setAssistantText for the streaming-finalize twin). Only runs for assistant/
+  // system free text that did not produce an inline_decision card.
+  let resolvedEmphasis = null;
+  if (
+    (role === "assistant" || role === "system")
+    && resolvedDecision == null
+    && typeof resolvedContent === "string"
+    && resolvedContent.includes(OFFICE_HOURS_EMPHASIS_SENTINEL_START)
+    && resolvedContent.includes(OFFICE_HOURS_EMPHASIS_SENTINEL_END)
+  ) {
+    const extracted = extractOfficeHoursChatEmphasis(resolvedContent);
+    resolvedContent = extracted.text;
+    if (extracted.emphasis.length) {
+      resolvedEmphasis = extracted.emphasis;
+    }
+  }
+
   // Mutual exclusion enforcement (P1 from plan-eng-review codex pass).
   // When a form-style intake is active on the session, drop any inline
   // decision payload to keep the two channels disjoint. The user only
@@ -10311,6 +10537,9 @@ function makeMessage({
   }
   if (Array.isArray(providerAuthActions) && providerAuthActions.length) {
     message.providerAuthActions = providerAuthActions;
+  }
+  if (Array.isArray(resolvedEmphasis) && resolvedEmphasis.length) {
+    message.emphasis = resolvedEmphasis;
   }
   const validatedDecision = validateInlineDecision(resolvedDecision);
   if (validatedDecision) {
@@ -10617,7 +10846,9 @@ function collectSelectedOptionDescriptions(pendingUserInput, response) {
       const label = typeof option?.label === "string" ? option.label.trim() : "";
       const description = typeof option?.description === "string" ? option.description.trim() : "";
       if (!label || !description) continue;
-      if (!lookup.has(label)) lookup.set(label, description);
+      // Keep the full option so the hint can fold in the risk / evidence /
+      // failure-mode reasoning the card UI no longer shows the user.
+      if (!lookup.has(label)) lookup.set(label, option);
     }
   }
   if (lookup.size === 0) return "";
@@ -10627,8 +10858,10 @@ function collectSelectedOptionDescriptions(pendingUserInput, response) {
     for (const option of selectedOptions) {
       const label = typeof option === "string" ? option.trim() : "";
       if (!label || isOtherTextOptionLabel(label)) continue;
-      const description = lookup.get(label);
-      if (description) descriptions.push(description);
+      const matched = lookup.get(label);
+      if (!matched) continue;
+      const hint = formatSelectedOptionEvidenceHint(matched);
+      if (hint) descriptions.push(hint);
     }
   }
   return descriptions.join(" ");

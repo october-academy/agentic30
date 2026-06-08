@@ -928,10 +928,23 @@ enum DayLoopSteps {
     static let day1: [String] = ["onboarding", "scan", "goal", "first_interview"]
     static let standard: [String] = ["scan", "retro", "goal", "interview", "execution"]
 
+    // Day-1 intro stages auto-complete before Office Hours opens, so the macro
+    // stepper + progress badges hide them — Day 1 surfaces only the stages the
+    // user actively works (목표 → 첫 인터뷰). Day 2+ keeps the full loop visible.
+    static let day1HiddenFromDisplay: Set<String> = ["onboarding", "scan"]
+
     static func kind(forDay day: Int) -> DayKind { day == 1 ? .day1 : .standard }
 
     static func ids(forDay day: Int, kind: DayKind) -> [String] {
         kind == .day1 ? day1 : standard
+    }
+
+    /// Stepper/progress-visible step ids — drops the Day-1 intro stages. Day 2+
+    /// mirrors `ids` exactly.
+    static func displayIds(forDay day: Int, kind: DayKind) -> [String] {
+        let all = ids(forDay: day, kind: kind)
+        guard kind == .day1 else { return all }
+        return all.filter { !day1HiddenFromDisplay.contains($0) }
     }
 
     static func label(for stepId: String) -> String {
@@ -970,8 +983,17 @@ struct DayRecord: Codable, Equatable, Hashable {
     }
 
     /// Steps in canonical stepper order with resolved labels and statuses.
+    /// Full data axis — keeps every stage (Day 1 = 4) for state + decoding parity.
     var orderedSteps: [(id: String, label: String, status: DayStepStatus)] {
         DayLoopSteps.ids(forDay: day, kind: kind).map { id in
+            (id, DayLoopSteps.label(for: id), steps[id] ?? .pending)
+        }
+    }
+
+    /// Stepper/progress-visible steps — hides the Day-1 intro stages (onboarding,
+    /// scan) so Day 1 shows only 목표 → 첫 인터뷰. Day 2+ mirrors `orderedSteps`.
+    var displaySteps: [(id: String, label: String, status: DayStepStatus)] {
+        DayLoopSteps.displayIds(forDay: day, kind: kind).map { id in
             (id, DayLoopSteps.label(for: id), steps[id] ?? .pending)
         }
     }
@@ -979,6 +1001,65 @@ struct DayRecord: Codable, Equatable, Hashable {
     var totalCount: Int { DayLoopSteps.ids(forDay: day, kind: kind).count }
     var completedCount: Int { orderedSteps.filter { $0.status == .done }.count }
     var isComplete: Bool { completedCount == totalCount }
+
+    /// Display-scoped counts (Day-1 intro stages excluded) for the stepper + sidebar badges.
+    var displayTotalCount: Int { DayLoopSteps.displayIds(forDay: day, kind: kind).count }
+    var displayCompletedCount: Int { displaySteps.filter { $0.status == .done }.count }
+    var isDisplayComplete: Bool { displayCompletedCount == displayTotalCount }
+}
+
+/// Cycle#N office-hours memory summary — attached additively to `day_progress_state`.
+/// Mirrors the sidecar `summarizeOfficeHoursMemory` payload (compiledTruth + open threads
+/// + the abandoned-thread / costume lines). Tolerant decode: any missing field defaults.
+struct OfficeHoursMemorySummary: Codable, Equatable, Hashable {
+    let compiledTruth: String?
+    let openThreads: [String]
+    let abandonedThreads: [String]
+    /// calibration-lite read-back ("예측 적중 N/M"); empty until a forecast is graded.
+    let calibrationLine: String?
+    /// The still-open forecast the commitment bar offers to grade at the next cycle close;
+    /// empty when there's nothing pending.
+    let pendingPrediction: String?
+
+    init(
+        compiledTruth: String? = nil,
+        openThreads: [String] = [],
+        abandonedThreads: [String] = [],
+        calibrationLine: String? = nil,
+        pendingPrediction: String? = nil
+    ) {
+        self.compiledTruth = compiledTruth
+        self.openThreads = openThreads
+        self.abandonedThreads = abandonedThreads
+        self.calibrationLine = calibrationLine
+        self.pendingPrediction = pendingPrediction
+    }
+
+    /// Whether there's anything worth surfacing in the retro banner — cold/stub brains
+    /// return an empty summary, so the banner stays hidden and screenshots stay pixel-stable.
+    /// pendingPrediction is intentionally excluded: it drives the commitment bar, not the banner.
+    var hasContent: Bool {
+        (compiledTruth.map { !$0.isEmpty } ?? false)
+            || !openThreads.isEmpty
+            || !abandonedThreads.isEmpty
+            || (calibrationLine.map { !$0.isEmpty } ?? false)
+    }
+
+    /// Whether there's a still-open forecast to offer for grading at cycle close.
+    var hasPendingPrediction: Bool { pendingPrediction.map { !$0.isEmpty } ?? false }
+
+    enum CodingKeys: String, CodingKey {
+        case compiledTruth, openThreads, abandonedThreads, calibrationLine, pendingPrediction
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        compiledTruth = try c.decodeIfPresent(String.self, forKey: .compiledTruth)
+        openThreads = (try c.decodeIfPresent([String].self, forKey: .openThreads)) ?? []
+        abandonedThreads = (try c.decodeIfPresent([String].self, forKey: .abandonedThreads)) ?? []
+        calibrationLine = try c.decodeIfPresent(String.self, forKey: .calibrationLine)
+        pendingPrediction = try c.decodeIfPresent(String.self, forKey: .pendingPrediction)
+    }
 }
 
 struct DayProgress: Codable, Equatable, Hashable {
@@ -1001,6 +1082,17 @@ struct DayProgress: Codable, Equatable, Hashable {
 
     func record(forDay day: Int) -> DayRecord? { days[String(day)] }
 
+    /// Today's record, or a synthesized all-pending default so the macro stepper and
+    /// Day breadcrumb stay consistent with the sidebar's tolerant rendering before any
+    /// activity exists for the day (sidecar only writes a record on scan/goal patch).
+    func recordOrDefault(forDay day: Int) -> DayRecord {
+        if let record = record(forDay: day) { return record }
+        let kind = DayLoopSteps.kind(forDay: day)
+        var steps: [String: DayStepStatus] = [:]
+        for id in DayLoopSteps.ids(forDay: day, kind: kind) { steps[id] = .pending }
+        return DayRecord(day: day, kind: kind, steps: steps)
+    }
+
     /// Recorded days, newest first (past + today). Skipped days have no record.
     var recordedDaysDescending: [DayRecord] {
         days.values.sorted { $0.day > $1.day }
@@ -1021,6 +1113,7 @@ struct DayProgress: Codable, Equatable, Hashable {
         guard let value, value.count >= 10 else { return nil }
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone.current
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.date(from: String(value.prefix(10)))
@@ -1034,20 +1127,20 @@ enum Day1GoalType: String, Codable, CaseIterable, Hashable {
 
     var title: String {
         switch self {
-        case .makeMoney: return "돈 벌기"
-        case .getUsers: return "유저 모으기"
-        case .buildProduct: return "제품 만들기 도움"
+        case .makeMoney: return "첫 매출 달성"
+        case .getUsers: return "첫 100명 사용자 모으기"
+        case .buildProduct: return "작동하는 첫 버전 출시"
         }
     }
 
     var promptHint: String {
         switch self {
         case .makeMoney:
-            return "첫 매출, 유료 파일럿, 구매 조건처럼 돈이 움직이는 증거를 확인합니다."
+            return "**돈이 실제로 움직일 조건**을 확인합니다."
         case .getUsers:
-            return "마케팅, 채널, referral, waitlist처럼 실제 유입 행동을 확인합니다."
+            return "가입, 추천, 출시 전 신청 등 **실제 유입 행동**을 확인합니다."
         case .buildProduct:
-            return "구현, 사용성, workflow 성공처럼 제품을 완성하는 데 필요한 증거를 확인합니다."
+            return "사용자가 **핵심 흐름을 끝까지 완료하는지** 확인합니다."
         }
     }
 }
@@ -1125,7 +1218,7 @@ struct Day1GoalSelection: Codable, Equatable, Hashable {
     var officeHoursOutputLine: String {
         switch proofSink {
         case .bipOptional:
-            return "BIP 저장 선택 가능 · 승인 전 게시/문서 없음"
+            return "공개 기록 저장 선택 가능 · 승인 전 게시/문서 없음"
         case .local:
             return "로컬 증거만 유지 · 승인 전 게시/문서 없음"
         }
@@ -1190,6 +1283,11 @@ struct Day1GoalDraft: Identifiable, Hashable {
     let proofSink: Day1ProofSink
     let sourcePlanFingerprint: String
     let isRecommended: Bool
+    /// Style-aware dynamic emphasis spans for the detail rows (Stage 2). When
+    /// empty, the rows render with the legacy static styling (plain row, or
+    /// `strong` for the goal row), preserving the historical look.
+    var customerEmphasis: [EmphasisSpan] = []
+    var problemEmphasis: [EmphasisSpan] = []
 
     var id: String { goalType.rawValue }
 
@@ -1229,7 +1327,7 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var environment = SidecarEnvironment.placeholder
     @Published private(set) var sidecarDiagnostics: SidecarDiagnostics?
     @Published private(set) var appUpdateState: AppUpdateState = .unavailable
-    @Published private(set) var connectionLabel = "Starting sidecar..."
+    @Published private(set) var connectionLabel = "실행 보조 앱 시작 중..."
     @Published private(set) var isConnected = false
     @Published private(set) var workspaceRoot = ""
     @Published private(set) var lastError: String?
@@ -1256,6 +1354,16 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var day1GoalSelection: Day1GoalSelection?
     @Published private(set) var day1GoalError: String?
     @Published private(set) var dayProgress: DayProgress?
+    /// Cycle#N office-hours memory summary (compiled truth + open/abandoned threads),
+    /// delivered additively on `day_progress_state`. Drives the retro read-back surface.
+    @Published private(set) var officeHoursMemory: OfficeHoursMemorySummary?
+    /// Soft guidance from the interview gate: set when the sidecar withholds an interview
+    /// close (needsCommitment) and asks for one next customer action; cleared on the next
+    /// successful (non-blocked) day_progress_state so the nudge never lingers.
+    @Published private(set) var commitmentGateMessage: String?
+    /// The step the gate held (event.gatedStep), so the nudge is scoped to the matching
+    /// commitment bar and never bleeds onto a different step's surface.
+    @Published private(set) var commitmentGateStep: String?
     @Published private(set) var isBipCoachRefreshing = false
     @Published private(set) var isBipCoachGenerating = false
     @Published private(set) var isBipCoachCompleting = false
@@ -2265,14 +2373,14 @@ final class AgenticViewModel: ObservableObject {
         }
 
         if disablesSidecarStartForTesting {
-            connectionLabel = "Sidecar disabled for unit tests"
+            connectionLabel = "실행 보조 앱이 단위 테스트에서 비활성화됨"
             isConnected = false
             return
         }
 
         if CommandLine.arguments.contains("--ui-testing-sidecar-failure") {
             workspaceRoot = WorkspaceSettings.resolvedURL().path
-            connectionLabel = "Sidecar failed to start (signal 6). Check Node.js availability."
+            connectionLabel = "실행 보조 앱 시작 실패(signal 6). Node.js 상태를 확인하세요."
             isConnected = false
             ensureInlineUITestStubSession()
             PostHogTelemetry.capture("mac_sidecar_failure_stubbed_for_ui_tests", authSession: macAuthSession)
@@ -2287,7 +2395,7 @@ final class AgenticViewModel: ObservableObject {
                 ensureInlineUITestStubSession()
                 appendInlineUITestDay1ICPConversationIfNeeded()
             } else {
-                connectionLabel = "Sidecar disabled for UI tests"
+                connectionLabel = "실행 보조 앱이 UI 테스트에서 비활성화됨"
                 isConnected = false
             }
             PostHogTelemetry.capture("mac_sidecar_disabled_for_ui_tests", authSession: macAuthSession)
@@ -2321,7 +2429,7 @@ final class AgenticViewModel: ObservableObject {
     func reconnectSidecar() {
         guard canStartSidecar else { return }
         PostHogTelemetry.capture("mac_sidecar_reconnect_requested", authSession: macAuthSession)
-        connectionLabel = "Reconnecting sidecar..."
+        connectionLabel = "실행 보조 앱 다시 연결 중..."
         lastError = nil
         isConnected = false
         isBipCoachRefreshing = false
@@ -2478,7 +2586,7 @@ final class AgenticViewModel: ObservableObject {
 
         let archivedAt = Date()
         guard isConnected else {
-            lastError = "Sidecar is not connected."
+            lastError = "실행 보조 앱이 연결되지 않았습니다."
             PostHogTelemetry.capture(
                 "mac_session_archive_failed",
                 properties: properties.merging(["reason": "sidecar_disconnected"]) { current, _ in current },
@@ -2491,7 +2599,7 @@ final class AgenticViewModel: ObservableObject {
             "sessionId": session.id,
             "archivedAt": Self.sidecarDateString(from: archivedAt),
         ]) else {
-            lastError = "Sidecar is not connected."
+            lastError = "실행 보조 앱이 연결되지 않았습니다."
             PostHogTelemetry.capture(
                 "mac_session_archive_failed",
                 properties: properties.merging(["reason": "send_failed"]) { current, _ in current },
@@ -2623,7 +2731,7 @@ final class AgenticViewModel: ObservableObject {
                 return true
             }
             #endif
-            day1GoalError = "Sidecar 연결 후 목표를 저장할 수 있습니다."
+            day1GoalError = "실행 보조 앱 연결 후 목표를 저장할 수 있습니다."
             return false
         }
         applyDay1GoalSelectionLocally(selection, root: root)
@@ -2633,7 +2741,7 @@ final class AgenticViewModel: ObservableObject {
             "selection": selection.bridgePayload,
         ])
         if !sent {
-            day1GoalError = "목표 저장 요청을 sidecar로 보내지 못했습니다."
+            day1GoalError = "목표 저장 요청을 실행 보조 앱으로 보내지 못했습니다."
         }
         return sent
     }
@@ -2670,6 +2778,10 @@ final class AgenticViewModel: ObservableObject {
         stepId: String,
         status: DayStepStatus,
         goalText: String? = nil,
+        commitmentText: String? = nil,
+        confession: String? = nil,
+        predictionText: String? = nil,
+        predictionVerdict: String? = nil,
         workspaceRoot explicitRoot: String? = nil
     ) -> Bool {
         guard isConnected else { return false }
@@ -2683,6 +2795,23 @@ final class AgenticViewModel: ObservableObject {
             "status": status.rawValue,
         ]
         if let goalText { payload["goalText"] = goalText }
+        // Interview/first_interview completion gate (block-once-then-confession): the
+        // sidecar requires one of these to mark an interview step done. The founder's
+        // typed next customer action (user-origin), or the reason they're holding the gate.
+        if let commitmentText, !commitmentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            payload["commitmentText"] = commitmentText
+        }
+        if let confession, !confession.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            payload["confession"] = confession
+        }
+        // calibration-lite (additive): a forecast for this cycle, and/or a verdict on the
+        // prior cycle's forecast. The sidecar grades-then-captures so the order is safe.
+        if let predictionText, !predictionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            payload["predictionText"] = predictionText
+        }
+        if let predictionVerdict, !predictionVerdict.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            payload["predictionVerdict"] = predictionVerdict
+        }
         return sidecar.send(payload: payload)
     }
 
@@ -2695,7 +2824,7 @@ final class AgenticViewModel: ObservableObject {
         let trimmedSessionID = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSessionID.isEmpty else { return false }
         guard isConnected else {
-            lastError = "Sidecar 연결 후 Office Hours를 시작할 수 있습니다."
+            lastError = "실행 보조 앱 연결 후 Office Hours를 시작할 수 있습니다."
             return false
         }
 
@@ -3146,6 +3275,19 @@ final class AgenticViewModel: ObservableObject {
             onboardingContext?.goal,
         ])
 
+        // Only attach emphasis when the displayed value is the exact alignment
+        // component statement the sidecar generated spans for; otherwise the
+        // value came from a fallback source with no matching spans and we keep
+        // the legacy plain-row look (Stage 2 back-compat).
+        let customerEmphasis = day1GoalRowEmphasis(
+            component: scanResult?.day1AlignmentPlan?.components.icp,
+            displayValue: customer
+        )
+        let problemEmphasis = day1GoalRowEmphasis(
+            component: scanResult?.day1AlignmentPlan?.components.painPoint,
+            displayValue: problem
+        )
+
         return Day1GoalType.allCases.map { goalType in
             Day1GoalDraft(
                 goalType: goalType,
@@ -3161,9 +3303,30 @@ final class AgenticViewModel: ObservableObject {
                 evidenceRefs: evidenceRefs,
                 proofSink: proofSink,
                 sourcePlanFingerprint: fingerprint,
-                isRecommended: goalType == recommended
+                isRecommended: goalType == recommended,
+                customerEmphasis: customerEmphasis,
+                problemEmphasis: problemEmphasis
             )
         }
+    }
+
+    /// Pull the sidecar-generated emphasis spans for a goal detail row, but only
+    /// when the rendered value equals the component statement those spans were
+    /// produced against (each span phrase is a substring of that statement). Any
+    /// mismatch returns [] so the row keeps its legacy static styling.
+    private func day1GoalRowEmphasis(
+        component: Day1AlignmentComponent?,
+        displayValue: String
+    ) -> [EmphasisSpan] {
+        guard let component,
+              let emphasis = component.emphasis,
+              !emphasis.isEmpty,
+              component.statement.trimmingCharacters(in: .whitespacesAndNewlines)
+                == displayValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        else {
+            return []
+        }
+        return emphasis
     }
 
     private func day1GoalEvidenceRefs() -> [String] {
@@ -3846,7 +4009,7 @@ final class AgenticViewModel: ObservableObject {
                     WorkHistoryEvidenceMix(source: "git_github", label: "git/GitHub", count: 4, status: "covered"),
                     WorkHistoryEvidenceMix(source: "workspace_docs", label: "워크스페이스 문서", count: 1, status: "partial"),
                     WorkHistoryEvidenceMix(source: "interview", label: "인터뷰", count: 0, status: "missing"),
-                    WorkHistoryEvidenceMix(source: "bip", label: "BIP", count: 0, status: "missing"),
+                    WorkHistoryEvidenceMix(source: "bip", label: "공개 기록", count: 0, status: "missing"),
                     WorkHistoryEvidenceMix(source: "mission", label: "미션", count: 0, status: "missing"),
                     WorkHistoryEvidenceMix(source: "curriculum", label: "커리큘럼", count: 0, status: "missing"),
                 ]
@@ -3979,7 +4142,7 @@ final class AgenticViewModel: ObservableObject {
             stale: false,
             error: nil,
             reason: "daily",
-            researchSource: "Codex Exa MCP",
+            researchSource: "Codex 웹 검색 도구",
             stage: "running_provider_research",
             progressText: "UI 테스트 리서치 갱신 중",
             elapsedMs: 120,
@@ -4115,7 +4278,7 @@ final class AgenticViewModel: ObservableObject {
                         stale: false,
                         error: nil,
                         reason: "daily",
-                        researchSource: "Codex Exa MCP",
+                        researchSource: "Codex 웹 검색 도구",
                         stage: "saving_results",
                         progressText: "UI 테스트 리서치 준비 완료",
                         elapsedMs: 240,
@@ -4153,7 +4316,7 @@ final class AgenticViewModel: ObservableObject {
                                         NewsMarketRadarSourceRef(
                                             id: "ui-test-source",
                                             sourceType: "web",
-                                            title: "Codex Exa MCP",
+                                            title: "Codex 웹 검색 도구",
                                             url: "https://example.com/radar",
                                             domain: "example.com",
                                             path: nil,
@@ -4294,7 +4457,7 @@ final class AgenticViewModel: ObservableObject {
         }
         if !iddSetupComplete {
             startBipIddQueue(docType: iddCurrentDocType)
-            lastError = "Foundation Setup을 먼저 승인해야 Day 1 Mission을 만들 수 있습니다."
+            lastError = "초기 설정을 먼저 승인해야 Day 1 미션을 만들 수 있습니다."
             return
         }
         isBipCoachGenerating = true
@@ -4371,7 +4534,7 @@ final class AgenticViewModel: ObservableObject {
         #endif
         guard isConnected else {
             let docLabel = normalizedDocType == "all" ? "foundation" : normalizedDocType.uppercased()
-            let message = "Sidecar 연결 후 \(docLabel) 문서를 작성할 수 있습니다."
+            let message = "실행 보조 앱 연결 후 \(docLabel) 문서를 작성할 수 있습니다."
             day1DocHandoffPendingDocType = nil
             day1DocHandoffError = message
             lastError = message
@@ -4411,8 +4574,8 @@ final class AgenticViewModel: ObservableObject {
         ], authSession: macAuthSession)
         if !sidecar.send(payload: payload) {
             let message = isBulkWrite
-                ? "Foundation 문서 저장을 요청하지 못했습니다. Sidecar 연결을 확인해 주세요."
-                : "\(normalizedDocType.uppercased()) 문서 질문 카드를 요청하지 못했습니다. Sidecar 연결을 확인해 주세요."
+                ? "초기 검증 문서 저장을 요청하지 못했습니다. 실행 보조 앱 연결을 확인해 주세요."
+                : "\(normalizedDocType.uppercased()) 문서 질문 카드를 요청하지 못했습니다. 실행 보조 앱 연결을 확인해 주세요."
             day1DocHandoffPendingDocType = nil
             day1DocHandoffError = message
             lastError = message
@@ -5108,7 +5271,7 @@ final class AgenticViewModel: ObservableObject {
                 "message": event.message ?? "",
             ], authSession: macAuthSession)
         case "sidecar_unexpected_exit":
-            let message = event.message ?? "Sidecar stopped unexpectedly."
+            let message = event.message ?? "실행 보조 앱이 예기치 않게 중단됐습니다."
             connectionLabel = message
             isConnected = false
             officeHoursSessionCreateInFlight = false
@@ -5134,6 +5297,7 @@ final class AgenticViewModel: ObservableObject {
                 self.bipCoach = bipCoach
             }
             day1GoalSelection = event.day1GoalSelection
+            if let dp = event.dayProgress { dayProgress = dp }
             workspaceRoot = event.workspaceRoot ?? workspaceRoot
             notionConnected = event.notionConnected ?? false
             connectionLabel = "Connected"
@@ -5317,6 +5481,17 @@ final class AgenticViewModel: ObservableObject {
         case "day_progress_state":
             if event.success == false { return }
             if let dp = event.dayProgress { dayProgress = dp }
+            if let memory = event.officeHoursMemory { officeHoursMemory = memory }
+            // Interview gate: surface the soft nudge when a close was withheld; clear it on
+            // any non-blocked update so it disappears once the founder commits or confesses.
+            if event.needsCommitment == true {
+                commitmentGateMessage = event.message
+                    ?? "이 인터뷰를 닫기 전에 다음 한 가지 고객 행동을 약속해줘. 정 못 하면 그 이유를 남겨도 통과돼."
+                commitmentGateStep = event.gatedStep
+            } else {
+                commitmentGateMessage = nil
+                commitmentGateStep = nil
+            }
         case "doc_creation_started":
             isCreatingDoc = event.docType
             docCreationLogs = []
@@ -5665,13 +5840,13 @@ final class AgenticViewModel: ObservableObject {
                 officeHoursSessionCreateInFlight = false
                 if shouldRecoverRunningSessions(forGlobalSidecarError: event.message) {
                     markRunningSessionsRecoverableAfterSidecarExit(
-                        message: event.message ?? "Sidecar connection closed."
+                        message: event.message ?? "실행 보조 앱 연결이 끊겼습니다."
                     )
                 }
-                markStartupQueuedActionFailed(event.message ?? "Sidecar 연결이 끊겼습니다.")
+                markStartupQueuedActionFailed(event.message ?? "실행 보조 앱 연결이 끊겼습니다.")
             }
             PostHogTelemetry.captureException(
-                NSError(domain: "SidecarEvent", code: -1, userInfo: [NSLocalizedDescriptionKey: event.message ?? "Unknown sidecar error"]),
+                NSError(domain: "SidecarEvent", code: -1, userInfo: [NSLocalizedDescriptionKey: event.message ?? "알 수 없는 실행 보조 앱 오류"]),
                 properties: [
                     "component": "agentic_view_model",
                     "operation": "sidecar_event_error",
@@ -5692,7 +5867,7 @@ final class AgenticViewModel: ObservableObject {
 
         return [
             "agentic30 diagnostics",
-            "Sidecar diagnostics are not available yet.",
+            "실행 보조 앱 진단 정보를 아직 불러오지 못했습니다.",
             "Connection: \(connectionLabel)",
             "Connected: \(isConnected)",
             "Workspace: \(workspaceRoot.isEmpty ? "unknown" : workspaceRoot)",
@@ -5884,7 +6059,7 @@ final class AgenticViewModel: ObservableObject {
                             nextIntent: "mac_app_market"
                         ),
                         StructuredPromptOption(
-                            label: "Web SaaS",
+                            label: "구독형 웹 도구",
                             description: "팀이나 개인이 반복 업무 해결에 돈을 내는 웹 도구 시장입니다.",
                             preview: nil,
                             nextIntent: "web_saas_market"
@@ -5893,7 +6068,7 @@ final class AgenticViewModel: ObservableObject {
                     multiSelect: false,
                     allowFreeText: true,
                     requiresFreeText: true,
-                    freeTextPlaceholder: "예: 회의 요약 SaaS, 월 $15 도구",
+                    freeTextPlaceholder: "예: 회의 요약 웹 도구, 월 $15 도구",
                     textMode: .short
                 )
             ],
@@ -5916,29 +6091,29 @@ final class AgenticViewModel: ObservableObject {
             requestId: "ui-test-icp-request",
             sessionId: requestedSessionID,
             toolName: "agentic30_request_user_input",
-            title: "ICP 1/4",
+            title: "고객 후보 1/4",
             createdAt: createdAt,
             questions: [
                 StructuredPromptQuestion(
                     header: "첫 고객",
-                    question: "agentic30-public의 SwiftUI macOS 앱과 Node sidecar 흐름에서 Day 1에 먼저 검증할 사용자는 누구인가요?",
+                    question: "agentic30-public의 SwiftUI macOS 앱과 Node 실행 보조 앱 흐름에서 Day 1에 먼저 검증할 사용자는 누구인가요?",
                     helperText: "UI testing seed도 host structured payload와 같은 형태만 사용합니다.",
                     options: [
                         StructuredPromptOption(
                             label: "Codex/Claude 전환 사용자",
-                            description: "provider 인증과 실행 전환에서 막히는 실제 사용자입니다.",
+                            description: "AI 연결 인증과 실행 전환에서 막히는 실제 사용자입니다.",
                             preview: nil,
                             nextIntent: "provider_switch_user"
                         ),
                         StructuredPromptOption(
                             label: "30일 커리큘럼 참가자",
-                            description: "Foundation Setup 문서를 통과해야 다음 Day로 넘어갑니다.",
+                            description: "초기 설정 문서를 통과해야 다음 Day로 넘어갑니다.",
                             preview: nil,
                             nextIntent: "curriculum_day1_user"
                         ),
                         StructuredPromptOption(
                             label: "macOS 메뉴바 앱 사용자",
-                            description: "SwiftUI panel에서 질문/응답 정체를 직접 겪습니다.",
+                            description: "SwiftUI 패널에서 질문/응답 정체를 직접 겪습니다.",
                             preview: nil,
                             nextIntent: "macos_panel_user"
                         )
@@ -5946,7 +6121,7 @@ final class AgenticViewModel: ObservableObject {
                     multiSelect: false,
                     allowFreeText: true,
                     requiresFreeText: false,
-                    freeTextPlaceholder: "예: Day 1 참가자가 provider 인증 실패 후 static ICP 질문에 갇힌다",
+                    freeTextPlaceholder: "예: Day 1 참가자가 AI 연결 인증 실패 후 고정된 고객 후보 질문에 갇힌다",
                     textMode: .short
                 )
             ],
@@ -5989,35 +6164,35 @@ final class AgenticViewModel: ObservableObject {
         switch step {
         case 2:
             signalId = "status_quo"
-            signalLabel = "STATUS QUO"
+            signalLabel = "현재 대안"
             prompt = StructuredPromptQuestion(
                 questionId: "office_hours_status_quo",
-                header: "STATUS QUO",
-                question: "사용자는 지금 이 문제를 어떻게 해결하고 있어? 도구, 사람, 시간, 비용까지 현재 workaround를 써줘.",
+                header: "현재 대안",
+                question: "사용자는 지금 이 문제를 어떻게 해결하고 있어? 도구, 사람, 시간, 비용까지 지금 쓰는 우회 방식을 써줘.",
                 helperText: nil,
                 options: [
                     StructuredPromptOption(
                         label: "스프레드시트와 메신저",
                         description: "시트, Notion, Slack, 카톡처럼 흩어진 수동 조합.",
-                        preview: "duct tape",
+                        preview: "수동 조합",
                         nextIntent: "spreadsheet_slack"
                     ),
                     StructuredPromptOption(
                         label: "사람이 직접 처리",
                         description: "운영자, PM, 인턴, 외주가 반복 업무를 사람 손으로 처리.",
-                        preview: "labor",
+                        preview: "사람 손",
                         nextIntent: "manual_labor"
                     ),
                     StructuredPromptOption(
-                        label: "기존 SaaS 우회 사용",
+                        label: "기존 웹 도구 우회 사용",
                         description: "목적이 다른 도구를 억지로 맞춰 쓰는 상태.",
-                        preview: "tool gap",
+                        preview: "도구 공백",
                         nextIntent: "misfit_saas"
                     ),
                     StructuredPromptOption(
                         label: "아무것도 안 함",
                         description: "실제로는 안 풀고 지나간다. 통증이 약할 수 있는 위험 신호.",
-                        preview: "red flag",
+                        preview: "위험 신호",
                         nextIntent: "no_status_quo"
                     ),
                 ],
@@ -6040,25 +6215,25 @@ final class AgenticViewModel: ObservableObject {
                     StructuredPromptOption(
                         label: "이름과 회사까지 안다",
                         description: "이번 주 바로 연락할 수 있는 실제 후보가 있다.",
-                        preview: "specific",
+                        preview: "구체적",
                         nextIntent: "named_person"
                     ),
                     StructuredPromptOption(
                         label: "역할과 상황은 안다",
                         description: "직함, 팀, 실패 비용은 있지만 아직 특정 이름은 없다.",
-                        preview: "close",
+                        preview: "가까움",
                         nextIntent: "role_known"
                     ),
                     StructuredPromptOption(
                         label: "고객군만 안다",
-                        description: "SMB, 개발자, 마케터처럼 아직 너무 넓다.",
-                        preview: "broad",
+                        description: "소규모 회사, 개발자, 마케터처럼 아직 너무 넓다.",
+                        preview: "넓음",
                         nextIntent: "category_only"
                     ),
                     StructuredPromptOption(
                         label: "아직 모른다",
                         description: "문제보다 솔루션에서 출발했을 가능성이 크다.",
-                        preview: "reset",
+                        preview: "재설정",
                         nextIntent: "unknown_user"
                     ),
                 ],
@@ -6071,15 +6246,15 @@ final class AgenticViewModel: ObservableObject {
             )
         case 4:
             signalId = "wedge"
-            signalLabel = "WEDGE"
+            signalLabel = "첫 진입점"
             prompt = StructuredPromptQuestion(
                 questionId: "office_hours_wedge",
-                header: "WEDGE",
-                question: "이번 주에 돈을 받을 수 있는 가장 작은 버전은 뭐야? 플랫폼 말고 하나의 workflow로 말해줘.",
+                header: "첫 진입점",
+                question: "이번 주에 돈을 받을 수 있는 가장 작은 버전은 뭐야? 플랫폼 말고 하나의 작업 흐름으로 말해줘.",
                 helperText: nil,
                 options: [
                     StructuredPromptOption(
-                        label: "유료 파일럿 1건",
+                        label: "유료 첫 테스트 1건",
                         description: "한 고객에게 직접 돈을 받고 결과물을 제공한다.",
                         preview: "paid",
                         nextIntent: "paid_pilot"
@@ -6093,7 +6268,7 @@ final class AgenticViewModel: ObservableObject {
                     StructuredPromptOption(
                         label: "단일 자동화",
                         description: "전체 플랫폼이 아니라 한 반복 작업만 자동화한다.",
-                        preview: "workflow",
+                        preview: "작업 흐름",
                         nextIntent: "single_automation"
                     ),
                     StructuredPromptOption(
@@ -6106,7 +6281,7 @@ final class AgenticViewModel: ObservableObject {
                 multiSelect: false,
                 allowFreeText: true,
                 requiresFreeText: false,
-                freeTextPlaceholder: "예: 매주 월요일 경쟁사 변화 리포트 1장을 대신 만들어주는 paid pilot.",
+                freeTextPlaceholder: "예: 매주 월요일 경쟁사 변화 리포트 1장을 대신 만들어주는 유료 첫 테스트.",
                 textMode: .short,
                 highlightPhrases: ["돈을 받을 수 있는 가장 작은 버전"]
             )
@@ -6139,7 +6314,7 @@ final class AgenticViewModel: ObservableObject {
                     ),
                     StructuredPromptOption(
                         label: "아직 없다",
-                        description: "다음 과제는 build가 아니라 observation일 가능성이 높다.",
+                        description: "다음 과제는 만들기가 아니라 관찰일 가능성이 높다.",
                         preview: "assignment",
                         nextIntent: "no_observation"
                     ),
@@ -6168,7 +6343,7 @@ final class AgenticViewModel: ObservableObject {
                     ),
                     StructuredPromptOption(
                         label: "덜 필수적일 수 있다",
-                        description: "범용 AI나 incumbent가 같은 문제를 흡수할 위험이 있다.",
+                        description: "범용 AI나 기존 강자가 같은 문제를 흡수할 위험이 있다.",
                         preview: "risk",
                         nextIntent: "less_essential"
                     ),
@@ -6210,12 +6385,12 @@ final class AgenticViewModel: ObservableObject {
                     StructuredPromptOption(
                         label: "강한 workaround 있음",
                         description: "Excel, Slack, 사람, 외주로 억지로 해결하는 현재 대안.",
-                        preview: "status quo",
+                        preview: "현재 대안",
                         nextIntent: "workaround_cost"
                     ),
                     StructuredPromptOption(
                         label: "아직 실제 증거 없음",
-                        description: "아이디어나 waitlist 수준이라 첫 검증 과제가 필요한 상태.",
+                        description: "아이디어나 대기 신청자 수준이라 첫 검증 과제가 필요한 상태.",
                         preview: "honest",
                         nextIntent: "no_evidence_yet"
                     ),
@@ -6389,17 +6564,17 @@ final class AgenticViewModel: ObservableObject {
             requestId: "ui-test-day1-handoff-goal-request",
             sessionId: requestedSessionID,
             toolName: "agentic30_request_user_input",
-            title: "GOAL 정하기",
+            title: "목표 정하기",
             createdAt: createdAt,
             questions: [
                 StructuredPromptQuestion(
-                    header: "이번 주 GOAL",
-                    question: "이번 주에 가장 먼저 검증하거나 달성하려는 GOAL은 무엇인가요?",
+                    header: "이번 주 목표",
+                    question: "이번 주에 가장 먼저 검증하거나 달성하려는 목표는 무엇인가요?",
                     helperText: "먼저 검증할 목표를 정합니다. 저장: docs/GOAL.md",
                     options: [
                         StructuredPromptOption(
                             label: "첫 고객 반응 확인",
-                            description: "ICP가 답변, 미팅, 사용 시도 같은 실제 반응을 보이는지 봅니다.",
+                            description: "고객 후보가 답변, 미팅, 사용 시도 같은 실제 반응을 보이는지 봅니다.",
                             preview: nil,
                             nextIntent: "goal_customer_response"
                         ),
@@ -6443,7 +6618,7 @@ final class AgenticViewModel: ObservableObject {
         let order = ["goal", "icp", "values", "spec"]
         let seededPreviews = [
             IddDocPreview(type: "goal", title: "GOAL", path: "docs/GOAL.md", status: "written", content: "UI test GOAL handoff response"),
-            IddDocPreview(type: "icp", title: "ICP", path: "docs/ICP.md", status: "written", content: "UI test ICP handoff response"),
+            IddDocPreview(type: "icp", title: "고객 후보", path: "docs/ICP.md", status: "written", content: "UI test customer candidate handoff response"),
             IddDocPreview(type: "values", title: "VALUES", path: "docs/VALUES.md", status: "written", content: "UI test VALUES handoff response"),
             IddDocPreview(type: "spec", title: "SPEC", path: "docs/SPEC.md", status: "written", content: "UI test SPEC handoff response"),
         ]
@@ -6569,7 +6744,7 @@ final class AgenticViewModel: ObservableObject {
         case "goal":
             docMeta = ("GOAL", "docs/GOAL.md")
         case "icp":
-            docMeta = ("ICP", "docs/ICP.md")
+            docMeta = ("고객 후보", "docs/ICP.md")
         case "values":
             docMeta = ("VALUES", "docs/VALUES.md")
         case "spec":
@@ -6709,7 +6884,7 @@ final class AgenticViewModel: ObservableObject {
         iddUnresolvedAssumptions = []
         iddDocOrder = ["icp", "goal", "values", "spec"]
         iddDocPreviews = [
-            IddDocPreview(type: "icp", title: "ICP", path: "docs/ICP.md", status: "approved", content: "Seed ICP"),
+            IddDocPreview(type: "icp", title: "고객 후보", path: "docs/ICP.md", status: "approved", content: "Seed customer candidate"),
             IddDocPreview(type: "goal", title: "GOAL", path: "docs/GOAL.md", status: "approved", content: "Seed GOAL"),
             IddDocPreview(type: "values", title: "VALUES", path: "docs/VALUES.md", status: "approved", content: "Seed VALUES"),
             IddDocPreview(type: "spec", title: "SPEC", path: "docs/SPEC.md", status: "approved", content: "Seed SPEC"),
@@ -6851,10 +7026,10 @@ final class AgenticViewModel: ObservableObject {
         guard !session.messages.contains(where: { $0.content.contains("DAY1_ICP_TURN_5") }) else { return }
 
         let turns = [
-            "DAY1_ICP_TURN_1: Day 1 시작. docs/ICP.md 기준으로 내가 맞는 유저인지 먼저 진단해줘.",
-            "DAY1_ICP_TURN_2: 나는 퇴사한 전업 1인 개발자이고 수익은 0원, macOS에서 Codex를 쓴다. Day 1 builder-state를 판정해줘.",
-            "DAY1_ICP_TURN_3: 이미 랜딩 페이지와 작은 프로토타입은 있다. Day 1 blank-slate discovery가 아니라 fast path로 가야 하는지 확인해줘.",
-            "DAY1_ICP_TURN_4: SPEC.md v0 proof baseline에는 어떤 현재 상태와 다음 proof target을 남겨야 해?",
+            "DAY1_ICP_TURN_1: Day 1 시작. docs/ICP.md 기준으로 내가 맞는 고객 후보인지 먼저 진단해줘.",
+            "DAY1_ICP_TURN_2: 나는 퇴사한 전업 1인 개발자이고 수익은 0원, macOS에서 Codex를 쓴다. Day 1 현재 상태를 판정해줘.",
+            "DAY1_ICP_TURN_3: 이미 소개 페이지와 작은 프로토타입은 있다. Day 1 백지 상태의 고객 탐색이 아니라 빠른 경로로 가야 하는지 확인해줘.",
+            "DAY1_ICP_TURN_4: SPEC.md v0 현재 기준에는 어떤 현재 상태와 다음 검증 기준을 남겨야 해?",
             "DAY1_ICP_TURN_5: 5턴 대화의 결론으로 오늘 바로 실행할 우선순위 1개와 확인할 응답을 정리해줘.",
         ]
         for prompt in turns {
@@ -6865,8 +7040,8 @@ final class AgenticViewModel: ObservableObject {
     private func inlineUITestStubResponse(for prompt: String) -> String {
         if prompt.contains("DAY1_ICP_TURN") {
             return [
-                "ICP.md 확인: 전업 1인 개발자, 수익 0원, macOS, 고객 인터뷰 의향이 있는 사용자로 가정했습니다.",
-                "Day 1 응답: builder-state 진단을 먼저 하고, 기존 자산이 있으면 blank-slate discovery 대신 fast path로 SPEC.md v0 proof baseline과 다음 proof target을 정합니다.",
+                "고객 후보 문서 확인: 전업 1인 개발자, 수익 0원, macOS, 고객 인터뷰 의향이 있는 사용자로 가정했습니다.",
+                "Day 1 응답: 현재 상태 진단을 먼저 하고, 기존 자산이 있으면 백지 상태의 고객 탐색 대신 빠른 경로로 SPEC.md v0 현재 기준과 다음 검증 기준을 정합니다.",
             ].joined(separator: "\n")
         }
         return "테스트 응답: \(prompt)"
@@ -7580,7 +7755,7 @@ final class AgenticViewModel: ObservableObject {
     }
 
     private func markRunningSessionsRecoverableAfterSidecarExit(message: String) {
-        let recoveryText = "Sidecar stopped before this response completed. Restarting sidecar; retry this turn if it does not resume."
+        let recoveryText = "응답이 끝나기 전에 실행 보조 앱이 중단됐습니다. 실행 보조 앱을 다시 시작합니다. 이어지지 않으면 이 요청을 다시 시도하세요."
         var changed = false
         var recoveredCount = 0
         for index in sessions.indices {
@@ -7894,7 +8069,7 @@ final class AgenticViewModel: ObservableObject {
     private static func makeUITestingOnboardingContext(arguments: [String]) -> OnboardingContext? {
         guard arguments.contains("--ui-testing-seed-onboarding-context") else { return nil }
         return OnboardingContext.make(
-            businessDescription: "Agentic30 dogfood workspace",
+            businessDescription: "Agentic30 직접 사용 워크스페이스",
             currentStage: "First users and onboarding validation",
             goal: "Complete Day 1 and verify curriculum setup",
             role: .developer,
@@ -7935,7 +8110,7 @@ final class AgenticViewModel: ObservableObject {
                 projectKind: "mac_app",
                 targetUser: "1인 빌더",
                 problem: "첫 고객 기준이 흔들림",
-                purpose: "Day 1 ICP 검증",
+                purpose: "Day 1 고객 후보 검증",
                 goal: "인터뷰할 고객 후보 1명을 고정",
                 values: nil,
                 likelyUsers: ["1인 빌더", "macOS AI 도구 사용자"],
@@ -7962,7 +8137,7 @@ final class AgenticViewModel: ObservableObject {
                 oneLine: "Agentic30: Day 1 고객 검증을 돕는 macOS 앱입니다.",
                 customer: "1인 빌더",
                 problem: "첫 고객 기준이 흔들림",
-                evidenceRefs: ["README.md (README)", "docs/ICP.md (ICP)"]
+                evidenceRefs: ["README.md (README)", "docs/ICP.md (고객 후보)"]
             ),
             diagnosis: Day1SituationSummary.Diagnosis(
                 stage: "초기 사용자 검증",
@@ -8113,13 +8288,13 @@ final class AgenticViewModel: ObservableObject {
     private static func makeUITestingDay1IcpPlan() -> Day1IcpPlan {
         let optionSets: [[Day1IcpQuestionOption]] = [
             [
-                Day1IcpQuestionOption(id: "solo-builder", label: "전업 1인 빌더", description: "이번 주 실제 고객 인터뷰를 잡아야 합니다. · 근거: docs/ICP.md", preview: "ICP", antiSignal: false, evidenceLabel: "근거: docs/ICP.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "solo-builder", label: "전업 1인 빌더", description: "이번 주 실제 고객 인터뷰를 잡아야 합니다. · 근거: docs/ICP.md", preview: "고객 후보", antiSignal: false, evidenceLabel: "근거: docs/ICP.md", evidenceLimited: false),
                 Day1IcpQuestionOption(id: "tool-switcher", label: "AI 도구 전환 사용자", description: "Codex와 Claude 전환에서 인증/실행 마찰을 겪습니다. · 근거: README.md", preview: "Have", antiSignal: false, evidenceLabel: "근거: README.md", evidenceLimited: false),
                 Day1IcpQuestionOption(id: "curious-only", label: "관심만 있음", description: "최근 7일 안에 직접 시도한 사건이 없습니다.", preview: "Anti", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
             ],
             [
                 Day1IcpQuestionOption(id: "stuck-loop", label: "빌드 루프에 막힘", description: "검증 없이 새 기능을 반복해서 만들고 있습니다. · 근거: docs/GOAL.md", preview: "Pain", antiSignal: false, evidenceLabel: "근거: docs/GOAL.md", evidenceLimited: false),
-                Day1IcpQuestionOption(id: "auth-friction", label: "provider 인증 실패", description: "local sidecar와 provider auth 사이에서 진행이 멈춥니다. · 근거: README.md", preview: "Pain", antiSignal: false, evidenceLabel: "근거: README.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "auth-friction", label: "AI 연결 인증 실패", description: "로컬 실행 보조 앱과 AI 연결 인증 사이에서 진행이 멈춥니다. · 근거: README.md", preview: "문제", antiSignal: false, evidenceLabel: "근거: README.md", evidenceLimited: false),
                 Day1IcpQuestionOption(id: "nice-to-have", label: "있으면 좋음", description: "돈이나 시간을 이미 쓰는 대안이 없습니다.", preview: "Weak", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
             ],
             [
@@ -8128,8 +8303,8 @@ final class AgenticViewModel: ObservableObject {
                 Day1IcpQuestionOption(id: "blank-slate", label: "아직 프로젝트 없음", description: "선택한 workspace에 실제 검증 대상이 없습니다.", preview: "Anti", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
             ],
             [
-                Day1IcpQuestionOption(id: "schedule-call", label: "24시간 안에 인터뷰 요청", description: "오늘 바로 연락 가능한 후보가 있습니다. · 근거: docs/ICP.md", preview: "Outcome", antiSignal: false, evidenceLabel: "근거: docs/ICP.md", evidenceLimited: false),
-                Day1IcpQuestionOption(id: "capture-proof", label: "첫 반응 캡처", description: "대화 결과를 SPEC/ICP에 바로 남길 수 있습니다. · 근거: docs/SPEC.md", preview: "Outcome", antiSignal: false, evidenceLabel: "근거: docs/SPEC.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "schedule-call", label: "24시간 안에 인터뷰 요청", description: "오늘 바로 연락 가능한 후보가 있습니다. · 근거: docs/ICP.md", preview: "결과", antiSignal: false, evidenceLabel: "근거: docs/ICP.md", evidenceLimited: false),
+                Day1IcpQuestionOption(id: "capture-proof", label: "첫 반응 캡처", description: "대화 결과를 SPEC/고객 후보 문서에 바로 남길 수 있습니다. · 근거: docs/SPEC.md", preview: "결과", antiSignal: false, evidenceLabel: "근거: docs/SPEC.md", evidenceLimited: false),
                 Day1IcpQuestionOption(id: "wait-for-launch", label: "출시 후에 보기", description: "오늘 검증할 행동이 없어 Day 1 게이트를 닫을 수 없습니다.", preview: "Anti", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
             ],
         ]
@@ -8157,7 +8332,7 @@ final class AgenticViewModel: ObservableObject {
             generatedAt: "2026-05-22T00:00:00.000Z",
             confidence: 0.87,
             fellBackToDeterministic: false,
-            mission: "Day 1에서 실제 인터뷰로 이어질 ICP v0를 고정합니다.",
+            mission: "Day 1에서 실제 인터뷰로 이어질 고객 후보 v0를 고정합니다.",
             signals: Day1IcpSignals(
                 productName: "Agentic30",
                 currentIcpGuess: "첫 고객을 정해야 하는 1인 빌더",
@@ -8175,7 +8350,7 @@ final class AgenticViewModel: ObservableObject {
             icpDraft: IcpDraft(
                 description: "첫 고객을 정해야 하는 1인 빌더",
                 criteria: ["이번 주 인터뷰 가능", "이미 대안을 쓰고 있음", "최근 막힌 사건이 있음"],
-                whyTheyMatter: ["Day 2 시장 신호와 Day 3 Mom Test 질문으로 이어집니다."],
+                whyTheyMatter: ["Day 2 시장 신호와 Day 3 실제 행동 질문으로 이어집니다."],
                 needs: ["재시작 후에도 Day 1 계획이 유지되어야 함"],
                 haves: ["macOS workspace", "AI coding assistant 사용 경험"],
                 dontNeeds: ["관심만 있음", "출시 후 검증하겠다는 후보"],
@@ -8188,7 +8363,7 @@ final class AgenticViewModel: ObservableObject {
                     AntiIcpRule(id: "curious-only", label: "관심만 있음", reason: "최근 7일 행동 신호가 없습니다.", evidenceRef: nil),
                     AntiIcpRule(id: "wait-for-launch", label: "출시 후에 보기", reason: "오늘 인터뷰로 검증할 수 없습니다.", evidenceRef: nil),
                 ],
-                politeInterestGuardrails: ["좋네요만 말하면 ICP 후보로 보지 않습니다."]
+                politeInterestGuardrails: ["좋네요만 말하면 고객 후보로 보지 않습니다."]
             ),
             firstInterviewMessage: FirstInterviewMessage(
                 channel: "DM",
@@ -9023,6 +9198,13 @@ struct SidecarEvent: Decodable {
     let day1SituationSummary: Day1SituationSummary?
     let day1GoalSelection: Day1GoalSelection?
     let dayProgress: DayProgress?
+    let officeHoursMemory: OfficeHoursMemorySummary?
+    // Interview-gate block fields (day_progress_state): when the founder tries to close a
+    // gated interview step without naming a next customer action, the sidecar withholds the
+    // patch and sends needsCommitment=true + a soft `message`. `message` is shared (declared
+    // below); gatedStep names the step that was held.
+    let needsCommitment: Bool?
+    let gatedStep: String?
     let error: String?
 
     // Document creation fields
@@ -9120,6 +9302,9 @@ struct SidecarEvent: Decodable {
         day1SituationSummary: Day1SituationSummary? = nil,
         day1GoalSelection: Day1GoalSelection? = nil,
         dayProgress: DayProgress? = nil,
+        officeHoursMemory: OfficeHoursMemorySummary? = nil,
+        needsCommitment: Bool? = nil,
+        gatedStep: String? = nil,
         error: String?,
         docType: String?,
         docPath: String?,
@@ -9207,6 +9392,9 @@ struct SidecarEvent: Decodable {
         self.day1SituationSummary = day1SituationSummary
         self.day1GoalSelection = day1GoalSelection
         self.dayProgress = dayProgress
+        self.officeHoursMemory = officeHoursMemory
+        self.needsCommitment = needsCommitment
+        self.gatedStep = gatedStep
         self.error = error
         self.docType = docType
         self.docPath = docPath
@@ -9582,6 +9770,9 @@ extension SidecarEvent {
         case day1SituationSummary
         case day1GoalSelection
         case dayProgress
+        case officeHoursMemory
+        case needsCommitment
+        case gatedStep
         case error
         case docType
         case docPath
@@ -9679,6 +9870,9 @@ extension SidecarEvent {
         day1SituationSummary = Self.decodeIfPresent(Day1SituationSummary.self, from: container, forKey: .day1SituationSummary)
         day1GoalSelection = Self.decodeIfPresent(Day1GoalSelection.self, from: container, forKey: .day1GoalSelection)
         dayProgress = Self.decodeIfPresent(DayProgress.self, from: container, forKey: .dayProgress)
+        officeHoursMemory = Self.decodeIfPresent(OfficeHoursMemorySummary.self, from: container, forKey: .officeHoursMemory)
+        needsCommitment = Self.decodeIfPresent(Bool.self, from: container, forKey: .needsCommitment)
+        gatedStep = Self.decodeIfPresent(String.self, from: container, forKey: .gatedStep)
 
         let stringError = Self.decodeIfPresent(String.self, from: container, forKey: .error)
         let structuredError = Self.decodeIfPresent(BipReadinessError.self, from: container, forKey: .error)

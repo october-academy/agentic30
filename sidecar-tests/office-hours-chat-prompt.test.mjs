@@ -39,17 +39,22 @@ test("office-hours chat system prompt routes Codex forcing questions through str
   assert.match(prompt, /allowFreeText: true/);
   assert.match(prompt, /startup, intrapreneurship, or builder/);
   assert.match(prompt, /pre_product/);
-  assert.match(prompt, /has_users -> Q2 Status Quo, Q4 Narrowest Wedge, Q5 Observation/);
+  assert.match(prompt, /has_users -> Q2 현재 대안, Q4 가장 좁은 첫 진입점, Q5 직접 관찰/);
   assert.match(prompt, /Smart-skip/);
   assert.match(prompt, /recommended/);
   assert.match(prompt, /risk/);
   assert.match(prompt, /evidenceTarget/);
   assert.match(prompt, /failureMode/);
-  assert.match(prompt, /Premise Challenge/);
+  assert.match(prompt, /전제 확인/);
   assert.match(prompt, /office_hours_alternatives/);
   assert.match(prompt, /pendingUserInput card/);
   assert.match(prompt, /Never present numbered prose choices/);
   assert.match(prompt, /target solo founder/);
+  // Free-text chat replies may emphasize spans via the ===EMPHASIS=== sentinel,
+  // never inline markup.
+  assert.match(prompt, /===EMPHASIS===/);
+  assert.match(prompt, /Do NOT use inline markup like \*\* or ==/);
+  assert.match(prompt, /exact substring of the reply/);
 });
 
 test("office-hours chat prompt skips repeated mode gate and routes has-users sessions", () => {
@@ -79,18 +84,20 @@ test("office-hours write-design-doc flow fixes startup questions and terminal do
 
   assert.match(prompt, /fixed Startup design-doc flow/);
   assert.match(prompt, /Do not ask mode, product-stage, privacy, or smart-skip gates/);
-  assert.match(prompt, /demand, status_quo, human, wedge, observation, future_fit/);
+  assert.match(prompt, /real demand evidence, current alternative, reachable person, smallest paid entry point, observed behavior, future importance/);
+  assert.match(prompt, /수요 증거, 현재 대안, 연락 가능한 사람, 작은 유료 진입점, 관찰한 행동, 앞으로 더 중요해질 이유/);
   assert.match(prompt, /one-question Q1 demand evidence card/);
   assert.match(prompt, /After the sixth answer/);
   assert.match(prompt, /generated_by: office-hours/);
   assert.match(prompt, /handoff_for: plan-ceo-review/);
+  assert.match(prompt, /문제 정의, 대상 사용자, 선택한 첫 진입점, 전제 확인, 검토한 대안, 이번에는 제외, 다음 행동, CEO 리뷰 인계/);
 });
 
 test("office-hours locked Day 1 goal prompt skips gates and requires a structured card", () => {
   const context = [
     "DAY1_LOCKED_GOAL",
     "Flow contract: locked Day 1 goal interview.",
-    "Goal lane: make_money / 돈 벌기",
+    "Goal lane: make_money / 첫 매출 달성",
     "Goal text: support lead가 Slack 누락에 돈을 낼지 확인한다.",
     "Customer: B2B support lead",
     "Problem: Slack escalation을 놓친다",
@@ -108,7 +115,7 @@ test("office-hours locked Day 1 goal prompt skips gates and requires a structure
   assert.match(prompt, /weakest missing evidence/);
   assert.match(prompt, /money signal for make_money/);
   assert.match(prompt, /Do not write files, write docs, publish posts/);
-  assert.match(prompt, /BIP proof sink is available/);
+  assert.match(prompt, /public evidence logging is available/);
 });
 
 test("office-hours chat system prompt routes Claude forcing questions through AskUserQuestion", () => {
