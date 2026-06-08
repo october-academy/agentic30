@@ -29,8 +29,8 @@ Workflow: `.github/workflows/release.yml`
 
 Triggers:
 
-- pushing a `v*` tag uses the `xcode-cloud-gated-local` builder by default
-- manual `workflow_dispatch` can choose `xcode-cloud-gated-local`, `xcode-cloud`, or `local`
+- pushing a `v*` tag uses the `local` builder by default: a single build/notarize/upload pass on a GitHub macOS runner (no Xcode Cloud rebuild). This is the fast path.
+- manual `workflow_dispatch` can choose `local`, `xcode-cloud-gated-local`, or `xcode-cloud`. Use `xcode-cloud-gated-local` only when you explicitly want an Xcode Cloud validation archive to gate the release — it roughly doubles wall-clock because the gate rebuilds the app and discards the archive.
 
 Required repository variables:
 
@@ -100,14 +100,31 @@ bash scripts/publish-github-release.sh
 
 ## Tag Release
 
-Default automated path:
+Recommended path — one command that bumps the version in BOTH sources, runs the local preflight gate, commits, tags, and pushes:
 
 ```bash
-git tag vYYYYMMDD-N
-git push origin vYYYYMMDD-N
+npm run release:cut -- --bump build      # CFBundleVersion +1, keep marketing version
+npm run release:cut -- --bump patch      # CFBundleVersion +1 and marketing x.y.(z+1)
+npm run release:cut -- --set 1.0.8/9     # explicit MARKETING/BUILD
 ```
 
-The tag starts both Xcode Cloud and GitHub Actions. GitHub Actions waits for the matching Xcode Cloud build to pass, then builds/notarizes/uploads the release on its macOS runner. The release script auto-discovers Sparkle's `generate_appcast` from Xcode DerivedData after SwiftPM resolves Sparkle; set `SPARKLE_GENERATE_APPCAST_BIN` only if the tool lives somewhere custom. PKG output is enabled automatically only when the optional Developer ID Installer `.p12` secret exists.
+`release:cut` runs `scripts/preflight-release.sh` first, which catches the failures that otherwise waste a full ~20-minute CI cycle BEFORE a tag is pushed:
+
+1. **Version source consistency** — `agentic30/Info.plist` (the authoritative source; `GENERATE_INFOPLIST_FILE=NO`) must match `project.pbxproj`. Catches the "bumped pbxproj but not Info.plist" drift that ships a stale build number.
+2. **Sparkle monotonicity** — `CFBundleVersion` must be strictly greater than the live appcast's `sparkle:version`, or existing users are never offered the update.
+3. **Release compile dry-run** — a real `xcodebuild build` (no signing) so compile / actor-isolation errors surface locally in minutes.
+4. **Sidecar test suite**.
+
+Run the gate by itself anytime with `npm run release:verify` (add `--skip-build` for a fast version-only check).
+
+Manual equivalent (no preflight):
+
+```bash
+git tag vYYYYMMDD-HHMM
+git push origin vYYYYMMDD-HHMM
+```
+
+The tag starts GitHub Actions on the `local` builder: a single build/notarize/upload pass on a macOS runner (the default no longer waits for or rebuilds via Xcode Cloud). A CI step also fetches the live appcast's `sparkle:version` into `PREVIOUS_BUNDLE_VERSION`, arming the guard in `build-and-notarize.sh` so a duplicate build number fails fast. The release script auto-discovers Sparkle's `generate_appcast` from Xcode DerivedData after SwiftPM resolves Sparkle; set `SPARKLE_GENERATE_APPCAST_BIN` only if the tool lives somewhere custom. PKG output is enabled automatically only when the optional Developer ID Installer `.p12` secret exists.
 
 ## Verification
 

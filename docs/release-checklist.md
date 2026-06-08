@@ -34,9 +34,10 @@ This checklist is for local dogfood releases of the macOS menu bar app. Public D
 
 ## Automated Release
 
-- See `docs/release-automation.md` for the tag-triggered GitHub Actions workflow, Xcode Cloud builder integration, required secrets/variables, and local fallback path.
-- Pushing a `v*` tag starts the GitHub release workflow; the default builder waits for the matching Xcode Cloud archive to pass, then runs the local notarized release script on a GitHub-hosted macOS runner, uploads Sparkle files to R2, and publishes GitHub Release assets.
-- Manual `workflow_dispatch` can choose the `local` builder to run `scripts/build-and-notarize.sh` on a GitHub-hosted macOS runner when signing secrets and Sparkle tooling are configured.
+- See `docs/release-automation.md` for the tag-triggered GitHub Actions workflow, builder options, required secrets/variables, and the `npm run release:cut` flow.
+- Prefer `npm run release:cut -- --bump build` (or `--bump patch` / `--set X.Y.Z/N`): it bumps the version in both `agentic30/Info.plist` and `project.pbxproj`, runs the local preflight gate (`scripts/preflight-release.sh`), commits, tags, and pushes — catching version/compile/test failures before they waste a ~20-minute CI cycle.
+- Pushing a `v*` tag starts the GitHub release workflow on the default `local` builder: a single build/notarize/upload pass on a GitHub-hosted macOS runner (no Xcode Cloud rebuild), uploads Sparkle files to R2, and publishes GitHub Release assets.
+- `workflow_dispatch` can opt into `xcode-cloud-gated-local` (adds an Xcode Cloud validation archive that gates the release at ~2x wall-clock) or `xcode-cloud`.
 - Confirm the GitHub secret `CLOUDFLARE_API_TOKEN` is present before tag release; it must allow R2 object reads/writes for the `agentic30-sparkle` bucket.
 
 ## Launch Funnel Telemetry
