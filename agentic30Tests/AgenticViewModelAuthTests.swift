@@ -1604,7 +1604,7 @@ struct AgenticViewModelAuthTests {
         try sidecar.emit(Self.workspaceScanResultPayload(workspaceRoot: workspace.path))
         try await Task.sleep(nanoseconds: 10_000_000)
 
-        #expect(viewModel.day1GoalDrafts.map(\.goalType) == [.makeMoney, .getUsers, .buildProduct])
+        #expect(viewModel.day1GoalDrafts.map(\.goalType) == [.buildProduct, .getUsers, .makeMoney])
         let draft = try #require(viewModel.day1GoalDrafts.first(where: { $0.goalType == .makeMoney }))
         #expect(draft.customer == "B2B SaaS support lead")
         #expect(draft.problem == "Slack escalation을 놓침")
