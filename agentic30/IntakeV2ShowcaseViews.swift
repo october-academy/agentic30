@@ -1747,6 +1747,14 @@ private struct IntakeSourceIconTile: View {
         switch assetName {
         case "BrandGitHub":
             return Color(red: 0.051, green: 0.067, blue: 0.090)
+        case "BrandNotion":
+            // Notion ships as a light (near-white) mark for dark surfaces, so it needs
+            // a dark tile here instead of the default white plate (else white-on-white).
+            return Color(red: 0.098, green: 0.098, blue: 0.098)
+        case "BrandPostHog":
+            // PostHog's hedgehog uses a light head on dark surfaces; keep a dark tile so
+            // the head stays visible (the colored quills read on either background).
+            return Color(red: 0.102, green: 0.102, blue: 0.122)
         case "BrandDiscord":
             return Color(red: 0.345, green: 0.396, blue: 0.949)
         case "BrandToss":

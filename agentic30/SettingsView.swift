@@ -1259,28 +1259,20 @@ struct SettingsView: View {
     }
 
     private func odSettingsBrandIcon(_ imageName: String, accessibilityLabel: String) -> some View {
-        let iconSize = odSettingsBrandIconSize(for: imageName)
-
-        return Image(imageName)
+        // Integration brand marks (BrandGitHub/Notion/Cloudflare/Exa/PostHog) ship as
+        // transparent, dark-surface logomarks normalized to a uniform fill by
+        // scripts/generate-provider-logos.sh. They render with the same inset as the
+        // provider auth-card logos (odProviderLogo), so every chip sits identically in
+        // its 36pt surface2 tile — no per-icon size table, no baked-in white plate.
+        Image(imageName)
             .resizable()
             .interpolation(.high)
             .scaledToFit()
-            .frame(width: iconSize.width, height: iconSize.height)
+            .padding(7)
             .frame(width: 36, height: 36)
             .background(settingsRounded(fill: OpenDesignDayColor.surface2, stroke: settingsHairline, radius: 8))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .accessibilityLabel(Text(accessibilityLabel))
-    }
-
-    private func odSettingsBrandIconSize(for imageName: String) -> CGSize {
-        switch imageName {
-        case "BrandCloudflare", "BrandPostHog":
-            return CGSize(width: 34, height: 34)
-        case "BrandExa":
-            return CGSize(width: 25, height: 25)
-        default:
-            return CGSize(width: 30, height: 30)
-        }
     }
 
     private func odSettingsRowCopy(title: String, detail: String) -> some View {
