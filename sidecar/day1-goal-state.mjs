@@ -155,25 +155,21 @@ function sanitizeDay1GoalText(goalText, {
       validationAction,
     })
   ) {
-    return buildDay1GoalText({ goalType, customer: cleanedCustomer, problem, validationAction });
+    return buildDay1GoalText({ goalType });
   }
   return text;
 }
 
-function buildDay1GoalText({ goalType, customer, problem, validationAction } = {}) {
-  const target = cleanString(customer, 300);
-  const pain = quoteProblem(problem);
-  const method = validationMethodSentence(validationAction);
-  switch (goalType) {
-    case "make_money":
-      return `${target}가 ${pain} 문제에 돈이나 시간을 쓸지 확인한다. ${method}`;
-    case "get_users":
-      return `${target}가 ${pain} 문제를 실제 유입/가입 행동으로 반복해서 드러내는지 확인한다. ${method}`;
-    case "build_product":
-      return `${target}가 ${pain} 문제를 해결하는 제품 흐름에서 어디가 막히는지 확인한다. ${method}`;
-    default:
-      return "";
-  }
+// 목표 행은 30일 안에 달성할 정량 타깃 한 문장만 보여준다. 고객·문제는 같은
+// 테이블의 별도 행에 이미 있으므로 반복하지 않는다(검증 방법은 validationAction에 보존).
+const DAY1_GOAL_TEXTS = {
+  make_money: "30일 안에 첫 유료 결제 1건을 만든다.",
+  get_users: "30일 안에 가입자 100명을 모은다.",
+  build_product: "30일 안에 핵심 흐름 완주율 10%를 달성한다.",
+};
+
+function buildDay1GoalText({ goalType } = {}) {
+  return DAY1_GOAL_TEXTS[goalType] || "";
 }
 
 function shouldRegenerateDay1GoalText(text, {
@@ -194,6 +190,12 @@ function shouldRegenerateDay1GoalText(text, {
   if (/[.!?。！？]\s*으로\s*확인한다[.。]?$/u.test(text)) return true;
   if (/다에\s*돈이나\s*시간을\s*쓸지/u.test(text)) return true;
 
+  // 옛 정성형 2문장(고객 주어 + 문제 인용 + "방법:" 꼬리)을 새 정량 1문장으로 마이그레이션.
+  if (/방법\s*[:：]/u.test(text)) return true;
+  if (/돈이나 시간을 쓸지 확인한다/u.test(text)) return true;
+  if (/유입\/가입 행동으로 반복해서 드러내는지 확인한다/u.test(text)) return true;
+  if (/제품 흐름에서 어디가 막히는지 확인한다/u.test(text)) return true;
+
   const pain = cleanString(problem, 500);
   const action = cleanString(validationAction, 500);
   if (!pain) return false;
@@ -205,20 +207,6 @@ function shouldRegenerateDay1GoalText(text, {
   if (legacyPatterns.some((pattern) => text.includes(pattern))) return true;
   if (action && text.includes(`${action}으로 확인한다`)) return true;
   return false;
-}
-
-function quoteProblem(value = "") {
-  const text = cleanString(value, 500)
-    .replace(/^["“”'‘’]+|["“”'‘’]+$/gu, "")
-    .replace(/[.。]+$/u, "")
-    .trim();
-  return `"${text || "검증할 문제"}"`;
-}
-
-function validationMethodSentence(value = "") {
-  const text = cleanString(value, 500);
-  if (!text) return "방법: 이번 주 확인할 행동을 정한다.";
-  return `방법: ${/[.!?。！？]$/u.test(text) ? text : `${text}.`}`;
 }
 
 function escapeRegExp(value = "") {

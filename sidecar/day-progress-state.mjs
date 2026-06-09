@@ -305,36 +305,23 @@ function cleanString(value = "", maxLength = 200) {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, maxLength);
 }
 
+// 옛 Day1 목표 문장(정성형 2문장/깨진 합성 포맷)을 새 정량 1문장으로 정규화한다.
+// 문장은 day1-goal-state.mjs의 DAY1_GOAL_TEXTS와 일치해야 한다.
+const LEGACY_DAY1_GOAL_REPAIRS = [
+  { test: /돈이나 시간을 쓸지/u, text: "30일 안에 첫 유료 결제 1건을 만든다." },
+  { test: /유입\/가입 행동/u, text: "30일 안에 가입자 100명을 모은다." },
+  { test: /제품 흐름에서.*막히/u, text: "30일 안에 핵심 흐름 완주율 10%를 달성한다." },
+];
+
 function looksLikeLegacyDay1GoalText(text = "") {
   const value = cleanString(text, 500);
-  return /에 돈이나 시간을 쓸지 .+으로 확인한다[.。]?$/u.test(value)
-    || /를 실제 유입\/가입 행동으로 모아 .+ 반복 여부를 확인한다[.。]?$/u.test(value)
-    || /을 해결하는 제품 흐름에서 막히는 지점을 .+으로 확인한다[.。]?$/u.test(value);
+  return LEGACY_DAY1_GOAL_REPAIRS.some(({ test }) => test.test(value));
 }
 
 function repairLegacyDay1GoalText(text = "") {
   const value = cleanString(text, 500);
-  let match = value.match(/^(.+?)가 (.+?)에 돈이나 시간을 쓸지 (.+?)으로 확인한다[.。]?$/u);
-  if (match) {
-    return cleanString(`${match[1]}가 "${stripSentenceTerminal(match[2])}" 문제에 돈이나 시간을 쓸지 확인한다. 방법: ${ensureSentence(match[3])}`, 200);
+  for (const { test, text: replacement } of LEGACY_DAY1_GOAL_REPAIRS) {
+    if (test.test(value)) return replacement;
   }
-  match = value.match(/^(.+?)를 실제 유입\/가입 행동으로 모아 (.+?) 반복 여부를 확인한다[.。]?$/u);
-  if (match) {
-    return cleanString(`${match[1]}가 "${stripSentenceTerminal(match[2])}" 문제를 실제 유입/가입 행동으로 반복해서 드러내는지 확인한다.`, 200);
-  }
-  match = value.match(/^(.+?)가 (.+?)을 해결하는 제품 흐름에서 막히는 지점을 (.+?)으로 확인한다[.。]?$/u);
-  if (match) {
-    return cleanString(`${match[1]}가 "${stripSentenceTerminal(match[2])}" 문제를 해결하는 제품 흐름에서 어디가 막히는지 확인한다. 방법: ${ensureSentence(match[3])}`, 200);
-  }
-  return cleanString(value, 200);
-}
-
-function stripSentenceTerminal(value = "") {
-  return cleanString(value, 500).replace(/[.。]+$/u, "").trim();
-}
-
-function ensureSentence(value = "") {
-  const text = cleanString(value, 500);
-  if (!text) return "이번 주 확인할 행동을 정한다.";
-  return /[.!?。！？]$/u.test(text) ? text : `${text}.`;
+  return value;
 }
