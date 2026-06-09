@@ -116,6 +116,37 @@ struct OpenDesignDayContentTests {
         #expect(rows.last?.content == "실제 한 사람의 시간 손실")
     }
 
+    @Test func officeHoursVisibleRowsHideFinalizedNarrationWhilePendingForProviderParity() {
+        // Gemini (inline channel) finalizes a fresh narration message per answer,
+        // whereas the tool channels (Claude/Codex) keep narration in one streaming
+        // message hidden for the whole interview. While a question card is pending,
+        // the finalized narration must be hidden too so every provider shows the
+        // same clean card stack (the matched answer still rebuilds its card).
+        let withPending = makeChatSession(
+            status: .awaitingInput,
+            messages: [
+                makeChatMessage(id: "start", role: .user, content: OfficeHoursTranscriptRow.syntheticStartPrompt),
+                makeChatMessage(id: "answer", role: .user, content: "실제 결제 대화로 이어짐"),
+                makeChatMessage(id: "narration", role: .assistant, content: "좋습니다. 다음 질문을 준비했습니다.", state: .final),
+            ],
+            pendingUserInput: makeOfficeHoursPrompt(sessionID: "session")
+        )
+        let pendingRows = OfficeHoursLiveStatusPolicy.visibleRows(in: withPending)
+        #expect(pendingRows.map(\.id) == ["answer"])
+        #expect(!pendingRows.contains { $0.id == "narration" })
+
+        // Interview concluded (no pending question): the final message still shows.
+        let concluded = makeChatSession(
+            status: .idle,
+            messages: [
+                makeChatMessage(id: "answer", role: .user, content: "실제 결제 대화로 이어짐"),
+                makeChatMessage(id: "conclusion", role: .assistant, content: "정리하면 다음 단계는 결제 확인입니다.", state: .final),
+            ]
+        )
+        let concludedRows = OfficeHoursLiveStatusPolicy.visibleRows(in: concluded)
+        #expect(concludedRows.contains { $0.id == "conclusion" })
+    }
+
     @Test func officeHoursLiveStatusPolicyShowsDetachedPanelOnlyWithoutStreamingAssistantRow() {
         let runningWithoutAssistant = makeChatSession(
             status: .running,
@@ -475,6 +506,88 @@ struct OpenDesignDayContentTests {
         #expect(!OfficeHoursAutoStartPolicy.canAutoStart(
             in: fresh,
             startedSessionIDs: ["office-hours-session"],
+            realProjectTestBusy: false,
+            realProjectSessionCreateRequested: false
+        ))
+    }
+
+    @Test func officeHoursProviderSwitchReArmsAutoStartForStuckSession() {
+        // Repro of the stuck Day-1 session: the first interview question failed to
+        // generate (the prior provider hit its usage limit), so the session is idle with
+        // no pending input. It is already recorded in startedSessionIDs, so it cannot
+        // auto-restart on its own — and after a provider switch the sidecar clears the
+        // error, removing the only "다시 시도" affordance.
+        let stuck = makeChatSession(id: "office-hours-session", provider: .claude, status: .idle)
+        #expect(!OfficeHoursAutoStartPolicy.canAutoStart(
+            in: stuck,
+            startedSessionIDs: ["office-hours-session"],
+            realProjectTestBusy: false,
+            realProjectSessionCreateRequested: false
+        ))
+
+        // Switching the active engine in place (same session id, codex → claude) is a
+        // genuine provider switch, so the view re-arms auto-start.
+        let inPlaceSwitch = OfficeHoursAutoStartPolicy.shouldRestartAfterProviderChange(
+            from: OfficeHoursAutoStartPolicy.SessionProviderSnapshot(sessionID: "office-hours-session", provider: .codex),
+            to: OfficeHoursAutoStartPolicy.SessionProviderSnapshot(sessionID: "office-hours-session", provider: .claude)
+        )
+        #expect(inPlaceSwitch)
+
+        // After re-arming (eviction from startedSessionIDs), the session becomes
+        // restart-eligible and the Day question regenerates on the new engine.
+        #expect(OfficeHoursAutoStartPolicy.canAutoStart(
+            in: stuck,
+            startedSessionIDs: [],
+            realProjectTestBusy: false,
+            realProjectSessionCreateRequested: false
+        ))
+    }
+
+    @Test func officeHoursProviderSwitchPolicyIgnoresNonSwitches() {
+        typealias Snapshot = OfficeHoursAutoStartPolicy.SessionProviderSnapshot
+
+        // Same provider is not a switch.
+        let sameProvider = OfficeHoursAutoStartPolicy.shouldRestartAfterProviderChange(
+            from: Snapshot(sessionID: "s", provider: .codex),
+            to: Snapshot(sessionID: "s", provider: .codex)
+        )
+        #expect(sameProvider == false)
+
+        // Selecting a *different* session (different id) is not an in-place switch, so an
+        // unrelated session is never restarted.
+        let sessionSwap = OfficeHoursAutoStartPolicy.shouldRestartAfterProviderChange(
+            from: Snapshot(sessionID: "a", provider: .codex),
+            to: Snapshot(sessionID: "b", provider: .claude)
+        )
+        #expect(sessionSwap == false)
+
+        // No prior snapshot (initial assignment / no session) → no restart.
+        let nilFrom = OfficeHoursAutoStartPolicy.shouldRestartAfterProviderChange(
+            from: nil,
+            to: Snapshot(sessionID: "s", provider: .claude)
+        )
+        #expect(nilFrom == false)
+
+        let nilTo = OfficeHoursAutoStartPolicy.shouldRestartAfterProviderChange(
+            from: Snapshot(sessionID: "s", provider: .codex),
+            to: nil
+        )
+        #expect(nilTo == false)
+    }
+
+    @Test func officeHoursProviderSwitchLeavesValidPendingQuestionUntouched() {
+        // If a valid question is already in flight, switching providers must NOT discard
+        // it: canAutoStart stays false even after eviction, so the next answer is simply
+        // handled by the newly selected engine instead of regenerating the question.
+        let awaiting = makeChatSession(
+            id: "office-hours-session",
+            provider: .claude,
+            status: .awaitingInput,
+            pendingUserInput: makeOfficeHoursPrompt(sessionID: "office-hours-session")
+        )
+        #expect(!OfficeHoursAutoStartPolicy.canAutoStart(
+            in: awaiting,
+            startedSessionIDs: [],
             realProjectTestBusy: false,
             realProjectSessionCreateRequested: false
         ))

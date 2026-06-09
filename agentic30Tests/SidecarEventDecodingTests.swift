@@ -825,13 +825,15 @@ struct SidecarEventDecodingTests {
           "officeHoursMemory": {
             "compiledTruth": "Cycle 10.",
             "calibrationLine": "예측 적중 1/3 — 2개 빗나갔어.",
-            "pendingPrediction": "5명 중 2명 답장"
+            "pendingPrediction": "5명 중 2명 답장",
+            "consecutiveDeferrals": 2
           }
         }
         """
         let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
         #expect(event.officeHoursMemory?.calibrationLine == "예측 적중 1/3 — 2개 빗나갔어.")
         #expect(event.officeHoursMemory?.pendingPrediction == "5명 중 2명 답장")
+        #expect(event.officeHoursMemory?.consecutiveDeferrals == 2)
         #expect(event.officeHoursMemory?.hasContent == true)
         #expect(event.officeHoursMemory?.hasPendingPrediction == true)
     }
@@ -846,6 +848,7 @@ struct SidecarEventDecodingTests {
         #expect(event.officeHoursMemory?.calibrationLine == nil)
         #expect(event.officeHoursMemory?.pendingPrediction == nil)
         #expect(event.officeHoursMemory?.hasPendingPrediction == false)
+        #expect(event.officeHoursMemory?.consecutiveDeferrals == 0)
     }
 
     @MainActor @Test func day1DisplayStepsHideIntroStagesMidLoop() {

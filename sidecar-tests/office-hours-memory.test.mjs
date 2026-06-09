@@ -29,6 +29,7 @@ import {
   detectAbandonedThreads,
   buildPriorCycle,
   summarizeOfficeHoursMemory,
+  countConsecutiveDeferrals,
   formatPriorCycleOpening,
   classifyInterviewGate,
   isGatedInterviewStep,
@@ -282,6 +283,29 @@ test("buildPriorCycle returns null on a cold brain, populated after a cycle", as
   assert.equal(warm.hasOpenCommitment, true);
   // 10 - 8 = 2 cycles silent -> surfaced
   assert.equal(warm.abandonedThreads.length, 1);
+  await fs.rm(ws, { recursive: true, force: true });
+});
+
+test("countConsecutiveDeferrals counts trailing gate-held cycles, a success resets the streak", async () => {
+  const ws = await tempWorkspace();
+  await appendCycle({ workspaceRoot: ws, cycle: 1, day: 1, step: "interview", outcome: "blocked", note: "못 함", now: NOW });
+  await appendCycle({ workspaceRoot: ws, cycle: 2, day: 2, step: "interview", outcome: "success", lastAssignment: "DM 보냄", now: NOW });
+  await appendCycle({ workspaceRoot: ws, cycle: 3, day: 3, step: "interview", outcome: "blocked", note: "또 못 함", now: NOW });
+  await appendCycle({ workspaceRoot: ws, cycle: 4, day: 4, step: "interview", outcome: "blocked", note: "세 번째", now: NOW });
+  const memory = await loadOfficeHoursMemory({ workspaceRoot: ws, now: NOW });
+  // only the trailing two blocked cycles count — the cycle-2 success resets the run.
+  assert.equal(countConsecutiveDeferrals(memory), 2);
+  assert.equal(summarizeOfficeHoursMemory(memory, { currentCycle: 5 }).consecutiveDeferrals, 2);
+  await fs.rm(ws, { recursive: true, force: true });
+});
+
+test("countConsecutiveDeferrals is 0 when the last close was a commit (success)", async () => {
+  const ws = await tempWorkspace();
+  await appendCycle({ workspaceRoot: ws, cycle: 1, day: 1, step: "interview", outcome: "blocked", note: "못 함", now: NOW });
+  await appendCycle({ workspaceRoot: ws, cycle: 2, day: 2, step: "interview", outcome: "success", lastAssignment: "DM 보냄", now: NOW });
+  const memory = await loadOfficeHoursMemory({ workspaceRoot: ws, now: NOW });
+  assert.equal(countConsecutiveDeferrals(memory), 0);
+  assert.equal(summarizeOfficeHoursMemory(memory, { currentCycle: 3 }).consecutiveDeferrals, 0);
   await fs.rm(ws, { recursive: true, force: true });
 });
 

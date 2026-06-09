@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>약속 카드 v2 · Before / After (디자인 보존)</title>
+<style>
+  :root {
+    --bg: #141618; --bgDeep: #0a0b0d; --bgDarker: #060708;
+    --surface: #0e1011; --surface2: #121415; --hover: #242729; --selected: #2d3134;
+    --border: #26292c; --borderSoft: #1c2022;
+    --fg: #f0f2f4; --fgSecondary: #babec1; --muted: #7c8185; --mutedDeep: #53595d;
+    --accent: #37d5a0; --amber: #efb146; --rose: #f87770;
+    --accentDim: rgba(55,213,160,0.14); --accentLine: rgba(55,213,160,0.40);
+    --amberDim: rgba(239,177,70,0.14); --amberLine: rgba(239,177,70,0.40);
+    --roseDim: rgba(248,119,112,0.13); --roseLine: rgba(248,119,112,0.42);
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --sans: -apple-system, "SF Pro Text", system-ui, "Pretendard", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #000; color: var(--fg); font-family: var(--sans);
+    -webkit-font-smoothing: antialiased; min-height: 100vh; padding: 32px 24px 64px;
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+  }
+  .page-h { font-size: 22px; font-weight: 700; color: var(--fg); }
+  .page-sub { font-size: 13px; color: var(--muted); margin-bottom: 22px; text-align: center; line-height: 1.6; }
+  .page-sub b { color: var(--accent); font-weight: 600; }
+
+  .sh { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 1180px; margin: 26px 0 14px; }
+  .sh .bar { width: 4px; height: 13px; border-radius: 2px; background: var(--muted); }
+  .sh.after .bar { background: var(--accent); }
+  .sh .t { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--fgSecondary);
+    letter-spacing: 1.1px; text-transform: uppercase; }
+  .sh.after .t { color: var(--accent); }
+  .sh .m { font-family: var(--mono); font-size: 10.5px; font-weight: 500; color: var(--mutedDeep); }
+  .sh .line { flex: 1; height: 1px; background: var(--borderSoft); }
+
+  .row { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; width: 100%; max-width: 1180px; align-items: flex-start; }
+  .label-tag { font-family: var(--mono); font-size: 10px; font-weight: 600; color: var(--mutedDeep);
+    margin-bottom: 9px; letter-spacing: 0.5px; }
+  .label-tag.good { color: var(--accent); }
+  .label-tag.warn { color: var(--rose); }
+  .label-tag.amber { color: var(--amber); }
+  .cardwrap { display: flex; flex-direction: column; }
+
+  /* ===== shared commitment card shell (matches OH design language) ===== */
+  .pcard { position: relative; background: linear-gradient(var(--surface), var(--surface2));
+    border: 1px solid var(--border); border-radius: 14px; padding: 17px 19px 16px; overflow: hidden; }
+  .pcard::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: var(--amber); box-shadow: 0 0 14px rgba(239,177,70,0.5); }
+
+  .phead { display: flex; align-items: center; margin-bottom: 12px; }
+  .phead .ey { font-family: var(--mono); font-size: 10px; font-weight: 600; color: var(--amber);
+    letter-spacing: 1.2px; text-transform: uppercase; }
+  .phead .nm { margin-left: auto; font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+    color: var(--amber); padding: 0 9px; height: 21px; display: flex; align-items: center;
+    background: var(--amberDim); border: 1px solid var(--amberLine); border-radius: 999px; }
+
+  .ptitle { font-size: 15.5px; font-weight: 700; color: var(--fg); line-height: 1.45; margin-bottom: 11px; }
+
+  /* ===== commit zone (collapses on defer) ===== */
+  .commitzone { max-height: 460px; opacity: 1; overflow: hidden;
+    transition: max-height .34s cubic-bezier(.4,0,.2,1), opacity .22s ease, margin .34s ease; }
+  .commitzone.collapsed { max-height: 0; opacity: 0; margin-bottom: 0; }
+
+  /* action options (3 suggested + custom) — reuses OH opt idiom */
+  .acts { display: flex; flex-direction: column; gap: 7px; }
+  .actopt { display: flex; align-items: center; gap: 11px; padding: 11px 13px; background: var(--bgDeep);
+    border: 1px solid var(--borderSoft); border-radius: 10px; cursor: pointer; transition: border-color .12s, background .12s; }
+  .actopt:hover { border-color: var(--border); }
+  .actopt.sel { border-color: var(--accentLine); background: var(--accentDim); }
+  .actopt .rdo { width: 16px; height: 16px; flex-shrink: 0; border-radius: 999px; border: 1.5px solid var(--mutedDeep); position: relative; }
+  .actopt.sel .rdo { border-color: var(--accent); }
+  .actopt.sel .rdo::after { content: ""; position: absolute; inset: 3px; border-radius: 999px; background: var(--accent); }
+  .actopt .atxt { flex: 1; min-width: 0; font-size: 13px; color: var(--fgSecondary); }
+  .actopt.sel .atxt { color: var(--fg); font-weight: 500; }
+  .actopt .rec { font-family: var(--mono); font-size: 9px; font-weight: 600; color: var(--accent);
+    padding: 1px 6px; background: var(--accentDim); border: 1px solid var(--accentLine); border-radius: 5px; flex-shrink: 0; }
+
+  .actcustom { display: flex; align-items: center; gap: 11px; padding: 0 13px; background: var(--bgDeep);
+    border: 1px solid var(--borderSoft); border-radius: 10px; }
+  .actcustom.sel { border-color: var(--accentLine); }
+  .actcustom .pen { color: var(--mutedDeep); font-size: 13px; flex-shrink: 0; }
+  .actcustom input { flex: 1; background: none; border: none; outline: none; color: var(--fg);
+    font-family: var(--sans); font-size: 13px; padding: 11px 0; }
+  .actcustom input::placeholder { color: var(--mutedDeep); }
+
+  .draftnote { font-family: var(--mono); font-size: 10px; color: var(--mutedDeep); margin-top: 8px; letter-spacing: 0.3px; }
+
+  /* buttons */
+  .btn { border: none; border-radius: 9px; font-family: var(--sans); font-size: 13px; font-weight: 600;
+    padding: 11px 16px; cursor: pointer; }
+  .btn.primary { background: var(--accent); color: #04130d; }
+  .btn.primary:disabled { background: rgba(55,213,160,0.22); color: rgba(4,19,13,0.5); cursor: not-allowed; }
+  .btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--fgSecondary); }
+  .btn.amber { background: var(--amber); color: #1a1303; }
+  .btn-full { width: 100%; }
+
+  .deferlink { display: block; width: 100%; text-align: center; background: none; border: none;
+    color: var(--muted); font-family: var(--sans); font-size: 11.5px; padding: 12px 0 2px; cursor: pointer;
+    max-height: 40px; opacity: 1; overflow: hidden; transition: max-height .28s ease, opacity .2s ease, padding .28s ease; }
+  .deferlink:hover { color: var(--fgSecondary); }
+  .deferlink.gone { max-height: 0; opacity: 0; padding: 0; pointer-events: none; }
+
+  /* ===== defer (미룸) mode box — reveals on defer ===== */
+  .deferbox { max-height: 0; opacity: 0; overflow: hidden;
+    transition: max-height .34s cubic-bezier(.4,0,.2,1) .06s, opacity .26s ease .1s; }
+  .deferbox.show { max-height: 280px; opacity: 1; }
+  .defer-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+  .defer-head .dh-t { font-size: 13.5px; font-weight: 700; color: var(--amber); }
+  .defer-head .dh-c { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--amber);
+    padding: 1px 7px; background: var(--amberDim); border: 1px solid var(--amberLine); border-radius: 999px; }
+  .defer-back { display: inline-block; background: none; border: none; color: var(--muted);
+    font-family: var(--sans); font-size: 11.5px; padding: 9px 0 1px; cursor: pointer; }
+  .defer-back:hover { color: var(--accent); }
+
+  /* debt banner */
+  .debt { display: flex; align-items: flex-start; gap: 10px; background: var(--roseDim);
+    border: 1px solid var(--roseLine); border-radius: 10px; padding: 10px 12px; margin-bottom: 13px; }
+  .debt .ic { color: var(--rose); font-size: 13px; line-height: 1.3; flex-shrink: 0; }
+  .debt .db { flex: 1; min-width: 0; }
+  .debt .dt { font-size: 12.5px; color: var(--fgSecondary); line-height: 1.45; }
+  .debt .dt b { color: var(--fg); font-weight: 600; }
+  .debt .dm { font-family: var(--mono); font-size: 10px; color: var(--rose); margin-top: 3px; }
+  .debt .dabandon { flex-shrink: 0; align-self: center; font-family: var(--sans); font-size: 11px;
+    font-weight: 600; color: var(--muted); background: transparent; border: 1px solid var(--border);
+    border-radius: 7px; padding: 5px 9px; cursor: pointer; white-space: nowrap; }
+  .debt .dabandon:hover { color: var(--rose); border-color: var(--roseLine); }
+
+  /* annotation pins (Before) */
+  .pin { font-family: var(--mono); font-size: 9px; font-weight: 700; color: var(--rose);
+    background: var(--roseDim); border: 1px solid var(--roseLine); padding: 1.5px 6px; border-radius: 5px; white-space: nowrap; }
+  .pinrow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .inp { width: 100%; background: var(--bgDeep); border: 1px solid var(--border); border-radius: 9px;
+    color: var(--fg); font-family: var(--sans); font-size: 13px; padding: 10px 12px; outline: none; }
+  .inp::placeholder { color: var(--mutedDeep); }
+  .inp.green { border-color: var(--accentLine); }
+  .inp.amberline { border-color: var(--amberLine); }
+  select.inp { -webkit-appearance: none; appearance: none; cursor: pointer; padding-right: 28px; }
+
+  .note { font-size: 11px; color: var(--mutedDeep); margin-top: 12px; line-height: 1.55; }
+  .note b { color: var(--accent); font-weight: 600; }
+
+  .legend { width: 100%; max-width: 1180px; margin-top: 34px; font-family: var(--mono); font-size: 11.5px;
+    color: var(--mutedDeep); line-height: 2.0; border-top: 1px solid var(--borderSoft); padding-top: 18px; }
+  .legend b { color: var(--amber); } .legend .g { color: var(--accent); } .legend .r { color: var(--rose); }
+  .legend .blk { margin-bottom: 8px; }
+  .legend .h { color: var(--fgSecondary); font-weight: 700; letter-spacing: 0.6px; }
+  .legend code { color: var(--fgSecondary); }
+</style>
+</head>
+<body>
+  <div class="page-h">인터뷰 마지막 단계 · "약속" 카드 v2</div>
+  <div class="page-sub">
+    약속 입력 = <b>행동 후보 3개(선택) + "직접 적기" 텍스트</b> · "미룸" 누르면 선택지가 <b>접히고</b> 사유 입력만 남음.<br>
+    후보 클릭 / 직접 입력 / "미룸으로 닫기" / "포기로 기록" / "다시 약속하기" 모두 동작합니다.
+  </div>
+
+  <!-- ============ BEFORE ============ -->
+  <div class="sh"><span class="bar"></span><span class="t">Before · 현행</span>
+    <span class="m">입력 6 + picker + 버튼 2 + 조건부 채점버튼 3</span><span class="line"></span></div>
+  <div class="row">
+    <div class="cardwrap" style="width:720px;">
+      <div class="label-tag warn">과밀 · commit과 confess가 한 폼에 · self-report로 닫힘</div>
+      <div class="pcard">
+        <div class="phead"><span class="ey">마지막 단계</span><span class="nm">약속</span></div>
+        <div class="ptitle" style="margin-bottom:0;">이 인터뷰를 닫기 전에 — 다음 한 가지 고객 행동을 약속해줘.</div>
+        <div class="draftnote">시스템 초안</div>
+        <div style="font-size:12.5px;color:var(--muted);margin-top:3px;">고객 1명에게 미확인 가설을 확인하고, 스크린샷/URL/결제 같은 증거로 닫기</div>
+        <div style="display:flex; gap:8px; margin-top:13px;">
+          <input class="inp" style="flex:1;" placeholder="고객명 또는 회사" />
+          <input class="inp" style="width:80px;" value="DM" />
+        </div>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <input class="inp" style="flex:1;" value="지금 가장 큰 미확인 가설을 확인하고, 실제 사용/결제 행동으로 이어지는지 물어보기" />
+          <select class="inp" style="width:108px; flex-shrink:0;"><option>스크린샷</option><option>URL</option></select>
+          <button class="btn primary" style="flex-shrink:0;">확인하고 닫기</button>
+        </div>
+        <input class="inp green" style="margin-top:8px;" placeholder="이번 약속, 어떻게 될 것 같아? (선택 — 예: 5명 중 2명 답장)" />
+        <div style="color:var(--muted); font-size:11.5px; margin-top:11px; cursor:pointer;">오늘은 못 함 — 이유 남기고 닫기</div>
+        <div class="pinrow">
+          <span class="pin">① 고객명</span><span class="pin">② 채널</span><span class="pin">③ 메시지</span>
+          <span class="pin">④ 증거종류 picker</span><span class="pin">⑤ 예측</span><span class="pin">⑥ 사유(펼침)</span>
+          <span class="pin">버튼 ×2</span><span class="pin">증거 검증 0</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ AFTER ============ -->
+  <div class="sh after"><span class="bar"></span><span class="t">After · v2</span>
+    <span class="m">후보 3개 + 직접 적기 · 미룸 누르면 선택지 접힘 → 사유 입력만</span><span class="line"></span></div>
+  <div class="row">
+
+    <!-- A. 기본 (부채 없음) -->
+    <div class="cardwrap" style="width:430px;">
+      <div class="label-tag good">기본 상태 — 약속 모드</div>
+      <div class="pcard">
+        <div class="phead"><span class="ey">마지막 단계</span><span class="nm">약속</span></div>
+        <div class="commitzone" id="czA">
+          <div class="ptitle">다음 한 가지 고객 행동을 약속해줘.</div>
+          <div class="acts" data-card="A">
+            <div class="actopt sel" onclick="pick('A',this)"><span class="rdo"></span><span class="atxt">조은성에게 DM으로 가격 물어보기</span><span class="rec">추천</span></div>
+            <div class="actopt" onclick="pick('A',this)"><span class="rdo"></span><span class="atxt">어제 인터뷰한 3명에게 결제 의향 재확인</span></div>
+            <div class="actopt" onclick="pick('A',this)"><span class="rdo"></span><span class="atxt">@breachers_joe 답장에 짧은 데모 영상 보내기</span></div>
+            <div class="actcustom"><span class="pen">✎</span><input placeholder="직접 적기…" oninput="typed('A',this)" /></div>
+          </div>
+          <div class="draftnote">✦ 후보는 직전 인터뷰에서 자동 제안 · 고르거나 고쳐 써도 됨 <span style="color:var(--mutedDeep)">(draftOrigin)</span></div>
+          <button class="btn primary btn-full" id="btnA" style="margin-top:13px;">약속하고 닫기</button>
+        </div>
+        <button class="deferlink" id="dlA" onclick="defer('A')">오늘은 약속 못 해 — 미룸으로 닫기</button>
+        <div class="deferbox" id="defA">
+          <div class="defer-head"><span class="dh-t">오늘은 미룸</span></div>
+          <input class="inp amberline" placeholder="못 한 이유를 한 줄로 (정직하게)" />
+          <button class="btn amber btn-full" style="margin-top:8px;">미룸으로 닫기</button>
+          <button class="defer-back" onclick="undefer('A')">← 다시 약속하기</button>
+        </div>
+        <div class="note">미룸을 누르면 선택지·약속 버튼이 <b>접히고</b> 사유 입력만 남음. 닫는 순간 증거는 강제 안 함.</div>
+      </div>
+    </div>
+
+    <!-- B. 부채 배너 있음 -->
+    <div class="cardwrap" style="width:430px;">
+      <div class="label-tag warn">이전 미증명 약속 있음 — 부채 배너</div>
+      <div class="pcard">
+        <div class="phead"><span class="ey">마지막 단계</span><span class="nm">약속</span></div>
+        <div class="debt" id="debtB">
+          <span class="ic">⚠</span>
+          <div class="db">
+            <div class="dt">어제 약속: <b>"조은성에게 DM으로 가격 물어보기"</b></div>
+            <div class="dm">증거 0 · 2일째 미룸</div>
+          </div>
+          <button class="dabandon" onclick="abandon('B')">포기로 기록</button>
+        </div>
+        <div class="commitzone" id="czB">
+          <div class="ptitle">다음 한 가지 고객 행동을 약속해줘.</div>
+          <div class="acts" data-card="B">
+            <div class="actopt" onclick="pick('B',this)"><span class="rdo"></span><span class="atxt">@breachers_joe 답장에 데모 영상 보내기</span><span class="rec">추천</span></div>
+            <div class="actopt" onclick="pick('B',this)"><span class="rdo"></span><span class="atxt">조은성에게 다시 DM — 가격 반응 확인</span></div>
+            <div class="actopt" onclick="pick('B',this)"><span class="rdo"></span><span class="atxt">관심 보인 2명에게 베타 링크 보내기</span></div>
+            <div class="actcustom"><span class="pen">✎</span><input placeholder="직접 적기…" oninput="typed('B',this)" /></div>
+          </div>
+          <div class="draftnote">✦ 후보는 직전 인터뷰에서 자동 제안 · 고르거나 고쳐 써도 됨</div>
+          <button class="btn primary btn-full" id="btnB" style="margin-top:13px;" disabled>약속하고 닫기</button>
+        </div>
+        <button class="deferlink" id="dlB" onclick="defer('B')">오늘은 약속 못 해 — 미룸으로 닫기</button>
+        <div class="deferbox" id="defB">
+          <div class="defer-head"><span class="dh-t">오늘은 미룸</span></div>
+          <input class="inp amberline" placeholder="못 한 이유를 한 줄로 (정직하게)" />
+          <button class="btn amber btn-full" style="margin-top:8px;">미룸으로 닫기</button>
+          <button class="defer-back" onclick="undefer('B')">← 다시 약속하기</button>
+        </div>
+        <div class="note">증거 닫기는 <b>다음 인터뷰 대화</b>에서 추궁(넛지). 부채 배너는 미룸 모드에서도 유지.</div>
+      </div>
+    </div>
+
+    <!-- C. 미룸 모드 (접힌 결과) -->
+    <div class="cardwrap" style="width:430px;">
+      <div class="label-tag amber">미룸 모드 — 선택지 접힌 결과</div>
+      <div class="pcard">
+        <div class="phead"><span class="ey">마지막 단계</span><span class="nm">약속</span></div>
+        <div class="commitzone collapsed" id="czC">
+          <div class="ptitle">다음 한 가지 고객 행동을 약속해줘.</div>
+          <div class="acts" data-card="C">
+            <div class="actopt sel"><span class="rdo"></span><span class="atxt">조은성에게 DM으로 가격 물어보기</span><span class="rec">추천</span></div>
+            <div class="actopt"><span class="rdo"></span><span class="atxt">어제 인터뷰한 3명에게 결제 의향 재확인</span></div>
+            <div class="actcustom"><span class="pen">✎</span><input placeholder="직접 적기…" /></div>
+          </div>
+          <button class="btn primary btn-full" id="btnC" style="margin-top:13px;">약속하고 닫기</button>
+        </div>
+        <button class="deferlink gone" id="dlC" onclick="defer('C')">오늘은 약속 못 해 — 미룸으로 닫기</button>
+        <div class="deferbox show" id="defC">
+          <div class="defer-head"><span class="dh-t">오늘은 미룸</span><span class="dh-c">⏱ 2일째 미룸</span></div>
+          <input class="inp amberline" value="DM 답장이 아직 안 와서 다음 행동을 못 정함" />
+          <button class="btn amber btn-full" style="margin-top:8px;">미룸으로 닫기</button>
+          <button class="defer-back" onclick="undefer('C')">← 다시 약속하기</button>
+        </div>
+        <div class="note">사유는 <b>cycle note</b>로 기록 + day memory <b>consecutiveDeferrals</b> 증가. outcome="deferred"(승리 아님), 연속 카운트 배지로 노출.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- legend -->
+  <div class="legend">
+    <div class="blk"><span class="h">제거</span> &nbsp; <span class="r">✕</span> 고객명·채널 TextField · 증거종류 Picker · 예측 칸 · 지난 예측 채점 3버튼 · 편집 불가 '시스템 초안' 정적줄 · 제출 버튼 2개 중 1개</div>
+    <div class="blk"><span class="h">유지</span> &nbsp; <span class="g">●</span> "마지막 단계" 헤더 + amber "약속" 배지 · 카드 색·박스 · green 메인 버튼 · <b>옵션 행 idiom</b>(office-hours 질문 카드와 동일)</div>
+    <div class="blk"><span class="h">신규</span> &nbsp; <b>◆</b> ① <b>행동 후보 3개(선택) + 직접 적기</b>(draftOrigin=selected|typed) &nbsp; ② <b>미룸 모드 전환</b> — 선택지·약속버튼 접힘(애니메이션) → 사유 입력+버튼만 &nbsp; ③ <span class="r">부채 배너</span>(증거0 + N일째 미룸 + 포기로 기록, 미룸 모드에도 유지) &nbsp; ④ 미룸 <b>연속 카운트 배지</b> &nbsp; ⑤ 증거는 <b>다음 인터뷰 대화로</b> 추궁해 met 채점</div>
+    <div class="blk"><span class="h">데이터</span> &nbsp; 이벤트 → <code>{suggestedActions:[3], openDebt}</code> · commit → ledger <code>{text, origin:"user", evidence:null, draftOrigin}</code> · defer → cycle <code>outcome="deferred"</code> + <code>consecutiveDeferrals++</code></div>
+  </div>
+
+<script>
+  function setBtn(card){
+    var acts = document.querySelector('.acts[data-card="'+card+'"]');
+    var hasOpt = !!acts.querySelector('.actopt.sel');
+    var custom = acts.querySelector('.actcustom input');
+    var hasText = custom && custom.value.trim().length > 0;
+    document.getElementById('btn'+card).disabled = !(hasOpt || hasText);
+  }
+  function pick(card, el){
+    var acts = document.querySelector('.acts[data-card="'+card+'"]');
+    acts.querySelectorAll('.actopt').forEach(function(o){ o.classList.remove('sel'); });
+    el.classList.add('sel');
+    var custom = acts.querySelector('.actcustom');
+    custom.classList.remove('sel'); custom.querySelector('input').value = '';
+    setBtn(card);
+  }
+  function typed(card, inp){
+    var acts = document.querySelector('.acts[data-card="'+card+'"]');
+    if (inp.value.trim().length > 0){
+      acts.querySelectorAll('.actopt').forEach(function(o){ o.classList.remove('sel'); });
+      inp.closest('.actcustom').classList.add('sel');
+    } else { inp.closest('.actcustom').classList.remove('sel'); }
+    setBtn(card);
+  }
+  function defer(card){
+    document.getElementById('cz'+card).classList.add('collapsed');
+    document.getElementById('dl'+card).classList.add('gone');
+    document.getElementById('def'+card).classList.add('show');
+  }
+  function undefer(card){
+    document.getElementById('cz'+card).classList.remove('collapsed');
+    document.getElementById('dl'+card).classList.remove('gone');
+    document.getElementById('def'+card).classList.remove('show');
+  }
+  function abandon(card){
+    var b = document.getElementById('debt'+card);
+    b.style.transition = 'opacity .3s'; b.style.opacity = '0.35';
+    b.querySelector('.dm').textContent = '포기로 기록됨 · status="abandoned"';
+    b.querySelector('.dabandon').textContent = '기록됨 ✓'; b.querySelector('.dabandon').disabled = true;
+  }
+  setBtn('A'); setBtn('B');
+</script>
+</body>
+</html>

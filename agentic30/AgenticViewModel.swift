@@ -1050,19 +1050,23 @@ struct OfficeHoursMemorySummary: Codable, Equatable, Hashable {
     /// The still-open forecast the commitment bar offers to grade at the next cycle close;
     /// empty when there's nothing pending.
     let pendingPrediction: String?
+    /// "N일째 미룸" streak — trailing gate-held deferrals; 0 when the last close was a commit.
+    let consecutiveDeferrals: Int
 
     init(
         compiledTruth: String? = nil,
         openThreads: [String] = [],
         abandonedThreads: [String] = [],
         calibrationLine: String? = nil,
-        pendingPrediction: String? = nil
+        pendingPrediction: String? = nil,
+        consecutiveDeferrals: Int = 0
     ) {
         self.compiledTruth = compiledTruth
         self.openThreads = openThreads
         self.abandonedThreads = abandonedThreads
         self.calibrationLine = calibrationLine
         self.pendingPrediction = pendingPrediction
+        self.consecutiveDeferrals = consecutiveDeferrals
     }
 
     /// Whether there's anything worth surfacing in the retro banner — cold/stub brains
@@ -1079,7 +1083,7 @@ struct OfficeHoursMemorySummary: Codable, Equatable, Hashable {
     var hasPendingPrediction: Bool { pendingPrediction.map { !$0.isEmpty } ?? false }
 
     enum CodingKeys: String, CodingKey {
-        case compiledTruth, openThreads, abandonedThreads, calibrationLine, pendingPrediction
+        case compiledTruth, openThreads, abandonedThreads, calibrationLine, pendingPrediction, consecutiveDeferrals
     }
 
     init(from decoder: Decoder) throws {
@@ -1089,6 +1093,7 @@ struct OfficeHoursMemorySummary: Codable, Equatable, Hashable {
         abandonedThreads = (try c.decodeIfPresent([String].self, forKey: .abandonedThreads)) ?? []
         calibrationLine = try c.decodeIfPresent(String.self, forKey: .calibrationLine)
         pendingPrediction = try c.decodeIfPresent(String.self, forKey: .pendingPrediction)
+        consecutiveDeferrals = (try c.decodeIfPresent(Int.self, forKey: .consecutiveDeferrals)) ?? 0
     }
 }
 
@@ -2878,13 +2883,18 @@ final class AgenticViewModel: ObservableObject {
     func ensureOfficeHoursSession(forDay day: Int? = nil) -> Bool {
         let scopedDay = normalizedOfficeHoursDay(day)
         #if DEBUG
-        if scopedDay == nil, installUITestingOfficeHoursCommitmentGateSessionIfNeeded() {
+        // UI-testing seed installers are gated solely by their own CommandLine
+        // arg (and are idempotent). They must run regardless of the requested
+        // day: the day-scoped Office Hours screen always calls this with a
+        // concrete `activeDay` (>= 1, see `activeOfficeHoursDay`), so a
+        // `scopedDay == nil` precondition would orphan the seeds entirely.
+        if installUITestingOfficeHoursCommitmentGateSessionIfNeeded() {
             return true
         }
-        if scopedDay == nil, installUITestingOfficeHoursRunningSessionIfNeeded() {
+        if installUITestingOfficeHoursRunningSessionIfNeeded() {
             return true
         }
-        if scopedDay == nil, installUITestingOfficeHoursStructuredPromptSessionIfNeeded() {
+        if installUITestingOfficeHoursStructuredPromptSessionIfNeeded() {
             return true
         }
         #endif

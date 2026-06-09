@@ -416,7 +416,23 @@ export function summarizeOfficeHoursMemory(memory, { currentCycle } = {}) {
     // the still-open prediction the Mac side offers to grade at the next cycle close.
     calibrationLine: calibration.line,
     pendingPrediction: pending ? cleanString(pending.claim, MAX_FIELD_CHARS) : "",
+    // anti-displacement: "N일째 미룸" — trailing gate-held cycles with no intervening success.
+    consecutiveDeferrals: countConsecutiveDeferrals(memory),
   };
+}
+
+// Pure: how many of the most-recently closed cycles were gate-held deferrals (a "미룸":
+// outcome blocked/abort) with no intervening success. Surfaced as the card's streak badge so
+// repeated deferrals are named, not hidden. Confess is the only writer of blocked in practice.
+export function countConsecutiveDeferrals(memory) {
+  const cycles = Array.isArray(memory?.cycles) ? memory.cycles : [];
+  let streak = 0;
+  for (let i = cycles.length - 1; i >= 0; i -= 1) {
+    const outcome = cycles[i]?.outcome;
+    if (outcome === "blocked" || outcome === "abort") streak += 1;
+    else break;
+  }
+  return streak;
 }
 
 // Pure: the Cycle#N interview-opening block. Injected into the office-hours CONTEXT
