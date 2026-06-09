@@ -147,10 +147,13 @@ function sanitizeDay1GoalText(goalText, {
   const cleanedCustomer = cleanString(customer, 300);
   const originalCustomer = cleanString(rawCustomer, 300);
   if (
-    cleanedCustomer
-    && originalCustomer
-    && cleanedCustomer !== originalCustomer
-    && text.includes(originalCustomer.slice(0, Math.min(originalCustomer.length, 80)))
+    shouldRegenerateDay1GoalText(text, {
+      goalType,
+      originalCustomer,
+      cleanedCustomer,
+      problem,
+      validationAction,
+    })
   ) {
     return buildDay1GoalText({ goalType, customer: cleanedCustomer, problem, validationAction });
   }
@@ -158,16 +161,64 @@ function sanitizeDay1GoalText(goalText, {
 }
 
 function buildDay1GoalText({ goalType, customer, problem, validationAction } = {}) {
+  const target = cleanString(customer, 300);
+  const pain = quoteProblem(problem);
+  const method = validationMethodSentence(validationAction);
   switch (goalType) {
     case "make_money":
-      return `${customer}가 ${problem}에 돈이나 시간을 쓸지 ${validationAction}으로 확인한다.`;
+      return `${target}가 ${pain} 문제에 돈이나 시간을 쓸지 확인한다. ${method}`;
     case "get_users":
-      return `${customer}를 실제 유입/가입 행동으로 모아 ${problem} 반복 여부를 확인한다.`;
+      return `${target}가 ${pain} 문제를 실제 유입/가입 행동으로 반복해서 드러내는지 확인한다. ${method}`;
     case "build_product":
-      return `${customer}가 ${problem}을 해결하는 제품 흐름에서 막히는 지점을 ${validationAction}으로 확인한다.`;
+      return `${target}가 ${pain} 문제를 해결하는 제품 흐름에서 어디가 막히는지 확인한다. ${method}`;
     default:
       return "";
   }
+}
+
+function shouldRegenerateDay1GoalText(text, {
+  goalType,
+  originalCustomer,
+  cleanedCustomer,
+  problem,
+  validationAction,
+} = {}) {
+  if (
+    cleanedCustomer
+    && originalCustomer
+    && cleanedCustomer !== originalCustomer
+    && text.includes(originalCustomer.slice(0, Math.min(originalCustomer.length, 80)))
+  ) {
+    return true;
+  }
+  if (/[.!?。！？]\s*으로\s*확인한다[.。]?$/u.test(text)) return true;
+  if (/다에\s*돈이나\s*시간을\s*쓸지/u.test(text)) return true;
+
+  const pain = cleanString(problem, 500);
+  const action = cleanString(validationAction, 500);
+  if (!pain) return false;
+  const legacyPatterns = [
+    `${pain}에 돈이나 시간을 쓸지`,
+    `${pain} 반복 여부를 확인한다`,
+    `${pain}을 해결하는 제품 흐름에서 막히는 지점을`,
+  ];
+  if (legacyPatterns.some((pattern) => text.includes(pattern))) return true;
+  if (action && text.includes(`${action}으로 확인한다`)) return true;
+  return false;
+}
+
+function quoteProblem(value = "") {
+  const text = cleanString(value, 500)
+    .replace(/^["“”'‘’]+|["“”'‘’]+$/gu, "")
+    .replace(/[.。]+$/u, "")
+    .trim();
+  return `"${text || "검증할 문제"}"`;
+}
+
+function validationMethodSentence(value = "") {
+  const text = cleanString(value, 500);
+  if (!text) return "방법: 이번 주 확인할 행동을 정한다.";
+  return `방법: ${/[.!?。！？]$/u.test(text) ? text : `${text}.`}`;
 }
 
 function escapeRegExp(value = "") {

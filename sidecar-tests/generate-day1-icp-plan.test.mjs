@@ -981,7 +981,7 @@ test("Day 1 alignment frontier synthesis merges five high-quality choices", asyn
       workspaceRoot: root,
       deterministicPlan,
       frontierResults: [
-        { provider: "claude", model: "claude-opus-4-7", text: JSON.stringify(claudePlan) },
+        { provider: "claude", model: "claude-opus-4-8", text: JSON.stringify(claudePlan) },
         { provider: "codex", model: "gpt-5.5", text: JSON.stringify(gptPlan) },
       ],
     });
@@ -1036,7 +1036,7 @@ test("Day 1 alignment frontier synthesis dedupes similar outcomes and fills from
       workspaceRoot: root,
       deterministicPlan,
       frontierResults: [
-        { provider: "claude", model: "claude-opus-4-7", text: JSON.stringify(noisyPrimary) },
+        { provider: "claude", model: "claude-opus-4-8", text: JSON.stringify(noisyPrimary) },
         { provider: "codex", model: "gpt-5.5", text: JSON.stringify(backup) },
       ],
     });
@@ -1073,7 +1073,7 @@ test("Day 1 alignment frontier synthesis tolerates provider failures and falls b
       workspaceRoot: root,
       deterministicPlan,
       frontierResults: [
-        { provider: "claude", model: "claude-opus-4-7", text: "{not json" },
+        { provider: "claude", model: "claude-opus-4-8", text: "{not json" },
         { provider: "gemini", model: "gemini-3.5-flash", text: JSON.stringify(frontierPlan) },
       ],
     });
@@ -1084,7 +1084,7 @@ test("Day 1 alignment frontier synthesis tolerates provider failures and falls b
       workspaceRoot: root,
       deterministicPlan,
       frontierResults: [
-        { provider: "claude", model: "claude-opus-4-7", text: "{not json" },
+        { provider: "claude", model: "claude-opus-4-8", text: "{not json" },
         { provider: "codex", model: "gpt-5.5", text: JSON.stringify({ ...frontierPlan, confidence: 0.1 }) },
       ],
     });
@@ -1130,7 +1130,7 @@ test("Day 1 alignment frontier synthesis filters product-input and outcome conta
       workspaceRoot: root,
       deterministicPlan,
       frontierResults: [
-        { provider: "claude", model: "claude-opus-4-7", text: JSON.stringify(contaminated) },
+        { provider: "claude", model: "claude-opus-4-8", text: JSON.stringify(contaminated) },
         { provider: "codex", model: "gpt-5.5", text: JSON.stringify(cleanBackup) },
       ],
     });

@@ -235,11 +235,15 @@ export function normalizeDayRecord(value = {}, { now = new Date(), fallbackDay }
   for (const stepId of defs) {
     steps[stepId] = normalizeStatus(stepsIn[stepId]);
   }
+  const rawGoalText = cleanString(value.goalText ?? value.goal_text, 500);
+  const goalText = day > 1 && looksLikeLegacyDay1GoalText(rawGoalText)
+    ? ""
+    : repairLegacyDay1GoalText(rawGoalText);
   return {
     day,
     kind,
     steps,
-    goalText: cleanString(value.goalText ?? value.goal_text, 200),
+    goalText,
     updatedAt: normalizeIsoDate(value.updatedAt ?? value.updated_at, now),
   };
 }
@@ -299,4 +303,38 @@ function normalizeIsoDate(value, fallbackDate) {
 
 function cleanString(value = "", maxLength = 200) {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function looksLikeLegacyDay1GoalText(text = "") {
+  const value = cleanString(text, 500);
+  return /에 돈이나 시간을 쓸지 .+으로 확인한다[.。]?$/u.test(value)
+    || /를 실제 유입\/가입 행동으로 모아 .+ 반복 여부를 확인한다[.。]?$/u.test(value)
+    || /을 해결하는 제품 흐름에서 막히는 지점을 .+으로 확인한다[.。]?$/u.test(value);
+}
+
+function repairLegacyDay1GoalText(text = "") {
+  const value = cleanString(text, 500);
+  let match = value.match(/^(.+?)가 (.+?)에 돈이나 시간을 쓸지 (.+?)으로 확인한다[.。]?$/u);
+  if (match) {
+    return cleanString(`${match[1]}가 "${stripSentenceTerminal(match[2])}" 문제에 돈이나 시간을 쓸지 확인한다. 방법: ${ensureSentence(match[3])}`, 200);
+  }
+  match = value.match(/^(.+?)를 실제 유입\/가입 행동으로 모아 (.+?) 반복 여부를 확인한다[.。]?$/u);
+  if (match) {
+    return cleanString(`${match[1]}가 "${stripSentenceTerminal(match[2])}" 문제를 실제 유입/가입 행동으로 반복해서 드러내는지 확인한다.`, 200);
+  }
+  match = value.match(/^(.+?)가 (.+?)을 해결하는 제품 흐름에서 막히는 지점을 (.+?)으로 확인한다[.。]?$/u);
+  if (match) {
+    return cleanString(`${match[1]}가 "${stripSentenceTerminal(match[2])}" 문제를 해결하는 제품 흐름에서 어디가 막히는지 확인한다. 방법: ${ensureSentence(match[3])}`, 200);
+  }
+  return cleanString(value, 200);
+}
+
+function stripSentenceTerminal(value = "") {
+  return cleanString(value, 500).replace(/[.。]+$/u, "").trim();
+}
+
+function ensureSentence(value = "") {
+  const text = cleanString(value, 500);
+  if (!text) return "이번 주 확인할 행동을 정한다.";
+  return /[.!?。！？]$/u.test(text) ? text : `${text}.`;
 }
