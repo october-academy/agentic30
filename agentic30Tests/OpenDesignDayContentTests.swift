@@ -2203,7 +2203,7 @@ struct OpenDesignDayContentTests {
             missingAssumptions: [],
             options: [
                 Day1IcpQuestionOption(id: "o1", label: "빠른 판단", description: outcomeOptionDescription, highlightPhrases: ["빠른 판단"], preview: "Outcome", antiSignal: false),
-                Day1IcpQuestionOption(id: "o2", label: "기능 추가", description: "빌드 도피", highlightPhrases: ["기능 추가"], preview: "Anti", antiSignal: true),
+                Day1IcpQuestionOption(id: "o2", label: "기능 추가", description: "고객 검증 없이 빌드", highlightPhrases: ["기능 추가"], preview: "Anti", antiSignal: true),
             ]
         )
         return Day1AlignmentPlan(

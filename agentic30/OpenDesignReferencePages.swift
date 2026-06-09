@@ -401,12 +401,15 @@ enum OpenDesignReferenceCatalog {
                     .init("claude", leading: "A", title: "Claude", subtitle: "로컬 인증 또는 API 키 · 모델 선택", body: "에이전트 설정은 Keychain 저장값과 실행 보조 앱의 AI 연결 설정에 동기화됩니다.", trailing: "설정됨", tone: .accent),
                     .init("codex", leading: "C", title: "Codex", subtitle: "로컬 인증 또는 API 키 · 모델 선택", body: "OpenAI/Codex 인증 방식과 모델 ID를 저장합니다.", trailing: "설정됨", tone: .accent),
                     .init("gemini", leading: "G", title: "Gemini", subtitle: "API 키 · 모델 선택", body: "Gemini API 키와 모델 ID를 Keychain에 저장합니다.", trailing: "선택", tone: .sky),
-                    .init("exa", leading: "E", title: "Exa Research", subtitle: "뉴스 시장 리서치 예비 키", body: "AI 연결의 웹 검색 도구가 없을 때만 사용하는 예비 API 키입니다.", trailing: "Keychain", tone: .amber),
                     .init("node", leading: "20", title: "Node 런타임", subtitle: "/usr/local/bin/node — v20.11.1", body: "실행 보조 앱이 사용하는 Node 바이너리. 20+ 필요. NODE_BINARY → 일반 설치 → mise/asdf/Volta → 로그인 셸 PATH 순으로 탐색합니다.", trailing: "20+", tone: .sky),
                 ]),
             ]),
             .init(id: "integrations", title: "연동", meta: "OAuth · API 키 — Keychain 보관", markerTone: .amber, blocks: [
                 .init("integrations", style: .rows, rows: [
+                    .init("exa", leading: "E", title: "Exa Research", subtitle: "뉴스 시장 리서치 예비 키. AI 프로바이더의 웹 검색 도구가 없을 때만 사용합니다.", trailing: "Keychain", tone: .amber),
+                    .init("github", leading: "GH", title: "GitHub", subtitle: "gh CLI 인증으로 PR / 이슈 / 릴리즈 활동을 읽어 History에 반영합니다.", trailing: "gh 로그인", tone: .amber),
+                    .init("cloudflare", leading: "CF", title: "Cloudflare", subtitle: "Cloudflare MCP 토큰과 endpoint를 저장해 Workers, R2, DNS 도구를 AI 실행에 연결합니다.", trailing: "MCP", tone: .amber),
+                    .init("posthog-mcp", leading: "PH", title: "PostHog", subtitle: "phx_ / pha_ personal API key로 HogQL, insights, web analytics MCP 도구를 연결합니다.", trailing: "MCP", tone: .amber),
                     .init("notion", leading: "N", title: "Notion", subtitle: "SPEC.md / ICP.md / VALUES.md 변경분을 지정한 페이지로 양방향 동기화.", trailing: "연결 안 됨", tone: .muted),
                 ]),
             ]),

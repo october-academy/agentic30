@@ -188,6 +188,57 @@ struct SidecarEventDecodingTests {
         #expect(event.sessions == nil)
     }
 
+    @MainActor @Test func decodesOfficeHoursSourceGatePayload() throws {
+        let payload = """
+        {
+          "type": "office_hours_source_gate",
+          "sessionId": "session-1",
+          "day": 2,
+          "status": "blocked",
+          "officeHoursSourceGate": {
+            "schemaVersion": 1,
+            "day": 2,
+            "ok": false,
+            "blocking": true,
+            "skipped": false,
+            "reason": "no_live_sources",
+            "message": "Day 2+ Office Hours를 시작하려면 source가 필요합니다.",
+            "checkedAt": "2026-06-09T01:30:00.000Z",
+            "selectedSources": ["posthog"],
+            "sources": [
+              {
+                "id": "posthog",
+                "label": "PostHog",
+                "state": "missing",
+                "available": false,
+                "selected": true,
+                "required": true,
+                "detail": "PostHog MCP key is missing"
+              }
+            ],
+            "missingRequiredSources": ["posthog"],
+            "connectActions": [
+              {
+                "id": "connect_posthog",
+                "source": "posthog",
+                "label": "PostHog MCP 연결",
+                "detail": "Settings > Integrations에 key를 저장합니다.",
+                "settingsSection": "integrations"
+              }
+            ]
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "office_hours_source_gate")
+        #expect(event.officeHoursSourceGate?.blocking == true)
+        #expect(event.officeHoursSourceGate?.selectedSources == ["posthog"])
+        #expect(event.officeHoursSourceGate?.sources.first?.id == "posthog")
+        #expect(event.officeHoursSourceGate?.connectActions.first?.settingsSection == "integrations")
+    }
+
     @MainActor @Test func decodesWorkspaceScanProgressStructuredFields() throws {
         let payload = """
         {
@@ -528,9 +579,9 @@ struct SidecarEventDecodingTests {
               "schemaVersion": 1,
               "day": 2,
               "status": "build_escape",
-              "verdictLabel": "빌드로 도피",
+              "verdictLabel": "고객 증거 없이 빌드함",
               "verdictTone": "danger",
-              "summary": "AI 작업 90분이 있었지만 고객 하드 증거가 없습니다.",
+              "summary": "AI 작업 90분이 있었지만 확인 가능한 고객 증거가 없습니다.",
               "customerEvidence": [
                 {
                   "id": "cm-2",
@@ -551,6 +602,32 @@ struct SidecarEventDecodingTests {
               "commitments": [],
               "nextCommitment": null,
               "missing": ["hard_evidence"],
+              "goalSnapshot": {
+                "summary": "Jane에게 결제 의향을 묻는다",
+                "customer": "Jane",
+                "problem": "첫 결제 의사 확인",
+                "validationAction": "DM으로 가격을 묻는다",
+                "source": "day1_goal"
+              },
+              "missingReasons": ["확인 가능한 증거가 없습니다."],
+              "carryForwardAction": "Jane에게 DM로 결제 의향 묻기",
+              "evidenceDebts": [
+                {
+                  "id": "cm-2",
+                  "cycle": 2,
+                  "day": 2,
+                  "createdAt": "2026-06-09T09:00:00.000Z",
+                  "text": "Jane에게 DM로 결제 의향 묻기",
+                  "customer": "Jane",
+                  "channel": "DM",
+                  "message": "결제 의향 묻기",
+                  "expectedEvidenceKind": "screenshot",
+                  "dueDay": 3,
+                  "confirmedByUser": true,
+                  "status": "open",
+                  "evidence": null
+                }
+              ],
               "work": {
                 "available": true,
                 "date": "2026-06-09",
@@ -570,11 +647,61 @@ struct SidecarEventDecodingTests {
         let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
         let review = try #require(event.dayReviews?["2"])
         #expect(review.status == "build_escape")
-        #expect(review.verdictLabel == "빌드로 도피")
+        #expect(review.verdictLabel == "고객 증거 없이 빌드함")
         #expect(review.customerEvidence.first?.customer == "Jane")
         #expect(review.customerEvidence.first?.expectedEvidenceKind == "screenshot")
+        #expect(review.goalSnapshot?.customer == "Jane")
+        #expect(review.carryForwardAction == "Jane에게 DM로 결제 의향 묻기")
+        #expect(review.evidenceDebts.first?.id == "cm-2")
         #expect(review.work?.aiMinutes == 90)
         #expect(review.work?.areas.first?.paths == ["agentic30/ContentView.swift"])
+    }
+
+    @MainActor @Test func decodesDayProgressStateWithEvidenceOS() throws {
+        let payload = """
+        {
+          "type": "day_progress_state",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "evidenceOS": {
+            "schemaVersion": 1,
+            "currentDay": 2,
+            "openDebts": [
+              {
+                "id": "cm-1",
+                "cycle": 1,
+                "day": 1,
+                "createdAt": "2026-06-08T09:00:00.000Z",
+                "text": "Jane에게 DM",
+                "customer": "Jane",
+                "channel": "DM",
+                "message": "결제 의향 묻기",
+                "expectedEvidenceKind": "screenshot",
+                "dueDay": 2,
+                "confirmedByUser": true,
+                "status": "open",
+                "evidence": null
+              }
+            ],
+            "overdueDebts": [],
+            "provenEvidence": [],
+            "dayStates": {
+              "1": {
+                "day": 1,
+                "state": "closed_unproven",
+                "label": "증거 없음",
+                "tone": "warning",
+                "openDebtCount": 1,
+                "provenEvidenceCount": 0,
+                "carryForwardAction": "Jane에게 DM"
+              }
+            }
+          }
+        }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.evidenceOS?.currentDay == 2)
+        #expect(event.evidenceOS?.openDebts.first?.customer == "Jane")
+        #expect(event.evidenceOS?.dayStates["1"]?.state == "closed_unproven")
     }
 
     @MainActor @Test func decodesDayProgressStateWithOfficeHoursMemory() throws {
@@ -603,6 +730,49 @@ struct SidecarEventDecodingTests {
         #expect(event.officeHoursMemory?.compiledTruth?.contains("DM 5개 보내기") == true)
         #expect(event.officeHoursMemory?.openThreads == ["DM 5개 보내기"])
         #expect(event.officeHoursMemory?.abandonedThreads.first?.contains("2 사이클 silent") == true)
+    }
+
+    @MainActor @Test func decodesDayProgressStateWithOfficeHoursHistoryRollup() throws {
+        let payload = """
+        {
+          "type": "day_progress_state",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "officeHoursHistory": {
+            "schemaVersion": 1,
+            "day": 30,
+            "onboarding": {
+              "role": "developer",
+              "timeBudget": "daily_1_2h",
+              "blocker": "building",
+              "records": "project_folder,work_log",
+              "projectPath": "/Users/october/prj/myapp",
+              "readSources": ["GitHub:connected", "Notion:disabled"],
+              "summary": "역할=developer"
+            },
+            "dayRollup": [
+              {
+                "day": 29,
+                "summary": "Q Day 29 질문 · A Day 29 답변",
+                "curriculumAnswerCount": 1,
+                "officeHoursTurnCount": 1,
+                "openCommitments": 1,
+                "metCommitments": 0,
+                "detailPath": ".agentic30/memory/days/day-29.json"
+              }
+            ],
+            "curriculumAnswers": ["Day 29: Q=질문 / A=답변"],
+            "officeHoursTurns": ["Day 29: Q=질문 / A=답변"],
+            "openCommitments": ["Day 29 [open] 고객 DM"],
+            "metCommitments": []
+          }
+        }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.officeHoursHistory?.day == 30)
+        #expect(event.officeHoursHistory?.onboarding?.readSources == ["GitHub:connected", "Notion:disabled"])
+        #expect(event.officeHoursHistory?.dayRollup.first?.day == 29)
+        #expect(event.officeHoursHistory?.dayRollup.first?.detailPath == ".agentic30/memory/days/day-29.json")
+        #expect(event.officeHoursHistory?.openCommitments.first?.contains("고객 DM") == true)
     }
 
     @MainActor @Test func decodesOfficeHoursMemoryToleratesMissingArrays() throws {
@@ -974,7 +1144,7 @@ struct SidecarEventDecodingTests {
                 "missingAssumptions": [],
                 "options": [
                   { "id": "o1", "label": "빠른 판단", "description": "행동 신호", "preview": "확인할 행동" },
-                  { "id": "o2", "label": "기능 추가", "description": "빌드 도피", "preview": "Anti", "antiSignal": true }
+                  { "id": "o2", "label": "기능 추가", "description": "고객 검증 없이 빌드", "preview": "Anti", "antiSignal": true }
                 ]
               }
             },

@@ -57,7 +57,6 @@ enum IntakeSourceID: String, Codable, CaseIterable, Hashable {
     case lemonSqueezy = "lemon_squeezy"
     case paddle
     case gumroad
-    case lemonSqueezyPaddleGumroad = "lemon_squeezy_paddle_gumroad"
     case customUrl = "custom_url"
     case customLocalFileFolder = "custom_local_file_folder"
     case customManualNote = "custom_manual_note"
@@ -108,7 +107,6 @@ enum IntakeSourceID: String, Codable, CaseIterable, Hashable {
         case .lemonSqueezy: return "Lemon Squeezy"
         case .paddle: return "Paddle"
         case .gumroad: return "Gumroad"
-        case .lemonSqueezyPaddleGumroad: return "Lemon Squeezy / Paddle / Gumroad"
         case .customUrl: return "Custom URL"
         case .customLocalFileFolder: return "Local file/folder"
         case .customManualNote: return "Manual note"
@@ -328,8 +326,6 @@ enum IntakeSourceIconCatalog {
             return .asset("BrandPaddle")
         case .gumroad:
             return .asset("BrandGumroad")
-        case .lemonSqueezyPaddleGumroad:
-            return .composite(["BrandLemonSqueezy", "BrandPaddle", "BrandGumroad"])
         case .localFolder,
              .interviewTxt,
              .workLogFolder,
@@ -424,7 +420,6 @@ final class IntakeV2Store: ObservableObject {
     @Published var completedAt: Date?
 
     static let stateDefaultsKey = "agentic30.intakeV2.state.v1"
-    static let legacyStateDefaultsKey = "IntakeV2.state.v1"
 
     private let defaults: UserDefaults
 
@@ -450,32 +445,28 @@ final class IntakeV2Store: ObservableObject {
 
     private func restore() {
         var foundCorruptStorage = false
-        for key in [Self.stateDefaultsKey, Self.legacyStateDefaultsKey] {
-            guard let data = defaults.data(forKey: key) else { continue }
-            do {
-                let snap = try JSONDecoder().decode(Snapshot.self, from: data)
-                self.workmode = snap.workmode
-                self.role = snap.role
-                self.stuck = snap.stuck
-                self.commitmentLevel = snap.commitmentLevel
-                if self.workmode == nil {
-                    self.workmode = snap.commitmentLevel?.workMode
-                }
-                self.evidenceLevels = Self.normalizedEvidenceLevels(snap.evidenceLevels ?? [])
-                if let path = snap.folderPath {
-                    self.folderURL = URL(fileURLWithPath: path)
-                }
-                self.completedAt = snap.completedAt
-                if key != Self.stateDefaultsKey {
-                    defaults.set(data, forKey: Self.stateDefaultsKey)
-                    defaults.removeObject(forKey: key)
-                }
-                return
-            } catch {
-                // Corrupt — wipe and surface the failure (eng D6 critical gap)
-                defaults.removeObject(forKey: key)
-                foundCorruptStorage = true
+        guard let data = defaults.data(forKey: Self.stateDefaultsKey) else {
+            restoreFailed = false
+            return
+        }
+        do {
+            let snap = try JSONDecoder().decode(Snapshot.self, from: data)
+            self.workmode = snap.workmode
+            self.role = snap.role
+            self.stuck = snap.stuck
+            self.commitmentLevel = snap.commitmentLevel
+            if self.workmode == nil {
+                self.workmode = snap.commitmentLevel?.workMode
             }
+            self.evidenceLevels = Self.normalizedEvidenceLevels(snap.evidenceLevels ?? [])
+            if let path = snap.folderPath {
+                self.folderURL = URL(fileURLWithPath: path)
+            }
+            self.completedAt = snap.completedAt
+            return
+        } catch {
+            defaults.removeObject(forKey: Self.stateDefaultsKey)
+            foundCorruptStorage = true
         }
         self.restoreFailed = foundCorruptStorage
     }
@@ -493,7 +484,6 @@ final class IntakeV2Store: ObservableObject {
         do {
             let data = try JSONEncoder().encode(snap)
             defaults.set(data, forKey: Self.stateDefaultsKey)
-            defaults.removeObject(forKey: Self.legacyStateDefaultsKey)
         } catch {
             // Encoding should never fail for these primitives — log via PostHog elsewhere
         }
@@ -513,7 +503,6 @@ final class IntakeV2Store: ObservableObject {
 
     static func clearPersistedDraft(defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: stateDefaultsKey)
-        defaults.removeObject(forKey: legacyStateDefaultsKey)
     }
 
     // MARK: - Step completion
@@ -627,7 +616,6 @@ final class IntakeV2SourceManager: ObservableObject {
     @Published private(set) var sources: [IntakeSourceState] = []
 
     static let sourcesDefaultsKey = "agentic30.intakeV2.sources.v1"
-    static let legacySourcesDefaultsKey = "IntakeV2.sources.v1"
 
     private let defaults: UserDefaults
 
@@ -637,57 +625,18 @@ final class IntakeV2SourceManager: ObservableObject {
     }
 
     private func restore() {
-        for key in [Self.sourcesDefaultsKey, Self.legacySourcesDefaultsKey] {
-            guard let data = defaults.data(forKey: key) else { continue }
-            if let decoded = try? JSONDecoder().decode([IntakeSourceState].self, from: data) {
-                let migrated = Self.migrateLegacyPaymentBundle(in: decoded)
-                self.sources = migrated.sources
-                if key != Self.sourcesDefaultsKey || migrated.didMigrate {
-                    persist()
-                }
-                return
-            } else {
-                defaults.removeObject(forKey: key)
-            }
+        guard let data = defaults.data(forKey: Self.sourcesDefaultsKey) else { return }
+        if let decoded = try? JSONDecoder().decode([IntakeSourceState].self, from: data) {
+            self.sources = decoded
+        } else {
+            defaults.removeObject(forKey: Self.sourcesDefaultsKey)
         }
-    }
-
-    private static func migrateLegacyPaymentBundle(
-        in decoded: [IntakeSourceState]
-    ) -> (sources: [IntakeSourceState], didMigrate: Bool) {
-        let replacementIDs: [IntakeSourceID] = [.lemonSqueezy, .paddle, .gumroad]
-        var didMigrate = false
-        var seen = Set<IntakeSourceID>()
-        var migrated: [IntakeSourceState] = []
-
-        for source in decoded {
-            if source.id == .lemonSqueezyPaddleGumroad {
-                didMigrate = true
-                for id in replacementIDs where !seen.contains(id) {
-                    migrated.append(
-                        IntakeSourceState(
-                            id: id,
-                            status: source.status,
-                            path: source.path,
-                            detail: source.detail
-                        )
-                    )
-                    seen.insert(id)
-                }
-            } else if !seen.contains(source.id) {
-                migrated.append(source)
-                seen.insert(source.id)
-            }
-        }
-
-        return (migrated, didMigrate)
     }
 
     @discardableResult
     private func persist() -> Bool {
         if let data = try? JSONEncoder().encode(sources) {
             defaults.set(data, forKey: Self.sourcesDefaultsKey)
-            defaults.removeObject(forKey: Self.legacySourcesDefaultsKey)
             return true
         }
         return false

@@ -41,7 +41,6 @@ final class IntakeV2StoreTests: XCTestCase {
         store1.folderURL = URL(fileURLWithPath: "/Users/test/Projects")
         store1.persist()
         XCTAssertNotNil(suiteDefaults.data(forKey: IntakeV2Store.stateDefaultsKey))
-        XCTAssertNil(suiteDefaults.data(forKey: IntakeV2Store.legacyStateDefaultsKey))
 
         let store2 = IntakeV2Store(defaults: suiteDefaults)
         XCTAssertEqual(store2.workmode, .fullTimeSolo)
@@ -133,36 +132,16 @@ final class IntakeV2StoreTests: XCTestCase {
         XCTAssertEqual(store.evidenceLevels, [])
     }
 
-    func test_legacyStorage_migratesToAgentic30Namespace() throws {
-        let data = try XCTUnwrap("""
-        {"workmode":"full_time_solo","role":"developer","stuck":"idea_only","folderPath":"/tmp/legacy","firstDecisionShown":false}
-        """.data(using: .utf8))
-        suiteDefaults.set(data, forKey: IntakeV2Store.legacyStateDefaultsKey)
-
-        let store = IntakeV2Store(defaults: suiteDefaults)
-
-        XCTAssertEqual(store.workmode, .fullTimeSolo)
-        XCTAssertNil(store.commitmentLevel)
-        XCTAssertEqual(store.evidenceLevels, [])
-        XCTAssertEqual(store.role, .developer)
-        XCTAssertEqual(store.stuck, .ideaOnly)
-        XCTAssertEqual(store.folderURL?.path, "/tmp/legacy")
-        XCTAssertNotNil(suiteDefaults.data(forKey: IntakeV2Store.stateDefaultsKey))
-        XCTAssertNil(suiteDefaults.data(forKey: IntakeV2Store.legacyStateDefaultsKey))
-    }
-
     func test_reset_clearsStateAndStorage() {
         let store = IntakeV2Store(defaults: suiteDefaults)
         store.selectCommitmentLevel(.weekendFocused)
         store.toggleEvidenceLevel(.weeklyLoop)
         store.persist()
-        suiteDefaults.set(Data([0x01]), forKey: IntakeV2Store.legacyStateDefaultsKey)
         store.reset()
         XCTAssertNil(store.workmode)
         XCTAssertNil(store.commitmentLevel)
         XCTAssertEqual(store.evidenceLevels, [])
         XCTAssertNil(suiteDefaults.data(forKey: IntakeV2Store.stateDefaultsKey))
-        XCTAssertNil(suiteDefaults.data(forKey: IntakeV2Store.legacyStateDefaultsKey))
 
         let fresh = IntakeV2Store(defaults: suiteDefaults)
         XCTAssertNil(fresh.workmode)
@@ -172,14 +151,12 @@ final class IntakeV2StoreTests: XCTestCase {
 
     func test_clearPersistedDraft_removesOnlyIntakeDraftKeys() {
         suiteDefaults.set(Data([0x01]), forKey: IntakeV2Store.stateDefaultsKey)
-        suiteDefaults.set(Data([0x02]), forKey: IntakeV2Store.legacyStateDefaultsKey)
         suiteDefaults.set(Data([0x03]), forKey: IntakeV2SourceManager.sourcesDefaultsKey)
         suiteDefaults.set("/tmp/workspace", forKey: "agentic30.workspaceRoot")
 
         IntakeV2Store.clearPersistedDraft(defaults: suiteDefaults)
 
         XCTAssertNil(suiteDefaults.data(forKey: IntakeV2Store.stateDefaultsKey))
-        XCTAssertNil(suiteDefaults.data(forKey: IntakeV2Store.legacyStateDefaultsKey))
         XCTAssertEqual(suiteDefaults.data(forKey: IntakeV2SourceManager.sourcesDefaultsKey), Data([0x03]))
         XCTAssertEqual(suiteDefaults.string(forKey: "agentic30.workspaceRoot"), "/tmp/workspace")
     }
@@ -354,11 +331,6 @@ final class IntakeSourceCatalogTests: XCTestCase {
             (.gumroad, "Gumroad", .revenue, "PAYMENT", ["Gumroad", "Revenue", "PAYMENT"]),
         ]
         let addableIDs = Set(IntakeSourceCatalog.addableItems.map(\.id))
-
-        XCTAssertNil(
-            IntakeSourceCatalog.item(for: .lemonSqueezyPaddleGumroad),
-            "The legacy bundled payment source should not be shown in the catalog."
-        )
 
         for expected in expectedItems {
             let item = try XCTUnwrap(IntakeSourceCatalog.item(for: expected.id))
@@ -801,44 +773,10 @@ final class IntakeV2SourceManagerTests: XCTestCase {
         mgr1.registerLocalFolder(URL(fileURLWithPath: "/x"), fileCount: 1)
         mgr1.toggle(.github, to: .connected)
         XCTAssertNotNil(suiteDefaults.data(forKey: IntakeV2SourceManager.sourcesDefaultsKey))
-        XCTAssertNil(suiteDefaults.data(forKey: IntakeV2SourceManager.legacySourcesDefaultsKey))
 
         let mgr2 = IntakeV2SourceManager(defaults: suiteDefaults)
         XCTAssertEqual(mgr2.connectedCount, 2)
         XCTAssertEqual(mgr2.status(of: .github), .connected)
-    }
-
-    func test_legacySources_migrateToAgentic30Namespace() throws {
-        let data = try XCTUnwrap("""
-        [{"id":"local_folder","status":"connected","path":"/tmp/legacy","detail":"1 docs"}]
-        """.data(using: .utf8))
-        suiteDefaults.set(data, forKey: IntakeV2SourceManager.legacySourcesDefaultsKey)
-
-        let mgr = IntakeV2SourceManager(defaults: suiteDefaults)
-
-        XCTAssertEqual(mgr.connectedCount, 1)
-        XCTAssertEqual(mgr.sources.first?.path, "/tmp/legacy")
-        XCTAssertNotNil(suiteDefaults.data(forKey: IntakeV2SourceManager.sourcesDefaultsKey))
-        XCTAssertNil(suiteDefaults.data(forKey: IntakeV2SourceManager.legacySourcesDefaultsKey))
-    }
-
-    func test_legacyBundledPaymentSource_migratesToSeparatedPaymentSources() throws {
-        let data = try XCTUnwrap("""
-        [{"id":"lemon_squeezy_paddle_gumroad","status":"disabled","path":"/tmp/payments","detail":"old bundle"}]
-        """.data(using: .utf8))
-        suiteDefaults.set(data, forKey: IntakeV2SourceManager.sourcesDefaultsKey)
-
-        let mgr = IntakeV2SourceManager(defaults: suiteDefaults)
-
-        XCTAssertEqual(mgr.status(of: .lemonSqueezy), .disabled)
-        XCTAssertEqual(mgr.status(of: .paddle), .disabled)
-        XCTAssertEqual(mgr.status(of: .gumroad), .disabled)
-        XCTAssertEqual(mgr.status(of: .lemonSqueezyPaddleGumroad), .notConnected)
-        XCTAssertEqual(
-            mgr.sources.filter { [.lemonSqueezy, .paddle, .gumroad].contains($0.id) }.map(\.path),
-            ["/tmp/payments", "/tmp/payments", "/tmp/payments"]
-        )
-        XCTAssertNotNil(suiteDefaults.data(forKey: IntakeV2SourceManager.sourcesDefaultsKey))
     }
 
     func test_remove_clearsEntry() {

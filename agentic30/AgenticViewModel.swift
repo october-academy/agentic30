@@ -19,6 +19,34 @@ protocol WebAuthenticationSessionHandle: AnyObject {
     func cancel()
 }
 
+nonisolated struct GitHubCLIAuthStatus: Hashable, Sendable {
+    enum State: String, Hashable, Sendable {
+        case unknown
+        case checking
+        case connected
+        case disconnected
+        case missing
+    }
+
+    let state: State
+    let detail: String
+    let checkedAt: Date?
+
+    static let unknown = GitHubCLIAuthStatus(
+        state: .unknown,
+        detail: "gh CLI 상태를 아직 확인하지 않았습니다.",
+        checkedAt: nil
+    )
+
+    static func checking() -> GitHubCLIAuthStatus {
+        GitHubCLIAuthStatus(
+            state: .checking,
+            detail: "gh auth status 확인 중...",
+            checkedAt: Date()
+        )
+    }
+}
+
 final class SystemWebAuthenticationSessionHandle: WebAuthenticationSessionHandle {
     private let session: ASWebAuthenticationSession
 
@@ -1064,6 +1092,70 @@ struct OfficeHoursMemorySummary: Codable, Equatable, Hashable {
     }
 }
 
+struct OfficeHoursHistorySummary: Codable, Equatable, Hashable {
+    struct Onboarding: Codable, Equatable, Hashable {
+        let role: String?
+        let timeBudget: String?
+        let blocker: String?
+        let records: String?
+        let projectPath: String?
+        let readSources: [String]
+        let summary: String?
+
+        enum CodingKeys: String, CodingKey {
+            case role, timeBudget, blocker, records, projectPath, readSources, summary
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            role = try c.decodeIfPresent(String.self, forKey: .role)
+            timeBudget = try c.decodeIfPresent(String.self, forKey: .timeBudget)
+            blocker = try c.decodeIfPresent(String.self, forKey: .blocker)
+            records = try c.decodeIfPresent(String.self, forKey: .records)
+            projectPath = try c.decodeIfPresent(String.self, forKey: .projectPath)
+            readSources = try c.decodeIfPresent([String].self, forKey: .readSources) ?? []
+            summary = try c.decodeIfPresent(String.self, forKey: .summary)
+        }
+    }
+
+    struct DayRollup: Codable, Equatable, Hashable, Identifiable {
+        var id: Int { day }
+        let day: Int
+        let summary: String
+        let curriculumAnswerCount: Int
+        let officeHoursTurnCount: Int
+        let openCommitments: Int
+        let metCommitments: Int
+        let detailPath: String?
+    }
+
+    let schemaVersion: Int
+    let day: Int?
+    let onboarding: Onboarding?
+    let dayRollup: [DayRollup]
+    let curriculumAnswers: [String]
+    let officeHoursTurns: [String]
+    let openCommitments: [String]
+    let metCommitments: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion, day, onboarding, dayRollup
+        case curriculumAnswers, officeHoursTurns, openCommitments, metCommitments
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        day = try c.decodeIfPresent(Int.self, forKey: .day)
+        onboarding = try c.decodeIfPresent(Onboarding.self, forKey: .onboarding)
+        dayRollup = try c.decodeIfPresent([DayRollup].self, forKey: .dayRollup) ?? []
+        curriculumAnswers = try c.decodeIfPresent([String].self, forKey: .curriculumAnswers) ?? []
+        officeHoursTurns = try c.decodeIfPresent([String].self, forKey: .officeHoursTurns) ?? []
+        openCommitments = try c.decodeIfPresent([String].self, forKey: .openCommitments) ?? []
+        metCommitments = try c.decodeIfPresent([String].self, forKey: .metCommitments) ?? []
+    }
+}
+
 struct CommitmentDraft: Codable, Equatable, Hashable {
     let customer: String
     let channel: String
@@ -1127,6 +1219,97 @@ struct CommitmentRecord: Codable, Equatable, Hashable, Identifiable {
 
 typealias CustomerEvidenceItem = CommitmentRecord
 
+struct DayGoalSnapshot: Codable, Equatable, Hashable {
+    let summary: String
+    let customer: String
+    let problem: String
+    let validationAction: String
+    let source: String
+
+    init(
+        summary: String = "",
+        customer: String = "",
+        problem: String = "",
+        validationAction: String = "",
+        source: String = ""
+    ) {
+        self.summary = summary
+        self.customer = customer
+        self.problem = problem
+        self.validationAction = validationAction
+        self.source = source
+    }
+}
+
+struct EvidenceOSDayState: Codable, Equatable, Hashable {
+    let day: Int
+    let state: String
+    let label: String
+    let tone: String
+    let openDebtCount: Int
+    let provenEvidenceCount: Int
+    let carryForwardAction: String?
+
+    init(
+        day: Int = 0,
+        state: String = "not_started",
+        label: String = "시작 안 함",
+        tone: String = "muted",
+        openDebtCount: Int = 0,
+        provenEvidenceCount: Int = 0,
+        carryForwardAction: String? = nil
+    ) {
+        self.day = day
+        self.state = state
+        self.label = label
+        self.tone = tone
+        self.openDebtCount = openDebtCount
+        self.provenEvidenceCount = provenEvidenceCount
+        self.carryForwardAction = carryForwardAction
+    }
+}
+
+struct EvidenceOSSummary: Codable, Equatable, Hashable {
+    let schemaVersion: Int
+    let currentDay: Int?
+    let openDebts: [CommitmentRecord]
+    let overdueDebts: [CommitmentRecord]
+    let provenEvidence: [CommitmentRecord]
+    let dayStates: [String: EvidenceOSDayState]
+
+    init(
+        schemaVersion: Int = 1,
+        currentDay: Int? = nil,
+        openDebts: [CommitmentRecord] = [],
+        overdueDebts: [CommitmentRecord] = [],
+        provenEvidence: [CommitmentRecord] = [],
+        dayStates: [String: EvidenceOSDayState] = [:]
+    ) {
+        self.schemaVersion = schemaVersion
+        self.currentDay = currentDay
+        self.openDebts = openDebts
+        self.overdueDebts = overdueDebts
+        self.provenEvidence = provenEvidence
+        self.dayStates = dayStates
+    }
+
+    var hasOpenDebt: Bool { !openDebts.isEmpty || !overdueDebts.isEmpty }
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion, currentDay, openDebts, overdueDebts, provenEvidence, dayStates
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        currentDay = try c.decodeIfPresent(Int.self, forKey: .currentDay)
+        openDebts = try c.decodeIfPresent([CommitmentRecord].self, forKey: .openDebts) ?? []
+        overdueDebts = try c.decodeIfPresent([CommitmentRecord].self, forKey: .overdueDebts) ?? []
+        provenEvidence = try c.decodeIfPresent([CommitmentRecord].self, forKey: .provenEvidence) ?? []
+        dayStates = try c.decodeIfPresent([String: EvidenceOSDayState].self, forKey: .dayStates) ?? [:]
+    }
+}
+
 struct DayReviewWorkArea: Codable, Equatable, Hashable, Identifiable {
     var id: String { name }
     let name: String
@@ -1156,11 +1339,17 @@ struct DayReview: Codable, Equatable, Hashable {
     let commitments: [CommitmentRecord]
     let nextCommitment: CommitmentRecord?
     let missing: [String]
+    let goalSnapshot: DayGoalSnapshot?
+    let missingReasons: [String]
+    let carryForwardAction: String?
+    let evidenceDebts: [CommitmentRecord]
     let work: DayReviewWorkSummary?
 
     enum CodingKeys: String, CodingKey {
         case schemaVersion, day, status, verdictLabel, verdictTone, summary
-        case customerEvidence, commitments, nextCommitment, missing, work
+        case customerEvidence, commitments, nextCommitment, missing
+        case goalSnapshot, missingReasons, carryForwardAction, evidenceDebts
+        case work
     }
 
     init(
@@ -1174,6 +1363,10 @@ struct DayReview: Codable, Equatable, Hashable {
         commitments: [CommitmentRecord] = [],
         nextCommitment: CommitmentRecord? = nil,
         missing: [String] = [],
+        goalSnapshot: DayGoalSnapshot? = nil,
+        missingReasons: [String] = [],
+        carryForwardAction: String? = nil,
+        evidenceDebts: [CommitmentRecord] = [],
         work: DayReviewWorkSummary? = nil
     ) {
         self.schemaVersion = schemaVersion
@@ -1186,6 +1379,10 @@ struct DayReview: Codable, Equatable, Hashable {
         self.commitments = commitments
         self.nextCommitment = nextCommitment
         self.missing = missing
+        self.goalSnapshot = goalSnapshot
+        self.missingReasons = missingReasons
+        self.carryForwardAction = carryForwardAction
+        self.evidenceDebts = evidenceDebts
         self.work = work
     }
 
@@ -1201,6 +1398,10 @@ struct DayReview: Codable, Equatable, Hashable {
         commitments = try c.decodeIfPresent([CommitmentRecord].self, forKey: .commitments) ?? []
         nextCommitment = try c.decodeIfPresent(CommitmentRecord.self, forKey: .nextCommitment)
         missing = try c.decodeIfPresent([String].self, forKey: .missing) ?? []
+        goalSnapshot = try c.decodeIfPresent(DayGoalSnapshot.self, forKey: .goalSnapshot)
+        missingReasons = try c.decodeIfPresent([String].self, forKey: .missingReasons) ?? []
+        carryForwardAction = try c.decodeIfPresent(String.self, forKey: .carryForwardAction)
+        evidenceDebts = try c.decodeIfPresent([CommitmentRecord].self, forKey: .evidenceDebts) ?? []
         work = try c.decodeIfPresent(DayReviewWorkSummary.self, forKey: .work)
     }
 }
@@ -1501,6 +1702,9 @@ final class AgenticViewModel: ObservableObject {
     /// Cycle#N office-hours memory summary (compiled truth + open/abandoned threads),
     /// delivered additively on `day_progress_state`. Drives the retro read-back surface.
     @Published private(set) var officeHoursMemory: OfficeHoursMemorySummary?
+    @Published private(set) var officeHoursHistory: OfficeHoursHistorySummary?
+    @Published private(set) var evidenceOS: EvidenceOSSummary?
+    @Published private(set) var officeHoursSourceGate: OfficeHoursSourceGate?
     /// Soft guidance from the interview gate: set when the sidecar withholds an interview
     /// close (needsCommitment) and asks for one next customer action; cleared on the next
     /// successful (non-blocked) day_progress_state so the nudge never lingers.
@@ -1552,6 +1756,7 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var newsMarketRadar: NewsMarketRadarSnapshot = .empty
     @Published private(set) var bipResearch: BipResearchSnapshot = .empty
     @Published private(set) var workHistory: WorkHistorySnapshot = .empty
+    @Published private(set) var githubCliAuthStatus: GitHubCLIAuthStatus = .unknown
     /// First-launch wall-clock timestamp that anchors the Foundation phase
     /// Day N/30 counter. The value is mirrored from `foundationProgressState`,
     /// which is persisted per workspace/app-support rather than globally.
@@ -1961,7 +2166,6 @@ final class AgenticViewModel: ObservableObject {
         if Self.isUITesting(arguments: arguments) {
             if arguments.contains("--ui-testing-reset-onboarding") {
                 KeychainHelper.deleteMacAuthSession()
-                KeychainHelper.deleteOnboardingContext()
                 Self.resetMacOnboardingState()
                 WorkspaceSettings.clear()
             }
@@ -1982,24 +2186,22 @@ final class AgenticViewModel: ObservableObject {
         } else {
             if arguments.contains("--ui-testing-reset-onboarding") {
                 KeychainHelper.deleteMacAuthSession()
-                KeychainHelper.deleteOnboardingContext()
                 Self.resetMacOnboardingState()
                 WorkspaceSettings.clear()
             }
             macAuthSession = KeychainHelper.loadMacAuthSession()
-            onboardingContext = KeychainHelper.loadOnboardingContext()
+            onboardingContext = Self.loadWorkspaceOnboardingContext()
             macOnboardingIntroCompleted = onboardingContext != nil || Self.loadMacOnboardingIntroCompleted()
             macOnboardingIntakeOnlyCompleted = Self.loadMacOnboardingIntakeOnlyCompleted()
         }
         #else
         if arguments.contains("--ui-testing-reset-onboarding") {
             KeychainHelper.deleteMacAuthSession()
-            KeychainHelper.deleteOnboardingContext()
             Self.resetMacOnboardingState()
             WorkspaceSettings.clear()
         }
         macAuthSession = KeychainHelper.loadMacAuthSession()
-        onboardingContext = KeychainHelper.loadOnboardingContext()
+        onboardingContext = Self.loadWorkspaceOnboardingContext()
         macOnboardingIntroCompleted = onboardingContext != nil || Self.loadMacOnboardingIntroCompleted()
         macOnboardingIntakeOnlyCompleted = Self.loadMacOnboardingIntakeOnlyCompleted()
         #endif
@@ -2275,10 +2477,13 @@ final class AgenticViewModel: ObservableObject {
         resetMacOnboardingIntroCompleted(defaults: defaults)
         resetMacOnboardingIntakeOnlyCompleted(defaults: defaults)
         defaults.removeObject(forKey: IntakeV2Store.stateDefaultsKey)
-        defaults.removeObject(forKey: IntakeV2Store.legacyStateDefaultsKey)
         defaults.removeObject(forKey: IntakeV2SourceManager.sourcesDefaultsKey)
-        defaults.removeObject(forKey: IntakeV2SourceManager.legacySourcesDefaultsKey)
         defaults.synchronize()
+    }
+
+    private static func loadWorkspaceOnboardingContext() -> OnboardingContext? {
+        guard WorkspaceSettings.hasExplicitWorkspace else { return nil }
+        return WorkspaceMemoryStore.loadOnboardingContext(workspaceRoot: WorkspaceSettings.resolvedURL().path)
     }
 
     func requestBipNotificationOpen(
@@ -2616,7 +2821,8 @@ final class AgenticViewModel: ObservableObject {
     func createSession(
         provider: AgentProvider? = nil,
         source: String? = nil,
-        suppressBootstrapIntake: Bool = false
+        suppressBootstrapIntake: Bool = false,
+        officeHoursDay: Int? = nil
     ) -> Bool {
         let resolvedProvider = provider ?? selectedProvider
         let model = preferredModel(for: resolvedProvider)
@@ -2645,23 +2851,33 @@ final class AgenticViewModel: ObservableObject {
         if suppressBootstrapIntake || !iddSetupComplete {
             payload["suppressBootstrapIntake"] = true
         }
+        if let officeHoursDay, officeHoursDay > 0 {
+            payload["officeHoursDay"] = officeHoursDay
+        }
         return sidecar.send(payload: payload)
     }
 
     @discardableResult
-    func ensureOfficeHoursSession() -> Bool {
+    func ensureOfficeHoursSession(forDay day: Int? = nil) -> Bool {
+        let scopedDay = normalizedOfficeHoursDay(day)
         #if DEBUG
-        if installUITestingOfficeHoursCommitmentGateSessionIfNeeded() {
+        if scopedDay == nil, installUITestingOfficeHoursCommitmentGateSessionIfNeeded() {
             return true
         }
-        if installUITestingOfficeHoursRunningSessionIfNeeded() {
+        if scopedDay == nil, installUITestingOfficeHoursRunningSessionIfNeeded() {
             return true
         }
-        if installUITestingOfficeHoursStructuredPromptSessionIfNeeded() {
+        if scopedDay == nil, installUITestingOfficeHoursStructuredPromptSessionIfNeeded() {
             return true
         }
         #endif
-        if let selectedSession, canUseSessionForOfficeHours(selectedSession) {
+        if let scopedDay,
+           let session = officeHoursSession(forDay: scopedDay) {
+            selectedSessionID = session.id
+            officeHoursSessionCreateInFlight = false
+            return true
+        }
+        if let selectedSession, canUseSessionForOfficeHours(selectedSession, day: scopedDay) {
             officeHoursSessionCreateInFlight = false
             return true
         }
@@ -2671,8 +2887,9 @@ final class AgenticViewModel: ObservableObject {
         officeHoursSessionCreateInFlight = true
         if createSession(
             provider: selectedProvider,
-            source: "office_hours_screen",
-            suppressBootstrapIntake: true
+            source: scopedDay.map { "office_hours_screen_day_\($0)" } ?? "office_hours_screen",
+            suppressBootstrapIntake: true,
+            officeHoursDay: scopedDay
         ) {
             return false
         }
@@ -2680,17 +2897,45 @@ final class AgenticViewModel: ObservableObject {
         return false
     }
 
-    func canUseSessionForOfficeHours(_ session: ChatSession) -> Bool {
+    func officeHoursSession(forDay day: Int) -> ChatSession? {
+        let scopedDay = normalizedOfficeHoursDay(day)
+        return sessions.first { session in
+            guard session.archivedAt == nil else { return false }
+            return canUseSessionForOfficeHours(session, day: scopedDay)
+        }
+    }
+
+    func canUseSessionForOfficeHours(_ session: ChatSession, day: Int? = nil) -> Bool {
+        let requestedDay = normalizedOfficeHoursDay(day)
+        if let officeHours = session.runtime?.officeHours {
+            if let requestedDay {
+                if let runtimeDay = normalizedOfficeHoursDay(officeHours.day) {
+                    guard runtimeDay == requestedDay else { return false }
+                } else {
+                    guard requestedDay == 1 else { return false }
+                }
+            }
+            return true
+        }
         if session.runtime?.officeHours?.active == true {
             return true
         }
         if let pendingUserInput = session.pendingUserInput {
-            return pendingUserInput.title?.caseInsensitiveCompare("Office Hours") == .orderedSame
+            let looksLikeOfficeHours = pendingUserInput.title?.caseInsensitiveCompare("Office Hours") == .orderedSame
                 || pendingUserInput.generation?.mode?.hasPrefix("office_hours") == true
+            guard looksLikeOfficeHours else { return false }
+            return requestedDay == nil || requestedDay == 1
         }
         if session.title.range(of: "Office Hours", options: [.caseInsensitive, .diacriticInsensitive]) != nil {
+            if let requestedDay {
+                if let titleDay = Self.officeHoursDay(fromTitle: session.title) {
+                    return titleDay == requestedDay
+                }
+                return requestedDay == 1
+            }
             return true
         }
+        if requestedDay != nil { return false }
         if session.messages.isEmpty {
             return true
         }
@@ -2702,9 +2947,24 @@ final class AgenticViewModel: ObservableObject {
         }
     }
 
+    private func normalizedOfficeHoursDay(_ day: Int?) -> Int? {
+        guard let day, day > 0 else { return nil }
+        return day
+    }
+
+    private static func officeHoursDay(fromTitle title: String) -> Int? {
+        guard let range = title.range(
+            of: #"Day\s+(\d+)"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) else { return nil }
+        let match = String(title[range])
+        guard let numberRange = match.range(of: #"\d+"#, options: .regularExpression) else { return nil }
+        return Int(match[numberRange])
+    }
+
     @discardableResult
     func ensureDay999OfficeHoursSession() -> Bool {
-        ensureOfficeHoursSession()
+        ensureOfficeHoursSession(forDay: 999)
     }
 
     private func createReplacementSessionIfNeeded(source: String) {
@@ -2980,10 +3240,74 @@ final class AgenticViewModel: ObservableObject {
     }
 
     @discardableResult
+    func submitOfficeHoursCommitmentEvidence(
+        commitmentId: String,
+        kind: String,
+        url: String,
+        note: String,
+        workspaceRoot explicitRoot: String? = nil
+    ) -> Bool {
+        guard isConnected else { return false }
+        let root = (explicitRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
+        let id = commitmentId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !root.isEmpty, !id.isEmpty else { return false }
+        return sidecar.send(payload: [
+            "type": "office_hours_commitment_evidence",
+            "workspaceRoot": root,
+            "commitmentId": id,
+            "evidence": [
+                "kind": kind.trimmingCharacters(in: .whitespacesAndNewlines),
+                "url": url.trimmingCharacters(in: .whitespacesAndNewlines),
+                "note": note.trimmingCharacters(in: .whitespacesAndNewlines),
+            ],
+        ])
+    }
+
+    @discardableResult
+    func carryForwardOfficeHoursCommitment(
+        commitmentId: String,
+        workspaceRoot explicitRoot: String? = nil
+    ) -> Bool {
+        guard isConnected else { return false }
+        let root = (explicitRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
+        let id = commitmentId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !root.isEmpty, !id.isEmpty else { return false }
+        var payload: [String: Any] = [
+            "type": "office_hours_commitment_carry_forward",
+            "workspaceRoot": root,
+            "commitmentId": id,
+        ]
+        if let currentDay = dayProgress?.currentDayNumber() {
+            payload["day"] = currentDay
+        }
+        return sidecar.send(payload: payload)
+    }
+
+    @discardableResult
+    func abandonOfficeHoursCommitment(
+        commitmentId: String,
+        reason: String,
+        workspaceRoot explicitRoot: String? = nil
+    ) -> Bool {
+        guard isConnected else { return false }
+        let root = (explicitRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
+        let id = commitmentId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !root.isEmpty, !id.isEmpty else { return false }
+        return sidecar.send(payload: [
+            "type": "office_hours_commitment_abandon",
+            "workspaceRoot": root,
+            "commitmentId": id,
+            "reason": reason.trimmingCharacters(in: .whitespacesAndNewlines),
+        ])
+    }
+
+    @discardableResult
     func startOfficeHours(
         sessionID: String,
         context: String,
-        source: String = "office_hours_screen"
+        source: String = "office_hours_screen",
+        day: Int? = nil,
+        selectedSources: [String] = []
     ) -> Bool {
         let trimmedSessionID = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSessionID.isEmpty else { return false }
@@ -2994,28 +3318,68 @@ final class AgenticViewModel: ObservableObject {
 
         let trimmedContext = context.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedSource = source.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "office_hours_screen"
+        let scopedDay = normalizedOfficeHoursDay(day)
+        let normalizedSelectedSources = selectedSources
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .sorted()
         PostHogTelemetry.capture(
             "mac_office_hours_start_requested",
             properties: [
                 "session_id": trimmedSessionID,
                 "context_length": trimmedContext.count,
                 "source": trimmedSource,
+                "day": scopedDay ?? 0,
+                "selected_source_count": normalizedSelectedSources.count,
             ],
             authSession: macAuthSession
         )
 
-        return sidecar.send(payload: [
+        var payload: [String: Any] = [
             "type": "office_hours_start",
             "sessionId": trimmedSessionID,
             "source": trimmedSource,
             "visiblePrompt": "Office Hours",
             "context": trimmedContext,
-        ])
+        ]
+        if let scopedDay {
+            payload["day"] = scopedDay
+        }
+        if !normalizedSelectedSources.isEmpty {
+            payload["selectedSources"] = normalizedSelectedSources
+        }
+        return sidecar.send(payload: payload)
     }
 
     @discardableResult
     func startDay999OfficeHours(sessionID: String, context: String) -> Bool {
-        startOfficeHours(sessionID: sessionID, context: context)
+        startOfficeHours(sessionID: sessionID, context: context, day: 999)
+    }
+
+    func refreshOfficeHoursSourceGate(
+        sessionID: String? = nil,
+        day: Int,
+        selectedSources: [String] = []
+    ) {
+        guard isConnected else { return }
+        guard let scopedDay = normalizedOfficeHoursDay(day), scopedDay >= 2 else { return }
+        var payload: [String: Any] = [
+            "type": "office_hours_source_gate_get",
+            "day": scopedDay,
+            "provider": selectedProvider.rawValue,
+        ]
+        let normalizedSessionID = sessionID?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+        if let normalizedSessionID {
+            payload["sessionId"] = normalizedSessionID
+        }
+        let normalizedSelectedSources = selectedSources
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .sorted()
+        if !normalizedSelectedSources.isEmpty {
+            payload["selectedSources"] = normalizedSelectedSources
+        }
+        _ = sidecar.send(payload: payload)
     }
 
     func sendPrompt() {
@@ -3610,14 +3974,36 @@ final class AgenticViewModel: ObservableObject {
         problem: String,
         validationAction: String
     ) -> String {
+        let target = customer.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pain = quotedDay1Problem(problem)
+        let method = day1ValidationMethodSentence(validationAction)
         switch goalType {
         case .makeMoney:
-            return "\(customer)가 \(problem)에 돈이나 시간을 쓸지 \(validationAction)으로 확인한다."
+            return "\(target)가 \(pain) 문제에 돈이나 시간을 쓸지 확인한다. \(method)"
         case .getUsers:
-            return "\(customer)를 실제 유입/가입 행동으로 모아 \(problem) 반복 여부를 확인한다."
+            return "\(target)가 \(pain) 문제를 실제 유입/가입 행동으로 반복해서 드러내는지 확인한다. \(method)"
         case .buildProduct:
-            return "\(customer)가 \(problem)을 해결하는 제품 흐름에서 막히는 지점을 \(validationAction)으로 확인한다."
+            return "\(target)가 \(pain) 문제를 해결하는 제품 흐름에서 어디가 막히는지 확인한다. \(method)"
         }
+    }
+
+    private func quotedDay1Problem(_ value: String) -> String {
+        let trimmed = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'“”‘’"))
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".。"))
+        return "\"\(trimmed.isEmpty ? "검증할 문제" : trimmed)\""
+    }
+
+    private func day1ValidationMethodSentence(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return "방법: 이번 주 확인할 행동을 정한다."
+        }
+        if trimmed.range(of: #"[.!?。！？]$"#, options: .regularExpression) != nil {
+            return "방법: \(trimmed)"
+        }
+        return "방법: \(trimmed)."
     }
 
     private func firstNonEmpty(_ values: [String?], fallback: String) -> String {
@@ -3807,6 +4193,99 @@ final class AgenticViewModel: ObservableObject {
         sidecar.send(payload: ["type": "notion_disconnect"])
     }
 
+    func refreshGitHubCliStatus() {
+        githubCliAuthStatus = .checking()
+        let root = workspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? WorkspaceSettings.resolvedURL().path
+            : workspaceRoot
+        Task { [weak self, root] in
+            let status = await Task.detached(priority: .userInitiated) {
+                Self.detectGitHubCliAuthStatus(workspaceRoot: root)
+            }.value
+            await MainActor.run {
+                self?.githubCliAuthStatus = status
+            }
+        }
+    }
+
+    func openGitHubCliLoginInTerminal() {
+        githubCliAuthStatus = GitHubCLIAuthStatus(
+            state: .disconnected,
+            detail: "Terminal에서 gh auth login을 시작했습니다. 완료 후 상태 확인을 눌러주세요.",
+            checkedAt: Date()
+        )
+        lastError = nil
+
+        let root = workspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? WorkspaceSettings.resolvedURL().path
+            : workspaceRoot
+        let resolvedRoot = root.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? NSHomeDirectory() : root
+        let command = "cd \(Self.shellQuoted(resolvedRoot)); gh auth login"
+        let script = """
+        tell application "Terminal"
+            activate
+            do script \(Self.appleScriptLiteral(command))
+        end tell
+        """
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+
+        do {
+            try process.run()
+            PostHogTelemetry.capture("mac_github_cli_auth_terminal_opened", authSession: macAuthSession)
+        } catch {
+            githubCliAuthStatus = GitHubCLIAuthStatus(
+                state: .disconnected,
+                detail: "gh auth login을 열 수 없습니다: \(error.localizedDescription)",
+                checkedAt: Date()
+            )
+            lastError = githubCliAuthStatus.detail
+            PostHogTelemetry.captureException(error, properties: [
+                "component": "agentic_view_model",
+                "operation": "open_github_cli_auth_terminal",
+            ], authSession: macAuthSession)
+        }
+    }
+
+    func openGitHubCliInstallInTerminal() {
+        githubCliAuthStatus = GitHubCLIAuthStatus(
+            state: .missing,
+            detail: "Terminal에서 GitHub CLI 설치 후 gh auth login을 이어서 실행합니다.",
+            checkedAt: Date()
+        )
+        lastError = nil
+
+        let command = "brew install gh && gh auth login"
+        let script = """
+        tell application "Terminal"
+            activate
+            do script \(Self.appleScriptLiteral(command))
+        end tell
+        """
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+
+        do {
+            try process.run()
+            PostHogTelemetry.capture("mac_github_cli_brew_install_started", authSession: macAuthSession)
+        } catch {
+            githubCliAuthStatus = GitHubCLIAuthStatus(
+                state: .missing,
+                detail: "GitHub CLI 설치 명령을 열 수 없습니다: \(error.localizedDescription)",
+                checkedAt: Date()
+            )
+            lastError = githubCliAuthStatus.detail
+            PostHogTelemetry.captureException(error, properties: [
+                "component": "agentic_view_model",
+                "operation": "open_github_cli_brew_install_terminal",
+            ], authSession: macAuthSession)
+        }
+    }
+
     func startProviderLogin(_ provider: AgentProvider) {
         guard isConnected else { return }
         providerAuthInProgress = provider
@@ -3890,6 +4369,57 @@ final class AgenticViewModel: ObservableObject {
             return process.terminationStatus == 0
         } catch {
             return false
+        }
+    }
+
+    nonisolated static func detectGitHubCliAuthStatus(workspaceRoot: String) -> GitHubCLIAuthStatus {
+        let root = workspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? NSHomeDirectory()
+            : workspaceRoot
+        let result = runLoginShellCommand("cd \(shellQuoted(root)); gh auth status")
+        if result.exitCode == 0 {
+            return GitHubCLIAuthStatus(
+                state: .connected,
+                detail: "gh auth status 통과. History에서 PR/이슈/릴리즈 신호를 읽을 수 있습니다.",
+                checkedAt: Date()
+            )
+        }
+        if result.exitCode == 127 || result.output.localizedCaseInsensitiveContains("command not found") {
+            return GitHubCLIAuthStatus(
+                state: .missing,
+                detail: "gh CLI가 설치되어 있지 않습니다. brew install gh 후 gh auth login을 실행하세요.",
+                checkedAt: Date()
+            )
+        }
+        return GitHubCLIAuthStatus(
+            state: .disconnected,
+            detail: "gh auth login이 필요합니다. 인증 후 History에서 GitHub 활동을 반영합니다.",
+            checkedAt: Date()
+        )
+    }
+
+    nonisolated private static func runLoginShellCommand(_ command: String) -> (exitCode: Int32, output: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-lc", command]
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
+            let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
+            let output = [
+                String(data: stdoutData, encoding: .utf8),
+                String(data: stderrData, encoding: .utf8),
+            ]
+                .compactMap { $0 }
+                .joined(separator: "\n")
+            return (process.terminationStatus, output)
+        } catch {
+            return (-1, error.localizedDescription)
         }
     }
 
@@ -4943,6 +5473,15 @@ final class AgenticViewModel: ObservableObject {
         foundationProgressStore = nil
         restoreFoundationProgress(arguments: CommandLine.arguments)
         workspaceRoot = url.path
+        if let onboardingContext,
+           let memory = try? persistOnboardingMemoryIfPossible(
+            context: onboardingContext,
+            workspaceRoot: url.path,
+            intakeStore: nil,
+            sources: []
+           ) {
+            sendOnboardingMemoryToSidecar(memory)
+        }
         attemptedStartupWorkspaceScanRecoveryRoots.removeAll()
         PostHogTelemetry.capture("mac_project_workspace_selected", properties: [
             "workspace_basename": url.lastPathComponent,
@@ -5047,7 +5586,6 @@ final class AgenticViewModel: ObservableObject {
 
     func resetMacOnboarding() {
         signOutMacAuth()
-        KeychainHelper.deleteOnboardingContext()
         Self.resetMacOnboardingIntroCompleted()
         Self.resetMacOnboardingIntakeOnlyCompleted()
         macOnboardingIntroCompleted = false
@@ -5090,10 +5628,20 @@ final class AgenticViewModel: ObservableObject {
         }
     }
 
-    func submitOnboardingContext(_ context: OnboardingContext) {
+    func submitOnboardingContext(
+        _ context: OnboardingContext,
+        workspaceRoot explicitWorkspaceRoot: String? = nil,
+        intakeStore: IntakeV2Store? = nil,
+        sources: [IntakeSourceState] = []
+    ) {
         onboardingContextStatus = .submitting
         do {
-            try KeychainHelper.saveOnboardingContext(context)
+            let onboardingMemory = try persistOnboardingMemoryIfPossible(
+                context: context,
+                workspaceRoot: explicitWorkspaceRoot,
+                intakeStore: intakeStore,
+                sources: sources
+            )
             IntakeV2Store.clearPersistedDraft()
             onboardingContext = context
             onboardingContextStatus = .idle
@@ -5108,8 +5656,10 @@ final class AgenticViewModel: ObservableObject {
                 "isolation_level": context.isolationLevel.rawValue,
                 "isolation_levels": context.isolationLevels.map(\.rawValue).joined(separator: ","),
             ], authSession: macAuthSession)
-            // Local persistence done. Server sync to /api/profile/onboarding-context is a follow-up.
             sendAuthContextToSidecar()
+            if let onboardingMemory {
+                sendOnboardingMemoryToSidecar(onboardingMemory)
+            }
             if !started, canStartSidecar {
                 hydrateWorkspaceRootFromSettingsIfAvailable()
                 start()
@@ -5121,6 +5671,27 @@ final class AgenticViewModel: ObservableObject {
                 "operation": "submit_onboarding_context",
             ], authSession: macAuthSession)
         }
+    }
+
+    private func persistOnboardingMemoryIfPossible(
+        context: OnboardingContext,
+        workspaceRoot explicitWorkspaceRoot: String?,
+        intakeStore: IntakeV2Store?,
+        sources: [IntakeSourceState]
+    ) throws -> WorkspaceOnboardingMemory? {
+        let explicit = explicitWorkspaceRoot?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let active = workspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines)
+        let stored = WorkspaceSettings.hasExplicitWorkspace ? WorkspaceSettings.resolvedURL().path : ""
+        let root = [explicit, active, stored].first { !$0.isEmpty } ?? ""
+        guard !root.isEmpty else { return nil }
+        let memory = WorkspaceOnboardingMemory.make(
+            context: context,
+            workspaceRoot: root,
+            intakeStore: intakeStore,
+            sources: sources
+        )
+        try WorkspaceMemoryStore.saveOnboardingMemory(memory)
+        return memory
     }
 
     private enum AuthFlow {
@@ -5315,10 +5886,24 @@ final class AgenticViewModel: ObservableObject {
         if let email = session.email {
             payload["email"] = email
         }
-        if let onboardingContext {
-            payload["onboardingContext"] = onboardingContext.bridgePayload
-        }
         sidecar.send(payload: payload)
+    }
+
+    private func sendOnboardingMemoryToSidecarIfAvailable() {
+        let root = workspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? (WorkspaceSettings.hasExplicitWorkspace ? WorkspaceSettings.resolvedURL().path : "")
+            : workspaceRoot
+        guard let memory = WorkspaceMemoryStore.loadOnboardingMemory(workspaceRoot: root) else { return }
+        sendOnboardingMemoryToSidecar(memory)
+    }
+
+    private func sendOnboardingMemoryToSidecar(_ memory: WorkspaceOnboardingMemory) {
+        guard isConnected else { return }
+        sidecar.send(payload: [
+            "type": "onboarding_memory_save",
+            "workspaceRoot": memory.workspaceRoot,
+            "memory": memory.sidecarPayload,
+        ])
     }
 
     private func requestAndScheduleBipNotificationsIfNeeded(for state: BipCoachState) {
@@ -5463,6 +6048,7 @@ final class AgenticViewModel: ObservableObject {
             day1GoalSelection = event.day1GoalSelection
             if let dp = event.dayProgress { dayProgress = dp }
             if let reviews = event.dayReviews { dayReviews = reviews }
+            if let evidence = event.evidenceOS { evidenceOS = evidence }
             workspaceRoot = event.workspaceRoot ?? workspaceRoot
             notionConnected = event.notionConnected ?? false
             connectionLabel = "Connected"
@@ -5478,6 +6064,7 @@ final class AgenticViewModel: ObservableObject {
             }
             recordStartupSessionAppearIfNeeded(source: "ready")
             sendAuthContextToSidecar()
+            sendOnboardingMemoryToSidecarIfAvailable()
             syncProviderSettingsToSidecar()
             flushPendingProjectContextRefreshIfNeeded()
             prepareNewsMarketRadarForDisplay()
@@ -5560,6 +6147,13 @@ final class AgenticViewModel: ObservableObject {
             // here; inject as the seeded assistant opener for the matching
             // session. Idempotent + persistence-safe via deterministic ID.
             handleFoundationFirstPromptEvent(event)
+        case "office_hours_source_gate":
+            if let gate = event.officeHoursSourceGate {
+                officeHoursSourceGate = gate
+                if gate.blocking {
+                    lastError = gate.message
+                }
+            }
         case "office_hours_status":
             applyOfficeHoursLiveStatus(from: event)
             refreshPresentationState()
@@ -5630,6 +6224,7 @@ final class AgenticViewModel: ObservableObject {
             day1GoalSelection = event.day1GoalSelection
             if let dp = event.dayProgress { dayProgress = dp }
             if let reviews = event.dayReviews { dayReviews = reviews }
+            if let evidence = event.evidenceOS { evidenceOS = evidence }
             persistWorkspaceScanResult(event)
             persistWorkspaceScanResultCache(result, root: event.scanRoot)
         case "day1_goal_state":
@@ -5649,6 +6244,8 @@ final class AgenticViewModel: ObservableObject {
             if let dp = event.dayProgress { dayProgress = dp }
             if let reviews = event.dayReviews { dayReviews = reviews }
             if let memory = event.officeHoursMemory { officeHoursMemory = memory }
+            if let history = event.officeHoursHistory { officeHoursHistory = history }
+            if let evidence = event.evidenceOS { evidenceOS = evidence }
             // Interview gate: surface the soft nudge when a close was withheld; clear it on
             // any non-blocked update so it disappears once the founder commits or confesses.
             if event.needsCommitment == true {
@@ -6274,7 +6871,7 @@ final class AgenticViewModel: ObservableObject {
                         ),
                         StructuredPromptOption(
                             label: "30일 커리큘럼 참가자",
-                            description: "초기 설정 문서를 통과해야 다음 Day로 넘어갑니다.",
+                            description: "초기 설정 문서를 통과해야 다음 회차로 넘어갑니다.",
                             preview: nil,
                             nextIntent: "curriculum_day1_user"
                         ),
@@ -6641,15 +7238,29 @@ final class AgenticViewModel: ObservableObject {
         )
         dayReviews = [
             "1": DayReview(
+                schemaVersion: 2,
                 day: 1,
                 status: "build_escape",
-                verdictLabel: "빌드로 도피",
+                verdictLabel: "고객 증거 없이 빌드함",
                 verdictTone: "danger",
-                summary: "AI 작업 75분이 있었지만 고객 하드 증거가 없습니다. 다음 고객 접촉으로 닫아야 합니다.",
+                summary: "AI 작업 75분이 있었지만 확인 가능한 고객 증거가 없습니다. 다음 고객 접촉으로 닫아야 합니다.",
                 customerEvidence: [commitment],
                 commitments: [commitment],
                 nextCommitment: commitment,
                 missing: ["hard_evidence"],
+                goalSnapshot: DayGoalSnapshot(
+                    summary: "전업 1인 개발자에게 macOS 메뉴바 AI 비서의 결제 의향을 검증한다",
+                    customer: "전업 1인 개발자",
+                    problem: "AI 코딩은 많이 하지만 고객 검증과 매출 약속이 사라진다",
+                    validationAction: "장지창에게 결제 의향 DM을 보내고 스크린샷을 붙인다",
+                    source: "day1-goal"
+                ),
+                missingReasons: [
+                    "고객 반응 URL/스크린샷/결제 같은 확인 가능한 증거가 없습니다.",
+                    "Day 1 약속이 Day 2 기준으로 기한을 넘겼습니다."
+                ],
+                carryForwardAction: "오늘 장지창에게 결제 의향 DM을 보내고 screenshot 증거를 붙이기",
+                evidenceDebts: [commitment],
                 work: DayReviewWorkSummary(
                     available: true,
                     date: startedAt,
@@ -6668,6 +7279,33 @@ final class AgenticViewModel: ObservableObject {
                 )
             )
         ]
+        evidenceOS = EvidenceOSSummary(
+            schemaVersion: 1,
+            currentDay: 2,
+            openDebts: [commitment],
+            overdueDebts: [commitment],
+            provenEvidence: [],
+            dayStates: [
+                "1": EvidenceOSDayState(
+                    day: 1,
+                    state: "build_escape",
+                    label: "빌드만 진행",
+                    tone: "danger",
+                    openDebtCount: 1,
+                    provenEvidenceCount: 0,
+                    carryForwardAction: "오늘 장지창에게 결제 의향 DM을 보내고 screenshot 증거를 붙이기"
+                ),
+                "2": EvidenceOSDayState(
+                    day: 2,
+                    state: "in_progress",
+                    label: "진행 중",
+                    tone: "warning",
+                    openDebtCount: 1,
+                    provenEvidenceCount: 0,
+                    carryForwardAction: "Day 1 고객 증거를 먼저 닫기"
+                )
+            ]
+        )
         #endif
     }
 
@@ -6873,7 +7511,8 @@ final class AgenticViewModel: ObservableObject {
                     active: true,
                     source: "ui_testing_running",
                     startedAt: startedAt,
-                    context: "UI test Office Hours running state"
+                    context: "UI test Office Hours running state",
+                    day: 1
                 )
             )
         )
@@ -7437,11 +8076,11 @@ final class AgenticViewModel: ObservableObject {
         ]
     }
 
-    private static func shellQuoted(_ value: String) -> String {
+    nonisolated private static func shellQuoted(_ value: String) -> String {
         "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 
-    private static func appleScriptLiteral(_ value: String) -> String {
+    nonisolated private static func appleScriptLiteral(_ value: String) -> String {
         "\"\(value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\""
     }
 
@@ -8571,7 +9210,7 @@ final class AgenticViewModel: ObservableObject {
             options: [
                 Day1IcpQuestionOption(id: "paid-alternative", label: "첫 대화에서 지불 의향과 대안을 확인한다", description: "다음 시장 신호 확인에서 바로 검증할 수 있습니다. · 근거: docs/GOAL.md", preview: "확인할 행동", antiSignal: false, evidenceLabel: "근거: docs/GOAL.md", evidenceLimited: false),
                 Day1IcpQuestionOption(id: "market-signal", label: "시장 신호로 첫 사용자 획득 행동을 확인한다", description: "채널과 행동이 함께 남습니다. · 근거: docs/SPEC.md", preview: "확인할 행동", antiSignal: false, evidenceLabel: "근거: docs/SPEC.md", evidenceLimited: false),
-                Day1IcpQuestionOption(id: "ship-feature", label: "기능을 더 만든다", description: "고객 결과가 아니라 빌드 도피입니다.", preview: "Anti", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
+                Day1IcpQuestionOption(id: "ship-feature", label: "기능을 더 만든다", description: "고객 검증 없이 빌드하는 선택입니다.", preview: "Anti", antiSignal: true, evidenceLabel: "근거 부족", evidenceLimited: true),
             ]
         )
         let projectGoal = "30일 안에 사용자 100명과 첫 매출 가능성을 검증한다"
@@ -9215,6 +9854,7 @@ private extension AgenticViewModel {
         startupSessionAppearElapsedMs = nil
         reviewDayDashboardViewModel = nil
         newsMarketRadar = .empty
+        githubCliAuthStatus = .unknown
         foundationStartedAt = nil
         foundationProgressState = FoundationProgressSnapshot(workspaceRoot: WorkspaceSettings.resolvedURL().path)
         notionConnected = false
@@ -9537,6 +10177,8 @@ struct SidecarEvent: Decodable {
     let dayProgress: DayProgress?
     let dayReviews: [String: DayReview]?
     let officeHoursMemory: OfficeHoursMemorySummary?
+    let officeHoursHistory: OfficeHoursHistorySummary?
+    let evidenceOS: EvidenceOSSummary?
     // Interview-gate block fields (day_progress_state): when the founder tries to close a
     // gated interview step without naming a next customer action, the sidecar withholds the
     // patch and sends needsCommitment=true + a soft `message`. `message` is shared (declared
@@ -9591,6 +10233,7 @@ struct SidecarEvent: Decodable {
     let bipResearchStatus: BipResearchStatus?
     let workHistory: WorkHistorySnapshot?
     let workHistoryStatus: WorkHistoryStatus?
+    let officeHoursSourceGate: OfficeHoursSourceGate?
 
     init(
         type: String,
@@ -9642,6 +10285,8 @@ struct SidecarEvent: Decodable {
         dayProgress: DayProgress? = nil,
         dayReviews: [String: DayReview]? = nil,
         officeHoursMemory: OfficeHoursMemorySummary? = nil,
+        officeHoursHistory: OfficeHoursHistorySummary? = nil,
+        evidenceOS: EvidenceOSSummary? = nil,
         needsCommitment: Bool? = nil,
         gatedStep: String? = nil,
         error: String?,
@@ -9682,7 +10327,8 @@ struct SidecarEvent: Decodable {
         bipResearch: BipResearchSnapshot? = nil,
         bipResearchStatus: BipResearchStatus? = nil,
         workHistory: WorkHistorySnapshot? = nil,
-        workHistoryStatus: WorkHistoryStatus? = nil
+        workHistoryStatus: WorkHistoryStatus? = nil,
+        officeHoursSourceGate: OfficeHoursSourceGate? = nil
     ) {
         self.type = type
         self.title = title
@@ -9733,6 +10379,8 @@ struct SidecarEvent: Decodable {
         self.dayProgress = dayProgress
         self.dayReviews = dayReviews
         self.officeHoursMemory = officeHoursMemory
+        self.officeHoursHistory = officeHoursHistory
+        self.evidenceOS = evidenceOS
         self.needsCommitment = needsCommitment
         self.gatedStep = gatedStep
         self.error = error
@@ -9774,6 +10422,7 @@ struct SidecarEvent: Decodable {
         self.bipResearchStatus = bipResearchStatus
         self.workHistory = workHistory
         self.workHistoryStatus = workHistoryStatus
+        self.officeHoursSourceGate = officeHoursSourceGate
     }
 
     var bipMissionProgress: BipMissionProgress? {
@@ -10112,6 +10761,8 @@ extension SidecarEvent {
         case dayProgress
         case dayReviews
         case officeHoursMemory
+        case officeHoursHistory
+        case evidenceOS
         case needsCommitment
         case gatedStep
         case error
@@ -10159,6 +10810,7 @@ extension SidecarEvent {
         case newsMarketRadar
         case bipResearch
         case workHistory
+        case officeHoursSourceGate
     }
 
     init(from decoder: Decoder) throws {
@@ -10213,6 +10865,8 @@ extension SidecarEvent {
         dayProgress = Self.decodeIfPresent(DayProgress.self, from: container, forKey: .dayProgress)
         dayReviews = Self.decodeIfPresent([String: DayReview].self, from: container, forKey: .dayReviews)
         officeHoursMemory = Self.decodeIfPresent(OfficeHoursMemorySummary.self, from: container, forKey: .officeHoursMemory)
+        officeHoursHistory = Self.decodeIfPresent(OfficeHoursHistorySummary.self, from: container, forKey: .officeHoursHistory)
+        evidenceOS = Self.decodeIfPresent(EvidenceOSSummary.self, from: container, forKey: .evidenceOS)
         needsCommitment = Self.decodeIfPresent(Bool.self, from: container, forKey: .needsCommitment)
         gatedStep = Self.decodeIfPresent(String.self, from: container, forKey: .gatedStep)
 
@@ -10267,6 +10921,7 @@ extension SidecarEvent {
         bipResearchStatus = Self.decodeIfPresent(BipResearchStatus.self, from: container, forKey: .status)
         workHistory = Self.decodeIfPresent(WorkHistorySnapshot.self, from: container, forKey: .workHistory)
         workHistoryStatus = Self.decodeIfPresent(WorkHistoryStatus.self, from: container, forKey: .status)
+        officeHoursSourceGate = Self.decodeIfPresent(OfficeHoursSourceGate.self, from: container, forKey: .officeHoursSourceGate)
     }
 
     private static func decodeIfPresent<T: Decodable>(

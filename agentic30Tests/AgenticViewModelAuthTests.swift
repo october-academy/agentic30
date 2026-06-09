@@ -81,25 +81,6 @@ private final class FakeSidecarTransport: SidecarTransport {
 
 @Suite(.serialized)
 struct AgenticViewModelAuthTests {
-    @Test @MainActor func onboardingContextMigratesLegacySoloAllValue() throws {
-        let payload = """
-        {
-          "role": "developer",
-          "project_stage": "building",
-          "isolation_level": "solo_all",
-          "completed_at": "2026-05-08T00:00:00Z"
-        }
-        """.data(using: .utf8)!
-
-        let context = try JSONDecoder().decode(OnboardingContext.self, from: payload)
-
-        #expect(context.workMode == .fullTimeSolo)
-        #expect(context.role == .developer)
-        #expect(context.projectStage == .building)
-        #expect(context.isolationLevel == .projectFolder)
-        #expect(context.isolationLevels == [.projectFolder])
-    }
-
     @Test @MainActor func onboardingContextDecodesCurrentPayloadWithoutWorkMode() throws {
         let payload = """
         {
@@ -163,29 +144,22 @@ struct AgenticViewModelAuthTests {
     @Test @MainActor func submitOnboardingContextPersistsCanonicalContextAndClearsDraftOnly() throws {
         let productionLegacyProvider = WorkspaceSettings.legacyWorkspaceProvider
         WorkspaceSettings.legacyWorkspaceProvider = { "" }
-        KeychainHelper.deleteOnboardingContext()
         UserDefaults.standard.removeObject(forKey: IntakeV2Store.stateDefaultsKey)
-        UserDefaults.standard.removeObject(forKey: IntakeV2Store.legacyStateDefaultsKey)
         UserDefaults.standard.removeObject(forKey: IntakeV2SourceManager.sourcesDefaultsKey)
-        UserDefaults.standard.removeObject(forKey: IntakeV2SourceManager.legacySourcesDefaultsKey)
         WorkspaceSettings.clear()
 
         let workspace = FileManager.default.temporaryDirectory
             .appendingPathComponent("agentic30-submit-context-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         defer {
-            KeychainHelper.deleteOnboardingContext()
             UserDefaults.standard.removeObject(forKey: IntakeV2Store.stateDefaultsKey)
-            UserDefaults.standard.removeObject(forKey: IntakeV2Store.legacyStateDefaultsKey)
             UserDefaults.standard.removeObject(forKey: IntakeV2SourceManager.sourcesDefaultsKey)
-            UserDefaults.standard.removeObject(forKey: IntakeV2SourceManager.legacySourcesDefaultsKey)
             WorkspaceSettings.clear()
             WorkspaceSettings.legacyWorkspaceProvider = productionLegacyProvider
             try? FileManager.default.removeItem(at: workspace)
         }
 
         UserDefaults.standard.set(Data([0x01]), forKey: IntakeV2Store.stateDefaultsKey)
-        UserDefaults.standard.set(Data([0x02]), forKey: IntakeV2Store.legacyStateDefaultsKey)
         UserDefaults.standard.set(Data([0x03]), forKey: IntakeV2SourceManager.sourcesDefaultsKey)
         WorkspaceSettings.store(workspace)
 
@@ -205,10 +179,13 @@ struct AgenticViewModelAuthTests {
 
         viewModel.submitOnboardingContext(context)
 
-        let persisted = try #require(KeychainHelper.loadOnboardingContext())
-        #expect(persisted == context)
+        let persisted = try #require(WorkspaceMemoryStore.loadOnboardingMemory(workspaceRoot: workspace.path))
+        #expect(persisted.onboardingContext == context)
+        #expect(persisted.projectPath == workspace.path)
+        #expect(persisted.answers.primaryRole.answer == "product_manager")
+        #expect(persisted.answers.timeBudget.answer == "하루 1~2시간")
+        #expect(persisted.readSources.contains(where: { $0.id == "local_folder" }))
         #expect(UserDefaults.standard.data(forKey: IntakeV2Store.stateDefaultsKey) == nil)
-        #expect(UserDefaults.standard.data(forKey: IntakeV2Store.legacyStateDefaultsKey) == nil)
         #expect(UserDefaults.standard.data(forKey: IntakeV2SourceManager.sourcesDefaultsKey) == Data([0x03]))
         #expect(WorkspaceSettings.resolvedURL().path == workspace.path)
     }
@@ -892,11 +869,9 @@ struct AgenticViewModelAuthTests {
         let productionLegacyProvider = WorkspaceSettings.legacyWorkspaceProvider
         WorkspaceSettings.legacyWorkspaceProvider = { "" }
         WorkspaceSettings.clear()
-        KeychainHelper.deleteOnboardingContext()
         defer {
             WorkspaceSettings.clear()
             WorkspaceSettings.legacyWorkspaceProvider = productionLegacyProvider
-            KeychainHelper.deleteOnboardingContext()
         }
 
         let sidecar = FakeSidecarTransport(workspaceRoot: "")
@@ -928,14 +903,12 @@ struct AgenticViewModelAuthTests {
         let productionLegacyProvider = WorkspaceSettings.legacyWorkspaceProvider
         WorkspaceSettings.legacyWorkspaceProvider = { "" }
         WorkspaceSettings.clear()
-        KeychainHelper.deleteOnboardingContext()
         let workspaceURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("agentic30-intake-only-upgrade-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
         defer {
             WorkspaceSettings.clear()
             WorkspaceSettings.legacyWorkspaceProvider = productionLegacyProvider
-            KeychainHelper.deleteOnboardingContext()
             try? FileManager.default.removeItem(at: workspaceURL)
         }
 
@@ -1032,7 +1005,7 @@ struct AgenticViewModelAuthTests {
                 "Starting workspace scan...",
                 "Found 3 local candidate(s). Asking agents to verify context...",
                 "Claude Sonnet 4.6 (claude-sonnet-4-6): using Read: docs/ICP.md docs/SPEC.md docs/GOAL.md",
-                "GPT 5.4 Mini (gpt-5.4-mini): this is a long provider summary that should not leak raw debug text into onboarding"
+                "GPT 5.1 Codex Mini (gpt-5.1-codex-mini): this is a long provider summary that should not leak raw debug text into onboarding"
             ],
             scanDidComplete: true,
             scanError: nil,
@@ -1054,7 +1027,7 @@ struct AgenticViewModelAuthTests {
         #expect(state.lines[4].status == "✓ 3 artifacts verified")
         #expect(!state.lines.contains { $0.status == "Preparing workspace scan..." })
         #expect(!state.lines.contains { $0.status?.contains("Claude Sonnet") == true })
-        #expect(!state.lines.contains { $0.status?.contains("gpt-5.4-mini") == true })
+        #expect(!state.lines.contains { $0.status?.contains("gpt-5.1-codex-mini") == true })
         #expect(state.scanDidComplete)
         #expect(!state.scanDidFail)
     }
@@ -1545,6 +1518,59 @@ struct AgenticViewModelAuthTests {
         #expect(payload["context"] as? String == "real project context")
     }
 
+    @Test @MainActor func officeHoursStartSendsDayScopedPayload() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 2
+        )
+        sidecar.resetSentPayloads()
+
+        let sent = viewModel.startOfficeHours(
+            sessionID: "session-day-2",
+            context: "Day 2 context",
+            source: "office_hours_day_2",
+            day: 2
+        )
+
+        #expect(sent)
+        let payload = try #require(sidecar.sentPayloads.first)
+        #expect(payload["type"] as? String == "office_hours_start")
+        #expect(payload["sessionId"] as? String == "session-day-2")
+        #expect(payload["source"] as? String == "office_hours_day_2")
+        #expect(payload["day"] as? Int == 2)
+        #expect(payload["context"] as? String == "Day 2 context")
+    }
+
+    @Test @MainActor func officeHoursStartSendsSelectedSourcesPayload() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 2
+        )
+        sidecar.resetSentPayloads()
+
+        let sent = viewModel.startOfficeHours(
+            sessionID: "session-day-2",
+            context: "Day 2 context",
+            source: "office_hours_day_2",
+            day: 2,
+            selectedSources: ["posthog", "github", "cloudflare"]
+        )
+
+        #expect(sent)
+        let payload = try #require(sidecar.sentPayloads.first)
+        #expect(payload["type"] as? String == "office_hours_start")
+        #expect(payload["day"] as? Int == 2)
+        #expect(payload["selectedSources"] as? [String] == ["cloudflare", "github", "posthog"])
+    }
+
     @Test @MainActor func day1GoalDraftsSaveThroughSidecarPayload() async throws {
         let (workspace, cleanup) = try Self.installTemporaryWorkspace()
         defer { cleanup() }
@@ -1683,6 +1709,26 @@ struct AgenticViewModelAuthTests {
         #expect(payload["suppressBootstrapIntake"] as? Bool == true)
     }
 
+    @Test @MainActor func officeHoursStepEnsureSessionCreatesDayScopedSession() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 2
+        )
+
+        let hasSession = viewModel.ensureOfficeHoursSession(forDay: 2)
+
+        #expect(!hasSession)
+        let payload = try #require(sidecar.sentPayloads.first)
+        #expect(payload["type"] as? String == "create_session")
+        #expect(payload["source"] as? String == "office_hours_screen_day_2")
+        #expect(payload["officeHoursDay"] as? Int == 2)
+        #expect(payload["suppressBootstrapIntake"] as? Bool == true)
+    }
+
     @Test @MainActor func officeHoursStepRejectsBootstrapIntakeSession() throws {
         let (workspace, cleanup) = try Self.installTemporaryWorkspace()
         defer { cleanup() }
@@ -1809,7 +1855,8 @@ struct AgenticViewModelAuthTests {
                     active: true,
                     source: "office_hours_screen",
                     startedAt: "2026-06-03T00:00:00.000Z",
-                    context: "real context"
+                    context: "real context",
+                    day: 1
                 )
             )
         )

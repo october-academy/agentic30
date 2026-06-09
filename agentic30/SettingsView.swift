@@ -88,6 +88,16 @@ struct SettingsView: View {
     @State private var codexEnvironment = ""
     @State private var geminiEnvironment = ""
     @State private var exaApiKey = ""
+    @State private var cloudflareApiToken = ""
+    @State private var cloudflareMcpURL = KeychainHelper.Settings.defaultCloudflareMcpURL
+    @State private var cloudflareMcpCodemode = KeychainHelper.Settings.defaultCloudflareMcpCodemode
+    @State private var posthogApiKey = ""
+    @State private var posthogProjectAPIKey = ""
+    @State private var posthogHost = ""
+    @State private var posthogMcpURL = KeychainHelper.Settings.defaultPostHogMcpURL
+    @State private var posthogMcpRegion = KeychainHelper.Settings.defaultPostHogMcpRegion
+    @State private var posthogMcpReadonly = true
+    @State private var posthogMcpFeatures = KeychainHelper.Settings.defaultPostHogMcpFeatures
 
     // MARK: - Workspace State
 
@@ -790,12 +800,6 @@ struct SettingsView: View {
             odProviderCard(provider: .gemini, authMode: $geminiAuthMode, apiKey: $geminiApiKey, environment: $geminiEnvironment, modelSelection: $geminiModelID)
 
             odNodeRuntimeCard
-
-            odSettingsRowsCard {
-                odSettingsRow(title: "Exa Research", detail: "뉴스 시장 리서치 예비 키입니다. AI 연결의 웹 검색 도구가 없을 때만 사용합니다.", stacked: true) {
-                    secureAgentField(label: "EXA_API_KEY", placeholder: "exa_...", text: $exaApiKey, identifier: "settings.exa.apiKeyField")
-                }
-            }
         }
     }
 
@@ -868,7 +872,29 @@ struct SettingsView: View {
     private var odIntegrationsSection: some View {
         odSettingsSection(id: "integrations", title: "연동") {
             odSettingsRowsCard {
-                odSettingsRow(title: "Notion", detail: "SPEC.md / ICP.md / VALUES.md 변경분을 지정한 페이지로 양방향 동기화.") {
+                odSettingsRow(title: "GitHub", detail: githubCliDetailText, iconName: "BrandGitHub") {
+                    HStack(spacing: 8) {
+                        odSettingsStatus(githubCliStatusLabel, color: githubCliStatusColor)
+                        odSettingsGhostButton(
+                            title: "상태 확인",
+                            systemImage: "arrow.clockwise",
+                            width: 88,
+                            identifier: "settings.github.refreshStatusButton",
+                            isDisabled: viewModel.githubCliAuthStatus.state == .checking
+                        ) {
+                            viewModel.refreshGitHubCliStatus()
+                        }
+                        odSettingsGhostButton(
+                            title: githubCliActionTitle,
+                            systemImage: "terminal",
+                            width: 92,
+                            identifier: "settings.github.openAuthButton"
+                        ) {
+                            beginGitHubCliAuth()
+                        }
+                    }
+                }
+                odSettingsRow(title: "Notion", detail: "SPEC.md / ICP.md / VALUES.md 변경분을 지정한 페이지로 양방향 동기화.", iconName: "BrandNotion") {
                     HStack(spacing: 8) {
                         odSettingsStatus(viewModel.notionConnected ? "연결됨" : "연결 안 됨", color: viewModel.notionConnected ? settingsAccentColor : settingsSubtleText)
                         odSettingsGhostButton(title: viewModel.notionConnected ? "해제" : "OAuth 연결", width: 96) {
@@ -880,8 +906,168 @@ struct SettingsView: View {
                         }
                     }
                 }
+                odSettingsRow(title: "Cloudflare", detail: "Cloudflare MCP 연동입니다. Workers, R2, DNS 같은 Cloudflare API 도구를 AI 실행에서 사용할 때 씁니다.", iconName: "BrandCloudflare", stacked: true) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            odSettingsStatus(cloudflareMcpStatusLabel, color: cloudflareMcpStatusColor)
+                            Text("Codemode")
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(settingsSubtleText)
+                            odSettingsToggle(isOn: $cloudflareMcpCodemode)
+                        }
+                        secureAgentField(label: "CLOUDFLARE_API_TOKEN", placeholder: "Cloudflare API token", text: $cloudflareApiToken, identifier: "settings.cloudflare.apiTokenField")
+                        plainAgentField(label: "CLOUDFLARE_MCP_URL", placeholder: KeychainHelper.Settings.defaultCloudflareMcpURL, text: $cloudflareMcpURL, identifier: "settings.cloudflare.mcpUrlField")
+                    }
+                }
+                odSettingsRow(title: "Exa Research", detail: "뉴스·시장 리서치 예비 키입니다. AI 프로바이더의 웹 검색 도구가 없을 때만 사용합니다.", iconName: "BrandExa", stacked: true) {
+                    secureAgentField(label: "EXA_API_KEY", placeholder: "exa_...", text: $exaApiKey, identifier: "settings.exa.apiKeyField")
+                }
+                odSettingsRow(title: "PostHog", detail: "PostHog MCP 연동입니다. phx_ 또는 pha_ personal API key로 HogQL, insights, web analytics 도구를 읽습니다.", iconName: "BrandPostHog", stacked: true) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            odSettingsStatus(posthogMcpStatusLabel, color: posthogMcpStatusColor)
+                            odSettingsSegmented(values: ["US", "EU"], selection: posthogMcpRegionSelection)
+                            Text("Readonly")
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(settingsSubtleText)
+                            odSettingsToggle(isOn: $posthogMcpReadonly)
+                        }
+                        secureAgentField(label: "POSTHOG_MCP_API_KEY", placeholder: "phx_... 또는 pha_...", text: $posthogApiKey, identifier: "settings.posthog.apiKeyField")
+                        plainAgentField(label: "POSTHOG_PROJECT_API_KEY", placeholder: "phc_... (선택)", text: $posthogProjectAPIKey, identifier: "settings.posthog.projectApiKeyField")
+                        plainAgentField(label: "POSTHOG_HOST", placeholder: "https://us.posthog.com", text: $posthogHost, identifier: "settings.posthog.hostField")
+                        plainAgentField(label: "POSTHOG_MCP_URL", placeholder: KeychainHelper.Settings.defaultPostHogMcpURL, text: $posthogMcpURL, identifier: "settings.posthog.mcpUrlField")
+                        plainAgentField(label: "POSTHOG_MCP_FEATURES", placeholder: KeychainHelper.Settings.defaultPostHogMcpFeatures, text: $posthogMcpFeatures, identifier: "settings.posthog.mcpFeaturesField")
+                    }
+                }
             }
         }
+    }
+
+    private var githubCliStatusLabel: String {
+        switch viewModel.githubCliAuthStatus.state {
+        case .unknown:
+            return "확인 전"
+        case .checking:
+            return "확인 중"
+        case .connected:
+            return "연결됨"
+        case .disconnected:
+            return "로그인 필요"
+        case .missing:
+            return "gh 없음"
+        }
+    }
+
+    private var githubCliStatusColor: Color {
+        switch viewModel.githubCliAuthStatus.state {
+        case .connected:
+            return settingsAccentColor
+        case .disconnected, .missing:
+            return OpenDesignDayColor.amber
+        case .unknown, .checking:
+            return settingsSubtleText
+        }
+    }
+
+    private var githubCliActionTitle: String {
+        switch viewModel.githubCliAuthStatus.state {
+        case .connected:
+            return "다시 로그인"
+        case .missing:
+            return "설치"
+        default:
+            return "gh 로그인"
+        }
+    }
+
+    private var githubCliDetailText: String {
+        let detail = viewModel.githubCliAuthStatus.detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        return detail.isEmpty
+            ? "gh CLI 인증으로 PR / 이슈 / 릴리즈 활동을 읽어 History에 반영합니다."
+            : detail
+    }
+
+    private var cloudflareMcpStatusLabel: String {
+        cloudflareApiToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "토큰 없음"
+            : "토큰 설정됨"
+    }
+
+    private var cloudflareMcpStatusColor: Color {
+        cloudflareApiToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? settingsSubtleText
+            : settingsAccentColor
+    }
+
+    private var posthogMcpStatusLabel: String {
+        let apiKey = posthogApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isValidPostHogMcpAPIKey(apiKey) {
+            return "MCP 설정됨"
+        }
+        if apiKey.hasPrefix("phc_") {
+            return "Personal key 필요"
+        }
+        let projectKey = posthogProjectAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if projectKey.hasPrefix("phc_") {
+            return "Project key만"
+        }
+        return "미설정"
+    }
+
+    private var posthogMcpStatusColor: Color {
+        let apiKey = posthogApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isValidPostHogMcpAPIKey(apiKey) {
+            return settingsAccentColor
+        }
+        if apiKey.hasPrefix("phc_")
+            || posthogProjectAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("phc_") {
+            return OpenDesignDayColor.amber
+        }
+        return settingsSubtleText
+    }
+
+    private var posthogMcpRegionSelection: Binding<String> {
+        Binding(
+            get: { posthogMcpRegion == "eu" ? "EU" : "US" },
+            set: { updatePostHogMcpRegion($0) }
+        )
+    }
+
+    private func updatePostHogMcpRegion(_ value: String) {
+        let previousRegion = posthogMcpRegion
+        let previousDefaultURL = posthogDefaultMcpURL(for: previousRegion)
+        let nextRegion = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "eu" ? "eu" : "us"
+        posthogMcpRegion = nextRegion
+        let currentURL = posthogMcpURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if currentURL.isEmpty
+            || currentURL == previousDefaultURL
+            || currentURL == KeychainHelper.Settings.defaultPostHogMcpURL
+            || currentURL == KeychainHelper.Settings.defaultPostHogEuMcpURL {
+            posthogMcpURL = posthogDefaultMcpURL(for: nextRegion)
+        }
+    }
+
+    private func posthogDefaultMcpURL(for region: String) -> String {
+        region.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "eu"
+            ? KeychainHelper.Settings.defaultPostHogEuMcpURL
+            : KeychainHelper.Settings.defaultPostHogMcpURL
+    }
+
+    private func isValidPostHogMcpAPIKey(_ value: String) -> Bool {
+        value.hasPrefix("phx_") || value.hasPrefix("pha_")
+    }
+
+    private func beginGitHubCliAuth() {
+        if viewModel.githubCliAuthStatus.state == .missing {
+            Task { @MainActor in
+                let brewAvailable = await Task.detached(priority: .userInitiated) {
+                    AgenticViewModel.detectBrewAvailable()
+                }.value
+                presentGitHubCliMissingAlert(brewAvailable: brewAvailable)
+            }
+            return
+        }
+        viewModel.openGitHubCliLoginInTerminal()
     }
 
     private var odPrivacySection: some View {
@@ -1031,12 +1217,13 @@ struct SettingsView: View {
     private func odSettingsRow<Trailing: View>(
         title: String,
         detail: String,
+        iconName: String? = nil,
         stacked: Bool = false,
         @ViewBuilder trailing: () -> Trailing
     ) -> some View {
         if stacked {
             VStack(alignment: .leading, spacing: 10) {
-                odSettingsRowCopy(title: title, detail: detail)
+                odSettingsRowHeader(title: title, detail: detail, iconName: iconName)
                 trailing()
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -1045,7 +1232,8 @@ struct SettingsView: View {
             .overlay(Rectangle().fill(settingsHairline).frame(height: 1), alignment: .bottom)
         } else {
             HStack(alignment: .center, spacing: 16) {
-                odSettingsRowCopy(title: title, detail: detail)
+                odSettingsRowHeader(title: title, detail: detail, iconName: iconName)
+                    .layoutPriority(1)
 
                 Spacer(minLength: 12)
 
@@ -1055,6 +1243,43 @@ struct SettingsView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .overlay(Rectangle().fill(settingsHairline).frame(height: 1), alignment: .bottom)
+        }
+    }
+
+    private func odSettingsRowHeader(title: String, detail: String, iconName: String?) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            if let iconName {
+                odSettingsBrandIcon(iconName, accessibilityLabel: title)
+                    .padding(.top, 1)
+            }
+
+            odSettingsRowCopy(title: title, detail: detail)
+        }
+        .frame(minWidth: 0, alignment: .leading)
+    }
+
+    private func odSettingsBrandIcon(_ imageName: String, accessibilityLabel: String) -> some View {
+        let iconSize = odSettingsBrandIconSize(for: imageName)
+
+        return Image(imageName)
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            .frame(width: iconSize.width, height: iconSize.height)
+            .frame(width: 36, height: 36)
+            .background(settingsRounded(fill: OpenDesignDayColor.surface2, stroke: settingsHairline, radius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .accessibilityLabel(Text(accessibilityLabel))
+    }
+
+    private func odSettingsBrandIconSize(for imageName: String) -> CGSize {
+        switch imageName {
+        case "BrandCloudflare", "BrandPostHog":
+            return CGSize(width: 34, height: 34)
+        case "BrandExa":
+            return CGSize(width: 25, height: 25)
+        default:
+            return CGSize(width: 30, height: 30)
         }
     }
 
@@ -1313,7 +1538,6 @@ struct SettingsView: View {
                     Text(odProviderDisplayTitle(provider))
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(settingsText)
-                        .accessibilityIdentifier("settings.\(provider.rawValue).apiKeyField")
                     Text(odProviderSubtitle(provider))
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
                         .foregroundStyle(settingsSubtleText)
@@ -1344,11 +1568,17 @@ struct SettingsView: View {
 
             VStack(spacing: 0) {
                 odProviderGridRow(label: "인증") {
-                    odProviderAuthRow(provider: provider, mode: mode, status: status, authMode: authMode)
+                    odProviderAuthRow(provider: provider, mode: mode, status: status)
                 }
 
-                odProviderGridRow(label: "API 키 폴백", identifier: "settings.\(provider.rawValue).apiKeyField") {
-                    odProviderApiFallbackRow(provider: provider, apiKey: apiKey)
+                odProviderGridRow(label: "선택") {
+                    odProviderAuthSelectionRow(provider: provider, authMode: authMode)
+                }
+
+                if mode == .apiKey {
+                    odProviderGridRow(label: "API 키 폴백", identifier: "settings.\(provider.rawValue).apiKeyField") {
+                        odProviderApiFallbackRow(provider: provider, apiKey: apiKey)
+                    }
                 }
 
                 if mode != .local && mode != .apiKey {
@@ -1449,8 +1679,7 @@ struct SettingsView: View {
     private func odProviderAuthRow(
         provider: AgentProvider,
         mode: AgentAuthMode,
-        status: SidecarProviderEnvironment?,
-        authMode: Binding<String>
+        status: SidecarProviderEnvironment?
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 12) {
@@ -1473,11 +1702,9 @@ struct SettingsView: View {
                         .foregroundStyle(settingsSubtleText)
                         .lineLimit(1)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 Spacer(minLength: 12)
-
-                authModeMenu(provider: provider, selection: authMode)
-                    .frame(width: 238)
 
                 if mode == .local {
                     odProviderAuthActionButton(provider: provider, connected: status?.available == true)
@@ -1501,6 +1728,18 @@ struct SettingsView: View {
                         .foregroundStyle(settingsSubtleText)
                 }
             }
+        }
+    }
+
+    private func odProviderAuthSelectionRow(
+        provider: AgentProvider,
+        authMode: Binding<String>
+    ) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            authModeMenu(provider: provider, selection: authMode)
+                .frame(minWidth: 260, idealWidth: 360, maxWidth: 420, alignment: .leading)
+
+            Spacer(minLength: 0)
         }
     }
 
@@ -2002,6 +2241,48 @@ struct SettingsView: View {
         }
     }
 
+    @MainActor
+    private func presentGitHubCliMissingAlert(brewAvailable: Bool) {
+        let alert = NSAlert()
+        alert.messageText = "GitHub CLI가 설치되어 있지 않습니다"
+        alert.informativeText = """
+        Agentic30의 GitHub 연동은 별도 토큰을 저장하지 않고 로컬 gh CLI 인증을 사용합니다.
+
+        설치 후 `gh auth login`을 완료하면 History에서 PR, 이슈, 릴리즈 활동을 읽을 수 있습니다.
+        """
+        alert.alertStyle = .informational
+        if brewAvailable {
+            alert.addButton(withTitle: "Terminal에서 brew로 설치")
+        }
+        alert.addButton(withTitle: "GitHub CLI 설치 페이지 열기")
+        alert.addButton(withTitle: "취소")
+
+        let response = alert.runModal()
+        let openInstallPageURL: () -> Void = {
+            if let url = URL(string: "https://cli.github.com/") {
+                NSWorkspace.shared.open(url)
+            }
+        }
+
+        if brewAvailable {
+            switch response {
+            case .alertFirstButtonReturn:
+                viewModel.openGitHubCliInstallInTerminal()
+            case .alertSecondButtonReturn:
+                openInstallPageURL()
+            default:
+                break
+            }
+        } else {
+            switch response {
+            case .alertFirstButtonReturn:
+                openInstallPageURL()
+            default:
+                break
+            }
+        }
+    }
+
     private func apiKeyLabel(_ provider: AgentProvider) -> String {
         switch provider {
         case .claude:
@@ -2049,6 +2330,29 @@ struct SettingsView: View {
                 .textCase(.uppercase)
                 .foregroundStyle(settingsSubtleText)
             SecureField(placeholder, text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(settingsText)
+                .padding(.horizontal, 12)
+                .frame(height: 34)
+                .background(fieldBackground)
+                .accessibilityIdentifier(identifier)
+        }
+        .accessibilityIdentifier(identifier)
+    }
+
+    private func plainAgentField(
+        label: String,
+        placeholder: String,
+        text: Binding<String>,
+        identifier: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .textCase(.uppercase)
+                .foregroundStyle(settingsSubtleText)
+            TextField(placeholder, text: text)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13.5, weight: .medium, design: .monospaced))
                 .foregroundStyle(settingsText)
@@ -2266,6 +2570,16 @@ struct SettingsView: View {
         s.codexEnvironment = codexEnvironment
         s.geminiEnvironment = geminiEnvironment
         s.exaApiKey = exaApiKey
+        s.cloudflareApiToken = cloudflareApiToken
+        s.cloudflareMcpURL = cloudflareMcpURL
+        s.cloudflareMcpCodemode = cloudflareMcpCodemode
+        s.posthogApiKey = posthogApiKey
+        s.posthogProjectAPIKey = posthogProjectAPIKey
+        s.posthogHost = posthogHost
+        s.posthogMcpURL = posthogMcpURL
+        s.posthogMcpRegion = posthogMcpRegion
+        s.posthogMcpReadonly = posthogMcpReadonly
+        s.posthogMcpFeatures = posthogMcpFeatures
         s.bipWorkspaceRoot = workspaceRootPath
         return s
     }
@@ -2301,6 +2615,16 @@ struct SettingsView: View {
         codexEnvironment = s.codexEnvironment
         geminiEnvironment = s.geminiEnvironment
         exaApiKey = s.exaApiKey
+        cloudflareApiToken = s.cloudflareApiToken
+        cloudflareMcpURL = s.cloudflareMcpURL
+        cloudflareMcpCodemode = s.cloudflareMcpCodemode
+        posthogApiKey = s.posthogApiKey
+        posthogProjectAPIKey = s.posthogProjectAPIKey
+        posthogHost = s.posthogHost
+        posthogMcpURL = s.posthogMcpURL
+        posthogMcpRegion = s.posthogMcpRegion
+        posthogMcpReadonly = s.posthogMcpReadonly
+        posthogMcpFeatures = s.posthogMcpFeatures
         #if DEBUG
         if environment["AGENTIC30_UI_TEST_SETTINGS_CLAUDE_MODEL"] != nil
             || environment["AGENTIC30_UI_TEST_SETTINGS_CODEX_MODEL"] != nil
@@ -2330,6 +2654,7 @@ struct SettingsView: View {
         applySettings(settings)
         workspaceRootPath = WorkspaceSettings.displayPath(legacyFallback: settings.bipWorkspaceRoot)
         viewModel.syncProviderSettingsToSidecar(settings)
+        viewModel.refreshGitHubCliStatus()
     }
 
     private func syncWorkspaceRoot(_ root: String) {

@@ -6,12 +6,9 @@ enum KeychainHelper {
     private static let service = "com.agentic30"
     private static let settingsAccount = "com.agentic30.all-settings"
     private static let macAuthAccount = "com.agentic30.mac-auth"
-    private static let onboardingContextAccount = "com.agentic30.onboarding-context"
     private static var cachedSettings: Settings?
     private static var cachedMacAuthSession: MacAuthSession?
     private static var didLoadMacAuthSession = false
-    private static var cachedOnboardingContext: OnboardingContext?
-    private static var didLoadOnboardingContext = false
 
     /// DEBUG builds bypass macOS Keychain entirely so that ad-hoc-signed dev runs
     /// stop prompting for a login password on every launch. RELEASE builds keep
@@ -32,7 +29,6 @@ enum KeychainHelper {
     private struct DevSecretsBlob: Codable {
         var settings: Settings?
         var macAuth: MacAuthSession?
-        var onboarding: OnboardingContext?
     }
 
     private static var devSecretsURL: URL {
@@ -69,13 +65,17 @@ enum KeychainHelper {
     // MARK: - Single-Blob Settings
 
     struct Settings: Codable {
-        static let currentSchemaVersion = 8
+        static let currentSchemaVersion = 10
         static let legacyDefaultCodexModelID = "gpt-5.4"
+        static let previousDefaultCodexModelID = "gpt-5.2-codex"
         static let legacyDefaultGeminiModelID = "gemini-3.1-pro-preview"
+        static let previousDefaultGeminiModelID = "gemini-3-pro-preview"
         static let defaultPostHogMcpURL = "https://mcp.posthog.com/mcp"
         static let defaultPostHogEuMcpURL = "https://mcp-eu.posthog.com/mcp"
         static let defaultPostHogMcpRegion = "us"
         static let defaultPostHogMcpFeatures = "sql,data_schema,insights,web_analytics,search,docs"
+        static let defaultCloudflareMcpURL = "https://mcp.cloudflare.com/mcp"
+        static let defaultCloudflareMcpCodemode = true
 
         var schemaVersion: Int = Settings.currentSchemaVersion
 
@@ -93,6 +93,11 @@ enum KeychainHelper {
         var codexEnvironment: String = ""
         var geminiEnvironment: String = ""
         var exaApiKey: String = ""
+
+        // Integrations
+        var cloudflareApiToken: String = ""
+        var cloudflareMcpURL: String = Settings.defaultCloudflareMcpURL
+        var cloudflareMcpCodemode: Bool = Settings.defaultCloudflareMcpCodemode
 
         // Ad Analytics
         var posthogApiKey: String = ""
@@ -145,6 +150,10 @@ enum KeychainHelper {
             geminiEnvironment = try container.decodeIfPresent(String.self, forKey: .geminiEnvironment) ?? ""
             exaApiKey = try container.decodeIfPresent(String.self, forKey: .exaApiKey) ?? ""
 
+            cloudflareApiToken = try container.decodeIfPresent(String.self, forKey: .cloudflareApiToken) ?? ""
+            cloudflareMcpURL = try container.decodeIfPresent(String.self, forKey: .cloudflareMcpURL) ?? Settings.defaultCloudflareMcpURL
+            cloudflareMcpCodemode = try container.decodeIfPresent(Bool.self, forKey: .cloudflareMcpCodemode) ?? Settings.defaultCloudflareMcpCodemode
+
             posthogApiKey = try container.decodeIfPresent(String.self, forKey: .posthogApiKey) ?? ""
             posthogProjectAPIKey = try container.decodeIfPresent(String.self, forKey: .posthogProjectAPIKey) ?? ""
             posthogHost = try container.decodeIfPresent(String.self, forKey: .posthogHost) ?? ""
@@ -193,6 +202,10 @@ enum KeychainHelper {
             try container.encode(geminiEnvironment, forKey: .geminiEnvironment)
             try container.encode(exaApiKey, forKey: .exaApiKey)
 
+            try container.encode(cloudflareApiToken, forKey: .cloudflareApiToken)
+            try container.encode(cloudflareMcpURL, forKey: .cloudflareMcpURL)
+            try container.encode(cloudflareMcpCodemode, forKey: .cloudflareMcpCodemode)
+
             try container.encode(posthogApiKey, forKey: .posthogApiKey)
             try container.encode(posthogProjectAPIKey, forKey: .posthogProjectAPIKey)
             try container.encode(posthogHost, forKey: .posthogHost)
@@ -236,6 +249,9 @@ enum KeychainHelper {
             case codexEnvironment
             case geminiEnvironment
             case exaApiKey
+            case cloudflareApiToken
+            case cloudflareMcpURL
+            case cloudflareMcpCodemode
             case posthogApiKey
             case posthogProjectAPIKey
             case posthogHost
@@ -286,6 +302,14 @@ enum KeychainHelper {
             if schemaVersion < 7 && migrated.preferredGeminiModel == legacyDefaultGeminiModelID {
                 migrated.preferredGeminiModel = AgentModelCatalog.defaultGeminiModelID
             }
+            if schemaVersion < 9 {
+                if migrated.preferredCodexModel == previousDefaultCodexModelID {
+                    migrated.preferredCodexModel = AgentModelCatalog.defaultCodexModelID
+                }
+                if migrated.preferredGeminiModel == previousDefaultGeminiModelID {
+                    migrated.preferredGeminiModel = AgentModelCatalog.defaultGeminiModelID
+                }
+            }
             if schemaVersion < 8 {
                 migrated.posthogMcpRegion = normalizedPostHogMcpRegion(migrated.posthogMcpRegion, host: migrated.posthogHost)
                 if migrated.posthogMcpURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -299,6 +323,9 @@ enum KeychainHelper {
                 if migrated.posthogMcpFeatures.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     migrated.posthogMcpFeatures = defaultPostHogMcpFeatures
                 }
+            }
+            if migrated.cloudflareMcpURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                migrated.cloudflareMcpURL = defaultCloudflareMcpURL
             }
             return migrated
         }
@@ -441,44 +468,6 @@ enum KeychainHelper {
         delete(account: macAuthAccount)
     }
 
-    // MARK: - Mac Onboarding Context (tone personalization)
-
-    static func loadOnboardingContext() -> OnboardingContext? {
-        if didLoadOnboardingContext {
-            return cachedOnboardingContext
-        }
-        if isInsecureDevStorageEnabled {
-            cachedOnboardingContext = readDevSecrets().onboarding
-            if cachedOnboardingContext == nil {
-                pruneInvalidDevOnboardingContextIfNeeded()
-            }
-        } else {
-            cachedOnboardingContext = loadOnboardingContextFromKeychain()
-        }
-        didLoadOnboardingContext = true
-        return cachedOnboardingContext
-    }
-
-    static func saveOnboardingContext(_ context: OnboardingContext) throws {
-        cachedOnboardingContext = context
-        didLoadOnboardingContext = true
-        if isInsecureDevStorageEnabled {
-            mutateDevSecrets { $0.onboarding = context }
-            return
-        }
-        try saveCodable(context, account: onboardingContextAccount)
-    }
-
-    static func deleteOnboardingContext() {
-        cachedOnboardingContext = nil
-        didLoadOnboardingContext = true
-        if isInsecureDevStorageEnabled {
-            mutateDevSecrets { $0.onboarding = nil }
-            return
-        }
-        delete(account: onboardingContextAccount)
-    }
-
     typealias LocalDataResetReport = Agentic30LocalDataResetReport
 
     static func resetAgentic30LocalData(
@@ -547,40 +536,6 @@ enum KeychainHelper {
         removed += keys.count
         defaults.synchronize()
         return removed
-    }
-
-    private static func loadOnboardingContextFromKeychain() -> OnboardingContext? {
-        guard let data = loadData(account: onboardingContextAccount) else {
-            return nil
-        }
-        guard let context = try? JSONDecoder().decode(OnboardingContext.self, from: data) else {
-            delete(account: onboardingContextAccount)
-            return nil
-        }
-        return context
-    }
-
-    private static func pruneInvalidDevOnboardingContextIfNeeded() {
-        guard let data = try? Data(contentsOf: devSecretsURL),
-              var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              object["onboarding"] != nil
-        else { return }
-
-        if let onboarding = object["onboarding"],
-           let onboardingData = try? JSONSerialization.data(withJSONObject: onboarding),
-           (try? JSONDecoder().decode(OnboardingContext.self, from: onboardingData)) != nil {
-            return
-        }
-
-        object.removeValue(forKey: "onboarding")
-        guard JSONSerialization.isValidJSONObject(object),
-              let prunedData = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
-        else { return }
-        try? prunedData.write(to: devSecretsURL)
-        try? FileManager.default.setAttributes(
-            [.posixPermissions: 0o600],
-            ofItemAtPath: devSecretsURL.path
-        )
     }
 
     private static func loadCodable<T: Decodable>(account: String, as type: T.Type) -> T? {
@@ -658,12 +613,9 @@ enum KeychainHelper {
         cachedSettings = nil
         cachedMacAuthSession = nil
         didLoadMacAuthSession = true
-        cachedOnboardingContext = nil
-        didLoadOnboardingContext = true
 
         deleteSettings()
         deleteMacAuthSession()
-        deleteOnboardingContext()
         deleteAllServiceEntries()
     }
 
@@ -704,6 +656,7 @@ enum KeychainHelper {
     static func syncAllConfigFiles(from settings: Settings) {
         syncAdConfigFile(from: settings)
         syncBipConfigFile(from: settings)
+        syncCloudflareConfigFile(from: settings)
         syncNotionConfigFile(from: settings)
     }
 
@@ -724,6 +677,17 @@ enum KeychainHelper {
             ],
         ]
         writeJSON(config, to: "ad-config.json")
+    }
+
+    static func syncCloudflareConfigFile(from settings: Settings) {
+        let config: [String: Any] = [
+            "cloudflare": [
+                "apiToken": settings.cloudflareApiToken,
+                "mcpUrl": settings.cloudflareMcpURL.isEmpty ? Settings.defaultCloudflareMcpURL : settings.cloudflareMcpURL,
+                "mcpCodemode": settings.cloudflareMcpCodemode,
+            ],
+        ]
+        writeJSON(config, to: "cloudflare-config.json")
     }
 
     static func syncBipConfigFile(from settings: Settings) {

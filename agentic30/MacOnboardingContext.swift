@@ -113,29 +113,6 @@ enum OnboardingIsolationLevel: String, Codable, CaseIterable, Hashable {
     case paymentResponses = "payment_responses"
     case community
 
-    private static let legacySoloAllRawValue = "solo_all"
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        let rawValue = try container.decode(String.self)
-        if rawValue == Self.legacySoloAllRawValue {
-            self = .projectFolder
-            return
-        }
-        guard let value = Self(rawValue: rawValue) else {
-            throw DecodingError.dataCorruptedError(
-                in: container,
-                debugDescription: "Invalid onboarding isolation level: \(rawValue)"
-            )
-        }
-        self = value
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        try container.encode(rawValue)
-    }
-
     // UPDATE this list when adding new OnboardingIsolationLevel cases.
     static var allCases: [OnboardingIsolationLevel] {
         [
@@ -353,10 +330,295 @@ struct OnboardingContext: Codable, Hashable {
     }
 }
 
+struct WorkspaceOnboardingMemory: Codable, Hashable {
+    struct Answer: Codable, Hashable {
+        var id: String
+        var question: String
+        var answer: String
+        var detail: String
+    }
+
+    struct Answers: Codable, Hashable {
+        var timeBudget: Answer
+        var primaryRole: Answer
+        var biggestBlocker: Answer
+        var existingRecords: Answer
+    }
+
+    struct ReadSource: Codable, Hashable {
+        var id: String
+        var displayName: String
+        var category: String
+        var kind: String
+        var status: String
+        var path: String
+        var detail: String
+    }
+
+    static let schema = "agentic30.memory.onboarding.v1"
+    static let schemaVersion = 1
+
+    var schemaVersion: Int
+    var schema: String
+    var workspaceRoot: String
+    var projectPath: String
+    var answers: Answers
+    var onboardingContext: OnboardingContext
+    var readSources: [ReadSource]
+    var createdAt: String
+    var updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case schema
+        case workspaceRoot
+        case projectPath
+        case answers
+        case onboardingContext
+        case readSources
+        case createdAt
+        case updatedAt
+    }
+
+    @MainActor
+    static func make(
+        context: OnboardingContext,
+        workspaceRoot: String,
+        intakeStore: IntakeV2Store? = nil,
+        sources: [IntakeSourceState] = [],
+        now: Date = Date()
+    ) -> WorkspaceOnboardingMemory {
+        let timestamp = ISO8601DateFormatter().string(from: now)
+        let trimmedRoot = workspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceStates = normalizedReadSources(
+            context: context,
+            workspaceRoot: trimmedRoot,
+            intakeStore: intakeStore,
+            sources: sources
+        )
+        let timeAnswer = answer(
+            id: "time_budget",
+            question: "하루에 얼마나 시간을 쓸 수 있는지",
+            answer: intakeStore?.commitmentLevel?.rawValue ?? context.customWorkMode.nonEmptyValue ?? context.workMode.rawValue,
+            detail: intakeStore?.commitmentLevel?.displayTitle ?? context.customWorkMode.nonEmptyValue ?? context.workMode.displayTitle
+        )
+        let roleAnswer = answer(
+            id: "primary_role",
+            question: "하루 중 가장 많이 쓰는 역할",
+            answer: context.role.rawValue,
+            detail: context.role.displayTitle
+        )
+        let blockerAnswer = answer(
+            id: "biggest_blocker",
+            question: "현재 가장 큰 막힘",
+            answer: context.projectStage.rawValue,
+            detail: context.projectStage.displayTitle
+        )
+        let records = context.isolationLevels.map(\.rawValue).joined(separator: ",")
+        let recordsDetail = context.isolationLevels.map(\.displayTitle).joined(separator: ", ")
+        let recordAnswer = answer(
+            id: "existing_records",
+            question: "이미 가진 기록",
+            answer: records,
+            detail: recordsDetail
+        )
+        return WorkspaceOnboardingMemory(
+            schemaVersion: Self.schemaVersion,
+            schema: Self.schema,
+            workspaceRoot: trimmedRoot,
+            projectPath: trimmedRoot,
+            answers: Answers(
+                timeBudget: timeAnswer,
+                primaryRole: roleAnswer,
+                biggestBlocker: blockerAnswer,
+                existingRecords: recordAnswer
+            ),
+            onboardingContext: context,
+            readSources: sourceStates,
+            createdAt: context.completedAt.isEmpty ? timestamp : context.completedAt,
+            updatedAt: timestamp
+        )
+    }
+
+    var sidecarPayload: [String: Any] {
+        [
+            "schemaVersion": schemaVersion,
+            "schema": schema,
+            "workspaceRoot": workspaceRoot,
+            "projectPath": projectPath,
+            "answers": [
+                "timeBudget": answers.timeBudget.payload,
+                "primaryRole": answers.primaryRole.payload,
+                "biggestBlocker": answers.biggestBlocker.payload,
+                "existingRecords": answers.existingRecords.payload,
+            ],
+            "onboardingContext": onboardingContext.bridgePayload,
+            "readSources": readSources.map(\.payload),
+            "createdAt": createdAt,
+            "updatedAt": updatedAt,
+        ]
+    }
+
+    private static func answer(id: String, question: String, answer: String, detail: String) -> Answer {
+        Answer(
+            id: id,
+            question: question,
+            answer: answer.trimmingCharacters(in: .whitespacesAndNewlines),
+            detail: detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    @MainActor
+    private static func normalizedReadSources(
+        context: OnboardingContext,
+        workspaceRoot: String,
+        intakeStore: IntakeV2Store?,
+        sources: [IntakeSourceState]
+    ) -> [ReadSource] {
+        var states = sources
+        if states.isEmpty {
+            states = context.isolationLevels.map { level in
+                IntakeSourceState(
+                    id: sourceID(for: level),
+                    status: .disabled,
+                    path: level == .projectFolder ? workspaceRoot.nonEmptyValue : nil,
+                    detail: level.displayTitle
+                )
+            }
+        }
+        if let folderURL = intakeStore?.folderURL,
+           !states.contains(where: { $0.id == .localFolder }) {
+            states.insert(
+                IntakeSourceState(id: .localFolder, status: .connected, path: folderURL.path, detail: "Project folder"),
+                at: 0
+            )
+        } else if !workspaceRoot.isEmpty,
+                  context.isolationLevels.contains(.projectFolder),
+                  !states.contains(where: { $0.id == .localFolder }) {
+            states.insert(
+                IntakeSourceState(id: .localFolder, status: .connected, path: workspaceRoot, detail: "Project folder"),
+                at: 0
+            )
+        }
+        var seen = Set<IntakeSourceID>()
+        return states.compactMap { state in
+            guard !seen.contains(state.id) else { return nil }
+            seen.insert(state.id)
+            let item = IntakeSourceCatalog.item(for: state.id)
+            return ReadSource(
+                id: state.id.rawValue,
+                displayName: state.id.displayName,
+                category: item?.category.rawValue ?? "",
+                kind: item?.kind ?? "",
+                status: state.status.rawValue,
+                path: state.path ?? "",
+                detail: state.detail ?? item?.why ?? ""
+            )
+        }
+    }
+
+    private static func sourceID(for level: OnboardingIsolationLevel) -> IntakeSourceID {
+        switch level {
+        case .projectFolder: return .localFolder
+        case .workLog: return .workLogFolder
+        case .occasional: return .interviewTranscriptFolder
+        case .weeklyLoop: return .threads
+        case .paymentResponses: return .stripe
+        case .community: return .customManualNote
+        }
+    }
+}
+
+private extension WorkspaceOnboardingMemory.Answer {
+    var payload: [String: Any] {
+        [
+            "id": id,
+            "question": question,
+            "answer": answer,
+            "detail": detail,
+        ]
+    }
+}
+
+private extension WorkspaceOnboardingMemory.ReadSource {
+    var payload: [String: Any] {
+        [
+            "id": id,
+            "displayName": displayName,
+            "category": category,
+            "kind": kind,
+            "status": status,
+            "path": path,
+            "detail": detail,
+        ]
+    }
+}
+
+enum WorkspaceMemoryStore {
+    static func onboardingMemoryURL(workspaceRoot: String) -> URL? {
+        let root = workspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !root.isEmpty else { return nil }
+        return URL(fileURLWithPath: root, isDirectory: true)
+            .appendingPathComponent(".agentic30", isDirectory: true)
+            .appendingPathComponent("memory", isDirectory: true)
+            .appendingPathComponent("onboarding.json")
+    }
+
+    static func loadOnboardingMemory(workspaceRoot: String) -> WorkspaceOnboardingMemory? {
+        guard let url = onboardingMemoryURL(workspaceRoot: workspaceRoot),
+              let data = try? Data(contentsOf: url),
+              let memory = try? JSONDecoder().decode(WorkspaceOnboardingMemory.self, from: data),
+              memory.schema == WorkspaceOnboardingMemory.schema
+        else { return nil }
+        return memory
+    }
+
+    static func loadOnboardingContext(workspaceRoot: String) -> OnboardingContext? {
+        loadOnboardingMemory(workspaceRoot: workspaceRoot)?.onboardingContext
+    }
+
+    static func saveOnboardingMemory(_ memory: WorkspaceOnboardingMemory) throws {
+        guard let url = onboardingMemoryURL(workspaceRoot: memory.workspaceRoot) else {
+            throw WorkspaceMemoryError.missingWorkspaceRoot
+        }
+        let directory = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(memory)
+        let temporaryURL = directory.appendingPathComponent(".onboarding.json.\(UUID().uuidString).tmp")
+        try data.write(to: temporaryURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporaryURL.path)
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
+        try FileManager.default.moveItem(at: temporaryURL, to: url)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    enum WorkspaceMemoryError: LocalizedError {
+        case missingWorkspaceRoot
+
+        var errorDescription: String? {
+            switch self {
+            case .missingWorkspaceRoot:
+                return "Workspace root is required to write .agentic30 memory."
+            }
+        }
+    }
+}
+
 enum OnboardingContextSubmissionStatus: Hashable {
     case idle
     case submitting
     case failed(String)
+}
+
+private extension String {
+    var nonEmptyValue: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 }
 
 struct OnboardingProgramIntro {

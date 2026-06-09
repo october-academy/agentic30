@@ -93,7 +93,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
             "AGENTIC30_DISABLE_IDD_AGENT_SYNTHESIS": "1",
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
-            "AGENTIC30_CODEX_MODEL": "gpt-5.4-mini",
+            "AGENTIC30_CODEX_MODEL": "gpt-5.5",
         ])
         hideKnownInterferingApplications()
         app.activate()
@@ -1661,18 +1661,37 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.sessions").waitForExistence(timeout: 6))
         confirmDay1GoalIfPresent(in: app)
 
+        let evidenceBanner = elementWithIdentifier(in: app, "opendesign.officeHours.evidenceOSBanner")
+        XCTAssertTrue(scrollElementToVisible(
+            evidenceBanner,
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+        ))
+        XCTAssertTrue(app.staticTexts["이전 회차에서 넘어온 고객 증거"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["1 open"].waitForExistence(timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.evidenceOS.attach").waitForExistence(timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.evidenceOS.carry").waitForExistence(timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.evidenceOS.abandon").waitForExistence(timeout: 3))
+
         let day1Row = elementWithIdentifier(in: app, "opendesign.officeHours.timeline.day.1")
         XCTAssertTrue(day1Row.waitForExistence(timeout: 6))
         clickCenter(of: day1Row)
 
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.pastDay.goalSnapshot").waitForExistence(timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.pastDay.carryForward").waitForExistence(timeout: 3))
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.pastDay.review.verdict.1").waitForExistence(timeout: 3))
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.pastDay.review.evidence").waitForExistence(timeout: 3))
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.pastDay.review.commitment").waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["빌드로 도피"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["고객 증거 없이 빌드함"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["장지창"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["결제 의향 묻기"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["증거 없음"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["오늘 장지창에게 결제 의향 DM을 보내고 screenshot 증거를 붙이기"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["다음 약속"].waitForExistence(timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.evidenceOS.attach").waitForExistence(timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.evidenceOS.carry").waitForExistence(timeout: 3))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.evidenceOS.abandon").waitForExistence(timeout: 3))
         movePointerAwayFromContent()
         attachWindowScreenshot(from: app, named: "Office Hours Past Day Customer Evidence Review")
     }
@@ -2005,8 +2024,8 @@ final class agentic30UITests: XCTestCase {
             ],
             environment: [
                 "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
-                "AGENTIC30_UI_TEST_SETTINGS_CLAUDE_MODEL": "claude-opus-4-7",
-                "AGENTIC30_UI_TEST_SETTINGS_CODEX_MODEL": "gpt-5.4-mini",
+                "AGENTIC30_UI_TEST_SETTINGS_CLAUDE_MODEL": "claude-opus-4-8",
+                "AGENTIC30_UI_TEST_SETTINGS_CODEX_MODEL": "gpt-5.5",
                 "AGENTIC30_UI_TEST_SETTINGS_GEMINI_MODEL": "gemini-2.5-flash",
                 "AGENTIC30_UI_TEST_SETTINGS_CLAUDE_AUTH_MODE": "api_key",
             ]
@@ -2035,21 +2054,21 @@ final class agentic30UITests: XCTestCase {
             chooseModelOption(
                 in: app,
                 pickerIdentifier: "settings.claude.modelPicker",
-                optionLabel: "Claude Opus 4.7 (Best)",
-                optionIdentifier: "settings.claude.modelOption.claude-opus-4-7"
+                optionLabel: "Claude Opus 4.8 (Best)",
+                optionIdentifier: "settings.claude.modelOption.claude-opus-4-8"
             )
         )
-        XCTAssertTrue(waitForModelID(in: app, identifier: "settings.claude.modelID", value: "claude-opus-4-7"))
+        XCTAssertTrue(waitForModelID(in: app, identifier: "settings.claude.modelID", value: "claude-opus-4-8"))
 
         XCTAssertTrue(
             chooseModelOption(
                 in: app,
                 pickerIdentifier: "settings.codex.modelPicker",
-                optionLabel: "GPT 5.4 Mini",
-                optionIdentifier: "settings.codex.modelOption.gpt-5.4-mini"
+                optionLabel: "GPT 5.5 (Best)",
+                optionIdentifier: "settings.codex.modelOption.gpt-5.5"
             )
         )
-        XCTAssertTrue(waitForModelID(in: app, identifier: "settings.codex.modelID", value: "gpt-5.4-mini"))
+        XCTAssertTrue(waitForModelID(in: app, identifier: "settings.codex.modelID", value: "gpt-5.5"))
 
         app.scrollViews.firstMatch.swipeUp()
 
@@ -2072,8 +2091,8 @@ final class agentic30UITests: XCTestCase {
         clickCenter(of: saveModels)
         XCTAssertTrue(waitForPreferredModelSettings(
             appSupportPath: appSupportPath,
-            claude: "claude-opus-4-7",
-            codex: "gpt-5.4-mini",
+            claude: "claude-opus-4-8",
+            codex: "gpt-5.5",
             gemini: "gemini-2.5-flash",
             timeout: 2
         ))

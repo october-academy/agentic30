@@ -50,6 +50,9 @@ struct KeychainSettingsMigrationTests {
         #expect(settings.codexAuthMode == AgentAuthMode.local.rawValue)
         #expect(settings.geminiAuthMode == AgentAuthMode.local.rawValue)
         #expect(settings.geminiApiKey == "")
+        #expect(settings.cloudflareApiToken == "")
+        #expect(settings.cloudflareMcpURL == KeychainHelper.Settings.defaultCloudflareMcpURL)
+        #expect(settings.cloudflareMcpCodemode == KeychainHelper.Settings.defaultCloudflareMcpCodemode)
         #expect(settings.notionEnabled == false)
     }
 
@@ -61,11 +64,14 @@ struct KeychainSettingsMigrationTests {
         settings.posthogMcpRegion = "eu"
         settings.posthogMcpReadonly = false
         settings.posthogMcpFeatures = "sql,docs"
-        settings.preferredClaudeModel = "claude-opus-4-7"
-        settings.preferredCodexModel = "gpt-5.3-codex"
+        settings.preferredClaudeModel = "claude-opus-4-8"
+        settings.preferredCodexModel = "gpt-5.5"
         settings.preferredGeminiModel = "gemini-2.5-flash"
         settings.geminiAuthMode = AgentAuthMode.apiKey.rawValue
         settings.geminiApiKey = "gemini-secret"
+        settings.cloudflareApiToken = "cloudflare-secret"
+        settings.cloudflareMcpURL = "https://mcp.cloudflare.com/mcp?codemode=false"
+        settings.cloudflareMcpCodemode = false
 
         let data = try JSONEncoder().encode(settings)
         let object = try #require(
@@ -79,11 +85,60 @@ struct KeychainSettingsMigrationTests {
         #expect(object["posthogMcpRegion"] as? String == "eu")
         #expect(object["posthogMcpReadonly"] as? Bool == false)
         #expect(object["posthogMcpFeatures"] as? String == "sql,docs")
-        #expect(object["preferredClaudeModel"] as? String == "claude-opus-4-7")
-        #expect(object["preferredCodexModel"] as? String == "gpt-5.3-codex")
+        #expect(object["preferredClaudeModel"] as? String == "claude-opus-4-8")
+        #expect(object["preferredCodexModel"] as? String == "gpt-5.5")
         #expect(object["preferredGeminiModel"] as? String == "gemini-2.5-flash")
         #expect(object["geminiAuthMode"] as? String == AgentAuthMode.apiKey.rawValue)
         #expect(object["geminiApiKey"] as? String == "gemini-secret")
+        #expect(object["cloudflareApiToken"] as? String == "cloudflare-secret")
+        #expect(object["cloudflareMcpURL"] as? String == "https://mcp.cloudflare.com/mcp?codemode=false")
+        #expect(object["cloudflareMcpCodemode"] as? Bool == false)
+    }
+
+    @Test func syncAllConfigFilesWritesMcpIntegrationConfigs() throws {
+        let fileManager = FileManager.default
+        let appSupport = fileManager.temporaryDirectory
+            .appendingPathComponent("agentic30-config-sync-\(UUID().uuidString)", isDirectory: true)
+        let previousAppSupportPath = ProcessInfo.processInfo.environment["AGENTIC30_APP_SUPPORT_PATH"]
+        setenv("AGENTIC30_APP_SUPPORT_PATH", appSupport.path, 1)
+        defer {
+            if let previousAppSupportPath {
+                setenv("AGENTIC30_APP_SUPPORT_PATH", previousAppSupportPath, 1)
+            } else {
+                unsetenv("AGENTIC30_APP_SUPPORT_PATH")
+            }
+            try? fileManager.removeItem(at: appSupport)
+        }
+
+        var settings = KeychainHelper.Settings()
+        settings.cloudflareApiToken = "cf-token"
+        settings.cloudflareMcpURL = "https://mcp.cloudflare.com/mcp"
+        settings.cloudflareMcpCodemode = false
+        settings.posthogApiKey = "phx-posthog"
+        settings.posthogProjectAPIKey = "phc-project"
+        settings.posthogMcpURL = KeychainHelper.Settings.defaultPostHogEuMcpURL
+        settings.posthogMcpRegion = "eu"
+        settings.posthogMcpReadonly = false
+        settings.posthogMcpFeatures = "sql,insights"
+
+        KeychainHelper.syncAllConfigFiles(from: settings)
+
+        let cloudflareData = try Data(contentsOf: appSupport.appendingPathComponent("cloudflare-config.json"))
+        let cloudflareRoot = try #require(JSONSerialization.jsonObject(with: cloudflareData) as? [String: Any])
+        let cloudflare = try #require(cloudflareRoot["cloudflare"] as? [String: Any])
+        #expect(cloudflare["apiToken"] as? String == "cf-token")
+        #expect(cloudflare["mcpUrl"] as? String == "https://mcp.cloudflare.com/mcp")
+        #expect(cloudflare["mcpCodemode"] as? Bool == false)
+
+        let adData = try Data(contentsOf: appSupport.appendingPathComponent("ad-config.json"))
+        let adRoot = try #require(JSONSerialization.jsonObject(with: adData) as? [String: Any])
+        let posthog = try #require(adRoot["posthog"] as? [String: Any])
+        #expect(posthog["apiKey"] as? String == "phx-posthog")
+        #expect(posthog["projectApiKey"] as? String == "phc-project")
+        #expect(posthog["mcpUrl"] as? String == KeychainHelper.Settings.defaultPostHogEuMcpURL)
+        #expect(posthog["mcpRegion"] as? String == "eu")
+        #expect(posthog["mcpReadonly"] as? Bool == false)
+        #expect(posthog["mcpFeatures"] as? String == "sql,insights")
     }
 
     @Test func migrationRegistryAlwaysNormalizesToCurrentSchema() {
@@ -103,6 +158,8 @@ struct KeychainSettingsMigrationTests {
         #expect(migrated.preferredCodexModel == AgentModelCatalog.defaultCodexModelID)
         #expect(migrated.preferredGeminiModel == AgentModelCatalog.defaultGeminiModelID)
         #expect(migrated.geminiAuthMode == AgentAuthMode.local.rawValue)
+        #expect(migrated.cloudflareMcpURL == KeychainHelper.Settings.defaultCloudflareMcpURL)
+        #expect(migrated.cloudflareMcpCodemode == KeychainHelper.Settings.defaultCloudflareMcpCodemode)
     }
 
     @Test func migrationMovesLegacyCodexDefaultToGPT55() {
@@ -116,14 +173,25 @@ struct KeychainSettingsMigrationTests {
         #expect(migrated.preferredCodexModel == AgentModelCatalog.defaultCodexModelID)
     }
 
+    @Test func migrationMovesPreviousCodexDefaultToGPT55() {
+        var oldSettings = KeychainHelper.Settings()
+        oldSettings.schemaVersion = 8
+        oldSettings.preferredCodexModel = KeychainHelper.Settings.previousDefaultCodexModelID
+
+        let migrated = KeychainHelper.Settings.migrate(oldSettings, from: 8)
+
+        #expect(migrated.schemaVersion == KeychainHelper.Settings.currentSchemaVersion)
+        #expect(migrated.preferredCodexModel == AgentModelCatalog.defaultCodexModelID)
+    }
+
     @Test func migrationPreservesExplicitCodexMiniSelection() {
         var oldSettings = KeychainHelper.Settings()
         oldSettings.schemaVersion = 3
-        oldSettings.preferredCodexModel = "gpt-5.4-mini"
+        oldSettings.preferredCodexModel = "gpt-5.1-codex-mini"
 
         let migrated = KeychainHelper.Settings.migrate(oldSettings, from: 3)
 
-        #expect(migrated.preferredCodexModel == "gpt-5.4-mini")
+        #expect(migrated.preferredCodexModel == "gpt-5.1-codex-mini")
     }
 
     @Test func migrationMovesLegacyGeminiDefaultToGemini35Flash() {
@@ -132,6 +200,17 @@ struct KeychainSettingsMigrationTests {
         oldSettings.preferredGeminiModel = KeychainHelper.Settings.legacyDefaultGeminiModelID
 
         let migrated = KeychainHelper.Settings.migrate(oldSettings, from: 6)
+
+        #expect(migrated.schemaVersion == KeychainHelper.Settings.currentSchemaVersion)
+        #expect(migrated.preferredGeminiModel == AgentModelCatalog.defaultGeminiModelID)
+    }
+
+    @Test func migrationMovesPreviousGeminiDefaultToGemini35Flash() {
+        var oldSettings = KeychainHelper.Settings()
+        oldSettings.schemaVersion = 8
+        oldSettings.preferredGeminiModel = KeychainHelper.Settings.previousDefaultGeminiModelID
+
+        let migrated = KeychainHelper.Settings.migrate(oldSettings, from: 8)
 
         #expect(migrated.schemaVersion == KeychainHelper.Settings.currentSchemaVersion)
         #expect(migrated.preferredGeminiModel == AgentModelCatalog.defaultGeminiModelID)
