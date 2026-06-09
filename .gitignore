@@ -47,3 +47,8 @@ posthog-setup-report.md
 # Local Ouroboros tool artifacts (mechanical config, eval scratch).
 .ouroboros/
 .ouroboros_eval_artifact.md
+
+# sourcekit-lsp ↔ Xcode build-system bridge (xcode-build-server). Contains local
+# absolute paths (DerivedData build_root); per-machine, must not be committed.
+buildServer.json
+.bsp/
