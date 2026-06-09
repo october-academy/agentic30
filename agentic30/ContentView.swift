@@ -4609,25 +4609,21 @@ struct ContentView: View {
                         rows: OfficeHoursLiveStatusPolicy.visibleRows(in: session)
                     )
 
-                if timeline.isEmpty && session.pendingUserInput == nil && !shouldShowFallbackLiveStatus {
-                    officeHoursEmptyTranscript()
-                } else {
-                    ForEach(timeline) { item in
-                        switch item {
-                        case .row(let row):
-                            officeHoursTranscriptRow(row, session: session)
-                                .id(row.id)
-                        case .submittedPrompt(let card):
-                            officeHoursSubmittedPromptBlock(card)
-                                .id(card.id)
-                        case .loading(let loading):
-                            officeHoursQuestionLoader(
-                                title: officeHoursLoaderTitle(session: session),
-                                detail: officeHoursLoaderDetail(session: session),
-                                outputLines: viewModel.sidecarOutputPreview(for: session.id)
-                            )
-                            .id(loading.requestId)
-                        }
+                ForEach(timeline) { item in
+                    switch item {
+                    case .row(let row):
+                        officeHoursTranscriptRow(row, session: session)
+                            .id(row.id)
+                    case .submittedPrompt(let card):
+                        officeHoursSubmittedPromptBlock(card)
+                            .id(card.id)
+                    case .loading(let loading):
+                        officeHoursQuestionLoader(
+                            title: officeHoursLoaderTitle(session: session),
+                            detail: officeHoursLoaderDetail(session: session),
+                            outputLines: viewModel.sidecarOutputPreview(for: session.id)
+                        )
+                        .id(loading.requestId)
                     }
                 }
 
@@ -7052,30 +7048,6 @@ struct ContentView: View {
                 performScroll()
             }
         }
-    }
-
-    private func officeHoursEmptyTranscript() -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "bubble.left.and.bubble.right.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(OpenDesignOfficeHoursColor.accent)
-                .frame(width: 24, height: 24)
-                .background(Circle().fill(OpenDesignOfficeHoursColor.accentDim))
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("오피스 아워를 시작하는 중입니다.")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
-                Text("Day 1 맥락을 읽고 첫 질문을 준비합니다.")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            openDesignOfficeHoursBackground(cornerRadius: 10, fill: OpenDesignOfficeHoursColor.surface)
-        )
     }
 
     @ViewBuilder
