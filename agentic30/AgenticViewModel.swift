@@ -1465,9 +1465,11 @@ struct DayProgress: Codable, Equatable, Hashable {
 }
 
 enum Day1GoalType: String, Codable, CaseIterable, Hashable {
-    case makeMoney = "make_money"
-    case getUsers = "get_users"
+    // Declaration order drives the goal-card order (drafts = allCases.map),
+    // arranged easy → hard.
     case buildProduct = "build_product"
+    case getUsers = "get_users"
+    case makeMoney = "make_money"
 
     var title: String {
         switch self {

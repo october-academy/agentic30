@@ -6381,8 +6381,6 @@ private struct OpenDesignDayGoalSelectionCard: View {
                     .foregroundStyle(OpenDesignDayColor.fg)
                 if selection != nil {
                     goalBadge("저장됨", tone: .accent)
-                } else if let recommended = drafts.first(where: \.isRecommended) {
-                    goalBadge("추천 \(recommended.goalType.title)", tone: .amber)
                 }
                 Spacer(minLength: 0)
                 goalBadge(bipProofSinkAvailable ? "증거 저장 가능" : "로컬 증거", tone: bipProofSinkAvailable ? .accent : .muted)
@@ -6479,10 +6477,6 @@ private struct OpenDesignDayGoalSelectionCard: View {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(OpenDesignDayColor.accent)
-                    } else if draft.isRecommended {
-                        Text("추천")
-                            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(OpenDesignDayColor.amber)
                     }
                 }
                 Text(openDesignAttributedText(

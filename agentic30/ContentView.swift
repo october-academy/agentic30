@@ -4065,16 +4065,11 @@ struct ContentView: View {
             selectedOfficeHoursGoalType = draft.goalType
         } label: {
             VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Text(draft.goalType.title)
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    if draft.isRecommended {
-                        officeHoursGoalBadge("추천", tone: .amber)
-                    }
-                }
+                Text(draft.goalType.title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Text(openDesignAttributedText(
                     [.body(draft.goalType.promptHint)],
                     bodySize: 11.5,
@@ -4097,24 +4092,6 @@ struct ContentView: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier("opendesign.officeHours.goal.option.\(draft.goalType.rawValue)")
         .accessibilityValue(isSelected ? "active" : "inactive")
-    }
-
-    private enum OfficeHoursGoalBadgeTone: Equatable {
-        case amber
-        case muted
-    }
-
-    private func officeHoursGoalBadge(_ text: String, tone: OfficeHoursGoalBadgeTone) -> some View {
-        let foreground = tone == .amber ? OpenDesignOfficeHoursColor.amber : OpenDesignOfficeHoursColor.muted
-        let background = tone == .amber ? OpenDesignOfficeHoursColor.amberDim : OpenDesignOfficeHoursColor.surface2
-        let border = tone == .amber ? OpenDesignOfficeHoursColor.amber.opacity(0.35) : OpenDesignOfficeHoursColor.borderSoft
-        return Text(text)
-            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-            .foregroundStyle(foreground)
-            .padding(.horizontal, 7)
-            .frame(height: 20)
-            .background(Capsule().fill(background))
-            .overlay(Capsule().stroke(border, lineWidth: 1))
     }
 
     private func officeHoursGoalDetailRow(
@@ -8329,9 +8306,10 @@ struct ContentView: View {
         day1Content: OpenDesignDayContent,
         session: ChatSession? = nil
     ) -> [String: Any] {
-        [
-            "provider": (session?.provider ?? viewModel.selectedProvider).rawValue,
-            "model": session?.model ?? AgentModelCatalog.defaultModelID(for: viewModel.selectedProvider),
+        let resolvedProvider = session?.provider ?? viewModel.selectedProvider
+        return [
+            "provider": resolvedProvider.rawValue,
+            "model": session?.model ?? AgentModelCatalog.defaultModelID(for: resolvedProvider),
             "workspace_root": openDesignInteractionWorkspaceRoot,
             "has_scan_result": viewModel.scanResult != nil,
             "has_scan_error": viewModel.scanResult?.error?.nonEmpty != nil,
