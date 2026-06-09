@@ -33,21 +33,16 @@ test("a settings provider narrows the scan to exactly that one provider", () => 
   ]);
 });
 
-test("an empty or unknown settings provider falls back to the full frontier", () => {
-  const all = [
-    { provider: "claude", model: "claude-sonnet-4-6" },
-    { provider: "codex", model: "gpt-5.1-codex-mini" },
-    { provider: "gemini", model: "gemini-3.5-flash" },
-  ];
-  assert.deepEqual(selectScanProviderTargets("", SCAN_MODELS), all);
-  assert.deepEqual(selectScanProviderTargets("openai", SCAN_MODELS), all);
-  assert.deepEqual(selectScanProviderTargets(undefined, SCAN_MODELS), all);
+test("an empty or unknown settings provider defaults to codex only", () => {
+  const codexOnly = [{ provider: "codex", model: "gpt-5.1-codex-mini" }];
+  assert.deepEqual(selectScanProviderTargets("", SCAN_MODELS), codexOnly);
+  assert.deepEqual(selectScanProviderTargets("openai", SCAN_MODELS), codexOnly);
+  assert.deepEqual(selectScanProviderTargets(undefined, SCAN_MODELS), codexOnly);
 });
 
-test("a known provider missing from the model map falls back to the full set", () => {
+test("a known provider missing from the model map defaults to codex only", () => {
   const partial = { claude: "claude-sonnet-4-6", codex: "gpt-5.1-codex-mini" };
   assert.deepEqual(selectScanProviderTargets("gemini", partial), [
-    { provider: "claude", model: "claude-sonnet-4-6" },
     { provider: "codex", model: "gpt-5.1-codex-mini" },
   ]);
 });

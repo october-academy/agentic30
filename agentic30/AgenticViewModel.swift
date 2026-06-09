@@ -1665,10 +1665,13 @@ struct Day1GoalDraft: Identifiable, Hashable {
 final class AgenticViewModel: ObservableObject {
     private static let macOnboardingIntroCompletedDefaultsKey = "agentic30.macOnboardingIntroCompleted"
     private static let macOnboardingIntakeOnlyCompletedDefaultsKey = "agentic30.macOnboardingIntakeOnlyCompleted"
+    nonisolated static let selectedProviderDefaultsKey = "agentic30.selectedProvider"
 
     @Published private(set) var sessions: [ChatSession] = []
     @Published var selectedSessionID: String?
-    @Published var selectedProvider: AgentProvider = .codex
+    @Published var selectedProvider: AgentProvider = AgenticViewModel.loadSelectedProvider() {
+        didSet { Self.saveSelectedProvider(selectedProvider) }
+    }
     @Published var draft = ""
     @Published private(set) var environment = SidecarEnvironment.placeholder
     @Published private(set) var sidecarDiagnostics: SidecarDiagnostics?
@@ -2451,6 +2454,18 @@ final class AgenticViewModel: ObservableObject {
         return message
     }
 
+    nonisolated static func loadSelectedProvider(defaults: UserDefaults = .standard) -> AgentProvider {
+        guard let raw = defaults.string(forKey: selectedProviderDefaultsKey),
+              let provider = AgentProvider(rawValue: raw) else {
+            return .codex
+        }
+        return provider
+    }
+
+    nonisolated static func saveSelectedProvider(_ provider: AgentProvider, defaults: UserDefaults = .standard) {
+        defaults.set(provider.rawValue, forKey: selectedProviderDefaultsKey)
+    }
+
     private static func loadMacOnboardingIntroCompleted(defaults: UserDefaults = .standard) -> Bool {
         defaults.bool(forKey: macOnboardingIntroCompletedDefaultsKey)
     }
@@ -3050,6 +3065,24 @@ final class AgenticViewModel: ObservableObject {
         sidecar.send(payload: [
             "type": "stop_session",
             "sessionId": session.id,
+        ])
+    }
+
+    /// Switches the active AI provider used for new sessions, persists it, and
+    /// immediately re-points the currently selected session at the new provider
+    /// so a blocked session (e.g. office-hours after a usage limit) can retry on
+    /// it without starting a new chat.
+    func setActiveProvider(_ provider: AgentProvider) {
+        guard provider != selectedProvider else { return }
+        selectedProvider = provider // didSet persists the choice
+        PostHogTelemetry.capture("mac_active_provider_changed", properties: [
+            "provider": provider.rawValue,
+        ], authSession: macAuthSession)
+        guard let session = selectedSession, session.provider != provider else { return }
+        sidecar.send(payload: [
+            "type": "update_session_provider",
+            "sessionId": session.id,
+            "provider": provider.rawValue,
         ])
     }
 

@@ -795,6 +795,7 @@ struct SettingsView: View {
 
     private var odProvidersSection: some View {
             odSettingsSection(id: "providers", title: "AI 연결") {
+            odActiveProviderCard
             odProviderCard(provider: .claude, authMode: $claudeAuthMode, apiKey: $claudeApiKey, environment: $claudeEnvironment, modelSelection: $claudeModelID)
             odProviderCard(provider: .codex, authMode: $codexAuthMode, apiKey: $codexApiKey, environment: $codexEnvironment, modelSelection: $codexModelID)
             odProviderCard(provider: .gemini, authMode: $geminiAuthMode, apiKey: $geminiApiKey, environment: $geminiEnvironment, modelSelection: $geminiModelID)
@@ -1511,6 +1512,60 @@ struct SettingsView: View {
             .overlay(Capsule().stroke(settingsHairline, lineWidth: 1))
     }
 
+    private var odActiveProviderCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("기본 provider")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(settingsText)
+                Text("선택한 엔진으로 새 세션과 현재 세션을 실행합니다. 연결된 provider만 선택할 수 있습니다.")
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(settingsSubtleText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            odActiveProviderSegmented()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 16)
+        .background(settingsRounded(fill: OpenDesignDayColor.surface, stroke: settingsHairline, radius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func odActiveProviderSegmented() -> some View {
+        HStack(spacing: 3) {
+            ForEach(AgentProvider.allCases) { provider in
+                let isActive = viewModel.selectedProvider == provider
+                let available = providerEnvironment(for: provider)?.available ?? false
+                Button {
+                    viewModel.setActiveProvider(provider)
+                } label: {
+                    Text(provider.title)
+                        .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(odActiveProviderLabelColor(isActive: isActive, available: available))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                        .frame(maxWidth: .infinity, minHeight: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(isActive ? OpenDesignDayColor.selected : Color.clear)
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(!available)
+                .help(available ? "" : "\(provider.title) 로그인이 필요합니다")
+                .accessibilityIdentifier("settings.providers.active.\(provider.rawValue)")
+            }
+        }
+        .padding(3)
+        .background(settingsRounded(fill: OpenDesignDayColor.bgDarker, stroke: settingsHairline, radius: 8))
+    }
+
+    private func odActiveProviderLabelColor(isActive: Bool, available: Bool) -> Color {
+        if !available { return settingsSubtleText.opacity(0.4) }
+        return isActive ? settingsText : settingsSubtleText
+    }
+
     private func odProviderCard(
         provider: AgentProvider,
         authMode: Binding<String>,
@@ -1876,13 +1931,16 @@ struct SettingsView: View {
     }
 
     private func providerPolicyDescription(_ provider: AgentProvider) -> String {
+        if viewModel.selectedProvider == provider {
+            return "활성 · 기본 엔진"
+        }
         switch provider {
         case .claude:
-            return "1순위 · 실패 시 Codex 예비 연결"
+            return "선택 시 사용 · 맞춤형 엔진"
         case .codex:
-            return "예비 연결 · 코드/분석 전용"
+            return "선택 시 사용 · 코드/분석"
         case .gemini:
-            return "대체 모델 · ADC 또는 API 키"
+            return "선택 시 사용 · ADC 또는 API 키"
         }
     }
 

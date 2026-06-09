@@ -1,12 +1,11 @@
 // Provider selection for agent-backed workspace scan and Day 1 alignment
-// synthesis. These flows historically fanned out to every authenticated
-// provider (claude + codex + gemini) as a "best of 3" frontier ensemble. The
-// product decision is to honor the provider the user picked in settings: run
-// only that one. We still fall back to the full provider set when the caller
-// did not supply a settings provider (e.g. an older Mac client that omits
-// preferredProvider), so version skew never silently drops the agent scan.
+// synthesis. Policy: run a SINGLE explicit provider — the one the user picked
+// in settings — or fall back to the single default (codex) when the caller did
+// not supply a usable settings provider. No multi-provider fan-out / frontier
+// ensemble: exactly one { provider, model } target is always returned.
 
 const KNOWN_PROVIDERS = ["claude", "codex", "gemini"];
+const DEFAULT_PROVIDER = "codex";
 
 export function normalizeSettingsProvider(value = "") {
   const provider = String(value || "").trim().toLowerCase();
@@ -14,20 +13,17 @@ export function normalizeSettingsProvider(value = "") {
 }
 
 /**
- * Resolve which { provider, model } targets a scan / Day 1 synthesis run should
- * spawn, given the settings-selected provider and a provider→model map.
+ * Resolve the single { provider, model } target a scan / Day 1 synthesis run
+ * should spawn, given the settings-selected provider and a provider→model map.
  *
  * - A known settings provider that exists in the map → exactly that one target.
- * - Empty / unknown settings provider, or one missing from the map → every
- *   target in the map (legacy frontier fallback).
+ * - Empty / unknown settings provider, or one missing from the map → the codex
+ *   default target. Never fans out to multiple providers.
  */
 export function selectScanProviderTargets(preferredProvider, modelByProvider = {}) {
   const settingsProvider = normalizeSettingsProvider(preferredProvider);
-  if (settingsProvider && Object.prototype.hasOwnProperty.call(modelByProvider, settingsProvider)) {
-    return [{ provider: settingsProvider, model: modelByProvider[settingsProvider] }];
-  }
-  return Object.keys(modelByProvider).map((provider) => ({
-    provider,
-    model: modelByProvider[provider],
-  }));
+  const provider = (settingsProvider && Object.prototype.hasOwnProperty.call(modelByProvider, settingsProvider))
+    ? settingsProvider
+    : DEFAULT_PROVIDER;
+  return [{ provider, model: modelByProvider[provider] }];
 }

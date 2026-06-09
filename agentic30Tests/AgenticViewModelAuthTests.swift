@@ -387,6 +387,25 @@ struct AgenticViewModelAuthTests {
         #expect(viewModel.isConnected == false)
     }
 
+    @Test func selectedProviderPersistRoundTripsAndDefaultsToCodex() {
+        let suiteName = "agentic30.tests.selectedProvider.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        // No stored value → default is Codex (matches the product default).
+        #expect(AgenticViewModel.loadSelectedProvider(defaults: defaults) == .codex)
+
+        // Every provider round-trips through save/load.
+        for provider in AgentProvider.allCases {
+            AgenticViewModel.saveSelectedProvider(provider, defaults: defaults)
+            #expect(AgenticViewModel.loadSelectedProvider(defaults: defaults) == provider)
+        }
+
+        // A corrupted/unknown stored value falls back to Codex.
+        defaults.set("not-a-real-provider", forKey: AgenticViewModel.selectedProviderDefaultsKey)
+        #expect(AgenticViewModel.loadSelectedProvider(defaults: defaults) == .codex)
+    }
+
     @Test @MainActor func bipResearchPrepareRequestsCacheThenDailyRefreshWhenStale() throws {
         let (workspace, cleanup) = try Self.installTemporaryWorkspace()
         defer { cleanup() }

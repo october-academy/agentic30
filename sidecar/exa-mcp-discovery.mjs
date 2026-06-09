@@ -54,11 +54,11 @@ export function orderExaMcpRoutes(routes = [], { preferredProvider = "" } = {}) 
 
 export function buildExaApiKeyRoute({
   apiKey = "",
-  provider = "claude",
+  provider = "codex",
 } = {}) {
   const key = String(apiKey || "").trim();
   if (!key) return null;
-  const normalizedProvider = normalizeProvider(provider) || "claude";
+  const normalizedProvider = normalizeProvider(provider) || "codex";
   return {
     provider: normalizedProvider,
     source: "api_key",

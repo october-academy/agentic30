@@ -986,6 +986,28 @@ async function handleClientMessage(socket, payload) {
     broadcast({ type: "session_updated", session });
       return;
     }
+    case "update_session_provider": {
+      const session = getSession(payload.sessionId);
+      const nextProvider = normalizeSessionProvider(payload.provider);
+      if (session.provider !== nextProvider) {
+        await stopSession(session.id);
+        cancelWarmSession(session.id);
+        session.provider = nextProvider;
+        // Provider changed: drop the now-invalid model so the runner resolves
+        // the new provider's default (mirrors index.mjs provider!==resolved -> "").
+        session.model = "";
+        session.status = "idle";
+        session.error = null;
+        touch(session);
+        await persistSessions();
+        telemetry.captureEvent("mac_sidecar_session_provider_changed", {
+          session_id: session.id,
+          provider: nextProvider,
+        });
+        broadcast({ type: "session_updated", session });
+      }
+      return;
+    }
     case "stop_session": {
       const session = getSession(payload.sessionId);
       await stopSession(session.id);
@@ -6211,10 +6233,10 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
     await clearInitialIntakeIfNeeded(coachSession);
     const preferredProvider = coachSession?.provider
       || (normalizeSessionProvider(provider) === provider ? provider : state.bipCoach.config.provider);
-    const providers = [
-      preferredProvider,
-      preferredProvider === "claude" ? "codex" : "claude",
-    ];
+    // Single explicit provider — no provider fallback. If this provider is
+    // unavailable or generation fails, the error is surfaced (no alternate
+    // provider attempt and no local deterministic fallback).
+    const providers = [preferredProvider];
     const failures = [];
     const today = todayKey();
 
@@ -6304,64 +6326,6 @@ async function generateBipCoachMission({ sessionId, provider, compact = false, c
       } catch (error) {
         failures.push(`${candidate}: ${formatError(error)}`);
     }
-    }
-
-    if (state.bipCoach?.evidence?.fullRead) {
-      emitMissionProgress("finalizing", "생성 provider 연결이 불안정해 로컬 fallback 미션을 정리하는 중", {
-        provider: "local",
-    });
-      const now = new Date();
-      const missionChoices = buildFallbackBipMissionChoices({
-        state: state.bipCoach,
-        compact,
-        curriculumDay,
-        localEvidence: null,
-        today,
-        now,
-    });
-      state.bipCoach = normalizeBipCoachState({
-      ...state.bipCoach,
-        updatedAt: now.toISOString(),
-        evidence: {
-          ...state.bipCoach.evidence,
-          source: "sidecar_gws",
-          provider: "local",
-          fallbackUsed: true,
-          providerFailures: failures,
-          elapsedMs: Date.now() - startedAt,
-          curriculumDay,
-        },
-        missionChoices,
-        currentMission: null,
-        lastError: null,
-    });
-      if (coachSession) {
-        coachSession.messages.push(makeMessage({
-          role: "assistant",
-          provider: coachSession.provider,
-          content: buildMissionChoicesVisibleMessage(
-            missionChoices,
-            "Codex/Claude 생성 연결이 불안정해서, 방금 읽은 공개 기록과 선택한 Day 커리큘럼만으로 바로 실행 가능한 후보 3개를 만들었어요.",
-          ),
-          state: "final",
-          bipMissionChoices: missionChoices,
-          providerAuthActions: buildProviderAuthActionsForFailures(failures),
-        }));
-        coachSession.status = "idle";
-        coachSession.error = null;
-        touch(coachSession);
-        await persistSessions();
-        broadcast({ type: "session_updated", session: coachSession });
-    }
-      await persistAndBroadcastBipCoach("mac_sidecar_bip_coach_mission_generated", {
-        provider: "local",
-        compact,
-        fallback_used: true,
-        provider_failures: failures,
-        duration_ms: Date.now() - startedAt,
-    });
-      broadcast({ type: "bip_coach_generation_completed", bipCoach: state.bipCoach });
-      return;
     }
 
     throw new Error(`Mission generation failed. ${failures.join(" | ")}`);
@@ -9396,23 +9360,11 @@ function resolveNewsMarketRadarExaRoutes({
   const routes = [...discovered];
   const apiKey = currentExaApiKey();
   if (apiKey) {
-    const provider = firstAvailableProvider(preferredProvider) || normalizeProviderName(preferredProvider) || "claude";
+    const provider = normalizeProviderName(preferredProvider) || "codex";
     const apiKeyRoute = buildExaApiKeyRoute({ apiKey, provider });
     if (apiKeyRoute) routes.push(apiKeyRoute);
   }
   return routes;
-}
-
-function firstAvailableProvider(preferredProvider = "") {
-  return providerPriority(preferredProvider).find((provider) => getProviderAuthState(provider).available) || "";
-}
-
-function providerPriority(preferredProvider = "") {
-  const preferred = normalizeProviderName(preferredProvider);
-  return [
-    ...(preferred ? [preferred] : []),
-    ...["codex", "claude", "gemini"].filter((provider) => provider !== preferred),
-  ];
 }
 
 function normalizeProviderName(value = "") {
@@ -9695,9 +9647,9 @@ async function runWorkHistoryProviderRefinement(prompt, { provider, model = "" }
 async function runWorkHistoryRefresh({ reason = "manual", targetSocket = null, preferredProvider = "" } = {}) {
   const startedAt = Date.now();
   state.workHistoryProgressStartedAt = startedAt;
-  // Honor the user's settings-selected provider. Default to claude only when no
-  // provider is supplied, preserving prior behavior for older clients.
-  const provider = normalizeProviderName(preferredProvider) || "claude";
+  // Honor the user's settings-selected provider; default to codex when none is
+  // supplied. No provider fallback.
+  const provider = normalizeProviderName(preferredProvider) || "codex";
   const emitProgress = (progress = {}) => {
     const status = buildWorkHistoryProgressStatus(progress, { reason, startedAt });
     state.workHistoryProgress = status;
@@ -9904,60 +9856,45 @@ async function runNewsMarketRadarProviderResearch({
   exaResearchRoutes = [],
   onProgress = null,
 } = {}) {
-  const providerErrors = [];
+  // Single explicit provider route (or codex default). No multi-route/provider
+  // fallback: if the chosen route's provider is unavailable or fails, surface
+  // the error directly.
   const routes = normalizeNewsMarketRadarProviderRoutes({
     exaMcpConfig,
     exaResearchRoute,
     exaResearchRoutes,
   });
-  for (const [routeIndex, route] of routes.entries()) {
-    const provider = normalizeProviderName(route.provider);
-    if (!provider) {
-      providerErrors.push(`${route.label || "웹 검색 도구"} 사용 불가: AI 연결이 설정되지 않았습니다`);
-      continue;
-    }
-    const authState = getProviderAuthState(provider);
-    if (!authState.available) {
-      providerErrors.push(`${providerLabel(provider)} 사용 불가: ${authState.message || authState.source || "설정되지 않음"}`);
-      continue;
-    }
-    const routeLabel = route.label || `${providerLabel(provider)} 웹 검색 도구`;
-    if (typeof onProgress === "function") {
-      onProgress({
-        stage: "running_provider_research",
-        progressText: `${routeLabel}로 공개 근거를 검색하는 중`,
-        researchSource: routeLabel,
-      });
-    }
-    try {
-      const text = provider === "claude"
-        ? await runNewsMarketRadarClaudeResearch({ prompt, exaMcpConfig: route.mcpConfig })
-        : provider === "gemini"
-          ? await runNewsMarketRadarGeminiResearch({ prompt, exaMcpConfig: route.mcpConfig })
-          : await runNewsMarketRadarCodexResearch({ prompt, exaMcpConfig: route.mcpConfig });
-      return {
-        text,
-        provider,
-        researchSource: route.label || `${providerLabel(provider)} 웹 검색 도구`,
-        exaResearchRoute: redactExaResearchRoute(route),
-      };
-    } catch (error) {
-      const formattedError = formatError(error);
-      providerErrors.push(`${routeLabel}: ${formattedError}`);
-      if (typeof onProgress === "function") {
-        const hasNextRoute = routeIndex < routes.length - 1;
-        onProgress({
-          stage: "running_provider_research",
-          progressText: hasNextRoute
-            ? `${routeLabel} 실패: ${formattedError}. 다음 웹 검색 도구 연결을 확인하는 중`
-            : `${routeLabel} 실패: ${formattedError}`,
-          researchSource: routeLabel,
-        });
-      }
-    }
+  const route = routes[0];
+  if (!route) {
+    throw new Error("웹 검색 도구가 설정되지 않았습니다");
   }
-
-  throw new Error(`웹 검색 도구 리서치를 완료한 AI 연결이 없습니다. ${providerErrors.join(" | ")}`);
+  const provider = normalizeProviderName(route.provider);
+  if (!provider) {
+    throw new Error(`${route.label || "웹 검색 도구"} 사용 불가: AI 연결이 설정되지 않았습니다`);
+  }
+  const authState = getProviderAuthState(provider);
+  if (!authState.available) {
+    throw new Error(`${providerLabel(provider)} 사용 불가: ${authState.message || authState.source || "설정되지 않음"}`);
+  }
+  const routeLabel = route.label || `${providerLabel(provider)} 웹 검색 도구`;
+  if (typeof onProgress === "function") {
+    onProgress({
+      stage: "running_provider_research",
+      progressText: `${routeLabel}로 공개 근거를 검색하는 중`,
+      researchSource: routeLabel,
+    });
+  }
+  const text = provider === "claude"
+    ? await runNewsMarketRadarClaudeResearch({ prompt, exaMcpConfig: route.mcpConfig })
+    : provider === "gemini"
+      ? await runNewsMarketRadarGeminiResearch({ prompt, exaMcpConfig: route.mcpConfig })
+      : await runNewsMarketRadarCodexResearch({ prompt, exaMcpConfig: route.mcpConfig });
+  return {
+    text,
+    provider,
+    researchSource: route.label || `${providerLabel(provider)} 웹 검색 도구`,
+    exaResearchRoute: redactExaResearchRoute(route),
+  };
 }
 
 async function runNewsMarketRadarProviderSynthesis({
@@ -9965,30 +9902,23 @@ async function runNewsMarketRadarProviderSynthesis({
   provider = "",
   preferredProvider = "",
 } = {}) {
-  const preferred = normalizeProviderName(provider) || normalizeProviderName(preferredProvider);
-  const providerErrors = [];
-  for (const candidate of providerPriority(preferred)) {
-    const authState = getProviderAuthState(candidate);
-    if (!authState.available) {
-      providerErrors.push(`${providerLabel(candidate)} 합성 사용 불가: ${authState.message || authState.source || "설정되지 않음"}`);
-      continue;
-    }
-    try {
-      const text = candidate === "claude"
-        ? await runNewsMarketRadarClaudeSynthesis({ prompt })
-        : candidate === "gemini"
-          ? await runNewsMarketRadarGeminiSynthesis({ prompt })
-          : await runNewsMarketRadarCodexSynthesis({ prompt });
-      return {
-        text,
-        provider: candidate,
-        researchSource: `${providerLabel(candidate)} synthesis`,
-      };
-    } catch (error) {
-      providerErrors.push(`${providerLabel(candidate)} 합성 실패: ${formatError(error)}`);
-    }
+  // Single explicit provider (or codex default). No precedence fallback: if the
+  // chosen provider is unavailable or fails, surface the error directly.
+  const candidate = normalizeProviderName(provider) || normalizeProviderName(preferredProvider) || "codex";
+  const authState = getProviderAuthState(candidate);
+  if (!authState.available) {
+    throw new Error(`${providerLabel(candidate)} 합성 사용 불가: ${authState.message || authState.source || "설정되지 않음"}`);
   }
-  throw new Error(`Market Radar 최종 합성을 완료한 provider가 없습니다. ${providerErrors.join(" | ")}`);
+  const text = candidate === "claude"
+    ? await runNewsMarketRadarClaudeSynthesis({ prompt })
+    : candidate === "gemini"
+      ? await runNewsMarketRadarGeminiSynthesis({ prompt })
+      : await runNewsMarketRadarCodexSynthesis({ prompt });
+  return {
+    text,
+    provider: candidate,
+    researchSource: `${providerLabel(candidate)} synthesis`,
+  };
 }
 
 function normalizeNewsMarketRadarProviderRoutes({
@@ -10415,9 +10345,9 @@ function extractGeminiResponseText(response) {
 }
 
 async function runCreateDoc(docRoot, docType, { preferredProvider = "" } = {}) {
-  // Honor the user's settings-selected provider. Default to claude only when no
-  // provider is supplied (older Mac client), which preserves prior behavior.
-  const provider = normalizeProviderName(preferredProvider) || "claude";
+  // Honor the user's settings-selected provider; default to codex when none is
+  // supplied. No provider fallback.
+  const provider = normalizeProviderName(preferredProvider) || "codex";
   const authState = getProviderAuthState(provider);
   if (!authState.available) {
   broadcast({
