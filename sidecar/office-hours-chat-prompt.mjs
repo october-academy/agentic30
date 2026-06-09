@@ -1,13 +1,7 @@
-import { CODEX_STRUCTURED_INPUT_TOOL } from "./structured-input-tools.mjs";
+import { officeHoursStructuredInputChannel } from "./office-hours-structured-input.mjs";
 
 export function clampOfficeHoursContext(context = "") {
   return String(context || "").trim().slice(0, 16_000);
-}
-
-export function officeHoursStructuredInputToolName(provider = "codex") {
-  return String(provider || "").toLowerCase() === "claude"
-    ? "AskUserQuestion"
-    : CODEX_STRUCTURED_INPUT_TOOL;
 }
 
 export function isOfficeHoursWriteDesignDocContext(context = "") {
@@ -55,7 +49,15 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
   context = "",
   provider = "codex",
 } = {}) {
-  const structuredInputTool = officeHoursStructuredInputToolName(provider);
+  // Provider's Office Hours asking mechanism — single source of truth lives in
+  // office-hours-structured-input.mjs. `structuredInputTool` is interpolated as
+  // a noun into the forcing-question rules below; `isInlineChannel` branches the
+  // tool-vs-sentinel guidance for text-only providers (Gemini) without
+  // hard-coding a provider name. A wrong instruction here left answers as plain
+  // "you" bubbles instead of stacked Office Hours cards.
+  const channel = officeHoursStructuredInputChannel(provider);
+  const structuredInputTool = channel.promptToken;
+  const isInlineChannel = channel.kind === "inline";
   const isWriteDesignDocFlow = isOfficeHoursWriteDesignDocContext(context);
   const isLockedDay1GoalFlow = isOfficeHoursLockedDay1GoalContext(context);
   const isDay2GoalDrivenFlow = isOfficeHoursDay2GoalDrivenContext(context);
@@ -87,7 +89,9 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
     "Optionally attach an emphasis array to the question to highlight key spans. Each item is { phrase, style }: phrase MUST be an exact substring of the question text; style is strong (key nouns, numbers, quotes), mark (warnings, deadlines, the single most important phrase), or code (file names, paths, code tokens). Use 1-5 spans, never more, and never emphasize most of the sentence.",
     "For a free-text chat reply (no structured input card), you may emphasize key spans of your reply with an emphasis sentinel block appended at the very end. Do NOT use inline markup like ** or ==; only the sentinel block. Wire format: the visible reply body, then a new line `===EMPHASIS===`, then a JSON array `[{ \"phrase\": \"<exact substring of the reply>\", \"style\": \"strong|mark|code\" }]`, then `===END===`. style is strong (key nouns, numbers, quotes), mark (warnings, deadlines, the single most important phrase), or code (file names, paths, code tokens). phrase MUST be an exact substring of the reply body. Use 1-5 spans, never more, never emphasize most of the reply, and omit the block entirely when nothing needs emphasis. The host strips this block so the user only sees the reply body.",
     "Recommended options are allowed, but the user must still be able to disagree.",
-    "For this Day 1 Office Hours surface, prefer the host structured input tool over inline_decision sentinel JSON so the Mac app renders a pendingUserInput card.",
+    isInlineChannel
+      ? "You have no host tool channel; ask every forcing question by emitting an inline_decision sentinel block (its exact format is defined in the base system prompt). Never wait for, or claim to call, a host structured input tool — emit the sentinel so the Mac app renders a pendingUserInput card."
+      : "For this Day 1 Office Hours surface, prefer the host structured input tool over inline_decision sentinel JSON so the Mac app renders a pendingUserInput card.",
     "Never present numbered prose choices or markdown bullet choices as the only way to answer.",
     "Use workspace facts and Day 1 answers before broad startup advice.",
     "After the routed forcing questions are sufficiently answered, close with exactly two terminal cards: first `전제 확인` (signalId: office_hours_premise_challenge), then `대안 비교` (signalId: office_hours_alternatives).",

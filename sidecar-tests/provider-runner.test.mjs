@@ -22,6 +22,7 @@ import {
   isClaudeOfficeHoursDigestUnsafeTool,
   isClaudeMutatingTool,
   mapCodexItemToToolEvent,
+  normalizeClaudeQuestions,
   parseProviderEnvironment,
   resetProviderSettingsForTest,
   resolveClaudeModel,
@@ -918,4 +919,44 @@ test("buildSystemPromptText starts mini-action execution-only sessions without u
   assert.match(prompt, /Use auto-verification first/);
   assert.match(prompt, /Do not enter planning, interview, or review flows/);
   assert.match(prompt, /agentic30_request_user_input/);
+});
+
+test("normalizeClaudeQuestions leaves an absent header empty (no English placeholder) for the OH preparer to fill", () => {
+  const [question] = normalizeClaudeQuestions([
+    {
+      question: "지금 이 문제를 어떤 대안으로 해결하고 있나요?",
+      options: [
+        { label: "수작업", description: "직접 처리" },
+        { label: "다른 도구", description: "우회" },
+      ],
+    },
+  ]);
+  assert.equal(question.header, "");
+});
+
+test("normalizeClaudeQuestions carries question highlight/emphasis spans through (Office Hours card parity)", () => {
+  const [question] = normalizeClaudeQuestions([
+    {
+      header: "현재 대안",
+      question: "지금 이 문제를 어떤 대안으로 해결하고 있나요?",
+      options: [
+        { label: "수작업", description: "직접 처리" },
+        { label: "다른 도구", description: "우회" },
+      ],
+      highlightPhrases: ["어떤 대안으로", "  "],
+      emphasis: [
+        { phrase: "어떤 대안으로", style: "mark" },
+        { text: "지금", kind: "strong" },
+        { phrase: "", style: "code" },
+      ],
+    },
+  ]);
+
+  // highlightPhrases: blank entries dropped, kept as a string array.
+  assert.deepEqual(question.highlightPhrases, ["어떤 대안으로"]);
+  // emphasis: shape-normalized to { phrase, style } (text/kind aliases honored,
+  // empty phrases dropped) so it is Swift-decodable; OH preparer re-validates.
+  assert.equal(question.emphasis.length, 2);
+  assert.deepEqual(question.emphasis[0], { phrase: "어떤 대안으로", style: "mark" });
+  assert.deepEqual(question.emphasis[1], { phrase: "지금", style: "strong" });
 });

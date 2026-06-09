@@ -265,12 +265,16 @@ import {
   formatSelectedOptionEvidenceHint,
   isOfficeHoursStructuredInputMode,
   isOfficeHoursStructuredInputToolEvent,
-  normalizeOfficeHoursStructuredPromptRequest,
+  prepareOfficeHoursStructuredInputRequest,
   OFFICE_HOURS_EMPHASIS_SENTINEL_END,
   OFFICE_HOURS_EMPHASIS_SENTINEL_START,
   shouldAppendOfficeHoursStructuredQuestionMessage,
   stripTrailingRubricFocusMetadata,
 } from "./office-hours-structured-input.mjs";
+import {
+  OFFICE_HOURS_STATUS_COPY,
+  OFFICE_HOURS_FIRST_QUESTION_STATUS_COPY,
+} from "./office-hours-status.mjs";
 import {
   clearUserInputArtifacts,
   createUserInputRequest,
@@ -4138,99 +4142,11 @@ function isLockedDay1GoalOfficeHoursRuntime(officeHours = {}) {
     || isOfficeHoursLockedDay1GoalContext(officeHours?.context || "");
 }
 
-const OFFICE_HOURS_STATUS_COPY = Object.freeze({
-  context_loaded: {
-    title: "답변 확인 중",
-    detail: "방금 답변과 프로젝트 정보를 확인하고 있습니다.",
-    progressText: "질문에 필요한 맥락 확인 중",
-  },
-  specialist_routed: {
-    title: "다음 질문 방향 정하는 중",
-    detail: "무엇을 더 물어보면 좋을지 고르고 있습니다.",
-    progressText: "다음 질문 방향 정하는 중",
-  },
-  provider_starting: {
-    title: "다음 질문 준비 중",
-    detail: "답변과 프로젝트 맥락에 맞는 다음 질문을 준비하고 있습니다.",
-    progressText: "프로젝트 맥락에 맞는 다음 질문 준비 중",
-  },
-  provider_thinking: {
-    title: "다음 질문 준비 중",
-    detail: "선택한 답변과 입력 내용을 바탕으로 이어서 물어볼 질문을 정리하고 있습니다.",
-    progressText: "답변을 바탕으로 다음 질문 준비 중",
-  },
-  tool_running: {
-    title: "선택지 준비 중",
-    detail: "고를 수 있는 답변 후보를 만들고 있습니다.",
-    progressText: "답변 후보 준비 중",
-  },
-  structured_input_requested: {
-    title: "질문 화면 여는 중",
-    detail: "곧 다음 질문이 선택지와 함께 표시됩니다.",
-    progressText: "다음 질문 화면 여는 중",
-  },
-  question_ready: {
-    title: "다음 질문 준비 완료",
-    detail: "선택하거나 직접 입력하면 이어서 진행합니다.",
-    progressText: "다음 질문 준비 완료",
-  },
-  completed: {
-    title: "응답 정리 중",
-    detail: "방금 답변을 저장하고 화면 상태를 정리하고 있습니다.",
-    progressText: "응답 정리 중",
-  },
-  failed: {
-    title: "질문 준비 실패",
-    detail: "오류 내용을 화면에 반영하고 있습니다.",
-    progressText: "질문 준비 실패",
-  },
-  aborted: {
-    title: "질문 준비 중단됨",
-    detail: "요청을 멈추고 화면 상태를 정리하고 있습니다.",
-    progressText: "질문 준비 중단됨",
-  },
-});
-
-const OFFICE_HOURS_FIRST_QUESTION_STATUS_COPY = Object.freeze({
-  context_loaded: {
-    title: "목표 확인 중",
-    detail: "목표와 프로젝트 정보를 확인하고 있습니다.",
-    progressText: "목표와 프로젝트 정보 확인 중",
-  },
-  specialist_routed: {
-    title: "첫 질문 방향 정하는 중",
-    detail: "가장 먼저 확인할 내용을 고르고 있습니다.",
-    progressText: "첫 질문 방향 정하는 중",
-  },
-  provider_starting: {
-    title: "첫 질문 준비 중",
-    detail: "프로젝트 맥락에 맞는 첫 질문을 준비하고 있습니다.",
-    progressText: "프로젝트 맥락에 맞는 첫 질문 준비 중",
-  },
-  provider_thinking: {
-    title: "첫 질문 준비 중",
-    detail: "목표와 세션 맥락을 바탕으로 확인할 질문을 정리하고 있습니다.",
-    progressText: "목표와 세션 맥락으로 첫 질문 준비 중",
-  },
-  structured_input_requested: {
-    title: "질문 화면 여는 중",
-    detail: "곧 첫 질문이 선택지와 함께 표시됩니다.",
-    progressText: "첫 질문 화면 여는 중",
-  },
-  question_ready: {
-    title: "첫 질문 준비 완료",
-    detail: "선택하거나 직접 입력하면 Office Hours를 시작합니다.",
-    progressText: "첫 질문 준비 완료",
-  },
-});
-
-function officeHoursFirstQuestionStatus(status = {}) {
-  const firstQuestionCopy = OFFICE_HOURS_FIRST_QUESTION_STATUS_COPY[status.stage] || {};
-  return {
-    ...status,
-    ...firstQuestionCopy,
-  };
-}
+// Office Hours loading-card status copy tables (OFFICE_HOURS_STATUS_COPY for
+// follow-up questions, OFFICE_HOURS_FIRST_QUESTION_STATUS_COPY for the first one)
+// live in ./office-hours-status.mjs (imported above) so the superset invariant
+// can be unit-tested. emitOfficeHoursStatus resolves against whichever table the
+// caller passes as `copy` — there is no cross-table fallback.
 
 function clampOfficeHoursStatusText(value, maxLength = 240) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
@@ -4240,6 +4156,7 @@ function clampOfficeHoursStatusText(value, maxLength = 240) {
 
 function emitOfficeHoursStatus(session, {
   stage,
+  copy = OFFICE_HOURS_STATUS_COPY,
   title = "",
   detail = "",
   progressText = "",
@@ -4248,7 +4165,10 @@ function emitOfficeHoursStatus(session, {
   elapsedMs = null,
 } = {}) {
   if (!session?.id || !stage) return;
-  const stageCopy = OFFICE_HOURS_STATUS_COPY[stage] || {};
+  // Resolve against the caller-selected table only — no cross-table fallback.
+  // The first-question table is a superset of the regular one (pinned by test),
+  // so a first-question emit never silently falls back to follow-up phrasing.
+  const stageCopy = copy[stage] || {};
   const resolvedTitle = clampOfficeHoursStatusText(title || stageCopy.title || "", 120);
   const resolvedDetail = clampOfficeHoursStatusText(detail || stageCopy.detail || "", 240);
   const resolvedProgressText = clampOfficeHoursStatusText(progressText || stageCopy.progressText || resolvedDetail || resolvedTitle, 240);
@@ -4338,7 +4258,7 @@ async function promoteOfficeHoursInlineDecisionPromptCard(session, assistantMess
 
   const request = await createUserInputRequest(
     appSupportPath,
-    normalizeOfficeHoursStructuredPromptRequest(payload),
+    prepareOfficeHoursStructuredInputRequest(payload),
   );
   session.pendingUserInput = request;
   session.status = "awaiting_input";
@@ -4538,7 +4458,7 @@ async function runOfficeHours(session, {
     await persistSessions();
     broadcast({ type: "session_updated", session });
     const emitFirstQuestionOfficeHoursStatus = (status) => {
-      emitOfficeHoursStatus(session, officeHoursFirstQuestionStatus(status));
+      emitOfficeHoursStatus(session, { ...status, copy: OFFICE_HOURS_FIRST_QUESTION_STATUS_COPY });
     };
     emitFirstQuestionOfficeHoursStatus({
       stage: "context_loaded",
@@ -4577,6 +4497,17 @@ async function runOfficeHours(session, {
       provider: session.provider,
     });
     let officeHoursStructuredInputAnswered = false;
+    // True once ANY structured-input question was asked during this run — tool
+    // channel (Claude AskUserQuestion / the MCP request_user_input), a
+    // structured-input run/tool stage, or an inline_decision. Distinguishes a
+    // genuine "no question was produced" failure from a normal interview that
+    // asked (and possibly answered) at least one question and then ended its
+    // turn without a trailing card. With Claude's blocking-continue run model
+    // the whole interview runs inside this single runOfficeHours call, so on
+    // natural conclusion request and pendingUserInput are both null even though
+    // the interview succeeded — without this guard the locked-Day1 failure
+    // branch below would misfire.
+    let officeHoursStructuredInputAsked = false;
     emitFirstQuestionOfficeHoursStatus({
       stage: "provider_starting",
       messageId: assistantMessage.id,
@@ -4597,12 +4528,16 @@ async function runOfficeHours(session, {
       onTextReplace: (text) => setAssistantText(session, assistantMessage.id, text),
       onToolEvent: (toolEvent) => {
         if (isOfficeHoursStructuredInputToolEvent(toolEvent)) {
+          officeHoursStructuredInputAsked = true;
           if (isSuccessfulStructuredInputToolEvent(toolEvent)) {
             officeHoursStructuredInputAnswered = true;
           }
         }
         const status = mapOfficeHoursToolEventToStatus(toolEvent);
         if (status) {
+          if (status.stage === "tool_running" || status.stage === "structured_input_requested") {
+            officeHoursStructuredInputAsked = true;
+          }
           emitFirstQuestionOfficeHoursStatus({
             ...status,
             messageId: assistantMessage.id,
@@ -4634,9 +4569,13 @@ async function runOfficeHours(session, {
       onRunEvent: (event) => {
         if (isStructuredInputResponseRunEvent(event)) {
           officeHoursStructuredInputAnswered = true;
+          officeHoursStructuredInputAsked = true;
         }
         const status = mapOfficeHoursRunEventToStatus(event);
         if (status) {
+          if (status.stage === "structured_input_requested") {
+            officeHoursStructuredInputAsked = true;
+          }
           emitFirstQuestionOfficeHoursStatus({
             ...status,
             messageId: assistantMessage.id,
@@ -4666,9 +4605,18 @@ async function runOfficeHours(session, {
           context: officeHoursRuntime.context,
           source: "office_hours_start",
         });
+    // Only a run that produced NO question in ANY channel is a real failure.
+    // A run that asked/answered ≥1 structured question (Claude blocking-continue
+    // interviews the whole session in one runOfficeHours call) or parsed an
+    // inline_decision legitimately ends with request and pendingUserInput null —
+    // that is a successful conclusion, not a question-generation failure.
+    const officeHoursProducedQuestion = officeHoursStructuredInputAnswered
+      || officeHoursStructuredInputAsked
+      || Boolean(assistantMessage.inlineDecision);
     if (isLockedDay1GoalOfficeHoursRuntime(officeHoursRuntime)
       && !request
-      && !session.pendingUserInput) {
+      && !session.pendingUserInput
+      && !officeHoursProducedQuestion) {
       const message = "Day 1 인터뷰 질문을 만들지 못했습니다.";
       assistantMessage.state = "error";
       assistantMessage.error = message;
@@ -11367,7 +11315,7 @@ async function syncPendingUserInputRequests() {
     if (session.pendingUserInput?.requestId === request.requestId) continue;
 
     const nextRequest = session.runtime?.officeHours?.active === true
-      ? normalizeOfficeHoursStructuredPromptRequest(request)
+      ? prepareOfficeHoursStructuredInputRequest(request)
       : request;
     session.pendingUserInput = attachIddAdaptiveContinuationToRequest(session, nextRequest);
     session.status = "awaiting_input";

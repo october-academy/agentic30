@@ -89,6 +89,19 @@ const structuredQuestionSchema = z
     helperText: z.string().max(280).optional(),
     freeTextPlaceholder: z.string().max(280).optional(),
     textMode: z.enum(["short", "long"]).optional(),
+    // Optional question-statement styling spans, so the Office Hours card can
+    // render the same inline highlight/emphasis the inline_decision channel does.
+    // The Office Hours preparer re-validates these against the question text.
+    highlightPhrases: z.array(z.string().min(1).max(280)).max(8).optional(),
+    emphasis: z
+      .array(
+        z.object({
+          phrase: z.string().min(1).max(280),
+          style: z.enum(["strong", "mark", "code"]).optional(),
+        }),
+      )
+      .max(8)
+      .optional(),
   })
   .superRefine((question, context) => {
     if ((!question.options || question.options.length === 0) && !question.allowFreeText) {

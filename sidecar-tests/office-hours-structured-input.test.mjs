@@ -2,16 +2,20 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   OFFICE_HOURS_INLINE_MODE,
+  OFFICE_HOURS_TOOL_MODE,
   OFFICE_HOURS_EMPHASIS_SENTINEL_END,
   OFFICE_HOURS_EMPHASIS_SENTINEL_START,
   buildContextualOfficeHoursQuestion,
   buildOfficeHoursInlineStructuredPromptPayload,
   buildOfficeHoursStructuredQuestionTranscriptText,
   buildOfficeHoursStructuredInputContinuationPrompt,
+  ensureOfficeHoursGeneration,
   extractOfficeHoursChatEmphasis,
   formatSelectedOptionEvidenceHint,
   isOfficeHoursStructuredInputMode,
   isOfficeHoursStructuredInputToolEvent,
+  officeHoursStructuredInputChannel,
+  prepareOfficeHoursStructuredInputRequest,
   normalizeOfficeHoursEmphasis,
   normalizeOfficeHoursStructuredPromptRequest,
   shouldAppendOfficeHoursStructuredQuestionMessage,
@@ -111,6 +115,180 @@ test("Office Hours demand evidence question is canonicalized to four choices", (
   );
   assert.equal(request.questions[0].allowFreeText, false);
   assert.equal(request.questions[0].requiresFreeText, false);
+});
+
+test("ensureOfficeHoursGeneration stamps a tool-channel request so it is treated as Office Hours", () => {
+  // Shape produced by createUserInputRequest in canUseTool / mcp-server: no generation.
+  const stamped = ensureOfficeHoursGeneration({
+    toolName: "AskUserQuestion",
+    title: "Office Hours",
+    questions: [
+      {
+        header: "수요 증거",
+        question: "Agentic30 수요를 실제 행동으로 확인한 가장 강한 증거는 무엇인가요?",
+        options: [{ label: "실제 결제/계약이 있었다", description: "돈이 움직였다" }],
+      },
+    ],
+  });
+
+  assert.equal(stamped.generation.mode, OFFICE_HOURS_TOOL_MODE);
+  assert.equal(isOfficeHoursStructuredInputMode(stamped.generation.mode), true);
+  // Intent is derived from the demand header so the turn carries signal lineage.
+  assert.equal(stamped.generation.signalId, "office_hours_demand_evidence");
+  assert.equal(typeof stamped.generation.signalLabel, "string");
+  assert.ok(stamped.generation.signalLabel.length > 0);
+});
+
+test("ensureOfficeHoursGeneration leaves an existing Office Hours generation untouched", () => {
+  const inline = {
+    title: "Office Hours",
+    questions: [{ header: "현재 대안", question: "지금 무엇으로 버티나요?" }],
+    generation: { mode: OFFICE_HOURS_INLINE_MODE, signalId: "office_hours_status_quo" },
+  };
+  const result = ensureOfficeHoursGeneration(inline);
+  assert.equal(result, inline);
+  assert.equal(result.generation.mode, OFFICE_HOURS_INLINE_MODE);
+});
+
+test("ensureOfficeHoursGeneration does not override a non-Office-Hours generation (IDD docType)", () => {
+  const idd = {
+    title: "ICP adaptive follow-up",
+    questions: [{ header: "근거 보완", question: "어떤 근거를 고정할까요?" }],
+    generation: { mode: "provider_adaptive", docType: "icp" },
+  };
+  const result = ensureOfficeHoursGeneration(idd);
+  assert.equal(result, idd);
+  assert.equal(result.generation.docType, "icp");
+  assert.equal(isOfficeHoursStructuredInputMode(result.generation.mode), false);
+});
+
+test("ensureOfficeHoursGeneration stamps mode only when intent is unresolved", () => {
+  const stamped = ensureOfficeHoursGeneration({
+    title: "Office Hours",
+    questions: [{ header: "메모", question: "한 줄로 정리해 주세요." }],
+  });
+  assert.equal(stamped.generation.mode, OFFICE_HOURS_TOOL_MODE);
+  // No confident intent -> no misleading demand signal stamped.
+  assert.equal(stamped.generation.signalId, undefined);
+  assert.equal(stamped.generation.signalLabel, undefined);
+});
+
+test("officeHoursStructuredInputChannel maps each provider to its asking mechanism", () => {
+  const claude = officeHoursStructuredInputChannel("claude");
+  assert.equal(claude.kind, "tool");
+  assert.equal(claude.toolName, "AskUserQuestion");
+  assert.equal(claude.promptToken, "AskUserQuestion");
+
+  const codex = officeHoursStructuredInputChannel("codex");
+  assert.equal(codex.kind, "tool");
+  assert.equal(codex.toolName, "agentic30_request_user_input");
+  assert.equal(codex.promptToken, "agentic30_request_user_input");
+
+  // Gemini is text-only: inline channel, sentinel prompt token, no callable tool.
+  const gemini = officeHoursStructuredInputChannel("gemini");
+  assert.equal(gemini.kind, "inline");
+  assert.equal(gemini.promptToken, "inline_decision sentinel block");
+
+  // Unknown / empty providers default to the Codex tool channel.
+  assert.equal(officeHoursStructuredInputChannel("").kind, "tool");
+});
+
+test("prepareOfficeHoursStructuredInputRequest canonicalizes choices and stamps a tool-channel request", () => {
+  // Shape produced by createUserInputRequest in canUseTool / mcp-server: no generation.
+  const prepared = prepareOfficeHoursStructuredInputRequest({
+    toolName: "agentic30_request_user_input",
+    title: "Office Hours",
+    questions: [
+      {
+        questionId: "office_hours_demand_evidence",
+        header: "수요 증거",
+        question: "Agentic30 수요를 실제 행동으로 확인한 가장 강한 증거는 무엇인가요?",
+        options: [
+          { label: "old 1", description: "돈" },
+          { label: "old 2", description: "조건" },
+        ],
+        allowFreeText: true,
+        requiresFreeText: true,
+      },
+    ],
+  });
+
+  // normalize: demand choices canonicalized to the fixed four.
+  assert.deepEqual(
+    prepared.questions[0].options.map((o) => o.label),
+    [
+      "실제 결제/계약이 있었다",
+      "구매 조건이 구체적으로 확인됐다",
+      "현재 대안에 돈/시간을 쓰고 있다",
+      "관심만 있거나 아직 증거가 없다",
+    ],
+  );
+  // ensure: Office Hours generation stamped so the Mac timeline renders a card.
+  assert.equal(prepared.generation.mode, OFFICE_HOURS_TOOL_MODE);
+  assert.equal(isOfficeHoursStructuredInputMode(prepared.generation.mode), true);
+  assert.equal(prepared.generation.signalId, "office_hours_demand_evidence");
+});
+
+test("prepareOfficeHoursStructuredInputRequest leaves an inline-promoted request untouched", () => {
+  const inline = {
+    title: "Office Hours",
+    questions: [{ header: "현재 대안", question: "지금 무엇으로 버티나요?" }],
+    generation: { mode: OFFICE_HOURS_INLINE_MODE, signalId: "office_hours_status_quo" },
+  };
+  const prepared = prepareOfficeHoursStructuredInputRequest(inline);
+  assert.equal(prepared.generation.mode, OFFICE_HOURS_INLINE_MODE);
+  assert.equal(prepared.generation.signalId, "office_hours_status_quo");
+});
+
+test("prepareOfficeHoursStructuredInputRequest fills an empty or 'Question' header with the intent header (card-title parity)", () => {
+  // Claude's normalizeClaudeQuestions can leave the header empty (and historically
+  // injected a literal English "Question"); the tool-channel card must show the
+  // same Korean intent header the inline (Gemini) path produces, never a placeholder.
+  const baseQuestion = {
+    question: "지금 이 문제를 어떤 대안으로 해결하고 있나요?",
+    options: [
+      { label: "수작업", description: "직접 처리" },
+      { label: "다른 도구", description: "우회" },
+    ],
+  };
+
+  const emptyHeader = prepareOfficeHoursStructuredInputRequest({
+    title: "Office Hours",
+    questions: [{ ...baseQuestion, header: "" }],
+  });
+  assert.equal(emptyHeader.questions[0].header, "현재 대안");
+
+  const literalHeader = prepareOfficeHoursStructuredInputRequest({
+    title: "Office Hours",
+    questions: [{ ...baseQuestion, header: "Question" }],
+  });
+  assert.notEqual(literalHeader.questions[0].header, "Question");
+  assert.equal(literalHeader.questions[0].header, "현재 대안");
+});
+
+test("prepareOfficeHoursStructuredInputRequest carries and validates tool-channel emphasis spans (statement-styling parity)", () => {
+  const prepared = prepareOfficeHoursStructuredInputRequest({
+    title: "Office Hours",
+    questions: [
+      {
+        header: "현재 대안",
+        question: "지금 이 문제를 어떤 대안으로 해결하고 있나요?",
+        options: [
+          { label: "수작업", description: "직접 처리" },
+          { label: "다른 도구", description: "우회" },
+        ],
+        emphasis: [
+          { phrase: "어떤 대안으로", style: "mark" },
+          { phrase: "이 문장에 없는 구절", style: "strong" }, // dropped: not a substring of the question
+        ],
+      },
+    ],
+  });
+  const question = prepared.questions[0];
+  assert.ok(Array.isArray(question.emphasis));
+  assert.equal(question.emphasis.length, 1);
+  assert.equal(question.emphasis[0].phrase, "어떤 대안으로");
+  assert.equal(question.emphasis[0].style, "mark");
 });
 
 test("Office Hours inline decision without choices is rejected unless free text is explicit", () => {

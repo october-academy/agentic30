@@ -4,10 +4,18 @@ import {
 } from "./structured-input-tools.mjs";
 
 export const OFFICE_HOURS_INLINE_MODE = "office_hours_inline";
+// Origin stamp for Office Hours questions asked through the host TOOL channel
+// (Claude AskUserQuestion via canUseTool, Codex agentic30_request_user_input via
+// the MCP subprocess) as opposed to the inline-decision text channel. Kept
+// distinct from OFFICE_HOURS_INLINE_MODE so memory turns and telemetry can tell
+// which channel produced the answer, while both are recognized as Office Hours
+// structured input.
+export const OFFICE_HOURS_TOOL_MODE = "office_hours_tool";
 
 const OFFICE_HOURS_STRUCTURED_MODES = new Set([
   "office_hours",
   OFFICE_HOURS_INLINE_MODE,
+  OFFICE_HOURS_TOOL_MODE,
 ]);
 
 const DEFAULT_OFFICE_HOURS_QUESTION =
@@ -64,10 +72,42 @@ const KNOWN_OFFICE_HOURS_INTENTS = new Set([
   "future_fit",
 ]);
 
-export function officeHoursStructuredInputToolName(provider = "codex") {
-  return String(provider || "").toLowerCase() === "claude"
-    ? "AskUserQuestion"
-    : CODEX_STRUCTURED_INPUT_TOOL;
+// Single source of truth for HOW each provider asks an Office Hours forcing
+// question. The asking mechanism differs by provider capability, but all three
+// converge on the same pendingUserInput card:
+//   - claude: native AskUserQuestion tool (intercepted in-process by canUseTool)
+//   - codex:  agentic30_request_user_input MCP tool (spawned subprocess)
+//   - gemini: inline_decision sentinel — text-only, no host tool channel
+// `promptToken` is the noun the system prompt interpolates into its
+// forcing-question rules; `toolName` is the label carried on the promoted /
+// answered request; `kind` ("tool" | "inline") drives tool-vs-sentinel guidance
+// without hard-coding a provider name.
+export function officeHoursStructuredInputChannel(provider = "codex") {
+  const normalized = String(provider || "").toLowerCase();
+  if (normalized === "claude") {
+    return Object.freeze({
+      provider: "claude",
+      kind: "tool",
+      toolName: "AskUserQuestion",
+      promptToken: "AskUserQuestion",
+    });
+  }
+  if (normalized === "gemini") {
+    return Object.freeze({
+      provider: "gemini",
+      kind: "inline",
+      // Label only — Gemini cannot invoke a host tool; its card is produced by
+      // promoting the inline_decision sentinel it emits as text.
+      toolName: CODEX_STRUCTURED_INPUT_TOOL,
+      promptToken: "inline_decision sentinel block",
+    });
+  }
+  return Object.freeze({
+    provider: "codex",
+    kind: "tool",
+    toolName: CODEX_STRUCTURED_INPUT_TOOL,
+    promptToken: CODEX_STRUCTURED_INPUT_TOOL,
+  });
 }
 
 export function isOfficeHoursStructuredInputMode(mode = "") {
@@ -99,6 +139,111 @@ export function normalizeOfficeHoursStructuredPromptRequest(request = {}) {
         questions: normalizedQuestions,
       }
     : request;
+}
+
+// Tool-channel requests (Claude AskUserQuestion via canUseTool, Codex
+// agentic30_request_user_input via the MCP subprocess) reach the host through
+// createUserInputRequest, which — unlike the inline-decision promotion path
+// (buildOfficeHoursInlineStructuredPromptPayload) — attaches no generation
+// stamp. Without `generation.mode`, the submit handler's
+// isOfficeHoursStructuredInputResponse check is false, so the answer skips the
+// Office Hours transcript question bubble and, more importantly, the
+// appendOfficeHoursTurn memory log. This stamps a tool-channel Office Hours
+// request so both providers get identical post-answer treatment.
+//
+// Conservative + idempotent: only stamps when NO generation is present at all
+// (the tool-channel signature). Requests already carrying an Office Hours
+// generation (inline promotion) or any other generation — e.g. an IDD adaptive
+// continuation with a docType — are returned untouched.
+export function ensureOfficeHoursGeneration(request = {}) {
+  if (!request || typeof request !== "object") return request;
+  const generation = request.generation;
+  if (isOfficeHoursStructuredInputMode(generation?.mode)) return request;
+  if (generation && (generation.mode || generation.docType)) return request;
+
+  const firstQuestion = Array.isArray(request.questions) ? request.questions[0] : null;
+  const intent = firstQuestion
+    ? resolveOfficeHoursQuestionIntent({
+        question: String(firstQuestion.question || ""),
+        inlineDecision: {
+          header: firstQuestion.header,
+          question: firstQuestion.question,
+          intent: firstQuestion.intent || firstQuestion.questionIntent,
+          questionId: firstQuestion.questionId,
+        },
+      })
+    : "";
+
+  const stamped = {
+    ...(generation || {}),
+    mode: OFFICE_HOURS_TOOL_MODE,
+  };
+  if (intent) {
+    stamped.signalId = resolveOfficeHoursSignalId(
+      { questionId: firstQuestion?.questionId },
+      intent,
+    );
+    stamped.signalLabel = officeHoursSignalLabel(intent);
+  }
+  return { ...request, generation: stamped };
+}
+
+// Single entry point that makes any structured-input request card-ready for the
+// Office Hours surface: canonicalize the demand-evidence choices, then guarantee
+// an Office Hours generation stamp. With the stamp the Mac timeline collapses
+// the question/answer into a stacked submitted card (instead of a plain "you"
+// bubble) and submit_user_input treats it as an Office Hours turn (transcript +
+// appendOfficeHoursTurn memory log). Idempotent: requests already promoted from
+// the inline_decision channel keep their richer generation untouched.
+// Normalize one question's PRESENTATION so the stacked card renders identically
+// regardless of which provider/channel produced it:
+//  - header: tool channels (especially Claude's AskUserQuestion default) may emit
+//    an empty or literal "Question" header; fall back to the same deterministic
+//    Korean intent header the inline path uses so the card title never shows a
+//    raw English placeholder.
+//  - highlightPhrases / emphasis: validate + derive them the same way the inline
+//    path does (option-label highlights, substring-checked emphasis spans) so the
+//    question-statement styling is consistent across providers. The tool channels
+//    now carry these through (mcp-server schema + normalizeClaudeQuestions), and
+//    the prompt already asks every provider to attach emphasis spans.
+function normalizeOfficeHoursQuestionPresentation(question = {}) {
+  if (!question || typeof question !== "object") return question;
+  const intent = resolveOfficeHoursQuestionIntent({
+    question: String(question.question || ""),
+    inlineDecision: {
+      header: question.header,
+      question: question.question,
+      intent: question.intent || question.questionIntent,
+      questionId: question.questionId,
+    },
+  });
+  const rawHeader = String(question.header || "").trim();
+  const header = !rawHeader || rawHeader.toLowerCase() === "question"
+    ? officeHoursIntentHeader(intent)
+    : rawHeader.slice(0, 32);
+  const highlightPhrases = normalizeOfficeHoursHighlightPhrases(
+    question.highlightPhrases || question.highlight_phrases || question.highlights,
+    question.question,
+    Array.isArray(question.options) ? question.options : [],
+  );
+  const emphasis = normalizeOfficeHoursEmphasis(
+    question.emphasis || question.emphasis_spans || question.emphasisSpans,
+    question.question,
+  );
+  const next = { ...question, header };
+  if (highlightPhrases.length) next.highlightPhrases = highlightPhrases;
+  else delete next.highlightPhrases;
+  if (emphasis.length) next.emphasis = emphasis;
+  else delete next.emphasis;
+  return next;
+}
+
+export function prepareOfficeHoursStructuredInputRequest(request = {}) {
+  const canonical = normalizeOfficeHoursStructuredPromptRequest(request);
+  const withPresentation = Array.isArray(canonical?.questions)
+    ? { ...canonical, questions: canonical.questions.map(normalizeOfficeHoursQuestionPresentation) }
+    : canonical;
+  return ensureOfficeHoursGeneration(withPresentation);
 }
 
 export function stripTrailingRubricFocusMetadata(content = "") {
@@ -196,7 +341,7 @@ export function buildOfficeHoursInlineStructuredPromptPayload({
 
   const payload = {
     sessionId,
-    toolName: officeHoursStructuredInputToolName(provider),
+    toolName: officeHoursStructuredInputChannel(provider).toolName,
     title: "Office Hours",
     questions,
     generation: {

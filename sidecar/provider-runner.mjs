@@ -781,7 +781,7 @@ export function isClaudeOfficeHoursDigestUnsafeTool(toolName = "") {
   ].some((token) => new RegExp(`(^|[_:\\-])${token}($|[_:\\-])`).test(action));
 }
 
-function normalizeClaudeQuestions(questions) {
+export function normalizeClaudeQuestions(questions) {
   if (!Array.isArray(questions)) return [];
   return questions
     .map((question) => {
@@ -819,7 +819,10 @@ function normalizeClaudeQuestions(questions) {
           ? { questionId: String(question.questionId || question.question_id || question.id).trim().slice(0, 96) }
           : {}),
         question: String(question?.question || "").trim(),
-        header: String(question?.header || "Question").trim().slice(0, 32) || "Question",
+        // Leave an absent header empty; the Office Hours preparer fills a
+        // deterministic Korean intent header so the card title never shows a raw
+        // English placeholder. (Was a literal "Question" default.)
+        header: String(question?.header || "").trim().slice(0, 32),
         options,
         multiSelect: Boolean(question?.multiSelect),
         allowFreeText,
@@ -827,6 +830,26 @@ function normalizeClaudeQuestions(questions) {
         ...(question?.helperText ? { helperText: String(question.helperText).trim().slice(0, 280) } : {}),
         ...(question?.freeTextPlaceholder ? { freeTextPlaceholder: String(question.freeTextPlaceholder).trim().slice(0, 280) } : {}),
         ...(question?.textMode === "long" ? { textMode: "long" } : {}),
+        // Carry question-statement highlight/emphasis spans through so the Office
+        // Hours card can render the same inline styling the inline_decision
+        // channel already produces. Shape-normalized here for Swift-decode safety;
+        // the Office Hours preparer re-validates spans against the question text.
+        ...(Array.isArray(question?.highlightPhrases) && question.highlightPhrases.length
+          ? { highlightPhrases: question.highlightPhrases.map((phrase) => String(phrase || "").trim()).filter(Boolean).slice(0, 8) }
+          : {}),
+        ...(Array.isArray(question?.emphasis) && question.emphasis.length
+          ? {
+              emphasis: question.emphasis
+                .map((span) => ({
+                  phrase: String(span?.phrase || span?.text || "").trim(),
+                  style: ["strong", "mark", "code"].includes(String(span?.style || span?.kind))
+                    ? String(span?.style || span?.kind)
+                    : "mark",
+                }))
+                .filter((span) => span.phrase)
+                .slice(0, 8),
+            }
+          : {}),
       };
     })
     .filter((question) => question.question && (question.options.length >= 2 || question.allowFreeText))

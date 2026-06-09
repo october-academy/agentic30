@@ -173,3 +173,27 @@ test("office-hours chat system prompt routes Claude forcing questions through As
   assert.match(prompt, /AskUserQuestion/);
   assert.doesNotMatch(prompt, /agentic30_request_user_input/);
 });
+
+test("office-hours chat system prompt routes Gemini forcing questions through the inline_decision sentinel", () => {
+  const prompt = buildOfficeHoursChatSystemPrompt("/workspace", {
+    provider: "gemini",
+    context: "target solo founder",
+  });
+
+  // Gemini has no host tool channel — it must not be told to call one.
+  assert.doesNotMatch(prompt, /agentic30_request_user_input/);
+  assert.doesNotMatch(prompt, /AskUserQuestion/);
+  // The forcing-question rules name the inline_decision sentinel as the mechanism,
+  // consistent with the base system prompt that already injects its contract.
+  assert.match(prompt, /inline_decision sentinel block/);
+  assert.match(prompt, /first forcing question/i);
+  assert.match(prompt, /MUST be asked/);
+  // The "prefer tool over inline_decision" preference is replaced for Gemini.
+  assert.doesNotMatch(prompt, /prefer the host structured input tool over inline_decision/);
+  assert.match(prompt, /no host tool channel/);
+  // Office Hours core routing rules still apply.
+  assert.match(prompt, /Q1 Demand Reality/);
+  assert.match(prompt, /exactly four demand evidence choices/);
+  assert.match(prompt, /현재 대안에 돈\/시간을 쓰고 있다/);
+  assert.match(prompt, /target solo founder/);
+});
