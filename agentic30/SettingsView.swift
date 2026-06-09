@@ -61,6 +61,65 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     }
 }
 
+/// Vertical extent of a settings section measured in the content scroll view's
+/// coordinate space (top edge = 0; values shrink as the content scrolls upward).
+struct SettingsSectionFrame: Equatable {
+    var minY: CGFloat
+    var maxY: CGFloat
+}
+
+/// Collects every section's frame so the sidebar can highlight whichever section is
+/// currently parked at the top of the scroll view (scroll-spy).
+private struct SettingsSectionFramesKey: PreferenceKey {
+    static let defaultValue: [SettingsSection: SettingsSectionFrame] = [:]
+
+    static func reduce(
+        value: inout [SettingsSection: SettingsSectionFrame],
+        nextValue: () -> [SettingsSection: SettingsSectionFrame]
+    ) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+/// Pure scroll-spy decision: given each section's frame in the scroll viewport, returns
+/// the section the sidebar should focus. Kept free of SwiftUI so it is unit-testable.
+enum SettingsScrollSpy {
+    static let defaultActivationLine: CGFloat = 64
+
+    /// - Parameters:
+    ///   - order: sections in their on-screen (top-to-bottom) layout order.
+    ///   - frames: per-section frames in the scroll viewport coordinate space.
+    ///   - viewportHeight: visible height of the scroll view, used for bottom-edge logic.
+    ///   - activationLine: distance below the viewport top at which a section's header is
+    ///     considered "current". A section activates once its top crosses this line.
+    static func activeSection(
+        order: [SettingsSection],
+        frames: [SettingsSection: SettingsSectionFrame],
+        viewportHeight: CGFloat,
+        activationLine: CGFloat = defaultActivationLine
+    ) -> SettingsSection? {
+        let present = order.filter { frames[$0] != nil }
+        guard let first = present.first, let firstFrame = frames[first] else { return nil }
+
+        // Bottom edge: once the first section has scrolled off the top and the whole
+        // content tail fits within the viewport, pin the last section. Short trailing
+        // sections can never push their header up to the activation line, so without
+        // this they would be unreachable by scrolling.
+        if viewportHeight > 0, firstFrame.minY < 0 {
+            let contentBottom = present.compactMap { frames[$0]?.maxY }.max() ?? 0
+            if contentBottom <= viewportHeight + 1, let last = present.last {
+                return last
+            }
+        }
+
+        // Standard: the last section whose top edge has crossed the activation line.
+        if let passed = present.last(where: { (frames[$0]?.minY ?? .infinity) <= activationLine }) {
+            return passed
+        }
+        return first
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject var viewModel: AgenticViewModel
     private let embeddedInWorkspace: Bool
@@ -110,6 +169,20 @@ struct SettingsView: View {
     @State private var hoveredWorkspacePathChangeButton = false
     @State private var settingsSearchQuery = ""
     @State private var settingsSaveMessage = ""
+    /// Visible height of the content scroll view, fed into the scroll-spy bottom-edge rule.
+    @State private var settingsScrollViewportHeight: CGFloat = 0
+    /// True while a sidebar-driven (programmatic) scroll is animating. Scroll-spy updates
+    /// are ignored during this window so the animation isn't fought by transient frames.
+    @State private var isProgrammaticSettingsScroll = false
+    /// Set right before scroll-spy mutates the selection so the selection's `onChange`
+    /// skips re-scrolling — otherwise following the scroll would snap the section to the top.
+    @State private var suppressScrollOnSelectionChange = false
+    /// Provider chosen in the settings UI but not yet committed via the save button.
+    /// Kept separate from `viewModel.selectedProvider` so the active engine only
+    /// switches when the user explicitly saves.
+    @State private var pendingProvider: AgentProvider = AgenticViewModel.loadSelectedProvider()
+    /// Snapshot of the last persisted settings, used to detect unsaved edits.
+    @State private var savedSettingsBaseline = KeychainHelper.loadSettings()
     @State private var settingsThemeChoice = Agentic30Theme.current == .dark ? "dark" : "light"
     @AppStorage(Agentic30Theme.storageKey) private var appThemeRawValue = Agentic30Theme.defaultTheme.rawValue
 
@@ -177,6 +250,15 @@ struct SettingsView: View {
         selectedSectionOverride ?? $localSelectedSection
     }
 
+    /// Sections in the exact top-to-bottom order they appear in `openDesignSettingsMain`.
+    /// Must stay in sync with that VStack so scroll-spy resolves the right neighbour.
+    private static let scrollSpyOrder: [SettingsSection] = [
+        .appearance, .workspace, .menubar, .providers, .integrations, .privacy, .updates, .advanced,
+    ]
+
+    /// Coordinate space the section frame readers report into, owned by the content scroll view.
+    private static let scrollSpaceName = "settings.scrollSpy"
+
     #if DEBUG
     private static func uiTestingInitialSection() -> SettingsSection? {
         guard let rawSection = uiTestingArgumentValue("--ui-testing-open-settings-section") else {
@@ -203,6 +285,13 @@ struct SettingsView: View {
             .onAppear(perform: loadAllValues)
             .onChange(of: viewModel.workspaceRoot) { _, root in
                 syncWorkspaceRoot(root)
+            }
+            .onChange(of: viewModel.selectedProvider) { oldValue, newValue in
+                // The active engine can change outside settings (e.g. session
+                // switch). Follow it only when the user hadn't already picked a
+                // different provider in the segment — i.e. pending was tracking the
+                // previous value. Otherwise the user's explicit choice is preserved.
+                if pendingProvider == oldValue { pendingProvider = newValue }
             }
             .overlay {
                 ZStack {
@@ -445,13 +534,7 @@ struct SettingsView: View {
                             .fill(settingsAccentColor)
                             .frame(width: 5, height: 5)
                             .shadow(color: settingsAccentColor.opacity(0.24), radius: 3)
-                        Text("Agentic30 · 로컬 우선")
-                        Text("·")
-                            .foregroundStyle(settingsText.opacity(0.22))
-                        Text(settingsUserLabel)
-                        Text("·")
-                            .foregroundStyle(settingsText.opacity(0.22))
-                        Text(settingsSaveMessage.isEmpty ? "변경 사항 자동 저장" : settingsSaveMessage)
+                        Text("Agentic30")
                     }
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(settingsText.opacity(0.44))
@@ -492,17 +575,20 @@ struct SettingsView: View {
             .buttonStyle(.plain)
 
             Button(action: saveAllSettingsValues) {
-                Label(settingsSaveMessage.isEmpty ? "모두 저장됨" : settingsSaveMessage, systemImage: "checkmark")
+                Label(saveButtonLabel, systemImage: saveButtonIcon)
                     .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(Color(red: 0.08, green: 0.12, blue: 0.11))
+                    .foregroundStyle(saveButtonIsAccented
+                        ? Color(red: 0.08, green: 0.12, blue: 0.11)
+                        : settingsText.opacity(0.5))
                     .padding(.horizontal, 14)
                     .frame(height: 28)
                     .background(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(settingsAccentColor)
+                            .fill(saveButtonIsAccented ? settingsAccentColor : settingsText.opacity(0.08))
                     )
             }
             .buttonStyle(.plain)
+            .disabled(!hasUnsavedSettings)
             .accessibilityIdentifier("settings.saveButton")
         }
         .padding(.horizontal, 28)
@@ -659,11 +745,6 @@ struct SettingsView: View {
         """
     }
 
-    private var settingsUserLabel: String {
-        let email = viewModel.signedInEmail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return email.isEmpty ? selectedSection.wrappedValue.sidebarTitle : email
-    }
-
     private var settingsBackground: Color {
         OpenDesignDayColor.bg
     }
@@ -710,20 +791,58 @@ struct SettingsView: View {
                 .padding(.bottom, 60)
                 .frame(maxWidth: .infinity)
             }
+            .coordinateSpace(.named(Self.scrollSpaceName))
             .accessibilityIdentifier("settings.contentScroll")
             .accessibilityLabel("OpenDesign Settings Main")
             .background(settingsTabBackground)
+            .background(settingsScrollViewportReader)
+            .onPreferenceChange(SettingsSectionFramesKey.self) { frames in
+                updateScrollSpy(frames)
+            }
             .onAppear {
                 scrollToSelectedSettingsSection(proxy, animated: false)
             }
             .onChange(of: selectedSection.wrappedValue) { _, _ in
+                // A selection change driven by scroll-spy must NOT scroll — the user is
+                // already there. Only sidebar clicks (and external changes) scroll.
+                if suppressScrollOnSelectionChange {
+                    suppressScrollOnSelectionChange = false
+                    return
+                }
                 scrollToSelectedSettingsSection(proxy, animated: true)
             }
         }
         .accessibilityIdentifier("opendesign.reference.settings.main")
     }
 
+    /// Measures the visible scroll-view height for the scroll-spy bottom-edge rule.
+    private var settingsScrollViewportReader: some View {
+        GeometryReader { geo in
+            Color.clear
+                .onAppear { settingsScrollViewportHeight = geo.size.height }
+                .onChange(of: geo.size.height) { _, newHeight in
+                    settingsScrollViewportHeight = newHeight
+                }
+        }
+    }
+
+    /// Highlights the section the content is currently scrolled to. Skipped while a
+    /// programmatic scroll animates, and it flags the resulting selection change so the
+    /// selection `onChange` doesn't bounce the scroll position back.
+    private func updateScrollSpy(_ frames: [SettingsSection: SettingsSectionFrame]) {
+        guard !isProgrammaticSettingsScroll else { return }
+        guard let target = SettingsScrollSpy.activeSection(
+            order: Self.scrollSpyOrder,
+            frames: frames,
+            viewportHeight: settingsScrollViewportHeight
+        ) else { return }
+        guard target != selectedSection.wrappedValue else { return }
+        suppressScrollOnSelectionChange = true
+        selectedSection.wrappedValue = target
+    }
+
     private func scrollToSelectedSettingsSection(_ proxy: ScrollViewProxy, animated: Bool) {
+        isProgrammaticSettingsScroll = true
         let action = {
             proxy.scrollTo(openDesignAnchor(for: selectedSection.wrappedValue), anchor: .top)
         }
@@ -731,6 +850,11 @@ struct SettingsView: View {
             withAnimation(.easeInOut(duration: 0.22), action)
         } else {
             action()
+        }
+        // Release the scroll-spy lock once the programmatic scroll has settled, so a
+        // subsequent manual scroll updates the sidebar again.
+        DispatchQueue.main.asyncAfter(deadline: .now() + (animated ? 0.32 : 0.05)) {
+            isProgrammaticSettingsScroll = false
         }
     }
 
@@ -1202,6 +1326,22 @@ struct SettingsView: View {
             content()
         }
         .id(id)
+        .background(settingsSectionFrameReader(id))
+    }
+
+    /// Reports this section's frame (in the scroll viewport coordinate space) so the
+    /// sidebar can track scroll position. No-op for ids without a backing section.
+    @ViewBuilder
+    private func settingsSectionFrameReader(_ id: String) -> some View {
+        if let section = SettingsSection.fromIdentifier(id) {
+            GeometryReader { geo in
+                let frame = geo.frame(in: .named(Self.scrollSpaceName))
+                Color.clear.preference(
+                    key: SettingsSectionFramesKey.self,
+                    value: [section: SettingsSectionFrame(minY: frame.minY, maxY: frame.maxY)]
+                )
+            }
+        }
     }
 
     private func odSettingsRowsCard<Content: View>(
@@ -1535,10 +1675,10 @@ struct SettingsView: View {
     private func odActiveProviderSegmented() -> some View {
         HStack(spacing: 3) {
             ForEach(AgentProvider.allCases) { provider in
-                let isActive = viewModel.selectedProvider == provider
+                let isActive = pendingProvider == provider
                 let available = providerEnvironment(for: provider)?.available ?? false
                 Button {
-                    viewModel.setActiveProvider(provider)
+                    pendingProvider = provider
                 } label: {
                     Text(provider.title)
                         .font(.system(size: 11.5, weight: .medium, design: .monospaced))
@@ -2532,10 +2672,21 @@ struct SettingsView: View {
 
     private func saveAllSettingsValues() {
         let settings = currentSettings()
-        try? KeychainHelper.saveSettings(settings)
+        do {
+            try KeychainHelper.saveSettings(settings)
+        } catch {
+            showMessage($settingsSaveMessage, text: "저장 실패")
+            return
+        }
         KeychainHelper.syncAllConfigFiles(from: settings)
         PostHogTelemetry.reloadConfiguration()
         viewModel.syncProviderSettingsToSidecar(settings)
+        // Commit the pending provider only on save — switching the active engine
+        // here keeps provider changes behind the same gate as every other setting.
+        if pendingProvider != viewModel.selectedProvider {
+            viewModel.setActiveProvider(pendingProvider)
+        }
+        savedSettingsBaseline = settings
         showMessage($settingsSaveMessage, text: "저장됨")
     }
 
@@ -2595,9 +2746,10 @@ struct SettingsView: View {
 
     // MARK: - Load / Save / Clear
 
-    /// Builds a Settings struct from current @State values.
-    private func currentSettings() -> KeychainHelper.Settings {
-        var s = KeychainHelper.loadSettings()
+    /// Overlays the save-gated @State values onto an existing Settings struct.
+    /// Deliberately excludes `bipWorkspaceRoot` — the workspace folder is applied
+    /// immediately via the folder picker, so it must not drive the save button.
+    private func applyEditableFields(to s: inout KeychainHelper.Settings) {
         s.preferredClaudeModel = AgentModelCatalog.normalizedModelID(
             claudeModelID,
             provider: .claude
@@ -2630,8 +2782,41 @@ struct SettingsView: View {
         s.posthogMcpRegion = posthogMcpRegion
         s.posthogMcpReadonly = posthogMcpReadonly
         s.posthogMcpFeatures = posthogMcpFeatures
+    }
+
+    /// Builds a Settings struct from current @State values.
+    private func currentSettings() -> KeychainHelper.Settings {
+        var s = KeychainHelper.loadSettings()
+        applyEditableFields(to: &s)
         s.bipWorkspaceRoot = workspaceRootPath
         return s
+    }
+
+    /// True when the user has edited a save-gated field (settings values or the
+    /// pending provider) since the last successful load/save. Drives the save
+    /// button label between "저장" and "모두 저장됨". Compares in-memory snapshots
+    /// only, so it is cheap to evaluate on every body pass.
+    private var hasUnsavedSettings: Bool {
+        if pendingProvider != viewModel.selectedProvider { return true }
+        var candidate = savedSettingsBaseline
+        applyEditableFields(to: &candidate)
+        return candidate != savedSettingsBaseline
+    }
+
+    /// Whether the save button should read/behave as the accent (actionable) state:
+    /// either there are unsaved edits, or a transient confirmation message is showing.
+    private var saveButtonIsAccented: Bool {
+        hasUnsavedSettings || !settingsSaveMessage.isEmpty
+    }
+
+    private var saveButtonLabel: String {
+        if !settingsSaveMessage.isEmpty { return settingsSaveMessage }
+        return hasUnsavedSettings ? "저장" : "모두 저장됨"
+    }
+
+    private var saveButtonIcon: String {
+        if settingsSaveMessage.isEmpty, hasUnsavedSettings { return "arrow.down.circle" }
+        return "checkmark"
     }
 
     /// Applies a Settings struct to all @State values.
@@ -2705,6 +2890,9 @@ struct SettingsView: View {
         workspaceRootPath = WorkspaceSettings.displayPath(legacyFallback: settings.bipWorkspaceRoot)
         viewModel.syncProviderSettingsToSidecar(settings)
         viewModel.refreshGitHubCliStatus()
+        // Re-baseline after applying values so the save button starts clean.
+        pendingProvider = viewModel.selectedProvider
+        savedSettingsBaseline = currentSettings()
     }
 
     private func syncWorkspaceRoot(_ root: String) {

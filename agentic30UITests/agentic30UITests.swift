@@ -1737,10 +1737,10 @@ final class agentic30UITests: XCTestCase {
             timeout: 5,
             scrollViewIdentifier: "opendesign.officeHours.main.scroll"
         ))
-        XCTAssertTrue(app.staticTexts["시스템 초안"].waitForExistence(timeout: 3))
-        let customerField = elementWithIdentifier(in: app, "opendesign.officeHours.commitmentCustomerField")
+        XCTAssertTrue(app.staticTexts["다음 한 가지 고객 행동을 약속해줘."].waitForExistence(timeout: 3))
+        let customField = elementWithIdentifier(in: app, "opendesign.officeHours.commitmentCustomField")
         XCTAssertTrue(scrollElementToVisible(
-            customerField,
+            customField,
             in: app,
             timeout: 5,
             scrollViewIdentifier: "opendesign.officeHours.main.scroll"
@@ -1748,8 +1748,8 @@ final class agentic30UITests: XCTestCase {
         let commitButton = elementWithIdentifier(in: app, "opendesign.officeHours.commitButton")
         XCTAssertTrue(commitButton.exists)
         XCTAssertFalse(commitButton.isEnabled)
-        clickCenter(of: customerField)
-        customerField.typeText("Jane")
+        clickCenter(of: customField)
+        customField.typeText("Jane에게 DM으로 가격 물어보기")
         XCTAssertTrue(commitButton.isEnabled)
         movePointerAwayFromContent()
         attachWindowScreenshot(from: app, named: "Office Hours Commitment Gate Requires Confirmation")

@@ -64,7 +64,7 @@ enum KeychainHelper {
 
     // MARK: - Single-Blob Settings
 
-    struct Settings: Codable {
+    struct Settings: Codable, Equatable {
         static let currentSchemaVersion = 10
         static let legacyDefaultCodexModelID = "gpt-5.4"
         static let previousDefaultCodexModelID = "gpt-5.2-codex"
