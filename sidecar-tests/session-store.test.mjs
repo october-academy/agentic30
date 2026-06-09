@@ -165,7 +165,7 @@ test("normalization preserves unknown session fields for forward compatibility",
   assert.deepEqual(session.futureProviderState, { token: "opaque" });
 });
 
-test("normalization migrates legacy Codex default model to GPT 5.5", () => {
+test("normalization migrates legacy Codex default models to GPT 5.5", () => {
   const sessions = normalizePersistedSessionsPayload({
     sessions: [
       {
@@ -174,9 +174,14 @@ test("normalization migrates legacy Codex default model to GPT 5.5", () => {
         model: LEGACY_DEFAULT_CODEX_MODEL,
       },
       {
+        id: "previous-codex-session",
+        provider: "codex",
+        model: "gpt-5.2-codex",
+      },
+      {
         id: "codex-mini-session",
         provider: "codex",
-        model: "gpt-5.4-mini",
+        model: "gpt-5.1-codex-mini",
       },
       {
         id: "claude-session",
@@ -187,8 +192,9 @@ test("normalization migrates legacy Codex default model to GPT 5.5", () => {
   });
 
   assert.equal(sessions[0].model, CURRENT_DEFAULT_CODEX_MODEL);
-  assert.equal(sessions[1].model, "gpt-5.4-mini");
-  assert.equal(sessions[2].model, LEGACY_DEFAULT_CODEX_MODEL);
+  assert.equal(sessions[1].model, CURRENT_DEFAULT_CODEX_MODEL);
+  assert.equal(sessions[2].model, "gpt-5.1-codex-mini");
+  assert.equal(sessions[3].model, LEGACY_DEFAULT_CODEX_MODEL);
 });
 
 test("normalization clears stale Codex runtime thread ids on startup", () => {
@@ -197,7 +203,7 @@ test("normalization clears stale Codex runtime thread ids on startup", () => {
       {
         id: "codex-session",
         provider: "codex",
-        model: "gpt-5.4-mini",
+        model: "gpt-5.1-codex-mini",
         runtime: {
           codexThreadId: "019dc32f-4182-7993-a7d7-58012553279d",
           codexThreadMeta: { workspaceRoot: "/tmp/old", codexHome: "/tmp/codex-home" },

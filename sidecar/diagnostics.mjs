@@ -7,6 +7,7 @@ export function buildDiagnosticsSnapshot({
   activeRuns,
   sessionStoreSchemaVersion,
   sessionStoreWarnings = [],
+  executionOs = null,
   now = () => new Date(),
   processInfo = process,
 } = {}) {
@@ -37,6 +38,8 @@ export function buildDiagnosticsSnapshot({
     },
     environment: sanitizeEnvironmentSummary(environment),
     preflight: preflight ? sanitizeValue(preflight) : null,
+    executionOs: executionOs ? sanitizeValue(executionOs) : null,
+    redactionSafe: true,
   };
 }
 

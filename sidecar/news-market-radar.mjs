@@ -205,8 +205,12 @@ export function resolveAgentic30Dir(workspaceRoot) {
   return path.join(path.resolve(String(workspaceRoot || ".")), ".agentic30");
 }
 
+export function resolveAgentic30MemoryDir(workspaceRoot) {
+  return path.join(resolveAgentic30Dir(workspaceRoot), "memory");
+}
+
 export function resolveCurriculumAnswerLogPath(workspaceRoot) {
-  return path.join(resolveAgentic30Dir(workspaceRoot), "curriculum-answer-log.json");
+  return path.join(resolveAgentic30MemoryDir(workspaceRoot), "curriculum-answers.json");
 }
 
 export function resolveNewsMarketRadarCachePath(workspaceRoot) {

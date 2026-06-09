@@ -4,7 +4,12 @@ import { randomUUID } from "node:crypto";
 
 export const SESSION_STORE_SCHEMA_VERSION = 1;
 export const LEGACY_DEFAULT_CODEX_MODEL = "gpt-5.4";
+export const PREVIOUS_DEFAULT_CODEX_MODEL = "gpt-5.2-codex";
 export const CURRENT_DEFAULT_CODEX_MODEL = "gpt-5.5";
+const LEGACY_DEFAULT_CODEX_MODELS = new Set([
+  LEGACY_DEFAULT_CODEX_MODEL,
+  PREVIOUS_DEFAULT_CODEX_MODEL,
+]);
 
 export function normalizePersistedSessionsPayload(parsed) {
   const rawSessions = Array.isArray(parsed)
@@ -28,7 +33,7 @@ export function normalizeSessionForStartup(session) {
     next.status = "idle";
     next.error = null;
   }
-  if (next.provider === "codex" && next.model === LEGACY_DEFAULT_CODEX_MODEL) {
+  if (next.provider === "codex" && LEGACY_DEFAULT_CODEX_MODELS.has(next.model)) {
     next.model = CURRENT_DEFAULT_CODEX_MODEL;
   }
   if (next.runtime?.codexThreadId) {

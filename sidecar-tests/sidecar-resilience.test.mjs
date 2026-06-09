@@ -20,7 +20,7 @@ test("closed WebSocket clients do not crash later broadcasts", async () => {
 
     const events = [];
     second.on("message", (raw) => events.push(JSON.parse(String(raw))));
-    second.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.4-mini" }));
+    second.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.1-codex-mini" }));
 
     const created = await waitForEvent(events, (event) => event.type === "session_created");
     assert.equal(created.session.provider, "codex");

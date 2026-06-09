@@ -53,6 +53,19 @@ test("buildDiagnosticsSnapshot redacts credential-shaped fields", () => {
         },
       ],
     },
+    executionOs: {
+      pilotReadiness: { status: "blocked" },
+      proofLedger: {
+        events: [
+          {
+            type: "dm_ask",
+            metadata: {
+              authorization: "Bearer secret",
+            },
+          },
+        ],
+      },
+    },
     sessions: [
       { id: "session-1", status: "idle" },
       { id: "session-2", status: "error" },
@@ -88,5 +101,8 @@ test("buildDiagnosticsSnapshot redacts credential-shaped fields", () => {
   assert.equal(snapshot.environment.gemini.vertexToken, "[redacted]");
   assert.equal(snapshot.environment.gemini.sdk.packageName, "@google/gemini-cli");
   assert.equal(snapshot.preflight.checks[0].token, "[redacted]");
+  assert.equal(snapshot.redactionSafe, true);
+  assert.equal(snapshot.executionOs.pilotReadiness.status, "blocked");
+  assert.equal(snapshot.executionOs.proofLedger.events[0].metadata.authorization, "[redacted]");
   assert.equal(snapshot.storage.sessionStoreWarnings[0].type, "session_store_corrupt");
 });

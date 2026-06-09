@@ -10,7 +10,7 @@ import {
 } from "./onboarding-hypothesis.mjs";
 import {
   loadCurriculumAnswerLog,
-  resolveAgentic30Dir,
+  resolveAgentic30MemoryDir,
 } from "./news-market-radar.mjs";
 
 export const PROJECT_CONTEXT_SCHEMA_VERSION = 1;
@@ -20,7 +20,7 @@ const MAX_EVIDENCE_REFS = 12;
 const MAX_ANSWER_REFS = 6;
 
 export function resolveProjectContextCachePath(workspaceRoot) {
-  return path.join(resolveAgentic30Dir(workspaceRoot), "project-context.json");
+  return path.join(resolveAgentic30MemoryDir(workspaceRoot), "project-context.json");
 }
 
 export async function loadProjectContextCache({ workspaceRoot, fsImpl = fs } = {}) {

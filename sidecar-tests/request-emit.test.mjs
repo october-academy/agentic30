@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 
@@ -106,7 +106,7 @@ test("workspace setup request_emit envelopes are host-routed and completion wait
       "scan success alone must not complete workspace setup",
     );
 
-    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.4-mini" }));
+    ws.send(JSON.stringify({ type: "create_session", provider: "codex", model: "gpt-5.1-codex-mini" }));
     const created = await waitForEvent(ws.events, (event) =>
       event.type === "session_created" && event.session?.pendingUserInput?.requestId,
     );
@@ -141,24 +141,30 @@ test("office_hours_start preserves custom source and ignores duplicate concurren
   const harness = await spawnSidecar();
   let ws;
   try {
+    await initGitRepo(harness.workspacePath);
     ws = await connectAndCollect(harness);
 
     ws.send(JSON.stringify({
       type: "create_session",
       provider: "codex",
-      model: "gpt-5.4-mini",
+      model: "gpt-5.1-codex-mini",
       suppressBootstrapIntake: true,
+      officeHoursDay: 2,
     }));
     const created = await waitForEvent(ws.events, (event) =>
       event.type === "session_created" && event.session?.status === "idle",
     );
+    assert.equal(created.session.title, "Office Hours · Day 2");
+    assert.equal(created.session.runtime.officeHours.active, false);
+    assert.equal(created.session.runtime.officeHours.day, 2);
 
     const officeHoursStartPayload = {
       type: "office_hours_start",
       sessionId: created.session.id,
       context: "Workspace: Revenue analytics dashboard. ICP: B2B founders. Problem: activation drop-off.",
       visiblePrompt: "Test Office Hours on current project",
-      source: "day1_real_project_test",
+      source: "office_hours_day_2",
+      day: 2,
     };
     ws.send(JSON.stringify(officeHoursStartPayload));
     ws.send(JSON.stringify(officeHoursStartPayload));
@@ -166,7 +172,7 @@ test("office_hours_start preserves custom source and ignores duplicate concurren
     const started = await waitForEvent(ws.events, (event) =>
       event.type === "session_updated"
         && event.session?.id === created.session.id
-        && event.session?.runtime?.officeHours?.source === "day1_real_project_test",
+        && event.session?.runtime?.officeHours?.source === "office_hours_day_2",
     );
     const duplicateError = await waitForEvent(ws.events, (event) =>
       event.type === "error"
@@ -216,7 +222,8 @@ test("office_hours_start preserves custom source and ignores duplicate concurren
     assert.equal(questionReadyStatus.progressText, "첫 질문 준비 완료");
     assert.equal(typeof providerStatus.elapsedMs, "number");
     assert.equal(started.session.runtime.officeHours.active, true);
-    assert.equal(started.session.runtime.officeHours.source, "day1_real_project_test");
+    assert.equal(started.session.runtime.officeHours.source, "office_hours_day_2");
+    assert.equal(started.session.runtime.officeHours.day, 2);
     assert.match(started.session.runtime.officeHours.context, /Revenue analytics dashboard/);
     assert.equal(duplicateError.sessionId, created.session.id);
     assert.equal(
@@ -257,6 +264,59 @@ test("office_hours_start preserves custom source and ignores duplicate concurren
       event.type === "session_updated"
         && event.session?.id === created.session.id
         && event.session?.status === "idle",
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("office_hours_start blocks Day 2+ when no live source exists", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 2,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle",
+    );
+
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context: "DAY2_PLUS_GOAL_DRIVEN_OFFICE_HOURS\nGoal lane: build_product / 작동하는 첫 버전 출시",
+      visiblePrompt: "Test blocked Office Hours",
+      source: "office_hours_day_2",
+      day: 2,
+    }));
+
+    const gate = await waitForEvent(ws.events, (event) =>
+      event.type === "office_hours_source_gate"
+        && event.sessionId === created.session.id
+        && event.status === "blocked",
+    );
+    assert.equal(gate.officeHoursSourceGate.reason, "no_live_sources");
+    assert.ok(gate.officeHoursSourceGate.connectActions.length >= 1);
+    const blockedError = await waitForEvent(ws.events, (event) =>
+      event.type === "error"
+        && event.sessionId === created.session.id
+        && /source|연결/i.test(event.message || ""),
+    );
+    assert.equal(blockedError.sessionId, created.session.id);
+    assert.equal(
+      ws.events.some((event) =>
+        event.type === "session_updated"
+          && event.session?.id === created.session.id
+          && event.session?.messages?.some((message) => message.content === "Test blocked Office Hours"),
+      ),
+      false,
     );
   } finally {
     ws?.close();
@@ -314,7 +374,7 @@ test("day1_goal_save/get persists goal state and hydrates scan/project context",
     assert.equal(persistedGoal.goalType, "make_money");
     assert.equal(persistedGoal.proofSink, "bip_optional");
 
-    const contextPath = path.join(harness.workspacePath, ".agentic30", "project-context.json");
+    const contextPath = path.join(harness.workspacePath, ".agentic30", "memory", "project-context.json");
     const persistedContext = JSON.parse(await fs.readFile(contextPath, "utf8"));
     assert.equal(persistedContext.targetUser, "B2B support leads");
     assert.equal(persistedContext.goal, "Support leads will pay to avoid missed Slack escalations.");
@@ -439,8 +499,10 @@ async function spawnSidecar() {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-request-emit-"));
   const workspacePath = path.join(tempRoot, "workspace");
   const appSupportPath = path.join(tempRoot, "app-support");
+  const ghConfigPath = path.join(tempRoot, "gh-config");
   await fs.mkdir(workspacePath, { recursive: true });
   await fs.mkdir(appSupportPath, { recursive: true });
+  await fs.mkdir(ghConfigPath, { recursive: true });
 
   const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", workspacePath], {
     cwd: packageRoot,
@@ -449,6 +511,9 @@ async function spawnSidecar() {
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
       AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_TEST_STUB_PROVIDER: "1",
+      GH_CONFIG_DIR: ghConfigPath,
+      GH_TOKEN: "",
+      GITHUB_TOKEN: "",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -498,6 +563,27 @@ async function spawnSidecar() {
       await fs.rm(tempRoot, { recursive: true, force: true });
     },
   };
+}
+
+function execFileOk(cmd, args, cwd) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { cwd, encoding: "utf8" }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(`${cmd} ${args.join(" ")} failed: ${stderr || error.message}`));
+      } else {
+        resolve(stdout);
+      }
+    });
+  });
+}
+
+async function initGitRepo(workspacePath) {
+  await execFileOk("git", ["init"], workspacePath);
+  await execFileOk("git", ["config", "user.email", "agentic30@example.com"], workspacePath);
+  await execFileOk("git", ["config", "user.name", "Agentic30 Test"], workspacePath);
+  await fs.writeFile(path.join(workspacePath, "README.md"), "# test workspace\n");
+  await execFileOk("git", ["add", "README.md"], workspacePath);
+  await execFileOk("git", ["commit", "-m", "seed workspace"], workspacePath);
 }
 
 async function connectAndCollect(harness) {

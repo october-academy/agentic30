@@ -337,7 +337,7 @@ export async function buildBipResearchContext({
       id: `project-context:${index + 1}`,
       sourceType: "project_context_cache",
       title: "Project context cache",
-      path: ".agentic30/project-context.json",
+      path: ".agentic30/memory/project-context.json",
       excerpt: String(item || "").slice(0, 900),
     })),
     answers: rankedAnswers.map((answer) => ({
