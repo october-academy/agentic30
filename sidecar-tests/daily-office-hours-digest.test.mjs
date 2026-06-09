@@ -8,6 +8,7 @@ import {
   collectGitDailySignals,
   evaluateOfficeHoursSourceGate,
   finalizeDailyOfficeHoursDigest,
+  formatDailyOfficeHoursDigestForPrompt,
   normalizeExternalOfficeHoursDigest,
   normalizeOfficeHoursSelectedSources,
   officeHoursDigestWindow,
@@ -169,4 +170,90 @@ test("persisted daily digest contains summaries only, not raw external payloads"
 
   assert.match(persisted, /activation event 3건/);
   assert.doesNotMatch(persisted, /rawEvents|distinct_id|secret-user|\$pageview/);
+});
+
+test("a shipped release is not customer evidence — only PostHog usage counts", () => {
+  const gate = {
+    day: 2,
+    ok: true,
+    reason: "ready",
+    selectedSources: ["git", "gh_cli"],
+    window: officeHoursDigestWindow(new Date("2026-06-09T10:30:00+09:00"), { tzOffsetMinutes: KST }),
+    sources: [
+      { id: "git", label: "git", state: "ready", selected: true, required: true },
+      { id: "gh_cli", label: "gh CLI", state: "ready", selected: true, required: true },
+    ],
+  };
+  // git commits + a published release, but zero PostHog usage signals.
+  const localSignals = [
+    { id: "git", label: "git", state: "ready", counts: { commits: 30 }, highlights: ["git 커밋 30건"], summary: "git 커밋 30건" },
+    { id: "gh_cli", label: "gh CLI", state: "ready", counts: { prs: 0, issues: 0, releases: 4 }, highlights: ["릴리즈 4건"], summary: "릴리즈 4건" },
+  ];
+  const digest = finalizeDailyOfficeHoursDigest({
+    gate,
+    localSignals,
+    externalSignals: [],
+    context: "Goal lane: get_users",
+    now: new Date("2026-06-09T10:30:00+09:00"),
+  });
+
+  // Releases must NOT count as proof a customer did anything.
+  assert.equal(digest.buildWithoutCustomerEvidence, true);
+  assert.match(digest.briefing.biggestEvidenceGap[0], /고객 행동 증거/);
+
+  // With real PostHog usage, the flag flips off.
+  const withUsage = finalizeDailyOfficeHoursDigest({
+    gate: { ...gate, selectedSources: ["git", "posthog"] },
+    localSignals,
+    externalSignals: [
+      { id: "posthog", label: "PostHog", state: "ready", counts: { activeUsers: 3 }, highlights: ["활성 사용자 3명"], summary: "활성 사용자 3명" },
+    ],
+    context: "Goal lane: get_users",
+    now: new Date("2026-06-09T10:30:00+09:00"),
+  });
+  assert.equal(withUsage.buildWithoutCustomerEvidence, false);
+});
+
+test("evidence-derived goalSignals/evidenceGaps reach the interview briefing", () => {
+  const externalSignals = normalizeExternalOfficeHoursDigest({
+    sources: [
+      {
+        id: "posthog",
+        state: "ready",
+        summary: "activation 3건",
+        counts: { activeUsers: 3 },
+        highlights: ["활성 사용자 3명"],
+        goalSignals: ["가입은 늘지만 결제 0 — 오늘은 결제 전환을 물어야 함"],
+        evidenceGaps: ["pricing 페이지 방문 후 이탈 원인이 관측되지 않음"],
+      },
+    ],
+  }, ["posthog"]);
+
+  // normalize must preserve the diagnosis, not drop it.
+  assert.deepEqual(externalSignals[0].goalSignals, ["가입은 늘지만 결제 0 — 오늘은 결제 전환을 물어야 함"]);
+  assert.deepEqual(externalSignals[0].evidenceGaps, ["pricing 페이지 방문 후 이탈 원인이 관측되지 않음"]);
+
+  const digest = finalizeDailyOfficeHoursDigest({
+    gate: {
+      day: 2,
+      ok: true,
+      reason: "ready",
+      selectedSources: ["posthog"],
+      window: officeHoursDigestWindow(new Date("2026-06-09T10:30:00+09:00"), { tzOffsetMinutes: KST }),
+      sources: [{ id: "posthog", label: "PostHog", state: "ready", selected: true, required: true }],
+    },
+    localSignals: [],
+    externalSignals,
+    context: "Goal lane: make_money",
+    now: new Date("2026-06-09T10:30:00+09:00"),
+  });
+
+  // The diagnosis reaches the briefing the interview reads, source-labeled.
+  assert.ok(digest.briefing.goalHelpfulSignals.some((line) => /^PostHog: 가입은 늘지만 결제 0/.test(line)));
+  assert.ok(digest.briefing.biggestEvidenceGap.some((line) => /^PostHog: pricing 페이지 방문 후 이탈/.test(line)));
+
+  // And it survives into the prompt text fed to the office-hours specialist.
+  const prompt = formatDailyOfficeHoursDigestForPrompt(digest);
+  assert.match(prompt, /결제 전환을 물어야 함/);
+  assert.match(prompt, /pricing 페이지 방문 후 이탈/);
 });

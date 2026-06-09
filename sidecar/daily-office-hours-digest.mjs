@@ -118,6 +118,8 @@ function sourceStatus({
   counts = {},
   highlights = [],
   summary = "",
+  goalSignals = [],
+  evidenceGaps = [],
 } = {}) {
   const def = SOURCE_DEFS[id] || { id, label: id };
   return {
@@ -132,6 +134,12 @@ function sourceStatus({
     counts,
     highlights: normalizeStringList(highlights, 6, 180),
     summary: cleanString(summary, 320),
+    // Evidence-derived diagnosis from external MCP sources (PostHog/Cloudflare):
+    // goalSignals = what moves the 30-day goal, evidenceGaps = what proof is still
+    // missing. Local sources leave these empty. Carried all the way into the
+    // interview briefing so the questions act on evidence, not just commit counts.
+    goalSignals: normalizeStringList(goalSignals, 6, 200),
+    evidenceGaps: normalizeStringList(evidenceGaps, 6, 200),
   };
 }
 
@@ -655,6 +663,8 @@ export function normalizeExternalOfficeHoursDigest(textOrObject = "", expectedSo
           counts: normalizeCounts(item?.counts),
           highlights: normalizeStringList(item?.highlights, 6, 180),
           summary: cleanString(item?.summary, 320),
+          goalSignals: normalizeStringList(item?.goalSignals, 6, 200),
+          evidenceGaps: normalizeStringList(item?.evidenceGaps, 6, 200),
         });
       })
       .filter(Boolean),
@@ -711,6 +721,8 @@ export function finalizeDailyOfficeHoursDigest({
       counts: merged.counts || {},
       highlights: normalizeStringList(merged.highlights, 6, 180),
       summary: cleanString(merged.summary, 320),
+      goalSignals: normalizeStringList(merged.goalSignals, 6, 200),
+      evidenceGaps: normalizeStringList(merged.evidenceGaps, 6, 200),
     };
   });
   const failedRequired = sources.filter((source) => source.required && source.state !== "ready");
@@ -732,8 +744,12 @@ export function finalizeDailyOfficeHoursDigest({
   const allHighlights = readySources.flatMap((source) => source.highlights.map((line) => `${source.label}: ${line}`));
   const goalLane = inferGoalLane(context);
   const git = sources.find((source) => source.id === "git");
+  // Customer evidence = real product-usage signals, which only PostHog supplies
+  // (events / active users / conversions). gh CLI activity — PRs, issues, even a
+  // shipped release — is builder output, not proof a customer did anything, so it
+  // must never satisfy the "did anyone actually use it?" check.
   const customerEvidenceSources = sources.filter((source) =>
-    ["posthog", "gh_cli"].includes(source.id)
+    source.id === "posthog"
       && source.state === "ready"
       && Object.values(source.counts || {}).some((count) => Number(count) > 0),
   );
@@ -741,6 +757,15 @@ export function finalizeDailyOfficeHoursDigest({
   const biggestGap = buildWithoutCustomerEvidence
     ? "어제/간밤 신호가 코드 변경 중심입니다. 첫 질문은 만든 양이 아니라 고객 행동 증거 공백을 찔러야 합니다."
     : "오늘 질문은 아직 관찰되지 않은 결제, activation, 또는 end-to-end 사용 증거 하나를 요구해야 합니다.";
+  // Evidence-derived diagnosis (PostHog/Cloudflare) carried into the interview
+  // briefing. Without this, the LLM-generated goalSignals/evidenceGaps were parsed
+  // and then dropped, so the interview never acted on the live external evidence.
+  const evidenceGoalSignals = readySources.flatMap((source) =>
+    (source.goalSignals || []).map((line) => `${source.label}: ${line}`),
+  );
+  const evidenceGaps = readySources.flatMap((source) =>
+    (source.evidenceGaps || []).map((line) => `${source.label}: ${line}`),
+  );
   return {
     schemaVersion: OFFICE_HOURS_DAILY_DIGEST_SCHEMA_VERSION,
     generatedAt: new Date(now instanceof Date ? now.getTime() : now).toISOString(),
@@ -759,11 +784,11 @@ export function finalizeDailyOfficeHoursDigest({
         goalHelpfulFallback(goalLane),
       ],
       overnightChanges: allHighlights.length ? allHighlights.slice(0, 8) : ["연결된 source에서 해당 기간 변화가 거의 없습니다."],
-      goalHelpfulSignals: readySources
-        .map((source) => source.summary)
-        .filter(Boolean)
-        .slice(0, 6),
-      biggestEvidenceGap: [biggestGap],
+      goalHelpfulSignals: unique([
+        ...evidenceGoalSignals,
+        ...readySources.map((source) => source.summary).filter(Boolean),
+      ]).slice(0, 6),
+      biggestEvidenceGap: unique([biggestGap, ...evidenceGaps]).slice(0, 4),
     },
   };
 }
