@@ -17,6 +17,12 @@ import { buildAdStrategyPrompt } from "./ad-strategy-prompt.mjs";
 import { buildBipPrompt } from "./bip-prompt.mjs";
 import { buildDiagnosticsSnapshot } from "./diagnostics.mjs";
 import {
+  appendProofLedgerEvent,
+  captureExecutionOsTelemetryEvents,
+  composeExecutionOsSnapshot,
+  loadProofLedger,
+} from "./execution-os.mjs";
+import {
   buildOfficeHoursDocsPrompt,
   buildOfficeHoursDocsSystemPrompt,
 } from "./office-hours-docs-prompt.mjs";
@@ -27,6 +33,18 @@ import {
   isOfficeHoursLockedDay1GoalContext,
   isOfficeHoursWriteDesignDocContext,
 } from "./office-hours-chat-prompt.mjs";
+import {
+  OfficeHoursSourceGateError,
+  buildExternalOfficeHoursDigestPrompt,
+  collectLocalDailyOfficeHoursSignals,
+  evaluateOfficeHoursSourceGate,
+  finalizeDailyOfficeHoursDigest,
+  formatDailyOfficeHoursDigestForPrompt,
+  normalizeExternalOfficeHoursDigest,
+  normalizeOfficeHoursSelectedSources,
+  persistDailyOfficeHoursDigest,
+  selectedExternalOfficeHoursSources,
+} from "./daily-office-hours-digest.mjs";
 import {
   buildQmdGuidance,
   buildQmdMcpConfig,
@@ -83,10 +101,13 @@ import {
   appendCommitment,
   appendCycle,
   appendPrediction,
+  appendTimeline,
+  buildEvidenceOS,
   buildPriorCycle,
   buildDayReviews,
   classifyInterviewGate,
   formatPriorCycleOpening,
+  gradeCommitment,
   gradePrediction,
   latestUnresolvedPrediction,
   loadOfficeHoursMemory,
@@ -224,6 +245,14 @@ import {
   orderExaMcpRoutes,
   redactExaResearchRoute,
 } from "./exa-mcp-discovery.mjs";
+import {
+  appendOfficeHoursTurn,
+  buildOfficeHoursHistorySummary,
+  formatOfficeHoursHistoryForPrompt,
+  loadOnboardingMemory,
+  refreshDayMemory,
+  saveOnboardingMemory,
+} from "./workspace-memory.mjs";
 import { emitInlineHintTriggerForFeatureAppearance } from "./curriculum-hint-eligibility.mjs";
 import {
   CODEX_STRUCTURED_INPUT_TOOL,
@@ -316,9 +345,9 @@ const sidecarAuthToken = randomBytes(32).toString("base64url");
 const BIP_TEMPLATE_DOC_ID = process.env.AGENTIC30_BIP_TEMPLATE_DOC_ID || "1EoQIaByJd5Aq8ENbgEfxHKKJsZsup7d5gJxcT7uqNeA";
 const BIP_TEMPLATE_SHEET_ID = process.env.AGENTIC30_BIP_TEMPLATE_SHEET_ID || "16NkGIe8K9NZiLy4O81zyXKVeQ72nvBGSZ0YBQaBr0sA";
 const WORKSPACE_SCAN_CLAUDE_MODEL = "claude-sonnet-4-6";
-const WORKSPACE_SCAN_CODEX_MODEL = "gpt-5.4-mini";
+const WORKSPACE_SCAN_CODEX_MODEL = "gpt-5.1-codex-mini";
 const WORKSPACE_SCAN_GEMINI_MODEL = "gemini-3.5-flash";
-const DAY1_CHOICE_CLAUDE_MODEL = process.env.AGENTIC30_DAY1_CHOICE_CLAUDE_MODEL || "claude-opus-4-7";
+const DAY1_CHOICE_CLAUDE_MODEL = process.env.AGENTIC30_DAY1_CHOICE_CLAUDE_MODEL || "claude-opus-4-8";
 const DAY1_CHOICE_CODEX_MODEL = process.env.AGENTIC30_DAY1_CHOICE_CODEX_MODEL || "gpt-5.5";
 const DAY1_CHOICE_GEMINI_MODEL = process.env.AGENTIC30_DAY1_CHOICE_GEMINI_MODEL || "gemini-3.5-flash";
 const DAY1_CHOICE_PROVIDER_TIMEOUT_MS = 45_000;
@@ -1076,6 +1105,7 @@ async function handleClientMessage(socket, payload) {
       }
       const context = String(payload.context || "").trim();
       const visiblePrompt = String(payload.visiblePrompt || "Office Hours").trim() || "Office Hours";
+      const day = normalizeOfficeHoursDay(payload.day ?? payload.officeHoursDay ?? session.runtime?.officeHours?.day);
       markWorkspaceSetupFirstInput("office_hours_start");
       if (state.activeRuns.has(session.id)) {
         send(socket, {
@@ -1090,6 +1120,25 @@ async function handleClientMessage(socket, payload) {
         context,
         originalPrompt: visiblePrompt,
         source: payload.source || "manual",
+        day,
+        selectedSources: payload.selectedSources,
+      });
+      return;
+    }
+    case "office_hours_source_gate_get": {
+      const session = payload.sessionId ? getSession(payload.sessionId) : null;
+      const day = normalizeOfficeHoursDay(payload.day ?? payload.officeHoursDay ?? session?.runtime?.officeHours?.day);
+      const provider = String(session?.provider || payload.provider || "").trim();
+      const gate = await evaluateOfficeHoursSourceGate({
+        workspaceRoot,
+        day,
+        selectedSources: payload.selectedSources,
+        provider,
+        appSupportPath,
+      });
+      sendOfficeHoursSourceGate(socket, {
+        sessionId: session?.id || payload.sessionId || null,
+        gate,
       });
       return;
     }
@@ -1322,6 +1371,25 @@ async function handleClientMessage(socket, payload) {
       requestId,
         response,
     });
+      if (isOfficeHoursStructuredInputResponse && userResponseText) {
+        await appendOfficeHoursTurn({
+          workspaceRoot,
+          turn: {
+            day: normalizeOfficeHoursDay(session.runtime?.officeHours?.day),
+            sessionId: session.id,
+            requestId,
+            mode: answeredGeneration?.mode || "office_hours_structured_input",
+            questionText: officeHoursStructuredQuestionText,
+            responseText: userResponseText,
+            responseDescription: userResponseDescription,
+          },
+        }).catch((error) => {
+          telemetry.captureException(error, {
+            operation: "office_hours_turn_append",
+            session_id: session.id,
+          });
+        });
+      }
       if (!hasActiveRun) {
         await deleteUserInputArtifacts(appSupportPath, session.id, requestId);
     }
@@ -1557,14 +1625,23 @@ async function handleClientMessage(socket, payload) {
           workspaceRoot,
           answer: payload,
         });
+        const savedDay = Number.parseInt(payload.day ?? payload.dayNumber ?? 0, 10) || 0;
+        if (savedDay >= 1 && savedDay <= 30) {
+          await refreshDayMemory({ workspaceRoot, day: savedDay }).catch((error) => {
+            telemetry.captureException(error, {
+              operation: "day_memory_refresh_after_curriculum_answer",
+              day: savedDay,
+            });
+          });
+        }
         send(socket, {
           type: "curriculum_answer_saved_result",
           success: true,
-          day: payload.day ?? payload.dayNumber ?? null,
+          day: savedDay || null,
           answerCount: log.records.length,
         });
         telemetry.captureEvent("mac_sidecar_curriculum_answer_saved", {
-          day: Number.parseInt(payload.day ?? payload.dayNumber ?? 0, 10) || 0,
+          day: savedDay,
           has_freeform: Boolean(payload.freeformAnswer || payload.freeform),
           dimension: String(payload.dimension || "").slice(0, 80),
         });
@@ -1594,6 +1671,26 @@ async function handleClientMessage(socket, payload) {
     }
     case "day_progress_patch": {
       await handleDayProgressPatch(socket, payload);
+      return;
+    }
+    case "office_hours_commitment_evidence": {
+      await handleOfficeHoursCommitmentEvidence(socket, payload);
+      return;
+    }
+    case "office_hours_commitment_carry_forward": {
+      await handleOfficeHoursCommitmentCarryForward(socket, payload);
+      return;
+    }
+    case "office_hours_commitment_abandon": {
+      await handleOfficeHoursCommitmentAbandon(socket, payload);
+      return;
+    }
+    case "execution_os_get": {
+      await handleExecutionOsGet(socket, payload);
+      return;
+    }
+    case "proof_ledger_append": {
+      await handleProofLedgerAppend(socket, payload);
       return;
     }
     case "project_context_refresh": {
@@ -1896,6 +1993,43 @@ async function handleClientMessage(socket, payload) {
       send(socket, { type: "auth_context_updated", auth });
       return;
     }
+    case "onboarding_memory_save": {
+      const root = resolveDay1GoalWorkspaceRoot(payload);
+      try {
+        const onboardingMemory = await saveOnboardingMemory({
+          workspaceRoot: root,
+          memory: payload.memory || payload.onboardingMemory || payload,
+        });
+        const event = {
+          type: "onboarding_memory_state",
+          workspaceRoot: root,
+          onboardingMemory,
+          success: true,
+        };
+        send(socket, event);
+        broadcast(event);
+      } catch (error) {
+        telemetry.captureException(error, { operation: "onboarding_memory_save" });
+        send(socket, {
+          type: "onboarding_memory_state",
+          workspaceRoot: root,
+          success: false,
+          error: formatError(error),
+        });
+      }
+      return;
+    }
+    case "onboarding_memory_request": {
+      const root = resolveDay1GoalWorkspaceRoot(payload);
+      const onboardingMemory = await loadOnboardingMemory({ workspaceRoot: root });
+      send(socket, {
+        type: "onboarding_memory_state",
+        workspaceRoot: root,
+        onboardingMemory,
+        success: true,
+      });
+      return;
+    }
     case "clear_auth_context": {
       if (payload?.anonymousDistinctId) {
         telemetry.setAnonymousDistinctId(payload.anonymousDistinctId);
@@ -1929,9 +2063,10 @@ async function handleClientMessage(socket, payload) {
     case "get_diagnostics": {
       const environment = getEnvironmentSummary();
       const preflight = buildSidecarPreflight(environment);
+      const executionOs = await buildExecutionOsSnapshotForWorkspace(workspaceRoot);
       send(socket, {
         type: "diagnostics_snapshot",
-        diagnostics: buildSidecarDiagnostics(environment, preflight),
+        diagnostics: buildSidecarDiagnostics(environment, preflight, executionOs),
     });
       return;
     }
@@ -1951,6 +2086,117 @@ async function handleClientMessage(socket, payload) {
 function resolveDay1GoalWorkspaceRoot(payload = {}) {
   const requestedRoot = String(payload.workspaceRoot || payload.workspace_root || workspaceRoot || "").trim();
   return requestedRoot ? path.resolve(requestedRoot) : workspaceRoot;
+}
+
+async function handleExecutionOsGet(socket, payload = {}) {
+  const root = resolveDay1GoalWorkspaceRoot(payload);
+  try {
+    const snapshot = await buildExecutionOsSnapshotForWorkspace(root, {
+      day: payload.day ?? payload.dayNumber ?? payload.day_number,
+    });
+    captureExecutionOsTelemetryEvents(telemetry, snapshot);
+    sendExecutionOsState(socket, root, snapshot);
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "execution_os_get",
+      workspace_root: root,
+    });
+    send(socket, {
+      type: "execution_os_state",
+      workspaceRoot: root,
+      success: false,
+      error: formatError(error),
+    });
+  }
+}
+
+async function handleProofLedgerAppend(socket, payload = {}) {
+  const root = resolveDay1GoalWorkspaceRoot(payload);
+  try {
+    const eventPayload = payload.event || payload.proofEvent || payload.proof_event || payload;
+    const result = await appendProofLedgerEvent({
+      workspaceRoot: root,
+      event: eventPayload,
+    });
+    const snapshot = await buildExecutionOsSnapshotForWorkspace(root, {
+      day: payload.day ?? payload.dayNumber ?? payload.day_number,
+      proofLedger: result.ledger,
+    });
+    telemetry.captureEvent("mac_sidecar_execution_os_proof_event_appended", {
+      event_type: result.event.type,
+      status: result.event.status,
+      day: result.event.day,
+      workspace_basename: path.basename(root),
+    });
+    captureExecutionOsTelemetryEvents(telemetry, snapshot);
+    sendExecutionOsState(socket, root, snapshot, {
+      appendedProofEvent: result.event,
+      appended_proof_event: result.event,
+    });
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "proof_ledger_append",
+      workspace_root: root,
+    });
+    send(socket, {
+      type: "execution_os_state",
+      workspaceRoot: root,
+      success: false,
+      error: formatError(error),
+    });
+  }
+}
+
+async function buildExecutionOsSnapshotForWorkspace(root = workspaceRoot, {
+  day = null,
+  proofLedger = null,
+} = {}) {
+  const resolvedRoot = root ? path.resolve(root) : workspaceRoot;
+  const [ledger, selection, progress, projectContext] = await Promise.all([
+    proofLedger ? Promise.resolve(proofLedger) : loadProofLedger({ workspaceRoot: resolvedRoot }),
+    loadDay1GoalSelection({ workspaceRoot: resolvedRoot }),
+    loadDayProgress({ workspaceRoot: resolvedRoot }),
+    loadProjectContextCache({ workspaceRoot: resolvedRoot }).catch(() => null),
+  ]);
+  const environment = getEnvironmentSummary();
+  const preflight = buildSidecarPreflight(environment);
+  const currentDay = Number.parseInt(String(day ?? ""), 10)
+    || (progress ? computeDayNumber({ challengeStartedAt: progress.challengeStartedAt }) : null)
+    || 1;
+  return composeExecutionOsSnapshot({
+    workspaceRoot: resolvedRoot,
+    day: currentDay,
+    day1GoalSelection: selection,
+    projectContext,
+    proofLedger: ledger,
+    progressState: progress,
+    diagnostics: { redactionSafe: true, preflight },
+    preflight,
+    telemetryState: {
+      configured: Boolean(process.env.POSTHOG_PROJECT_API_KEY || process.env.POSTHOG_PROJECT_TOKEN),
+      optOutAvailable: true,
+    },
+    crashState: {
+      nativeCrashReportingAvailable: process.env.AGENTIC30_NATIVE_CRASH_REPORTING === "1",
+    },
+  });
+}
+
+function sendExecutionOsState(socket, root, snapshot, extra = {}) {
+  send(socket, {
+    type: "execution_os_state",
+    workspaceRoot: root,
+    success: true,
+    executionOs: snapshot,
+    execution_os: snapshot,
+    proofLedger: snapshot.proofLedger,
+    proof_ledger: snapshot.proofLedger,
+    missionCard: snapshot.missionCard,
+    mission_card: snapshot.missionCard,
+    pilotReadiness: snapshot.pilotReadiness,
+    pilot_readiness: snapshot.pilotReadiness,
+    ...extra,
+  });
 }
 
 async function handleDay1GoalGet(socket, payload = {}) {
@@ -2004,11 +2250,10 @@ async function handleDay1GoalSave(socket, payload = {}) {
       const dp = await ensureChallengeStart({ workspaceRoot: root });
       const currentDay = computeDayNumber({ challengeStartedAt: dp.challengeStartedAt });
       if (currentDay) {
-        const interviewStep = currentDay === 1 ? "first_interview" : "interview";
         const updated = await setDayActiveStep({
           workspaceRoot: root,
-          day: currentDay,
-          stepId: interviewStep,
+          day: 1,
+          stepId: "first_interview",
           goalText: selection.goalText,
         });
         if (path.resolve(root) === path.resolve(workspaceRoot)) {
@@ -2020,7 +2265,9 @@ async function handleDay1GoalSave(socket, payload = {}) {
           dayProgress: updated,
           currentDay,
           officeHoursMemory: await loadOfficeHoursMemorySummary(root, currentDay),
-          dayReviews: await loadOfficeHoursDayReviews(root, updated),
+          officeHoursHistory: await loadOfficeHoursHistorySummary(root, currentDay),
+          dayReviews: await loadOfficeHoursDayReviews(root, updated, currentDay),
+          evidenceOS: await loadOfficeHoursEvidenceOS(root, updated, currentDay),
         });
       }
     } catch (progressError) {
@@ -2058,7 +2305,9 @@ async function handleDayProgressGet(socket, payload = {}) {
     dayProgress,
     currentDay,
     officeHoursMemory: await loadOfficeHoursMemorySummary(root, currentDay),
-    dayReviews: await loadOfficeHoursDayReviews(root, dayProgress),
+    officeHoursHistory: await loadOfficeHoursHistorySummary(root, currentDay),
+    dayReviews: await loadOfficeHoursDayReviews(root, dayProgress, currentDay),
+    evidenceOS: await loadOfficeHoursEvidenceOS(root, dayProgress, currentDay),
   });
 }
 
@@ -2073,17 +2322,186 @@ async function loadOfficeHoursMemorySummary(root, currentDay) {
   }
 }
 
-async function loadOfficeHoursDayReviews(root, dayProgress) {
-  if (!dayProgress) return null;
+async function loadOfficeHoursHistorySummary(root, currentDay) {
   try {
-    const [memory, workHistory] = await Promise.all([
-      loadOfficeHoursMemory({ workspaceRoot: root }),
-      loadWorkHistorySnapshot({ workspaceRoot: root }),
-    ]);
-    return buildDayReviews({ dayProgress, memory, workHistory });
+    return await buildOfficeHoursHistorySummary({ workspaceRoot: root, day: currentDay ?? null });
   } catch {
     return null;
   }
+}
+
+async function loadOfficeHoursDayReviews(root, dayProgress, currentDay = null) {
+  if (!dayProgress) return null;
+  try {
+    const [memory, workHistory, day1GoalSelection] = await Promise.all([
+      loadOfficeHoursMemory({ workspaceRoot: root }),
+      loadWorkHistorySnapshot({ workspaceRoot: root }),
+      loadDay1GoalSelection({ workspaceRoot: root }),
+    ]);
+    return buildDayReviews({ dayProgress, memory, workHistory, day1GoalSelection, currentDay });
+  } catch {
+    return null;
+  }
+}
+
+async function loadOfficeHoursEvidenceOS(root, dayProgress, currentDay = null) {
+  if (!dayProgress) return null;
+  try {
+    const [memory, workHistory, day1GoalSelection] = await Promise.all([
+      loadOfficeHoursMemory({ workspaceRoot: root }),
+      loadWorkHistorySnapshot({ workspaceRoot: root }),
+      loadDay1GoalSelection({ workspaceRoot: root }),
+    ]);
+    return buildEvidenceOS({ dayProgress, memory, workHistory, day1GoalSelection, currentDay });
+  } catch {
+    return null;
+  }
+}
+
+async function sendOfficeHoursEvidenceState(socket, root, { broadcastToAll = true } = {}) {
+  const dayProgress = await loadDayProgress({ workspaceRoot: root });
+  if (path.resolve(root) === path.resolve(workspaceRoot)) {
+    state.dayProgress = dayProgress;
+  }
+  const currentDay = dayProgress ? computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt }) : null;
+  const payload = {
+    type: "day_progress_state",
+    workspaceRoot: root,
+    dayProgress,
+    currentDay,
+    officeHoursMemory: await loadOfficeHoursMemorySummary(root, currentDay),
+    officeHoursHistory: await loadOfficeHoursHistorySummary(root, currentDay),
+    dayReviews: await loadOfficeHoursDayReviews(root, dayProgress, currentDay),
+    evidenceOS: await loadOfficeHoursEvidenceOS(root, dayProgress, currentDay),
+  };
+  if (broadcastToAll) {
+    broadcast(payload);
+  } else {
+    send(socket, payload);
+  }
+}
+
+async function handleOfficeHoursCommitmentEvidence(socket, payload = {}) {
+  const root = resolveDay1GoalWorkspaceRoot(payload);
+  const commitmentId = String(payload.commitmentId ?? payload.commitment_id ?? "").trim();
+  const evidence = normalizeCommitmentEvidencePayload(payload.evidence ?? payload);
+  try {
+    if (!commitmentId) throw new Error("commitmentId is required.");
+    await gradeCommitment({
+      workspaceRoot: root,
+      commitmentId,
+      evidence,
+      gradedCycle: Number.parseInt(payload.gradedCycle ?? payload.graded_cycle ?? payload.day ?? 0, 10) || undefined,
+    });
+    await recompileCompiledTruth({ workspaceRoot: root });
+    const dayProgress = await loadDayProgress({ workspaceRoot: root }).catch(() => null);
+    const currentDay = dayProgress ? computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt }) : null;
+    if (currentDay) {
+      await refreshDayMemory({ workspaceRoot: root, day: currentDay }).catch((error) => {
+        telemetry.captureException(error, { operation: "day_memory_refresh_after_commitment_evidence" });
+      });
+    }
+    telemetry.captureEvent("mac_sidecar_office_hours_commitment_evidence", {
+      workspace_basename: path.basename(root),
+      evidence_kind: evidence.kind || "",
+    });
+    await sendOfficeHoursEvidenceState(socket, root);
+  } catch (error) {
+    telemetry.captureException(error, { operation: "office_hours_commitment_evidence" });
+    send(socket, { type: "day_progress_state", workspaceRoot: root, success: false, error: formatError(error) });
+  }
+}
+
+async function handleOfficeHoursCommitmentCarryForward(socket, payload = {}) {
+  const root = resolveDay1GoalWorkspaceRoot(payload);
+  const commitmentId = String(payload.commitmentId ?? payload.commitment_id ?? "").trim();
+  try {
+    const memory = await loadOfficeHoursMemory({ workspaceRoot: root });
+    const target = memory.commitments.find((commitment) => commitment.id === commitmentId);
+    if (!target) throw new Error(`Unknown commitment "${commitmentId}".`);
+    const dayProgress = await loadDayProgress({ workspaceRoot: root });
+    const currentDay = dayProgress ? computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt }) : null;
+    const nextDay = Number.parseInt(payload.day ?? payload.dayNumber ?? payload.day_number ?? currentDay ?? target.dueDay ?? target.createdDay ?? target.cycle ?? 1, 10) || 1;
+    const text = target.text || target.message || "고객 행동 약속";
+    await gradeCommitment({ workspaceRoot: root, commitmentId, evidence: null, gradedCycle: nextDay });
+    await appendCommitment({
+      workspaceRoot: root,
+      text,
+      cycle: nextDay,
+      day: nextDay,
+      originText: text,
+      commitment: {
+        customer: target.customer,
+        channel: target.channel,
+        message: target.message || text,
+        expectedEvidenceKind: target.expectedEvidenceKind,
+        dueDay: nextDay + 1,
+        confirmedByUser: true,
+      },
+    });
+    await appendTimeline({
+      workspaceRoot: root,
+      cycle: nextDay,
+      source: "retro",
+      origin: "user",
+      summary: `이월: ${text}`,
+      detail: "Evidence OS에서 오늘 약속으로 다시 열었습니다.",
+    });
+    await recompileCompiledTruth({ workspaceRoot: root });
+    await refreshDayMemory({ workspaceRoot: root, day: nextDay }).catch((error) => {
+      telemetry.captureException(error, { operation: "day_memory_refresh_after_commitment_carry_forward" });
+    });
+    telemetry.captureEvent("mac_sidecar_office_hours_commitment_carry_forward", {
+      workspace_basename: path.basename(root),
+    });
+    await sendOfficeHoursEvidenceState(socket, root);
+  } catch (error) {
+    telemetry.captureException(error, { operation: "office_hours_commitment_carry_forward" });
+    send(socket, { type: "day_progress_state", workspaceRoot: root, success: false, error: formatError(error) });
+  }
+}
+
+async function handleOfficeHoursCommitmentAbandon(socket, payload = {}) {
+  const root = resolveDay1GoalWorkspaceRoot(payload);
+  const commitmentId = String(payload.commitmentId ?? payload.commitment_id ?? "").trim();
+  const reason = String(payload.reason ?? payload.note ?? "").replace(/\s+/g, " ").trim();
+  try {
+    if (!commitmentId) throw new Error("commitmentId is required.");
+    const dayProgress = await loadDayProgress({ workspaceRoot: root });
+    const currentDay = dayProgress ? computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt }) : null;
+    await gradeCommitment({ workspaceRoot: root, commitmentId, evidence: null, gradedCycle: currentDay ?? undefined });
+    await appendTimeline({
+      workspaceRoot: root,
+      cycle: currentDay ?? 1,
+      source: "retro",
+      origin: "user",
+      summary: "약속 포기",
+      detail: reason || "사용자가 Evidence OS에서 미해결 약속을 포기 처리했습니다.",
+    });
+    await recompileCompiledTruth({ workspaceRoot: root });
+    if (currentDay) {
+      await refreshDayMemory({ workspaceRoot: root, day: currentDay }).catch((error) => {
+        telemetry.captureException(error, { operation: "day_memory_refresh_after_commitment_abandon" });
+      });
+    }
+    telemetry.captureEvent("mac_sidecar_office_hours_commitment_abandon", {
+      workspace_basename: path.basename(root),
+      has_reason: Boolean(reason),
+    });
+    await sendOfficeHoursEvidenceState(socket, root);
+  } catch (error) {
+    telemetry.captureException(error, { operation: "office_hours_commitment_abandon" });
+    send(socket, { type: "day_progress_state", workspaceRoot: root, success: false, error: formatError(error) });
+  }
+}
+
+function normalizeCommitmentEvidencePayload(value = {}) {
+  const input = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return {
+    kind: String(input.kind || input.evidenceKind || input.evidence_kind || "").trim(),
+    url: String(input.url || input.locator || "").trim(),
+    note: String(input.note || "").trim(),
+  };
 }
 
 function formatStructuredCommitmentText(commitment) {
@@ -2155,7 +2573,9 @@ async function handleDayProgressPatch(socket, payload = {}) {
         gatedStep: String(stepId || ""),
         message: "이 인터뷰를 닫기 전에 다음 한 가지 고객 행동을 약속해줘. 정 못 하면 그 이유를 남겨도 통과돼.",
         officeHoursMemory: await loadOfficeHoursMemorySummary(root, currentDay),
-        dayReviews: await loadOfficeHoursDayReviews(root, current),
+        officeHoursHistory: await loadOfficeHoursHistorySummary(root, currentDay),
+        dayReviews: await loadOfficeHoursDayReviews(root, current, currentDay),
+        evidenceOS: await loadOfficeHoursEvidenceOS(root, current, currentDay),
       });
       telemetry.captureEvent("mac_sidecar_interview_gate_blocked", {
         step_id: String(stepId || ""),
@@ -2193,6 +2613,9 @@ async function handleDayProgressPatch(socket, payload = {}) {
       await appendCycle({ workspaceRoot: root, cycle: cycleNo, day: cycleNo, step: stepId, outcome: "success", lastAssignment: resolvedCommitmentText });
       await applyPredictionPatch({ workspaceRoot: root, cycle: cycleNo, predictionText, predictionVerdict });
       await recompileCompiledTruth({ workspaceRoot: root });
+      await refreshDayMemory({ workspaceRoot: root, day: cycleNo }).catch((error) => {
+        telemetry.captureException(error, { operation: "day_memory_refresh_after_interview_commit" });
+      });
     } else if (gate.mode === "confess" && cycleNo) {
       // gate-held-as-win: outcome `blocked` mirrors gstack's abort/blocked ledger. The
       // confession is the note, NOT the next assignment — don't label the excuse a commitment.
@@ -2201,6 +2624,9 @@ async function handleDayProgressPatch(socket, payload = {}) {
       // confession opens no new commitment, so no new prediction is captured here).
       await applyPredictionPatch({ workspaceRoot: root, cycle: cycleNo, predictionText: undefined, predictionVerdict });
       await recompileCompiledTruth({ workspaceRoot: root });
+      await refreshDayMemory({ workspaceRoot: root, day: cycleNo }).catch((error) => {
+        telemetry.captureException(error, { operation: "day_memory_refresh_after_interview_confess" });
+      });
     }
     telemetry.captureEvent("mac_sidecar_day_progress_updated", {
       day: Number(day) || null,
@@ -2218,7 +2644,9 @@ async function handleDayProgressPatch(socket, payload = {}) {
       dayProgress,
       currentDay,
       officeHoursMemory: await loadOfficeHoursMemorySummary(root, currentDay),
-      dayReviews: await loadOfficeHoursDayReviews(root, dayProgress),
+      officeHoursHistory: await loadOfficeHoursHistorySummary(root, currentDay),
+      dayReviews: await loadOfficeHoursDayReviews(root, dayProgress, currentDay),
+      evidenceOS: await loadOfficeHoursEvidenceOS(root, dayProgress, currentDay),
     });
   } catch (error) {
     telemetry.captureException(error, {
@@ -3520,26 +3948,147 @@ async function runNextQueuedPrompt(sessionId) {
   });
 }
 
-function buildOfficeHoursRuntime(context = "", source = "manual") {
+function normalizeOfficeHoursDay(value) {
+  const number = Number.parseInt(String(value ?? "").trim(), 10);
+  if (!Number.isFinite(number) || number <= 0) return null;
+  return number;
+}
+
+function isDay2PlusOfficeHoursDay(day = null) {
+  const normalized = normalizeOfficeHoursDay(day);
+  return Number.isFinite(normalized) && normalized >= 2;
+}
+
+function officeHoursSourceGateEventPayload({ sessionId = null, gate } = {}) {
   return {
+    type: "office_hours_source_gate",
+    ...(sessionId ? { sessionId } : {}),
+    day: gate?.day ?? null,
+    success: gate?.ok !== false,
+    status: gate?.ok === false ? "blocked" : "ready",
+    detail: gate?.message || "",
+    officeHoursSourceGate: gate,
+  };
+}
+
+function sendOfficeHoursSourceGate(socket, { sessionId = null, gate } = {}) {
+  const payload = officeHoursSourceGateEventPayload({ sessionId, gate });
+  if (socket) {
+    send(socket, payload);
+  } else {
+    broadcast(payload);
+  }
+}
+
+function buildOfficeHoursRuntime(context = "", source = "manual", day = null) {
+  const normalizedDay = normalizeOfficeHoursDay(day);
+  const runtime = {
     active: true,
     source: String(source || "manual"),
     startedAt: new Date().toISOString(),
     context: clampOfficeHoursContext(context),
   };
+  if (normalizedDay) runtime.day = normalizedDay;
+  return runtime;
+}
+
+async function buildExternalOfficeHoursDigestSignals(session, {
+  context = "",
+  gate,
+  abortController,
+} = {}) {
+  const externalSources = selectedExternalOfficeHoursSources(gate);
+  if (!externalSources.length) return [];
+  let externalText = "";
+  await runProviderStream({
+    provider: session.provider,
+    sessionRuntime: session.runtime,
+    prompt: buildExternalOfficeHoursDigestPrompt({
+      sources: externalSources,
+      window: gate.window,
+      context,
+    }),
+    model: session.model,
+    workspaceRoot,
+    abortController,
+    sessionIdForMcp: null,
+    executionMode: "office_hours_digest_read_only",
+    approvedToolExecution: false,
+    onTextDelta: (text) => {
+      externalText += String(text || "");
+    },
+    onTextReplace: (text) => {
+      externalText = String(text || "");
+    },
+  });
+  return normalizeExternalOfficeHoursDigest(externalText, externalSources);
+}
+
+async function prepareDailyOfficeHoursDigest(session, {
+  context = "",
+  day = null,
+  selectedSources = [],
+  abortController = null,
+} = {}) {
+  const gate = await evaluateOfficeHoursSourceGate({
+    workspaceRoot,
+    day,
+    selectedSources,
+    provider: session.provider,
+    appSupportPath,
+  });
+  sendOfficeHoursSourceGate(null, {
+    sessionId: session.id,
+    gate,
+  });
+  if (!gate.ok) {
+    throw new OfficeHoursSourceGateError(gate);
+  }
+
+  const localSignals = await collectLocalDailyOfficeHoursSignals({
+    workspaceRoot,
+    gate,
+  });
+  const externalSignals = await buildExternalOfficeHoursDigestSignals(session, {
+    context,
+    gate,
+    abortController,
+  });
+  const digest = finalizeDailyOfficeHoursDigest({
+    gate,
+    localSignals,
+    externalSignals,
+    context,
+  });
+  await persistDailyOfficeHoursDigest({ workspaceRoot, digest });
+  broadcast({
+    type: "office_hours_daily_digest_result",
+    sessionId: session.id,
+    day: digest.day,
+    officeHoursDailyDigest: digest,
+    status: "ready",
+    detail: "Day 2+ Office Hours digest ready.",
+  });
+  return digest;
 }
 
 // Cycle#N read-back: the prior interview's assignment + hard-evidence demand + costume
 // detector, injected into the office-hours CONTEXT (survives vendor SKILL.md routing).
 // Empty on a cold brain. Reads office-hours-memory, never writes. Fail-open: any error
 // yields "" so the interview always proceeds.
-async function buildOfficeHoursCyclePreamble() {
+async function buildOfficeHoursCyclePreamble(day = null) {
   try {
     const dp = state.dayProgress ?? (await loadDayProgress({ workspaceRoot }));
-    const currentDay = dp ? computeDayNumber({ challengeStartedAt: dp.challengeStartedAt }) : null;
+    const currentDay = normalizeOfficeHoursDay(day) || (dp ? computeDayNumber({ challengeStartedAt: dp.challengeStartedAt }) : null);
     if (!currentDay) return "";
-    const memory = await loadOfficeHoursMemory({ workspaceRoot });
-    return formatPriorCycleOpening(buildPriorCycle(memory, { currentCycle: currentDay }));
+    const [memory, history] = await Promise.all([
+      loadOfficeHoursMemory({ workspaceRoot }),
+      buildOfficeHoursHistorySummary({ workspaceRoot, day: currentDay }),
+    ]);
+    return [
+      formatPriorCycleOpening(buildPriorCycle(memory, { currentCycle: currentDay })),
+      formatOfficeHoursHistoryForPrompt(history),
+    ].filter(Boolean).join("\n\n");
   } catch {
     return "";
   }
@@ -3830,6 +4379,8 @@ async function runOfficeHours(session, {
   context = "",
   originalPrompt = "Office Hours",
   source = "manual",
+  day = null,
+  selectedSources = [],
 } = {}) {
   if (state.activeRuns.has(session.id)) {
     throw new Error("This session is already running.");
@@ -3840,11 +4391,66 @@ async function runOfficeHours(session, {
     throw new Error(authState.message);
   }
 
-  const officeHoursRuntime = buildOfficeHoursRuntime(context, source);
-  const visiblePrompt = String(originalPrompt || "Office Hours").trim() || "Office Hours";
   const abortController = new AbortController();
-  const runStartedAt = performance.now();
   const runKey = randomUUID();
+  state.activeRuns.set(session.id, {
+    runKey,
+    abortController,
+    stop: async () => {
+      abortController.abort();
+    },
+  });
+
+  const runtimeDay = normalizeOfficeHoursDay(day) || normalizeOfficeHoursDay(session.runtime?.officeHours?.day);
+  const normalizedSelectedSources = normalizeOfficeHoursSelectedSources(selectedSources);
+  try {
+    if (isDay2PlusOfficeHoursDay(runtimeDay)) {
+      const gate = await evaluateOfficeHoursSourceGate({
+        workspaceRoot,
+        day: runtimeDay,
+        selectedSources: normalizedSelectedSources,
+        provider: session.provider,
+        appSupportPath,
+      });
+      sendOfficeHoursSourceGate(null, {
+        sessionId: session.id,
+        gate,
+      });
+      if (!gate.ok) {
+        telemetry.captureEvent("mac_sidecar_office_hours_source_gate_blocked", {
+          session_id: session.id,
+          provider: session.provider,
+          day: runtimeDay,
+          reason: gate.reason || "",
+          selected_sources: normalizedSelectedSources.join(","),
+        });
+        session.status = "idle";
+        session.error = null;
+        touch(session);
+        await persistSessions();
+        broadcast({ type: "session_updated", session });
+        const activeRun = state.activeRuns.get(session.id);
+        if (activeRun?.runKey === runKey) {
+          state.activeRuns.delete(session.id);
+        }
+        broadcast({
+          type: "error",
+          sessionId: session.id,
+          message: gate.message || "Day 2+ Office Hours source gate blocked.",
+        });
+        return;
+      }
+    }
+  } catch (error) {
+    const activeRun = state.activeRuns.get(session.id);
+    if (activeRun?.runKey === runKey) {
+      state.activeRuns.delete(session.id);
+    }
+    throw error;
+  }
+  const officeHoursRuntime = buildOfficeHoursRuntime(context, source, runtimeDay);
+  const visiblePrompt = String(originalPrompt || "Office Hours").trim() || "Office Hours";
+  const runStartedAt = performance.now();
   const assistantMessage = makeMessage({
     role: "assistant",
     provider: session.provider,
@@ -3879,9 +4485,31 @@ async function runOfficeHours(session, {
     // Cycle#N read-back, injected into the office-hours context AFTER the dedup slot is
     // reserved (state.activeRuns.set above) so the concurrent-start guard window stays
     // synchronous. Fail-open: empty preamble (cold brain / any error) leaves context as-is.
-    const cyclePreamble = await buildOfficeHoursCyclePreamble();
+    const cyclePreamble = await buildOfficeHoursCyclePreamble(runtimeDay);
     if (cyclePreamble) {
       officeHoursRuntime.context = clampOfficeHoursContext(`${cyclePreamble}\n\n${officeHoursRuntime.context}`);
+    }
+    if (isDay2PlusOfficeHoursDay(runtimeDay)) {
+      const digest = await prepareDailyOfficeHoursDigest(session, {
+        context: officeHoursRuntime.context,
+        day: runtimeDay,
+        selectedSources: normalizedSelectedSources,
+        abortController,
+      });
+      officeHoursRuntime.context = clampOfficeHoursContext(
+        `${officeHoursRuntime.context}\n\n${formatDailyOfficeHoursDigestForPrompt(digest)}`,
+      );
+      officeHoursRuntime.dailyDigest = {
+        generatedAt: digest.generatedAt,
+        window: digest.window,
+        sources: digest.sources.map((source) => ({
+          id: source.id,
+          state: source.state,
+          selected: Boolean(source.selected),
+          required: Boolean(source.required),
+          summary: source.summary,
+        })),
+      };
     }
     session.runtime = attachOfficeHoursRuntime(session.runtime, officeHoursRuntime);
     touch(session);
@@ -4060,6 +4688,41 @@ async function runOfficeHours(session, {
         stage: "aborted",
         messageId: assistantMessage.id,
         elapsedMs: performance.now() - runStartedAt,
+      });
+    } else if (error instanceof OfficeHoursSourceGateError) {
+      sendOfficeHoursSourceGate(null, {
+        sessionId: session.id,
+        gate: error.gate,
+      });
+      telemetry.captureEvent("mac_sidecar_office_hours_source_gate_blocked", {
+        session_id: session.id,
+        provider: session.provider,
+        day: runtimeDay || 0,
+        reason: error.gate?.reason || "",
+        selected_sources: normalizedSelectedSources.join(","),
+      });
+      const lastAssistant = session.messages.at(-1);
+      const lastUser = session.messages.at(-2);
+      if (
+        lastAssistant?.id === assistantMessage.id
+        && !String(lastAssistant.content || "").trim()
+        && lastUser?.role === "user"
+        && lastUser?.content === visiblePrompt
+      ) {
+        session.messages.splice(-2, 2);
+      } else {
+        assistantMessage.state = "error";
+        assistantMessage.error = formatError(error);
+        if (!assistantMessage.content) {
+          assistantMessage.content = formatError(error);
+        }
+      }
+      session.status = "idle";
+      session.error = null;
+      broadcast({
+        type: "error",
+        sessionId: session.id,
+        message: formatError(error),
       });
     } else {
       telemetry.captureException(error, {
@@ -7856,7 +8519,12 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
           const seeded = await ensureChallengeStart({ workspaceRoot: scanRoot });
           const currentDay = computeDayNumber({ challengeStartedAt: seeded.challengeStartedAt });
           dayProgress = currentDay
-            ? await setDayActiveStep({ workspaceRoot: scanRoot, day: currentDay, stepId: "goal", goalText: day1GoalSelection?.goalText })
+            ? await setDayActiveStep({
+                workspaceRoot: scanRoot,
+                day: currentDay,
+                stepId: "goal",
+                goalText: currentDay === 1 ? day1GoalSelection?.goalText : undefined,
+              })
             : seeded;
         } else {
           dayProgress = await loadDayProgress({ workspaceRoot: scanRoot });
@@ -7886,6 +8554,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
         completedDay: projectContext.lastCompletedDay,
         projectContext,
       });
+      const scanCurrentDay = dayProgress ? computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt }) : null;
       broadcast({
         type: "workspace_scan_result",
         scanRoot,
@@ -7903,6 +8572,8 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
         day1SituationSummary,
         day1GoalSelection,
         dayProgress,
+        dayReviews: await loadOfficeHoursDayReviews(scanRoot, dayProgress, scanCurrentDay),
+        evidenceOS: await loadOfficeHoursEvidenceOS(scanRoot, dayProgress, scanCurrentDay),
       });
       triggerDay1AlignmentPlanBroadcast({
         scanRoot,
@@ -7998,7 +8669,12 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
         const seeded = await ensureChallengeStart({ workspaceRoot: scanRoot });
         const currentDay = computeDayNumber({ challengeStartedAt: seeded.challengeStartedAt });
         dayProgress = currentDay
-          ? await setDayActiveStep({ workspaceRoot: scanRoot, day: currentDay, stepId: "goal", goalText: day1GoalSelection?.goalText })
+          ? await setDayActiveStep({
+              workspaceRoot: scanRoot,
+              day: currentDay,
+              stepId: "goal",
+              goalText: currentDay === 1 ? day1GoalSelection?.goalText : undefined,
+            })
           : seeded;
       } else {
         dayProgress = await loadDayProgress({ workspaceRoot: scanRoot });
@@ -8028,6 +8704,7 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       completedDay: projectContext.lastCompletedDay,
       projectContext,
     });
+    const scanCurrentDay = dayProgress ? computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt }) : null;
     broadcast({
       type: "workspace_scan_result",
       scanRoot,
@@ -8045,6 +8722,8 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       day1SituationSummary,
       day1GoalSelection,
       dayProgress,
+      dayReviews: await loadOfficeHoursDayReviews(scanRoot, dayProgress, scanCurrentDay),
+      evidenceOS: await loadOfficeHoursEvidenceOS(scanRoot, dayProgress, scanCurrentDay),
     });
     triggerDay1AlignmentPlanBroadcast({
       scanRoot,
@@ -8258,7 +8937,7 @@ function broadcastWorkspaceScanProgress(scanRoot, progressText, progress = {}) {
 
 function workspaceScanProviderLabel(provider, model) {
   if (provider === "claude") return `Claude Sonnet 4.6 (${model})`;
-  if (provider === "codex") return `GPT 5.4 Mini (${model})`;
+  if (provider === "codex") return `GPT 5.1 Codex Mini (${model})`;
   if (provider === "gemini") return `Gemini 3.5 Flash (${model})`;
   return `${provider} (${model})`;
 }
@@ -10138,6 +10817,7 @@ function buildSidecarPreflight(environment = getEnvironmentSummary()) {
 function buildSidecarDiagnostics(
   environment = getEnvironmentSummary(),
   preflight = buildSidecarPreflight(environment),
+  executionOs = null,
 ) {
   const snapshot = buildDiagnosticsSnapshot({
     appSupportPath,
@@ -10148,6 +10828,7 @@ function buildSidecarDiagnostics(
     activeRuns: state.activeRuns,
     sessionStoreSchemaVersion: SESSION_STORE_SCHEMA_VERSION,
     sessionStoreWarnings: state.sessionStoreWarnings,
+    executionOs,
   });
   snapshot.gstackVendor = describeGstackVendor();
   return snapshot;
@@ -10377,9 +11058,18 @@ function createSession(payload) {
   const provider = normalizeSessionProvider(payload.provider);
   const model = String(payload.model || "").trim();
   const now = new Date().toISOString();
+  const officeHoursDay = normalizeOfficeHoursDay(payload.officeHoursDay ?? payload.office_hours_day);
+  const runtime = {};
+  if (officeHoursDay) {
+    runtime.officeHours = {
+      active: false,
+      source: String(payload.source || "office_hours_screen"),
+      day: officeHoursDay,
+    };
+  }
   return {
     id: randomUUID(),
-    title: "New Session",
+    title: officeHoursDay ? `Office Hours · Day ${officeHoursDay}` : "New Session",
     provider,
     model,
     status: "idle",
@@ -10388,7 +11078,7 @@ function createSession(payload) {
     error: null,
     messages: [],
     pendingUserInput: null,
-    runtime: {},
+    runtime,
   };
 }
 
