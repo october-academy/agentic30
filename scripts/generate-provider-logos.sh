@@ -11,13 +11,17 @@
 #             (NOT the legacy blue->purple gradient) https://lobehub.com/icons/gemini
 #   Node.js — official OpenJS asset, used unmodified
 #             https://nodejs.org/static/logos/nodejsHex.svg
+#   Exa     — official Exa Brand Assets zip, Logomark Blue SVG
+#             https://exa.ai/brand
 #
 # Claude is intentionally NOT regenerated here: BrandClaude.imageset already ships
 # the official-color (#d97757 / #faf9f5) starburst and is reused by other surfaces.
 #
-# Trademark note: these marks are trademarks of their respective owners. They are
-# bundled solely as neutral provider-attribution icons (no implied endorsement).
-# The MIT license on a LobeHub SVG covers the file, not trademark rights.
+# Trademark note: these marks are trademarks of their respective owners. Codex
+# and Gemini currently come from LobeHub icon files rather than official vendor
+# brand kits; the MIT license on those SVG files does not grant trademark rights.
+# They are bundled solely as neutral provider-attribution icons (no implied
+# endorsement).
 #
 # Requirements: curl, npx (for sharp-cli / resvg SVG rendering), ImageMagick (magick).
 set -euo pipefail
@@ -33,6 +37,8 @@ ENTRIES=(
   "BrandGemini|https://unpkg.com/@lobehub/icons-static-svg@latest/icons/gemini-color.svg"
   "BrandNodejs|https://nodejs.org/static/logos/nodejsHex.svg"
 )
+
+EXA_BRAND_ASSETS_URL="https://exa.ai/assets/Exa%20Brand%20Assets.zip"
 
 write_contents_json() {
   cat > "$1/Contents.json" <<'JSON'
@@ -82,5 +88,20 @@ for entry in "${ENTRIES[@]}"; do
   write_contents_json "$dir"
   echo "    wrote $dir (128/256/384)"
 done
+
+echo "==> BrandExa  <-  $EXA_BRAND_ASSETS_URL"
+exa_zip="$TMP/exa-brand-assets.zip"
+exa_dir="$TMP/exa-brand-assets"
+curl -fsSL "$EXA_BRAND_ASSETS_URL" -o "$exa_zip"
+unzip -q "$exa_zip" -d "$exa_dir"
+exa_svg="$exa_dir/Exa Brand Assets/Logo/SVGs/Logomark/Exa Logomark Blue.svg"
+dir="$ASSETS/BrandExa.imageset"
+mkdir -p "$dir"
+npx -y sharp-cli -i "$exa_svg" -o "$dir/icon@3x.png" \
+  resize 384 384 --fit contain --background '#00000000' >/dev/null
+magick "$dir/icon@3x.png" -resize 256x256 "$dir/icon@2x.png"
+magick "$dir/icon@3x.png" -resize 128x128 "$dir/icon.png"
+write_contents_json "$dir"
+echo "    wrote $dir (128/256/384)"
 
 echo "done — regenerated provider brand logos"
