@@ -25,6 +25,7 @@ import {
   recompileCompiledTruth,
   buildCompiledTruth,
   buildDayReviews,
+  buildEvidenceOS,
   detectAbandonedThreads,
   buildPriorCycle,
   summarizeOfficeHoursMemory,
@@ -63,9 +64,9 @@ test("appendCommitment persists, loads back identically, and is user-origin", as
   // round-trips from disk
   const loaded = await loadOfficeHoursMemory({ workspaceRoot: ws, now: NOW });
   assert.deepEqual(loaded.commitments, saved.commitments);
-  // file lives under .agentic30/
+  // file lives under .agentic30/memory/
   const p = resolveOfficeHoursMemoryPath(ws);
-  assert.ok(p.endsWith(path.join(".agentic30", "office-hours-memory.json")));
+  assert.ok(p.endsWith(path.join(".agentic30", "memory", "office-hours-ledger.json")));
   await fs.rm(ws, { recursive: true, force: true });
 });
 
@@ -300,15 +301,15 @@ test("timeline + cycles prune to MAX_* (oldest dropped), append-only", async () 
   assert.equal(norm.cycles.at(-1).cycle, MAX_CYCLE_LEDGER + 12);
 });
 
-test("migration: schemaVersion:0 / missing-field blob normalizes without throw and bumps current schema", () => {
-  const legacy = {
+test("schemaVersion:0 / missing-field blob normalizes without throw and bumps current schema", () => {
+  const partial = {
     schemaVersion: 0,
     cycles: [{ cycle: 3, lastAssignment: "old" }, { junk: true }, null],
     commitments: [{ text: "keep me" }, {}],
     timeline: "not-an-array",
     compiledTruth: { text: "x".repeat(9000) }, // over cap
   };
-  const norm = normalizeOfficeHoursMemory(legacy, { now: NOW });
+  const norm = normalizeOfficeHoursMemory(partial, { now: NOW });
   assert.equal(norm.schemaVersion, OFFICE_HOURS_MEMORY_SCHEMA_VERSION);
   assert.equal(norm.schema, OFFICE_HOURS_MEMORY_SCHEMA);
   assert.equal(norm.cycles.length, 1); // only the valid one survives
@@ -347,7 +348,7 @@ test("buildDayReviews flags build_escape when work exists without customer hard 
   };
   const reviews = buildDayReviews({ dayProgress, memory, workHistory });
   assert.equal(reviews["1"].status, "build_escape");
-  assert.equal(reviews["1"].verdictLabel, "빌드로 도피");
+  assert.equal(reviews["1"].verdictLabel, "고객 증거 없이 빌드함");
   assert.equal(reviews["1"].work.aiMinutes, 90);
   assert.ok(reviews["1"].missing.includes("hard_evidence"));
 });
@@ -390,9 +391,84 @@ test("buildDayReviews clears build_escape when hard customer evidence exists", (
     ],
   };
   const reviews = buildDayReviews({ dayProgress, memory, workHistory });
-  assert.equal(reviews["1"].status, "hard_evidence_confirmed");
+  assert.equal(reviews["1"].status, "evidence_confirmed");
   assert.equal(reviews["1"].customerEvidence[0].customer, "Jane");
   assert.equal(reviews["1"].customerEvidence[0].evidence.kind, "screenshot");
+});
+
+test("buildDayReviews uses Day 1 goal selection as retro goal snapshot after date rollover", () => {
+  const dayProgress = {
+    challengeStartedAt: "2026-06-07",
+    days: {
+      "1": { day: 1, kind: "day1", steps: { onboarding: "done", scan: "done", goal: "active", first_interview: "pending" }, goalText: "" },
+      "2": { day: 2, kind: "standard", steps: { scan: "done", retro: "done", goal: "active", interview: "pending", execution: "pending" }, goalText: "" },
+    },
+  };
+  const day1GoalSelection = {
+    goalText: "Jane에게 결제 의향을 묻는다",
+    customer: "Jane",
+    problem: "첫 결제 의사 확인",
+    validationAction: "DM으로 가격을 묻는다",
+  };
+  const reviews = buildDayReviews({
+    dayProgress,
+    memory: makeDefaultOfficeHoursMemory({ now: NOW }),
+    workHistory: { generatedAt: NOW.toISOString(), days: [] },
+    day1GoalSelection,
+    currentDay: 2,
+  });
+  assert.equal(reviews["1"].goalSnapshot.customer, "Jane");
+  assert.equal(reviews["1"].carryForwardAction, "DM으로 가격을 묻는다");
+});
+
+test("buildEvidenceOS exposes open, overdue, proven debts and day states", () => {
+  const dayProgress = {
+    challengeStartedAt: "2026-06-08",
+    days: {
+      "1": { day: 1, kind: "day1", steps: { onboarding: "done", scan: "done", goal: "done", first_interview: "done" }, goalText: "ICP 검증" },
+      "2": { day: 2, kind: "standard", steps: { scan: "done", retro: "done", goal: "active", interview: "pending", execution: "pending" }, goalText: "" },
+    },
+  };
+  const memory = makeDefaultOfficeHoursMemory({ now: NOW });
+  memory.commitments = [
+    {
+      id: "cm-open",
+      cycle: 1,
+      createdDay: 1,
+      createdAt: NOW.toISOString(),
+      text: "Jane에게 DM",
+      customer: "Jane",
+      channel: "DM",
+      message: "결제 의향 묻기",
+      expectedEvidenceKind: "screenshot",
+      dueDay: 1,
+      confirmedByUser: true,
+      status: "open",
+      evidence: null,
+      origin: "user",
+    },
+    {
+      id: "cm-met",
+      cycle: 1,
+      createdDay: 1,
+      createdAt: NOW.toISOString(),
+      text: "Kim에게 결제 링크",
+      customer: "Kim",
+      channel: "DM",
+      message: "결제 링크 보내기",
+      expectedEvidenceKind: "payment",
+      dueDay: 2,
+      confirmedByUser: true,
+      status: "met",
+      evidence: { kind: "payment", url: "https://example.com/pay", note: "", gradedCycle: 1, gradedAt: NOW.toISOString() },
+      origin: "user",
+    },
+  ];
+  const evidenceOS = buildEvidenceOS({ dayProgress, memory, workHistory: { generatedAt: NOW.toISOString(), days: [] }, currentDay: 2 });
+  assert.equal(evidenceOS.openDebts.length, 1);
+  assert.equal(evidenceOS.overdueDebts.length, 1);
+  assert.equal(evidenceOS.provenEvidence.length, 1);
+  assert.equal(evidenceOS.dayStates["1"].state, "evidence_confirmed");
 });
 
 test("injectable now: no wall-clock — timestamps derive from the injected now", async () => {
@@ -415,7 +491,7 @@ test("formatPriorCycleOpening: cold brain empty; warm opens with Cycle#N evidenc
   const opening = formatPriorCycleOpening(prior);
   assert.ok(opening.includes("직전 사이클 회상 — Cycle 8"));
   assert.ok(opening.includes("DM 5개 보내기"));
-  assert.ok(opening.includes("하드 증거")); // evidence demand
+  assert.ok(opening.includes("확인 가능한 증거")); // evidence demand
   assert.ok(opening.includes("코스튬")); // abandoned-thread detector fired (2 cycles silent)
   await fs.rm(ws, { recursive: true, force: true });
 });

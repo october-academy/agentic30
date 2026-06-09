@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildOfficeHoursChatPrompt,
   buildOfficeHoursChatSystemPrompt,
+  isOfficeHoursDay2GoalDrivenContext,
   isOfficeHoursLockedDay1GoalContext,
 } from "../sidecar/office-hours-chat-prompt.mjs";
 
@@ -41,6 +42,14 @@ test("office-hours chat system prompt routes Codex forcing questions through str
   assert.match(prompt, /pre_product/);
   assert.match(prompt, /has_users -> Q2 현재 대안, Q4 가장 좁은 첫 진입점, Q5 직접 관찰/);
   assert.match(prompt, /Smart-skip/);
+  assert.match(prompt, /Agentic30 Memory source of truth is `\.agentic30\/memory\/` only/);
+  assert.match(prompt, /Efficient Memory lookup order/);
+  assert.match(prompt, /\.agentic30\/memory\/day-rollup\.json/);
+  assert.match(prompt, /\.agentic30\/memory\/days\/day-N\.json/);
+  assert.match(prompt, /Day interview questions and user answers/);
+  assert.match(prompt, /Office Hours structured input questions and user answers/);
+  assert.match(prompt, /For Day 30, reason from the Day 1\.\.29 roll-up/);
+  assert.match(prompt, /open or missed commitment/);
   assert.match(prompt, /recommended/);
   assert.match(prompt, /risk/);
   assert.match(prompt, /evidenceTarget/);
@@ -116,6 +125,44 @@ test("office-hours locked Day 1 goal prompt skips gates and requires a structure
   assert.match(prompt, /money signal for make_money/);
   assert.match(prompt, /Do not write files, write docs, publish posts/);
   assert.match(prompt, /public evidence logging is available/);
+});
+
+test("office-hours Day 2+ goal-driven prompt requires live briefing and goal-specific routing", () => {
+  const context = [
+    "DAY1_FOUNDATION_GOAL",
+    "DAY2_PLUS_GOAL_DRIVEN_OFFICE_HOURS",
+    "Flow contract: Day 2 goal-driven Office Hours scoped to the locked Day 1 30-day goal.",
+    "30-day goal source of truth: Day1GoalSelection.goalType",
+    "Goal lane: get_users / 첫 100명 사용자 모으기",
+    "Goal text: activation action을 끝낸 100명을 모은다.",
+    "Day 1 customer: B2B founder",
+    "Day 1 problem: onboarding에서 이탈한다",
+    "Validation action: 랜딩에서 invite 요청",
+    "DAY2_PLUS_LIVE_DIGEST",
+    "BUILD_WITHOUT_CUSTOMER_EVIDENCE: true",
+  ].join("\n");
+  const prompt = buildOfficeHoursChatSystemPrompt("/workspace", {
+    provider: "codex",
+    context,
+  });
+  const userPrompt = buildOfficeHoursChatPrompt({ context });
+
+  assert.equal(isOfficeHoursDay2GoalDrivenContext(context), true);
+  assert.match(userPrompt, /Day 2\+ Office Hours/);
+  assert.match(userPrompt, /mode gate, product-stage gate, goal-selection question을 반복하지 않는다/);
+  assert.match(prompt, /Day1GoalSelection\.goalType is the source of truth/);
+  assert.match(prompt, /Do not switch, reinterpret, dilute/);
+  assert.match(prompt, /30일 목표 상태, 어제\/간밤에 바뀐 것, 목표 달성에 도움 되는 신호, 오늘 막고 있는 가장 큰 증거 공백/);
+  assert.match(prompt, /first forcing question MUST call agentic30_request_user_input/i);
+  assert.match(prompt, /progress toward the 30-day goal/);
+  assert.match(prompt, /missing hard evidence/);
+  assert.match(prompt, /today's smallest action/);
+  assert.match(prompt, /For make_money/);
+  assert.match(prompt, /For get_users/);
+  assert.match(prompt, /100 unique people\/accounts completing the chosen activation action/);
+  assert.match(prompt, /For build_product/);
+  assert.match(prompt, /BUILD_WITHOUT_CUSTOMER_EVIDENCE: true/);
+  assert.match(prompt, /challenge the customer\/user evidence gap/);
 });
 
 test("office-hours chat system prompt routes Claude forcing questions through AskUserQuestion", () => {

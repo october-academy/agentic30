@@ -19,12 +19,23 @@ export function isOfficeHoursLockedDay1GoalContext(context = "") {
   return /DAY1_LOCKED_GOAL|Flow contract:\s*locked Day 1 goal interview/i.test(String(context || ""));
 }
 
+export function isOfficeHoursDay2GoalDrivenContext(context = "") {
+  return /DAY2_PLUS_GOAL_DRIVEN_OFFICE_HOURS|DAY2_PLUS_LIVE_DIGEST|Flow contract:\s*Day \d+ goal-driven Office Hours/i.test(String(context || ""));
+}
+
 export function buildOfficeHoursChatPrompt({ context = "", userPrompt = "" } = {}) {
+  const isDay2GoalDrivenFlow = isOfficeHoursDay2GoalDrivenContext(context);
   const sections = [
     "Office Hours를 시작한다.",
-    "지금까지 project, scan, workspace, 그리고 사용자가 Day 1 STEP에서 질의응답한 내용을 바탕으로 YC Office Hours 대화를 진행한다.",
-    "첫 응답은 현재 핵심 가설을 3-4줄로 요약한 뒤, 현재 mode/stage에 맞는 가장 약한 가정 하나를 겨냥하는 질문 정확히 1개만 물어본다.",
-    "Day 1에서 Startup mode가 이미 선택되어 있으면 mode gate를 반복하지 않는다. product stage가 불명확하면 stage card를 먼저 묻는다.",
+    isDay2GoalDrivenFlow
+      ? "Day 2+ Office Hours다. Day 1에서 고른 30일 목표와 live digest를 바탕으로 오늘 목표 달성 행동을 좁힌다."
+      : "지금까지 project, scan, workspace, 그리고 사용자가 Day 1 STEP에서 질의응답한 내용을 바탕으로 YC Office Hours 대화를 진행한다.",
+    isDay2GoalDrivenFlow
+      ? "첫 응답은 live digest를 짧게 브리핑한 뒤, 30일 목표를 향한 오늘의 가장 작은 외부 행동을 강제하는 질문 정확히 1개만 물어본다."
+      : "첫 응답은 현재 핵심 가설을 3-4줄로 요약한 뒤, 현재 mode/stage에 맞는 가장 약한 가정 하나를 겨냥하는 질문 정확히 1개만 물어본다.",
+    isDay2GoalDrivenFlow
+      ? "Day 2+에서는 mode gate, product-stage gate, goal-selection question을 반복하지 않는다."
+      : "Day 1에서 Startup mode가 이미 선택되어 있으면 mode gate를 반복하지 않는다. product stage가 불명확하면 stage card를 먼저 묻는다.",
   ];
   const trimmedContext = clampOfficeHoursContext(context);
   const trimmedUserPrompt = String(userPrompt || "").trim();
@@ -47,6 +58,7 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
   const structuredInputTool = officeHoursStructuredInputToolName(provider);
   const isWriteDesignDocFlow = isOfficeHoursWriteDesignDocContext(context);
   const isLockedDay1GoalFlow = isOfficeHoursLockedDay1GoalContext(context);
+  const isDay2GoalDrivenFlow = isOfficeHoursDay2GoalDrivenContext(context);
   const baseRules = [
     "## Agentic30 Day 1 STEP Office Hours",
     "Use the office-hours specialist for this whole session.",
@@ -56,6 +68,11 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
     "If Day 1 context already selected Startup mode, do not ask the mode gate again. If stage is unclear, ask one stage card before diagnostic questions.",
     "Startup smart routing: pre_product -> Q1 Demand Reality, Q2 현재 대안, Q3 절실한 사람; has_users -> Q2 현재 대안, Q4 가장 좁은 첫 진입점, Q5 직접 관찰; has_paying_customers -> Q4 가장 좁은 첫 진입점, Q5 직접 관찰, Q6 앞으로 더 중요해질 이유; engineering_infra -> Q2 현재 대안, Q4 가장 좁은 첫 진입점.",
     "Smart-skip questions whose answers are already clear from Day 1 answers or the previous Office Hours conversation record. Do not force all six questions.",
+    "Agentic30 Memory source of truth is `.agentic30/memory/` only. Treat any non-memory Agentic30 path as unavailable for Office Hours or interview history.",
+    "Efficient Memory lookup order: first use `.agentic30/memory/day-rollup.json` for Day 1..N cumulative context, then use `.agentic30/memory/days/day-N.json` for the active day, and only follow a prior day's `detailPath` when the roll-up says an exact previous question, answer, source, or commitment is needed.",
+    "Memory facts include onboarding answers, read sources, Day interview questions and user answers, Office Hours structured input questions and user answers, source read logs, prior commitments, evidence status, and open/missed promises.",
+    "Scope every Office Hours/interview question to the active day/session. For Day 30, reason from the Day 1..29 roll-up before asking; do not repeat an already answered question unless the user explicitly asks to revisit it.",
+    "If a previous day has an open or missed commitment, check that first before generating a new broad discovery question.",
     `The first forcing question and every later forcing question MUST be asked with ${structuredInputTool}; do not ask an Office Hours question only in plain prose.`,
     `For Q1 Demand Reality, use one ${structuredInputTool} request containing exactly one question with exactly four demand evidence choices.`,
     "Q1 demand evidence choice must ask: \"Agentic30 수요를 실제 행동으로 확인한 가장 강한 증거는 무엇인가요?\" Exclude feelings, praise, \"좋아 보인다\", and \"나오면 써보겠다\". Only real-name/date/action evidence counts.",
@@ -99,10 +116,27 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
         "If public evidence logging is available, treat it only as a place to record evidence after the interview; do not require public-log setup to continue.",
       ]
     : [];
+  const day2GoalDrivenRules = isDay2GoalDrivenFlow
+    ? [
+        "For Day 2+ goal-driven Office Hours, Day1GoalSelection.goalType is the source of truth for the 30-day goal.",
+        "Do not switch, reinterpret, dilute, or ask the user to reselect the 30-day goal unless the user explicitly changes the Day 1 goal.",
+        "Use the Day 1 goal contract: goal type, goal text, customer, problem, validation action, prior commitments, open evidence debts, and DAY2_PLUS_LIVE_DIGEST.",
+        "The first visible assistant prose must be a short briefing with exactly these four Korean section labels: 30일 목표 상태, 어제/간밤에 바뀐 것, 목표 달성에 도움 되는 신호, 오늘 막고 있는 가장 큰 증거 공백.",
+        `After that briefing, the first forcing question MUST call ${structuredInputTool} with exactly one question card. Do not ask the Day 2+ Office Hours question only in prose.`,
+        "Every Day 2+ Office Hours question must target exactly one of: progress toward the 30-day goal, missing hard evidence, today's smallest action to advance the goal, or a blocker preventing the goal.",
+        "Each Day 2+ question must include 2-4 options, allowFreeText: true, requiresFreeText: false, and option metadata: recommended when applicable, risk, evidenceTarget, mapsTo, and failureMode.",
+        "For make_money, push toward a real payment, paid pilot, contract, invoice, or explicit paid-offer response. Price curiosity alone is not success.",
+        "For get_users, push toward a measurable acquisition action and activated users, not vanity traffic. Default success is 100 unique people/accounts completing the chosen activation action.",
+        "For build_product, push toward a working version that a target user can complete end-to-end. A deploy or commit alone is not enough unless it enables the validation action.",
+        "If DAY2_PLUS_LIVE_DIGEST says BUILD_WITHOUT_CUSTOMER_EVIDENCE: true, the first question must challenge the customer/user evidence gap before asking for more building.",
+        "If live source data is thin, say so briefly and ask for the smallest action that creates hard evidence today; do not invent analytics, traffic, revenue, user, or deployment facts.",
+      ]
+    : [];
   return [
     ...baseRules,
     ...writeDesignDocRules,
     ...lockedDay1GoalRules,
+    ...day2GoalDrivenRules,
     `Workspace root: ${workspaceRootValue || ""}`,
     specialistInjection ? `\n${specialistInjection}` : "",
     context ? `\n## Day 1 STEP Office Hours Context\n${clampOfficeHoursContext(context)}` : "",

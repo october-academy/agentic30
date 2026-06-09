@@ -3,7 +3,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 
 import { atomicWriteJson, withFileLock } from "./atomic-store.mjs";
-import { resolveAgentic30Dir } from "./news-market-radar.mjs";
+import { resolveAgentic30MemoryDir } from "./news-market-radar.mjs";
 
 // Office-Hours / interview memory — the "Cycle#N" cross-interview store.
 //
@@ -15,7 +15,7 @@ import { resolveAgentic30Dir } from "./news-market-radar.mjs";
 // make the gap between a committed customer action and shipped HARD evidence
 // impossible to hide. See memory project_office_hours_day_memory.
 //
-// Schema bumps require a normalize-from-prior migration test (office-hours-memory.test.mjs).
+// Schema bumps require a canonical normalization test (office-hours-memory.test.mjs).
 export const OFFICE_HOURS_MEMORY_SCHEMA_VERSION = 2;
 export const OFFICE_HOURS_MEMORY_SCHEMA = "agentic30.office_hours_memory.v1";
 
@@ -43,7 +43,7 @@ const ORIGINS = new Set(["user", "system"]);
 const EVIDENCE_KINDS = new Set(["url", "screenshot", "commit", "payment"]);
 
 export function resolveOfficeHoursMemoryPath(workspaceRoot) {
-  return path.join(resolveAgentic30Dir(workspaceRoot), "office-hours-memory.json");
+  return path.join(resolveAgentic30MemoryDir(workspaceRoot), "office-hours-ledger.json");
 }
 
 // ── Load / save ──────────────────────────────────────────────────────────────
@@ -436,7 +436,7 @@ export function formatPriorCycleOpening(priorCycle) {
     `[직전 사이클 회상 — Cycle ${priorNo}]`,
     `지난 사이클에 너는 이걸 하기로 했어: "${assignment}".`,
     evidenceLine,
-    "이번 사이클 첫 질문은 반드시 그 약속의 하드 증거(URL/캡처/커밋/결제) 확인이다. 자기보고·칭찬·관심은 증거가 아니다.",
+    "이번 사이클 첫 질문은 반드시 그 약속의 확인 가능한 증거(URL/캡처/커밋/결제) 확인이다. 자기보고·칭찬·관심은 증거가 아니다.",
   ];
   const abandoned = Array.isArray(priorCycle.abandonedThreads) ? priorCycle.abandonedThreads : [];
   if (abandoned.length) {
@@ -479,16 +479,31 @@ export function classifyInterviewGate({ stepId, status, commitmentText, commitme
 // Pure: synthesize the per-Day customer-evidence review payload attached to
 // day_progress_state. This is additive UI data; the source of truth remains
 // day-progress + office-hours-memory + work-history.
-export function buildDayReviews({ dayProgress, memory, workHistory } = {}) {
+export function buildDayReviews({ dayProgress, memory, workHistory, day1GoalSelection = null, currentDay = null } = {}) {
   const days = dayProgress?.days && typeof dayProgress.days === "object" && !Array.isArray(dayProgress.days)
     ? dayProgress.days
     : {};
+  const evidenceOS = buildEvidenceOS({ dayProgress, memory, workHistory, day1GoalSelection, currentDay });
+  const reviewDays = new Set(Object.keys(days));
+  const resolvedCurrentDay = clampInt(currentDay, 1, 400, null);
+  if (resolvedCurrentDay) {
+    for (let day = 1; day <= resolvedCurrentDay; day += 1) reviewDays.add(String(day));
+  }
+  if (normalizeDay1GoalSnapshot(day1GoalSelection)) reviewDays.add("1");
   const reviews = {};
-  for (const [key, record] of Object.entries(days)) {
+  for (const key of reviewDays) {
+    const record = days[key] ?? null;
     const day = clampInt(record?.day ?? key, 1, 400, null);
     if (!day) continue;
     const commitments = (memory?.commitments ?? [])
       .filter((commitment) => clampInt(commitment.createdDay ?? commitment.cycle, 1, 400, null) === day)
+      .map(commitmentToReviewRecord);
+    const evidenceDebts = (memory?.commitments ?? [])
+      .filter((commitment) => isUnprovenDebt(commitment)
+        && (
+          clampInt(commitment.createdDay ?? commitment.cycle, 1, 400, null) === day
+          || clampInt(commitment.dueDay, 1, 400, null) === day
+        ))
       .map(commitmentToReviewRecord);
     const cycles = (memory?.cycles ?? []).filter((cycle) => clampInt(cycle.day ?? cycle.cycle, 1, 400, null) === day);
     const work = workSummaryForDay({ workHistory, dayProgress, day });
@@ -502,30 +517,212 @@ export function buildDayReviews({ dayProgress, memory, workHistory } = {}) {
     const blockedCycle = cycles.find((cycle) => cycle.outcome === "blocked" || cycle.outcome === "abort") ?? null;
 
     const missing = [];
+    const goalSnapshot = goalSnapshotForDay({ day, record, day1GoalSelection });
+    if (!goalSnapshot?.summary) missing.push("goal_snapshot");
     if (!hasCustomerDetails) missing.push("customer_evidence");
     if (!hasHardEvidence) missing.push("hard_evidence");
     if (!commitments.length) missing.push("next_commitment");
 
+    const evidenceState = evidenceOS.dayStates?.[String(day)]?.state;
     const status = hasHardEvidence
-      ? "hard_evidence_confirmed"
+      ? "evidence_confirmed"
       : (work.hasWork ? "build_escape"
         : (hasUnprovenCommitment ? "commitment_unproven"
-          : (blockedCycle ? "blocked" : "customer_evidence_missing")));
+          : (blockedCycle ? "blocked"
+            : (evidenceState === "not_started" ? "not_started"
+              : (evidenceState === "closed_unproven" ? "closed_unproven" : "customer_evidence_missing")))));
     reviews[String(day)] = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       day,
       status,
       verdictLabel: verdictLabelForStatus(status),
       verdictTone: verdictToneForStatus(status),
-      summary: reviewSummaryForStatus(status, { work, commitments, blockedCycle }),
+      summary: reviewSummaryForStatus(status, { work, commitments, blockedCycle, goalSnapshot, evidenceDebts }),
       customerEvidence: commitments.filter((commitment) => commitment.customer || commitment.message || commitment.evidence),
       commitments,
       nextCommitment: commitments.find((commitment) => !commitment.evidence && commitment.status === "open") ?? null,
       missing,
+      goalSnapshot,
+      missingReasons: missingReasonsForReview({ missing, goalSnapshot, evidenceDebts, status }),
+      carryForwardAction: carryForwardActionForReview({ status, goalSnapshot, evidenceDebts, commitments }),
+      evidenceDebts,
       work,
     };
   }
   return reviews;
+}
+
+export function buildEvidenceOS({ dayProgress, memory, workHistory, day1GoalSelection = null, currentDay = null } = {}) {
+  const days = dayProgress?.days && typeof dayProgress.days === "object" && !Array.isArray(dayProgress.days)
+    ? dayProgress.days
+    : {};
+  const resolvedCurrentDay = clampInt(currentDay, 1, 400, null);
+  const commitments = Array.isArray(memory?.commitments) ? memory.commitments : [];
+  const openDebts = commitments.filter(isUnprovenDebt).map(commitmentToReviewRecord);
+  const overdueDebts = commitments
+    .filter((commitment) => isUnprovenDebt(commitment)
+      && resolvedCurrentDay
+      && clampInt(commitment.dueDay, 1, 400, resolvedCurrentDay) < resolvedCurrentDay)
+    .map(commitmentToReviewRecord);
+  const provenEvidence = commitments
+    .filter((commitment) => commitment?.evidence || commitment?.status === "met")
+    .map(commitmentToReviewRecord);
+  const maxRecordedDay = Object.keys(days).reduce((max, key) => Math.max(max, clampInt(days[key]?.day ?? key, 1, 400, 0)), 0);
+  const maxCommitmentDay = commitments.reduce((max, commitment) => Math.max(
+    max,
+    clampInt(commitment?.createdDay ?? commitment?.cycle, 1, 400, 0),
+    clampInt(commitment?.dueDay, 1, 400, 0),
+  ), 0);
+  const maxDay = Math.max(resolvedCurrentDay ?? 0, maxRecordedDay, maxCommitmentDay, normalizeDay1GoalSnapshot(day1GoalSelection) ? 1 : 0);
+  const dayStates = {};
+  for (let day = 1; day <= maxDay; day += 1) {
+    const record = days[String(day)] ?? null;
+    const dayCommitments = commitments.filter((commitment) => clampInt(commitment.createdDay ?? commitment.cycle, 1, 400, null) === day);
+    const dayOpenDebts = dayCommitments.filter(isUnprovenDebt);
+    const dayProven = dayCommitments.filter((commitment) => commitment?.evidence || commitment?.status === "met");
+    const work = workSummaryForDay({ workHistory, dayProgress, day });
+    const state = evidenceOSStateForDay({ day, record, day1GoalSelection, dayOpenDebts, dayProven, work });
+    dayStates[String(day)] = {
+      day,
+      state,
+      label: evidenceOSLabelForState(state),
+      tone: evidenceOSToneForState(state),
+      openDebtCount: dayOpenDebts.length,
+      provenEvidenceCount: dayProven.length,
+      carryForwardAction: carryForwardActionForReview({
+        status: state,
+        goalSnapshot: goalSnapshotForDay({ day, record, day1GoalSelection }),
+        evidenceDebts: dayOpenDebts.map(commitmentToReviewRecord),
+        commitments: dayCommitments.map(commitmentToReviewRecord),
+      }),
+    };
+  }
+  return {
+    schemaVersion: 1,
+    currentDay: resolvedCurrentDay,
+    openDebts,
+    overdueDebts,
+    provenEvidence,
+    dayStates,
+  };
+}
+
+function normalizeDay1GoalSnapshot(selection = null) {
+  if (!selection || typeof selection !== "object" || Array.isArray(selection)) return null;
+  const summary = cleanString(selection.goalText ?? selection.goal_text, MAX_FIELD_CHARS);
+  const customer = cleanString(selection.customer, MAX_FIELD_CHARS);
+  const problem = cleanString(selection.problem, MAX_FIELD_CHARS);
+  const validationAction = cleanString(selection.validationAction ?? selection.validation_action, MAX_FIELD_CHARS);
+  if (!summary && !customer && !problem && !validationAction) return null;
+  return {
+    summary: summary || [customer, problem, validationAction].filter(Boolean).join(" · "),
+    customer,
+    problem,
+    validationAction,
+    source: "day1_goal",
+  };
+}
+
+function goalSnapshotForDay({ day, record, day1GoalSelection } = {}) {
+  if (Number(day) === 1) {
+    const day1 = normalizeDay1GoalSnapshot(day1GoalSelection);
+    if (day1) return day1;
+  }
+  const summary = cleanString(record?.goalText, MAX_FIELD_CHARS);
+  if (!summary) return null;
+  return {
+    summary,
+    customer: "",
+    problem: "",
+    validationAction: "",
+    source: "day_progress",
+  };
+}
+
+function isUnprovenDebt(commitment = {}) {
+  if (!commitment || typeof commitment !== "object" || Array.isArray(commitment)) return false;
+  if (commitment.evidence) return false;
+  return ["open", "missed", "abandoned"].includes(commitment.status || "open");
+}
+
+function evidenceOSStateForDay({ day, record, day1GoalSelection, dayOpenDebts, dayProven, work } = {}) {
+  if ((dayProven ?? []).length > 0) return "evidence_confirmed";
+  if (work?.hasWork) return "build_escape";
+  if ((dayOpenDebts ?? []).length > 0) return "closed_unproven";
+  const goalSnapshot = goalSnapshotForDay({ day, record, day1GoalSelection });
+  const steps = record?.steps && typeof record.steps === "object" && !Array.isArray(record.steps)
+    ? Object.values(record.steps)
+    : [];
+  const touched = steps.some((status) => status === "done" || status === "active");
+  const complete = steps.length > 0 && steps.every((status) => status === "done");
+  if (complete) return "closed_unproven";
+  if (touched || goalSnapshot) return "in_progress";
+  return "not_started";
+}
+
+function evidenceOSLabelForState(state) {
+  switch (state) {
+    case "evidence_confirmed": return "증거 확인";
+    case "build_escape": return "빌드만 진행";
+    case "closed_unproven": return "증거 없음";
+    case "in_progress": return "진행 중";
+    case "not_started":
+    default:
+      return "시작 안 함";
+  }
+}
+
+function evidenceOSToneForState(state) {
+  switch (state) {
+    case "evidence_confirmed": return "success";
+    case "build_escape": return "danger";
+    case "closed_unproven": return "warning";
+    case "in_progress": return "warning";
+    case "not_started":
+    default:
+      return "muted";
+  }
+}
+
+function missingReasonsForReview({ missing, goalSnapshot, evidenceDebts, status } = {}) {
+  const reasons = [];
+  if (!goalSnapshot?.summary || missing?.includes("goal_snapshot")) {
+    reasons.push("검증할 고객/문제/행동이 고정되지 않았습니다.");
+  }
+  if (missing?.includes("customer_evidence")) {
+    reasons.push("고객명과 보낸 메시지가 연결되지 않았습니다.");
+  }
+  if (missing?.includes("hard_evidence")) {
+    reasons.push("URL/스크린샷/커밋/결제 같은 확인 가능한 증거가 없습니다.");
+  }
+  if (missing?.includes("next_commitment")) {
+    reasons.push("다음 고객 행동 약속이 없습니다.");
+  }
+  if ((evidenceDebts ?? []).length > 0) {
+    reasons.push(`미해결 고객 약속 ${evidenceDebts.length}개가 남아 있습니다.`);
+  }
+  if (status === "build_escape") {
+    reasons.push("빌드 작업은 있었지만 고객 행동 증거로 확인되지 않았습니다.");
+  }
+  return reasons;
+}
+
+function carryForwardActionForReview({ status, goalSnapshot, evidenceDebts, commitments } = {}) {
+  const debt = (evidenceDebts ?? []).find((item) => item && !item.evidence)
+    ?? (commitments ?? []).find((item) => item && !item.evidence && item.status === "open");
+  if (debt?.text) return debt.text;
+  if (goalSnapshot?.validationAction) return goalSnapshot.validationAction;
+  if (goalSnapshot?.customer && goalSnapshot?.problem) {
+    return `${goalSnapshot.customer}에게 "${sentenceFragment(goalSnapshot.problem, 80)}"를 실제 행동으로 확인한다.`;
+  }
+  if (status === "build_escape") return "오늘 고객 행동 1개를 정하고 확인 가능한 증거로 닫는다.";
+  return "";
+}
+
+function sentenceFragment(value, max = 80) {
+  const text = cleanString(value, max + 20);
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(0, max - 1)).trim()}…`;
 }
 
 // ── Normalization (tolerance-first; accepts old/corrupt input, coerces to current) ──
@@ -785,10 +982,13 @@ function dateKeyForChallengeDay(challengeStartedAt, day) {
 
 function verdictLabelForStatus(status) {
   switch (status) {
-    case "hard_evidence_confirmed": return "하드 증거 확인됨";
-    case "build_escape": return "빌드로 도피";
-    case "commitment_unproven": return "약속 미증거";
+    case "evidence_confirmed": return "확인 가능한 증거 있음";
+    case "hard_evidence_confirmed": return "확인 가능한 증거 있음";
+    case "build_escape": return "고객 증거 없이 빌드함";
+    case "closed_unproven": return "완료했지만 증거 없음";
+    case "commitment_unproven": return "약속했지만 증거 없음";
     case "blocked": return "못 한 이유 기록됨";
+    case "not_started": return "시작 안 함";
     case "customer_evidence_missing":
     default:
       return "고객 증거 미기록";
@@ -797,32 +997,44 @@ function verdictLabelForStatus(status) {
 
 function verdictToneForStatus(status) {
   switch (status) {
+    case "evidence_confirmed":
     case "hard_evidence_confirmed": return "success";
     case "build_escape": return "danger";
+    case "closed_unproven":
     case "commitment_unproven":
     case "blocked":
       return "warning";
+    case "not_started":
     case "customer_evidence_missing":
     default:
       return "muted";
   }
 }
 
-function reviewSummaryForStatus(status, { work, commitments, blockedCycle } = {}) {
+function reviewSummaryForStatus(status, { work, commitments, blockedCycle, goalSnapshot, evidenceDebts } = {}) {
   switch (status) {
+    case "evidence_confirmed":
     case "hard_evidence_confirmed":
       return "고객 행동 약속이 확인 가능한 증거로 닫혔습니다.";
     case "build_escape":
-      return `AI 작업 ${work?.aiMinutes ?? 0}분이 있었지만 고객 하드 증거가 없습니다. 다음 고객 접촉으로 닫아야 합니다.`;
+      return `AI 작업 ${work?.aiMinutes ?? 0}분이 있었지만 확인 가능한 고객 증거가 없습니다. 다음 고객 접촉으로 닫아야 합니다.`;
+    case "closed_unproven":
+      return (evidenceDebts?.length ?? 0) > 0
+        ? `완료된 단계는 있지만 미해결 고객 약속 ${evidenceDebts.length}개가 남아 있습니다.`
+        : "단계는 닫혔지만 확인 가능한 고객 증거가 없습니다.";
     case "commitment_unproven":
-      return "고객 행동 약속은 남겼지만 아직 URL/스크린샷/결제 같은 하드 증거가 없습니다.";
+      return "고객 행동 약속은 남겼지만 아직 URL/스크린샷/결제 같은 확인 가능한 증거가 없습니다.";
     case "blocked":
       return cleanString(blockedCycle?.note, MAX_FIELD_CHARS) || "고객 행동을 못 한 이유를 남기고 닫았습니다.";
+    case "not_started":
+      return goalSnapshot?.summary
+        ? "회차 목표는 있지만 실행 단계가 아직 시작되지 않았습니다."
+        : "이 회차는 시작되지 않아 오늘 검증 행동의 근거로 쓰기 어렵습니다.";
     case "customer_evidence_missing":
     default:
       return commitments?.length
         ? "약속은 있지만 고객명/메시지/증거 기준이 부족합니다."
-        : "이 Day에는 고객 증거가 기록되지 않았습니다.";
+        : "이 회차에는 고객 증거가 기록되지 않았습니다.";
   }
 }
 
