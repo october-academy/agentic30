@@ -38,7 +38,7 @@ const DEFAULT_CODEX_MODEL = "gpt-5.5";
 const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
 export const CODEX_BINARY_NOT_INSTALLED_ERROR_CODE = "ERR_CODEX_BINARY_NOT_INSTALLED";
 const CODEX_CLI_VERSION_TIMEOUT_MS = 2500;
-const DEFAULT_CLAUDE_MODEL = "claude-opus-4-7";
+const DEFAULT_CLAUDE_MODEL = "claude-opus-4-8";
 const MINI_ACTION_EXECUTION_ONLY_MODE = "mini_action_execution_only";
 const CODEX_REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
 const CODEX_MCP_TOOL_TIMEOUT_SEC = 60;
@@ -510,6 +510,7 @@ async function runClaudeProvider({
     canUseTool: buildClaudeCanUseTool({
       sessionId: sessionIdForMcp,
       onRunEvent,
+      executionMode,
       approvedToolExecution,
     }),
     toolConfig: {
@@ -654,9 +655,20 @@ async function runClaudeProvider({
 function buildClaudeCanUseTool({
   sessionId,
   onRunEvent,
+  executionMode = "",
   approvedToolExecution = false,
 } = {}) {
   return async (toolName, input, context = {}) => {
+    if (executionMode === "office_hours_digest_read_only" && isClaudeOfficeHoursDigestUnsafeTool(toolName)) {
+      onRunEvent?.({
+        phase: "provider.claude.tool_denied_office_hours_digest_read_only",
+        toolName,
+      });
+      return {
+        behavior: "deny",
+        message: "Office Hours digest mode is read-only. Use only list/get/read/query analytics tools and do not mutate external services.",
+      };
+    }
     if (!approvedToolExecution && isClaudeMutatingTool(toolName)) {
       onRunEvent?.({
         phase: "provider.claude.tool_denied_read_only",
@@ -737,6 +749,36 @@ export function isClaudeMutatingTool(toolName = "") {
     "websearch",
   ].some((name) => normalized === name.toLowerCase())
     || normalized.includes("gws_gmail_send");
+}
+
+export function isClaudeOfficeHoursDigestUnsafeTool(toolName = "") {
+  const normalized = String(toolName || "").toLowerCase();
+  if (!normalized) return false;
+  if (isClaudeMutatingTool(normalized)) return true;
+  const action = normalized.split("__").pop()?.split(/[./]/).pop() || normalized;
+  if (/^(list|get|read|query|search|fetch|describe|inspect|show|count|aggregate|select|sql|insight|find)(_|$)/.test(action)) {
+    return false;
+  }
+  return [
+    "create",
+    "update",
+    "delete",
+    "deploy",
+    "write",
+    "edit",
+    "publish",
+    "purge",
+    "set",
+    "insert",
+    "post",
+    "patch",
+    "put",
+    "remove",
+    "send",
+    "execute",
+    "run",
+    "mutate",
+  ].some((token) => new RegExp(`(^|[_:\\-])${token}($|[_:\\-])`).test(action));
 }
 
 function normalizeClaudeQuestions(questions) {
@@ -1521,6 +1563,9 @@ export function resolveCodexReasoningEffort({ executionMode = "", prompt = "" } 
   const hasDeepWorkSignal = /debug|diagnos|root cause|investigate|analy[sz]e|implement|refactor|architecture|security|test|failure|failing|broken|복잡|분석|구현|리팩터|테스트|장애|오류|보안/.test(text);
   const hasLightWorkSignal = /quick|brief|summari[sz]e|간단|짧게|요약/.test(text);
 
+  if (executionMode === "office_hours_digest_read_only") {
+    return "low";
+  }
   if (executionMode === "fast_chat") {
     return hasDeepWorkSignal ? "medium" : "minimal";
   }
@@ -2371,6 +2416,20 @@ function baseSystemPrompt(provider, workspaceRoot, executionMode) {
     ].join("\n");
   }
 
+  if (executionMode === "office_hours_digest_read_only") {
+    return [
+      "You are the read-only source digest engine for Agentic30 Day 2+ Office Hours.",
+      RESPONSE_LANGUAGE_INSTRUCTION,
+      `Current workspace: ${workspaceRoot}`,
+      `Provider mode: ${provider}`,
+      "Use only connected PostHog and Cloudflare MCP tools when the user prompt asks for those sources.",
+      "Do not use shell tools, filesystem tools, web search, QMD, Notion, internal Agentic30 MCP tools, structured input tools, or user-question tools.",
+      "Do not mutate PostHog, Cloudflare, repositories, files, flags, workers, deployments, dashboards, or settings.",
+      "Return JSON only in the schema requested by the user prompt.",
+      "Never include raw rows, raw events, request logs, user identifiers, emails, IP addresses, tokens, or secrets. Aggregate counts, short summaries, and evidence gaps only.",
+    ].join("\n");
+  }
+
   if (executionMode === MINI_ACTION_EXECUTION_ONLY_MODE) {
     return [
       "You are the sidecar execution engine for an Agentic30 curriculum mini-action session.",
@@ -2481,11 +2540,15 @@ function usesQmdMcp(executionMode = "") {
 }
 
 function usesPostHogMcp(executionMode = "") {
-  return usesInternalMcp(executionMode) || usesQmdMcp(executionMode);
+  return executionMode === "office_hours_digest_read_only"
+    || usesInternalMcp(executionMode)
+    || usesQmdMcp(executionMode);
 }
 
 function usesCloudflareMcp(executionMode = "") {
-  return usesInternalMcp(executionMode) || usesQmdMcp(executionMode);
+  return executionMode === "office_hours_digest_read_only"
+    || usesInternalMcp(executionMode)
+    || usesQmdMcp(executionMode);
 }
 
 function buildOctoberAdvisorGuidance() {

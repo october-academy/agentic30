@@ -8,7 +8,7 @@ import {
 
 const SCAN_MODELS = {
   claude: "claude-sonnet-4-6",
-  codex: "gpt-5.4-mini",
+  codex: "gpt-5.1-codex-mini",
   gemini: "gemini-3.5-flash",
 };
 
@@ -26,7 +26,7 @@ test("a settings provider narrows the scan to exactly that one provider", () => 
     { provider: "claude", model: "claude-sonnet-4-6" },
   ]);
   assert.deepEqual(selectScanProviderTargets("codex", SCAN_MODELS), [
-    { provider: "codex", model: "gpt-5.4-mini" },
+    { provider: "codex", model: "gpt-5.1-codex-mini" },
   ]);
   assert.deepEqual(selectScanProviderTargets("gemini", SCAN_MODELS), [
     { provider: "gemini", model: "gemini-3.5-flash" },
@@ -36,7 +36,7 @@ test("a settings provider narrows the scan to exactly that one provider", () => 
 test("an empty or unknown settings provider falls back to the full frontier", () => {
   const all = [
     { provider: "claude", model: "claude-sonnet-4-6" },
-    { provider: "codex", model: "gpt-5.4-mini" },
+    { provider: "codex", model: "gpt-5.1-codex-mini" },
     { provider: "gemini", model: "gemini-3.5-flash" },
   ];
   assert.deepEqual(selectScanProviderTargets("", SCAN_MODELS), all);
@@ -45,9 +45,9 @@ test("an empty or unknown settings provider falls back to the full frontier", ()
 });
 
 test("a known provider missing from the model map falls back to the full set", () => {
-  const partial = { claude: "claude-sonnet-4-6", codex: "gpt-5.4-mini" };
+  const partial = { claude: "claude-sonnet-4-6", codex: "gpt-5.1-codex-mini" };
   assert.deepEqual(selectScanProviderTargets("gemini", partial), [
     { provider: "claude", model: "claude-sonnet-4-6" },
-    { provider: "codex", model: "gpt-5.4-mini" },
+    { provider: "codex", model: "gpt-5.1-codex-mini" },
   ]);
 });

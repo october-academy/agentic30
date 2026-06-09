@@ -19,6 +19,7 @@ import {
   getProviderConnectionState,
   isCodexContextOverflowError,
   isCodexRecoverableThreadResumeError,
+  isClaudeOfficeHoursDigestUnsafeTool,
   isClaudeMutatingTool,
   mapCodexItemToToolEvent,
   parseProviderEnvironment,
@@ -35,6 +36,7 @@ import {
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { POSTHOG_MCP_TOKEN_ENV_VAR } from "../sidecar/posthog-mcp-config.mjs";
+import { CLOUDFLARE_MCP_TOKEN_ENV_VAR } from "../sidecar/cloudflare-mcp-config.mjs";
 
 test("test stub provider bypasses local provider auth checks", () => {
   const previous = process.env.AGENTIC30_TEST_STUB_PROVIDER;
@@ -282,7 +284,7 @@ test("resolveClaudeModel falls back to DEFAULT_CLAUDE_MODEL and honors overrides
 
     process.env.ANTHROPIC_MODEL = "claude-sonnet-4-6";
     assert.equal(resolveClaudeModel(), "claude-sonnet-4-6");
-    assert.equal(resolveClaudeModel("claude-opus-4-6"), "claude-opus-4-6");
+    assert.equal(resolveClaudeModel("claude-opus-4-8"), "claude-opus-4-8");
   } finally {
     restoreEnv("ANTHROPIC_MODEL", previousAnthropicModel);
     resetProviderSettingsForTest();
@@ -507,6 +509,44 @@ test("buildCodexConfig adds read-only PostHog MCP for tool-capable sessions", ()
   }
 });
 
+test("office_hours_digest_read_only Codex config uses external MCP without internal memory tools", () => {
+  const previousPostHog = process.env.POSTHOG_API_KEY;
+  const previousCloudflare = process.env.CLOUDFLARE_API_TOKEN;
+  process.env.POSTHOG_API_KEY = "phx_test";
+  process.env.CLOUDFLARE_API_TOKEN = "cf_test";
+  try {
+    const config = buildCodexConfig({
+      systemPromptText: "system",
+      executionMode: "office_hours_digest_read_only",
+      sessionIdForMcp: "session",
+      workspaceRoot: "/tmp/workspace",
+    });
+
+    assert.equal(config.mcp_servers.agentic30_sidecar, undefined);
+    assert.equal(config.mcp_servers.qmd, undefined);
+    assert.ok(config.mcp_servers.posthog);
+    assert.ok(config.mcp_servers["cloudflare-api"]);
+    assert.equal(config.mcp_servers.posthog.bearer_token_env_var, POSTHOG_MCP_TOKEN_ENV_VAR);
+    assert.equal(config.mcp_servers["cloudflare-api"].bearer_token_env_var, CLOUDFLARE_MCP_TOKEN_ENV_VAR);
+  } finally {
+    restoreEnv("POSTHOG_API_KEY", previousPostHog);
+    restoreEnv("CLOUDFLARE_API_TOKEN", previousCloudflare);
+  }
+});
+
+test("office_hours_digest_read_only system prompt is JSON-only and read-only", () => {
+  const prompt = buildSystemPromptText({
+    provider: "codex",
+    workspaceRoot: "/tmp/workspace",
+    executionMode: "office_hours_digest_read_only",
+  });
+
+  assert.match(prompt, /read-only source digest engine/);
+  assert.match(prompt, /Return JSON only/);
+  assert.match(prompt, /Never include raw rows/);
+  assert.doesNotMatch(prompt, /agentic30_request_user_input/);
+});
+
 test("provider permission bypass requires an approved agentic action", () => {
   assert.equal(
     allowsProviderPermissionBypass({ executionMode: "agentic", approvedToolExecution: true }),
@@ -537,6 +577,13 @@ test("Claude read-only gate treats shell, write, web, and mutating GWS tools as 
   assert.equal(isClaudeMutatingTool("mcp__agentic30_sidecar__gws_exec"), false);
   assert.equal(isClaudeMutatingTool("mcp__agentic30_sidecar__gws_sheets_read"), false);
   assert.equal(isClaudeMutatingTool("Read"), false);
+});
+
+test("Claude Office Hours digest gate treats mutating external tool names as unsafe", () => {
+  assert.equal(isClaudeOfficeHoursDigestUnsafeTool("mcp__cloudflare-api__deploy_worker"), true);
+  assert.equal(isClaudeOfficeHoursDigestUnsafeTool("mcp__posthog__update_feature_flag"), true);
+  assert.equal(isClaudeOfficeHoursDigestUnsafeTool("mcp__posthog__list_events"), false);
+  assert.equal(isClaudeOfficeHoursDigestUnsafeTool("mcp__cloudflare-api__get_worker"), false);
 });
 
 test("buildCodexConfig keeps judge_read_only isolated from MCP tools", () => {

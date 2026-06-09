@@ -18,7 +18,6 @@ export function setAuthContext(input = {}) {
     userId: String(input.userId || "").trim(),
     email: input.email ? String(input.email) : null,
     webBaseUrl: normalizeBaseUrl(input.webBaseUrl),
-    onboardingContext: normalizeOnboardingContext(input.onboardingContext),
     updatedAt: new Date().toISOString(),
   };
   return getAuthContextSummary();
@@ -37,7 +36,6 @@ export function getAuthContextSummary() {
     userId: authContext.userId || null,
     email: authContext.email,
     expiresAt: authContext.expiresAt,
-    onboardingContext: authContext.onboardingContext,
     updatedAt: authContext.updatedAt,
   };
 }
@@ -104,66 +102,4 @@ export function redactSensitiveValues(value) {
 function normalizeBaseUrl(value) {
   const raw = String(value || DEFAULT_WEB_BASE_URL).trim() || DEFAULT_WEB_BASE_URL;
   return raw.replace(/\/+$/, "");
-}
-
-function normalizeOnboardingContext(value) {
-  if (!value || typeof value !== "object") return null;
-  const businessDescription = stringField(value.businessDescription, value.business_description);
-  const currentStage = stringField(value.currentStage, value.current_stage);
-  const goal = stringField(value.goal);
-  const workMode = String(value.workMode || value.work_mode || "").trim();
-  const customWorkMode = String(value.customWorkMode || value.custom_work_mode || "").trim();
-  const role = String(value.role || "").trim();
-  const projectStage = String(value.projectStage || value.project_stage || "").trim();
-  const isolationLevel = String(value.isolationLevel || value.isolation_level || "").trim();
-  const isolationLevels = stringListField(value.isolationLevels ?? value.isolation_levels);
-  const completedAt = String(value.completedAt || value.completed_at || "").trim();
-  if (
-    !businessDescription
-    && !currentStage
-    && !goal
-    && !workMode
-    && !customWorkMode
-    && !role
-    && !projectStage
-    && !isolationLevel
-    && isolationLevels.length === 0
-  ) {
-    return null;
-  }
-  return {
-    businessDescription,
-    currentStage,
-    goal,
-    workMode,
-    customWorkMode,
-    role,
-    projectStage,
-    isolationLevel,
-    isolationLevels,
-    completedAt: completedAt || null,
-  };
-}
-
-function stringField(...values) {
-  for (const value of values) {
-    const text = String(value ?? "").trim();
-    if (text) return text;
-  }
-  return "";
-}
-
-function stringListField(value) {
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => String(item ?? "").trim())
-      .filter(Boolean);
-  }
-  if (typeof value === "string") {
-    return value
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-  return [];
 }

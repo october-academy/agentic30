@@ -33,7 +33,7 @@ test("auth context exposes tokens only through child process env", () => {
   });
 });
 
-test("auth context normalizes onboarding context from snake_case payload", () => {
+test("auth context ignores onboarding memory payloads", () => {
   clearAuthContext();
   setAuthContext({
     accessToken: "access-secret",
@@ -51,21 +51,10 @@ test("auth context normalizes onboarding context from snake_case payload", () =>
     },
   });
 
-  assert.deepEqual(getAuthContextSummary().onboardingContext, {
-    businessDescription: "AI assistant for solo founders",
-    currentStage: "First users are active",
-    goal: "Validate one paid user",
-    workMode: "side_project",
-    customWorkMode: "주말마다 고객 인터뷰를 돌리는 중",
-    role: "designer",
-    projectStage: "pre_revenue",
-    isolationLevel: "weekly_loop",
-    isolationLevels: ["weekly_loop", "payment_responses"],
-    completedAt: "2026-05-08T00:00:00Z",
-  });
+  assert.equal("onboardingContext" in getAuthContextSummary(), false);
 });
 
-test("auth context accepts comma-delimited isolation levels and clears memory state", () => {
+test("auth context clears auth state without workspace memory", () => {
   clearAuthContext();
   setAuthContext({
     accessToken: "access-secret",
@@ -82,36 +71,11 @@ test("auth context accepts comma-delimited isolation levels and clears memory st
     },
   });
 
-  assert.deepEqual(getAuthContextSummary().onboardingContext?.isolationLevels, [
-    "project_folder",
-    "work_log",
-  ]);
+  assert.equal(getAuthContextSummary().authenticated, true);
+  assert.equal("onboardingContext" in getAuthContextSummary(), false);
 
   clearAuthContext();
   assert.deepEqual(getAuthContextSummary(), { authenticated: false });
-});
-
-test("auth context preserves freeform custom work mode without structured choices", () => {
-  clearAuthContext();
-  setAuthContext({
-    accessToken: "access-secret",
-    onboardingContext: {
-      custom_work_mode: "주말마다 고객 인터뷰",
-    },
-  });
-
-  assert.deepEqual(getAuthContextSummary().onboardingContext, {
-    businessDescription: "",
-    currentStage: "",
-    goal: "",
-    workMode: "",
-    customWorkMode: "주말마다 고객 인터뷰",
-    role: "",
-    projectStage: "",
-    isolationLevel: "",
-    isolationLevels: [],
-    completedAt: null,
-  });
 });
 
 test("redactSensitiveValues removes credential-shaped fields recursively", () => {
