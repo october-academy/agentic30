@@ -12,7 +12,7 @@ GitHub repository metadata: pull request template, issue templates, public-safet
 |------|-------------|
 | `PULL_REQUEST_TEMPLATE.md` | PR description scaffolding |
 | `workflows/secret-scanning.yml` | Public-safety and secret scanning checks |
-| `workflows/release.yml` | Tag/manual release workflow for Xcode Cloud or local macOS builder publishing |
+| `workflows/release.yml` | Tag/manual release workflow: parallel arm64 + Intel x64 build/notarize/publish on macOS runners |
 
 ## Subdirectories
 

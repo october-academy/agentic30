@@ -1,27 +1,26 @@
 # Release Automation
 
-This repository supports three release paths that share the same Sparkle/R2 and GitHub Release contract:
+One release path: push a `v*` tag and GitHub Actions builds, signs, notarizes, and publishes two per-arch DMGs in parallel on `macos-15` runners — `arm64` (Apple Silicon) and `x64` (Intel).
 
-- Local release: run the notarization script on a trusted Mac.
-- Xcode Cloud gated release: let Xcode Cloud verify the tag build, then let GitHub Actions run the notarized local-builder release on a macOS runner.
-- Xcode Cloud artifact release: download and publish Xcode Cloud artifacts directly when that workflow already emits the release contract.
-- GitHub Actions local-builder release: run the local release script on a GitHub-hosted macOS runner without waiting for Xcode Cloud.
+The public update feeds are served from the `agentic30-sparkle` Cloudflare R2 bucket:
 
-The public update feed is `https://updates.agentic30.app/appcast.xml`, backed by the `agentic30-sparkle` Cloudflare R2 bucket.
+- Apple Silicon: `https://updates.agentic30.app/appcast.xml`
+- Intel: `https://updates.agentic30.app/appcast-x64.xml`
+
+Each build embeds its own `SUFeedURL`, so Sparkle never offers an Intel Mac an arm64 DMG (or vice versa).
 
 ## Release Contract
 
-Every release path must produce:
+Each per-arch job produces:
 
-- `build/appcast/appcast.xml`
-- exactly one `build/appcast/agentic30-*.dmg`
-- optional `build/appcast/agentic30-*.dmg.md`
-- optional `build/agentic30-*.pkg` when a Developer ID Installer certificate is configured
+- `build/appcast/appcast.xml` (arm64) or `build/appcast/appcast-x64.xml` (x64)
+- exactly one `build/appcast/agentic30-<build>-<arch>.dmg`
+- optional `build/appcast/agentic30-<build>-<arch>.dmg.md` release notes
 
-Publishing then performs two actions:
+Publishing then performs two actions, in a safe order:
 
-- upload `appcast.xml`, DMG, and optional release notes to R2
-- create or update the matching GitHub Release assets
+- upload the DMG to R2 and verify it is publicly fetchable, **then** flip the appcast pointer (a failed DMG upload leaves the old feed intact); transient R2 errors are retried with backoff
+- create or update the matching GitHub Release assets (parallel jobs tolerate the create race)
 
 ## GitHub Actions
 
@@ -29,47 +28,27 @@ Workflow: `.github/workflows/release.yml`
 
 Triggers:
 
-- pushing a `v*` tag uses the `local` builder by default: a single build/notarize/upload pass on a GitHub macOS runner (no Xcode Cloud rebuild). This is the fast path.
-- manual `workflow_dispatch` can choose `local`, `xcode-cloud-gated-local`, or `xcode-cloud`. Use `xcode-cloud-gated-local` only when you explicitly want an Xcode Cloud validation archive to gate the release — it roughly doubles wall-clock because the gate rebuilds the app and discards the archive.
+- pushing a `v*` tag — the normal path
+- manual `workflow_dispatch` with optional `release_tag` (must be `v*`) and `dry_run` (build + notarize, skip R2/GitHub publishing)
 
-Required repository variables:
-
-| Variable | Used by | Description |
-|---|---|---|
-| `XCODE_CLOUD_RELEASE_WORKFLOW_ID` | xcode-cloud builder | Xcode Cloud workflow id for the release archive workflow |
-| `XCODE_CLOUD_TIMEOUT_SECONDS` | xcode-cloud builder | Optional wait timeout, defaults to `7200` |
-| `XCODE_CLOUD_POLL_SECONDS` | xcode-cloud builder | Optional polling interval, defaults to `30` |
+Each job is capped at `timeout-minutes: 180` and every `notarytool submit` uses `--timeout 2h`, so a hung Apple notary connection fails fast instead of burning the 6h runner default.
 
 Required repository secrets:
 
-| Secret | Used by | Description |
-|---|---|---|
-| `ASC_KEY_ID` | both builders | App Store Connect API key id |
-| `ASC_ISSUER_ID` | both builders | App Store Connect issuer id |
-| `ASC_API_KEY_P8` | both builders | Raw `.p8` private key content |
-| `CLOUDFLARE_API_TOKEN` | both builders | Cloudflare token with R2 read/write access to `agentic30-sparkle` |
-| `DEVELOPMENT_TEAM` | local builder | Apple Developer Team ID |
-| `SPARKLE_PUBLIC_ED_KEY` | local builder | Sparkle public EdDSA key embedded in the app |
-| `SPARKLE_PRIVATE_ED_KEY` | local builder | Sparkle private EdDSA key used by `generate_appcast` in CI |
-| `MACOS_KEYCHAIN_PASSWORD` | local builder | Temporary CI keychain password |
-| `DEVELOPER_ID_APPLICATION_P12_BASE64` | local builder | Base64 Developer ID Application `.p12` |
-| `DEVELOPER_ID_APPLICATION_P12_PASSWORD` | local builder | Password for the app signing `.p12` |
-| `DEVELOPER_ID_INSTALLER_P12_BASE64` | local builder | Optional base64 Developer ID Installer `.p12` |
-| `DEVELOPER_ID_INSTALLER_P12_PASSWORD` | local builder | Optional installer `.p12` password |
+| Secret | Description |
+|---|---|
+| `ASC_KEY_ID` | App Store Connect API key id |
+| `ASC_ISSUER_ID` | App Store Connect issuer id |
+| `ASC_API_KEY_P8` | Raw `.p8` private key content |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare token with R2 read/write access to `agentic30-sparkle` |
+| `DEVELOPMENT_TEAM` | Apple Developer Team ID |
+| `SPARKLE_PUBLIC_ED_KEY` | Sparkle public EdDSA key embedded in the app |
+| `SPARKLE_PRIVATE_ED_KEY` | Sparkle private EdDSA key used by `generate_appcast` in CI |
+| `MACOS_KEYCHAIN_PASSWORD` | Temporary CI keychain password |
+| `DEVELOPER_ID_APPLICATION_P12_BASE64` | Base64 Developer ID Application `.p12` |
+| `DEVELOPER_ID_APPLICATION_P12_PASSWORD` | Password for the app signing `.p12` |
 
-## Xcode Cloud Setup
-
-Create a release workflow in Xcode Cloud/App Store Connect:
-
-- Start condition: tag changes matching the same `v*` tags GitHub Actions receives.
-- Action: Archive the macOS app using Developer ID distribution.
-- Signing: Developer ID with notarization enabled for direct distribution.
-
-The default GitHub workflow waits for the matching Xcode Cloud build by tag/ref and commit. If that build succeeds, GitHub Actions runs the local-builder release on a macOS runner and publishes the resulting appcast/DMG/PKG. This keeps Xcode Cloud as the Apple-native validation gate without depending on custom-script artifacts.
-
-The manual `xcode-cloud` builder downloads Xcode Cloud artifacts through the App Store Connect API and publishes them directly. Use it only when the Xcode Cloud workflow already emits a downloadable artifact containing the release contract files. If Xcode Cloud produces a different artifact shape, keep the release contract stable by adjusting the Xcode Cloud packaging, not the public R2/GitHub publishing contract.
-
-## Local Release
+## Cloudflare R2 Setup
 
 One-time setup:
 
@@ -87,16 +66,6 @@ The CI Cloudflare token is stored as the `CLOUDFLARE_API_TOKEN` GitHub secret. I
 - `Workers R2 Storage Metadata Read`
 
 The custom domain is already connected to bucket `agentic30-sparkle` in the verified `agentic30.app` zone `b770693582734b1854ac556acd00823f` with minimum TLS `1.2`.
-
-Release:
-
-```bash
-export RELEASE_TAG=vYYYYMMDD-N
-export SPARKLE_DOWNLOAD_URL_PREFIX=https://updates.agentic30.app/
-export AGENTIC30_UPLOAD_APPCAST_R2=1
-bash scripts/build-and-notarize.sh
-bash scripts/publish-github-release.sh
-```
 
 ## Tag Release
 
@@ -124,7 +93,21 @@ git tag vYYYYMMDD-HHMM
 git push origin vYYYYMMDD-HHMM
 ```
 
-The tag starts GitHub Actions on the `local` builder: a single build/notarize/upload pass on a macOS runner (the default no longer waits for or rebuilds via Xcode Cloud). A CI step also fetches the live appcast's `sparkle:version` into `PREVIOUS_BUNDLE_VERSION`, arming the guard in `build-and-notarize.sh` so a duplicate build number fails fast. The release script auto-discovers Sparkle's `generate_appcast` from Xcode DerivedData after SwiftPM resolves Sparkle; set `SPARKLE_GENERATE_APPCAST_BIN` only if the tool lives somewhere custom. PKG output is enabled automatically only when the optional Developer ID Installer `.p12` secret exists.
+A CI step fetches each live appcast's `sparkle:version` into `PREVIOUS_BUNDLE_VERSION`, arming the guard in `build-and-notarize.sh` so a duplicate build number fails fast. The release script auto-discovers Sparkle's `generate_appcast` from Xcode DerivedData after SwiftPM resolves Sparkle; set `SPARKLE_GENERATE_APPCAST_BIN` only if the tool lives somewhere custom.
+
+## Manual Release From a Trusted Mac
+
+```bash
+export RELEASE_TAG=vYYYYMMDD-HHMM
+export SPARKLE_DOWNLOAD_URL_PREFIX=https://updates.agentic30.app/
+export AGENTIC30_UPLOAD_APPCAST_R2=1
+# build-and-notarize.sh resets build/appcast per run, so publish each arch
+# before building the next one.
+for arch in arm64 x64; do
+  AGENTIC30_BUNDLE_ARCH=$arch bash scripts/build-and-notarize.sh
+  bash scripts/publish-github-release.sh
+done
+```
 
 ## Verification
 
@@ -137,8 +120,8 @@ npm run release:preflight
 After publishing:
 
 ```bash
-wrangler r2 bucket domain get agentic30-sparkle --domain updates.agentic30.app
 curl -I https://updates.agentic30.app/appcast.xml
+curl -I https://updates.agentic30.app/appcast-x64.xml
 ```
 
-Before the first real appcast upload, `appcast.xml` may return `404`; after a release publish, it must return `200`.
+Both feeds must return `200`, and the `url=` each references must also return `200`.

@@ -2,23 +2,25 @@
 set -euo pipefail
 
 # Build, sign, notarize, staple, and DMG-pack agentic30.app for Developer ID
-# distribution. Manual CI per /plan-eng-review D5 (GHA + fastlane match in W2+).
+# distribution. One invocation produces exactly one per-arch DMG plus its
+# Sparkle appcast; the GitHub Actions release workflow runs this once per arch.
 #
-# Required environment (via secrets/build.env, chmod 600):
+# Required environment (via secrets/build.env locally, or CI secrets):
 #   DEVELOPMENT_TEAM      — Apple Developer Team ID (e.g. ABC123XYZ)
 #   CODE_SIGN_IDENTITY    — SHA1 hash from `security find-identity -v -p codesigning`
-#   INSTALLER_SIGN_IDENTITY — Developer ID Installer identity for productbuild
-#   ASC_API_KEY_PATH      — App Store Connect API .p8 path (used for notarytool auth)
+#   ASC_API_KEY_PATH      — App Store Connect API .p8 path (notarytool auth)
 #   ASC_KEY_ID            — App Store Connect API Key ID (10 chars)
 #   ASC_ISSUER_ID         — App Store Connect API Issuer ID (UUID)
 #   SPARKLE_PUBLIC_ED_KEY — public EdDSA key embedded in Info.plist
 #   SPARKLE_DOWNLOAD_URL_PREFIX — public URL prefix where appcast DMGs are hosted
 #                                (https://updates.agentic30.app/ for release)
 # Optional:
-#   AGENTIC30_BUNDLE_ARCH     — arm64, x64, or universal (defaults to current machine arch)
-#   AGENTIC30_BUILD_PKG       — 1 to also build/sign/notarize PKG (requires INSTALLER_SIGN_IDENTITY)
+#   AGENTIC30_BUNDLE_ARCH     — arm64 or x64 (defaults to current machine arch)
 #   AGENTIC30_BUILD_APPCAST   — 0 to skip Sparkle appcast generation (defaults to 1)
-#   AGENTIC30_UPLOAD_APPCAST_R2 — 1 to upload appcast artifacts to Cloudflare R2 via Wrangler
+#   AGENTIC30_UPLOAD_APPCAST_R2 — 1 to upload appcast artifacts to Cloudflare R2
+#   SPARKLE_APPCAST_FILENAME — appcast object key (defaults per arch:
+#                              arm64 → appcast.xml, x64 → appcast-x64.xml)
+#   SPARKLE_FEED_URL         — SUFeedURL to embed (defaults to base URL + filename)
 #   SPARKLE_R2_BUCKET        — Cloudflare R2 bucket (defaults to agentic30-sparkle)
 #   SPARKLE_PUBLIC_BASE_URL  — public update URL (defaults to https://updates.agentic30.app/)
 #   SPARKLE_UPDATE_DOMAIN    — R2 custom domain (defaults to updates.agentic30.app)
@@ -30,21 +32,11 @@ set -euo pipefail
 #   SPARKLE_WRANGLER_BIN     — wrangler executable (defaults to wrangler)
 #   POSTHOG_PROJECT_API_KEY — PostHog project token embedded for launch telemetry
 #   POSTHOG_HOST           — PostHog app/ingest host (defaults to https://us.posthog.com)
-# Apple-ID + app-specific password path is unused (notarytool now authenticates
-# via ASC API key — same key reused by future fastlane match in W2+).
 #
 # Output:
-#   build/export/agentic30.app — signed + notarized + stapled
-#   build/agentic30-$AGENTIC30_BUNDLE_ARCH.dmg — signed + notarized + stapled fallback archive
-#   build/agentic30-$AGENTIC30_BUNDLE_ARCH.pkg — optional signed + notarized + stapled installer
-#   build/appcast/             — Sparkle appcast staging folder
-#
-# Manual smoke test (5/11 EOD checkpoint per /plan-eng-review D2):
-#   open build/export/agentic30.app
-#   spctl --assess --verbose=2 --type execute build/export/agentic30.app
-#
-# Usage:
-#   scripts/build-and-notarize.sh
+#   build/export/agentic30.app                  — signed + notarized + stapled
+#   build/agentic30-$AGENTIC30_BUNDLE_ARCH.dmg  — signed + notarized + stapled
+#   build/appcast/                              — Sparkle appcast staging folder
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -67,7 +59,6 @@ required_vars=(
   ASC_ISSUER_ID
   SPARKLE_PUBLIC_ED_KEY
 )
-AGENTIC30_BUILD_PKG="${AGENTIC30_BUILD_PKG:-0}"
 AGENTIC30_BUILD_APPCAST="${AGENTIC30_BUILD_APPCAST:-1}"
 AGENTIC30_UPLOAD_APPCAST_R2="${AGENTIC30_UPLOAD_APPCAST_R2:-0}"
 SPARKLE_PUBLIC_BASE_URL="${SPARKLE_PUBLIC_BASE_URL:-https://updates.agentic30.app/}"
@@ -79,9 +70,6 @@ case "$SPARKLE_PUBLIC_BASE_URL" in
   */) ;;
   *) SPARKLE_PUBLIC_BASE_URL="${SPARKLE_PUBLIC_BASE_URL}/" ;;
 esac
-if [ "$AGENTIC30_BUILD_PKG" = "1" ]; then
-  required_vars+=(INSTALLER_SIGN_IDENTITY)
-fi
 if [ "$AGENTIC30_BUILD_APPCAST" = "1" ]; then
   required_vars+=(SPARKLE_DOWNLOAD_URL_PREFIX)
 fi
@@ -143,17 +131,15 @@ case "${AGENTIC30_BUNDLE_ARCH:-$host_arch}" in
   arm64|aarch64)
     AGENTIC30_BUNDLE_ARCH="arm64"
     XCODE_ARCH="arm64"
+    NODE_RUNTIME_ARCH="arm64"
     ;;
   x64|x86_64)
     AGENTIC30_BUNDLE_ARCH="x64"
     XCODE_ARCH="x86_64"
-    ;;
-  universal)
-    AGENTIC30_BUNDLE_ARCH="universal"
-    XCODE_ARCH="arm64 x86_64"
+    NODE_RUNTIME_ARCH="x64"
     ;;
   *)
-    echo "ERROR: AGENTIC30_BUNDLE_ARCH must be arm64, x64, or universal" >&2
+    echo "ERROR: AGENTIC30_BUNDLE_ARCH must be arm64 or x64" >&2
     exit 2
     ;;
 esac
@@ -175,12 +161,9 @@ EXPORT_PATH="build/export"
 APP_PATH="$EXPORT_PATH/agentic30.app"
 DMG_PATH="build/agentic30-${AGENTIC30_BUNDLE_ARCH}.dmg"
 DMG_STAGING="build/dmg-staging"
-COMPONENT_PKG_PATH="build/agentic30-component.pkg"
-PKG_PATH="build/agentic30-${AGENTIC30_BUNDLE_ARCH}.pkg"
 APPCAST_DIR="${SPARKLE_APPCAST_DIR:-build/appcast}"
 EXPORT_OPTIONS="build/ExportOptions.plist"
-ENTITLEMENTS="agentic30/agentic30.entitlements"
-ENTITLEMENTS_PATH="$ROOT/$ENTITLEMENTS"
+ENTITLEMENTS_PATH="$ROOT/agentic30/agentic30.entitlements"
 
 resolve_generate_appcast_bin() {
   if [ -n "${SPARKLE_GENERATE_APPCAST_BIN:-}" ]; then
@@ -210,10 +193,19 @@ resolve_generate_appcast_bin() {
   exit 2
 }
 
+notarize() {
+  xcrun notarytool submit "$1" \
+    --key "$ASC_API_KEY_PATH" \
+    --key-id "$ASC_KEY_ID" \
+    --issuer "$ASC_ISSUER_ID" \
+    --wait \
+    --timeout 2h
+}
+
 mkdir -p build
 
 echo "[1/10] Cleaning previous build artifacts..."
-rm -rf "$ARCHIVE_PATH" "$EXPORT_PATH" "$DMG_PATH" "$DMG_STAGING" "$COMPONENT_PKG_PATH" "$PKG_PATH" "$EXPORT_OPTIONS"
+rm -rf "$ARCHIVE_PATH" "$EXPORT_PATH" "$DMG_PATH" "$DMG_STAGING" "$EXPORT_OPTIONS"
 if [ "$AGENTIC30_BUILD_APPCAST" = "1" ]; then
   rm -rf "$APPCAST_DIR"
 fi
@@ -257,7 +249,7 @@ xcodebuild archive \
 
 [ -d "$ARCHIVE_PATH" ] || { echo "ERROR: archive build failed" >&2; exit 1; }
 
-echo "[4/10] Exporting signed .app..."
+echo "[4/10] Exporting signed .app and verifying embedded Info.plist..."
 xcodebuild -exportArchive \
   -archivePath "$ARCHIVE_PATH" \
   -exportPath "$EXPORT_PATH" \
@@ -286,9 +278,7 @@ fi
 # etc.) that point outside the bundle on the build machine. macOS codesign
 # --strict rejects bundles containing broken or out-of-bundle symlinks
 # ("invalid destination for symbolic link"). Strip them before verification.
-# Side effect: tools like node-which become unavailable, but they are dev-time
-# helpers that the sidecar runtime does not call.
-echo "[4.5/10] Stripping bundled sidecar .bin/ symlinks..."
+echo "[5/10] Stripping bundled sidecar .bin/ symlinks..."
 SIDECAR_BUNDLE="$APP_PATH/Contents/Resources/sidecar"
 if [ -d "$SIDECAR_BUNDLE" ]; then
   find "$SIDECAR_BUNDLE" -type d -name '.bin' -prune -exec rm -rf {} + 2>/dev/null || true
@@ -299,28 +289,18 @@ if [ -d "$SIDECAR_BUNDLE" ]; then
     "$APP_PATH"
 fi
 
-echo "[4.7/10] Verifying app binary architectures and bundled Node runtimes..."
-case "$AGENTIC30_BUNDLE_ARCH" in
-  universal) required_archs=(arm64 x86_64); required_runtimes=(arm64 x64) ;;
-  arm64) required_archs=(arm64); required_runtimes=(arm64) ;;
-  x64) required_archs=(x86_64); required_runtimes=(x64) ;;
-esac
+echo "[6/10] Verifying architecture, bundled Node runtime, codesign, and version..."
 app_archs="$(lipo -archs "$APP_PATH/Contents/MacOS/agentic30")"
-for arch in "${required_archs[@]}"; do
-  if ! grep -qw "$arch" <<<"$app_archs"; then
-    echo "ERROR: app binary is missing $arch slice (got: $app_archs)" >&2
-    exit 1
-  fi
-done
-for runtime_arch in "${required_runtimes[@]}"; do
-  runtime_node="$APP_PATH/Contents/Resources/sidecar/runtime/node-darwin-$runtime_arch/bin/node"
-  if [ ! -x "$runtime_node" ]; then
-    echo "ERROR: bundled Node runtime missing for $runtime_arch at $runtime_node" >&2
-    exit 1
-  fi
-done
+if ! grep -qw "$XCODE_ARCH" <<<"$app_archs"; then
+  echo "ERROR: app binary is missing $XCODE_ARCH slice (got: $app_archs)" >&2
+  exit 1
+fi
+runtime_node="$APP_PATH/Contents/Resources/sidecar/runtime/node-darwin-$NODE_RUNTIME_ARCH/bin/node"
+if [ ! -x "$runtime_node" ]; then
+  echo "ERROR: bundled Node runtime missing for $NODE_RUNTIME_ARCH at $runtime_node" >&2
+  exit 1
+fi
 
-echo "[5/10] Verifying codesign..."
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
 bundle_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Contents/Info.plist")
@@ -333,18 +313,11 @@ if [ -n "${PREVIOUS_BUNDLE_VERSION:-}" ] && [ "$bundle_version" -le "$PREVIOUS_B
   exit 1
 fi
 
-echo "[6/10] Submitting .app to notarytool (this may take 5-30 min)..."
+echo "[7/10] Notarizing + stapling .app (may take 5-30 min)..."
 ZIP_PATH="build/agentic30-app.zip"
 ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
-xcrun notarytool submit "$ZIP_PATH" \
-  --key "$ASC_API_KEY_PATH" \
-  --key-id "$ASC_KEY_ID" \
-  --issuer "$ASC_ISSUER_ID" \
-  --wait \
-  --timeout 2h
+notarize "$ZIP_PATH"
 rm -f "$ZIP_PATH"
-
-echo "[7/10] Stapling notarization to .app..."
 xcrun stapler staple "$APP_PATH"
 xcrun stapler validate "$APP_PATH"
 
@@ -354,45 +327,13 @@ ditto "$APP_PATH" "$DMG_STAGING/agentic30.app"
 ln -s /Applications "$DMG_STAGING/Applications"
 hdiutil create -volname agentic30 -srcfolder "$DMG_STAGING" -ov -format UDZO "$DMG_PATH"
 codesign --sign "$CODE_SIGN_IDENTITY" --timestamp "$DMG_PATH"
-xcrun notarytool submit "$DMG_PATH" \
-  --key "$ASC_API_KEY_PATH" \
-  --key-id "$ASC_KEY_ID" \
-  --issuer "$ASC_ISSUER_ID" \
-  --wait \
-  --timeout 2h
+notarize "$DMG_PATH"
 xcrun stapler staple "$DMG_PATH"
 xcrun stapler validate "$DMG_PATH"
 
-echo "[9/10] Creating + signing + notarizing PKG..."
-if [ "$AGENTIC30_BUILD_PKG" = "1" ]; then
-  pkgbuild \
-    --component "$APP_PATH" \
-    --install-location /Applications \
-    --identifier october-academy.agentic30 \
-    --version "$bundle_version" \
-    "$COMPONENT_PKG_PATH"
-  productbuild \
-    --package "$COMPONENT_PKG_PATH" \
-    --sign "$INSTALLER_SIGN_IDENTITY" \
-    "$PKG_PATH"
-  xcrun notarytool submit "$PKG_PATH" \
-    --key "$ASC_API_KEY_PATH" \
-    --key-id "$ASC_KEY_ID" \
-    --issuer "$ASC_ISSUER_ID" \
-    --wait \
-  --timeout 2h
-  xcrun stapler staple "$PKG_PATH"
-  xcrun stapler validate "$PKG_PATH"
-else
-  echo "[9/10] Skipping PKG (set AGENTIC30_BUILD_PKG=1 to enable)."
-fi
-
-echo "[9.5/10] Running Gatekeeper distribution checks..."
+echo "[9/10] Running Gatekeeper distribution checks..."
 spctl -a -vv -t exec "$APP_PATH"
 spctl -a -vv -t open --context context:primary-signature "$DMG_PATH"
-if [ "$AGENTIC30_BUILD_PKG" = "1" ]; then
-  spctl -a -vv -t install "$PKG_PATH"
-fi
 if command -v syspolicy_check >/dev/null 2>&1; then
   run_syspolicy_distribution_check() {
     local target="$1"
@@ -417,9 +358,6 @@ if command -v syspolicy_check >/dev/null 2>&1; then
 
   run_syspolicy_distribution_check "$APP_PATH"
   run_syspolicy_distribution_check "$DMG_PATH"
-  if [ "$AGENTIC30_BUILD_PKG" = "1" ]; then
-    run_syspolicy_distribution_check "$PKG_PATH"
-  fi
 fi
 
 echo "[10/10] Generating Sparkle appcast staging folder..."
@@ -430,10 +368,7 @@ if [ "$AGENTIC30_BUILD_APPCAST" = "1" ]; then
   if [ -n "${SPARKLE_RELEASE_NOTES_PATH:-}" ]; then
     cp "$SPARKLE_RELEASE_NOTES_PATH" "${appcast_dmg}.md"
   fi
-  generate_appcast_args=()
-  if [ -n "${SPARKLE_DOWNLOAD_URL_PREFIX:-}" ]; then
-    generate_appcast_args+=(--download-url-prefix "$SPARKLE_DOWNLOAD_URL_PREFIX")
-  fi
+  generate_appcast_args=(--download-url-prefix "$SPARKLE_DOWNLOAD_URL_PREFIX")
   if [ -n "${SPARKLE_PRIVATE_ED_KEY_BASE64:-}" ]; then
     printf '%s' "$SPARKLE_PRIVATE_ED_KEY_BASE64" | base64 --decode | "$SPARKLE_GENERATE_APPCAST_BIN" --ed-key-file - "${generate_appcast_args[@]}" "$APPCAST_DIR"
   elif [ -n "${SPARKLE_PRIVATE_ED_KEY:-}" ]; then
@@ -441,12 +376,8 @@ if [ "$AGENTIC30_BUILD_APPCAST" = "1" ]; then
   else
     "$SPARKLE_GENERATE_APPCAST_BIN" --account "$SPARKLE_KEY_ACCOUNT" "${generate_appcast_args[@]}" "$APPCAST_DIR"
   fi
-  # Sparkle's generate_appcast names its output after the SUFeedURL filename
-  # embedded in the app's Info.plist, so per-arch builds may already produce
-  # appcast-x64.xml directly. Rename only when it fell back to appcast.xml.
-  if [ ! -f "$APPCAST_DIR/$SPARKLE_APPCAST_FILENAME" ] && [ -f "$APPCAST_DIR/appcast.xml" ]; then
-    mv "$APPCAST_DIR/appcast.xml" "$APPCAST_DIR/$SPARKLE_APPCAST_FILENAME"
-  fi
+  # generate_appcast names its output after the SUFeedURL filename embedded in
+  # the app (appcast.xml for arm64, appcast-x64.xml for x64).
   [ -f "$APPCAST_DIR/$SPARKLE_APPCAST_FILENAME" ] || { echo "ERROR: $SPARKLE_APPCAST_FILENAME was not generated in $APPCAST_DIR" >&2; exit 1; }
   [ -f "$appcast_dmg" ] || { echo "ERROR: appcast DMG missing at $appcast_dmg" >&2; exit 1; }
   if ! grep -Eq "sparkle:version(=|>)[\"']?$bundle_version([\"']|<)" "$APPCAST_DIR/$SPARKLE_APPCAST_FILENAME"; then
@@ -454,7 +385,7 @@ if [ "$AGENTIC30_BUILD_APPCAST" = "1" ]; then
     exit 1
   fi
   if [ "$AGENTIC30_UPLOAD_APPCAST_R2" = "1" ]; then
-    echo "[10.5/10] Uploading Sparkle appcast artifacts to Cloudflare R2..."
+    echo "[10/10] Uploading Sparkle appcast artifacts to Cloudflare R2..."
     SPARKLE_APPCAST_DIR="$APPCAST_DIR" \
       SPARKLE_APPCAST_FILENAME="$SPARKLE_APPCAST_FILENAME" \
       SPARKLE_PUBLIC_BASE_URL="$SPARKLE_PUBLIC_BASE_URL" \
@@ -465,36 +396,9 @@ else
 fi
 
 echo ""
-echo "✅ DONE"
-echo "  app:  $APP_PATH"
-echo "  dmg:  $DMG_PATH"
-if [ "$AGENTIC30_BUILD_PKG" = "1" ]; then
-  echo "  pkg:  $PKG_PATH"
-fi
+echo "✅ DONE (${AGENTIC30_BUNDLE_ARCH})"
+echo "  app: $APP_PATH"
+echo "  dmg: $DMG_PATH"
 if [ "$AGENTIC30_BUILD_APPCAST" = "1" ]; then
-  echo "  appcast: $APPCAST_DIR"
-  echo "  upload: $APPCAST_DIR/$SPARKLE_APPCAST_FILENAME -> ${SPARKLE_FEED_URL}"
-  echo "  upload: $APPCAST_DIR/agentic30-$bundle_version-${AGENTIC30_BUNDLE_ARCH}.dmg -> ${SPARKLE_PUBLIC_BASE_URL}agentic30-$bundle_version-${AGENTIC30_BUNDLE_ARCH}.dmg"
-  if [ -n "${SPARKLE_RELEASE_NOTES_PATH:-}" ]; then
-    echo "  upload: $APPCAST_DIR/agentic30-$bundle_version-${AGENTIC30_BUNDLE_ARCH}.dmg.md -> ${SPARKLE_PUBLIC_BASE_URL}agentic30-$bundle_version-${AGENTIC30_BUNDLE_ARCH}.dmg.md"
-  fi
-  if [ "$AGENTIC30_UPLOAD_APPCAST_R2" = "1" ]; then
-    echo "  r2: uploaded to ${SPARKLE_R2_BUCKET:-agentic30-sparkle}"
-  fi
+  echo "  appcast: $APPCAST_DIR/$SPARKLE_APPCAST_FILENAME -> $SPARKLE_FEED_URL"
 fi
-echo ""
-echo "Smoke tests:"
-echo "  open $APP_PATH"
-echo "  spctl --assess --verbose=2 --type execute $APP_PATH"
-echo "  spctl --assess --verbose=2 --type open --context context:primary-signature $DMG_PATH"
-if [ "$AGENTIC30_BUILD_PKG" = "1" ]; then
-  echo "  spctl --assess --verbose=2 --type install $PKG_PATH"
-fi
-echo ""
-echo "Upload to GitHub Releases (5/12 launch):"
-if [ "$AGENTIC30_BUILD_PKG" = "1" ]; then
-  echo "  gh release create v\$(date +%Y%m%d-%H%M) $PKG_PATH $DMG_PATH \\"
-else
-  echo "  gh release create v\$(date +%Y%m%d-%H%M) $DMG_PATH \\"
-fi
-echo "    --title \"agentic30 preview\" --notes-file CHANGELOG.md"

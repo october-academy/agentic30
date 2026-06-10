@@ -6,7 +6,7 @@ set -euo pipefail
 # Bumps the version in BOTH authoritative sources (agentic30/Info.plist AND
 # project.pbxproj), runs scripts/preflight-release.sh, commits the bump, then
 # creates and pushes a vYYYYMMDD-HHMM tag — which triggers the GitHub Actions
-# release workflow (single-build 'local' builder by default).
+# release workflow (parallel arm64 + Intel x64 builds).
 #
 # Usage:
 #   scripts/cut-release.sh --bump build       # CFBundleVersion +1, keep marketing version

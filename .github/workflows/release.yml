@@ -1,27 +1,20 @@
 name: Release
 
+# Push a v* tag (scripts/cut-release.sh) → two parallel macos-15 jobs build,
+# sign, notarize, and publish per-arch DMGs (arm64 + Intel x64), upload the
+# per-arch Sparkle appcasts to R2, and attach everything to a GitHub Release.
+
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch:
     inputs:
-      builder:
-        description: "Release builder. Default 'local' = single build on the GitHub macOS runner (fast). 'xcode-cloud-gated-local' adds an Xcode Cloud validation gate that rebuilds the app (~2x time)."
-        type: choice
-        options:
-          - local
-          - xcode-cloud-gated-local
-          - xcode-cloud
-        default: local
       release_tag:
-        description: "Release tag. Defaults to the current tag/ref."
-        required: false
-      xcode_cloud_build_run_id:
-        description: "Existing Xcode Cloud build run id to download instead of waiting for tag build."
+        description: "Release tag (v*). Defaults to the current tag ref."
         required: false
       dry_run:
-        description: "Prepare and verify without publishing GitHub Release."
+        description: "Prepare and verify without publishing to R2 or GitHub."
         type: boolean
         default: false
 
@@ -42,137 +35,8 @@ env:
   CLOUDFLARE_ACCOUNT_ID: 3c03f4b8151b812cd2662d4fb9d30b1f
 
 jobs:
-  resolve:
-    name: Resolve release inputs
-    runs-on: ubuntu-latest
-    outputs:
-      release_tag: ${{ steps.resolve.outputs.release_tag }}
-      builder: ${{ steps.resolve.outputs.builder }}
-      dry_run: ${{ steps.resolve.outputs.dry_run }}
-    steps:
-      - id: resolve
-        shell: bash
-        run: |
-          set -euo pipefail
-          release_tag="${{ github.event.inputs.release_tag || github.ref_name }}"
-          # Tag pushes default to the single-build 'local' path. The Xcode Cloud
-          # gate (which rebuilds and discards the archive) is opt-in via dispatch.
-          builder="${{ github.event.inputs.builder || 'local' }}"
-          dry_run="${{ github.event.inputs.dry_run || 'false' }}"
-          if [ -z "$release_tag" ]; then
-            echo "release_tag is required for manual runs outside a tag ref" >&2
-            exit 2
-          fi
-          {
-            echo "release_tag=$release_tag"
-            echo "builder=$builder"
-            echo "dry_run=$dry_run"
-          } >> "$GITHUB_OUTPUT"
-
-  xcode-cloud-gate:
-    name: Wait for Xcode Cloud release gate
-    needs: resolve
-    if: needs.resolve.outputs.builder == 'xcode-cloud-gated-local'
-    runs-on: ubuntu-latest
-    env:
-      RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
-      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-      ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
-      XCODE_CLOUD_WORKFLOW_ID: ${{ vars.XCODE_CLOUD_RELEASE_WORKFLOW_ID }}
-      XCODE_CLOUD_TIMEOUT_SECONDS: ${{ vars.XCODE_CLOUD_TIMEOUT_SECONDS || '7200' }}
-      XCODE_CLOUD_POLL_SECONDS: ${{ vars.XCODE_CLOUD_POLL_SECONDS || '30' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Wait for matching Xcode Cloud build
-        run: |
-          node scripts/asc-xcode-cloud-release.mjs wait \
-            --workflow-id "$XCODE_CLOUD_WORKFLOW_ID" \
-            --ref-name "$RELEASE_TAG" \
-            --git-ref "refs/tags/$RELEASE_TAG" \
-            --commit "${{ github.sha }}"
-
-  xcode-cloud-release:
-    name: Publish Xcode Cloud release artifacts
-    needs: resolve
-    if: needs.resolve.outputs.builder == 'xcode-cloud'
-    runs-on: ubuntu-latest
-    env:
-      RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
-      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-      ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
-      XCODE_CLOUD_WORKFLOW_ID: ${{ vars.XCODE_CLOUD_RELEASE_WORKFLOW_ID }}
-      XCODE_CLOUD_TIMEOUT_SECONDS: ${{ vars.XCODE_CLOUD_TIMEOUT_SECONDS || '7200' }}
-      XCODE_CLOUD_POLL_SECONDS: ${{ vars.XCODE_CLOUD_POLL_SECONDS || '30' }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GITHUB_RELEASE_DRY_RUN: ${{ needs.resolve.outputs.dry_run == 'true' && '1' || '0' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install Wrangler
-        run: npm install -g wrangler@4
-
-      - name: Wait for Xcode Cloud build and download artifacts
-        if: ${{ github.event.inputs.xcode_cloud_build_run_id == '' || github.event.inputs.xcode_cloud_build_run_id == null }}
-        run: |
-          npm run release:xcode-cloud -- \
-            --workflow-id "$XCODE_CLOUD_WORKFLOW_ID" \
-            --ref-name "$RELEASE_TAG" \
-            --git-ref "refs/tags/$RELEASE_TAG" \
-            --commit "${{ github.sha }}" \
-            --download-dir build/xcode-cloud-artifacts
-
-      - name: Download existing Xcode Cloud build artifacts
-        if: ${{ github.event.inputs.xcode_cloud_build_run_id != '' && github.event.inputs.xcode_cloud_build_run_id != null }}
-        run: |
-          node scripts/asc-xcode-cloud-release.mjs download \
-            --build-run-id "${{ github.event.inputs.xcode_cloud_build_run_id }}" \
-            --download-dir build/xcode-cloud-artifacts
-
-      - name: Normalize release artifacts
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p build/appcast
-          mkdir -p build/xcode-cloud-unpacked
-          while IFS= read -r file; do
-            unzip -qo "$file" -d build/xcode-cloud-unpacked
-          done < <(find build/xcode-cloud-artifacts -type f -name '*.zip' | sort)
-          find build/xcode-cloud-artifacts build/xcode-cloud-unpacked -type f -name 'appcast.xml' -exec cp {} build/appcast/appcast.xml \; -quit
-          find build/xcode-cloud-artifacts build/xcode-cloud-unpacked -type f -name 'agentic30-*.dmg' -exec cp {} build/appcast/ \;
-          find build/xcode-cloud-artifacts build/xcode-cloud-unpacked -type f -name 'agentic30-*.dmg.md' -exec cp {} build/appcast/ \; || true
-          find build/xcode-cloud-artifacts build/xcode-cloud-unpacked -type f -name 'agentic30-*.pkg' -exec cp {} build/ \; || true
-          test -f build/appcast/appcast.xml
-          test "$(find build/appcast -maxdepth 1 -type f -name 'agentic30-*.dmg' | wc -l | tr -d '[:space:]')" = "1"
-
-      - name: Upload Sparkle artifacts to R2
-        if: needs.resolve.outputs.dry_run != 'true'
-        run: npm run release:upload:sparkle
-
-      - name: Publish GitHub Release
-        run: npm run release:publish:github
-
-  local-release:
-    name: Build, notarize, and publish release (${{ matrix.bundle_arch }})
-    needs:
-      - resolve
-      - xcode-cloud-gate
-    if: always() && (needs.resolve.outputs.builder == 'local' || (needs.resolve.outputs.builder == 'xcode-cloud-gated-local' && needs.xcode-cloud-gate.result == 'success'))
+  release:
+    name: Build, notarize, and publish (${{ matrix.bundle_arch }})
     runs-on: macos-15
     # Build takes ~15 min; each notarytool submit is capped at 2h. Cap the job
     # so a hung Apple notary connection fails fast instead of burning the
@@ -190,7 +54,7 @@ jobs:
           - bundle_arch: x64
             appcast_filename: appcast-x64.xml
     env:
-      RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+      RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
       DEVELOPMENT_TEAM: ${{ secrets.DEVELOPMENT_TEAM }}
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
@@ -199,18 +63,21 @@ jobs:
       SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GITHUB_RELEASE_DRY_RUN: ${{ needs.resolve.outputs.dry_run == 'true' && '1' || '0' }}
-      AGENTIC30_UPLOAD_APPCAST_R2: ${{ needs.resolve.outputs.dry_run == 'true' && '0' || '1' }}
-      AGENTIC30_BUILD_APPCAST: "1"
+      GITHUB_RELEASE_DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '0' }}
+      AGENTIC30_UPLOAD_APPCAST_R2: ${{ github.event.inputs.dry_run == 'true' && '0' || '1' }}
       AGENTIC30_BUNDLE_ARCH: ${{ matrix.bundle_arch }}
       SPARKLE_APPCAST_FILENAME: ${{ matrix.appcast_filename }}
-      AGENTIC30_BUILD_PKG: ${{ secrets.DEVELOPER_ID_INSTALLER_P12_BASE64 != '' && '1' || '0' }}
       MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
       DEVELOPER_ID_APPLICATION_P12_BASE64: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_BASE64 }}
       DEVELOPER_ID_APPLICATION_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_PASSWORD }}
-      DEVELOPER_ID_INSTALLER_P12_BASE64: ${{ secrets.DEVELOPER_ID_INSTALLER_P12_BASE64 }}
-      DEVELOPER_ID_INSTALLER_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_INSTALLER_P12_PASSWORD }}
     steps:
+      - name: Validate release tag
+        run: |
+          case "$RELEASE_TAG" in
+            v*) echo "Releasing $RELEASE_TAG (${AGENTIC30_BUNDLE_ARCH})" ;;
+            *) echo "ERROR: RELEASE_TAG must look like v* (got: '$RELEASE_TAG'); pass release_tag when dispatching from a branch" >&2; exit 2 ;;
+          esac
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -226,18 +93,16 @@ jobs:
         run: npm install -g wrangler@4
 
       - name: Write App Store Connect API key
-        shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/asc"
           printf '%s' "$ASC_API_KEY_P8" > "$RUNNER_TEMP/asc/AuthKey.p8"
           echo "ASC_API_KEY_PATH=$RUNNER_TEMP/asc/AuthKey.p8" >> "$GITHUB_ENV"
 
-      - name: Import Developer ID signing identities
+      - name: Import Developer ID signing identity
         run: bash scripts/import-apple-signing-ci.sh
 
       - name: Arm Sparkle version guard from live feed
-        shell: bash
         run: |
           set -euo pipefail
           prev="$(curl -fsSL "${SPARKLE_PUBLIC_BASE_URL}${SPARKLE_APPCAST_FILENAME}" 2>/dev/null \

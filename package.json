@@ -26,7 +26,6 @@
     "check:public-safety": "node scripts/check-public-safety.mjs",
     "check:alignment-leak": "node scripts/check-alignment-leak.mjs",
     "scan:secrets:gh": "bash scripts/scan-secrets-gh.sh",
-    "release:xcode-cloud": "node scripts/asc-xcode-cloud-release.mjs wait-and-download",
     "release:publish:github": "bash scripts/publish-github-release.sh",
     "release:upload:sparkle": "bash scripts/upload-sparkle-r2.sh",
     "release:preflight": "bash scripts/check-release-automation.sh",

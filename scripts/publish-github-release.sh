@@ -11,7 +11,7 @@ set -euo pipefail
 #   SPARKLE_APPCAST_DIR         — appcast staging folder (defaults to build/appcast)
 #   GITHUB_RELEASE_REPO         — owner/repo (defaults to current gh repo)
 #   GITHUB_RELEASE_TITLE        — release title (defaults to RELEASE_TAG)
-#   GITHUB_RELEASE_NOTES_FILE   — notes file (defaults to CHANGELOG.md if present)
+#   GITHUB_RELEASE_NOTES_FILE   — notes file (defaults to CHANGELOG.md)
 #   GITHUB_RELEASE_DRAFT        — 1 to create a draft release
 #   GITHUB_RELEASE_PRERELEASE   — 1 to mark release as prerelease
 #   GITHUB_RELEASE_DRY_RUN      — 1 to print actions without publishing
@@ -55,35 +55,25 @@ if [ -d "$SPARKLE_APPCAST_DIR" ]; then
     assets+=("$file")
   done < <(find "$SPARKLE_APPCAST_DIR" -maxdepth 1 -type f \( -name 'agentic30-*.dmg' -o -name 'agentic30-*.dmg.md' -o -name 'appcast*.xml' \) | sort)
 fi
-if [ -d build ]; then
-  while IFS= read -r file; do
-    assets+=("$file")
-  done < <(find build -maxdepth 1 -type f -name 'agentic30-*.pkg' | sort)
-fi
 
 if [ "${#assets[@]}" -eq 0 ]; then
-  echo "ERROR: no release assets found in $SPARKLE_APPCAST_DIR or build/" >&2
+  echo "ERROR: no release assets found in $SPARKLE_APPCAST_DIR" >&2
   exit 1
 fi
 
-notes_args=()
-if [ -n "${GITHUB_RELEASE_NOTES_FILE:-}" ]; then
-  notes_args+=(--notes-file "$GITHUB_RELEASE_NOTES_FILE")
-elif [ -f CHANGELOG.md ]; then
-  notes_args+=(--notes-file CHANGELOG.md)
-else
-  notes_args+=(--notes "agentic30 release $RELEASE_TAG")
+GITHUB_RELEASE_NOTES_FILE="${GITHUB_RELEASE_NOTES_FILE:-CHANGELOG.md}"
+if [ ! -f "$GITHUB_RELEASE_NOTES_FILE" ]; then
+  echo "ERROR: release notes file not found: $GITHUB_RELEASE_NOTES_FILE" >&2
+  exit 1
 fi
 
-create_args=(release create "$RELEASE_TAG" --repo "$GITHUB_RELEASE_REPO" --title "$GITHUB_RELEASE_TITLE")
+create_args=(release create "$RELEASE_TAG" --repo "$GITHUB_RELEASE_REPO" --title "$GITHUB_RELEASE_TITLE" --notes-file "$GITHUB_RELEASE_NOTES_FILE")
 if [ "$GITHUB_RELEASE_DRAFT" = "1" ]; then
   create_args+=(--draft)
 fi
 if [ "$GITHUB_RELEASE_PRERELEASE" = "1" ]; then
   create_args+=(--prerelease)
 fi
-create_args+=("${notes_args[@]}")
-
 upload_args=(release upload "$RELEASE_TAG" --repo "$GITHUB_RELEASE_REPO")
 if [ "$GITHUB_RELEASE_CLOBBER" = "1" ]; then
   upload_args+=(--clobber)
