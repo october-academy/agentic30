@@ -65,3 +65,7 @@ SwiftUI/AppKit source for the macOS app target. Owns the menu bar extra, workspa
 - No third-party Swift packages currently — all integrations are Apple SDKs plus the WebSocket-driven sidecar.
 
 <!-- MANUAL: -->
+
+### Morning briefing screens
+
+`MorningBriefingPageView.swift` (main briefing, OD ref briefing.html) and `MorningBriefingDrilldownView.swift` (per-source drilldowns, OD refs briefing-cloudflare/github/posthog.html) share the scroll-spy plumbing (`MorningBriefingScrollRequest` / `MorningBriefingSectionOffsetKey`) and the `OpenDesignDayColor` palette (`violet` is derived in `OpenDesignDayPageView.swift`, not part of the palette struct). Drilldown payloads come from the sidecar `briefing.drilldowns` map; when a source has no drilldown data the card's 드릴다운 button falls back to inline highlights. Hermetic fixtures live in `MorningBriefing.uiTestingSample`.
