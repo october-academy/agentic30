@@ -977,6 +977,27 @@ export function isCodexContextOverflowError(error) {
   );
 }
 
+/**
+ * Recognizes an expected upstream Codex/ChatGPT usage-limit (quota) condition,
+ * e.g. "You've hit your usage limit. Your limit resets at …". This is a
+ * recoverable "retry later / switch provider" state, not a code fault — callers
+ * use it to route the error to a benign telemetry event and surface a
+ * user-facing message instead of capturing a generic exception on either side
+ * of the Swift-shell ↔ Node-sidecar bridge.
+ */
+export function isCodexUsageLimitError(error) {
+  const message = String(error?.message ?? error ?? "").toLowerCase();
+  if (!message) return false;
+  return (
+    message.includes("usage limit")
+    || message.includes("usage_limit")
+    || message.includes("quota")
+    || message.includes("plan limit")
+    || message.includes("you've reached your limit")
+    || message.includes("you have reached your limit")
+  );
+}
+
 async function runCodexAttempt({
   sessionRuntime,
   prompt,

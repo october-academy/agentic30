@@ -19,6 +19,7 @@ import {
   getProviderConnectionState,
   isCodexContextOverflowError,
   isCodexRecoverableThreadResumeError,
+  isCodexUsageLimitError,
   isClaudeOfficeHoursDigestUnsafeTool,
   isClaudeMutatingTool,
   mapCodexItemToToolEvent,
@@ -246,6 +247,35 @@ test("isCodexRecoverableThreadResumeError detects missing rollout resume failure
     isCodexRecoverableThreadResumeError(new Error("spawn codex ENOENT")),
     false,
   );
+});
+
+test("isCodexUsageLimitError detects expected Codex/ChatGPT quota conditions", () => {
+  assert.equal(
+    isCodexUsageLimitError(
+      new Error("You've hit your usage limit. Your limit resets Jun 11 12:54 PM."),
+    ),
+    true,
+  );
+  assert.equal(
+    isCodexUsageLimitError({ message: "Request failed: usage_limit_reached" }),
+    true,
+  );
+  assert.equal(
+    isCodexUsageLimitError(new Error("You have exceeded your current quota.")),
+    true,
+  );
+  assert.equal(
+    isCodexUsageLimitError(new Error("You've reached your limit for this plan.")),
+    true,
+  );
+  // Distinct recoverable conditions must not be misread as quota.
+  assert.equal(
+    isCodexUsageLimitError(new Error("request failed: context_length_exceeded")),
+    false,
+  );
+  assert.equal(isCodexUsageLimitError(new Error("spawn codex ENOENT")), false);
+  assert.equal(isCodexUsageLimitError(null), false);
+  assert.equal(isCodexUsageLimitError(undefined), false);
 });
 
 test("resolveCodexModel defaults Codex sessions to GPT 5.5", () => {

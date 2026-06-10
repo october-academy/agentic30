@@ -139,6 +139,7 @@ import {
   resolveGeminiModel,
   getProviderAuthState,
   getProviderConnectionState,
+  isCodexUsageLimitError,
   runProviderStream,
   updateProviderSettings,
 } from "./provider-runner.mjs";
@@ -3197,7 +3198,7 @@ async function runPrompt(
         });
       }
     } else {
-      telemetry.captureException(error, {
+      const usageLimited = reportProviderRunError(error, {
         operation: "runPrompt",
         session_id: session.id,
         provider: session.provider,
@@ -3228,12 +3229,13 @@ async function runPrompt(
       emitAgentEvent(session, assistantMessage.id, {
         eventType: "run.failed",
         error: assistantMessage.error,
-        recoverable: false,
+        recoverable: usageLimited,
     });
       broadcast({
         type: "error",
         sessionId: session.id,
         message: assistantMessage.error,
+        ...providerQuotaErrorEnvelope(usageLimited),
     });
     }
   } finally {
@@ -3810,7 +3812,7 @@ async function runUnifiedFoundationChat(
         transport,
     });
     } else {
-      telemetry.captureException(error, {
+      const usageLimited = reportProviderRunError(error, {
         operation: "runUnifiedFoundationChat",
         session_id: session.id,
         provider: session.provider,
@@ -3833,12 +3835,13 @@ async function runUnifiedFoundationChat(
       emitAgentEvent(session, assistantMessage.id, {
         eventType: "run.failed",
         error: assistantMessage.error,
-        recoverable: false,
+        recoverable: usageLimited,
     });
       broadcast({
         type: "error",
         sessionId: session.id,
         message: assistantMessage.error,
+        ...providerQuotaErrorEnvelope(usageLimited),
     });
     }
   } finally {
@@ -12339,6 +12342,49 @@ function formatError(error) {
     return error.message;
   }
   return String(error);
+}
+
+/**
+ * Marks the `type: "error"` envelope so the Mac side can tell an expected
+ * upstream provider usage-limit (quota) condition apart from a real fault. The
+ * Swift bridge keys on `errorKind` to surface a "retry later / switch provider"
+ * message instead of capturing a generic exception (see AgenticViewModel).
+ */
+const PROVIDER_USAGE_LIMIT_ERROR_KIND = "provider_usage_limit";
+
+/**
+ * True for an expected, recoverable upstream provider quota condition (today,
+ * Codex/ChatGPT usage limits). Such errors are tracked as a benign telemetry
+ * event rather than a captured exception on either side of the bridge.
+ */
+function isRecoverableProviderQuotaError(error) {
+  return isCodexUsageLimitError(error);
+}
+
+/**
+ * Routes a failed provider-run error to telemetry: a benign event for expected
+ * quota caps, a captured exception otherwise. Returns whether the error was a
+ * recoverable quota condition so the caller can mark the run recoverable and
+ * tag the broadcast envelope. `captureProps` is shared between both lanes.
+ */
+function reportProviderRunError(error, captureProps) {
+  if (isRecoverableProviderQuotaError(error)) {
+    telemetry.captureEvent("mac_sidecar_provider_usage_limit", captureProps);
+    return true;
+  }
+  telemetry.captureException(error, captureProps);
+  return false;
+}
+
+/**
+ * Extra fields added to a `type: "error"` broadcast when the failure was a
+ * recoverable provider quota cap, so the Mac side can surface a "retry later /
+ * switch provider" message instead of capturing a generic exception.
+ */
+function providerQuotaErrorEnvelope(usageLimited) {
+  return usageLimited
+    ? { errorKind: PROVIDER_USAGE_LIMIT_ERROR_KIND, recoverable: true }
+    : {};
 }
 
 function readApiKey(provider) {
