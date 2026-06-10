@@ -1849,6 +1849,10 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var bipResearch: BipResearchSnapshot = .empty
     @Published private(set) var workHistory: WorkHistorySnapshot = .empty
     @Published private(set) var githubCliAuthStatus: GitHubCLIAuthStatus = .unknown
+    // Settings > 연동 live checks (sidecar verifies tokens against the real
+    // services: gh auth / PostHog /users/@me / Cloudflare /zones).
+    @Published private(set) var integrationStatus: IntegrationStatusSnapshot?
+    @Published private(set) var integrationStatusChecking = false
     /// First-launch wall-clock timestamp that anchors the Foundation phase
     /// Day N/30 counter. The value is mirrored from `foundationProgressState`,
     /// which is persisted per workspace/app-support rather than globally.
@@ -3185,11 +3189,14 @@ final class AgenticViewModel: ObservableObject {
     /// so a blocked session (e.g. office-hours after a usage limit) can retry on
     /// it without starting a new chat.
     func setActiveProvider(_ provider: AgentProvider) {
-        guard provider != selectedProvider else { return }
-        selectedProvider = provider // didSet persists the choice
-        PostHogTelemetry.capture("mac_active_provider_changed", properties: [
-            "provider": provider.rawValue,
-        ], authSession: macAuthSession)
+        if provider != selectedProvider {
+            selectedProvider = provider // didSet persists the choice
+            PostHogTelemetry.capture("mac_active_provider_changed", properties: [
+                "provider": provider.rawValue,
+            ], authSession: macAuthSession)
+        }
+        // Re-point the selected session even when the global default already
+        // matches — a blocked session can lag behind `selectedProvider`.
         guard let session = selectedSession, session.provider != provider else { return }
         sidecar.send(payload: [
             "type": "update_session_provider",
@@ -4361,6 +4368,12 @@ final class AgenticViewModel: ObservableObject {
     func disconnectNotion() {
         PostHogTelemetry.capture("mac_notion_disconnected", authSession: macAuthSession)
         sidecar.send(payload: ["type": "notion_disconnect"])
+    }
+
+    func refreshIntegrationStatus() {
+        guard isConnected, !integrationStatusChecking else { return }
+        integrationStatusChecking = true
+        sidecar.send(payload: ["type": "integration_status_check"])
     }
 
     func refreshGitHubCliStatus() {
@@ -6623,6 +6636,9 @@ final class AgenticViewModel: ObservableObject {
             morningBriefingCollecting = false
         case "morning_briefing_status":
             morningBriefingCollecting = event.morningBriefingStatus?.state == "collecting"
+        case "integration_status_result":
+            integrationStatus = event.integrationStatus
+            integrationStatusChecking = false
         case "bip_research_result":
             if let snapshot = event.bipResearch {
                 bipResearch = snapshot
@@ -6681,7 +6697,7 @@ final class AgenticViewModel: ObservableObject {
             isBipCoachGenerating = false
             bipMissionProgress = nil
             activeSurface = .assistantBubble
-            lastError = event.bipSetupGateMessage ?? "오늘 미션은 바로 만들 수 있고, 부족한 기준은 추천 정확도를 높이는 데 사용됩니다."
+            lastError = event.bipSetupGateMessage ?? "오늘 미션은 바로 만들 수 있고 부족한 기준은 추천 정확도를 높이는 데 사용됩니다."
         case "bip_idd_session_ready":
             updateBipSetupGate(from: event)
             let isDay1HandoffReady = isDay1HandoffSession(id: event.sessionId)
@@ -9528,7 +9544,7 @@ final class AgenticViewModel: ObservableObject {
             id: "icp",
             title: "고객",
             prompt: "이 목표를 검증하려면 이번 주 가장 먼저 확인할 고객은 누구인가요?",
-            helperText: "직함보다 지금 같은 문제를 겪고, 이번 주 실제로 물어볼 수 있는 고객 조건을 고릅니다.",
+            helperText: "직함보다 지금 같은 문제를 겪고 이번 주 실제로 물어볼 수 있는 고객 조건을 고릅니다.",
             statement: documentPointer,
             evidence: ["docs/ICP.md"],
             missingAssumptions: [],
@@ -10597,6 +10613,7 @@ struct SidecarEvent: Decodable {
     let morningBriefing: MorningBriefing?
     let morningBriefingPrevious: MorningBriefing?
     let morningBriefingStatus: MorningBriefingStatus?
+    let integrationStatus: IntegrationStatusSnapshot?
     // office_hours_commitment_candidates: context-aware commitment-close proposals
     // generated from this interview's own answers. Proposals only — the stored
     // commitment is always the founder's resolved text (user-origin gate).
@@ -10701,6 +10718,7 @@ struct SidecarEvent: Decodable {
         morningBriefing: MorningBriefing? = nil,
         morningBriefingPrevious: MorningBriefing? = nil,
         morningBriefingStatus: MorningBriefingStatus? = nil,
+        integrationStatus: IntegrationStatusSnapshot? = nil,
         commitmentCandidates: [String]? = nil
     ) {
         self.type = type
@@ -10801,6 +10819,7 @@ struct SidecarEvent: Decodable {
         self.morningBriefing = morningBriefing
         self.morningBriefingPrevious = morningBriefingPrevious
         self.morningBriefingStatus = morningBriefingStatus
+        self.integrationStatus = integrationStatus
         self.commitmentCandidates = commitmentCandidates
     }
 
@@ -11195,6 +11214,7 @@ extension SidecarEvent {
         case morningBriefing
         case morningBriefingPrevious
         case candidates
+        case integrationStatus
     }
 
     init(from decoder: Decoder) throws {
@@ -11312,6 +11332,7 @@ extension SidecarEvent {
         morningBriefingPrevious = Self.decodeIfPresent(MorningBriefing.self, from: container, forKey: .morningBriefingPrevious)
         morningBriefingStatus = Self.decodeIfPresent(MorningBriefingStatus.self, from: container, forKey: .status)
         commitmentCandidates = Self.decodeIfPresent([String].self, from: container, forKey: .candidates)
+        integrationStatus = Self.decodeIfPresent(IntegrationStatusSnapshot.self, from: container, forKey: .integrationStatus)
     }
 
     private static func decodeIfPresent<T: Decodable>(

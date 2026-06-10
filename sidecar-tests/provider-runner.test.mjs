@@ -535,12 +535,34 @@ test("buildCodexConfig adds read-only PostHog MCP for tool-capable sessions", ()
     assert.ok(config.mcp_servers.posthog);
     assert.match(config.mcp_servers.posthog.url, /^https:\/\/mcp\.posthog\.com\/mcp\?/);
     assert.match(config.mcp_servers.posthog.url, /readonly=1/);
-    assert.equal(config.mcp_servers.posthog.bearer_token_env_var, POSTHOG_MCP_TOKEN_ENV_VAR);
+    // OAuth-first: a stored key alone no longer pins bearer auth — Codex runs
+    // its native MCP OAuth against the URL-only entry.
+    assert.equal(config.mcp_servers.posthog.bearer_token_env_var, undefined);
     assert.equal(config.mcp_servers.posthog.default_tools_approval_mode, "approve");
     assert.equal(config.mcp_servers.posthog.tool_timeout_sec, 60);
     assert.equal(JSON.stringify(config.mcp_servers.posthog).includes("phx_test"), false);
   } finally {
     restoreEnv("POSTHOG_API_KEY", previous);
+  }
+});
+
+test("buildCodexConfig pins bearer auth only in explicit api_key mode", () => {
+  const previousKey = process.env.POSTHOG_API_KEY;
+  const previousMode = process.env.POSTHOG_MCP_AUTH_MODE;
+  process.env.POSTHOG_API_KEY = "phx_test";
+  process.env.POSTHOG_MCP_AUTH_MODE = "api_key";
+  try {
+    const config = buildCodexConfig({
+      systemPromptText: "system",
+      executionMode: "memory_chat",
+      sessionIdForMcp: "session",
+      workspaceRoot: "/tmp/workspace",
+    });
+    assert.equal(config.mcp_servers.posthog.bearer_token_env_var, POSTHOG_MCP_TOKEN_ENV_VAR);
+    assert.equal(JSON.stringify(config.mcp_servers.posthog).includes("phx_test"), false);
+  } finally {
+    restoreEnv("POSTHOG_API_KEY", previousKey);
+    restoreEnv("POSTHOG_MCP_AUTH_MODE", previousMode);
   }
 });
 
@@ -561,8 +583,10 @@ test("office_hours_digest_read_only Codex config uses external MCP without inter
     assert.equal(config.mcp_servers.qmd, undefined);
     assert.ok(config.mcp_servers.posthog);
     assert.ok(config.mcp_servers["cloudflare-api"]);
-    assert.equal(config.mcp_servers.posthog.bearer_token_env_var, POSTHOG_MCP_TOKEN_ENV_VAR);
-    assert.equal(config.mcp_servers["cloudflare-api"].bearer_token_env_var, CLOUDFLARE_MCP_TOKEN_ENV_VAR);
+    // OAuth-first: URL-only entries; Codex handles the MCP login natively.
+    assert.equal(config.mcp_servers.posthog.bearer_token_env_var, undefined);
+    assert.equal(config.mcp_servers["cloudflare-api"].bearer_token_env_var, undefined);
+    assert.match(config.mcp_servers["cloudflare-api"].url, /^https:\/\/mcp\.cloudflare\.com\/mcp/);
   } finally {
     restoreEnv("POSTHOG_API_KEY", previousPostHog);
     restoreEnv("CLOUDFLARE_API_TOKEN", previousCloudflare);
@@ -646,6 +670,9 @@ test("buildCodexEnv points Codex CLI at an isolated app config home", () => {
     CODEX_API_KEY: "codex-key",
     OPENAI_API_KEY: "openai-key",
     POSTHOG_API_KEY: "phx_posthog",
+    // OAuth-first: the PostHog token env var is only forwarded when the user
+    // explicitly pins api_key mode.
+    POSTHOG_MCP_AUTH_MODE: "api_key",
   });
 
   assert.match(env.CODEX_HOME, /Application Support\/agentic30\/codex-home$/);
@@ -654,6 +681,14 @@ test("buildCodexEnv points Codex CLI at an isolated app config home", () => {
   assert.equal(env.OPENAI_API_KEY, "openai-key");
   assert.equal(env.POSTHOG_MCP_API_KEY, "phx_posthog");
   assert.equal(env.AGENTIC30_QMD_INDEX, "agentic30");
+
+  const oauthEnv = buildCodexEnv({
+    PATH: "/usr/bin",
+    HOME: "/Users/tester",
+    TMPDIR: "/tmp",
+    POSTHOG_API_KEY: "phx_posthog",
+  });
+  assert.equal(oauthEnv.POSTHOG_MCP_API_KEY, undefined);
 });
 
 test("provider environment parser accepts KEY=VALUE lines and strips quotes", () => {

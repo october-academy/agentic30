@@ -1004,6 +1004,13 @@ struct SettingsView: View {
             odSettingsRowsCard {
                 odSettingsRow(title: "GitHub", detail: githubCliDetailText, iconName: "BrandGitHub") {
                     HStack(spacing: 8) {
+                        if let githubMcp = viewModel.integrationStatus?.githubMcp, !githubMcp.isMissing {
+                            // gh 로그인 하나로 GitHub MCP까지 AI 실행에 연결되는지 표시.
+                            odSettingsStatus(
+                                githubMcp.isReady ? "MCP 연결됨" : "MCP 실패",
+                                color: githubMcp.isReady ? settingsAccentColor : OpenDesignDayColor.rose
+                            )
+                        }
                         odSettingsStatus(githubCliStatusLabel, color: githubCliStatusColor)
                         odSettingsGhostButton(
                             title: "상태 확인",
@@ -1013,6 +1020,8 @@ struct SettingsView: View {
                             isDisabled: viewModel.githubCliAuthStatus.state == .checking
                         ) {
                             viewModel.refreshGitHubCliStatus()
+                            // gh 로그인 → GitHub MCP 연결 여부까지 한 번에 검증.
+                            viewModel.refreshIntegrationStatus()
                         }
                         odSettingsGhostButton(
                             title: githubCliActionTitle,
@@ -1036,7 +1045,7 @@ struct SettingsView: View {
                         }
                     }
                 }
-                odSettingsRow(title: "Cloudflare", detail: "Cloudflare MCP 연동입니다. Workers, R2, DNS 같은 Cloudflare API 도구를 AI 실행에서 사용할 때 씁니다.", iconName: "BrandCloudflare", stacked: true) {
+                odSettingsRow(title: "Cloudflare", detail: "AI 실행의 Cloudflare MCP는 OAuth가 기본 — 키 없이 첫 사용 시 브라우저 로그인. API 토큰은 선택: 저장하면 아침 브리핑 트래픽 드릴다운 숫자를 직접 집계(GraphQL Analytics)합니다.", iconName: "BrandCloudflare", stacked: true) {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 8) {
                             odSettingsStatus(cloudflareMcpStatusLabel, color: cloudflareMcpStatusColor)
@@ -1044,15 +1053,26 @@ struct SettingsView: View {
                                 .font(.system(size: 11.5, weight: .medium))
                                 .foregroundStyle(settingsSubtleText)
                             odSettingsToggle(isOn: $cloudflareMcpCodemode)
+                            Spacer(minLength: 8)
+                            odSettingsGhostButton(
+                                title: "상태 확인",
+                                systemImage: "arrow.clockwise",
+                                width: 88,
+                                identifier: "settings.cloudflare.refreshStatusButton",
+                                isDisabled: viewModel.integrationStatusChecking
+                            ) {
+                                viewModel.refreshIntegrationStatus()
+                            }
                         }
-                        secureAgentField(label: "CLOUDFLARE_API_TOKEN", placeholder: "Cloudflare API token", text: $cloudflareApiToken, identifier: "settings.cloudflare.apiTokenField")
+                        secureAgentField(label: "CLOUDFLARE_API_TOKEN (선택 · 드릴다운 직접 집계)", placeholder: "Cloudflare API token (Analytics Read 권한)", text: $cloudflareApiToken, identifier: "settings.cloudflare.apiTokenField")
                         plainAgentField(label: "CLOUDFLARE_MCP_URL", placeholder: KeychainHelper.Settings.defaultCloudflareMcpURL, text: $cloudflareMcpURL, identifier: "settings.cloudflare.mcpUrlField")
+                        integrationProbeCaption(viewModel.integrationStatus?.cloudflare)
                     }
                 }
                 odSettingsRow(title: "Exa Research", detail: "뉴스·시장 리서치 예비 키입니다. AI 프로바이더의 웹 검색 도구가 없을 때만 사용합니다.", iconName: "BrandExa", stacked: true) {
                     secureAgentField(label: "EXA_API_KEY", placeholder: "exa_...", text: $exaApiKey, identifier: "settings.exa.apiKeyField")
                 }
-                odSettingsRow(title: "PostHog", detail: "PostHog MCP 연동입니다. phx_ 또는 pha_ personal API key로 HogQL, insights, web analytics 도구를 읽습니다.", iconName: "BrandPostHog", stacked: true) {
+                odSettingsRow(title: "PostHog", detail: "AI 실행의 PostHog MCP는 OAuth가 기본 — 키 없이 첫 사용 시 브라우저 로그인. phx_/pha_ 키는 선택: 저장하면 아침 브리핑 리텐션·웹 드릴다운 숫자를 직접 집계(HogQL)합니다.", iconName: "BrandPostHog", stacked: true) {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 8) {
                             odSettingsStatus(posthogMcpStatusLabel, color: posthogMcpStatusColor)
@@ -1061,12 +1081,23 @@ struct SettingsView: View {
                                 .font(.system(size: 11.5, weight: .medium))
                                 .foregroundStyle(settingsSubtleText)
                             odSettingsToggle(isOn: $posthogMcpReadonly)
+                            Spacer(minLength: 8)
+                            odSettingsGhostButton(
+                                title: "상태 확인",
+                                systemImage: "arrow.clockwise",
+                                width: 88,
+                                identifier: "settings.posthog.refreshStatusButton",
+                                isDisabled: viewModel.integrationStatusChecking
+                            ) {
+                                viewModel.refreshIntegrationStatus()
+                            }
                         }
-                        secureAgentField(label: "POSTHOG_MCP_API_KEY", placeholder: "phx_... 또는 pha_...", text: $posthogApiKey, identifier: "settings.posthog.apiKeyField")
+                        secureAgentField(label: "POSTHOG_MCP_API_KEY (선택 · 드릴다운 직접 집계)", placeholder: "phx_... 또는 pha_...", text: $posthogApiKey, identifier: "settings.posthog.apiKeyField")
                         plainAgentField(label: "POSTHOG_PROJECT_API_KEY", placeholder: "phc_... (선택)", text: $posthogProjectAPIKey, identifier: "settings.posthog.projectApiKeyField")
                         plainAgentField(label: "POSTHOG_HOST", placeholder: "https://us.posthog.com", text: $posthogHost, identifier: "settings.posthog.hostField")
                         plainAgentField(label: "POSTHOG_MCP_URL", placeholder: KeychainHelper.Settings.defaultPostHogMcpURL, text: $posthogMcpURL, identifier: "settings.posthog.mcpUrlField")
                         plainAgentField(label: "POSTHOG_MCP_FEATURES", placeholder: KeychainHelper.Settings.defaultPostHogMcpFeatures, text: $posthogMcpFeatures, identifier: "settings.posthog.mcpFeaturesField")
+                        integrationProbeCaption(viewModel.integrationStatus?.posthog)
                     }
                 }
             }
@@ -1113,47 +1144,74 @@ struct SettingsView: View {
     private var githubCliDetailText: String {
         let detail = viewModel.githubCliAuthStatus.detail.trimmingCharacters(in: .whitespacesAndNewlines)
         return detail.isEmpty
-            ? "gh CLI 인증으로 PR / 이슈 / 릴리즈 활동을 읽어 History에 반영합니다."
+            ? "gh auth 로그인 하나로 세 경로가 켜집니다 — git/gh CLI 신호 수집(History·아침 브리핑 GitHub 드릴다운)과 AI 실행의 GitHub MCP 도구."
             : detail
     }
 
     private var cloudflareMcpStatusLabel: String {
-        cloudflareApiToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "토큰 없음"
-            : "토큰 설정됨"
+        if viewModel.integrationStatusChecking { return "확인 중…" }
+        if let live = viewModel.integrationStatus?.cloudflare, !live.isMissing {
+            if live.isOauthDelegated { return "MCP OAuth" }
+            return live.isReady ? "연결됨" : "검증 실패"
+        }
+        // MCP auth is OAuth-first; the token only upgrades drilldown numbers.
+        return cloudflareApiToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "MCP OAuth"
+            : "토큰 저장됨 · 미검증"
     }
 
     private var cloudflareMcpStatusColor: Color {
-        cloudflareApiToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? settingsSubtleText
-            : settingsAccentColor
+        if let live = viewModel.integrationStatus?.cloudflare, !live.isMissing {
+            if live.isOauthDelegated { return settingsAccentColor }
+            return live.isReady ? settingsAccentColor : OpenDesignDayColor.rose
+        }
+        return settingsAccentColor
+    }
+
+    /// Live-check caption shown under an integration's fields once the sidecar
+    /// verified (or failed to verify) the stored credential.
+    private func integrationProbeCaption(_ probe: IntegrationProbeStatus?) -> some View {
+        Group {
+            if let detail = probe?.detail, !detail.isEmpty, probe?.isMissing != true {
+                Text(detail)
+                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .foregroundStyle(
+                        probe?.isReady == true || probe?.isOauthDelegated == true
+                            ? settingsAccentColor
+                            : OpenDesignDayColor.rose
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     private var posthogMcpStatusLabel: String {
+        if viewModel.integrationStatusChecking { return "확인 중…" }
+        if let live = viewModel.integrationStatus?.posthog, !live.isMissing {
+            if live.isOauthDelegated { return "MCP OAuth" }
+            return live.isReady ? "연결됨" : "검증 실패"
+        }
         let apiKey = posthogApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         if isValidPostHogMcpAPIKey(apiKey) {
-            return "MCP 설정됨"
+            return "키 저장됨 · 미검증"
         }
         if apiKey.hasPrefix("phc_") {
             return "Personal key 필요"
         }
-        let projectKey = posthogProjectAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        if projectKey.hasPrefix("phc_") {
-            return "Project key만"
-        }
-        return "미설정"
+        // MCP auth is OAuth-first; the key only upgrades drilldown numbers.
+        return "MCP OAuth"
     }
 
     private var posthogMcpStatusColor: Color {
-        let apiKey = posthogApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        if isValidPostHogMcpAPIKey(apiKey) {
-            return settingsAccentColor
+        if let live = viewModel.integrationStatus?.posthog, !live.isMissing {
+            if live.isOauthDelegated { return settingsAccentColor }
+            return live.isReady ? settingsAccentColor : OpenDesignDayColor.rose
         }
-        if apiKey.hasPrefix("phc_")
-            || posthogProjectAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("phc_") {
+        let apiKey = posthogApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if apiKey.hasPrefix("phc_") {
             return OpenDesignDayColor.amber
         }
-        return settingsSubtleText
+        return settingsAccentColor
     }
 
     private var posthogMcpRegionSelection: Binding<String> {

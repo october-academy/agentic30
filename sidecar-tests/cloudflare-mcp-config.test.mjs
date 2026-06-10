@@ -45,27 +45,45 @@ test("resolveCloudflareMcpSettings reads env token aliases and codemode flag", (
   assert.equal(settings.url, "https://mcp.cloudflare.com/mcp?codemode=false");
 });
 
-test("Claude MCP config includes streamable HTTP headers only when token is available", () => {
-  assert.deepEqual(buildCloudflareClaudeMcpConfig(), {});
+test("Claude MCP config is OAuth-first (URL-only) and uses headers only in api_key mode", () => {
+  // OAuth-first: even with no token, the server entry exists so the provider
+  // can run its native browser login.
+  const oauth = buildCloudflareClaudeMcpConfig()["cloudflare-api"];
+  assert.equal(oauth.type, "http");
+  assert.equal(oauth.url, "https://mcp.cloudflare.com/mcp");
+  assert.equal(oauth.headers, undefined);
 
-  const config = buildCloudflareClaudeMcpConfig({ token: "cf_secret" })["cloudflare-api"];
-  assert.equal(config.type, "http");
-  assert.equal(config.url, "https://mcp.cloudflare.com/mcp");
-  assert.equal(config.headers.Authorization, "Bearer cf_secret");
-  assert.equal(config.headers.Accept, "application/json, text/event-stream");
+  // A stored token alone does NOT switch to header auth — OAuth keeps priority.
+  const tokenStillOauth = buildCloudflareClaudeMcpConfig({ token: "cf_secret" })["cloudflare-api"];
+  assert.equal(tokenStillOauth.headers, undefined);
+
+  // Explicit api_key mode pins the Bearer header.
+  const apiKey = buildCloudflareClaudeMcpConfig({ token: "cf_secret", authMode: "api_key" })["cloudflare-api"];
+  assert.equal(apiKey.headers.Authorization, "Bearer cf_secret");
+  assert.equal(apiKey.headers.Accept, "application/json, text/event-stream");
 });
 
-test("Codex MCP config references token env var without storing raw token", () => {
-  const config = buildCloudflareCodexMcpConfig({ token: "cf_secret" })["cloudflare-api"];
+test("Codex MCP config references token env var only in api_key mode", () => {
+  const oauth = buildCloudflareCodexMcpConfig({ token: "cf_secret" })["cloudflare-api"];
+  assert.equal(oauth.url, "https://mcp.cloudflare.com/mcp");
+  assert.equal(oauth.bearer_token_env_var, undefined);
+
+  const config = buildCloudflareCodexMcpConfig({ token: "cf_secret", authMode: "api_key" })["cloudflare-api"];
   assert.equal(config.url, "https://mcp.cloudflare.com/mcp");
   assert.equal(config.bearer_token_env_var, CLOUDFLARE_MCP_TOKEN_ENV_VAR);
   assert.equal(JSON.stringify(config).includes("cf_secret"), false);
 });
 
-test("applyCloudflareCodexEnvFromSources forwards token into isolated Codex env", () => {
-  const env = applyCloudflareCodexEnvFromSources(
+test("applyCloudflareCodexEnvFromSources forwards token only in api_key mode", () => {
+  const oauthEnv = applyCloudflareCodexEnvFromSources(
     { PATH: "/bin" },
     { env: { CLOUDFLARE_API_TOKEN: "cf_secret" } },
+  );
+  assert.equal(oauthEnv.CLOUDFLARE_MCP_API_TOKEN, undefined);
+
+  const env = applyCloudflareCodexEnvFromSources(
+    { PATH: "/bin" },
+    { env: { CLOUDFLARE_API_TOKEN: "cf_secret", CLOUDFLARE_MCP_AUTH_MODE: "api_key" } },
   );
   assert.equal(env.PATH, "/bin");
   assert.equal(env.CLOUDFLARE_MCP_API_TOKEN, "cf_secret");
@@ -125,7 +143,7 @@ test("external sync uses API token auth without writing raw token to Codex confi
   await withTmpHome(async (home) => {
     const results = await syncExternalCloudflareMcpClients({
       homeDir: home,
-      env: { CLOUDFLARE_API_TOKEN: "cf_secret" },
+      env: { CLOUDFLARE_API_TOKEN: "cf_secret", CLOUDFLARE_MCP_AUTH_MODE: "api_key" },
       targets: ["codex-cli", "claude-code"],
       dryRun: false,
     });

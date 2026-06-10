@@ -293,10 +293,12 @@ export function normalizeMorningBriefingDrilldown(id, raw) {
   const scan = normalizeScanCells(raw.scan);
   const funnel = normalizeFunnel(raw.funnel);
   const signals = normalizeSignals(raw.signals);
+  const webSignals = normalizeSignals(raw.webSignals);
   const drafts = normalizeDrafts(raw.drafts, `${id}_draft`);
   const maintenance = normalizeDrafts(raw.maintenance, `${id}_keep`);
   const hasContent = kpis.length || chart || table.length || listRows.length
-    || scan.length || funnel || signals.length || drafts.length || maintenance.length;
+    || scan.length || funnel || signals.length || webSignals.length
+    || drafts.length || maintenance.length;
   if (!hasContent) return null;
   const progress = raw.meta?.progress && typeof raw.meta.progress === "object"
     ? {
@@ -323,6 +325,10 @@ export function normalizeMorningBriefingDrilldown(id, raw) {
     scan,
     funnel,
     signals,
+    // briefing-posthog.html "웹 신호" — a second signal list with its own
+    // section heading (경로 분해 etc.), separate from the cohort signals.
+    webSignals,
+    webMeta: cleanString(raw.webMeta, 80) || null,
     drafts,
     draftsEmpty: raw.draftsEmpty && typeof raw.draftsEmpty === "object"
       ? {
@@ -344,6 +350,104 @@ export function normalizeMorningBriefingDrilldowns(raw = {}) {
   for (const id of MORNING_BRIEFING_DRILLDOWN_IDS) {
     const normalized = normalizeMorningBriefingDrilldown(id, raw?.[id]);
     if (normalized) output[id] = normalized;
+  }
+  return Object.keys(output).length ? output : null;
+}
+
+// ── Counts-grade drilldown (always available for ready sources) ──────────────
+// Built strictly from aggregates the digest already collected (counts,
+// highlights, goalSignals, evidenceGaps) — never invented numbers. This is the
+// guaranteed baseline so every ready source card always drills into a real
+// screen; richer provider/CLI sections replace it whenever they exist.
+
+const COUNT_KPI_LABELS = Object.freeze({
+  cloudflare: [
+    ["visits", "순 방문"],
+    ["uniqueVisitors", "순 방문"],
+    ["visitors", "방문"],
+    ["pageviews", "페이지뷰"],
+    ["pageViews", "페이지뷰"],
+    ["requests", "요청"],
+    ["conversions", "전환"],
+  ],
+  posthog: [
+    ["activeUsers", "활성 사용자"],
+    ["events", "이벤트"],
+    ["signups", "신규 가입"],
+    ["conversions", "전환"],
+  ],
+  github: [
+    ["commits", "커밋"],
+    ["mergedPrs", "PR 머지"],
+    ["openPrs", "오픈 PR"],
+    ["issues", "이슈 업데이트"],
+    ["releases", "릴리즈"],
+    ["additions", "추가 라인"],
+    ["deletions", "삭제 라인"],
+  ],
+});
+
+const COUNTS_TITLES = Object.freeze({
+  cloudflare: { title: "Cloudflare · 트래픽 드릴다운", subtitle: "수집된 집계 기준" },
+  posthog: { title: "PostHog · 프로덕트 드릴다운", subtitle: "수집된 집계 기준" },
+  github: { title: "GitHub · 빌드·배포 · 레포 신호", subtitle: "git · gh CLI 집계 기준" },
+});
+
+export function buildCountsDrilldown(id, sources = []) {
+  if (!MORNING_BRIEFING_DRILLDOWN_IDS.includes(id)) return null;
+  const relevant = (Array.isArray(sources) ? sources : []).filter((source) => {
+    if (!source || source.state !== "ready") return false;
+    if (id === "github") return source.id === "git" || source.id === "gh_cli";
+    return source.id === id;
+  });
+  if (!relevant.length) return null;
+
+  const mergedCounts = {};
+  for (const source of relevant) {
+    for (const [key, value] of Object.entries(source.counts || {})) {
+      const number = finiteNumber(value);
+      if (number !== null && mergedCounts[key] === undefined) mergedCounts[key] = number;
+    }
+  }
+  const seenLabels = new Set();
+  const kpis = (COUNT_KPI_LABELS[id] || [])
+    .filter(([key]) => mergedCounts[key] !== undefined)
+    .filter(([, label]) => !seenLabels.has(label) && seenLabels.add(label))
+    .map(([key, label]) => ({ label, valueLabel: String(mergedCounts[key]) }));
+
+  const signals = [];
+  for (const source of relevant) {
+    for (const line of source.highlights || []) signals.push({ time: "신호", text: line });
+    for (const line of source.goalSignals || []) signals.push({ time: "목표", text: line });
+    for (const line of source.evidenceGaps || []) signals.push({ time: "공백", text: line });
+  }
+
+  const metaRows = relevant
+    .map((source) => ({ key: source.label || source.id, value: "연결됨", tone: "accent" }))
+    .slice(0, 4);
+
+  return normalizeMorningBriefingDrilldown(id, {
+    ...COUNTS_TITLES[id],
+    kpis,
+    kpisMeta: "지난 24시간 집계",
+    signals,
+    meta: { rows: metaRows },
+  });
+}
+
+/// Guarantee: every ready source card carries a drilldown. Richer payloads
+/// (provider digest / gh CLI) win; counts-grade fills whatever is missing.
+export function ensureMorningBriefingDrilldowns({ drilldowns = null, sources = [] } = {}) {
+  const output = { ...(drilldowns || {}) };
+  const readyIds = new Set();
+  for (const source of Array.isArray(sources) ? sources : []) {
+    if (source?.state !== "ready") continue;
+    readyIds.add(source.id === "git" || source.id === "gh_cli" ? "github" : source.id);
+  }
+  for (const id of MORNING_BRIEFING_DRILLDOWN_IDS) {
+    if (output[id] || !readyIds.has(id)) continue;
+    const counts = buildCountsDrilldown(id, sources);
+    if (counts) output[id] = counts;
   }
   return Object.keys(output).length ? output : null;
 }
@@ -804,7 +908,7 @@ export async function collectGithubDrilldown({
     drafts: [],
     draftsEmpty: {
       title: "코드에서 꺼낼 다음 일이 없어요",
-      detail: "gh CLI와 git 로그 기준, 액션으로 만들 변화가 확인되지 않았어요. 머지 정체나 배포 실패 같은 신호가 잡히면 초안이 여기 먼저 떠요. 대신 커밋·PR 밖 영역을 훑어서, 위임할 수 있는 신호와 미뤄둔 정리를 아래에 모아뒀어요.",
+      detail: "gh CLI와 git 로그 기준, 액션으로 만들 변화가 확인되지 않았어요. 머지 정체나 배포 실패 같은 신호가 잡히면 초안이 여기 먼저 떠요. 대신 커밋·PR 밖 영역을 훑어서 위임할 수 있는 신호와 미뤄둔 정리를 아래에 모아뒀어요.",
       evidence: "근거: gh CLI · git log",
     },
     maintenance,
@@ -867,6 +971,8 @@ const EXTERNAL_DRILLDOWN_SHAPE = {
       gapLabel: "biggest leak description",
     },
     signals: [{ time: "이탈 지점", text: "aggregate funnel note" }],
+    webSignals: [{ time: "유입 엔진", text: "aggregate web/pageview note (path-level)" }],
+    webMeta: "최근 2주 · 경로 분해",
     actions: [
       {
         kind: "message",

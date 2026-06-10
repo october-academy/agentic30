@@ -124,6 +124,9 @@ struct MorningBriefingDrilldownView: View {
         if !(drilldown.signals ?? []).isEmpty {
             entries.append(SectionEntry(id: "signals", title: drilldown.id == "cloudflare" ? "봇 필터" : "코호트·표본", meta: "\((drilldown.signals ?? []).count)건", tone: "ring"))
         }
+        if !(drilldown.webSignals ?? []).isEmpty {
+            entries.append(SectionEntry(id: "web", title: "웹 신호", meta: drilldown.webMeta ?? "\((drilldown.webSignals ?? []).count)건", tone: "amber"))
+        }
         if !(drilldown.drafts ?? []).isEmpty || drilldown.draftsEmpty != nil {
             entries.append(SectionEntry(id: "action", title: "액션 초안", meta: (drilldown.drafts ?? []).isEmpty ? "없음" : "\((drilldown.drafts ?? []).count)", tone: (drilldown.drafts ?? []).isEmpty ? "ring" : "amber"))
         }
@@ -361,6 +364,10 @@ struct MorningBriefingDrilldownView: View {
                                 tone: drilldown.id == "cloudflare" ? "accent" : "rose"
                             )
                             signalList(signals)
+                        }
+                        if let webSignals = drilldown.webSignals, !webSignals.isEmpty {
+                            sectionHeading(id: "web", title: "웹 신호", meta: drilldown.webMeta ?? "", tone: "amber")
+                            signalList(webSignals)
                         }
                         if !(drilldown.drafts ?? []).isEmpty {
                             sectionHeading(id: "action", title: "액션 초안 · \((drilldown.drafts ?? []).count)", meta: "검토 후 적용", tone: drilldown.id == "posthog" ? "violet" : "amber")

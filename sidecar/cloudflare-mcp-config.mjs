@@ -14,9 +14,18 @@ export const CLOUDFLARE_EXTERNAL_CLIENT_TARGETS = Object.freeze([
   "claude-app",
 ]);
 
+// MCP auth: "oauth" (default) delegates to the provider's native MCP OAuth
+// (browser login on first use — mcp.cloudflare.com supports it natively);
+// "api_key" pins the Bearer header to the stored API token. The token stays
+// useful either way (GraphQL Analytics drilldown collectors).
+export function normalizeCloudflareMcpAuthMode(value = "") {
+  return String(value || "").trim().toLowerCase() === "api_key" ? "api_key" : "oauth";
+}
+
 export function normalizeCloudflareMcpSettings(input = {}) {
   const token = String(input.token ?? input.apiToken ?? input.mcpApiToken ?? "").trim();
   const codemode = parseBoolean(input.codemode ?? input.mcpCodemode, true);
+  const authMode = normalizeCloudflareMcpAuthMode(input.authMode ?? input.mcpAuthMode);
   const url = buildCloudflareMcpUrl({
     url: input.url ?? input.mcpUrl ?? input.mcpURL,
     codemode,
@@ -26,6 +35,8 @@ export function normalizeCloudflareMcpSettings(input = {}) {
     tokenValid: Boolean(token),
     url,
     codemode,
+    authMode,
+    usesApiKeyAuth: authMode === "api_key" && Boolean(token),
   };
 }
 
@@ -43,6 +54,7 @@ export function resolveCloudflareMcpSettings({
       || env[CLOUDFLARE_API_TOKEN_ENV_VAR]
       || cloudflare.mcpApiToken
       || cloudflare.apiToken,
+    authMode: env.CLOUDFLARE_MCP_AUTH_MODE || cloudflare.mcpAuthMode,
     url: env.CLOUDFLARE_MCP_URL || cloudflare.mcpUrl || cloudflare.mcpURL,
     codemode: env.CLOUDFLARE_MCP_CODEMODE ?? cloudflare.mcpCodemode,
   });
@@ -86,7 +98,7 @@ export function applyCloudflareCodexEnvFromSources(env = {}, options = {}) {
     ...options,
     env: sourceEnv,
   });
-  if (settings.tokenValid) {
+  if (settings.usesApiKeyAuth) {
     nextEnv[CLOUDFLARE_MCP_TOKEN_ENV_VAR] = settings.token;
   }
   return nextEnv;
@@ -94,26 +106,42 @@ export function applyCloudflareCodexEnvFromSources(env = {}, options = {}) {
 
 export function buildCloudflareClaudeMcpConfig(settings = {}) {
   const normalized = normalizeCloudflareMcpSettings(settings);
-  if (!normalized.tokenValid) return {};
+  if (normalized.usesApiKeyAuth) {
+    return {
+      [CLOUDFLARE_MCP_SERVER_NAME]: {
+        type: "http",
+        url: normalized.url,
+        headers: {
+          Authorization: `Bearer ${normalized.token}`,
+          Accept: "application/json, text/event-stream",
+        },
+      },
+    };
+  }
+  // OAuth-first: URL-only config — the provider performs (or reuses) its own
+  // Cloudflare MCP browser login. Works with zero stored tokens.
   return {
     [CLOUDFLARE_MCP_SERVER_NAME]: {
       type: "http",
       url: normalized.url,
-      headers: {
-        Authorization: `Bearer ${normalized.token}`,
-        Accept: "application/json, text/event-stream",
-      },
     },
   };
 }
 
 export function buildCloudflareCodexMcpConfig(settings = {}) {
   const normalized = normalizeCloudflareMcpSettings(settings);
-  if (!normalized.tokenValid) return {};
+  if (normalized.usesApiKeyAuth) {
+    return {
+      [CLOUDFLARE_MCP_SERVER_NAME]: {
+        url: normalized.url,
+        bearer_token_env_var: CLOUDFLARE_MCP_TOKEN_ENV_VAR,
+      },
+    };
+  }
+  // OAuth-first: Codex native MCP OAuth handles the login.
   return {
     [CLOUDFLARE_MCP_SERVER_NAME]: {
       url: normalized.url,
-      bearer_token_env_var: CLOUDFLARE_MCP_TOKEN_ENV_VAR,
     },
   };
 }
@@ -128,7 +156,7 @@ export function buildCloudflareExternalClaudeMcpConfig(settings = {}) {
       normalized.url,
     ],
   };
-  if (!normalized.tokenValid) return base;
+  if (!normalized.usesApiKeyAuth) return base;
   return {
     ...base,
     args: [
@@ -144,7 +172,7 @@ export function buildCloudflareExternalClaudeMcpConfig(settings = {}) {
 
 export function buildCloudflareExternalCodexMcpConfig(settings = {}) {
   const normalized = normalizeCloudflareMcpSettings(settings);
-  if (normalized.tokenValid) {
+  if (normalized.usesApiKeyAuth) {
     return {
       url: normalized.url,
       bearer_token_env_var: CLOUDFLARE_MCP_TOKEN_ENV_VAR,
@@ -179,7 +207,7 @@ export async function syncExternalCloudflareMcpClients({
       changed,
       dryRun: Boolean(dryRun),
       serverName: CLOUDFLARE_MCP_SERVER_NAME,
-      authMode: settings.tokenValid ? "api_token" : "oauth",
+      authMode: settings.usesApiKeyAuth ? "api_token" : "oauth",
     };
     if (!dryRun && changed) {
       result.backupPath = await writeConfigFileAtomically(filePath, next, { backupExisting: Boolean(current) });

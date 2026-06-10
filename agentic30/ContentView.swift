@@ -4297,7 +4297,7 @@ struct ContentView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 Text(openDesignAttributedText(
-                    [.body("선택한 목표를 기준으로 Day 1 질문을 만들고, 확정하면 "), .code("docs/GOAL.md"), .body("에 기록합니다.")],
+                    [.body("선택한 목표를 기준으로 Day 1 질문을 만들고 확정하면 "), .code("docs/GOAL.md"), .body("에 기록합니다.")],
                     bodySize: 12.5,
                     bodyWeight: .medium,
                     bodyColor: OpenDesignOfficeHoursColor.fgSecondary,
@@ -5058,6 +5058,11 @@ struct ContentView: View {
             ?? session.messages.last(where: { $0.state == .error })?.content.nonEmpty
             ?? viewModel.lastError?.nonEmpty
             ?? "AI 연결이 유효한 질문 카드 요청을 반환하지 않았습니다."
+        // Codex → Claude → Gemini rotation; only providers the sidecar reports
+        // as connected qualify, mirroring the settings picker gate.
+        let fallbackProvider = session.provider.nextFallbackProvider { candidate in
+            officeHoursProviderEnvironment(for: candidate)?.available == true
+        }
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "exclamationmark.triangle.fill")
@@ -5075,6 +5080,26 @@ struct ContentView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
+                if let fallbackProvider {
+                    Button {
+                        viewModel.setActiveProvider(fallbackProvider)
+                        retryOfficeHoursAfterFailure(day1Content: day1Content, day: activeDay)
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("\(fallbackProvider.title)로 전환")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .foregroundStyle(OpenDesignOfficeHoursColor.bgDeep)
+                        .padding(.horizontal, 11)
+                        .frame(height: 30)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(OpenDesignOfficeHoursColor.accent))
+                    }
+                    .buttonStyle(.plain)
+                    .help("\(session.provider.title) 대신 \(fallbackProvider.title)(으)로 다시 시도합니다. 기본 provider 설정도 함께 바뀝니다.")
+                    .accessibilityIdentifier("opendesign.officeHours.failure.switchProvider")
+                }
                 Button {
                     retryOfficeHoursAfterFailure(day1Content: day1Content, day: activeDay)
                 } label: {
@@ -5084,10 +5109,21 @@ struct ContentView: View {
                         Text("다시 시도")
                             .font(.system(size: 12, weight: .semibold))
                     }
-                    .foregroundStyle(OpenDesignOfficeHoursColor.bgDeep)
+                    .foregroundStyle(
+                        fallbackProvider == nil
+                            ? OpenDesignOfficeHoursColor.bgDeep
+                            : OpenDesignOfficeHoursColor.fgSecondary
+                    )
                     .padding(.horizontal, 11)
                     .frame(height: 30)
-                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(OpenDesignOfficeHoursColor.accent))
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(
+                                fallbackProvider == nil
+                                    ? OpenDesignOfficeHoursColor.accent
+                                    : OpenDesignOfficeHoursColor.hover
+                            )
+                    )
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("opendesign.officeHours.failure.retry")
@@ -7441,7 +7477,7 @@ struct ContentView: View {
                         title: liveStatus?.title?.nonEmpty ?? "\(row.provider?.title ?? session.provider.title)가 다음 질문을 준비 중",
                         idleDetail: liveStatus?.detail?.nonEmpty ?? "실행 이벤트를 기다리는 중입니다.",
                         streamingDetail: liveStatus?.detail?.nonEmpty ?? liveStatus?.progressText?.nonEmpty ?? "실행 타임라인 스트리밍",
-                        emptyMessage: liveStatus?.progressText?.nonEmpty ?? "답변은 저장됐고, 첫 응답 이벤트를 기다리는 중입니다."
+                        emptyMessage: liveStatus?.progressText?.nonEmpty ?? "답변은 저장됐고 첫 응답 이벤트를 기다리는 중입니다."
                     )
                     .accessibilityIdentifier("opendesign.officeHours.liveStatus")
                 } else {
@@ -9330,9 +9366,9 @@ struct ContentView: View {
         case .workspace:
             return "미션과 설정을 저장할 프로젝트 폴더를 정해요."
         case .gwsInstall:
-            return "먼저 이 Mac에 gws CLI가 있는지 확인해요. 이미 있으면 바로 넘어가고, 없을 때만 npm으로 설치해요."
+            return "먼저 이 Mac에 gws CLI가 있는지 확인해요. 이미 있으면 바로 넘어가고 없을 때만 npm으로 설치해요."
         case .gwsAuth:
-            return "저장된 gws 인증을 먼저 확인해요. 아직 유효하면 바로 넘어가고, 필요할 때만 브라우저 로그인을 엽니다."
+            return "저장된 gws 인증을 먼저 확인해요. 아직 유효하면 바로 넘어가고 필요할 때만 브라우저 로그인을 엽니다."
         case .docUrl:
             return "앱이 업무일지 템플릿을 내 Drive에 복사하고 자동으로 연결해요."
         case .sheetUrl:
@@ -10317,7 +10353,7 @@ struct ContentView: View {
                 Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Agentic30BrandColor.greenBright.opacity(0.92))
-                Text("연결된 Google Sheet 기록을 다시 읽고, 확인된 최신 행으로 오늘 미션을 닫습니다.")
+                Text("연결된 Google Sheet 기록을 다시 읽고 확인된 최신 행으로 오늘 미션을 닫습니다.")
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.58))
                     .fixedSize(horizontal: false, vertical: true)

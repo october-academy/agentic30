@@ -19,7 +19,6 @@ struct MorningBriefingPageView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pickedAnomalyOptionID: String?
     @State private var customAnomalyLabel = ""
-    @State private var expandedDrillCardID: String?
     @State private var presentedDrilldownID: String?
     @State private var appliedActionIDs: Set<String> = []
     @State private var copiedActionIDs: Set<String> = []
@@ -158,7 +157,6 @@ struct MorningBriefingPageView: View {
         .onChange(of: viewingPrevious) { _, _ in
             pickedAnomalyOptionID = nil
             customAnomalyLabel = ""
-            expandedDrillCardID = nil
             presentedDrilldownID = nil
             activeSectionID = "summary"
         }
@@ -362,6 +360,10 @@ struct MorningBriefingPageView: View {
                             sectionHeading(id: "sources", title: "세 소스 · 어제 대비", meta: "표본 작음 · 단정보다 방향", markerColor: OpenDesignDayColor.accent)
                             sourceCardsGrid
 
+                            if let guide = displayBriefing?.connectGuide {
+                                connectGuideCard(guide)
+                            }
+
                             sectionHeading(id: "timeline", title: "밤사이 타임라인", meta: "자동 수집 · 사람 개입 0", markerColor: OpenDesignDayColor.amber)
                             timelineList
 
@@ -557,6 +559,99 @@ struct MorningBriefingPageView: View {
             Capsule()
                 .fill(OpenDesignDayColor.surface)
                 .overlay(Capsule().stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+        )
+    }
+
+    // MARK: - Connect guide (Day-1 upgrade path)
+
+    /// Rendered while PostHog/Cloudflare MCP are not connected: today's briefing
+    /// ran on git/GitHub signals, and connecting in Settings > Integrations
+    /// upgrades tomorrow's briefing with traffic + retention signals.
+    private func connectGuideCard(_ guide: MorningBriefingConnectGuide) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: "antenna.radiowaves.left.and.right")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.amber)
+                .frame(width: 30, height: 30)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(OpenDesignDayColor.amber.opacity(0.14))
+                )
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(guide.title ?? "내일 브리핑 업그레이드")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.fg)
+                if let detail = guide.detail {
+                    Text(detail)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let sources = guide.sources, !sources.isEmpty {
+                    HStack(spacing: 8) {
+                        ForEach(sources) { source in
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(OpenDesignDayColor.amber)
+                                    .frame(width: 5, height: 5)
+                                Text(source.label ?? source.id)
+                                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                                if let benefit = source.benefit {
+                                    Text(benefit)
+                                        .foregroundStyle(OpenDesignDayColor.muted)
+                                }
+                            }
+                            .font(.system(size: 10.5, design: .monospaced))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule()
+                                    .fill(OpenDesignDayColor.surface)
+                                    .overlay(Capsule().stroke(OpenDesignDayColor.borderSoft, lineWidth: 1))
+                            )
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+            }
+
+            Spacer(minLength: 12)
+
+            Button {
+                openIntegrationsSettings(guide)
+            } label: {
+                Text("Settings에서 연결")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(OpenDesignDayColor.bg)
+                    .padding(.horizontal, 13)
+                    .frame(height: 27)
+                    .background(Capsule().fill(OpenDesignDayColor.amber))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("morningBriefing.connectGuide.openSettings")
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(OpenDesignDayColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(OpenDesignDayColor.amber.opacity(0.35), lineWidth: 1)
+                )
+        )
+        .padding(.top, 12)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("morningBriefing.connectGuide")
+    }
+
+    private func openIntegrationsSettings(_ guide: MorningBriefingConnectGuide) {
+        let section = guide.settingsSection ?? SettingsSection.integrations.rawValue
+        NotificationCenter.default.post(
+            name: .agenticOpenDesignSettingsRequested,
+            object: nil,
+            userInfo: [AgenticSettingsRouteNotification.sectionUserInfoKey: section]
         )
     }
 
@@ -804,21 +899,17 @@ struct MorningBriefingPageView: View {
                 }
                 Spacer()
                 if card.isReady {
-                    let hasDrilldownPage = displayBriefing?.drilldowns?[card.id] != nil
+                    // The sidecar guarantees a drilldown for every ready source
+                    // (counts-grade at minimum), so this always navigates —
+                    // same as the briefing.html drill links.
                     Button {
                         withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.15)) {
-                            if hasDrilldownPage {
-                                presentedDrilldownID = card.id
-                            } else {
-                                // No drilldown-grade data for this source yet:
-                                // fall back to the inline highlight expansion.
-                                expandedDrillCardID = expandedDrillCardID == card.id ? nil : card.id
-                            }
+                            presentedDrilldownID = card.id
                         }
                     } label: {
                         HStack(spacing: 5) {
                             Text("드릴다운")
-                            Image(systemName: !hasDrilldownPage && expandedDrillCardID == card.id ? "chevron.up" : "arrow.right")
+                            Image(systemName: "arrow.right")
                                 .font(.system(size: 8, weight: .bold))
                         }
                         .font(.system(size: 10.5, design: .monospaced))
@@ -828,19 +919,6 @@ struct MorningBriefingPageView: View {
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("morningBriefing.drill.\(card.id)")
                 }
-            }
-
-            if expandedDrillCardID == card.id, let highlights = card.highlights, !highlights.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(highlights, id: \.self) { line in
-                        Text("· \(line)")
-                            .font(.system(size: 10.5, design: .monospaced))
-                            .foregroundStyle(OpenDesignDayColor.fgSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .padding(.top, 2)
-                .transition(.opacity)
             }
         }
         .padding(EdgeInsets(top: 15, leading: 15, bottom: 13, trailing: 15))
@@ -1010,7 +1088,7 @@ struct MorningBriefingPageView: View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(OpenDesignDayColor.accent)
                         .padding(.top, 1)
-                    Text("\"\(anomaly.label ?? "")\" 로 라벨링했어요. 액션 초안 우선순위에 반영했고, 오늘 브리핑 근거에 기록했어요.")
+                    Text("\"\(anomaly.label ?? "")\" 로 라벨링했어요. 액션 초안 우선순위에 반영했고 오늘 브리핑 근거에 기록했어요.")
                         .font(.system(size: 12))
                         .lineSpacing(3)
                         .foregroundStyle(OpenDesignDayColor.fgSecondary)

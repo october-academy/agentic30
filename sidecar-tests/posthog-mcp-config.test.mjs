@@ -42,16 +42,29 @@ test("resolvePostHogMcpSettings accepts phx and pha keys but not project keys", 
   assert.equal(resolvePostHogMcpSettings({ env: { POSTHOG_API_KEY: "phc_project" } }).tokenValid, false);
 });
 
-test("Claude MCP config includes required streamable HTTP headers", () => {
-  const config = buildPostHogClaudeMcpConfig({ token: "phx_test" }).posthog;
+test("Claude MCP config is OAuth-first (URL-only) and uses headers only in api_key mode", () => {
+  // OAuth-first: server entry exists with no key at all — the provider runs
+  // (or reuses) its native PostHog MCP browser login.
+  const oauth = buildPostHogClaudeMcpConfig().posthog;
+  assert.equal(oauth.type, "http");
+  assert.match(oauth.url, /^https:\/\/mcp\.posthog\.com\/mcp\?/);
+  assert.equal(oauth.headers, undefined);
+
+  // A stored key alone does NOT switch to header auth — OAuth keeps priority.
+  assert.equal(buildPostHogClaudeMcpConfig({ token: "phx_test" }).posthog.headers, undefined);
+
+  const config = buildPostHogClaudeMcpConfig({ token: "phx_test", authMode: "api_key" }).posthog;
   assert.equal(config.type, "http");
-  assert.match(config.url, /^https:\/\/mcp\.posthog\.com\/mcp\?/);
   assert.equal(config.headers.Authorization, "Bearer phx_test");
   assert.equal(config.headers.Accept, "application/json, text/event-stream");
 });
 
-test("Codex MCP config references token env var without storing raw token", () => {
-  const config = buildPostHogCodexMcpConfig({ token: "phx_secret" }).posthog;
+test("Codex MCP config references token env var only in api_key mode", () => {
+  const oauth = buildPostHogCodexMcpConfig({ token: "phx_secret" }).posthog;
+  assert.equal(oauth.bearer_token_env_var, undefined);
+  assert.match(oauth.url, /^https:\/\/mcp\.posthog\.com\/mcp\?/);
+
+  const config = buildPostHogCodexMcpConfig({ token: "phx_secret", authMode: "api_key" }).posthog;
   assert.equal(config.bearer_token_env_var, POSTHOG_MCP_TOKEN_ENV_VAR);
   assert.equal(JSON.stringify(config).includes("phx_secret"), false);
 });
@@ -83,7 +96,7 @@ test("external sync preserves existing Codex and Claude MCP servers", async () =
 
     const results = await syncExternalPostHogMcpClients({
       homeDir: home,
-      env: { POSTHOG_MCP_API_KEY: "phx_secret" },
+      env: { POSTHOG_MCP_API_KEY: "phx_secret", POSTHOG_MCP_AUTH_MODE: "api_key" },
       dryRun: false,
     });
 
@@ -110,10 +123,10 @@ test("external sync rejects invalid tokens and malformed JSON configs", async ()
     await assert.rejects(
       syncExternalPostHogMcpClients({
         homeDir: home,
-        env: { POSTHOG_MCP_API_KEY: "phc_project" },
+        env: { POSTHOG_MCP_API_KEY: "phc_project", POSTHOG_MCP_AUTH_MODE: "api_key" },
         targets: ["codex-cli"],
       }),
-      /must start with phx_ or pha_/,
+      /phx_ 또는 pha_/,
     );
 
     const claudePath = path.join(home, ".claude", "mcp.json");

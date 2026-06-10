@@ -9,6 +9,7 @@ import {
   buildMorningBriefing,
   buildMorningBriefingActions,
   buildMorningBriefingCards,
+  buildMorningBriefingConnectGuide,
   buildMorningBriefingSummary,
   buildMorningBriefingTimeline,
   detectMorningBriefingAnomaly,
@@ -325,4 +326,37 @@ test("loadMorningBriefingStore resets on schema mismatch", async () => {
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
+});
+
+// ── Connect guide (Day-1 git/gh-only briefing upgrade path) ──────────────────
+
+test("connectGuide is null when PostHog and Cloudflare are both connected", () => {
+  assert.equal(buildMorningBriefingConnectGuide({ digest: digestFixture(), day: 12 }), null);
+  const briefing = buildMorningBriefing({ digest: digestFixture(), day: 12, now: NOW });
+  assert.equal(briefing.connectGuide, null);
+});
+
+test("Day-1 briefing with git/gh only carries a Settings integrations guide", () => {
+  const digest = digestFixture({ posthogState: "missing", cloudflareState: "missing" });
+  const briefing = buildMorningBriefing({ digest, day: 1, now: NOW });
+  const guide = briefing.connectGuide;
+  assert.ok(guide, "connectGuide must exist when posthog/cloudflare are missing");
+  assert.equal(guide.settingsSection, "integrations");
+  assert.equal(guide.title, "Day 2 브리핑 업그레이드");
+  assert.match(guide.detail, /git · GitHub 신호로 만들었어요/);
+  assert.match(guide.detail, /Settings > Integrations/);
+  assert.match(guide.detail, /Day 2 브리핑부터/);
+  assert.deepEqual(guide.sources.map((source) => source.id), ["posthog", "cloudflare"]);
+  // Day-1 briefing itself still renders from the connected git/gh sources.
+  const github = briefing.cards.find((card) => card.id === "github");
+  assert.equal(github.state, "ready");
+  assert.equal(briefing.status.state, "ready");
+});
+
+test("connectGuide lists only the missing source and keeps later-day phrasing", () => {
+  const digest = digestFixture({ cloudflareState: "missing" });
+  const guide = buildMorningBriefingConnectGuide({ digest, day: 12 });
+  assert.deepEqual(guide.sources.map((source) => source.id), ["cloudflare"]);
+  assert.equal(guide.title, "Day 13 브리핑 업그레이드");
+  assert.ok(!guide.detail.includes("git · GitHub 신호로 만들었어요"));
 });

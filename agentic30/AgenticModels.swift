@@ -63,6 +63,24 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
             return false
         }
     }
+
+    /// Fixed Codex → Claude → Gemini rotation used by failure-recovery
+    /// affordances (e.g. the office-hours "전환 후 재시도" button).
+    static let fallbackCycle: [AgentProvider] = [.codex, .claude, .gemini]
+
+    /// Next provider in `fallbackCycle` after `self` for which `isAvailable`
+    /// returns true. Skips `self`; returns nil when no other provider is
+    /// available (the switch affordance should then stay hidden).
+    func nextFallbackProvider(isAvailable: (AgentProvider) -> Bool) -> AgentProvider? {
+        guard let index = Self.fallbackCycle.firstIndex(of: self) else { return nil }
+        for offset in 1..<Self.fallbackCycle.count {
+            let candidate = Self.fallbackCycle[(index + offset) % Self.fallbackCycle.count]
+            if isAvailable(candidate) {
+                return candidate
+            }
+        }
+        return nil
+    }
 }
 
 enum AgentAuthMode: String, Codable, CaseIterable, Identifiable {
@@ -483,6 +501,22 @@ nonisolated struct MorningBriefing: Codable, Hashable {
     var historyDates: [String]?
     var historyEntries: [MorningBriefingHistoryEntry]?
     var drilldowns: [String: MorningBriefingDrilldown]?
+    /// Day-1 upgrade guide: present while PostHog/Cloudflare MCP are missing so
+    /// the screen can point at Settings > Integrations for tomorrow's briefing.
+    var connectGuide: MorningBriefingConnectGuide?
+}
+
+nonisolated struct MorningBriefingConnectGuide: Codable, Hashable {
+    var title: String?
+    var detail: String?
+    var settingsSection: String?
+    var sources: [MorningBriefingConnectGuideSource]?
+}
+
+nonisolated struct MorningBriefingConnectGuideSource: Codable, Hashable, Identifiable {
+    var id: String
+    var label: String?
+    var benefit: String?
 }
 
 nonisolated struct MorningBriefingHistoryEntry: Codable, Hashable, Identifiable {
@@ -602,6 +636,26 @@ nonisolated struct MorningBriefingStatus: Codable, Hashable {
     var detail: String?
 }
 
+// MARK: - Integration status (Settings > 연동 live checks)
+
+nonisolated struct IntegrationStatusSnapshot: Codable, Hashable {
+    var github: IntegrationProbeStatus?
+    var githubMcp: IntegrationProbeStatus?
+    var posthog: IntegrationProbeStatus?
+    var cloudflare: IntegrationProbeStatus?
+    var checkedAt: String?
+}
+
+nonisolated struct IntegrationProbeStatus: Codable, Hashable {
+    var state: String?
+    var detail: String?
+
+    var isReady: Bool { state == "ready" }
+    var isMissing: Bool { state == "missing" }
+    /// MCP auth is delegated to the provider's native OAuth (no stored key).
+    var isOauthDelegated: Bool { state == "oauth" }
+}
+
 // MARK: - Morning briefing drilldowns (briefing-cloudflare/github/posthog.html)
 
 nonisolated struct MorningBriefingDrilldown: Codable, Hashable, Identifiable {
@@ -618,6 +672,9 @@ nonisolated struct MorningBriefingDrilldown: Codable, Hashable, Identifiable {
     var scan: [MorningBriefingDrillScanCell]?
     var funnel: MorningBriefingDrillFunnel?
     var signals: [MorningBriefingDrillSignal]?
+    /// briefing-posthog.html "웹 신호" — second signal list with its own heading.
+    var webSignals: [MorningBriefingDrillSignal]?
+    var webMeta: String?
     var drafts: [MorningBriefingActionDraft]?
     var draftsEmpty: MorningBriefingDrillDraftsEmpty?
     var maintenance: [MorningBriefingActionDraft]?
@@ -1057,6 +1114,11 @@ extension MorningBriefing {
                     MorningBriefingDrillSignal(time: "이탈 지점", text: "온보딩 2단계 — 워크스페이스 연결. 가입한 6명 중 4명이 이 화면에서 멈췄어요."),
                     MorningBriefingDrillSignal(time: "표본", text: "활성 코호트 n=11 · 어제 신규 6. 실제 이탈인지 추적 누락(PR #43)인지부터 갈라야 해요."),
                 ],
+                webSignals: [
+                    MorningBriefingDrillSignal(time: "유입 1위", text: "/blog/paddle-guide 76뷰 — 2주 $pageview 193뷰의 39%"),
+                    MorningBriefingDrillSignal(time: "랜딩", text: "/ · 22뷰 · 오늘 5뷰"),
+                ],
+                webMeta: "최근 2주 · $pageview 193뷰 · 경로 분해",
                 drafts: [
                     MorningBriefingActionDraft(
                         id: "posthog_draft_1",

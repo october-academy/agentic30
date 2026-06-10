@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 
 import {
   MORNING_BRIEFING_DRILLDOWN_IDS,
+  buildCountsDrilldown,
   buildMorningBriefingExternalDigestPrompt,
   collectGithubDrilldown,
+  ensureMorningBriefingDrilldowns,
   normalizeMorningBriefingDrilldown,
   normalizeMorningBriefingDrilldowns,
   normalizeMorningBriefingExternalDigest,
@@ -348,4 +350,67 @@ test("buildMorningBriefing attaches normalized drilldowns and history entries", 
 
 test("drilldown id list stays pinned to the three briefing sources", () => {
   assert.deepEqual([...MORNING_BRIEFING_DRILLDOWN_IDS], ["cloudflare", "github", "posthog"]);
+});
+
+test("buildCountsDrilldown builds KPIs and signals from collected aggregates only", () => {
+  const drilldown = buildCountsDrilldown("posthog", [
+    {
+      id: "posthog",
+      label: "PostHog",
+      state: "ready",
+      counts: { activeUsers: 11, events: 188, conversions: 2 },
+      highlights: ["활성 사용자 추이 하락"],
+      goalSignals: ["가입의 절반이 BIP 포스트 경유"],
+      evidenceGaps: ["온보딩 2단계 이탈 원인 미확인"],
+    },
+  ]);
+  assert.equal(drilldown.id, "posthog");
+  assert.equal(drilldown.title, "PostHog · 프로덕트 드릴다운");
+  assert.deepEqual(
+    drilldown.kpis.map((kpi) => `${kpi.label}=${kpi.valueLabel}`),
+    ["활성 사용자=11", "이벤트=188", "전환=2"],
+  );
+  assert.equal(drilldown.signals.length, 3);
+  assert.equal(drilldown.signals[0].time, "신호");
+  assert.equal(drilldown.signals[2].time, "공백");
+  assert.equal(buildCountsDrilldown("posthog", [{ id: "posthog", state: "missing" }]), null);
+});
+
+test("ensureMorningBriefingDrilldowns guarantees a drilldown per ready source, richer payloads win", () => {
+  const sources = [
+    { id: "cloudflare", label: "Cloudflare", state: "ready", counts: { visits: 64 }, highlights: ["방문 ▲56%"] },
+    { id: "posthog", label: "PostHog", state: "ready", counts: { activeUsers: 11 }, highlights: [] },
+    { id: "git", label: "git", state: "ready", counts: { commits: 9 }, highlights: ["git 커밋 9건"] },
+    { id: "gh_cli", label: "gh CLI", state: "missing" },
+  ];
+  const rich = normalizeMorningBriefingDrilldowns({
+    cloudflare: { title: "Cloudflare · 트래픽 드릴다운", kpis: [{ label: "순 방문", value: 64, deltaLabel: "▲ 56%", direction: "up" }] },
+  });
+  const ensured = ensureMorningBriefingDrilldowns({ drilldowns: rich, sources });
+  // Rich provider payload kept as-is.
+  assert.equal(ensured.cloudflare.kpis[0].deltaLabel, "▲ 56%");
+  // Missing sources are filled from counts.
+  assert.equal(ensured.posthog.kpis[0].label, "활성 사용자");
+  assert.equal(ensured.github.kpis[0].label, "커밋");
+  assert.equal(ensured.github.kpis[0].valueLabel, "9");
+  // Not-ready sources never get a drilldown.
+  assert.equal(
+    ensureMorningBriefingDrilldowns({ drilldowns: null, sources: [{ id: "posthog", state: "missing" }] }),
+    null,
+  );
+});
+
+test("buildMorningBriefing guarantees drilldowns for every ready source", () => {
+  const digest = {
+    window: { startIso: WINDOW.startIso, untilIso: WINDOW.untilIso, label: WINDOW.label },
+    sources: [
+      { id: "git", label: "git", state: "ready", counts: { commits: 9, additions: 412 }, highlights: ["git 커밋 9건"], events: [] },
+      { id: "posthog", label: "PostHog", state: "ready", counts: { activeUsers: 11 }, highlights: ["리텐션 하락"], events: [] },
+      { id: "cloudflare", label: "Cloudflare", state: "missing" },
+    ],
+  };
+  const briefing = buildMorningBriefing({ digest, day: 12, now: new Date("2026-06-10T09:00:00+09:00") });
+  assert.ok(briefing.drilldowns.github, "ready git source must yield a github drilldown");
+  assert.ok(briefing.drilldowns.posthog, "ready posthog source must yield a posthog drilldown");
+  assert.equal(briefing.drilldowns.cloudflare, undefined, "missing source must not fabricate a drilldown");
 });

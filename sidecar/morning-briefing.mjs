@@ -2,7 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { atomicWriteJson } from "./atomic-store.mjs";
-import { normalizeMorningBriefingDrilldowns } from "./morning-briefing-drilldown.mjs";
+import {
+  ensureMorningBriefingDrilldowns,
+  normalizeMorningBriefingDrilldowns,
+} from "./morning-briefing-drilldown.mjs";
 
 export const MORNING_BRIEFING_SCHEMA_VERSION = 1;
 export const MORNING_BRIEFING_FILE = "morning-briefing.json";
@@ -480,6 +483,40 @@ export function buildMorningBriefingActions({ digest = {}, anomaly = null } = {}
   ];
 }
 
+// ── Connect guide ────────────────────────────────────────────────────────────
+// Day 1 ships with git/gh CLI signals only unless PostHog/Cloudflare are
+// already connected. When either is missing, the briefing carries a guide
+// pointing at Settings > Integrations so tomorrow's briefing gets traffic and
+// retention signals too. Null when both are connected — nothing to upsell.
+
+const CONNECT_GUIDE_SOURCES = Object.freeze({
+  posthog: { label: "PostHog MCP", benefit: "리텐션 · 활성 사용자 신호" },
+  cloudflare: { label: "Cloudflare MCP", benefit: "트래픽 · 방문 추이 신호" },
+});
+
+export function buildMorningBriefingConnectGuide({ digest = {}, day = null } = {}) {
+  const byId = sourceById(digest.sources || []);
+  const missing = Object.keys(CONNECT_GUIDE_SOURCES)
+    .filter((id) => byId.get(id)?.state !== "ready");
+  if (!missing.length) return null;
+  const normalizedDay = finiteNumber(day);
+  const nextDayLabel = normalizedDay !== null ? `Day ${normalizedDay + 1}` : "내일";
+  const missingLabels = missing.map((id) => CONNECT_GUIDE_SOURCES[id].label).join(" · ");
+  const detail = normalizedDay !== null && normalizedDay <= 1
+    ? `오늘 브리핑은 git · GitHub 신호로 만들었어요. Settings > Integrations에서 ${missingLabels}를 연결하면 ${nextDayLabel} 브리핑부터 트래픽·리텐션 신호가 함께 도착해요.`
+    : `Settings > Integrations에서 ${missingLabels}를 연결하면 ${nextDayLabel} 브리핑부터 트래픽·리텐션 신호가 함께 도착해요.`;
+  return {
+    title: `${nextDayLabel} 브리핑 업그레이드`,
+    detail: cleanString(detail, 240),
+    settingsSection: "integrations",
+    sources: missing.map((id) => ({
+      id,
+      label: CONNECT_GUIDE_SOURCES[id].label,
+      benefit: CONNECT_GUIDE_SOURCES[id].benefit,
+    })),
+  };
+}
+
 // ── Assembly ─────────────────────────────────────────────────────────────────
 
 export function buildMorningBriefing({
@@ -517,10 +554,15 @@ export function buildMorningBriefing({
     timeline: buildMorningBriefingTimeline({ digest }),
     anomaly,
     actions: buildMorningBriefingActions({ digest, anomaly }),
+    connectGuide: buildMorningBriefingConnectGuide({ digest, day: normalizedDay }),
     // Per-source drilldown payloads (briefing-cloudflare/github/posthog.html).
-    // Null when no source produced drilldown-grade data; the screen falls back
-    // to the inline card highlights.
-    drilldowns: normalizeMorningBriefingDrilldowns(drilldowns || {}),
+    // Every ready source is guaranteed a drilldown: richer provider/CLI payloads
+    // win, and a counts-grade drilldown (built from already-collected aggregates)
+    // fills any gap so the 드릴다운 link always lands on a real screen.
+    drilldowns: ensureMorningBriefingDrilldowns({
+      drilldowns: normalizeMorningBriefingDrilldowns(drilldowns || {}),
+      sources: digest.sources || [],
+    }),
     sync: {
       sources: (digest.sources || []).map((source) => ({
         id: source.id,

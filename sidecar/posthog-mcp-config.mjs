@@ -41,8 +41,18 @@ export function isValidPostHogMcpToken(value = "") {
   return token.startsWith("phx_") || token.startsWith("pha_");
 }
 
+// MCP auth: "oauth" (default) delegates authentication to the provider's
+// native MCP OAuth (browser login on first use; Claude/Codex cache the token),
+// matching posthog.com/docs/model-context-protocol. "api_key" is the explicit
+// escape hatch that pins the Bearer header to the stored personal API key —
+// the key itself stays useful either way (direct HogQL drilldown collectors).
+export function normalizePostHogMcpAuthMode(value = "") {
+  return String(value || "").trim().toLowerCase() === "api_key" ? "api_key" : "oauth";
+}
+
 export function normalizePostHogMcpSettings(input = {}) {
   const region = normalizePostHogMcpRegion(input.region ?? input.mcpRegion);
+  const authMode = normalizePostHogMcpAuthMode(input.authMode ?? input.mcpAuthMode);
   const token = String(input.token ?? input.apiKey ?? input.mcpApiKey ?? "").trim();
   const readonly = parseBoolean(input.readonly ?? input.mcpReadonly, DEFAULT_POSTHOG_MCP_READONLY);
   const features = normalizePostHogMcpFeatures(input.features ?? input.mcpFeatures);
@@ -68,6 +78,10 @@ export function normalizePostHogMcpSettings(input = {}) {
     features,
     mode,
     consumer,
+    authMode,
+    // Bearer-header auth only when explicitly requested AND the key is valid;
+    // everything else delegates to provider OAuth (URL-only config).
+    usesApiKeyAuth: authMode === "api_key" && isValidPostHogMcpToken(token),
   };
 }
 
@@ -87,6 +101,7 @@ export function resolvePostHogMcpSettings({
       || env.POSTHOG_API_KEY
       || posthog.mcpApiKey
       || posthog.apiKey,
+    authMode: env.POSTHOG_MCP_AUTH_MODE || posthog.mcpAuthMode,
     url: env.POSTHOG_MCP_URL || posthog.mcpUrl || posthog.mcpURL,
     region: envRegion || configRegion,
     readonly: env.POSTHOG_MCP_READONLY ?? posthog.mcpReadonly,
@@ -154,7 +169,7 @@ export function applyPostHogCodexEnvFromSources(env = {}, options = {}) {
     ...options,
     env: sourceEnv,
   });
-  if (settings.tokenValid) {
+  if (settings.usesApiKeyAuth) {
     nextEnv[POSTHOG_MCP_TOKEN_ENV_VAR] = settings.token;
   }
   return nextEnv;
@@ -162,33 +177,55 @@ export function applyPostHogCodexEnvFromSources(env = {}, options = {}) {
 
 export function buildPostHogClaudeMcpConfig(settings = {}) {
   const normalized = normalizePostHogMcpSettings(settings);
-  if (!normalized.tokenValid) return {};
+  if (normalized.usesApiKeyAuth) {
+    return {
+      [POSTHOG_MCP_SERVER_NAME]: {
+        type: "http",
+        url: normalized.url,
+        headers: {
+          Authorization: `Bearer ${normalized.token}`,
+          Accept: "application/json, text/event-stream",
+        },
+      },
+    };
+  }
+  // OAuth-first: URL-only config — the provider performs (or reuses) its own
+  // PostHog MCP browser login. Works with zero stored keys.
   return {
     [POSTHOG_MCP_SERVER_NAME]: {
       type: "http",
       url: normalized.url,
-      headers: {
-        Authorization: `Bearer ${normalized.token}`,
-        Accept: "application/json, text/event-stream",
-      },
     },
   };
 }
 
 export function buildPostHogCodexMcpConfig(settings = {}) {
   const normalized = normalizePostHogMcpSettings(settings);
-  if (!normalized.tokenValid) return {};
+  if (normalized.usesApiKeyAuth) {
+    return {
+      [POSTHOG_MCP_SERVER_NAME]: {
+        url: normalized.url,
+        bearer_token_env_var: POSTHOG_MCP_TOKEN_ENV_VAR,
+      },
+    };
+  }
+  // OAuth-first: Codex supports native MCP OAuth; URL-only config triggers it.
   return {
     [POSTHOG_MCP_SERVER_NAME]: {
       url: normalized.url,
-      bearer_token_env_var: POSTHOG_MCP_TOKEN_ENV_VAR,
     },
   };
 }
 
 export function buildPostHogExternalClaudeMcpConfig(settings = {}) {
   const normalized = normalizePostHogMcpSettings(settings);
-  if (!normalized.tokenValid) return null;
+  if (!normalized.usesApiKeyAuth) {
+    // OAuth-first: mcp-remote runs the browser OAuth flow itself.
+    return {
+      command: "npx",
+      args: ["-y", "mcp-remote@latest", normalized.url],
+    };
+  }
   return {
     command: "npx",
     args: [
@@ -213,11 +250,8 @@ export async function syncExternalPostHogMcpClients({
   dryRun = false,
 } = {}) {
   const settings = resolvePostHogMcpSettings({ env, config, appSupportPath });
-  if (!settings.token) {
-    throw new Error("PostHog MCP token is missing. Set POSTHOG_MCP_API_KEY, POSTHOG_API_KEY, or save a PostHog MCP key in Agentic30 settings.");
-  }
-  if (!settings.tokenValid) {
-    throw new Error("PostHog MCP token must start with phx_ or pha_. Project keys such as phc_ cannot authenticate the PostHog MCP server.");
+  if (settings.authMode === "api_key" && !settings.tokenValid) {
+    throw new Error("PostHog MCP api_key 모드에는 phx_ 또는 pha_ 키가 필요합니다 (phc_ 프로젝트 키는 인증 불가). 키가 없으면 기본 OAuth 모드를 사용하세요.");
   }
 
   const normalizedTargets = normalizeExternalTargets(targets);

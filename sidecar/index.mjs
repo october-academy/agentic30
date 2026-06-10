@@ -58,6 +58,12 @@ import {
   normalizeMorningBriefingExternalDigest,
 } from "./morning-briefing-drilldown.mjs";
 import {
+  collectCloudflareDirectDrilldown,
+  collectPosthogDirectDrilldown,
+  mergeMorningBriefingDrilldownMaps,
+} from "./morning-briefing-direct-sources.mjs";
+import { collectIntegrationStatus } from "./integration-status.mjs";
+import {
   buildQmdGuidance,
   buildQmdMcpConfig,
   getQmdState,
@@ -1898,6 +1904,19 @@ async function handleClientMessage(socket, payload) {
           label,
         });
       }
+      return;
+    }
+    case "integration_status_check": {
+      // Settings > 연동 "상태 확인": live-verify gh CLI/GitHub MCP, PostHog key,
+      // and Cloudflare token against the real services.
+      const integrationStatus = await collectIntegrationStatus({ appSupportPath });
+      send(socket, { type: "integration_status_result", integrationStatus });
+      telemetry.captureEvent("mac_sidecar_integration_status_checked", {
+        github: integrationStatus.github?.state || "",
+        github_mcp: integrationStatus.githubMcp?.state || "",
+        posthog: integrationStatus.posthog?.state || "",
+        cloudflare: integrationStatus.cloudflare?.state || "",
+      });
       return;
     }
     case "bip_research_get": {
@@ -4411,7 +4430,10 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
   broadcast({ type: "morning_briefing_status", status: { state: "collecting", reason } });
   try {
     const store = await loadMorningBriefingStore({ workspaceRoot });
-    if (!force && store.current && isSameLocalDate(store.current.generatedAt, new Date())) {
+    // A persisted "locked" briefing predates Day-1 support — never serve it from
+    // the same-date cache; fall through and collect a real one.
+    const cachedIsLocked = store.current?.status?.state === "locked";
+    if (!force && !cachedIsLocked && store.current && isSameLocalDate(store.current.generatedAt, new Date())) {
       broadcast({
         type: "morning_briefing_result",
         morningBriefing: store.current,
@@ -4421,26 +4443,13 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
     }
 
     const day = await challengeElapsedOfficeHoursDay();
-    if (Number.isFinite(day) && day <= 1) {
-      const locked = {
-        ...buildMorningBriefing({ digest: { sources: [] }, day }),
-        status: {
-          state: "locked",
-          detail: "아침 브리핑은 Day 2 아침부터 도착해요. 오늘은 Day 1 인터뷰에 집중해요.",
-        },
-      };
-      const lockedStore = await persistMorningBriefing({ workspaceRoot, briefing: locked });
-      broadcast({
-        type: "morning_briefing_result",
-        morningBriefing: locked,
-        morningBriefingPrevious: lockedStore.previous,
-      });
-      return locked;
-    }
-
+    // Day 1 gets a real briefing from git/gh CLI (plus PostHog/Cloudflare when
+    // already connected). The gate probe is clamped to >= 2 because the Office
+    // Hours gate short-circuits Day 1 (fixed interview) with zero sources —
+    // the briefing must still probe what is actually connected.
     const probeGate = await evaluateOfficeHoursSourceGate({
       workspaceRoot,
-      day: day ?? 2,
+      day: Math.max(2, Number.isFinite(day) ? day : 2),
       selectedSources: MORNING_BRIEFING_ALL_SOURCES,
       provider: preferredProvider,
       appSupportPath,
@@ -4474,25 +4483,47 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
     const previousMetrics = store.current?.metrics
       || store.history[store.history.length - 1]?.metrics
       || {};
-    const githubDrilldown = await collectGithubDrilldown({
-      workspaceRoot,
-      window: gate.window,
-      gitSource: localSignals.find((source) => source.id === "git"),
-      ghSource: localSignals.find((source) => source.id === "gh_cli"),
-      previousCommitCount: previousMetrics.github ?? null,
-    }).catch((error) => {
-      telemetry.captureException(error, { operation: "morning_briefing_github_drilldown" });
-      return null;
-    });
+    // Direct collectors carry the numbers: git/gh CLI for GitHub, vendor HTTP
+    // APIs for Cloudflare (GraphQL Analytics) and PostHog (Query API/HogQL).
+    // The provider digest's drilldown only fills narrative sections the APIs
+    // cannot produce (action drafts, app-specific funnels).
+    const [githubDrilldown, cloudflareDirect, posthogDirect] = await Promise.all([
+      collectGithubDrilldown({
+        workspaceRoot,
+        window: gate.window,
+        gitSource: localSignals.find((source) => source.id === "git"),
+        ghSource: localSignals.find((source) => source.id === "gh_cli"),
+        previousCommitCount: previousMetrics.github ?? null,
+      }).catch((error) => {
+        telemetry.captureException(error, { operation: "morning_briefing_github_drilldown" });
+        return null;
+      }),
+      readySources.includes("cloudflare")
+        ? collectCloudflareDirectDrilldown({ window: gate.window, appSupportPath }).catch((error) => {
+            telemetry.captureException(error, { operation: "morning_briefing_cloudflare_direct" });
+            return null;
+          })
+        : Promise.resolve(null),
+      readySources.includes("posthog")
+        ? collectPosthogDirectDrilldown({ window: gate.window, appSupportPath }).catch((error) => {
+            telemetry.captureException(error, { operation: "morning_briefing_posthog_direct" });
+            return null;
+          })
+        : Promise.resolve(null),
+    ]);
     const briefing = buildMorningBriefing({
       digest,
       day,
       previous: store.current ? { metrics: store.current.metrics } : null,
       history: store.history,
-      drilldowns: {
-        ...external.drilldowns,
-        ...(githubDrilldown ? { github: githubDrilldown } : {}),
-      },
+      drilldowns: mergeMorningBriefingDrilldownMaps(
+        {
+          ...(githubDrilldown ? { github: githubDrilldown } : {}),
+          ...(cloudflareDirect ? { cloudflare: cloudflareDirect } : {}),
+          ...(posthogDirect ? { posthog: posthogDirect } : {}),
+        },
+        external.drilldowns || {},
+      ),
     });
     const persistedStore = await persistMorningBriefing({ workspaceRoot, briefing });
     broadcast({
@@ -6017,7 +6048,7 @@ function buildStageAwareActionPlan({ prompt = "", context = {}, selectedOption =
 
   if (isBuilder && isComplete) {
     verdict = "keep";
-    domainLine = "Builder retro: 끝난 demo loop는 회고로 닫고, 가장 선명한 artifact를 다음 공개 증거로 이어갑니다.";
+    domainLine = "Builder retro: 끝난 demo loop는 회고로 닫고 가장 선명한 artifact를 다음 공개 증거로 이어갑니다.";
     stageLine = `근거: ${proofRefs.length ? proofRefs.join(", ") : "완료된 demo loop와 현재 BIP 기록"}`;
     nextAction = "오늘 demo에서 가장 선명했던 화면 1개를 골라 retro와 함께 공개 proof로 남기세요.";
     proofTarget = "retro 공개 proof 1개, 다음 artifact proof target 1개, demo를 이해한 사람 1명/막힌 지점 1개를 오늘 기록에 남깁니다.";
@@ -7238,7 +7269,7 @@ function buildSelectedMissionCoachMessage(mission, coachState) {
     mission.mission ? `수행: ${mission.mission}` : "",
     "",
     "진행 순서:",
-    "1. 아래 초안 중 하나를 고르고, 사실과 숫자만 네 상황에 맞게 바꾸세요.",
+    "1. 아래 초안 중 하나를 고르고 사실과 숫자만 네 상황에 맞게 바꾸세요.",
     "2. Threads에 올린 뒤 URL을 복사하세요.",
     "3. Sheet 오늘 행에 URL, 반응, 배운 점을 남기세요.",
     "4. 여기 채팅에 URL이나 막힌 지점을 보내면 다음 문장까지 같이 줄이겠습니다.",

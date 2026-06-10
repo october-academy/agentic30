@@ -449,7 +449,16 @@ struct SidecarEventDecodingTests {
               "syncedAtLabel": "09:00"
             },
             "status": { "state": "ready", "detail": "소스 1개에서 밤사이 신호를 모았어요." },
-            "historyDates": ["2026-06-09"]
+            "historyDates": ["2026-06-09"],
+            "connectGuide": {
+              "title": "Day 2 브리핑 업그레이드",
+              "detail": "Settings > Integrations에서 PostHog MCP · Cloudflare MCP를 연결하면 Day 2 브리핑부터 트래픽·리텐션 신호가 함께 도착해요.",
+              "settingsSection": "integrations",
+              "sources": [
+                { "id": "posthog", "label": "PostHog MCP", "benefit": "리텐션 · 활성 사용자 신호" },
+                { "id": "cloudflare", "label": "Cloudflare MCP", "benefit": "트래픽 · 방문 추이 신호" }
+              ]
+            }
           }
         }
         """
@@ -473,6 +482,9 @@ struct SidecarEventDecodingTests {
         #expect(briefing.sync?.readyCount == 1)
         #expect(briefing.status?.state == "ready")
         #expect(briefing.historyDates == ["2026-06-09"])
+        let guide = try #require(briefing.connectGuide)
+        #expect(guide.settingsSection == "integrations")
+        #expect(guide.sources?.map(\.id) == ["posthog", "cloudflare"])
         // Drilldown payload absent on older sidecars: decoders must fail soft.
         #expect(briefing.drilldowns == nil)
         #expect(briefing.historyEntries == nil)
@@ -534,6 +546,8 @@ struct SidecarEventDecodingTests {
                   "gapLabel": "가입 → 연결에서 67% 이탈"
                 },
                 "signals": [{ "time": "02:10", "text": "단일 IP 9요청 — 봇으로 분류" }],
+                "webSignals": [{ "time": "유입 1위", "text": "/blog/paddle-guide 76뷰 — 39%" }],
+                "webMeta": "최근 2주 · 경로 분해",
                 "drafts": [
                   {
                     "id": "github_draft_1",
@@ -598,11 +612,39 @@ struct SidecarEventDecodingTests {
         #expect(drilldown.funnel?.steps?.last?.drop == true)
         #expect(drilldown.funnel?.gapAfterIndex == 0)
         #expect(drilldown.signals?.first?.time == "02:10")
+        #expect(drilldown.webSignals?.first?.time == "유입 1위")
+        #expect(drilldown.webMeta == "최근 2주 · 경로 분해")
         #expect(drilldown.drafts?.first?.id == "github_draft_1")
         #expect(drilldown.draftsEmpty?.title == "코드에서 꺼낼 다음 일이 없어요")
         #expect(drilldown.maintenance?.first?.badge == "문서")
         #expect(drilldown.meta?.progress?.ratio == 1)
         #expect(drilldown.meta?.rows?.first?.key == "리포")
+    }
+
+    @MainActor @Test func decodesIntegrationStatusResultPayload() throws {
+        let payload = """
+        {
+          "type": "integration_status_result",
+          "integrationStatus": {
+            "github": { "state": "ready", "detail": "gh auth status 통과" },
+            "githubMcp": { "state": "ready", "detail": "gh 토큰으로 GitHub MCP 연결됨" },
+            "posthog": { "state": "failed", "detail": "PostHog API 검증 실패 (HTTP 401)" },
+            "cloudflare": { "state": "missing", "detail": "API 토큰을 저장하면 활성화돼요." },
+            "checkedAt": "2026-06-10T09:00:00.000Z"
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "integration_status_result")
+        let status = try #require(event.integrationStatus)
+        #expect(status.github?.isReady == true)
+        #expect(status.githubMcp?.isReady == true)
+        #expect(status.posthog?.state == "failed")
+        #expect(status.posthog?.isReady == false)
+        #expect(status.cloudflare?.isMissing == true)
+        #expect(status.checkedAt == "2026-06-10T09:00:00.000Z")
     }
 
     @MainActor @Test func decodesMorningBriefingCollectingStatusPayload() throws {
