@@ -432,7 +432,7 @@ export function normalizeBipResearchSnapshot(value = {}, {
       260,
     ),
     briefBody: cleanString(
-      value.briefBody || value.brief_body || "웹 자료 검색 결과를 웹 원문 확인으로 다시 읽고, 원문 URL이 있는 후보만 공개 기록에 표시합니다.",
+      value.briefBody || value.brief_body || "웹 자료 검색 결과를 웹 원문 확인으로 다시 읽고 원문 URL이 있는 후보만 공개 기록에 표시합니다.",
       900,
     ),
     querySummary: cleanString(
@@ -877,7 +877,7 @@ function buildCandidateDraft(value = {}, sourceRefs = []) {
     "",
     `원문 근거: ${cleanString(value.quote || sourceRefs[0]?.excerpt || "", 500)}`,
     `왜 중요한가: ${cleanString(value.whyBody || value.whyItMatters || "", 500)}`,
-    "맥락: 프로젝트와 오늘 Day 기준에 맞는 공개 소셜 신호인지 확인하고, 인터뷰 후보나 공개 기록 소재로만 사용한다.",
+    "맥락: 프로젝트와 오늘 Day 기준에 맞는 공개 소셜 신호인지 확인하고 인터뷰 후보나 공개 기록 소재로만 사용한다.",
     `확인할 것: ${cleanString(value.gap || "전업 여부, 수익 상태, 인터뷰 의향", 300)}`,
   ].join("\n");
 }

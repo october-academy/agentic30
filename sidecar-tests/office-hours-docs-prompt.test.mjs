@@ -26,7 +26,7 @@ test("office-hours docs system prompt embeds gstack forcing devices", () => {
   const prompt = buildOfficeHoursDocsSystemPrompt("/workspace");
 
   assert.match(prompt, /Operating Principles/);
-  assert.match(prompt, /구체성이 유일한 통화/);
+  assert.match(prompt, /여기서는 구체성만 통합니다/);
   assert.match(prompt, /관심은 수요가 아닙니다/);
 
   assert.match(prompt, /Anti-Sycophancy/);

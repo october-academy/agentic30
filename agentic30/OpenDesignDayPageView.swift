@@ -757,7 +757,7 @@ struct OpenDesignDayContent {
             ),
         ],
         contextTitle: "오늘은 첫 고객 1명을 정하는 게 목표예요.",
-        contextBody: "30일 챌린지의 첫 결과는 \"유저 100명 + 첫 매출\"이지만, Day 1은 그보다 더 좁은 문제부터 풉니다. 이번 주에 진짜로 인터뷰 한 통을 할 만큼 가까운 1명이 누구인지 정하는 것. 이 한 명이 고객 후보가 되고, 이번 주 인터뷰·랜딩·막힌 지점 판단의 기준점이 됩니다.",
+        contextBody: "30일 챌린지의 첫 결과는 \"유저 100명 + 첫 매출\"이지만 Day 1은 그보다 더 좁은 문제부터 풉니다. 이번 주에 진짜로 인터뷰 한 통을 할 만큼 가까운 1명이 누구인지 정하는 것. 이 한 명이 고객 후보가 되고 이번 주 인터뷰·랜딩·막힌 지점 판단의 기준점이 됩니다.",
         mission: Mission(
             markedTitle: "한 명",
             titleSuffix: "만 골라요.",
@@ -787,9 +787,9 @@ struct OpenDesignDayContent {
                 submitLabel: "이 후보로 제출",
                 options: [
                     InterviewOption(id: 1, title: "내 Threads 글에 답한 개발자", detail: "이미 문제 맥락에 반응했기 때문에 1대1 대화 시작이 가장 가볍습니다. 모수는 작아도 첫 인터뷰가 빠릅니다.", tail: "+2명 / 7일"),
-                    InterviewOption(id: 2, title: "내 글을 저장한 전업 개발자", detail: "공개 반응은 적어도 관심 신호가 있고, 후속 질문으로 실제 시간을 쓰는지 확인하기 좋습니다.", tail: "+9명 / 7일"),
-                    InterviewOption(id: 3, title: "전 직장 출신 1인 개발자", detail: "관계 기반이라 답변 가능성이 높고, 퇴사 후 첫 매출 압박을 직접 물어볼 수 있습니다. 그 중에서도 \"AI로 계속 새로 만드는 동료\"가 유력 후보입니다.", tail: "+5명 / 즉시"),
-                    InterviewOption(id: 4, title: "이미 아는 사람", detail: "친밀해서 빠르게 만날 수 있지만, 거리가 가까울수록 칭찬형 답변이 늘어 객관적 신호가 약합니다.", tail: "언제든"),
+                    InterviewOption(id: 2, title: "내 글을 저장한 전업 개발자", detail: "공개 반응은 적어도 관심 신호가 있고 후속 질문으로 실제 시간을 쓰는지 확인하기 좋습니다.", tail: "+9명 / 7일"),
+                    InterviewOption(id: 3, title: "전 직장 출신 1인 개발자", detail: "관계 기반이라 답변 가능성이 높고 퇴사 후 첫 매출 압박을 직접 물어볼 수 있습니다. 그 중에서도 \"AI로 계속 새로 만드는 동료\"가 유력 후보입니다.", tail: "+5명 / 즉시"),
+                    InterviewOption(id: 4, title: "이미 아는 사람", detail: "친밀해서 빠르게 만날 수 있지만 거리가 가까울수록 칭찬형 답변이 늘어 객관적 신호가 약합니다.", tail: "언제든"),
                 ]
             ),
             InterviewStep(
@@ -846,7 +846,7 @@ struct OpenDesignDayContent {
                 progressLabel: "한 사건",
                 submitLabel: "이 행동으로 제출",
                 options: [
-                    InterviewOption(id: 1, title: "새 프로젝트를 또 시작했다", detail: "지난 프로젝트는 절반쯤에서 멈췄고, 새 레포·새 디자인·새 아이디어로 또 한 번 출발했습니다.", tail: "빌드 루프"),
+                    InterviewOption(id: 1, title: "새 프로젝트를 또 시작했다", detail: "지난 프로젝트는 절반쯤에서 멈췄고 새 레포·새 디자인·새 아이디어로 또 한 번 출발했습니다.", tail: "빌드 루프"),
                     InterviewOption(id: 2, title: "실사용자 1명을 만났다", detail: "인터뷰·콜·DM 등으로 실제 사람의 답을 들었습니다. 가장 강한 신호.", tail: "진짜 신호 ↑"),
                     InterviewOption(id: 3, title: "출시를 시도했다", detail: "포스트·결제 링크·랜딩 등 사람들에게 보여지는 행동을 1건 이상 했습니다.", tail: "검증 신호"),
                     InterviewOption(id: 4, title: "아무 행동도 안 했다", detail: "계획·고민만 7일을 보냈습니다. 솔직한 답 — 제외 신호를 확인하는 출발점이 됩니다.", tail: "제외 신호", isAntiSignal: true),
@@ -2581,7 +2581,7 @@ struct OpenDesignDayDraft: Equatable {
         if isAntiSignal {
             return "현재 후보는 제외 신호에 걸립니다. Day 3 인터뷰 대상에 넣기 전 실제 행동 증거를 한 번 더 확인한다."
         }
-        return "Day 3 실제 행동 인터뷰 첫 후보로 올리고, 인터뷰 원문과 업무 일지를 docs/ICP.md의 증거 섹션에 연결한다."
+        return "Day 3 실제 행동 인터뷰 첫 후보로 올리고 인터뷰 원문과 업무 일지를 docs/ICP.md의 증거 섹션에 연결한다."
     }
 
     var markdown: String {
@@ -2640,7 +2640,7 @@ struct OpenDesignDayDraft: Equatable {
         if let plan {
             let firstRule = plan.antiIcp.rules.first?.label ?? "최근 사건과 현재 대안이 없는 후보"
             if isAntiSignal {
-                return "선택한 답변이 제외 신호에 걸립니다. \(plan.antiIcp.summary) \(firstRule)을 확인하고, 실제 필요/현재 행동/확인할 행동이 없으면 Day 3 인터뷰에서 제외하세요."
+                return "선택한 답변이 제외 신호에 걸립니다. \(plan.antiIcp.summary) \(firstRule)을 확인하고 실제 필요/현재 행동/확인할 행동이 없으면 Day 3 인터뷰에서 제외하세요."
             }
             return "\(plan.antiIcp.summary) 첫 제외 기준: \(firstRule)"
         }

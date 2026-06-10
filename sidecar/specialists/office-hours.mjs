@@ -34,7 +34,7 @@ export function buildPrompt({ doc = null, observations = "", lastAnswer = "" } =
     "- 가격 질문(\"얼마예요?\")은 강한 돈 신호가 아니다. 실제 결제, 결제 절차, 현재 대안 비용, 반복 행동이 없으면 말뿐인 관심으로 낮춘다.",
     "- Startup stage routing을 우선한다: pre_product는 Q1/Q2/Q3, has_users는 Q2/Q4/Q5, has_paying_customers는 Q4/Q5/Q6, engineering_infra는 Q2/Q4.",
     "- Day 1에서 Startup mode가 이미 선택된 경우 mode gate를 반복하지 않는다. stage가 불명확할 때만 stage card를 먼저 묻는다.",
-    "- Smart-skip: 이미 답이 명확한 질문은 건너뛰고, 모든 6문항을 억지로 끝까지 묻지 않는다.",
+    "- Smart-skip: 이미 답이 명확한 질문은 건너뛰고 모든 6문항을 억지로 끝까지 묻지 않는다.",
     "- 답변이 추상적이면(예: \"개발자\", \"고객\") 반드시 다음 질문에서 실제 이름·역할·상황·증거로 좁힌다.",
     "- 직전 답변이 추상적이면 새 주제로 넘어가지 말고 같은 질문군 안에서 이름/역할/상황/돈/시간/관찰 증거로 한 번 더 좁힌다.",
     "- options는 2~4개. 각 option description에는 결과/장점/리스크 중 하나를 구체적 사실로 적는다.",

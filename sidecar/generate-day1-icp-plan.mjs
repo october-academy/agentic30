@@ -1923,7 +1923,7 @@ function buildAlignmentComponents({ signals, projectGoal }) {
       title: "고객",
       prompt: "이 목표를 검증하려면 이번 주 가장 먼저 확인할 고객 후보는 누구인가요?",
       highlightPhrases: alignmentComponentHighlightPhrases("icp"),
-      helperText: "직함보다 지금 같은 문제를 겪고, 이번 주 실제로 물어볼 수 있는 고객 조건을 고릅니다.",
+      helperText: "직함보다 지금 같은 문제를 겪고 이번 주 실제로 물어볼 수 있는 고객 조건을 고릅니다.",
       statement: hasSpecificProblem
         ? `${target} 중 "${problem}" 상황을 지금 해결하려는 고객.`
         : `${target} 중 이번 주 가장 먼저 확인할 고객.`,
@@ -2612,7 +2612,7 @@ function questionForDimension(dimension, signals) {
     return {
       title: "질문 — 필수 조건",
       prompt: `${product}의 좋은 고객이라면 이미 갖고 있어야 하는 조건은 무엇인가요?`,
-      helperText: "직함보다 '좋은 고객이면 이미 가지고 있는 조건'을 고릅니다.",
+      helperText: "직함보다 '좋은 고객이면 이미 갖춘 조건'을 고릅니다.",
       freeTextPlaceholder: "예: 이미 같은 문제를 매주 직접 처리하고 있는 팀",
       options: evidenceBackedQuestionOptions([
         ...bank.targetUsers.slice(0, 2).map((candidate) =>

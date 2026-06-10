@@ -13,7 +13,7 @@ export function buildFoundationAntiDisplacementGate({
   const sinceDate = weekStartDate || "<week-start-date>";
   return Object.freeze({
     label: "anti-displacement",
-    rule: "이번 주는 제품 개선 주가 아니라 creator dogfood 주다. Friction은 먼저 기록하고, hotfix는 주 전체 3 commits / 10 lines / 신규 파일 0개 한도 안에서만 허용한다.",
+    rule: "이번 주는 제품 개선 주가 아니라 creator dogfood 주다. Friction은 먼저 기록하고 hotfix는 주 전체 3 commits / 10 lines / 신규 파일 0개 한도 안에서만 허용한다.",
     baselineCommand: `git rev-parse HEAD > ${evidencePath}`,
     weeklyCheck: `git log --since='${sinceDate}' --oneline && git diff --stat $(cat ${evidencePath})..HEAD`,
   });

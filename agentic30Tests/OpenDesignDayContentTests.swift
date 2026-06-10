@@ -2095,7 +2095,7 @@ struct OpenDesignDayContentTests {
         let draft = content.draft(for: state)
 
         #expect(draft.markdown.contains("- 필수 입력: 프로젝트 path, 업무 일지, 인터뷰 원문, 공개 기록"))
-        #expect(draft.recommendation == "Day 3 실제 행동 인터뷰 첫 후보로 올리고, 인터뷰 원문과 업무 일지를 docs/ICP.md의 증거 섹션에 연결한다.")
+        #expect(draft.recommendation == "Day 3 실제 행동 인터뷰 첫 후보로 올리고 인터뷰 원문과 업무 일지를 docs/ICP.md의 증거 섹션에 연결한다.")
         #expect(!draft.isAntiSignal)
     }
 
@@ -2332,7 +2332,7 @@ struct OpenDesignDayContentTests {
         alignmentIcp: String = "B2B SaaS support lead",
         alignmentStatementText: String? = nil,
         icpPrompt: String = "먼저 검증할 고객은?",
-        icpHelperText: String? = "직함보다 지금 같은 문제를 겪고, 이번 주 실제로 물어볼 수 있는 고객 조건을 고릅니다.",
+        icpHelperText: String? = "직함보다 지금 같은 문제를 겪고 이번 주 실제로 물어볼 수 있는 고객 조건을 고릅니다.",
         outcomePrompt: String = "고객 결과는?",
         outcomeOptionDescription: String = "결과"
     ) -> Day1AlignmentPlan {

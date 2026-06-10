@@ -488,7 +488,7 @@ enum OpenDesignReferenceCatalog {
         filters: [.init("요약"), .init("인용 12", tone: .sky), .init("후속 7", tone: .amber), .init("대화 기록", tone: .muted)],
         sections: [
             .init(id: "summary", title: "요약", meta: nil, markerTone: .accent, blocks: [
-                .init("summary-card", style: .banner, title: "5번 빌드 → 0매출", subtitle: "강한 신호 · 실제 행동 질문 4/5 통과", body: "패턴을 본인이 자각했지만, \"검증 없이 또 만들 것 같다\"는 회피 신호가 강합니다. 핵심 통증은 \"누가 쓸지를 모른다\"로 압축됩니다.", chips: [.init("신호 8/10"), .init("고객 후보 적합 매우 높음"), .init("주의 1", tone: .amber)]),
+                .init("summary-card", style: .banner, title: "5번 빌드 → 0매출", subtitle: "강한 신호 · 실제 행동 질문 4/5 통과", body: "패턴을 본인이 자각했지만 \"검증 없이 또 만들 것 같다\"는 회피 신호가 강합니다. 핵심 통증은 \"누가 쓸지를 모른다\"로 압축됩니다.", chips: [.init("신호 8/10"), .init("고객 후보 적합 매우 높음"), .init("주의 1", tone: .amber)]),
             ]),
             .init(id: "signals", title: "추출 신호", meta: "실제 행동 질문 · 4 카테고리", markerTone: .accent, blocks: [
                 .init("signal-grid", style: .cards, rows: [
@@ -636,7 +636,7 @@ enum OpenDesignReferenceCatalog {
             ]),
             .init(id: "customer", title: "고객이 먼저다", meta: "Value 2 · 6건 · 첫 매출 0원일 때 고객 후보가 가장 자주 비는 자료", markerTone: .accent, blocks: [
                 .init("customer-articles", style: .articles, rows: [
-                    .init("mom", leading: "MT", title: "The Mom Test — 엄마도 거짓말한다", subtitle: "momtestbook.com · 책 · Ch. 1-3 · 22분", body: "Day 1 적용: \"지난주에 이 문제 때문에 뭘 시도했나요?\" 칭찬형 답이 사라지고, 진짜 시간을 쓴 사람만 남습니다.", trailing: "오늘 고정", tone: .accent, chips: [.init("고객"), .init("숫자", tone: .rose)]),
+                    .init("mom", leading: "MT", title: "The Mom Test — 엄마도 거짓말한다", subtitle: "momtestbook.com · 책 · Ch. 1-3 · 22분", body: "Day 1 적용: \"지난주에 이 문제 때문에 뭘 시도했나요?\" 칭찬형 답이 사라지고 진짜 시간을 쓴 사람만 남습니다.", trailing: "오늘 고정", tone: .accent, chips: [.init("고객"), .init("숫자", tone: .rose)]),
                     .init("ph", leading: "PH", title: "Your entire strategy is downstream of your ICP", subtitle: "posthog.com/handbook · 8분", body: "고객 후보가 가격, 기능, 마케팅 채널, 콘텐츠 톤, UI 스타일을 결정합니다. 모르는 사람을 위해 만들면 모든 결정이 흐릿해집니다.", tone: .teal, chips: [.init("고객"), .init("맞춤", tone: .teal)]),
                     .init("pg", leading: "PG", title: "Do Things That Don't Scale", subtitle: "paulgraham.com · 에세이 · 15분", body: "첫 30일은 자동화보다 1대1 손작업이 빠릅니다. 첫 5명에게 메뉴바 앱을 직접 설치해 주세요.", tone: .amber, chips: [.init("고객"), .init("제약", tone: .amber)]),
                     .init("yc", leading: "YC", title: "How to Talk to Users", subtitle: "Startup School · 강연 · 32분", body: "지금 가장 큰 문제 1개, 마지막 발생 시점, 그때 어떻게 해결했는가. 이 3개로 시작하세요.", tone: .sky, chips: [.init("고객"), .init("숫자", tone: .rose)]),
@@ -1063,7 +1063,7 @@ private enum OpenDesignNewsCatalog {
             original: "Rob Fitzpatrick · 2013 · \"How to talk to customers when everyone is lying to you\"",
             quote: "\"Would you buy this?\"는 최악의 질문입니다. 중요한 데이터는 그들이 문제에 대해 실제로 무엇을 했는가입니다.",
             takeLead: "Day 1 적용",
-            takeBody: "오늘 인터뷰 4지선다 마지막에 한 번만 더 물으세요. \"지난주에 이 문제 때문에 뭘 시도했나요?\" 칭찬형 답이 사라지고, 진짜 시간을 쓴 사람만 남습니다.",
+            takeBody: "오늘 인터뷰 4지선다 마지막에 한 번만 더 물으세요. \"지난주에 이 문제 때문에 뭘 시도했나요?\" 칭찬형 답이 사라지고 진짜 시간을 쓴 사람만 남습니다.",
             applyWhen: "Day 1 · Day 2 · Day 3",
             values: [.customer, .numbers],
             type: .sourceBook,
@@ -1183,7 +1183,7 @@ private enum OpenDesignNewsCatalog {
             original: "Tyler Tringas · MicroAcquire · Earnest Capital",
             quote: nil,
             takeLead: "고객 후보에게 직접",
-            takeBody: "전업 1인 개발자는 투자 받아야 진짜라는 환각을 가집니다. 30일 목표를 투자가 아니라 첫 매출 1원으로 잡으세요.",
+            takeBody: "전업 1인 개발자는 투자 받아야 진짜라는 환각에 빠집니다. 30일 목표를 투자가 아니라 첫 매출 1원으로 잡으세요.",
             applyWhen: "Day 22+",
             values: [.constraint, .adaptive],
             type: .sourceEssay,
@@ -1283,7 +1283,7 @@ private enum OpenDesignNewsCatalog {
             original: "Naval Ravikant · AngelList · 2018-05-31 thread",
             quote: nil,
             takeLead: "1인 개발자의 레버리지",
-            takeBody: "코드와 미디어는 0의 한계비용이고, 1인 개발자가 동시에 굴릴 수 있는 유일한 두 가지입니다. 공개 기록은 부가가 아니라 필수 지렛대입니다.",
+            takeBody: "코드와 미디어는 0의 한계비용이고 1인 개발자가 동시에 굴릴 수 있는 유일한 두 가지입니다. 공개 기록은 부가가 아니라 필수 지렛대입니다.",
             applyWhen: "Day 18-30",
             values: [.ship, .constraint],
             type: .sourceEssay,
@@ -2160,7 +2160,7 @@ private struct OpenDesignBipBriefCard: View {
                         .foregroundStyle(OpenDesignDayColor.fg)
                         .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text(snapshot.briefBody ?? "웹 자료 검색 결과를 원문 확인으로 다시 읽고, 실제 원문 URL이 있는 후보만 표시합니다.")
+                    Text(snapshot.briefBody ?? "웹 자료 검색 결과를 원문 확인으로 다시 읽고 실제 원문 URL이 있는 후보만 표시합니다.")
                         .font(.system(size: 13, weight: .regular))
                         .foregroundStyle(OpenDesignDayColor.fgSecondary)
                         .lineSpacing(4)
@@ -4146,7 +4146,7 @@ private struct OpenDesignNewsMetaPanelView: View {
                     .foregroundStyle(OpenDesignDayColor.muted)
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("VALUES.md의 6개 원칙을 외부 1차 자료로 보강했어요. 이번 주는 고객 후보가 Day 1-7 초기 검증 단계라, 고객 인터뷰 · 첫 매출 · 공개 기록 첫 글에 직접 쓸 수 있는 자료를 우선 큐레이션했습니다.")
+                    Text("VALUES.md의 6개 원칙을 외부 1차 자료로 보강했습니다. 이번 주는 고객 후보가 Day 1-7 초기 검증 단계라, 고객 인터뷰 · 첫 매출 · 공개 기록 첫 글에 직접 쓸 수 있는 자료를 우선 큐레이션했습니다.")
                         .font(.system(size: 12, weight: .regular))
                         .foregroundStyle(OpenDesignDayColor.fgSecondary)
                         .lineSpacing(4)
@@ -6407,7 +6407,7 @@ private struct OpenDesignInterviewUpcoming: Identifiable {
 }
 
 private func openDesignInterviewSummaryText() -> AttributedString {
-    var text = AttributedString("5번 빌드 → 0매출 패턴을 본인이 자각했지만, \"검증 없이 또 만들 것 같다\"는 회피 신호가 강하다. 핵심 통증은 \"누가 쓸지를 모른다\"로 압축된다.")
+    var text = AttributedString("5번 빌드 → 0매출 패턴을 본인이 자각했지만 \"검증 없이 또 만들 것 같다\"는 회피 신호가 강하다. 핵심 통증은 \"누가 쓸지를 모른다\"로 압축된다.")
     text.foregroundColor = OpenDesignDayColor.fg
 
     func apply(_ needle: String, color: Color, background: Color) {
@@ -8674,7 +8674,7 @@ private struct OpenDesignProjectMiniButton: View {
 private struct OpenDesignProjectPathFooter: View {
     var body: some View {
         HStack(spacing: 8) {
-            Text("코드 루트는 여러 개를 붙일 수 있고, 각 루트별로 git 상태와 변경 이벤트를 분리해서 기록합니다.")
+            Text("코드 루트는 여러 개를 붙일 수 있고 각 루트별로 git 상태와 변경 이벤트를 분리해서 기록합니다.")
                 .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                 .foregroundStyle(OpenDesignDayColor.muted)
                 .lineLimit(2)

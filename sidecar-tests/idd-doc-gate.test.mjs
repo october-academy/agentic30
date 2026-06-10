@@ -658,7 +658,7 @@ test("IDD prompt routes choice-based interview questions through plan-style stru
   assert.match(prompt, /devex-review 벤치마크/);
   assert.match(prompt, /TTHW\(Time to Hello World\)/);
   assert.match(prompt, /대안\/리스크\/증거\/실패 모드/);
-  assert.match(prompt, /어떤 대안이 선택되고, 어떤 리스크가 남고, 어떤 증거가 문서에 들어가며/);
+  assert.match(prompt, /어떤 대안이 선택되고 어떤 리스크가 남고 어떤 증거가 문서에 들어가며/);
   assert.match(prompt, /problem\/cause\/fix/);
   assert.match(prompt, /추측하지 말고 증거 출처/);
   assert.match(prompt, /마지막에는 리뷰 체크/);

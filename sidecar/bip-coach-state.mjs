@@ -412,10 +412,10 @@ export function buildBipCoachMissionPrompt({
     `Threads: ${config.threadsHandle ? `@${config.threadsHandle}` : "미설정"}`,
     compact
       ? "오늘은 실패 방지 모드다. 15분 안에 끝나는 관찰글 중심으로 서로 다른 미션 후보 3개를 만든다."
-      : "오늘은 오전 계획 모드다. 서로 다른 글쓰기 각도와 수행 난이도를 가진 미션 후보 3개를 만든다.",
+      : "오늘은 오전 계획 모드다. 글쓰기 각도와 수행 난이도가 서로 다른 미션 후보 3개를 만든다.",
     "",
     "필수 도구 사용 원칙:",
-    "- 미션을 쓰기 전에 agentic30_sidecar.gws_sheets_read로 Google Sheet 메타데이터를 읽고, 선택한 탭의 '<tab>'!A:I 전체 범위를 다시 읽는다.",
+    "- 미션을 쓰기 전에 agentic30_sidecar.gws_sheets_read로 Google Sheet 메타데이터를 읽고 선택한 탭의 '<tab>'!A:I 전체 범위를 다시 읽는다.",
     "- 미션을 쓰기 전에 agentic30_sidecar.gws_docs_read로 Google Doc 업무일지 전체 payload를 읽는다.",
     "- MCP 도구가 없을 때만 read-only gws CLI 명령으로 같은 내용을 직접 확인한다.",
     "- 업무일지 Doc과 SNS 기록 Sheet를 둘 다 전체 확인하기 전에는 미션 JSON을 작성하지 않는다.",
@@ -429,7 +429,7 @@ export function buildBipCoachMissionPrompt({
     "- 둘째 질문은 `/plan-ceo-review` 훈련이다. 10-star product, premise challenge, scope expansion/reduction, narrowest useful version 중 오늘 계획을 더 날카롭게 만드는 질문 하나를 골라 구체적으로 묻는다.",
     "- 이 질문들은 전체 skill을 실행하라는 지시가 아니라 매일 5-10분짜리 사고 훈련이다. 미션 본문이나 eveningChecklist에 `/office-hours:`와 `/plan-ceo-review:` 라벨로 넣는다.",
     "- Sheet/Docs에는 절대 쓰지 않는다. 사용자가 수동으로 붙여넣을 수 있게 안내만 한다.",
-    "- 도구 오류나 권한 문제로 전체 확인이 불가능하면 기록을 상상하지 말고, 사용자가 재인증/연결을 해야 한다는 미션만 반환한다.",
+    "- 도구 오류나 권한 문제로 전체 확인이 불가능하면 기록을 상상하지 말고 사용자가 재인증/연결을 해야 한다는 미션만 반환한다.",
     "",
     "출력은 설명 없이 JSON 하나만 반환한다. Markdown 코드블록도 쓰지 않는다.",
     "스키마:",
@@ -501,7 +501,7 @@ export function buildBipCoachMissionPromptFromEvidence({
     compact
       ? "오늘은 실패 방지 모드다. 15분 안에 끝나는 관찰글 중심으로 미션을 만든다."
       : "오늘은 오전 계획 모드다. 글쓰기 각도와 수행 난이도가 분명한 미션을 만든다.",
-    laneInstruction ? `이번 생성 lane: ${laneInstruction}` : "서로 다른 글쓰기 각도와 수행 난이도를 가진 미션 후보 3개를 만든다.",
+    laneInstruction ? `이번 생성 lane: ${laneInstruction}` : "글쓰기 각도와 수행 난이도가 서로 다른 미션 후보 3개를 만든다.",
     "",
     "필수 판단 원칙:",
     "- Evidence JSON의 sheet.allRows와 doc.text를 모두 근거로 삼는다.",

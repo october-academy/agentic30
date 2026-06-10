@@ -195,7 +195,7 @@ export function deriveReadinessState({
       status: gwsInstallDone ? "done" : (env.npm || resolveNpmBin(env) ? "pending" : "blocked"),
       detail: gwsInstallDone
         ? `gws CLI 확인됨: ${gwsBin}`
-        : "버튼을 누르면 gws CLI를 먼저 확인해요. 이미 있으면 바로 넘어가고, 없을 때만 npm으로 설치해요.",
+        : "버튼을 누르면 gws CLI를 먼저 확인해요. 이미 있으면 바로 넘어가고 없을 때만 npm으로 설치해요.",
     },
     {
       id: "gwsAuth",

@@ -230,7 +230,7 @@ struct IntakeV2BootIntroView: View {
                     .foregroundStyle(IntakeV2Color.textPrimary)
                     .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("컨텍스트를 읽고, 오늘 한 가지를 결정하고, 실행을 추적합니다. Read → Decide → Execute 세 동작이 매일 반복됩니다.")
+                Text("컨텍스트를 읽고 오늘 한 가지를 결정하고 실행을 추적합니다. Read → Decide → Execute 세 동작이 매일 반복됩니다.")
                     .font(.system(size: isNarrow ? 16 : 18, weight: .medium, design: .rounded))
                     .foregroundStyle(IntakeV2Color.textSecondary)
                     .lineSpacing(3)
