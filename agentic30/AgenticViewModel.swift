@@ -11069,6 +11069,7 @@ extension SidecarEvent {
         case needsCommitment
         case gatedStep
         case error
+        case errorKind
         case docType
         case docPath
         case progressText
@@ -11179,6 +11180,7 @@ extension SidecarEvent {
         let stringError = Self.decodeIfPresent(String.self, from: container, forKey: .error)
         let structuredError = Self.decodeIfPresent(BipReadinessError.self, from: container, forKey: .error)
         error = stringError ?? structuredError?.userMessage
+        errorKind = Self.decodeIfPresent(String.self, from: container, forKey: .errorKind)
 
         docType = Self.decodeIfPresent(String.self, from: container, forKey: .docType)
         docPath = Self.decodeIfPresent(String.self, from: container, forKey: .docPath)
