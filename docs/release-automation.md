@@ -125,3 +125,13 @@ curl -I https://updates.agentic30.app/appcast-x64.xml
 ```
 
 Both feeds must return `200`, and the `url=` each references must also return `200`.
+
+## Troubleshooting
+
+Field-tested failure modes from the 2026-06-10/11 release cycles and the guards now in place:
+
+1. **`ERROR: appcast-*.xml was not generated`** — Sparkle's `generate_appcast` names its output after the `SUFeedURL` filename embedded in the app inside the DMG, not always `appcast.xml`. The x64 build therefore produces `appcast-x64.xml` directly. The pipeline asserts the per-arch filename; if this fires, the embedded `SUFeedURL` and `SPARKLE_APPCAST_FILENAME` have drifted apart — fix the feed wiring, don't rename files.
+2. **Job stuck on "initiating connection to the Apple notary service"** — Apple's notary service intermittently hangs mid-upload (observed: 5h46m on a DMG submission, killed only by the 6h runner default). Guards: every `notarytool submit` passes `--timeout 2h` and the job is capped at `timeout-minutes: 180`. The `--timeout` flag only bounds the polling phase, so the job cap is the real backstop. On timeout, just re-run the failed job — the hang is transient.
+3. **Live feed pointing at a 404 DMG** — large DMG PUTs (280MB+) intermittently get `502 Bad Gateway` from Cloudflare's edge. Guards in `upload-sparkle-r2.sh`: the DMG is uploaded and verified publicly fetchable **before** the appcast pointer flips (a failed DMG upload leaves the previous feed intact), and every PUT retries up to 4 times with exponential backoff. If a feed is ever broken anyway, re-cutting a release with a bumped build number fully heals it — Sparkle clients just see the next valid feed state.
+
+A release is only done when both appcasts return `200` **and** the DMG URL inside each also returns `200`.

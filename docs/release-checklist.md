@@ -1,6 +1,6 @@
 # Agentic30 Mac Release Checklist
 
-This checklist is for local dogfood releases of the macOS menu bar app. Public Developer ID distribution needs signing, notarization, updater, and support checks for the PKG primary installer plus the DMG fallback/update archive.
+This checklist is for local dogfood releases of the macOS menu bar app. Public Developer ID distribution ships two notarized DMGs per release — `agentic30-<build>-arm64.dmg` (Apple Silicon) and `agentic30-<build>-x64.dmg` (Intel) — each with its own Sparkle feed (`appcast.xml` / `appcast-x64.xml`).
 
 ## Dogfood Gate
 
@@ -26,9 +26,10 @@ This checklist is for local dogfood releases of the macOS menu bar app. Public D
 
 1. Install the previous signed and notarized build into `/Applications`.
 2. Run `wrangler login`, then run `scripts/setup-sparkle-r2.sh` once to create/connect the `agentic30-sparkle` R2 bucket to `updates.agentic30.app` in the verified `agentic30.app` zone (`b770693582734b1854ac556acd00823f`).
-3. Build a newer release with a greater `CFBundleVersion` using `scripts/build-and-notarize.sh`; the script must embed `SPARKLE_PUBLIC_ED_KEY`, generate `build/appcast/appcast.xml`, and stage `build/appcast/agentic30-<build>-<arch>.dmg`.
-4. Set `SPARKLE_DOWNLOAD_URL_PREFIX=https://updates.agentic30.app/` and `AGENTIC30_UPLOAD_APPCAST_R2=1` so the release script uploads `appcast.xml`, the staged DMG, and any generated release-notes `.md` to the `agentic30-sparkle` R2 bucket through Wrangler.
-5. Before a real appcast is uploaded, confirm routing with a temporary R2 object; `https://updates.agentic30.app/appcast.xml` may correctly return `404` while the file is absent. After upload, confirm `appcast.xml` and the referenced DMG URL return `200`.
+3. Build a newer release with a greater `CFBundleVersion` using `scripts/build-and-notarize.sh` (per arch via `AGENTIC30_BUNDLE_ARCH`); the script must embed `SPARKLE_PUBLIC_ED_KEY` and the per-arch `SUFeedURL`, generate `build/appcast/appcast.xml` (arm64) or `appcast-x64.xml` (x64), and stage `build/appcast/agentic30-<build>-<arch>.dmg`.
+4. Set `SPARKLE_DOWNLOAD_URL_PREFIX=https://updates.agentic30.app/` and `AGENTIC30_UPLOAD_APPCAST_R2=1` so the release script uploads the staged DMG first (verified publicly fetchable, with 502 retries), then flips the appcast pointer.
+5. After upload, confirm both feeds and the DMG URLs they reference return `200`:
+   `curl -I https://updates.agentic30.app/appcast.xml` and `curl -I https://updates.agentic30.app/appcast-x64.xml`.
 6. Launch the older `/Applications` build and use Settings or the app menu `Check for Updates...`.
 7. Confirm Sparkle finds the newer build, validates the signed feed/archive, downloads the update, and completes the standard install/relaunch flow after user approval.
 
@@ -43,7 +44,7 @@ This checklist is for local dogfood releases of the macOS menu bar app. Public D
 
 - The Mac app ships with the Agentic30 PostHog project token embedded so launch telemetry works from Xcode and signed builds without local secrets. This is a public capture token, not a personal API key: it can write events to PostHog ingest but cannot read analytics data or modify project settings. Never embed a personal API key in the app. `POSTHOG_PROJECT_API_KEY` / `POSTHOG_PROJECT_TOKEN` and `POSTHOG_HOST` can still override the defaults for a custom build, and `scripts/build-and-notarize.sh` verifies the exported app contains a `phc_…` token. The Settings opt-out toggle (`agentic30.posthog.telemetryDisabled` UserDefault) lets end users disable per-device.
 - Use a `go.agentic30.app` short URL for the Threads launch link so PostHog receives `short_link_click` from the URL shortener.
-- After uploading the PKG and DMG to GitHub Releases, run `npm run track:release-funnel -- --repo october-academy/agentic30-private --tag <release-tag>` on a short interval during launch day. The script polls `gh api` release asset `download_count` and emits one `installer_downloaded` event per new PKG/DMG download.
+- After the DMGs land on GitHub Releases, run `npm run track:release-funnel -- --repo october-academy/agentic30-private --tag <release-tag>` on a short interval during launch day. The script polls `gh api` release asset `download_count` and emits one `installer_downloaded` event per new DMG download.
 - Confirm the signed app emits `mac_install_completed` once on first launch, gated on a fresh `agentic30.posthog.distinctId` so existing users who upgrade to this build do not fire the install event. The legacy `dmg_install_completed` event is still emitted for old dashboards.
 - The A4 funnel landed in this slice: `short_link_click` → `installer_downloaded` → `mac_install_completed`.
 - Host-routed sidecar telemetry for `workspace_setup_started`, `workspace_setup_failed`, and `workspace_setup_completed` is wired. `workspace_setup_completed` is gated on workspace scan success plus first real input, so use it as the workspace-setup funnel terminator only after confirming the events in local telemetry capture or PostHog for the signed artifact.
@@ -51,10 +52,10 @@ This checklist is for local dogfood releases of the macOS menu bar app. Public D
 ## Public Distribution Blockers
 
 - Developer ID signing and Hardened Runtime.
-- Notarized PKG and DMG.
+- Notarized DMGs for both architectures (arm64 + Intel x64).
 - Update channel and rollback path.
 - Supportable diagnostics export.
 - Clear privacy copy for local project access, provider calls, and Google proof reads.
-- Fresh macOS user smoke with no local Node.js installed: install PKG, launch, confirm sidecar starts from the bundled runtime and no Gatekeeper “Open Anyway” path is required.
-- Sparkle smoke from an older notarized build installed in `/Applications` to a newer notarized DMG referenced by `https://updates.agentic30.app/appcast.xml`, including background download and user-approved install/relaunch.
+- Fresh macOS user smoke with no local Node.js installed: install from the DMG, launch, confirm sidecar starts from the bundled runtime and no Gatekeeper “Open Anyway” path is required. Repeat on an Intel Mac (or Rosetta-free x64 VM) with the x64 DMG.
+- Sparkle smoke from an older notarized build installed in `/Applications` to a newer notarized DMG referenced by its arch feed (`appcast.xml` for arm64, `appcast-x64.xml` for Intel), including background download and user-approved install/relaunch.
 - Keep `https://agentic30.app/appcast.xml` available or redirected during the transition so previously shipped builds that still point at the apex feed are not stranded.
