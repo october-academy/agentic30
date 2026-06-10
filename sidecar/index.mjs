@@ -3198,22 +3198,11 @@ async function runPrompt(
         });
       }
     } else {
-      const usageLimited = isRecoverableProviderQuotaError(error);
-      if (usageLimited) {
-        // Expected upstream Codex/ChatGPT quota condition — track it as a benign
-        // event so it does not surface as a generic captured exception.
-        telemetry.captureEvent("mac_sidecar_provider_usage_limit", {
-          operation: "runPrompt",
-          session_id: session.id,
-          provider: session.provider,
-      });
-      } else {
-        telemetry.captureException(error, {
-          operation: "runPrompt",
-          session_id: session.id,
-          provider: session.provider,
-      });
-      }
+      const usageLimited = reportProviderRunError(error, {
+        operation: "runPrompt",
+        session_id: session.id,
+        provider: session.provider,
+    });
       assistantMessage.state = "error";
       assistantMessage.error = formatError(error);
       const authActions = buildProviderAuthActionsForError(session.provider, assistantMessage.error);
@@ -3246,9 +3235,7 @@ async function runPrompt(
         type: "error",
         sessionId: session.id,
         message: assistantMessage.error,
-        ...(usageLimited
-          ? { errorKind: PROVIDER_USAGE_LIMIT_ERROR_KIND, recoverable: true }
-          : {}),
+        ...providerQuotaErrorEnvelope(usageLimited),
     });
     }
   } finally {
@@ -3825,24 +3812,12 @@ async function runUnifiedFoundationChat(
         transport,
     });
     } else {
-      const usageLimited = isRecoverableProviderQuotaError(error);
-      if (usageLimited) {
-        // Expected upstream Codex/ChatGPT quota condition — track it as a benign
-        // event so it does not surface as a generic captured exception.
-        telemetry.captureEvent("mac_sidecar_provider_usage_limit", {
-          operation: "runUnifiedFoundationChat",
-          session_id: session.id,
-          provider: session.provider,
-          day: foundationContext.day,
-      });
-      } else {
-        telemetry.captureException(error, {
-          operation: "runUnifiedFoundationChat",
-          session_id: session.id,
-          provider: session.provider,
-          day: foundationContext.day,
-      });
-      }
+      const usageLimited = reportProviderRunError(error, {
+        operation: "runUnifiedFoundationChat",
+        session_id: session.id,
+        provider: session.provider,
+        day: foundationContext.day,
+    });
       assistantMessage.state = "error";
       assistantMessage.error = formatError(error);
       const authActions = buildProviderAuthActionsForError(session.provider, assistantMessage.error);
@@ -3866,9 +3841,7 @@ async function runUnifiedFoundationChat(
         type: "error",
         sessionId: session.id,
         message: assistantMessage.error,
-        ...(usageLimited
-          ? { errorKind: PROVIDER_USAGE_LIMIT_ERROR_KIND, recoverable: true }
-          : {}),
+        ...providerQuotaErrorEnvelope(usageLimited),
     });
     }
   } finally {
@@ -12386,6 +12359,32 @@ const PROVIDER_USAGE_LIMIT_ERROR_KIND = "provider_usage_limit";
  */
 function isRecoverableProviderQuotaError(error) {
   return isCodexUsageLimitError(error);
+}
+
+/**
+ * Routes a failed provider-run error to telemetry: a benign event for expected
+ * quota caps, a captured exception otherwise. Returns whether the error was a
+ * recoverable quota condition so the caller can mark the run recoverable and
+ * tag the broadcast envelope. `captureProps` is shared between both lanes.
+ */
+function reportProviderRunError(error, captureProps) {
+  if (isRecoverableProviderQuotaError(error)) {
+    telemetry.captureEvent("mac_sidecar_provider_usage_limit", captureProps);
+    return true;
+  }
+  telemetry.captureException(error, captureProps);
+  return false;
+}
+
+/**
+ * Extra fields added to a `type: "error"` broadcast when the failure was a
+ * recoverable provider quota cap, so the Mac side can surface a "retry later /
+ * switch provider" message instead of capturing a generic exception.
+ */
+function providerQuotaErrorEnvelope(usageLimited) {
+  return usageLimited
+    ? { errorKind: PROVIDER_USAGE_LIMIT_ERROR_KIND, recoverable: true }
+    : {};
 }
 
 function readApiKey(provider) {
