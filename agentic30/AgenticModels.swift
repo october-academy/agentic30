@@ -132,6 +132,7 @@ struct AgentModelOption: Identifiable, Hashable {
 
 enum AgentModelCatalog {
     static let claude: [AgentModelOption] = [
+        AgentModelOption(id: "claude-fable-5", label: "Claude Fable 5", provider: .claude),
         AgentModelOption(id: "claude-opus-4-8", label: "Claude Opus 4.8 (Best)", provider: .claude, isRecommended: true),
         AgentModelOption(id: "claude-opus-4-7", label: "Claude Opus 4.7", provider: .claude),
         AgentModelOption(id: "claude-opus-4-6", label: "Claude Opus 4.6", provider: .claude),
@@ -248,6 +249,12 @@ struct ChatMessage: Identifiable, Codable, Hashable {
     /// the Office Hours emphasis vocabulary; when nil/empty the bubble renders
     /// `content` as plain text exactly as before (backward compatible).
     var emphasis: [EmphasisSpan]? = nil
+    /// True on transcript rows the sidecar seeded from the workspace turn log
+    /// when resuming a Day-1 Office Hours interview after a relaunch. Restored
+    /// history has no live submitted-card snapshot, so the client uses this to
+    /// keep seeded questions visible during the resumed run and to keep seeded
+    /// answers out of snapshot dedup. Backward compatible: absent -> nil.
+    var officeHoursSeededTurn: Bool? = nil
 }
 
 struct OfficeHoursTranscriptRow: Identifiable, Hashable {
@@ -272,6 +279,10 @@ struct OfficeHoursTranscriptRow: Identifiable, Hashable {
     /// for user rows and for assistant rows without emphasis, in which case the
     /// bubble renders plain text (backward compatible).
     var emphasis: [EmphasisSpan] = []
+    /// Forwarded from `ChatMessage.officeHoursSeededTurn`: this row was
+    /// restored from the workspace turn log by the Day-1 interview resume and
+    /// has no live submitted-card snapshot backing it.
+    var isSeededInterviewTurn: Bool = false
 
     var isUser: Bool { kind == .user }
     var isAssistant: Bool { kind == .assistant || kind == .system }
@@ -309,7 +320,8 @@ struct OfficeHoursTranscriptRow: Identifiable, Hashable {
                 content: trimmedContent,
                 state: message.state,
                 error: nil,
-                lineLimit: nil
+                lineLimit: nil,
+                isSeededInterviewTurn: message.officeHoursSeededTurn == true
             )
         case .assistant, .system:
             guard !trimmedContent.isEmpty
@@ -331,7 +343,8 @@ struct OfficeHoursTranscriptRow: Identifiable, Hashable {
                 state: message.state,
                 error: trimmedError,
                 lineLimit: nil,
-                emphasis: message.emphasis ?? []
+                emphasis: message.emphasis ?? [],
+                isSeededInterviewTurn: message.officeHoursSeededTurn == true
             )
         }
     }
@@ -409,6 +422,8 @@ nonisolated struct OfficeHoursSourceStatus: Codable, Hashable, Identifiable {
     var counts: [String: Int]?
     var highlights: [String]?
     var summary: String?
+    var goalSignals: [String]?
+    var evidenceGaps: [String]?
 }
 
 nonisolated struct OfficeHoursSourceConnectAction: Codable, Hashable, Identifiable {
@@ -417,6 +432,307 @@ nonisolated struct OfficeHoursSourceConnectAction: Codable, Hashable, Identifiab
     var label: String
     var detail: String
     var settingsSection: String?
+}
+
+nonisolated struct OfficeHoursDailyDigest: Codable, Hashable {
+    var schemaVersion: Int?
+    var generatedAt: String?
+    var day: Int?
+    var window: OfficeHoursDigestWindow?
+    var sources: [OfficeHoursSourceStatus]
+    var buildWithoutCustomerEvidence: Bool?
+    var briefing: OfficeHoursDigestBriefing?
+
+    func applies(to activeDay: Int) -> Bool {
+        guard let day else { return true }
+        return day == activeDay
+    }
+}
+
+nonisolated struct OfficeHoursDigestWindow: Codable, Hashable {
+    var startIso: String?
+    var untilIso: String?
+    var localStartDate: String?
+    var localUntilDate: String?
+    var label: String?
+}
+
+nonisolated struct OfficeHoursDigestBriefing: Codable, Hashable {
+    var goalStatus: [String]?
+    var overnightChanges: [String]?
+    var goalHelpfulSignals: [String]?
+    var biggestEvidenceGap: [String]?
+}
+
+// MARK: - Morning briefing (sidecar/morning-briefing.mjs)
+
+nonisolated struct MorningBriefing: Codable, Hashable {
+    var schemaVersion: Int?
+    var generatedAt: String?
+    var day: Int?
+    var totalDays: Int?
+    var phase: String?
+    var window: OfficeHoursDigestWindow?
+    var summary: MorningBriefingSummary?
+    var cards: [MorningBriefingCard]?
+    var timeline: [MorningBriefingTimelineEvent]?
+    var anomaly: MorningBriefingAnomaly?
+    var actions: [MorningBriefingActionDraft]?
+    var sync: MorningBriefingSync?
+    var status: MorningBriefingStatus?
+    var historyDates: [String]?
+}
+
+nonisolated struct MorningBriefingSummary: Codable, Hashable {
+    var title: String?
+    var windowLabel: String?
+    var statement: String?
+    var crits: [MorningBriefingSummaryCrit]?
+}
+
+nonisolated struct MorningBriefingSummaryCrit: Codable, Hashable {
+    var source: String?
+    var label: String?
+    var value: String?
+    var direction: String?
+}
+
+nonisolated struct MorningBriefingCard: Codable, Hashable, Identifiable {
+    var id: String
+    var label: String?
+    var subtitle: String?
+    var state: String?
+    var metric: MorningBriefingMetric?
+    var rows: [MorningBriefingCardRow]?
+    var spark: [Double]?
+    var note: String?
+    var noteTone: String?
+    var highlights: [String]?
+
+    var isReady: Bool { state == "ready" }
+}
+
+nonisolated struct MorningBriefingMetric: Codable, Hashable {
+    var value: Double?
+    var unit: String?
+    var deltaLabel: String?
+    var direction: String?
+    var versusLabel: String?
+}
+
+nonisolated struct MorningBriefingCardRow: Codable, Hashable {
+    var k: String?
+    var v: String?
+}
+
+nonisolated struct MorningBriefingTimelineEvent: Codable, Hashable {
+    var at: String?
+    var timeLabel: String?
+    var source: String?
+    var text: String?
+}
+
+nonisolated struct MorningBriefingAnomaly: Codable, Hashable {
+    var id: String?
+    var kind: String?
+    var title: String?
+    var question: String?
+    var evidence: String?
+    var options: [MorningBriefingAnomalyOption]?
+    var label: String?
+    var labeledAt: String?
+}
+
+nonisolated struct MorningBriefingAnomalyOption: Codable, Hashable, Identifiable {
+    var id: String
+    var title: String?
+    var detail: String?
+    var tail: String?
+}
+
+nonisolated struct MorningBriefingActionDraft: Codable, Hashable, Identifiable {
+    var id: String
+    var kind: String?
+    var badge: String?
+    var title: String?
+    var subtitle: String?
+    var body: String?
+    var why: String?
+    var copyText: String?
+    var applyLabel: String?
+    var tasks: [MorningBriefingActionTask]?
+}
+
+nonisolated struct MorningBriefingActionTask: Codable, Hashable {
+    var title: String?
+    var tag: String?
+}
+
+nonisolated struct MorningBriefingSync: Codable, Hashable {
+    var sources: [MorningBriefingSyncSource]?
+    var readyCount: Int?
+    var syncedAt: String?
+    var syncedAtLabel: String?
+}
+
+nonisolated struct MorningBriefingSyncSource: Codable, Hashable, Identifiable {
+    var id: String
+    var label: String?
+    var state: String?
+    var selected: Bool?
+    var detail: String?
+}
+
+nonisolated struct MorningBriefingStatus: Codable, Hashable {
+    var state: String?
+    var detail: String?
+}
+
+extension MorningBriefing {
+    /// Deterministic fixture for hermetic UI tests (`--ui-testing-stub-morning-briefing-events`).
+    /// Mirrors the OD agentic30-morning-briefing.html reference content so screenshots stay stable.
+    nonisolated static let uiTestingSample = MorningBriefing(
+        schemaVersion: 1,
+        generatedAt: "2026-06-10T00:00:00.000Z",
+        day: 12,
+        totalDays: 30,
+        phase: "Build",
+        window: OfficeHoursDigestWindow(
+            startIso: "2026-06-09T00:00:00.000Z",
+            untilIso: "2026-06-10T00:00:00.000Z",
+            localStartDate: "2026-06-09",
+            localUntilDate: "2026-06-10",
+            label: "2026-06-09 00:00 -> 2026-06-10 now"
+        ),
+        summary: MorningBriefingSummary(
+            title: "overnight digest",
+            windowLabel: "2026-06-09 00:00 -> 2026-06-10 now",
+            statement: "밤사이 가장 큰 변화는 PostHog 활성 사용자 ▼ 56% 하락이에요. Cloudflare 방문은 어제보다 늘었지만, 늘어난 유입이 온보딩에서 빠지고 있어요.",
+            crits: [
+                MorningBriefingSummaryCrit(source: "Cloudflare", label: "순 방문", value: "▲ 56%", direction: "up"),
+                MorningBriefingSummaryCrit(source: "GitHub", label: "커밋", value: "▲ 50%", direction: "up"),
+                MorningBriefingSummaryCrit(source: "PostHog", label: "활성 사용자", value: "▼ 56%", direction: "down"),
+            ]
+        ),
+        cards: [
+            MorningBriefingCard(
+                id: "cloudflare",
+                label: "Cloudflare",
+                subtitle: "트래픽 · 방문 추이",
+                state: "ready",
+                metric: MorningBriefingMetric(value: 64, unit: "순 방문", deltaLabel: "▲ 56%", direction: "up", versusLabel: "어제 41"),
+                rows: [MorningBriefingCardRow(k: "페이지뷰", v: "188")],
+                spark: [38, 41, 64],
+                note: "방문 증가",
+                noteTone: "info",
+                highlights: ["방문 증가"]
+            ),
+            MorningBriefingCard(
+                id: "github",
+                label: "GitHub",
+                subtitle: "커밋 · PR · 배포",
+                state: "ready",
+                metric: MorningBriefingMetric(value: 9, unit: "커밋", deltaLabel: "▲ 50%", direction: "up", versusLabel: "어제 6"),
+                rows: [
+                    MorningBriefingCardRow(k: "PR 업데이트", v: "2"),
+                    MorningBriefingCardRow(k: "릴리즈", v: "1"),
+                ],
+                spark: [4, 6, 9],
+                note: "PR #43 리뷰 대기",
+                noteTone: "info",
+                highlights: ["PR 업데이트 2건"]
+            ),
+            MorningBriefingCard(
+                id: "posthog",
+                label: "PostHog",
+                subtitle: "활성 사용자 · 이벤트",
+                state: "ready",
+                metric: MorningBriefingMetric(value: 11, unit: "활성 사용자", deltaLabel: "▼ 56%", direction: "down", versusLabel: "어제 25"),
+                rows: [
+                    MorningBriefingCardRow(k: "이벤트", v: "188"),
+                    MorningBriefingCardRow(k: "전환", v: "2"),
+                ],
+                spark: [22, 25, 11],
+                note: "온보딩 2단계 이탈 원인 미확인",
+                noteTone: "warn",
+                highlights: ["활성 사용자 추이 하락"]
+            ),
+        ],
+        timeline: [
+            MorningBriefingTimelineEvent(at: "2026-06-09T18:12:00.000Z", timeLabel: "03:12", source: "github", text: "커밋 · feat: onboarding step trim"),
+            MorningBriefingTimelineEvent(at: "2026-06-09T18:30:00.000Z", timeLabel: "03:30", source: "github", text: "PR #43 open · 리텐션 이벤트 보강"),
+        ],
+        anomaly: MorningBriefingAnomaly(
+            id: "metric_drop_posthog",
+            kind: "metric_drop",
+            title: "PostHog 신호 하락",
+            question: "PostHog 활성 사용자가 어제 25 → 11로 떨어졌어요. 한 가지로 라벨링하면 오늘 액션이 달라져요.",
+            evidence: "근거: PostHog 활성 사용자 ▼ 56%",
+            options: [
+                MorningBriefingAnomalyOption(id: "real_churn", title: "실제 이탈이다", detail: "신호 하락이 실제 사용자 행동 변화로 보입니다.", tail: "메시지 + 실험"),
+                MorningBriefingAnomalyOption(id: "tracking_gap", title: "추적 누락이다", detail: "이벤트가 일부 안 잡혔을 수 있습니다.", tail: "계측 우선"),
+                MorningBriefingAnomalyOption(id: "small_sample", title: "표본이 너무 작다", detail: "표본이 작아 한두 명 변화가 크게 보입니다.", tail: "판단 보류"),
+                MorningBriefingAnomalyOption(id: "custom", title: "다르게 본다", detail: "직접 라벨을 남깁니다.", tail: "직접 입력"),
+            ],
+            label: nil,
+            labeledAt: nil
+        ),
+        actions: [
+            MorningBriefingActionDraft(
+                id: "message",
+                kind: "message",
+                badge: "메시지",
+                title: "PostHog 신호 하락 관련 사용자에게 보낼 DM",
+                subtitle: "Mom Test 톤 · 답을 유도하지 않는 질문",
+                body: "안녕하세요 {이름}님, Agentic30 만들고 있는 zettalyst예요.",
+                why: "이탈/정체 원인은 1:1로 물어보면 가장 빨리 잡혀요.",
+                copyText: "안녕하세요 {이름}님, Agentic30 만들고 있는 zettalyst예요.",
+                applyLabel: "큐에 추가",
+                tasks: []
+            ),
+            MorningBriefingActionDraft(
+                id: "experiment",
+                kind: "experiment",
+                badge: "실험",
+                title: "증거 공백을 좁히는 실험",
+                subtitle: "가설 · 측정지표 초안",
+                body: "# 실험: evidence-gap-probe",
+                why: "공백이 한 곳에 몰려 있으면, 그 지점을 검증하는 게 가장 깨끗해요.",
+                copyText: "# 실험: evidence-gap-probe",
+                applyLabel: "실험 생성",
+                tasks: []
+            ),
+            MorningBriefingActionDraft(
+                id: "task",
+                kind: "task",
+                badge: "태스크",
+                title: "오늘 빌드에 추가할 태스크",
+                subtitle: "증거 신뢰도부터 확보",
+                body: "",
+                why: "추적이 못 믿을 상태면 실험 결과도 못 믿어요.",
+                copyText: "PR #43 머지 / 온보딩 깔때기 고정 / 샘플 프로젝트 시드",
+                applyLabel: "오늘 태스크에 추가",
+                tasks: [
+                    MorningBriefingActionTask(title: "PR #43 머지 — 리텐션 이벤트 보강", tag: "신뢰도"),
+                    MorningBriefingActionTask(title: "온보딩 2단계 깔때기 대시보드 고정", tag: "관측"),
+                    MorningBriefingActionTask(title: "샘플 프로젝트 시드 1개 만들기", tag: "빌드"),
+                ]
+            ),
+        ],
+        sync: MorningBriefingSync(
+            sources: [
+                MorningBriefingSyncSource(id: "git", label: "git", state: "ready", selected: true, detail: "git log/status live query succeeded"),
+                MorningBriefingSyncSource(id: "gh_cli", label: "gh CLI", state: "ready", selected: true, detail: "gh CLI live query succeeded"),
+                MorningBriefingSyncSource(id: "posthog", label: "PostHog", state: "ready", selected: true, detail: "external MCP digest succeeded"),
+                MorningBriefingSyncSource(id: "cloudflare", label: "Cloudflare", state: "ready", selected: true, detail: "external MCP digest succeeded"),
+            ],
+            readyCount: 4,
+            syncedAt: "2026-06-10T00:00:00.000Z",
+            syncedAtLabel: "09:00"
+        ),
+        status: MorningBriefingStatus(state: "ready", detail: "소스 4개에서 밤사이 신호를 모았어요."),
+        historyDates: ["2026-06-09", "2026-06-08", "2026-06-07"]
+    )
 }
 
 struct OfficeHoursLiveStatus: Hashable {

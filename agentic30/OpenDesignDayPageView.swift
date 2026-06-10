@@ -32,6 +32,7 @@ struct OpenDesignDayContent {
             case today
             case search
             case officeHours
+            case morningBriefing
             case settings
             case inert
         }
@@ -416,6 +417,7 @@ struct OpenDesignDayContent {
     ) -> [RailItem] {
         visibleRailItems([
             RailItem(id: "today", title: todayTitle, systemImage: "calendar", isActive: true, hasNewDot: false, route: todayRoute),
+            RailItem(id: "briefing", title: "아침 브리핑", systemImage: "sunrise", isActive: false, hasNewDot: false, route: .morningBriefing),
             RailItem(id: "settings", title: "설정", systemImage: "gearshape", isActive: false, hasNewDot: false, route: .settings),
         ], showsDevelopmentOnlyReferencePages: showsDevelopmentOnlyReferencePages)
     }
@@ -3147,6 +3149,7 @@ struct OpenDesignDayPageView: View {
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
     let officeHoursScreen: ((Bool) -> AnyView)?
+    let morningBriefingScreen: AnyView?
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
     let day1HandoffError: String?
@@ -3162,6 +3165,7 @@ struct OpenDesignDayPageView: View {
     @Binding private var interaction: OpenDesignDayInteractionState
     @Binding private var selectedReferencePage: OpenDesignReferencePageKind?
     @Binding private var isOfficeHoursPresented: Bool
+    @Binding private var isMorningBriefingPresented: Bool
     @State private var isSearchPresented = false
     @State private var searchQuery = ""
     @State private var selectedSearchIndex = 0
@@ -3178,6 +3182,7 @@ struct OpenDesignDayPageView: View {
         interaction: Binding<OpenDesignDayInteractionState>,
         selectedReferencePage: Binding<OpenDesignReferencePageKind?> = .constant(nil),
         isOfficeHoursPresented: Binding<Bool> = .constant(false),
+        isMorningBriefingPresented: Binding<Bool> = .constant(false),
         openSettings: @escaping () -> Void,
         settingsScreen: AnyView? = nil,
         requiresDay1Goal: Bool = false,
@@ -3200,6 +3205,7 @@ struct OpenDesignDayPageView: View {
         day1DocPreviews: [IddDocPreview] = [],
         day1HandoffPromptCard: AnyView? = nil,
         officeHoursScreen: ((Bool) -> AnyView)? = nil,
+        morningBriefingScreen: AnyView? = nil,
         activeDay1HandoffDocType: String? = nil,
         pendingDay1HandoffDocType: String? = nil,
         day1HandoffError: String? = nil,
@@ -3215,6 +3221,7 @@ struct OpenDesignDayPageView: View {
         _interaction = interaction
         _selectedReferencePage = selectedReferencePage
         _isOfficeHoursPresented = isOfficeHoursPresented
+        _isMorningBriefingPresented = isMorningBriefingPresented
         self.openSettings = openSettings
         self.settingsScreen = settingsScreen
         self.requiresDay1Goal = requiresDay1Goal
@@ -3237,6 +3244,7 @@ struct OpenDesignDayPageView: View {
         self.day1DocPreviews = day1DocPreviews
         self.day1HandoffPromptCard = day1HandoffPromptCard
         self.officeHoursScreen = officeHoursScreen
+        self.morningBriefingScreen = morningBriefingScreen
         self.activeDay1HandoffDocType = activeDay1HandoffDocType
         self.pendingDay1HandoffDocType = pendingDay1HandoffDocType
         self.day1HandoffError = day1HandoffError
@@ -3274,6 +3282,7 @@ struct OpenDesignDayPageView: View {
                     interaction: $interaction,
                     selectedReferencePage: selectedReferencePage,
                     isOfficeHoursPresented: effectiveOfficeHoursPresented,
+                    isMorningBriefingPresented: effectiveMorningBriefingPresented,
                     pendingScrollRequest: $pendingScrollRequest,
                     searchPulseTarget: $searchPulseTarget,
                     layout: layout,
@@ -3301,6 +3310,7 @@ struct OpenDesignDayPageView: View {
                     day1DocPreviews: day1DocPreviews,
                     day1HandoffPromptCard: day1HandoffPromptCard,
                     officeHoursScreen: officeHoursScreen,
+                    morningBriefingScreen: morningBriefingScreen,
                     isOfficeHoursRightSidebarExpanded: isOfficeHoursRightSidebarExpanded,
                     isOfficeHoursRightSidebarVisible: officeHoursLayout.showsMeta,
                     activeDay1HandoffDocType: activeDay1HandoffDocType,
@@ -3494,12 +3504,16 @@ struct OpenDesignDayPageView: View {
             closeSearch()
             selectedReferencePage = nil
             isOfficeHoursPresented = false
+            isMorningBriefingPresented = false
             openSettings()
         case .search:
             openSearch()
         case .officeHours:
             closeSearch()
             openOfficeHoursFromRail()
+        case .morningBriefing:
+            closeSearch()
+            openMorningBriefingFromRail()
         case .today, .inert:
             closeSearch()
             if routesTodayToOfficeHours {
@@ -3508,6 +3522,7 @@ struct OpenDesignDayPageView: View {
             }
             selectedReferencePage = nil
             isOfficeHoursPresented = false
+            isMorningBriefingPresented = false
             let target = OpenDesignSectionAnchor(rawValue: item.targetSectionID ?? "") ?? .top
             revealIntroIfNeeded(for: target)
             focusWorkflowStepIfNeeded(for: target)
@@ -3553,11 +3568,14 @@ struct OpenDesignDayPageView: View {
         case .settings:
             selectedReferencePage = nil
             isOfficeHoursPresented = false
+            isMorningBriefingPresented = false
             openSettings()
         case .search:
             openSearch()
         case .officeHours:
             openOfficeHoursFromRail()
+        case .morningBriefing:
+            openMorningBriefingFromRail()
         case .today:
             openTodayFromRail()
         case .inert:
@@ -3572,6 +3590,7 @@ struct OpenDesignDayPageView: View {
         }
         selectedReferencePage = nil
         isOfficeHoursPresented = false
+        isMorningBriefingPresented = false
         requestScroll(to: .top)
     }
 
@@ -3579,6 +3598,15 @@ struct OpenDesignDayPageView: View {
         selectedReferencePage = nil
         withAnimation(.spring(response: reduceMotion ? 0 : 0.24, dampingFraction: 0.90)) {
             isOfficeHoursPresented = true
+            isMorningBriefingPresented = false
+        }
+    }
+
+    private func openMorningBriefingFromRail() {
+        selectedReferencePage = nil
+        withAnimation(.spring(response: reduceMotion ? 0 : 0.24, dampingFraction: 0.90)) {
+            isOfficeHoursPresented = false
+            isMorningBriefingPresented = true
         }
     }
 
@@ -3862,7 +3890,14 @@ struct OpenDesignDayPageView: View {
         if selectedReferencePage != nil {
             return false
         }
+        if isMorningBriefingPresented {
+            return false
+        }
         return isOfficeHoursPresented || routesTodayToOfficeHours
+    }
+
+    private var effectiveMorningBriefingPresented: Bool {
+        selectedReferencePage == nil && isMorningBriefingPresented
     }
 }
 
@@ -3871,6 +3906,7 @@ struct OpenDesignDayShell: View {
     @Binding var interaction: OpenDesignDayInteractionState
     let selectedReferencePage: OpenDesignReferencePageKind?
     let isOfficeHoursPresented: Bool
+    let isMorningBriefingPresented: Bool
     @Binding var pendingScrollRequest: OpenDesignScrollRequest?
     @Binding var searchPulseTarget: String?
     let layout: OpenDesignDayLayoutMetrics
@@ -3898,6 +3934,7 @@ struct OpenDesignDayShell: View {
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
     let officeHoursScreen: ((Bool) -> AnyView)?
+    let morningBriefingScreen: AnyView?
     let isOfficeHoursRightSidebarExpanded: Bool
     let isOfficeHoursRightSidebarVisible: Bool
     let activeDay1HandoffDocType: String?
@@ -3957,6 +3994,7 @@ struct OpenDesignDayShell: View {
                     OpenDesignRailView(
                         content: content,
                         isOfficeHoursPresented: isOfficeHoursPresented,
+                        isMorningBriefingPresented: isMorningBriefingPresented,
                         railWidth: layout.railWidth,
                         selectedReferencePage: selectedReferencePage,
                         activate: activateRailItem
@@ -4001,6 +4039,16 @@ struct OpenDesignDayShell: View {
                             prepareWorkHistory: prepareWorkHistory
                         )
                         .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.995)))
+                    }
+                } else if isMorningBriefingPresented {
+                    if let morningBriefingScreen {
+                        morningBriefingScreen
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.995)))
+                    } else {
+                        OpenDesignOfficeHoursUnavailableView()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .transition(.opacity)
                     }
                 } else if isOfficeHoursPresented {
                     if let officeHoursScreen {
@@ -4370,11 +4418,15 @@ private struct OpenDesignToolbarButton: View {
 private struct OpenDesignRailView: View {
     let content: OpenDesignDayContent
     let isOfficeHoursPresented: Bool
+    let isMorningBriefingPresented: Bool
     let railWidth: CGFloat
     let selectedReferencePage: OpenDesignReferencePageKind?
     let activate: (OpenDesignDayContent.RailItem) -> Void
 
     private var activeItemID: String {
+        if isMorningBriefingPresented {
+            return "briefing"
+        }
         if isOfficeHoursPresented {
             return "today"
         }

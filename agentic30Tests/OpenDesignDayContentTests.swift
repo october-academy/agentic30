@@ -147,6 +147,70 @@ struct OpenDesignDayContentTests {
         #expect(concludedRows.contains { $0.id == "conclusion" })
     }
 
+    @Test func officeHoursVisibleRowsKeepSeededResumeRowsWhileInterviewActive() {
+        // Day-1 resume seeds prior Q/A from the turn log; their submitted-card
+        // snapshots died with the prior session, so the provider-parity hide
+        // must not orphan the restored answers below questionless bubbles
+        // while the resumed run is producing the next question.
+        let session = makeChatSession(
+            status: .running,
+            messages: [
+                makeChatMessage(id: "seed-q1", role: .assistant, content: "가장 강한 실제 신호는 무엇인가요?", seededTurn: true),
+                makeChatMessage(id: "seed-a1", role: .user, content: "답장이 왔고 현재 대안/비용을 말했다", seededTurn: true),
+                makeChatMessage(id: "start", role: .user, content: OfficeHoursTranscriptRow.syntheticStartPrompt),
+                makeChatMessage(id: "narration", role: .assistant, content: "이어서 다음 질문을 준비합니다.", state: .final),
+                makeChatMessage(id: "streaming", role: .assistant, content: "", state: .streaming),
+            ]
+        )
+
+        let rows = OfficeHoursLiveStatusPolicy.visibleRows(in: session)
+
+        #expect(rows.map(\.id) == ["seed-q1", "seed-a1"])
+    }
+
+    @Test func officeHoursTimelineBuilderNeverCollapsesSeededRowsIntoNewSnapshots() {
+        // A NEW submitted card whose short option label is contained in a
+        // seeded answer must not swallow the seeded row — that would misplace
+        // the card at the seeded position and drop a restored answer. Seeded
+        // rows always render as plain rows.
+        let prompt = makeOfficeHoursPrompt(sessionID: "session", requestId: "request-new")
+        let submission = AgenticViewModel.StructuredPromptSubmission(
+            question: prompt.questions[0].question,
+            selectedOptions: ["대안"],
+            freeText: ""
+        )
+        let snapshot = OfficeHoursSubmittedPromptSnapshot(
+            sessionId: "session",
+            requestId: prompt.requestId,
+            prompt: prompt,
+            submissions: [submission],
+            submittedAt: Date(timeIntervalSince1970: 10)
+        )
+        let rows = OfficeHoursTranscriptRow.rows(from: [
+            makeChatMessage(id: "seed-a1", role: .user, content: "현재 대안에 돈/시간을 쓰고 있다", seededTurn: true),
+        ])
+
+        let items = OfficeHoursTimelineBuilder.items(
+            rows: rows,
+            submittedSnapshots: [snapshot],
+            activeLoading: nil,
+            fallbackTotal: 6
+        )
+
+        #expect(items.count == 2)
+        if case .row(let row)? = items.first {
+            #expect(row.id == "seed-a1")
+            #expect(row.isSeededInterviewTurn)
+        } else {
+            #expect(Bool(false))
+        }
+        if case .submittedPrompt(let card)? = items.dropFirst().first {
+            #expect(card.snapshot == snapshot)
+        } else {
+            #expect(Bool(false))
+        }
+    }
+
     @Test func officeHoursLiveStatusPolicyShowsDetachedPanelOnlyWithoutStreamingAssistantRow() {
         let runningWithoutAssistant = makeChatSession(
             status: .running,
@@ -393,7 +457,8 @@ struct OpenDesignDayContentTests {
         id: String,
         role: MessageRole,
         content: String,
-        state: MessageState = .final
+        state: MessageState = .final,
+        seededTurn: Bool = false
     ) -> ChatMessage {
         ChatMessage(
             id: id,
@@ -405,7 +470,8 @@ struct OpenDesignDayContentTests {
             error: nil,
             bipMissionChoices: nil,
             providerAuthActions: nil,
-            inlineDecision: nil
+            inlineDecision: nil,
+            officeHoursSeededTurn: seededTurn ? true : nil
         )
     }
 
@@ -709,6 +775,7 @@ struct OpenDesignDayContentTests {
 
         #expect(content.railItems.map(\.title) == [
             "오늘 · Day 1",
+            "아침 브리핑",
             "설정",
         ])
         #expect(content.taskGroups.count == 4)
@@ -761,6 +828,7 @@ struct OpenDesignDayContentTests {
 
         #expect(railIDs == [
             "today",
+            "briefing",
             "settings",
         ])
         #expect(pageIDs == [
@@ -797,6 +865,7 @@ struct OpenDesignDayContentTests {
 
         #expect(productionRailIDs == [
             "today",
+            "briefing",
             "settings",
         ])
         #expect(allRailIDs == Set(productionRailIDs))

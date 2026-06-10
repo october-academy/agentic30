@@ -213,6 +213,53 @@ struct ChatMessageDecodingTests {
         #expect(row.emphasis[1].style == .code)
     }
 
+    /// Forward path: the Day-1 interview resume seeds restored Q/A rows with
+    /// `officeHoursSeededTurn: true` so the client can tell restored history
+    /// from live rows (seeded rows have no submitted-card snapshot backing
+    /// them). The flag must survive decoding and reach the transcript row.
+    @MainActor @Test func decodesSeededOfficeHoursTurnFlag() throws {
+        let payload = """
+        {
+          "id": "msg-seeded",
+          "role": "assistant",
+          "provider": "claude",
+          "content": "지금까지 나온 가장 강한 실제 신호는 무엇인가요?",
+          "state": "final",
+          "createdAt": "2026-06-10T01:00:00.000Z",
+          "error": null,
+          "officeHoursSeededTurn": true
+        }
+        """.data(using: .utf8)!
+
+        let message = try Self.makeDecoder().decode(ChatMessage.self, from: payload)
+        #expect(message.officeHoursSeededTurn == true)
+
+        let row = try #require(OfficeHoursTranscriptRow.rows(from: [message]).first)
+        #expect(row.isSeededInterviewTurn)
+    }
+
+    /// Backward compatibility: messages without the seeded-turn key decode
+    /// with `officeHoursSeededTurn == nil` and a non-seeded transcript row.
+    @MainActor @Test func decodesLegacyMessageWithoutSeededTurnFlag() throws {
+        let payload = """
+        {
+          "id": "msg-live",
+          "role": "user",
+          "provider": "claude",
+          "content": "답장이 왔고 현재 대안/비용을 말했다",
+          "state": "final",
+          "createdAt": "2026-06-10T01:01:00.000Z",
+          "error": null
+        }
+        """.data(using: .utf8)!
+
+        let message = try Self.makeDecoder().decode(ChatMessage.self, from: payload)
+        #expect(message.officeHoursSeededTurn == nil)
+
+        let row = try #require(OfficeHoursTranscriptRow.rows(from: [message]).first)
+        #expect(!row.isSeededInterviewTurn)
+    }
+
     /// Unknown wire styles fall back to `.mark` so a future style never breaks
     /// chat decoding.
     @MainActor @Test func decodesChatEmphasisWithUnknownStyleFallback() throws {

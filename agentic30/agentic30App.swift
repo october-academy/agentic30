@@ -207,6 +207,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CommandLine.arguments.contains { $0.hasPrefix("--ui-testing") }
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // The user is back in the app; question-ready banners in Notification
+        // Center are stale from here on.
+        OfficeHoursQuestionReadyNotification.removeDelivered()
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         // Block briefly so the terminate event actually reaches PostHog. The
         // default async sender uses URLSession.shared, which the OS cancels on
@@ -338,6 +344,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func openBipNotification(intent: BipNotificationIntent, source: String) {
         openWorkspaceWindow()
         viewModel.requestBipNotificationOpen(intent: intent, source: source)
+    }
+
+    @MainActor
+    private func openOfficeHoursQuestionReady(sessionId: String, source: String) {
+        openWorkspaceWindow()
+        viewModel.requestOfficeHoursQuestionReadyOpen(sessionId: sessionId, source: source)
     }
 
     private func focusWorkspaceWindow() {
@@ -574,15 +586,23 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse
     ) async {
         let request = response.notification.request
-        guard let intent = BipNotificationIntent(
+        if let intent = BipNotificationIntent(
             notificationUserInfo: request.content.userInfo,
             identifier: request.identifier
-        ) else {
+        ) {
+            await MainActor.run {
+                openBipNotification(intent: intent, source: "notification_center")
+            }
             return
         }
 
-        await MainActor.run {
-            openBipNotification(intent: intent, source: "notification_center")
+        if let questionReady = OfficeHoursQuestionReadyNotification(
+            notificationUserInfo: request.content.userInfo,
+            identifier: request.identifier
+        ) {
+            await MainActor.run {
+                openOfficeHoursQuestionReady(sessionId: questionReady.sessionId, source: "notification_center")
+            }
         }
     }
 }

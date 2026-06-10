@@ -1643,6 +1643,10 @@ struct AgenticViewModelAuthTests {
         #expect(draft.problem == "만들 줄은 알지만 무엇을 팔아야 하는지 모른다")
         #expect(draft.goalText.contains("중 \"만들 줄은") == false)
         #expect(draft.goalText.contains("모른다…") == false)
+        // 목표 행은 고객·문제를 반복하지 않는 정량 타깃 한 문장만 보여준다
+        // (sidecar DAY1_GOAL_TEXTS와 동일 문구).
+        #expect(draft.goalText.hasPrefix("30일 안에"))
+        #expect(draft.goalText.contains("방법:") == false)
     }
 
     @Test func day1GoalSelectionOfficeHoursContextCopyIsConcise() {

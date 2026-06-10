@@ -239,6 +239,202 @@ struct SidecarEventDecodingTests {
         #expect(event.officeHoursSourceGate?.connectActions.first?.settingsSection == "integrations")
     }
 
+    @MainActor @Test func decodesOfficeHoursDailyDigestResultPayload() throws {
+        let payload = """
+        {
+          "type": "office_hours_daily_digest_result",
+          "sessionId": "session-1",
+          "day": 2,
+          "status": "ready",
+          "detail": "Day 2+ Office Hours digest ready.",
+          "officeHoursDailyDigest": {
+            "schemaVersion": 1,
+            "generatedAt": "2026-06-09T01:30:00.000Z",
+            "day": 2,
+            "window": {
+              "startIso": "2026-06-07T15:00:00.000Z",
+              "untilIso": "2026-06-09T01:30:00.000Z",
+              "localStartDate": "2026-06-08",
+              "localUntilDate": "2026-06-09",
+              "label": "2026-06-08 00:00 -> 2026-06-09 now"
+            },
+            "sourceGate": { "ok": true, "reason": "ready", "selectedSources": ["posthog"] },
+            "sources": [
+              {
+                "id": "posthog",
+                "label": "PostHog",
+                "state": "ready",
+                "available": true,
+                "selected": true,
+                "required": true,
+                "detail": "external MCP digest succeeded",
+                "counts": { "activeUsers": 3 },
+                "highlights": ["활성 사용자 3명"],
+                "summary": "activation 3건",
+                "goalSignals": ["가입은 늘지만 결제 0"],
+                "evidenceGaps": ["pricing 이탈 원인 미관측"]
+              }
+            ],
+            "buildWithoutCustomerEvidence": true,
+            "briefing": {
+              "goalStatus": ["30일 목표 유지"],
+              "overnightChanges": ["git: 커밋 2건"],
+              "goalHelpfulSignals": ["PostHog: 가입은 늘지만 결제 0"],
+              "biggestEvidenceGap": ["PostHog: pricing 이탈 원인 미관측"]
+            }
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "office_hours_daily_digest_result")
+        #expect(event.status == "ready")
+        #expect(event.day == 2)
+        let digest = try #require(event.officeHoursDailyDigest)
+        #expect(digest.day == 2)
+        #expect(digest.buildWithoutCustomerEvidence == true)
+        #expect(digest.window?.localStartDate == "2026-06-08")
+        #expect(digest.sources.first?.goalSignals == ["가입은 늘지만 결제 0"])
+        #expect(digest.briefing?.biggestEvidenceGap == ["PostHog: pricing 이탈 원인 미관측"])
+        #expect(digest.applies(to: 2))
+        #expect(!digest.applies(to: 3))
+    }
+
+    @MainActor @Test func decodesOfficeHoursDailyDigestCollectingPayload() throws {
+        let payload = """
+        {
+          "type": "office_hours_daily_digest_result",
+          "sessionId": "session-1",
+          "day": 2,
+          "status": "collecting",
+          "detail": "Day 2+ Office Hours digest collecting."
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "office_hours_daily_digest_result")
+        #expect(event.status == "collecting")
+        #expect(event.officeHoursDailyDigest == nil)
+    }
+
+    @MainActor @Test func decodesMorningBriefingResultPayload() throws {
+        let payload = """
+        {
+          "type": "morning_briefing_result",
+          "morningBriefing": {
+            "schemaVersion": 1,
+            "generatedAt": "2026-06-10T00:00:00.000Z",
+            "day": 12,
+            "totalDays": 30,
+            "phase": "",
+            "window": {
+              "startIso": "2026-06-09T00:00:00.000Z",
+              "untilIso": "2026-06-10T00:00:00.000Z",
+              "label": "2026-06-09 00:00 -> 2026-06-10 now"
+            },
+            "summary": {
+              "title": "overnight digest",
+              "windowLabel": "2026-06-09 00:00 -> 2026-06-10 now",
+              "statement": "밤사이 가장 큰 변화는 PostHog 활성 사용자 ▼ 56% 하락이에요.",
+              "crits": [
+                { "source": "PostHog", "label": "활성 사용자", "value": "▼ 56%", "direction": "down" }
+              ]
+            },
+            "cards": [
+              {
+                "id": "posthog",
+                "label": "PostHog",
+                "subtitle": "활성 사용자 · 이벤트",
+                "state": "ready",
+                "metric": { "value": 11, "unit": "활성 사용자", "deltaLabel": "▼ 56%", "direction": "down", "versusLabel": "어제 25" },
+                "rows": [{ "k": "이벤트", "v": "188" }],
+                "spark": [22, 25, 11],
+                "note": "온보딩 2단계 이탈 원인 미확인",
+                "noteTone": "warn",
+                "highlights": ["활성 사용자 추이 하락"]
+              }
+            ],
+            "timeline": [
+              { "at": "2026-06-09T18:12:00.000Z", "timeLabel": "03:12", "source": "github", "text": "커밋 · feat: onboarding step trim" }
+            ],
+            "anomaly": {
+              "id": "metric_drop_posthog",
+              "kind": "metric_drop",
+              "title": "PostHog 신호 하락",
+              "question": "PostHog 활성 사용자가 어제 25 → 11로 떨어졌어요.",
+              "evidence": "근거: PostHog 활성 사용자 ▼ 56%",
+              "options": [
+                { "id": "real_churn", "title": "실제 이탈이다", "detail": "오늘 바로 물어봅니다.", "tail": "메시지 + 실험" }
+              ],
+              "label": null,
+              "labeledAt": null
+            },
+            "actions": [
+              {
+                "id": "task",
+                "kind": "task",
+                "badge": "태스크",
+                "title": "오늘 빌드에 추가할 태스크",
+                "subtitle": "증거 신뢰도부터 확보",
+                "body": "",
+                "why": "추적이 못 믿을 상태면 실험 결과도 못 믿어요.",
+                "copyText": "PR #43 머지",
+                "applyLabel": "오늘 태스크에 추가",
+                "tasks": [{ "title": "PR #43 머지", "tag": "신뢰도" }]
+              }
+            ],
+            "sync": {
+              "sources": [
+                { "id": "posthog", "label": "PostHog", "state": "ready", "selected": true, "detail": "external MCP digest succeeded" }
+              ],
+              "readyCount": 1,
+              "syncedAt": "2026-06-10T00:00:00.000Z",
+              "syncedAtLabel": "09:00"
+            },
+            "status": { "state": "ready", "detail": "소스 1개에서 밤사이 신호를 모았어요." },
+            "historyDates": ["2026-06-09"]
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "morning_briefing_result")
+        let briefing = try #require(event.morningBriefing)
+        #expect(briefing.day == 12)
+        #expect(briefing.totalDays == 30)
+        #expect(briefing.summary?.crits?.first?.direction == "down")
+        let card = try #require(briefing.cards?.first)
+        #expect(card.id == "posthog")
+        #expect(card.isReady)
+        #expect(card.metric?.deltaLabel == "▼ 56%")
+        #expect(card.spark == [22, 25, 11])
+        #expect(briefing.timeline?.first?.timeLabel == "03:12")
+        #expect(briefing.anomaly?.kind == "metric_drop")
+        #expect(briefing.anomaly?.label == nil)
+        #expect(briefing.actions?.first?.tasks?.first?.tag == "신뢰도")
+        #expect(briefing.sync?.readyCount == 1)
+        #expect(briefing.status?.state == "ready")
+        #expect(briefing.historyDates == ["2026-06-09"])
+    }
+
+    @MainActor @Test func decodesMorningBriefingCollectingStatusPayload() throws {
+        let payload = """
+        {
+          "type": "morning_briefing_status",
+          "status": { "state": "collecting", "reason": "tab_enter" }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "morning_briefing_status")
+        #expect(event.morningBriefing == nil)
+        #expect(event.morningBriefingStatus?.state == "collecting")
+    }
+
     @MainActor @Test func decodesWorkspaceScanProgressStructuredFields() throws {
         let payload = """
         {

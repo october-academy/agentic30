@@ -93,11 +93,15 @@ struct OfficeHoursLiveStatusPolicy {
         // error rows are dropped as before. Matched question/answer rows are
         // unaffected — the timeline rebuilds their cards from the submitted
         // snapshots regardless.
+        // Seeded rows (Day-1 interview resume restored them from the workspace
+        // turn log) are exempt: their submitted-card snapshots died with the
+        // prior session, so hiding them would orphan the restored answers
+        // below questionless bubbles for the whole resumed run.
         let interviewActive = session.pendingUserInput != nil || session.status == .running
         return rows.filter { row in
             if isStreamingAssistantRow(row) { return false }
             if isAssistantRow(row) && row.state == .error { return false }
-            if interviewActive && isAssistantRow(row) && row.error == nil { return false }
+            if interviewActive && isAssistantRow(row) && row.error == nil && !row.isSeededInterviewTurn { return false }
             return true
         }
     }
@@ -1648,7 +1652,12 @@ struct OfficeHoursTimelineBuilder {
         }
 
         for row in rows {
-            if let snapshotIndex = orderedSnapshots.firstIndex(where: { snapshot in
+            // Seeded (restored) rows predate every live snapshot — never collapse
+            // them into a submitted card. Their own card died with the prior
+            // session; a fuzzy containment match against a NEW snapshot would
+            // misplace that card at the seeded row's position and swallow the row.
+            if !row.isSeededInterviewTurn,
+               let snapshotIndex = orderedSnapshots.firstIndex(where: { snapshot in
                 switch row.kind {
                 case .assistant:
                     return snapshot.matchesTranscriptQuestion(row.content)
@@ -1799,6 +1808,7 @@ struct ContentView: View {
     @State private var selectedSettingsSection: SettingsSection = .workspace
     @State private var showsAppUpdateStatusPanel = false
     @State private var isOpenDesignOfficeHoursPresented = false
+    @State private var isOpenDesignMorningBriefingPresented = false
     @State private var openDesignDayInteractionStateCache = OpenDesignDayInteractionStateCache()
     @State private var officeHoursStartedSessionIDs: Set<String> = []
     @State private var officeHoursRealProjectTestState: OfficeHoursRealProjectTestState = .idle
@@ -1819,7 +1829,6 @@ struct ContentView: View {
     @State private var officeHoursReadyPromptRevealIDs: Set<String> = []
     @State private var officeHoursEvidenceDraft: OfficeHoursEvidenceDraft?
     @State private var didCopyOfficeHoursPlanCeoReview = false
-    @FocusState private var isOfficeHoursComposerFocused: Bool
     @FocusState private var focusedOfficeHoursStructuredFreeTextID: String?
 
     private static let officeHoursQuestionOutputRowID = "office-hours-question-output-row"
@@ -2200,6 +2209,7 @@ struct ContentView: View {
                     interaction: openDesignDayInteractionBinding(for: day, content: resolvedContent),
                     selectedReferencePage: $selectedOpenDesignReferencePage,
                     isOfficeHoursPresented: $isOpenDesignOfficeHoursPresented,
+                    isMorningBriefingPresented: $isOpenDesignMorningBriefingPresented,
                     openSettings: {
                         openOpenDesignSettingsRoute()
                     },
@@ -2254,6 +2264,31 @@ struct ContentView: View {
                     day1DocPreviews: viewModel.iddDocPreviews,
                     day1HandoffPromptCard: day1HandoffPromptCard,
                     officeHoursScreen: officeHoursScreen,
+                    morningBriefingScreen: AnyView(
+                        MorningBriefingPageView(
+                            briefing: viewModel.morningBriefing,
+                            previousBriefing: viewModel.morningBriefingPrevious,
+                            collecting: viewModel.morningBriefingCollecting,
+                            fallbackDay: officeHoursActiveDay,
+                            refresh: {
+                                viewModel.refreshMorningBriefing(reason: "manual")
+                            },
+                            prepare: {
+                                viewModel.prepareMorningBriefingForDisplay()
+                            },
+                            submitAnomalyLabel: { label in
+                                viewModel.submitMorningBriefingAnomalyLabel(label)
+                            },
+                            applyAction: { draft in
+                                viewModel.draft = draft.copyText ?? ""
+                            },
+                            startToday: {
+                                withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                                    isOpenDesignMorningBriefingPresented = false
+                                }
+                            }
+                        )
+                    ),
                     activeDay1HandoffDocType: day1HandoffPrompt?.generation?.docType?.lowercased(),
                     pendingDay1HandoffDocType: viewModel.day1DocHandoffPendingDocType,
                     day1HandoffError: viewModel.day1DocHandoffError,
@@ -2331,6 +2366,7 @@ struct ContentView: View {
                     officeHoursMemoryBanner()
                     officeHoursEvidenceOSBanner()
                     officeHoursSourceGateBanner(activeDay: activeDay)
+                    officeHoursDailyDigestBanner(activeDay: activeDay)
                     officeHoursMainColumn(
                         session: conversationSession,
                         day1Content: day1Content,
@@ -2667,6 +2703,162 @@ struct ContentView: View {
             .background(OpenDesignOfficeHoursColor.bg)
             .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1), alignment: .bottom)
             .accessibilityIdentifier("opendesign.officeHours.sourceGateBanner")
+        }
+    }
+
+    @ViewBuilder
+    private func officeHoursDailyDigestBanner(activeDay: Int) -> some View {
+        if activeDay >= 2 {
+            if viewModel.officeHoursDailyDigestCollecting {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                    Text("어제/간밤 신호 수집 중 — git · GitHub · PostHog · Cloudflare")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 28)
+                .padding(.vertical, 10)
+                .background(OpenDesignOfficeHoursColor.bg)
+                .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1), alignment: .bottom)
+                .accessibilityIdentifier("opendesign.officeHours.dailyDigest.collecting")
+            } else if let digest = viewModel.officeHoursDailyDigest,
+                      digest.applies(to: activeDay),
+                      let briefing = digest.briefing {
+                let buildEscape = digest.buildWithoutCustomerEvidence == true
+                let accentColor = buildEscape
+                    ? OpenDesignOfficeHoursColor.amber
+                    : OpenDesignOfficeHoursColor.accent
+                VStack(spacing: 0) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "sunrise")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(accentColor)
+                                .frame(width: 24, height: 24)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .fill(accentColor.opacity(0.14))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                                .stroke(accentColor.opacity(0.38), lineWidth: 1)
+                                        )
+                                )
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("어제/간밤 브리핑")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
+                                if let startDate = digest.window?.localStartDate?.nonEmpty {
+                                    Text("\(startDate) 00:00부터 지금까지")
+                                        .font(.system(size: 11.5, weight: .medium))
+                                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                                }
+                            }
+                            Spacer(minLength: 0)
+                            HStack(spacing: 10) {
+                                ForEach(digest.sources.filter { $0.state != "ignored" }) { source in
+                                    HStack(spacing: 5) {
+                                        Circle()
+                                            .fill(
+                                                source.state == "ready"
+                                                    ? OpenDesignOfficeHoursColor.accent
+                                                    : OpenDesignOfficeHoursColor.rose
+                                            )
+                                            .frame(width: 5, height: 5)
+                                        Text(source.label)
+                                            .font(.system(size: 10.5, weight: .semibold))
+                                            .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                                    }
+                                }
+                            }
+                        }
+
+                        if buildEscape {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                                Text("코드 변경은 있지만 고객 행동 증거가 아직 없습니다.")
+                                    .font(.system(size: 11.5, weight: .semibold))
+                                    .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                                Spacer(minLength: 0)
+                            }
+                        }
+
+                        officeHoursDigestSection(
+                            "어제/간밤에 바뀐 것",
+                            lines: briefing.overnightChanges ?? [],
+                            limit: 4
+                        )
+                        officeHoursDigestSection(
+                            "목표에 도움 되는 신호",
+                            lines: briefing.goalHelpfulSignals ?? [],
+                            limit: 3
+                        )
+                        officeHoursDigestSection(
+                            "가장 큰 증거 공백",
+                            lines: briefing.biggestEvidenceGap ?? [],
+                            limit: 3,
+                            bulletColor: OpenDesignOfficeHoursColor.amber
+                        )
+                    }
+                    .padding(.leading, 20)
+                    .padding(.trailing, 18)
+                    .padding(.vertical, 14)
+                    .frame(maxWidth: 820, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(OpenDesignOfficeHoursColor.surface)
+                    )
+                    .overlay(alignment: .leading) {
+                        Rectangle()
+                            .fill(accentColor)
+                            .frame(width: 3)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(OpenDesignOfficeHoursColor.border, lineWidth: 1)
+                    )
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 28)
+                .padding(.top, 12)
+                .padding(.bottom, 10)
+                .background(OpenDesignOfficeHoursColor.bg)
+                .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1), alignment: .bottom)
+                .accessibilityIdentifier("opendesign.officeHours.dailyDigestBanner")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func officeHoursDigestSection(
+        _ title: String,
+        lines: [String],
+        limit: Int,
+        bulletColor: Color = OpenDesignOfficeHoursColor.mutedDeep
+    ) -> some View {
+        if !lines.isEmpty {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                ForEach(Array(lines.prefix(limit).enumerated()), id: \.offset) { _, line in
+                    HStack(alignment: .top, spacing: 8) {
+                        Circle()
+                            .fill(bulletColor)
+                            .frame(width: 4, height: 4)
+                            .padding(.top, 5)
+                        Text(line)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(OpenDesignOfficeHoursColor.fgSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
         }
     }
 
@@ -4770,7 +4962,12 @@ struct ContentView: View {
                         officeHoursDocReadyBlock(session: session)
                             .transition(.officeHoursPromptReveal)
                     } else {
-                        officeHoursPromptComposer()
+                        // An idle session that hasn't finished its question
+                        // count is a stalled interview, not a chat handoff —
+                        // surface the explicit failure (with retry) instead of
+                        // the removed free-text composer fallback.
+                        officeHoursFailureBlock(session: session, day1Content: day1Content, activeDay: activeDay)
+                            .id("office-hours-incomplete-\(session.id)")
                             .transition(.officeHoursPromptReveal)
                     }
                 }
@@ -4989,14 +5186,23 @@ struct ContentView: View {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
-        let transcriptAnswers = OfficeHoursTranscriptRow.rows(from: session.messages)
+        // Each snapshot's answer also lands in the transcript as a user row, so
+        // dedup consumes at most ONE row per snapshot — the containment heuristic
+        // must not let one short answer swallow several rows. Seeded rows (Day-1
+        // resume restored them from the turn log) are never consumed: their
+        // snapshots died with the prior session, so they always count.
+        var unconsumedSnapshots = snapshots
+        let transcriptAnswerRows = OfficeHoursTranscriptRow.rows(from: session.messages)
             .filter(\.isUser)
-            .map(\.content)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
 
-        for answer in transcriptAnswers {
-            guard !snapshots.contains(where: { $0.matchesTranscriptAnswer(answer) }) else { continue }
+        for row in transcriptAnswerRows {
+            let answer = row.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !answer.isEmpty else { continue }
+            if !row.isSeededInterviewTurn,
+               let consumedIndex = unconsumedSnapshots.firstIndex(where: { $0.matchesTranscriptAnswer(answer) }) {
+                unconsumedSnapshots.remove(at: consumedIndex)
+                continue
+            }
             answers.append(answer)
         }
 
@@ -7351,110 +7557,6 @@ struct ContentView: View {
             )
     }
 
-    private func officeHoursPromptLabel(placeholder: String) -> some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "text.bubble")
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(OpenDesignOfficeHoursColor.accent)
-                Text("직접 답하기")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(OpenDesignOfficeHoursColor.fg)
-            }
-
-            Text(placeholder)
-                .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(OpenDesignOfficeHoursColor.muted)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: 0)
-            HStack(spacing: 5) {
-                Image(systemName: "return")
-                    .font(.system(size: 9.5, weight: .semibold))
-                Text("Enter 줄바꿈")
-                    .font(.system(size: 10, weight: .medium))
-            }
-            .foregroundStyle(OpenDesignOfficeHoursColor.mutedDeep)
-            .lineLimit(1)
-        }
-    }
-
-    private func officeHoursSendButton(canSend: Bool) -> some View {
-        Button {
-            viewModel.sendPrompt()
-        } label: {
-            Image(systemName: "arrow.up")
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(canSend ? OpenDesignOfficeHoursColor.bgDeep : OpenDesignOfficeHoursColor.muted)
-                .frame(width: 34, height: 34)
-                .background(
-                    Circle()
-                        .fill(canSend ? OpenDesignOfficeHoursColor.accent : OpenDesignOfficeHoursColor.bgDarker)
-                        .overlay(
-                            Circle().stroke(canSend ? OpenDesignOfficeHoursColor.accentLine : OpenDesignOfficeHoursColor.borderSoft, lineWidth: 1)
-                        )
-                )
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!canSend)
-        .accessibilityIdentifier("opendesign.officeHours.sendButton")
-        .accessibilityLabel("오피스 아워 메시지 보내기")
-    }
-
-    private func officeHoursPromptComposer() -> some View {
-        let placeholder = "오피스 아워에 이어서 질문하기"
-        let canSend = viewModel.canSend
-        return VStack(alignment: .leading, spacing: 9) {
-            officeHoursPromptLabel(placeholder: placeholder)
-
-            HStack(alignment: .center, spacing: 10) {
-                Image(systemName: "quote.bubble.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(OpenDesignOfficeHoursColor.accent)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(OpenDesignOfficeHoursColor.accentDim))
-
-                ZStack(alignment: .topLeading) {
-                    TextEditor(text: $viewModel.draft)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(OpenDesignOfficeHoursColor.fg)
-                        .scrollContentBackground(.hidden)
-                        .background(Color.clear)
-                        .frame(height: 48)
-                        .focused($isOfficeHoursComposerFocused)
-                        .accessibilityIdentifier("opendesign.officeHours.promptComposer")
-                        .accessibilityLabel(placeholder)
-
-                    if viewModel.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text("예: 지금 가설에서 가장 약한 부분은?")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(OpenDesignOfficeHoursColor.mutedDeep)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 8)
-                            .allowsHitTesting(false)
-                    }
-                }
-                .frame(height: 48)
-
-                officeHoursSendButton(canSend: canSend)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(
-                openDesignOfficeHoursBackground(
-                    cornerRadius: 10,
-                    fill: OpenDesignOfficeHoursColor.bgDeep,
-                    stroke: isOfficeHoursComposerFocused ? OpenDesignOfficeHoursColor.accentLine : OpenDesignOfficeHoursColor.borderSoft
-                )
-            )
-        }
-        .padding(11)
-        .background(
-            openDesignOfficeHoursBackground(cornerRadius: 10, fill: OpenDesignOfficeHoursColor.surface2)
-        )
-    }
-
     private func officeHoursSessionCanReceiveStart(_ session: ChatSession?) -> Bool {
         guard let session else { return viewModel.isConnected }
         guard session.status == .idle else { return false }
@@ -8533,11 +8635,13 @@ struct ContentView: View {
     private func clearOpenDesignReferenceRoute() {
         selectedOpenDesignReferencePage = nil
         isOpenDesignOfficeHoursPresented = false
+        isOpenDesignMorningBriefingPresented = false
     }
 
     private func openOpenDesignSettingsRoute() {
         withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
             isOpenDesignOfficeHoursPresented = false
+            isOpenDesignMorningBriefingPresented = false
             selectedOpenDesignReferencePage = .settings
         }
     }
@@ -8567,6 +8671,7 @@ struct ContentView: View {
         showsInlineBipReadinessSetup = false
         selectedOpenDesignReferencePage = nil
         isOpenDesignOfficeHoursPresented = false
+        isOpenDesignMorningBriefingPresented = false
         openDesignDayInteractionStateCache.removeAll()
         officeHoursStartedSessionIDs.removeAll()
         officeHoursRealProjectTestState = .idle

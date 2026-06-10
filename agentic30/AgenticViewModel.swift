@@ -143,6 +143,70 @@ struct BipNotificationOpenRequest: Identifiable, Equatable, Sendable {
     }
 }
 
+/// Routing payload for the "office-hours question ready" local notification.
+/// Identifier carries the structured-prompt requestId; userInfo carries the
+/// session to reselect when the user clicks the banner.
+struct OfficeHoursQuestionReadyNotification: Hashable, Sendable {
+    static let sessionIdUserInfoKey = "agentic30.officeHours.questionReady.sessionId"
+    static let identifierPrefix = "agentic30.office-hours.question-ready."
+
+    let sessionId: String
+
+    init(sessionId: String) {
+        self.sessionId = sessionId
+    }
+
+    init?(notificationUserInfo userInfo: [AnyHashable: Any], identifier: String) {
+        guard identifier.hasPrefix(Self.identifierPrefix),
+              let sessionId = (userInfo[Self.sessionIdUserInfoKey] as? String)?
+                  .trimmingCharacters(in: .whitespacesAndNewlines)
+                  .nonEmpty else {
+            return nil
+        }
+        self.sessionId = sessionId
+    }
+
+    static func notificationIdentifier(requestId: String) -> String {
+        "\(identifierPrefix)\(requestId)"
+    }
+
+    static func removeDelivered(center: UNUserNotificationCenter = .current()) {
+        let prefix = identifierPrefix
+        center.getDeliveredNotifications { delivered in
+            let identifiers = delivered
+                .map(\.request.identifier)
+                .filter { $0.hasPrefix(prefix) }
+            guard !identifiers.isEmpty else { return }
+            center.removeDeliveredNotifications(withIdentifiers: identifiers)
+        }
+    }
+}
+
+/// Pure decision authority for posting the question-ready notification, kept
+/// free of UNUserNotificationCenter so the gate matrix is unit-testable.
+enum OfficeHoursQuestionReadyNotifier {
+    static func shouldNotify(
+        stage: String,
+        requestId: String?,
+        title: String?,
+        alreadyNotifiedRequestIds: Set<String>,
+        isAppActive: Bool,
+        isEnabled: Bool,
+        isUITesting: Bool
+    ) -> Bool {
+        guard stage == "question_ready",
+              let requestId, !requestId.isEmpty,
+              let title, !title.isEmpty,
+              !alreadyNotifiedRequestIds.contains(requestId),
+              !isAppActive,
+              isEnabled,
+              !isUITesting else {
+            return false
+        }
+        return true
+    }
+}
+
 struct WorkspaceScanProgressSnapshot: Equatable {
     let progressText: String
     let stage: String?
@@ -1715,6 +1779,16 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var officeHoursHistory: OfficeHoursHistorySummary?
     @Published private(set) var evidenceOS: EvidenceOSSummary?
     @Published private(set) var officeHoursSourceGate: OfficeHoursSourceGate?
+    /// Day 2+ daily digest briefing (`office_hours_daily_digest_result`): the sidecar
+    /// broadcasts `status: "collecting"` before the (potentially slow) gh CLI + external
+    /// MCP collection, then `status: "ready"` with the full digest payload.
+    @Published private(set) var officeHoursDailyDigest: OfficeHoursDailyDigest?
+    @Published private(set) var officeHoursDailyDigestCollecting = false
+    /// Morning briefing (`morning_briefing_result`): session-less reuse of the Day 2+
+    /// digest collectors, shaped by sidecar/morning-briefing.mjs for the briefing screen.
+    @Published private(set) var morningBriefing: MorningBriefing?
+    @Published private(set) var morningBriefingPrevious: MorningBriefing?
+    @Published private(set) var morningBriefingCollecting = false
     /// Soft guidance from the interview gate: set when the sidecar withholds an interview
     /// close (needsCommitment) and asks for one next customer action; cleared on the next
     /// successful (non-blocked) day_progress_state so the nudge never lingers.
@@ -1887,6 +1961,7 @@ final class AgenticViewModel: ObservableObject {
     #if DEBUG
     private var didEmitUITestingNewsMarketRadarEvents = false
     private var didEmitUITestingWorkHistoryEvents = false
+    private var didEmitUITestingMorningBriefingEvents = false
     #endif
     /// Idempotency guard for the AI-driven Foundation Day 0/2-7 first prompt.
     /// Keyed by `"<sessionId>:day-<day>"` so the same opener is never injected
@@ -2526,6 +2601,25 @@ final class AgenticViewModel: ObservableObject {
             selectedSessionID = sessionId
         }
         bipNotificationOpenRequest = BipNotificationOpenRequest(intent: intent)
+    }
+
+    nonisolated static let questionReadyNotificationDefaultsKey = "agentic30.officeHours.questionReadyNotification"
+
+    /// Default-on toggle; absent key means enabled.
+    var isQuestionReadyNotificationEnabled: Bool {
+        UserDefaults.standard.object(forKey: Self.questionReadyNotificationDefaultsKey) as? Bool ?? true
+    }
+
+    func requestOfficeHoursQuestionReadyOpen(
+        sessionId: String,
+        source: String = "notification_center"
+    ) {
+        PostHogTelemetry.capture("mac_office_hours_question_ready_notification_opened", properties: [
+            "source": source,
+        ], authSession: macAuthSession)
+
+        guard sessions.contains(where: { $0.id == sessionId }) else { return }
+        selectedSessionID = sessionId
     }
 
     func recordBipNotificationPrimaryAction(intent: BipNotificationIntent, action: String) {
@@ -3864,12 +3958,7 @@ final class AgenticViewModel: ObservableObject {
         return Day1GoalType.allCases.map { goalType in
             Day1GoalDraft(
                 goalType: goalType,
-                goalText: day1GoalText(
-                    goalType: goalType,
-                    customer: customer,
-                    problem: problem,
-                    validationAction: validationAction
-                ),
+                goalText: day1GoalText(goalType: goalType),
                 customer: customer,
                 problem: problem,
                 validationAction: validationAction,
@@ -4013,42 +4102,18 @@ final class AgenticViewModel: ObservableObject {
         ) != nil
     }
 
-    private func day1GoalText(
-        goalType: Day1GoalType,
-        customer: String,
-        problem: String,
-        validationAction: String
-    ) -> String {
-        let target = customer.trimmingCharacters(in: .whitespacesAndNewlines)
-        let pain = quotedDay1Problem(problem)
-        let method = day1ValidationMethodSentence(validationAction)
+    /// 목표 행은 30일 안에 달성할 정량 타깃 한 문장만 보여준다. 고객·문제는 같은
+    /// 테이블의 별도 행에 이미 있으므로 반복하지 않는다 — sidecar의
+    /// `DAY1_GOAL_TEXTS`(day1-goal-state.mjs)와 동일한 문구를 유지해야 한다.
+    private func day1GoalText(goalType: Day1GoalType) -> String {
         switch goalType {
         case .makeMoney:
-            return "\(target)가 \(pain) 문제에 돈이나 시간을 쓸지 확인한다. \(method)"
+            return "30일 안에 첫 유료 결제 1건을 만든다."
         case .getUsers:
-            return "\(target)가 \(pain) 문제를 실제 유입/가입 행동으로 반복해서 드러내는지 확인한다. \(method)"
+            return "30일 안에 가입자 100명을 모은다."
         case .buildProduct:
-            return "\(target)가 \(pain) 문제를 해결하는 제품 흐름에서 어디가 막히는지 확인한다. \(method)"
+            return "30일 안에 핵심 흐름 완주율 10%를 달성한다."
         }
-    }
-
-    private func quotedDay1Problem(_ value: String) -> String {
-        let trimmed = value
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'“”‘’"))
-            .trimmingCharacters(in: CharacterSet(charactersIn: ".。"))
-        return "\"\(trimmed.isEmpty ? "검증할 문제" : trimmed)\""
-    }
-
-    private func day1ValidationMethodSentence(_ value: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return "방법: 이번 주 확인할 행동을 정한다."
-        }
-        if trimmed.range(of: #"[.!?。！？]$"#, options: .regularExpression) != nil {
-            return "방법: \(trimmed)"
-        }
-        return "방법: \(trimmed)."
     }
 
     private func firstNonEmpty(_ values: [String?], fallback: String) -> String {
@@ -4595,6 +4660,60 @@ final class AgenticViewModel: ObservableObject {
         #endif
         requestWorkHistory()
     }
+
+    /// 아침 브리핑 탭 진입 시 호출. 사이드카가 캐시된 브리핑을 즉시 돌려주고,
+    /// 로컬 날짜가 바뀌었으면 소스 수집을 다시 돈다.
+    func prepareMorningBriefingForDisplay() {
+        #if DEBUG
+        if emitUITestingMorningBriefingEventsIfRequested() { return }
+        #endif
+        guard isConnected else { return }
+        sidecar.send(payload: [
+            "type": "morning_briefing_get",
+            "preferredProvider": selectedProvider.rawValue,
+        ])
+    }
+
+    func refreshMorningBriefing(reason: String = "manual", force: Bool = true) {
+        guard isConnected else { return }
+        PostHogTelemetry.capture("mac_morning_briefing_refresh_requested", properties: [
+            "reason": reason,
+        ], authSession: macAuthSession)
+        morningBriefingCollecting = true
+        sidecar.send(payload: [
+            "type": "morning_briefing_refresh",
+            "reason": reason,
+            "force": force,
+            "preferredProvider": selectedProvider.rawValue,
+        ])
+    }
+
+    func submitMorningBriefingAnomalyLabel(_ label: String) {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isConnected, !trimmed.isEmpty else { return }
+        PostHogTelemetry.capture("mac_morning_briefing_anomaly_labeled", properties: [
+            "anomaly": morningBriefing?.anomaly?.id ?? "",
+        ], authSession: macAuthSession)
+        sidecar.send(payload: [
+            "type": "morning_briefing_anomaly_label",
+            "label": trimmed,
+        ])
+    }
+
+    #if DEBUG
+    private func emitUITestingMorningBriefingEventsIfRequested() -> Bool {
+        guard CommandLine.arguments.contains("--ui-testing-stub-morning-briefing-events") else {
+            return false
+        }
+        guard !didEmitUITestingMorningBriefingEvents else {
+            return true
+        }
+        didEmitUITestingMorningBriefingEvents = true
+        morningBriefing = .uiTestingSample
+        morningBriefingCollecting = false
+        return true
+    }
+    #endif
 
     #if DEBUG
     private func emitUITestingWorkHistoryEventsIfRequested() -> Bool {
@@ -6197,10 +6316,28 @@ final class AgenticViewModel: ObservableObject {
                 officeHoursSourceGate = gate
                 if gate.blocking {
                     lastError = gate.message
+                    officeHoursDailyDigestCollecting = false
                 }
+            }
+        case "office_hours_daily_digest_result":
+            if let digest = event.officeHoursDailyDigest {
+                officeHoursDailyDigest = digest
+                officeHoursDailyDigestCollecting = false
+            } else if event.status == "collecting" {
+                officeHoursDailyDigestCollecting = true
+            } else {
+                // Fail-soft decode: a result event whose digest payload didn't
+                // decode still ends the collecting state.
+                officeHoursDailyDigestCollecting = false
             }
         case "office_hours_status":
             applyOfficeHoursLiveStatus(from: event)
+            // Any run-terminal stage also ends digest collection — covers failure
+            // paths that never deliver a "ready" digest.
+            if let stage = event.stage,
+               ["question_ready", "completed", "failed", "aborted"].contains(stage) {
+                officeHoursDailyDigestCollecting = false
+            }
             refreshPresentationState()
         case "tool_event":
             guard let sessionID = event.sessionId else { return }
@@ -6406,6 +6543,16 @@ final class AgenticViewModel: ObservableObject {
             if let status = event.workHistoryStatus {
                 workHistory = workHistory.applying(status: status)
             }
+        case "morning_briefing_result":
+            if let briefing = event.morningBriefing {
+                morningBriefing = briefing
+            }
+            if let previous = event.morningBriefingPrevious {
+                morningBriefingPrevious = previous
+            }
+            morningBriefingCollecting = false
+        case "morning_briefing_status":
+            morningBriefingCollecting = event.morningBriefingStatus?.state == "collecting"
         case "bip_research_result":
             if let snapshot = event.bipResearch {
                 bipResearch = snapshot
@@ -7841,7 +7988,7 @@ final class AgenticViewModel: ObservableObject {
                 id: UUID().uuidString,
                 role: .assistant,
                 provider: sessions[sessionIndex].provider,
-                content: "선택지를 확인했어요. 이제 채팅으로 이어갈 수 있습니다.",
+                content: "선택지를 확인했어요. 답변이 모두 기록됐습니다.",
                 state: .final,
                 createdAt: .now,
                 error: nil,
@@ -8846,6 +8993,80 @@ final class AgenticViewModel: ObservableObject {
         if let progressText = status.progressText {
             appendSidecarOutput(sessionID: status.sessionId, summary: progressText)
         }
+        maybePostQuestionReadyNotification(for: status)
+    }
+
+    /// requestIds already turned into a local notification this app run; the
+    /// sidecar re-broadcasts `question_ready` (250ms poller + end-of-run emit)
+    /// for the same request, so dedupe must outlive the live-status entry.
+    private var notifiedQuestionReadyRequestIds: Set<String> = []
+
+    private func maybePostQuestionReadyNotification(for status: OfficeHoursLiveStatus) {
+        guard OfficeHoursQuestionReadyNotifier.shouldNotify(
+            stage: status.stage,
+            requestId: status.requestId,
+            title: status.title,
+            alreadyNotifiedRequestIds: notifiedQuestionReadyRequestIds,
+            isAppActive: NSApp.isActive,
+            isEnabled: isQuestionReadyNotificationEnabled,
+            isUITesting: Self.isUITestingOrStubProviderLaunch()
+        ), let requestId = status.requestId, let title = status.title else { return }
+
+        notifiedQuestionReadyRequestIds.insert(requestId)
+        Task {
+            await postQuestionReadyNotification(
+                sessionId: status.sessionId,
+                requestId: requestId,
+                title: title,
+                body: status.detail
+            )
+        }
+    }
+
+    private nonisolated static func isUITestingOrStubProviderLaunch() -> Bool {
+        CommandLine.arguments.contains { $0.hasPrefix("--ui-testing") }
+            || ProcessInfo.processInfo.environment["AGENTIC30_TEST_STUB_PROVIDER"] == "1"
+    }
+
+    private func postQuestionReadyNotification(
+        sessionId: String,
+        requestId: String,
+        title: String,
+        body: String?
+    ) async {
+        let center = UNUserNotificationCenter.current()
+        let settings = await withCheckedContinuation { continuation in
+            center.getNotificationSettings { settings in
+                continuation.resume(returning: settings)
+            }
+        }
+
+        var authorized = settings.authorizationStatus == .authorized
+            || settings.authorizationStatus == .provisional
+        if settings.authorizationStatus == .notDetermined {
+            authorized = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+        }
+        guard authorized else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = title
+        if let body {
+            content.body = body
+        }
+        content.sound = .default
+        content.userInfo = [
+            OfficeHoursQuestionReadyNotification.sessionIdUserInfoKey: sessionId,
+        ]
+
+        try? await center.add(UNNotificationRequest(
+            identifier: OfficeHoursQuestionReadyNotification.notificationIdentifier(requestId: requestId),
+            content: content,
+            trigger: nil
+        ))
+        PostHogTelemetry.capture(
+            "mac_office_hours_question_ready_notification_posted",
+            authSession: macAuthSession
+        )
     }
 
     private func reconcileOfficeHoursLiveStatus(with session: ChatSession) {
@@ -10279,6 +10500,10 @@ struct SidecarEvent: Decodable {
     let workHistory: WorkHistorySnapshot?
     let workHistoryStatus: WorkHistoryStatus?
     let officeHoursSourceGate: OfficeHoursSourceGate?
+    let officeHoursDailyDigest: OfficeHoursDailyDigest?
+    let morningBriefing: MorningBriefing?
+    let morningBriefingPrevious: MorningBriefing?
+    let morningBriefingStatus: MorningBriefingStatus?
 
     init(
         type: String,
@@ -10373,7 +10598,11 @@ struct SidecarEvent: Decodable {
         bipResearchStatus: BipResearchStatus? = nil,
         workHistory: WorkHistorySnapshot? = nil,
         workHistoryStatus: WorkHistoryStatus? = nil,
-        officeHoursSourceGate: OfficeHoursSourceGate? = nil
+        officeHoursSourceGate: OfficeHoursSourceGate? = nil,
+        officeHoursDailyDigest: OfficeHoursDailyDigest? = nil,
+        morningBriefing: MorningBriefing? = nil,
+        morningBriefingPrevious: MorningBriefing? = nil,
+        morningBriefingStatus: MorningBriefingStatus? = nil
     ) {
         self.type = type
         self.title = title
@@ -10468,6 +10697,10 @@ struct SidecarEvent: Decodable {
         self.workHistory = workHistory
         self.workHistoryStatus = workHistoryStatus
         self.officeHoursSourceGate = officeHoursSourceGate
+        self.officeHoursDailyDigest = officeHoursDailyDigest
+        self.morningBriefing = morningBriefing
+        self.morningBriefingPrevious = morningBriefingPrevious
+        self.morningBriefingStatus = morningBriefingStatus
     }
 
     var bipMissionProgress: BipMissionProgress? {
@@ -10856,6 +11089,9 @@ extension SidecarEvent {
         case bipResearch
         case workHistory
         case officeHoursSourceGate
+        case officeHoursDailyDigest
+        case morningBriefing
+        case morningBriefingPrevious
     }
 
     init(from decoder: Decoder) throws {
@@ -10967,6 +11203,10 @@ extension SidecarEvent {
         workHistory = Self.decodeIfPresent(WorkHistorySnapshot.self, from: container, forKey: .workHistory)
         workHistoryStatus = Self.decodeIfPresent(WorkHistoryStatus.self, from: container, forKey: .status)
         officeHoursSourceGate = Self.decodeIfPresent(OfficeHoursSourceGate.self, from: container, forKey: .officeHoursSourceGate)
+        officeHoursDailyDigest = Self.decodeIfPresent(OfficeHoursDailyDigest.self, from: container, forKey: .officeHoursDailyDigest)
+        morningBriefing = Self.decodeIfPresent(MorningBriefing.self, from: container, forKey: .morningBriefing)
+        morningBriefingPrevious = Self.decodeIfPresent(MorningBriefing.self, from: container, forKey: .morningBriefingPrevious)
+        morningBriefingStatus = Self.decodeIfPresent(MorningBriefingStatus.self, from: container, forKey: .status)
     }
 
     private static func decodeIfPresent<T: Decodable>(

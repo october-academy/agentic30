@@ -209,9 +209,11 @@ struct DecideNotificationGroupView: View {
         .padding(.top, front ? 10 : 9)
         .padding(.bottom, front ? 12 : 9)
         .frame(maxWidth: .infinity, minHeight: stackPreviewCardHeight(for: index), maxHeight: stackPreviewCardHeight(for: index), alignment: .topLeading)
-        .background(stackPreviewBackground(index: index))
+        .background(
+            stackPreviewBackground(index: index)
+                .shadow(color: front ? IntakeV2Color.cardShadow : IntakeV2Color.cardShadowSoft, radius: front ? 7 : 4, y: front ? 4 : 2)
+        )
         .overlay(stackPreviewStroke(index: index))
-        .shadow(color: IntakeV2Color.textPrimary.opacity(front ? 0.12 : 0.08), radius: front ? 7 : 4, y: front ? 4 : 2)
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .padding(.horizontal, stackPreviewHorizontalInset(for: index))
     }
@@ -342,9 +344,11 @@ struct DecideNotificationGroupView: View {
         .padding(.horizontal, expandedRow ? 18 : 16)
         .padding(.vertical, expandedRow ? 15 : 13)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(cardBackground)
+        .background(
+            cardBackground
+                .shadow(color: isBackingLayer ? IntakeV2Color.cardShadowSoft : IntakeV2Color.cardShadow, radius: isBackingLayer ? 5 : 8, y: isBackingLayer ? 2 : 4)
+        )
         .overlay(cardStroke)
-        .shadow(color: IntakeV2Color.textPrimary.opacity(isBackingLayer ? 0.08 : 0.12), radius: isBackingLayer ? 5 : 8, y: isBackingLayer ? 2 : 4)
         .contentShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
     }
 
@@ -428,9 +432,11 @@ struct DecideNotificationGroupView: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 16)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(cardBackground)
+        .background(
+            cardBackground
+                .shadow(color: IntakeV2Color.cardShadow, radius: 8, y: 4)
+        )
         .overlay(cardStroke)
-        .shadow(color: IntakeV2Color.textPrimary.opacity(0.12), radius: 8, y: 4)
         .contentShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Agentic30, \(item.contextLabel), \(item.body)")
@@ -600,9 +606,10 @@ struct DecideNotificationGroupView: View {
     }
 
     private func stackPreviewBackground(index: Int) -> some View {
+        // No material layer here: the fill is opaque, and .shadow() over an
+        // NSVisualEffectView-backed material renders as a light glow on dark theme.
         RoundedRectangle(cornerRadius: 16, style: .continuous)
             .fill(index == 0 ? IntakeV2Color.panelElevated : IntakeV2Color.panel)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func stackPreviewStroke(index: Int) -> some View {
@@ -611,9 +618,10 @@ struct DecideNotificationGroupView: View {
     }
 
     private var cardBackground: some View {
+        // No material layer here: the fill is opaque, and .shadow() over an
+        // NSVisualEffectView-backed material renders as a light glow on dark theme.
         RoundedRectangle(cornerRadius: 19, style: .continuous)
             .fill(IntakeV2Color.panelElevated)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 19, style: .continuous))
     }
 
     private var cardStroke: some View {
@@ -666,6 +674,6 @@ struct Agentic30AppIcon: View {
             .scaledToFit()
             .frame(width: size, height: size)
             .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
-            .shadow(color: IntakeV2Color.textPrimary.opacity(0.14), radius: size * 0.15, y: size * 0.05)
+            .shadow(color: IntakeV2Color.cardShadowSoft, radius: size * 0.15, y: size * 0.05)
     }
 }

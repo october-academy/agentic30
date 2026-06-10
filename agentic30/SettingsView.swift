@@ -185,6 +185,7 @@ struct SettingsView: View {
     @State private var savedSettingsBaseline = KeychainHelper.loadSettings()
     @State private var settingsThemeChoice = Agentic30Theme.current == .dark ? "dark" : "light"
     @AppStorage(Agentic30Theme.storageKey) private var appThemeRawValue = Agentic30Theme.defaultTheme.rawValue
+    @AppStorage(AgenticViewModel.questionReadyNotificationDefaultsKey) private var questionReadyNotificationEnabled = true
 
     private enum LocalDataConfirmation: Identifiable {
         case reset
@@ -912,6 +913,10 @@ struct SettingsView: View {
                 odSettingsRow(title: "로그인 시 자동 실행", detail: "macOS 로그인 항목에 추가합니다. Launch Agent — com.octobacademy.agentic30.plist.") {
                     odSettingsToggle(isOn: Binding(get: { loginItemsManager.isEnabled }, set: { loginItemsManager.setEnabled($0) }))
                         .accessibilityIdentifier("settings.menubar.launchAtLogin.toggle")
+                }
+                odSettingsRow(title: "질문 준비 알림", detail: "Office Hours 인터뷰에서 다음 질문 생성이 끝나면, 앱이 백그라운드일 때 macOS 알림을 보냅니다.") {
+                    odSettingsToggle(isOn: $questionReadyNotificationEnabled)
+                        .accessibilityIdentifier("settings.menubar.questionReadyNotification.toggle")
                 }
             }
         }

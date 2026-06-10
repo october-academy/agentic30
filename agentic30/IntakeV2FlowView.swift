@@ -44,6 +44,9 @@ enum IntakeV2Color {
     static var cardFill: Color { isWhiteTheme ? OpenDesignDayColor.surface : Color.white.opacity(0.03) }
     static var cardMutedFill: Color { isWhiteTheme ? OpenDesignDayColor.surface2 : Color.white.opacity(0.02) }
     static var cardStroke: Color { isWhiteTheme ? OpenDesignDayColor.borderSoft : Color.white.opacity(0.08) }
+    // Drop shadows must stay black-based in both themes — fg-based shadow colors render as a white glow on the dark theme.
+    static var cardShadow: Color { Color.black.opacity(isWhiteTheme ? 0.12 : 0.55) }
+    static var cardShadowSoft: Color { Color.black.opacity(isWhiteTheme ? 0.08 : 0.35) }
     static var selectionDotEmpty: Color { isWhiteTheme ? OpenDesignDayColor.borderStrong : Color.white.opacity(0.22) }
     static var invisibleHitArea: Color { OpenDesignDayColor.fg.opacity(0.001) }
 

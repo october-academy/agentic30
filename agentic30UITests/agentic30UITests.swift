@@ -2341,6 +2341,77 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    func testMorningBriefingRailOpensBriefingScreenWithAllSections() throws {
+        // The rail gains an "아침 브리핑" item between today and settings. Clicking it
+        // swaps the main column for the briefing screen (summary, source cards,
+        // timeline, anomaly picker, action drafts, meta panel) driven by the
+        // deterministic --ui-testing-stub-morning-briefing-events fixture.
+        let workspacePath = "/tmp/agentic30-ui-morning-briefing-\(UUID().uuidString)"
+        resetDirectory(at: workspacePath)
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-stub-morning-briefing-events",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+        }
+
+        XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.shell"].waitForExistence(timeout: 10))
+
+        let railItem = elementWithIdentifier(in: app, "opendesign.day.rail.item.briefing")
+        XCTAssertTrue(railItem.waitForExistence(timeout: 5))
+        railItem.click()
+
+        // Briefing screen with every OD reference section.
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.screen").waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.summary").waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.sources").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.card.cloudflare").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.card.github").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.card.posthog").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.timeline").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.anomaly").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.actions").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.syncbar").exists)
+
+        // The rail marks the briefing item active while the screen is presented.
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.day.rail.item.briefing", containing: "active", timeout: 3))
+        attachScreenshot(from: app, named: "Morning Briefing Screen")
+
+        // Anomaly labeling: jump via the section nav (scrolls the main column),
+        // pick option 1 → submit enables → toast confirms.
+        elementWithIdentifier(in: app, "morningBriefing.nav.anomaly").click()
+        let option = elementWithIdentifier(in: app, "morningBriefing.anomaly.option.real_churn")
+        XCTAssertTrue(option.waitForExistence(timeout: 3))
+        option.click()
+        let submit = elementWithIdentifier(in: app, "morningBriefing.anomaly.submit")
+        XCTAssertTrue(submit.waitForExistence(timeout: 3))
+        submit.click()
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.toast").waitForExistence(timeout: 3))
+
+        // Action draft applies (copy/적용 buttons are real controls).
+        elementWithIdentifier(in: app, "morningBriefing.nav.actions").click()
+        let apply = elementWithIdentifier(in: app, "morningBriefing.action.apply.message")
+        XCTAssertTrue(apply.waitForExistence(timeout: 3))
+        apply.click()
+
+        // Returning via the today rail item restores the Day 1 office-hours column.
+        elementWithIdentifier(in: app, "opendesign.day.rail.item.today").click()
+        XCTAssertTrue(app.descendants(matching: .any)["opendesign.officeHours.main"].waitForExistence(timeout: 10))
+        XCTAssertFalse(elementWithIdentifier(in: app, "morningBriefing.screen").exists)
+    }
+
+    @MainActor
     private func launchApp(
         arguments: [String],
         environment: [String: String] = [:]
