@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.16] - 2026-06-11
+
+### Fixed
+- **Release Upload Reliability**: Sparkle R2 uploads now publish the DMG (and verify it is publicly fetchable) before flipping the `appcast.xml` pointer, and retry transient Cloudflare edge errors (502) with backoff. Previously a 502 on a large arm64 DMG upload left the live feed pointing at a missing file. Re-cuts the Intel/Apple Silicon split release so both `appcast.xml` (Apple Silicon) and `appcast-x64.xml` (Intel) ship working DMGs.
+
 ## [1.0.15] - 2026-06-10
 
 ### Added

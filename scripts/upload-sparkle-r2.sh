@@ -66,6 +66,8 @@ if ! grep -Fq "$SPARKLE_PUBLIC_BASE_URL" "$appcast_xml"; then
   exit 1
 fi
 
+SPARKLE_UPLOAD_RETRIES="${SPARKLE_UPLOAD_RETRIES:-4}"
+
 upload_object() {
   local file_path="$1"
   local object_key="$2"
@@ -75,11 +77,27 @@ upload_object() {
   if [ "$SPARKLE_WRANGLER_REMOTE" = "1" ]; then
     remote_args+=(--remote)
   fi
-  "$SPARKLE_WRANGLER_BIN" r2 object put "${SPARKLE_R2_BUCKET}/${object_key}" \
-    --file "$file_path" \
-    --content-type "$content_type" \
-    --cache-control "$cache_control" \
-    "${remote_args[@]}"
+  # Large DMG PUTs intermittently 502 from Cloudflare's edge (observed
+  # 2026-06-10: arm64 DMG 502'd after a 4.5-min upload). Retry with backoff
+  # so a transient edge error doesn't fail the whole release.
+  local attempt=1 delay=10
+  while :; do
+    if "$SPARKLE_WRANGLER_BIN" r2 object put "${SPARKLE_R2_BUCKET}/${object_key}" \
+      --file "$file_path" \
+      --content-type "$content_type" \
+      --cache-control "$cache_control" \
+      "${remote_args[@]}"; then
+      return 0
+    fi
+    if [ "$attempt" -ge "$SPARKLE_UPLOAD_RETRIES" ]; then
+      echo "ERROR: failed to upload $object_key after $attempt attempts" >&2
+      return 1
+    fi
+    echo "WARN: upload of $object_key failed (attempt $attempt/$SPARKLE_UPLOAD_RETRIES); retrying in ${delay}s..." >&2
+    sleep "$delay"
+    attempt=$((attempt + 1))
+    delay=$((delay * 2))
+  done
 }
 
 verify_url() {
@@ -88,15 +106,23 @@ verify_url() {
 }
 
 echo "Uploading Sparkle artifacts to R2 bucket: $SPARKLE_R2_BUCKET"
-upload_object "$appcast_xml" "$SPARKLE_APPCAST_FILENAME" "application/xml" "public, max-age=0, must-revalidate"
 
+# Upload the DMG (and release notes) BEFORE the appcast. The appcast is the
+# feed pointer; publishing it before its target exists would point existing
+# installs at a missing DMG. Verify each payload is publicly fetchable before
+# the appcast goes live so a failed DMG upload leaves the old feed intact.
 dmg_name="$(basename "$appcast_dmg")"
 upload_object "$appcast_dmg" "$dmg_name" "application/x-apple-diskimage" "public, max-age=31536000, immutable"
+verify_url "${SPARKLE_PUBLIC_BASE_URL}${dmg_name}"
 
 notes_path="${appcast_dmg}.md"
 if [ -f "$notes_path" ]; then
   upload_object "$notes_path" "$(basename "$notes_path")" "text/markdown; charset=utf-8" "public, max-age=31536000, immutable"
+  verify_url "${SPARKLE_PUBLIC_BASE_URL}$(basename "$notes_path")"
 fi
+
+# Pointer last: only flip the feed once the DMG it references is confirmed live.
+upload_object "$appcast_xml" "$SPARKLE_APPCAST_FILENAME" "application/xml" "public, max-age=0, must-revalidate"
 
 echo "Verifying public Sparkle URLs..."
 verify_url "${SPARKLE_PUBLIC_BASE_URL}${SPARKLE_APPCAST_FILENAME}"
