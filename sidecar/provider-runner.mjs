@@ -15,6 +15,7 @@ import {
 import {
   CODEX_STRUCTURED_INPUT_TOOL,
 } from "./structured-input-tools.mjs";
+import { decorateIcpStructuredInput } from "./idd-doc-gate.mjs";
 import {
   INLINE_DECISION_CONTRACT,
   INLINE_DECISION_SENTINEL_END,
@@ -374,19 +375,42 @@ export function getProviderConnectionState(provider) {
   };
 }
 
+// Agent SDK >=0.3 ships the Claude Code CLI as a per-platform native binary in
+// an optionalDependency package; <=0.2 bundled a Node `cli.js` inside the main
+// package. Resolve whichever layout is installed (native first, then legacy).
+export function resolveClaudeCodeEntrypoint() {
+  const { platform, arch } = process;
+  const suffixes = platform === "linux"
+    ? [`${platform}-${arch}`, `${platform}-${arch}-musl`]
+    : [`${platform}-${arch}`];
+  for (const suffix of suffixes) {
+    const root = resolveExistingInstalledPackageRoot("@anthropic-ai", `claude-agent-sdk-${suffix}`);
+    if (!root) continue;
+    const binary = path.join(root, platform === "win32" ? "claude.exe" : "claude");
+    if (fsSync.existsSync(binary)) {
+      return binary;
+    }
+  }
+  const legacyCliPath = path.join(
+    resolveInstalledPackageRoot("@anthropic-ai", "claude-agent-sdk"),
+    "cli.js",
+  );
+  return fsSync.existsSync(legacyCliPath) ? legacyCliPath : null;
+}
+
 function getProviderSdkState(provider) {
   if (provider === "claude") {
     const packageName = "@anthropic-ai/claude-agent-sdk";
     const packageRoot = resolveInstalledPackageRoot("@anthropic-ai", "claude-agent-sdk");
-    const cliPath = path.join(packageRoot, "cli.js");
+    const entrypointPath = resolveClaudeCodeEntrypoint();
     const packageJson = readPackageJson(packageRoot);
     return {
-      available: fsSync.existsSync(cliPath),
+      available: Boolean(entrypointPath),
       packageName,
       version: packageJson?.version ?? null,
       packageRoot,
-      entrypointPath: cliPath,
-      message: fsSync.existsSync(cliPath)
+      entrypointPath,
+      message: entrypointPath
         ? "Claude Agent SDK CLI is installed"
         : "Claude Agent SDK CLI is missing",
     };
@@ -468,8 +492,7 @@ async function runClaudeProvider({
     executionMode,
     systemPromptOverride,
   });
-  const packagePath = resolveInstalledPackageRoot("@anthropic-ai", "claude-agent-sdk");
-  const cliPath = path.join(packagePath, "cli.js");
+  const cliPath = resolveClaudeCodeEntrypoint();
   const providerEnv = buildProviderEnv("claude");
   const mcpServers = {
     ...(usesInternalMcp(executionMode) && sessionIdForMcp
@@ -500,7 +523,7 @@ async function runClaudeProvider({
   const claudeVendor = specialist?.vendor?.claude;
   const options = {
     model: model || undefined,
-    pathToClaudeCodeExecutable: cliPath,
+    pathToClaudeCodeExecutable: cliPath ?? undefined,
     executable: process.execPath,
     env,
     cwd: workspaceRoot,
@@ -1697,7 +1720,13 @@ async function createStubIddUserInputRequest({
     spec: "SPEC",
   };
   const title = docTitleByType[pending.docType] || "Foundation";
-  return createUserInputRequest(appSupportPath, {
+  // This is the only writer that persists generation.mode "provider_adaptive"
+  // to disk. syncPendingUserInputRequests() checks isMissingIcpContextIntro()
+  // on the raw on-disk request before any attach-time decoration runs, so an
+  // undecorated ICP card here would be restarted, regenerated identically, and
+  // restarted again — an infinite loop. Decorate at write time, like every
+  // other ICP card writer.
+  const payload = {
     sessionId: sessionIdForMcp,
     toolName: CODEX_STRUCTURED_INPUT_TOOL,
     title: `${title} adaptive follow-up`,
@@ -1731,7 +1760,11 @@ async function createStubIddUserInputRequest({
         textMode: "short",
       },
     ],
-  });
+  };
+  return createUserInputRequest(
+    appSupportPath,
+    pending.docType === "icp" ? decorateIcpStructuredInput(payload) : payload,
+  );
 }
 
 function extractStubContextFiles(prompt) {

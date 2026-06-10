@@ -62,7 +62,11 @@ test("provider connection state reports SDK and CLI entrypoint health", () => {
 
   assert.equal(claude.sdk.packageName, "@anthropic-ai/claude-agent-sdk");
   assert.equal(claude.sdk.available, true);
-  assert.match(claude.sdk.entrypointPath, /@anthropic-ai\/claude-agent-sdk\/cli\.js$/);
+  // Agent SDK >=0.3: per-platform native binary package; <=0.2: bundled cli.js.
+  assert.match(
+    claude.sdk.entrypointPath,
+    /@anthropic-ai\/claude-agent-sdk(?:-[a-z0-9]+-[a-z0-9]+(?:-musl)?\/claude(?:\.exe)?|\/cli\.js)$/,
+  );
   assert.match(claude.sdk.version, /^\d+\.\d+\.\d+/);
 
   assert.equal(codex.sdk.packageName, "@openai/codex-sdk");

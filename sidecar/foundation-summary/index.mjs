@@ -125,9 +125,10 @@ export function buildFoundationSummaryCanUseTool(hooks = {}) {
  * @param {object} [args.foundationContext] - Resolved Foundation context.
  *   `day` should equal 7.
  * @param {string} [args.model] - Optional Claude model override.
- * @param {string} [args.cliPath] - Path to the bundled `cli.js` from
- *   `@anthropic-ai/claude-agent-sdk`. The host already resolves this; we
- *   accept it as an arg to avoid duplicating the resolver logic.
+ * @param {string} [args.cliPath] - Path to the Claude Code entrypoint from
+ *   `@anthropic-ai/claude-agent-sdk` (native binary on >=0.3, `cli.js` on
+ *   <=0.2). The host resolves this via `resolveClaudeCodeEntrypoint()`;
+ *   empty means the SDK falls back to its own built-in binary.
  * @param {AbortController} [args.abortController] - Cancellation signal.
  * @param {object} [args.env] - Sanitized child env (host applies the same
  *   ANTHROPIC_API_KEY / OAuth precedence rules used by provider-runner.mjs).

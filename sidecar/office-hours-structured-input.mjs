@@ -395,6 +395,30 @@ export function formatSelectedOptionEvidenceHint(option = {}) {
   return extras.length ? `${description} (${extras.join(" · ")})` : description;
 }
 
+// The Mac client embeds "Expected question count: N" in the office-hours
+// context it sends on start (ContentView's office-hours context builder).
+// 0 means "unknown" — callers must treat that as "do not enforce a count".
+export function parseExpectedOfficeHoursQuestionCount(context = "") {
+  const match = /^Expected question count:\s*(\d+)\s*$/im.exec(String(context || ""));
+  if (!match) return 0;
+  const count = Number.parseInt(match[1], 10);
+  return Number.isInteger(count) && count > 0 ? count : 0;
+}
+
+// Counts answered interview turns recorded for one session in the workspace
+// turn log (workspace-memory.mjs appendOfficeHoursTurn writes one entry per
+// submitted structured answer).
+export function countOfficeHoursTurnsForSession(turnLog, sessionId = "") {
+  const id = String(sessionId || "").trim();
+  if (!id) return 0;
+  const turns = Array.isArray(turnLog?.turns) ? turnLog.turns : [];
+  return turns.filter((turn) => String(turn?.sessionId || "") === id).length;
+}
+
+export function buildOfficeHoursIncompleteInterviewMessage({ expected = 0, answered = 0 } = {}) {
+  return `Office Hours 인터뷰가 질문 ${expected}개 중 ${answered}개만 진행하고 종료했습니다. 다시 시도해 주세요.`;
+}
+
 export function buildContextualOfficeHoursQuestion(context = "") {
   const facts = extractOfficeHoursContextFacts(context);
   const customer = facts.customer || facts.icp;

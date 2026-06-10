@@ -46,6 +46,13 @@ import {
   selectedExternalOfficeHoursSources,
 } from "./daily-office-hours-digest.mjs";
 import {
+  buildMorningBriefing,
+  labelMorningBriefingAnomaly,
+  loadMorningBriefingStore,
+  persistMorningBriefing,
+  updatePersistedMorningBriefing,
+} from "./morning-briefing.mjs";
+import {
   buildQmdGuidance,
   buildQmdMcpConfig,
   getQmdState,
@@ -80,6 +87,7 @@ import {
 import { buildDay1SituationSummary } from "./generate-day1-situation-summary.mjs";
 import { extractWorkspaceEvidence } from "./workspace-signal-extractor.mjs";
 import { isSecretPath, redactSecrets } from "./workspace-safety.mjs";
+import { ensureAgentic30Gitignored } from "./workspace-gitignore.mjs";
 import {
   formatProjectContextForPrompt,
   loadProjectContextCache,
@@ -125,6 +133,7 @@ import { buildPreflightReport } from "./preflight.mjs";
 import {
   buildCodexEnv,
   buildGeminiEnv,
+  resolveClaudeCodeEntrypoint,
   resolveCodexBinaryPath,
   resolveCodexModel,
   resolveGeminiModel,
@@ -249,6 +258,7 @@ import {
   appendOfficeHoursTurn,
   buildOfficeHoursHistorySummary,
   formatOfficeHoursHistoryForPrompt,
+  loadOfficeHoursTurnLog,
   loadOnboardingMemory,
   refreshDayMemory,
   saveOnboardingMemory,
@@ -258,13 +268,16 @@ import {
   CODEX_STRUCTURED_INPUT_TOOL,
 } from "./structured-input-tools.mjs";
 import {
+  buildOfficeHoursIncompleteInterviewMessage,
   buildOfficeHoursInlineStructuredPromptPayload,
   buildOfficeHoursStructuredQuestionTranscriptText,
   buildOfficeHoursStructuredInputContinuationPrompt,
+  countOfficeHoursTurnsForSession,
   extractOfficeHoursChatEmphasis,
   formatSelectedOptionEvidenceHint,
   isOfficeHoursStructuredInputMode,
   isOfficeHoursStructuredInputToolEvent,
+  parseExpectedOfficeHoursQuestionCount,
   prepareOfficeHoursStructuredInputRequest,
   OFFICE_HOURS_EMPHASIS_SENTINEL_END,
   OFFICE_HOURS_EMPHASIS_SENTINEL_START,
@@ -273,8 +286,14 @@ import {
 } from "./office-hours-structured-input.mjs";
 import {
   OFFICE_HOURS_STATUS_COPY,
-  OFFICE_HOURS_FIRST_QUESTION_STATUS_COPY,
+  selectOfficeHoursStatusCopy,
 } from "./office-hours-status.mjs";
+import {
+  buildOfficeHoursResumePreamble,
+  countOfficeHoursResumeTurnsFromOtherSessions,
+  selectOfficeHoursResumeTurns,
+  shouldSeedOfficeHoursResumeTranscript,
+} from "./office-hours-resume.mjs";
 import {
   clearUserInputArtifacts,
   createUserInputRequest,
@@ -410,6 +429,7 @@ const state = {
   workHistoryRefreshPromise: null,
   workHistoryProgress: null,
   workHistoryProgressStartedAt: null,
+  morningBriefingRefreshPromise: null,
   integrationSettings: {
     exaApiKey: "",
   },
@@ -677,6 +697,22 @@ const workHistoryPoll = setInterval(() => {
   );
 }, WORK_HISTORY_REFRESH_INTERVAL_MS);
 workHistoryPoll.unref?.();
+
+// Mid-challenge workspaces never re-scan, but day-progress/memory writers keep
+// touching `.agentic30/` — backfill the gitignore guard once per daemon start.
+// `onlyIfAgentic30Exists` keeps untouched workspaces' `.gitignore` unmodified.
+fireAndForget(
+  "workspace_gitignore_startup",
+  ensureAgentic30Gitignored({ workspaceRoot, onlyIfAgentic30Exists: true }).then((result) => {
+    if (result.status === "added") {
+      telemetry.captureEvent("mac_sidecar_workspace_gitignore_added", { scan_root: workspaceRoot });
+    } else if (result.status === "error") {
+      telemetry.captureException(new Error(result.error), {
+        operation: "workspace_gitignore_startup",
+      });
+    }
+  }),
+);
 
 const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
 let shutdownStarted = false;
@@ -1392,11 +1428,10 @@ async function handleClientMessage(socket, payload) {
         );
     }
       const hasActiveRun = state.activeRuns.has(session.id);
-      await writeUserInputResponse(appSupportPath, {
-        sessionId: session.id,
-      requestId,
-        response,
-    });
+      // Record the turn BEFORE writing the response file: that write resumes a
+      // blocked Claude run, and detectIncompleteOfficeHoursInterview counts
+      // these turns when that run concludes — the final answer must be durable
+      // before the run can race ahead to its conclusion.
       if (isOfficeHoursStructuredInputResponse && userResponseText) {
         await appendOfficeHoursTurn({
           workspaceRoot,
@@ -1416,6 +1451,11 @@ async function handleClientMessage(socket, payload) {
           });
         });
       }
+      await writeUserInputResponse(appSupportPath, {
+        sessionId: session.id,
+      requestId,
+        response,
+    });
       if (!hasActiveRun) {
         await deleteUserInputArtifacts(appSupportPath, session.id, requestId);
     }
@@ -1790,6 +1830,59 @@ async function handleClientMessage(socket, payload) {
         targetSocket: socket,
         preferredProvider: payload.preferredProvider,
       });
+      return;
+    }
+    case "morning_briefing_get": {
+      const store = await loadMorningBriefingStore({ workspaceRoot });
+      if (store.current) {
+        send(socket, {
+          type: "morning_briefing_result",
+          morningBriefing: store.current,
+          morningBriefingPrevious: store.previous,
+        });
+      }
+      if (state.morningBriefingRefreshPromise) {
+        send(socket, { type: "morning_briefing_status", status: { state: "collecting" } });
+        return;
+      }
+      // Tab-entry refresh policy: the briefing is a daily artifact, so anything
+      // generated on a previous local date is stale and re-collects on entry.
+      if (!store.current || !isSameLocalDate(store.current.generatedAt, new Date())) {
+        scheduleMorningBriefingRefresh({
+          reason: "tab_enter",
+          preferredProvider: payload.preferredProvider,
+          targetSocket: socket,
+        });
+      }
+      return;
+    }
+    case "morning_briefing_refresh": {
+      scheduleMorningBriefingRefresh({
+        reason: payload.reason || "manual",
+        force: Boolean(payload.force),
+        preferredProvider: payload.preferredProvider,
+        targetSocket: socket,
+      });
+      return;
+    }
+    case "morning_briefing_anomaly_label": {
+      const label = String(payload.label || "").trim();
+      const updated = await updatePersistedMorningBriefing({
+        workspaceRoot,
+        update: (current) => labelMorningBriefingAnomaly(current, label),
+      });
+      if (updated) {
+        const labeledStore = await loadMorningBriefingStore({ workspaceRoot });
+        broadcast({
+          type: "morning_briefing_result",
+          morningBriefing: updated,
+          morningBriefingPrevious: labeledStore.previous,
+        });
+        telemetry.captureEvent("mac_sidecar_morning_briefing_anomaly_labeled", {
+          anomaly: updated.anomaly?.id || "",
+          label,
+        });
+      }
       return;
     }
     case "bip_research_get": {
@@ -3059,6 +3152,22 @@ async function runPrompt(
             context: officeHoursContext,
             source: "office_hours_continuation",
           });
+      const incompleteInterview = !request && !session.pendingUserInput
+        ? await detectIncompleteOfficeHoursInterview(session, officeHoursContext)
+        : null;
+      if (incompleteInterview) {
+        failOfficeHoursIncompleteInterview(session, assistantMessage, {
+          incomplete: incompleteInterview,
+          runStartedAt,
+          source: "office_hours_continuation",
+        });
+        emitAgentEvent(session, assistantMessage.id, {
+          eventType: "run.failed",
+          error: session.error,
+          recoverable: false,
+        });
+        return;
+      }
       emitOfficeHoursStatus(session, {
         stage: session.pendingUserInput ? "question_ready" : "completed",
         messageId: assistantMessage.id,
@@ -4026,27 +4135,42 @@ async function buildExternalOfficeHoursDigestSignals(session, {
   const externalSources = selectedExternalOfficeHoursSources(gate);
   if (!externalSources.length) return [];
   let externalText = "";
-  await runProviderStream({
-    provider: session.provider,
-    sessionRuntime: session.runtime,
-    prompt: buildExternalOfficeHoursDigestPrompt({
-      sources: externalSources,
-      window: gate.window,
-      context,
-    }),
-    model: session.model,
-    workspaceRoot,
-    abortController,
-    sessionIdForMcp: null,
-    executionMode: "office_hours_digest_read_only",
-    approvedToolExecution: false,
-    onTextDelta: (text) => {
-      externalText += String(text || "");
-    },
-    onTextReplace: (text) => {
-      externalText = String(text || "");
-    },
-  });
+  try {
+    await runProviderStream({
+      provider: session.provider,
+      sessionRuntime: session.runtime,
+      prompt: buildExternalOfficeHoursDigestPrompt({
+        sources: externalSources,
+        window: gate.window,
+        context,
+      }),
+      model: session.model,
+      workspaceRoot,
+      abortController,
+      sessionIdForMcp: null,
+      executionMode: "office_hours_digest_read_only",
+      approvedToolExecution: false,
+      onTextDelta: (text) => {
+        externalText += String(text || "");
+      },
+      onTextReplace: (text) => {
+        externalText = String(text || "");
+      },
+    });
+  } catch (error) {
+    // A provider/MCP outage must not surface as a raw run failure. Aborts keep
+    // propagating; everything else falls through with empty text so the selected
+    // sources resolve to "failed" and finalize throws the structured
+    // OfficeHoursSourceGateError (connect actions + retry, not a crash).
+    if (abortController?.signal?.aborted || error?.name === "AbortError") {
+      throw error;
+    }
+    telemetry.captureException(error, {
+      operation: "office_hours_external_digest",
+      sources: externalSources.join(","),
+    });
+    externalText = "";
+  }
   return normalizeExternalOfficeHoursDigest(externalText, externalSources);
 }
 
@@ -4070,6 +4194,16 @@ async function prepareDailyOfficeHoursDigest(session, {
   if (!gate.ok) {
     throw new OfficeHoursSourceGateError(gate);
   }
+
+  // Collection can take seconds (gh CLI + external MCP digest); without this the
+  // Mac client sits silent between "gate passed" and the first question.
+  broadcast({
+    type: "office_hours_daily_digest_result",
+    sessionId: session.id,
+    day: gate.day ?? null,
+    status: "collecting",
+    detail: "Day 2+ Office Hours digest collecting.",
+  });
 
   const localSignals = await collectLocalDailyOfficeHoursSignals({
     workspaceRoot,
@@ -4096,6 +4230,226 @@ async function prepareDailyOfficeHoursDigest(session, {
     detail: "Day 2+ Office Hours digest ready.",
   });
   return digest;
+}
+
+// ── Morning briefing ─────────────────────────────────────────────────────────
+// Reuses the Day 2+ Office Hours digest collectors (git / gh CLI / PostHog /
+// Cloudflare) but runs session-less: sources are auto-selected from whatever is
+// actually connected, external sources are best-effort (required=false, so a
+// failed MCP digest renders as a disconnected card instead of blocking), and the
+// result is shaped by morning-briefing.mjs into the briefing screen payload.
+
+const MORNING_BRIEFING_PROVIDER_TIMEOUT_MS = 90_000;
+const MORNING_BRIEFING_ALL_SOURCES = Object.freeze(["git", "gh_cli", "posthog", "cloudflare"]);
+
+function isSameLocalDate(iso, now = new Date()) {
+  const ts = Date.parse(String(iso || ""));
+  if (!Number.isFinite(ts)) return false;
+  const a = new Date(ts);
+  return a.getFullYear() === now.getFullYear()
+    && a.getMonth() === now.getMonth()
+    && a.getDate() === now.getDate();
+}
+
+function pickMorningBriefingProvider(preferredProvider = "") {
+  const preferred = String(preferredProvider || "").trim().toLowerCase();
+  const candidates = ["claude", "codex"];
+  const ordered = candidates.includes(preferred)
+    ? [preferred, ...candidates.filter((provider) => provider !== preferred)]
+    : candidates;
+  for (const provider of ordered) {
+    if (getProviderAuthState(provider).available) return provider;
+  }
+  return "";
+}
+
+function scheduleMorningBriefingRefresh({
+  reason = "manual",
+  force = false,
+  preferredProvider = "",
+  targetSocket = null,
+} = {}) {
+  if (state.morningBriefingRefreshPromise) {
+    send(targetSocket, { type: "morning_briefing_status", status: { state: "collecting", reason } });
+    return state.morningBriefingRefreshPromise;
+  }
+  const promise = runMorningBriefingRefresh({ reason, force, preferredProvider }).finally(() => {
+    state.morningBriefingRefreshPromise = null;
+  });
+  state.morningBriefingRefreshPromise = promise;
+  return promise;
+}
+
+async function runMorningBriefingRefresh({ reason = "manual", force = false, preferredProvider = "" } = {}) {
+  const startedAt = Date.now();
+  broadcast({ type: "morning_briefing_status", status: { state: "collecting", reason } });
+  try {
+    const store = await loadMorningBriefingStore({ workspaceRoot });
+    if (!force && store.current && isSameLocalDate(store.current.generatedAt, new Date())) {
+      broadcast({
+        type: "morning_briefing_result",
+        morningBriefing: store.current,
+        morningBriefingPrevious: store.previous,
+      });
+      return store.current;
+    }
+
+    const day = await challengeElapsedOfficeHoursDay();
+    if (Number.isFinite(day) && day <= 1) {
+      const locked = {
+        ...buildMorningBriefing({ digest: { sources: [] }, day }),
+        status: {
+          state: "locked",
+          detail: "아침 브리핑은 Day 2 아침부터 도착해요. 오늘은 Day 1 인터뷰에 집중해요.",
+        },
+      };
+      const lockedStore = await persistMorningBriefing({ workspaceRoot, briefing: locked });
+      broadcast({
+        type: "morning_briefing_result",
+        morningBriefing: locked,
+        morningBriefingPrevious: lockedStore.previous,
+      });
+      return locked;
+    }
+
+    const probeGate = await evaluateOfficeHoursSourceGate({
+      workspaceRoot,
+      day: day ?? 2,
+      selectedSources: MORNING_BRIEFING_ALL_SOURCES,
+      provider: preferredProvider,
+      appSupportPath,
+    });
+    const readySources = (probeGate.sources || [])
+      .filter((source) => source.state === "ready")
+      .map((source) => source.id);
+    // Briefing gate: selected = whatever is connected, required = none. The
+    // briefing renders disconnected sources as connect pills instead of blocking
+    // the whole screen the way the Office Hours interview gate does.
+    const gate = {
+      ...probeGate,
+      ok: true,
+      blocking: false,
+      selectedSources: readySources,
+      sources: (probeGate.sources || []).map((source) => ({
+        ...source,
+        selected: readySources.includes(source.id),
+        required: false,
+      })),
+    };
+
+    const localSignals = await collectLocalDailyOfficeHoursSignals({ workspaceRoot, gate });
+    const externalSignals = await collectMorningBriefingExternalSignals({ gate, preferredProvider });
+    const digest = finalizeDailyOfficeHoursDigest({
+      gate,
+      localSignals,
+      externalSignals,
+      context: "",
+    });
+    const briefing = buildMorningBriefing({
+      digest,
+      day,
+      previous: store.current ? { metrics: store.current.metrics } : null,
+      history: store.history,
+    });
+    const persistedStore = await persistMorningBriefing({ workspaceRoot, briefing });
+    broadcast({
+      type: "morning_briefing_result",
+      morningBriefing: briefing,
+      morningBriefingPrevious: persistedStore.previous,
+    });
+    telemetry.captureEvent("mac_sidecar_morning_briefing_refresh_completed", {
+      reason,
+      duration_ms: Date.now() - startedAt,
+      day: briefing.day ?? 0,
+      ready_sources: readySources.join(","),
+      anomaly: briefing.anomaly?.id || "",
+      status: briefing.status?.state || "",
+    });
+    return briefing;
+  } catch (error) {
+    telemetry.captureException(error, { operation: "morning_briefing_refresh", reason });
+    const store = await loadMorningBriefingStore({ workspaceRoot });
+    broadcast({
+      type: "morning_briefing_result",
+      morningBriefing: store.current,
+      status: { state: "failed", detail: "브리핑 수집에 실패했어요. 다시 동기화를 눌러 주세요." },
+    });
+    return store.current;
+  }
+}
+
+async function collectMorningBriefingExternalSignals({ gate, preferredProvider = "" } = {}) {
+  const externalSources = selectedExternalOfficeHoursSources(gate);
+  if (!externalSources.length) return [];
+  const provider = pickMorningBriefingProvider(preferredProvider);
+  if (!provider) {
+    return normalizeExternalOfficeHoursDigest("", externalSources);
+  }
+  const abortController = new AbortController();
+  let externalText = "";
+  let timedOut = false;
+  try {
+    await runWithSoftTimeout({
+      timeoutMs: MORNING_BRIEFING_PROVIDER_TIMEOUT_MS,
+      abortController,
+      onTimeout: () => {
+        timedOut = true;
+        telemetry.captureEvent("mac_sidecar_morning_briefing_external_timeout", {
+          provider,
+          sources: externalSources.join(","),
+          timeout_ms: MORNING_BRIEFING_PROVIDER_TIMEOUT_MS,
+        });
+      },
+      onLateError: (error) => {
+        telemetry.captureException(error, {
+          operation: "morning_briefing_external_digest_late",
+          provider,
+        });
+      },
+      operation: async () => {
+        await runProviderStream({
+          provider,
+          prompt: buildExternalOfficeHoursDigestPrompt({
+            sources: externalSources,
+            window: gate.window,
+            context: "Morning briefing: aggregate overnight product/traffic evidence only.",
+          }),
+          workspaceRoot,
+          abortController,
+          sessionIdForMcp: null,
+          executionMode: "office_hours_digest_read_only",
+          approvedToolExecution: false,
+          onTextDelta: (text) => {
+            if (!timedOut) externalText += String(text || "");
+          },
+          onTextReplace: (text) => {
+            if (!timedOut) externalText = String(text || "");
+          },
+        });
+      },
+    });
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "morning_briefing_external_digest",
+      provider,
+      sources: externalSources.join(","),
+    });
+    externalText = "";
+  }
+  return normalizeExternalOfficeHoursDigest(timedOut ? "" : externalText, externalSources);
+}
+
+// Day-less Office Hours starts (fresh slash-command or button sessions) must not
+// silently skip the Day 2+ source gate and daily digest: fall back to the
+// challenge-elapsed day. Fail-open: null keeps the legacy day-less behavior.
+async function challengeElapsedOfficeHoursDay() {
+  try {
+    const dayProgress = state.dayProgress ?? (await loadDayProgress({ workspaceRoot }));
+    if (!dayProgress) return null;
+    return normalizeOfficeHoursDay(computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt }));
+  } catch {
+    return null;
+  }
 }
 
 // Cycle#N read-back: the prior interview's assignment + hard-evidence demand + costume
@@ -4183,6 +4537,74 @@ function emitOfficeHoursStatus(session, {
     ...(messageId ? { messageId } : {}),
     ...(requestId ? { requestId } : {}),
     ...(Number.isFinite(elapsedMs) ? { elapsedMs: Math.max(0, Math.round(elapsedMs)) } : {}),
+  });
+}
+
+// Detects an interview run that ended with no question card on deck while the
+// session is still short of the expected question count the Mac client embeds
+// in the office-hours context ("Expected question count: N"). The count is
+// read from the runtime stamp runOfficeHours parses off the BASE context
+// (robust against the head-keeping 16k clamp evicting the line once the
+// cycle/resume preambles are prepended), falling back to re-parsing the given
+// context. Answered turns are counted from the workspace turn log, which
+// appendOfficeHoursTurn writes once per submitted structured answer, plus the
+// turns a resumed Day-1 interview inherited from OTHER sessions
+// (session.runtime.officeHours.resumedTurns — deliberately excludes the
+// current session's own turns, because the Mac retry path re-enters
+// runOfficeHours on the SAME session and countOfficeHoursTurnsForSession
+// already counts those). Returns { expected, answered } when the interview is
+// incomplete, null otherwise (including when no count is embedded — unknown
+// counts are never enforced).
+async function detectIncompleteOfficeHoursInterview(session, context) {
+  const stampedExpected = Number.parseInt(String(session?.runtime?.officeHours?.expectedQuestionCount ?? ""), 10);
+  const expected = Number.isFinite(stampedExpected) && stampedExpected > 0
+    ? stampedExpected
+    : parseExpectedOfficeHoursQuestionCount(context);
+  if (!expected) return null;
+  const turnLog = await loadOfficeHoursTurnLog({ workspaceRoot }).catch(() => null);
+  if (!turnLog) return null;
+  const resumedTurns = Number.parseInt(String(session?.runtime?.officeHours?.resumedTurns ?? ""), 10);
+  const resumeOffset = Number.isFinite(resumedTurns) ? Math.max(0, resumedTurns) : 0;
+  const answered = countOfficeHoursTurnsForSession(turnLog, session.id) + resumeOffset;
+  if (answered >= expected) return null;
+  return { expected, answered };
+}
+
+// An interview that stops early is an explicit failure, not a completion: the
+// Mac client has no free-chat fallback for an idle office-hours session, so an
+// early stop must land in the error state (failure block + retry) instead of
+// reading as "completed".
+function failOfficeHoursIncompleteInterview(session, assistantMessage, {
+  incomplete,
+  runStartedAt,
+  source,
+}) {
+  const message = buildOfficeHoursIncompleteInterviewMessage(incomplete);
+  assistantMessage.state = "error";
+  assistantMessage.error = message;
+  if (!assistantMessage.content) {
+    assistantMessage.content = message;
+  }
+  session.status = "error";
+  session.error = message;
+  telemetry.captureEvent("mac_sidecar_office_hours_incomplete_interview", {
+    session_id: session.id,
+    provider: session.provider,
+    expected_questions: incomplete.expected,
+    answered_questions: incomplete.answered,
+    source,
+  });
+  emitOfficeHoursStatus(session, {
+    stage: "failed",
+    detail: message,
+    progressText: message,
+    messageId: assistantMessage.id,
+    elapsedMs: performance.now() - runStartedAt,
+  });
+  broadcast({
+    type: "error",
+    sessionId: session.id,
+    message,
   });
 }
 
@@ -4343,7 +4765,9 @@ async function runOfficeHours(session, {
     },
   });
 
-  const runtimeDay = normalizeOfficeHoursDay(day) || normalizeOfficeHoursDay(session.runtime?.officeHours?.day);
+  const runtimeDay = normalizeOfficeHoursDay(day)
+    || normalizeOfficeHoursDay(session.runtime?.officeHours?.day)
+    || (await challengeElapsedOfficeHoursDay());
   const normalizedSelectedSources = normalizeOfficeHoursSelectedSources(selectedSources);
   try {
     if (isDay2PlusOfficeHoursDay(runtimeDay)) {
@@ -4414,6 +4838,106 @@ async function runOfficeHours(session, {
       };
     }
 
+    // Day-1 interview resume: a relaunch kills the in-flight provider
+    // conversation and boot wipes sessions.json, but the answered turns survive
+    // in .agentic30/memory/office-hours-turns.json and day-progress.json still
+    // holds first_interview=active. Rebuild from that pair instead of starting
+    // over at question 1. Fail-open: any error means a normal fresh start.
+    let officeHoursResumeTurns = [];
+    try {
+      officeHoursResumeTurns = selectOfficeHoursResumeTurns({
+        turnLog: await loadOfficeHoursTurnLog({ workspaceRoot }),
+        day: runtimeDay,
+        dayProgress: state.dayProgress ?? (await loadDayProgress({ workspaceRoot })),
+        source,
+      });
+    } catch {
+      officeHoursResumeTurns = [];
+    }
+    const officeHoursExpectedQuestionCount = parseExpectedOfficeHoursQuestionCount(officeHoursRuntime.context);
+    if (officeHoursExpectedQuestionCount > 0) {
+      // Parsed from the BASE context before any preamble prepend, then stamped
+      // on the runtime so detectIncompleteOfficeHoursInterview never depends on
+      // the "Expected question count" line surviving the head-keeping 16k clamp
+      // after the cycle/resume preambles are prepended.
+      officeHoursRuntime.expectedQuestionCount = officeHoursExpectedQuestionCount;
+    }
+    // All questions already answered — the founder quit between the last answer
+    // and the commitment close. The interview's only remaining work is the
+    // commitment close (PB-1 bar -> day_progress_patch gate), which the Mac
+    // client renders from the transcript count plus day-progress alone, so the
+    // wrap-up path below skips the provider run entirely.
+    const officeHoursResumeWrapUp = officeHoursExpectedQuestionCount > 0
+      && officeHoursResumeTurns.length >= officeHoursExpectedQuestionCount;
+    if (officeHoursResumeTurns.length) {
+      // The Mac client derives the 답변 N/M counter and the visible Q&A history
+      // from transcript rows, so seeding the prior turns restores both with no
+      // client change. Same shape as the post-answer transcript writes in the
+      // submit_user_input handler, plus the officeHoursSeededTurn wire marker
+      // (decoded by ChatMessage on the Mac side) that exempts restored rows
+      // from snapshot-based hiding/dedup — their submitted-card snapshots died
+      // with the prior session. Skipped when the session already carries real
+      // answer rows (same-daemon retry) so turns are never duplicated.
+      let officeHoursResumeSeeded = false;
+      if (shouldSeedOfficeHoursResumeTranscript(session)) {
+        officeHoursResumeSeeded = true;
+        for (const turn of officeHoursResumeTurns) {
+          const seededQuestion = makeMessage({ role: "assistant", provider: session.provider, content: turn.questionText, state: "final" });
+          const seededAnswer = makeMessage({ role: "user", provider: session.provider, content: turn.responseText, state: "final" });
+          seededQuestion.officeHoursSeededTurn = true;
+          seededAnswer.officeHoursSeededTurn = true;
+          session.messages.push(seededQuestion, seededAnswer);
+        }
+      }
+      // Carried on the session runtime so detectIncompleteOfficeHoursInterview
+      // (run end + chat continuations) counts prior-session answers too. Only
+      // turns from OTHER sessions: the Mac retry path re-enters runOfficeHours
+      // on the SAME failed session, whose own turns the detector already counts
+      // via countOfficeHoursTurnsForSession — including them here would
+      // double-count and let an incomplete interview read as completed.
+      officeHoursRuntime.resumedTurns = countOfficeHoursResumeTurnsFromOtherSessions(
+        officeHoursResumeTurns,
+        session.id,
+      );
+      telemetry.captureEvent("mac_sidecar_office_hours_resumed", {
+        session_id: session.id,
+        provider: session.provider,
+        day: runtimeDay || 0,
+        resumed_turns: officeHoursRuntime.resumedTurns,
+        day_turns: officeHoursResumeTurns.length,
+        seeded: officeHoursResumeSeeded,
+        wrap_up: officeHoursResumeWrapUp,
+      });
+      if (officeHoursResumeWrapUp) {
+        // Skip the provider run: a wrap-up prompt would re-bill on every
+        // relaunch until first_interview closes, and its summary is already
+        // covered by the client-side doc-ready block. Settle the session idle
+        // with the seeded transcript; the commitment bar (gated on the
+        // day-progress step + answered count) carries the close from here.
+        // No visiblePrompt/assistant rows are pushed — the auto-start policy
+        // marks this session started for the launch, so it will not refire.
+        session.runtime = attachOfficeHoursRuntime(session.runtime, officeHoursRuntime);
+        if (!session.title || session.title === "New Session") {
+          session.title = "Office Hours";
+        }
+        session.status = "idle";
+        session.error = null;
+        session.pendingUserInput = null;
+        touch(session);
+        await persistSessions();
+        broadcast({ type: "session_updated", session });
+        emitOfficeHoursStatus(session, {
+          stage: "completed",
+          copy: selectOfficeHoursStatusCopy({ firstQuestionAnswered: true }),
+        });
+        const wrapUpRun = state.activeRuns.get(session.id);
+        if (wrapUpRun?.runKey === runKey) {
+          state.activeRuns.delete(session.id);
+        }
+        return;
+      }
+    }
+
     session.messages.push(
       makeMessage({ role: "user", provider: session.provider, content: visiblePrompt, state: "final" }),
       assistantMessage,
@@ -4430,6 +4954,16 @@ async function runOfficeHours(session, {
     const cyclePreamble = await buildOfficeHoursCyclePreamble(runtimeDay);
     if (cyclePreamble) {
       officeHoursRuntime.context = clampOfficeHoursContext(`${cyclePreamble}\n\n${officeHoursRuntime.context}`);
+    }
+    // Resume preamble goes ABOVE everything else: the provider must treat the
+    // already-answered questions as settled and continue at question k+1 (or
+    // wrap up when all are answered) instead of re-running the interview.
+    const officeHoursResumePreamble = buildOfficeHoursResumePreamble({
+      turns: officeHoursResumeTurns,
+      expected: officeHoursExpectedQuestionCount,
+    });
+    if (officeHoursResumePreamble) {
+      officeHoursRuntime.context = clampOfficeHoursContext(`${officeHoursResumePreamble}\n\n${officeHoursRuntime.context}`);
     }
     if (isDay2PlusOfficeHoursDay(runtimeDay)) {
       const digest = await prepareDailyOfficeHoursDigest(session, {
@@ -4457,10 +4991,35 @@ async function runOfficeHours(session, {
     touch(session);
     await persistSessions();
     broadcast({ type: "session_updated", session });
-    const emitFirstQuestionOfficeHoursStatus = (status) => {
-      emitOfficeHoursStatus(session, { ...status, copy: OFFICE_HOURS_FIRST_QUESTION_STATUS_COPY });
+    let officeHoursStructuredInputAnswered = false;
+    // True once ANY structured-input question was asked during this run — tool
+    // channel (Claude AskUserQuestion / the MCP request_user_input), a
+    // structured-input run/tool stage, or an inline_decision. Distinguishes a
+    // genuine "no question was produced" failure from a normal interview that
+    // asked (and possibly answered) at least one question and then ended its
+    // turn without a trailing card. With Claude's blocking-continue run model
+    // the whole interview runs inside this single runOfficeHours call, so on
+    // natural conclusion request and pendingUserInput are both null even though
+    // the interview succeeded — without this guard the locked-Day1 failure
+    // branch below would misfire.
+    let officeHoursStructuredInputAsked = false;
+    // Claude's blocking-continue model also means the status copy table cannot
+    // be pinned for the whole run: questions 2..N are generated inside this
+    // same call and would keep reading "첫 질문 …". Select the table per emit —
+    // first-question copy until the first structured answer arrives, follow-up
+    // copy afterwards. (Codex never hits this: its run ends per question and
+    // continuations go through the chat path with the follow-up table.)
+    // A resumed interview already answered question 1 in a prior session, so it
+    // starts on the follow-up table outright.
+    const emitInterviewOfficeHoursStatus = (status) => {
+      emitOfficeHoursStatus(session, {
+        ...status,
+        copy: selectOfficeHoursStatusCopy({
+          firstQuestionAnswered: officeHoursStructuredInputAnswered || officeHoursResumeTurns.length > 0,
+        }),
+      });
     };
-    emitFirstQuestionOfficeHoursStatus({
+    emitInterviewOfficeHoursStatus({
       stage: "context_loaded",
       messageId: assistantMessage.id,
       elapsedMs: performance.now() - runStartedAt,
@@ -4477,7 +5036,7 @@ async function runOfficeHours(session, {
       context: officeHoursRuntime.context,
       lastAnswer: visiblePrompt,
     });
-    emitFirstQuestionOfficeHoursStatus({
+    emitInterviewOfficeHoursStatus({
       stage: "specialist_routed",
       messageId: assistantMessage.id,
       elapsedMs: performance.now() - runStartedAt,
@@ -4496,19 +5055,7 @@ async function runOfficeHours(session, {
     const officeHoursSpecialistInjection = buildSpecialistInjection(officeHoursSelection, {
       provider: session.provider,
     });
-    let officeHoursStructuredInputAnswered = false;
-    // True once ANY structured-input question was asked during this run — tool
-    // channel (Claude AskUserQuestion / the MCP request_user_input), a
-    // structured-input run/tool stage, or an inline_decision. Distinguishes a
-    // genuine "no question was produced" failure from a normal interview that
-    // asked (and possibly answered) at least one question and then ended its
-    // turn without a trailing card. With Claude's blocking-continue run model
-    // the whole interview runs inside this single runOfficeHours call, so on
-    // natural conclusion request and pendingUserInput are both null even though
-    // the interview succeeded — without this guard the locked-Day1 failure
-    // branch below would misfire.
-    let officeHoursStructuredInputAsked = false;
-    emitFirstQuestionOfficeHoursStatus({
+    emitInterviewOfficeHoursStatus({
       stage: "provider_starting",
       messageId: assistantMessage.id,
       elapsedMs: performance.now() - runStartedAt,
@@ -4538,7 +5085,7 @@ async function runOfficeHours(session, {
           if (status.stage === "tool_running" || status.stage === "structured_input_requested") {
             officeHoursStructuredInputAsked = true;
           }
-          emitFirstQuestionOfficeHoursStatus({
+          emitInterviewOfficeHoursStatus({
             ...status,
             messageId: assistantMessage.id,
             elapsedMs: performance.now() - runStartedAt,
@@ -4576,7 +5123,7 @@ async function runOfficeHours(session, {
           if (status.stage === "structured_input_requested") {
             officeHoursStructuredInputAsked = true;
           }
-          emitFirstQuestionOfficeHoursStatus({
+          emitInterviewOfficeHoursStatus({
             ...status,
             messageId: assistantMessage.id,
             elapsedMs: performance.now() - runStartedAt,
@@ -4593,7 +5140,7 @@ async function runOfficeHours(session, {
     session.status = session.pendingUserInput ? "awaiting_input" : "idle";
     session.error = null;
     if (!officeHoursStructuredInputAnswered && assistantMessage.inlineDecision) {
-      emitFirstQuestionOfficeHoursStatus({
+      emitInterviewOfficeHoursStatus({
         stage: "structured_input_requested",
         messageId: assistantMessage.id,
         elapsedMs: performance.now() - runStartedAt,
@@ -4639,7 +5186,18 @@ async function runOfficeHours(session, {
       });
       return;
     }
-    emitFirstQuestionOfficeHoursStatus({
+    const incompleteInterview = !request && !session.pendingUserInput
+      ? await detectIncompleteOfficeHoursInterview(session, officeHoursRuntime.context)
+      : null;
+    if (incompleteInterview) {
+      failOfficeHoursIncompleteInterview(session, assistantMessage, {
+        incomplete: incompleteInterview,
+        runStartedAt,
+        source: "office_hours_start",
+      });
+      return;
+    }
+    emitInterviewOfficeHoursStatus({
       stage: session.pendingUserInput ? "question_ready" : "completed",
       messageId: assistantMessage.id,
       requestId: request?.requestId || session.pendingUserInput?.requestId || null,
@@ -5043,13 +5601,12 @@ async function runAnalyzeAds(session, targetUrl, originalPrompt) {
     ].filter(Boolean).join("\n\n");
 
     // 4. Run Claude with the strategy prompt
-    const packagePath = resolveInstalledPackageRoot("@anthropic-ai", "claude-agent-sdk");
-    const cliPath = path.join(packagePath, "cli.js");
+    const cliPath = resolveClaudeCodeEntrypoint();
     const env = buildClaudeAgentEnv();
 
     const options = {
       model: session.model || undefined,
-      pathToClaudeCodeExecutable: cliPath,
+      pathToClaudeCodeExecutable: cliPath ?? undefined,
       executable: process.execPath,
       env,
       cwd: workspaceRoot,
@@ -5868,13 +6425,12 @@ async function runBipDraft(session, topic, originalPrompt) {
       ...buildQmdMcpConfig({ sidecarRoot }),
     };
 
-    const packagePath = resolveInstalledPackageRoot("@anthropic-ai", "claude-agent-sdk");
-    const cliPath = path.join(packagePath, "cli.js");
+    const cliPath = resolveClaudeCodeEntrypoint();
     const env = buildClaudeAgentEnv();
 
     const options = {
       model: session.model || undefined,
-      pathToClaudeCodeExecutable: cliPath,
+      pathToClaudeCodeExecutable: cliPath ?? undefined,
       executable: process.execPath,
       env,
       cwd: bipConfig.workspace.root,
@@ -8343,6 +8899,17 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       totalSteps: 3,
       etaSeconds: 45,
     });
+    // The scan seeds `<scanRoot>/.agentic30/` (memory, day progress) — make
+    // sure git never picks it up, even when a later scan stage fails.
+    const gitignoreResult = await ensureAgentic30Gitignored({ workspaceRoot: scanRoot });
+    if (gitignoreResult.status === "added") {
+      telemetry.captureEvent("mac_sidecar_workspace_gitignore_added", { scan_root: scanRoot });
+    } else if (gitignoreResult.status === "error") {
+      telemetry.captureException(new Error(gitignoreResult.error), {
+        operation: "workspace_gitignore",
+        scan_root: scanRoot,
+      });
+    }
     const localResult = await findWorkspaceDocsLocally(scanRoot);
     // Stage-3 deterministic local signals — git activity, project shape,
     // runway hints. Pure read; absorbs all errors so a non-git folder still
@@ -9520,13 +10087,12 @@ function scheduleWorkHistoryRefresh({ reason = "manual", targetSocket = null, pr
 /// names + coach summaries). No tools/MCP; strict-JSON contract; any failure
 /// falls back to the deterministic snapshot inside composeWorkHistorySnapshot.
 async function runWorkHistoryClaudeRefinement(prompt) {
-  const packagePath = resolveInstalledPackageRoot("@anthropic-ai", "claude-agent-sdk");
-  const cliPath = path.join(packagePath, "cli.js");
+  const cliPath = resolveClaudeCodeEntrypoint();
   const env = buildClaudeAgentEnv();
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), WORK_HISTORY_PROVIDER_TIMEOUT_MS);
   const options = {
-    pathToClaudeCodeExecutable: cliPath,
+    pathToClaudeCodeExecutable: cliPath ?? undefined,
     executable: process.execPath,
     env,
     cwd: workspaceRoot,
@@ -9905,8 +10471,7 @@ async function runNewsMarketRadarClaudeResearch({
   prompt,
   exaMcpConfig,
 } = {}) {
-  const packagePath = resolveInstalledPackageRoot("@anthropic-ai", "claude-agent-sdk");
-  const cliPath = path.join(packagePath, "cli.js");
+  const cliPath = resolveClaudeCodeEntrypoint();
   const env = buildClaudeAgentEnv();
   const abortController = new AbortController();
   let timedOut = false;
@@ -9915,7 +10480,7 @@ async function runNewsMarketRadarClaudeResearch({
     abortController.abort();
   }, NEWS_MARKET_RADAR_PROVIDER_TIMEOUT_MS);
   const options = {
-    pathToClaudeCodeExecutable: cliPath,
+    pathToClaudeCodeExecutable: cliPath ?? undefined,
     executable: process.execPath,
     env,
     cwd: workspaceRoot,
@@ -9961,8 +10526,7 @@ async function runNewsMarketRadarClaudeResearch({
 async function runNewsMarketRadarClaudeSynthesis({
   prompt,
 } = {}) {
-  const packagePath = resolveInstalledPackageRoot("@anthropic-ai", "claude-agent-sdk");
-  const cliPath = path.join(packagePath, "cli.js");
+  const cliPath = resolveClaudeCodeEntrypoint();
   const env = buildClaudeAgentEnv();
   const abortController = new AbortController();
   let timedOut = false;
@@ -9971,7 +10535,7 @@ async function runNewsMarketRadarClaudeSynthesis({
     abortController.abort();
   }, NEWS_MARKET_RADAR_PROVIDER_TIMEOUT_MS);
   const options = {
-    pathToClaudeCodeExecutable: cliPath,
+    pathToClaudeCodeExecutable: cliPath ?? undefined,
     executable: process.execPath,
     env,
     cwd: workspaceRoot,
@@ -11809,17 +12373,29 @@ async function startProviderAuthLogin(payload = {}) {
     return;
   }
 
+  const claudeEntrypoint = provider === "claude" ? resolveClaudeCodeEntrypoint() : null;
+  if (provider === "claude" && !claudeEntrypoint) {
+    broadcast({
+      type: "provider_auth_result",
+      provider,
+      success: false,
+      error: "Claude Agent SDK CLI is missing. Reinstall sidecar dependencies and retry.",
+    });
+    return;
+  }
   const command = provider === "claude"
-    ? {
-        executable: process.execPath,
-        args: [
-          path.join(resolveInstalledPackageRoot("@anthropic-ai", "claude-agent-sdk"), "cli.js"),
-          "auth",
-          "login",
-          "--claudeai",
-        ],
-        env: buildClaudeLoginEnv(),
-    }
+    ? (claudeEntrypoint.endsWith(".js")
+      ? {
+          // Legacy (<0.3) Agent SDK layout: Node script run via the current runtime.
+          executable: process.execPath,
+          args: [claudeEntrypoint, "auth", "login", "--claudeai"],
+          env: buildClaudeLoginEnv(),
+      }
+      : {
+          executable: claudeEntrypoint,
+          args: ["auth", "login", "--claudeai"],
+          env: buildClaudeLoginEnv(),
+      })
     : {
         executable: process.execPath,
         args: [

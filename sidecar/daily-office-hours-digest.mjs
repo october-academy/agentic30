@@ -120,6 +120,7 @@ function sourceStatus({
   summary = "",
   goalSignals = [],
   evidenceGaps = [],
+  events = [],
 } = {}) {
   const def = SOURCE_DEFS[id] || { id, label: id };
   return {
@@ -140,7 +141,24 @@ function sourceStatus({
     // interview briefing so the questions act on evidence, not just commit counts.
     goalSignals: normalizeStringList(goalSignals, 6, 200),
     evidenceGaps: normalizeStringList(evidenceGaps, 6, 200),
+    // Timestamped overnight events (git commits, PR/release updates) so downstream
+    // consumers (morning briefing timeline) can render when things happened, not
+    // just that they happened. Empty for sources without per-event timestamps.
+    events: normalizeEventList(events),
   };
+}
+
+function normalizeEventList(values = [], limit = 8) {
+  return (Array.isArray(values) ? values : [])
+    .map((event) => {
+      const at = cleanString(event?.at, 40);
+      const text = cleanString(event?.text, 200);
+      if (!text || !Number.isFinite(Date.parse(at))) return null;
+      return { at, text };
+    })
+    .filter(Boolean)
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at))
+    .slice(0, limit);
 }
 
 function normalizeStringList(values = [], limit = 6, max = 200) {
@@ -479,6 +497,14 @@ export async function collectGitDailySignals({
     },
     highlights,
     summary: highlights.join(" / "),
+    events: commits
+      .slice()
+      .sort((a, b) => b.ts - a.ts)
+      .slice(0, 8)
+      .map((commit) => ({
+        at: new Date(commit.ts).toISOString(),
+        text: `커밋 · ${commit.subject}`,
+      })),
   });
 }
 
@@ -535,6 +561,16 @@ export async function collectGhDailySignals({
   if (issues.length) highlights.push(`이슈 업데이트 ${issues.length}건`);
   if (releases.length) highlights.push(`릴리즈 ${releases.length}건`);
   if (!highlights.length) highlights.push("gh CLI는 연결됐지만 해당 기간 PR/이슈/릴리즈 변화는 없습니다.");
+  const events = [
+    ...prs.map((pr) => ({
+      at: pr.updatedAt || pr.createdAt,
+      text: `PR #${pr.number} ${String(pr.state || "").toLowerCase()} · ${cleanString(pr.title, 80)}`,
+    })),
+    ...releases.map((release) => ({
+      at: release.publishedAt,
+      text: `릴리즈 ${cleanString(release.tagName || release.name, 60)} 배포`,
+    })),
+  ];
   return sourceStatus({
     id: "gh_cli",
     state: "ready",
@@ -548,6 +584,7 @@ export async function collectGhDailySignals({
     },
     highlights,
     summary: highlights.join(" / "),
+    events,
   });
 }
 
@@ -714,8 +751,12 @@ export function finalizeDailyOfficeHoursDigest({
       label: merged.label,
       state: merged.state,
       available: merged.available,
-      selected: Boolean(merged.selected ?? gateStatusMap.get(id)?.selected),
-      required: Boolean(merged.required ?? gateStatusMap.get(id)?.required),
+      // The gate is the authority on selection: signal statuses (especially
+      // normalized external digests) default selected/required to a concrete
+      // false, which would un-require a selected source whose digest failed and
+      // silently skip the failedRequired block below.
+      selected: Boolean(gateStatusMap.get(id)?.selected ?? merged.selected),
+      required: Boolean(gateStatusMap.get(id)?.required ?? merged.required),
       detail: merged.detail,
       checkedAt: merged.checkedAt,
       counts: merged.counts || {},
@@ -723,6 +764,7 @@ export function finalizeDailyOfficeHoursDigest({
       summary: cleanString(merged.summary, 320),
       goalSignals: normalizeStringList(merged.goalSignals, 6, 200),
       evidenceGaps: normalizeStringList(merged.evidenceGaps, 6, 200),
+      events: normalizeEventList(merged.events),
     };
   });
   const failedRequired = sources.filter((source) => source.required && source.state !== "ready");

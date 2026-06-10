@@ -257,3 +257,103 @@ test("evidence-derived goalSignals/evidenceGaps reach the interview briefing", (
   assert.match(prompt, /결제 전환을 물어야 함/);
   assert.match(prompt, /pricing 페이지 방문 후 이탈/);
 });
+
+test("normalizeExternalOfficeHoursDigest fails closed when the model returns no usable JSON", () => {
+  // Empty text is exactly what the index.mjs provider-outage catch feeds in.
+  for (const broken of ["", "provider crashed before emitting JSON", '{"sources": [']) {
+    const sources = normalizeExternalOfficeHoursDigest(broken, ["posthog", "cloudflare"]);
+    assert.deepEqual(
+      sources.map((source) => [source.id, source.state]),
+      [["posthog", "failed"], ["cloudflare", "failed"]],
+    );
+  }
+});
+
+test("normalizeExternalOfficeHoursDigest extracts embedded JSON and fails the missing expected source", () => {
+  const text = [
+    "Here is the digest you asked for:",
+    JSON.stringify({
+      sources: [{
+        id: "posthog",
+        state: "ready",
+        summary: "이벤트 12건",
+        counts: { events: "12", conversions: -3, bogus: "not-a-number" },
+        highlights: ["signup 1건"],
+      }],
+    }),
+  ].join("\n");
+
+  const sources = normalizeExternalOfficeHoursDigest(text, ["posthog", "cloudflare"]);
+  const posthog = sources.find((source) => source.id === "posthog");
+  const cloudflare = sources.find((source) => source.id === "cloudflare");
+
+  assert.equal(posthog.state, "ready");
+  assert.equal(posthog.counts.events, 12);
+  assert.equal(posthog.counts.conversions, 0);
+  assert.ok(!("bogus" in posthog.counts));
+  assert.equal(cloudflare.state, "failed");
+});
+
+test("a failed external digest blocks via the structured gate error, not a raw crash", () => {
+  const gate = {
+    day: 3,
+    ok: true,
+    reason: "ready",
+    selectedSources: ["git", "posthog"],
+    window: officeHoursDigestWindow(new Date("2026-06-09T10:30:00+09:00"), { tzOffsetMinutes: KST }),
+    sources: [
+      { id: "git", label: "git", state: "ready", selected: true, required: true },
+      { id: "posthog", label: "PostHog", state: "ready", selected: true, required: true },
+    ],
+  };
+  const localSignals = [
+    { id: "git", label: "git", state: "ready", counts: { commits: 2 }, highlights: ["git 커밋 2건"], summary: "git 커밋 2건" },
+  ];
+  const externalSignals = normalizeExternalOfficeHoursDigest("", ["posthog"]);
+
+  assert.throws(
+    () => finalizeDailyOfficeHoursDigest({
+      gate,
+      localSignals,
+      externalSignals,
+      context: "Goal lane: make_money",
+      now: new Date("2026-06-09T10:30:00+09:00"),
+    }),
+    (error) => {
+      assert.equal(error.name, "OfficeHoursSourceGateError");
+      assert.equal(error.gate.reason, "selected_sources_failed");
+      assert.deepEqual(error.gate.missingRequiredSources, ["posthog"]);
+      assert.ok(error.gate.connectActions.some((action) => action.id === "connect_posthog"));
+      return true;
+    },
+  );
+});
+
+test("a gate-deselected source stays non-required even when its signal claims otherwise", () => {
+  const digest = finalizeDailyOfficeHoursDigest({
+    gate: {
+      day: 2,
+      ok: true,
+      reason: "ready",
+      selectedSources: ["git"],
+      window: officeHoursDigestWindow(new Date("2026-06-09T10:30:00+09:00"), { tzOffsetMinutes: KST }),
+      sources: [
+        { id: "git", label: "git", state: "ready", selected: true, required: true },
+        { id: "posthog", label: "PostHog", state: "ready", selected: false, required: false },
+      ],
+    },
+    localSignals: [
+      { id: "git", label: "git", state: "ready", counts: { commits: 1 }, highlights: ["git 커밋 1건"], summary: "git 커밋 1건" },
+    ],
+    externalSignals: [
+      // Signal statuses are not the selection authority — even when one claims it.
+      { id: "posthog", label: "PostHog", state: "ready", selected: true, required: true, counts: { activeUsers: 1 }, summary: "활성 사용자 1명" },
+    ],
+    context: "Goal lane: get_users",
+    now: new Date("2026-06-09T10:30:00+09:00"),
+  });
+
+  const posthog = digest.sources.find((source) => source.id === "posthog");
+  assert.equal(posthog.selected, false);
+  assert.equal(posthog.required, false);
+});

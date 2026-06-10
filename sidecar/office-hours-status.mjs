@@ -8,17 +8,24 @@
 //
 // emitOfficeHoursStatus (index.mjs) resolves a stage to title/detail/progressText
 // server-side and broadcasts the resolved text; the Swift client renders it
-// verbatim. The caller selects which table to resolve against — runOfficeHours
-// passes the first-question table so the first question reads "첫 질문 …", the
-// continuation path uses the regular table. There is NO cross-table fallback:
-// each emit resolves against exactly one table.
+// verbatim. The caller selects which table to resolve against. There is NO
+// cross-table fallback: each emit resolves against exactly one table.
+//
+// Which table applies is a per-question decision, not a per-run one. Claude's
+// blocking-continue model runs the WHOLE interview inside a single
+// runOfficeHours call (AskUserQuestion blocks until the user answers, then the
+// same stream generates the next question), so runOfficeHours selects the table
+// per emit via selectOfficeHoursStatusCopy below: first-question copy until the
+// first structured answer arrives, follow-up copy afterwards. Codex ends its run
+// after each question; its continuation runs go through the chat path, which
+// always uses the follow-up table.
 //
 // IMPORTANT INVARIANT: the first-question table MUST define the same stage keys
 // as the regular table. A missing key means emitOfficeHoursStatus resolves empty
 // copy and skips the broadcast, so the loading card would stall on that stage —
-// and the two in-progress stages a provider interleaves per token
-// (provider_thinking ↔ tool_running, e.g. Claude's thinking/tool-input deltas)
-// MUST resolve to identical copy so the card never oscillates. The
+// and within EACH table the two in-progress stages a provider interleaves per
+// token (provider_thinking ↔ tool_running, e.g. Claude's thinking/tool-input
+// deltas) MUST resolve to identical copy so the card never oscillates. The
 // office-hours-status test pins both relationships.
 
 export const OFFICE_HOURS_STATUS_COPY = Object.freeze({
@@ -42,10 +49,16 @@ export const OFFICE_HOURS_STATUS_COPY = Object.freeze({
     detail: "선택한 답변과 입력 내용을 바탕으로 이어서 물어볼 질문을 정리하고 있습니다.",
     progressText: "답변을 바탕으로 다음 질문 준비 중",
   },
+  // Deliberately identical to provider_thinking — same anti-flicker invariant
+  // as the first-question table. Claude's blocking-continue interview keeps
+  // questions 2..N inside the same run, interleaving thinking_delta
+  // (→ provider_thinking) and input_json_delta (→ tool_running) per token while
+  // building each follow-up question; distinct copy here made the card
+  // oscillate between two titles once the table switched over.
   tool_running: {
-    title: "선택지 준비 중",
-    detail: "고를 수 있는 답변 후보를 만들고 있습니다.",
-    progressText: "답변 후보 준비 중",
+    title: "다음 질문 준비 중",
+    detail: "선택한 답변과 입력 내용을 바탕으로 이어서 물어볼 질문을 정리하고 있습니다.",
+    progressText: "답변을 바탕으로 다음 질문 준비 중",
   },
   structured_input_requested: {
     title: "질문 화면 여는 중",
@@ -135,3 +148,12 @@ export const OFFICE_HOURS_FIRST_QUESTION_STATUS_COPY = Object.freeze({
     progressText: "질문 준비 중단됨",
   },
 });
+
+// Per-emit table selection for the single-run (blocking-continue) interview
+// path: first-question copy until the first structured answer arrives,
+// follow-up copy for every question after it.
+export function selectOfficeHoursStatusCopy({ firstQuestionAnswered = false } = {}) {
+  return firstQuestionAnswered
+    ? OFFICE_HOURS_STATUS_COPY
+    : OFFICE_HOURS_FIRST_QUESTION_STATUS_COPY;
+}
