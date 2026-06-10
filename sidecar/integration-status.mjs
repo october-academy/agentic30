@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 
 import { resolveCloudflareMcpSettings } from "./cloudflare-mcp-config.mjs";
+import { isMcpOauthServerReady, readMcpOauthState } from "./mcp-oauth-state.mjs";
 import { resolvePostHogMcpSettings } from "./posthog-mcp-config.mjs";
 import { resolveGithubMcpSettings } from "./github-mcp-config.mjs";
 
@@ -64,7 +65,10 @@ export async function probePosthogIntegration({
     // MCP itself is OAuth-first: the provider handles the browser login, so
     // no key is required for AI-run PostHog tools. The key only upgrades the
     // briefing drilldown numbers to direct HogQL aggregation.
-    return status("oauth", "MCP는 OAuth로 동작 — AI 첫 사용 시 브라우저 로그인. phx_/pha_ 키 저장 시 드릴다운 숫자를 직접 집계해요.");
+    if (isMcpOauthServerReady(readMcpOauthState(appSupportPath), "posthog")) {
+      return status("ready", "PostHog MCP OAuth 연결 검증됨 — AI 실행에서 PostHog 도구 사용 가능. phx_/pha_ 키 저장 시 드릴다운 숫자를 직접 집계해요.");
+    }
+    return status("oauth", "MCP는 OAuth로 동작 — Settings의 'MCP 연결'로 브라우저 로그인. phx_/pha_ 키 저장 시 드릴다운 숫자를 직접 집계해요.");
   }
   if (!settings.tokenValid) {
     return status("failed", "키는 phx_ 또는 pha_로 시작해야 해요 (phc_ 프로젝트 키는 인증 불가).");
@@ -88,7 +92,10 @@ export async function probeCloudflareIntegration({
   if (!settings.tokenValid) {
     // MCP itself is OAuth-first; the token only upgrades the briefing traffic
     // drilldown to direct GraphQL Analytics aggregation.
-    return status("oauth", "MCP는 OAuth로 동작 — AI 첫 사용 시 브라우저 로그인. API 토큰 저장 시 트래픽 드릴다운 숫자를 직접 집계해요.");
+    if (isMcpOauthServerReady(readMcpOauthState(appSupportPath), "cloudflare")) {
+      return status("ready", "Cloudflare MCP OAuth 연결 검증됨 — AI 실행에서 Cloudflare 도구 사용 가능. API 토큰 저장 시 트래픽 드릴다운 숫자를 직접 집계해요.");
+    }
+    return status("oauth", "MCP는 OAuth로 동작 — Settings의 'MCP 연결'로 브라우저 로그인. API 토큰 저장 시 트래픽 드릴다운 숫자를 직접 집계해요.");
   }
   const result = await fetchJson(fetchImpl, "https://api.cloudflare.com/client/v4/zones?status=active&per_page=5", {
     Authorization: `Bearer ${settings.token}`,

@@ -513,6 +513,12 @@ function durationLabel(ms) {
   return minutes > 0 ? `${minutes}m${String(seconds).padStart(2, "0")}s` : `${seconds}s`;
 }
 
+function deployFootnote(deploy) {
+  if (deploy.kind === "release") return `${shortTime(deploy.at)} 배포(Release)가 ${deploy.label}에서 나갔어요.`;
+  if (deploy.kind === "package") return `${shortTime(deploy.at)} 배포(Package)가 ${deploy.label}로 나갔어요.`;
+  return `${shortTime(deploy.at)} 배포(${deploy.workflowName || "workflow"})가 ${deploy.headBranch || "main"}에서 나갔어요.`;
+}
+
 function buildCommitBuckets({ commits = [], deploys = [], window }) {
   const startMs = finiteNumber(window?.startMs);
   const untilMs = finiteNumber(window?.untilMs);
@@ -559,15 +565,45 @@ async function readGithubRepoFacts({ cwd, execImpl }) {
   };
 }
 
+// GitHub Packages live on the owner (user or org), not the repo, and the list
+// endpoint requires an explicit package_type — so we probe both owner kinds ×
+// the registries a solo project realistically publishes to. {owner} is a gh
+// api placeholder resolved from the repo in cwd; failures stay silent.
+const PACKAGE_ENDPOINTS = Object.freeze([
+  "users/{owner}/packages?package_type=npm",
+  "users/{owner}/packages?package_type=container",
+  "orgs/{owner}/packages?package_type=npm",
+  "orgs/{owner}/packages?package_type=container",
+]);
+
 async function readGithubScanFacts({ cwd, execImpl, nowMs }) {
-  const [issueResult, releaseResult, runResult] = await Promise.all([
+  const [issueResult, releaseResult, runResult, ...packageResults] = await Promise.all([
     execImpl("gh", ["issue", "list", "--state", "open", "--limit", "30", "--json", "number,title,author,createdAt"], { cwd }),
-    execImpl("gh", ["release", "list", "--limit", "1", "--json", "tagName,publishedAt"], { cwd }),
+    execImpl("gh", ["release", "list", "--limit", "20", "--json", "tagName,publishedAt,isDraft,isPrerelease"], { cwd }),
     execImpl("gh", ["run", "list", "--limit", "20", "--json", "conclusion,createdAt,updatedAt,workflowName,displayTitle,headBranch"], { cwd }),
+    ...PACKAGE_ENDPOINTS.map((endpoint) => execImpl("gh", ["api", endpoint], { cwd })),
   ]);
   const issues = parseJsonArrayValue(issueResult.ok ? issueResult.stdout : "");
-  const releases = parseJsonArrayValue(releaseResult.ok ? releaseResult.stdout : "");
+  const releases = parseJsonArrayValue(releaseResult.ok ? releaseResult.stdout : "")
+    .filter((release) => !release?.isDraft);
   const runs = parseJsonArrayValue(runResult.ok ? runResult.stdout : "");
+
+  const packagesAvailable = packageResults.some((result) => result?.ok);
+  const packagesByKey = new Map();
+  for (const result of packageResults) {
+    for (const pkg of parseJsonArrayValue(result?.ok ? result.stdout : "")) {
+      const name = cleanString(pkg?.name, 80);
+      const key = `${cleanString(pkg?.package_type, 20)}/${name}`;
+      if (!name || packagesByKey.has(key)) continue;
+      packagesByKey.set(key, {
+        name,
+        packageType: cleanString(pkg?.package_type, 20),
+        updatedAt: cleanString(pkg?.updated_at, 40),
+        versionCount: finiteNumber(pkg?.version_count),
+        repository: cleanString(pkg?.repository?.full_name, 80),
+      });
+    }
+  }
 
   const lastRelease = releases[0] || null;
   let unreleasedCommits = null;
@@ -593,7 +629,10 @@ async function readGithubScanFacts({ cwd, execImpl, nowMs }) {
       .slice()
       .sort((a, b) => Date.parse(b?.createdAt || 0) - Date.parse(a?.createdAt || 0))[0] || null,
     releasesAvailable: releaseResult.ok,
+    releases,
     lastRelease,
+    packagesAvailable,
+    packages: [...packagesByKey.values()],
     lastReleaseDays: lastRelease ? relativeDays(lastRelease.publishedAt, nowMs) : null,
     unreleasedCommits,
     runsAvailable: runResult.ok,
@@ -686,27 +725,77 @@ export async function collectGithubDrilldown({
         };
       });
 
-    deploys = (facts.runs || [])
+    const runDeploys = (facts.runs || [])
       .filter((run) => String(run?.conclusion || "").toLowerCase() === "success" && inWindow(run.updatedAt || run.createdAt))
       .slice(0, 2)
       .map((run) => ({
+        kind: "workflow",
         at: run.updatedAt || run.createdAt,
         workflowName: cleanString(run.workflowName, 60),
         durationMs: Date.parse(run.updatedAt || "") - Date.parse(run.createdAt || ""),
         headBranch: cleanString(run.headBranch, 60),
       }));
+    const releaseDeploys = (facts.releases || [])
+      .filter((release) => inWindow(release?.publishedAt))
+      .slice(0, 2)
+      .map((release) => ({
+        kind: "release",
+        at: release.publishedAt,
+        label: cleanString(release.tagName, 40) || "release",
+        prerelease: Boolean(release.isPrerelease),
+      }));
+    const packageDeploys = (facts.packages || [])
+      .filter((pkg) => (!pkg.repository || pkg.repository === repo?.nameWithOwner) && inWindow(pkg.updatedAt))
+      .slice(0, 2)
+      .map((pkg) => ({
+        kind: "package",
+        at: pkg.updatedAt,
+        label: pkg.name,
+        packageType: pkg.packageType,
+      }));
+    deploys = [...runDeploys, ...releaseDeploys, ...packageDeploys]
+      .sort((a, b) => (Date.parse(b.at || "") || 0) - (Date.parse(a.at || "") || 0))
+      .slice(0, 4);
     for (const deploy of deploys) {
-      prRows.push({
-        kind: "deploy",
-        title: `워크플로 ${deploy.workflowName || "run"} · ${deploy.headBranch || "main"}`,
-        metaItems: [
-          `${shortTime(deploy.at)} 성공`,
-          durationLabel(deploy.durationMs) ? `실행 ${durationLabel(deploy.durationMs)}` : "",
-        ].filter(Boolean),
-        tag: "deployed",
-      });
+      if (deploy.kind === "release") {
+        prRows.push({
+          kind: "deploy",
+          title: `릴리스 ${deploy.label}${deploy.prerelease ? " · pre" : ""}`,
+          metaItems: [`${shortTime(deploy.at)} 발행`, "gh release"],
+          tag: "released",
+        });
+      } else if (deploy.kind === "package") {
+        prRows.push({
+          kind: "deploy",
+          title: `패키지 ${deploy.label}${deploy.packageType ? ` · ${deploy.packageType}` : ""}`,
+          metaItems: [`${shortTime(deploy.at)} 갱신`, "gh api packages"],
+          tag: "package",
+        });
+      } else {
+        prRows.push({
+          kind: "deploy",
+          title: `워크플로 ${deploy.workflowName || "run"} · ${deploy.headBranch || "main"}`,
+          metaItems: [
+            `${shortTime(deploy.at)} 성공`,
+            durationLabel(deploy.durationMs) ? `실행 ${durationLabel(deploy.durationMs)}` : "",
+          ].filter(Boolean),
+          tag: "deployed",
+        });
+      }
     }
   }
+
+  const deployBreakdown = [
+    ["workflow", "워크플로"],
+    ["release", "릴리스"],
+    ["package", "패키지"],
+  ]
+    .map(([kind, label]) => {
+      const count = deploys.filter((deploy) => deploy.kind === kind).length;
+      return count ? `${label} ${count}` : "";
+    })
+    .filter(Boolean);
+  const mixedDeploys = deploys.some((deploy) => deploy.kind !== "workflow");
 
   const mergedPrs = finiteNumber(ghCounts.mergedPrs) ?? 0;
   const openPrs = finiteNumber(ghCounts.openPrs) ?? 0;
@@ -769,6 +858,20 @@ export async function collectGithubDrilldown({
         : null,
       tone: "violet",
       quiet: !scanFacts.lastRelease,
+    });
+  }
+  if (scanFacts?.packagesAvailable) {
+    const repoPackages = (scanFacts.packages || [])
+      .filter((pkg) => !pkg.repository || pkg.repository === repoFacts?.nameWithOwner);
+    scan.push({
+      title: "패키지",
+      cmd: "gh api packages",
+      valueLabel: repoPackages.length ? `패키지 ${repoPackages.length}` : "패키지 없음",
+      sub: repoPackages[0]
+        ? `${repoPackages[0].name}${repoPackages[0].versionCount !== null ? ` · 버전 ${repoPackages[0].versionCount}` : ""}`
+        : null,
+      tone: "violet",
+      quiet: !repoPackages.length,
     });
   }
   if (scanFacts?.runsAvailable) {
@@ -882,7 +985,11 @@ export async function collectGithubDrilldown({
     subtitle: [repoFacts?.nameWithOwner, repoFacts?.branch].filter(Boolean).join(" · "),
     syncPills: [
       `지난 24시간 커밋 ${commits} · PR 머지 ${mergedPrs}`,
-      deploys.length ? `배포 ${deploys.length}건 성공` : "이 기간 배포 없음",
+      deploys.length
+        ? mixedDeploys
+          ? `배포 ${deploys.length}건 · ${deployBreakdown.join(" · ")}`
+          : `배포 ${deploys.length}건 성공`
+        : "이 기간 배포 없음",
       scan.length ? `레포 스캔 ${scan.length}개 영역` : "",
     ].filter(Boolean),
     kpis,
@@ -898,9 +1005,7 @@ export async function collectGithubDrilldown({
         { label: "커밋", tone: "accent" },
         ...(deploys.length ? [{ label: "배포 시점", tone: "violet" }] : []),
       ],
-      footnote: deploys.length
-        ? `${shortTime(deploys[0].at)} 배포(${deploys[0].workflowName || "workflow"})가 ${deploys[0].headBranch || "main"}에서 나갔어요.`
-        : null,
+      footnote: deploys.length ? deployFootnote(deploys[0]) : null,
     },
     listRows: prRows,
     listMeta: ghReady ? `머지 ${mergedPrs} · 오픈 ${openPrs} · 배포 ${deploys.length}` : null,

@@ -3,6 +3,10 @@
 // in settings — or fall back to the single default (codex) when the caller did
 // not supply a usable settings provider. No multi-provider fan-out / frontier
 // ensemble: exactly one { provider, model } target is always returned.
+// No automatic fallback either: when the provider hits its usage limit the
+// sidecar broadcasts workspace_scan_provider_limited and the Mac side offers
+// an explicit "switch provider and re-scan" button — switching requires the
+// user's consent.
 
 const KNOWN_PROVIDERS = ["claude", "codex", "gemini"];
 const DEFAULT_PROVIDER = "codex";

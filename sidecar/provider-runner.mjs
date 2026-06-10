@@ -2625,14 +2625,20 @@ function usesQmdMcp(executionMode = "") {
   return executionMode === "agentic" || executionMode === "memory_chat";
 }
 
+// "mcp_oauth_prewarm_*": Settings > 연동 "MCP 연결" 버튼이 도는 최소 쿼리 모드
+// (mcp-oauth-prewarm.mjs). 대상 서버 하나만 주입해 프로바이더 네이티브 OAuth를
+// 트리거하고 도구 응답으로 검증한다. 다른 게이트엔 등장하지 않으므로 자동으로
+// read-only(권한 바이패스 불가 · Codex 샌드박스 read-only · 내부 MCP 미주입).
 function usesPostHogMcp(executionMode = "") {
   return executionMode === "office_hours_digest_read_only"
+    || executionMode === "mcp_oauth_prewarm_posthog"
     || usesInternalMcp(executionMode)
     || usesQmdMcp(executionMode);
 }
 
 function usesCloudflareMcp(executionMode = "") {
   return executionMode === "office_hours_digest_read_only"
+    || executionMode === "mcp_oauth_prewarm_cloudflare"
     || usesInternalMcp(executionMode)
     || usesQmdMcp(executionMode);
 }

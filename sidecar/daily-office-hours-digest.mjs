@@ -4,6 +4,7 @@ import { execFile } from "node:child_process";
 
 import { atomicWriteJson } from "./atomic-store.mjs";
 import { resolveCloudflareMcpSettings } from "./cloudflare-mcp-config.mjs";
+import { isMcpOauthServerReady, readMcpOauthState } from "./mcp-oauth-state.mjs";
 import { resolvePostHogMcpSettings } from "./posthog-mcp-config.mjs";
 
 export const OFFICE_HOURS_DAILY_DIGEST_SCHEMA_VERSION = 1;
@@ -188,9 +189,14 @@ export async function probeGhCliSource({ workspaceRoot, execImpl = defaultExec }
 
 function externalSourceStatus(id, { selected = false, required = false, appSupportPath = "", env = process.env, provider = "" } = {}) {
   const unsupportedProvider = provider && !["claude", "codex"].includes(String(provider || "").toLowerCase());
+  // OAuth-first MCP: 토큰은 프로바이더 캐시에 있어 사이드카가 볼 수 없다.
+  // "MCP 연결" 버튼이 실증·영속한 OAuth ready 상태가 저장된 API 키와 동급의
+  // 연결 증거다 — 둘 중 하나면 ready.
+  const oauthState = readMcpOauthState(appSupportPath);
   if (id === "posthog") {
     const settings = resolvePostHogMcpSettings({ appSupportPath, env });
-    const ready = settings.tokenValid && !unsupportedProvider;
+    const oauthReady = isMcpOauthServerReady(oauthState, "posthog");
+    const ready = (settings.tokenValid || oauthReady) && !unsupportedProvider;
     return sourceStatus({
       id,
       state: ready ? "ready" : "missing",
@@ -200,12 +206,15 @@ function externalSourceStatus(id, { selected = false, required = false, appSuppo
         ? "PostHog digest requires Claude or Codex provider MCP support"
         : settings.tokenValid
           ? "PostHog MCP key is configured"
-          : "PostHog MCP key is missing or invalid",
+          : oauthReady
+            ? "PostHog MCP OAuth connection verified"
+            : "PostHog MCP is not connected — connect via OAuth in Settings or store an API key",
     });
   }
   if (id === "cloudflare") {
     const settings = resolveCloudflareMcpSettings({ appSupportPath, env });
-    const ready = settings.tokenValid && !unsupportedProvider;
+    const oauthReady = isMcpOauthServerReady(oauthState, "cloudflare");
+    const ready = (settings.tokenValid || oauthReady) && !unsupportedProvider;
     return sourceStatus({
       id,
       state: ready ? "ready" : "missing",
@@ -215,7 +224,9 @@ function externalSourceStatus(id, { selected = false, required = false, appSuppo
         ? "Cloudflare digest requires Claude or Codex provider MCP support"
         : settings.tokenValid
           ? "Cloudflare MCP token is configured"
-          : "Cloudflare MCP token is missing",
+          : oauthReady
+            ? "Cloudflare MCP OAuth connection verified"
+            : "Cloudflare MCP is not connected — connect via OAuth in Settings or store an API token",
     });
   }
   return sourceStatus({ id, selected, required, detail: "unknown external source" });

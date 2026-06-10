@@ -63,6 +63,8 @@ import {
   mergeMorningBriefingDrilldownMaps,
 } from "./morning-briefing-direct-sources.mjs";
 import { collectIntegrationStatus } from "./integration-status.mjs";
+import { normalizeMcpOauthPrewarmServer, prewarmMcpOauth } from "./mcp-oauth-prewarm.mjs";
+import { persistMcpOauthConnectResult } from "./mcp-oauth-state.mjs";
 import {
   buildQmdGuidance,
   buildQmdMcpConfig,
@@ -385,7 +387,9 @@ const sidecarAuthToken = randomBytes(32).toString("base64url");
 const BIP_TEMPLATE_DOC_ID = process.env.AGENTIC30_BIP_TEMPLATE_DOC_ID || "1EoQIaByJd5Aq8ENbgEfxHKKJsZsup7d5gJxcT7uqNeA";
 const BIP_TEMPLATE_SHEET_ID = process.env.AGENTIC30_BIP_TEMPLATE_SHEET_ID || "16NkGIe8K9NZiLy4O81zyXKVeQ72nvBGSZ0YBQaBr0sA";
 const WORKSPACE_SCAN_CLAUDE_MODEL = "claude-sonnet-4-6";
-const WORKSPACE_SCAN_CODEX_MODEL = "gpt-5.1-codex-mini";
+// gpt-5.1-codex-mini는 ChatGPT 인증 Codex 서버 카탈로그에서 제거돼 400 거부됨.
+// 동급 저비용 모델인 gpt-5.4-mini로 대체 (2026-06-10 `codex debug models` 기준).
+const WORKSPACE_SCAN_CODEX_MODEL = "gpt-5.4-mini";
 const WORKSPACE_SCAN_GEMINI_MODEL = "gemini-3.5-flash";
 const DAY1_CHOICE_CLAUDE_MODEL = process.env.AGENTIC30_DAY1_CHOICE_CLAUDE_MODEL || "claude-opus-4-8";
 const DAY1_CHOICE_CODEX_MODEL = process.env.AGENTIC30_DAY1_CHOICE_CODEX_MODEL || "gpt-5.5";
@@ -1916,6 +1920,46 @@ async function handleClientMessage(socket, payload) {
         github_mcp: integrationStatus.githubMcp?.state || "",
         posthog: integrationStatus.posthog?.state || "",
         cloudflare: integrationStatus.cloudflare?.state || "",
+      });
+      return;
+    }
+    case "mcp_oauth_connect": {
+      // Settings > 연동 "MCP 연결": OAuth-first MCP(PostHog/Cloudflare)는 설정
+      // 화면에서 검증할 수 없으므로(토큰이 프로바이더 캐시에 있음), 대상 MCP
+      // 도구를 호출하는 최소 프로바이더 쿼리로 OAuth를 트리거하고 도구 응답으로
+      // 연결을 실증한다. 미인증 서버는 authenticate 플레이스홀더가 로그인 URL을
+      // 반환 → 진행상황 이벤트로 중계하면 Mac 쪽이 브라우저를 연다.
+      const server = normalizeMcpOauthPrewarmServer(payload.server);
+      const provider = pickMorningBriefingProvider(payload.preferredProvider);
+      const mcpOauthConnect = await prewarmMcpOauth({
+        server: server || payload.server,
+        provider,
+        workspaceRoot,
+        runProviderStreamImpl: runProviderStream,
+        onProgress: (update) => {
+          send(socket, {
+            type: "mcp_oauth_connect_status",
+            mcpOauthConnect: {
+              server: update.server,
+              provider,
+              state: "progress",
+              detail: update.detail || "",
+              ...(update.loginUrl ? { loginUrl: update.loginUrl } : {}),
+            },
+          });
+        },
+      });
+      // 검증 결과 영속: 브리핑 소스 게이트와 Settings 상태 배지가 "OAuth로
+      // 연결됨"을 인정하는 유일한 근거. 토큰이 아니라 검증 사실만 저장.
+      await persistMcpOauthConnectResult({ appSupportPath, result: mcpOauthConnect }).catch((error) => {
+        telemetry.captureException(error, { operation: "mcp_oauth_state_persist" });
+      });
+      const integrationStatus = await collectIntegrationStatus({ appSupportPath });
+      send(socket, { type: "mcp_oauth_connect_result", mcpOauthConnect, integrationStatus });
+      telemetry.captureEvent("mac_sidecar_mcp_oauth_connect", {
+        server: mcpOauthConnect.server,
+        provider: mcpOauthConnect.provider,
+        state: mcpOauthConnect.state,
       });
       return;
     }
@@ -9553,16 +9597,45 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
     );
     return result;
   } catch (error) {
-  telemetry.captureException(error, {
+    const usageLimited = reportProviderRunError(error, {
       operation: "runWorkspaceScanAgent",
       provider,
       model,
       scan_root: scanRoot,
     });
+    if (usageLimited) {
+      broadcastWorkspaceScanProviderLimited(scanRoot, { provider, model, stage: "scan_agent" });
+      broadcastWorkspaceScanProgress(
+        scanRoot,
+        `scan.agent · ${providerLabel} 한도 도달 — 질문은 로컬 신호로 구성됩니다`,
+        {
+          stage: "verifying",
+          stepIndex: 2,
+          totalSteps: 3,
+        },
+      );
+    }
     return null;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * Tells the Mac side a scan-path provider hit its usage limit (quota) so the
+ * UI can surface an explicit "switch provider and re-verify" button. No
+ * automatic fallback happens on this side — provider switching requires the
+ * user's consent via that button (see IntakeV2ShowcaseViews).
+ */
+function broadcastWorkspaceScanProviderLimited(scanRoot, { provider, model, stage }) {
+  broadcast({
+    type: "workspace_scan_provider_limited",
+    scanRoot,
+    provider,
+    model,
+    stage,
+    errorKind: PROVIDER_USAGE_LIMIT_ERROR_KIND,
+  });
 }
 
 function broadcastWorkspaceScanAgentOutput(scanRoot, providerLabel, text) {
@@ -10020,12 +10093,15 @@ async function runDay1ChoiceFrontierProvider({ provider, model, scanRoot, prompt
       },
     });
   } catch (error) {
-    telemetry.captureException(error, {
+    const usageLimited = reportProviderRunError(error, {
       operation: "runDay1ChoiceFrontierProvider",
       provider,
       model,
       scan_root: scanRoot,
     });
+    if (usageLimited) {
+      broadcastWorkspaceScanProviderLimited(scanRoot, { provider, model, stage: "day1_synthesis" });
+    }
     return null;
   }
 }
