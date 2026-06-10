@@ -1827,6 +1827,9 @@ struct ContentView: View {
     @State private var officeHoursSubmittedPromptSnapshotsBySession: [String: [OfficeHoursSubmittedPromptSnapshot]] = [:]
     @State private var officeHoursActiveQuestionLoadersBySession: [String: OfficeHoursLoadingSnapshot] = [:]
     @State private var officeHoursReadyPromptRevealIDs: Set<String> = []
+    // Sessions whose commitment-close candidates were already requested, so the close
+    // reveals (instead of waiting forever) once that one request resolves either way.
+    @State private var officeHoursCommitmentCandidateRequestedSessions: Set<String> = []
     @State private var officeHoursEvidenceDraft: OfficeHoursEvidenceDraft?
     @State private var didCopyOfficeHoursPlanCeoReview = false
     @FocusState private var focusedOfficeHoursStructuredFreeTextID: String?
@@ -3071,44 +3074,87 @@ struct ContentView: View {
             // 종착지로 보여준다. 진행 중(1~5/6)에는 메인 인터뷰 흐름과 경쟁하지 않도록 숨긴다.
             let allQuestionsAnswered = officeHoursAnswerCount(session: session) >= selectedOfficeHoursMode.questionCount
             if stepActive && allQuestionsAnswered {
+                // 약속도 인터뷰처럼: 카드를 열기 전에 이번 인터뷰의 답변에서 후보 액션을
+                // 만들어 온다(사이드카 생성, 제안일 뿐 — 저장되는 약속은 항상 사용자가
+                // 고르거나 고쳐 쓴 문장이라 user-origin 게이트는 그대로다). 후보가 resolve
+                // 되기 전에는 카드를 잡아두고, 메인 로더("약속 준비 중")가 꺼진 뒤에도
+                // 생성이 남아 있으면 같은 amber 로더로 그 박자를 채운다.
+                let sessionID = session?.id ?? ""
+                let candidates = sessionID.isEmpty ? nil : viewModel.officeHoursCommitmentCandidatesBySession[sessionID]
+                let commitmentRevealed = sessionID.isEmpty
+                    || candidates != nil
+                    || (officeHoursCommitmentCandidateRequestedSessions.contains(sessionID)
+                        && !viewModel.officeHoursCommitmentCandidatesGenerating.contains(sessionID))
                 // 마지막 질문 답변과 약속 게이트 사이에 호흡을 둔다 — 연한 구분선으로 '이제
                 // 인터뷰 마무리'로의 전환을 분리(질문 흐름과 종료 흐름을 한 박자 띄운다).
                 VStack(spacing: 14) {
-                    Rectangle()
-                        .fill(OpenDesignOfficeHoursColor.borderSoft)
-                        .frame(height: 1)
-                        .padding(.top, 6)
-                    // 부채 confrontation: 새 약속을 적기 전에 미증명 약속을 직면시킨다(anti-displacement).
-                    // 증거 닫기는 다음 인터뷰 대화 넛지가 담당 — 여기선 시각 confront + 빠른 '포기로 기록'만.
-                    if let evidenceOS = viewModel.evidenceOS,
-                       let debt = evidenceOS.overdueDebts.first ?? evidenceOS.openDebts.first {
-                        officeHoursCommitmentDebtBanner(debt)
-                    }
-                    OfficeHoursCommitmentBarView(
-                        // Scope the gate nudge to the step that was actually held (gatedStep).
-                        gateMessage: (viewModel.commitmentGateStep == nil || viewModel.commitmentGateStep == stepId)
-                            ? viewModel.commitmentGateMessage : nil,
-                        suggestedActions: officeHoursCommitmentSuggestions(),
-                        deferralStreak: viewModel.officeHoursMemory?.consecutiveDeferrals ?? 0,
-                        onCommit: { action in
-                            // user-origin: the founder's chosen/typed next customer action (one line).
-                            _ = viewModel.markDayStep(day: day, stepId: stepId, status: .done, commitmentText: action)
-                        },
-                        onConfess: { reason in
-                            // A confess-close records a deferral ("미룸"); it opens no new commitment.
-                            _ = viewModel.markDayStep(day: day, stepId: stepId, status: .done, confession: reason)
+                    if commitmentRevealed {
+                        Rectangle()
+                            .fill(OpenDesignOfficeHoursColor.borderSoft)
+                            .frame(height: 1)
+                            .padding(.top, 6)
+                        // 부채 confrontation: 새 약속을 적기 전에 미증명 약속을 직면시킨다(anti-displacement).
+                        // 증거 닫기는 다음 인터뷰 대화 넛지가 담당 — 여기선 시각 confront + 빠른 '포기로 기록'만.
+                        if let evidenceOS = viewModel.evidenceOS,
+                           let debt = evidenceOS.overdueDebts.first ?? evidenceOS.openDebts.first {
+                            officeHoursCommitmentDebtBanner(debt)
                         }
+                        OfficeHoursCommitmentBarView(
+                            // Scope the gate nudge to the step that was actually held (gatedStep).
+                            gateMessage: (viewModel.commitmentGateStep == nil || viewModel.commitmentGateStep == stepId)
+                                ? viewModel.commitmentGateMessage : nil,
+                            suggestedActions: officeHoursCommitmentSuggestions(sidecarCandidates: candidates ?? []),
+                            deferralStreak: viewModel.officeHoursMemory?.consecutiveDeferrals ?? 0,
+                            onCommit: { action in
+                                // user-origin: the founder's chosen/typed next customer action (one line).
+                                _ = viewModel.markDayStep(day: day, stepId: stepId, status: .done, commitmentText: action)
+                            },
+                            onConfess: { reason in
+                                // A confess-close records a deferral ("미룸"); it opens no new commitment.
+                                _ = viewModel.markDayStep(day: day, stepId: stepId, status: .done, confession: reason)
+                            }
+                        )
+                        .transition(.officeHoursPromptReveal)
+                    } else if session?.status != .running {
+                        // run이 이미 끝났는데 후보 생성만 남은 짧은 구간 — 메인 로더 자리가
+                        // 비므로 여기서 amber 로더로 이어받는다. run이 도는 동안에는 타임
+                        // 라인의 "약속 준비 중" 로더가 보이고 있어 중복 로더를 만들지 않는다.
+                        Rectangle()
+                            .fill(OpenDesignOfficeHoursColor.borderSoft)
+                            .frame(height: 1)
+                            .padding(.top, 6)
+                        officeHoursQuestionLoader(
+                            title: "약속 준비 중",
+                            detail: "이번 답변 기반 · 고객 행동 후보 · 직접 적기 가능",
+                            accent: OpenDesignOfficeHoursColor.amber
+                        )
+                    }
+                }
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: commitmentRevealed)
+                .task(id: sessionID) {
+                    guard !sessionID.isEmpty else { return }
+                    guard !officeHoursCommitmentCandidateRequestedSessions.contains(sessionID) else { return }
+                    officeHoursCommitmentCandidateRequestedSessions.insert(sessionID)
+                    _ = viewModel.requestOfficeHoursCommitmentCandidates(
+                        sessionID: sessionID,
+                        day: day,
+                        provider: session?.provider
                     )
+                    // 버전 스큐 안전망: 옛 사이드카가 요청을 모르면 ready가 영영 안 온다 —
+                    // 일정 시간 뒤 빈 결과로 강제 resolve해 약속 닫기가 로더에 갇히지 않게 한다.
+                    try? await Task.sleep(nanoseconds: 45_000_000_000)
+                    viewModel.resolveStalledOfficeHoursCommitmentCandidates(sessionID: sessionID)
                 }
             }
         }
     }
 
-    // 약속 카드의 행동 후보(≤3) — 직전 인터뷰의 미증명 부채 + 메모리의 open thread에서 파생한다.
-    // 사이드카가 suggestedActions를 직접 실어 보내면(Stage 2) 그걸 우선하되, 없으면 이 로컬 폴백을
-    // 쓴다. 후보는 전부 사용자 자신의 과거 약속/스레드에서 나오므로 user-origin 원칙과 충돌하지 않는다.
-    private func officeHoursCommitmentSuggestions() -> [String] {
-        var raw: [String] = []
+    // 약속 카드의 행동 후보(≤3) — ① 사이드카가 이번 인터뷰 6답변에서 생성한 후보(우선) ②
+    // 직전 인터뷰의 미증명 부채 ③ 메모리의 open thread. ①은 제안일 뿐이고(고르거나 직접
+    // 고쳐 쓰는 건 사용자), ②③은 사용자 자신의 과거 약속/스레드라 user-origin 원칙과
+    // 충돌하지 않는다. 사이드카 미연결/구버전이면 ①이 비어 기존 로컬 폴백 그대로다.
+    private func officeHoursCommitmentSuggestions(sidecarCandidates: [String] = []) -> [String] {
+        var raw: [String] = sidecarCandidates
         if let evidenceOS = viewModel.evidenceOS {
             for debt in evidenceOS.overdueDebts + evidenceOS.openDebts {
                 raw.append(debt.message.nonEmpty ?? debt.text)
@@ -4913,7 +4959,8 @@ struct ContentView: View {
                         officeHoursQuestionLoader(
                             title: officeHoursLoaderTitle(session: session),
                             detail: officeHoursLoaderDetail(session: session),
-                            outputLines: viewModel.sidecarOutputPreview(for: session.id)
+                            outputLines: viewModel.sidecarOutputPreview(for: session.id),
+                            accent: officeHoursLoaderAccent(session: session)
                         )
                         .id(loading.requestId)
                     }
@@ -4939,7 +4986,8 @@ struct ContentView: View {
                                 officeHoursQuestionLoader(
                                     title: officeHoursLoaderTitle(session: session),
                                     detail: officeHoursLoaderDetail(session: session),
-                                    outputLines: viewModel.sidecarOutputPreview(for: session.id)
+                                    outputLines: viewModel.sidecarOutputPreview(for: session.id),
+                                    accent: officeHoursLoaderAccent(session: session)
                                 )
                             },
                             content: {
@@ -4991,7 +5039,8 @@ struct ContentView: View {
             officeHoursQuestionLoader(
                 title: officeHoursLoaderTitle(session: session),
                 detail: officeHoursLoaderDetail(session: session),
-                outputLines: viewModel.sidecarOutputPreview(for: session.id)
+                outputLines: viewModel.sidecarOutputPreview(for: session.id),
+                accent: officeHoursLoaderAccent(session: session)
             )
         }
         .accessibilityElement(children: .contain)
@@ -5120,7 +5169,8 @@ struct ContentView: View {
     private func officeHoursQuestionLoader(
         title: String?,
         detail: String?,
-        outputLines: [String] = []
+        outputLines: [String] = [],
+        accent: Color = OpenDesignOfficeHoursColor.accent
     ) -> some View {
         HStack(alignment: .center, spacing: 14) {
             OfficeHoursLoaderOrb(reduceMotion: reduceMotion)
@@ -5163,9 +5213,9 @@ struct ContentView: View {
         )
         .overlay(alignment: .leading) {
             Rectangle()
-                .fill(OpenDesignOfficeHoursColor.accent)
+                .fill(accent)
                 .frame(width: 3)
-                .shadow(color: OpenDesignOfficeHoursColor.accent.opacity(0.55), radius: 14)
+                .shadow(color: accent.opacity(0.55), radius: 14)
         }
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(alignment: .leading) {
@@ -5237,9 +5287,19 @@ struct ContentView: View {
             return "\(selectedOfficeHoursMode.label) 첫 질문 생성 중"
         }
         if completed >= selectedOfficeHoursMode.questionCount {
-            return "증거 정리 중"
+            // 마지막 답변 뒤는 '다음 질문'이 아니라 약속 단계로의 전환 — 카피와 액센트
+            // (amber, officeHoursLoaderAccent)가 같이 바뀌어 질문 로더와 구분된다.
+            return "약속 준비 중"
         }
         return "질문 \(completed + 1) 생성 중"
+    }
+
+    // 질문 로더는 초록(accent), 마지막 단계(약속 전환) 로더는 amber — 약속 카드의 좌측
+    // 바와 같은 색으로 '질문 아님, 마무리' 신호를 로더 시점부터 잇는다.
+    private func officeHoursLoaderAccent(session: ChatSession) -> Color {
+        officeHoursCompletedQuestionCount(session: session) >= selectedOfficeHoursMode.questionCount
+            ? OpenDesignOfficeHoursColor.amber
+            : OpenDesignOfficeHoursColor.accent
     }
 
     private func officeHoursLoaderDetail(session: ChatSession) -> String? {
@@ -5251,7 +5311,7 @@ struct ContentView: View {
             return "Startup 컨텍스트 · 증거 프레임 · 답변 선택지"
         }
         if completed >= selectedOfficeHoursMode.questionCount {
-            return "답변 요약 · 다음 과제 · 저장 준비"
+            return "답변 요약 · 고객 행동 후보 · 약속 카드 준비"
         }
         return "방금 답변 반영 · 다음 질문 프레임 · 선택지 준비"
     }
@@ -7636,7 +7696,7 @@ struct ContentView: View {
                 return "첫 질문 생성 중"
             }
             if completed >= selectedOfficeHoursMode.questionCount {
-                return "증거 정리 중"
+                return "약속 준비 중"
             }
             return "다음 질문 생성 중"
         }
