@@ -338,6 +338,42 @@ struct SidecarEventDecodingTests {
         #expect(event.officeHoursDailyDigest == nil)
     }
 
+    @MainActor @Test func decodesOfficeHoursCommitmentCandidatesReadyPayload() throws {
+        let payload = """
+        {
+          "type": "office_hours_commitment_candidates",
+          "sessionId": "session-1",
+          "day": 6,
+          "status": "ready",
+          "candidates": ["조은성에게 5만원 결제요청 보내기", "박지민에게 데모 일정 묻기"]
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "office_hours_commitment_candidates")
+        #expect(event.sessionId == "session-1")
+        #expect(event.status == "ready")
+        #expect(event.commitmentCandidates == ["조은성에게 5만원 결제요청 보내기", "박지민에게 데모 일정 묻기"])
+    }
+
+    @MainActor @Test func decodesOfficeHoursCommitmentCandidatesGeneratingPayload() throws {
+        let payload = """
+        {
+          "type": "office_hours_commitment_candidates",
+          "sessionId": "session-1",
+          "day": 6,
+          "status": "generating",
+          "candidates": []
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.status == "generating")
+        #expect(event.commitmentCandidates == [])
+    }
+
     @MainActor @Test func decodesMorningBriefingResultPayload() throws {
         let payload = """
         {
@@ -437,6 +473,136 @@ struct SidecarEventDecodingTests {
         #expect(briefing.sync?.readyCount == 1)
         #expect(briefing.status?.state == "ready")
         #expect(briefing.historyDates == ["2026-06-09"])
+        // Drilldown payload absent on older sidecars: decoders must fail soft.
+        #expect(briefing.drilldowns == nil)
+        #expect(briefing.historyEntries == nil)
+    }
+
+    @MainActor @Test func decodesMorningBriefingDrilldownPayload() throws {
+        let payload = """
+        {
+          "type": "morning_briefing_result",
+          "morningBriefing": {
+            "schemaVersion": 1,
+            "generatedAt": "2026-06-10T00:00:00.000Z",
+            "day": 12,
+            "summary": {
+              "statement": "밤사이 가장 큰 변화는 PostHog 리텐션 ▼ 14p 하락이에요. Cloudflare 방문은 ▲ 56% 늘었어요.",
+              "statementMarks": ["PostHog 리텐션 ▼ 14p 하락"],
+              "statementEmphases": ["Cloudflare 방문은 ▲ 56%"]
+            },
+            "historyEntries": [
+              { "date": "2026-06-09", "day": 11, "title": "배포 후 첫 유입." }
+            ],
+            "drilldowns": {
+              "github": {
+                "id": "github",
+                "title": "GitHub · 빌드·배포 · 레포 신호",
+                "subtitle": "agentic30-public · main",
+                "syncPills": ["지난 24시간 커밋 9 · PR 머지 2"],
+                "kpis": [
+                  { "label": "커밋", "valueLabel": "9", "deltaLabel": "▲ 3", "direction": "up", "vsLabel": "어제 6" },
+                  { "label": "방문 → 가입", "valueLabel": "9%", "deltaLabel": "▼ 4p", "direction": "down", "vsLabel": "어제 13%", "flag": true }
+                ],
+                "kpisMeta": "main 브랜치 기준",
+                "chart": {
+                  "kind": "bars",
+                  "title": "커밋, 지난 24시간",
+                  "bars": [
+                    { "label": "00", "value": 2, "ratio": 1, "tone": "accent", "tip": "00–03 · 2 커밋" },
+                    { "label": "03", "value": 1, "ratio": 0.5, "tone": "violet", "tip": "배포 03:12" }
+                  ],
+                  "legend": [{ "label": "커밋", "tone": "accent" }],
+                  "footnote": "03:12 배포 포함"
+                },
+                "table": [
+                  { "rank": 1, "code": "/landing", "label": "랜딩", "valueLabel": "132", "share": 70, "ratio": 1 }
+                ],
+                "listRows": [
+                  { "kind": "merged", "title": "#41 온보딩 단계 축소", "metaItems": ["머지 02:58", "+120"], "tag": "merged" }
+                ],
+                "listMeta": "머지 2 · 오픈 1",
+                "scan": [
+                  { "title": "이슈", "cmd": "gh issue list", "valueLabel": "열린 2", "sub": "#44 · 50분 전", "tone": "sky", "quiet": false }
+                ],
+                "funnel": {
+                  "steps": [
+                    { "label": "랜딩 방문", "valueLabel": "64", "ratio": 1, "drop": false },
+                    { "label": "가입", "valueLabel": "6", "ratio": 0.46, "drop": true }
+                  ],
+                  "gapAfterIndex": 0,
+                  "gapLabel": "가입 → 연결에서 67% 이탈"
+                },
+                "signals": [{ "time": "02:10", "text": "단일 IP 9요청 — 봇으로 분류" }],
+                "drafts": [
+                  {
+                    "id": "github_draft_1",
+                    "kind": "task",
+                    "badge": "태스크",
+                    "title": "flaky 테스트 격리",
+                    "subtitle": "gh run list",
+                    "body": "success 17 · failure 3",
+                    "why": "재실행 습관이 굳기 전에 잡아야 해요.",
+                    "copyText": "success 17 · failure 3",
+                    "applyLabel": "맡기기",
+                    "tasks": []
+                  }
+                ],
+                "draftsEmpty": { "title": "코드에서 꺼낼 다음 일이 없어요", "detail": "신호 없음", "evidence": "근거: gh CLI" },
+                "maintenance": [
+                  {
+                    "id": "github_keep_readme",
+                    "kind": "message",
+                    "badge": "문서",
+                    "title": "README 최신화",
+                    "subtitle": "10일 전",
+                    "body": "10 days ago",
+                    "why": "첫인상",
+                    "copyText": "10 days ago",
+                    "applyLabel": "초안 PR 맡기기",
+                    "tasks": []
+                  }
+                ],
+                "meta": {
+                  "progress": { "label": "main 배포", "valueLabel": "1 · 성공", "sub": "롤백 0", "ratio": 1 },
+                  "rows": [{ "key": "리포", "value": "agentic30-public", "tone": "muted" }]
+                }
+              }
+            }
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        let briefing = try #require(event.morningBriefing)
+        #expect(briefing.summary?.statementMarks == ["PostHog 리텐션 ▼ 14p 하락"])
+        #expect(briefing.summary?.statementEmphases == ["Cloudflare 방문은 ▲ 56%"])
+        let entry = try #require(briefing.historyEntries?.first)
+        #expect(entry.date == "2026-06-09")
+        #expect(entry.day == 11)
+        #expect(entry.title == "배포 후 첫 유입.")
+
+        let drilldown = try #require(briefing.drilldowns?["github"])
+        #expect(drilldown.id == "github")
+        #expect(drilldown.title == "GitHub · 빌드·배포 · 레포 신호")
+        #expect(drilldown.syncPills?.count == 1)
+        #expect(drilldown.kpis?.count == 2)
+        #expect(drilldown.kpis?.last?.flag == true)
+        #expect(drilldown.kpisMeta == "main 브랜치 기준")
+        #expect(drilldown.chart?.kind == "bars")
+        #expect(drilldown.chart?.bars?.last?.tone == "violet")
+        #expect(drilldown.table?.first?.share == 70)
+        #expect(drilldown.listRows?.first?.kind == "merged")
+        #expect(drilldown.scan?.first?.cmd == "gh issue list")
+        #expect(drilldown.funnel?.steps?.last?.drop == true)
+        #expect(drilldown.funnel?.gapAfterIndex == 0)
+        #expect(drilldown.signals?.first?.time == "02:10")
+        #expect(drilldown.drafts?.first?.id == "github_draft_1")
+        #expect(drilldown.draftsEmpty?.title == "코드에서 꺼낼 다음 일이 없어요")
+        #expect(drilldown.maintenance?.first?.badge == "문서")
+        #expect(drilldown.meta?.progress?.ratio == 1)
+        #expect(drilldown.meta?.rows?.first?.key == "리포")
     }
 
     @MainActor @Test func decodesMorningBriefingCollectingStatusPayload() throws {

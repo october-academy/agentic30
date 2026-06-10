@@ -53,6 +53,11 @@ import {
   updatePersistedMorningBriefing,
 } from "./morning-briefing.mjs";
 import {
+  buildMorningBriefingExternalDigestPrompt,
+  collectGithubDrilldown,
+  normalizeMorningBriefingExternalDigest,
+} from "./morning-briefing-drilldown.mjs";
+import {
   buildQmdGuidance,
   buildQmdMcpConfig,
   getQmdState,
@@ -295,6 +300,11 @@ import {
   selectOfficeHoursResumeTurns,
   shouldSeedOfficeHoursResumeTranscript,
 } from "./office-hours-resume.mjs";
+import {
+  buildOfficeHoursCommitmentCandidatesPrompt,
+  mergeCommitmentCandidates,
+  parseOfficeHoursCommitmentCandidates,
+} from "./office-hours-commitment-suggest.mjs";
 import {
   clearUserInputArtifacts,
   createUserInputRequest,
@@ -1752,6 +1762,10 @@ async function handleClientMessage(socket, payload) {
       await handleOfficeHoursCommitmentAbandon(socket, payload);
       return;
     }
+    case "office_hours_commitment_candidates_request": {
+      await handleOfficeHoursCommitmentCandidatesRequest(socket, payload);
+      return;
+    }
     case "execution_os_get": {
       await handleExecutionOsGet(socket, payload);
       return;
@@ -2612,6 +2626,115 @@ async function handleOfficeHoursCommitmentAbandon(socket, payload = {}) {
   } catch (error) {
     telemetry.captureException(error, { operation: "office_hours_commitment_abandon" });
     send(socket, { type: "day_progress_state", workspaceRoot: root, success: false, error: formatError(error) });
+  }
+}
+
+const OFFICE_HOURS_COMMITMENT_CANDIDATES_TIMEOUT_MS = 30_000;
+
+// Stage 2 of the interview-close redesign: when the founder finishes the last
+// forcing question, the Mac requests context-aware candidates for the commitment
+// close so it mirrors the interview (clickable options) instead of opening on a
+// bare text field. Candidates are derived from THIS interview's own answers (the
+// turn log) plus still-open memory threads, generated read-only by the provider.
+//
+// PROPOSALS only — the user-origin gate in handleDayProgressPatch still governs the
+// actual commitment write. Fail-open at every step: a missing provider, a timeout,
+// junk output, or any error all resolve to `status: "ready"` with whatever local
+// fallback exists, so the close never blocks on this and the Mac falls back to its
+// own memory-derived suggestions (and always to "직접 적기").
+async function handleOfficeHoursCommitmentCandidatesRequest(socket, payload = {}) {
+  const root = resolveDay1GoalWorkspaceRoot(payload);
+  const sessionId = String(payload.sessionId ?? payload.session_id ?? "").trim();
+  const requestedDay = normalizeOfficeHoursDay(payload.day ?? payload.dayNumber ?? payload.day_number);
+  const preferredProvider = String(payload.provider ?? payload.preferredProvider ?? "").trim();
+
+  const emit = (status, candidates) => {
+    broadcast({
+      type: "office_hours_commitment_candidates",
+      sessionId,
+      day: requestedDay ?? null,
+      status,
+      candidates: Array.isArray(candidates) ? candidates : [],
+    });
+  };
+
+  // Local fallback first, so even a total generation failure still yields whatever
+  // memory-derived threads exist (mirrors the Mac's own local suggestion source).
+  let fallbackThreads = [];
+  try {
+    const dayProgress = await loadDayProgress({ workspaceRoot: root }).catch(() => null);
+    const currentDay = requestedDay
+      ?? (dayProgress ? normalizeOfficeHoursDay(computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt })) : null);
+    const memorySummary = await loadOfficeHoursMemorySummary(root, currentDay);
+    fallbackThreads = Array.isArray(memorySummary?.openThreads) ? memorySummary.openThreads : [];
+
+    emit("generating", []);
+
+    const turnLog = await loadOfficeHoursTurnLog({ workspaceRoot: root }).catch(() => null);
+    const allTurns = Array.isArray(turnLog?.turns) ? turnLog.turns : [];
+    // Prefer this session's turns; fall back to the requested day, then the tail.
+    const sessionTurns = sessionId ? allTurns.filter((turn) => turn.sessionId === sessionId) : [];
+    const dayTurns = currentDay ? allTurns.filter((turn) => turn.day === currentDay) : [];
+    const interviewTurns = (sessionTurns.length ? sessionTurns : dayTurns.length ? dayTurns : allTurns).slice(-8);
+
+    const provider = pickMorningBriefingProvider(preferredProvider);
+    if (!provider) {
+      emit("ready", mergeCommitmentCandidates([], fallbackThreads));
+      return;
+    }
+
+    const abortController = new AbortController();
+    let generatedText = "";
+    let timedOut = false;
+    await runWithSoftTimeout({
+      timeoutMs: OFFICE_HOURS_COMMITMENT_CANDIDATES_TIMEOUT_MS,
+      abortController,
+      onTimeout: () => {
+        timedOut = true;
+        telemetry.captureEvent("mac_sidecar_office_hours_commitment_candidates_timeout", {
+          provider,
+          workspace_basename: path.basename(root),
+        });
+      },
+      onLateError: (error) => {
+        telemetry.captureException(error, { operation: "office_hours_commitment_candidates_late", provider });
+      },
+      operation: async () => {
+        await runProviderStream({
+          provider,
+          prompt: buildOfficeHoursCommitmentCandidatesPrompt({
+            turns: interviewTurns,
+            openThreads: fallbackThreads,
+            day: currentDay,
+          }),
+          workspaceRoot: root,
+          abortController,
+          sessionIdForMcp: null,
+          executionMode: "office_hours_digest_read_only",
+          approvedToolExecution: false,
+          onTextDelta: (text) => {
+            if (!timedOut) generatedText += String(text || "");
+          },
+          onTextReplace: (text) => {
+            if (!timedOut) generatedText = String(text || "");
+          },
+        });
+      },
+    });
+
+    const generated = timedOut ? [] : parseOfficeHoursCommitmentCandidates(generatedText);
+    const candidates = mergeCommitmentCandidates(generated, fallbackThreads);
+    telemetry.captureEvent("mac_sidecar_office_hours_commitment_candidates", {
+      provider,
+      generated_count: generated.length,
+      merged_count: candidates.length,
+      workspace_basename: path.basename(root),
+    });
+    emit("ready", candidates);
+  } catch (error) {
+    telemetry.captureException(error, { operation: "office_hours_commitment_candidates" });
+    // Fail-open: still hand back the local fallback so the close is never blocked.
+    emit("ready", mergeCommitmentCandidates([], fallbackThreads));
   }
 }
 
@@ -4341,18 +4464,35 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
     };
 
     const localSignals = await collectLocalDailyOfficeHoursSignals({ workspaceRoot, gate });
-    const externalSignals = await collectMorningBriefingExternalSignals({ gate, preferredProvider });
+    const external = await collectMorningBriefingExternalSignals({ gate, preferredProvider });
     const digest = finalizeDailyOfficeHoursDigest({
       gate,
       localSignals,
-      externalSignals,
+      externalSignals: external.sources,
       context: "",
+    });
+    const previousMetrics = store.current?.metrics
+      || store.history[store.history.length - 1]?.metrics
+      || {};
+    const githubDrilldown = await collectGithubDrilldown({
+      workspaceRoot,
+      window: gate.window,
+      gitSource: localSignals.find((source) => source.id === "git"),
+      ghSource: localSignals.find((source) => source.id === "gh_cli"),
+      previousCommitCount: previousMetrics.github ?? null,
+    }).catch((error) => {
+      telemetry.captureException(error, { operation: "morning_briefing_github_drilldown" });
+      return null;
     });
     const briefing = buildMorningBriefing({
       digest,
       day,
       previous: store.current ? { metrics: store.current.metrics } : null,
       history: store.history,
+      drilldowns: {
+        ...external.drilldowns,
+        ...(githubDrilldown ? { github: githubDrilldown } : {}),
+      },
     });
     const persistedStore = await persistMorningBriefing({ workspaceRoot, briefing });
     broadcast({
@@ -4383,10 +4523,10 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
 
 async function collectMorningBriefingExternalSignals({ gate, preferredProvider = "" } = {}) {
   const externalSources = selectedExternalOfficeHoursSources(gate);
-  if (!externalSources.length) return [];
+  if (!externalSources.length) return { sources: [], drilldowns: {} };
   const provider = pickMorningBriefingProvider(preferredProvider);
   if (!provider) {
-    return normalizeExternalOfficeHoursDigest("", externalSources);
+    return normalizeMorningBriefingExternalDigest("", externalSources);
   }
   const abortController = new AbortController();
   let externalText = "";
@@ -4412,7 +4552,7 @@ async function collectMorningBriefingExternalSignals({ gate, preferredProvider =
       operation: async () => {
         await runProviderStream({
           provider,
-          prompt: buildExternalOfficeHoursDigestPrompt({
+          prompt: buildMorningBriefingExternalDigestPrompt({
             sources: externalSources,
             window: gate.window,
             context: "Morning briefing: aggregate overnight product/traffic evidence only.",
@@ -4439,7 +4579,7 @@ async function collectMorningBriefingExternalSignals({ gate, preferredProvider =
     });
     externalText = "";
   }
-  return normalizeExternalOfficeHoursDigest(timedOut ? "" : externalText, externalSources);
+  return normalizeMorningBriefingExternalDigest(timedOut ? "" : externalText, externalSources);
 }
 
 // Day-less Office Hours starts (fresh slash-command or button sessions) must not

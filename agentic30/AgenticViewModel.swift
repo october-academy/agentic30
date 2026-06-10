@@ -1789,6 +1789,14 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var morningBriefing: MorningBriefing?
     @Published private(set) var morningBriefingPrevious: MorningBriefing?
     @Published private(set) var morningBriefingCollecting = false
+    /// Commitment-close candidates (`office_hours_commitment_candidates`), keyed by
+    /// session id: 2–3 next-customer-action proposals the sidecar derives from THIS
+    /// interview's own answers. Proposals only — the stored commitment is always the
+    /// founder's resolved text (user-origin gate lives sidecar-side).
+    @Published private(set) var officeHoursCommitmentCandidatesBySession: [String: [String]] = [:]
+    /// Sessions with a candidate generation in flight (`status: "generating"`), so the
+    /// close can show a "약속 준비 중" loader instead of a bare empty card.
+    @Published private(set) var officeHoursCommitmentCandidatesGenerating: Set<String> = []
     /// Soft guidance from the interview gate: set when the sidecar withholds an interview
     /// close (needsCommitment) and asks for one next customer action; cleared on the next
     /// successful (non-blocked) day_progress_state so the nudge never lingers.
@@ -3376,6 +3384,58 @@ final class AgenticViewModel: ObservableObject {
             payload["predictionVerdict"] = predictionVerdict
         }
         return sidecar.send(payload: payload)
+    }
+
+    /// Ask the sidecar for commitment-close candidates derived from this interview's
+    /// own answers. Idempotent per session: once a generation is in flight or results
+    /// landed, repeat calls are no-ops, so the view can call this on every layout pass
+    /// after the last forcing question. Fail-open by design — the close never blocks
+    /// on this; the bar always keeps its "직접 적기" path.
+    @discardableResult
+    func requestOfficeHoursCommitmentCandidates(
+        sessionID: String,
+        day: Int? = nil,
+        provider: AgentProvider? = nil
+    ) -> Bool {
+        let id = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty else { return false }
+        guard officeHoursCommitmentCandidatesBySession[id] == nil,
+              !officeHoursCommitmentCandidatesGenerating.contains(id) else { return true }
+        let root = workspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Every failure path resolves to an EMPTY ready result: the commitment bar
+        // reveals on a resolved entry, so a disconnected sidecar (UI tests run with
+        // --ui-testing-disable-sidecar) must never leave the close stuck on a loader.
+        guard isConnected, !root.isEmpty else {
+            officeHoursCommitmentCandidatesBySession[id] = []
+            return false
+        }
+        var payload: [String: Any] = [
+            "type": "office_hours_commitment_candidates_request",
+            "workspaceRoot": root,
+            "sessionId": id,
+        ]
+        if let day { payload["day"] = day }
+        if let provider { payload["provider"] = provider.rawValue }
+        // Optimistic: mark generating immediately so a second layout pass doesn't
+        // double-send before the sidecar's "generating" broadcast arrives.
+        officeHoursCommitmentCandidatesGenerating.insert(id)
+        let sent = sidecar.send(payload: payload)
+        if !sent {
+            officeHoursCommitmentCandidatesGenerating.remove(id)
+            officeHoursCommitmentCandidatesBySession[id] = []
+        }
+        return sent
+    }
+
+    /// Safety valve for sidecar/app version skew: an older sidecar that doesn't know
+    /// the candidates request would leave `generating` set forever and hold the
+    /// commitment close behind a loader. Resolves the session to an empty ready
+    /// result; a no-op once a real result landed.
+    func resolveStalledOfficeHoursCommitmentCandidates(sessionID: String) {
+        let id = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty, officeHoursCommitmentCandidatesBySession[id] == nil else { return }
+        officeHoursCommitmentCandidatesGenerating.remove(id)
+        officeHoursCommitmentCandidatesBySession[id] = []
     }
 
     @discardableResult
@@ -6329,6 +6389,16 @@ final class AgenticViewModel: ObservableObject {
                 // Fail-soft decode: a result event whose digest payload didn't
                 // decode still ends the collecting state.
                 officeHoursDailyDigestCollecting = false
+            }
+        case "office_hours_commitment_candidates":
+            guard let sessionID = event.sessionId, !sessionID.isEmpty else { return }
+            if event.status == "generating" {
+                officeHoursCommitmentCandidatesGenerating.insert(sessionID)
+            } else {
+                // "ready" (the only other status) always ends the loader, even with an
+                // empty list — the bar then falls back to its local suggestions/직접 적기.
+                officeHoursCommitmentCandidatesGenerating.remove(sessionID)
+                officeHoursCommitmentCandidatesBySession[sessionID] = event.commitmentCandidates ?? []
             }
         case "office_hours_status":
             applyOfficeHoursLiveStatus(from: event)
@@ -10527,6 +10597,10 @@ struct SidecarEvent: Decodable {
     let morningBriefing: MorningBriefing?
     let morningBriefingPrevious: MorningBriefing?
     let morningBriefingStatus: MorningBriefingStatus?
+    // office_hours_commitment_candidates: context-aware commitment-close proposals
+    // generated from this interview's own answers. Proposals only — the stored
+    // commitment is always the founder's resolved text (user-origin gate).
+    let commitmentCandidates: [String]?
 
     init(
         type: String,
@@ -10626,7 +10700,8 @@ struct SidecarEvent: Decodable {
         officeHoursDailyDigest: OfficeHoursDailyDigest? = nil,
         morningBriefing: MorningBriefing? = nil,
         morningBriefingPrevious: MorningBriefing? = nil,
-        morningBriefingStatus: MorningBriefingStatus? = nil
+        morningBriefingStatus: MorningBriefingStatus? = nil,
+        commitmentCandidates: [String]? = nil
     ) {
         self.type = type
         self.title = title
@@ -10726,6 +10801,7 @@ struct SidecarEvent: Decodable {
         self.morningBriefing = morningBriefing
         self.morningBriefingPrevious = morningBriefingPrevious
         self.morningBriefingStatus = morningBriefingStatus
+        self.commitmentCandidates = commitmentCandidates
     }
 
     var bipMissionProgress: BipMissionProgress? {
@@ -11118,6 +11194,7 @@ extension SidecarEvent {
         case officeHoursDailyDigest
         case morningBriefing
         case morningBriefingPrevious
+        case candidates
     }
 
     init(from decoder: Decoder) throws {
@@ -11234,6 +11311,7 @@ extension SidecarEvent {
         morningBriefing = Self.decodeIfPresent(MorningBriefing.self, from: container, forKey: .morningBriefing)
         morningBriefingPrevious = Self.decodeIfPresent(MorningBriefing.self, from: container, forKey: .morningBriefingPrevious)
         morningBriefingStatus = Self.decodeIfPresent(MorningBriefingStatus.self, from: container, forKey: .status)
+        commitmentCandidates = Self.decodeIfPresent([String].self, from: container, forKey: .candidates)
     }
 
     private static func decodeIfPresent<T: Decodable>(

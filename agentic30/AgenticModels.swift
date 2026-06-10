@@ -481,12 +481,26 @@ nonisolated struct MorningBriefing: Codable, Hashable {
     var sync: MorningBriefingSync?
     var status: MorningBriefingStatus?
     var historyDates: [String]?
+    var historyEntries: [MorningBriefingHistoryEntry]?
+    var drilldowns: [String: MorningBriefingDrilldown]?
+}
+
+nonisolated struct MorningBriefingHistoryEntry: Codable, Hashable, Identifiable {
+    var date: String
+    var day: Int?
+    var title: String?
+
+    var id: String { date }
 }
 
 nonisolated struct MorningBriefingSummary: Codable, Hashable {
     var title: String?
     var windowLabel: String?
     var statement: String?
+    /// Exact substrings of `statement` rendered with the rose "mark" highlight.
+    var statementMarks: [String]?
+    /// Exact substrings of `statement` rendered with the accent "em" highlight.
+    var statementEmphases: [String]?
     var crits: [MorningBriefingSummaryCrit]?
 }
 
@@ -588,6 +602,133 @@ nonisolated struct MorningBriefingStatus: Codable, Hashable {
     var detail: String?
 }
 
+// MARK: - Morning briefing drilldowns (briefing-cloudflare/github/posthog.html)
+
+nonisolated struct MorningBriefingDrilldown: Codable, Hashable, Identifiable {
+    var id: String
+    var title: String?
+    var subtitle: String?
+    var syncPills: [String]?
+    var kpis: [MorningBriefingDrillKpi]?
+    var kpisMeta: String?
+    var chart: MorningBriefingDrillChart?
+    var table: [MorningBriefingDrillTableRow]?
+    var listRows: [MorningBriefingDrillListRow]?
+    var listMeta: String?
+    var scan: [MorningBriefingDrillScanCell]?
+    var funnel: MorningBriefingDrillFunnel?
+    var signals: [MorningBriefingDrillSignal]?
+    var drafts: [MorningBriefingActionDraft]?
+    var draftsEmpty: MorningBriefingDrillDraftsEmpty?
+    var maintenance: [MorningBriefingActionDraft]?
+    var meta: MorningBriefingDrillMeta?
+}
+
+nonisolated struct MorningBriefingDrillKpi: Codable, Hashable {
+    var label: String?
+    var valueLabel: String?
+    var deltaLabel: String?
+    var direction: String?
+    var vsLabel: String?
+    var flag: Bool?
+}
+
+nonisolated struct MorningBriefingDrillChart: Codable, Hashable {
+    var kind: String?
+    var title: String?
+    var subtitle: String?
+    var bars: [MorningBriefingDrillBar]?
+    var points: [MorningBriefingDrillPoint]?
+    var baselinePct: Double?
+    var legend: [MorningBriefingDrillLegend]?
+    var footnote: String?
+}
+
+nonisolated struct MorningBriefingDrillBar: Codable, Hashable {
+    var label: String?
+    var value: Double?
+    var ratio: Double?
+    var tone: String?
+    var tip: String?
+}
+
+nonisolated struct MorningBriefingDrillPoint: Codable, Hashable {
+    var label: String?
+    var pct: Double?
+}
+
+nonisolated struct MorningBriefingDrillLegend: Codable, Hashable {
+    var label: String?
+    var tone: String?
+}
+
+nonisolated struct MorningBriefingDrillTableRow: Codable, Hashable {
+    var rank: Int?
+    var code: String?
+    var label: String?
+    var valueLabel: String?
+    var share: Double?
+    var ratio: Double?
+}
+
+nonisolated struct MorningBriefingDrillListRow: Codable, Hashable {
+    var kind: String?
+    var title: String?
+    var metaItems: [String]?
+    var tag: String?
+}
+
+nonisolated struct MorningBriefingDrillScanCell: Codable, Hashable {
+    var title: String?
+    var cmd: String?
+    var valueLabel: String?
+    var sub: String?
+    var tone: String?
+    var quiet: Bool?
+}
+
+nonisolated struct MorningBriefingDrillFunnel: Codable, Hashable {
+    var steps: [MorningBriefingDrillFunnelStep]?
+    var gapAfterIndex: Int?
+    var gapLabel: String?
+}
+
+nonisolated struct MorningBriefingDrillFunnelStep: Codable, Hashable {
+    var label: String?
+    var valueLabel: String?
+    var ratio: Double?
+    var drop: Bool?
+}
+
+nonisolated struct MorningBriefingDrillSignal: Codable, Hashable {
+    var time: String?
+    var text: String?
+}
+
+nonisolated struct MorningBriefingDrillDraftsEmpty: Codable, Hashable {
+    var title: String?
+    var detail: String?
+    var evidence: String?
+}
+
+nonisolated struct MorningBriefingDrillMeta: Codable, Hashable {
+    var progress: MorningBriefingDrillMetaProgress?
+    var rows: [MorningBriefingDrillMetaRow]?
+}
+
+nonisolated struct MorningBriefingDrillMetaProgress: Codable, Hashable {
+    var label: String?
+    var valueLabel: String?
+    var sub: String?
+    var ratio: Double?
+}
+
+nonisolated struct MorningBriefingDrillMetaRow: Codable, Hashable {
+    var key: String?
+    var value: String?
+    var tone: String?
+}
+
 extension MorningBriefing {
     /// Deterministic fixture for hermetic UI tests (`--ui-testing-stub-morning-briefing-events`).
     /// Mirrors the OD agentic30-morning-briefing.html reference content so screenshots stay stable.
@@ -608,6 +749,8 @@ extension MorningBriefing {
             title: "overnight digest",
             windowLabel: "2026-06-09 00:00 -> 2026-06-10 now",
             statement: "밤사이 가장 큰 변화는 PostHog 활성 사용자 ▼ 56% 하락이에요. Cloudflare 방문은 어제보다 늘었지만, 늘어난 유입이 온보딩에서 빠지고 있어요.",
+            statementMarks: ["PostHog 활성 사용자 ▼ 56% 하락"],
+            statementEmphases: ["Cloudflare 방문은 어제보다 늘었지만"],
             crits: [
                 MorningBriefingSummaryCrit(source: "Cloudflare", label: "순 방문", value: "▲ 56%", direction: "up"),
                 MorningBriefingSummaryCrit(source: "GitHub", label: "커밋", value: "▲ 50%", direction: "up"),
@@ -731,7 +874,225 @@ extension MorningBriefing {
             syncedAtLabel: "09:00"
         ),
         status: MorningBriefingStatus(state: "ready", detail: "소스 4개에서 밤사이 신호를 모았어요."),
-        historyDates: ["2026-06-09", "2026-06-08", "2026-06-07"]
+        historyDates: ["2026-06-09", "2026-06-08", "2026-06-07"],
+        historyEntries: [
+            MorningBriefingHistoryEntry(date: "2026-06-09", day: 11, title: "어제 — 배포 후 첫 유입"),
+            MorningBriefingHistoryEntry(date: "2026-06-08", day: 10, title: "가격 카피 A/B 시작"),
+            MorningBriefingHistoryEntry(date: "2026-06-07", day: 9, title: "랜딩 첫 봇 트래픽"),
+        ],
+        drilldowns: [
+            "cloudflare": MorningBriefingDrilldown(
+                id: "cloudflare",
+                title: "Cloudflare · 트래픽 드릴다운",
+                subtitle: "사람 방문 기준 · 봇 제외",
+                syncPills: ["지난 24시간 06-09 09:00 → 06-10 09:00", "비교 그 전 24시간"],
+                kpis: [
+                    MorningBriefingDrillKpi(label: "순 방문", valueLabel: "64", deltaLabel: "▲ 56%", direction: "up", vsLabel: "어제 41"),
+                    MorningBriefingDrillKpi(label: "사람 방문", valueLabel: "52", deltaLabel: "▲ 37%", direction: "up", vsLabel: "어제 38 · 봇 12 제외"),
+                    MorningBriefingDrillKpi(label: "페이지뷰", valueLabel: "188", deltaLabel: "▲ 41%", direction: "up", vsLabel: "어제 133"),
+                    MorningBriefingDrillKpi(label: "방문 → 가입", valueLabel: "9%", deltaLabel: "▼ 4p", direction: "down", vsLabel: "어제 13% · 유입↑ 전환↓", flag: true),
+                ],
+                kpisMeta: "사람 방문 기준 · 봇 제외",
+                chart: MorningBriefingDrillChart(
+                    kind: "bars",
+                    title: "사람 방문, 지난 24시간",
+                    subtitle: "피크 16–18시 · 새벽 02–04시 봇 스파이크는 제외",
+                    bars: [
+                        MorningBriefingDrillBar(label: "00", value: 2, ratio: 0.25, tone: "amber", tip: "00–02 · 2"),
+                        MorningBriefingDrillBar(label: "02", value: 3, ratio: 0.4, tone: "muted", tip: "02–04 · 사람 3 · 봇 9 제외"),
+                        MorningBriefingDrillBar(label: "08", value: 6, ratio: 0.75, tone: "amber", tip: "08–10 · 6"),
+                        MorningBriefingDrillBar(label: "16", value: 8, ratio: 1, tone: "amber", tip: "16–18 · 8 (피크)"),
+                        MorningBriefingDrillBar(label: "20", value: 4, ratio: 0.5, tone: "amber", tip: "20–22 · 4"),
+                    ],
+                    legend: [
+                        MorningBriefingDrillLegend(label: "사람 방문", tone: "amber"),
+                        MorningBriefingDrillLegend(label: "봇(제외)", tone: "muted"),
+                    ],
+                    footnote: "02–04시 단일 IP 9요청은 봇으로 분류해 사람 방문 합계(52)에서 제외했어요."
+                ),
+                table: [
+                    MorningBriefingDrillTableRow(rank: 1, code: "/landing", label: "랜딩", valueLabel: "132", share: 70, ratio: 1),
+                    MorningBriefingDrillTableRow(rank: 2, code: "/pricing", label: "가격", valueLabel: "34", share: 18, ratio: 0.26),
+                    MorningBriefingDrillTableRow(rank: 3, code: "/", label: "홈", valueLabel: "13", share: 7, ratio: 0.1),
+                ],
+                signals: [
+                    MorningBriefingDrillSignal(time: "02:10", text: "단일 IP에서 9요청 — 동일 UA, 5초 간격. 봇으로 분류·제외."),
+                    MorningBriefingDrillSignal(time: "레퍼러", text: "사람 유입 상위: X/Threads 58% · 직접 24% · GitHub README 12%."),
+                ],
+                drafts: [
+                    MorningBriefingActionDraft(
+                        id: "cloudflare_draft_1",
+                        kind: "task",
+                        badge: "태스크",
+                        title: "봇 스파이크 자동 차단 + 진짜 전환 보기",
+                        subtitle: "",
+                        body: "1 Cloudflare WAF rate-limit 규칙: 동일 IP >5 req/min on /landing → 챌린지\n2 /landing → 가입 전환은 사람 방문 기준으로만 집계",
+                        why: "봇이 분모를 부풀리면 전환율이 가짜로 흔들려요.",
+                        copyText: "WAF rate-limit 규칙",
+                        applyLabel: "태스크 추가",
+                        tasks: []
+                    ),
+                ],
+                meta: MorningBriefingDrillMeta(
+                    progress: MorningBriefingDrillMetaProgress(label: "사람 방문", valueLabel: "52 · 어제 38", sub: "▲ 37%", ratio: 0.72),
+                    rows: [
+                        MorningBriefingDrillMetaRow(key: "존", value: "agentic30.dev", tone: "muted"),
+                        MorningBriefingDrillMetaRow(key: "봇 제외", value: "12", tone: "amber"),
+                        MorningBriefingDrillMetaRow(key: "피크", value: "16–18시", tone: "muted"),
+                    ]
+                )
+            ),
+            "github": MorningBriefingDrilldown(
+                id: "github",
+                title: "GitHub · 빌드·배포 · 레포 신호",
+                subtitle: "agentic30-public · main",
+                syncPills: ["지난 24시간 커밋 9 · PR 머지 2", "배포 1건 성공", "레포 스캔 5개 영역"],
+                kpis: [
+                    MorningBriefingDrillKpi(label: "커밋", valueLabel: "9", deltaLabel: "▲ 3", direction: "up", vsLabel: "어제 6"),
+                    MorningBriefingDrillKpi(label: "PR 머지", valueLabel: "2", vsLabel: "오픈 1"),
+                    MorningBriefingDrillKpi(label: "배포", valueLabel: "1", deltaLabel: "성공", direction: "up", vsLabel: "03:12 · 1m48s"),
+                    MorningBriefingDrillKpi(label: "순 변경", valueLabel: "+204 −97", vsLabel: "커밋 9건 기준"),
+                ],
+                kpisMeta: "main 브랜치 기준",
+                chart: MorningBriefingDrillChart(
+                    kind: "bars",
+                    title: "커밋, 지난 24시간",
+                    subtitle: "어제 저녁부터 새벽 배포(03:12)까지 집중 · 이후 잠잠",
+                    bars: [
+                        MorningBriefingDrillBar(label: "00", value: 2, ratio: 1, tone: "accent", tip: "00–03 · 2 커밋"),
+                        MorningBriefingDrillBar(label: "03", value: 1, ratio: 0.5, tone: "violet", tip: "03–06 · 1 커밋 · 배포 03:12"),
+                        MorningBriefingDrillBar(label: "09", value: 1, ratio: 0.5, tone: "accent", tip: "09–12 · 1 커밋"),
+                        MorningBriefingDrillBar(label: "18", value: 2, ratio: 1, tone: "accent", tip: "18–21 · 2 커밋"),
+                        MorningBriefingDrillBar(label: "21", value: 2, ratio: 1, tone: "accent", tip: "21–24 · 2 커밋"),
+                    ],
+                    legend: [
+                        MorningBriefingDrillLegend(label: "커밋", tone: "accent"),
+                        MorningBriefingDrillLegend(label: "배포 시점", tone: "violet"),
+                    ],
+                    footnote: "03:12 배포는 PR #41(온보딩 단계 축소)을 포함해 main → production으로 나갔어요."
+                ),
+                listRows: [
+                    MorningBriefingDrillListRow(kind: "merged", title: "#41 온보딩 단계 축소 — 워크스페이스 연결을 선택으로", metaItems: ["머지 02:58", "+120", "−64"], tag: "merged"),
+                    MorningBriefingDrillListRow(kind: "open", title: "#43 리텐션 이벤트 보강 — onboarding/activation 누락 보정", metaItems: ["리뷰 대기 22:40", "+254", "−62"], tag: "open"),
+                    MorningBriefingDrillListRow(kind: "deploy", title: "배포 main → production", metaItems: ["03:12 성공", "빌드 1m48s"], tag: "deployed"),
+                ],
+                listMeta: "머지 2 · 오픈 1 · 배포 1",
+                scan: [
+                    MorningBriefingDrillScanCell(title: "이슈", cmd: "gh issue list", valueLabel: "열린 2 · 외부 첫 리포트 1", sub: "#44 · 50분 전", tone: "sky"),
+                    MorningBriefingDrillScanCell(title: "릴리스", cmd: "gh release list", valueLabel: "마지막 v0.6.0 · 8일 전", sub: "미릴리스 커밋 33", tone: "violet"),
+                    MorningBriefingDrillScanCell(title: "Actions", cmd: "gh run list", valueLabel: "성공 17/20 · flaky 1", sub: "평균 6m 42s", tone: "amber"),
+                    MorningBriefingDrillScanCell(title: "위키", cmd: "gh repo view", valueLabel: "위키 비활성", sub: "지금은 README 하나로 충분해요", tone: "off", quiet: true),
+                ],
+                drafts: [],
+                draftsEmpty: MorningBriefingDrillDraftsEmpty(
+                    title: "코드에서 꺼낼 다음 일이 없어요",
+                    detail: "gh CLI와 git 로그 기준, 액션으로 만들 변화가 확인되지 않았어요.",
+                    evidence: "근거: gh CLI · git log · 09:00 확인"
+                ),
+                maintenance: [
+                    MorningBriefingActionDraft(
+                        id: "github_keep_readme",
+                        kind: "message",
+                        badge: "문서",
+                        title: "README 최신화 — 문서가 열흘 전 제품을 설명하고 있어요",
+                        subtitle: "git log -1 -- README.md · Day 2 이후 그대로",
+                        body: "$ git log -1 --format='%cr' -- README.md\n10 days ago\n$ git rev-list --count --since='10 days ago' HEAD\n41",
+                        why: "방문이 뛴 날, 새 방문자가 처음 읽는 화면이 열흘 전 제품이에요.",
+                        copyText: "README freshness",
+                        applyLabel: "초안 PR 맡기기",
+                        tasks: []
+                    ),
+                ],
+                meta: MorningBriefingDrillMeta(
+                    progress: MorningBriefingDrillMetaProgress(label: "main 배포", valueLabel: "1 · 성공", sub: "롤백 0", ratio: 1),
+                    rows: [
+                        MorningBriefingDrillMetaRow(key: "리포", value: "agentic30-public", tone: "muted"),
+                        MorningBriefingDrillMetaRow(key: "브랜치", value: "main", tone: "accent"),
+                        MorningBriefingDrillMetaRow(key: "오픈 PR", value: "1 · #43", tone: "amber"),
+                        MorningBriefingDrillMetaRow(key: "릴리스", value: "v0.6.0 · 8일 전", tone: "muted"),
+                    ]
+                )
+            ),
+            "posthog": MorningBriefingDrilldown(
+                id: "posthog",
+                title: "PostHog · 리텐션·이탈 드릴다운",
+                subtitle: "표본 작음 · 단정보다 방향",
+                syncPills: ["이상 신호 Day-2 리텐션 ▼14p", "표본 n = 11 · 작음"],
+                kpis: [
+                    MorningBriefingDrillKpi(label: "Day-2 리텐션", valueLabel: "27%", deltaLabel: "▼ 14p", direction: "down", vsLabel: "어제 41%", flag: true),
+                    MorningBriefingDrillKpi(label: "활성 사용자", valueLabel: "11", deltaLabel: "▼ 3", direction: "down", vsLabel: "어제 14"),
+                    MorningBriefingDrillKpi(label: "신규 가입", valueLabel: "6", deltaLabel: "▲ 2", direction: "up", vsLabel: "어제 4 · 방문 64"),
+                    MorningBriefingDrillKpi(label: "온보딩 완료율", valueLabel: "33%", deltaLabel: "▼ 21p", direction: "down", vsLabel: "가입 6 중 2 연결", flag: true),
+                ],
+                kpisMeta: "표본 작음 · 방향만",
+                chart: MorningBriefingDrillChart(
+                    kind: "curve",
+                    title: "Day-2 리텐션",
+                    subtitle: "나흘간 39–44%에서 평탄 → 오늘 27%로 급락",
+                    points: [
+                        MorningBriefingDrillPoint(label: "06-05 · 39%", pct: 39),
+                        MorningBriefingDrillPoint(label: "06-06 · 44%", pct: 44),
+                        MorningBriefingDrillPoint(label: "06-07 · 41%", pct: 41),
+                        MorningBriefingDrillPoint(label: "06-08 · 41%", pct: 41),
+                        MorningBriefingDrillPoint(label: "오늘 · 27%", pct: 27),
+                    ],
+                    baselinePct: 40,
+                    legend: [
+                        MorningBriefingDrillLegend(label: "Day-2 리텐션", tone: "rose"),
+                        MorningBriefingDrillLegend(label: "40% 기준선", tone: "muted"),
+                    ],
+                    footnote: "하루 만에 14p는 큰 폭이지만 표본이 n=11이라, 한두 명 이탈도 크게 보일 수 있어요."
+                ),
+                funnel: MorningBriefingDrillFunnel(
+                    steps: [
+                        MorningBriefingDrillFunnelStep(label: "랜딩 방문", valueLabel: "64", ratio: 1),
+                        MorningBriefingDrillFunnelStep(label: "가입", valueLabel: "6 · 9%", ratio: 0.46),
+                        MorningBriefingDrillFunnelStep(label: "워크스페이스 연결", valueLabel: "2 · −4", ratio: 0.24, drop: true),
+                        MorningBriefingDrillFunnelStep(label: "첫 프로젝트 생성", valueLabel: "2", ratio: 0.22),
+                    ],
+                    gapAfterIndex: 1,
+                    gapLabel: "▼ 가입 → 연결에서 67% 이탈 — 가장 큰 누수"
+                ),
+                signals: [
+                    MorningBriefingDrillSignal(time: "이탈 지점", text: "온보딩 2단계 — 워크스페이스 연결. 가입한 6명 중 4명이 이 화면에서 멈췄어요."),
+                    MorningBriefingDrillSignal(time: "표본", text: "활성 코호트 n=11 · 어제 신규 6. 실제 이탈인지 추적 누락(PR #43)인지부터 갈라야 해요."),
+                ],
+                drafts: [
+                    MorningBriefingActionDraft(
+                        id: "posthog_draft_1",
+                        kind: "message",
+                        badge: "메시지",
+                        title: "워크스페이스 연결에서 멈춘 3명에게 보낼 DM",
+                        subtitle: "Mom Test 톤 · 답을 유도하지 않기",
+                        body: "안녕하세요 {이름}님, Agentic30 만든 zettalyst예요.\n어제 가입해 주셨는데 워크스페이스 연결 단계에서 멈추신 것 같아서요.",
+                        why: "이탈이 한 화면에 몰려 있어요. 3명만 물어봐도 원인이 잡혀요.",
+                        copyText: "DM draft",
+                        applyLabel: "큐에 추가",
+                        tasks: []
+                    ),
+                    MorningBriefingActionDraft(
+                        id: "posthog_draft_2",
+                        kind: "experiment",
+                        badge: "실험",
+                        title: "온보딩 2단계 건너뛰기 — 샘플 프로젝트로 시작",
+                        subtitle: "가설 · 측정 · PostHog 플래그",
+                        body: "# 실험: onboarding-skip-connect\n가설   워크스페이스 연결을 건너뛰면 Day-2 리텐션이 회복된다",
+                        why: "이탈이 한 단계에 몰려 있어, 그 단계를 빼는 게 가장 깨끗한 검증이에요.",
+                        copyText: "experiment spec",
+                        applyLabel: "실험 생성",
+                        tasks: []
+                    ),
+                ],
+                meta: MorningBriefingDrillMeta(
+                    progress: MorningBriefingDrillMetaProgress(label: "Day-2 리텐션", valueLabel: "27% / 어제 41%", sub: "▼ 14p", ratio: 0.27),
+                    rows: [
+                        MorningBriefingDrillMetaRow(key: "프로젝트", value: "Agentic30", tone: "muted"),
+                        MorningBriefingDrillMetaRow(key: "활성 코호트", value: "n = 11", tone: "muted"),
+                        MorningBriefingDrillMetaRow(key: "이탈 지점", value: "온보딩 2단계", tone: "rose"),
+                    ]
+                )
+            ),
+        ]
     )
 }
 
