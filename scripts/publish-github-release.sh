@@ -53,7 +53,7 @@ assets=()
 if [ -d "$SPARKLE_APPCAST_DIR" ]; then
   while IFS= read -r file; do
     assets+=("$file")
-  done < <(find "$SPARKLE_APPCAST_DIR" -maxdepth 1 -type f \( -name 'agentic30-*.dmg' -o -name 'agentic30-*.dmg.md' -o -name 'appcast.xml' \) | sort)
+  done < <(find "$SPARKLE_APPCAST_DIR" -maxdepth 1 -type f \( -name 'agentic30-*.dmg' -o -name 'agentic30-*.dmg.md' -o -name 'appcast*.xml' \) | sort)
 fi
 if [ -d build ]; then
   while IFS= read -r file; do
@@ -105,6 +105,11 @@ fi
 if gh release view "$RELEASE_TAG" --repo "$GITHUB_RELEASE_REPO" >/dev/null 2>&1; then
   echo "GitHub release already exists: $RELEASE_TAG"
 else
-  gh "${create_args[@]}"
+  # Parallel per-arch release jobs can race on creation; tolerate "already
+  # exists" as long as the release is visible afterwards.
+  if ! gh "${create_args[@]}"; then
+    echo "WARN: gh release create failed; checking whether a concurrent job created $RELEASE_TAG..." >&2
+    gh release view "$RELEASE_TAG" --repo "$GITHUB_RELEASE_REPO" >/dev/null
+  fi
 fi
 gh "${upload_args[@]}"

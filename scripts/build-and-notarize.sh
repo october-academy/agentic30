@@ -15,7 +15,7 @@ set -euo pipefail
 #   SPARKLE_DOWNLOAD_URL_PREFIX — public URL prefix where appcast DMGs are hosted
 #                                (https://updates.agentic30.app/ for release)
 # Optional:
-#   AGENTIC30_BUNDLE_ARCH     — arm64 or x64 (defaults to current machine arch)
+#   AGENTIC30_BUNDLE_ARCH     — arm64, x64, or universal (defaults to current machine arch)
 #   AGENTIC30_BUILD_PKG       — 1 to also build/sign/notarize PKG (requires INSTALLER_SIGN_IDENTITY)
 #   AGENTIC30_BUILD_APPCAST   — 0 to skip Sparkle appcast generation (defaults to 1)
 #   AGENTIC30_UPLOAD_APPCAST_R2 — 1 to upload appcast artifacts to Cloudflare R2 via Wrangler
@@ -148,12 +148,27 @@ case "${AGENTIC30_BUNDLE_ARCH:-$host_arch}" in
     AGENTIC30_BUNDLE_ARCH="x64"
     XCODE_ARCH="x86_64"
     ;;
+  universal)
+    AGENTIC30_BUNDLE_ARCH="universal"
+    XCODE_ARCH="arm64 x86_64"
+    ;;
   *)
-    echo "ERROR: AGENTIC30_BUNDLE_ARCH must be arm64 or x64" >&2
+    echo "ERROR: AGENTIC30_BUNDLE_ARCH must be arm64, x64, or universal" >&2
     exit 2
     ;;
 esac
 export AGENTIC30_BUNDLE_ARCH
+
+# Per-arch Sparkle feed: Intel builds must never read the arm64 appcast or
+# Sparkle would hand Intel users an arm64 DMG on update. arm64 keeps the
+# historical appcast.xml so existing installs continue updating.
+case "$AGENTIC30_BUNDLE_ARCH" in
+  x64) default_appcast_filename="appcast-x64.xml" ;;
+  *) default_appcast_filename="appcast.xml" ;;
+esac
+SPARKLE_APPCAST_FILENAME="${SPARKLE_APPCAST_FILENAME:-$default_appcast_filename}"
+SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-${SPARKLE_PUBLIC_BASE_URL}${SPARKLE_APPCAST_FILENAME}}"
+export SPARKLE_APPCAST_FILENAME SPARKLE_FEED_URL
 
 ARCHIVE_PATH="build/agentic30.xcarchive"
 EXPORT_PATH="build/export"
@@ -236,6 +251,7 @@ xcodebuild archive \
   CODE_SIGN_STYLE=Manual \
   DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
   SPARKLE_PUBLIC_ED_KEY="$SPARKLE_PUBLIC_ED_KEY" \
+  SPARKLE_FEED_URL="$SPARKLE_FEED_URL" \
   POSTHOG_PROJECT_API_KEY="$POSTHOG_PROJECT_API_KEY" \
   POSTHOG_HOST="$POSTHOG_HOST"
 
@@ -260,6 +276,11 @@ if [[ "$embedded_sparkle_key" =~ ^[[:space:]]*$ ]] || [[ "$embedded_sparkle_key"
   echo "ERROR: exported app is missing embedded Sparkle public EdDSA key" >&2
   exit 1
 fi
+embedded_feed_url="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)"
+if [ "$embedded_feed_url" != "$SPARKLE_FEED_URL" ]; then
+  echo "ERROR: exported app SUFeedURL ($embedded_feed_url) does not match expected feed ($SPARKLE_FEED_URL)" >&2
+  exit 1
+fi
 
 # Bundled sidecar npm packages ship .bin/ symlinks (cmake-js, node-llama-cpp,
 # etc.) that point outside the bundle on the build machine. macOS codesign
@@ -277,6 +298,27 @@ if [ -d "$SIDECAR_BUNDLE" ]; then
     --entitlements "$ENTITLEMENTS_PATH" \
     "$APP_PATH"
 fi
+
+echo "[4.7/10] Verifying app binary architectures and bundled Node runtimes..."
+case "$AGENTIC30_BUNDLE_ARCH" in
+  universal) required_archs=(arm64 x86_64); required_runtimes=(arm64 x64) ;;
+  arm64) required_archs=(arm64); required_runtimes=(arm64) ;;
+  x64) required_archs=(x86_64); required_runtimes=(x64) ;;
+esac
+app_archs="$(lipo -archs "$APP_PATH/Contents/MacOS/agentic30")"
+for arch in "${required_archs[@]}"; do
+  if ! grep -qw "$arch" <<<"$app_archs"; then
+    echo "ERROR: app binary is missing $arch slice (got: $app_archs)" >&2
+    exit 1
+  fi
+done
+for runtime_arch in "${required_runtimes[@]}"; do
+  runtime_node="$APP_PATH/Contents/Resources/sidecar/runtime/node-darwin-$runtime_arch/bin/node"
+  if [ ! -x "$runtime_node" ]; then
+    echo "ERROR: bundled Node runtime missing for $runtime_arch at $runtime_node" >&2
+    exit 1
+  fi
+done
 
 echo "[5/10] Verifying codesign..."
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
@@ -397,14 +439,18 @@ if [ "$AGENTIC30_BUILD_APPCAST" = "1" ]; then
     "$SPARKLE_GENERATE_APPCAST_BIN" --account "$SPARKLE_KEY_ACCOUNT" "${generate_appcast_args[@]}" "$APPCAST_DIR"
   fi
   [ -f "$APPCAST_DIR/appcast.xml" ] || { echo "ERROR: appcast.xml was not generated in $APPCAST_DIR" >&2; exit 1; }
+  if [ "$SPARKLE_APPCAST_FILENAME" != "appcast.xml" ]; then
+    mv "$APPCAST_DIR/appcast.xml" "$APPCAST_DIR/$SPARKLE_APPCAST_FILENAME"
+  fi
   [ -f "$appcast_dmg" ] || { echo "ERROR: appcast DMG missing at $appcast_dmg" >&2; exit 1; }
-  if ! grep -Eq "sparkle:version(=|>)[\"']?$bundle_version([\"']|<)" "$APPCAST_DIR/appcast.xml"; then
-    echo "ERROR: appcast.xml does not reference CFBundleVersion $bundle_version" >&2
+  if ! grep -Eq "sparkle:version(=|>)[\"']?$bundle_version([\"']|<)" "$APPCAST_DIR/$SPARKLE_APPCAST_FILENAME"; then
+    echo "ERROR: $SPARKLE_APPCAST_FILENAME does not reference CFBundleVersion $bundle_version" >&2
     exit 1
   fi
   if [ "$AGENTIC30_UPLOAD_APPCAST_R2" = "1" ]; then
     echo "[10.5/10] Uploading Sparkle appcast artifacts to Cloudflare R2..."
     SPARKLE_APPCAST_DIR="$APPCAST_DIR" \
+      SPARKLE_APPCAST_FILENAME="$SPARKLE_APPCAST_FILENAME" \
       SPARKLE_PUBLIC_BASE_URL="$SPARKLE_PUBLIC_BASE_URL" \
       scripts/upload-sparkle-r2.sh
   fi
@@ -421,7 +467,7 @@ if [ "$AGENTIC30_BUILD_PKG" = "1" ]; then
 fi
 if [ "$AGENTIC30_BUILD_APPCAST" = "1" ]; then
   echo "  appcast: $APPCAST_DIR"
-  echo "  upload: $APPCAST_DIR/appcast.xml -> ${SPARKLE_PUBLIC_BASE_URL}appcast.xml"
+  echo "  upload: $APPCAST_DIR/$SPARKLE_APPCAST_FILENAME -> ${SPARKLE_FEED_URL}"
   echo "  upload: $APPCAST_DIR/agentic30-$bundle_version-${AGENTIC30_BUNDLE_ARCH}.dmg -> ${SPARKLE_PUBLIC_BASE_URL}agentic30-$bundle_version-${AGENTIC30_BUNDLE_ARCH}.dmg"
   if [ -n "${SPARKLE_RELEASE_NOTES_PATH:-}" ]; then
     echo "  upload: $APPCAST_DIR/agentic30-$bundle_version-${AGENTIC30_BUNDLE_ARCH}.dmg.md -> ${SPARKLE_PUBLIC_BASE_URL}agentic30-$bundle_version-${AGENTIC30_BUNDLE_ARCH}.dmg.md"

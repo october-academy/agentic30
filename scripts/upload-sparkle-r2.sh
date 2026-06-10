@@ -7,6 +7,7 @@ set -euo pipefail
 # Optional environment:
 #   BUILD_ENV_FILE              — env file to source (defaults to secrets/build.env)
 #   SPARKLE_APPCAST_DIR         — appcast staging folder (defaults to build/appcast)
+#   SPARKLE_APPCAST_FILENAME    — appcast object key (defaults to appcast.xml; x64 builds use appcast-x64.xml)
 #   SPARKLE_R2_BUCKET           — R2 bucket name (defaults to agentic30-sparkle)
 #   SPARKLE_PUBLIC_BASE_URL     — public base URL (defaults to https://updates.agentic30.app/)
 #   SPARKLE_WRANGLER_BIN        — wrangler executable (defaults to wrangler)
@@ -26,6 +27,7 @@ else
 fi
 
 SPARKLE_APPCAST_DIR="${SPARKLE_APPCAST_DIR:-build/appcast}"
+SPARKLE_APPCAST_FILENAME="${SPARKLE_APPCAST_FILENAME:-appcast.xml}"
 SPARKLE_R2_BUCKET="${SPARKLE_R2_BUCKET:-agentic30-sparkle}"
 SPARKLE_PUBLIC_BASE_URL="${SPARKLE_PUBLIC_BASE_URL:-https://updates.agentic30.app/}"
 SPARKLE_WRANGLER_BIN="${SPARKLE_WRANGLER_BIN:-wrangler}"
@@ -49,7 +51,7 @@ if ! "$SPARKLE_WRANGLER_BIN" r2 bucket info "$SPARKLE_R2_BUCKET" >/dev/null 2>&1
   exit 2
 fi
 
-appcast_xml="$SPARKLE_APPCAST_DIR/appcast.xml"
+appcast_xml="$SPARKLE_APPCAST_DIR/$SPARKLE_APPCAST_FILENAME"
 [ -f "$appcast_xml" ] || { echo "ERROR: missing $appcast_xml" >&2; exit 1; }
 
 dmg_count="$(find "$SPARKLE_APPCAST_DIR" -maxdepth 1 -type f -name 'agentic30-*.dmg' | wc -l | tr -d '[:space:]')"
@@ -60,7 +62,7 @@ fi
 appcast_dmg="$(find "$SPARKLE_APPCAST_DIR" -maxdepth 1 -type f -name 'agentic30-*.dmg' | sort | head -n 1)"
 
 if ! grep -Fq "$SPARKLE_PUBLIC_BASE_URL" "$appcast_xml"; then
-  echo "ERROR: appcast.xml does not reference $SPARKLE_PUBLIC_BASE_URL" >&2
+  echo "ERROR: $SPARKLE_APPCAST_FILENAME does not reference $SPARKLE_PUBLIC_BASE_URL" >&2
   exit 1
 fi
 
@@ -86,7 +88,7 @@ verify_url() {
 }
 
 echo "Uploading Sparkle artifacts to R2 bucket: $SPARKLE_R2_BUCKET"
-upload_object "$appcast_xml" "appcast.xml" "application/xml" "public, max-age=0, must-revalidate"
+upload_object "$appcast_xml" "$SPARKLE_APPCAST_FILENAME" "application/xml" "public, max-age=0, must-revalidate"
 
 dmg_name="$(basename "$appcast_dmg")"
 upload_object "$appcast_dmg" "$dmg_name" "application/x-apple-diskimage" "public, max-age=31536000, immutable"
@@ -97,14 +99,14 @@ if [ -f "$notes_path" ]; then
 fi
 
 echo "Verifying public Sparkle URLs..."
-verify_url "${SPARKLE_PUBLIC_BASE_URL}appcast.xml"
+verify_url "${SPARKLE_PUBLIC_BASE_URL}${SPARKLE_APPCAST_FILENAME}"
 verify_url "${SPARKLE_PUBLIC_BASE_URL}${dmg_name}"
 if [ -f "$notes_path" ]; then
   verify_url "${SPARKLE_PUBLIC_BASE_URL}$(basename "$notes_path")"
 fi
 
 echo "Sparkle R2 upload complete:"
-echo "  ${SPARKLE_PUBLIC_BASE_URL}appcast.xml"
+echo "  ${SPARKLE_PUBLIC_BASE_URL}${SPARKLE_APPCAST_FILENAME}"
 echo "  ${SPARKLE_PUBLIC_BASE_URL}${dmg_name}"
 if [ -f "$notes_path" ]; then
   echo "  ${SPARKLE_PUBLIC_BASE_URL}$(basename "$notes_path")"

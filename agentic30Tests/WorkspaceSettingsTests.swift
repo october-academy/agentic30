@@ -655,7 +655,11 @@ final class SparkleUpdateTests: XCTestCase {
     }
 
     func testDefaultSparkleFeedUsesUpdatesSubdomain() {
+        #if arch(x86_64)
+        XCTAssertEqual(AppUpdateState.defaultFeedURL, "https://updates.agentic30.app/appcast-x64.xml")
+        #else
         XCTAssertEqual(AppUpdateState.defaultFeedURL, "https://updates.agentic30.app/appcast.xml")
+        #endif
     }
 
     func testUpdateChecksAreBlockedDuringUITestingLaunch() {

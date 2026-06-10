@@ -314,7 +314,11 @@ struct AppUpdateState: Equatable {
     var latestDisplayVersion: String?
     var lastError: String?
 
+    #if arch(x86_64)
+    static let defaultFeedURL = "https://updates.agentic30.app/appcast-x64.xml"
+    #else
     static let defaultFeedURL = "https://updates.agentic30.app/appcast.xml"
+    #endif
 
     static let unavailable = AppUpdateState(
         configured: false,

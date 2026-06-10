@@ -168,12 +168,23 @@ jobs:
         run: npm run release:publish:github
 
   local-release:
-    name: Build, notarize, and publish release locally in GitHub Actions
+    name: Build, notarize, and publish release (${{ matrix.bundle_arch }})
     needs:
       - resolve
       - xcode-cloud-gate
     if: always() && (needs.resolve.outputs.builder == 'local' || (needs.resolve.outputs.builder == 'xcode-cloud-gated-local' && needs.xcode-cloud-gate.result == 'success'))
     runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # arm64 keeps the historical appcast.xml so existing Apple Silicon
+          # installs continue updating; Intel builds get their own feed so
+          # Sparkle never hands an Intel Mac an arm64 DMG.
+          - bundle_arch: arm64
+            appcast_filename: appcast.xml
+          - bundle_arch: x64
+            appcast_filename: appcast-x64.xml
     env:
       RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
       DEVELOPMENT_TEAM: ${{ secrets.DEVELOPMENT_TEAM }}
@@ -187,6 +198,8 @@ jobs:
       GITHUB_RELEASE_DRY_RUN: ${{ needs.resolve.outputs.dry_run == 'true' && '1' || '0' }}
       AGENTIC30_UPLOAD_APPCAST_R2: ${{ needs.resolve.outputs.dry_run == 'true' && '0' || '1' }}
       AGENTIC30_BUILD_APPCAST: "1"
+      AGENTIC30_BUNDLE_ARCH: ${{ matrix.bundle_arch }}
+      SPARKLE_APPCAST_FILENAME: ${{ matrix.appcast_filename }}
       AGENTIC30_BUILD_PKG: ${{ secrets.DEVELOPER_ID_INSTALLER_P12_BASE64 != '' && '1' || '0' }}
       MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
       DEVELOPER_ID_APPLICATION_P12_BASE64: ${{ secrets.DEVELOPER_ID_APPLICATION_P12_BASE64 }}
@@ -223,7 +236,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          prev="$(curl -fsSL "${SPARKLE_PUBLIC_BASE_URL}appcast.xml" 2>/dev/null \
+          prev="$(curl -fsSL "${SPARKLE_PUBLIC_BASE_URL}${SPARKLE_APPCAST_FILENAME}" 2>/dev/null \
             | grep -oE '<sparkle:version>[0-9]+' | grep -oE '[0-9]+' | sort -n | tail -1 || true)"
           echo "PREVIOUS_BUNDLE_VERSION=${prev}" >> "$GITHUB_ENV"
           echo "Live Sparkle build version: ${prev:-none}; this build must be strictly greater."
