@@ -52,3 +52,6 @@ posthog-setup-report.md
 # absolute paths (DerivedData build_root); per-machine, must not be committed.
 buildServer.json
 .bsp/
+
+# Local workspace directories
+_workspace/
