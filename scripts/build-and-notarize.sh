@@ -340,7 +340,8 @@ xcrun notarytool submit "$ZIP_PATH" \
   --key "$ASC_API_KEY_PATH" \
   --key-id "$ASC_KEY_ID" \
   --issuer "$ASC_ISSUER_ID" \
-  --wait
+  --wait \
+  --timeout 2h
 rm -f "$ZIP_PATH"
 
 echo "[7/10] Stapling notarization to .app..."
@@ -357,7 +358,8 @@ xcrun notarytool submit "$DMG_PATH" \
   --key "$ASC_API_KEY_PATH" \
   --key-id "$ASC_KEY_ID" \
   --issuer "$ASC_ISSUER_ID" \
-  --wait
+  --wait \
+  --timeout 2h
 xcrun stapler staple "$DMG_PATH"
 xcrun stapler validate "$DMG_PATH"
 
@@ -377,7 +379,8 @@ if [ "$AGENTIC30_BUILD_PKG" = "1" ]; then
     --key "$ASC_API_KEY_PATH" \
     --key-id "$ASC_KEY_ID" \
     --issuer "$ASC_ISSUER_ID" \
-    --wait
+    --wait \
+  --timeout 2h
   xcrun stapler staple "$PKG_PATH"
   xcrun stapler validate "$PKG_PATH"
 else
@@ -438,10 +441,13 @@ if [ "$AGENTIC30_BUILD_APPCAST" = "1" ]; then
   else
     "$SPARKLE_GENERATE_APPCAST_BIN" --account "$SPARKLE_KEY_ACCOUNT" "${generate_appcast_args[@]}" "$APPCAST_DIR"
   fi
-  [ -f "$APPCAST_DIR/appcast.xml" ] || { echo "ERROR: appcast.xml was not generated in $APPCAST_DIR" >&2; exit 1; }
-  if [ "$SPARKLE_APPCAST_FILENAME" != "appcast.xml" ]; then
+  # Sparkle's generate_appcast names its output after the SUFeedURL filename
+  # embedded in the app's Info.plist, so per-arch builds may already produce
+  # appcast-x64.xml directly. Rename only when it fell back to appcast.xml.
+  if [ ! -f "$APPCAST_DIR/$SPARKLE_APPCAST_FILENAME" ] && [ -f "$APPCAST_DIR/appcast.xml" ]; then
     mv "$APPCAST_DIR/appcast.xml" "$APPCAST_DIR/$SPARKLE_APPCAST_FILENAME"
   fi
+  [ -f "$APPCAST_DIR/$SPARKLE_APPCAST_FILENAME" ] || { echo "ERROR: $SPARKLE_APPCAST_FILENAME was not generated in $APPCAST_DIR" >&2; exit 1; }
   [ -f "$appcast_dmg" ] || { echo "ERROR: appcast DMG missing at $appcast_dmg" >&2; exit 1; }
   if ! grep -Eq "sparkle:version(=|>)[\"']?$bundle_version([\"']|<)" "$APPCAST_DIR/$SPARKLE_APPCAST_FILENAME"; then
     echo "ERROR: $SPARKLE_APPCAST_FILENAME does not reference CFBundleVersion $bundle_version" >&2

@@ -174,6 +174,10 @@ jobs:
       - xcode-cloud-gate
     if: always() && (needs.resolve.outputs.builder == 'local' || (needs.resolve.outputs.builder == 'xcode-cloud-gated-local' && needs.xcode-cloud-gate.result == 'success'))
     runs-on: macos-15
+    # Build takes ~15 min; each notarytool submit is capped at 2h. Cap the job
+    # so a hung Apple notary connection fails fast instead of burning the
+    # default 6h runner timeout (observed 2026-06-10: DMG submit hung 5h46m).
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
