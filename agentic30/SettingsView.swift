@@ -1048,7 +1048,11 @@ struct SettingsView: View {
                 odSettingsRow(title: "Cloudflare", detail: "AI 실행의 Cloudflare MCP는 OAuth가 기본 — 키 없이 첫 사용 시 브라우저 로그인. API 토큰은 선택: 저장하면 아침 브리핑 트래픽 드릴다운 숫자를 직접 집계(GraphQL Analytics)합니다.", iconName: "BrandCloudflare", stacked: true) {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 8) {
-                            odSettingsStatus(cloudflareMcpStatusLabel, color: cloudflareMcpStatusColor)
+                            odSettingsStatus(
+                                cloudflareMcpStatusLabel,
+                                color: cloudflareMcpStatusColor,
+                                isLoading: viewModel.mcpOauthConnecting.contains("cloudflare") || viewModel.integrationStatusChecking
+                            )
                             Text("Codemode")
                                 .font(.system(size: 11.5, weight: .medium))
                                 .foregroundStyle(settingsSubtleText)
@@ -1059,14 +1063,28 @@ struct SettingsView: View {
                                 systemImage: "arrow.clockwise",
                                 width: 88,
                                 identifier: "settings.cloudflare.refreshStatusButton",
-                                isDisabled: viewModel.integrationStatusChecking
+                                isDisabled: viewModel.integrationStatusChecking,
+                                isLoading: viewModel.integrationStatusChecking
                             ) {
                                 viewModel.refreshIntegrationStatus()
+                            }
+                            odSettingsGhostButton(
+                                title: viewModel.mcpOauthConnecting.contains("cloudflare") ? "연결 중…" : "MCP 연결",
+                                systemImage: "link",
+                                width: 96,
+                                identifier: "settings.cloudflare.mcpConnectButton",
+                                isDisabled: viewModel.mcpOauthConnecting.contains("cloudflare"),
+                                isLoading: viewModel.mcpOauthConnecting.contains("cloudflare")
+                            ) {
+                                // OAuth 트리거+검증: AI가 Cloudflare MCP 도구를 1회 호출 —
+                                // 처음이면 브라우저 로그인 창이 뜨고, 응답이 오면 연결 실증.
+                                viewModel.connectMcpOauth(server: "cloudflare")
                             }
                         }
                         secureAgentField(label: "CLOUDFLARE_API_TOKEN (선택 · 드릴다운 직접 집계)", placeholder: "Cloudflare API token (Analytics Read 권한)", text: $cloudflareApiToken, identifier: "settings.cloudflare.apiTokenField")
                         plainAgentField(label: "CLOUDFLARE_MCP_URL", placeholder: KeychainHelper.Settings.defaultCloudflareMcpURL, text: $cloudflareMcpURL, identifier: "settings.cloudflare.mcpUrlField")
                         integrationProbeCaption(viewModel.integrationStatus?.cloudflare)
+                        mcpOauthResultCaption("cloudflare")
                     }
                 }
                 odSettingsRow(title: "Exa Research", detail: "뉴스·시장 리서치 예비 키입니다. AI 프로바이더의 웹 검색 도구가 없을 때만 사용합니다.", iconName: "BrandExa", stacked: true) {
@@ -1075,7 +1093,11 @@ struct SettingsView: View {
                 odSettingsRow(title: "PostHog", detail: "AI 실행의 PostHog MCP는 OAuth가 기본 — 키 없이 첫 사용 시 브라우저 로그인. phx_/pha_ 키는 선택: 저장하면 아침 브리핑 리텐션·웹 드릴다운 숫자를 직접 집계(HogQL)합니다.", iconName: "BrandPostHog", stacked: true) {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 8) {
-                            odSettingsStatus(posthogMcpStatusLabel, color: posthogMcpStatusColor)
+                            odSettingsStatus(
+                                posthogMcpStatusLabel,
+                                color: posthogMcpStatusColor,
+                                isLoading: viewModel.mcpOauthConnecting.contains("posthog") || viewModel.integrationStatusChecking
+                            )
                             odSettingsSegmented(values: ["US", "EU"], selection: posthogMcpRegionSelection)
                             Text("Readonly")
                                 .font(.system(size: 11.5, weight: .medium))
@@ -1087,9 +1109,20 @@ struct SettingsView: View {
                                 systemImage: "arrow.clockwise",
                                 width: 88,
                                 identifier: "settings.posthog.refreshStatusButton",
-                                isDisabled: viewModel.integrationStatusChecking
+                                isDisabled: viewModel.integrationStatusChecking,
+                                isLoading: viewModel.integrationStatusChecking
                             ) {
                                 viewModel.refreshIntegrationStatus()
+                            }
+                            odSettingsGhostButton(
+                                title: viewModel.mcpOauthConnecting.contains("posthog") ? "연결 중…" : "MCP 연결",
+                                systemImage: "link",
+                                width: 96,
+                                identifier: "settings.posthog.mcpConnectButton",
+                                isDisabled: viewModel.mcpOauthConnecting.contains("posthog"),
+                                isLoading: viewModel.mcpOauthConnecting.contains("posthog")
+                            ) {
+                                viewModel.connectMcpOauth(server: "posthog")
                             }
                         }
                         secureAgentField(label: "POSTHOG_MCP_API_KEY (선택 · 드릴다운 직접 집계)", placeholder: "phx_... 또는 pha_...", text: $posthogApiKey, identifier: "settings.posthog.apiKeyField")
@@ -1098,6 +1131,7 @@ struct SettingsView: View {
                         plainAgentField(label: "POSTHOG_MCP_URL", placeholder: KeychainHelper.Settings.defaultPostHogMcpURL, text: $posthogMcpURL, identifier: "settings.posthog.mcpUrlField")
                         plainAgentField(label: "POSTHOG_MCP_FEATURES", placeholder: KeychainHelper.Settings.defaultPostHogMcpFeatures, text: $posthogMcpFeatures, identifier: "settings.posthog.mcpFeaturesField")
                         integrationProbeCaption(viewModel.integrationStatus?.posthog)
+                        mcpOauthResultCaption("posthog")
                     }
                 }
             }
@@ -1149,6 +1183,12 @@ struct SettingsView: View {
     }
 
     private var cloudflareMcpStatusLabel: String {
+        // "MCP 연결" prewarm이 실제 도구 호출로 실증한 결과가 가장 강한 신호.
+        if viewModel.mcpOauthConnecting.contains("cloudflare") { return "MCP 확인 중…" }
+        if let prewarm = viewModel.mcpOauthResults["cloudflare"] {
+            if prewarm.isReady { return "MCP 연결됨" }
+            return prewarm.isLoginPending ? "로그인 대기" : "MCP 연결 실패"
+        }
         if viewModel.integrationStatusChecking { return "확인 중…" }
         if let live = viewModel.integrationStatus?.cloudflare, !live.isMissing {
             if live.isOauthDelegated { return "MCP OAuth" }
@@ -1161,6 +1201,11 @@ struct SettingsView: View {
     }
 
     private var cloudflareMcpStatusColor: Color {
+        if viewModel.mcpOauthConnecting.contains("cloudflare") { return settingsSubtleText }
+        if let prewarm = viewModel.mcpOauthResults["cloudflare"] {
+            if prewarm.isReady { return settingsAccentColor }
+            return prewarm.isLoginPending ? OpenDesignDayColor.amber : OpenDesignDayColor.rose
+        }
         if let live = viewModel.integrationStatus?.cloudflare, !live.isMissing {
             if live.isOauthDelegated { return settingsAccentColor }
             return live.isReady ? settingsAccentColor : OpenDesignDayColor.rose
@@ -1185,7 +1230,40 @@ struct SettingsView: View {
         }
     }
 
+    /// Caption under an integration's fields: live progress while the "MCP 연결"
+    /// prewarm runs, then the verdict (success proof, login-pending guidance, or
+    /// failure reason from the live tool call).
+    private func mcpOauthResultCaption(_ server: String) -> some View {
+        Group {
+            if viewModel.mcpOauthConnecting.contains(server) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .frame(width: 10, height: 10)
+                    Text(viewModel.mcpOauthProgress[server] ?? "연결 확인 중…")
+                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .foregroundStyle(settingsSubtleText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else if let result = viewModel.mcpOauthResults[server], let detail = result.detail, !detail.isEmpty {
+                Text(detail)
+                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .foregroundStyle(
+                        result.isReady
+                            ? settingsAccentColor
+                            : (result.isLoginPending ? OpenDesignDayColor.amber : OpenDesignDayColor.rose)
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
     private var posthogMcpStatusLabel: String {
+        if viewModel.mcpOauthConnecting.contains("posthog") { return "MCP 확인 중…" }
+        if let prewarm = viewModel.mcpOauthResults["posthog"] {
+            if prewarm.isReady { return "MCP 연결됨" }
+            return prewarm.isLoginPending ? "로그인 대기" : "MCP 연결 실패"
+        }
         if viewModel.integrationStatusChecking { return "확인 중…" }
         if let live = viewModel.integrationStatus?.posthog, !live.isMissing {
             if live.isOauthDelegated { return "MCP OAuth" }
@@ -1203,6 +1281,11 @@ struct SettingsView: View {
     }
 
     private var posthogMcpStatusColor: Color {
+        if viewModel.mcpOauthConnecting.contains("posthog") { return settingsSubtleText }
+        if let prewarm = viewModel.mcpOauthResults["posthog"] {
+            if prewarm.isReady { return settingsAccentColor }
+            return prewarm.isLoginPending ? OpenDesignDayColor.amber : OpenDesignDayColor.rose
+        }
         if let live = viewModel.integrationStatus?.posthog, !live.isMissing {
             if live.isOauthDelegated { return settingsAccentColor }
             return live.isReady ? settingsAccentColor : OpenDesignDayColor.rose
@@ -1642,11 +1725,16 @@ struct SettingsView: View {
         width: CGFloat? = nil,
         identifier: String? = nil,
         isDisabled: Bool = false,
+        isLoading: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                if let systemImage {
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .frame(width: 10, height: 10)
+                } else if let systemImage {
                     Image(systemName: systemImage)
                         .font(.system(size: 10, weight: .semibold))
                 }
@@ -2197,11 +2285,17 @@ struct SettingsView: View {
         }
     }
 
-    private func odSettingsStatus(_ text: String, color: Color) -> some View {
+    private func odSettingsStatus(_ text: String, color: Color, isLoading: Bool = false) -> some View {
         HStack(spacing: 5) {
-            Circle()
-                .fill(color)
-                .frame(width: 6, height: 6)
+            if isLoading {
+                ProgressView()
+                    .controlSize(.mini)
+                    .frame(width: 8, height: 8)
+            } else {
+                Circle()
+                    .fill(color)
+                    .frame(width: 6, height: 6)
+            }
             Text(text)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -2878,7 +2972,7 @@ struct SettingsView: View {
     }
 
     private var saveButtonIcon: String {
-        if settingsSaveMessage.isEmpty, hasUnsavedSettings { return "arrow.down.circle" }
+        if settingsSaveMessage.isEmpty, hasUnsavedSettings { return "tray.and.arrow.down" }
         return "checkmark"
     }
 

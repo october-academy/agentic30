@@ -1641,6 +1641,12 @@ struct IntakeV2ReadyAnalyzeView: View {
     let onBack: () -> Void
     let onDone: () -> Void
     var progressNamespace: Namespace.ID? = nil
+    /// Usage-limit notice from the scan provider (quota hit → questions were
+    /// built from local signals only). Switching providers is explicit: the
+    /// banner button calls `onProviderLimitRescan` with `providerLimitFallback`.
+    var providerLimitNotice: ScanProviderLimitNotice? = nil
+    var providerLimitFallback: AgentProvider? = nil
+    var onProviderLimitRescan: ((AgentProvider) -> Void)? = nil
 
     @State private var decision: IntakeV2Decision?
     @State private var revealCard: Bool = false
@@ -1955,6 +1961,10 @@ struct IntakeV2ReadyAnalyzeView: View {
                     readySummarySlot(slot: previewSlots[index], index: index)
                 }
             }
+
+            if let notice = providerLimitNotice {
+                providerLimitBanner(notice)
+            }
         }
         .padding(18)
         .background(
@@ -1968,6 +1978,50 @@ struct IntakeV2ReadyAnalyzeView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text("질문 \(questionCount)개가 준비됐어요. \(readySummaryBody(for: presentation))"))
         .accessibilityIdentifier("intakeV2.day1ReadyHandoff")
+    }
+
+    private func providerLimitBanner(_ notice: ScanProviderLimitNotice) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(IntakeV2Color.textSecondary)
+                .frame(width: 18, height: 18)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("\(notice.provider.title) 한도에 도달해 질문이 로컬 신호로만 구성됐어요")
+                    .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                    .foregroundStyle(IntakeV2Color.textPrimary)
+                Text(
+                    providerLimitFallback != nil
+                        ? "지금 질문으로 바로 시작해도 되고, 다른 AI로 근거 검증을 다시 돌릴 수도 있어요."
+                        : "지금 질문으로 바로 시작할 수 있어요. 한도가 풀리면 근거 검증을 다시 돌릴 수 있습니다."
+                )
+                .font(.system(size: 11.5, weight: .medium, design: .rounded))
+                .foregroundStyle(IntakeV2Color.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            if let fallback = providerLimitFallback, let onRescan = onProviderLimitRescan {
+                Button {
+                    onRescan(fallback)
+                } label: {
+                    Text("\(fallback.title)로 다시 검증")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("intakeV2.day1ProviderLimitRescan")
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(IntakeV2Color.textSecondary.opacity(0.07))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(IntakeV2Color.textSecondary.opacity(0.18), lineWidth: 1)
+                )
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("intakeV2.day1ProviderLimitNotice")
     }
 
     private func readySummarySlot(

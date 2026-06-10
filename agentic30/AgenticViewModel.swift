@@ -232,6 +232,16 @@ struct WorkspaceScanProgressSnapshot: Equatable {
     }
 }
 
+/// `workspace_scan_provider_limited`: a scan-path provider hit its usage limit
+/// (quota). The scan still completed with local deterministic signals; the UI
+/// surfaces this notice with an explicit "switch provider and re-scan" button.
+struct ScanProviderLimitNotice: Equatable {
+    let scanRoot: String
+    let provider: AgentProvider
+    /// "scan_agent" (workspace scan) or "day1_synthesis" (Day 1 question synthesis).
+    let stage: String
+}
+
 enum AppUpdateResult: Equatable {
     case neverChecked
     case checking
@@ -1758,6 +1768,10 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var scanStartedAt: Date?
     @Published private(set) var scanCompletedAt: Date?
     @Published var scanResult: WorkspaceScanResult?
+    /// Set when a scan-path provider hit its usage limit (quota): the scan still
+    /// completes with local deterministic signals, and the UI offers an explicit
+    /// "switch provider and re-scan" button. Cleared on the next scan start.
+    @Published private(set) var scanProviderLimitNotice: ScanProviderLimitNotice?
     @Published private(set) var isCreatingDoc: String?
     @Published private(set) var docCreationLogs: [String] = []
     @Published var lastDocCreated: (type: String, path: String)?
@@ -1853,6 +1867,16 @@ final class AgenticViewModel: ObservableObject {
     // services: gh auth / PostHog /users/@me / Cloudflare /zones).
     @Published private(set) var integrationStatus: IntegrationStatusSnapshot?
     @Published private(set) var integrationStatusChecking = false
+    /// Settings > 연동 "MCP 연결" prewarm — in-flight servers + last results.
+    /// In-memory only: the proof is a live tool call, so it's re-earned per run.
+    @Published private(set) var mcpOauthConnecting: Set<String> = []
+    @Published private(set) var mcpOauthResults: [String: McpOauthConnectResult] = [:]
+    /// Live progress captions while a prewarm runs (provider start → OAuth URL
+    /// issued → browser login wait → tool call), keyed by server.
+    @Published private(set) var mcpOauthProgress: [String: String] = [:]
+    /// Login URLs already auto-opened — guards against re-opening the browser
+    /// when the sidecar re-emits the same progress event.
+    private var mcpOauthOpenedLoginUrls: Set<String> = []
     /// First-launch wall-clock timestamp that anchors the Foundation phase
     /// Day N/30 counter. The value is mirrored from `foundationProgressState`,
     /// which is persisted per workspace/app-support rather than globally.
@@ -1955,6 +1979,7 @@ final class AgenticViewModel: ObservableObject {
     private var lastBipRequestedAction: BipRequestedAction?
     private var pendingBipAuthRetry: BipRequestedAction?
     private var pendingWorkspaceScanRoot: String?
+    private var pendingWorkspaceScanProvider: AgentProvider?
     private var pendingProjectContextRefresh: PendingProjectContextRefresh?
     private var attemptedStartupWorkspaceScanRecoveryRoots = Set<String>()
     #if DEBUG
@@ -3914,7 +3939,7 @@ final class AgenticViewModel: ObservableObject {
         requestCodexWarmupIfNeeded()
     }
 
-    func scanWorkspace(root: String) {
+    func scanWorkspace(root: String, providerOverride: AgentProvider? = nil) {
         guard !root.isEmpty else { return }
         beginWorkspaceScanTiming(reset: true)
         isScanning = true
@@ -3922,22 +3947,31 @@ final class AgenticViewModel: ObservableObject {
         scanProgressLogs = [scanProgressMessage]
         scanProgressSnapshots = [WorkspaceScanProgressSnapshot(progressText: scanProgressMessage)]
         scanResult = nil
+        scanProviderLimitNotice = nil
         PostHogTelemetry.capture("mac_workspace_scan_requested", properties: [
             "workspace_basename": (root as NSString).lastPathComponent,
+            "provider_override": providerOverride?.rawValue ?? "",
         ], authSession: macAuthSession)
         markWorkspaceSetupStarted(root: root)
         guard isConnected else {
             pendingWorkspaceScanRoot = root
+            pendingWorkspaceScanProvider = providerOverride
             return
         }
-        sendWorkspaceScan(root: root)
+        sendWorkspaceScan(root: root, providerOverride: providerOverride)
     }
 
-    private func sendWorkspaceScan(root: String) {
+    /// Explicit, user-consented provider switch after a usage-limit notice:
+    /// re-runs the scan once with `provider` without changing `selectedProvider`.
+    func rescanWorkspace(root: String, provider: AgentProvider) {
+        scanWorkspace(root: root, providerOverride: provider)
+    }
+
+    private func sendWorkspaceScan(root: String, providerOverride: AgentProvider? = nil) {
         sidecar.send(payload: [
             "type": "scan_workspace",
             "root": root,
-            "preferredProvider": selectedProvider.rawValue,
+            "preferredProvider": (providerOverride ?? selectedProvider).rawValue,
         ])
     }
 
@@ -4374,6 +4408,21 @@ final class AgenticViewModel: ObservableObject {
         guard isConnected, !integrationStatusChecking else { return }
         integrationStatusChecking = true
         sidecar.send(payload: ["type": "integration_status_check"])
+    }
+
+    /// Settings > 연동 "MCP 연결": OAuth-first MCP(PostHog/Cloudflare)는 설정에서
+    /// 검증 불가(토큰이 프로바이더 캐시에 있음) — 사이드카가 대상 MCP 도구를 1회
+    /// 호출하는 최소 쿼리를 돌려 브라우저 OAuth를 트리거하고 연결을 실증한다.
+    func connectMcpOauth(server: String) {
+        guard isConnected, !mcpOauthConnecting.contains(server) else { return }
+        mcpOauthConnecting.insert(server)
+        mcpOauthProgress[server] = "연결 확인을 시작하는 중…"
+        PostHogTelemetry.capture("mac_mcp_oauth_connect_started", authSession: macAuthSession)
+        sidecar.send(payload: [
+            "type": "mcp_oauth_connect",
+            "server": server,
+            "preferredProvider": selectedProvider.rawValue,
+        ])
     }
 
     func refreshGitHubCliStatus() {
@@ -5749,6 +5798,7 @@ final class AgenticViewModel: ObservableObject {
         requestedInitialBipGate = false
         requestedInitialBipMission = false
         pendingWorkspaceScanRoot = nil
+        pendingWorkspaceScanProvider = nil
         attemptedStartupWorkspaceScanRecoveryRoots.removeAll()
         scanResult = nil
         clearWorkspaceScanTiming()
@@ -5784,6 +5834,7 @@ final class AgenticViewModel: ObservableObject {
         requestedInitialBipGate = false
         requestedInitialBipMission = false
         pendingWorkspaceScanRoot = nil
+        pendingWorkspaceScanProvider = nil
         attemptedStartupWorkspaceScanRecoveryRoots.removeAll()
         scanResult = nil
         scanProgressMessage = ""
@@ -6312,7 +6363,9 @@ final class AgenticViewModel: ObservableObject {
             flushStartupQueuedActionIfPossible()
             if let root = pendingWorkspaceScanRoot {
                 pendingWorkspaceScanRoot = nil
-                sendWorkspaceScan(root: root)
+                let provider = pendingWorkspaceScanProvider
+                pendingWorkspaceScanProvider = nil
+                sendWorkspaceScan(root: root, providerOverride: provider)
             } else {
                 requestWorkspaceScanRecoveryIfNeeded()
             }
@@ -6443,6 +6496,16 @@ final class AgenticViewModel: ObservableObject {
                 foundCount: event.foundCount
             )
             scanResult = nil
+            scanProviderLimitNotice = nil
+        case "workspace_scan_provider_limited":
+            if let raw = event.provider,
+               let provider = AgentProvider(rawValue: raw) {
+                scanProviderLimitNotice = ScanProviderLimitNotice(
+                    scanRoot: event.scanRoot ?? "",
+                    provider: provider,
+                    stage: event.stage ?? ""
+                )
+            }
         case "workspace_scan_progress":
             // Background Day 1 enrichment can report late progress after the
             // foreground scan result. Do not reopen the scan gate unless a new
@@ -6639,6 +6702,33 @@ final class AgenticViewModel: ObservableObject {
         case "integration_status_result":
             integrationStatus = event.integrationStatus
             integrationStatusChecking = false
+        case "mcp_oauth_connect_status":
+            // Live prewarm progress: caption text + auto-open the OAuth login
+            // URL once (the sidecar can't open a browser; the app can).
+            if let update = event.mcpOauthConnect, let server = update.server, !server.isEmpty {
+                if let detail = update.detail, !detail.isEmpty {
+                    mcpOauthProgress[server] = detail
+                }
+                if let loginUrl = update.loginUrl,
+                   !loginUrl.isEmpty,
+                   !mcpOauthOpenedLoginUrls.contains(loginUrl),
+                   let url = URL(string: loginUrl) {
+                    mcpOauthOpenedLoginUrls.insert(loginUrl)
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        case "mcp_oauth_connect_result":
+            if let result = event.mcpOauthConnect, let server = result.server, !server.isEmpty {
+                mcpOauthResults[server] = result
+                mcpOauthConnecting.remove(server)
+                mcpOauthProgress.removeValue(forKey: server)
+            } else {
+                mcpOauthConnecting.removeAll()
+                mcpOauthProgress.removeAll()
+            }
+            if let snapshot = event.integrationStatus {
+                integrationStatus = snapshot
+            }
         case "bip_research_result":
             if let snapshot = event.bipResearch {
                 bipResearch = snapshot
@@ -10237,6 +10327,7 @@ private extension AgenticViewModel {
         lastBipRequestedAction = nil
         pendingBipAuthRetry = nil
         pendingWorkspaceScanRoot = nil
+        pendingWorkspaceScanProvider = nil
         workspaceSetupTelemetryGate = WorkspaceSetupTelemetryGate()
         requestedWarmSessionIDs = []
         requestedInitialBipGate = false
@@ -10614,6 +10705,7 @@ struct SidecarEvent: Decodable {
     let morningBriefingPrevious: MorningBriefing?
     let morningBriefingStatus: MorningBriefingStatus?
     let integrationStatus: IntegrationStatusSnapshot?
+    let mcpOauthConnect: McpOauthConnectResult?
     // office_hours_commitment_candidates: context-aware commitment-close proposals
     // generated from this interview's own answers. Proposals only — the stored
     // commitment is always the founder's resolved text (user-origin gate).
@@ -10719,6 +10811,7 @@ struct SidecarEvent: Decodable {
         morningBriefingPrevious: MorningBriefing? = nil,
         morningBriefingStatus: MorningBriefingStatus? = nil,
         integrationStatus: IntegrationStatusSnapshot? = nil,
+        mcpOauthConnect: McpOauthConnectResult? = nil,
         commitmentCandidates: [String]? = nil
     ) {
         self.type = type
@@ -10820,6 +10913,7 @@ struct SidecarEvent: Decodable {
         self.morningBriefingPrevious = morningBriefingPrevious
         self.morningBriefingStatus = morningBriefingStatus
         self.integrationStatus = integrationStatus
+        self.mcpOauthConnect = mcpOauthConnect
         self.commitmentCandidates = commitmentCandidates
     }
 
@@ -11215,6 +11309,7 @@ extension SidecarEvent {
         case morningBriefingPrevious
         case candidates
         case integrationStatus
+        case mcpOauthConnect
     }
 
     init(from decoder: Decoder) throws {
@@ -11333,6 +11428,7 @@ extension SidecarEvent {
         morningBriefingStatus = Self.decodeIfPresent(MorningBriefingStatus.self, from: container, forKey: .status)
         commitmentCandidates = Self.decodeIfPresent([String].self, from: container, forKey: .candidates)
         integrationStatus = Self.decodeIfPresent(IntegrationStatusSnapshot.self, from: container, forKey: .integrationStatus)
+        mcpOauthConnect = Self.decodeIfPresent(McpOauthConnectResult.self, from: container, forKey: .mcpOauthConnect)
     }
 
     private static func decodeIfPresent<T: Decodable>(

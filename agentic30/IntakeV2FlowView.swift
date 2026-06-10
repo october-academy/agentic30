@@ -517,6 +517,11 @@ struct IntakeV2FlowView: View {
     /// complete) without IntakeV2 having to know about AgenticViewModel.
     var bootLogState: IntakeV2BootLogState = .empty
     var workspaceScanResult: AgenticViewModel.WorkspaceScanResult? = nil
+    /// Scan-provider usage-limit notice + the explicit "switch provider and
+    /// re-verify" affordance, forwarded to the ready/analyze step.
+    var scanProviderLimitNotice: ScanProviderLimitNotice? = nil
+    var scanProviderLimitFallback: AgentProvider? = nil
+    var onProviderLimitRescan: ((AgentProvider) -> Void)? = nil
     var onWorkspacePrefetchRequested: ((IntakeV2Store, IntakeV2SourceManager) -> Void)? = nil
     var onComplete: ((IntakeV2Store, IntakeV2SourceManager) -> Void)? = nil
 
@@ -619,7 +624,10 @@ struct IntakeV2FlowView: View {
                 workspaceScanResult: workspaceScanResult,
                 onBack: { navigate(to: .connectShowcase) },
                 onDone: { onComplete?(store, sources) },
-                progressNamespace: progressNamespace
+                progressNamespace: progressNamespace,
+                providerLimitNotice: scanProviderLimitNotice,
+                providerLimitFallback: scanProviderLimitFallback,
+                onProviderLimitRescan: onProviderLimitRescan
             )
         }
     }

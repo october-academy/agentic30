@@ -2054,6 +2054,17 @@ struct ContentView: View {
                 IntakeV2FlowView(
                     bootLogState: viewModel.intakeV2BootLogState,
                     workspaceScanResult: viewModel.scanResult,
+                    scanProviderLimitNotice: viewModel.scanProviderLimitNotice,
+                    // Codex → Claude → Gemini rotation; only providers the sidecar
+                    // reports as connected qualify (same gate as office-hours).
+                    scanProviderLimitFallback: viewModel.scanProviderLimitNotice?.provider.nextFallbackProvider { candidate in
+                        officeHoursProviderEnvironment(for: candidate)?.available == true
+                    },
+                    onProviderLimitRescan: { provider in
+                        guard let notice = viewModel.scanProviderLimitNotice,
+                              !notice.scanRoot.isEmpty else { return }
+                        viewModel.rescanWorkspace(root: notice.scanRoot, provider: provider)
+                    },
                     onWorkspacePrefetchRequested: { store, sources in
                         guard let context = intakeV2OnboardingContext(from: store) else { return }
                         guard let url = store.folderURL else {

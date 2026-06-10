@@ -159,16 +159,14 @@ enum AgentModelCatalog {
         AgentModelOption(id: "claude-haiku-4-5", label: "Claude Haiku 4.5", provider: .claude),
     ]
 
+    // ChatGPT 로그인 계정의 Codex 서버 카탈로그(`codex debug models`)에 노출되는
+    // 모델만 나열한다. 구 세대(gpt-5.2 이하)는 ChatGPT 인증에서 400 거부되므로
+    // 제거 — 저장된 구 ID는 normalizedModelID가 기본값으로 폴백시킨다.
     static let codex: [AgentModelOption] = [
         AgentModelOption(id: "gpt-5.5", label: "GPT 5.5 (Best)", provider: .codex, isRecommended: true),
-        AgentModelOption(id: "gpt-5.2-codex", label: "GPT 5.2 Codex", provider: .codex),
-        AgentModelOption(id: "gpt-5.2", label: "GPT 5.2", provider: .codex),
-        AgentModelOption(id: "gpt-5.1-codex", label: "GPT 5.1 Codex", provider: .codex),
-        AgentModelOption(id: "gpt-5.1-codex-max", label: "GPT 5.1 Codex Max", provider: .codex),
-        AgentModelOption(id: "gpt-5.1-codex-mini", label: "GPT 5.1 Codex Mini", provider: .codex),
-        AgentModelOption(id: "gpt-5-codex", label: "GPT 5 Codex", provider: .codex),
-        AgentModelOption(id: "gpt-5-mini", label: "GPT 5 Mini", provider: .codex),
-        AgentModelOption(id: "gpt-5-nano", label: "GPT 5 Nano", provider: .codex),
+        AgentModelOption(id: "gpt-5.4", label: "GPT 5.4", provider: .codex),
+        AgentModelOption(id: "gpt-5.4-mini", label: "GPT 5.4 Mini", provider: .codex),
+        AgentModelOption(id: "gpt-5.3-codex-spark", label: "GPT 5.3 Codex Spark (Pro)", provider: .codex),
     ]
 
     static let gemini: [AgentModelOption] = [
@@ -654,6 +652,24 @@ nonisolated struct IntegrationProbeStatus: Codable, Hashable {
     var isMissing: Bool { state == "missing" }
     /// MCP auth is delegated to the provider's native OAuth (no stored key).
     var isOauthDelegated: Bool { state == "oauth" }
+}
+
+/// Result/progress of the Settings > 연동 "MCP 연결" prewarm: the sidecar runs a
+/// minimal provider query that calls one tool on the target OAuth-first MCP
+/// (PostHog/Cloudflare). An unauthorized server exposes an authenticate
+/// placeholder that returns a login URL (`loginUrl`) — the Mac side opens it in
+/// the browser; once the user finishes, the real tools unlock and the call
+/// proves the link. States: progress · ready · login_pending · failed.
+nonisolated struct McpOauthConnectResult: Codable, Hashable {
+    var server: String?
+    var provider: String?
+    var state: String?
+    var detail: String?
+    var loginUrl: String?
+    var checkedAt: String?
+
+    var isReady: Bool { state == "ready" }
+    var isLoginPending: Bool { state == "login_pending" }
 }
 
 // MARK: - Morning briefing drilldowns (briefing-cloudflare/github/posthog.html)
