@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 import {
   collectIntegrationStatus,
@@ -64,6 +67,41 @@ test("probePosthogIntegration distinguishes missing, malformed, failed, and read
   });
   assert.equal(ready.state, "ready");
   assert.match(calledUrl, /^https:\/\/us\.posthog\.com\/api\/users\/@me/);
+});
+
+test("probes report ready when MCP OAuth state is verified and no key is stored", async () => {
+  // OAuth-first 연결은 키가 디스크에 없다 — "MCP 연결"이 영속한 ready 상태가
+  // Settings 배지에서 연결됨으로 보여야 한다.
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "integration-oauth-"));
+  try {
+    await fs.writeFile(
+      path.join(appSupportPath, "mcp-oauth-state.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        servers: {
+          posthog: { state: "ready", provider: "claude", detail: "ok", checkedAt: "2026-06-10T11:00:00.000Z" },
+          cloudflare: { state: "ready", provider: "claude", detail: "ok", checkedAt: "2026-06-10T11:00:00.000Z" },
+        },
+      }),
+    );
+    const posthog = await probePosthogIntegration({
+      env: {},
+      appSupportPath,
+      fetchImpl: async () => { throw new Error("must not call"); },
+    });
+    assert.equal(posthog.state, "ready");
+    assert.match(posthog.detail, /OAuth 연결 검증됨/);
+
+    const cloudflare = await probeCloudflareIntegration({
+      env: {},
+      appSupportPath,
+      fetchImpl: async () => { throw new Error("must not call"); },
+    });
+    assert.equal(cloudflare.state, "ready");
+    assert.match(cloudflare.detail, /OAuth 연결 검증됨/);
+  } finally {
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
 });
 
 test("probeCloudflareIntegration verifies token against /zones", async () => {

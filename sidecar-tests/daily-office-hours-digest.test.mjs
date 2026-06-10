@@ -107,6 +107,46 @@ test("Day 2+ source gate blocks when a selected source fails even if git is live
   assert.deepEqual(gate.missingRequiredSources, ["gh_cli"]);
 });
 
+test("Day 2+ source gate accepts persisted MCP OAuth state in place of stored API keys", async () => {
+  // OAuth-first MCP는 토큰이 프로바이더 캐시에 있어 사이드카에 키가 없다 —
+  // "MCP 연결"이 영속한 ready 상태가 키와 동급의 연결 증거여야 한다.
+  // (회귀: 키만 검사하면 OAuth 연결 후에도 브리핑이 영원히 missing으로 표시)
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "oh-gate-oauth-"));
+  try {
+    await fs.writeFile(
+      path.join(appSupportPath, "mcp-oauth-state.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        servers: {
+          posthog: { state: "ready", provider: "claude", detail: "ok", checkedAt: "2026-06-10T11:00:00.000Z" },
+          cloudflare: { state: "login_pending", provider: "claude", detail: "pending", checkedAt: "2026-06-10T11:00:00.000Z" },
+        },
+      }),
+    );
+    const gate = await evaluateOfficeHoursSourceGate({
+      workspaceRoot: "/tmp/ws",
+      day: 2,
+      selectedSources: ["posthog", "cloudflare"],
+      appSupportPath,
+      execImpl: fakeExec([
+        ["git rev-parse", { ok: true, stdout: "true\n" }],
+        ["gh auth status", { ok: false, stdout: "" }],
+      ]),
+      env: {},
+    });
+
+    const posthog = gate.sources.find((source) => source.id === "posthog");
+    assert.equal(posthog.state, "ready");
+    assert.match(posthog.detail, /OAuth connection verified/);
+    // login_pending은 ready가 아니다 — 로그인 미완료 상태로 게이트를 통과시키면 안 된다.
+    const cloudflare = gate.sources.find((source) => source.id === "cloudflare");
+    assert.equal(cloudflare.state, "missing");
+    assert.deepEqual(gate.missingRequiredSources, ["cloudflare"]);
+  } finally {
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
+});
+
 test("collectGitDailySignals stores aggregate summaries without commit SHAs", async () => {
   const window = officeHoursDigestWindow(new Date("2026-06-09T10:30:00+09:00"), {
     tzOffsetMinutes: KST,

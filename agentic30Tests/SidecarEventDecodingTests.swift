@@ -647,6 +647,106 @@ struct SidecarEventDecodingTests {
         #expect(status.checkedAt == "2026-06-10T09:00:00.000Z")
     }
 
+    @MainActor @Test func decodesMcpOauthConnectResultPayload() throws {
+        let payload = """
+        {
+          "type": "mcp_oauth_connect_result",
+          "mcpOauthConnect": {
+            "server": "posthog",
+            "provider": "claude",
+            "state": "ready",
+            "detail": "PostHog MCP 도구 호출 검증됨 — AI 실행에서 바로 사용 가능해요.",
+            "checkedAt": "2026-06-10T09:30:00.000Z"
+          },
+          "integrationStatus": {
+            "posthog": { "state": "oauth", "detail": "MCP는 OAuth로 동작" },
+            "checkedAt": "2026-06-10T09:30:00.000Z"
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "mcp_oauth_connect_result")
+        let result = try #require(event.mcpOauthConnect)
+        #expect(result.server == "posthog")
+        #expect(result.provider == "claude")
+        #expect(result.isReady == true)
+        #expect(result.detail?.contains("검증됨") == true)
+        #expect(result.checkedAt == "2026-06-10T09:30:00.000Z")
+        #expect(event.integrationStatus?.posthog?.isOauthDelegated == true)
+    }
+
+    @MainActor @Test func decodesMcpOauthConnectFailurePayload() throws {
+        let payload = """
+        {
+          "type": "mcp_oauth_connect_result",
+          "mcpOauthConnect": {
+            "server": "cloudflare",
+            "provider": "codex",
+            "state": "failed",
+            "detail": "Cloudflare MCP 연결 확인이 시간 초과됐어요 — 브라우저 로그인 후 다시 시도해 주세요.",
+            "checkedAt": "2026-06-10T09:31:00.000Z"
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        let result = try #require(event.mcpOauthConnect)
+        #expect(result.server == "cloudflare")
+        #expect(result.isReady == false)
+        #expect(result.isLoginPending == false)
+        #expect(result.state == "failed")
+        #expect(event.integrationStatus == nil)
+    }
+
+    @MainActor @Test func decodesMcpOauthConnectLoginPendingPayload() throws {
+        let payload = """
+        {
+          "type": "mcp_oauth_connect_result",
+          "mcpOauthConnect": {
+            "server": "posthog",
+            "provider": "claude",
+            "state": "login_pending",
+            "detail": "PostHog 브라우저 로그인이 필요해요 — 로그인 완료 후 'MCP 연결'을 다시 눌러 검증해 주세요.",
+            "loginUrl": "https://oauth.posthog.com/oauth/authorize/?state=xyz",
+            "checkedAt": "2026-06-10T09:32:00.000Z"
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        let result = try #require(event.mcpOauthConnect)
+        #expect(result.isLoginPending == true)
+        #expect(result.isReady == false)
+        #expect(result.loginUrl == "https://oauth.posthog.com/oauth/authorize/?state=xyz")
+    }
+
+    @MainActor @Test func decodesMcpOauthConnectStatusProgressPayload() throws {
+        let payload = """
+        {
+          "type": "mcp_oauth_connect_status",
+          "mcpOauthConnect": {
+            "server": "posthog",
+            "provider": "claude",
+            "state": "progress",
+            "detail": "브라우저에서 OAuth 로그인을 완료해 주세요.",
+            "loginUrl": "https://oauth.posthog.com/oauth/authorize/?state=abc"
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "mcp_oauth_connect_status")
+        let update = try #require(event.mcpOauthConnect)
+        #expect(update.state == "progress")
+        #expect(update.detail?.contains("로그인") == true)
+        #expect(update.loginUrl == "https://oauth.posthog.com/oauth/authorize/?state=abc")
+    }
+
     @MainActor @Test func decodesMorningBriefingCollectingStatusPayload() throws {
         let payload = """
         {
@@ -2580,6 +2680,37 @@ struct SidecarEventDecodingTests {
         let merged = WorkHistorySnapshot.empty.applying(status: event.workHistoryStatus!)
         #expect(merged.status.state == "refreshing")
         #expect(merged.status.progressText == "AI 세션 로그를 읽는 중")
+    }
+
+    @MainActor @Test func decodesWorkspaceScanProviderLimitedEnvelope() throws {
+        let payload = """
+        {
+          "type": "workspace_scan_provider_limited",
+          "scanRoot": "/Users/me/project",
+          "provider": "codex",
+          "model": "gpt-5.1-codex-mini",
+          "stage": "scan_agent",
+          "errorKind": "provider_usage_limit"
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "workspace_scan_provider_limited")
+        #expect(event.scanRoot == "/Users/me/project")
+        #expect(event.provider == "codex")
+        #expect(event.stage == "scan_agent")
+        #expect(event.errorKind == "provider_usage_limit")
+
+        // ViewModel이 이 envelope에서 만드는 notice와 동일한 매핑을 고정.
+        let provider = try #require(AgentProvider(rawValue: event.provider ?? ""))
+        let notice = ScanProviderLimitNotice(
+            scanRoot: event.scanRoot ?? "",
+            provider: provider,
+            stage: event.stage ?? ""
+        )
+        #expect(notice.provider == .codex)
+        #expect(notice.scanRoot == "/Users/me/project")
     }
 
     @MainActor @Test func decodesWorkHistoryGitHubRequiredState() throws {

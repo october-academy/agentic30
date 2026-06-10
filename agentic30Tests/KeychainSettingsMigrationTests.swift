@@ -187,11 +187,23 @@ struct KeychainSettingsMigrationTests {
     @Test func migrationPreservesExplicitCodexMiniSelection() {
         var oldSettings = KeychainHelper.Settings()
         oldSettings.schemaVersion = 3
+        oldSettings.preferredCodexModel = "gpt-5.4-mini"
+
+        let migrated = KeychainHelper.Settings.migrate(oldSettings, from: 3)
+
+        #expect(migrated.preferredCodexModel == "gpt-5.4-mini")
+    }
+
+    @Test func migrationMovesRetiredCodexModelToDefault() {
+        // gpt-5.1-codex-mini는 ChatGPT 인증 Codex 카탈로그에서 제거된 모델 —
+        // 카탈로그 밖 ID는 기본값으로 폴백해야 한다.
+        var oldSettings = KeychainHelper.Settings()
+        oldSettings.schemaVersion = 3
         oldSettings.preferredCodexModel = "gpt-5.1-codex-mini"
 
         let migrated = KeychainHelper.Settings.migrate(oldSettings, from: 3)
 
-        #expect(migrated.preferredCodexModel == "gpt-5.1-codex-mini")
+        #expect(migrated.preferredCodexModel == AgentModelCatalog.defaultCodexModelID)
     }
 
     @Test func migrationMovesLegacyGeminiDefaultToGemini35Flash() {

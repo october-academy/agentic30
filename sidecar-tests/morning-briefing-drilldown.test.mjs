@@ -58,6 +58,7 @@ function stubGithubExec({
     { conclusion: "failure", createdAt: "2026-06-07T10:00:00.000Z", updatedAt: "2026-06-07T10:07:00.000Z", workflowName: "ci", displayTitle: "ci", headBranch: "main" },
   ],
   repoView = { nameWithOwner: "zettalyst/agentic30-public", stargazerCount: 21, hasWikiEnabled: false },
+  packagesList = null,
   readmeIso = "2026-05-31T00:00:00.000Z",
   readmeCommitsSince = "41",
   unreleasedCount = "33",
@@ -73,6 +74,12 @@ function stubGithubExec({
       if (cmd === "gh" && args[0] === "release") return { ok: true, stdout: JSON.stringify(releaseList), stderr: "" };
       if (cmd === "gh" && args[0] === "run") return { ok: true, stdout: JSON.stringify(runList), stderr: "" };
       if (cmd === "gh" && args[0] === "repo") return { ok: true, stdout: JSON.stringify(repoView), stderr: "" };
+      if (cmd === "gh" && args[0] === "api" && String(args[1]).includes("packages")) {
+        if (!packagesList) return { ok: false, stdout: "", stderr: "gh: Not Found (HTTP 404)" };
+        // user 엔드포인트만 성공하는 실제 솔로 계정 모양을 재현
+        if (String(args[1]).startsWith("users/")) return { ok: true, stdout: JSON.stringify(packagesList), stderr: "" };
+        return { ok: false, stdout: "", stderr: "gh: Not Found (HTTP 404)" };
+      }
       if (cmd === "git" && args[0] === "rev-parse") return { ok: true, stdout: "main\n", stderr: "" };
       if (cmd === "git" && args[0] === "log" && joined.includes("README.md")) return { ok: true, stdout: `${readmeIso}\n`, stderr: "" };
       if (cmd === "git" && args[0] === "rev-list" && joined.includes("--since")) return { ok: true, stdout: `${readmeCommitsSince}\n`, stderr: "" };
@@ -134,6 +141,51 @@ test("collectGithubDrilldown builds kpis, buckets, lists, scan, and maintenance 
 
   assert.equal(drilldown.meta.progress.label, "main 배포");
   assert.ok(drilldown.meta.rows.some((row) => row.key === "리포" && row.value === "zettalyst/agentic30-public"));
+});
+
+test("collectGithubDrilldown counts in-window releases and packages as deploys", async () => {
+  const { exec } = stubGithubExec({
+    releaseList: [
+      { tagName: "v20260609-2330", publishedAt: "2026-06-09T23:30:00.000Z", isDraft: false, isPrerelease: false },
+      { tagName: "v-draft", publishedAt: "2026-06-09T22:00:00.000Z", isDraft: true, isPrerelease: false },
+      { tagName: "v0.6.0", publishedAt: "2026-06-02T03:00:00.000Z", isDraft: false, isPrerelease: false },
+    ],
+    packagesList: [
+      { name: "agentic30-sidecar", package_type: "npm", updated_at: "2026-06-09T21:00:00.000Z", version_count: 4, repository: { full_name: "zettalyst/agentic30-public" } },
+      { name: "other-repo-pkg", package_type: "npm", updated_at: "2026-06-09T20:00:00.000Z", version_count: 2, repository: { full_name: "zettalyst/other" } },
+      { name: "stale-pkg", package_type: "container", updated_at: "2026-05-01T00:00:00.000Z", version_count: 9 },
+    ],
+  });
+  const drilldown = await collectGithubDrilldown({
+    workspaceRoot: "/tmp/ws",
+    window: WINDOW,
+    gitSource: gitSourceFixture(),
+    ghSource: ghSourceFixture(),
+    previousCommitCount: 6,
+    execImpl: exec,
+  });
+
+  // 1 workflow run + 1 published release (draft·윈도 밖 제외) + 1 repo-linked package
+  const deployKpi = drilldown.kpis.find((kpi) => kpi.label === "배포");
+  assert.equal(deployKpi.valueLabel, "3");
+  assert.ok(drilldown.syncPills.includes("배포 3건 · 워크플로 1 · 릴리스 1 · 패키지 1"));
+
+  const deployRows = drilldown.listRows.filter((row) => row.kind === "deploy");
+  assert.ok(deployRows.some((row) => row.tag === "released" && /v20260609-2330/.test(row.title)));
+  assert.ok(deployRows.some((row) => row.tag === "package" && /agentic30-sidecar/.test(row.title)));
+  assert.ok(deployRows.some((row) => row.tag === "deployed"));
+  assert.ok(!deployRows.some((row) => /other-repo-pkg|v-draft|stale-pkg/.test(row.title)));
+
+  // 가장 최근 배포(릴리스 23:30)가 차트 footnote를 차지
+  assert.match(drilldown.chart.footnote, /배포\(Release\).*v20260609-2330/);
+
+  const scanTitles = drilldown.scan.map((cell) => cell.title);
+  assert.deepEqual(scanTitles, ["이슈", "릴리스", "패키지", "Actions", "인사이트", "위키"]);
+  const packageCell = drilldown.scan.find((cell) => cell.title === "패키지");
+  assert.equal(packageCell.valueLabel, "패키지 2");
+  assert.match(packageCell.sub, /agentic30-sidecar · 버전 4/);
+
+  assert.equal(drilldown.meta.progress.valueLabel, "3 · 성공");
 });
 
 test("collectGithubDrilldown returns null when no github source is ready", async () => {
