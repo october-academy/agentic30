@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { atomicWriteJson } from "./atomic-store.mjs";
+import { normalizeMorningBriefingDrilldowns } from "./morning-briefing-drilldown.mjs";
 
 export const MORNING_BRIEFING_SCHEMA_VERSION = 1;
 export const MORNING_BRIEFING_FILE = "morning-briefing.json";
@@ -298,10 +299,23 @@ export function buildMorningBriefingSummary({ digest = {}, cards = [], window = 
   const downCard = readyCards.find((card) => card.metric?.direction === "down");
   const upCard = readyCards.find((card) => card.metric?.direction === "up");
   const parts = [];
+  // Exact substrings of the final statement, so the screen can render the
+  // briefing.html mark (rose) / em (accent) inline highlights.
+  const marks = [];
+  const emphases = [];
   if (downCard) {
-    parts.push(`밤사이 가장 큰 변화는 ${downCard.label} ${downCard.metric.unit} ${downCard.metric.deltaLabel} 하락이에요.`);
+    const phrase = `${downCard.label} ${downCard.metric.unit} ${downCard.metric.deltaLabel} 하락`;
+    parts.push(`밤사이 가장 큰 변화는 ${phrase}이에요.`);
+    marks.push(phrase);
+    if (upCard) {
+      const upPhrase = `${upCard.label} ${upCard.metric.unit}은 ${upCard.metric.deltaLabel}`;
+      parts.push(`${upPhrase} 늘었어요.`);
+      emphases.push(upPhrase);
+    }
   } else if (upCard) {
-    parts.push(`밤사이 가장 큰 변화는 ${upCard.label} ${upCard.metric.unit} ${upCard.metric.deltaLabel} 증가예요.`);
+    const phrase = `${upCard.label} ${upCard.metric.unit} ${upCard.metric.deltaLabel} 증가`;
+    parts.push(`밤사이 가장 큰 변화는 ${phrase}예요.`);
+    emphases.push(phrase);
   }
   const overnight = (digest.briefing?.overnightChanges || []).slice(0, 2);
   parts.push(...overnight);
@@ -319,6 +333,8 @@ export function buildMorningBriefingSummary({ digest = {}, cards = [], window = 
     title: "overnight digest",
     windowLabel: cleanString(window.label || "", 120),
     statement,
+    statementMarks: marks.filter((phrase) => statement.includes(phrase)),
+    statementEmphases: emphases.filter((phrase) => statement.includes(phrase)),
     crits,
   };
 }
@@ -473,6 +489,7 @@ export function buildMorningBriefing({
   history = [],
   now = new Date(),
   phase = "",
+  drilldowns = null,
 } = {}) {
   const generatedAt = nowIso(now);
   const window = digest.window || {};
@@ -500,6 +517,10 @@ export function buildMorningBriefing({
     timeline: buildMorningBriefingTimeline({ digest }),
     anomaly,
     actions: buildMorningBriefingActions({ digest, anomaly }),
+    // Per-source drilldown payloads (briefing-cloudflare/github/posthog.html).
+    // Null when no source produced drilldown-grade data; the screen falls back
+    // to the inline card highlights.
+    drilldowns: normalizeMorningBriefingDrilldowns(drilldowns || {}),
     sync: {
       sources: (digest.sources || []).map((source) => ({
         id: source.id,
@@ -527,6 +548,18 @@ export function buildMorningBriefing({
       .sort()
       .slice(-7)
       .reverse(),
+    // Same list with the persisted headline/day so the rows can show what each
+    // morning actually said (briefing.html "지난 브리핑" rows carry titles).
+    historyEntries: priorHistory
+      .filter((entry) => entry?.date)
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+      .slice(-7)
+      .reverse()
+      .map((entry) => ({
+        date: String(entry.date),
+        day: finiteNumber(entry.day),
+        title: cleanString(entry.title, 80) || null,
+      })),
   };
 }
 
@@ -579,7 +612,15 @@ export async function persistMorningBriefing({ workspaceRoot, briefing, fsImpl =
     : store.previous ?? null;
   const history = [
     ...store.history.filter((entry) => entry?.date && entry.date !== date),
-    ...(date ? [{ date, metrics: briefing?.metrics || {} }] : []),
+    ...(date
+      ? [{
+          date,
+          metrics: briefing?.metrics || {},
+          day: briefing?.day ?? null,
+          // First clause of the overnight statement = the morning's headline.
+          title: cleanString(String(briefing?.summary?.statement || "").split(/(?<=[.!?요])\s/)[0] || "", 80),
+        }]
+      : []),
   ]
     .sort((a, b) => String(a.date).localeCompare(String(b.date)))
     .slice(-MORNING_BRIEFING_HISTORY_LIMIT);

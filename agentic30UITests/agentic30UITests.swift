@@ -2412,6 +2412,66 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    func testMorningBriefingDrilldownOpensPerSourceScreens() throws {
+        // Each source card's 드릴다운 link swaps the briefing for the per-source
+        // drilldown screen (briefing-github/cloudflare/posthog.html): KPI grid,
+        // chart, scan/funnel sections, source switcher, and back navigation —
+        // driven by the deterministic stub fixture's drilldowns payload.
+        let workspacePath = "/tmp/agentic30-ui-briefing-drilldown-\(UUID().uuidString)"
+        resetDirectory(at: workspacePath)
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-stub-morning-briefing-events",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+        }
+
+        XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.shell"].waitForExistence(timeout: 10))
+        elementWithIdentifier(in: app, "opendesign.day.rail.item.briefing").click()
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.screen").waitForExistence(timeout: 5))
+
+        // GitHub drilldown: KPI grid + commit chart + repo scan + maintenance draft.
+        let githubDrill = elementWithIdentifier(in: app, "morningBriefing.drill.github")
+        XCTAssertTrue(githubDrill.waitForExistence(timeout: 5))
+        githubDrill.click()
+        // Per-source head badge is the reliable leaf identifier; the screen-sized
+        // container identifier does not surface in the accessibility tree.
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.drilldown.head.github").waitForExistence(timeout: 10))
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.drilldown.kpis").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.drilldown.chart").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.drilldown.scan").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.drilldown.draft.github_keep_readme").exists)
+        attachScreenshot(from: app, named: "Morning Briefing Drilldown GitHub")
+
+        // Source switcher jumps straight to the PostHog drilldown (retention
+        // curve + onboarding funnel) without going back to the briefing.
+        elementWithIdentifier(in: app, "morningBriefing.drilldown.source.posthog").click()
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.drilldown.head.posthog").waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.drilldown.funnel").exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.drilldown.signals").exists)
+        attachScreenshot(from: app, named: "Morning Briefing Drilldown PostHog")
+
+        // Cloudflare drilldown renders the path table; back returns to the briefing.
+        elementWithIdentifier(in: app, "morningBriefing.drilldown.source.cloudflare").click()
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.drilldown.head.cloudflare").waitForExistence(timeout: 5))
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.drilldown.table").exists)
+        elementWithIdentifier(in: app, "morningBriefing.drilldown.back").click()
+        XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.summary").waitForExistence(timeout: 5))
+        XCTAssertFalse(elementWithIdentifier(in: app, "morningBriefing.drilldown.head.cloudflare").exists)
+    }
+
+    @MainActor
     private func launchApp(
         arguments: [String],
         environment: [String: String] = [:]

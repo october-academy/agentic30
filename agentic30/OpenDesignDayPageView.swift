@@ -2962,6 +2962,14 @@ enum OpenDesignDayColor {
     static var diffAdd: Color { palette.diffAdd }
     static var diffDel: Color { palette.diffDel }
 
+    // briefing drilldown mockups use a violet accent (deploy markers, 실험 badge,
+    // PostHog logo); the palette struct predates it so derive per-theme here.
+    static var violet: Color {
+        Agentic30Theme.current == .white
+            ? Color(red: 0.4509, green: 0.2696, blue: 0.7177)
+            : Color(red: 0.7798, green: 0.5391, blue: 0.9596)
+    }
+
     static var accentDim: Color { accent.opacity(Agentic30Theme.current == .white ? 0.12 : 0.14) }
     static var accentLine: Color { accent.opacity(Agentic30Theme.current == .white ? 0.34 : 0.40) }
     static var amberDim: Color { amber.opacity(0.14) }

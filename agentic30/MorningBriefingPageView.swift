@@ -20,9 +20,11 @@ struct MorningBriefingPageView: View {
     @State private var pickedAnomalyOptionID: String?
     @State private var customAnomalyLabel = ""
     @State private var expandedDrillCardID: String?
+    @State private var presentedDrilldownID: String?
     @State private var appliedActionIDs: Set<String> = []
     @State private var copiedActionIDs: Set<String> = []
     @State private var activeSectionID = "summary"
+    @State private var sectionScrollRequest: MorningBriefingScrollRequest?
     @State private var toastText: String?
     @State private var toastDismissTask: Task<Void, Never>?
     @State private var viewingPrevious = false
@@ -87,24 +89,45 @@ struct MorningBriefingPageView: View {
             let showsMeta = geometry.size.width >= 1120
 
             ZStack(alignment: .bottom) {
-                HStack(spacing: 0) {
-                    if showsNav {
-                        sectionNav
-                            .frame(width: 240)
-                            .frame(maxHeight: .infinity)
-                            .background(OpenDesignDayColor.bg)
-                            .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .trailing)
-                    }
+                if let drilldownID = presentedDrilldownID,
+                   let drilldown = displayBriefing?.drilldowns?[drilldownID] {
+                    MorningBriefingDrilldownView(
+                        drilldown: drilldown,
+                        briefing: displayBriefing,
+                        day: day,
+                        onSelectSource: { id in
+                            withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.18)) {
+                                presentedDrilldownID = id
+                            }
+                        },
+                        onBack: {
+                            withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.18)) {
+                                presentedDrilldownID = nil
+                            }
+                        },
+                        applyAction: applyAction,
+                        showToast: { showToast($0) }
+                    )
+                } else {
+                    HStack(spacing: 0) {
+                        if showsNav {
+                            sectionNav
+                                .frame(width: 240)
+                                .frame(maxHeight: .infinity)
+                                .background(OpenDesignDayColor.bg)
+                                .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .trailing)
+                        }
 
-                    mainColumn
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        mainColumn
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                    if showsMeta {
-                        metaPanel
-                            .frame(width: 280)
-                            .frame(maxHeight: .infinity)
-                            .background(OpenDesignDayColor.bg)
-                            .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .leading)
+                        if showsMeta {
+                            metaPanel
+                                .frame(width: 280)
+                                .frame(maxHeight: .infinity)
+                                .background(OpenDesignDayColor.bg)
+                                .overlay(Rectangle().fill(OpenDesignDayColor.borderSoft).frame(width: 1), alignment: .leading)
+                        }
                     }
                 }
 
@@ -136,6 +159,7 @@ struct MorningBriefingPageView: View {
             pickedAnomalyOptionID = nil
             customAnomalyLabel = ""
             expandedDrillCardID = nil
+            presentedDrilldownID = nil
             activeSectionID = "summary"
         }
         .accessibilityElement(children: .contain)
@@ -169,10 +193,15 @@ struct MorningBriefingPageView: View {
                         sectionNavRow(section)
                     }
 
-                    if let dates = displayBriefing?.historyDates, !dates.isEmpty {
+                    if let entries = displayBriefing?.historyEntries, !entries.isEmpty {
+                        groupLabel("지난 브리핑", trailing: "")
+                        ForEach(entries) { entry in
+                            pastBriefingRow(entry)
+                        }
+                    } else if let dates = displayBriefing?.historyDates, !dates.isEmpty {
                         groupLabel("지난 브리핑", trailing: "")
                         ForEach(dates, id: \.self) { date in
-                            pastBriefingRow(date)
+                            pastBriefingRow(MorningBriefingHistoryEntry(date: date))
                         }
                     }
                 }
@@ -204,6 +233,7 @@ struct MorningBriefingPageView: View {
             withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.15)) {
                 activeSectionID = section.id
             }
+            sectionScrollRequest = MorningBriefingScrollRequest(id: section.id)
         } label: {
             HStack(alignment: .top, spacing: 9) {
                 Group {
@@ -255,18 +285,35 @@ struct MorningBriefingPageView: View {
             .background(Circle().fill(color.opacity(0.18)).frame(width: 14, height: 14))
     }
 
-    private func pastBriefingRow(_ date: String) -> some View {
-        HStack(alignment: .top, spacing: 9) {
+    /// The local date the persisted previous-day briefing was generated —
+    /// the one "지난 브리핑" row that is actually viewable in-app.
+    private var previousBriefingDate: String? {
+        guard let generatedAt = previousBriefing?.generatedAt, generatedAt.count >= 10 else { return nil }
+        return String(generatedAt.prefix(10))
+    }
+
+    private func pastBriefingRow(_ entry: MorningBriefingHistoryEntry) -> some View {
+        let isViewable = entry.date == previousBriefingDate && !viewingPrevious
+        let row = HStack(alignment: .top, spacing: 9) {
             Circle()
                 .stroke(OpenDesignDayColor.mutedDeep, lineWidth: 1.5)
                 .frame(width: 11, height: 11)
                 .padding(.top, 3)
             VStack(alignment: .leading, spacing: 2) {
-                Text("아침 브리핑")
+                Text(entry.title?.isEmpty == false ? entry.title! : "아침 브리핑")
                     .font(.system(size: 12.5, weight: .medium))
-                Text(date)
-                    .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    if let day = entry.day {
+                        Text("Day \(day)")
+                            .foregroundStyle(OpenDesignDayColor.accent)
+                        Text("·")
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                    }
+                    Text(entry.date)
+                        .foregroundStyle(OpenDesignDayColor.muted)
+                }
+                .font(.system(size: 10.5, design: .monospaced))
             }
             Spacer(minLength: 0)
         }
@@ -274,6 +321,22 @@ struct MorningBriefingPageView: View {
         .padding(.vertical, 8)
         .foregroundStyle(OpenDesignDayColor.fgSecondary)
         .opacity(0.66)
+
+        return Group {
+            if isViewable {
+                Button {
+                    withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.18)) {
+                        viewingPrevious = true
+                    }
+                } label: {
+                    row.contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("morningBriefing.nav.past.\(entry.date)")
+            } else {
+                row
+            }
+        }
     }
 
     // MARK: - Main column
@@ -317,9 +380,22 @@ struct MorningBriefingPageView: View {
                         .padding(.horizontal, 28)
                         .padding(.top, 22)
                     }
-                    .onChange(of: activeSectionID) { _, target in
+                    .coordinateSpace(name: "morningBriefingScroll")
+                    .onChange(of: sectionScrollRequest) { _, request in
+                        guard let request else { return }
                         withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.25)) {
-                            proxy.scrollTo(target, anchor: .top)
+                            proxy.scrollTo(request.id, anchor: .top)
+                        }
+                    }
+                    // Scroll spy (briefing.html IntersectionObserver): the left
+                    // nav highlight follows manual scrolling.
+                    .onPreferenceChange(MorningBriefingSectionOffsetKey.self) { offsets in
+                        guard !offsets.isEmpty else { return }
+                        let passed = offsets.filter { $0.value <= 90 }
+                        let spyID = passed.max(by: { $0.value < $1.value })?.key
+                            ?? offsets.min(by: { $0.value < $1.value })?.key
+                        if let spyID, spyID != activeSectionID {
+                            activeSectionID = spyID
                         }
                     }
                 }
@@ -507,6 +583,14 @@ struct MorningBriefingPageView: View {
         .padding(.top, 26)
         .padding(.bottom, 12)
         .id(id)
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: MorningBriefingSectionOffsetKey.self,
+                    value: [id: geo.frame(in: .named("morningBriefingScroll")).minY]
+                )
+            }
+        )
     }
 
     // MARK: - Summary card
@@ -525,7 +609,7 @@ struct MorningBriefingPageView: View {
             }
             .padding(.bottom, 9)
 
-            Text(displayBriefing?.summary?.statement ?? "밤사이 연결된 소스에서 큰 변화는 없었어요.")
+            Text(summaryStatement)
                 .font(.system(size: 16, weight: .medium))
                 .lineSpacing(6)
                 .foregroundStyle(OpenDesignDayColor.fg)
@@ -577,6 +661,26 @@ struct MorningBriefingPageView: View {
         }
     }
 
+    /// Statement with the briefing.html mark (rose) / em (accent) inline
+    /// highlights applied from the sidecar-provided exact substrings.
+    private var summaryStatement: AttributedString {
+        let statement = displayBriefing?.summary?.statement ?? "밤사이 연결된 소스에서 큰 변화는 없었어요."
+        var attributed = AttributedString(statement)
+        for mark in displayBriefing?.summary?.statementMarks ?? [] {
+            if let range = attributed.range(of: mark) {
+                attributed[range].foregroundColor = OpenDesignDayColor.rose
+                attributed[range].backgroundColor = OpenDesignDayColor.rose.opacity(0.14)
+            }
+        }
+        for emphasis in displayBriefing?.summary?.statementEmphases ?? [] {
+            if let range = attributed.range(of: emphasis) {
+                attributed[range].foregroundColor = OpenDesignDayColor.accent
+                attributed[range].backgroundColor = OpenDesignDayColor.accent.opacity(0.14)
+            }
+        }
+        return attributed
+    }
+
     // MARK: - Source cards
 
     private var sourceCardsGrid: some View {
@@ -593,7 +697,7 @@ struct MorningBriefingPageView: View {
     private func sourceLogoColor(_ id: String) -> Color {
         switch id {
         case "cloudflare": return OpenDesignDayColor.amber
-        case "posthog": return OpenDesignDayColor.sky
+        case "posthog": return OpenDesignDayColor.violet
         default: return OpenDesignDayColor.fg
         }
     }
@@ -700,14 +804,21 @@ struct MorningBriefingPageView: View {
                 }
                 Spacer()
                 if card.isReady {
+                    let hasDrilldownPage = displayBriefing?.drilldowns?[card.id] != nil
                     Button {
                         withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.15)) {
-                            expandedDrillCardID = expandedDrillCardID == card.id ? nil : card.id
+                            if hasDrilldownPage {
+                                presentedDrilldownID = card.id
+                            } else {
+                                // No drilldown-grade data for this source yet:
+                                // fall back to the inline highlight expansion.
+                                expandedDrillCardID = expandedDrillCardID == card.id ? nil : card.id
+                            }
                         }
                     } label: {
                         HStack(spacing: 5) {
                             Text("드릴다운")
-                            Image(systemName: expandedDrillCardID == card.id ? "chevron.up" : "arrow.right")
+                            Image(systemName: !hasDrilldownPage && expandedDrillCardID == card.id ? "chevron.up" : "arrow.right")
                                 .font(.system(size: 8, weight: .bold))
                         }
                         .font(.system(size: 10.5, design: .monospaced))
@@ -1083,7 +1194,7 @@ struct MorningBriefingPageView: View {
     private func draftBadgeColor(_ kind: String?) -> Color {
         switch kind {
         case "message": return OpenDesignDayColor.sky
-        case "experiment": return OpenDesignDayColor.sky.opacity(0.9)
+        case "experiment": return OpenDesignDayColor.violet
         default: return OpenDesignDayColor.accent
         }
     }
@@ -1516,5 +1627,30 @@ struct MorningBriefingPageView: View {
                 toastText = nil
             }
         }
+    }
+}
+
+// MARK: - Scroll spy plumbing (shared with the drilldown screen)
+
+/// Explicit scroll command from a nav click. Carries a nonce so re-clicking
+/// the same section still triggers `onChange`, and so scroll-spy updates to
+/// `activeSectionID` never cause a programmatic scroll on their own.
+struct MorningBriefingScrollRequest: Equatable {
+    let id: String
+    private let nonce = UUID()
+
+    init(id: String) {
+        self.id = id
+    }
+}
+
+/// Section headings report their minY in the scroll coordinate space; the nav
+/// highlights the deepest section whose heading has passed the top threshold
+/// (briefing.html IntersectionObserver equivalent).
+struct MorningBriefingSectionOffsetKey: PreferenceKey {
+    static let defaultValue: [String: CGFloat] = [:]
+
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
+        value.merge(nextValue()) { $1 }
     }
 }
