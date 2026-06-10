@@ -55,6 +55,8 @@ const BASE_EXTERNAL_PACKAGES = [
   "@openai/codex",
 ];
 const ARCH_EXTERNAL_PACKAGES = [
+  "@anthropic-ai/claude-agent-sdk-darwin-arm64",
+  "@anthropic-ai/claude-agent-sdk-darwin-x64",
   "@openai/codex-darwin-arm64",
   "@openai/codex-darwin-x64",
   "@img/sharp-darwin-arm64",
