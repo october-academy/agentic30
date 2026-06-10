@@ -139,6 +139,7 @@ import {
   resolveGeminiModel,
   getProviderAuthState,
   getProviderConnectionState,
+  isCodexUsageLimitError,
   runProviderStream,
   updateProviderSettings,
 } from "./provider-runner.mjs";
@@ -3197,11 +3198,22 @@ async function runPrompt(
         });
       }
     } else {
-      telemetry.captureException(error, {
-        operation: "runPrompt",
-        session_id: session.id,
-        provider: session.provider,
-    });
+      const usageLimited = isRecoverableProviderQuotaError(error);
+      if (usageLimited) {
+        // Expected upstream Codex/ChatGPT quota condition — track it as a benign
+        // event so it does not surface as a generic captured exception.
+        telemetry.captureEvent("mac_sidecar_provider_usage_limit", {
+          operation: "runPrompt",
+          session_id: session.id,
+          provider: session.provider,
+      });
+      } else {
+        telemetry.captureException(error, {
+          operation: "runPrompt",
+          session_id: session.id,
+          provider: session.provider,
+      });
+      }
       assistantMessage.state = "error";
       assistantMessage.error = formatError(error);
       const authActions = buildProviderAuthActionsForError(session.provider, assistantMessage.error);
@@ -3228,12 +3240,15 @@ async function runPrompt(
       emitAgentEvent(session, assistantMessage.id, {
         eventType: "run.failed",
         error: assistantMessage.error,
-        recoverable: false,
+        recoverable: usageLimited,
     });
       broadcast({
         type: "error",
         sessionId: session.id,
         message: assistantMessage.error,
+        ...(usageLimited
+          ? { errorKind: PROVIDER_USAGE_LIMIT_ERROR_KIND, recoverable: true }
+          : {}),
     });
     }
   } finally {
@@ -3810,12 +3825,24 @@ async function runUnifiedFoundationChat(
         transport,
     });
     } else {
-      telemetry.captureException(error, {
-        operation: "runUnifiedFoundationChat",
-        session_id: session.id,
-        provider: session.provider,
-        day: foundationContext.day,
-    });
+      const usageLimited = isRecoverableProviderQuotaError(error);
+      if (usageLimited) {
+        // Expected upstream Codex/ChatGPT quota condition — track it as a benign
+        // event so it does not surface as a generic captured exception.
+        telemetry.captureEvent("mac_sidecar_provider_usage_limit", {
+          operation: "runUnifiedFoundationChat",
+          session_id: session.id,
+          provider: session.provider,
+          day: foundationContext.day,
+      });
+      } else {
+        telemetry.captureException(error, {
+          operation: "runUnifiedFoundationChat",
+          session_id: session.id,
+          provider: session.provider,
+          day: foundationContext.day,
+      });
+      }
       assistantMessage.state = "error";
       assistantMessage.error = formatError(error);
       const authActions = buildProviderAuthActionsForError(session.provider, assistantMessage.error);
@@ -3833,12 +3860,15 @@ async function runUnifiedFoundationChat(
       emitAgentEvent(session, assistantMessage.id, {
         eventType: "run.failed",
         error: assistantMessage.error,
-        recoverable: false,
+        recoverable: usageLimited,
     });
       broadcast({
         type: "error",
         sessionId: session.id,
         message: assistantMessage.error,
+        ...(usageLimited
+          ? { errorKind: PROVIDER_USAGE_LIMIT_ERROR_KIND, recoverable: true }
+          : {}),
     });
     }
   } finally {
@@ -12339,6 +12369,23 @@ function formatError(error) {
     return error.message;
   }
   return String(error);
+}
+
+/**
+ * Marks the `type: "error"` envelope so the Mac side can tell an expected
+ * upstream provider usage-limit (quota) condition apart from a real fault. The
+ * Swift bridge keys on `errorKind` to surface a "retry later / switch provider"
+ * message instead of capturing a generic exception (see AgenticViewModel).
+ */
+const PROVIDER_USAGE_LIMIT_ERROR_KIND = "provider_usage_limit";
+
+/**
+ * True for an expected, recoverable upstream provider quota condition (today,
+ * Codex/ChatGPT usage limits). Such errors are tracked as a benign telemetry
+ * event rather than a captured exception on either side of the bridge.
+ */
+function isRecoverableProviderQuotaError(error) {
+  return isCodexUsageLimitError(error);
 }
 
 function readApiKey(provider) {

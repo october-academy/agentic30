@@ -186,6 +186,25 @@ struct SidecarEventDecodingTests {
         #expect(event.type == "error")
         #expect(event.message == "Sidecar is not connected.")
         #expect(event.sessions == nil)
+        #expect(event.errorKind == nil)
+    }
+
+    @MainActor @Test func decodesProviderUsageLimitErrorPayload() throws {
+        let payload = """
+        {
+          "type": "error",
+          "sessionId": "session-1",
+          "message": "You've hit your usage limit. Your limit resets Jun 11 12:54 PM.",
+          "errorKind": "provider_usage_limit",
+          "recoverable": true
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "error")
+        #expect(event.errorKind == "provider_usage_limit")
+        #expect(event.sessionId == "session-1")
     }
 
     @MainActor @Test func decodesOfficeHoursSourceGatePayload() throws {

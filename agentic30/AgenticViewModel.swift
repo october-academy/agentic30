@@ -6801,15 +6801,32 @@ final class AgenticViewModel: ObservableObject {
                 }
                 markStartupQueuedActionFailed(event.message ?? "실행 보조 앱 연결이 끊겼습니다.")
             }
-            PostHogTelemetry.captureException(
-                NSError(domain: "SidecarEvent", code: -1, userInfo: [NSLocalizedDescriptionKey: event.message ?? "알 수 없는 실행 보조 앱 오류"]),
-                properties: [
-                    "component": "agentic_view_model",
-                    "operation": "sidecar_event_error",
-                    "session_id": event.sessionId ?? "",
-                ],
-                authSession: macAuthSession
-            )
+            if event.errorKind == "provider_usage_limit" {
+                // Expected upstream provider quota cap (e.g. Codex/ChatGPT usage
+                // limit). The sidecar already surfaced it as the session error
+                // (a "retry later / switch provider" message); track it as a
+                // benign event instead of a captured exception so the bridge
+                // does not double-report it as an error-tracking issue.
+                PostHogTelemetry.capture(
+                    "mac_provider_usage_limit",
+                    properties: [
+                        "component": "agentic_view_model",
+                        "operation": "sidecar_event_error",
+                        "session_id": event.sessionId ?? "",
+                    ],
+                    authSession: macAuthSession
+                )
+            } else {
+                PostHogTelemetry.captureException(
+                    NSError(domain: "SidecarEvent", code: -1, userInfo: [NSLocalizedDescriptionKey: event.message ?? "알 수 없는 실행 보조 앱 오류"]),
+                    properties: [
+                        "component": "agentic_view_model",
+                        "operation": "sidecar_event_error",
+                        "session_id": event.sessionId ?? "",
+                    ],
+                    authSession: macAuthSession
+                )
+            }
             refreshPresentationState()
         default:
             break
@@ -10452,6 +10469,12 @@ struct SidecarEvent: Decodable {
     let needsCommitment: Bool?
     let gatedStep: String?
     let error: String?
+    /// Set by the sidecar on `type: "error"` envelopes that represent an
+    /// expected, recoverable upstream provider condition (today,
+    /// `"provider_usage_limit"` for a Codex/ChatGPT quota cap) rather than a
+    /// real fault. The host uses it to surface a "retry later / switch provider"
+    /// message instead of capturing a generic exception.
+    let errorKind: String?
 
     // Document creation fields
     let docType: String?
@@ -10560,6 +10583,7 @@ struct SidecarEvent: Decodable {
         needsCommitment: Bool? = nil,
         gatedStep: String? = nil,
         error: String?,
+        errorKind: String? = nil,
         docType: String?,
         docPath: String?,
         progressText: String?,
@@ -10658,6 +10682,7 @@ struct SidecarEvent: Decodable {
         self.needsCommitment = needsCommitment
         self.gatedStep = gatedStep
         self.error = error
+        self.errorKind = errorKind
         self.docType = docType
         self.docPath = docPath
         self.progressText = progressText
