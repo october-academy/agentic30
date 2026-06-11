@@ -2,6 +2,7 @@ import {
   CODEX_STRUCTURED_INPUT_TOOL,
   isStructuredInputToolName,
 } from "./structured-input-tools.mjs";
+import { normalizeOfficeHoursUiCopyRequest } from "./office-hours-copy-rules.mjs";
 
 export const OFFICE_HOURS_INLINE_MODE = "office_hours_inline";
 // Origin stamp for Office Hours questions asked through the host TOOL channel
@@ -30,6 +31,7 @@ const DEFAULT_OFFICE_HOURS_FREE_TEXT_PLACEHOLDER =
   "예: 선택지에 없으면 실제 상황을 직접 입력";
 
 const DEMAND_EVIDENCE_QUESTION_ID = "office_hours_demand_evidence";
+const ACTIVE_USER_DEFINITION_QUESTION_ID = "get_users_active_user_definition";
 const DEMAND_EVIDENCE_OPTIONS = Object.freeze([
   Object.freeze({
     label: "실제 결제/계약이 있었다",
@@ -69,6 +71,36 @@ const DEMAND_EVIDENCE_OPTIONS = Object.freeze([
     failureMode: "실제 행동 없이 제품을 만들면 수요 공백이 남습니다.",
   }),
 ]);
+const ACTIVE_USER_DEFINITION_OPTIONS = Object.freeze([
+  Object.freeze({
+    label: "첫 가치 완료",
+    description: "고객 후보가 첫 실행 기록, 검증 행동, 다음 과제까지 제품의 핵심 결과를 처음 끝낸 순간만 활성 사용자로 셉니다.",
+    nextIntent: "first_value_completed",
+    recommended: true,
+    risk: "가입이나 방문만으로는 실제 사용이 증명되지 않습니다.",
+    evidenceTarget: "첫 가치 완료 이벤트, 실행 기록, 검증 행동, 다음 과제",
+    mapsTo: "get_users_active_user_definition",
+    failureMode: "핵심 결과 완료가 없으면 활성 사용자로 세지 않습니다.",
+  }),
+  Object.freeze({
+    label: "반복 사용 완료",
+    description: "정해진 기간 안에 같은 고객 후보가 다시 돌아와 핵심 행동을 반복한 경우만 셉니다.",
+    nextIntent: "repeat_use_completed",
+    risk: "반복 기준이 너무 높으면 초기 유입 실험 속도가 느려질 수 있습니다.",
+    evidenceTarget: "재방문/반복 핵심 행동 이벤트",
+    mapsTo: "get_users_active_user_definition",
+    failureMode: "한 번 둘러본 사용자나 단순 가입자는 제외합니다.",
+  }),
+  Object.freeze({
+    label: "수동 파일럿 성공",
+    description: "자동화 전이라도 수동으로 고객 후보의 문제를 해결하고 결과 확인까지 끝낸 사람만 셉니다.",
+    nextIntent: "manual_pilot_success",
+    risk: "수동 성공을 제품 사용으로 착각하지 않도록 완료 기준과 증거를 남겨야 합니다.",
+    evidenceTarget: "파일럿 완료 기록, 사용자 반응, 다음 행동/과제",
+    mapsTo: "get_users_active_user_definition",
+    failureMode: "관심 표현이나 미완료 상담은 제외합니다.",
+  }),
+]);
 const KNOWN_OFFICE_HOURS_INTENTS = new Set([
   "demand",
   "stage",
@@ -78,6 +110,7 @@ const KNOWN_OFFICE_HOURS_INTENTS = new Set([
   "premise",
   "alternatives",
   "future_fit",
+  "get_users_active_user_definition",
 ]);
 
 // Single source of truth for HOW each provider asks an Office Hours forcing
@@ -137,9 +170,15 @@ export function normalizeOfficeHoursStructuredPromptRequest(request = {}) {
   const questions = Array.isArray(request.questions) ? request.questions : [];
   let changed = false;
   const normalizedQuestions = questions.map((question) => {
-    if (!isDemandEvidenceQuestion(question)) return question;
-    changed = true;
-    return normalizeDemandEvidenceQuestion(question);
+    if (isActiveUserDefinitionQuestion(question)) {
+      changed = true;
+      return normalizeActiveUserDefinitionQuestion(question);
+    }
+    if (isDemandEvidenceQuestion(question)) {
+      changed = true;
+      return normalizeDemandEvidenceQuestion(question);
+    }
+    return question;
   });
   return changed
     ? {
@@ -248,15 +287,18 @@ function normalizeOfficeHoursQuestionPresentation(question = {}) {
 
 export function prepareOfficeHoursStructuredInputRequest(request = {}) {
   const canonical = normalizeOfficeHoursStructuredPromptRequest(request);
-  const withPresentation = Array.isArray(canonical?.questions)
-    ? { ...canonical, questions: canonical.questions.map(normalizeOfficeHoursQuestionPresentation) }
-    : canonical;
-  const stamped = ensureOfficeHoursGeneration(withPresentation);
+  const stamped = ensureOfficeHoursGeneration(canonical);
+  const withUiCopy = isOfficeHoursStructuredInputMode(stamped?.generation?.mode)
+    ? normalizeOfficeHoursUiCopyRequest(stamped)
+    : stamped;
+  const withPresentation = Array.isArray(withUiCopy?.questions)
+    ? { ...withUiCopy, questions: withUiCopy.questions.map(normalizeOfficeHoursQuestionPresentation) }
+    : withUiCopy;
   // Office Hours로 스탬프된 카드만 자유 입력을 강제한다 — 이 함수를 통과하는
   // 비 Office Hours 요청(예: docType이 있는 IDD 연속 질문)은 그대로 둔다.
-  return isOfficeHoursStructuredInputMode(stamped?.generation?.mode)
-    ? ensureOfficeHoursFreeTextInput(stamped)
-    : stamped;
+  return isOfficeHoursStructuredInputMode(withPresentation?.generation?.mode)
+    ? ensureOfficeHoursFreeTextInput(withPresentation)
+    : withPresentation;
 }
 
 // 요청 안의 모든 질문에 자유 입력 탈출구를 보장한다. allowFreeText가 이미
@@ -389,9 +431,10 @@ export function buildOfficeHoursInlineStructuredPromptPayload({
       signalLabel: officeHoursSignalLabel(intent),
     },
   };
-  return normalizeOfficeHoursIntent(intent) === "demand"
+  const canonicalPayload = normalizeOfficeHoursIntent(intent) === "demand"
     ? normalizeOfficeHoursStructuredPromptRequest(payload)
     : payload;
+  return normalizeOfficeHoursUiCopyRequest(canonicalPayload);
 }
 
 export function buildOfficeHoursStructuredInputContinuationPrompt({
@@ -411,6 +454,82 @@ export function buildOfficeHoursStructuredInputContinuationPrompt({
     lines.push("", "## Selected option evidence hints", description);
   }
   return lines.join("\n");
+}
+
+export function buildOfficeHoursInterviewAnswerLogAttributes({
+  session = null,
+  pendingUserInput = null,
+  response = null,
+  responseText = "",
+  responseDescription = "",
+  terminal = false,
+} = {}) {
+  const generation = pendingUserInput?.generation || {};
+  const questions = Array.isArray(pendingUserInput?.questions) ? pendingUserInput.questions : [];
+  const responseEntries = Array.isArray(response?.responses) ? response.responses : [];
+  const responseByQuestion = new Map(
+    responseEntries.map((entry) => [String(entry?.question || ""), entry]),
+  );
+  const normalizedResponses = questions.map((question) => {
+    const questionText = String(question?.question || "");
+    const entry = responseByQuestion.get(questionText) || {};
+    const selectedOptions = Array.isArray(entry?.selectedOptions)
+      ? entry.selectedOptions.map((option) => String(option)).filter(Boolean)
+      : [];
+    const selected = new Set(selectedOptions);
+    const options = Array.isArray(question?.options)
+      ? question.options.map((option) => normalizeOfficeHoursLogOption(option, selected))
+      : [];
+    return {
+      question_id: String(question?.questionId || question?.question_id || question?.id || ""),
+      header: String(question?.header || ""),
+      question_text: questionText,
+      helper_text: String(question?.helperText || question?.helper_text || ""),
+      allow_free_text: question?.allowFreeText === true,
+      requires_free_text: question?.requiresFreeText === true,
+      multi_select: question?.multiSelect === true,
+      text_mode: String(question?.textMode || question?.text_mode || ""),
+      options,
+      selected_options: selectedOptions,
+      free_text: typeof entry?.freeText === "string" ? entry.freeText : "",
+    };
+  });
+  return {
+    log_type: "office_hours_interview_answer",
+    session_id: String(session?.id || pendingUserInput?.sessionId || ""),
+    request_id: String(pendingUserInput?.requestId || ""),
+    provider: String(session?.provider || ""),
+    day: normalizeOfficeHoursLogDay(session?.runtime?.officeHours?.day),
+    source: String(session?.runtime?.officeHours?.source || ""),
+    mode: String(generation?.mode || ""),
+    signal_id: String(generation?.signalId || generation?.signal_id || ""),
+    signal_label: String(generation?.signalLabel || generation?.signal_label || ""),
+    terminal: terminal === true,
+    question_count: normalizedResponses.length,
+    responses: normalizedResponses,
+    response_text: String(responseText || ""),
+    response_description: String(responseDescription || ""),
+  };
+}
+
+function normalizeOfficeHoursLogOption(option = {}, selected = new Set()) {
+  const label = String(option?.label || "");
+  return {
+    label,
+    description: String(option?.description || ""),
+    next_intent: String(option?.nextIntent || option?.next_intent || ""),
+    recommended: option?.recommended === true,
+    risk: String(option?.risk || ""),
+    evidence_target: String(option?.evidenceTarget || option?.evidence_target || ""),
+    maps_to: String(option?.mapsTo || option?.maps_to || ""),
+    failure_mode: String(option?.failureMode || option?.failure_mode || ""),
+    selected: selected.has(label),
+  };
+}
+
+function normalizeOfficeHoursLogDay(value) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
 }
 
 // Resolve a picked option back into a single hint string for the agent SDK.
@@ -532,6 +651,44 @@ function isDemandEvidenceQuestion(question = {}) {
     && /증거|evidence|실제 행동|strongest/.test(text);
 }
 
+function isActiveUserDefinitionQuestion(question = {}) {
+  const id = String(question?.questionId || question?.question_id || question?.id || "")
+    .trim()
+    .toLowerCase();
+  if (id === ACTIVE_USER_DEFINITION_QUESTION_ID) return true;
+  const text = [
+    question?.header,
+    question?.question,
+  ].filter(Boolean).join("\n").toLowerCase();
+  return /active user|activation action|활성 사용자|활성\s*행동|핵심\s*행동/.test(text)
+    && /기준|세려면|count|definition|완료/.test(text);
+}
+
+function normalizeActiveUserDefinitionQuestion(question = {}) {
+  return {
+    ...question,
+    questionId: String(
+      question.questionId
+        || question.question_id
+        || question.id
+        || ACTIVE_USER_DEFINITION_QUESTION_ID,
+    ).trim().slice(0, 96) || ACTIVE_USER_DEFINITION_QUESTION_ID,
+    header: "활성 사용자 기준",
+    question: "이 목표에서 활성 사용자 1명으로 세려면 고객 후보가 어떤 핵심 행동을 끝내야 하나요?",
+    helperText: cleanOfficeHoursQuestion(
+      String(question.helperText || question.helper_text || "").trim()
+        || "가입, 대기 신청, 페이지 조회, 좋아요, 팔로워, 관심 표현만으로는 활성 사용자로 세지 않습니다.",
+    ),
+    options: ACTIVE_USER_DEFINITION_OPTIONS.map((option) => ({ ...option })),
+    allowFreeText: true,
+    requiresFreeText: false,
+    textMode: question.textMode || question.text_mode || "short",
+    freeTextPlaceholder: String(question.freeTextPlaceholder || question.free_text_placeholder || "")
+      .trim()
+      .slice(0, 180) || "예: 온보딩을 끝내고 첫 검증 행동을 기록해 다음 과제를 받는다",
+  };
+}
+
 function normalizeDemandEvidenceQuestion(question = {}) {
   return {
     ...question,
@@ -609,6 +766,9 @@ function resolveOfficeHoursQuestionIntent({
     inlineDecision?.question,
     inlineDecision?.header,
   ].filter(Boolean).join("\n").toLowerCase();
+  if (/active user|activated users|activation action|활성 사용자|활성\s*행동|핵심\s*활성|첫 가치|반복 사용|수동 파일럿/.test(haystack)) {
+    return "get_users_active_user_definition";
+  }
   if (/demand|수요|증거|누가.*원하|관심 말고|돈.*시간.*우회|would.*upset/.test(haystack)) {
     return "demand";
   }
@@ -647,6 +807,7 @@ function normalizeOfficeHoursIntent(value = "") {
   if (text.includes("premise")) return "premise";
   if (text.includes("alternative")) return "alternatives";
   if (text.includes("future") || text.includes("q6")) return "future_fit";
+  if (text.includes("get_users_active_user_definition") || text.includes("active_user") || text.includes("activation")) return "get_users_active_user_definition";
   return KNOWN_OFFICE_HOURS_INTENTS.has(text) ? text : "";
 }
 
@@ -661,6 +822,7 @@ function resolveOfficeHoursQuestionId(inlineDecision, intent = "") {
   const key = normalizeOfficeHoursIntent(intent);
   if (key === "premise") return "office_hours_premise_challenge";
   if (key === "alternatives") return "office_hours_alternatives";
+  if (key === "get_users_active_user_definition") return ACTIVE_USER_DEFINITION_QUESTION_ID;
   if (key === "demand") return DEMAND_EVIDENCE_QUESTION_ID;
   if (key) return `office_hours_${key}`;
   return DEMAND_EVIDENCE_QUESTION_ID;
@@ -694,6 +856,8 @@ function officeHoursIntentHeader(intent = "") {
       return "대안 비교";
     case "future_fit":
       return "앞으로 더 중요해질 이유";
+    case "get_users_active_user_definition":
+      return "활성 사용자 기준";
     default:
       return "수요 증거";
   }
@@ -717,6 +881,8 @@ function officeHoursSignalLabel(intent = "") {
       return "Office Hours 대안 비교";
     case "future_fit":
       return "Office Hours Q6 앞으로 더 중요해질 이유";
+    case "get_users_active_user_definition":
+      return "활성 사용자 기준";
     default:
       return "Office Hours Q1 수요 증거";
   }

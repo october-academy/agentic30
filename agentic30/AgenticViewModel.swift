@@ -92,6 +92,24 @@ enum BipNotificationIntent: String, Hashable, Sendable {
         }
     }
 
+    var notificationTitle: String {
+        switch self {
+        case .morning:
+            return "오늘 인터뷰 체크"
+        case .evening:
+            return "오늘 실행 완료 체크"
+        }
+    }
+
+    var notificationBody: String {
+        switch self {
+        case .morning:
+            return "오늘 인터뷰를 진행했는지 확인하세요."
+        case .evening:
+            return "오늘 실행을 완료했는지 확인하세요."
+        }
+    }
+
     init?(notificationUserInfo userInfo: [AnyHashable: Any], identifier: String) {
         if let rawIntent = userInfo[Self.userInfoKey] as? String,
            let intent = BipNotificationIntent(rawValue: rawIntent) {
@@ -242,6 +260,32 @@ struct ScanProviderLimitNotice: Equatable {
     let stage: String
 }
 
+struct WorkspaceScanProviderReadiness: Codable, Hashable, Identifiable {
+    let provider: AgentProvider
+    let sdkInstalled: Bool
+    let authenticated: Bool
+    let scanReady: Bool
+    let source: String
+    let message: String
+    let sdkMessage: String
+    let authAction: String?
+
+    var id: AgentProvider { provider }
+
+    var telemetryProperties: [String: Any] {
+        [
+            "provider": provider.rawValue,
+            "sdk_installed": sdkInstalled,
+            "authenticated": authenticated,
+            "scan_ready": scanReady,
+            "source": source,
+            "message": message,
+            "sdk_message": sdkMessage,
+            "auth_action": authAction ?? "",
+        ]
+    }
+}
+
 /// `workspace_scan_blocked`: foreground scan verification could not complete.
 /// Unlike a provider-limit notice, this is fail-closed: Day 1 must not proceed
 /// until the user retries with an available provider.
@@ -253,6 +297,7 @@ struct WorkspaceScanBlockedNotice: Equatable {
     let message: String
     let nextProvider: AgentProvider?
     let availableProviders: [AgentProvider]
+    let providerReadiness: [WorkspaceScanProviderReadiness]
     let errorKind: String?
 }
 
@@ -1650,7 +1695,7 @@ enum Day1GoalType: String, Codable, CaseIterable, Hashable {
     var title: String {
         switch self {
         case .makeMoney: return "첫 매출 달성"
-        case .getUsers: return "첫 100명 사용자 모으기"
+        case .getUsers: return "활성 사용자 100명 모으기"
         case .buildProduct: return "작동하는 첫 버전 출시"
         }
     }
@@ -1660,7 +1705,7 @@ enum Day1GoalType: String, Codable, CaseIterable, Hashable {
         case .makeMoney:
             return "**돈이 실제로 움직일 조건**을 확인합니다."
         case .getUsers:
-            return "가입, 추천, 출시 전 신청 등 **실제 유입 행동**을 확인합니다."
+            return "ICP가 **핵심 활성 행동을 끝냈는지** 확인합니다."
         case .buildProduct:
             return "사용자가 **핵심 흐름을 끝까지 완료하는지** 확인합니다."
         }
@@ -1751,7 +1796,7 @@ struct Day1GoalSelection: Codable, Equatable, Hashable {
         case .makeMoney:
             return "지불 의향 검증"
         case .getUsers:
-            return "유입/가입 행동 검증"
+            return "활성 행동 기준 검증"
         case .buildProduct:
             return "제품 흐름 검증"
         }
@@ -2108,6 +2153,7 @@ final class AgenticViewModel: ObservableObject {
     private var didEmitUITestingNewsMarketRadarEvents = false
     private var didEmitUITestingWorkHistoryEvents = false
     private var didEmitUITestingMorningBriefingEvents = false
+    private var didEmitUITestingBipResearchEvents = false
     #endif
     /// Idempotency guard for the AI-driven Foundation Day 0/2-7 first prompt.
     /// Keyed by `"<sessionId>:day-<day>"` so the same opener is never injected
@@ -2468,7 +2514,7 @@ final class AgenticViewModel: ObservableObject {
         hydrateWorkspaceScanResultFromCacheIfAvailable()
     }
 
-    struct StructuredPromptSubmission: Hashable {
+    struct StructuredPromptSubmission: Codable, Hashable {
         let question: String
         let selectedOptions: [String]
         let freeText: String
@@ -2756,15 +2802,25 @@ final class AgenticViewModel: ObservableObject {
             "source": source,
         ], authSession: macAuthSession)
 
-        guard canStartSidecar else {
-            bipNotificationOpenRequest = nil
-            return
-        }
-        if let sessionId = bipCoach?.sessionId,
-           sessions.contains(where: { $0.id == sessionId }) {
-            selectedSessionID = sessionId
+        if intent == .evening {
+            selectBipCoachSessionIfAvailable()
         }
         bipNotificationOpenRequest = BipNotificationOpenRequest(intent: intent)
+    }
+
+    func clearBipNotificationOpenRequest(id: UUID? = nil) {
+        guard id == nil || bipNotificationOpenRequest?.id == id else { return }
+        bipNotificationOpenRequest = nil
+    }
+
+    @discardableResult
+    func selectBipCoachSessionIfAvailable() -> Bool {
+        guard let sessionId = bipCoach?.sessionId,
+              sessions.contains(where: { $0.id == sessionId }) else {
+            return false
+        }
+        selectedSessionID = sessionId
+        return true
     }
 
     nonisolated static let questionReadyNotificationDefaultsKey = "agentic30.officeHours.questionReadyNotification"
@@ -2811,8 +2867,8 @@ final class AgenticViewModel: ObservableObject {
         }
 
         let content = UNMutableNotificationContent()
-        content.title = bipTestNotificationTitle(intent)
-        content.body = bipTestNotificationBody(intent)
+        content.title = intent.notificationTitle
+        content.body = intent.notificationBody
         content.sound = .default
         content.userInfo = [
             BipNotificationIntent.userInfoKey: intent.rawValue,
@@ -2836,24 +2892,6 @@ final class AgenticViewModel: ObservableObject {
             "intent": intent.rawValue,
         ], authSession: macAuthSession)
         return "1초 뒤 테스트 알림을 보냅니다. 배너를 누르면 알림 진입 화면으로 이동해요."
-    }
-
-    private func bipTestNotificationTitle(_ intent: BipNotificationIntent) -> String {
-        switch intent {
-        case .morning:
-            return "10시 오늘 실행"
-        case .evening:
-            return "21시 마감 체크"
-        }
-    }
-
-    private func bipTestNotificationBody(_ intent: BipNotificationIntent) -> String {
-        switch intent {
-        case .morning:
-            return "작게 하나 공개할 미션을 정하세요."
-        case .evening:
-            return "게시 기록을 남기면 오늘 루프가 닫힙니다."
-        }
     }
 
     func sentPromptPreview(for sessionID: String) -> String? {
@@ -4043,6 +4081,75 @@ final class AgenticViewModel: ObservableObject {
         ])
     }
 
+    func reviseOfficeHoursAnswer(
+        sessionId: String,
+        requestId: String,
+        prompt: StructuredPromptRequest,
+        responses: [StructuredPromptSubmission]
+    ) -> Bool {
+        guard sessions.contains(where: { $0.id == sessionId && $0.archivedAt == nil }) else { return false }
+        guard let promptPayload = Self.sidecarJSONObject(prompt) as? [String: Any] else { return false }
+        let payloadResponses = responses.map { response in
+            [
+                "question": response.question,
+                "selectedOptions": response.selectedOptions,
+                "freeText": response.freeText,
+            ] as [String : Any]
+        }
+        #if DEBUG
+        if completeUITestingOfficeHoursRevisionIfNeeded(
+            sessionId: sessionId,
+            requestId: requestId,
+            prompt: prompt
+        ) {
+            submittedStructuredPromptBySession.removeValue(forKey: sessionId)
+            structuredPromptDraftBySession.removeValue(forKey: sessionId)
+            officeHoursCommitmentCandidatesBySession.removeValue(forKey: sessionId)
+            officeHoursCommitmentCandidatesGenerating.remove(sessionId)
+            PostHogTelemetry.capture("mac_office_hours_answer_revision_submitted", properties: [
+                "session_id": sessionId,
+                "request_id": requestId,
+                "response_count": responses.count,
+            ], authSession: macAuthSession)
+            return true
+        }
+        #endif
+        let sent = sidecar.send(payload: [
+            "type": "office_hours_revise_answer",
+            "sessionId": sessionId,
+            "requestId": requestId,
+            "prompt": promptPayload,
+            "responses": payloadResponses,
+        ])
+        guard sent else { return false }
+        submittedStructuredPromptBySession.removeValue(forKey: sessionId)
+        structuredPromptDraftBySession.removeValue(forKey: sessionId)
+        officeHoursCommitmentCandidatesBySession.removeValue(forKey: sessionId)
+        officeHoursCommitmentCandidatesGenerating.remove(sessionId)
+        PostHogTelemetry.capture("mac_office_hours_answer_revision_submitted", properties: [
+            "session_id": sessionId,
+            "request_id": requestId,
+            "response_count": responses.count,
+        ], authSession: macAuthSession)
+        return true
+    }
+
+    private nonisolated static func sidecarJSONObject<T: Encodable>(_ value: T) -> Any? {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(sidecarDateString(date))
+        }
+        guard let data = try? encoder.encode(value) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data)
+    }
+
+    private nonisolated static func sidecarDateString(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date)
+    }
+
     private func markStructuredPromptSubmittedLocally(
         sessionId: String,
         requestId: String,
@@ -4071,6 +4178,7 @@ final class AgenticViewModel: ObservableObject {
     func scanWorkspace(root: String, providerOverride: AgentProvider? = nil) {
         guard !root.isEmpty else { return }
         beginWorkspaceScanTiming(reset: true)
+        clearWorkspaceScanResultCache(root: root)
         isScanning = true
         scanProgressMessage = isConnected ? "Preparing workspace scan..." : "Waiting for workspace connection..."
         scanProgressLogs = [scanProgressMessage]
@@ -4344,7 +4452,7 @@ final class AgenticViewModel: ObservableObject {
         case .makeMoney:
             return "30일 안에 첫 유료 결제 1건을 만든다."
         case .getUsers:
-            return "30일 안에 가입자 100명을 모은다."
+            return "30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다."
         case .buildProduct:
             return "30일 안에 핵심 흐름 완주율 10%를 달성한다."
         }
@@ -4397,6 +4505,12 @@ final class AgenticViewModel: ObservableObject {
         let root = (explicitRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !root.isEmpty else { return }
         workspaceScanResultStore(for: root).save(result)
+    }
+
+    private func clearWorkspaceScanResultCache(root explicitRoot: String? = nil) {
+        let root = (explicitRoot ?? workspaceRoot).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !root.isEmpty else { return }
+        workspaceScanResultStore(for: root).clear()
     }
 
     private func requestWorkspaceScanRecoveryIfNeeded() {
@@ -4561,6 +4675,75 @@ final class AgenticViewModel: ObservableObject {
             "server": server,
             "preferredProvider": selectedProvider.rawValue,
         ])
+    }
+
+    private func reportIntegrationStatusTelemetry(_ snapshot: IntegrationStatusSnapshot?) {
+        guard let snapshot else { return }
+        let probes: [(String, IntegrationProbeStatus?)] = [
+            ("github", snapshot.github),
+            ("github_mcp", snapshot.githubMcp),
+            ("posthog", snapshot.posthog),
+            ("cloudflare", snapshot.cloudflare),
+            ("vercel", snapshot.vercel),
+        ]
+        for (integration, probe) in probes {
+            guard let state = probe?.state,
+                  ["failed", "missing"].contains(state)
+            else { continue }
+            let properties: [String: Any] = [
+                "integration": integration,
+                "state": state,
+                "failure_detail": probe?.detail ?? "",
+                "checked_at": snapshot.checkedAt ?? "",
+            ]
+            PostHogTelemetry.capture(
+                "mac_integration_probe_unhealthy",
+                properties: properties,
+                authSession: macAuthSession
+            )
+            PostHogTelemetry.captureLog(
+                "integration probe unhealthy",
+                level: state == "failed" ? .error : .warn,
+                properties: properties,
+                authSession: macAuthSession
+            )
+        }
+    }
+
+    private func reportMcpOauthConnectTelemetry(_ result: McpOauthConnectResult?) {
+        guard let result,
+              let state = result.state,
+              !["ready", "progress"].contains(state)
+        else { return }
+
+        let properties: [String: Any] = [
+            "server": result.server ?? "",
+            "provider": result.provider ?? selectedProvider.rawValue,
+            "state": state,
+            "has_login_url": !(result.loginUrl?.isEmpty ?? true),
+            "failure_detail": result.detail ?? "",
+            "checked_at": result.checkedAt ?? "",
+        ]
+        PostHogTelemetry.capture(
+            "mac_mcp_oauth_connect_unhealthy",
+            properties: properties,
+            authSession: macAuthSession
+        )
+        PostHogTelemetry.captureLog(
+            "mcp oauth connect did not complete",
+            level: state == "failed" ? .error : .warn,
+            properties: properties,
+            authSession: macAuthSession
+        )
+        if state == "failed" {
+            PostHogTelemetry.captureException(
+                NSError(domain: "McpOauthConnect", code: -1, userInfo: [
+                    NSLocalizedDescriptionKey: result.detail ?? "MCP OAuth connection failed."
+                ]),
+                properties: properties,
+                authSession: macAuthSession
+            )
+        }
     }
 
     func refreshGitHubCliStatus() {
@@ -5240,6 +5423,9 @@ final class AgenticViewModel: ObservableObject {
 
     func prepareBipResearchForDisplay(curriculumDay: [String: Any]? = nil) {
         lastBipResearchViewedAt = Date()
+        #if DEBUG
+        if emitUITestingBipResearchEventsIfRequested() { return }
+        #endif
         let dayNumber = resolvedBipResearchDayNumber(nil)
         requestBipResearch(dayNumber: dayNumber, curriculumDay: curriculumDay)
         guard shouldRefreshBipResearchForDisplay else { return }
@@ -5453,6 +5639,108 @@ final class AgenticViewModel: ObservableObject {
                 )
             ))
         }
+        return true
+    }
+
+    private func emitUITestingBipResearchEventsIfRequested() -> Bool {
+        guard CommandLine.arguments.contains("--ui-testing-stub-bip-research-events") else {
+            return false
+        }
+        guard !didEmitUITestingBipResearchEvents else {
+            return true
+        }
+        didEmitUITestingBipResearchEvents = true
+
+        let now = Date(timeIntervalSince1970: 1_779_238_800)
+        let later = now.addingTimeInterval(24 * 60 * 60)
+        bipResearch = BipResearchSnapshot(
+            schemaVersion: 1,
+            contentLocale: "ko-KR",
+            promptProfile: "ui-testing",
+            contextFingerprint: "ui-testing-bip-research",
+            generatedAt: now,
+            nextRefreshAfter: later,
+            dayNumber: resolvedBipResearchDayNumber(nil),
+            dayTitle: "Day 1 고객 후보",
+            dayPhase: "first_users",
+            status: BipResearchStatus(
+                state: "ready",
+                lastSuccessAt: now,
+                stale: false,
+                error: nil,
+                reason: "ui_testing",
+                researchSource: "UI 테스트 fixture",
+                stage: "saving_results",
+                progressText: "UI 테스트 공개 기록 리서치 준비 완료",
+                elapsedMs: 180,
+                stepIndex: 6,
+                stepCount: 6,
+                partialFailures: nil
+            ),
+            briefTitle: "공개 기록으로 고객 후보를 좁힙니다",
+            briefBody: "UI 테스트 fixture는 공개 실행 기록, 고객 후보 근거, DM 초안 패널이 동시에 렌더되는지 검증합니다.",
+            querySummary: "SpeakMac 공개 기록 · 1인 빌더 · macOS AI 도구",
+            candidateTargetCount: 14,
+            workspaceEvidenceRefs: [],
+            signals: [
+                BipResearchSignal(
+                    id: "social",
+                    title: "공개 소셜 기록",
+                    subtitle: "X/Twitter · Threads(Meta)",
+                    state: "ready",
+                    tone: "success"
+                ),
+                BipResearchSignal(
+                    id: "gap",
+                    title: "확인할 공백",
+                    subtitle: "결제 의향과 현재 대안",
+                    state: "ask",
+                    tone: "amber"
+                ),
+            ],
+            candidates: [
+                BipResearchCandidate(
+                    id: "speakmac",
+                    title: "SpeakMac을 쓰는 1인 macOS 빌더",
+                    sourceLabel: "X / Twitter",
+                    source: "@speakmac",
+                    sourceType: "x",
+                    medium: "public_post",
+                    date: "2026-06-10",
+                    matchLabel: "강한 적합",
+                    matchCaption: "macOS AI workflow와 공개 실행 기록이 모두 있음",
+                    quote: "메뉴바에서 바로 음성 입력과 AI 작업을 이어가는 흐름을 만들고 있다.",
+                    whyTitle: "왜 후보인가",
+                    whyBody: "혼자 제품을 만들고 있으며 macOS 자동화와 AI 도구 사용 맥락이 Agentic30의 Day 1 검증 질문과 맞습니다.",
+                    usageTitle: "오늘의 사용처",
+                    usageBody: "DM으로 현재 고객 검증 루틴과 지불 의향을 확인합니다.",
+                    gap: "실제 결제 의향과 반복 사용 빈도는 아직 확인되지 않았습니다.",
+                    tags: [
+                        BipResearchTag(title: "macOS", tone: "sky"),
+                        BipResearchTag(title: "1인 빌더", tone: "accent"),
+                        BipResearchTag(title: "결제 질문 필요", tone: "amber"),
+                    ],
+                    sourceRefs: [
+                        BipResearchSourceRef(
+                            id: "speakmac-x",
+                            sourceType: "x",
+                            platform: "X",
+                            title: "SpeakMac 공개 포스트",
+                            url: "https://example.com/speakmac",
+                            domain: "example.com",
+                            path: "/speakmac",
+                            publishedAt: "2026-06-10",
+                            fetchedAt: "2026-06-11",
+                            excerpt: "macOS 메뉴바 AI workflow 공개 기록"
+                        ),
+                    ],
+                    draft: """
+                    안녕하세요. macOS에서 AI 작업을 반복하는 흐름을 만들고 계신 걸 봤습니다. 지금 고객 검증이나 결제 의향 확인을 어떤 방식으로 관리하는지 10분만 여쭤봐도 될까요?
+                    """,
+                    evidenceStrength: "strong"
+                ),
+            ]
+        )
         return true
     }
     #endif
@@ -6335,9 +6623,17 @@ final class AgenticViewModel: ObservableObject {
         ])
     }
 
-    private func requestAndScheduleBipNotificationsIfNeeded(for state: BipCoachState) {
+    private func syncBipDailyNotifications(for state: BipCoachState) {
         Task {
             let center = UNUserNotificationCenter.current()
+            let identifiers = [
+                BipNotificationIntent.morningIdentifier,
+                BipNotificationIntent.eveningIdentifier,
+            ]
+            center.removePendingNotificationRequests(withIdentifiers: identifiers)
+            center.removeDeliveredNotifications(withIdentifiers: identifiers)
+            guard state.isConfigured else { return }
+
             let settings = await withCheckedContinuation { continuation in
                 center.getNotificationSettings { settings in
                     continuation.resume(returning: settings)
@@ -6353,38 +6649,22 @@ final class AgenticViewModel: ObservableObject {
 
             let morningHour = state.config.morningHour ?? 10
             let eveningHour = state.config.eveningHour ?? 21
-            center.removePendingNotificationRequests(withIdentifiers: [
-                BipNotificationIntent.morningIdentifier,
-                BipNotificationIntent.eveningIdentifier,
-            ])
-            scheduleBipNotification(
-                intent: .morning,
-                hour: morningHour,
-                title: "오늘 실행",
-                body: "Threads 글감과 3개 초안을 만들 시간입니다."
-            )
-            scheduleBipNotification(
-                intent: .evening,
-                hour: eveningHour,
-                title: "공개 실행 마감 체크",
-                body: "Threads URL과 Google Sheet 행을 남겼는지 확인하세요."
-            )
+            scheduleBipNotification(intent: .morning, hour: morningHour)
+            scheduleBipNotification(intent: .evening, hour: eveningHour)
         }
     }
 
     private func scheduleBipNotification(
         intent: BipNotificationIntent,
-        hour: Int,
-        title: String,
-        body: String
+        hour: Int
     ) {
         var dateComponents = DateComponents()
         dateComponents.hour = hour
         dateComponents.minute = 0
 
         let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
+        content.title = intent.notificationTitle
+        content.body = intent.notificationBody
         content.sound = .default
         content.userInfo = [
             BipNotificationIntent.userInfoKey: intent.rawValue,
@@ -6473,6 +6753,7 @@ final class AgenticViewModel: ObservableObject {
             }
             if let bipCoach = event.bipCoach {
                 self.bipCoach = bipCoach
+                syncBipDailyNotifications(for: bipCoach)
             }
             day1GoalSelection = event.day1GoalSelection
             if let dp = event.dayProgress { dayProgress = dp }
@@ -6652,11 +6933,13 @@ final class AgenticViewModel: ObservableObject {
             finishWorkspaceScanTiming()
             isScanning = false
             scanResult = nil
+            clearWorkspaceScanResultCache(root: event.scanRoot)
             scanProviderLimitNotice = nil
             let provider = event.provider.flatMap(AgentProvider.init(rawValue:)) ?? selectedProvider
             let nextProvider = event.nextProvider.flatMap(AgentProvider.init(rawValue:))
             let availableProviders = (event.availableProviders ?? [])
                 .compactMap(AgentProvider.init(rawValue:))
+            let providerReadiness = event.providerReadiness ?? []
             let message = event.message?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
                 ?? "AI 검증을 완료하지 못했습니다."
             scanBlockedNotice = WorkspaceScanBlockedNotice(
@@ -6667,6 +6950,7 @@ final class AgenticViewModel: ObservableObject {
                 message: message,
                 nextProvider: nextProvider,
                 availableProviders: availableProviders,
+                providerReadiness: providerReadiness,
                 errorKind: event.errorKind
             )
             setScanProgress(
@@ -6677,6 +6961,40 @@ final class AgenticViewModel: ObservableObject {
                 etaSeconds: nil,
                 foundCount: event.foundCount
             )
+            let properties: [String: Any] = [
+                "workspace_basename": ((event.scanRoot ?? workspaceRoot) as NSString).lastPathComponent,
+                "provider": provider.rawValue,
+                "model": event.model ?? "",
+                "reason": event.reason ?? "",
+                "error_kind": event.errorKind ?? "",
+                "next_provider": nextProvider?.rawValue ?? "",
+                "available_providers": availableProviders.map(\.rawValue),
+                "installed_providers": providerReadiness.filter(\.sdkInstalled).map(\.provider.rawValue),
+                "scan_ready_providers": providerReadiness.filter(\.scanReady).map(\.provider.rawValue),
+                "auth_required_providers": providerReadiness.filter { $0.sdkInstalled && !$0.authenticated }.map(\.provider.rawValue),
+                "provider_readiness": providerReadiness.map(\.telemetryProperties),
+                "failure_detail": message,
+            ]
+            PostHogTelemetry.capture(
+                "mac_workspace_scan_blocked",
+                properties: properties,
+                authSession: macAuthSession
+            )
+            PostHogTelemetry.captureLog(
+                "workspace scan blocked",
+                level: .error,
+                properties: properties,
+                authSession: macAuthSession
+            )
+            if event.reason == "error" {
+                PostHogTelemetry.captureException(
+                    NSError(domain: "WorkspaceScan", code: -1, userInfo: [
+                        NSLocalizedDescriptionKey: message
+                    ]),
+                    properties: properties,
+                    authSession: macAuthSession
+                )
+            }
         case "workspace_scan_progress":
             // Background Day 1 enrichment can report late progress after the
             // foreground scan result. Do not reopen the scan gate unless a new
@@ -6727,6 +7045,35 @@ final class AgenticViewModel: ObservableObject {
             if let evidence = event.evidenceOS { evidenceOS = evidence }
             persistWorkspaceScanResult(event)
             persistWorkspaceScanResultCache(result, root: event.scanRoot)
+            if let error = event.error {
+                clearWorkspaceScanResultCache(root: event.scanRoot)
+                let properties: [String: Any] = [
+                    "workspace_basename": ((event.scanRoot ?? workspaceRoot) as NSString).lastPathComponent,
+                    "stage": event.stage ?? "failed",
+                    "step_index": event.stepIndex ?? 3,
+                    "total_steps": event.totalSteps ?? 3,
+                    "found_count": event.foundCount ?? 0,
+                    "failure_detail": error,
+                ]
+                PostHogTelemetry.capture(
+                    "mac_workspace_scan_failed",
+                    properties: properties,
+                    authSession: macAuthSession
+                )
+                PostHogTelemetry.captureLog(
+                    "workspace scan failed",
+                    level: .error,
+                    properties: properties,
+                    authSession: macAuthSession
+                )
+                PostHogTelemetry.captureException(
+                    NSError(domain: "WorkspaceScan", code: -1, userInfo: [
+                        NSLocalizedDescriptionKey: error
+                    ]),
+                    properties: properties,
+                    authSession: macAuthSession
+                )
+            }
         case "day1_goal_state":
             if event.success == false {
                 day1GoalError = event.error ?? event.message ?? "Day 1 목표를 저장하지 못했습니다."
@@ -6883,6 +7230,7 @@ final class AgenticViewModel: ObservableObject {
         case "integration_status_result":
             integrationStatus = event.integrationStatus
             integrationStatusChecking = false
+            reportIntegrationStatusTelemetry(event.integrationStatus)
         case "mcp_oauth_connect_status":
             // Live prewarm progress: caption text + auto-open the OAuth login
             // URL once (the sidecar can't open a browser; the app can).
@@ -6903,6 +7251,7 @@ final class AgenticViewModel: ObservableObject {
                 mcpOauthResults[server] = result
                 mcpOauthConnecting.remove(server)
                 mcpOauthProgress.removeValue(forKey: server)
+                reportMcpOauthConnectTelemetry(result)
             } else {
                 mcpOauthConnecting.removeAll()
                 mcpOauthProgress.removeAll()
@@ -6952,6 +7301,7 @@ final class AgenticViewModel: ObservableObject {
         case "bip_coach_state":
             if let bipCoach = event.bipCoach {
                 self.bipCoach = bipCoach
+                syncBipDailyNotifications(for: bipCoach)
             }
         case "bip_setup_gate_state":
             updateBipSetupGate(from: event)
@@ -7018,7 +7368,7 @@ final class AgenticViewModel: ObservableObject {
                 ?? selectedFoundationDay
             if let bipCoach = event.bipCoach {
                 self.bipCoach = bipCoach
-                requestAndScheduleBipNotificationsIfNeeded(for: bipCoach)
+                syncBipDailyNotifications(for: bipCoach)
             }
             markFoundationDayCompleted(completedDay)
         case "bip_coach_error":
@@ -7324,6 +7674,27 @@ final class AgenticViewModel: ObservableObject {
         let pendingUserInput = Self.makeUITestingFoundationDay2QuestionIfNeeded(sessionID: stubSessionID, createdAt: now)
             ?? Self.makeUITestingOfficeHoursStructuredPromptIfNeeded(sessionID: stubSessionID, createdAt: now)
             ?? Self.makeUITestingIcpStructuredPromptIfNeeded(sessionID: stubSessionID, createdAt: now)
+        let runtime: ChatSessionRuntime? = {
+            guard let pendingUserInput,
+                  pendingUserInput.generation?.mode?.hasPrefix("office_hours") == true else {
+                return nil
+            }
+            return ChatSessionRuntime(
+                codexThreadId: nil,
+                codexThreadMeta: nil,
+                codexWarm: nil,
+                startupTiming: nil,
+                iddDocumentType: "day1_step",
+                iddMode: "office_hours",
+                officeHours: OfficeHoursRuntime(
+                    active: true,
+                    source: "ui_testing_structured_prompt",
+                    startedAt: ISO8601DateFormatter().string(from: now),
+                    context: "UI test Office Hours structured prompt",
+                    day: 1
+                )
+            )
+        }()
         let session = ChatSession(
             id: pendingUserInput?.sessionId ?? stubSessionID,
             title: "Codex Assistant",
@@ -7347,7 +7718,7 @@ final class AgenticViewModel: ObservableObject {
                 )
             ] : [],
             pendingUserInput: pendingUserInput,
-            runtime: nil
+            runtime: runtime
         )
         sessions = [session]
         selectedSessionID = session.id
@@ -7946,7 +8317,14 @@ final class AgenticViewModel: ObservableObject {
                 codexWarm: nil,
                 startupTiming: nil,
                 iddDocumentType: "day1_step",
-                iddMode: "office_hours"
+                iddMode: "office_hours",
+                officeHours: OfficeHoursRuntime(
+                    active: true,
+                    source: "ui_testing_structured_prompt",
+                    startedAt: ISO8601DateFormatter().string(from: now),
+                    context: "UI test Office Hours structured prompt",
+                    day: 1
+                )
             )
         )
         sessions = [session]
@@ -8384,6 +8762,87 @@ final class AgenticViewModel: ObservableObject {
             requestId: prompt.requestId,
             promptBeforeLocalSubmission: prompt
         )
+    }
+
+    @discardableResult
+    private func completeUITestingOfficeHoursRevisionIfNeeded(
+        sessionId: String,
+        requestId: String,
+        prompt: StructuredPromptRequest
+    ) -> Bool {
+        let arguments = CommandLine.arguments
+        guard arguments.contains("--ui-testing-seed-office-hours-structured-prompt"),
+              let sessionIndex = sessions.firstIndex(where: { $0.id == sessionId }),
+              prompt.requestId == requestId else {
+            return false
+        }
+
+        let currentStep = prompt.generation?.dimensionStepIndex
+            ?? (requestId == "ui-test-office-hours-request" ? 1 : 6)
+        let totalSteps = prompt.generation?.dimensionTotal ?? 6
+        let now = Date()
+        if currentStep < totalSteps {
+            let nextStep = currentStep + 1
+            let nextPrompt = Self.makeUITestingOfficeHoursStructuredPrompt(
+                sessionID: sessionId,
+                requestId: "ui-test-office-hours-request-\(nextStep)-revised",
+                createdAt: now,
+                step: nextStep
+            )
+            sessions[sessionIndex].pendingUserInput = nil
+            sessions[sessionIndex].status = .running
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                guard let self,
+                      let refreshedIndex = self.sessions.firstIndex(where: { $0.id == sessionId }) else {
+                    return
+                }
+                self.sessions[refreshedIndex].pendingUserInput = nextPrompt
+                self.sessions[refreshedIndex].status = .awaitingInput
+                self.sessions[refreshedIndex].error = nil
+                self.sessions[refreshedIndex].updatedAt = Date()
+                self.refreshPresentationState()
+            }
+        } else {
+            sessions[sessionIndex].pendingUserInput = nil
+            sessions[sessionIndex].status = .idle
+        }
+        sessions[sessionIndex].messages = []
+        sessions[sessionIndex].error = nil
+        sessions[sessionIndex].updatedAt = now
+        if sessions[sessionIndex].runtime == nil {
+            sessions[sessionIndex].runtime = ChatSessionRuntime(
+                codexThreadId: nil,
+                codexThreadMeta: nil,
+                codexWarm: nil,
+                startupTiming: nil,
+                iddDocumentType: "day1_step",
+                iddMode: "office_hours",
+                officeHours: OfficeHoursRuntime(
+                    active: true,
+                    source: "ui_testing_revision",
+                    startedAt: ISO8601DateFormatter().string(from: now),
+                    context: "UI test Office Hours revision",
+                    day: 1
+                )
+            )
+        } else {
+            sessions[sessionIndex].runtime?.iddDocumentType = "day1_step"
+            sessions[sessionIndex].runtime?.iddMode = "office_hours"
+            sessions[sessionIndex].runtime?.officeHours = OfficeHoursRuntime(
+                active: true,
+                source: "ui_testing_revision",
+                startedAt: sessions[sessionIndex].runtime?.officeHours?.startedAt
+                    ?? ISO8601DateFormatter().string(from: now),
+                context: sessions[sessionIndex].runtime?.officeHours?.context
+                    ?? "UI test Office Hours revision",
+                day: sessions[sessionIndex].runtime?.officeHours?.day ?? 1
+            )
+        }
+        submittedStructuredPromptBySession.removeValue(forKey: sessionId)
+        structuredPromptDraftBySession.removeValue(forKey: sessionId)
+        refreshPresentationState()
+        return true
     }
     #endif
 
@@ -9265,15 +9724,29 @@ final class AgenticViewModel: ObservableObject {
         guard ProcessInfo.processInfo.environment["AGENTIC30_DISABLE_CODEX_WARMUP"] != "1" else { return }
         guard let session = selectedSession else { return }
         guard session.provider == .codex else { return }
+        guard let officeHours = session.runtime?.officeHours,
+              officeHours.active == true,
+              let officeHoursContext = officeHours.context?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !officeHoursContext.isEmpty else { return }
         guard !requestedWarmSessionIDs.contains(session.id) else { return }
         guard session.runtime?.codexWarm?.state != "ready" else { return }
         guard session.runtime?.codexWarm?.state != "warming" else { return }
 
         requestedWarmSessionIDs.insert(session.id)
-        sidecar.send(payload: [
+        var payload: [String: Any] = [
             "type": "warm_session",
             "sessionId": session.id,
-        ])
+            "purpose": "office_hours_question",
+            "context": officeHoursContext,
+        ]
+        if let day = officeHours.day {
+            payload["day"] = day
+        }
+        if let source = officeHours.source?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !source.isEmpty {
+            payload["source"] = source
+        }
+        sidecar.send(payload: payload)
     }
 
     private func appendSentPromptPreview(sessionID: String, prompt: String) {
@@ -10896,6 +11369,7 @@ struct SidecarEvent: Decodable {
     let reason: String?
     let nextProvider: String?
     let availableProviders: [String]?
+    let providerReadiness: [WorkspaceScanProviderReadiness]?
     let sheetRowsRead: Int?
     let docCharsRead: Int?
     let elapsedMs: Int?
@@ -11008,6 +11482,7 @@ struct SidecarEvent: Decodable {
         reason: String? = nil,
         nextProvider: String? = nil,
         availableProviders: [String]? = nil,
+        providerReadiness: [WorkspaceScanProviderReadiness]? = nil,
         sheetRowsRead: Int?,
         docCharsRead: Int?,
         elapsedMs: Int?,
@@ -11115,6 +11590,7 @@ struct SidecarEvent: Decodable {
         self.reason = reason
         self.nextProvider = nextProvider
         self.availableProviders = availableProviders
+        self.providerReadiness = providerReadiness
         self.sheetRowsRead = sheetRowsRead
         self.docCharsRead = docCharsRead
         self.elapsedMs = elapsedMs
@@ -11510,6 +11986,7 @@ extension SidecarEvent {
         case reason
         case nextProvider
         case availableProviders
+        case providerReadiness
         case sheetRowsRead
         case docCharsRead
         case elapsedMs
@@ -11630,6 +12107,7 @@ extension SidecarEvent {
         reason = Self.decodeIfPresent(String.self, from: container, forKey: .reason)
         nextProvider = Self.decodeIfPresent(String.self, from: container, forKey: .nextProvider)
         availableProviders = Self.decodeIfPresent([String].self, from: container, forKey: .availableProviders)
+        providerReadiness = Self.decodeIfPresent([WorkspaceScanProviderReadiness].self, from: container, forKey: .providerReadiness)
         sheetRowsRead = Self.decodeIfPresent(Int.self, from: container, forKey: .sheetRowsRead)
         docCharsRead = Self.decodeIfPresent(Int.self, from: container, forKey: .docCharsRead)
         elapsedMs = Self.decodeIfPresent(Int.self, from: container, forKey: .elapsedMs)

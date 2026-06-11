@@ -242,6 +242,60 @@ test("telemetry sanitizes auth email, raw keys, and absolute paths", async () =>
   }
 });
 
+test("telemetry sends structured PostHog logs through the OTLP logs endpoint", async () => {
+  const appSupportPath = fs.mkdtempSync(path.join(os.tmpdir(), "agentic30-telemetry-logs-"));
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = null;
+  let capturedHeaders = null;
+  let captured = null;
+
+  try {
+    globalThis.fetch = async (url, init) => {
+      capturedUrl = String(url);
+      capturedHeaders = init?.headers || {};
+      captured = JSON.parse(String(init?.body));
+      return new Response("{}", { status: 200 });
+    };
+
+    const telemetry = createTelemetryClient({
+      appSupportPath,
+      workspaceRoot: "/Users/october/prj/secret-workspace",
+      environment: {
+        ...productionTelemetryEnvironment,
+        POSTHOG_PROJECT_API_KEY: "phc_logs",
+        POSTHOG_HOST: "https://us.posthog.com",
+      },
+    });
+
+    telemetry.captureLog("workspace scan blocked", "error", {
+      operation: "runWorkspaceScan",
+      scan_root: "/Users/october/prj/secret-workspace",
+      provider: "claude",
+      token: "should-redact",
+      retry_count: 2,
+    });
+
+    assert.equal(capturedUrl, "https://us.i.posthog.com/i/v1/logs");
+    assert.equal(capturedHeaders.Authorization, "Bearer phc_logs");
+    const record = captured.resourceLogs[0].scopeLogs[0].logRecords[0];
+    assert.equal(record.severityText, "ERROR");
+    assert.equal(record.body.stringValue, "workspace scan blocked");
+    const attrs = Object.fromEntries(
+      record.attributes.map((attribute) => [attribute.key, attribute.value]),
+    );
+    assert.equal(attrs.operation.stringValue, "runWorkspaceScan");
+    assert.equal(attrs.provider.stringValue, "claude");
+    assert.equal(attrs.scan_basename.stringValue, "secret-workspace");
+    assert.equal(attrs.token.stringValue, "[redacted]");
+    assert.equal(attrs.retry_count.intValue, "2");
+    assert.equal(attrs.telemetry_source.stringValue, "mac_sidecar");
+    assert.equal(attrs.posthogDistinctId.stringValue, telemetry.getAnonymousDistinctId());
+  } finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(appSupportPath, { recursive: true, force: true });
+  }
+});
+
 test("development sidecar telemetry is suppressed unless explicitly enabled", async () => {
   const appSupportPath = fs.mkdtempSync(path.join(os.tmpdir(), "agentic30-telemetry-dev-"));
   const originalFetch = globalThis.fetch;

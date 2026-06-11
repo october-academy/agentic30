@@ -251,7 +251,7 @@ test("persisted daily digest contains summaries only, not raw external payloads"
     gate,
     localSignals: [],
     externalSignals,
-    context: "Goal lane: get_users / 첫 100명 사용자 모으기",
+    context: "Goal lane: get_users / 활성 사용자 100명 모으기",
     now: new Date("2026-06-09T10:30:00+09:00"),
   });
 
@@ -260,6 +260,62 @@ test("persisted daily digest contains summaries only, not raw external payloads"
 
   assert.match(persisted, /activation event 3건/);
   assert.doesNotMatch(persisted, /rawEvents|distinct_id|secret-user|\$pageview/);
+});
+
+test("get_users digest reuses active-user definition from Office Hours memory context", () => {
+  const gate = {
+    day: 2,
+    ok: true,
+    reason: "ready",
+    selectedSources: ["posthog"],
+    window: officeHoursDigestWindow(new Date("2026-06-09T10:30:00+09:00"), { tzOffsetMinutes: KST }),
+    sources: [
+      { id: "posthog", label: "PostHog", state: "ready", selected: true, required: true },
+    ],
+  };
+  const digest = finalizeDailyOfficeHoursDigest({
+    gate,
+    localSignals: [],
+    externalSignals: [
+      { id: "posthog", label: "PostHog", state: "ready", counts: { activeUsers: 3 }, summary: "활성 사용자 3명" },
+    ],
+    context: [
+      "Goal lane: get_users / 활성 사용자 100명 모으기",
+      "GET_USERS_ACTIVE_USER_DEFINITION",
+      "signalId: get_users_active_user_definition",
+      "Active user definition: 온보딩을 끝내고 첫 검증 행동을 기록한다.",
+    ].join("\n"),
+    now: new Date("2026-06-09T10:30:00+09:00"),
+  });
+
+  assert.ok(digest.briefing.goalStatus.includes("활성 사용자 기준: 온보딩을 끝내고 첫 검증 행동을 기록한다."));
+  assert.doesNotMatch(formatDailyOfficeHoursDigestForPrompt(digest), /활성 사용자 기준이 아직 잠기지 않았습니다/);
+});
+
+test("get_users digest blocks acquisition briefing when active-user definition is missing", () => {
+  const gate = {
+    day: 2,
+    ok: true,
+    reason: "ready",
+    selectedSources: ["git"],
+    window: officeHoursDigestWindow(new Date("2026-06-09T10:30:00+09:00"), { tzOffsetMinutes: KST }),
+    sources: [
+      { id: "git", label: "git", state: "ready", selected: true, required: true },
+    ],
+  };
+  const digest = finalizeDailyOfficeHoursDigest({
+    gate,
+    localSignals: [{ id: "git", label: "git", state: "ready", counts: { commits: 3 }, summary: "git 커밋 3건" }],
+    externalSignals: [],
+    context: [
+      "Goal lane: get_users / 활성 사용자 100명 모으기",
+      "GET_USERS_ACTIVE_USER_DEFINITION_MISSING: true",
+    ].join("\n"),
+    now: new Date("2026-06-09T10:30:00+09:00"),
+  });
+
+  assert.ok(digest.briefing.goalStatus.includes("활성 사용자 기준이 아직 잠기지 않았습니다."));
+  assert.match(digest.briefing.biggestEvidenceGap[0], /활성 사용자 1명으로 세는 핵심 행동 기준/);
 });
 
 test("a shipped release is not customer evidence — only PostHog usage counts", () => {

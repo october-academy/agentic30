@@ -521,7 +521,7 @@ function codexTestTargetTriple() {
 test("buildCodexConfig isolates sidecar runs from global Codex notifier", () => {
   const config = buildCodexConfig({
     systemPromptText: "system",
-    executionMode: "fast_chat",
+    executionMode: "memory_chat",
     sessionIdForMcp: "session",
     workspaceRoot: "/tmp/workspace",
   });
@@ -550,6 +550,36 @@ test("buildCodexConfig gives memory_chat both QMD and internal BIP MCP access", 
   if (config.mcp_servers.qmd) {
     assert.equal(config.mcp_servers.qmd.default_tools_approval_mode, "approve");
     assert.equal(config.mcp_servers.qmd.tool_timeout_sec, 60);
+  }
+});
+
+test("buildCodexConfig keeps office_hours_question on the structured-input-only surface", () => {
+  const previousPostHog = process.env.POSTHOG_API_KEY;
+  const previousCloudflare = process.env.CLOUDFLARE_API_TOKEN;
+  process.env.POSTHOG_API_KEY = "phx_test";
+  process.env.CLOUDFLARE_API_TOKEN = "cf_test";
+  try {
+    const config = buildCodexConfig({
+      systemPromptText: "system",
+      executionMode: "office_hours_question",
+      sessionIdForMcp: "session",
+      workspaceRoot: "/tmp/workspace",
+      specialist: {
+        vendor: {
+          codex: { exists: true, skillDir: "/tmp/skill" },
+        },
+      },
+    });
+
+    assert.deepEqual(Object.keys(config.mcp_servers), ["agentic30_sidecar"]);
+    assert.deepEqual(
+      config.mcp_servers.agentic30_sidecar.enabled_tools,
+      ["agentic30_request_user_input", "AskUserQuestion", "ask_user_question"],
+    );
+    assert.equal(config.skills, undefined);
+  } finally {
+    restoreEnv("POSTHOG_API_KEY", previousPostHog);
+    restoreEnv("CLOUDFLARE_API_TOKEN", previousCloudflare);
   }
 });
 
@@ -878,8 +908,8 @@ test("resolveCodexReasoningEffort adapts to mode and prompt intent", () => {
   try {
     delete process.env.AGENTIC30_CODEX_REASONING_EFFORT;
     assert.equal(
-      resolveCodexReasoningEffort({ executionMode: "fast_chat", prompt: "quick summary" }),
-      "minimal",
+      resolveCodexReasoningEffort({ executionMode: "office_hours_question", prompt: "quick summary" }),
+      "low",
     );
     assert.equal(
       resolveCodexReasoningEffort({ executionMode: "agentic", prompt: "implement and test this" }),
@@ -985,6 +1015,24 @@ test("buildSystemPromptText for workspace_scan_read_only is a tight read-only sc
   assert.doesNotMatch(prompt, /agentic30 MCP server/);
 });
 
+test("buildSystemPromptText for office_hours_question is a tight question-generator prompt", () => {
+  const prompt = buildSystemPromptText({
+    provider: "codex",
+    workspaceRoot: "/tmp/ws",
+    executionMode: "office_hours_question",
+  });
+  assert.match(prompt, /Office Hours question generator/);
+  assert.match(prompt, /agentic30_request_user_input/);
+  assert.match(prompt, /Do not inspect the workspace/);
+  assert.doesNotMatch(prompt, /October-Style Advisor Identity/);
+  assert.doesNotMatch(prompt, /Use QMD retrieval/);
+});
+
+test("office_hours_question is supported by Gemini but not Cursor", () => {
+  assert.equal(supportsGeminiExecutionMode("office_hours_question"), true);
+  assert.equal(supportsCursorExecutionMode("office_hours_question"), false);
+});
+
 test("shouldResumeCodexThread requires matching isolated home, workspace, and execution mode", () => {
   assert.equal(shouldResumeCodexThread({}, "/tmp/workspace"), false);
   assert.equal(
@@ -1005,7 +1053,7 @@ test("shouldResumeCodexThread requires matching isolated home, workspace, and ex
           ? `${process.env.AGENTIC30_APP_SUPPORT_PATH}/codex-home`
           : `${process.env.HOME}/Library/Application Support/agentic30/codex-home`,
         workspaceRoot: "/tmp/workspace",
-        executionMode: "fast_chat",
+        executionMode: "office_hours_question",
       },
     }, "/tmp/workspace", "memory_chat"),
     false,
@@ -1333,31 +1381,31 @@ test("resolveCodexReasoningEffort: Settings beat the heuristic, env beats Settin
     delete process.env.CODEX_REASONING_EFFORT;
     delete process.env.MODEL_REASONING_EFFORT;
 
-    // Heuristic baseline (no Settings): fast_chat with a light prompt -> minimal.
+    // Heuristic baseline (no Settings): office_hours_question stays lightweight.
     assert.equal(
-      resolveCodexReasoningEffort({ executionMode: "fast_chat", prompt: "안녕" }),
-      "minimal",
+      resolveCodexReasoningEffort({ executionMode: "office_hours_question", prompt: "안녕" }),
+      "low",
     );
 
     // Explicit Settings choice overrides the heuristic for every mode.
     updateProviderSettings({ codex: { reasoningEffort: "high" } });
     assert.equal(
-      resolveCodexReasoningEffort({ executionMode: "fast_chat", prompt: "안녕" }),
+      resolveCodexReasoningEffort({ executionMode: "office_hours_question", prompt: "안녕" }),
       "high",
     );
 
     // Invalid Settings values fall back to the heuristic.
     updateProviderSettings({ codex: { reasoningEffort: "max" } });
     assert.equal(
-      resolveCodexReasoningEffort({ executionMode: "fast_chat", prompt: "안녕" }),
-      "minimal",
+      resolveCodexReasoningEffort({ executionMode: "office_hours_question", prompt: "안녕" }),
+      "low",
     );
 
     // Env still wins over Settings.
     updateProviderSettings({ codex: { reasoningEffort: "high" } });
     process.env.AGENTIC30_CODEX_REASONING_EFFORT = "low";
     assert.equal(
-      resolveCodexReasoningEffort({ executionMode: "fast_chat", prompt: "안녕" }),
+      resolveCodexReasoningEffort({ executionMode: "office_hours_question", prompt: "안녕" }),
       "low",
     );
   } finally {

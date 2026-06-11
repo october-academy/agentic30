@@ -164,7 +164,7 @@ function sanitizeDay1GoalText(goalText, {
 // 테이블의 별도 행에 이미 있으므로 반복하지 않는다(검증 방법은 validationAction에 보존).
 const DAY1_GOAL_TEXTS = {
   make_money: "30일 안에 첫 유료 결제 1건을 만든다.",
-  get_users: "30일 안에 가입자 100명을 모은다.",
+  get_users: "30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다.",
   build_product: "30일 안에 핵심 흐름 완주율 10%를 달성한다.",
 };
 
@@ -192,6 +192,7 @@ function shouldRegenerateDay1GoalText(text, {
 
   // 옛 정성형 2문장(고객 주어 + 문제 인용 + "방법:" 꼬리)을 새 정량 1문장으로 마이그레이션.
   if (/방법\s*[:：]/u.test(text)) return true;
+  if (goalType === "get_users" && /가입자\s*100명|사용자\s*100명/u.test(text)) return true;
   if (/돈이나 시간을 쓸지 확인한다/u.test(text)) return true;
   if (/유입\/가입 행동으로 반복해서 드러내는지 확인한다/u.test(text)) return true;
   if (/제품 흐름에서 어디가 막히는지 확인한다/u.test(text)) return true;

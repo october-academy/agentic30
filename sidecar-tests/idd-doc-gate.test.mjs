@@ -46,6 +46,10 @@ async function withTempWorkspace(fn) {
   }
 }
 
+function countTopLevelHeadings(content) {
+  return [...String(content || "").matchAll(/^# /gm)].length;
+}
+
 test("BIP setup gate requires all local docs and Google links", async () => {
   await withTempWorkspace(async (root) => {
     await fs.writeFile(path.join(root, "docs", "ICP.md"), "# ICP\n");
@@ -466,6 +470,32 @@ test("Day 1 handoff merge preserves existing document content and replaces only 
   assert.match(merged, /## Appendix\n보존할 링크/);
 });
 
+test("Day 1 handoff merge avoids duplicate top-level headings", () => {
+  const block = [
+    DAY1_HANDOFF_MARKER_START,
+    "<!-- generated_by: office-hours; target: docs/GOAL.md; status: written -->",
+    "",
+    "# GOAL",
+    "",
+    "## 30일 목표",
+    "- 첫 고객 반응 검증",
+    DAY1_HANDOFF_MARKER_END,
+  ].join("\n");
+
+  const emptyMerged = mergeDay1HandoffBlock("", block, { title: "GOAL" });
+  assert.equal(countTopLevelHeadings(emptyMerged), 1);
+  assert.ok(emptyMerged.startsWith(DAY1_HANDOFF_MARKER_START));
+
+  const titleOnlyMerged = mergeDay1HandoffBlock("# GOAL\n", block, { title: "GOAL" });
+  assert.equal(countTopLevelHeadings(titleOnlyMerged), 1);
+  assert.ok(titleOnlyMerged.startsWith(DAY1_HANDOFF_MARKER_START));
+
+  const existingMerged = mergeDay1HandoffBlock("# GOAL\n\n기존 목표\n", block, { title: "GOAL" });
+  assert.equal(countTopLevelHeadings(existingMerged), 1);
+  assert.match(existingMerged, /기존 목표/);
+  assert.match(existingMerged, /## 30일 목표/);
+});
+
 test("Day 1 handoff writes canonical docs immediately and completes after all four", async () => {
   await withTempWorkspace(async (root) => {
     await fs.writeFile(path.join(root, "docs", "GOAL.md"), "# GOAL\n\n기존 목표\n");
@@ -487,7 +517,8 @@ test("Day 1 handoff writes canonical docs immediately and completes after all fo
     assert.equal(state.docWriteStatuses.goal.status, "written");
     assert.equal(state.status, "interviewing");
     assert.match(await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8"), /기존 목표/);
-    assert.match(await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8"), /Day 1 Handoff — GOAL/);
+    assert.match(await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8"), /agentic30:day1-handoff:start/);
+    assert.doesNotMatch(await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8"), /Day 1 Handoff|Document Decision|Rubric Signals/);
 
     state = recordIddStructuredResponse(state, {
       doc: byType.get("icp"),
@@ -530,6 +561,7 @@ test("Day 1 handoff writes canonical docs immediately and completes after all fo
       const content = await fs.readFile(path.join(root, rel), "utf8");
       assert.match(content, /agentic30:day1-handoff:start/);
       assert.match(content, /agentic30:day1-handoff:end/);
+      assert.equal(countTopLevelHeadings(content), 1, rel);
     }
   });
 });
@@ -541,12 +573,17 @@ test("Day 1 bulk handoff writes all canonical docs from final hypothesis", async
     const { state } = await writeAllDay1HandoffDocuments(root, {}, {
       provider: "codex",
       day1Handoff: {
-        goal: "첫 고객 반응 검증",
-        icp: "macOS에서 AI 코딩 도구를 쓰는 전업 1인 개발자",
-        pain: "무엇을 팔아야 할지 몰라 노션과 스프레드시트로 인터뷰 메모를 복사함",
-        outcome: "이번 주 3명 인터뷰 완료",
+        northStarGoal: "첫 고객 반응 검증",
+        weeklyProof: "이번 주 3명 인터뷰 완료",
+        targetUser: "macOS에서 AI 코딩 도구를 쓰는 전업 1인 개발자",
+        problem: "무엇을 팔아야 할지 모른다",
+        currentAlternative: "노션과 스프레드시트로 인터뷰 메모를 복사함",
+        entryPoint: "첫 인터뷰 카드",
+        nextAction: "이번 주 3명 인터뷰 완료",
+        nonGoals: ["넓은 고객 후보", "자동화 확장"],
+        sourceQuotes: ["노션과 스프레드시트", "이번 주 3명 인터뷰"],
         qualityScore: "9.0/10",
-        markdown: "# Day 1 핵심 가설",
+        markdown: "# 핵심 가설",
       },
       onProgress: (event) => progress.push(`${event.doc.type}:${event.stage}`),
     });
@@ -568,10 +605,92 @@ test("Day 1 bulk handoff writes all canonical docs from final hypothesis", async
       const content = await fs.readFile(path.join(root, rel), "utf8");
       assert.match(content, /agentic30:day1-handoff:start/);
       assert.match(content, /agentic30:day1-handoff:end/);
+      assert.equal(countTopLevelHeadings(content), 1, rel);
     }
     const goal = await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8");
     assert.match(goal, /기존 목표/);
     assert.match(goal, /첫 고객 반응 검증/);
+    assert.doesNotMatch(goal, /Day 1 Handoff|Document Decision|Rubric Signals/);
+    assert.doesNotMatch(goal, /이번 주 확인할 행동|검증할 문제|첫 고객 후보/);
+    const spec = await fs.readFile(path.join(root, "docs", "SPEC.md"), "utf8");
+    assert.match(spec, /첫 인터뷰 카드/);
+    assert.doesNotMatch(spec, /GOAL\/ICP\/VALUES\/SPEC 문서|Foundation|새 AI 실행/);
+  });
+});
+
+test("Day 1 bulk handoff renders user-facing docs from Office Hours facts without placeholders or app-internal contamination", async () => {
+  await withTempWorkspace(async (root) => {
+    const { state } = await writeAllDay1HandoffDocuments(root, {}, {
+      provider: "claude",
+      day1Handoff: {
+        northStarGoal: "30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다.",
+        weeklyProof: "전용 링크(UTM/코드)로 게시물 1개에서 가입 전환을 추적한다.",
+        targetUser: "20대 여성, 불안·우울 관리로 이미 메모·기록 앱을 쓰는 사람",
+        problem: "콘텐츠/SNS 유입(릴스·글)이 방문·클릭까지만 보이고 가입으로 이어지는지 모른다.",
+        currentAlternative: "운영 중 계정과 유입 증거는 있지만 가입 추적은 분리되어 있다.",
+        entryPoint: "전용 링크(UTM/코드)로 게시물 1개→가입 추적",
+        nextAction: "가장 절박한 사용자 1명에게 이번 주 유료 진입점을 보여주기",
+        nonGoals: ["넓은 고객 후보", "자동화 확장", "여러 고객 유형 확장"],
+        assumptions: ["가입 전환 기준값은 아직 확인 필요"],
+        sourceQuotes: ["20대 여성", "불안·우울 관리", "메모·기록 앱", "릴스·글", "전용 링크(UTM/코드)", "가입 추적"],
+      },
+    });
+
+    assert.equal(state.status, "approved");
+    assert.ok(
+      !state.docWriteStatuses.spec.unresolvedAssumptions.some((item) =>
+        /첫 버전에서 하지 않을 일이 필요/.test(item)
+      ),
+    );
+
+    const icp = await fs.readFile(path.join(root, "docs", "ICP.md"), "utf8");
+    assert.match(icp, /20대 여성/);
+    assert.match(icp, /불안·우울 관리/);
+    assert.match(icp, /메모·기록 앱/);
+    assert.match(icp, /운영 중 계정과 유입 증거/);
+    assert.doesNotMatch(icp, /첫 고객 후보|검증할 문제|이번 주 확인할 행동/);
+    assert.doesNotMatch(icp, /기존 동료|DM으로 닿을 수 있는 후보 3명|주 3시간/);
+
+    const spec = await fs.readFile(path.join(root, "docs", "SPEC.md"), "utf8");
+    assert.match(spec, /전용 링크\(UTM\/코드\)/);
+    assert.match(spec, /가입 전환을 추적/);
+    assert.doesNotMatch(spec, /추적를|보여주기으로/);
+    assert.doesNotMatch(spec, /GOAL\/ICP\/VALUES\/SPEC 문서|Day 1|Foundation|새 AI 실행/);
+    for (const rel of ["docs/GOAL.md", "docs/ICP.md", "docs/VALUES.md", "docs/SPEC.md"]) {
+      assert.equal(countTopLevelHeadings(await fs.readFile(path.join(root, rel), "utf8")), 1, rel);
+    }
+
+    const values = await fs.readFile(path.join(root, "docs", "VALUES.md"), "utf8");
+    assert.match(values, /사용자 행동 증거/);
+    assert.doesNotMatch(values, /예쁜 대시보드|다중 Day 확장|플랫폼 확장/);
+
+    const goal = await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8");
+    assert.match(goal, /30일 안에 핵심 활성 행동을 끝낸 사용자 100명/);
+    assert.match(goal, /가입 전환 기준값은 아직 확인 필요/);
+  });
+});
+
+test("Day 1 handoff quality gate marks incomplete facts with assumptions instead of fabricating evidence", async () => {
+  await withTempWorkspace(async (root) => {
+    const { state } = await writeAllDay1HandoffDocuments(root, {}, {
+      provider: "codex",
+      day1Handoff: {
+        goal: "30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다.",
+        icp: "첫 고객 후보",
+        pain: "검증할 문제",
+        outcome: "이번 주 확인할 행동",
+      },
+    });
+
+    assert.equal(state.docWriteStatuses.icp.status, "written_with_assumptions");
+    assert.ok(state.docWriteStatuses.icp.unresolvedAssumptions.some((item) => /고객 후보|현재 대안/.test(item)));
+
+    const icp = await fs.readFile(path.join(root, "docs", "ICP.md"), "utf8");
+    assert.match(icp, /확인 필요/);
+    assert.doesNotMatch(icp, /DM으로 닿을 수 있는 후보 3명|주 3시간/);
+
+    const spec = await fs.readFile(path.join(root, "docs", "SPEC.md"), "utf8");
+    assert.doesNotMatch(spec, /GOAL\/ICP\/VALUES\/SPEC 문서|Day 1|Foundation|새 AI 실행/);
   });
 });
 

@@ -33,6 +33,17 @@ export function reportError(error, properties = {}) {
       // Telemetry itself must never crash a caller.
     }
   }
+  if (activeTelemetry?.captureLog) {
+    try {
+      activeTelemetry.captureLog("sidecar swallowed error", "error", {
+        ...properties,
+        error_type: normalized.name || "Error",
+        error_message: normalized.message,
+      });
+    } catch {
+      // Telemetry itself must never crash a caller.
+    }
+  }
   const op = properties?.operation || "unknown";
   console.warn(`[sidecar] swallowed error in ${op}: ${normalized.message}`);
 }

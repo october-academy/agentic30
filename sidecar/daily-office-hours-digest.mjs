@@ -767,12 +767,22 @@ function inferGoalLane(context = "") {
   return match ? match[1].toLowerCase() : "";
 }
 
+function inferActiveUserDefinition(context = "") {
+  const text = String(context || "");
+  const match = text.match(/^Active user definition:\s*(.+)$/im);
+  return cleanString(match?.[1] || "", 260);
+}
+
+function hasMissingActiveUserDefinition(context = "") {
+  return /GET_USERS_ACTIVE_USER_DEFINITION_MISSING:\s*true/i.test(String(context || ""));
+}
+
 function goalHelpfulFallback(goalLane = "") {
   switch (goalLane) {
   case "make_money":
     return "오늘 질문은 결제, 유료 파일럿, 계약, 인보이스, 명시적 유료 제안 반응 중 하나로 좁혀야 합니다.";
   case "get_users":
-    return "오늘 질문은 유입 숫자가 아니라 activation action을 끝낸 고유 사용자 증가로 좁혀야 합니다.";
+    return "오늘 질문은 유입 숫자가 아니라 핵심 활성 행동을 끝낸 고유 사용자 증가로 좁혀야 합니다.";
   case "build_product":
     return "오늘 질문은 배포나 커밋 자체가 아니라 고객이 핵심 흐름을 끝까지 수행했는지로 좁혀야 합니다.";
   default:
@@ -836,6 +846,8 @@ export function finalizeDailyOfficeHoursDigest({
     ),
   );
   const goalLane = inferGoalLane(context);
+  const activeUserDefinition = goalLane === "get_users" ? inferActiveUserDefinition(context) : "";
+  const activeUserDefinitionMissing = goalLane === "get_users" && !activeUserDefinition && hasMissingActiveUserDefinition(context);
   const git = sources.find((source) => source.id === "git");
   // Customer evidence = real product-usage signals, which only PostHog supplies
   // (events / active users / conversions). gh CLI activity — PRs, issues, even a
@@ -850,6 +862,7 @@ export function finalizeDailyOfficeHoursDigest({
   const biggestGap = buildWithoutCustomerEvidence
     ? "어제/간밤 신호가 코드 변경 중심입니다. 첫 질문은 만든 양이 아니라 고객 행동 증거 공백을 찔러야 합니다."
     : "오늘 질문은 아직 관찰되지 않은 결제, activation, 또는 end-to-end 사용 증거 하나를 요구해야 합니다.";
+  const activeUserDefinitionGap = "활성 사용자 1명으로 세는 핵심 행동 기준이 아직 없습니다. acquisition 실행 전에 이 기준을 먼저 잠가야 합니다.";
   // Evidence-derived diagnosis (PostHog/Cloudflare) carried into the interview
   // briefing. Without this, the LLM-generated goalSignals/evidenceGaps were parsed
   // and then dropped, so the interview never acted on the live external evidence.
@@ -882,13 +895,19 @@ export function finalizeDailyOfficeHoursDigest({
       goalStatus: [
         "30일 목표는 Day 1에서 고른 goalType을 기준으로 유지합니다.",
         goalHelpfulFallback(goalLane),
+        activeUserDefinition ? `활성 사용자 기준: ${activeUserDefinition}` : "",
+        activeUserDefinitionMissing ? "활성 사용자 기준이 아직 잠기지 않았습니다." : "",
       ],
       overnightChanges: allHighlights.length ? allHighlights.slice(0, 8) : ["연결된 source에서 해당 기간 변화가 거의 없습니다."],
       goalHelpfulSignals: unique([
         ...evidenceGoalSignals,
         ...customerSignalSummaries,
       ]).slice(0, 6),
-      biggestEvidenceGap: unique([biggestGap, ...evidenceGaps]).slice(0, 4),
+      biggestEvidenceGap: unique([
+        activeUserDefinitionMissing ? activeUserDefinitionGap : "",
+        biggestGap,
+        ...evidenceGaps,
+      ]).slice(0, 4),
     },
   };
 }

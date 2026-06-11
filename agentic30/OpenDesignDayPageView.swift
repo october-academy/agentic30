@@ -757,7 +757,7 @@ struct OpenDesignDayContent {
             ),
         ],
         contextTitle: "오늘은 첫 고객 1명을 정하는 게 목표예요.",
-        contextBody: "30일 챌린지의 첫 결과는 \"유저 100명 + 첫 매출\"이지만 Day 1은 그보다 더 좁은 문제부터 풉니다. 이번 주에 진짜로 인터뷰 한 통을 할 만큼 가까운 1명이 누구인지 정하는 것. 이 한 명이 고객 후보가 되고 이번 주 인터뷰·랜딩·막힌 지점 판단의 기준점이 됩니다.",
+        contextBody: "30일 챌린지의 첫 결과는 \"활성 유저 100명 + 첫 매출\"이지만 Day 1은 그보다 더 좁은 문제부터 풉니다. 이번 주에 진짜로 인터뷰 한 통을 할 만큼 가까운 1명이 누구인지 정하는 것. 이 한 명이 고객 후보가 되고 이번 주 인터뷰·랜딩·막힌 지점 판단의 기준점이 됩니다.",
         mission: Mission(
             markedTitle: "한 명",
             titleSuffix: "만 골라요.",
@@ -3157,6 +3157,7 @@ struct OpenDesignDayPageView: View {
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
     let officeHoursScreen: ((Bool) -> AnyView)?
+    let shareOfficeHoursScreenshot: ((NSView?) -> Void)?
     let morningBriefingScreen: AnyView?
     let activeDay1HandoffDocType: String?
     let pendingDay1HandoffDocType: String?
@@ -3213,6 +3214,7 @@ struct OpenDesignDayPageView: View {
         day1DocPreviews: [IddDocPreview] = [],
         day1HandoffPromptCard: AnyView? = nil,
         officeHoursScreen: ((Bool) -> AnyView)? = nil,
+        shareOfficeHoursScreenshot: ((NSView?) -> Void)? = nil,
         morningBriefingScreen: AnyView? = nil,
         activeDay1HandoffDocType: String? = nil,
         pendingDay1HandoffDocType: String? = nil,
@@ -3252,6 +3254,7 @@ struct OpenDesignDayPageView: View {
         self.day1DocPreviews = day1DocPreviews
         self.day1HandoffPromptCard = day1HandoffPromptCard
         self.officeHoursScreen = officeHoursScreen
+        self.shareOfficeHoursScreenshot = shareOfficeHoursScreenshot
         self.morningBriefingScreen = morningBriefingScreen
         self.activeDay1HandoffDocType = activeDay1HandoffDocType
         self.pendingDay1HandoffDocType = pendingDay1HandoffDocType
@@ -3318,6 +3321,7 @@ struct OpenDesignDayPageView: View {
                     day1DocPreviews: day1DocPreviews,
                     day1HandoffPromptCard: day1HandoffPromptCard,
                     officeHoursScreen: officeHoursScreen,
+                    shareOfficeHoursScreenshot: shareOfficeHoursScreenshot,
                     morningBriefingScreen: morningBriefingScreen,
                     isOfficeHoursRightSidebarExpanded: isOfficeHoursRightSidebarExpanded,
                     isOfficeHoursRightSidebarVisible: officeHoursLayout.showsMeta,
@@ -3942,6 +3946,7 @@ struct OpenDesignDayShell: View {
     let day1DocPreviews: [IddDocPreview]
     let day1HandoffPromptCard: AnyView?
     let officeHoursScreen: ((Bool) -> AnyView)?
+    let shareOfficeHoursScreenshot: ((NSView?) -> Void)?
     let morningBriefingScreen: AnyView?
     let isOfficeHoursRightSidebarExpanded: Bool
     let isOfficeHoursRightSidebarVisible: Bool
@@ -3977,6 +3982,7 @@ struct OpenDesignDayShell: View {
             } else if isOfficeHoursPresented {
                 OpenDesignOfficeHoursTitlebar(
                     openSearch: toggleSearch,
+                    shareScreenshot: shareOfficeHoursScreenshot,
                     isRightSidebarVisible: isOfficeHoursRightSidebarVisible,
                     toggleRightSidebar: toggleOfficeHoursRightSidebar
                 )
@@ -4296,8 +4302,11 @@ private struct OpenDesignDayTitlebar: View {
 
 private struct OpenDesignOfficeHoursTitlebar: View {
     let openSearch: () -> Void
+    let shareScreenshot: ((NSView?) -> Void)?
     let isRightSidebarVisible: Bool
     let toggleRightSidebar: () -> Void
+
+    @State private var shareAnchor: NSView?
 
     var body: some View {
         ZStack {
@@ -4326,6 +4335,18 @@ private struct OpenDesignOfficeHoursTitlebar: View {
                     accessibilityIdentifier: "opendesign.officeHours.search",
                     action: openSearch
                 )
+                OpenDesignToolbarButton(
+                    systemImage: "square.and.arrow.up",
+                    label: "공유 · ⌘ ⇧ S",
+                    keyboardKey: "s",
+                    keyboardModifiers: [.command, .shift],
+                    usesOfficeHoursPalette: true,
+                    accessibilityIdentifier: "opendesign.officeHours.share",
+                    action: {
+                        shareScreenshot?(shareAnchor)
+                    }
+                )
+                .background(OpenDesignToolbarButtonAnchor(anchor: $shareAnchor))
                 OpenDesignToolbarButton(
                     systemImage: "sidebar.right",
                     label: isRightSidebarVisible ? "우측 사이드바 닫기" : "우측 사이드바 열기",
@@ -4420,6 +4441,25 @@ private struct OpenDesignToolbarButton: View {
         .onHover { isHovered = $0 }
         .accessibilityValue(isOn ? "active" : "inactive")
         .accessibilityIdentifier(accessibilityIdentifier ?? label)
+    }
+}
+
+private struct OpenDesignToolbarButtonAnchor: NSViewRepresentable {
+    @Binding var anchor: NSView?
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            anchor = view
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        if let anchor, anchor === nsView { return }
+        DispatchQueue.main.async {
+            anchor = nsView
+        }
     }
 }
 

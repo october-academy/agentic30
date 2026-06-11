@@ -57,6 +57,17 @@ test("office-hours chat system prompt routes Codex forcing questions through str
   assert.match(prompt, /risk/);
   assert.match(prompt, /evidenceTarget/);
   assert.match(prompt, /failureMode/);
+  assert.match(prompt, /Korean UI Copy Contract/);
+  assert.match(prompt, /im-not-ai|quick-rules|S1/);
+  assert.match(prompt, /Question: exactly one natural Korean sentence/);
+  assert.match(prompt, /Option label: short Korean noun phrase/);
+  assert.match(prompt, /Do-NOT preservation/);
+  assert.match(prompt, /`risk`/);
+  assert.match(prompt, /`evidenceTarget`/);
+  assert.match(prompt, /`failureMode`/);
+  assert.match(prompt, /OH-S1-SIGNUP-GOAL/);
+  assert.match(prompt, /active users completing the chosen 핵심 행동/);
+  assert.match(prompt, /Self-check before calling the structured-input tool/);
   assert.match(prompt, /전제 확인/);
   assert.match(prompt, /office_hours_alternatives/);
   assert.match(prompt, /pendingUserInput card/);
@@ -103,6 +114,10 @@ test("office-hours write-design-doc flow fixes startup questions and terminal do
   assert.match(prompt, /generated_by: office-hours/);
   assert.match(prompt, /handoff_for: plan-ceo-review/);
   assert.match(prompt, /문제 정의, 대상 사용자, 선택한 첫 진입점, 전제 확인, 검토한 대안, 이번에는 제외, 다음 행동, CEO 리뷰 인계/);
+  assert.match(prompt, /===DAY1_HANDOFF_JSON===/);
+  assert.match(prompt, /northStarGoal, weeklyProof, targetUser, problem, currentAlternative, entryPoint, nextAction, nonGoals, assumptions, and sourceQuotes/);
+  assert.match(prompt, /Do not invent reachable people, numbers, costs, or product scope/);
+  assert.match(prompt, /Do not mention Agentic30, Day, Foundation, document writing/);
 });
 
 test("office-hours locked Day 1 goal prompt skips gates and requires a structured card", () => {
@@ -135,14 +150,44 @@ test("office-hours locked Day 1 goal prompt skips gates and requires a structure
   assert.match(prompt, /public evidence logging is available/);
 });
 
+test("office-hours locked Day 1 get_users prompt forces active-user definition first", () => {
+  const context = [
+    "DAY1_LOCKED_GOAL",
+    "Flow contract: locked Day 1 goal interview.",
+    "Expected question count: 6",
+    "Goal lane: get_users / 활성 사용자 100명 모으기",
+    "Goal text: 30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다.",
+    "Customer: B2B founder",
+    "Problem: onboarding에서 이탈한다",
+    "Validation action: 랜딩에서 invite 요청",
+  ].join("\n");
+  const prompt = buildOfficeHoursChatSystemPrompt("/workspace", {
+    provider: "codex",
+    context,
+  });
+
+  assert.match(prompt, /first structured input card MUST define the active-user counting rule/);
+  assert.match(prompt, /not eligible for smart-skip/);
+  assert.match(prompt, /get_users_active_user_definition/);
+  assert.match(prompt, /signalLabel `활성 사용자 기준`/);
+  assert.match(prompt, /이 목표에서 활성 사용자 1명으로 세려면 고객 후보가 어떤 핵심 행동을 끝내야 하나요/);
+  assert.match(prompt, /첫 가치 완료/);
+  assert.match(prompt, /반복 사용 완료/);
+  assert.match(prompt, /수동 파일럿 성공/);
+  assert.match(prompt, /가입, 대기 신청, 페이지 조회, 좋아요, 팔로워/);
+});
+
 test("office-hours Day 2+ goal-driven prompt requires live briefing and goal-specific routing", () => {
   const context = [
     "DAY1_FOUNDATION_GOAL",
     "DAY2_PLUS_GOAL_DRIVEN_OFFICE_HOURS",
     "Flow contract: Day 2 goal-driven Office Hours scoped to the locked Day 1 30-day goal.",
     "30-day goal source of truth: Day1GoalSelection.goalType",
-    "Goal lane: get_users / 첫 100명 사용자 모으기",
-    "Goal text: activation action을 끝낸 100명을 모은다.",
+    "Goal lane: get_users / 활성 사용자 100명 모으기",
+    "Goal text: 30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다.",
+    "GET_USERS_ACTIVE_USER_DEFINITION",
+    "signalId: get_users_active_user_definition",
+    "Active user definition: 온보딩을 끝내고 첫 검증 행동을 기록한다.",
     "Day 1 customer: B2B founder",
     "Day 1 problem: onboarding에서 이탈한다",
     "Validation action: 랜딩에서 invite 요청",
@@ -168,6 +213,7 @@ test("office-hours Day 2+ goal-driven prompt requires live briefing and goal-spe
   assert.match(prompt, /For make_money/);
   assert.match(prompt, /For get_users/);
   assert.match(prompt, /100 unique people\/accounts completing the chosen activation action/);
+  assert.match(prompt, /reuse the `Active user definition`/);
   assert.match(prompt, /For build_product/);
   assert.match(prompt, /BUILD_WITHOUT_CUSTOMER_EVIDENCE: true/);
   assert.match(prompt, /challenge the customer\/user evidence gap/);

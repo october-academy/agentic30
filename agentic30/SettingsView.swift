@@ -1496,12 +1496,12 @@ struct SettingsView: View {
             }
 
             odSettingsRowsCard {
-                odSettingsRow(title: "공개 기록 알림", detail: "테스트 알림은 실제 macOS 알림 센터 경로를 사용합니다. 배너를 누르면 Agentic30이 열리고 공개 기록 알림 작업 화면으로 이동합니다.", stacked: true) {
+                odSettingsRow(title: "인터뷰/실행 체크 알림", detail: "테스트 알림은 실제 macOS 알림 센터 경로를 사용합니다. 배너를 누르면 Agentic30이 열리고 아침은 인터뷰, 저녁은 오늘 실행 완료 화면으로 이동합니다.", stacked: true) {
                     HStack(spacing: 12) {
-                        odSettingsGhostButton(title: "10시 알림 보내기", systemImage: "sun.max.fill", width: 128, identifier: "settings.advanced.sendMorningBipNotification") {
+                        odSettingsGhostButton(title: "인터뷰 체크 보내기", systemImage: "sun.max.fill", width: 142, identifier: "settings.advanced.sendMorningBipNotification") {
                             sendTestBipNotification(.morning)
                         }
-                        odSettingsGhostButton(title: "21시 알림 보내기", systemImage: "moon.fill", width: 128, identifier: "settings.advanced.sendEveningBipNotification") {
+                        odSettingsGhostButton(title: "실행 완료 체크 보내기", systemImage: "moon.fill", width: 154, identifier: "settings.advanced.sendEveningBipNotification") {
                             sendTestBipNotification(.evening)
                         }
                     }
@@ -2544,6 +2544,7 @@ struct SettingsView: View {
                     .padding(.horizontal, 14)
                     .frame(height: 34)
                     .background(Capsule().fill(settingsText.opacity(0.12)))
+                    .accessibilityIdentifier("settings.privacy.localDataConfirmation.cancel")
 
                     Button(confirmation.actionTitle) {
                         localDataConfirmation = nil
@@ -2560,6 +2561,7 @@ struct SettingsView: View {
                     .padding(.horizontal, 14)
                     .frame(height: 34)
                     .background(Capsule().fill(Color.red.opacity(0.68)))
+                    .accessibilityIdentifier("settings.privacy.localDataConfirmation.action")
                 }
             }
             .padding(20)
@@ -2645,20 +2647,30 @@ struct SettingsView: View {
         }
         if status.available {
             let green = Agentic30BrandColor.greenBright
-            return ProviderStatusBadgeStyle(label: "연결됨", dot: green, text: green)
+            return ProviderStatusBadgeStyle(label: "인증됨", dot: green, text: green)
         }
         let amber = OpenDesignDayColor.amber
         // White-theme amber is too light to read as text, so deepen it for the label.
         let amberText = Agentic30Theme.current == .white
             ? Color(red: 0.66, green: 0.46, blue: 0.09)
             : amber
-        return ProviderStatusBadgeStyle(label: "로그인 안 됨", dot: amber, text: amberText)
+        if status.sdk?.available == true {
+            return ProviderStatusBadgeStyle(label: "로그인 필요", dot: amber, text: amberText)
+        }
+        return ProviderStatusBadgeStyle(label: "SDK 없음", dot: amber, text: amberText)
     }
 
     private func providerStatusDetail(_ status: SidecarProviderEnvironment?) -> String? {
         guard let status else { return nil }
-        let message = status.message.trimmingCharacters(in: .whitespacesAndNewlines)
-        return message.isEmpty ? nil : message
+        let authMessage = status.message.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sdkMessage = status.sdk?.message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let sdkLabel = status.sdk?.available == true
+            ? (sdkMessage.isEmpty ? "SDK 설치됨" : sdkMessage)
+            : (sdkMessage.isEmpty ? "SDK 확인 필요" : sdkMessage)
+        if authMessage.isEmpty {
+            return sdkLabel
+        }
+        return "\(sdkLabel) · \(authMessage)"
     }
 
     private func authModeMenu(provider: AgentProvider, selection: Binding<String>) -> some View {

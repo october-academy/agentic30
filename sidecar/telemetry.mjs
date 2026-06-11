@@ -279,6 +279,56 @@ function normalizeError(error) {
   }
 }
 
+const LOG_SEVERITY = {
+  trace: { text: "TRACE", number: 1 },
+  debug: { text: "DEBUG", number: 5 },
+  info: { text: "INFO", number: 9 },
+  warn: { text: "WARN", number: 13 },
+  warning: { text: "WARN", number: 13 },
+  error: { text: "ERROR", number: 17 },
+  fatal: { text: "FATAL", number: 21 },
+};
+
+function normalizeLogSeverity(level) {
+  return LOG_SEVERITY[String(level || "").trim().toLowerCase()] || LOG_SEVERITY.info;
+}
+
+function otlpValue(value) {
+  if (value == null) return { stringValue: "" };
+  if (typeof value === "boolean") return { boolValue: value };
+  if (typeof value === "number") {
+    return Number.isInteger(value)
+      ? { intValue: String(value) }
+      : { doubleValue: value };
+  }
+  if (typeof value === "bigint") return { intValue: String(value) };
+  if (value instanceof Date) return { stringValue: value.toISOString() };
+  if (Array.isArray(value)) {
+    return { arrayValue: { values: value.map(otlpValue) } };
+  }
+  if (typeof value === "object") {
+    return {
+      kvlistValue: {
+        values: Object.entries(value).map(([key, nested]) => ({
+          key,
+          value: otlpValue(nested),
+        })),
+      },
+    };
+  }
+  return { stringValue: String(value) };
+}
+
+function otlpAttributes(properties = {}) {
+  return Object.entries(properties)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => ({ key, value: otlpValue(value) }));
+}
+
+function timeUnixNano(date = new Date()) {
+  return String(BigInt(date.getTime()) * 1_000_000n);
+}
+
 export function createTelemetryClient({
   appSupportPath,
   workspaceRoot,
@@ -349,10 +399,10 @@ export function createTelemetryClient({
     return auth.userId || anonymousDistinctId;
   }
 
-  function send(url, payload) {
+  function send(url, payload, headers = {}) {
     fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify(payload),
     }).catch(() => {});
   }
@@ -413,6 +463,50 @@ export function createTelemetryClient({
         },
         timestamp: new Date().toISOString(),
       });
+    },
+
+    captureLog(message, level = "info", attributes = {}) {
+      const config = loadConfig();
+      if (!config) return;
+      const now = new Date();
+      const severity = normalizeLogSeverity(level);
+      const base = baseProperties({
+        posthogDistinctId: distinctId(),
+        distinct_id: distinctId(),
+        ...attributes,
+      });
+      send(
+        `${config.ingestBaseURL}/i/v1/logs`,
+        {
+          resourceLogs: [
+            {
+              resource: {
+                attributes: otlpAttributes({
+                  "service.name": "agentic30-sidecar",
+                  "service.version": environment.AGENTIC30_APP_VERSION || "",
+                  "deployment.environment": runtimePolicy().telemetryEnvironment,
+                }),
+              },
+              scopeLogs: [
+                {
+                  scope: { name: "agentic30-sidecar" },
+                  logRecords: [
+                    {
+                      timeUnixNano: timeUnixNano(now),
+                      observedTimeUnixNano: timeUnixNano(now),
+                      severityNumber: severity.number,
+                      severityText: severity.text,
+                      body: otlpValue(String(message || "")),
+                      attributes: otlpAttributes(base),
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        { Authorization: `Bearer ${config.apiKey}` },
+      );
     },
   };
 }

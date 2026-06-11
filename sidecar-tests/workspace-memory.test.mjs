@@ -15,6 +15,7 @@ import {
   loadOfficeHoursTurnLog,
   loadOnboardingMemory,
   refreshDayMemory,
+  reviseOfficeHoursTurn,
   resolveDayMemoryPath,
   resolveDayRollupPath,
   resolveOnboardingMemoryPath,
@@ -132,6 +133,8 @@ test("office hours turn log round-trips the terminal closing-card stamp", async 
         sessionId: "session-a",
         questionText: "오늘 그 한 통을 어떤 안으로 보낼 건가?",
         responseText: "최소안: 지금 박고 오늘 발송",
+        signalId: "office_hours_alternatives",
+        signalLabel: "Office Hours 대안 비교",
         terminal: true,
       },
       now: new Date("2026-06-11T00:00:00.000Z"),
@@ -150,7 +153,204 @@ test("office hours turn log round-trips the terminal closing-card stamp", async 
     const log = await loadOfficeHoursTurnLog({ workspaceRoot: root });
     assert.equal(log.turns.length, 2);
     assert.equal(log.turns[0].terminal, true);
+    assert.equal(log.turns[0].signalId, "office_hours_alternatives");
+    assert.equal(log.turns[0].signalLabel, "Office Hours 대안 비교");
     assert.equal("terminal" in log.turns[1], false);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+function makePromptSnapshot({
+  requestId = "request-1",
+  sessionId = "session-a",
+  question = "어떤 고객에게 먼저 물어볼까요?",
+} = {}) {
+  return {
+    requestId,
+    sessionId,
+    toolName: "agentic30_request_user_input",
+    title: "Office Hours",
+    createdAt: "2026-06-11T00:00:00.000Z",
+    questions: [
+      {
+        questionId: "office_hours_target",
+        header: "대상 사용자",
+        question,
+        options: [
+          { label: "1인 개발자", description: "혼자 제품을 만드는 개발자" },
+          { label: "B2B SaaS 팀", description: "작은 SaaS 팀" },
+        ],
+        multiSelect: false,
+        allowFreeText: true,
+        requiresFreeText: false,
+        freeTextPlaceholder: "구체적인 사람을 적어주세요",
+      },
+    ],
+    generation: {
+      mode: "office_hours_structured_input",
+      signalId: "office_hours_target",
+      signalLabel: "대상 사용자",
+      dimensionStepIndex: 1,
+      dimensionTotal: 6,
+    },
+  };
+}
+
+test("office hours v2 turns persist prompt snapshots and submissions while legacy turns still load", async () => {
+  const root = await tempWorkspace();
+  try {
+    await appendOfficeHoursTurn({
+      workspaceRoot: root,
+      turn: {
+        day: 1,
+        sessionId: "session-a",
+        requestId: "request-1",
+        questionText: "어떤 고객에게 먼저 물어볼까요?",
+        responseText: "1인 개발자",
+        promptSnapshot: makePromptSnapshot(),
+        submissions: [
+          {
+            question: "어떤 고객에게 먼저 물어볼까요?",
+            selectedOptions: ["1인 개발자"],
+            freeText: "",
+          },
+        ],
+      },
+      now: new Date("2026-06-11T00:01:00.000Z"),
+    });
+
+    const filePath = path.join(root, ".agentic30", "memory", "office-hours-turns.json");
+    const raw = JSON.parse(await fs.readFile(filePath, "utf8"));
+    raw.turns.push({
+      day: 1,
+      sessionId: "session-a",
+      requestId: "legacy-request",
+      questionText: "legacy question",
+      responseText: "legacy answer",
+      occurredAt: "2026-06-11T00:02:00.000Z",
+    });
+    await fs.writeFile(filePath, JSON.stringify(raw, null, 2), "utf8");
+
+    const log = await loadOfficeHoursTurnLog({ workspaceRoot: root });
+    assert.equal(log.schemaVersion, 2);
+    assert.equal(log.schema, "agentic30.memory.office_hours_turns.v2");
+    assert.equal(log.turns.length, 2);
+    assert.equal(log.turns[0].promptSnapshot.requestId, "request-1");
+    assert.equal(log.turns[0].submissions[0].selectedOptions[0], "1인 개발자");
+    assert.equal(log.turns[1].requestId, "legacy-request");
+    assert.equal(log.turns[1].promptSnapshot, undefined);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("office hours revision replaces target answer and removes later turns from the same day only", async () => {
+  const root = await tempWorkspace();
+  try {
+    await appendOfficeHoursTurn({
+      workspaceRoot: root,
+      turn: {
+        day: 1,
+        sessionId: "session-a",
+        requestId: "request-1",
+        questionText: "Q1",
+        responseText: "A1",
+        promptSnapshot: makePromptSnapshot({ requestId: "request-1", question: "Q1" }),
+        submissions: [{ question: "Q1", selectedOptions: ["1인 개발자"], freeText: "" }],
+      },
+      now: new Date("2026-06-11T00:01:00.000Z"),
+    });
+    await appendOfficeHoursTurn({
+      workspaceRoot: root,
+      turn: {
+        day: 1,
+        sessionId: "session-a",
+        requestId: "request-2",
+        questionText: "Q2",
+        responseText: "A2",
+        promptSnapshot: makePromptSnapshot({ requestId: "request-2", question: "Q2" }),
+        submissions: [{ question: "Q2", selectedOptions: ["B2B SaaS 팀"], freeText: "" }],
+      },
+      now: new Date("2026-06-11T00:02:00.000Z"),
+    });
+    await appendOfficeHoursTurn({
+      workspaceRoot: root,
+      turn: {
+        day: 2,
+        sessionId: "session-b",
+        requestId: "request-day2",
+        questionText: "Day 2 Q",
+        responseText: "Day 2 A",
+        promptSnapshot: makePromptSnapshot({ requestId: "request-day2", sessionId: "session-b", question: "Day 2 Q" }),
+        submissions: [{ question: "Day 2 Q", selectedOptions: ["1인 개발자"], freeText: "" }],
+      },
+      now: new Date("2026-06-12T00:01:00.000Z"),
+    });
+
+    const revision = await reviseOfficeHoursTurn({
+      workspaceRoot: root,
+      requestId: "request-1",
+      replacementTurn: {
+        day: 1,
+        sessionId: "session-a",
+        requestId: "request-1",
+        questionText: "Q1",
+        responseText: "A1 revised",
+        promptSnapshot: makePromptSnapshot({ requestId: "request-1", question: "Q1" }),
+        submissions: [{ question: "Q1", selectedOptions: ["B2B SaaS 팀"], freeText: "초기 팀" }],
+      },
+      now: new Date("2026-06-11T00:03:00.000Z"),
+    });
+
+    const log = await loadOfficeHoursTurnLog({ workspaceRoot: root });
+    assert.deepEqual(log.turns.map((turn) => turn.requestId), ["request-1", "request-day2"]);
+    assert.equal(log.turns[0].responseText, "A1 revised");
+    assert.equal(log.turns[0].submissions[0].freeText, "초기 팀");
+    assert.equal(log.turns[0].revisedAt, "2026-06-11T00:03:00.000Z");
+    assert.equal(revision.removedTurns.map((turn) => turn.requestId).join(","), "request-2");
+
+    const day1 = await loadDayMemory({ workspaceRoot: root, day: 1 });
+    const day2 = await loadDayMemory({ workspaceRoot: root, day: 2 });
+    assert.equal(day1.details.officeHoursTurns.length, 1);
+    assert.equal(day1.details.officeHoursTurns[0].responseText, "A1 revised");
+    assert.equal(day2.details.officeHoursTurns.length, 1);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("office hours revision rejects legacy turns without prompt snapshots", async () => {
+  const root = await tempWorkspace();
+  try {
+    await appendOfficeHoursTurn({
+      workspaceRoot: root,
+      turn: {
+        day: 1,
+        sessionId: "session-a",
+        requestId: "legacy-request",
+        questionText: "Q1",
+        responseText: "A1",
+      },
+      now: new Date("2026-06-11T00:01:00.000Z"),
+    });
+
+    await assert.rejects(
+      () => reviseOfficeHoursTurn({
+        workspaceRoot: root,
+        requestId: "legacy-request",
+        replacementTurn: {
+          day: 1,
+          sessionId: "session-a",
+          requestId: "legacy-request",
+          questionText: "Q1",
+          responseText: "A1 revised",
+          promptSnapshot: makePromptSnapshot({ requestId: "legacy-request", question: "Q1" }),
+          submissions: [{ question: "Q1", selectedOptions: ["1인 개발자"], freeText: "" }],
+        },
+      }),
+      /before editable snapshots/,
+    );
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

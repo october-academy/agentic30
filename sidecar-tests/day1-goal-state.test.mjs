@@ -17,7 +17,21 @@ test("Day 1 goal normalization strips duplicated problem text from customer and 
   });
 
   assert.equal(selection.customer, "전업 1인 개발자 (수익 0원, macOS)");
-  assert.equal(selection.goalText, "30일 안에 가입자 100명을 모은다.");
+  assert.equal(selection.goalText, "30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다.");
+});
+
+test("Day 1 get_users goal normalization upgrades old signup-count target to active users", () => {
+  const selection = normalizeDay1GoalSelection({
+    goalType: "get_users",
+    goalText: "30일 안에 가입자 100명을 모은다.",
+    customer: "B2B SaaS founder",
+    problem: "온보딩에서 이탈한다",
+    validationAction: "첫 핵심 행동 완료를 측정한다.",
+    proofSink: "local",
+    selectedAt: "2026-06-07T00:00:00.000Z",
+  });
+
+  assert.equal(selection.goalText, "30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다.");
 });
 
 test("Day 1 goal normalization repairs legacy sentence-composition artifacts", () => {

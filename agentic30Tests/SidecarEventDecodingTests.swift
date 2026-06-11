@@ -181,6 +181,88 @@ struct SidecarEventDecodingTests {
         #expect(event.state == .streaming)
     }
 
+    @MainActor @Test func decodesOfficeHoursRuntimePromptSnapshots() throws {
+        let payload = """
+        {
+          "type": "session_updated",
+          "session": {
+            "id": "session-1",
+            "title": "Office Hours",
+            "provider": "codex",
+            "model": "",
+            "status": "awaiting_input",
+            "createdAt": "2026-06-11T00:00:00.000Z",
+            "updatedAt": "2026-06-11T00:03:00.000Z",
+            "error": null,
+            "messages": [],
+            "pendingUserInput": null,
+            "runtime": {
+              "officeHours": {
+                "active": true,
+                "source": "office_hours_screen",
+                "startedAt": "2026-06-11T00:00:00.000Z",
+                "context": "Expected question count: 6",
+                "day": 1,
+                "promptSnapshots": [
+                  {
+                    "sessionId": "session-1",
+                    "requestId": "request-1",
+                    "submittedAt": "2026-06-11T00:01:00.000Z",
+                    "editable": true,
+                    "turnSessionId": "old-session",
+                    "prompt": {
+                      "requestId": "request-1",
+                      "sessionId": "session-1",
+                      "toolName": "agentic30_request_user_input",
+                      "title": "Office Hours",
+                      "createdAt": "2026-06-11T00:00:30.000Z",
+                      "questions": [
+                        {
+                          "questionId": "office_hours_target",
+                          "header": "대상 사용자",
+                          "question": "누구에게 먼저 물어볼까요?",
+                          "options": [
+                            { "label": "1인 개발자", "description": "혼자 제품을 만드는 사람" }
+                          ],
+                          "multiSelect": false,
+                          "allowFreeText": true,
+                          "requiresFreeText": false
+                        }
+                      ],
+                      "generation": {
+                        "mode": "office_hours_structured_input",
+                        "signalId": "office_hours_target",
+                        "signalLabel": "대상 사용자",
+                        "dimensionStepIndex": 1,
+                        "dimensionTotal": 6
+                      }
+                    },
+                    "submissions": [
+                      {
+                        "question": "누구에게 먼저 물어볼까요?",
+                        "selectedOptions": ["1인 개발자"],
+                        "freeText": "macOS 앱 개발자"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        let snapshot = try #require(event.session?.runtime?.officeHours?.promptSnapshots?.first)
+
+        #expect(snapshot.requestId == "request-1")
+        #expect(snapshot.prompt.questions.first?.question == "누구에게 먼저 물어볼까요?")
+        #expect(snapshot.submissions.first?.selectedOptions == ["1인 개발자"])
+        #expect(snapshot.submissions.first?.freeText == "macOS 앱 개발자")
+        #expect(snapshot.editable == true)
+        #expect(snapshot.turnSessionId == "old-session")
+    }
+
     @MainActor @Test func decodesConnectionErrorPayload() throws {
         let payload = """
         {
@@ -2787,6 +2869,28 @@ struct SidecarEventDecodingTests {
           "message": "Codex hit a usage limit during workspace scan verification.",
           "nextProvider": "cursor",
           "availableProviders": ["claude", "gemini", "cursor"],
+          "providerReadiness": [
+            {
+              "provider": "claude",
+              "sdkInstalled": true,
+              "authenticated": true,
+              "scanReady": true,
+              "source": "local-session",
+              "message": "Local Claude login session",
+              "sdkMessage": "Claude Agent SDK CLI is installed",
+              "authAction": null
+            },
+            {
+              "provider": "cursor",
+              "sdkInstalled": true,
+              "authenticated": false,
+              "scanReady": false,
+              "source": "missing",
+              "message": "CURSOR_API_KEY를 설정하세요.",
+              "sdkMessage": "Cursor Agent SDK is installed",
+              "authAction": "cursor_api_key"
+            }
+          ],
           "errorKind": "provider_usage_limit",
           "stage": "blocked",
           "stepIndex": 2,
@@ -2804,6 +2908,10 @@ struct SidecarEventDecodingTests {
         #expect(event.message == "Codex hit a usage limit during workspace scan verification.")
         #expect(event.nextProvider == "cursor")
         #expect(event.availableProviders == ["claude", "gemini", "cursor"])
+        #expect(event.providerReadiness?.count == 2)
+        #expect(event.providerReadiness?.first?.provider == .claude)
+        #expect(event.providerReadiness?.first?.scanReady == true)
+        #expect(event.providerReadiness?.last?.authAction == "cursor_api_key")
         #expect(event.errorKind == "provider_usage_limit")
         #expect(event.stage == "blocked")
         #expect(event.stepIndex == 2)
@@ -2818,11 +2926,14 @@ struct SidecarEventDecodingTests {
             message: event.message ?? "",
             nextProvider: event.nextProvider.flatMap(AgentProvider.init(rawValue:)),
             availableProviders: (event.availableProviders ?? []).compactMap(AgentProvider.init(rawValue:)),
+            providerReadiness: event.providerReadiness ?? [],
             errorKind: event.errorKind
         )
         #expect(notice.provider == .codex)
         #expect(notice.nextProvider == .cursor)
         #expect(notice.availableProviders == [.claude, .gemini, .cursor])
+        #expect(notice.providerReadiness.first?.provider == .claude)
+        #expect(notice.providerReadiness.first?.scanReady == true)
         #expect(notice.scanRoot == "/Users/me/project")
     }
 

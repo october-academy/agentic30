@@ -501,11 +501,30 @@ struct OfficeHoursRuntime: Codable, Hashable {
     var startedAt: String?
     var context: String?
     var day: Int?
+    var promptSnapshots: [OfficeHoursStoredPromptSnapshot]?
     /// 사이드카가 인터뷰 종결 카드(대안 비교) 답변 제출 시점에 스탬프하는
     /// 완료 신호. 프롬프트가 이미 답이 분명한 질문을 건너뛰므로(smart-skip)
     /// 모드 정원(questionCount)보다 적은 답변으로도 인터뷰가 정상 종결될 수
     /// 있다 — 카운트 게이트만 보면 종결된 인터뷰가 미완으로 읽힌다.
     var terminalAnswered: Bool?
+}
+
+struct OfficeHoursStoredPromptSnapshot: Identifiable, Codable, Hashable {
+    let sessionId: String
+    let requestId: String
+    let prompt: StructuredPromptRequest
+    let submissions: [OfficeHoursStoredPromptSubmission]
+    let submittedAt: Date
+    let editable: Bool?
+    let turnSessionId: String?
+
+    var id: String { requestId }
+}
+
+struct OfficeHoursStoredPromptSubmission: Codable, Hashable {
+    let question: String
+    let selectedOptions: [String]
+    let freeText: String
 }
 
 nonisolated struct OfficeHoursSourceGate: Codable, Hashable {
@@ -3367,6 +3386,48 @@ nonisolated struct BipResearchCandidate: Codable, Hashable, Identifiable {
         case sourceRefs
         case draft
         case evidenceStrength
+    }
+
+    init(
+        id: String,
+        title: String,
+        sourceLabel: String?,
+        source: String?,
+        sourceType: String?,
+        medium: String?,
+        date: String?,
+        matchLabel: String?,
+        matchCaption: String?,
+        quote: String?,
+        whyTitle: String?,
+        whyBody: String?,
+        usageTitle: String?,
+        usageBody: String?,
+        gap: String?,
+        tags: [BipResearchTag],
+        sourceRefs: [BipResearchSourceRef],
+        draft: String?,
+        evidenceStrength: String?
+    ) {
+        self.id = id
+        self.title = title
+        self.sourceLabel = sourceLabel
+        self.source = source
+        self.sourceType = sourceType
+        self.medium = medium
+        self.date = date
+        self.matchLabel = matchLabel
+        self.matchCaption = matchCaption
+        self.quote = quote
+        self.whyTitle = whyTitle
+        self.whyBody = whyBody
+        self.usageTitle = usageTitle
+        self.usageBody = usageBody
+        self.gap = gap
+        self.tags = tags
+        self.sourceRefs = sourceRefs
+        self.draft = draft
+        self.evidenceStrength = evidenceStrength
     }
 
     init(from decoder: Decoder) throws {

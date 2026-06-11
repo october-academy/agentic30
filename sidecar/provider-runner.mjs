@@ -48,6 +48,7 @@ const DEFAULT_CODEX_MODEL = "gpt-5.5";
 const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
 const DEFAULT_CURSOR_MODEL = "composer-2.5";
 export const CODEX_BINARY_NOT_INSTALLED_ERROR_CODE = "ERR_CODEX_BINARY_NOT_INSTALLED";
+export const OFFICE_HOURS_QUESTION_EXECUTION_MODE = "office_hours_question";
 const CODEX_CLI_VERSION_TIMEOUT_MS = 2500;
 const DEFAULT_CLAUDE_MODEL = "claude-opus-4-8";
 const MINI_ACTION_EXECUTION_ONLY_MODE = "mini_action_execution_only";
@@ -87,14 +88,19 @@ const CODEX_INTERNAL_MCP_READ_ONLY_TOOLS = Object.freeze([
   "gws_docs_read",
   "get_rubric_status",
 ]);
+const CODEX_OFFICE_HOURS_QUESTION_TOOLS = Object.freeze([
+  CODEX_STRUCTURED_INPUT_TOOL,
+  "AskUserQuestion",
+  "ask_user_question",
+]);
 const GEMINI_CAPABLE_EXECUTION_MODES = new Set([
   "isolated_read_only",
   "judge_read_only",
   "idd_question_synthesis",
   "agentic",
   "workspace_scan_read_only",
-  "fast_chat",
   "memory_chat",
+  OFFICE_HOURS_QUESTION_EXECUTION_MODE,
 ]);
 // Cursor runs a local agent with filesystem tools, so the read-only judge
 // modes (which rely on text-only execution) are excluded on purpose.
@@ -102,7 +108,6 @@ const CURSOR_CAPABLE_EXECUTION_MODES = new Set([
   "idd_question_synthesis",
   "agentic",
   "workspace_scan_read_only",
-  "fast_chat",
   "memory_chat",
 ]);
 const RESPONSE_LANGUAGE_INSTRUCTION =
@@ -443,6 +448,35 @@ export function getProviderConnectionState(provider) {
   };
 }
 
+function providerAuthAction(provider, connection = {}) {
+  if (connection.available) return null;
+  if (provider === "claude") return "claude_login";
+  if (provider === "codex") return "codex_login";
+  if (provider === "gemini") {
+    return connection.geminiAdc?.gcloudInstalled
+      ? "gemini_adc_login"
+      : "gemini_api_key";
+  }
+  if (provider === "cursor") return "cursor_api_key";
+  return null;
+}
+
+export function getProviderScanReadiness(provider) {
+  const connection = getProviderConnectionState(provider);
+  const sdkInstalled = connection.sdk?.available === true;
+  const authenticated = connection.available === true;
+  return {
+    provider,
+    sdkInstalled,
+    authenticated,
+    scanReady: sdkInstalled && authenticated,
+    source: String(connection.source || ""),
+    message: String(connection.message || ""),
+    sdkMessage: String(connection.sdk?.message || ""),
+    authAction: providerAuthAction(provider, connection),
+  };
+}
+
 // Agent SDK >=0.3 ships the Claude Code CLI as a per-platform native binary in
 // an optionalDependency package; <=0.2 bundled a Node `cli.js` inside the main
 // package. Resolve whichever layout is installed (native first, then legacy).
@@ -639,7 +673,7 @@ async function runClaudeProvider({
     },
     abortController,
     maxTurns: resolveClaudeMaxTurns(executionMode),
-    ...(claudeVendor?.exists
+    ...(claudeVendor?.exists && executionMode !== OFFICE_HOURS_QUESTION_EXECUTION_MODE
       ? {
           plugins: [{ type: "local", path: claudeVendor.pluginRoot }],
           skills: [claudeVendor.skillName],
@@ -647,7 +681,7 @@ async function runClaudeProvider({
         }
       : {}),
   };
-  if (claudeVendor?.exists) {
+  if (claudeVendor?.exists && executionMode !== OFFICE_HOURS_QUESTION_EXECUTION_MODE) {
     onRunEvent?.({
       phase: "provider.claude.specialist_loaded",
       specialistId: claudeVendor.skillName,
@@ -660,9 +694,7 @@ async function runClaudeProvider({
     options.permissionMode = "bypassPermissions";
   }
 
-  if (executionMode === "fast_chat" && sessionRuntime?.claudeSessionId) {
-    options.resume = sessionRuntime.claudeSessionId;
-  } else if (executionMode !== "fast_chat") {
+  if (sessionRuntime?.claudeSessionId) {
     const knownSessions = await listSessions().catch(() => []);
     const matchingSession = knownSessions.find(
       (item) => item.sessionId === sessionRuntime?.claudeSessionId,
@@ -780,6 +812,16 @@ function buildClaudeCanUseTool({
   approvedToolExecution = false,
 } = {}) {
   return async (toolName, input, context = {}) => {
+    if (executionMode === OFFICE_HOURS_QUESTION_EXECUTION_MODE && toolName !== "AskUserQuestion") {
+      onRunEvent?.({
+        phase: "provider.claude.tool_denied_office_hours_question",
+        toolName,
+      });
+      return {
+        behavior: "deny",
+        message: "Office Hours question mode may only ask the host structured-input question. Do not inspect files, run commands, browse, or use other tools.",
+      };
+    }
     if (executionMode === "office_hours_digest_read_only") {
       const verdict = evaluateClaudeOfficeHoursDigestToolCall(toolName, input);
       if (verdict?.allow === true) {
@@ -1369,6 +1411,7 @@ async function runCodexAttempt({
     }
 
     if (event.type === "item.started") {
+      assertCodexOfficeHoursQuestionItemAllowed(event.item, executionMode);
       onRunEvent?.({
         phase: "provider.codex.event.item_started",
         itemType: event.item?.type || "unknown",
@@ -1383,6 +1426,7 @@ async function runCodexAttempt({
 
     if (event.type === "item.updated") {
       const item = event.item;
+      assertCodexOfficeHoursQuestionItemAllowed(item, executionMode);
       if (item?.type === "agent_message") {
         onRunEvent?.({
           phase: "provider.codex.event.item_updated_agent_message",
@@ -1406,6 +1450,7 @@ async function runCodexAttempt({
 
     if (event.type === "item.completed") {
       const item = event.item;
+      assertCodexOfficeHoursQuestionItemAllowed(item, executionMode);
       if (item.type === "agent_message") {
         onRunEvent?.({
           phase: "provider.codex.event.item_completed_agent_message",
@@ -1481,6 +1526,25 @@ export function shouldResumeCodexThread(sessionRuntime = {}, workspaceRoot = "",
   return meta.codexHome === codexHomePath
     && meta.workspaceRoot === workspaceRoot
     && (!executionMode || meta.executionMode === executionMode);
+}
+
+function assertCodexOfficeHoursQuestionItemAllowed(item, executionMode = "") {
+  if (executionMode !== OFFICE_HOURS_QUESTION_EXECUTION_MODE || !item) return;
+  if (item.type === "command_execution") {
+    throw new Error("Office Hours question mode attempted command execution; refusing to fall back or continue.");
+  }
+  if (item.type === "web_search") {
+    throw new Error("Office Hours question mode attempted web search; refusing to fall back or continue.");
+  }
+  if (item.type === "file_change") {
+    throw new Error("Office Hours question mode attempted file changes; refusing to fall back or continue.");
+  }
+  if (item.type === "mcp_tool_call") {
+    const toolName = String(item.tool || "");
+    if (!CODEX_OFFICE_HOURS_QUESTION_TOOLS.includes(toolName)) {
+      throw new Error(`Office Hours question mode attempted disallowed MCP tool "${toolName}"; refusing to fall back or continue.`);
+    }
+  }
 }
 
 export function mapCodexItemToToolEvent(item, lifecycle) {
@@ -1654,7 +1718,7 @@ export function buildCodexConfig({
         ? withCodexMcpApproval(buildVercelCodexMcpConfigFromSources({ env: posthogEnv }))
         : {}),
     },
-    ...(codexVendor?.exists
+    ...(codexVendor?.exists && executionMode !== OFFICE_HOURS_QUESTION_EXECUTION_MODE
       ? {
           skills: {
             include_instructions: true,
@@ -1943,8 +2007,8 @@ export function resolveCodexReasoningEffort({ executionMode = "", prompt = "" } 
   if (executionMode === "office_hours_digest_read_only") {
     return "low";
   }
-  if (executionMode === "fast_chat") {
-    return hasDeepWorkSignal ? "medium" : "minimal";
+  if (executionMode === OFFICE_HOURS_QUESTION_EXECUTION_MODE) {
+    return "low";
   }
   if (executionMode === "isolated_read_only") {
     return hasDeepWorkSignal ? "medium" : "low";
@@ -2811,7 +2875,9 @@ function buildCodexInternalMcpConfig(
     tool_timeout_sec: CODEX_INTERNAL_MCP_TOOL_TIMEOUT_SEC,
   };
   if (!approvedToolExecution) {
-    config.enabled_tools = [...CODEX_INTERNAL_MCP_READ_ONLY_TOOLS];
+    config.enabled_tools = executionMode === OFFICE_HOURS_QUESTION_EXECUTION_MODE
+      ? [...CODEX_OFFICE_HOURS_QUESTION_TOOLS]
+      : [...CODEX_INTERNAL_MCP_READ_ONLY_TOOLS];
   }
   return withCodexMcpApproval(config);
 }
@@ -3001,14 +3067,20 @@ function baseSystemPrompt(provider, workspaceRoot, executionMode) {
     ].join("\n");
   }
 
-  if (executionMode === "fast_chat") {
+  if (executionMode === OFFICE_HOURS_QUESTION_EXECUTION_MODE) {
     return [
-      "You are the sidecar chat engine for agentic30.",
-      "Reply in concise conversational prose.",
+      "You are the Agentic30 Office Hours question generator.",
       RESPONSE_LANGUAGE_INSTRUCTION,
       `Current workspace: ${workspaceRoot}`,
       `Provider mode: ${provider}`,
-      "This is a fast chat lane. Do not use tools, workspace inspection, web search, QMD, Notion, or BIP document retrieval.",
+      "Generate exactly the next Office Hours structured-input question from the context embedded in the user prompt and appended system prompt.",
+      "Do not inspect the workspace, run shell commands, use web search, call QMD, call external MCP servers, write files, or produce implementation work.",
+      provider === "claude"
+        ? "When the next question is ready, use AskUserQuestion. Do not ask the question only in prose."
+        : provider === "codex"
+          ? `When the next question is ready, call the ${CODEX_STRUCTURED_INPUT_TOOL} MCP tool. Do not ask the question only in prose.`
+          : "When the next question is ready, emit the inline_decision contract. Do not ask the question only in loose prose.",
+      "Ask one focused decision at a time. Prefer 2-4 choices and allow free text when the user's situation may not fit the choices.",
       "",
       INLINE_DECISION_CONTRACT,
     ].join("\n");
@@ -3141,12 +3213,18 @@ export function codexSandboxForExecution({
 function usesInternalMcp(executionMode = "") {
   return executionMode === "agentic"
     || executionMode === "memory_chat"
+    || executionMode === OFFICE_HOURS_QUESTION_EXECUTION_MODE
     || executionMode === "bip_coach_read_only"
     || executionMode === MINI_ACTION_EXECUTION_ONLY_MODE;
 }
 
 function usesQmdMcp(executionMode = "") {
   return executionMode === "agentic" || executionMode === "memory_chat";
+}
+
+function usesExternalChatMcp(executionMode = "") {
+  return usesInternalMcp(executionMode)
+    && executionMode !== OFFICE_HOURS_QUESTION_EXECUTION_MODE;
 }
 
 // "mcp_oauth_prewarm_*": Settings > 연동 "MCP 연결" 버튼이 도는 최소 쿼리 모드
@@ -3156,14 +3234,14 @@ function usesQmdMcp(executionMode = "") {
 function usesPostHogMcp(executionMode = "") {
   return executionMode === "office_hours_digest_read_only"
     || executionMode === "mcp_oauth_prewarm_posthog"
-    || usesInternalMcp(executionMode)
+    || usesExternalChatMcp(executionMode)
     || usesQmdMcp(executionMode);
 }
 
 function usesCloudflareMcp(executionMode = "") {
   return executionMode === "office_hours_digest_read_only"
     || executionMode === "mcp_oauth_prewarm_cloudflare"
-    || usesInternalMcp(executionMode)
+    || usesExternalChatMcp(executionMode)
     || usesQmdMcp(executionMode);
 }
 
@@ -3172,13 +3250,13 @@ function usesCloudflareMcp(executionMode = "") {
 // signals through tools instead of shelling out.
 function usesGithubMcp(executionMode = "") {
   return executionMode === "office_hours_digest_read_only"
-    || usesInternalMcp(executionMode)
+    || usesExternalChatMcp(executionMode)
     || usesQmdMcp(executionMode);
 }
 
 function usesVercelMcp(executionMode = "") {
   return executionMode === "mcp_oauth_prewarm_vercel"
-    || usesInternalMcp(executionMode)
+    || usesExternalChatMcp(executionMode)
     || usesQmdMcp(executionMode);
 }
 

@@ -1761,7 +1761,7 @@ function signalPasses(signalId, text) {
     case "mvp_wedge":
       return /(mvp|wedge|작은|최소|첫 버전|v0|이번 주|one thing|smallest)/i.test(value);
     case "non_goal":
-      return /(non-goal|하지 않|안 하|제외|나중|범위 밖|스코프 밖|defer|skip|out of scope)/i.test(value);
+      return /(non-goal|만들지 않을|하지 않을|하지 않|않을 것|안 하|포기할|제외할|제외|나중|범위 밖|스코프 밖|defer|skip|out of scope)/i.test(value);
     case "observable_success":
       return /(성공|관찰|측정|완료|보이면|기준|signal|success|observe|measure)/i.test(value);
     case "core_risk":
@@ -1926,55 +1926,183 @@ export function day1HandoffDocByType(type) {
     || null;
 }
 
-export function buildDay1HandoffResponseText(doc, { day1Handoff = {} } = {}) {
-  const title = doc?.title || "Document";
-  const goal = cleanHandoffField(day1Handoff.goal) || "이번 주 첫 고객 반응 검증";
-  const icp = cleanHandoffField(day1Handoff.icp) || "Day 1에서 고른 좁은 첫 고객군";
-  const pain = cleanHandoffField(day1Handoff.pain) || "현재 대안과 압박 비용이 아직 약한 가정";
-  const outcome = cleanHandoffField(day1Handoff.outcome) || "이번 주 관찰 가능한 완료 행동";
-  const qualityScore = cleanHandoffField(day1Handoff.qualityScore);
+const DAY1_HANDOFF_PLACEHOLDER_PATTERNS = [
+  /첫\s*고객\s*후보/i,
+  /검증할\s*문제/i,
+  /이번\s*주\s*확인할\s*행동/i,
+  /Day\s*1에서\s*고른\s*좁은\s*첫\s*고객군/i,
+  /현재\s*대안과\s*압박\s*비용이\s*아직\s*약한\s*가정/i,
+  /이번\s*주\s*관찰\s*가능한\s*완료\s*행동/i,
+];
 
+const DAY1_HANDOFF_INTERNAL_PATTERNS = [
+  /Agentic30/i,
+  /\bFoundation\b/i,
+  /GOAL\/ICP\/VALUES\/SPEC\s*문서/i,
+  /문서\s*저장/i,
+  /새\s*AI\s*실행/i,
+  /Day\s*1/i,
+];
+
+export function buildDay1HandoffResponseText(doc, { day1Handoff = {} } = {}) {
+  return buildDay1HandoffUserFacingDocument(doc, { day1Handoff });
+}
+
+function buildDay1HandoffUserFacingDocument(doc, { day1Handoff = {} } = {}) {
+  const facts = normalizeDay1HandoffFacts(day1Handoff);
   switch (doc?.type) {
     case "goal":
-      return [
-        `이번 주 검증 기준은 ${goal}입니다.`,
-        `판단 지표는 ${outcome}의 응답 수, 완료 전환, 실제 사용 신호입니다.`,
-        "목표값은 금요일까지 최소 3명에게 연락하고 1명 이상의 구체적 과거 행동을 확인하는 것입니다.",
-        "실패 조건은 연락한 후보가 모두 응답하지 않거나 문제를 현재 해결 중이라고 말하지 못하면 피벗하는 것입니다.",
-        qualityScore ? `Day 1 품질 점수는 ${qualityScore}입니다.` : "",
-      ].filter(Boolean).join("\n");
+      return renderGoalHandoffDocument(facts);
     case "icp":
-      return [
-        `좁은 고객군은 ${icp}입니다.`,
-        "이번 주 연락 가능한 실제 사람은 기존 동료, 커뮤니티 계정, DM으로 닿을 수 있는 후보 3명입니다.",
-        `현재 대안은 ${pain}을 노션, 스프레드시트, Slack, 수작업 복사 같은 작업 흐름으로 우회하는 것입니다.`,
-        "압박 비용은 주 3시간 이상의 지연, 도구 비용, 평판 리스크 중 하나로 확인합니다.",
-      ].join("\n");
+      return renderIcpHandoffDocument(facts);
     case "values":
-      return [
-        `이번 주 우선순위 선택은 ${goal}보다 넓은 플랫폼 확장을 우선하지 않는 것입니다.`,
-        "포기할 선택지는 자동화, 예쁜 대시보드, 다중 Day 확장처럼 증거 없이 범위를 키우는 일입니다.",
-        `적용 조건은 ${outcome}이 관찰되지 않았는데 새 기능을 추가하고 싶어지는 상황입니다.`,
-        "위반 예시는 인터뷰, 응답, 사용 행동 없이 SPEC 범위를 키우는 것입니다.",
-      ].join("\n");
+      return renderValuesHandoffDocument(facts);
     case "spec":
-      return [
-        `한 사용자의 실제 작업 흐름은 가설 확인, ${icp} 선택, ${outcome} 저장까지 이어지는 단계입니다.`,
-        "이번 주 첫 버전 범위는 Day 1 확정에서 네 개 기초 문서를 저장하고 Day 2 검증으로 넘기는 가장 작은 버전입니다.",
-        "하지 않을 일은 완전 자동 문서 편집기, 새 AI 실행, 모든 문서 세부 인터뷰를 첫 경로에 넣는 것입니다.",
-        `관찰 가능한 성공 기준은 사용자가 ${outcome}을 끝내고 GOAL/ICP/VALUES/SPEC 문서가 저장된 상태를 보는 것입니다.`,
-        `핵심 리스크는 ${pain}이 실제 구매/사용 압박이 아니라면 이 가설이 틀리는 것입니다.`,
-      ].join("\n");
+      return renderSpecHandoffDocument(facts);
     default:
       return [
-        `# ${title}`,
+        `# ${doc?.title || "Document"}`,
         "",
-        `Day 1 확정 가설: ${goal}`,
-        `고객: ${icp}`,
-        `문제: ${pain}`,
-        `확인할 행동: ${outcome}`,
+        handoffBullet("목표", facts.northStarGoal),
+        handoffBullet("고객", facts.targetUser),
+        handoffBullet("문제", facts.problem),
+        handoffBullet("다음 행동", facts.nextAction),
       ].join("\n");
   }
+}
+
+function renderGoalHandoffDocument(facts) {
+  return compactMarkdown([
+    "# GOAL",
+    "",
+    "## 30일 목표",
+    handoffBullet(null, facts.northStarGoal),
+    "",
+    "## 이번 주 검증",
+    handoffBullet("증명할 것", facts.weeklyProof || facts.entryPoint),
+    handoffBullet("판단 지표", facts.weeklyProof),
+    handoffBullet("기준값/기한", facts.threshold),
+    handoffBullet("실패 조건", facts.failureCondition),
+    "",
+    "## 다음 행동",
+    handoffBullet(null, facts.nextAction || facts.entryPoint),
+    "",
+    renderHandoffEvidenceSections(facts),
+  ]);
+}
+
+function renderIcpHandoffDocument(facts) {
+  return compactMarkdown([
+    "# 고객 후보",
+    "",
+    "## 고객 후보",
+    handoffBullet(null, facts.targetUser),
+    "",
+    "## 현재 대안",
+    handoffBullet(null, facts.currentAlternative),
+    "",
+    "## 문제와 시급성",
+    handoffBullet(null, facts.problem),
+    "",
+    "## 이번 주 닿을 방법",
+    handoffBullet(null, facts.nextAction || facts.weeklyProof),
+    "",
+    "## 제외할 고객",
+    ...handoffListLines(facts.nonGoals),
+    "",
+    renderHandoffEvidenceSections(facts),
+  ]);
+}
+
+function renderSpecHandoffDocument(facts) {
+  const flow = [
+    facts.targetUser ? `대상 사용자: ${facts.targetUser}` : "",
+    facts.entryPoint ? `첫 진입점: ${facts.entryPoint}` : "",
+    facts.nextAction ? `검증 방법: ${facts.nextAction}` : "",
+  ].filter(Boolean);
+  return compactMarkdown([
+    "# SPEC",
+    "",
+    "## 문제",
+    handoffBullet(null, facts.problem),
+    "",
+    "## 가장 작은 진입점",
+    handoffBullet(null, facts.entryPoint),
+    "",
+    "## 사용자 흐름",
+    ...(flow.length ? flow.map((line, index) => `${index + 1}. ${line}`) : ["- 확인 필요"]),
+    "",
+    "## 만들지 않을 것",
+    ...handoffListLines(facts.nonGoals),
+    "",
+    "## 성공 신호",
+    handoffBullet(null, facts.weeklyProof || facts.nextAction),
+    "",
+    "## 핵심 리스크",
+    handoffBullet(null, facts.assumptions[0]),
+    "",
+    renderHandoffEvidenceSections(facts),
+  ]);
+}
+
+function renderValuesHandoffDocument(facts) {
+  const decisionAnchor = facts.nextAction || facts.weeklyProof || facts.entryPoint;
+  const principle = decisionAnchor
+    ? `이번 주 결정은 "${decisionAnchor}"에서 나온 사용자 행동 증거를 우선한다.`
+    : "이번 주 결정은 사용자 행동 증거를 우선한다.";
+  const trigger = facts.weeklyProof
+    ? `"${facts.weeklyProof}"가 확인되기 전에 범위를 늘리고 싶을 때 적용한다.`
+    : "검증 증거 없이 범위를 늘리고 싶을 때 적용한다.";
+  return compactMarkdown([
+    "# VALUES",
+    "",
+    "## 이번 주 결정 원칙",
+    `- ${principle}`,
+    "",
+    "## 포기할 선택",
+    ...handoffListLines(facts.nonGoals),
+    "",
+    "## 적용 상황",
+    `- ${trigger}`,
+    "",
+    "## 위반 예시",
+    "- 인터뷰 답변이나 사용 행동 없이 고객, 기능, 진입점을 넓히는 것.",
+    "",
+    renderHandoffEvidenceSections(facts),
+  ]);
+}
+
+function renderHandoffEvidenceSections(facts) {
+  return compactMarkdown([
+    facts.sourceQuotes.length ? "## 근거 문구" : "",
+    ...handoffListLines(facts.sourceQuotes, { empty: [] }),
+    facts.assumptions.length ? "" : "",
+    facts.assumptions.length ? "## 남은 가정" : "",
+    ...handoffListLines(facts.assumptions, { empty: [] }),
+  ]);
+}
+
+function handoffBullet(label, value) {
+  const text = cleanHandoffField(value) || "확인 필요";
+  return label ? `- ${label}: ${text}` : `- ${text}`;
+}
+
+function handoffListLines(values, { empty = ["- 확인 필요"] } = {}) {
+  const items = cleanHandoffList(values);
+  return items.length ? items.map((item) => `- ${item}`) : empty;
+}
+
+function compactMarkdown(lines) {
+  return lines
+    .flatMap((line) => String(line || "").split("\n"))
+    .reduce((acc, line) => {
+      const previous = acc[acc.length - 1];
+      if (line === "" && previous === "") return acc;
+      acc.push(line);
+      return acc;
+    }, [])
+    .join("\n")
+    .trim();
 }
 
 export async function writeAllDay1HandoffDocuments(workspaceRoot, state, {
@@ -2041,57 +2169,79 @@ export function buildDay1HandoffDocumentContent(doc, draft, {
   writtenAt = new Date().toISOString(),
   status = "written",
 } = {}) {
-  const title = doc?.title || "Document";
   const pathLabel = doc?.canonicalPath || "";
-  const goal = cleanHandoffField(day1Handoff.goal);
-  const icp = cleanHandoffField(day1Handoff.icp);
-  const pain = cleanHandoffField(day1Handoff.pain);
-  const outcome = cleanHandoffField(day1Handoff.outcome);
-  const qualityScore = cleanHandoffField(day1Handoff.qualityScore);
-  const markdown = cleanHandoffField(day1Handoff.markdown);
+  const userFacingDraft = buildDay1HandoffUserFacingDocument(doc, { day1Handoff });
   const assumptionLines = unresolvedAssumptions.length
-    ? unresolvedAssumptions.map((item) => `- ${item}`)
-    : ["- 없음"];
+    ? [`<!-- assumptions: ${unresolvedAssumptions.join(" / ")} -->`]
+    : [];
   return [
     DAY1_HANDOFF_MARKER_START,
-    `## Day 1 Handoff — ${title}`,
-    "",
-    `> Target: ${pathLabel}`,
-    `> Written: ${writtenAt}`,
-    `> Status: ${status}`,
-    "",
-    "### Confirmed Hypothesis",
-    goal ? `- 목표: ${goal}` : "- 목표: 확인 필요",
-    icp ? `- 고객: ${icp}` : "- 고객: 확인 필요",
-    pain ? `- 문제: ${pain}` : "- 문제: 확인 필요",
-    outcome ? `- 확인할 행동: ${outcome}` : "- 확인할 행동: 확인 필요",
-    qualityScore ? `- 품질 점수: ${qualityScore}` : null,
-    "",
-    "### Document Decision",
-    cleanHandoffField(draft) || `# ${title}\n\nDay 1 handoff 답변이 아직 충분하지 않습니다.`,
-    "",
-    "### Open Assumptions",
+    `<!-- generated_by: office-hours; target: ${pathLabel}; written: ${writtenAt}; status: ${status} -->`,
     ...assumptionLines,
-    markdown ? ["", "### Day 1 Evidence Snapshot", trimMarkdownSnapshot(markdown)].join("\n") : null,
+    "",
+    cleanHandoffField(userFacingDraft) || cleanHandoffField(draft) || `# ${doc?.title || "Document"}\n\n확인 필요`,
     DAY1_HANDOFF_MARKER_END,
     "",
   ].filter((line) => line !== null).join("\n");
 }
 
 export function mergeDay1HandoffBlock(existingContent, handoffBlock, doc) {
-  const block = String(handoffBlock || "").trimEnd() + "\n";
+  const rawBlock = String(handoffBlock || "").trimEnd();
   const existing = String(existingContent || "");
   const markerPattern = new RegExp(
     `${escapeRegExp(DAY1_HANDOFF_MARKER_START)}[\\s\\S]*?${escapeRegExp(DAY1_HANDOFF_MARKER_END)}\\n?`,
     "m",
   );
+  const blockWithHeading = `${rawBlock}\n`;
+  if (!existing.trim() || isMarkdownTitleOnlyStub(existing)) {
+    return blockWithHeading;
+  }
+  const existingWithoutManagedBlock = existing.replace(markerPattern, "").trim();
+  const existingTitle = firstMarkdownH1(existingWithoutManagedBlock);
+  const block = `${stripMatchingHandoffBlockH1(rawBlock, existingTitle).trimEnd()}\n`;
   if (markerPattern.test(existing)) {
     return existing.replace(markerPattern, block);
   }
   if (existing.trim()) {
     return `${existing.replace(/\s*$/u, "\n\n")}${block}`;
   }
-  return [`# ${doc?.title || "Document"}`, "", block].join("\n");
+  return blockWithHeading;
+}
+
+function isMarkdownTitleOnlyStub(content) {
+  const meaningfulLines = String(content || "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return meaningfulLines.length === 1 && /^#\s+\S/.test(meaningfulLines[0]);
+}
+
+function firstMarkdownH1(content) {
+  const match = String(content || "").match(/^#\s+(.+?)\s*$/m);
+  return match ? normalizeMarkdownHeadingText(match[1]) : "";
+}
+
+function stripMatchingHandoffBlockH1(block, existingTitle) {
+  if (!existingTitle) return String(block || "");
+  const lines = String(block || "").split("\n");
+  const headingIndex = lines.findIndex((line) => {
+    const match = line.match(/^#\s+(.+?)\s*$/);
+    return match && normalizeMarkdownHeadingText(match[1]) === existingTitle;
+  });
+  if (headingIndex < 0) return String(block || "");
+  const next = [...lines];
+  next.splice(headingIndex, 1);
+  if (next[headingIndex] === "") {
+    next.splice(headingIndex, 1);
+  }
+  return next.join("\n");
+}
+
+function normalizeMarkdownHeadingText(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
 export async function writeDay1HandoffDocument(workspaceRoot, state, doc, {
@@ -2105,9 +2255,16 @@ export async function writeDay1HandoffDocument(workspaceRoot, state, doc, {
   }
   const draft = normalized.drafts?.[targetDoc.type] || "";
   const docRubric = normalized.ambiguityRubric?.docs?.find((entry) => entry.type === targetDoc.type);
-  const unresolvedAssumptions = docRubric?.missingSignals?.length
+  const userFacingDraft = buildDay1HandoffUserFacingDocument(targetDoc, { day1Handoff });
+  const handoffFacts = normalizeDay1HandoffFacts(day1Handoff);
+  const qualityIssues = day1HandoffDocumentQualityIssues(targetDoc, userFacingDraft, handoffFacts);
+  const unresolvedAssumptions = uniqueStrings([
+    ...((docRubric?.missingSignals?.length)
     ? docRubric.missingSignals.map((signal) => signal.label)
-    : [];
+    : []),
+    ...handoffFacts.assumptions,
+    ...qualityIssues,
+  ]);
   const status = unresolvedAssumptions.length ? "written_with_assumptions" : "written";
   const writtenAt = new Date().toISOString();
   const root = path.resolve(workspaceRoot || ".");
@@ -2142,6 +2299,10 @@ export async function writeDay1HandoffDocument(workspaceRoot, state, doc, {
   );
   const next = normalizeIddSetupState({
     ...normalized,
+    drafts: {
+      ...normalized.drafts,
+      [targetDoc.type]: userFacingDraft,
+    },
     status: complete ? "approved" : "interviewing",
     currentDocType: complete ? targetDoc.type : (nextDay1HandoffDocType({ ...normalized, docWriteStatuses }) || targetDoc.type),
     docWriteStatuses,
@@ -2154,13 +2315,122 @@ export async function writeDay1HandoffDocument(workspaceRoot, state, doc, {
 }
 
 function cleanHandoffField(value) {
-  return String(value || "").trim();
+  if (Array.isArray(value)) {
+    return cleanHandoffList(value).join(", ");
+  }
+  const text = String(value || "").trim();
+  return containsDay1HandoffPlaceholder(text) ? "" : text;
 }
 
-function trimMarkdownSnapshot(value) {
-  const text = cleanHandoffField(value);
-  if (text.length <= 1400) return text;
-  return `${text.slice(0, 1400).trim()}\n...`;
+function cleanHandoffList(value) {
+  const rawItems = Array.isArray(value)
+    ? value
+    : (typeof value === "string" && value.includes("\n") ? value.split(/\n+/) : (value ? [value] : []));
+  return rawItems
+    .map((item) => cleanHandoffField(item))
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function normalizeDay1HandoffFacts(value = {}) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const nestedFacts = source.facts && typeof source.facts === "object" && !Array.isArray(source.facts)
+    ? source.facts
+    : {};
+  const merged = { ...source, ...nestedFacts };
+  const first = (...keys) => {
+    for (const key of keys) {
+      const candidate = cleanHandoffField(merged[key]);
+      if (candidate) return candidate;
+    }
+    return "";
+  };
+  return {
+    northStarGoal: first("northStarGoal", "north_star_goal", "goal"),
+    weeklyProof: first("weeklyProof", "weekly_proof", "proof", "validationAction", "validation_action"),
+    targetUser: first("targetUser", "target_user", "customer", "icp"),
+    problem: first("problem", "pain"),
+    currentAlternative: first("currentAlternative", "current_alternative", "statusQuo", "status_quo"),
+    entryPoint: first("entryPoint", "entry_point", "wedge"),
+    nextAction: first("nextAction", "next_action", "outcome"),
+    metric: first("metric"),
+    threshold: first("threshold"),
+    failureCondition: first("failureCondition", "failure_condition"),
+    nonGoals: cleanHandoffList(merged.nonGoals ?? merged.non_goals),
+    assumptions: cleanHandoffList(merged.assumptions),
+    sourceQuotes: cleanHandoffList(merged.sourceQuotes ?? merged.source_quotes),
+    markdown: cleanHandoffField(merged.markdown),
+  };
+}
+
+function day1HandoffDocumentQualityIssues(doc, content, facts) {
+  const issues = [];
+  const text = String(content || "");
+  if (containsDay1HandoffPlaceholder(text)) {
+    issues.push("문서에 placeholder가 남아 있습니다.");
+  }
+  if (day1HandoffFactCount(facts) === 0) {
+    issues.push("Office Hours 근거가 없습니다.");
+  }
+  if (!day1HandoffLooksLikeAgentic30Product(facts) && ["spec", "values"].includes(doc?.type)) {
+    if (DAY1_HANDOFF_INTERNAL_PATTERNS.some((pattern) => pattern.test(text))) {
+      issues.push("문서에 Agentic30 내부 구현 맥락이 섞여 있습니다.");
+    }
+  }
+  if (doc?.type === "goal" && !facts.northStarGoal && !facts.weeklyProof) {
+    issues.push("GOAL: 목표 또는 이번 주 검증 기준 확인 필요");
+  }
+  if (doc?.type === "icp") {
+    if (!facts.targetUser) issues.push("고객 후보 확인 필요");
+    if (!facts.currentAlternative) issues.push("현재 대안 확인 필요");
+  }
+  if (doc?.type === "spec") {
+    if (!facts.problem) issues.push("SPEC: 문제 확인 필요");
+    if (!facts.entryPoint) issues.push("SPEC: 가장 작은 진입점 확인 필요");
+  }
+  if (doc?.type === "values" && facts.nonGoals.length === 0) {
+    issues.push("VALUES: 포기할 선택 확인 필요");
+  }
+  return uniqueStrings(issues);
+}
+
+function day1HandoffFactCount(facts) {
+  return [
+    facts.northStarGoal,
+    facts.weeklyProof,
+    facts.targetUser,
+    facts.problem,
+    facts.currentAlternative,
+    facts.entryPoint,
+    facts.nextAction,
+    ...(facts.sourceQuotes || []),
+  ].filter((value) => cleanHandoffField(value)).length;
+}
+
+function day1HandoffLooksLikeAgentic30Product(facts) {
+  const text = [
+    facts.northStarGoal,
+    facts.weeklyProof,
+    facts.targetUser,
+    facts.problem,
+    facts.currentAlternative,
+    facts.entryPoint,
+    facts.nextAction,
+    facts.markdown,
+    ...(facts.sourceQuotes || []),
+  ].filter(Boolean).join("\n");
+  return /Agentic30/i.test(text);
+}
+
+function containsDay1HandoffPlaceholder(value) {
+  const text = String(value || "").trim();
+  return Boolean(text) && DAY1_HANDOFF_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function uniqueStrings(values) {
+  return [...new Set((Array.isArray(values) ? values : [])
+    .map((value) => String(value || "").trim())
+    .filter(Boolean))];
 }
 
 function escapeRegExp(value) {

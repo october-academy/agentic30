@@ -432,7 +432,7 @@ enum OpenDesignReferenceCatalog {
                 .init("advanced", style: .settings, rows: [
                     .init("state", title: "실행 보조 앱 상태", subtitle: "Node 실행 보조 앱이 살아 있고 stdio + 로컬 HTTP 둘 다 응답 중입니다.", trailing: "실행 중 · PID 47281", tone: .accent),
                     .init("log-folder", title: "로그 폴더", subtitle: "~/Library/Logs/Agentic30 — 회전 7개 보관.", trailing: "Finder에서 열기", tone: .muted),
-                    .init("bip-notifications", title: "공개 기록 알림", subtitle: "테스트 알림은 실제 macOS 알림 센터 경로를 사용합니다.", trailing: "테스트", tone: .amber),
+                    .init("bip-notifications", title: "인터뷰/실행 체크 알림", subtitle: "아침은 인터뷰 체크, 저녁은 실행 완료 체크를 보냅니다.", trailing: "테스트", tone: .amber),
                     .init("confetti", title: "Confetti 테스트", subtitle: "완료 축하 confetti 렌더링 경로를 즉시 재생합니다.", trailing: "재생", tone: .sky),
                 ]),
             ]),
@@ -4979,8 +4979,8 @@ private struct OpenDesignSettingsRowView: View {
             settingsGhostButton("Finder에서 열기", systemImage: "arrow.up.right.square", width: 124)
         case "bip-notifications":
             HStack(spacing: 8) {
-                settingsGhostButton("Snooze", systemImage: "moon", width: 78)
-                settingsGhostButton("Open", systemImage: "arrow.up.forward.app", width: 72)
+                settingsGhostButton("인터뷰", systemImage: "sun.max", width: 78)
+                settingsGhostButton("완료", systemImage: "checkmark.circle", width: 72)
             }
         case "confetti":
             settingsGhostButton("재생", systemImage: "sparkles", width: 72)

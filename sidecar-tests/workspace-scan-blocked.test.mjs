@@ -161,6 +161,22 @@ test("scan with no available provider broadcasts blocked and never passes on loc
     assert.equal(blocked.totalSteps, 3);
     assert.equal(blocked.nextProvider, null);
     assert.deepEqual(blocked.availableProviders, []);
+    assert.equal(blocked.providerReadiness.length, 4);
+    for (const provider of ["codex", "claude", "gemini", "cursor"]) {
+      const readiness = blocked.providerReadiness.find((item) => item.provider === provider);
+      assert.ok(readiness, `missing readiness for ${provider}`);
+      assert.equal(readiness.sdkInstalled, true, `${provider} SDK should be installed`);
+      assert.equal(readiness.authenticated, false, `${provider} should not be authenticated`);
+      assert.equal(readiness.scanReady, false, `${provider} should not be scan-ready`);
+    }
+    assert.equal(
+      blocked.providerReadiness.find((item) => item.provider === "codex").authAction,
+      "codex_login",
+    );
+    assert.equal(
+      blocked.providerReadiness.find((item) => item.provider === "cursor").authAction,
+      "cursor_api_key",
+    );
 
     // Fail closed: no successful workspace_scan_result may follow the block.
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -198,6 +214,10 @@ test("scan blocked on codex recommends claude when a claude login session exists
     assert.equal(blocked.totalSteps, 3);
     assert.equal(blocked.nextProvider, "claude");
     assert.deepEqual(blocked.availableProviders, ["claude"]);
+    const claudeReadiness = blocked.providerReadiness.find((item) => item.provider === "claude");
+    assert.equal(claudeReadiness.authenticated, true);
+    assert.equal(claudeReadiness.scanReady, true);
+    assert.equal(claudeReadiness.authAction, null);
   } finally {
     ws?.close();
     await harness.close();

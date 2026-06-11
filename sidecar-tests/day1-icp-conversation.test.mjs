@@ -856,7 +856,8 @@ test("Day 1 document handoff writes one canonical doc immediately without auto-s
     );
     const written = await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8");
     assert.match(written, /기존 목표는 보존한다/);
-    assert.match(written, /Day 1 Handoff — GOAL/);
+    assert.match(written, /agentic30:day1-handoff:start/);
+    assert.doesNotMatch(written, /Day 1 Handoff|Document Decision|Rubric Signals/);
 
     await closeWebSocket(ws);
     ws = null;
@@ -908,12 +909,16 @@ test("Day 1 bulk document handoff writes all canonical docs without structured p
       sessionId: created.session.id,
       provider: "codex",
       day1Handoff: {
-        goal: "첫 고객 반응 검증",
-        icp: "macOS에서 AI 코딩 도구를 쓰는 전업 1인 개발자",
-        pain: "무엇을 팔아야 할지 몰라 노션과 스프레드시트로 인터뷰 메모를 복사함",
-        outcome: "이번 주 3명 인터뷰 완료",
+        northStarGoal: "첫 고객 반응 검증",
+        weeklyProof: "이번 주 3명 인터뷰 완료",
+        targetUser: "macOS에서 AI 코딩 도구를 쓰는 전업 1인 개발자",
+        problem: "무엇을 팔아야 할지 모른다",
+        currentAlternative: "노션과 스프레드시트로 인터뷰 메모를 복사함",
+        entryPoint: "첫 인터뷰 카드",
+        nextAction: "이번 주 3명 인터뷰 완료",
+        nonGoals: ["넓은 고객 후보", "자동화 확장"],
         qualityScore: "9.0/10",
-        markdown: "# Day 1 핵심 가설",
+        markdown: "# 핵심 가설",
       },
     }));
 
@@ -932,7 +937,8 @@ test("Day 1 bulk document handoff writes all canonical docs without structured p
     );
     for (const rel of ["docs/GOAL.md", "docs/ICP.md", "docs/VALUES.md", "docs/SPEC.md"]) {
       const content = await fs.readFile(path.join(root, rel), "utf8");
-      assert.match(content, /Day 1 Handoff/);
+      assert.match(content, /agentic30:day1-handoff:start/);
+      assert.doesNotMatch(content, /Day 1 Handoff|Document Decision|Rubric Signals/);
     }
     const goal = await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8");
     assert.match(goal, /기존 목표는 보존한다/);

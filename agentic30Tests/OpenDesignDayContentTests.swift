@@ -168,11 +168,10 @@ struct OpenDesignDayContentTests {
         #expect(rows.map(\.id) == ["seed-q1", "seed-a1"])
     }
 
-    @Test func officeHoursTimelineBuilderNeverCollapsesSeededRowsIntoNewSnapshots() {
+    @Test func officeHoursTimelineBuilderNeverCollapsesSeededRowsIntoLiveSnapshots() {
         // A NEW submitted card whose short option label is contained in a
         // seeded answer must not swallow the seeded row — that would misplace
-        // the card at the seeded position and drop a restored answer. Seeded
-        // rows always render as plain rows.
+        // the card at the seeded position and drop a restored answer.
         let prompt = makeOfficeHoursPrompt(sessionID: "session", requestId: "request-new")
         let submission = AgenticViewModel.StructuredPromptSubmission(
             question: prompt.questions[0].question,
@@ -205,6 +204,41 @@ struct OpenDesignDayContentTests {
             #expect(Bool(false))
         }
         if case .submittedPrompt(let card)? = items.dropFirst().first {
+            #expect(card.snapshot == snapshot)
+        } else {
+            #expect(Bool(false))
+        }
+    }
+
+    @Test func officeHoursTimelineBuilderCollapsesSeededRowsIntoRestoredSnapshots() {
+        let prompt = makeOfficeHoursPrompt(sessionID: "session", requestId: "request-restored")
+        let submission = AgenticViewModel.StructuredPromptSubmission(
+            question: prompt.questions[0].question,
+            selectedOptions: ["돈을 내겠다고 했다"],
+            freeText: "실제 결제 대화로 이어짐"
+        )
+        let snapshot = OfficeHoursSubmittedPromptSnapshot(
+            sessionId: "session",
+            requestId: prompt.requestId,
+            prompt: prompt,
+            submissions: [submission],
+            submittedAt: Date(timeIntervalSince1970: 10),
+            isRestored: true
+        )
+        let rows = OfficeHoursTranscriptRow.rows(from: [
+            makeChatMessage(id: "seed-q1", role: .assistant, content: prompt.questions[0].question, seededTurn: true),
+            makeChatMessage(id: "seed-a1", role: .user, content: "돈을 내겠다고 했다 — 실제 결제 대화로 이어짐", seededTurn: true),
+        ])
+
+        let items = OfficeHoursTimelineBuilder.items(
+            rows: rows,
+            submittedSnapshots: [snapshot],
+            activeLoading: nil,
+            fallbackTotal: 6
+        )
+
+        #expect(items.count == 1)
+        if case .submittedPrompt(let card)? = items.first {
             #expect(card.snapshot == snapshot)
         } else {
             #expect(Bool(false))

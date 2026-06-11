@@ -10,8 +10,8 @@ import {
 
 export const ONBOARDING_MEMORY_SCHEMA_VERSION = 1;
 export const ONBOARDING_MEMORY_SCHEMA = "agentic30.memory.onboarding.v1";
-export const OFFICE_HOURS_TURN_LOG_SCHEMA_VERSION = 1;
-export const OFFICE_HOURS_TURN_LOG_SCHEMA = "agentic30.memory.office_hours_turns.v1";
+export const OFFICE_HOURS_TURN_LOG_SCHEMA_VERSION = 2;
+export const OFFICE_HOURS_TURN_LOG_SCHEMA = "agentic30.memory.office_hours_turns.v2";
 export const SOURCE_READ_LOG_SCHEMA_VERSION = 1;
 export const SOURCE_READ_LOG_SCHEMA = "agentic30.memory.source_read_log.v1";
 export const DAY_MEMORY_SCHEMA_VERSION = 1;
@@ -126,6 +126,79 @@ export async function appendOfficeHoursTurn({
       await refreshDayMemory({ workspaceRoot, day: normalizedTurn.day, now }).catch(() => {});
     }
     return payload;
+  });
+}
+
+export async function reviseOfficeHoursTurn({
+  workspaceRoot,
+  requestId,
+  sessionId = "",
+  replacementTurn,
+  now = new Date(),
+} = {}) {
+  assertWorkspace(workspaceRoot, "office_hours_turn_revise");
+  const targetRequestId = cleanString(requestId, 180);
+  if (!targetRequestId) {
+    throw new Error("reviseOfficeHoursTurn requires requestId.");
+  }
+  const normalizedTurn = normalizeOfficeHoursTurn(replacementTurn, { now });
+  if (!normalizedTurn) {
+    throw new Error("reviseOfficeHoursTurn requires replacement question and answer text.");
+  }
+  const filePath = resolveOfficeHoursTurnLogPath(workspaceRoot);
+  return withFileLock(filePath, async () => {
+    const previous = await loadOfficeHoursTurnLog({ workspaceRoot, now, prune: false });
+    const turns = Array.isArray(previous.turns) ? previous.turns : [];
+    const targetIndex = turns.findIndex((turn) =>
+      turn.requestId === targetRequestId
+        && (!sessionId || turn.sessionId === sessionId));
+    if (targetIndex < 0) {
+      throw new Error("No editable Office Hours answer found for this request.");
+    }
+    const target = turns[targetIndex];
+    if (!target.promptSnapshot) {
+      throw new Error("This Office Hours answer was saved before editable snapshots existed.");
+    }
+    const targetDay = clampInt(target.day, 1, 400, null);
+    const replacement = {
+      ...normalizedTurn,
+      id: target.id,
+      occurredAt: target.occurredAt,
+      revisedAt: now.toISOString(),
+    };
+    const nextTurns = [];
+    for (let index = 0; index < turns.length; index += 1) {
+      const turn = turns[index];
+      if (index < targetIndex) {
+        nextTurns.push(turn);
+        continue;
+      }
+      if (index === targetIndex) {
+        nextTurns.push(replacement);
+        continue;
+      }
+      const sameDay = targetDay && clampInt(turn.day, 1, 400, null) === targetDay;
+      if (sameDay) continue;
+      nextTurns.push(turn);
+    }
+    const payload = {
+      schemaVersion: OFFICE_HOURS_TURN_LOG_SCHEMA_VERSION,
+      schema: OFFICE_HOURS_TURN_LOG_SCHEMA,
+      updatedAt: now.toISOString(),
+      turns: nextTurns.slice(-MAX_TURNS),
+    };
+    await atomicWriteJson(filePath, payload);
+    if (targetDay) {
+      await refreshDayMemory({ workspaceRoot, day: targetDay, now }).catch(() => {});
+    }
+    return {
+      previous,
+      payload,
+      target,
+      replacement,
+      removedTurns: turns.slice(targetIndex + 1).filter((turn) =>
+        targetDay && clampInt(turn.day, 1, 400, null) === targetDay),
+    };
   });
 }
 
@@ -521,21 +594,186 @@ function normalizeOfficeHoursTurn(value = {}, { now = new Date() } = {}) {
   if (!questionText || !responseText) return null;
   const day = clampInt(source.day ?? source.officeHoursDay ?? source.office_hours_day, 1, 400, null);
   const occurredAt = normalizeIsoDate(source.occurredAt ?? source.occurred_at ?? source.createdAt, now);
+  const promptSnapshot = normalizeStructuredPromptSnapshot(source.promptSnapshot ?? source.prompt_snapshot, { now });
+  const submissions = normalizeStructuredPromptSubmissions(source.submissions ?? source.responses);
+  const revisedAt = source.revisedAt ?? source.revised_at;
   return {
     id: cleanString(source.id ?? `oh-${day || "x"}-${Date.parse(occurredAt) || now.getTime()}`, 180),
     day,
     sessionId: cleanString(source.sessionId ?? source.session_id, 160),
     requestId: cleanString(source.requestId ?? source.request_id, 160),
     mode: cleanString(source.mode, 120),
+    signalId: cleanString(source.signalId ?? source.signal_id, 120),
+    signalLabel: cleanString(source.signalLabel ?? source.signal_label, 160),
     questionText,
     responseText,
     responseDescription: cleanString(source.responseDescription ?? source.response_description, MAX_LONG_TEXT),
+    ...(promptSnapshot ? { promptSnapshot } : {}),
+    ...(submissions.length ? { submissions } : {}),
     // Marks the 대안 비교 closing-card answer — the interview-completion
     // signal the incomplete-interview gate honors even when fewer answers
     // than the expected count were recorded (smart-skip interviews).
     ...(source.terminal === true ? { terminal: true } : {}),
+    ...(revisedAt ? { revisedAt: normalizeIsoDate(revisedAt, now) } : {}),
     occurredAt,
   };
+}
+
+function normalizeStructuredPromptSnapshot(value = {}, { now = new Date() } = {}) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : null;
+  if (!source) return null;
+  const questions = Array.isArray(source.questions)
+    ? source.questions.map(normalizeStructuredPromptQuestion).filter(Boolean)
+    : [];
+  if (!questions.length) return null;
+  const requestId = cleanString(source.requestId ?? source.request_id, 180);
+  const sessionId = cleanString(source.sessionId ?? source.session_id, 160);
+  const toolName = cleanString(source.toolName ?? source.tool_name, 160);
+  if (!requestId || !sessionId || !toolName) return null;
+  return {
+    requestId,
+    sessionId,
+    toolName,
+    title: nullableCleanString(source.title, 240),
+    createdAt: normalizeIsoDate(source.createdAt ?? source.created_at, now),
+    ...(normalizeStructuredPromptIntro(source.intro) ? { intro: normalizeStructuredPromptIntro(source.intro) } : {}),
+    ...(normalizeStructuredPromptResources(source.resources).length ? { resources: normalizeStructuredPromptResources(source.resources) } : {}),
+    questions,
+    ...(normalizeStructuredPromptGeneration(source.generation) ? { generation: normalizeStructuredPromptGeneration(source.generation) } : {}),
+  };
+}
+
+function normalizeStructuredPromptQuestion(value = {}) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : null;
+  if (!source) return null;
+  const question = cleanString(source.question, MAX_LONG_TEXT);
+  if (!question) return null;
+  const output = {
+    ...(nullableCleanString(source.questionId ?? source.question_id ?? source.id, 240) ? { questionId: nullableCleanString(source.questionId ?? source.question_id ?? source.id, 240) } : {}),
+    header: cleanString(source.header, 240) || "질문",
+    question,
+    ...(nullableCleanString(source.helperText ?? source.helper_text, MAX_LONG_TEXT) ? { helperText: nullableCleanString(source.helperText ?? source.helper_text, MAX_LONG_TEXT) } : {}),
+    ...(normalizeStringList(source.highlightPhrases ?? source.highlight_phrases ?? source.highlights ?? source.highlight, 12, 240).length ? { highlightPhrases: normalizeStringList(source.highlightPhrases ?? source.highlight_phrases ?? source.highlights ?? source.highlight, 12, 240) } : {}),
+    ...(normalizeEmphasisList(source.emphasis ?? source.emphasis_spans).length ? { emphasis: normalizeEmphasisList(source.emphasis ?? source.emphasis_spans) } : {}),
+    ...(normalizeStructuredPromptOptions(source.options).length ? { options: normalizeStructuredPromptOptions(source.options) } : {}),
+    ...(typeof source.multiSelect === "boolean" ? { multiSelect: source.multiSelect } : {}),
+    ...(typeof source.allowFreeText === "boolean" ? { allowFreeText: source.allowFreeText } : {}),
+    ...(typeof source.requiresFreeText === "boolean" ? { requiresFreeText: source.requiresFreeText } : {}),
+    ...(nullableCleanString(source.freeTextPlaceholder ?? source.free_text_placeholder, 400) ? { freeTextPlaceholder: nullableCleanString(source.freeTextPlaceholder ?? source.free_text_placeholder, 400) } : {}),
+    ...(nullableCleanString(source.textMode ?? source.text_mode, 40) ? { textMode: nullableCleanString(source.textMode ?? source.text_mode, 40) } : {}),
+  };
+  return output;
+}
+
+function normalizeStructuredPromptOptions(value) {
+  const items = Array.isArray(value) ? value : [];
+  return items
+    .map((item) => {
+      const source = item && typeof item === "object" && !Array.isArray(item) ? item : {};
+      const label = cleanString(source.label, 400);
+      if (!label) return null;
+      return {
+        label,
+        description: cleanString(source.description, MAX_LONG_TEXT),
+        ...(nullableCleanString(source.preview, MAX_LONG_TEXT) ? { preview: nullableCleanString(source.preview, MAX_LONG_TEXT) } : {}),
+        ...(nullableCleanString(source.nextIntent ?? source.next_intent, 240) ? { nextIntent: nullableCleanString(source.nextIntent ?? source.next_intent, 240) } : {}),
+        ...(typeof source.recommended === "boolean" ? { recommended: source.recommended } : {}),
+        ...(nullableCleanString(source.risk, MAX_LONG_TEXT) ? { risk: nullableCleanString(source.risk, MAX_LONG_TEXT) } : {}),
+        ...(nullableCleanString(source.evidenceTarget ?? source.evidence_target, MAX_LONG_TEXT) ? { evidenceTarget: nullableCleanString(source.evidenceTarget ?? source.evidence_target, MAX_LONG_TEXT) } : {}),
+        ...(nullableCleanString(source.mapsTo ?? source.maps_to, 240) ? { mapsTo: nullableCleanString(source.mapsTo ?? source.maps_to, 240) } : {}),
+        ...(nullableCleanString(source.failureMode ?? source.failure_mode, MAX_LONG_TEXT) ? { failureMode: nullableCleanString(source.failureMode ?? source.failure_mode, MAX_LONG_TEXT) } : {}),
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+function normalizeStructuredPromptIntro(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : null;
+  if (!source) return null;
+  const intro = {
+    ...(nullableCleanString(source.title, 240) ? { title: nullableCleanString(source.title, 240) } : {}),
+    ...(nullableCleanString(source.body, MAX_LONG_TEXT) ? { body: nullableCleanString(source.body, MAX_LONG_TEXT) } : {}),
+    ...(normalizeStringList(source.bullets, 8, 400).length ? { bullets: normalizeStringList(source.bullets, 8, 400) } : {}),
+  };
+  return Object.keys(intro).length ? intro : null;
+}
+
+function normalizeStructuredPromptResources(value) {
+  const items = Array.isArray(value) ? value : [];
+  return items
+    .map((item) => {
+      const source = item && typeof item === "object" && !Array.isArray(item) ? item : {};
+      const title = cleanString(source.title, 240);
+      const url = cleanString(source.url, MAX_LONG_TEXT);
+      if (!title || !url) return null;
+      return {
+        title,
+        ...(nullableCleanString(source.source, 240) ? { source: nullableCleanString(source.source, 240) } : {}),
+        url,
+        ...(nullableCleanString(source.description, MAX_LONG_TEXT) ? { description: nullableCleanString(source.description, MAX_LONG_TEXT) } : {}),
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 5);
+}
+
+function normalizeStructuredPromptGeneration(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : null;
+  if (!source) return null;
+  const generation = {
+    ...(nullableCleanString(source.mode, 160) ? { mode: nullableCleanString(source.mode, 160) } : {}),
+    ...(nullableCleanString(source.docType ?? source.doc_type, 160) ? { docType: nullableCleanString(source.docType ?? source.doc_type, 160) } : {}),
+    ...(nullableCleanString(source.signalId ?? source.signal_id, 160) ? { signalId: nullableCleanString(source.signalId ?? source.signal_id, 160) } : {}),
+    ...(nullableCleanString(source.signalLabel ?? source.signal_label, 240) ? { signalLabel: nullableCleanString(source.signalLabel ?? source.signal_label, 240) } : {}),
+    ...(typeof source.isLastSignalForDoc === "boolean" ? { isLastSignalForDoc: source.isLastSignalForDoc } : {}),
+    ...(typeof source.dimensionTransitioned === "boolean" ? { dimensionTransitioned: source.dimensionTransitioned } : {}),
+    ...(nullableCleanString(source.previousSignalLabel ?? source.previous_signal_label, 240) ? { previousSignalLabel: nullableCleanString(source.previousSignalLabel ?? source.previous_signal_label, 240) } : {}),
+    ...(nullableCleanString(source.previousAnswerLabel ?? source.previous_answer_label, 240) ? { previousAnswerLabel: nullableCleanString(source.previousAnswerLabel ?? source.previous_answer_label, 240) } : {}),
+    ...(clampInt(source.dimensionStepIndex ?? source.dimension_step_index, 1, 100, null) ? { dimensionStepIndex: clampInt(source.dimensionStepIndex ?? source.dimension_step_index, 1, 100, null) } : {}),
+    ...(clampInt(source.dimensionTotal ?? source.dimension_total, 1, 100, null) ? { dimensionTotal: clampInt(source.dimensionTotal ?? source.dimension_total, 1, 100, null) } : {}),
+  };
+  return Object.keys(generation).length ? generation : null;
+}
+
+function normalizeStructuredPromptSubmissions(value) {
+  const items = Array.isArray(value) ? value : [];
+  return items
+    .map((item) => {
+      const source = item && typeof item === "object" && !Array.isArray(item) ? item : {};
+      const question = cleanString(source.question, MAX_LONG_TEXT);
+      const selectedOptions = normalizeStringList(source.selectedOptions ?? source.selected_options, 12, 400);
+      const freeText = cleanString(source.freeText ?? source.free_text, MAX_LONG_TEXT);
+      if (!question && !selectedOptions.length && !freeText) return null;
+      return { question, selectedOptions, freeText };
+    })
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function normalizeStringList(value, maxItems = 12, maxLength = MAX_TEXT) {
+  const items = Array.isArray(value) ? value : (typeof value === "string" ? [value] : []);
+  return items
+    .map((item) => cleanString(item, maxLength))
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
+function normalizeEmphasisList(value) {
+  const items = Array.isArray(value) ? value : [];
+  return items
+    .map((item) => {
+      const source = item && typeof item === "object" && !Array.isArray(item) ? item : {};
+      const phrase = cleanString(source.phrase ?? source.text, 400);
+      if (!phrase) return null;
+      const style = cleanString(source.style ?? source.kind, 40).toLowerCase();
+      return {
+        phrase,
+        style: ["strong", "mark", "code"].includes(style) ? style : "mark",
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 8);
 }
 
 function normalizeSourceReadEntry(value = {}, { now = new Date() } = {}) {
@@ -661,9 +899,14 @@ function buildDayMemoryPayload({
       sessionId: turn.sessionId,
       requestId: turn.requestId,
       mode: turn.mode,
+      signalId: turn.signalId,
+      signalLabel: turn.signalLabel,
       questionText: turn.questionText,
       responseText: turn.responseText,
       responseDescription: turn.responseDescription,
+      ...(turn.promptSnapshot ? { promptSnapshot: turn.promptSnapshot } : {}),
+      ...(Array.isArray(turn.submissions) && turn.submissions.length ? { submissions: turn.submissions } : {}),
+      ...(turn.revisedAt ? { revisedAt: turn.revisedAt } : {}),
       occurredAt: turn.occurredAt,
     }));
   const dayCommitments = commitments
@@ -941,4 +1184,9 @@ function clampInt(value, min, max, fallback = null) {
 
 function cleanString(value = "", maxLength = MAX_TEXT) {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function nullableCleanString(value = "", maxLength = MAX_TEXT) {
+  const text = cleanString(value, maxLength);
+  return text || null;
 }

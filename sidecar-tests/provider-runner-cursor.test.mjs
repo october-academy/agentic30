@@ -4,6 +4,7 @@ import {
   buildCursorEnv,
   getProviderAuthState,
   getProviderConnectionState,
+  getProviderScanReadiness,
   isProviderUsageLimitError,
   resetProviderSettingsForTest,
   resolveCursorModel,
@@ -96,6 +97,21 @@ test("Cursor connection state reports the @cursor/sdk package", () => {
   }
 });
 
+test("Cursor scan readiness requires an API key even when SDK is installed", () => {
+  resetProviderSettingsForTest();
+  try {
+    withoutCursorEnv(() => {
+      const readiness = getProviderScanReadiness("cursor");
+      assert.equal(readiness.sdkInstalled, true);
+      assert.equal(readiness.authenticated, false);
+      assert.equal(readiness.scanReady, false);
+      assert.equal(readiness.authAction, "cursor_api_key");
+    });
+  } finally {
+    resetProviderSettingsForTest();
+  }
+});
+
 test("Cursor model resolution prefers explicit model, then settings, then default", () => {
   resetProviderSettingsForTest();
   try {
@@ -114,8 +130,8 @@ test("Cursor model resolution prefers explicit model, then settings, then defaul
 test("Cursor execution-mode gate allows agentic and rejects read-only judge modes", () => {
   assert.equal(supportsCursorExecutionMode("agentic"), true);
   assert.equal(supportsCursorExecutionMode("idd_question_synthesis"), true);
-  assert.equal(supportsCursorExecutionMode("fast_chat"), true);
   assert.equal(supportsCursorExecutionMode("memory_chat"), true);
+  assert.equal(supportsCursorExecutionMode("office_hours_question"), false);
   assert.equal(supportsCursorExecutionMode("isolated_read_only"), false);
   assert.equal(supportsCursorExecutionMode("judge_read_only"), false);
 });

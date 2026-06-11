@@ -6,6 +6,7 @@ import {
   extractGeminiFunctionCalls,
   getProviderAuthState,
   getProviderConnectionState,
+  getProviderScanReadiness,
   resetProviderSettingsForTest,
   resolveGeminiModel,
   supportsGeminiExecutionMode,
@@ -72,6 +73,46 @@ test("Gemini provider connection reports installed @google/genai SDK", () => {
   assert.match(state.sdk.version, /^\d+\.\d+\.\d+/);
 });
 
+test("Gemini scan readiness treats gcloud without ADC as auth-required", async () => {
+  const previousStub = process.env.AGENTIC30_TEST_STUB_PROVIDER;
+  const previousGoogle = process.env.GOOGLE_API_KEY;
+  const previousGemini = process.env.GEMINI_API_KEY;
+  const previousHome = process.env.HOME;
+  const previousPath = process.env.PATH;
+  const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const tempRoot = await mkdtemp(join(tmpdir(), "agentic30-gemini-readiness-"));
+  try {
+    const binDir = join(tempRoot, "bin");
+    const homeDir = join(tempRoot, "home");
+    await mkdir(binDir, { recursive: true });
+    await mkdir(homeDir, { recursive: true });
+    await writeFile(join(binDir, "gcloud"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    delete process.env.AGENTIC30_TEST_STUB_PROVIDER;
+    delete process.env.GOOGLE_API_KEY;
+    delete process.env.GEMINI_API_KEY;
+    process.env.HOME = homeDir;
+    process.env.PATH = `${binDir}:${previousPath || ""}`;
+    resetProviderSettingsForTest();
+
+    const readiness = getProviderScanReadiness("gemini");
+
+    assert.equal(readiness.sdkInstalled, true);
+    assert.equal(readiness.authenticated, false);
+    assert.equal(readiness.scanReady, false);
+    assert.equal(readiness.authAction, "gemini_adc_login");
+  } finally {
+    restoreEnv("AGENTIC30_TEST_STUB_PROVIDER", previousStub);
+    restoreEnv("GOOGLE_API_KEY", previousGoogle);
+    restoreEnv("GEMINI_API_KEY", previousGemini);
+    restoreEnv("HOME", previousHome);
+    restoreEnv("PATH", previousPath);
+    resetProviderSettingsForTest();
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("resolveGeminiModel defaults to gemini-3.5-flash when no override is set", () => {
   const previousAgentic = process.env.AGENTIC30_GEMINI_MODEL;
   const previousGemini = process.env.GEMINI_MODEL;
@@ -101,7 +142,7 @@ test("resolveGeminiModel honors AGENTIC30_GEMINI_MODEL override", () => {
 
 test("supportsGeminiExecutionMode allows shared read-only/agentic lanes", () => {
   assert.equal(supportsGeminiExecutionMode("agentic"), true);
-  assert.equal(supportsGeminiExecutionMode("fast_chat"), true);
+  assert.equal(supportsGeminiExecutionMode("office_hours_question"), true);
   assert.equal(supportsGeminiExecutionMode("judge_read_only"), true);
   assert.equal(supportsGeminiExecutionMode("isolated_read_only"), true);
   assert.equal(supportsGeminiExecutionMode("memory_chat"), true);

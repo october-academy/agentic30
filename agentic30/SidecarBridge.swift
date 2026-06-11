@@ -196,9 +196,15 @@ final class SidecarBridge: SidecarTransport {
             appendStartupTrace("send_while_disconnected", properties: [
                 "message_type": payload["type"] as? String ?? "unknown",
             ])
-            PostHogTelemetry.capture("mac_sidecar_send_while_disconnected", properties: [
+            let properties: [String: Any] = [
                 "message_type": payload["type"] as? String ?? "unknown",
-            ])
+            ]
+            PostHogTelemetry.capture("mac_sidecar_send_while_disconnected", properties: properties)
+            PostHogTelemetry.captureLog(
+                "sidecar send while disconnected",
+                level: .warn,
+                properties: properties
+            )
             emit(type: "error", message: "Sidecar is not connected.")
             return false
         }
@@ -542,13 +548,27 @@ final class SidecarBridge: SidecarTransport {
 
         if didConnect {
             didConnect = false
+            let properties: [String: Any] = [
+                "termination_status": Int(terminatedProcess.terminationStatus),
+                "stderr_tail": stderrTail,
+            ]
             appendStartupTrace("process_stopped_after_connect", properties: [
                 "termination_status": Int(terminatedProcess.terminationStatus),
                 "stderr_tail": stderrTail,
             ])
-            PostHogTelemetry.capture("mac_sidecar_stopped", properties: [
-                "termination_status": terminatedProcess.terminationStatus,
-            ])
+            PostHogTelemetry.capture("mac_sidecar_stopped", properties: properties)
+            PostHogTelemetry.capture("mac_sidecar_unexpected_exit", properties: properties)
+            PostHogTelemetry.captureLog(
+                "sidecar unexpected exit",
+                level: .error,
+                properties: properties
+            )
+            PostHogTelemetry.captureException(
+                NSError(domain: "SidecarBridge", code: Int(terminatedProcess.terminationStatus), userInfo: [
+                    NSLocalizedDescriptionKey: "Sidecar stopped unexpectedly after connecting."
+                ]),
+                properties: properties
+            )
             emit(
                 type: "sidecar_unexpected_exit",
                 message: "Sidecar stopped unexpectedly (exit \(terminatedProcess.terminationStatus))."
@@ -567,6 +587,15 @@ final class SidecarBridge: SidecarTransport {
             "termination_reason": reason,
             "termination_status": Int(terminatedProcess.terminationStatus),
         ])
+        PostHogTelemetry.captureLog(
+            "sidecar early process exit",
+            level: .error,
+            properties: [
+                "termination_reason": reason,
+                "termination_status": Int(terminatedProcess.terminationStatus),
+                "stderr_tail": stderrTail,
+            ]
+        )
         PostHogTelemetry.captureException(
             NSError(domain: "SidecarBridge", code: Int(terminatedProcess.terminationStatus), userInfo: [
                 NSLocalizedDescriptionKey: "Sidecar failed to start (\(reason) \(terminatedProcess.terminationStatus))."
@@ -586,11 +615,14 @@ final class SidecarBridge: SidecarTransport {
 
     private func captureBootFailure(reason: String, properties: [String: Any] = [:]) {
         guard emittedBootFailureReasons.insert(reason).inserted else { return }
-        PostHogTelemetry.capture(
-            "sidecar_boot_failed",
-            properties: properties.merging([
-                "reason": reason,
-            ]) { _, new in new }
+        let merged = properties.merging([
+            "reason": reason,
+        ]) { _, new in new }
+        PostHogTelemetry.capture("sidecar_boot_failed", properties: merged)
+        PostHogTelemetry.captureLog(
+            "sidecar boot failed",
+            level: .error,
+            properties: merged
         )
     }
 

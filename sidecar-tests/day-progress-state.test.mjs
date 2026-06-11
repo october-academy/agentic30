@@ -95,6 +95,11 @@ test("normalizeDayRecord repairs legacy Day 1 goal text and clears it from later
   assert.equal(day2.goalText, "");
 });
 
+test("normalizeDayRecord repairs legacy Day 1 get_users target to active users", () => {
+  const day1 = normalizeDayRecord({ day: 1, steps: {}, goalText: "30일 안에 가입자 100명을 모은다." });
+  assert.equal(day1.goalText, "30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다.");
+});
+
 test("normalizeDayProgress returns a clean default for garbage input", () => {
   for (const bad of [null, undefined, 42, "x", []]) {
     const norm = normalizeDayProgress(bad);

@@ -1,3 +1,4 @@
+import { buildOfficeHoursUiCopyContractPrompt } from "./office-hours-copy-rules.mjs";
 import { officeHoursStructuredInputChannel } from "./office-hours-structured-input.mjs";
 
 export function clampOfficeHoursContext(context = "") {
@@ -61,6 +62,7 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
   const isWriteDesignDocFlow = isOfficeHoursWriteDesignDocContext(context);
   const isLockedDay1GoalFlow = isOfficeHoursLockedDay1GoalContext(context);
   const isDay2GoalDrivenFlow = isOfficeHoursDay2GoalDrivenContext(context);
+  const isGetUsersGoalFlow = /Goal lane:\s*get_users\b/i.test(String(context || ""));
   const baseRules = [
     "## Agentic30 Day 1 STEP Office Hours",
     "Use the office-hours specialist for this whole session.",
@@ -86,6 +88,7 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
     "Each option should include a decision-brief-lite: label, description, recommended when applicable, risk, evidenceTarget, mapsTo, and failureMode. Keep label/description useful even if the host ignores extra metadata.",
     "Option descriptions must name at least one of: selected outcome, concrete risk, evidence that will be captured, or the remaining evidence gap.",
     "In user-visible Korean copy, follow docs/JARGON.md: prefer plain action words over jargon. Say 고객 후보 instead of ICP, 현재 대안 instead of status quo, 작은 유료 진입점 instead of wedge, 작업 흐름 instead of workflow, and 제외 신호 instead of Anti-ICP unless the user's own wording requires the term.",
+    buildOfficeHoursUiCopyContractPrompt(),
     "Optionally attach an emphasis array to the question to highlight key spans. Each item is { phrase, style }: phrase MUST be an exact substring of the question text; style is strong (key nouns, numbers, quotes), mark (warnings, deadlines, the single most important phrase), or code (file names, paths, code tokens). Use 1-5 spans, never more, and never emphasize most of the sentence.",
     "For a free-text chat reply (no structured input card), you may emphasize key spans of your reply with an emphasis sentinel block appended at the very end. Do NOT use inline markup like ** or ==; only the sentinel block. Wire format: the visible reply body, then a new line `===EMPHASIS===`, then a JSON array `[{ \"phrase\": \"<exact substring of the reply>\", \"style\": \"strong|mark|code\" }]`, then `===END===`. style is strong (key nouns, numbers, quotes), mark (warnings, deadlines, the single most important phrase), or code (file names, paths, code tokens). phrase MUST be an exact substring of the reply body. Use 1-5 spans, never more, never emphasize most of the reply, and omit the block entirely when nothing needs emphasis. The host strips this block so the user only sees the reply body.",
     "Recommended options are allowed, but the user must still be able to disagree.",
@@ -108,6 +111,10 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
         "Ask exactly six startup forcing decisions in this order when missing: real demand evidence, current alternative, reachable person, smallest paid entry point, observed behavior, future importance. In Korean output, label them 수요 증거, 현재 대안, 연락 가능한 사람, 작은 유료 진입점, 관찰한 행동, 앞으로 더 중요해질 이유.",
         `The demand decision MUST use the one-question Q1 demand evidence card above. Each later decision MUST use ${structuredInputTool} with exactly one question, 2-4 options, allowFreeText: true, and requiresFreeText: false.`,
         "After the sixth answer, do not ask 전제 확인 or 대안 비교 as more structured input. Return generated design-doc markdown with frontmatter generated_by: office-hours and handoff_for: plan-ceo-review, including these Korean section headings: 문제 정의, 대상 사용자, 선택한 첫 진입점, 전제 확인, 검토한 대안, 이번에는 제외, 다음 행동, CEO 리뷰 인계.",
+        "After the design-doc markdown, return a machine handoff block exactly in this form: ===DAY1_HANDOFF_JSON===, then one JSON object, then ===END===.",
+        "The handoff JSON fields are northStarGoal, weeklyProof, targetUser, problem, currentAlternative, entryPoint, nextAction, nonGoals, assumptions, and sourceQuotes. Keep each scalar field to one sentence or less; nonGoals, assumptions, and sourceQuotes are short string arrays.",
+        "Use only interview answers and the generated design doc for the handoff JSON. Do not invent reachable people, numbers, costs, or product scope. If unknown, leave the field empty and add one assumption.",
+        "Do not mention Agentic30, Day, Foundation, document writing, provider execution, or app internals in the handoff JSON unless the user's product itself is Agentic30.",
       ]
     : [];
   const lockedDay1GoalRules = isLockedDay1GoalFlow
@@ -115,6 +122,14 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
         "For the locked Day 1 goal interview, do not ask a mode gate, product-stage gate, or goal-selection question.",
         "Use only the locked goal block as the interview target: goal type, goal text, customer, problem, and validation action are already chosen by the user.",
         `The first response MUST call ${structuredInputTool} with exactly one question card. Do not answer only in prose.`,
+        ...(isGetUsersGoalFlow ? [
+          "For locked Day 1 get_users, the first structured input card MUST define the active-user counting rule before any acquisition, channel, or evidence question. This active-user-definition card is not eligible for smart-skip.",
+          "The get_users active-user-definition card MUST use signalId `get_users_active_user_definition`, signalLabel `활성 사용자 기준`, header `활성 사용자 기준`, allowFreeText: true, requiresFreeText: false, and exactly three options.",
+          "The card question MUST be: `이 목표에서 활성 사용자 1명으로 세려면 고객 후보가 어떤 핵심 행동을 끝내야 하나요?`",
+          "The three option labels MUST be exactly: `첫 가치 완료`, `반복 사용 완료`, `수동 파일럿 성공`. Mark `첫 가치 완료` as recommended unless the context clearly says another activation behavior is already chosen.",
+          "Ground the get_users activation behavior in docs/ICP.md for this product: a full-time solo macOS developer should count only when project/work/interview/BIP records lead to a concrete validation action and next task, not when they merely express interest.",
+          "The active-user-definition card MUST say the failure condition in Korean: 가입, 대기 신청, 페이지 조회, 좋아요, 팔로워, or `관심 있어요` do not count as active users unless the chosen 핵심 행동 is completed.",
+        ] : []),
         "Ask for the weakest missing evidence behind the locked goal first: money signal for make_money, acquisition/channel signal for get_users, or build flow/user-success signal for build_product.",
         "Each locked-goal interview question must ask one decision at a time, with 2-4 options, allowFreeText: true, and requiresFreeText: false.",
         "Expected question count is a hard upper bound for this locked Day 1 interview. Ask no more than six user-facing structured input cards when the context says `Expected question count: 6`.",
@@ -134,6 +149,10 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
         "Each Day 2+ question must include 2-4 options, allowFreeText: true, requiresFreeText: false, and option metadata: recommended when applicable, risk, evidenceTarget, mapsTo, and failureMode.",
         "For make_money, push toward a real payment, paid pilot, contract, invoice, or explicit paid-offer response. Price curiosity alone is not success.",
         "For get_users, push toward a measurable acquisition action and activated users, not vanity traffic. Default success is 100 unique people/accounts completing the chosen activation action.",
+        ...(isGetUsersGoalFlow ? [
+          "For Day 2+ get_users, reuse the `Active user definition` / `get_users_active_user_definition` answer from memory when present. If no such answer exists, the first structured input card MUST ask the same active-user-definition question before acquisition execution.",
+          "For this product's docs/ICP.md customer definition, apply that definition to record-backed execution: the activated user should complete a validation behavior and receive or commit to the next task, not just join a list or view content.",
+        ] : []),
         "For build_product, push toward a working version that a target user can complete end-to-end. A deploy or commit alone is not enough unless it enables the validation action.",
         "If DAY2_PLUS_LIVE_DIGEST says BUILD_WITHOUT_CUSTOMER_EVIDENCE: true, the first question must challenge the customer/user evidence gap before asking for more building.",
         "If live source data is thin, say so briefly and ask for the smallest action that creates hard evidence today; do not invent analytics, traffic, revenue, user, or deployment facts.",

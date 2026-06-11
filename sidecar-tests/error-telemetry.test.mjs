@@ -10,10 +10,15 @@ import {
 
 function makeFakeTelemetry() {
   const captured = [];
+  const logs = [];
   return {
     captured,
+    logs,
     captureException(error, properties = {}) {
       captured.push({ error, properties });
+    },
+    captureLog(message, level, attributes = {}) {
+      logs.push({ message, level, attributes });
     },
   };
 }
@@ -44,6 +49,11 @@ test("reportError forwards to telemetry with operation", () => {
   assert.equal(fake.captured[0].error.message, "boom");
   assert.equal(fake.captured[0].properties.operation, "unit_test_op");
   assert.equal(fake.captured[0].properties.extra, 1);
+  assert.equal(fake.logs.length, 1);
+  assert.equal(fake.logs[0].message, "sidecar swallowed error");
+  assert.equal(fake.logs[0].level, "error");
+  assert.equal(fake.logs[0].attributes.operation, "unit_test_op");
+  assert.equal(fake.logs[0].attributes.error_message, "boom");
   assert.ok(warn.lines.some((line) => line.includes("unit_test_op")));
 });
 
@@ -71,6 +81,23 @@ test("reportError survives telemetry that throws", () => {
     warn.restore();
     setTelemetryClient(null);
   }
+});
+
+test("reportError survives log capture failures", () => {
+  setTelemetryClient({
+    captureException() {},
+    captureLog() {
+      throw new Error("log telemetry exploded");
+    },
+  });
+  const warn = muteConsoleWarn();
+  try {
+    assert.doesNotThrow(() => reportError(new Error("payload"), { operation: "log_throws" }));
+  } finally {
+    warn.restore();
+    setTelemetryClient(null);
+  }
+  assert.ok(warn.lines.some((line) => line.includes("log_throws")));
 });
 
 test("swallow reports and returns undefined on rejection", async () => {

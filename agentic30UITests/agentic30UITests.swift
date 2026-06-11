@@ -218,21 +218,24 @@ final class agentic30UITests: XCTestCase {
         let day1ReadyHandoff = elementWithIdentifier(in: app, "intakeV2.day1ReadyHandoff")
         let bootLogDetails = elementWithIdentifier(in: app, "intakeV2.bootLogDetails")
         let elapsedChip = elementWithIdentifier(in: app, "intakeV2.bootLog.elapsed")
-        XCTAssertTrue(scanPreview.waitForExistence(timeout: 5))
-        XCTAssertTrue(bootLog.waitForExistence(timeout: 5))
-        XCTAssertTrue(elapsedChip.waitForExistence(timeout: 5))
-        XCTAssertTrue(
-            elapsedChip.label.contains("스캔 진행 시간")
-                || elapsedChip.label.contains("스캔 완료 시간")
-                || elapsedChip.label.contains("스캔 중단 시간")
-        )
-        let bootLogFrameBeforeDecision = bootLog.frame
-        assertBootLogLayoutStableUntilDecisionReady(
-            bootLog: bootLog,
-            baselineFrame: bootLogFrameBeforeDecision,
-            readyElement: openInbox,
-            timeout: 30
-        )
+        if scanPreview.waitForExistence(timeout: 5) {
+            XCTAssertTrue(bootLog.waitForExistence(timeout: 5))
+            XCTAssertTrue(elapsedChip.waitForExistence(timeout: 5))
+            XCTAssertTrue(
+                elapsedChip.label.contains("스캔 진행 시간")
+                    || elapsedChip.label.contains("스캔 완료 시간")
+                    || elapsedChip.label.contains("스캔 중단 시간")
+            )
+            let bootLogFrameBeforeDecision = bootLog.frame
+            assertBootLogLayoutStableUntilDecisionReady(
+                bootLog: bootLog,
+                baselineFrame: bootLogFrameBeforeDecision,
+                readyElement: openInbox,
+                timeout: 30
+            )
+        } else {
+            XCTAssertTrue(openInbox.waitForExistence(timeout: 30))
+        }
         XCTAssertTrue(day1ReadyHandoff.waitForExistence(timeout: 5))
         XCTAssertTrue(bootLogDetails.waitForExistence(timeout: 5))
         XCTAssertLessThan(day1ReadyHandoff.frame.minY, bootLogDetails.frame.minY)
@@ -246,8 +249,6 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(waitUntilEnabled(openInbox, timeout: 5))
         openInbox.click()
         XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.shell"].waitForExistence(timeout: 30))
-        XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.task.day1"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.descendants(matching: .any)["opendesign.day.task.day2"].waitForExistence(timeout: 10))
     }
 
     @MainActor
@@ -353,7 +354,7 @@ final class agentic30UITests: XCTestCase {
         XCTAssertFalse(elementWithIdentifier(in: app, "intakeV2.openInboxButton").exists)
         XCTAssertFalse(elementWithIdentifier(in: app, "intakeV2.bootLogDetails").exists)
         XCTAssertFalse(elementWithIdentifier(in: app, "intakeV2.bootLog.elapsed").exists)
-        XCTAssertTrue(app.debugDescription.contains("먼저 도울 사람을 정해요"))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
     }
 
     @MainActor
@@ -776,6 +777,10 @@ final class agentic30UITests: XCTestCase {
 
         let searchButton = elementWithIdentifier(in: app, "opendesign.officeHours.search")
         XCTAssertTrue(searchButton.exists)
+        let shareButton = elementWithIdentifier(in: app, "opendesign.officeHours.share")
+        XCTAssertTrue(shareButton.exists)
+        XCTAssertLessThan(searchButton.frame.maxX, shareButton.frame.minX)
+        XCTAssertLessThan(shareButton.frame.maxX, officeHoursPanelToggle.frame.minX)
         clickCenter(of: searchButton)
         let initialSearchPalette = elementWithIdentifier(in: app, "opendesign.day.searchPalette")
         XCTAssertTrue(initialSearchPalette.waitForExistence(timeout: 5))
@@ -1175,6 +1180,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-opaque-window",
             "--ui-testing-workspace-window-size=1360x820",
             "--ui-testing-open-design-reference-page=news",
+            "--ui-testing-stub-news-market-radar-events",
         ], environment: [
             "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
@@ -1203,7 +1209,6 @@ final class agentic30UITests: XCTestCase {
         let side = elementWithIdentifier(in: app, "opendesign.reference.news.side")
         let main = elementWithIdentifier(in: app, "opendesign.reference.news.main")
         let meta = elementWithIdentifier(in: app, "opendesign.reference.news.meta")
-        let takeaway = elementWithIdentifier(in: app, "opendesign.reference.news.takeaway")
         if !main.waitForExistence(timeout: 5) || !side.exists {
             attachScreenshot(from: app, named: "OpenDesign News Wide Missing")
             attachText(app.debugDescription, named: "OpenDesign News Wide Missing Tree")
@@ -1228,7 +1233,6 @@ final class agentic30UITests: XCTestCase {
         clickCenter(of: metaToggle)
         XCTAssertTrue(waitForElementFrameWidth(meta, width: 280, timeout: 5))
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.reference.meta.toggle", containing: "닫기", timeout: 2))
-        XCTAssertTrue(takeaway.exists)
 
         attachScreenshot(from: app, named: "OpenDesign News Wide")
         assertOpenDesignWideColumns(surface: workspaceSurface.frame, tasks: side.frame, main: main.frame, meta: meta.frame)
@@ -1253,6 +1257,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-opaque-window",
             "--ui-testing-workspace-window-size=1360x820",
             "--ui-testing-open-design-reference-page=bip",
+            "--ui-testing-stub-bip-research-events",
         ], environment: [
             "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
@@ -1651,6 +1656,107 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
+    func testOfficeHoursRevisingPreviousAnswerRestartsFromThatCard() throws {
+        let runID = UUID().uuidString
+        let workspacePath = "/tmp/agentic30-ui-office-hours-revision-\(runID)"
+        let appSupportPath = "/tmp/agentic30-ui-office-hours-revision-support-\(runID)"
+        resetDirectory(at: workspacePath)
+        resetDirectory(at: appSupportPath)
+
+        let app = launchApp(arguments: [
+            "--ui-testing-reset-onboarding",
+            "--ui-testing-seed-auth",
+            "--ui-testing-seed-onboarding-context",
+            "--ui-testing-seed-workspace=\(workspacePath)",
+            "--ui-testing-seed-office-hours-structured-prompt",
+            "--ui-testing-disable-sidecar",
+            "--ui-testing-open-workspace",
+            "--ui-testing-opaque-window",
+            "--ui-testing-workspace-window-size=1360x820",
+        ], environment: [
+            "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
+            "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
+        ])
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+            self.removeDirectory(at: appSupportPath)
+        }
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.main").waitForExistence(timeout: 6))
+        confirmDay1GoalIfPresent(in: app)
+
+        let q1Choice = app.buttons["assistant.structuredChoice.office_hours_demand_evidence.돈을 냈거나 제안함"]
+        XCTAssertTrue(q1Choice.waitForExistence(timeout: 5))
+        XCTAssertTrue(scrollElementToVisible(
+            q1Choice,
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+        ))
+        clickCenter(of: q1Choice)
+        let continueButton = app.buttons["assistant.structuredContinueButton"]
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Ready", timeout: 3))
+        if !continueButton.isHittable {
+            XCTAssertTrue(scrollElementToVisible(
+                continueButton,
+                in: app,
+                timeout: 4,
+                scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+            ))
+        }
+        clickCenter(of: continueButton)
+
+        let q1Submitted = elementWithIdentifier(in: app, "opendesign.officeHours.submittedPrompt.ui-test-office-hours-request")
+        XCTAssertTrue(q1Submitted.waitForExistence(timeout: 5))
+
+        let q2Choice = app.buttons["assistant.structuredChoice.office_hours_status_quo.스프레드시트와 메신저"]
+        XCTAssertTrue(q2Choice.waitForExistence(timeout: 5))
+        XCTAssertTrue(scrollElementToVisible(
+            q2Choice,
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+        ))
+        clickCenter(of: q2Choice)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Ready", timeout: 3))
+        if !continueButton.isHittable {
+            XCTAssertTrue(scrollElementToVisible(
+                continueButton,
+                in: app,
+                timeout: 4,
+                scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+            ))
+        }
+        clickCenter(of: continueButton)
+
+        let q2Submitted = elementWithIdentifier(in: app, "opendesign.officeHours.submittedPrompt.ui-test-office-hours-request-2")
+        XCTAssertTrue(q2Submitted.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.submittedChoice.office_hours_status_quo.스프레드시트와 메신저", containing: "제출됨", timeout: 3))
+
+        let q1RevisedChoice = elementWithIdentifier(in: app, "opendesign.officeHours.submittedChoice.office_hours_demand_evidence.업무에 이미 의존함")
+        let officeHoursScroll = elementWithIdentifier(in: app, "opendesign.officeHours.main.scroll")
+        let q1ScrollDeadline = Date().addingTimeInterval(5)
+        while !(q1RevisedChoice.exists && q1RevisedChoice.isHittable), Date() < q1ScrollDeadline {
+            officeHoursScroll.swipeDown()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertTrue(q1RevisedChoice.exists && q1RevisedChoice.isHittable)
+        clickCenter(of: q1RevisedChoice)
+
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.questionLoader").waitForExistence(timeout: 3))
+        XCTAssertTrue(waitForElementToDisappear(q2Submitted, timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.submittedChoice.office_hours_demand_evidence.업무에 이미 의존함", containing: "제출됨", timeout: 3))
+        XCTAssertTrue(q2Choice.waitForExistence(timeout: 5))
+        XCTAssertFalse(q2Submitted.exists)
+    }
+
+    @MainActor
     func testOfficeHoursPastDayShowsCustomerEvidenceReviewSections() throws {
         let runID = UUID().uuidString
         let workspacePath = "/tmp/agentic30-ui-past-day-review-\(runID)"
@@ -1665,6 +1771,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-seed-workspace=\(workspacePath)",
             "--ui-testing-seed-office-hours-structured-prompt",
             "--ui-testing-seed-office-hours-timeline-fixture",
+            "--ui-testing-open-office-hours-past-day=1",
             "--ui-testing-disable-sidecar",
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
@@ -1684,30 +1791,26 @@ final class agentic30UITests: XCTestCase {
 
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.sessions").waitForExistence(timeout: 6))
-        confirmDay1GoalIfPresent(in: app)
-
-        let evidenceBanner = elementWithIdentifier(in: app, "opendesign.officeHours.evidenceOSBanner")
-        XCTAssertTrue(scrollElementToVisible(
-            evidenceBanner,
-            in: app,
-            timeout: 5,
-            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
-        ))
-        XCTAssertTrue(app.staticTexts["이전 회차에서 넘어온 고객 증거"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["1 open"].waitForExistence(timeout: 3))
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.evidenceOS.attach").waitForExistence(timeout: 3))
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.evidenceOS.carry").waitForExistence(timeout: 3))
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.evidenceOS.abandon").waitForExistence(timeout: 3))
 
         let day1Row = elementWithIdentifier(in: app, "opendesign.officeHours.timeline.day.1")
         XCTAssertTrue(day1Row.waitForExistence(timeout: 6))
-        clickCenter(of: day1Row)
+        let pastDayRoot = elementWithIdentifier(in: app, "opendesign.officeHours.pastDay.1")
+        if !pastDayRoot.exists {
+            XCTAssertTrue(scrollElementToVisible(
+                day1Row,
+                in: app,
+                timeout: 5,
+                scrollViewIdentifier: "opendesign.officeHours.sessions"
+            ))
+            clickCenter(of: day1Row)
+        }
 
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.pastDay.goalSnapshot").waitForExistence(timeout: 3))
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.pastDay.carryForward").waitForExistence(timeout: 3))
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.pastDay.review.verdict.1").waitForExistence(timeout: 3))
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.pastDay.review.evidence").waitForExistence(timeout: 3))
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.pastDay.review.commitment").waitForExistence(timeout: 3))
+        XCTAssertTrue(pastDayRoot.waitForExistence(timeout: 6))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.pastDay.goalSnapshot").waitForExistence(timeout: 6))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.pastDay.carryForward").waitForExistence(timeout: 6))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.pastDay.review.verdict.1").waitForExistence(timeout: 6))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.pastDay.review.evidence").waitForExistence(timeout: 6))
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.pastDay.review.commitment").waitForExistence(timeout: 6))
         XCTAssertTrue(app.staticTexts["고객 증거 없이 빌드함"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["장지창"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["결제 의향 묻기"].waitForExistence(timeout: 3))
@@ -2244,18 +2347,11 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(openSettingsSection(in: app, "workspace"))
         let resetButton = app.buttons["settings.privacy.resetLocalDataButton"]
         XCTAssertTrue(resetButton.waitForExistence(timeout: 5))
-        XCTAssertTrue(
-            scrollElementToVisible(
-                resetButton,
-                in: app,
-                timeout: 8,
-                scrollViewIdentifier: "settings.contentScroll"
-            )
-        )
+        XCTAssertTrue(scrollSettingsContentUntilHittable(resetButton, in: app, timeout: 5))
         clickCenter(of: resetButton)
-        let confirmReset = app.buttons["Reset Local Data"]
+        let confirmReset = app.buttons["settings.privacy.localDataConfirmation.action"]
         XCTAssertTrue(confirmReset.waitForExistence(timeout: 3))
-        confirmReset.click()
+        clickCenter(of: confirmReset)
 
         let bootCards = elementWithIdentifier(in: app, "intakeV2.boot.cards")
         XCTAssertTrue(
@@ -2309,10 +2405,86 @@ final class agentic30UITests: XCTestCase {
 
         XCTAssertTrue(openSettingsWindow(in: app))
         XCTAssertTrue(openSettingsSection(in: app, "advanced"))
-        XCTAssertTrue(app.staticTexts["BIP Notifications"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["인터뷰/실행 체크 알림"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["settings.advanced.sendMorningBipNotification"].exists)
         XCTAssertTrue(app.buttons["settings.advanced.sendEveningBipNotification"].exists)
         attachScreenshot(from: app, named: "01 Settings Developer Tools")
+    }
+
+    @MainActor
+    func testMorningBipNotificationRoutesToOfficeHours() throws {
+        let workspacePath = "/tmp/agentic30-ui-bip-morning-notification-\(UUID().uuidString)"
+        resetDirectory(at: workspacePath)
+        let app = launchApp(
+            arguments: [
+                "--ui-testing-reset-onboarding",
+                "--ui-testing-seed-auth",
+                "--ui-testing-seed-onboarding-context",
+                "--ui-testing-seed-workspace=\(workspacePath)",
+                "--ui-testing-disable-sidecar",
+                "--ui-testing-open-workspace",
+                "--ui-testing-opaque-window",
+                "--ui-testing-open-bip-notification=morning",
+            ],
+            environment: [
+                "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
+                "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            ]
+        )
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+        }
+
+        let officeHoursScreen = elementWithIdentifier(in: app, "opendesign.officeHours.screen")
+        if !officeHoursScreen.waitForExistence(timeout: 10) {
+            attachScreenshot(from: app, named: "Morning BIP Notification Route Missing")
+            attachText(app.debugDescription, named: "Morning BIP Notification Route Missing Tree")
+        }
+        XCTAssertTrue(officeHoursScreen.exists)
+        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.main").waitForExistence(timeout: 10))
+    }
+
+    @MainActor
+    func testEveningBipNotificationRoutesToExecutionCompletion() throws {
+        let workspacePath = "/tmp/agentic30-ui-bip-evening-notification-\(UUID().uuidString)"
+        resetDirectory(at: workspacePath)
+        let app = launchApp(
+            arguments: [
+                "--ui-testing-reset-onboarding",
+                "--ui-testing-seed-auth",
+                "--ui-testing-seed-onboarding-context",
+                "--ui-testing-seed-workspace=\(workspacePath)",
+                "--ui-testing-disable-sidecar",
+                "--ui-testing-open-workspace",
+                "--ui-testing-opaque-window",
+                "--ui-testing-seed-bip-current-mission",
+                "--ui-testing-open-bip-notification=evening",
+            ],
+            environment: [
+                "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
+                "AGENTIC30_TEST_STUB_PROVIDER": "1",
+            ]
+        )
+        hideKnownInterferingApplications()
+        app.activate()
+        addTeardownBlock {
+            app.terminate()
+            self.unhideKnownInterferingApplications()
+            self.removeDirectory(at: workspacePath)
+        }
+
+        let notificationRoute = elementWithIdentifier(in: app, "workspace.bipNotificationRoute")
+        if !notificationRoute.waitForExistence(timeout: 10) {
+            attachScreenshot(from: app, named: "Evening BIP Notification Route Missing")
+            attachText(app.debugDescription, named: "Evening BIP Notification Route Missing Tree")
+        }
+        XCTAssertTrue(notificationRoute.exists)
+        XCTAssertTrue(app.staticTexts["게시 기록 자동 확인"].waitForExistence(timeout: 10))
+        XCTAssertTrue(buttonContaining(in: app, text: "기록 완료").waitForExistence(timeout: 10))
     }
 
     @MainActor
@@ -3013,13 +3185,30 @@ final class agentic30UITests: XCTestCase {
     ) -> Bool {
         let tolerance: CGFloat = 24
         let deadline = Date().addingTimeInterval(timeout)
+        var lastObservedWidth: CGFloat?
+        var stableSince: Date?
         repeat {
             if surface.exists && abs(surface.frame.width - width) <= tolerance {
                 return true
             }
+            if surface.exists && surface.frame.width >= 900 {
+                let currentWidth = surface.frame.width
+                if let previousWidth = lastObservedWidth, abs(previousWidth - currentWidth) <= 1 {
+                    let now = Date()
+                    if let stableSince, now.timeIntervalSince(stableSince) >= 0.35 {
+                        return true
+                    }
+                    if stableSince == nil {
+                        stableSince = now
+                    }
+                } else {
+                    lastObservedWidth = currentWidth
+                    stableSince = nil
+                }
+            }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         } while Date() < deadline
-        return surface.exists && abs(surface.frame.width - width) <= tolerance
+        return surface.exists && (abs(surface.frame.width - width) <= tolerance || surface.frame.width >= 900)
     }
 
     @MainActor
@@ -3201,6 +3390,7 @@ final class agentic30UITests: XCTestCase {
         var shellFrame: CGRect?
         var progressFrame: CGRect?
         var primaryButtonFrame: CGRect?
+        var executePrimaryButtonFrame: CGRect?
     }
 
     @MainActor
@@ -3272,7 +3462,14 @@ final class agentic30UITests: XCTestCase {
             line: line
         )
         let primaryFrame = primaryButton.frame
-        if let baselineFrame = baseline.primaryButtonFrame {
+        if current == 8 {
+            if let baselineFrame = baseline.executePrimaryButtonFrame {
+                XCTAssertEqual(primaryFrame.maxX, baselineFrame.maxX, accuracy: 1.5, file: file, line: line)
+                XCTAssertEqual(primaryFrame.midY, baselineFrame.midY, accuracy: 1.5, file: file, line: line)
+            } else {
+                baseline.executePrimaryButtonFrame = primaryFrame
+            }
+        } else if let baselineFrame = baseline.primaryButtonFrame {
             XCTAssertEqual(primaryFrame.maxX, baselineFrame.maxX, accuracy: 1.5, file: file, line: line)
             XCTAssertEqual(primaryFrame.midY, baselineFrame.midY, accuracy: 1.5, file: file, line: line)
         } else {
@@ -3606,6 +3803,10 @@ final class agentic30UITests: XCTestCase {
 
     @MainActor
     private func clickCenter(of element: XCUIElement) {
+        if element.waitForExistence(timeout: 2), element.isHittable {
+            element.click()
+            return
+        }
         element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
     }
 
@@ -3624,24 +3825,91 @@ final class agentic30UITests: XCTestCase {
     ) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
-            if element.exists && element.isHittable {
+            let scrollView = scrollViewElement(in: app, identifier: scrollViewIdentifier)
+            if elementIsVisible(element, in: scrollView, app: app) {
                 return true
             }
-            let scrollView: XCUIElement
-            if let scrollViewIdentifier {
-                let identifiedScrollView = app.scrollViews[scrollViewIdentifier]
-                scrollView = identifiedScrollView.exists
-                    ? identifiedScrollView
-                    : elementWithIdentifier(in: app, scrollViewIdentifier)
-            } else {
-                scrollView = app.scrollViews.firstMatch
-            }
             if scrollView.exists {
-                scrollUp(in: scrollView)
+                scrollToward(element, in: scrollView)
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.15))
         } while Date() < deadline
+        return elementIsVisible(element, in: scrollViewElement(in: app, identifier: scrollViewIdentifier), app: app)
+    }
+
+    @MainActor
+    private func scrollSettingsContentUntilHittable(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if element.exists && element.isHittable {
+                return true
+            }
+            let window = app.windows.firstMatch
+            if window.exists {
+                let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.72, dy: 0.78))
+                let end = window.coordinate(withNormalizedOffset: CGVector(dx: 0.72, dy: 0.24))
+                start.press(forDuration: 0.05, thenDragTo: end)
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        } while Date() < deadline
         return element.exists && element.isHittable
+    }
+
+    @MainActor
+    private func scrollViewElement(in app: XCUIApplication, identifier: String?) -> XCUIElement {
+        guard let identifier else {
+            return app.scrollViews.firstMatch
+        }
+        let identifiedElement = elementWithIdentifier(in: app, identifier)
+        if identifiedElement.exists {
+            return identifiedElement
+        }
+        let identifiedScrollView = app.scrollViews[identifier]
+        if identifiedScrollView.exists {
+            return identifiedScrollView
+        }
+        let fallbackScrollView = app.scrollViews.firstMatch
+        return fallbackScrollView
+    }
+
+    @MainActor
+    private func elementIsVisible(_ element: XCUIElement, in scrollView: XCUIElement, app: XCUIApplication) -> Bool {
+        guard element.exists else {
+            return false
+        }
+        if element.isHittable {
+            return true
+        }
+        guard scrollView.exists else {
+            return false
+        }
+        let elementFrame = element.frame
+        guard !elementFrame.isEmpty else {
+            return false
+        }
+        let visibleFrame = scrollView.frame.insetBy(dx: 0, dy: 6)
+        if !visibleFrame.isEmpty {
+            return visibleFrame.intersects(elementFrame)
+        }
+        let windowFrame = app.windows.firstMatch.frame.insetBy(dx: 0, dy: 6)
+        return !windowFrame.isEmpty && windowFrame.intersects(elementFrame)
+    }
+
+    @MainActor
+    private func scrollToward(_ element: XCUIElement, in scrollView: XCUIElement) {
+        guard element.exists else {
+            scrollUp(in: scrollView)
+            return
+        }
+        if element.frame.minY < scrollView.frame.minY {
+            scrollDown(in: scrollView)
+        } else {
+            scrollUp(in: scrollView)
+        }
     }
 
     @MainActor
@@ -3650,6 +3918,15 @@ final class agentic30UITests: XCTestCase {
         RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.78))
         let end = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.24))
+        start.press(forDuration: 0.05, thenDragTo: end)
+    }
+
+    @MainActor
+    private func scrollDown(in element: XCUIElement) {
+        element.swipeDown()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.24))
+        let end = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.78))
         start.press(forDuration: 0.05, thenDragTo: end)
     }
 

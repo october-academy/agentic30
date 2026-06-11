@@ -3,7 +3,7 @@ import fsSync from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { WebSocket, WebSocketServer } from "ws";
@@ -80,7 +80,7 @@ import {
 } from "./qmd-support.mjs";
 import { buildPostHogClaudeMcpConfigFromSources } from "./posthog-mcp-config.mjs";
 import { createTelemetryClient } from "./telemetry.mjs";
-import { setTelemetryClient as setSharedTelemetryClient, swallow } from "./error-telemetry.mjs";
+import { reportError, setTelemetryClient as setSharedTelemetryClient, swallow } from "./error-telemetry.mjs";
 import { getCachedBipContext } from "./context-cache.mjs";
 import { collectLocalDiscovery } from "./local-discovery.mjs";
 import {
@@ -160,13 +160,15 @@ import {
   resolveGeminiModel,
   getProviderAuthState,
   getProviderConnectionState,
+  getProviderScanReadiness,
   isProviderAuthRequiredError,
   isProviderUsageLimitError,
+  OFFICE_HOURS_QUESTION_EXECUTION_MODE,
   runProviderStream,
   updateProviderSettings,
 } from "./provider-runner.mjs";
 import { runWithSoftTimeout } from "./frontier-soft-timeout.mjs";
-import { selectNextScanProvider, selectScanProviderTargets } from "./scan-provider-select.mjs";
+import { PROVIDER_FALLBACK_CYCLE, selectNextScanProvider, selectScanProviderTargets } from "./scan-provider-select.mjs";
 import {
   extractInlineDecision,
   inferInlineDecisionFromPlainText,
@@ -284,6 +286,7 @@ import {
   loadOfficeHoursTurnLog,
   loadOnboardingMemory,
   refreshDayMemory,
+  reviseOfficeHoursTurn,
   saveOnboardingMemory,
 } from "./workspace-memory.mjs";
 import { emitInlineHintTriggerForFeatureAppearance } from "./curriculum-hint-eligibility.mjs";
@@ -291,6 +294,7 @@ import {
   CODEX_STRUCTURED_INPUT_TOOL,
 } from "./structured-input-tools.mjs";
 import {
+  buildOfficeHoursInterviewAnswerLogAttributes,
   buildOfficeHoursIncompleteInterviewMessage,
   buildOfficeHoursInlineStructuredPromptPayload,
   buildOfficeHoursStructuredQuestionTranscriptText,
@@ -332,6 +336,7 @@ import {
   createUserInputRequest,
   deleteUserInputArtifacts,
   ensureUserInputDirs,
+  getUserInputPaths,
   listUserInputRequests,
   writeUserInputResponse,
 } from "./user-input.mjs";
@@ -481,6 +486,7 @@ const state = {
   workHistoryProgress: null,
   workHistoryProgressStartedAt: null,
   morningBriefingRefreshPromise: null,
+  userInputRequestWatcher: null,
   // 수집 중 카드별 라이브 진행(스피너+에이전트 로그). 서빙 전용, persist 금지.
   morningBriefingProgressTracker: null,
   integrationSettings: {
@@ -523,29 +529,61 @@ function currentBipSetupGate() {
   });
 }
 
-await fs.mkdir(appSupportPath, { recursive: true });
-await ensureUserInputDirs(appSupportPath);
-await clearUserInputArtifacts(appSupportPath);
-await loadSessions();
-state.bipCoach = mergeBipConfigIntoCoachState(
-  await loadBipCoachState(bipCoachFilePath),
-  currentBipConfig(),
-);
-state.bipCoach = syncBipCoachSessionState();
-state.iddSetup = await loadIddSetupState(workspaceRoot);
-state.day1GoalSelection = await loadDay1GoalSelection({ workspaceRoot });
-state.dayProgress = await loadDayProgress({ workspaceRoot });
-await persistBipCoachState(bipCoachFilePath, state.bipCoach);
 const telemetry = createTelemetryClient({ appSupportPath, workspaceRoot });
 setSharedTelemetryClient(telemetry);
 let fatalSidecarWriteInProgress = false;
+let fatalSidecarHandlersInstalled = false;
+installFatalSidecarErrorHandlers();
+
+try {
+  await fs.mkdir(appSupportPath, { recursive: true });
+  if (process.env.AGENTIC30_TEST_BOOTSTRAP_FAILURE === "1") {
+    throw new Error("Synthetic bootstrap failure for sidecar resilience test");
+  }
+  await ensureUserInputDirs(appSupportPath);
+  await clearUserInputArtifacts(appSupportPath);
+  await loadSessions();
+  state.bipCoach = mergeBipConfigIntoCoachState(
+    await loadBipCoachState(bipCoachFilePath),
+    currentBipConfig(),
+  );
+  state.bipCoach = syncBipCoachSessionState();
+  state.iddSetup = await loadIddSetupState(workspaceRoot);
+  state.day1GoalSelection = await loadDay1GoalSelection({ workspaceRoot });
+  state.dayProgress = await loadDayProgress({ workspaceRoot });
+  await persistBipCoachState(bipCoachFilePath, state.bipCoach);
+} catch (error) {
+  const properties = {
+    operation: "sidecar_bootstrap",
+    ...errorTelemetryProperties(error),
+  };
+  captureSidecarLog("sidecar bootstrap failed", "error", properties);
+  try {
+    telemetry.captureException(error, { operation: "sidecar_bootstrap" }, false);
+  } catch {
+    // Telemetry must never mask the bootstrap failure itself.
+  }
+  writeSidecarCrashRecord("sidecar_bootstrap", error, properties);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  process.exit(1);
+}
 
 function fireAndForget(operation, promise, properties = {}) {
   Promise.resolve(promise).catch((error) => {
-    telemetry.captureException(error, {
+    const logProperties = {
       operation,
       ...properties,
-    });
+      ...errorTelemetryProperties(error),
+    };
+    try {
+      telemetry.captureException(error, {
+        operation,
+        ...properties,
+      });
+    } catch {
+      // Telemetry must never prevent local crash breadcrumbs.
+    }
+    captureSidecarLog("sidecar background task failed", "error", logProperties);
     writeSidecarCrashRecord("background_rejection", error, {
       operation,
       ...properties,
@@ -626,12 +664,16 @@ function handleFatalSidecarError(phase, error) {
   setTimeout(() => process.exit(1), 25).unref?.();
 }
 
-process.on("uncaughtException", (error) => {
-  handleFatalSidecarError("uncaughtException", error);
-});
-process.on("unhandledRejection", (reason) => {
-  handleFatalSidecarError("unhandledRejection", reason);
-});
+function installFatalSidecarErrorHandlers() {
+  if (fatalSidecarHandlersInstalled) return;
+  fatalSidecarHandlersInstalled = true;
+  process.on("uncaughtException", (error) => {
+    handleFatalSidecarError("uncaughtException", error);
+  });
+  process.on("unhandledRejection", (reason) => {
+    handleFatalSidecarError("unhandledRejection", reason);
+  });
+}
 // Replay pending ritual after telemetry client exists. broadcast() may run
 // even before any client connects — that's fine, the persisted pendingRitual
 // stays until ack so reconnects also see it.
@@ -731,6 +773,33 @@ function replayPendingRitualOnBoot() {
   if (typeof day !== "number" || !state.bipCoach?.pendingRitualKey) return;
   broadcastPendingRitual(day);
 }
+
+let userInputSyncScheduled = false;
+function schedulePendingUserInputSync(reason = "requested") {
+  if (userInputSyncScheduled) return;
+  userInputSyncScheduled = true;
+  const timeout = setTimeout(() => {
+    userInputSyncScheduled = false;
+    fireAndForget(`syncPendingUserInputRequests:${reason}`, syncPendingUserInputRequests());
+  }, 10);
+  timeout.unref?.();
+}
+
+function startUserInputRequestWatcher() {
+  const { requestsDir } = getUserInputPaths(appSupportPath);
+  try {
+    const watcher = fsSync.watch(requestsDir, { persistent: false }, () => {
+      schedulePendingUserInputSync("fs_watch");
+    });
+    watcher.on?.("error", (error) => {
+      telemetry.captureException(error, { operation: "user_input_request_watch" });
+    });
+    return watcher;
+  } catch (error) {
+    telemetry.captureException(error, { operation: "user_input_request_watch_start" });
+    return null;
+  }
+}
 telemetry.captureEvent("mac_sidecar_booted", {
   session_count: state.sessions.size,
 });
@@ -738,6 +807,7 @@ fireAndForget("refreshPersistedBipCoachReadinessOnBoot", refreshPersistedBipCoac
 const userInputPoll = setInterval(() => {
   fireAndForget("syncPendingUserInputRequests", syncPendingUserInputRequests());
 }, 250);
+state.userInputRequestWatcher = startUserInputRequestWatcher();
 // History tab: hourly low-frequency background reindex (interview round 32).
 // Tab-entry catch-up and the manual button arrive via work_history_get/refresh.
 const workHistoryPoll = setInterval(() => {
@@ -1118,9 +1188,10 @@ async function handleClientMessage(socket, payload) {
     }
     case "warm_session": {
       const session = getSession(payload.sessionId);
-      fireAndForget("warmSession", warmSession(session), {
+      fireAndForget("warmSession", warmSession(session, payload), {
         session_id: session.id,
         provider: session.provider,
+        purpose: normalizeWarmSessionPurpose(payload.purpose) || "",
     });
       return;
     }
@@ -1237,6 +1308,110 @@ async function handleClientMessage(socket, payload) {
         source: payload.source || "manual",
         day,
         selectedSources: payload.selectedSources,
+      });
+      return;
+    }
+    case "office_hours_revise_answer": {
+      const session = getSession(payload.sessionId);
+      const requestId = String(payload.requestId || "").trim();
+      if (!requestId) {
+        throw new Error("Office Hours answer revision requires requestId.");
+      }
+      if (session.runtime?.officeHours?.active !== true) {
+        throw new Error("This session is not an active Office Hours interview.");
+      }
+      if (
+        session.runtime?.officeHours?.terminalAnswered === true
+        || session.runtime?.officeHours?.completedByExpectedCount === true
+      ) {
+        throw new Error("Completed Office Hours interviews cannot be revised.");
+      }
+      const promptRequest = prepareOfficeHoursStructuredInputRequest(payload.prompt || {});
+      if (!promptRequest?.requestId || !Array.isArray(promptRequest.questions)) {
+        throw new Error("Office Hours answer revision requires the original prompt snapshot.");
+      }
+      if (promptRequest.requestId !== requestId) {
+        throw new Error("Office Hours answer revision requestId does not match the prompt snapshot.");
+      }
+      if (session.pendingUserInput?.requestId) {
+        await deleteUserInputArtifacts(appSupportPath, session.id, session.pendingUserInput.requestId).catch(() => {});
+        state.resolvedUserInputIds.add(session.pendingUserInput.requestId);
+      }
+      if (state.activeRuns.has(session.id)) {
+        await stopSession(session.id);
+      }
+      state.promptQueues.delete(session.id);
+      cancelWarmSession(session.id);
+
+      const response = normalizeUserInputResponse(promptRequest, payload);
+      const userResponseText = formatStructuredPromptResponse(response);
+      if (!userResponseText) {
+        throw new Error("Office Hours answer revision requires a non-empty answer.");
+      }
+      const userResponseDescription = collectSelectedOptionDescriptions(promptRequest, response);
+      const officeHoursStructuredQuestionText = buildOfficeHoursStructuredQuestionTranscriptText(promptRequest);
+      const officeHoursTerminalAnswered = isOfficeHoursTerminalAlternativesRequest(promptRequest);
+      const answeredGeneration = promptRequest.generation || null;
+      const runtimeDay = normalizeOfficeHoursDay(session.runtime?.officeHours?.day);
+      const source = String(session.runtime?.officeHours?.source || "office_hours_revision");
+      const context = activeOfficeHoursContext(session);
+
+      const revision = await reviseOfficeHoursTurn({
+        workspaceRoot,
+        requestId,
+        replacementTurn: {
+          day: runtimeDay,
+          sessionId: session.id,
+          requestId,
+          mode: answeredGeneration?.mode || "office_hours_structured_input",
+          signalId: answeredGeneration?.signalId || "",
+          signalLabel: answeredGeneration?.signalLabel || "",
+          questionText: officeHoursStructuredQuestionText,
+          responseText: userResponseText,
+          responseDescription: userResponseDescription,
+          promptSnapshot: promptRequest,
+          submissions: response.responses,
+          ...(officeHoursTerminalAnswered ? { terminal: true } : {}),
+        },
+      });
+
+      session.messages = [];
+      session.pendingUserInput = null;
+      if (session.runtime?.officeHours) {
+        const {
+          terminalAnswered,
+          completedByExpectedCount,
+          completedQuestionCount,
+          ...officeHours
+        } = session.runtime.officeHours;
+        session.runtime.officeHours = {
+          ...officeHours,
+          active: true,
+        };
+      }
+      refreshOfficeHoursRuntimePromptSnapshotsFromTurns(session, revision.payload.turns);
+      session.status = "idle";
+      session.error = null;
+      touch(session);
+      await persistSessions();
+      broadcast({ type: "session_updated", session });
+      emitOfficeHoursStatus(session, {
+        stage: "provider_thinking",
+        progressText: "수정한 답변 기준으로 다음 질문을 다시 준비 중",
+        requestId,
+      });
+      telemetry.captureEvent("mac_sidecar_office_hours_answer_revised", {
+        session_id: session.id,
+        provider: session.provider,
+        request_id: requestId,
+        day: runtimeDay || 0,
+        removed_turns: revision.removedTurns.length,
+      });
+      await runOfficeHours(session, {
+        context,
+        originalPrompt: "Office Hours",
+        source,
+        day: runtimeDay,
       });
       return;
     }
@@ -1498,6 +1673,18 @@ async function handleClientMessage(socket, payload) {
         if (officeHoursTerminalAnswered && session.runtime?.officeHours) {
           session.runtime.officeHours.terminalAnswered = true;
         }
+        captureSidecarLog(
+          "office_hours_interview_answer_submitted",
+          "info",
+          buildOfficeHoursInterviewAnswerLogAttributes({
+            session,
+            pendingUserInput,
+            response,
+            responseText: userResponseText,
+            responseDescription: userResponseDescription,
+            terminal: officeHoursTerminalAnswered,
+          }),
+        );
         await appendOfficeHoursTurn({
           workspaceRoot,
           turn: {
@@ -1505,15 +1692,28 @@ async function handleClientMessage(socket, payload) {
             sessionId: session.id,
             requestId,
             mode: answeredGeneration?.mode || "office_hours_structured_input",
+            signalId: answeredGeneration?.signalId || "",
+            signalLabel: answeredGeneration?.signalLabel || "",
             questionText: officeHoursStructuredQuestionText,
             responseText: userResponseText,
             responseDescription: userResponseDescription,
+            promptSnapshot: pendingUserInput,
+            submissions: response.responses,
             ...(officeHoursTerminalAnswered ? { terminal: true } : {}),
           },
         }).catch((error) => {
           telemetry.captureException(error, {
             operation: "office_hours_turn_append",
             session_id: session.id,
+          });
+        });
+        await refreshOfficeHoursRuntimePromptSnapshots(session).catch((error) => {
+          reportError(error, {
+            operation: "office_hours_prompt_snapshot_refresh",
+            session_id: session.id,
+            provider: session.provider,
+            request_id: requestId,
+            day: normalizeOfficeHoursDay(session.runtime?.officeHours?.day) || 0,
           });
         });
         officeHoursProgressAfterAnswer = await getOfficeHoursQuestionProgress(session, {
@@ -2019,6 +2219,7 @@ async function handleClientMessage(socket, payload) {
         cloudflare: integrationStatus.cloudflare?.state || "",
         vercel: integrationStatus.vercel?.state || "",
       });
+      reportIntegrationStatusFailures(integrationStatus);
       return;
     }
     case "mcp_oauth_connect": {
@@ -2051,6 +2252,7 @@ async function handleClientMessage(socket, payload) {
           provider: failedResult.provider,
           state: "failed_provider_unavailable",
         });
+        reportMcpOauthConnectOutcome(failedResult);
         return;
       }
       const provider = resolvedProvider.provider;
@@ -2085,7 +2287,9 @@ async function handleClientMessage(socket, payload) {
         server: mcpOauthConnect.server,
         provider: mcpOauthConnect.provider,
         state: mcpOauthConnect.state,
+        provider_limited: mcpOauthConnect.providerLimited === true,
       });
+      reportMcpOauthConnectOutcome(mcpOauthConnect);
       return;
     }
     case "bip_research_get": {
@@ -2143,6 +2347,11 @@ async function handleClientMessage(socket, payload) {
         });
         telemetry.captureEvent("mac_sidecar_workspace_scan_rejected", {
           reason: "invalid_root",
+        });
+        captureSidecarLog("workspace scan rejected", "warn", {
+          operation: "scan_workspace",
+          reason: "invalid_root",
+          scan_root: root,
         });
         markWorkspaceSetupFailed(root, error);
         broadcast({
@@ -3238,16 +3447,14 @@ async function runPrompt(
       });
     }
     if (officeHoursContext && !routedSpecialist) {
-      if (route.executionMode === "fast_chat" || route.executionMode === "instant_chat") {
-        route = {
-          ...route,
-          executionMode: "memory_chat",
-          reason: "office_hours_context_chat",
-          contextSummary: "context=office_hours",
-          inlineBipContext: false,
-          approvedToolExecution: false,
-        };
-      }
+      route = {
+        ...route,
+        executionMode: OFFICE_HOURS_QUESTION_EXECUTION_MODE,
+        reason: "office_hours_question_continuation",
+        contextSummary: "context=office_hours_question",
+        inlineBipContext: false,
+        approvedToolExecution: false,
+      };
       routedSpecialist = selectOfficeHoursSpecialist({
         context: officeHoursContext,
         lastAnswer: prompt,
@@ -3330,6 +3537,20 @@ async function runPrompt(
     emitChatRunPhase(session, assistantMessage.id, route.contextSummary);
     emitChatRunPhase(session, assistantMessage.id, `provider=${session.provider} model=${session.model || "default"} starting_stream`);
     if (officeHoursContext) {
+      const warmSpec = buildOfficeHoursWarmSpec(session, {
+        context: officeHoursContext,
+        source: officeHoursRuntimeForRun?.source,
+        day: officeHoursRuntimeForRun?.day,
+        selectedSources: officeHoursRuntimeForRun?.selectedSources,
+      });
+      assertOfficeHoursWarmIsNotStale(session, warmSpec);
+      telemetry.captureEvent("mac_sidecar_office_hours_question_provider_starting", {
+        session_id: session.id,
+        provider: session.provider,
+        execution_mode: OFFICE_HOURS_QUESTION_EXECUTION_MODE,
+        warmup_used: isOfficeHoursWarmRuntimeReady(session.runtime, warmSpec),
+        continuation: true,
+      });
       emitOfficeHoursStatus(session, {
         stage: "provider_starting",
         messageId: assistantMessage.id,
@@ -3351,7 +3572,7 @@ async function runPrompt(
       sessionIdForMcp: session.id,
       executionMode: route.executionMode,
       approvedToolExecution: route.approvedToolExecution === true,
-      specialist: routedSpecialist,
+      specialist: route.executionMode === OFFICE_HOURS_QUESTION_EXECUTION_MODE ? null : routedSpecialist,
       onTextDelta: (chunk) => {
         emitAgentEvent(session, assistantMessage.id, {
           eventType: "message.delta",
@@ -3368,6 +3589,14 @@ async function runPrompt(
       },
       onToolEvent: (event) => {
         if (officeHoursContext && isOfficeHoursStructuredInputToolEvent(event)) {
+          telemetry.captureEvent("mac_sidecar_office_hours_request_user_input_called", {
+            session_id: session.id,
+            provider: session.provider,
+            execution_mode: route.executionMode,
+            phase: event.phase || "",
+            elapsed_ms: Math.max(0, Math.round(performance.now() - runStartedAt)),
+            continuation: true,
+          });
           if (isSuccessfulStructuredInputToolEvent(event)) {
             officeHoursStructuredInputAnswered = true;
           }
@@ -3577,7 +3806,7 @@ async function runPrompt(
  * Single AI interaction channel — every Day, every sub-workflow, every prompt
  * flows through THIS function. There is no mode-based branching:
  *  - No `/bip-draft`, `/office-hours-docs`, `/analyze-ads` command parsing.
- *  - No instant_chat / agentic / memory_chat / fast_chat split.
+ *  - No instant_chat / agentic / memory_chat split.
  *  - Sub-workflow selection lives inside the Foundation context object and
  *    is rendered as system context only — the caller never sees it.
  *
@@ -3723,7 +3952,7 @@ async function runUnifiedFoundationChat(
     );
 
     // Pull cached BIP context exactly the same way the existing flow does.
-    // Single channel — no instant_chat / fast_chat split.
+    // Single channel — no fast lane split.
     const bipContextBlock = await buildChatBipContext().catch((error) => {
       telemetry.captureException(error, {
         operation: "buildChatBipContext.foundation",
@@ -4180,21 +4409,111 @@ async function runUnifiedFoundationChat(
   }
 }
 
-async function warmSession(session) {
+function normalizeWarmSessionPurpose(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === OFFICE_HOURS_QUESTION_EXECUTION_MODE || normalized === "office_hours") {
+    return OFFICE_HOURS_QUESTION_EXECUTION_MODE;
+  }
+  return "";
+}
+
+function sha256Short(value = "") {
+  return createHash("sha256").update(String(value || "")).digest("hex").slice(0, 16);
+}
+
+function buildOfficeHoursWarmSpec(session, payload = {}) {
+  const officeHours = session?.runtime?.officeHours || {};
+  const context = clampOfficeHoursContext(
+    payload.context ?? officeHours.context ?? "",
+  );
+  const selectedSources = normalizeOfficeHoursSelectedSources(payload.selectedSources ?? officeHours.selectedSources ?? []);
+  const day = normalizeOfficeHoursDay(payload.day ?? payload.officeHoursDay ?? officeHours.day);
+  const source = String(payload.source ?? officeHours.source ?? "office_hours_screen").trim() || "office_hours_screen";
+  return {
+    purpose: OFFICE_HOURS_QUESTION_EXECUTION_MODE,
+    executionMode: OFFICE_HOURS_QUESTION_EXECUTION_MODE,
+    model: session?.model || "",
+    workspaceRoot,
+    day,
+    source,
+    selectedSources,
+    selectedSourcesFingerprint: sha256Short(JSON.stringify(selectedSources)),
+    contextFingerprint: context ? sha256Short(context) : null,
+    context,
+  };
+}
+
+function warmSpecMatches(warm = {}, spec = {}) {
+  if (!warm || !spec) return false;
+  return warm.state === "ready"
+    && warm.purpose === spec.purpose
+    && warm.executionMode === spec.executionMode
+    && warm.workspaceRoot === spec.workspaceRoot
+    && (warm.model || "") === (spec.model || "")
+    && (warm.day || null) === (spec.day || null)
+    && (warm.source || "") === (spec.source || "")
+    && (warm.selectedSourcesFingerprint || "") === (spec.selectedSourcesFingerprint || "")
+    && (warm.contextFingerprint || null) === (spec.contextFingerprint || null);
+}
+
+function isOfficeHoursWarmRuntimeReady(runtime = {}, spec = {}) {
+  const warm = runtime?.codexWarm;
+  const meta = runtime?.codexThreadMeta || {};
+  return Boolean(
+    runtime?.codexThreadId
+      && warmSpecMatches(warm, spec)
+      && meta.workspaceRoot === spec.workspaceRoot
+      && meta.executionMode === spec.executionMode,
+  );
+}
+
+function assertOfficeHoursWarmIsNotStale(session, spec = {}) {
+  const warm = session?.runtime?.codexWarm;
+  if (!warm || warm.purpose !== OFFICE_HOURS_QUESTION_EXECUTION_MODE) return;
+  if (warm.state === "warming") {
+    throw new Error("Office Hours question warm-up is still running; refusing to fall back to a cold run.");
+  }
+  if (
+    (warm.state === "failed" || warm.state === "cancelled")
+    && warm.contextFingerprint
+    && warm.contextFingerprint === spec.contextFingerprint
+  ) {
+    throw new Error(`Office Hours question warm-up ${warm.state}; refusing to fall back to a cold run.`);
+  }
+  if (warm.state === "ready" && !isOfficeHoursWarmRuntimeReady(session.runtime, spec)) {
+    throw new Error("Office Hours question warm-up metadata is stale or mismatched; refusing to fall back to a cold run.");
+  }
+}
+
+async function warmSession(session, payload = {}) {
   if (!session || session.provider !== "codex") return;
   if (process.env.AGENTIC30_DISABLE_CODEX_WARMUP === "1") return;
   if (state.activeRuns.has(session.id) || state.warmRuns.has(session.id)) return;
 
-  const model = session.model || "";
-  if (isCodexWarmRuntimeReady(session.runtime, { model, workspaceRoot })) return;
+  const purpose = normalizeWarmSessionPurpose(payload.purpose)
+    || (session.runtime?.officeHours ? OFFICE_HOURS_QUESTION_EXECUTION_MODE : "");
+  if (purpose !== OFFICE_HOURS_QUESTION_EXECUTION_MODE) return;
+
+  const warmSpec = buildOfficeHoursWarmSpec(session, payload);
+  if (!warmSpec.contextFingerprint) {
+    setCodexWarmRuntime(session, {
+      ...warmSpec,
+      state: "failed",
+      error: "Office Hours question warm-up requires an explicit context fingerprint.",
+      failedAt: new Date().toISOString(),
+    });
+    await persistSessions();
+    broadcast({ type: "session_updated", session });
+    return;
+  }
+
+  if (isOfficeHoursWarmRuntimeReady(session.runtime, warmSpec)) return;
 
   const authState = getProviderAuthState(session.provider);
   if (!authState.available) {
     setCodexWarmRuntime(session, {
+      ...warmSpec,
       state: "failed",
-      model,
-    workspaceRoot,
-      executionMode: "fast_chat",
       error: authState.message,
     });
   await persistSessions();
@@ -4206,10 +4525,8 @@ async function warmSession(session) {
   const startedAt = performance.now();
   state.warmRuns.set(session.id, { abortController, startedAt });
   setCodexWarmRuntime(session, {
+    ...warmSpec,
     state: "warming",
-    model,
-    workspaceRoot,
-    executionMode: "fast_chat",
     startedAt: new Date().toISOString(),
   });
   touch(session);
@@ -4222,15 +4539,16 @@ async function warmSession(session) {
       provider: session.provider,
       sessionRuntime: session.runtime,
       prompt: [
-        "Prepare this Agentic30 fast chat session.",
-        "Load the current developer instructions and workspace context.",
+        "Prepare this Agentic30 Office Hours question session.",
+        "Start the provider thread for the Office Hours question-generation mode.",
         "Do not answer the user yet.",
+        "Do not inspect files, call tools, or generate the first question.",
       ].join("\n"),
       model: session.model,
     workspaceRoot,
       abortController,
       sessionIdForMcp: session.id,
-      executionMode: "fast_chat",
+      executionMode: OFFICE_HOURS_QUESTION_EXECUTION_MODE,
       stopAfterCodexThreadStarted: true,
       onTextDelta: () => {},
       onTextReplace: () => {},
@@ -4262,36 +4580,31 @@ async function warmSession(session) {
         ...(result.runtime || {}),
       };
       setCodexWarmRuntime(session, {
+        ...warmSpec,
         state: "ready",
-        model,
-        workspaceRoot,
-        executionMode: "fast_chat",
         startedAt: session.runtime?.codexWarm?.startedAt,
         completedAt: new Date().toISOString(),
         elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
         timings,
     });
-      telemetry.captureEvent("mac_sidecar_codex_warmup_completed", {
+      telemetry.captureEvent("mac_sidecar_office_hours_warmup_completed", {
         session_id: session.id,
         provider: session.provider,
+        execution_mode: OFFICE_HOURS_QUESTION_EXECUTION_MODE,
         elapsed_ms: session.runtime.codexWarm.elapsedMs,
       });
     }
   } catch (error) {
     if (abortController.signal.aborted || error?.name === "AbortError") {
       setCodexWarmRuntime(session, {
+        ...warmSpec,
         state: "cancelled",
-        model,
-        workspaceRoot,
-        executionMode: "fast_chat",
         elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
       });
     } else {
       setCodexWarmRuntime(session, {
+        ...warmSpec,
         state: "failed",
-        model,
-        workspaceRoot,
-        executionMode: "fast_chat",
         failedAt: new Date().toISOString(),
         elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
         error: formatError(error),
@@ -4316,20 +4629,6 @@ function cancelWarmSession(sessionId) {
   if (!run) return;
   run.abortController.abort();
   state.warmRuns.delete(sessionId);
-}
-
-function isCodexWarmRuntimeReady(runtime = {}, { model = "", workspaceRoot: root = "" } = {}) {
-  const warm = runtime?.codexWarm;
-  const meta = runtime?.codexThreadMeta || {};
-  return Boolean(
-    runtime?.codexThreadId
-      && warm?.state === "ready"
-      && warm.executionMode === "fast_chat"
-      && warm.workspaceRoot === root
-      && (warm.model || "") === (model || "")
-      && meta.workspaceRoot === root
-      && meta.executionMode === "fast_chat",
-  );
 }
 
 function setCodexWarmRuntime(session, warm) {
@@ -4433,7 +4732,7 @@ function sendOfficeHoursSourceGate(socket, { sessionId = null, gate } = {}) {
   }
 }
 
-function buildOfficeHoursRuntime(context = "", source = "manual", day = null) {
+function buildOfficeHoursRuntime(context = "", source = "manual", day = null, selectedSources = []) {
   const normalizedDay = normalizeOfficeHoursDay(day);
   const runtime = {
     active: true,
@@ -4442,6 +4741,8 @@ function buildOfficeHoursRuntime(context = "", source = "manual", day = null) {
     context: clampOfficeHoursContext(context),
   };
   if (normalizedDay) runtime.day = normalizedDay;
+  const normalizedSelectedSources = normalizeOfficeHoursSelectedSources(selectedSources);
+  if (normalizedSelectedSources.length) runtime.selectedSources = normalizedSelectedSources;
   return runtime;
 }
 
@@ -4553,6 +4854,48 @@ async function prepareDailyOfficeHoursDigest(session, {
     detail: "Day 2+ Office Hours digest ready.",
   });
   return digest;
+}
+
+function isGetUsersOfficeHoursContext(context = "") {
+  return /^Goal lane:\s*get_users\b/im.test(String(context || ""));
+}
+
+function latestGetUsersActiveUserDefinitionTurn(turnLog = {}) {
+  const turns = Array.isArray(turnLog?.turns) ? turnLog.turns : [];
+  return turns
+    .filter((turn) =>
+      String(turn?.signalId || turn?.signal_id || "").trim() === "get_users_active_user_definition"
+        || /활성 사용자 기준|active user definition/i.test(`${turn?.signalLabel || ""}\n${turn?.questionText || ""}`),
+    )
+    .at(-1) || null;
+}
+
+async function buildGetUsersActiveUserDefinitionPreamble({ workspaceRoot, context } = {}) {
+  if (!isGetUsersOfficeHoursContext(context)) return "";
+  let turn = null;
+  try {
+    turn = latestGetUsersActiveUserDefinitionTurn(await loadOfficeHoursTurnLog({ workspaceRoot }));
+  } catch {
+    turn = null;
+  }
+  const response = String(turn?.responseText || "").replace(/\s+/g, " ").trim();
+  const description = String(turn?.responseDescription || "").replace(/\s+/g, " ").trim();
+  if (response) {
+    return [
+      "GET_USERS_ACTIVE_USER_DEFINITION",
+      "signalId: get_users_active_user_definition",
+      `Active user definition: ${response}`,
+      description ? `Active user definition detail: ${description}` : "",
+      "Counting rule: only unique people/accounts in the selected ICP that complete this chosen activation action count toward the 100 active users.",
+      "Anti-counts: signup, waitlist, pageview, like, follower, or polite interest alone do not count.",
+    ].filter(Boolean).join("\n");
+  }
+  return [
+    "GET_USERS_ACTIVE_USER_DEFINITION_MISSING: true",
+    "Before any acquisition/channel execution, ask the active-user-definition card with signalId get_users_active_user_definition.",
+    "Active user definition question: 이 목표에서 활성 사용자 1명으로 세려면 ICP가 어떤 핵심 행동을 끝내야 하나요?",
+    "Anti-counts: signup, waitlist, pageview, like, follower, or polite interest alone do not count.",
+  ].join("\n");
 }
 
 // ── Morning briefing ─────────────────────────────────────────────────────────
@@ -4996,6 +5339,50 @@ function activeOfficeHoursContext(session = null) {
   return clampOfficeHoursContext(officeHours.context || "");
 }
 
+function buildOfficeHoursRuntimePromptSnapshots(session, turns = [], day = null) {
+  const runtimeDay = normalizeOfficeHoursDay(day)
+    || normalizeOfficeHoursDay(session?.runtime?.officeHours?.day);
+  const snapshots = (Array.isArray(turns) ? turns : [])
+    .filter((turn) =>
+      turn?.promptSnapshot
+        && Array.isArray(turn?.submissions)
+        && turn.submissions.length > 0
+        && (!runtimeDay || normalizeOfficeHoursDay(turn.day) === runtimeDay))
+    .map((turn) => ({
+      sessionId: session.id,
+      requestId: String(turn.requestId || turn.promptSnapshot?.requestId || ""),
+      prompt: {
+        ...turn.promptSnapshot,
+        sessionId: session.id,
+      },
+      submissions: turn.submissions,
+      submittedAt: turn.revisedAt || turn.occurredAt || new Date().toISOString(),
+      editable: true,
+      turnSessionId: turn.sessionId || "",
+    }))
+    .filter((snapshot) => snapshot.requestId && snapshot.prompt?.questions?.length);
+  return snapshots;
+}
+
+function refreshOfficeHoursRuntimePromptSnapshotsFromTurns(session, turns = []) {
+  if (!session?.runtime?.officeHours) return [];
+  const snapshots = buildOfficeHoursRuntimePromptSnapshots(
+    session,
+    turns,
+    session.runtime.officeHours.day,
+  );
+  session.runtime.officeHours.promptSnapshots = snapshots;
+  return snapshots;
+}
+
+async function refreshOfficeHoursRuntimePromptSnapshots(session) {
+  if (!session?.runtime?.officeHours) return [];
+  const turnLog = await loadOfficeHoursTurnLog({ workspaceRoot });
+  const sessionTurns = (turnLog.turns || []).filter((turn) =>
+    String(turn?.sessionId || "") === String(session.id || ""));
+  return refreshOfficeHoursRuntimePromptSnapshotsFromTurns(session, sessionTurns);
+}
+
 function isLockedDay1GoalOfficeHoursRuntime(officeHours = {}) {
   return String(officeHours?.source || "") === "day1_interview_goal_locked"
     || isOfficeHoursLockedDay1GoalContext(officeHours?.context || "");
@@ -5362,21 +5749,39 @@ async function runOfficeHours(session, {
   // legacy behavior, and current-day relaunches keep the resume path below.
   let officeHoursPastDaySnapshot = false;
   try {
+    if (process.env.AGENTIC30_TEST_OFFICE_HOURS_PAST_DAY_SNAPSHOT_CHECK_FAILURE === "1") {
+      throw new Error("Synthetic Office Hours past-day snapshot check failure");
+    }
     officeHoursPastDaySnapshot = isPastOfficeHoursSnapshotDay({
       day: runtimeDay,
       elapsedDay: await challengeElapsedOfficeHoursDay(),
     });
-  } catch {
+  } catch (error) {
+    reportError(error, {
+      operation: "office_hours_past_day_snapshot_check",
+      session_id: session.id,
+      provider: session.provider,
+      day: runtimeDay || 0,
+    });
     officeHoursPastDaySnapshot = false;
   }
   if (officeHoursPastDaySnapshot) {
     let snapshotTurns = [];
     try {
+      if (process.env.AGENTIC30_TEST_OFFICE_HOURS_PAST_DAY_SNAPSHOT_TURNS_LOAD_FAILURE === "1") {
+        throw new Error("Synthetic Office Hours past-day snapshot turns load failure");
+      }
       snapshotTurns = selectOfficeHoursSnapshotTurns({
         turnLog: await loadOfficeHoursTurnLog({ workspaceRoot }),
         day: runtimeDay,
       });
-    } catch {
+    } catch (error) {
+      reportError(error, {
+        operation: "office_hours_past_day_snapshot_turns_load",
+        session_id: session.id,
+        provider: session.provider,
+        day: runtimeDay || 0,
+      });
       snapshotTurns = [];
     }
     // Same seeded-row shape as the Day-1 resume path: the Mac client derives
@@ -5457,6 +5862,12 @@ async function runOfficeHours(session, {
           reason: gate.reason || "",
           selected_sources: normalizedSelectedSources.join(","),
         });
+        logOfficeHoursSourceGateBlocked({
+          session,
+          day: runtimeDay,
+          gate,
+          selectedSources: normalizedSelectedSources,
+        });
         session.status = "idle";
         session.error = null;
         touch(session);
@@ -5481,7 +5892,7 @@ async function runOfficeHours(session, {
     }
     throw error;
   }
-  const officeHoursRuntime = buildOfficeHoursRuntime(context, source, runtimeDay);
+  const officeHoursRuntime = buildOfficeHoursRuntime(context, source, runtimeDay, normalizedSelectedSources);
   const visiblePrompt = String(originalPrompt || "Office Hours").trim() || "Office Hours";
   const runStartedAt = performance.now();
   const assistantMessage = makeMessage({
@@ -5575,6 +5986,11 @@ async function runOfficeHours(session, {
         officeHoursResumeTurns,
         session.id,
       );
+      officeHoursRuntime.promptSnapshots = buildOfficeHoursRuntimePromptSnapshots(
+        session,
+        officeHoursResumeTurns,
+        runtimeDay,
+      );
       telemetry.captureEvent("mac_sidecar_office_hours_resumed", {
         session_id: session.id,
         provider: session.provider,
@@ -5649,6 +6065,13 @@ async function runOfficeHours(session, {
     });
     if (officeHoursResumePreamble) {
       officeHoursRuntime.context = clampOfficeHoursContext(`${officeHoursResumePreamble}\n\n${officeHoursRuntime.context}`);
+    }
+    const getUsersActiveDefinitionPreamble = await buildGetUsersActiveUserDefinitionPreamble({
+      workspaceRoot,
+      context: officeHoursRuntime.context,
+    });
+    if (getUsersActiveDefinitionPreamble) {
+      officeHoursRuntime.context = clampOfficeHoursContext(`${officeHoursRuntime.context}\n\n${getUsersActiveDefinitionPreamble}`);
     }
     if (isDay2PlusOfficeHoursDay(runtimeDay)) {
       const digest = await prepareDailyOfficeHoursDigest(session, {
@@ -5745,6 +6168,20 @@ async function runOfficeHours(session, {
       messageId: assistantMessage.id,
       elapsedMs: performance.now() - runStartedAt,
     });
+    const warmSpec = buildOfficeHoursWarmSpec(session, {
+      context: officeHoursRuntime.context,
+      source: officeHoursRuntime.source,
+      day: officeHoursRuntime.day,
+      selectedSources: officeHoursRuntime.selectedSources,
+    });
+    assertOfficeHoursWarmIsNotStale(session, warmSpec);
+    const officeHoursWarmUsed = isOfficeHoursWarmRuntimeReady(session.runtime, warmSpec);
+    telemetry.captureEvent("mac_sidecar_office_hours_question_provider_starting", {
+      session_id: session.id,
+      provider: session.provider,
+      execution_mode: OFFICE_HOURS_QUESTION_EXECUTION_MODE,
+      warmup_used: officeHoursWarmUsed,
+    });
     const result = await runProviderStream({
       provider: session.provider,
       sessionRuntime: session.runtime,
@@ -5753,13 +6190,21 @@ async function runOfficeHours(session, {
       workspaceRoot,
       abortController,
       sessionIdForMcp: session.id,
-      executionMode: "memory_chat",
+      executionMode: OFFICE_HOURS_QUESTION_EXECUTION_MODE,
       approvedToolExecution: false,
-      specialist: officeHoursSelection,
+      specialist: null,
       onTextDelta: (text) => appendAssistantText(session, assistantMessage.id, text),
       onTextReplace: (text) => setAssistantText(session, assistantMessage.id, text),
       onToolEvent: (toolEvent) => {
         if (isOfficeHoursStructuredInputToolEvent(toolEvent)) {
+          telemetry.captureEvent("mac_sidecar_office_hours_request_user_input_called", {
+            session_id: session.id,
+            provider: session.provider,
+            execution_mode: OFFICE_HOURS_QUESTION_EXECUTION_MODE,
+            phase: toolEvent.phase || "",
+            elapsed_ms: Math.max(0, Math.round(performance.now() - runStartedAt)),
+            continuation: false,
+          });
           officeHoursStructuredInputAsked = true;
           if (isSuccessfulStructuredInputToolEvent(toolEvent)) {
             officeHoursStructuredInputAnswered = true;
@@ -5915,6 +6360,12 @@ async function runOfficeHours(session, {
         day: runtimeDay || 0,
         reason: error.gate?.reason || "",
         selected_sources: normalizedSelectedSources.join(","),
+      });
+      logOfficeHoursSourceGateBlocked({
+        session,
+        day: runtimeDay || 0,
+        gate: error.gate,
+        selectedSources: normalizedSelectedSources,
       });
       const lastAssistant = session.messages.at(-1);
       const lastUser = session.messages.at(-2);
@@ -6380,7 +6831,7 @@ async function runAnalyzeAds(session, targetUrl, originalPrompt) {
 }
 
 async function buildPromptWithBipContext(prompt, route = classifyChatExecutionRoute(prompt)) {
-  if ((!route.inlineBipContext && route.executionMode === "fast_chat") || !shouldInlineBipContext(prompt)) {
+  if (!route.inlineBipContext || !shouldInlineBipContext(prompt)) {
     return prompt;
   }
   const bipManifest = buildChatBipManifest();
@@ -9154,11 +9605,29 @@ function scheduleWorkspaceOnboardingHypothesisWarmup() {
 function normalizeDay1HandoffPayload(value = {}) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   const clean = (key, max = 4000) => String(source[key] || "").trim().slice(0, max);
+  const cleanList = (key, maxItems = 8, maxChars = 300) => {
+    const raw = source[key];
+    const values = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+    return values
+      .map((item) => String(item || "").trim().slice(0, maxChars))
+      .filter(Boolean)
+      .slice(0, maxItems);
+  };
   return {
     goal: clean("goal", 1000),
     icp: clean("icp", 1000),
     pain: clean("pain", 1000),
     outcome: clean("outcome", 1000),
+    northStarGoal: clean("northStarGoal", 1000),
+    weeklyProof: clean("weeklyProof", 1000),
+    targetUser: clean("targetUser", 1000),
+    problem: clean("problem", 1000),
+    currentAlternative: clean("currentAlternative", 1000),
+    entryPoint: clean("entryPoint", 1000),
+    nextAction: clean("nextAction", 1000),
+    nonGoals: cleanList("nonGoals"),
+    assumptions: cleanList("assumptions"),
+    sourceQuotes: cleanList("sourceQuotes"),
     qualityScore: clean("qualityScore", 80),
     markdown: clean("markdown", 5000),
   };
@@ -9919,6 +10388,11 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       preferredProvider,
     });
   } catch (error) {
+    captureSidecarLog("workspace scan failed", "error", {
+      operation: "runWorkspaceScan",
+      scan_root: scanRoot,
+      ...errorTelemetryProperties(error),
+    });
     telemetry.captureException(error, {
       operation: "runWorkspaceScan",
       scan_root: scanRoot,
@@ -9986,10 +10460,19 @@ async function appendWorkspaceScanVisibleAnswer({ sessionId = "", prompt = "", s
 async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
   const authState = getProviderAuthState(provider);
   if (!authState.available) {
-  telemetry.captureEvent("mac_sidecar_workspace_scan_provider_skipped", {
+    telemetry.captureEvent("mac_sidecar_workspace_scan_provider_skipped", {
       provider,
       model,
       reason: authState.source,
+    });
+    captureSidecarLog("workspace scan provider unavailable", "warn", {
+      operation: "runWorkspaceScanAgent",
+      provider,
+      model,
+      reason: "unavailable",
+      auth_source: authState.source || "",
+      auth_message: authState.message || "",
+      scan_root: scanRoot,
     });
     return {
       ok: false,
@@ -10184,17 +10667,54 @@ function broadcastWorkspaceScanProviderLimited(scanRoot, { provider, model, stag
  * all (`nextProvider: null`) the UI says Agentic30 cannot proceed.
  */
 function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, message }) {
+  const failedProviderAuthState = getProviderAuthState(provider);
   const { nextProvider, availableProviders } = selectNextScanProvider(
     provider,
     (candidate) => getProviderAuthState(candidate).available,
   );
+  const providerReadiness = PROVIDER_FALLBACK_CYCLE.map((candidate) => getProviderScanReadiness(candidate));
+  const installedProviders = providerReadiness
+    .filter((item) => item.sdkInstalled)
+    .map((item) => item.provider);
+  const scanReadyProviders = providerReadiness
+    .filter((item) => item.scanReady)
+    .map((item) => item.provider);
+  const authRequiredProviders = providerReadiness
+    .filter((item) => item.sdkInstalled && !item.authenticated)
+    .map((item) => item.provider);
   telemetry.captureEvent("mac_sidecar_workspace_scan_blocked", {
     scan_root: scanRoot,
+    selected_provider: provider,
+    failed_provider: provider,
     provider,
     model,
     reason,
     next_provider: nextProvider || "none",
     available_provider_count: availableProviders.length,
+    installed_providers: installedProviders,
+    scan_ready_providers: scanReadyProviders,
+    auth_required_providers: authRequiredProviders,
+    provider_readiness: providerReadiness,
+    auth_source: failedProviderAuthState.source || "",
+    auth_available: failedProviderAuthState.available === true,
+  });
+  captureSidecarLog("workspace scan blocked", "error", {
+    operation: "runWorkspaceScan",
+    scan_root: scanRoot,
+    selected_provider: provider,
+    failed_provider: provider,
+    provider,
+    model,
+    reason,
+    next_provider: nextProvider || "none",
+    available_provider_count: availableProviders.length,
+    installed_providers: installedProviders,
+    scan_ready_providers: scanReadyProviders,
+    auth_required_providers: authRequiredProviders,
+    provider_readiness: providerReadiness,
+    auth_source: failedProviderAuthState.source || "",
+    auth_available: failedProviderAuthState.available === true,
+    failure_detail: truncateTelemetryString(message || ""),
   });
   markWorkspaceSetupFailed(
     scanRoot,
@@ -10226,6 +10746,7 @@ function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, mess
     totalSteps: 3,
     nextProvider,
     availableProviders,
+    providerReadiness,
     ...(reason === "usage_limit" ? { errorKind: PROVIDER_USAGE_LIMIT_ERROR_KIND } : {}),
     ...(reason === "unavailable" ? { errorKind: PROVIDER_AUTH_REQUIRED_ERROR_KIND } : {}),
   });
@@ -12754,6 +13275,16 @@ async function syncPendingUserInputRequests() {
     touch(session);
     changedSessions.add(session.id);
     if (isOfficeHoursStructuredRequest(session.pendingUserInput)) {
+      const requestCreatedAtMs = Date.parse(request.createdAt || "");
+      const requestReadyLatencyMs = Number.isFinite(requestCreatedAtMs)
+        ? Math.max(0, Date.now() - requestCreatedAtMs)
+        : null;
+      telemetry.captureEvent("mac_sidecar_office_hours_question_ready", {
+        session_id: session.id,
+        provider: session.provider,
+        request_id: request.requestId,
+        request_ready_latency_ms: requestReadyLatencyMs,
+      });
       emitOfficeHoursStatus(session, {
         stage: "question_ready",
         requestId: request.requestId,
@@ -13216,6 +13747,92 @@ function formatError(error) {
   return String(error);
 }
 
+function truncateTelemetryString(value, maxLength = 500) {
+  return String(value || "").slice(0, maxLength);
+}
+
+function errorTelemetryProperties(error) {
+  return {
+    error_type: error instanceof Error ? (error.name || "Error") : typeof error,
+    error_message: truncateTelemetryString(formatError(error)),
+  };
+}
+
+function captureSidecarLog(message, level = "info", properties = {}) {
+  try {
+    telemetry.captureLog?.(message, level, properties);
+  } catch {
+    // Telemetry must never affect product flow.
+  }
+}
+
+function logOfficeHoursSourceGateBlocked({
+  session = null,
+  day = 0,
+  gate = null,
+  selectedSources = [],
+} = {}) {
+  captureSidecarLog("office_hours_source_gate_blocked", "warn", {
+    operation: "office_hours_source_gate_blocked",
+    session_id: session?.id || "",
+    provider: session?.provider || "",
+    day: normalizeOfficeHoursDay(day) || 0,
+    reason: gate?.reason || "",
+    selected_sources: Array.isArray(selectedSources) ? selectedSources : [],
+    missing_required_sources: Array.isArray(gate?.missingRequiredSources)
+      ? gate.missingRequiredSources
+      : [],
+    connect_action_count: Array.isArray(gate?.connectActions)
+      ? gate.connectActions.length
+      : 0,
+  });
+}
+
+function reportIntegrationStatusFailures(integrationStatus = {}) {
+  const probes = [
+    ["github", integrationStatus.github],
+    ["github_mcp", integrationStatus.githubMcp],
+    ["posthog", integrationStatus.posthog],
+    ["cloudflare", integrationStatus.cloudflare],
+    ["vercel", integrationStatus.vercel],
+  ];
+  for (const [integration, probe] of probes) {
+    const stateName = String(probe?.state || "");
+    if (!["failed", "missing"].includes(stateName)) continue;
+    const properties = {
+      operation: "integration_status_check",
+      integration,
+      state: stateName,
+      detail: truncateTelemetryString(probe?.detail || ""),
+      provider: integrationStatus.provider || "",
+    };
+    telemetry.captureEvent("mac_sidecar_integration_probe_unhealthy", properties);
+    captureSidecarLog("integration probe unhealthy", stateName === "failed" ? "error" : "warn", properties);
+  }
+}
+
+function reportMcpOauthConnectOutcome(result = {}) {
+  const stateName = String(result.state || "");
+  if (!stateName || stateName === "ready" || stateName === "progress") return;
+  const properties = {
+    operation: "mcp_oauth_connect",
+    server: result.server || "",
+    provider: result.provider || "",
+    state: stateName,
+    provider_limited: result.providerLimited === true,
+    has_login_url: Boolean(result.loginUrl),
+    detail: truncateTelemetryString(result.detail || ""),
+  };
+  const level = stateName === "failed" && result.providerLimited !== true ? "error" : "warn";
+  captureSidecarLog("mcp oauth connect did not complete", level, properties);
+  if (stateName === "failed" && result.providerLimited !== true) {
+    telemetry.captureException(
+      new Error(`MCP OAuth connect failed: ${properties.server || "unknown"} (${properties.provider || "unknown"})`),
+      properties,
+    );
+  }
+}
+
 /**
  * Marks the `type: "error"` envelope so the Mac side can tell an expected
  * upstream provider usage-limit (quota) condition apart from a real fault. The
@@ -13249,14 +13866,21 @@ function providerRecoverableErrorKind(error) {
  */
 function reportProviderRunError(error, captureProps) {
   const errorKind = providerRecoverableErrorKind(error);
+  const logProps = {
+    ...captureProps,
+    ...errorTelemetryProperties(error),
+  };
   if (errorKind === PROVIDER_USAGE_LIMIT_ERROR_KIND) {
     telemetry.captureEvent("mac_sidecar_provider_usage_limit", captureProps);
+    captureSidecarLog("provider usage limit", "warn", logProps);
     return errorKind;
   }
   if (errorKind === PROVIDER_AUTH_REQUIRED_ERROR_KIND) {
     telemetry.captureEvent("mac_sidecar_provider_auth_required", captureProps);
+    captureSidecarLog("provider auth required", "warn", logProps);
     return errorKind;
   }
+  captureSidecarLog("provider run failed", "error", logProps);
   telemetry.captureException(error, captureProps);
   return null;
 }

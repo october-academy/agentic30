@@ -615,6 +615,73 @@ final class AgenticViewModelAuthTests {
         #expect(restored.scanResult?.day1IcpPlan?.questions.count == 3)
     }
 
+    @Test @MainActor func blockedWorkspaceScanClearsCachedDay1PlanAcrossLaunches() async throws {
+        let (workspace, cleanupWorkspace) = try Self.installTemporaryWorkspace()
+        let appSupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agentic30-viewmodel-scan-blocked-cache-\(UUID().uuidString)", isDirectory: true)
+        let previousAppSupportPath = ProcessInfo.processInfo.environment["AGENTIC30_APP_SUPPORT_PATH"]
+        setenv("AGENTIC30_APP_SUPPORT_PATH", appSupport.path, 1)
+        KeychainHelper.deleteSettings()
+        AgenticViewModel.workspaceScanResultAppSupportURLOverrideForTesting = appSupport
+        defer {
+            KeychainHelper.deleteSettings()
+            if let previousAppSupportPath {
+                setenv("AGENTIC30_APP_SUPPORT_PATH", previousAppSupportPath, 1)
+            } else {
+                unsetenv("AGENTIC30_APP_SUPPORT_PATH")
+            }
+            AgenticViewModel.workspaceScanResultAppSupportURLOverrideForTesting = nil
+            cleanupWorkspace()
+            try? FileManager.default.removeItem(at: appSupport)
+        }
+
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let firstLaunch = AgenticViewModel(
+            onboardingContextOverride: Self.makeOnboardingContext(),
+            sidecar: sidecar,
+            activateAppForAuth: {}
+        )
+        firstLaunch.start()
+        firstLaunch.markSidecarConnectedForTesting(workspaceRoot: workspace.path)
+        try sidecar.emit(Self.workspaceScanResultPayload(workspaceRoot: workspace.path))
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        let store = WorkspaceScanResultStore(workspaceRoot: workspace.path, appSupportURL: appSupport)
+        #expect(store.load()?.day1IcpPlan?.questions.count == 3)
+
+        try sidecar.emit("""
+        {
+          "type": "workspace_scan_blocked",
+          "scanRoot": "\(workspace.path)",
+          "provider": "claude",
+          "model": "claude-sonnet-4-5",
+          "reason": "error",
+          "message": "Claude failed during workspace scan verification.",
+          "nextProvider": null,
+          "availableProviders": [],
+          "stage": "blocked",
+          "stepIndex": 2,
+          "totalSteps": 3,
+          "foundCount": 4
+        }
+        """)
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        #expect(firstLaunch.scanResult == nil)
+        #expect(firstLaunch.scanBlockedNotice?.provider == .claude)
+        #expect(store.load() == nil)
+
+        let restored = AgenticViewModel(
+            onboardingContextOverride: Self.makeOnboardingContext(),
+            sidecar: FakeSidecarTransport(workspaceRoot: workspace.path),
+            activateAppForAuth: {}
+        )
+        restored.start()
+
+        #expect(restored.workspaceRoot == workspace.path)
+        #expect(restored.scanResult == nil)
+    }
+
     @Test @MainActor func readyRequestsStartupWorkspaceScanOnceWhenCachedDay1PlanIsMissing() async throws {
         let (workspace, cleanupWorkspace) = try Self.installTemporaryWorkspace()
         let appSupport = FileManager.default.temporaryDirectory
@@ -739,6 +806,99 @@ final class AgenticViewModelAuthTests {
 
         #expect(viewModel.needsOnboardingIntro == true)
         #expect(viewModel.structuredPromptDraftBySession.isEmpty)
+    }
+
+    @Test @MainActor func officeHoursAnswerRevisionSendsPromptSnapshotPayload() throws {
+        let sidecar = FakeSidecarTransport(workspaceRoot: "")
+        let viewModel = AgenticViewModel(
+            disablesSidecarStartForTesting: true,
+            sidecar: sidecar,
+            activateAppForAuth: {}
+        )
+        let prompt = StructuredPromptRequest(
+            requestId: "request-1",
+            sessionId: "session-1",
+            toolName: "agentic30_request_user_input",
+            title: "Office Hours",
+            createdAt: Date(timeIntervalSince1970: 1_781_136_000),
+            questions: [
+                StructuredPromptQuestion(
+                    questionId: "office_hours_target",
+                    header: "대상 사용자",
+                    question: "누구에게 먼저 물어볼까요?",
+                    helperText: nil,
+                    options: [
+                        StructuredPromptOption(label: "1인 개발자", description: "혼자 제품을 만드는 사람"),
+                        StructuredPromptOption(label: "B2B SaaS 팀", description: "작은 SaaS 팀"),
+                    ],
+                    multiSelect: false,
+                    allowFreeText: true,
+                    requiresFreeText: false,
+                    freeTextPlaceholder: "구체적인 사람",
+                    textMode: nil
+                ),
+            ],
+            generation: StructuredPromptGeneration(
+                mode: "office_hours_structured_input",
+                signalId: "office_hours_target",
+                signalLabel: "대상 사용자",
+                dimensionStepIndex: 1,
+                dimensionTotal: 6
+            )
+        )
+        let session = ChatSession(
+            id: "session-1",
+            title: "Office Hours",
+            provider: .codex,
+            model: "",
+            status: .awaitingInput,
+            createdAt: Date(timeIntervalSince1970: 1_781_135_900),
+            updatedAt: Date(timeIntervalSince1970: 1_781_136_000),
+            error: nil,
+            messages: [],
+            pendingUserInput: nil,
+            runtime: ChatSessionRuntime(
+                codexThreadId: nil,
+                codexThreadMeta: nil,
+                codexWarm: nil,
+                startupTiming: nil,
+                iddDocumentType: nil,
+                iddMode: nil,
+                officeHours: OfficeHoursRuntime(
+                    active: true,
+                    source: "office_hours_screen",
+                    startedAt: "2026-06-11T00:00:00.000Z",
+                    context: "Expected question count: 6",
+                    day: 1
+                )
+            )
+        )
+        viewModel.replaceSessionsForTesting([session], selectedSessionID: session.id)
+
+        let sent = viewModel.reviseOfficeHoursAnswer(
+            sessionId: session.id,
+            requestId: prompt.requestId,
+            prompt: prompt,
+            responses: [
+                AgenticViewModel.StructuredPromptSubmission(
+                    question: prompt.questions[0].question,
+                    selectedOptions: ["B2B SaaS 팀"],
+                    freeText: "초기 팀"
+                ),
+            ]
+        )
+
+        #expect(sent)
+        let payload = try #require(sidecar.sentPayloads.last)
+        #expect(payload["type"] as? String == "office_hours_revise_answer")
+        #expect(payload["sessionId"] as? String == "session-1")
+        #expect(payload["requestId"] as? String == "request-1")
+        let promptPayload = try #require(payload["prompt"] as? [String: Any])
+        #expect(promptPayload["requestId"] as? String == "request-1")
+        #expect(promptPayload["createdAt"] as? String == "2026-06-11T00:00:00.000Z")
+        let responses = try #require(payload["responses"] as? [[String: Any]])
+        #expect(responses.first?["selectedOptions"] as? [String] == ["B2B SaaS 팀"])
+        #expect(responses.first?["freeText"] as? String == "초기 팀")
     }
 
     @Test @MainActor func localDataResetClearsVolatileStateAndBumpsOnboardingGeneration() throws {
@@ -1502,6 +1662,28 @@ final class AgenticViewModelAuthTests {
           "message": "Codex hit a usage limit during workspace scan verification.",
           "nextProvider": "cursor",
           "availableProviders": ["claude", "gemini", "cursor"],
+          "providerReadiness": [
+            {
+              "provider": "claude",
+              "sdkInstalled": true,
+              "authenticated": true,
+              "scanReady": true,
+              "source": "local-session",
+              "message": "Local Claude login session",
+              "sdkMessage": "Claude Agent SDK CLI is installed",
+              "authAction": null
+            },
+            {
+              "provider": "cursor",
+              "sdkInstalled": true,
+              "authenticated": true,
+              "scanReady": true,
+              "source": "api-key",
+              "message": "API key from CURSOR_API_KEY",
+              "sdkMessage": "Cursor Agent SDK is installed",
+              "authAction": null
+            }
+          ],
           "errorKind": "provider_usage_limit",
           "stage": "blocked",
           "stepIndex": 2,
@@ -1517,6 +1699,9 @@ final class AgenticViewModelAuthTests {
         #expect(notice.provider == .codex)
         #expect(notice.nextProvider == .cursor)
         #expect(notice.availableProviders == [.claude, .gemini, .cursor])
+        #expect(notice.providerReadiness.map(\.provider) == [.claude, .cursor])
+        let allReadinessScanReady = notice.providerReadiness.allSatisfy(\.scanReady)
+        #expect(allReadinessScanReady)
         #expect(notice.scanRoot == workspace.path)
 
         let bootState = viewModel.intakeV2BootLogState
@@ -1542,6 +1727,65 @@ final class AgenticViewModelAuthTests {
         viewModel.rescanWorkspace(root: notice.scanRoot, provider: .cursor)
         let scanPayload = sidecar.sentPayloads.last { ($0["type"] as? String) == "scan_workspace" }
         #expect(scanPayload?["preferredProvider"] as? String == AgentProvider.cursor.rawValue)
+    }
+
+    @Test @MainActor func workspaceScanBlockedWithOnlyInstalledProvidersKeepsDay1Closed() async throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 1
+        )
+
+        viewModel.scanWorkspace(root: workspace.path)
+        try sidecar.emit("""
+        {
+          "type": "workspace_scan_blocked",
+          "scanRoot": "\(workspace.path)",
+          "provider": "codex",
+          "model": "gpt-5.5",
+          "reason": "unavailable",
+          "message": "Codex auth is required.",
+          "nextProvider": null,
+          "availableProviders": [],
+          "providerReadiness": [
+            { "provider": "codex", "sdkInstalled": true, "authenticated": false, "scanReady": false, "source": "missing", "message": "Codex에 로그인하세요.", "sdkMessage": "Codex SDK and CLI binary are installed", "authAction": "codex_login" },
+            { "provider": "claude", "sdkInstalled": true, "authenticated": false, "scanReady": false, "source": "missing", "message": "Claude Code에 로그인하세요.", "sdkMessage": "Claude Agent SDK CLI is installed", "authAction": "claude_login" },
+            { "provider": "gemini", "sdkInstalled": true, "authenticated": false, "scanReady": false, "source": "missing", "message": "gcloud auth application-default login을 실행하세요.", "sdkMessage": "Google Gen AI SDK is installed", "authAction": "gemini_adc_login" },
+            { "provider": "cursor", "sdkInstalled": true, "authenticated": false, "scanReady": false, "source": "missing", "message": "CURSOR_API_KEY를 설정하세요.", "sdkMessage": "Cursor Agent SDK is installed", "authAction": "cursor_api_key" }
+          ],
+          "errorKind": "provider_auth_required",
+          "stage": "blocked",
+          "stepIndex": 2,
+          "totalSteps": 3,
+          "foundCount": 2
+        }
+        """)
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        let notice = try #require(viewModel.scanBlockedNotice)
+        #expect(notice.nextProvider == nil)
+        #expect(notice.availableProviders.isEmpty)
+        #expect(notice.providerReadiness.count == 4)
+        let installedButNotScanReady = notice.providerReadiness.allSatisfy { $0.sdkInstalled && !$0.scanReady }
+        #expect(installedButNotScanReady)
+        #expect(notice.providerReadiness.map(\.authAction) == [
+            "codex_login",
+            "claude_login",
+            "gemini_adc_login",
+            "cursor_api_key",
+        ])
+
+        let presentation = Day1ScanWaitPresentation(
+            bootLogState: viewModel.intakeV2BootLogState,
+            hasFolder: true,
+            hasWorkspaceScanResult: false,
+            now: Date()
+        )
+        #expect(presentation.state == .scanBlocked)
+        #expect(!presentation.canOpenDay1)
     }
 
     @Test @MainActor func startHydratesExplicitWorkspaceBeforeSidecarReady() throws {
@@ -1806,7 +2050,7 @@ final class AgenticViewModelAuthTests {
             selectedAt: "2026-06-07T00:00:00.000Z"
         )
 
-        #expect(selection.officeHoursPurposeLine == "첫 100명 사용자 모으기 · 유입/가입 행동 검증")
+        #expect(selection.officeHoursPurposeLine == "활성 사용자 100명 모으기 · 활성 행동 기준 검증")
         #expect(selection.officeHoursProgressLine == "전업 1인 개발자 (수익 0원, macOS) · 팔 대상·유입·검증 기준 불명확")
         #expect(selection.officeHoursOutputLine == "로컬 증거만 유지 · 승인 전 게시/문서 없음")
     }

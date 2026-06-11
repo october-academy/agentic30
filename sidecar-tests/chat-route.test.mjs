@@ -87,6 +87,16 @@ test("task intent defaults to read-only workspace analysis", () => {
   assert.equal(route.approvedToolExecution, false);
 });
 
+test("general prompts default to the standard memory chat lane", () => {
+  const route = classifyChatExecutionRoute(
+    "Please explain the strategic tradeoff in more detail across multiple scenarios.",
+    { qmdAvailable: false },
+  );
+
+  assert.equal(route.executionMode, "memory_chat");
+  assert.equal(route.reason, "general_prompt");
+});
+
 test("approved workspace action can use full agentic lane", () => {
   const route = classifyChatExecutionRoute("코드 수정하고 테스트 실행해", {
     qmdAvailable: true,

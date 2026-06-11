@@ -99,7 +99,7 @@ export function classifyChatExecutionRoute(
   if (hasMemoryIntent) {
     if (!qmdAvailable) {
       return {
-        executionMode: "fast_chat",
+        executionMode: "memory_chat",
         reason: "memory_intent_inline_bip",
         contextSummary: "context=fallback_bip_inline",
         inlineBipContext: true,
@@ -114,7 +114,7 @@ export function classifyChatExecutionRoute(
     };
   }
   return {
-    executionMode: "fast_chat",
+    executionMode: "memory_chat",
     reason: value.length <= 48 ? "short_general_prompt" : "general_prompt",
     contextSummary: "context=skipped",
     approvedToolExecution: false,

@@ -309,7 +309,7 @@ function cleanString(value = "", maxLength = 200) {
 // 문장은 day1-goal-state.mjs의 DAY1_GOAL_TEXTS와 일치해야 한다.
 const LEGACY_DAY1_GOAL_REPAIRS = [
   { test: /돈이나 시간을 쓸지/u, text: "30일 안에 첫 유료 결제 1건을 만든다." },
-  { test: /유입\/가입 행동/u, text: "30일 안에 가입자 100명을 모은다." },
+  { test: /유입\/가입 행동|가입자\s*100명/u, text: "30일 안에 핵심 활성 행동을 끝낸 사용자 100명을 만든다." },
   { test: /제품 흐름에서.*막히/u, text: "30일 안에 핵심 흐름 완주율 10%를 달성한다." },
 ];
 

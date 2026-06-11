@@ -42,6 +42,13 @@ struct BipNotificationIntentTests {
         #expect(first.id != second.id)
         #expect(first.intent == second.intent)
     }
+
+    @Test func notificationCopyMatchesMorningAndEveningChecks() {
+        #expect(BipNotificationIntent.morning.notificationTitle == "오늘 인터뷰 체크")
+        #expect(BipNotificationIntent.morning.notificationBody == "오늘 인터뷰를 진행했는지 확인하세요.")
+        #expect(BipNotificationIntent.evening.notificationTitle == "오늘 실행 완료 체크")
+        #expect(BipNotificationIntent.evening.notificationBody == "오늘 실행을 완료했는지 확인하세요.")
+    }
 }
 
 // MARK: - BipReadinessState model tests

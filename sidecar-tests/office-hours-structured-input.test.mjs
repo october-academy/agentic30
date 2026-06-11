@@ -6,6 +6,7 @@ import {
   OFFICE_HOURS_EMPHASIS_SENTINEL_END,
   OFFICE_HOURS_EMPHASIS_SENTINEL_START,
   buildContextualOfficeHoursQuestion,
+  buildOfficeHoursInterviewAnswerLogAttributes,
   buildOfficeHoursInlineStructuredPromptPayload,
   buildOfficeHoursStructuredQuestionTranscriptText,
   buildOfficeHoursStructuredInputContinuationPrompt,
@@ -21,6 +22,10 @@ import {
   shouldAppendOfficeHoursStructuredQuestionMessage,
   stripTrailingRubricFocusMetadata,
 } from "../sidecar/office-hours-structured-input.mjs";
+import {
+  inspectOfficeHoursUiCopyRequest,
+  normalizeOfficeHoursUiCopyRequest,
+} from "../sidecar/office-hours-copy-rules.mjs";
 
 test("Office Hours does not synthesize a card from a plain provider question", () => {
   const payload = buildOfficeHoursInlineStructuredPromptPayload({
@@ -184,6 +189,95 @@ test("ensureOfficeHoursGeneration stamps a tool-channel request so it is treated
   assert.equal(stamped.generation.signalId, "office_hours_demand_evidence");
   assert.equal(typeof stamped.generation.signalLabel, "string");
   assert.ok(stamped.generation.signalLabel.length > 0);
+});
+
+test("ensureOfficeHoursGeneration stamps get_users active-user-definition lineage", () => {
+  const stamped = ensureOfficeHoursGeneration({
+    toolName: "agentic30_request_user_input",
+    title: "Office Hours",
+    questions: [
+      {
+        header: "활성 사용자 기준",
+        question: "이 목표에서 활성 사용자 1명으로 세려면 고객 후보가 어떤 핵심 행동을 끝내야 하나요?",
+        options: [
+          { label: "첫 가치 완료", description: "핵심 결과를 처음 끝냅니다." },
+          { label: "반복 사용 완료", description: "정해진 기간에 다시 씁니다." },
+          { label: "수동 파일럿 성공", description: "수동으로라도 원하는 결과를 얻습니다." },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(stamped.generation.mode, OFFICE_HOURS_TOOL_MODE);
+  assert.equal(stamped.generation.signalId, "get_users_active_user_definition");
+  assert.equal(stamped.generation.signalLabel, "활성 사용자 기준");
+});
+
+test("prepareOfficeHoursStructuredInputRequest renders active-user-definition header", () => {
+  const prepared = prepareOfficeHoursStructuredInputRequest({
+    title: "Office Hours",
+    questions: [
+      {
+        header: "Question",
+        question: "이 목표에서 활성 사용자 1명으로 세려면 ICP가 어떤 핵심 행동을 끝내야 하나요?",
+        options: [
+          { label: "첫 가치 완료", description: "핵심 결과를 처음 끝냅니다." },
+          { label: "반복 사용 완료", description: "정해진 기간에 다시 씁니다." },
+          { label: "수동 파일럿 성공", description: "수동으로라도 원하는 결과를 얻습니다." },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(prepared.questions[0].header, "활성 사용자 기준");
+  assert.equal(
+    prepared.questions[0].question,
+    "이 목표에서 활성 사용자 1명으로 세려면 고객 후보가 어떤 핵심 행동을 끝내야 하나요?",
+  );
+  assert.equal(prepared.generation.signalId, "get_users_active_user_definition");
+});
+
+test("Office Hours Korean UI-copy contract detects awkward visible copy without hard-coded rewrites", () => {
+  const request = {
+    title: "Office Hours",
+    generation: { mode: OFFICE_HOURS_TOOL_MODE, signalId: "office_hours_channel" },
+    questions: [
+      {
+        header: "채널 증거",
+        question: "30일 안에 가입자 100명을 데려올, 지금 가장 현실적인 첫 유입 경로는 무엇인가요? (집합명사 말고)",
+        options: [
+          {
+            label: "콘텐츠/SNS 유입 (릴스·글)",
+            description: "감정일기 관련 짧은 콘텐츠로 유입. 리스크: 허영 지표만 보고 착각할 수 있음.",
+          },
+          {
+            label: "게시물→가입 전환 수치를 안다",
+            description: "가장 강함. 다음: UTM으로 proof target을 확인한다.",
+          },
+          {
+            label: "랜딩/가입 구간을 내가 직접 통과해보며 이탈 지점 찾기",
+            description: "activation action 전 이탈을 찾는다.",
+          },
+        ],
+      },
+    ],
+  };
+
+  const issues = inspectOfficeHoursUiCopyRequest(request);
+  assert.ok(issues.length >= 6);
+  assert.deepEqual(
+    [...new Set(issues.map((issue) => issue.severity))].sort(),
+    ["S1", "S2", "S3"],
+  );
+  assert.ok(issues.some((issue) => issue.ruleId === "OH-S1-SIGNUP-GOAL"));
+  assert.ok(issues.some((issue) => issue.ruleId === "OH-S1-COLLECTIVE"));
+  assert.ok(issues.some((issue) => issue.ruleId === "OH-S2-INTERNAL-RISK"));
+  assert.ok(issues.some((issue) => issue.ruleId === "OH-S2-POST-SIGNUP"));
+
+  // The contract gate is intentionally non-mutating: prompt/schema contract
+  // should make the model write better copy, not replace labels with fixed
+  // screenshot-specific strings in sidecar code.
+  assert.equal(normalizeOfficeHoursUiCopyRequest(request), request);
 });
 
 test("ensureOfficeHoursGeneration leaves an existing Office Hours generation untouched", () => {
@@ -481,6 +575,105 @@ test("Office Hours continuation prompt prevents vague confirmation after structu
   assert.match(prompt, /Do not end with a vague confirmation/);
   assert.match(prompt, /host structured input tool/);
   assert.match(prompt, /실제 결제\/계약이 있었다/);
+});
+
+test("Office Hours answer log attributes include raw question, options, selected value, free text, and signal metadata", () => {
+  const pendingUserInput = {
+    sessionId: "session-office-hours",
+    requestId: "request-1",
+    title: "Office Hours",
+    generation: {
+      mode: OFFICE_HOURS_TOOL_MODE,
+      signalId: "office_hours_demand_evidence",
+      signalLabel: "Office Hours Q1 수요 증거",
+    },
+    questions: [
+      {
+        questionId: "office_hours_demand_evidence",
+        header: "수요 증거",
+        question: "Agentic30 수요를 실제 행동으로 확인한 가장 강한 증거는 무엇인가요?",
+        helperText: "칭찬은 수요가 아닙니다.",
+        allowFreeText: true,
+        requiresFreeText: false,
+        multiSelect: false,
+        textMode: "short",
+        options: [
+          {
+            label: "실제 결제/계약이 있었다",
+            description: "돈이 이미 움직였습니다.",
+            nextIntent: "actual_payment_or_contract",
+            recommended: true,
+            risk: "결제 주체와 날짜가 필요합니다.",
+            evidenceTarget: "실명, 날짜, 결제 절차",
+            mapsTo: "Q1 Demand Reality",
+            failureMode: "돈이 움직이지 않았으면 낮춥니다.",
+          },
+          {
+            label: "관심만 있거나 아직 증거가 없다",
+            description: "칭찬이나 가격 질문은 수요가 아닙니다.",
+            risk: "실제 행동 검증이 남습니다.",
+          },
+        ],
+      },
+    ],
+  };
+  const attributes = buildOfficeHoursInterviewAnswerLogAttributes({
+    session: {
+      id: "session-office-hours",
+      provider: "codex",
+      runtime: {
+        officeHours: {
+          day: 3,
+          source: "office_hours_screen_day_3",
+        },
+      },
+    },
+    pendingUserInput,
+    response: {
+      responses: [
+        {
+          question: pendingUserInput.questions[0].question,
+          selectedOptions: ["실제 결제/계약이 있었다"],
+          freeText: "6/10에 A가 10만원 결제 링크를 요청했다.",
+        },
+      ],
+    },
+    responseText: "실제 결제/계약이 있었다 — 6/10에 A가 10만원 결제 링크를 요청했다.",
+    responseDescription: "돈이 이미 움직였습니다. (근거: 실명, 날짜, 결제 절차)",
+    terminal: true,
+  });
+
+  assert.equal(attributes.log_type, "office_hours_interview_answer");
+  assert.equal(attributes.session_id, "session-office-hours");
+  assert.equal(attributes.request_id, "request-1");
+  assert.equal(attributes.provider, "codex");
+  assert.equal(attributes.day, 3);
+  assert.equal(attributes.source, "office_hours_screen_day_3");
+  assert.equal(attributes.mode, OFFICE_HOURS_TOOL_MODE);
+  assert.equal(attributes.signal_id, "office_hours_demand_evidence");
+  assert.equal(attributes.signal_label, "Office Hours Q1 수요 증거");
+  assert.equal(attributes.terminal, true);
+  assert.equal(attributes.response_text, "실제 결제/계약이 있었다 — 6/10에 A가 10만원 결제 링크를 요청했다.");
+  assert.equal(attributes.response_description, "돈이 이미 움직였습니다. (근거: 실명, 날짜, 결제 절차)");
+  assert.equal(attributes.question_count, 1);
+  assert.equal(attributes.responses[0].question_id, "office_hours_demand_evidence");
+  assert.equal(
+    attributes.responses[0].question_text,
+    "Agentic30 수요를 실제 행동으로 확인한 가장 강한 증거는 무엇인가요?",
+  );
+  assert.deepEqual(attributes.responses[0].selected_options, ["실제 결제/계약이 있었다"]);
+  assert.equal(attributes.responses[0].free_text, "6/10에 A가 10만원 결제 링크를 요청했다.");
+  assert.equal(attributes.responses[0].options.length, 2);
+  assert.equal(attributes.responses[0].options[0].label, "실제 결제/계약이 있었다");
+  assert.equal(attributes.responses[0].options[0].description, "돈이 이미 움직였습니다.");
+  assert.equal(attributes.responses[0].options[0].next_intent, "actual_payment_or_contract");
+  assert.equal(attributes.responses[0].options[0].recommended, true);
+  assert.equal(attributes.responses[0].options[0].risk, "결제 주체와 날짜가 필요합니다.");
+  assert.equal(attributes.responses[0].options[0].evidence_target, "실명, 날짜, 결제 절차");
+  assert.equal(attributes.responses[0].options[0].maps_to, "Q1 Demand Reality");
+  assert.equal(attributes.responses[0].options[0].failure_mode, "돈이 움직이지 않았으면 낮춥니다.");
+  assert.equal(attributes.responses[0].options[0].selected, true);
+  assert.equal(attributes.responses[0].options[1].selected, false);
 });
 
 test("formatSelectedOptionEvidenceHint folds risk/evidence/failure into the agent context", () => {

@@ -524,6 +524,7 @@ struct IntakeV2FlowView: View {
     var onProviderLimitRescan: ((AgentProvider) -> Void)? = nil
     var scanBlockedNotice: WorkspaceScanBlockedNotice? = nil
     var onScanBlockedRescan: ((AgentProvider) -> Void)? = nil
+    var onScanBlockedAuthAction: ((WorkspaceScanProviderReadiness) -> Void)? = nil
     var onWorkspacePrefetchRequested: ((IntakeV2Store, IntakeV2SourceManager) -> Void)? = nil
     var onComplete: ((IntakeV2Store, IntakeV2SourceManager) -> Void)? = nil
 
@@ -631,7 +632,8 @@ struct IntakeV2FlowView: View {
                 providerLimitFallback: scanProviderLimitFallback,
                 onProviderLimitRescan: onProviderLimitRescan,
                 scanBlockedNotice: scanBlockedNotice,
-                onScanBlockedRescan: onScanBlockedRescan
+                onScanBlockedRescan: onScanBlockedRescan,
+                onScanBlockedAuthAction: onScanBlockedAuthAction
             )
         }
     }
