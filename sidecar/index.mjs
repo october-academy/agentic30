@@ -9254,9 +9254,11 @@ async function refreshProjectContextFromRequest(payload = {}) {
         ({ provider, model }) => runWorkspaceScanAgent({ provider, model, scanRoot: root }),
       ),
     );
+    // Background context refresh: a failed agent outcome just skips the merge
+    // (no blocking) — the Day 1 gate only applies to the foreground scan.
     const parsedAgentResults = agentResults
-      .filter((result) => result.status === "fulfilled" && result.value)
-      .map((result) => result.value);
+      .filter((result) => result.status === "fulfilled" && result.value?.ok)
+      .map((result) => result.value.result);
     if (parsedAgentResults.length) {
       scanResult = await mergeWorkspaceScanResultsForRoot(root, scanResult, ...parsedAgentResults);
       onboardingHypothesis = mergeWorkspaceOnboardingHypotheses(
@@ -9655,14 +9657,33 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
         foundCount: localFoundCount,
       },
     );
+    const scanTargets = selectScanProviderTargets(preferredProvider, WORKSPACE_SCAN_MODEL_BY_PROVIDER);
     const agentResults = await Promise.allSettled(
-      selectScanProviderTargets(preferredProvider, WORKSPACE_SCAN_MODEL_BY_PROVIDER).map(
+      scanTargets.map(
         ({ provider, model }) => runWorkspaceScanAgent({ provider, model, scanRoot }),
       ),
     );
-    const parsedAgentResults = agentResults
+    const agentOutcomes = agentResults
       .filter((result) => result.status === "fulfilled" && result.value)
       .map((result) => result.value);
+    const parsedAgentResults = agentOutcomes
+      .filter((outcome) => outcome.ok)
+      .map((outcome) => outcome.result);
+    if (!parsedAgentResults.length) {
+      // Agent verification failed (usage limit / no auth / run error). The
+      // scan must NOT pass on local-only signals — broadcast a blocked state
+      // with the next provider in the consent chain (codex → claude → gemini
+      // → cursor) instead of a workspace_scan_result. With no available
+      // provider at all, Agentic30 cannot proceed: fail closed.
+      const failure = agentOutcomes.find((outcome) => !outcome.ok) || {
+        provider: scanTargets[0]?.provider || "codex",
+        model: scanTargets[0]?.model || "",
+        reason: "error",
+        message: "",
+      };
+      broadcastWorkspaceScanBlocked(scanRoot, failure);
+      return;
+    }
     const agentSituationSignals = parsedAgentResults
       .map((result) => result.situationSignals)
       .filter(Boolean);
@@ -9845,6 +9866,16 @@ async function appendWorkspaceScanVisibleAnswer({ sessionId = "", prompt = "", s
   await appendVisibleAssistantMessage(sessionId, lines.join("\n"));
 }
 
+/**
+ * Runs the single agent-backed verification pass of the workspace scan.
+ * Always resolves to a structured outcome — never throws, never silently
+ * swallows a failure into "use local signals instead":
+ * - `{ ok: true, provider, model, result }` on success
+ * - `{ ok: false, provider, model, reason, message }` with reason
+ *   "unavailable" (no auth), "usage_limit" (quota), or "error" (run fault).
+ * The foreground scan path turns a failed outcome into workspace_scan_blocked;
+ * background refreshes simply skip the merge.
+ */
 async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
   const authState = getProviderAuthState(provider);
   if (!authState.available) {
@@ -9853,7 +9884,13 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
       model,
       reason: authState.source,
     });
-    return null;
+    return {
+      ok: false,
+      provider,
+      model,
+      reason: "unavailable",
+      message: authState.message || "",
+    };
   }
 
   const abortController = new AbortController();
@@ -9957,7 +9994,7 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
         foundCount,
       },
     );
-    return result;
+    return { ok: true, provider, model, result };
   } catch (error) {
     const usageLimited = reportProviderRunError(error, {
       operation: "runWorkspaceScanAgent",
@@ -9966,10 +10003,9 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
       scan_root: scanRoot,
     });
     if (usageLimited) {
-      broadcastWorkspaceScanProviderLimited(scanRoot, { provider, model, stage: "scan_agent" });
       broadcastWorkspaceScanProgress(
         scanRoot,
-        `scan.agent · ${providerLabel} 한도 도달 — 질문은 로컬 신호로 구성됩니다`,
+        `scan.agent · ${providerLabel} 사용 한도 도달`,
         {
           stage: "verifying",
           stepIndex: 2,
@@ -9977,17 +10013,25 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
         },
       );
     }
-    return null;
+    return {
+      ok: false,
+      provider,
+      model,
+      reason: usageLimited ? "usage_limit" : "error",
+      message: formatError(error),
+    };
   } finally {
     clearTimeout(timeout);
   }
 }
 
 /**
- * Tells the Mac side a scan-path provider hit its usage limit (quota) so the
- * UI can surface an explicit "switch provider and re-verify" button. No
+ * Tells the Mac side a Day 1 synthesis provider hit its usage limit (quota) so
+ * the UI can surface an explicit "switch provider and re-verify" button. No
  * automatic fallback happens on this side — provider switching requires the
- * user's consent via that button (see IntakeV2ShowcaseViews).
+ * user's consent via that button (see IntakeV2ShowcaseViews). The scan stage
+ * itself no longer uses this: a failed scan verification broadcasts
+ * workspace_scan_blocked instead (the scan must not pass on local signals).
  */
 function broadcastWorkspaceScanProviderLimited(scanRoot, { provider, model, stage }) {
   broadcast({
@@ -9997,6 +10041,58 @@ function broadcastWorkspaceScanProviderLimited(scanRoot, { provider, model, stag
     model,
     stage,
     errorKind: PROVIDER_USAGE_LIMIT_ERROR_KIND,
+  });
+}
+
+/**
+ * The scan's agent verification failed (usage limit, missing provider auth, or
+ * a run error). Day 1 must not proceed on local-only signals, so instead of a
+ * successful workspace_scan_result the Mac side gets this blocking notice with
+ * the next provider in the consent chain (codex → claude → gemini → cursor).
+ * Switching still requires the user's click; when no provider is available at
+ * all (`nextProvider: null`) the UI says Agentic30 cannot proceed.
+ */
+function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, message }) {
+  const { nextProvider, availableProviders } = selectNextScanProvider(
+    provider,
+    (candidate) => getProviderAuthState(candidate).available,
+  );
+  telemetry.captureEvent("mac_sidecar_workspace_scan_blocked", {
+    scan_root: scanRoot,
+    provider,
+    model,
+    reason,
+    next_provider: nextProvider || "none",
+    available_provider_count: availableProviders.length,
+  });
+  markWorkspaceSetupFailed(
+    scanRoot,
+    Object.assign(new Error(`workspace scan blocked: ${provider} ${reason}`), {
+      code: "workspace_scan_blocked",
+    }),
+  );
+  const providerLabel = workspaceScanProviderLabel(provider, model);
+  broadcastWorkspaceScanProgress(
+    scanRoot,
+    nextProvider
+      ? `scan.blocked · ${providerLabel} 검증 불가 — 다른 에이전트로 전환이 필요합니다`
+      : "scan.blocked · 사용 가능한 에이전트가 없어 진행할 수 없습니다",
+    {
+      stage: "blocked",
+      stepIndex: 2,
+      totalSteps: 3,
+    },
+  );
+  broadcast({
+    type: "workspace_scan_blocked",
+    scanRoot,
+    provider,
+    model,
+    reason,
+    message: String(message || ""),
+    nextProvider,
+    availableProviders,
+    ...(reason === "usage_limit" ? { errorKind: PROVIDER_USAGE_LIMIT_ERROR_KIND } : {}),
   });
 }
 

@@ -3977,8 +3977,11 @@ final class AgenticViewModel: ObservableObject {
     }
 
     /// Explicit, user-consented provider switch after a usage-limit notice:
-    /// re-runs the scan once with `provider` without changing `selectedProvider`.
+    /// adopts `provider` as the active engine (so the settings picker and
+    /// follow-up flows stay on the provider the user just chose) and re-runs
+    /// the scan once with it.
     func rescanWorkspace(root: String, provider: AgentProvider) {
+        setActiveProvider(provider)
         scanWorkspace(root: root, providerOverride: provider)
     }
 

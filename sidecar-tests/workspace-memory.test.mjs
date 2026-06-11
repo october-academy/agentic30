@@ -12,6 +12,7 @@ import {
   formatOfficeHoursHistoryForPrompt,
   loadDayMemory,
   loadDayRollup,
+  loadOfficeHoursTurnLog,
   loadOnboardingMemory,
   refreshDayMemory,
   resolveDayMemoryPath,
@@ -112,6 +113,44 @@ test("day memory persists per-day details plus cumulative rollup for Day 30 retr
     assert.ok(prompt.includes("Memory map: onboarding=.agentic30/memory/onboarding.json"));
     assert.ok(prompt.includes("Day 29"));
     assert.ok(prompt.includes("detail=.agentic30/memory/days/day-29.json"));
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+// The terminal stamp (대안 비교 closing-card answer) is what lets the
+// incomplete-interview gate accept a smart-skip interview that finished with
+// fewer answers than the expected count — it must survive the normalize →
+// write → load round trip, and stay absent on ordinary turns.
+test("office hours turn log round-trips the terminal closing-card stamp", async () => {
+  const root = await tempWorkspace();
+  try {
+    await appendOfficeHoursTurn({
+      workspaceRoot: root,
+      turn: {
+        day: 2,
+        sessionId: "session-a",
+        questionText: "오늘 그 한 통을 어떤 안으로 보낼 건가?",
+        responseText: "최소안: 지금 박고 오늘 발송",
+        terminal: true,
+      },
+      now: new Date("2026-06-11T00:00:00.000Z"),
+    });
+    await appendOfficeHoursTurn({
+      workspaceRoot: root,
+      turn: {
+        day: 2,
+        sessionId: "session-a",
+        questionText: "막고 있는 건 무엇인가?",
+        responseText: "금액 미정",
+      },
+      now: new Date("2026-06-11T00:01:00.000Z"),
+    });
+
+    const log = await loadOfficeHoursTurnLog({ workspaceRoot: root });
+    assert.equal(log.turns.length, 2);
+    assert.equal(log.turns[0].terminal, true);
+    assert.equal("terminal" in log.turns[1], false);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

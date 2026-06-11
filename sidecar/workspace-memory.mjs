@@ -530,6 +530,10 @@ function normalizeOfficeHoursTurn(value = {}, { now = new Date() } = {}) {
     questionText,
     responseText,
     responseDescription: cleanString(source.responseDescription ?? source.response_description, MAX_LONG_TEXT),
+    // Marks the 대안 비교 closing-card answer — the interview-completion
+    // signal the incomplete-interview gate honors even when fewer answers
+    // than the expected count were recorded (smart-skip interviews).
+    ...(source.terminal === true ? { terminal: true } : {}),
     occurredAt,
   };
 }

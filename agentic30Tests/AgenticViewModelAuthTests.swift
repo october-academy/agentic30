@@ -80,7 +80,16 @@ private final class FakeSidecarTransport: SidecarTransport {
 }
 
 @Suite(.serialized)
-struct AgenticViewModelAuthTests {
+final class AgenticViewModelAuthTests {
+    // Hosted tests share UserDefaults.standard with the developer's real app
+    // domain. Swift Testing creates one instance per test, so snapshotting in
+    // the initializer and restoring in deinit rolls back every defaults
+    // mutation (workspace root, onboarding gates, selected provider, …) after
+    // each test without touching the test bodies.
+    private let restoreHostDefaults = HostAppDefaultsGuard.snapshotAgentic30Domains()
+
+    deinit { restoreHostDefaults() }
+
     @Test @MainActor func onboardingContextDecodesCurrentPayloadWithoutWorkMode() throws {
         let payload = """
         {
@@ -406,6 +415,37 @@ struct AgenticViewModelAuthTests {
         #expect(AgenticViewModel.loadSelectedProvider(defaults: defaults) == .codex)
     }
 
+    /// Scan-stage provider switch (the usage-limit "다시 검증" button) must adopt
+    /// the chosen provider as the active engine so the settings picker follows
+    /// the user's scan-stage choice instead of staying on the limited provider.
+    @Test @MainActor func rescanWorkspaceAdoptsChosenProviderAsActive() throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let defaults = UserDefaults.standard
+        let previousProvider = defaults.string(forKey: AgenticViewModel.selectedProviderDefaultsKey)
+        defer {
+            if let previousProvider {
+                defaults.set(previousProvider, forKey: AgenticViewModel.selectedProviderDefaultsKey)
+            } else {
+                defaults.removeObject(forKey: AgenticViewModel.selectedProviderDefaultsKey)
+            }
+        }
+
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(sidecar: sidecar, workspace: workspace, currentDay: 1)
+        viewModel.setActiveProvider(.codex)
+        sidecar.resetSentPayloads()
+
+        viewModel.rescanWorkspace(root: workspace.path, provider: .claude)
+
+        // Settings follows the scan-stage choice (in-memory and persisted)…
+        #expect(viewModel.selectedProvider == .claude)
+        #expect(AgenticViewModel.loadSelectedProvider() == .claude)
+        // …and the scan itself runs on the explicitly chosen provider.
+        let scanPayload = sidecar.sentPayloads.last { ($0["type"] as? String) == "scan_workspace" }
+        #expect(scanPayload?["preferredProvider"] as? String == AgentProvider.claude.rawValue)
+    }
+
     @Test @MainActor func bipResearchPrepareRequestsCacheThenDailyRefreshWhenStale() throws {
         let (workspace, cleanup) = try Self.installTemporaryWorkspace()
         defer { cleanup() }
@@ -453,6 +493,19 @@ struct AgenticViewModelAuthTests {
     @Test @MainActor func bipResearchManualRefreshSendsForceManualPayload() throws {
         let (workspace, cleanup) = try Self.installTemporaryWorkspace()
         defer { cleanup() }
+        // Pin the persisted provider so the asserted payload stays deterministic
+        // regardless of what the host app last selected (scan-stage switches now
+        // persist Claude/Gemini choices into the same defaults key).
+        let defaults = UserDefaults.standard
+        let previousProvider = defaults.string(forKey: AgenticViewModel.selectedProviderDefaultsKey)
+        AgenticViewModel.saveSelectedProvider(.codex)
+        defer {
+            if let previousProvider {
+                defaults.set(previousProvider, forKey: AgenticViewModel.selectedProviderDefaultsKey)
+            } else {
+                defaults.removeObject(forKey: AgenticViewModel.selectedProviderDefaultsKey)
+            }
+        }
         let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
         let viewModel = Self.makeStartedViewModel(
             sidecar: sidecar,
@@ -647,8 +700,12 @@ struct AgenticViewModelAuthTests {
     }
 
     @Test @MainActor func volatileLocalDataResetRestoresFirstRunIntroGate() {
+        // resetAgentic30Defaults() targets the host app's real defaults domain
+        // when tests run hosted — bracket it so the developer's persisted
+        // settings survive the suite even if the suite-level guard changes.
+        let restoreDefaults = HostAppDefaultsGuard.snapshotAgentic30Domains()
+        defer { restoreDefaults() }
         KeychainHelper.resetAgentic30Defaults()
-        defer { KeychainHelper.resetAgentic30Defaults() }
 
         let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true, activateAppForAuth: {})
         viewModel.completeMacOnboardingIntro()
@@ -685,13 +742,16 @@ struct AgenticViewModelAuthTests {
     }
 
     @Test @MainActor func localDataResetClearsVolatileStateAndBumpsOnboardingGeneration() throws {
+        // Same hosted-defaults bracket as above: the reset paths under test
+        // operate on the real app domain, so restore the pre-test snapshot.
+        let restoreDefaults = HostAppDefaultsGuard.snapshotAgentic30Domains()
         KeychainHelper.resetAgentic30Defaults()
         let workspaceURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("agentic30-viewmodel-reset-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
         WorkspaceSettings.store(workspaceURL)
         defer {
-            KeychainHelper.resetAgentic30Defaults()
+            restoreDefaults()
             try? FileManager.default.removeItem(at: workspaceURL)
         }
 
@@ -1712,6 +1772,11 @@ struct AgenticViewModelAuthTests {
     }
 
     @Test @MainActor func officeHoursStepEnsureSessionCreatesSessionWhenConnected() throws {
+        // Pin the persisted provider so the asserted payload stays deterministic
+        // regardless of what the host app last selected (the view model seeds
+        // its active provider from the shared defaults key at construction).
+        // The suite-level defaults guard restores the developer's value after.
+        AgenticViewModel.saveSelectedProvider(.codex)
         let (workspace, cleanup) = try Self.installTemporaryWorkspace()
         defer { cleanup() }
         let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)

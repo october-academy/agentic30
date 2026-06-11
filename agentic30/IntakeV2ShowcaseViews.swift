@@ -2008,6 +2008,7 @@ struct IntakeV2ReadyAnalyzeView: View {
                         .font(.system(size: 12, weight: .bold, design: .rounded))
                 }
                 .buttonStyle(.bordered)
+                .help("\(fallback.title)로 근거 검증을 다시 돌립니다. 기본 provider 설정도 \(fallback.title)로 바뀝니다.")
                 .accessibilityIdentifier("intakeV2.day1ProviderLimitRescan")
             }
         }
