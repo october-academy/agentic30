@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.0.18] - 2026-06-11
+
 ### Added
 - **In-App Update Visibility**: The menu bar now shows an "업데이트 X.Y.Z 설치…" row whenever a new build is pending, so menu-bar-resident users see updates without the workspace window open. Sparkle's update dialog now shows a what's-new section — release notes are extracted from the newest released CHANGELOG section and embedded into the signed appcast (`generate_appcast --embed-release-notes`).
 
