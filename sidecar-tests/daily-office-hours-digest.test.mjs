@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  buildExternalOfficeHoursDigestPrompt,
   collectGitDailySignals,
   evaluateOfficeHoursSourceGate,
   finalizeDailyOfficeHoursDigest,
@@ -403,6 +404,36 @@ test("normalizeExternalOfficeHoursDigest extracts embedded JSON and fails the mi
   assert.equal(posthog.counts.conversions, 0);
   assert.ok(!("bogus" in posthog.counts));
   assert.equal(cloudflare.state, "failed");
+});
+
+test("buildExternalOfficeHoursDigestPrompt uses source-specific count keys", () => {
+  const window = officeHoursDigestWindow(new Date("2026-06-09T10:30:00+09:00"), { tzOffsetMinutes: KST });
+
+  const cloudflareOnly = buildExternalOfficeHoursDigestPrompt({
+    sources: ["cloudflare"],
+    window,
+    context: "ctx",
+  });
+  assert.match(cloudflareOnly, /"id": "cloudflare"/);
+  assert.match(cloudflareOnly, /"visits": 0/);
+  assert.match(cloudflareOnly, /"pageviews": 0/);
+  assert.match(cloudflareOnly, /"requests": 0/);
+  assert.match(cloudflareOnly, /\/zones\?status=active&per_page=5/);
+  assert.match(cloudflareOnly, /httpRequests1hGroups/);
+  assert.match(cloudflareOnly, /Do not query all zones in one GraphQL call/);
+  assert.doesNotMatch(cloudflareOnly, /"id": "posthog"/);
+  assert.doesNotMatch(cloudflareOnly, /"activeUsers": 0/);
+  assert.doesNotMatch(cloudflareOnly, /"events": 0/);
+
+  const both = buildExternalOfficeHoursDigestPrompt({
+    sources: ["posthog", "cloudflare"],
+    window,
+    context: "ctx",
+  });
+  assert.match(both, /PostHog counts must use events\/activeUsers\/conversions\/signups/);
+  assert.match(both, /Cloudflare counts must use visits\/uniqueVisitors\/pageviews\/requests\/threats/);
+  assert.match(both, /"id": "posthog"/);
+  assert.match(both, /"id": "cloudflare"/);
 });
 
 test("a failed external digest blocks via the structured gate error, not a raw crash", () => {

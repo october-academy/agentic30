@@ -21,6 +21,26 @@ const SOURCE_DEFS = Object.freeze({
 });
 const OFFICE_HOURS_SOURCE_ORDER = Object.freeze(["git", "gh_cli", "posthog", "cloudflare"]);
 const EXTERNAL_SOURCE_IDS = new Set(["posthog", "cloudflare"]);
+const EXTERNAL_SOURCE_DIGEST_SHAPES = Object.freeze({
+  posthog: {
+    id: "posthog",
+    state: "ready",
+    summary: "aggregate product usage summary only",
+    counts: { events: 0, activeUsers: 0, conversions: 0, signups: 0 },
+    highlights: ["short PostHog aggregate highlight"],
+    goalSignals: ["product usage signal useful for the 30-day goal"],
+    evidenceGaps: ["missing product evidence gap"],
+  },
+  cloudflare: {
+    id: "cloudflare",
+    state: "ready",
+    summary: "aggregate traffic summary only",
+    counts: { visits: 0, uniqueVisitors: 0, pageviews: 0, requests: 0, threats: 0 },
+    highlights: ["short Cloudflare aggregate highlight"],
+    goalSignals: ["traffic signal useful for the 30-day goal"],
+    evidenceGaps: ["missing traffic evidence gap"],
+  },
+});
 
 export class OfficeHoursSourceGateError extends Error {
   constructor(gate) {
@@ -646,6 +666,7 @@ export function buildExternalOfficeHoursDigestPrompt({
   context = "",
 } = {}) {
   const wanted = normalizeOfficeHoursSelectedSources(sources).filter((source) => EXTERNAL_SOURCE_IDS.has(source));
+  const sourceShapes = wanted.map((source) => EXTERNAL_SOURCE_DIGEST_SHAPES[source]).filter(Boolean);
   return [
     "You are generating an Agentic30 Day 2+ Office Hours source digest.",
     "Use only the connected external MCP sources named below. Do not mutate anything.",
@@ -654,7 +675,10 @@ export function buildExternalOfficeHoursDigestPrompt({
     // 명시하지 않으면 모델이 차단되는 호출을 반복하다 시간을 소진한다.
     "Tool access: MCP tools may be deferred — load them with ToolSearch first, then call them.",
     "PostHog: read with execute-sql using SELECT/WITH HogQL only, or insight/web-analytics getter tools. Mutating calls are denied.",
-    "Cloudflare: read with execute using GET requests or POST to /graphql analytics only. Mutating calls are denied. Prefer ONE GraphQL Analytics query (e.g. httpRequests1dGroups over all zones for the whole window) instead of per-zone or per-day loops.",
+    "Cloudflare: read with cloudflare-api execute/search only. Mutating calls are denied.",
+    "Cloudflare collection plan: first execute code that calls cloudflare.request({ method: \"GET\", path: \"/zones?status=active&per_page=5\" }) and choose the first active zone. Then execute one POST /client/v4/graphql query for that zone's httpRequests1hGroups over the requested window. Optional third call: httpRequestsAdaptiveGroups for top paths on the same zone. Do not query all zones in one GraphQL call.",
+    "Cloudflare GraphQL shape: viewer { zones(filter: { zoneTag: $zone }) { httpRequests1hGroups(limit: 96, filter: { datetime_geq: $start, datetime_lt: $end }, orderBy: [datetime_ASC]) { dimensions { datetime } sum { requests pageViews } uniq { uniques } } } }.",
+    "Use source-specific count keys. PostHog counts must use events/activeUsers/conversions/signups. Cloudflare counts must use visits/uniqueVisitors/pageviews/requests/threats. Do not put PostHog count keys on Cloudflare or Cloudflare count keys on PostHog.",
     // 실측(2026-06-11): 호출 상한이 없으면 모델이 존×일자 분할 쿼리로 14회까지
     // 왕복하며 타임아웃 직전(175초)까지 간다. 상한 4회로 묶으면 50~90초.
     "Budget: hard limit — at most 4 MCP tool calls per source (ToolSearch excluded). Plan queries to fit that, then emit the JSON immediately. If a source keeps failing, mark it failed and move on.",
@@ -665,17 +689,7 @@ export function buildExternalOfficeHoursDigestPrompt({
     "",
     "Required JSON shape:",
     JSON.stringify({
-      sources: [
-        {
-          id: "posthog",
-          state: "ready",
-          summary: "aggregate summary only",
-          counts: { events: 0, activeUsers: 0, conversions: 0 },
-          highlights: ["short aggregate highlight"],
-          goalSignals: ["signal useful for the 30-day goal"],
-          evidenceGaps: ["missing evidence gap"],
-        },
-      ],
+      sources: sourceShapes,
     }, null, 2),
     "",
     "Goal context:",
