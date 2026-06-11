@@ -158,6 +158,11 @@ test("merge helpers replace only the posthog server entry", () => {
   assert.doesNotMatch(codex, /old\.example/);
   assert.match(codex, /mcp\.posthog\.com/);
 
+  const codexOauth = mergeCodexTomlPostHogMcpConfig("", {
+    url: "https://mcp.posthog.com/mcp?readonly=1",
+  });
+  assert.doesNotMatch(codexOauth, /bearer_token_env_var/);
+
   const claude = mergeJsonPostHogMcpConfig(JSON.stringify({
     mcpServers: { other: { command: "node" } },
   }), {

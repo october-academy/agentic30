@@ -14,6 +14,15 @@ struct KeychainSettingsMigrationTests {
         #expect(AgentModelCatalog.options(for: .gemini).contains { $0.id == AgentModelCatalog.defaultGeminiModelID })
     }
 
+    @Test func cursorProviderAndModelCatalogAreNormalized() {
+        #expect(AgentProvider(rawValue: "cursor") == .cursor)
+        #expect(AgentModelCatalog.defaultModelID(for: .cursor) == AgentModelCatalog.defaultCursorModelID)
+        #expect(AgentModelCatalog.defaultCursorModelID == "composer-2.5")
+        #expect(AgentModelCatalog.normalizedModelID("composer-2.5", provider: .cursor) == "composer-2.5")
+        #expect(AgentModelCatalog.normalizedModelID("unknown", provider: .cursor) == AgentModelCatalog.defaultCursorModelID)
+        #expect(AgentAuthMode.modes(for: .cursor) == [.local, .apiKey])
+    }
+
     @Test func decodesLegacySettingsWithoutSchemaVersion() throws {
         let legacyPayload = """
         {
@@ -46,10 +55,13 @@ struct KeychainSettingsMigrationTests {
         #expect(settings.preferredClaudeModel == AgentModelCatalog.defaultClaudeModelID)
         #expect(settings.preferredCodexModel == AgentModelCatalog.defaultCodexModelID)
         #expect(settings.preferredGeminiModel == AgentModelCatalog.defaultGeminiModelID)
+        #expect(settings.preferredCursorModel == AgentModelCatalog.defaultCursorModelID)
         #expect(settings.claudeAuthMode == AgentAuthMode.local.rawValue)
         #expect(settings.codexAuthMode == AgentAuthMode.local.rawValue)
         #expect(settings.geminiAuthMode == AgentAuthMode.local.rawValue)
+        #expect(settings.cursorAuthMode == AgentAuthMode.local.rawValue)
         #expect(settings.geminiApiKey == "")
+        #expect(settings.cursorApiKey == "")
         #expect(settings.cloudflareApiToken == "")
         #expect(settings.cloudflareMcpURL == KeychainHelper.Settings.defaultCloudflareMcpURL)
         #expect(settings.cloudflareMcpCodemode == KeychainHelper.Settings.defaultCloudflareMcpCodemode)
@@ -67,8 +79,11 @@ struct KeychainSettingsMigrationTests {
         settings.preferredClaudeModel = "claude-opus-4-8"
         settings.preferredCodexModel = "gpt-5.5"
         settings.preferredGeminiModel = "gemini-2.5-flash"
+        settings.preferredCursorModel = "composer-2.5"
         settings.geminiAuthMode = AgentAuthMode.apiKey.rawValue
         settings.geminiApiKey = "gemini-secret"
+        settings.cursorAuthMode = AgentAuthMode.apiKey.rawValue
+        settings.cursorApiKey = "cursor-secret"
         settings.cloudflareApiToken = "cloudflare-secret"
         settings.cloudflareMcpURL = "https://mcp.cloudflare.com/mcp?codemode=false"
         settings.cloudflareMcpCodemode = false
@@ -88,8 +103,11 @@ struct KeychainSettingsMigrationTests {
         #expect(object["preferredClaudeModel"] as? String == "claude-opus-4-8")
         #expect(object["preferredCodexModel"] as? String == "gpt-5.5")
         #expect(object["preferredGeminiModel"] as? String == "gemini-2.5-flash")
+        #expect(object["preferredCursorModel"] as? String == "composer-2.5")
         #expect(object["geminiAuthMode"] as? String == AgentAuthMode.apiKey.rawValue)
         #expect(object["geminiApiKey"] as? String == "gemini-secret")
+        #expect(object["cursorAuthMode"] as? String == AgentAuthMode.apiKey.rawValue)
+        #expect(object["cursorApiKey"] as? String == "cursor-secret")
         #expect(object["cloudflareApiToken"] as? String == "cloudflare-secret")
         #expect(object["cloudflareMcpURL"] as? String == "https://mcp.cloudflare.com/mcp?codemode=false")
         #expect(object["cloudflareMcpCodemode"] as? Bool == false)
@@ -148,7 +166,9 @@ struct KeychainSettingsMigrationTests {
         oldSettings.preferredClaudeModel = "unknown-claude"
         oldSettings.preferredCodexModel = "unknown-codex"
         oldSettings.preferredGeminiModel = "unknown-gemini"
+        oldSettings.preferredCursorModel = "unknown-cursor"
         oldSettings.geminiAuthMode = "bedrock"
+        oldSettings.cursorAuthMode = "vertex"
 
         let migrated = KeychainHelper.Settings.migrate(oldSettings, from: 0)
 
@@ -157,7 +177,9 @@ struct KeychainSettingsMigrationTests {
         #expect(migrated.preferredClaudeModel == AgentModelCatalog.defaultClaudeModelID)
         #expect(migrated.preferredCodexModel == AgentModelCatalog.defaultCodexModelID)
         #expect(migrated.preferredGeminiModel == AgentModelCatalog.defaultGeminiModelID)
+        #expect(migrated.preferredCursorModel == AgentModelCatalog.defaultCursorModelID)
         #expect(migrated.geminiAuthMode == AgentAuthMode.local.rawValue)
+        #expect(migrated.cursorAuthMode == AgentAuthMode.local.rawValue)
         #expect(migrated.cloudflareMcpURL == KeychainHelper.Settings.defaultCloudflareMcpURL)
         #expect(migrated.cloudflareMcpCodemode == KeychainHelper.Settings.defaultCloudflareMcpCodemode)
     }

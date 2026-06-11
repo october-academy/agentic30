@@ -156,6 +156,9 @@ test("scan with no available provider broadcasts blocked and never passes on loc
     );
     assert.equal(blocked.provider, "codex");
     assert.equal(blocked.reason, "unavailable");
+    assert.equal(blocked.stage, "blocked");
+    assert.equal(blocked.stepIndex, 2);
+    assert.equal(blocked.totalSteps, 3);
     assert.equal(blocked.nextProvider, null);
     assert.deepEqual(blocked.availableProviders, []);
 
@@ -190,6 +193,9 @@ test("scan blocked on codex recommends claude when a claude login session exists
     );
     assert.equal(blocked.provider, "codex");
     assert.equal(blocked.reason, "unavailable");
+    assert.equal(blocked.stage, "blocked");
+    assert.equal(blocked.stepIndex, 2);
+    assert.equal(blocked.totalSteps, 3);
     assert.equal(blocked.nextProvider, "claude");
     assert.deepEqual(blocked.availableProviders, ["claude"]);
   } finally {

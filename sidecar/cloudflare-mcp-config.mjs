@@ -142,6 +142,7 @@ export function buildCloudflareCodexMcpConfig(settings = {}) {
   return {
     [CLOUDFLARE_MCP_SERVER_NAME]: {
       url: normalized.url,
+      oauth_resource: DEFAULT_CLOUDFLARE_MCP_URL,
     },
   };
 }
@@ -180,6 +181,7 @@ export function buildCloudflareExternalCodexMcpConfig(settings = {}) {
   }
   return {
     url: normalized.url,
+    oauth_resource: DEFAULT_CLOUDFLARE_MCP_URL,
   };
 }
 
@@ -269,6 +271,9 @@ function formatCodexCloudflareMcpToml(config) {
     `[mcp_servers.${tomlBareOrQuotedKey(CLOUDFLARE_MCP_SERVER_NAME)}]`,
     `url = ${tomlString(config.url)}`,
   ];
+  if (config.oauth_resource) {
+    lines.push(`oauth_resource = ${tomlString(config.oauth_resource)}`);
+  }
   if (config.bearer_token_env_var) {
     lines.push(`bearer_token_env_var = ${tomlString(config.bearer_token_env_var)}`);
   }

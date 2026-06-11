@@ -137,18 +137,23 @@ struct SettingsView: View {
     @State private var claudeModelID = AgentModelCatalog.defaultClaudeModelID
     @State private var codexModelID = AgentModelCatalog.defaultCodexModelID
     @State private var geminiModelID = AgentModelCatalog.defaultGeminiModelID
+    @State private var cursorModelID = AgentModelCatalog.defaultCursorModelID
     @State private var claudeReasoningEffort = AgentReasoningEffortCatalog.autoID
     @State private var codexReasoningEffort = AgentReasoningEffortCatalog.autoID
     @State private var geminiReasoningEffort = AgentReasoningEffortCatalog.autoID
+    @State private var cursorReasoningEffort = AgentReasoningEffortCatalog.autoID
     @State private var claudeAuthMode = AgentAuthMode.local.rawValue
     @State private var codexAuthMode = AgentAuthMode.local.rawValue
     @State private var geminiAuthMode = AgentAuthMode.local.rawValue
+    @State private var cursorAuthMode = AgentAuthMode.local.rawValue
     @State private var claudeApiKey = ""
     @State private var codexApiKey = ""
     @State private var geminiApiKey = ""
+    @State private var cursorApiKey = ""
     @State private var claudeEnvironment = ""
     @State private var codexEnvironment = ""
     @State private var geminiEnvironment = ""
+    @State private var cursorEnvironment = ""
     @State private var exaApiKey = ""
     @State private var cloudflareApiToken = ""
     @State private var cloudflareMcpURL = KeychainHelper.Settings.defaultCloudflareMcpURL
@@ -931,6 +936,7 @@ struct SettingsView: View {
             odProviderCard(provider: .claude, authMode: $claudeAuthMode, apiKey: $claudeApiKey, environment: $claudeEnvironment, modelSelection: $claudeModelID, reasoningEffortSelection: $claudeReasoningEffort)
             odProviderCard(provider: .codex, authMode: $codexAuthMode, apiKey: $codexApiKey, environment: $codexEnvironment, modelSelection: $codexModelID, reasoningEffortSelection: $codexReasoningEffort)
             odProviderCard(provider: .gemini, authMode: $geminiAuthMode, apiKey: $geminiApiKey, environment: $geminiEnvironment, modelSelection: $geminiModelID, reasoningEffortSelection: $geminiReasoningEffort)
+            odProviderCard(provider: .cursor, authMode: $cursorAuthMode, apiKey: $cursorApiKey, environment: $cursorEnvironment, modelSelection: $cursorModelID, reasoningEffortSelection: $cursorReasoningEffort)
 
             odNodeRuntimeCard
         }
@@ -1046,6 +1052,43 @@ struct SettingsView: View {
                                 viewModel.startNotionOAuth()
                             }
                         }
+                    }
+                }
+                odSettingsRow(title: "Vercel", detail: "공식 Vercel MCP는 OAuth로 연결합니다. 키 저장 없이 브라우저 로그인 후 프로젝트, 배포, 로그 맥락을 AI 실행에서 사용할 수 있습니다.", iconName: "BrandVercel", stacked: true) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            odSettingsStatus(
+                                vercelMcpStatusLabel,
+                                color: vercelMcpStatusColor,
+                                isLoading: viewModel.mcpOauthConnecting.contains("vercel") || viewModel.integrationStatusChecking
+                            )
+                            Text("https://mcp.vercel.com")
+                                .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                                .foregroundStyle(settingsSubtleText)
+                            Spacer(minLength: 8)
+                            odSettingsGhostButton(
+                                title: "상태 확인",
+                                systemImage: "arrow.clockwise",
+                                width: 88,
+                                identifier: "settings.vercel.refreshStatusButton",
+                                isDisabled: viewModel.integrationStatusChecking,
+                                isLoading: viewModel.integrationStatusChecking
+                            ) {
+                                viewModel.refreshIntegrationStatus()
+                            }
+                            odSettingsGhostButton(
+                                title: viewModel.mcpOauthConnecting.contains("vercel") ? "연결 중…" : "MCP 연결",
+                                systemImage: "link",
+                                width: 96,
+                                identifier: "settings.vercel.mcpConnectButton",
+                                isDisabled: viewModel.mcpOauthConnecting.contains("vercel"),
+                                isLoading: viewModel.mcpOauthConnecting.contains("vercel")
+                            ) {
+                                viewModel.connectMcpOauth(server: "vercel")
+                            }
+                        }
+                        integrationProbeCaption(viewModel.integrationStatus?.vercel)
+                        mcpOauthResultCaption("vercel")
                     }
                 }
                 odSettingsRow(title: "Cloudflare", detail: "AI 실행의 Cloudflare MCP는 OAuth가 기본 — 키 없이 첫 사용 시 브라우저 로그인. API 토큰은 선택: 저장하면 아침 브리핑 트래픽 드릴다운 숫자를 직접 집계(GraphQL Analytics)합니다.", iconName: "BrandCloudflare", stacked: true) {
@@ -1183,6 +1226,33 @@ struct SettingsView: View {
         return detail.isEmpty
             ? "gh auth 로그인 하나로 세 경로가 켜집니다 — git/gh CLI 신호 수집(History·아침 브리핑 GitHub 드릴다운)과 AI 실행의 GitHub MCP 도구."
             : detail
+    }
+
+    private var vercelMcpStatusLabel: String {
+        if viewModel.mcpOauthConnecting.contains("vercel") { return "MCP 확인 중…" }
+        if let prewarm = viewModel.mcpOauthResults["vercel"] {
+            if prewarm.isReady { return "MCP 연결됨" }
+            return prewarm.isLoginPending ? "로그인 대기" : "MCP 연결 실패"
+        }
+        if viewModel.integrationStatusChecking { return "확인 중…" }
+        if let live = viewModel.integrationStatus?.vercel, !live.isMissing {
+            if live.isOauthDelegated { return "MCP OAuth" }
+            return live.isReady ? "연결됨" : "검증 실패"
+        }
+        return "MCP OAuth"
+    }
+
+    private var vercelMcpStatusColor: Color {
+        if viewModel.mcpOauthConnecting.contains("vercel") { return settingsSubtleText }
+        if let prewarm = viewModel.mcpOauthResults["vercel"] {
+            if prewarm.isReady { return settingsAccentColor }
+            return prewarm.isLoginPending ? OpenDesignDayColor.amber : OpenDesignDayColor.rose
+        }
+        if let live = viewModel.integrationStatus?.vercel, !live.isMissing {
+            if live.isOauthDelegated { return settingsAccentColor }
+            return live.isReady ? settingsAccentColor : OpenDesignDayColor.rose
+        }
+        return settingsAccentColor
     }
 
     private var cloudflareMcpStatusLabel: String {
@@ -2025,6 +2095,8 @@ struct SettingsView: View {
             return "대체 엔진 · /analyze-ads · 비싼 모델 회피 시 사용"
         case .gemini:
             return "장문 컨텍스트 · 리서치/멀티모달 폴백 · 도구 실행 검증"
+        case .cursor:
+            return "Cursor Agent SDK · API 키 기반 재검증 폴백"
         }
     }
 
@@ -2238,6 +2310,8 @@ struct SettingsView: View {
             return "자동 = 작업 유형별 휴리스틱"
         case .gemini:
             return "자동 = 모델 기본값"
+        case .cursor:
+            return "자동 = Cursor 기본값"
         }
     }
 
@@ -2273,6 +2347,8 @@ struct SettingsView: View {
                     presentGcloudMissingAlert(brewAvailable: brewAvailable)
                 }
             }
+        } else if provider == .cursor {
+            cursorAuthMode = AgentAuthMode.apiKey.rawValue
         } else {
             viewModel.startProviderLogin(provider)
         }
@@ -2281,6 +2357,9 @@ struct SettingsView: View {
     private func providerAuthActionTitle(_ provider: AgentProvider, connected: Bool) -> String {
         if provider == .gemini {
             return connected ? "ADC 다시 로그인" : "ADC 로그인"
+        }
+        if provider == .cursor {
+            return connected ? "API 키 교체" : "API 키 입력"
         }
         return connected ? "다시 로그인" : "로그인"
     }
@@ -2296,6 +2375,8 @@ struct SettingsView: View {
             return "로컬 Codex 세션 · 발견 안 됨"
         case .gemini:
             return "Google AI Studio API 키 · 발견 안 됨"
+        case .cursor:
+            return "Cursor API 키 · 발견 안 됨"
         }
     }
 
@@ -2310,6 +2391,8 @@ struct SettingsView: View {
             return "선택 시 사용 · 코드/분석"
         case .gemini:
             return "선택 시 사용 · ADC 또는 API 키"
+        case .cursor:
+            return "선택 시 사용 · API 키"
         }
     }
 
@@ -2321,11 +2404,18 @@ struct SettingsView: View {
             return ["OPENAI_API_KEY", "CODEX_API_KEY"]
         case .gemini:
             return ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+        case .cursor:
+            return ["CURSOR_API_KEY"]
         }
     }
 
     private func providerApiKeyMissingText(_ provider: AgentProvider) -> String {
-        provider == .claude ? "환경변수 없음" : "둘 다 없음"
+        switch provider {
+        case .claude, .cursor:
+            return "환경변수 없음"
+        case .codex, .gemini:
+            return "둘 다 없음"
+        }
     }
 
     private func providerModelHint(_ provider: AgentProvider) -> String {
@@ -2336,6 +2426,8 @@ struct SettingsView: View {
             return "인증 후 선택 가능"
         case .gemini:
             return "인증 후 선택 가능"
+        case .cursor:
+            return "API 키 필요"
         }
     }
 
@@ -2495,6 +2587,8 @@ struct SettingsView: View {
             return OpenDesignDayColor.accent
         case .gemini:
             return OpenDesignDayColor.sky
+        case .cursor:
+            return settingsText
         }
     }
 
@@ -2506,6 +2600,8 @@ struct SettingsView: View {
             return "OpenAI GPT Codex"
         case .gemini:
             return "Google Gemini"
+        case .cursor:
+            return "Cursor Agent"
         }
     }
 
@@ -2517,6 +2613,8 @@ struct SettingsView: View {
             return "OPENAI"
         case .gemini:
             return "GOOGLE"
+        case .cursor:
+            return "CURSOR"
         }
     }
 
@@ -2529,6 +2627,8 @@ struct SettingsView: View {
             return diagnosticEnvironment?.codex ?? viewModel.environment.codex
         case .gemini:
             return diagnosticEnvironment?.gemini ?? viewModel.environment.gemini
+        case .cursor:
+            return diagnosticEnvironment?.cursor ?? viewModel.environment.cursor
         }
     }
 
@@ -2608,6 +2708,8 @@ struct SettingsView: View {
             return "Your Codex settings (e.g. subscription)"
         case (.gemini, .local):
             return "Your local Google credentials (gcloud ADC)"
+        case (.cursor, .local):
+            return "CURSOR_API_KEY from your local environment"
         default:
             return mode.title
         }
@@ -2716,6 +2818,8 @@ struct SettingsView: View {
             return "CODEX_API_KEY / OPENAI_API_KEY"
         case .gemini:
             return "GEMINI_API_KEY"
+        case .cursor:
+            return "CURSOR_API_KEY"
         }
     }
 
@@ -2727,6 +2831,8 @@ struct SettingsView: View {
             return "sk-..."
         case .gemini:
             return "AIza..."
+        case .cursor:
+            return "key_..."
         }
     }
 
@@ -2821,6 +2927,8 @@ struct SettingsView: View {
             return URL(string: "https://developers.openai.com/codex/quickstart")
         case .gemini:
             return URL(string: "https://ai.google.dev/gemini-api/docs/quickstart")
+        case .cursor:
+            return URL(string: "https://docs.cursor.com/account/api-keys")
         }
     }
 
@@ -2832,6 +2940,8 @@ struct SettingsView: View {
             return URL(string: "https://developers.openai.com/codex/config-basic")
         case .gemini:
             return URL(string: "https://github.com/googleapis/js-genai")
+        case .cursor:
+            return URL(string: "https://docs.cursor.com/cli")
         }
     }
 
@@ -2997,6 +3107,10 @@ struct SettingsView: View {
             geminiModelID,
             provider: .gemini
         )
+        s.preferredCursorModel = AgentModelCatalog.normalizedModelID(
+            cursorModelID,
+            provider: .cursor
+        )
         // Normalize against the just-assigned models so a model switch silently
         // coerces a now-invalid level (e.g. xhigh on Opus 4.5) back to automatic.
         s.claudeReasoningEffort = AgentReasoningEffortCatalog.normalized(
@@ -3014,15 +3128,23 @@ struct SettingsView: View {
             provider: .gemini,
             modelID: s.preferredGeminiModel
         )
+        s.cursorReasoningEffort = AgentReasoningEffortCatalog.normalized(
+            cursorReasoningEffort,
+            provider: .cursor,
+            modelID: s.preferredCursorModel
+        )
         s.claudeAuthMode = AgentAuthMode.normalized(claudeAuthMode, provider: .claude).rawValue
         s.codexAuthMode = AgentAuthMode.normalized(codexAuthMode, provider: .codex).rawValue
         s.geminiAuthMode = AgentAuthMode.normalized(geminiAuthMode, provider: .gemini).rawValue
+        s.cursorAuthMode = AgentAuthMode.normalized(cursorAuthMode, provider: .cursor).rawValue
         s.claudeApiKey = claudeApiKey
         s.codexApiKey = codexApiKey
         s.geminiApiKey = geminiApiKey
+        s.cursorApiKey = cursorApiKey
         s.claudeEnvironment = claudeEnvironment
         s.codexEnvironment = codexEnvironment
         s.geminiEnvironment = geminiEnvironment
+        s.cursorEnvironment = cursorEnvironment
         s.exaApiKey = exaApiKey
         s.cloudflareApiToken = cloudflareApiToken
         s.cloudflareMcpURL = cloudflareMcpURL
@@ -3077,9 +3199,11 @@ struct SettingsView: View {
         let preferredClaudeModel = environment["AGENTIC30_UI_TEST_SETTINGS_CLAUDE_MODEL"] ?? s.preferredClaudeModel
         let preferredCodexModel = environment["AGENTIC30_UI_TEST_SETTINGS_CODEX_MODEL"] ?? s.preferredCodexModel
         let preferredGeminiModel = environment["AGENTIC30_UI_TEST_SETTINGS_GEMINI_MODEL"] ?? s.preferredGeminiModel
+        let preferredCursorModel = environment["AGENTIC30_UI_TEST_SETTINGS_CURSOR_MODEL"] ?? s.preferredCursorModel
         let preferredClaudeAuthMode = environment["AGENTIC30_UI_TEST_SETTINGS_CLAUDE_AUTH_MODE"] ?? s.claudeAuthMode
         let preferredCodexAuthMode = environment["AGENTIC30_UI_TEST_SETTINGS_CODEX_AUTH_MODE"] ?? s.codexAuthMode
         let preferredGeminiAuthMode = environment["AGENTIC30_UI_TEST_SETTINGS_GEMINI_AUTH_MODE"] ?? s.geminiAuthMode
+        let preferredCursorAuthMode = environment["AGENTIC30_UI_TEST_SETTINGS_CURSOR_AUTH_MODE"] ?? s.cursorAuthMode
         claudeModelID = AgentModelCatalog.normalizedModelID(
             preferredClaudeModel,
             provider: .claude
@@ -3091,6 +3215,10 @@ struct SettingsView: View {
         geminiModelID = AgentModelCatalog.normalizedModelID(
             preferredGeminiModel,
             provider: .gemini
+        )
+        cursorModelID = AgentModelCatalog.normalizedModelID(
+            preferredCursorModel,
+            provider: .cursor
         )
         claudeReasoningEffort = AgentReasoningEffortCatalog.normalized(
             s.claudeReasoningEffort,
@@ -3107,15 +3235,23 @@ struct SettingsView: View {
             provider: .gemini,
             modelID: geminiModelID
         )
+        cursorReasoningEffort = AgentReasoningEffortCatalog.normalized(
+            s.cursorReasoningEffort,
+            provider: .cursor,
+            modelID: cursorModelID
+        )
         claudeAuthMode = AgentAuthMode.normalized(preferredClaudeAuthMode, provider: .claude).rawValue
         codexAuthMode = AgentAuthMode.normalized(preferredCodexAuthMode, provider: .codex).rawValue
         geminiAuthMode = AgentAuthMode.normalized(preferredGeminiAuthMode, provider: .gemini).rawValue
+        cursorAuthMode = AgentAuthMode.normalized(preferredCursorAuthMode, provider: .cursor).rawValue
         claudeApiKey = s.claudeApiKey
         codexApiKey = s.codexApiKey
         geminiApiKey = s.geminiApiKey
+        cursorApiKey = s.cursorApiKey
         claudeEnvironment = s.claudeEnvironment
         codexEnvironment = s.codexEnvironment
         geminiEnvironment = s.geminiEnvironment
+        cursorEnvironment = s.cursorEnvironment
         exaApiKey = s.exaApiKey
         cloudflareApiToken = s.cloudflareApiToken
         cloudflareMcpURL = s.cloudflareMcpURL
@@ -3131,16 +3267,20 @@ struct SettingsView: View {
         if environment["AGENTIC30_UI_TEST_SETTINGS_CLAUDE_MODEL"] != nil
             || environment["AGENTIC30_UI_TEST_SETTINGS_CODEX_MODEL"] != nil
             || environment["AGENTIC30_UI_TEST_SETTINGS_GEMINI_MODEL"] != nil
+            || environment["AGENTIC30_UI_TEST_SETTINGS_CURSOR_MODEL"] != nil
             || environment["AGENTIC30_UI_TEST_SETTINGS_CLAUDE_AUTH_MODE"] != nil
             || environment["AGENTIC30_UI_TEST_SETTINGS_CODEX_AUTH_MODE"] != nil
-            || environment["AGENTIC30_UI_TEST_SETTINGS_GEMINI_AUTH_MODE"] != nil {
+            || environment["AGENTIC30_UI_TEST_SETTINGS_GEMINI_AUTH_MODE"] != nil
+            || environment["AGENTIC30_UI_TEST_SETTINGS_CURSOR_AUTH_MODE"] != nil {
             var seededSettings = s
             seededSettings.preferredClaudeModel = AgentModelCatalog.normalizedModelID(preferredClaudeModel, provider: .claude)
             seededSettings.preferredCodexModel = AgentModelCatalog.normalizedModelID(preferredCodexModel, provider: .codex)
             seededSettings.preferredGeminiModel = AgentModelCatalog.normalizedModelID(preferredGeminiModel, provider: .gemini)
+            seededSettings.preferredCursorModel = AgentModelCatalog.normalizedModelID(preferredCursorModel, provider: .cursor)
             seededSettings.claudeAuthMode = AgentAuthMode.normalized(preferredClaudeAuthMode, provider: .claude).rawValue
             seededSettings.codexAuthMode = AgentAuthMode.normalized(preferredCodexAuthMode, provider: .codex).rawValue
             seededSettings.geminiAuthMode = AgentAuthMode.normalized(preferredGeminiAuthMode, provider: .gemini).rawValue
+            seededSettings.cursorAuthMode = AgentAuthMode.normalized(preferredCursorAuthMode, provider: .cursor).rawValue
             do {
                 try KeychainHelper.saveSettings(seededSettings)
             } catch {

@@ -215,7 +215,6 @@ final class IntakeSourceCatalogTests: XCTestCase {
             (.confluence, .core, "DOCS · KNOWLEDGE"),
             (.slack, .voc, "COMM · TEAM"),
             (.sentry, .infra, "OBSERVABILITY"),
-            (.vercel, .infra, "DEPLOY · WEB"),
             (.cloudflare, .infra, "EDGE · PLATFORM"),
             (.neon, .infra, "DATABASE · POSTGRES"),
         ]
@@ -250,6 +249,7 @@ final class IntakeSourceCatalogTests: XCTestCase {
             (.xTwitter, "X / Twitter", .public, "PUBLIC · VOC", ["X/Twitter", "PUBLIC", "Launch"]),
             (.instagram, "Instagram", .public, "PUBLIC · VOC", ["Instagram", "PUBLIC", "VOC"]),
             (.googleSearchConsole, "Google Search Console", .analytics, "SEARCH · AEO", ["Google Search Console", "AEO", "Analytics"]),
+            (.vercel, "Vercel", .infra, "DEPLOY · WEB", ["Vercel", "DEPLOY", "AI Gateway"]),
             (.aws, "AWS", .infra, "CLOUD · AWS", ["AWS", "CLOUD", "Infra"]),
         ]
         let addableIDs = Set(IntakeSourceCatalog.addableItems.map(\.id))

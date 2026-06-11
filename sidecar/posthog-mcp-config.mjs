@@ -326,11 +326,14 @@ export function mergeCodexTomlPostHogMcpConfig(raw = "", posthogConfig = null) {
 }
 
 function formatCodexPostHogMcpToml(config) {
-  return [
+  const lines = [
     `[mcp_servers.${POSTHOG_MCP_SERVER_NAME}]`,
     `url = ${tomlString(config.url)}`,
-    `bearer_token_env_var = ${tomlString(config.bearer_token_env_var)}`,
-  ].join("\n");
+  ];
+  if (config.bearer_token_env_var) {
+    lines.push(`bearer_token_env_var = ${tomlString(config.bearer_token_env_var)}`);
+  }
+  return lines.join("\n");
 }
 
 function isCodexPostHogMcpSection(sectionName = "") {

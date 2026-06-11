@@ -1460,6 +1460,90 @@ final class AgenticViewModelAuthTests {
         #expect(failedPresentation.primaryCTAAccessibilityLabel(questionCount: 3) == "질문 3개 시작하기")
     }
 
+    @Test @MainActor func workspaceScanBlockedStopsScanAndKeepsDay1Closed() async throws {
+        let (workspace, cleanup) = try Self.installTemporaryWorkspace()
+        defer { cleanup() }
+        let sidecar = FakeSidecarTransport(workspaceRoot: workspace.path)
+        let viewModel = Self.makeStartedViewModel(
+            sidecar: sidecar,
+            workspace: workspace,
+            currentDay: 1
+        )
+
+        viewModel.scanWorkspace(root: workspace.path)
+        try sidecar.emit("""
+        {
+          "type": "workspace_scan_started",
+          "scanRoot": "\(workspace.path)",
+          "progressText": "Starting workspace scan...",
+          "stage": "local",
+          "stepIndex": 1,
+          "totalSteps": 3
+        }
+        """)
+        try sidecar.emit("""
+        {
+          "type": "workspace_scan_progress",
+          "scanRoot": "\(workspace.path)",
+          "progressText": "scan.verify · 로컬 후보 6개를 Day 1 ICP 근거로 검증 중",
+          "stage": "verifying",
+          "stepIndex": 2,
+          "totalSteps": 3,
+          "foundCount": 6
+        }
+        """)
+        try sidecar.emit("""
+        {
+          "type": "workspace_scan_blocked",
+          "scanRoot": "\(workspace.path)",
+          "provider": "codex",
+          "model": "gpt-5.5",
+          "reason": "usage_limit",
+          "message": "Codex hit a usage limit during workspace scan verification.",
+          "nextProvider": "cursor",
+          "availableProviders": ["claude", "gemini", "cursor"],
+          "errorKind": "provider_usage_limit",
+          "stage": "blocked",
+          "stepIndex": 2,
+          "totalSteps": 3,
+          "foundCount": 6
+        }
+        """)
+        try await Task.sleep(nanoseconds: 10_000_000)
+
+        #expect(viewModel.isScanning == false)
+        #expect(viewModel.scanResult == nil)
+        let notice = try #require(viewModel.scanBlockedNotice)
+        #expect(notice.provider == .codex)
+        #expect(notice.nextProvider == .cursor)
+        #expect(notice.availableProviders == [.claude, .gemini, .cursor])
+        #expect(notice.scanRoot == workspace.path)
+
+        let bootState = viewModel.intakeV2BootLogState
+        #expect(bootState.scanDidBlock)
+        #expect(!bootState.scanDidComplete)
+        #expect(!bootState.scanDidFail)
+        #expect(bootState.scanPhase.stage == .blocked)
+        #expect(bootState.scanPhase.label == "2/3")
+        #expect(bootState.lines.last?.command == "scan.blocked")
+
+        let presentation = Day1ScanWaitPresentation(
+            bootLogState: bootState,
+            hasFolder: true,
+            hasWorkspaceScanResult: false,
+            now: Date()
+        )
+        #expect(presentation.state == .scanBlocked)
+        #expect(!presentation.canOpenDay1)
+        #expect(presentation.headerTitle(questionCount: 3) == "AI 검증이 필요합니다")
+        #expect(presentation.primaryCTATitle(questionCount: 3) == "AI 연결 확인 필요")
+
+        sidecar.resetSentPayloads()
+        viewModel.rescanWorkspace(root: notice.scanRoot, provider: .cursor)
+        let scanPayload = sidecar.sentPayloads.last { ($0["type"] as? String) == "scan_workspace" }
+        #expect(scanPayload?["preferredProvider"] as? String == AgentProvider.cursor.rawValue)
+    }
+
     @Test @MainActor func startHydratesExplicitWorkspaceBeforeSidecarReady() throws {
         let workspaceURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("agentic30-start-hydrates-workspace-\(UUID().uuidString)", isDirectory: true)

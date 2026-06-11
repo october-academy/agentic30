@@ -65,7 +65,7 @@ enum KeychainHelper {
     // MARK: - Single-Blob Settings
 
     struct Settings: Codable, Equatable {
-        static let currentSchemaVersion = 10
+        static let currentSchemaVersion = 11
         static let legacyDefaultCodexModelID = "gpt-5.4"
         static let previousDefaultCodexModelID = "gpt-5.2-codex"
         static let legacyDefaultGeminiModelID = "gemini-3.1-pro-preview"
@@ -83,21 +83,26 @@ enum KeychainHelper {
         var preferredClaudeModel: String = AgentModelCatalog.defaultClaudeModelID
         var preferredCodexModel: String = AgentModelCatalog.defaultCodexModelID
         var preferredGeminiModel: String = AgentModelCatalog.defaultGeminiModelID
+        var preferredCursorModel: String = AgentModelCatalog.defaultCursorModelID
         // Reasoning effort per provider. Empty string = automatic (provider default
         // or sidecar heuristic). Validated against AgentReasoningEffortCatalog for
         // the currently selected model on save/load.
         var claudeReasoningEffort: String = AgentReasoningEffortCatalog.autoID
         var codexReasoningEffort: String = AgentReasoningEffortCatalog.autoID
         var geminiReasoningEffort: String = AgentReasoningEffortCatalog.autoID
+        var cursorReasoningEffort: String = AgentReasoningEffortCatalog.autoID
         var claudeAuthMode: String = AgentAuthMode.local.rawValue
         var codexAuthMode: String = AgentAuthMode.local.rawValue
         var geminiAuthMode: String = AgentAuthMode.local.rawValue
+        var cursorAuthMode: String = AgentAuthMode.local.rawValue
         var claudeApiKey: String = ""
         var codexApiKey: String = ""
         var geminiApiKey: String = ""
+        var cursorApiKey: String = ""
         var claudeEnvironment: String = ""
         var codexEnvironment: String = ""
         var geminiEnvironment: String = ""
+        var cursorEnvironment: String = ""
         var exaApiKey: String = ""
 
         // Integrations
@@ -145,18 +150,23 @@ enum KeychainHelper {
             preferredClaudeModel = try container.decodeIfPresent(String.self, forKey: .preferredClaudeModel) ?? AgentModelCatalog.defaultClaudeModelID
             preferredCodexModel = try container.decodeIfPresent(String.self, forKey: .preferredCodexModel) ?? AgentModelCatalog.defaultCodexModelID
             preferredGeminiModel = try container.decodeIfPresent(String.self, forKey: .preferredGeminiModel) ?? AgentModelCatalog.defaultGeminiModelID
+            preferredCursorModel = try container.decodeIfPresent(String.self, forKey: .preferredCursorModel) ?? AgentModelCatalog.defaultCursorModelID
             claudeReasoningEffort = try container.decodeIfPresent(String.self, forKey: .claudeReasoningEffort) ?? AgentReasoningEffortCatalog.autoID
             codexReasoningEffort = try container.decodeIfPresent(String.self, forKey: .codexReasoningEffort) ?? AgentReasoningEffortCatalog.autoID
             geminiReasoningEffort = try container.decodeIfPresent(String.self, forKey: .geminiReasoningEffort) ?? AgentReasoningEffortCatalog.autoID
+            cursorReasoningEffort = try container.decodeIfPresent(String.self, forKey: .cursorReasoningEffort) ?? AgentReasoningEffortCatalog.autoID
             claudeAuthMode = try container.decodeIfPresent(String.self, forKey: .claudeAuthMode) ?? AgentAuthMode.local.rawValue
             codexAuthMode = try container.decodeIfPresent(String.self, forKey: .codexAuthMode) ?? AgentAuthMode.local.rawValue
             geminiAuthMode = try container.decodeIfPresent(String.self, forKey: .geminiAuthMode) ?? AgentAuthMode.local.rawValue
+            cursorAuthMode = try container.decodeIfPresent(String.self, forKey: .cursorAuthMode) ?? AgentAuthMode.local.rawValue
             claudeApiKey = try container.decodeIfPresent(String.self, forKey: .claudeApiKey) ?? ""
             codexApiKey = try container.decodeIfPresent(String.self, forKey: .codexApiKey) ?? ""
             geminiApiKey = try container.decodeIfPresent(String.self, forKey: .geminiApiKey) ?? ""
+            cursorApiKey = try container.decodeIfPresent(String.self, forKey: .cursorApiKey) ?? ""
             claudeEnvironment = try container.decodeIfPresent(String.self, forKey: .claudeEnvironment) ?? ""
             codexEnvironment = try container.decodeIfPresent(String.self, forKey: .codexEnvironment) ?? ""
             geminiEnvironment = try container.decodeIfPresent(String.self, forKey: .geminiEnvironment) ?? ""
+            cursorEnvironment = try container.decodeIfPresent(String.self, forKey: .cursorEnvironment) ?? ""
             exaApiKey = try container.decodeIfPresent(String.self, forKey: .exaApiKey) ?? ""
 
             cloudflareApiToken = try container.decodeIfPresent(String.self, forKey: .cloudflareApiToken) ?? ""
@@ -200,18 +210,23 @@ enum KeychainHelper {
             try container.encode(preferredClaudeModel, forKey: .preferredClaudeModel)
             try container.encode(preferredCodexModel, forKey: .preferredCodexModel)
             try container.encode(preferredGeminiModel, forKey: .preferredGeminiModel)
+            try container.encode(preferredCursorModel, forKey: .preferredCursorModel)
             try container.encode(claudeReasoningEffort, forKey: .claudeReasoningEffort)
             try container.encode(codexReasoningEffort, forKey: .codexReasoningEffort)
             try container.encode(geminiReasoningEffort, forKey: .geminiReasoningEffort)
+            try container.encode(cursorReasoningEffort, forKey: .cursorReasoningEffort)
             try container.encode(claudeAuthMode, forKey: .claudeAuthMode)
             try container.encode(codexAuthMode, forKey: .codexAuthMode)
             try container.encode(geminiAuthMode, forKey: .geminiAuthMode)
+            try container.encode(cursorAuthMode, forKey: .cursorAuthMode)
             try container.encode(claudeApiKey, forKey: .claudeApiKey)
             try container.encode(codexApiKey, forKey: .codexApiKey)
             try container.encode(geminiApiKey, forKey: .geminiApiKey)
+            try container.encode(cursorApiKey, forKey: .cursorApiKey)
             try container.encode(claudeEnvironment, forKey: .claudeEnvironment)
             try container.encode(codexEnvironment, forKey: .codexEnvironment)
             try container.encode(geminiEnvironment, forKey: .geminiEnvironment)
+            try container.encode(cursorEnvironment, forKey: .cursorEnvironment)
             try container.encode(exaApiKey, forKey: .exaApiKey)
 
             try container.encode(cloudflareApiToken, forKey: .cloudflareApiToken)
@@ -251,18 +266,23 @@ enum KeychainHelper {
             case preferredClaudeModel
             case preferredCodexModel
             case preferredGeminiModel
+            case preferredCursorModel
             case claudeReasoningEffort
             case codexReasoningEffort
             case geminiReasoningEffort
+            case cursorReasoningEffort
             case claudeAuthMode
             case codexAuthMode
             case geminiAuthMode
+            case cursorAuthMode
             case claudeApiKey
             case codexApiKey
             case geminiApiKey
+            case cursorApiKey
             case claudeEnvironment
             case codexEnvironment
             case geminiEnvironment
+            case cursorEnvironment
             case exaApiKey
             case cloudflareApiToken
             case cloudflareMcpURL
@@ -308,6 +328,10 @@ enum KeychainHelper {
                 migrated.preferredGeminiModel,
                 provider: .gemini
             )
+            migrated.preferredCursorModel = AgentModelCatalog.normalizedModelID(
+                migrated.preferredCursorModel,
+                provider: .cursor
+            )
             migrated.claudeReasoningEffort = AgentReasoningEffortCatalog.normalized(
                 migrated.claudeReasoningEffort,
                 provider: .claude,
@@ -323,9 +347,15 @@ enum KeychainHelper {
                 provider: .gemini,
                 modelID: migrated.preferredGeminiModel
             )
+            migrated.cursorReasoningEffort = AgentReasoningEffortCatalog.normalized(
+                migrated.cursorReasoningEffort,
+                provider: .cursor,
+                modelID: migrated.preferredCursorModel
+            )
             migrated.claudeAuthMode = AgentAuthMode.normalized(migrated.claudeAuthMode, provider: .claude).rawValue
             migrated.codexAuthMode = AgentAuthMode.normalized(migrated.codexAuthMode, provider: .codex).rawValue
             migrated.geminiAuthMode = AgentAuthMode.normalized(migrated.geminiAuthMode, provider: .gemini).rawValue
+            migrated.cursorAuthMode = AgentAuthMode.normalized(migrated.cursorAuthMode, provider: .cursor).rawValue
             if schemaVersion < 4 && migrated.preferredCodexModel == legacyDefaultCodexModelID {
                 migrated.preferredCodexModel = AgentModelCatalog.defaultCodexModelID
             }

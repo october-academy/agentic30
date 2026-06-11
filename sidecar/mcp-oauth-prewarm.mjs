@@ -1,5 +1,23 @@
-import { POSTHOG_MCP_SERVER_NAME } from "./posthog-mcp-config.mjs";
-import { CLOUDFLARE_MCP_SERVER_NAME } from "./cloudflare-mcp-config.mjs";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { spawn } from "node:child_process";
+import {
+  POSTHOG_MCP_SERVER_NAME,
+  buildPostHogCodexMcpConfigFromSources,
+  mergeCodexTomlPostHogMcpConfig,
+} from "./posthog-mcp-config.mjs";
+import {
+  CLOUDFLARE_MCP_SERVER_NAME,
+  DEFAULT_CLOUDFLARE_MCP_URL,
+  buildCloudflareCodexMcpConfigFromSources,
+  mergeCodexTomlCloudflareMcpConfig,
+} from "./cloudflare-mcp-config.mjs";
+import {
+  VERCEL_MCP_SERVER_NAME,
+  buildVercelCodexMcpConfigFromSources,
+  mergeCodexTomlVercelMcpConfig,
+} from "./vercel-mcp-config.mjs";
 
 // Settings > 연동 "MCP 연결" 버튼의 실체. OAuth-first MCP(PostHog/Cloudflare)는
 // 프로바이더(Claude Agent SDK / Codex)가 토큰을 "자기 캐시"에 저장한다 —
@@ -31,6 +49,7 @@ export const MCP_OAUTH_PREWARM_TIMEOUT_MS = 240_000;
 export const MCP_OAUTH_PREWARM_RECHECK_DELAY_MS = 12_000;
 export const MCP_OAUTH_PREWARM_VERIFY_TIMEOUT_MS = 90_000;
 export const MCP_OAUTH_PREWARM_MAX_RECHECKS = 2;
+export const CODEX_MCP_CLI_GET_TIMEOUT_MS = 15_000;
 
 export const MCP_OAUTH_PREWARM_SERVERS = {
   posthog: {
@@ -44,6 +63,12 @@ export const MCP_OAUTH_PREWARM_SERVERS = {
     label: "Cloudflare",
     mcpServerName: CLOUDFLARE_MCP_SERVER_NAME,
     executionMode: "mcp_oauth_prewarm_cloudflare",
+  },
+  vercel: {
+    server: "vercel",
+    label: "Vercel",
+    mcpServerName: VERCEL_MCP_SERVER_NAME,
+    executionMode: "mcp_oauth_prewarm_vercel",
   },
 };
 
@@ -185,6 +210,463 @@ function result(server, provider, state, detail, loginUrl = "") {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function defaultAppSupportPath() {
+  return path.join(os.homedir(), "Library", "Application Support", "agentic30");
+}
+
+function defaultCodexHomePath(env = process.env) {
+  return String(env.CODEX_HOME || path.join(env.AGENTIC30_APP_SUPPORT_PATH || defaultAppSupportPath(), "codex-home"));
+}
+
+function defaultCodexConfigToml() {
+  return [
+    "# Managed by agentic30. Do not read ~/.codex/config.toml from sidecar runs.",
+    "notify = []",
+    "",
+    "[features]",
+    "computer_use = false",
+    "",
+    "[mcp_servers]",
+    "",
+  ].join("\n");
+}
+
+export function extractFirstHttpUrl(text = "") {
+  const match = String(text || "")
+    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "")
+    .match(/https?:\/\/[^\s"'<>\\]+/);
+  return match ? match[0].replace(/[)\].,;]+$/, "") : "";
+}
+
+export function buildCodexMcpOauthServerConfig({
+  server,
+  env = process.env,
+  appSupportPath = "",
+} = {}) {
+  const normalized = normalizeMcpOauthPrewarmServer(server);
+  const target = MCP_OAUTH_PREWARM_SERVERS[normalized];
+  if (!target) {
+    throw new Error(`Unknown MCP OAuth prewarm server: ${server}`);
+  }
+  const sourceOptions = {
+    env,
+    appSupportPath: appSupportPath || env.AGENTIC30_APP_SUPPORT_PATH || defaultAppSupportPath(),
+  };
+  const map = normalized === "posthog"
+    ? buildPostHogCodexMcpConfigFromSources(sourceOptions)
+    : normalized === "cloudflare"
+      ? buildCloudflareCodexMcpConfigFromSources(sourceOptions)
+      : buildVercelCodexMcpConfigFromSources(sourceOptions);
+  const config = { ...(map[target.mcpServerName] || {}) };
+  if (normalized === "cloudflare" && !config.bearer_token_env_var && !config.oauth_resource) {
+    config.oauth_resource = DEFAULT_CLOUDFLARE_MCP_URL;
+  }
+  return {
+    server: normalized,
+    label: target.label,
+    mcpServerName: target.mcpServerName,
+    config,
+    authMode: config.bearer_token_env_var ? "api_key" : "oauth",
+  };
+}
+
+export async function syncCodexMcpOauthServerConfig({
+  server,
+  codexHome = "",
+  env = process.env,
+  appSupportPath = "",
+} = {}) {
+  const codexHomePath = codexHome ? path.resolve(codexHome) : defaultCodexHomePath(env);
+  const configPath = path.join(codexHomePath, "config.toml");
+  const desired = buildCodexMcpOauthServerConfig({ server, env, appSupportPath });
+  await fs.mkdir(path.dirname(configPath), { recursive: true });
+  let current = "";
+  try {
+    current = await fs.readFile(configPath, "utf8");
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    current = defaultCodexConfigToml();
+  }
+  const next = desired.server === "posthog"
+    ? mergeCodexTomlPostHogMcpConfig(current, desired.config)
+    : desired.server === "cloudflare"
+      ? mergeCodexTomlCloudflareMcpConfig(current, desired.config)
+      : mergeCodexTomlVercelMcpConfig(current, desired.config);
+  const changed = current !== next;
+  if (changed) {
+    await writeTextFileAtomically(configPath, next);
+  }
+  return {
+    ...desired,
+    codexHome: codexHomePath,
+    configPath,
+    changed,
+  };
+}
+
+async function writeTextFileAtomically(filePath, content) {
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tempPath, content, { mode: 0o600 });
+  await fs.rename(tempPath, filePath);
+  await fs.chmod(filePath, 0o600).catch(() => {});
+}
+
+export async function runCodexMcpCommand({
+  codexPath,
+  args = [],
+  env = process.env,
+  cwd = process.cwd(),
+  timeoutMs = MCP_OAUTH_PREWARM_TIMEOUT_MS,
+  onOutput,
+  stopWhen,
+  backgroundOnStop = false,
+  spawnImpl = spawn,
+} = {}) {
+  return new Promise((resolve) => {
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let timedOut = false;
+    let killTimer = null;
+    let child = null;
+    const cleanupTimers = () => {
+      clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+    };
+    const resolveOnce = (payload) => {
+      if (settled) return false;
+      settled = true;
+      resolve({ stdout, stderr, timedOut, ...payload });
+      return true;
+    };
+    const finish = (payload) => {
+      cleanupTimers();
+      resolveOnce(payload);
+    };
+    const terminate = (signal = "SIGTERM") => {
+      if (!child) return;
+      try {
+        if (process.platform !== "win32" && child.pid) {
+          process.kill(-child.pid, signal);
+        } else {
+          child.kill(signal);
+        }
+      } catch {
+        try {
+          child.kill(signal);
+        } catch {
+          // best effort
+        }
+      }
+    };
+    const maybeStopEarly = (stream) => {
+      if (settled || typeof stopWhen !== "function") return;
+      let shouldStop = false;
+      try {
+        shouldStop = Boolean(stopWhen({ stdout, stderr, stream }));
+      } catch {
+        shouldStop = false;
+      }
+      if (!shouldStop) return;
+      if (backgroundOnStop) {
+        resolveOnce({ exitCode: null, signal: null, backgrounded: true });
+        return;
+      }
+      terminate("SIGTERM");
+      finish({ exitCode: null, signal: "SIGTERM", earlyStopped: true });
+    };
+    child = spawnImpl(codexPath, args, {
+      cwd,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
+    });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      terminate("SIGTERM");
+      killTimer = setTimeout(() => {
+        terminate("SIGKILL");
+        finish({ exitCode: null, signal: "SIGKILL" });
+      }, 1500);
+    }, timeoutMs);
+    child.stdout?.on("data", (chunk) => {
+      const text = String(chunk || "");
+      stdout += text;
+      onOutput?.(text, "stdout");
+      maybeStopEarly("stdout");
+    });
+    child.stderr?.on("data", (chunk) => {
+      const text = String(chunk || "");
+      stderr += text;
+      onOutput?.(text, "stderr");
+      maybeStopEarly("stderr");
+    });
+    child.on("error", (error) => finish({ exitCode: null, error }));
+    child.on("close", (exitCode, signal) => finish({ exitCode, signal }));
+  });
+}
+
+async function resolveCodexCliRuntime({
+  env = process.env,
+  buildCodexEnvImpl,
+  resolveCodexBinaryPathImpl,
+} = {}) {
+  let buildEnv = buildCodexEnvImpl;
+  let resolveBinaryPath = resolveCodexBinaryPathImpl;
+  if (typeof buildEnv !== "function" || typeof resolveBinaryPath !== "function") {
+    const providerRunner = await import("./provider-runner.mjs");
+    buildEnv ||= providerRunner.buildCodexEnv;
+    resolveBinaryPath ||= providerRunner.resolveCodexBinaryPath;
+  }
+  const codexEnv = buildEnv(env);
+  const codexPath = resolveBinaryPath();
+  if (!codexPath) {
+    throw new Error("Codex CLI binary path is empty.");
+  }
+  return {
+    codexPath,
+    codexEnv,
+    codexHome: defaultCodexHomePath(codexEnv),
+  };
+}
+
+function isSuccessfulCodexCommand(commandResult = {}) {
+  return !commandResult.timedOut && !commandResult.error && commandResult.exitCode === 0;
+}
+
+function summarizeCodexCommandFailure(commandResult = {}) {
+  const text = [
+    commandResult.error?.message,
+    commandResult.stderr,
+    commandResult.stdout,
+    commandResult.signal ? `signal=${commandResult.signal}` : "",
+    commandResult.exitCode !== null && commandResult.exitCode !== undefined ? `exit=${commandResult.exitCode}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return (text || "Codex CLI 명령이 실패했어요.").slice(0, 160);
+}
+
+function codexMcpAddArgs(desired) {
+  const args = ["mcp", "add", desired.mcpServerName, "--url", desired.config.url];
+  if (desired.config.bearer_token_env_var) {
+    args.push("--bearer-token-env-var", desired.config.bearer_token_env_var);
+  }
+  if (desired.config.oauth_resource) {
+    args.push("--oauth-resource", desired.config.oauth_resource);
+  }
+  return args;
+}
+
+async function prewarmCodexMcpOauth({
+  normalized,
+  target,
+  workspaceRoot,
+  env,
+  timeoutMs,
+  verifyTimeoutMs,
+  progress,
+  runCodexMcpCommandImpl,
+  buildCodexEnvImpl,
+  resolveCodexBinaryPathImpl,
+} = {}) {
+  let runtime;
+  try {
+    runtime = await resolveCodexCliRuntime({
+      env,
+      buildCodexEnvImpl,
+      resolveCodexBinaryPathImpl,
+    });
+  } catch (error) {
+    return result(normalized, "codex", "failed", `Codex CLI를 사용할 수 없어요: ${error?.message || error}`);
+  }
+
+  const runCommandImpl = runCodexMcpCommandImpl || runCodexMcpCommand;
+  let loginUrlAnnounced = "";
+  let commandTranscript = "";
+  const announceLoginUrl = (text) => {
+    if (loginUrlAnnounced) return;
+    const url = extractFirstHttpUrl(text);
+    if (!url) return;
+    loginUrlAnnounced = url;
+    progress("login_url", "브라우저에서 OAuth 로그인을 완료해 주세요.", { loginUrl: url });
+  };
+  const runCli = async (args, phase, detail, commandTimeoutMs, options = {}) => {
+    commandTranscript = "";
+    progress(phase, detail);
+    const commandResult = await runCommandImpl({
+      codexPath: runtime.codexPath,
+      args,
+      env: runtime.codexEnv,
+      cwd: workspaceRoot || process.cwd(),
+      timeoutMs: commandTimeoutMs,
+      onOutput: (chunk) => {
+        commandTranscript += String(chunk || "");
+        announceLoginUrl(commandTranscript);
+      },
+      stopWhen: options.stopWhen,
+      backgroundOnStop: Boolean(options.backgroundOnStop),
+    });
+    announceLoginUrl(`${commandResult.stdout || ""}\n${commandResult.stderr || ""}`);
+    return commandResult;
+  };
+
+  progress("provider_started", `${target.label} MCP 서버를 Codex 설정에 등록하는 중… (codex)`);
+  const appSupportPath = runtime.codexEnv.AGENTIC30_APP_SUPPORT_PATH || env.AGENTIC30_APP_SUPPORT_PATH || "";
+  const desired = buildCodexMcpOauthServerConfig({
+    server: normalized,
+    env: runtime.codexEnv,
+    appSupportPath,
+  });
+
+  const getTimeoutMs = Math.min(verifyTimeoutMs, CODEX_MCP_CLI_GET_TIMEOUT_MS);
+  const initialGet = await runCli(
+    ["mcp", "get", desired.mcpServerName, "--json"],
+    "registering",
+    `${target.label} MCP 서버 등록 여부를 확인하는 중…`,
+    getTimeoutMs,
+  );
+  if (!isSuccessfulCodexCommand(initialGet)) {
+    const addResult = await runCli(
+      codexMcpAddArgs(desired),
+      "registering",
+      `${target.label} MCP 서버를 Codex에 등록하는 중…`,
+      timeoutMs,
+      {
+        stopWhen: () => Boolean(loginUrlAnnounced),
+        backgroundOnStop: true,
+      },
+    );
+    try {
+      await syncCodexMcpOauthServerConfig({
+        server: normalized,
+        codexHome: runtime.codexHome,
+        env: runtime.codexEnv,
+        appSupportPath,
+      });
+    } catch (error) {
+      return result(normalized, "codex", "failed", `Codex MCP 설정 저장 실패: ${error?.message || error}`, loginUrlAnnounced);
+    }
+    if ((addResult.timedOut || addResult.earlyStopped || addResult.backgrounded) && loginUrlAnnounced) {
+      return result(
+        normalized,
+        "codex",
+        "login_pending",
+        `${target.label} 브라우저 로그인이 필요해요 — 로그인 완료 후 'MCP 연결'을 다시 눌러 검증해 주세요.`,
+        loginUrlAnnounced,
+      );
+    }
+    if (!isSuccessfulCodexCommand(addResult)) {
+      return result(
+        normalized,
+        "codex",
+        loginUrlAnnounced ? "login_pending" : "failed",
+        loginUrlAnnounced
+          ? `${target.label} 브라우저 로그인이 필요해요 — 로그인 완료 후 'MCP 연결'을 다시 눌러 검증해 주세요.`
+          : `${target.label} MCP Codex 등록 실패: ${summarizeCodexCommandFailure(addResult)}`,
+        loginUrlAnnounced,
+      );
+    }
+  } else {
+    try {
+      await syncCodexMcpOauthServerConfig({
+        server: normalized,
+        codexHome: runtime.codexHome,
+        env: runtime.codexEnv,
+        appSupportPath,
+      });
+    } catch (error) {
+      return result(normalized, "codex", "failed", `Codex MCP 설정 저장 실패: ${error?.message || error}`, loginUrlAnnounced);
+    }
+  }
+
+  if (desired.authMode === "api_key") {
+    return result(
+      normalized,
+      "codex",
+      "ready",
+      `${target.label} MCP 설정이 Codex에 등록됨 (${providerDisplayLabel("codex")}, API key) — 이 프로바이더의 AI 실행에서 바로 사용 가능해요.`,
+    );
+  }
+
+  const loginResult = await runCli(
+    ["mcp", "login", desired.mcpServerName],
+    "authenticating",
+    `${target.label} MCP OAuth 로그인을 Codex에서 시작하는 중…`,
+    timeoutMs,
+    {
+      stopWhen: () => Boolean(loginUrlAnnounced),
+      backgroundOnStop: true,
+    },
+  );
+  if (loginResult.backgrounded) {
+    return result(
+      normalized,
+      "codex",
+      "login_pending",
+      `${target.label} 브라우저 로그인이 필요해요 — 로그인 완료 후 'MCP 연결'을 다시 눌러 검증해 주세요.`,
+      loginUrlAnnounced,
+    );
+  }
+  if (loginResult.earlyStopped) {
+    return result(
+      normalized,
+      "codex",
+      "login_pending",
+      `${target.label} 브라우저 로그인이 필요해요 — 로그인 완료 후 'MCP 연결'을 다시 눌러 검증해 주세요.`,
+      loginUrlAnnounced,
+    );
+  }
+  if (loginResult.timedOut) {
+    return result(
+      normalized,
+      "codex",
+      loginUrlAnnounced ? "login_pending" : "failed",
+      loginUrlAnnounced
+        ? `${target.label} 브라우저 로그인이 끝나지 않았어요 — 로그인 완료 후 'MCP 연결'을 다시 눌러 주세요.`
+        : `${target.label} MCP Codex 로그인 시작이 시간 초과됐어요 — 다시 시도해 주세요.`,
+      loginUrlAnnounced,
+    );
+  }
+  if (!isSuccessfulCodexCommand(loginResult)) {
+    return result(
+      normalized,
+      "codex",
+      loginUrlAnnounced ? "login_pending" : "failed",
+      loginUrlAnnounced
+        ? `${target.label} 브라우저 로그인이 필요해요 — 로그인 완료 후 'MCP 연결'을 다시 눌러 검증해 주세요.`
+        : `${target.label} MCP Codex 로그인 실패: ${summarizeCodexCommandFailure(loginResult)}`,
+      loginUrlAnnounced,
+    );
+  }
+
+  const verifyResult = await runCli(
+    ["mcp", "get", desired.mcpServerName, "--json"],
+    "verifying",
+    `${target.label} MCP Codex 설정을 검증하는 중…`,
+    getTimeoutMs,
+  );
+  if (!isSuccessfulCodexCommand(verifyResult)) {
+    return result(
+      normalized,
+      "codex",
+      "failed",
+      `${target.label} MCP Codex 로그인 후 설정 검증 실패: ${summarizeCodexCommandFailure(verifyResult)}`,
+      loginUrlAnnounced,
+    );
+  }
+
+  return result(
+    normalized,
+    "codex",
+    "ready",
+    `${target.label} MCP OAuth 로그인과 Codex 설정이 확인됨 (${providerDisplayLabel("codex")}) — 이 프로바이더의 AI 실행에서 바로 사용 가능해요.`,
+    loginUrlAnnounced,
+  );
+}
+
 export async function prewarmMcpOauth({
   server,
   provider,
@@ -196,11 +678,14 @@ export async function prewarmMcpOauth({
   verifyTimeoutMs = MCP_OAUTH_PREWARM_VERIFY_TIMEOUT_MS,
   recheckDelayMs = MCP_OAUTH_PREWARM_RECHECK_DELAY_MS,
   maxRechecks = MCP_OAUTH_PREWARM_MAX_RECHECKS,
+  runCodexMcpCommandImpl,
+  buildCodexEnvImpl,
+  resolveCodexBinaryPathImpl,
 } = {}) {
   const normalized = normalizeMcpOauthPrewarmServer(server);
   const target = MCP_OAUTH_PREWARM_SERVERS[normalized];
   if (!target) {
-    return result(String(server || ""), provider || "", "failed", "알 수 없는 MCP 서버예요 (posthog 또는 cloudflare).");
+    return result(String(server || ""), provider || "", "failed", "알 수 없는 MCP 서버예요 (posthog, cloudflare 또는 vercel).");
   }
   if (!provider) {
     return result(normalized, "", "failed", "사용 가능한 AI 프로바이더가 없어요 — Claude 또는 Codex 로그인이 필요해요.");
@@ -208,9 +693,6 @@ export async function prewarmMcpOauth({
   if (env.AGENTIC30_TEST_STUB_PROVIDER === "1") {
     // Hermetic UI tests: stub provider can't run MCP OAuth — succeed deterministically.
     return result(normalized, provider, "ready", `${target.label} MCP 연결 확인됨 (stub)`);
-  }
-  if (typeof runProviderStreamImpl !== "function") {
-    return result(normalized, provider, "failed", "프로바이더 실행기를 사용할 수 없어요.");
   }
 
   const progress = (phase, detail, extra = {}) => {
@@ -220,6 +702,25 @@ export async function prewarmMcpOauth({
       // progress is best-effort; never let a listener break the prewarm
     }
   };
+
+  if (String(provider || "").trim().toLowerCase() === "codex") {
+    return prewarmCodexMcpOauth({
+      normalized,
+      target,
+      workspaceRoot,
+      env,
+      timeoutMs,
+      verifyTimeoutMs,
+      progress,
+      runCodexMcpCommandImpl,
+      buildCodexEnvImpl,
+      resolveCodexBinaryPathImpl,
+    });
+  }
+
+  if (typeof runProviderStreamImpl !== "function") {
+    return result(normalized, provider, "failed", "프로바이더 실행기를 사용할 수 없어요.");
+  }
 
   // 로그인 URL은 전체 시도에 걸쳐 한 번만 공지 — 재확인 시도에서 새 URL이
   // 나와도 브라우저를 다시 열어 사용자의 진행 중 로그인을 깨면 안 된다.

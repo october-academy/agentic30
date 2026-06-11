@@ -1647,6 +1647,8 @@ struct IntakeV2ReadyAnalyzeView: View {
     var providerLimitNotice: ScanProviderLimitNotice? = nil
     var providerLimitFallback: AgentProvider? = nil
     var onProviderLimitRescan: ((AgentProvider) -> Void)? = nil
+    var scanBlockedNotice: WorkspaceScanBlockedNotice? = nil
+    var onScanBlockedRescan: ((AgentProvider) -> Void)? = nil
 
     @State private var decision: IntakeV2Decision?
     @State private var revealCard: Bool = false
@@ -1731,7 +1733,10 @@ struct IntakeV2ReadyAnalyzeView: View {
                         scanPreviewCard(presentation)
                             .transition(.opacity)
 
-                        if presentation.showsSlowCopy {
+                        if presentation.isBlocked {
+                            scanBlockedNoticeBanner
+                                .transition(.opacity)
+                        } else if presentation.showsSlowCopy {
                             slowScanNotice
                                 .transition(.opacity)
                         }
@@ -1767,6 +1772,9 @@ struct IntakeV2ReadyAnalyzeView: View {
         }
         if store.folderURL == nil {
             return "폴더 없이 시작합니다. 앞서 답한 내용만으로 질문을 준비합니다."
+        }
+        if presentation.isBlocked {
+            return "로컬 신호만으로는 Day 1을 시작하지 않습니다. AI 연결을 확인한 뒤 다시 검증하세요."
         }
         return "완료되면 바로 질문을 시작할 수 있습니다."
     }
@@ -1901,6 +1909,8 @@ struct IntakeV2ReadyAnalyzeView: View {
             return "질문 \(questionCount)개 구성 중"
         case .merged:
             return "질문 준비 완료"
+        case .blocked:
+            return "AI 검증이 필요합니다"
         case .failed:
             return "자료 확인 중단"
         }
@@ -1919,6 +1929,8 @@ struct IntakeV2ReadyAnalyzeView: View {
             return "고객, 문제, 확인할 행동 질문으로 묶는 중입니다."
         case .merged:
             return "질문에 쓸 근거를 모두 붙였습니다."
+        case .blocked:
+            return "연결된 AI로 근거 검증을 완료해야 Day 1을 시작할 수 있습니다."
         case .failed:
             return "폴더 신호가 부족해 기본 질문으로 이어갑니다."
         }
@@ -2076,6 +2088,7 @@ struct IntakeV2ReadyAnalyzeView: View {
         guard !presentation.canOpenDay1 else { return .complete }
         let activeIndex = min(max(presentation.phase.stepIndex - 1, 0), previewSlots.count - 1)
         if index < activeIndex { return .complete }
+        if presentation.isBlocked { return .pending }
         if index == activeIndex { return .active }
         return .pending
     }
@@ -2120,6 +2133,63 @@ struct IntakeV2ReadyAnalyzeView: View {
         .accessibilityIdentifier("intakeV2.scanSlowNotice")
     }
 
+    private var scanBlockedNoticeBanner: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.octagon.fill")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(IntakeV2Color.textSecondary)
+                .frame(width: 20, height: 20)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(scanBlockedTitle)
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(IntakeV2Color.textPrimary)
+                Text(scanBlockedBody)
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(IntakeV2Color.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 8)
+
+            if let nextProvider = scanBlockedNotice?.nextProvider,
+               let onScanBlockedRescan {
+                Button {
+                    onScanBlockedRescan(nextProvider)
+                } label: {
+                    Text("\(nextProvider.title)로 다시 검증")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                }
+                .buttonStyle(.borderedProminent)
+                .help("\(nextProvider.title)로 근거 검증을 다시 실행합니다. 기본 provider 설정도 \(nextProvider.title)로 바뀝니다.")
+                .accessibilityIdentifier("intakeV2.scanBlockedRescan")
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(IntakeV2Color.textSecondary.opacity(0.07))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(IntakeV2Color.textSecondary.opacity(0.2), lineWidth: 1))
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("intakeV2.scanBlockedNotice")
+    }
+
+    private var scanBlockedTitle: String {
+        guard let notice = scanBlockedNotice else {
+            return "AI 검증을 완료하지 못했어요"
+        }
+        return "\(notice.provider.title) 검증을 완료하지 못했어요"
+    }
+
+    private var scanBlockedBody: String {
+        if let nextProvider = scanBlockedNotice?.nextProvider {
+            return "로컬 신호만으로는 Day 1을 시작하지 않습니다. \(nextProvider.title)로 다시 검증하세요."
+        }
+        return "연결된 AI가 없어 진행할 수 없습니다. Settings > AI 연결에서 provider를 연결한 뒤 다시 시도하세요."
+    }
+
     private func scanWaitFooter(_ presentation: Day1ScanWaitPresentation, isNarrow: Bool) -> some View {
         HStack(alignment: .center, spacing: 12) {
             Button(action: handleBack) {
@@ -2138,7 +2208,7 @@ struct IntakeV2ReadyAnalyzeView: View {
                 ZStack(alignment: .leading) {
                     Button(action: { handleInboxCTA(presentation) }) {
                         HStack(spacing: 8) {
-                            if !presentation.canOpenDay1 {
+                            if !presentation.canOpenDay1 && !presentation.isBlocked {
                                 IntakeV2ActivitySpinner(
                                     size: 15,
                                     lineWidth: 2,
@@ -2165,7 +2235,7 @@ struct IntakeV2ReadyAnalyzeView: View {
                     .accessibilityIdentifier("intakeV2.openInboxButton")
                     .accessibilityFocused($primaryCTAFocused)
 
-                    if !presentation.canOpenDay1 {
+                    if !presentation.canOpenDay1 && !presentation.isBlocked {
                         IntakeV2FooterSpinnerAccessibilityMarker()
                             .padding(.leading, 30)
                     }
@@ -2252,6 +2322,7 @@ struct IntakeV2ReadyAnalyzeView: View {
             "total_steps": presentation.phase.totalSteps,
             "has_folder": store.folderURL != nil,
             "scan_failed": presentation.state == .scanFailed,
+            "scan_blocked": presentation.state == .scanBlocked,
         ]
         if let elapsedSeconds = presentation.elapsedSeconds {
             properties["elapsed_seconds"] = elapsedSeconds

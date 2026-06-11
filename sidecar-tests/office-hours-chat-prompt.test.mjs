@@ -109,6 +109,7 @@ test("office-hours locked Day 1 goal prompt skips gates and requires a structure
   const context = [
     "DAY1_LOCKED_GOAL",
     "Flow contract: locked Day 1 goal interview.",
+    "Expected question count: 6",
     "Goal lane: make_money / 첫 매출 달성",
     "Goal text: support lead가 Slack 누락에 돈을 낼지 확인한다.",
     "Customer: B2B support lead",
@@ -126,6 +127,10 @@ test("office-hours locked Day 1 goal prompt skips gates and requires a structure
   assert.match(prompt, /first response MUST call agentic30_request_user_input/i);
   assert.match(prompt, /weakest missing evidence/);
   assert.match(prompt, /money signal for make_money/);
+  assert.match(prompt, /hard upper bound/);
+  assert.match(prompt, /Ask no more than six user-facing structured input cards/);
+  assert.match(prompt, /After the sixth locked-goal answer, do not ask 전제 확인 or 대안 비교 as more structured input/);
+  assert.match(prompt, /host app show the commitment close/);
   assert.match(prompt, /Do not write files, write docs, publish posts/);
   assert.match(prompt, /public evidence logging is available/);
 });

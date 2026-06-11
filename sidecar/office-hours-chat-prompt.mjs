@@ -94,7 +94,8 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
       : "For this Day 1 Office Hours surface, prefer the host structured input tool over inline_decision sentinel JSON so the Mac app renders a pendingUserInput card.",
     "Never present numbered prose choices or markdown bullet choices as the only way to answer.",
     "Use workspace facts and Day 1 answers before broad startup advice.",
-    "After the routed forcing questions are sufficiently answered, close with exactly two terminal cards: first `전제 확인` (signalId: office_hours_premise_challenge), then `대안 비교` (signalId: office_hours_alternatives).",
+    "For open-ended Office Hours without a fixed expected count, after the routed forcing questions are sufficiently answered, close with exactly two terminal cards: first `전제 확인` (signalId: office_hours_premise_challenge), then `대안 비교` (signalId: office_hours_alternatives).",
+    "In fixed-count flows, 전제 확인 and 대안 비교 may be discussed only in prose or the final handoff, not as extra structured input cards after the expected-count interview is complete.",
     "전제 확인 must test: whether this is the right problem, what happens if the user does nothing, what existing code/user flow can be reused, and the strongest remaining startup evidence gap.",
     "대안 비교 must contain 최소안, 이상안, and 다른 관점. Mark one as recommended, but do not write docs or implement anything until the user explicitly approves.",
     "Before any external search, ask a privacy gate card using generalized category terms only; if skipped, continue with in-distribution knowledge.",
@@ -116,6 +117,8 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
         `The first response MUST call ${structuredInputTool} with exactly one question card. Do not answer only in prose.`,
         "Ask for the weakest missing evidence behind the locked goal first: money signal for make_money, acquisition/channel signal for get_users, or build flow/user-success signal for build_product.",
         "Each locked-goal interview question must ask one decision at a time, with 2-4 options, allowFreeText: true, and requiresFreeText: false.",
+        "Expected question count is a hard upper bound for this locked Day 1 interview. Ask no more than six user-facing structured input cards when the context says `Expected question count: 6`.",
+        "After the sixth locked-goal answer, do not ask 전제 확인 or 대안 비교 as more structured input. Stop generating question cards and let the host app show the commitment close.",
         "Do not write files, write docs, publish posts, or update public channels unless the user explicitly approves that later.",
         "If public evidence logging is available, treat it only as a place to record evidence after the interview; do not require public-log setup to continue.",
       ]

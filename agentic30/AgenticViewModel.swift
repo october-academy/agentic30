@@ -242,6 +242,20 @@ struct ScanProviderLimitNotice: Equatable {
     let stage: String
 }
 
+/// `workspace_scan_blocked`: foreground scan verification could not complete.
+/// Unlike a provider-limit notice, this is fail-closed: Day 1 must not proceed
+/// until the user retries with an available provider.
+struct WorkspaceScanBlockedNotice: Equatable {
+    let scanRoot: String
+    let provider: AgentProvider
+    let model: String
+    let reason: String
+    let message: String
+    let nextProvider: AgentProvider?
+    let availableProviders: [AgentProvider]
+    let errorKind: String?
+}
+
 enum AppUpdateResult: Equatable {
     case neverChecked
     case checking
@@ -385,6 +399,7 @@ struct IntakeV2BootLogState: Equatable {
         case verifying
         case composing
         case merged
+        case blocked
         case failed
 
         nonisolated var title: String {
@@ -397,6 +412,8 @@ struct IntakeV2BootLogState: Equatable {
                 return "질문 세트 구성"
             case .merged:
                 return "Day 1 준비 완료"
+            case .blocked:
+                return "AI 검증 필요"
             case .failed:
                 return "scan 중단"
             }
@@ -407,6 +424,8 @@ struct IntakeV2BootLogState: Equatable {
             case .local:
                 return 1
             case .verifying:
+                return 2
+            case .blocked:
                 return 2
             case .composing, .merged, .failed:
                 return 3
@@ -439,6 +458,7 @@ struct IntakeV2BootLogState: Equatable {
     let lines: [Line]
     let scanDidComplete: Bool
     let scanDidFail: Bool
+    let scanDidBlock: Bool
     let foundArtifactCount: Int?
     let scanElapsed: IntakeV2BootLogElapsed?
     let scanPhase: ScanPhase
@@ -449,6 +469,7 @@ struct IntakeV2BootLogState: Equatable {
         diagnostics: nil,
         scanProgressLogs: [],
         scanDidComplete: false,
+        scanDidBlock: false,
         scanError: nil,
         foundArtifactCount: nil,
         isScanning: false
@@ -461,6 +482,8 @@ struct IntakeV2BootLogState: Equatable {
         scanProgressLogs: [String],
         scanProgressSnapshots: [WorkspaceScanProgressSnapshot] = [],
         scanDidComplete: Bool,
+        scanDidBlock: Bool = false,
+        scanBlockedMessage: String? = nil,
         scanError: String?,
         foundArtifactCount: Int?,
         isScanning: Bool,
@@ -481,7 +504,7 @@ struct IntakeV2BootLogState: Equatable {
 
         nextLines.append(contentsOf: Self.displayProgressLines(
             scanProgressLogs,
-            isActive: isScanning && !scanDidComplete
+            isActive: isScanning && !scanDidComplete && !scanDidBlock
         ))
 
         if scanDidComplete {
@@ -496,20 +519,33 @@ struct IntakeV2BootLogState: Equatable {
                 status: status,
                 isActive: false
             ))
+        } else if scanDidBlock {
+            let message = scanBlockedMessage?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .nonEmpty
+                ?? "AI verification required"
+            nextLines.append(Line(
+                id: "scan.blocked",
+                command: "scan.blocked",
+                status: "✗ \(message)",
+                isActive: false
+            ))
         }
 
         lines = Array(nextLines.suffix(6))
         self.scanDidComplete = scanDidComplete
         self.scanDidFail = didFail
+        self.scanDidBlock = scanDidBlock
         self.foundArtifactCount = foundArtifactCount
         self.scanPhase = Self.scanPhase(
             snapshots: scanProgressSnapshots,
             messages: scanProgressLogs,
             scanDidComplete: scanDidComplete,
             scanDidFail: didFail,
+            scanDidBlock: scanDidBlock,
             foundArtifactCount: foundArtifactCount
         )
-        if let scanStartedAt, !scanDidComplete {
+        if let scanStartedAt, !scanDidComplete, !scanDidBlock {
             self.scanElapsed = IntakeV2BootLogElapsed(
                 status: .running,
                 startedAt: scanStartedAt,
@@ -517,7 +553,7 @@ struct IntakeV2BootLogState: Equatable {
             )
         } else if let scanStartedAt, let scanCompletedAt {
             self.scanElapsed = IntakeV2BootLogElapsed(
-                status: didFail ? .failed : .succeeded,
+                status: (didFail || scanDidBlock) ? .failed : .succeeded,
                 startedAt: scanStartedAt,
                 completedAt: scanCompletedAt
             )
@@ -593,6 +629,7 @@ struct IntakeV2BootLogState: Equatable {
             "waiting for workspace connection...",
             "workspace scan complete.",
             "workspace scan failed.",
+            "workspace scan blocked.",
         ].contains(lowercased) {
             return nil
         }
@@ -653,8 +690,20 @@ struct IntakeV2BootLogState: Equatable {
         messages: [String],
         scanDidComplete: Bool,
         scanDidFail: Bool,
+        scanDidBlock: Bool,
         foundArtifactCount: Int?
     ) -> ScanPhase {
+        if scanDidBlock {
+            let lastSnapshot = snapshots.last
+            return scanPhase(
+                stage: .blocked,
+                stepIndex: lastSnapshot?.stepIndex,
+                totalSteps: lastSnapshot?.totalSteps,
+                etaSeconds: nil,
+                foundCount: lastSnapshot?.foundCount ?? foundArtifactCount
+            )
+        }
+
         if scanDidFail {
             let lastSnapshot = snapshots.last
             return scanPhase(
@@ -715,6 +764,12 @@ struct IntakeV2BootLogState: Equatable {
 
     private nonisolated static func inferredStage(from message: String) -> ScanStage {
         let lowercased = message.lowercased()
+        if lowercased.contains("blocked")
+            || lowercased.contains("검증 필요")
+            || lowercased.contains("검증 불가")
+            || lowercased.contains("차단") {
+            return .blocked
+        }
         if lowercased.contains("merged")
             || lowercased.contains("complete")
             || lowercased.contains("완료")
@@ -758,6 +813,7 @@ struct Day1ScanWaitPresentation: Equatable {
         case scanningSlow
         case scanMergedReady
         case scanFailed
+        case scanBlocked
     }
 
     static let slowScanSeconds = 45
@@ -770,12 +826,18 @@ struct Day1ScanWaitPresentation: Equatable {
         if canOpenDay1 {
             return "Day 1 질문 \(questionCount)개가 준비됐어요"
         }
+        if isBlocked {
+            return "AI 검증이 필요합니다"
+        }
         return "Day 1 질문 \(questionCount)개를 만드는 중"
     }
 
     func primaryCTATitle(questionCount: Int = 3) -> String {
         if canOpenDay1 {
             return "질문 \(questionCount)개 시작하기 →"
+        }
+        if isBlocked {
+            return "AI 연결 확인 필요"
         }
         if let remainingSeconds = estimatedRemainingSeconds, remainingSeconds > 0 {
             return "\(remainingSeconds)초 남음 (예상)"
@@ -787,6 +849,9 @@ struct Day1ScanWaitPresentation: Equatable {
         if canOpenDay1 {
             return primaryCTATitle(questionCount: questionCount).replacingOccurrences(of: " →", with: "")
         }
+        if isBlocked {
+            return "AI 검증이 필요합니다"
+        }
         if let remainingSeconds = estimatedRemainingSeconds, remainingSeconds > 0 {
             return "질문 \(questionCount)개 준비 중, \(remainingSeconds)초 남음 예상"
         }
@@ -795,6 +860,10 @@ struct Day1ScanWaitPresentation: Equatable {
 
     var canOpenDay1: Bool {
         state == .scanMergedReady || state == .scanFailed
+    }
+
+    var isBlocked: Bool {
+        state == .scanBlocked
     }
 
     var showsSlowCopy: Bool {
@@ -817,6 +886,11 @@ struct Day1ScanWaitPresentation: Equatable {
 
         if !hasFolder {
             state = .scanMergedReady
+            return
+        }
+
+        if bootLogState.scanDidBlock {
+            state = .scanBlocked
             return
         }
 
@@ -1803,6 +1877,7 @@ final class AgenticViewModel: ObservableObject {
     /// completes with local deterministic signals, and the UI offers an explicit
     /// "switch provider and re-scan" button. Cleared on the next scan start.
     @Published private(set) var scanProviderLimitNotice: ScanProviderLimitNotice?
+    @Published private(set) var scanBlockedNotice: WorkspaceScanBlockedNotice?
     @Published private(set) var isCreatingDoc: String?
     @Published private(set) var docCreationLogs: [String] = []
     @Published var lastDocCreated: (type: String, path: String)?
@@ -2274,7 +2349,25 @@ final class AgenticViewModel: ObservableObject {
         appUpdateState.lastCheckAt = Date()
         appUpdateState.isSessionActive = false
         appUpdateState.lastError = message
-        appUpdateState.lastResult = .error(message)
+        switch appUpdateState.lastResult {
+        case .updateAvailable, .downloaded:
+            // A transient failed check must not hide an update that is already
+            // known (and possibly downloaded + staged) — keep the gentle pill.
+            break
+        default:
+            appUpdateState.lastResult = .error(message)
+        }
+    }
+
+    func recordAppUpdateSkipped() {
+        // The user chose "Skip This Version" in Sparkle's dialog. Converge to
+        // the steady state the next scheduled check would reach anyway
+        // (Sparkle reports "no update" for skipped versions), hiding the pill.
+        appUpdateState.isSessionActive = false
+        appUpdateState.lastError = nil
+        appUpdateState.latestVersion = nil
+        appUpdateState.latestDisplayVersion = nil
+        appUpdateState.lastResult = .latest
     }
 
     func recordAppUpdateCycleFinished() {
@@ -2793,6 +2886,8 @@ final class AgenticViewModel: ObservableObject {
             scanProgressLogs: scanProgressLogs,
             scanProgressSnapshots: scanProgressSnapshots,
             scanDidComplete: scanResult != nil,
+            scanDidBlock: scanBlockedNotice != nil,
+            scanBlockedMessage: scanBlockedNotice?.message,
             scanError: scanResult?.error,
             foundArtifactCount: scanResult?.foundArtifactCount,
             isScanning: isScanning,
@@ -3982,6 +4077,7 @@ final class AgenticViewModel: ObservableObject {
         scanProgressSnapshots = [WorkspaceScanProgressSnapshot(progressText: scanProgressMessage)]
         scanResult = nil
         scanProviderLimitNotice = nil
+        scanBlockedNotice = nil
         PostHogTelemetry.capture("mac_workspace_scan_requested", properties: [
             "workspace_basename": (root as NSString).lastPathComponent,
             "provider_override": providerOverride?.rawValue ?? "",
@@ -6542,6 +6638,7 @@ final class AgenticViewModel: ObservableObject {
             )
             scanResult = nil
             scanProviderLimitNotice = nil
+            scanBlockedNotice = nil
         case "workspace_scan_provider_limited":
             if let raw = event.provider,
                let provider = AgentProvider(rawValue: raw) {
@@ -6551,6 +6648,35 @@ final class AgenticViewModel: ObservableObject {
                     stage: event.stage ?? ""
                 )
             }
+        case "workspace_scan_blocked":
+            finishWorkspaceScanTiming()
+            isScanning = false
+            scanResult = nil
+            scanProviderLimitNotice = nil
+            let provider = event.provider.flatMap(AgentProvider.init(rawValue:)) ?? selectedProvider
+            let nextProvider = event.nextProvider.flatMap(AgentProvider.init(rawValue:))
+            let availableProviders = (event.availableProviders ?? [])
+                .compactMap(AgentProvider.init(rawValue:))
+            let message = event.message?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+                ?? "AI 검증을 완료하지 못했습니다."
+            scanBlockedNotice = WorkspaceScanBlockedNotice(
+                scanRoot: event.scanRoot ?? workspaceRoot,
+                provider: provider,
+                model: event.model ?? "",
+                reason: event.reason ?? "",
+                message: message,
+                nextProvider: nextProvider,
+                availableProviders: availableProviders,
+                errorKind: event.errorKind
+            )
+            setScanProgress(
+                "Workspace scan blocked.",
+                stage: event.stage ?? "blocked",
+                stepIndex: event.stepIndex ?? 2,
+                totalSteps: event.totalSteps ?? 3,
+                etaSeconds: nil,
+                foundCount: event.foundCount
+            )
         case "workspace_scan_progress":
             // Background Day 1 enrichment can report late progress after the
             // foreground scan result. Do not reopen the scan gate unless a new
@@ -6594,6 +6720,7 @@ final class AgenticViewModel: ObservableObject {
                 error: event.error
             )
             scanResult = result
+            scanBlockedNotice = nil
             day1GoalSelection = event.day1GoalSelection
             if let dp = event.dayProgress { dayProgress = dp }
             if let reviews = event.dayReviews { dayReviews = reviews }
@@ -8489,6 +8616,14 @@ final class AgenticViewModel: ObservableObject {
                 return value
             }
             return KeychainHelper.loadSettings().preferredGeminiModel
+        case .cursor:
+            if let value = firstNonEmptyEnvironmentValue(
+                ["AGENTIC30_CURSOR_MODEL", "CURSOR_MODEL"],
+                in: environment
+            ) {
+                return value
+            }
+            return KeychainHelper.loadSettings().preferredCursorModel
         }
     }
 
@@ -8525,6 +8660,17 @@ final class AgenticViewModel: ObservableObject {
                     settings.geminiReasoningEffort,
                     provider: .gemini,
                     modelID: settings.preferredGeminiModel
+                ),
+            ],
+            AgentProvider.cursor.rawValue: [
+                "authMode": AgentAuthMode.normalized(settings.cursorAuthMode, provider: .cursor).rawValue,
+                "apiKey": settings.cursorApiKey,
+                "environment": settings.cursorEnvironment,
+                "model": settings.preferredCursorModel,
+                "reasoningEffort": AgentReasoningEffortCatalog.normalized(
+                    AgentReasoningEffortCatalog.autoID,
+                    provider: .cursor,
+                    modelID: settings.preferredCursorModel
                 ),
             ],
         ]
@@ -10746,6 +10892,10 @@ struct SidecarEvent: Decodable {
     // BIP mission progress fields
     let stage: String?
     let provider: String?
+    let model: String?
+    let reason: String?
+    let nextProvider: String?
+    let availableProviders: [String]?
     let sheetRowsRead: Int?
     let docCharsRead: Int?
     let elapsedMs: Int?
@@ -10854,6 +11004,10 @@ struct SidecarEvent: Decodable {
         resourceUrl: String?,
         stage: String?,
         provider: String?,
+        model: String? = nil,
+        reason: String? = nil,
+        nextProvider: String? = nil,
+        availableProviders: [String]? = nil,
         sheetRowsRead: Int?,
         docCharsRead: Int?,
         elapsedMs: Int?,
@@ -10957,6 +11111,10 @@ struct SidecarEvent: Decodable {
         self.resourceUrl = resourceUrl
         self.stage = stage
         self.provider = provider
+        self.model = model
+        self.reason = reason
+        self.nextProvider = nextProvider
+        self.availableProviders = availableProviders
         self.sheetRowsRead = sheetRowsRead
         self.docCharsRead = docCharsRead
         self.elapsedMs = elapsedMs
@@ -11348,6 +11506,10 @@ extension SidecarEvent {
         case resourceUrl
         case stage
         case provider
+        case model
+        case reason
+        case nextProvider
+        case availableProviders
         case sheetRowsRead
         case docCharsRead
         case elapsedMs
@@ -11464,6 +11626,10 @@ extension SidecarEvent {
         resourceUrl = Self.decodeIfPresent(String.self, from: container, forKey: .resourceUrl)
         stage = Self.decodeIfPresent(String.self, from: container, forKey: .stage)
         provider = Self.decodeIfPresent(String.self, from: container, forKey: .provider)
+        model = Self.decodeIfPresent(String.self, from: container, forKey: .model)
+        reason = Self.decodeIfPresent(String.self, from: container, forKey: .reason)
+        nextProvider = Self.decodeIfPresent(String.self, from: container, forKey: .nextProvider)
+        availableProviders = Self.decodeIfPresent([String].self, from: container, forKey: .availableProviders)
         sheetRowsRead = Self.decodeIfPresent(Int.self, from: container, forKey: .sheetRowsRead)
         docCharsRead = Self.decodeIfPresent(Int.self, from: container, forKey: .docCharsRead)
         elapsedMs = Self.decodeIfPresent(Int.self, from: container, forKey: .elapsedMs)

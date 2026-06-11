@@ -252,9 +252,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 authSession: viewModel.macAuthSession
             )
             openWorkspaceWindow()
-            if viewModel.requiresMacOnboarding {
-                requestAppUpdateStatusPanel()
-            } else {
+            // Always surface the transient status panel: while a background
+            // download is in flight the Settings row only offers a disabled
+            // button, which reads as a dead end after the pill promised action.
+            requestAppUpdateStatusPanel()
+            if !viewModel.requiresMacOnboarding {
                 requestOpenDesignSettingsRoute(section: .updates)
             }
             return
@@ -530,6 +532,26 @@ extension AppDelegate: SPUUpdaterDelegate {
         )
     }
 
+    func updater(
+        _ updater: SPUUpdater,
+        userDidMake choice: SPUUserUpdateChoice,
+        forUpdate updateItem: SUAppcastItem,
+        state: SPUUserUpdateState
+    ) {
+        // Only .skip clears the gentle pill — Sparkle persists the skipped
+        // version and future scheduled checks report "no update" for it, so
+        // keeping the pill would nag about a build the user declined.
+        // .dismiss ("Remind Me Later") keeping the pill is the gentle-reminder
+        // feature working as intended.
+        guard choice == .skip else { return }
+        viewModel.recordAppUpdateSkipped()
+        PostHogTelemetry.capture(
+            "mac_update_skipped",
+            properties: updateTelemetryProperties(for: updateItem),
+            authSession: viewModel.macAuthSession
+        )
+    }
+
     func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
         if let error {
             viewModel.recordAppUpdateError(error.localizedDescription)
@@ -757,6 +779,23 @@ private struct StatusMenuContent: View {
                         }
                     }
                     .buttonStyle(.plain)
+                }
+            }
+
+            if let pendingUpdateVersion = viewModel.appUpdateState.lastResult.pendingUpdateVersionLabel {
+                Button {
+                    PostHogTelemetry.capture(
+                        "mac_menu_bar_action",
+                        properties: [
+                            "action": "install_update",
+                            "version": pendingUpdateVersion,
+                        ],
+                        authSession: viewModel.macAuthSession
+                    )
+                    NotificationCenter.default.post(name: .agenticCheckForUpdatesRequested, object: nil)
+                } label: {
+                    Label("업데이트 \(pendingUpdateVersion) 설치…", systemImage: "arrow.down.circle.fill")
+                        .foregroundStyle(Agentic30BrandColor.green)
                 }
             }
 

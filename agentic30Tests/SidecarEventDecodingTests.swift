@@ -658,6 +658,7 @@ struct SidecarEventDecodingTests {
             "githubMcp": { "state": "ready", "detail": "gh 토큰으로 GitHub MCP 연결됨" },
             "posthog": { "state": "failed", "detail": "PostHog API 검증 실패 (HTTP 401)" },
             "cloudflare": { "state": "missing", "detail": "API 토큰을 저장하면 활성화돼요." },
+            "vercel": { "state": "oauth", "detail": "MCP는 OAuth로 동작" },
             "checkedAt": "2026-06-10T09:00:00.000Z"
           }
         }
@@ -672,6 +673,7 @@ struct SidecarEventDecodingTests {
         #expect(status.posthog?.state == "failed")
         #expect(status.posthog?.isReady == false)
         #expect(status.cloudflare?.isMissing == true)
+        #expect(status.vercel?.isOauthDelegated == true)
         #expect(status.checkedAt == "2026-06-10T09:00:00.000Z")
     }
 
@@ -2771,6 +2773,56 @@ struct SidecarEventDecodingTests {
             stage: event.stage ?? ""
         )
         #expect(notice.provider == .codex)
+        #expect(notice.scanRoot == "/Users/me/project")
+    }
+
+    @MainActor @Test func decodesWorkspaceScanBlockedEnvelope() throws {
+        let payload = """
+        {
+          "type": "workspace_scan_blocked",
+          "scanRoot": "/Users/me/project",
+          "provider": "codex",
+          "model": "gpt-5.5",
+          "reason": "usage_limit",
+          "message": "Codex hit a usage limit during workspace scan verification.",
+          "nextProvider": "cursor",
+          "availableProviders": ["claude", "gemini", "cursor"],
+          "errorKind": "provider_usage_limit",
+          "stage": "blocked",
+          "stepIndex": 2,
+          "totalSteps": 3
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "workspace_scan_blocked")
+        #expect(event.scanRoot == "/Users/me/project")
+        #expect(event.provider == "codex")
+        #expect(event.model == "gpt-5.5")
+        #expect(event.reason == "usage_limit")
+        #expect(event.message == "Codex hit a usage limit during workspace scan verification.")
+        #expect(event.nextProvider == "cursor")
+        #expect(event.availableProviders == ["claude", "gemini", "cursor"])
+        #expect(event.errorKind == "provider_usage_limit")
+        #expect(event.stage == "blocked")
+        #expect(event.stepIndex == 2)
+        #expect(event.totalSteps == 3)
+
+        let provider = try #require(AgentProvider(rawValue: event.provider ?? ""))
+        let notice = WorkspaceScanBlockedNotice(
+            scanRoot: event.scanRoot ?? "",
+            provider: provider,
+            model: event.model ?? "",
+            reason: event.reason ?? "",
+            message: event.message ?? "",
+            nextProvider: event.nextProvider.flatMap(AgentProvider.init(rawValue:)),
+            availableProviders: (event.availableProviders ?? []).compactMap(AgentProvider.init(rawValue:)),
+            errorKind: event.errorKind
+        )
+        #expect(notice.provider == .codex)
+        #expect(notice.nextProvider == .cursor)
+        #expect(notice.availableProviders == [.claude, .gemini, .cursor])
         #expect(notice.scanRoot == "/Users/me/project")
     }
 

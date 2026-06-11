@@ -36,6 +36,10 @@ import {
   buildGithubClaudeMcpConfigFromSources,
   buildGithubCodexMcpConfigFromSources,
 } from "./github-mcp-config.mjs";
+import {
+  buildVercelClaudeMcpConfigFromSources,
+  buildVercelCodexMcpConfigFromSources,
+} from "./vercel-mcp-config.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sidecarRoot = path.resolve(__dirname);
@@ -58,6 +62,12 @@ const CLAUDE_REASONING_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max
 const GEMINI_THINKING_LEVELS = new Set(["minimal", "low", "medium", "high"]);
 const CODEX_MCP_TOOL_TIMEOUT_SEC = 60;
 const CODEX_INTERNAL_MCP_TOOL_TIMEOUT_SEC = 60 * 30;
+// Claude Agent SDK turn ceilings. The interactive lane keeps the historical 24;
+// the read-only workspace scanner is bounded far tighter (discover → read →
+// emit is ~3 turns, 5 leaves headroom) so a stuck scan fails fast instead of
+// burning minutes — see resolveClaudeMaxTurns.
+const DEFAULT_CLAUDE_MAX_TURNS = 24;
+const WORKSPACE_SCAN_MAX_TURNS = 5;
 const CODEX_INTERNAL_MCP_READ_ONLY_TOOLS = Object.freeze([
   "get_agentic30_context",
   CODEX_STRUCTURED_INPUT_TOOL,
@@ -82,6 +92,7 @@ const GEMINI_CAPABLE_EXECUTION_MODES = new Set([
   "judge_read_only",
   "idd_question_synthesis",
   "agentic",
+  "workspace_scan_read_only",
   "fast_chat",
   "memory_chat",
 ]);
@@ -90,6 +101,7 @@ const GEMINI_CAPABLE_EXECUTION_MODES = new Set([
 const CURSOR_CAPABLE_EXECUTION_MODES = new Set([
   "idd_question_synthesis",
   "agentic",
+  "workspace_scan_read_only",
   "fast_chat",
   "memory_chat",
 ]);
@@ -582,6 +594,7 @@ async function runClaudeProvider({
     ...(usesPostHogMcp(executionMode) ? buildPostHogClaudeMcpConfigFromSources({ appSupportPath, env: providerEnv }) : {}),
     ...(usesCloudflareMcp(executionMode) ? buildCloudflareClaudeMcpConfigFromSources({ appSupportPath, env: providerEnv }) : {}),
     ...(usesGithubMcp(executionMode) ? buildGithubClaudeMcpConfigFromSources({ env: providerEnv }) : {}),
+    ...(usesVercelMcp(executionMode) ? buildVercelClaudeMcpConfigFromSources({ env: providerEnv }) : {}),
   };
   const env = {
     ...providerEnv,
@@ -609,7 +622,6 @@ async function runClaudeProvider({
     env,
     cwd: workspaceRoot,
     mcpServers,
-    maxTurns: 24,
     includePartialMessages: true,
     canUseTool: buildClaudeCanUseTool({
       sessionId: sessionIdForMcp,
@@ -626,6 +638,7 @@ async function runClaudeProvider({
       append: systemPromptText,
     },
     abortController,
+    maxTurns: resolveClaudeMaxTurns(executionMode),
     ...(claudeVendor?.exists
       ? {
           plugins: [{ type: "local", path: claudeVendor.pluginRoot }],
@@ -859,6 +872,25 @@ function buildClaudeCanUseTool({
 export function isClaudeMutatingTool(toolName = "") {
   const normalized = String(toolName || "").toLowerCase();
   if (!normalized) return false;
+  if (/^mcp__vercel__/.test(normalized)) {
+    const action = normalized.split("__").pop()?.split(/[./]/).pop() || normalized;
+    if (/^(list|get|read|query|search|fetch|describe|inspect|show|find)(_|$)/.test(action)) {
+      return false;
+    }
+    return [
+      "create",
+      "update",
+      "delete",
+      "deploy",
+      "write",
+      "edit",
+      "publish",
+      "set",
+      "remove",
+      "cancel",
+      "rollback",
+    ].some((token) => new RegExp(`(^|[_:\\-])${token}($|[_:\\-])`).test(action));
+  }
   return [
     "bash",
     "edit",
@@ -1618,6 +1650,9 @@ export function buildCodexConfig({
       ...(usesGithubMcp(executionMode)
         ? withCodexMcpApproval(buildGithubCodexMcpConfigFromSources({ env: posthogEnv }))
         : {}),
+      ...(usesVercelMcp(executionMode)
+        ? withCodexMcpApproval(buildVercelCodexMcpConfigFromSources({ env: posthogEnv }))
+        : {}),
     },
     ...(codexVendor?.exists
       ? {
@@ -1880,6 +1915,12 @@ export function supportsCursorExecutionMode(executionMode = "") {
 }
 
 export function resolveCodexReasoningEffort({ executionMode = "", prompt = "" } = {}) {
+  if (executionMode === "workspace_scan_read_only") {
+    // Codex rejects reasoning.effort=minimal when its default tool set includes
+    // image_gen. Keep the scan lightweight, but force the lowest compatible
+    // effort regardless of env/settings overrides.
+    return "low";
+  }
   const configured = String(
     process.env.AGENTIC30_CODEX_REASONING_EFFORT
       || process.env.CODEX_REASONING_EFFORT
@@ -1944,6 +1985,17 @@ export function resolveClaudeReasoningEffort() {
     return fromSettings;
   }
   return "";
+}
+
+// Claude Agent SDK `options.maxTurns`. The default interactive chat lane needs
+// plenty of agentic turns, but the read-only workspace scanner has a tight
+// happy path — discover docs, batch-read candidates, emit JSON — so it gets a
+// hard low ceiling to stop a confused model from looping for minutes.
+export function resolveClaudeMaxTurns(executionMode = "") {
+  if (executionMode === "workspace_scan_read_only") {
+    return WORKSPACE_SCAN_MAX_TURNS;
+  }
+  return DEFAULT_CLAUDE_MAX_TURNS;
 }
 
 // Gemini `thinkingConfig.thinkingLevel` (SDK enum strings, e.g. "LOW"). Returns
@@ -2990,6 +3042,18 @@ function baseSystemPrompt(provider, workspaceRoot, executionMode) {
     ].join("\n");
   }
 
+  if (executionMode === "workspace_scan_read_only") {
+    return [
+      "You are the read-only workspace document scanner for agentic30.",
+      RESPONSE_LANGUAGE_INSTRUCTION,
+      `Current workspace: ${workspaceRoot}`,
+      `Provider mode: ${provider}`,
+      "Use only read-only filesystem inspection (read, list, glob, grep). Use the smallest number of inspections needed.",
+      "Do not modify files, run shell side effects, browse the web, or call QMD, PostHog, Cloudflare, GitHub, Notion, internal Agentic30 MCP, structured-input, or user-question tools.",
+      "Return only the exact JSON object requested by the user prompt.",
+    ].join("\n");
+  }
+
   const lines = [
     "You are the sidecar reasoning engine for agentic30.",
     "Reply in concise conversational prose suitable for the host client surface.",
@@ -3108,6 +3172,12 @@ function usesCloudflareMcp(executionMode = "") {
 // signals through tools instead of shelling out.
 function usesGithubMcp(executionMode = "") {
   return executionMode === "office_hours_digest_read_only"
+    || usesInternalMcp(executionMode)
+    || usesQmdMcp(executionMode);
+}
+
+function usesVercelMcp(executionMode = "") {
+  return executionMode === "mcp_oauth_prewarm_vercel"
     || usesInternalMcp(executionMode)
     || usesQmdMcp(executionMode);
 }

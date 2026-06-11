@@ -4,6 +4,7 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
     case codex
     case claude
     case gemini
+    case cursor
 
     var id: String { rawValue }
 
@@ -15,6 +16,8 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
             return "Claude"
         case .gemini:
             return "Gemini"
+        case .cursor:
+            return "Cursor"
         }
     }
 
@@ -26,6 +29,8 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
             return "Claude Agent SDK"
         case .gemini:
             return "Google Gen AI SDK"
+        case .cursor:
+            return "Cursor Agent SDK"
         }
     }
 
@@ -37,6 +42,8 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
             return "#F4C68A"
         case .gemini:
             return "#93C5FD"
+        case .cursor:
+            return "#D8DAE5"
         }
     }
 
@@ -50,6 +57,8 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
             return "BrandClaude"
         case .gemini:
             return "BrandGemini"
+        case .cursor:
+            return "BrandCursor"
         }
     }
 
@@ -61,12 +70,14 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
             return true
         case .gemini:
             return false
+        case .cursor:
+            return true
         }
     }
 
-    /// Fixed Codex → Claude → Gemini rotation used by failure-recovery
+    /// Fixed Codex → Claude → Gemini → Cursor rotation used by failure-recovery
     /// affordances (e.g. the office-hours "전환 후 재시도" button).
-    static let fallbackCycle: [AgentProvider] = [.codex, .claude, .gemini]
+    static let fallbackCycle: [AgentProvider] = [.codex, .claude, .gemini, .cursor]
 
     /// Next provider in `fallbackCycle` after `self` for which `isAvailable`
     /// returns true. Skips `self`; returns nil when no other provider is
@@ -125,6 +136,8 @@ enum AgentAuthMode: String, Codable, CaseIterable, Identifiable {
             return [.local, .apiKey]
         case .gemini:
             return [.local, .apiKey, .vertex]
+        case .cursor:
+            return [.local, .apiKey]
         }
     }
 }
@@ -178,9 +191,14 @@ enum AgentModelCatalog {
         AgentModelOption(id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite", provider: .gemini),
     ]
 
+    static let cursor: [AgentModelOption] = [
+        AgentModelOption(id: "composer-2.5", label: "Composer 2.5 (Best)", provider: .cursor, isRecommended: true),
+    ]
+
     static let defaultClaudeModelID = "claude-opus-4-8"
     static let defaultCodexModelID = "gpt-5.5"
     static let defaultGeminiModelID = "gemini-3.5-flash"
+    static let defaultCursorModelID = "composer-2.5"
 
     static func options(for provider: AgentProvider) -> [AgentModelOption] {
         switch provider {
@@ -190,6 +208,8 @@ enum AgentModelCatalog {
             return codex
         case .gemini:
             return gemini
+        case .cursor:
+            return cursor
         }
     }
 
@@ -201,6 +221,8 @@ enum AgentModelCatalog {
             return defaultCodexModelID
         case .gemini:
             return defaultGeminiModelID
+        case .cursor:
+            return defaultCursorModelID
         }
     }
 
@@ -266,6 +288,8 @@ enum AgentReasoningEffortCatalog {
             default:
                 return []
             }
+        case .cursor:
+            return []
         }
     }
 
@@ -735,6 +759,7 @@ nonisolated struct IntegrationStatusSnapshot: Codable, Hashable {
     var githubMcp: IntegrationProbeStatus?
     var posthog: IntegrationProbeStatus?
     var cloudflare: IntegrationProbeStatus?
+    var vercel: IntegrationProbeStatus?
     var checkedAt: String?
 }
 
@@ -2444,6 +2469,7 @@ struct SidecarEnvironment: Codable, Hashable {
     let claude: SidecarProviderEnvironment
     let codex: SidecarProviderEnvironment
     let gemini: SidecarProviderEnvironment?
+    let cursor: SidecarProviderEnvironment?
     let acp: SidecarACPEnvironment?
 }
 
@@ -3422,6 +3448,13 @@ extension SidecarEnvironment {
             available: false,
             source: "unknown",
             message: "Checking Gemini auth...",
+            sdk: nil,
+            geminiAdc: nil
+        ),
+        cursor: SidecarProviderEnvironment(
+            available: false,
+            source: "unknown",
+            message: "Checking Cursor auth...",
             sdk: nil,
             geminiAdc: nil
         ),

@@ -1686,6 +1686,27 @@ struct OfficeHoursTimelineBuilder {
     }
 }
 
+struct OfficeHoursPendingPromptPresentation: Hashable {
+    let shouldRender: Bool
+    let questionNumber: Int
+    let total: Int
+
+    static func resolve(
+        answerCount: Int,
+        fallbackTotal: Int,
+        generationTotal: Int?,
+        interviewComplete: Bool
+    ) -> OfficeHoursPendingPromptPresentation {
+        let questionNumber = max(1, answerCount + 1)
+        let total = max(questionNumber, generationTotal ?? fallbackTotal)
+        return OfficeHoursPendingPromptPresentation(
+            shouldRender: !interviewComplete,
+            questionNumber: questionNumber,
+            total: total
+        )
+    }
+}
+
 struct OfficeHoursLoadingPolicy {
     static func visibleLoading(
         for session: ChatSession,
@@ -2104,7 +2125,7 @@ struct ContentView: View {
             )
         }
         .buttonStyle(.plain)
-        .help("새 버전 \(versionLabel)이 준비됐습니다. 클릭하면 업데이트를 설치합니다.")
+        .help("새 버전 \(versionLabel)이 준비됐습니다. 클릭하면 업데이트 상태를 확인하거나 설치합니다.")
         .accessibilityIdentifier("appUpdate.updateAvailablePill")
     }
 
@@ -2120,13 +2141,19 @@ struct ContentView: View {
                     bootLogState: viewModel.intakeV2BootLogState,
                     workspaceScanResult: viewModel.scanResult,
                     scanProviderLimitNotice: viewModel.scanProviderLimitNotice,
-                    // Codex → Claude → Gemini rotation; only providers the sidecar
+                    // Codex → Claude → Gemini → Cursor rotation; only providers the sidecar
                     // reports as connected qualify (same gate as office-hours).
                     scanProviderLimitFallback: viewModel.scanProviderLimitNotice?.provider.nextFallbackProvider { candidate in
                         officeHoursProviderEnvironment(for: candidate)?.available == true
                     },
                     onProviderLimitRescan: { provider in
                         guard let notice = viewModel.scanProviderLimitNotice,
+                              !notice.scanRoot.isEmpty else { return }
+                        viewModel.rescanWorkspace(root: notice.scanRoot, provider: provider)
+                    },
+                    scanBlockedNotice: viewModel.scanBlockedNotice,
+                    onScanBlockedRescan: { provider in
+                        guard let notice = viewModel.scanBlockedNotice,
                               !notice.scanRoot.isEmpty else { return }
                         viewModel.rescanWorkspace(root: notice.scanRoot, provider: provider)
                     },
@@ -5103,7 +5130,15 @@ struct ContentView: View {
                     }
                 }
 
-                if let prompt = session.pendingUserInput {
+                let pendingPresentation = OfficeHoursPendingPromptPresentation.resolve(
+                    answerCount: officeHoursAnswerCount(session: session),
+                    fallbackTotal: selectedOfficeHoursMode.questionCount,
+                    generationTotal: session.pendingUserInput?.generation?.dimensionTotal,
+                    interviewComplete: officeHoursInterviewComplete(session: session)
+                )
+
+                if let prompt = session.pendingUserInput,
+                   pendingPresentation.shouldRender {
                     let currentPromptWasSubmitted = snapshots.contains(where: { $0.requestId == prompt.requestId })
                     if !currentPromptWasSubmitted {
                         let revealID = officeHoursPromptRevealID(sessionID: session.id, requestID: prompt.requestId)
@@ -5157,7 +5192,8 @@ struct ContentView: View {
                     }
                 }
 
-                if session.pendingUserInput != nil {
+                if session.pendingUserInput != nil,
+                   pendingPresentation.shouldRender {
                     Color.clear
                         .frame(height: 170)
                         .accessibilityHidden(true)
@@ -5527,9 +5563,11 @@ struct ContentView: View {
     }
 
     private func officeHoursIsDocReady(session: ChatSession) -> Bool {
-        session.pendingUserInput == nil
+        let interviewComplete = officeHoursInterviewComplete(session: session)
+        let blockingPendingInput = session.pendingUserInput != nil && !interviewComplete
+        return !blockingPendingInput
             && session.status != .running
-            && officeHoursInterviewComplete(session: session)
+            && interviewComplete
     }
 
     private func officeHoursDocReadyBlock(session: ChatSession) -> some View {
@@ -6045,8 +6083,14 @@ struct ContentView: View {
 
     private func officeHoursPendingPromptBlock(_ prompt: StructuredPromptRequest, session: ChatSession) -> some View {
         let question = prompt.questions.first
-        let questionNumber = max(1, officeHoursAnswerCount(session: session) + 1)
-        let total = prompt.generation?.dimensionTotal ?? selectedOfficeHoursMode.questionCount
+        let presentation = OfficeHoursPendingPromptPresentation.resolve(
+            answerCount: officeHoursAnswerCount(session: session),
+            fallbackTotal: selectedOfficeHoursMode.questionCount,
+            generationTotal: prompt.generation?.dimensionTotal,
+            interviewComplete: officeHoursInterviewComplete(session: session)
+        )
+        let questionNumber = presentation.questionNumber
+        let total = presentation.total
         let title = question?.header.nonEmpty ?? prompt.generation?.signalLabel?.nonEmpty ?? "forcing question"
         let blockStartGap: CGFloat = 20
         return VStack(alignment: .leading, spacing: 12) {
@@ -8402,6 +8446,8 @@ struct ContentView: View {
             return viewModel.environment.codex
         case .gemini:
             return viewModel.environment.gemini
+        case .cursor:
+            return viewModel.environment.cursor
         }
     }
 
@@ -11310,6 +11356,8 @@ struct ContentView: View {
             return "현재 Claude 세션의 최신 답변"
         case .gemini:
             return "현재 Gemini 세션의 최신 답변"
+        case .cursor:
+            return "현재 Cursor 세션의 최신 답변"
         }
     }
 
@@ -11321,6 +11369,8 @@ struct ContentView: View {
             return "sparkles"
         case .gemini:
             return "terminal"
+        case .cursor:
+            return "key.fill"
         }
     }
 

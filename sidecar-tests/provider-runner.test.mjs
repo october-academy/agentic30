@@ -28,6 +28,7 @@ import {
   normalizeClaudeQuestions,
   parseProviderEnvironment,
   resetProviderSettingsForTest,
+  resolveClaudeMaxTurns,
   resolveClaudeModel,
   resolveClaudeReasoningEffort,
   resolveCodexBinaryPath,
@@ -37,6 +38,8 @@ import {
   resolveGeminiModel,
   resolveGeminiThinkingLevel,
   shouldResumeCodexThread,
+  supportsCursorExecutionMode,
+  supportsGeminiExecutionMode,
   updateProviderSettings,
 } from "../sidecar/provider-runner.mjs";
 import { readFileSync } from "node:fs";
@@ -591,6 +594,33 @@ test("buildCodexConfig adds read-only PostHog MCP for tool-capable sessions", ()
   }
 });
 
+test("buildCodexConfig adds Vercel MCP for tool-capable sessions", () => {
+  const config = buildCodexConfig({
+    systemPromptText: "system",
+    executionMode: "memory_chat",
+    sessionIdForMcp: "session",
+    workspaceRoot: "/tmp/workspace",
+  });
+
+  assert.ok(config.mcp_servers.vercel);
+  assert.equal(config.mcp_servers.vercel.url, "https://mcp.vercel.com");
+  assert.equal(config.mcp_servers.vercel.default_tools_approval_mode, "approve");
+  assert.equal(config.mcp_servers.vercel.tool_timeout_sec, 60);
+});
+
+test("buildCodexConfig injects only Vercel MCP for Vercel OAuth prewarm", () => {
+  const config = buildCodexConfig({
+    systemPromptText: "system",
+    executionMode: "mcp_oauth_prewarm_vercel",
+    sessionIdForMcp: "session",
+    workspaceRoot: "/tmp/workspace",
+  });
+
+  assert.deepEqual(Object.keys(config.mcp_servers), ["vercel"]);
+  assert.equal(config.mcp_servers.vercel.url, "https://mcp.vercel.com");
+  assert.equal(config.mcp_servers.vercel.default_tools_approval_mode, "approve");
+});
+
 test("buildCodexConfig pins bearer auth only in explicit api_key mode", () => {
   const previousKey = process.env.POSTHOG_API_KEY;
   const previousMode = process.env.POSTHOG_MCP_AUTH_MODE;
@@ -678,6 +708,9 @@ test("Claude read-only gate treats shell, write, web, and mutating GWS tools as 
   assert.equal(isClaudeMutatingTool("Bash"), true);
   assert.equal(isClaudeMutatingTool("Write"), true);
   assert.equal(isClaudeMutatingTool("mcp__agentic30_sidecar__gws_gmail_send"), true);
+  assert.equal(isClaudeMutatingTool("mcp__vercel__create_deployment"), true);
+  assert.equal(isClaudeMutatingTool("mcp__vercel__rollback_deployment"), true);
+  assert.equal(isClaudeMutatingTool("mcp__vercel__list_projects"), false);
   assert.equal(isClaudeMutatingTool("mcp__agentic30_sidecar__gws_exec"), false);
   assert.equal(isClaudeMutatingTool("mcp__agentic30_sidecar__gws_sheets_read"), false);
   assert.equal(isClaudeMutatingTool("Read"), false);
@@ -868,6 +901,88 @@ test("resolveCodexReasoningEffort adapts to mode and prompt intent", () => {
   } finally {
     restoreEnv("AGENTIC30_CODEX_REASONING_EFFORT", previous);
   }
+});
+
+test("workspace_scan_read_only keeps codex reasoning low regardless of prompt", () => {
+  const previous = process.env.AGENTIC30_CODEX_REASONING_EFFORT;
+  try {
+    delete process.env.AGENTIC30_CODEX_REASONING_EFFORT;
+    // Even a deep-work-worded prompt must not escalate the scan beyond low.
+    assert.equal(
+      resolveCodexReasoningEffort({
+        executionMode: "workspace_scan_read_only",
+        prompt: "analyze and investigate the architecture",
+      }),
+      "low",
+    );
+  } finally {
+    restoreEnv("AGENTIC30_CODEX_REASONING_EFFORT", previous);
+  }
+});
+
+test("workspace_scan_read_only coerces minimal codex reasoning overrides to low", () => {
+  const previousAgenticEnv = process.env.AGENTIC30_CODEX_REASONING_EFFORT;
+  const previousCodexEnv = process.env.CODEX_REASONING_EFFORT;
+  const previousModelEnv = process.env.MODEL_REASONING_EFFORT;
+  resetProviderSettingsForTest();
+  try {
+    process.env.AGENTIC30_CODEX_REASONING_EFFORT = "minimal";
+    delete process.env.CODEX_REASONING_EFFORT;
+    delete process.env.MODEL_REASONING_EFFORT;
+    assert.equal(
+      resolveCodexReasoningEffort({ executionMode: "workspace_scan_read_only", prompt: "scan docs" }),
+      "low",
+    );
+
+    delete process.env.AGENTIC30_CODEX_REASONING_EFFORT;
+    updateProviderSettings({ codex: { reasoningEffort: "minimal" } });
+    assert.equal(
+      resolveCodexReasoningEffort({ executionMode: "workspace_scan_read_only", prompt: "scan docs" }),
+      "low",
+    );
+  } finally {
+    restoreEnv("AGENTIC30_CODEX_REASONING_EFFORT", previousAgenticEnv);
+    restoreEnv("CODEX_REASONING_EFFORT", previousCodexEnv);
+    restoreEnv("MODEL_REASONING_EFFORT", previousModelEnv);
+    resetProviderSettingsForTest();
+  }
+});
+
+test("resolveClaudeMaxTurns bounds the workspace scan far below the chat lane", () => {
+  assert.equal(resolveClaudeMaxTurns("workspace_scan_read_only"), 5);
+  assert.equal(resolveClaudeMaxTurns("agentic"), 24);
+  assert.equal(resolveClaudeMaxTurns(""), 24);
+});
+
+test("workspace_scan_read_only is a capable mode for gemini and cursor scans", () => {
+  assert.equal(supportsGeminiExecutionMode("workspace_scan_read_only"), true);
+  assert.equal(supportsCursorExecutionMode("workspace_scan_read_only"), true);
+});
+
+test("buildCodexConfig injects NO external MCP servers for workspace_scan_read_only", () => {
+  // The whole point of the scan lane: a read-only doc scanner must not boot
+  // QMD / PostHog / Cloudflare / GitHub / internal MCP — even with a session id
+  // present (internal MCP is gated on sessionIdForMcp for the chat lane).
+  const config = buildCodexConfig({
+    systemPromptText: "system prompt",
+    executionMode: "workspace_scan_read_only",
+    sessionIdForMcp: "sess-scan-1",
+    workspaceRoot: "/tmp/ws",
+  });
+  assert.deepEqual(config.mcp_servers, {});
+});
+
+test("buildSystemPromptText for workspace_scan_read_only is a tight read-only scanner prompt", () => {
+  const prompt = buildSystemPromptText({
+    provider: "codex",
+    workspaceRoot: "/tmp/ws",
+    executionMode: "workspace_scan_read_only",
+  });
+  assert.match(prompt, /read-only workspace document scanner/i);
+  // Must not drag in the heavy advisor identity / MCP-usage guidance the
+  // default chat lane carries.
+  assert.doesNotMatch(prompt, /October-Style Advisor Identity/);
+  assert.doesNotMatch(prompt, /agentic30 MCP server/);
 });
 
 test("shouldResumeCodexThread requires matching isolated home, workspace, and execution mode", () => {

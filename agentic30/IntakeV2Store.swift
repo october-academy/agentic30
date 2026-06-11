@@ -182,6 +182,7 @@ enum IntakeSourceCatalog {
         .xTwitter,
         .instagram,
         .googleSearchConsole,
+        .vercel,
         .aws,
         .interviewTxt,
     ]

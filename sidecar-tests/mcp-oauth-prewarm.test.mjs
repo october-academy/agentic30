@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 import {
+  buildCodexMcpOauthServerConfig,
   MCP_OAUTH_PREWARM_FAIL_SENTINEL,
   MCP_OAUTH_PREWARM_LOGIN_PENDING_SENTINEL,
   MCP_OAUTH_PREWARM_LOGIN_URL_SENTINEL,
@@ -9,6 +14,7 @@ import {
   MCP_OAUTH_PREWARM_SERVERS,
   buildMcpOauthPrewarmPrompt,
   buildMcpOauthVerifyPrompt,
+  extractFirstHttpUrl,
   extractMcpOauthLoginUrl,
   isProviderUsageLimitMessage,
   normalizeMcpOauthPrewarmServer,
@@ -16,11 +22,23 @@ import {
   prewarmMcpOauth,
   providerDisplayLabel,
   resolveMcpOauthConnectProvider,
+  runCodexMcpCommand,
+  syncCodexMcpOauthServerConfig,
 } from "../sidecar/mcp-oauth-prewarm.mjs";
 
-test("normalizeMcpOauthPrewarmServer accepts posthog/cloudflare only", () => {
+async function withTmpDir(fn) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-mcp-oauth-"));
+  try {
+    return await fn(dir);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+}
+
+test("normalizeMcpOauthPrewarmServer accepts supported OAuth MCP servers only", () => {
   assert.equal(normalizeMcpOauthPrewarmServer("posthog"), "posthog");
   assert.equal(normalizeMcpOauthPrewarmServer(" Cloudflare "), "cloudflare");
+  assert.equal(normalizeMcpOauthPrewarmServer(" Vercel "), "vercel");
   assert.equal(normalizeMcpOauthPrewarmServer("github"), "");
   assert.equal(normalizeMcpOauthPrewarmServer(""), "");
   assert.equal(normalizeMcpOauthPrewarmServer(undefined), "");
@@ -86,6 +104,10 @@ test("buildMcpOauthPrewarmPrompt targets the MCP server name and all sentinels",
   const cloudflarePrompt = buildMcpOauthPrewarmPrompt("cloudflare");
   assert.ok(cloudflarePrompt.includes(`"${MCP_OAUTH_PREWARM_SERVERS.cloudflare.mcpServerName}"`));
   assert.ok(cloudflarePrompt.includes(`mcp__${MCP_OAUTH_PREWARM_SERVERS.cloudflare.mcpServerName}__authenticate`));
+
+  const vercelPrompt = buildMcpOauthPrewarmPrompt("vercel");
+  assert.ok(vercelPrompt.includes(`"${MCP_OAUTH_PREWARM_SERVERS.vercel.mcpServerName}"`));
+  assert.ok(vercelPrompt.includes(`mcp__${MCP_OAUTH_PREWARM_SERVERS.vercel.mcpServerName}__authenticate`));
   assert.throws(() => buildMcpOauthPrewarmPrompt("github"));
 });
 
@@ -106,9 +128,10 @@ test("prewarm executionModes inject only the target MCP server", () => {
   // must not collide so connecting posthog never triggers cloudflare OAuth.
   assert.equal(MCP_OAUTH_PREWARM_SERVERS.posthog.executionMode, "mcp_oauth_prewarm_posthog");
   assert.equal(MCP_OAUTH_PREWARM_SERVERS.cloudflare.executionMode, "mcp_oauth_prewarm_cloudflare");
-  assert.notEqual(
-    MCP_OAUTH_PREWARM_SERVERS.posthog.executionMode,
-    MCP_OAUTH_PREWARM_SERVERS.cloudflare.executionMode,
+  assert.equal(MCP_OAUTH_PREWARM_SERVERS.vercel.executionMode, "mcp_oauth_prewarm_vercel");
+  assert.equal(
+    new Set(Object.values(MCP_OAUTH_PREWARM_SERVERS).map((server) => server.executionMode)).size,
+    Object.values(MCP_OAUTH_PREWARM_SERVERS).length,
   );
 });
 
@@ -117,6 +140,14 @@ test("extractMcpOauthLoginUrl pulls the URL from the sentinel line", () => {
   assert.equal(extractMcpOauthLoginUrl(`before\n${MCP_OAUTH_PREWARM_LOGIN_URL_SENTINEL}: ${url}\nafter`), url);
   assert.equal(extractMcpOauthLoginUrl("no sentinel"), "");
   assert.equal(extractMcpOauthLoginUrl(""), "");
+});
+
+test("extractFirstHttpUrl pulls plain Codex CLI login URLs", () => {
+  assert.equal(
+    extractFirstHttpUrl("Open this URL:\nhttps://auth.openai.com/oauth/authorize?state=abc.\n"),
+    "https://auth.openai.com/oauth/authorize?state=abc",
+  );
+  assert.equal(extractFirstHttpUrl("no url"), "");
 });
 
 test("parseMcpOauthPrewarmReply detects all sentinels", () => {
@@ -255,6 +286,266 @@ test("prewarmMcpOauth auto-rechecks after login_pending and lands on ready", asy
   assert.equal(progress.filter((update) => update.phase === "login_url").length, 1);
 });
 
+test("prewarmMcpOauth uses Codex CLI MCP login flow instead of provider ToolSearch", async () => {
+  await withTmpDir(async (codexHome) => {
+    const calls = [];
+    let providerStreamCalled = false;
+    const result = await prewarmMcpOauth({
+      server: "posthog",
+      provider: "codex",
+      workspaceRoot: "/tmp/ws",
+      env: {},
+      buildCodexEnvImpl: () => ({ CODEX_HOME: codexHome, PATH: "/bin" }),
+      resolveCodexBinaryPathImpl: () => "/usr/local/bin/codex",
+      runProviderStreamImpl: async () => {
+        providerStreamCalled = true;
+      },
+      runCodexMcpCommandImpl: async ({ args, cwd, onOutput }) => {
+        calls.push({ args, cwd });
+        if (args[1] === "get" && calls.length === 1) {
+          return { exitCode: 1, stdout: "", stderr: "not found" };
+        }
+        if (args[1] === "add") {
+          return { exitCode: 0, stdout: "Added posthog", stderr: "" };
+        }
+        if (args[1] === "login") {
+          onOutput("Open this URL in your browser: https://oauth.posthog.com/authorize?state=abc\n");
+          return { exitCode: 0, stdout: "Successfully logged in.", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "{\"name\":\"posthog\"}", stderr: "" };
+      },
+    });
+
+    assert.equal(result.state, "ready");
+    assert.equal(result.provider, "codex");
+    assert.equal(result.loginUrl, "https://oauth.posthog.com/authorize?state=abc");
+    assert.equal(providerStreamCalled, false);
+    assert.deepEqual(calls.map((call) => call.args.slice(0, 3)), [
+      ["mcp", "get", "posthog"],
+      ["mcp", "add", "posthog"],
+      ["mcp", "login", "posthog"],
+      ["mcp", "get", "posthog"],
+    ]);
+    assert.ok(calls.every((call) => call.cwd === "/tmp/ws"));
+
+    const codexConfig = await fs.readFile(path.join(codexHome, "config.toml"), "utf8");
+    assert.match(codexConfig, /\[mcp_servers\.posthog\]/);
+    assert.match(codexConfig, /url = "https:\/\/mcp\.posthog\.com\/mcp\?/);
+    assert.doesNotMatch(codexConfig, /bearer_token_env_var = "undefined"/);
+  });
+});
+
+test("prewarmMcpOauth registers Cloudflare with oauth_resource for Codex", async () => {
+  await withTmpDir(async (codexHome) => {
+    const calls = [];
+    const result = await prewarmMcpOauth({
+      server: "cloudflare",
+      provider: "codex",
+      env: {},
+      buildCodexEnvImpl: () => ({ CODEX_HOME: codexHome, PATH: "/bin" }),
+      resolveCodexBinaryPathImpl: () => "/usr/local/bin/codex",
+      runCodexMcpCommandImpl: async ({ args }) => {
+        calls.push(args);
+        if (args[1] === "get" && calls.length === 1) {
+          return { exitCode: 1, stdout: "", stderr: "not found" };
+        }
+        return { exitCode: 0, stdout: "ok", stderr: "" };
+      },
+    });
+
+    assert.equal(result.state, "ready");
+    const addCall = calls.find((args) => args[1] === "add");
+    assert.ok(addCall);
+    assert.deepEqual(addCall.slice(0, 5), ["mcp", "add", "cloudflare-api", "--url", "https://mcp.cloudflare.com/mcp"]);
+    assert.equal(addCall[addCall.indexOf("--oauth-resource") + 1], "https://mcp.cloudflare.com/mcp");
+
+    const codexConfig = await fs.readFile(path.join(codexHome, "config.toml"), "utf8");
+    assert.match(codexConfig, /\[mcp_servers\.cloudflare-api\]/);
+    assert.match(codexConfig, /oauth_resource = "https:\/\/mcp\.cloudflare\.com\/mcp"/);
+  });
+});
+
+test("prewarmMcpOauth reports Codex login URL timeout as login_pending", async () => {
+  await withTmpDir(async (codexHome) => {
+    const result = await prewarmMcpOauth({
+      server: "posthog",
+      provider: "codex",
+      env: {},
+      buildCodexEnvImpl: () => ({ CODEX_HOME: codexHome, PATH: "/bin" }),
+      resolveCodexBinaryPathImpl: () => "/usr/local/bin/codex",
+      runCodexMcpCommandImpl: async ({ args, onOutput }) => {
+        if (args[1] === "get" && args[2] === "posthog") {
+          return { exitCode: args.includes("--json") ? 0 : 1, stdout: "{}", stderr: "" };
+        }
+        if (args[1] === "login") {
+          onOutput("Visit https://oauth.posthog.com/authorize?state=pending to authenticate\n");
+          return { exitCode: null, timedOut: true, stdout: "", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "ok", stderr: "" };
+      },
+    });
+
+    assert.equal(result.state, "login_pending");
+    assert.equal(result.loginUrl, "https://oauth.posthog.com/authorize?state=pending");
+    assert.match(result.detail, /로그인/);
+  });
+});
+
+test("runCodexMcpCommand backgrounds a Codex OAuth login after the URL is emitted", async () => {
+  const kills = [];
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.pid = 987654321;
+  child.kill = (signal) => {
+    kills.push(signal);
+    return true;
+  };
+  const resultPromise = runCodexMcpCommand({
+    codexPath: "/usr/local/bin/codex",
+    args: ["mcp", "login", "posthog"],
+    env: {},
+    cwd: "/tmp",
+    timeoutMs: 10_000,
+    spawnImpl: () => {
+      setImmediate(() => {
+        child.stdout.emit("data", "Open https://oauth.posthog.com/authorize?state=fast\n");
+      });
+      return child;
+    },
+    stopWhen: ({ stdout }) => stdout.includes("https://oauth.posthog.com/authorize"),
+    backgroundOnStop: true,
+  });
+
+  const result = await resultPromise;
+  assert.equal(result.backgrounded, true);
+  assert.equal(result.signal, null);
+  assert.match(result.stdout, /oauth\.posthog\.com/);
+  assert.deepEqual(kills, []);
+  child.emit("close", 0, null);
+});
+
+test("prewarmMcpOauth Codex api_key mode writes env var config and skips OAuth login", async () => {
+  await withTmpDir(async (codexHome) => {
+    const calls = [];
+    const result = await prewarmMcpOauth({
+      server: "posthog",
+      provider: "codex",
+      env: {
+        POSTHOG_MCP_AUTH_MODE: "api_key",
+        POSTHOG_MCP_API_KEY: "phx_secret",
+      },
+      buildCodexEnvImpl: (env) => ({ ...env, CODEX_HOME: codexHome, PATH: "/bin" }),
+      resolveCodexBinaryPathImpl: () => "/usr/local/bin/codex",
+      runCodexMcpCommandImpl: async ({ args }) => {
+        calls.push(args);
+        if (args[1] === "get" && calls.length === 1) {
+          return { exitCode: 1, stdout: "", stderr: "not found" };
+        }
+        return { exitCode: 0, stdout: "ok", stderr: "" };
+      },
+    });
+
+    assert.equal(result.state, "ready");
+    assert.equal(calls.some((args) => args[1] === "login"), false);
+    const addCall = calls.find((args) => args[1] === "add");
+    assert.equal(addCall[addCall.indexOf("--bearer-token-env-var") + 1], "POSTHOG_MCP_API_KEY");
+
+    const codexConfig = await fs.readFile(path.join(codexHome, "config.toml"), "utf8");
+    assert.match(codexConfig, /bearer_token_env_var = "POSTHOG_MCP_API_KEY"/);
+    assert.equal(codexConfig.includes("phx_secret"), false);
+  });
+});
+
+test("syncCodexMcpOauthServerConfig preserves existing Codex servers and replaces target only", async () => {
+  await withTmpDir(async (codexHome) => {
+    const configPath = path.join(codexHome, "config.toml");
+    await fs.writeFile(configPath, [
+      "notify = []",
+      "",
+      "[mcp_servers.\"cloudflare-api\"]",
+      "url = \"https://old.example/mcp\"",
+      "",
+      "[mcp_servers.exa]",
+      "url = \"https://mcp.exa.ai/mcp\"",
+      "",
+    ].join("\n"));
+
+    const syncResult = await syncCodexMcpOauthServerConfig({
+      server: "cloudflare",
+      codexHome,
+      env: {},
+    });
+
+    assert.equal(syncResult.changed, true);
+    assert.equal(syncResult.authMode, "oauth");
+    const codexConfig = await fs.readFile(configPath, "utf8");
+    assert.match(codexConfig, /\[mcp_servers\.exa\]/);
+    assert.match(codexConfig, /\[mcp_servers\.cloudflare-api\]/);
+    assert.match(codexConfig, /oauth_resource = "https:\/\/mcp\.cloudflare\.com\/mcp"/);
+    assert.doesNotMatch(codexConfig, /old\.example/);
+  });
+});
+
+test("syncCodexMcpOauthServerConfig writes Vercel URL-only config without touching other servers", async () => {
+  await withTmpDir(async (codexHome) => {
+    const configPath = path.join(codexHome, "config.toml");
+    await fs.writeFile(configPath, [
+      "notify = []",
+      "",
+      "[mcp_servers.vercel]",
+      "url = \"https://old.example/mcp\"",
+      "",
+      "[mcp_servers.exa]",
+      "url = \"https://mcp.exa.ai/mcp\"",
+      "",
+    ].join("\n"));
+
+    const syncResult = await syncCodexMcpOauthServerConfig({
+      server: "vercel",
+      codexHome,
+      env: { VERCEL_MCP_URL: "https://custom.example/mcp" },
+    });
+
+    assert.equal(syncResult.changed, true);
+    assert.equal(syncResult.authMode, "oauth");
+    const codexConfig = await fs.readFile(configPath, "utf8");
+    assert.match(codexConfig, /\[mcp_servers\.exa\]/);
+    assert.match(codexConfig, /\[mcp_servers\.vercel\]/);
+    assert.match(codexConfig, /url = "https:\/\/mcp\.vercel\.com"/);
+    assert.doesNotMatch(codexConfig, /old\.example/);
+    assert.doesNotMatch(codexConfig, /custom\.example/);
+    assert.doesNotMatch(codexConfig, /oauth_resource/);
+    assert.doesNotMatch(codexConfig, /bearer_token_env_var/);
+  });
+});
+
+test("buildCodexMcpOauthServerConfig keeps Cloudflare oauth_resource, Vercel fixed URL, and PostHog api-key env indirection", () => {
+  const cloudflare = buildCodexMcpOauthServerConfig({ server: "cloudflare", env: {} });
+  assert.equal(cloudflare.config.oauth_resource, "https://mcp.cloudflare.com/mcp");
+  assert.equal(cloudflare.authMode, "oauth");
+
+  const vercel = buildCodexMcpOauthServerConfig({
+    server: "vercel",
+    env: { VERCEL_MCP_URL: "https://custom.example/mcp" },
+  });
+  assert.equal(vercel.authMode, "oauth");
+  assert.equal(vercel.config.url, "https://mcp.vercel.com");
+  assert.equal(vercel.config.oauth_resource, undefined);
+  assert.equal(vercel.config.bearer_token_env_var, undefined);
+
+  const posthogApiKey = buildCodexMcpOauthServerConfig({
+    server: "posthog",
+    env: {
+      POSTHOG_MCP_AUTH_MODE: "api_key",
+      POSTHOG_MCP_API_KEY: "phx_secret",
+    },
+  });
+  assert.equal(posthogApiKey.authMode, "api_key");
+  assert.equal(posthogApiKey.config.bearer_token_env_var, "POSTHOG_MCP_API_KEY");
+  assert.equal(JSON.stringify(posthogApiKey.config).includes("phx_secret"), false);
+});
+
 test("prewarmMcpOauth exhausts rechecks and reports login_pending", async () => {
   const url = "https://oauth.posthog.com/oauth/authorize/?state=slow";
   let calls = 0;
@@ -322,7 +613,7 @@ test("prewarmMcpOauth treats timeout-after-login-url as login_pending", async ()
 test("prewarmMcpOauth surfaces model-reported failure reason", async () => {
   const result = await prewarmMcpOauth({
     server: "cloudflare",
-    provider: "codex",
+    provider: "claude",
     env: {},
     runProviderStreamImpl: async (args) => {
       args.onTextReplace(`${MCP_OAUTH_PREWARM_FAIL_SENTINEL}: 연결 오류`);

@@ -66,6 +66,7 @@ test("Claude MCP config is OAuth-first (URL-only) and uses headers only in api_k
 test("Codex MCP config references token env var only in api_key mode", () => {
   const oauth = buildCloudflareCodexMcpConfig({ token: "cf_secret" })["cloudflare-api"];
   assert.equal(oauth.url, "https://mcp.cloudflare.com/mcp");
+  assert.equal(oauth.oauth_resource, "https://mcp.cloudflare.com/mcp");
   assert.equal(oauth.bearer_token_env_var, undefined);
 
   const config = buildCloudflareCodexMcpConfig({ token: "cf_secret", authMode: "api_key" })["cloudflare-api"];
@@ -124,6 +125,7 @@ test("external sync preserves existing MCP servers and supports OAuth without to
     const codex = await fs.readFile(codexPath, "utf8");
     assert.match(codex, /\[mcp_servers\.exa\]/);
     assert.match(codex, /\[mcp_servers\.cloudflare-api\]/);
+    assert.match(codex, /oauth_resource = "https:\/\/mcp\.cloudflare\.com\/mcp"/);
     assert.doesNotMatch(codex, /bearer_token_env_var/);
 
     const claudeCode = JSON.parse(await fs.readFile(claudeCodePath, "utf8"));

@@ -142,6 +142,21 @@ export async function probeCloudflareIntegration({
   return status("ready", `존 ${zones[0].name}${zones.length > 1 ? ` 외 ${zones.length - 1}개` : ""} — GraphQL 드릴다운 직접 집계 · MCP는 OAuth(${settings.authMode === "api_key" ? "키 인증으로 전환됨" : "기본"})`);
 }
 
+export async function probeVercelIntegration({
+  appSupportPath = "",
+  provider = "",
+} = {}) {
+  const oauthBadge = mcpOauthBadge({
+    appSupportPath,
+    server: "vercel",
+    label: "Vercel",
+    provider,
+    readyDetail: "AI 실행에서 Vercel 프로젝트·배포 MCP 도구 사용 가능.",
+  });
+  if (oauthBadge) return oauthBadge;
+  return status("oauth", "MCP는 OAuth로 동작 — Settings의 'MCP 연결'로 Vercel 브라우저 로그인을 완료해 주세요.");
+}
+
 export async function collectIntegrationStatus({
   appSupportPath = "",
   env = process.env,
@@ -150,7 +165,7 @@ export async function collectIntegrationStatus({
   now = new Date(),
   provider = "",
 } = {}) {
-  const [github, posthog, cloudflare] = await Promise.all([
+  const [github, posthog, cloudflare, vercel] = await Promise.all([
     probeGithubIntegration({ execImpl, env }).catch((error) => ({
       cli: status("failed", String(error?.message || error)),
       mcp: status("failed", String(error?.message || error)),
@@ -159,12 +174,15 @@ export async function collectIntegrationStatus({
       status("failed", String(error?.message || error))),
     probeCloudflareIntegration({ appSupportPath, env, fetchImpl, provider }).catch((error) =>
       status("failed", String(error?.message || error))),
+    probeVercelIntegration({ appSupportPath, provider }).catch((error) =>
+      status("failed", String(error?.message || error))),
   ]);
   return {
     github: github.cli,
     githubMcp: github.mcp,
     posthog,
     cloudflare,
+    vercel,
     provider: String(provider || ""),
     checkedAt: (now instanceof Date ? now : new Date(now)).toISOString(),
   };

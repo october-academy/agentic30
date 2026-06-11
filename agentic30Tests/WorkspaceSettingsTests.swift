@@ -773,6 +773,45 @@ final class SparkleUpdateTests: XCTestCase {
         XCTAssertFalse(viewModel.appUpdateState.isSessionActive)
         XCTAssertEqual(viewModel.appUpdateState.lastResult, .error("Download failed"))
     }
+
+    func testAppUpdateErrorPreservesKnownPendingUpdate() {
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true, activateAppForAuth: {})
+
+        // A transient failed check (e.g. offline at the next 6h check) must
+        // not hide an update that is already downloaded and staged.
+        viewModel.recordAppUpdateDownloaded(version: "18", displayVersion: "1.0.17")
+        viewModel.recordAppUpdateError("Network unreachable")
+
+        XCTAssertFalse(viewModel.appUpdateState.isSessionActive)
+        XCTAssertEqual(viewModel.appUpdateState.lastError, "Network unreachable")
+        XCTAssertEqual(
+            viewModel.appUpdateState.lastResult,
+            .downloaded(version: "18", displayVersion: "1.0.17")
+        )
+        XCTAssertEqual(viewModel.appUpdateState.lastResult.pendingUpdateVersionLabel, "1.0.17")
+
+        viewModel.recordAppUpdateAvailable(version: "19", displayVersion: "1.0.18")
+        viewModel.recordAppUpdateError("Feed unreachable")
+        XCTAssertEqual(
+            viewModel.appUpdateState.lastResult,
+            .updateAvailable(version: "19", displayVersion: "1.0.18")
+        )
+    }
+
+    func testAppUpdateSkippedClearsPendingUpdatePill() {
+        let viewModel = AgenticViewModel(disablesSidecarStartForTesting: true, activateAppForAuth: {})
+
+        viewModel.recordAppUpdateAvailable(version: "18", displayVersion: "1.0.17")
+        XCTAssertEqual(viewModel.appUpdateState.lastResult.pendingUpdateVersionLabel, "1.0.17")
+
+        viewModel.recordAppUpdateSkipped()
+
+        XCTAssertNil(viewModel.appUpdateState.lastResult.pendingUpdateVersionLabel)
+        XCTAssertEqual(viewModel.appUpdateState.lastResult, .latest)
+        XCTAssertNil(viewModel.appUpdateState.latestVersion)
+        XCTAssertNil(viewModel.appUpdateState.latestDisplayVersion)
+        XCTAssertFalse(viewModel.appUpdateState.isSessionActive)
+    }
 }
 
 final class WorkspaceInitialWindowSizingTests: XCTestCase {

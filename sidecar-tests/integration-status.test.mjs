@@ -9,6 +9,7 @@ import {
   probeCloudflareIntegration,
   probeGithubIntegration,
   probePosthogIntegration,
+  probeVercelIntegration,
 } from "../sidecar/integration-status.mjs";
 import { resetGithubMcpTokenCacheForTesting } from "../sidecar/github-mcp-config.mjs";
 
@@ -81,6 +82,7 @@ test("probes report ready when MCP OAuth state is verified and no key is stored"
         servers: {
           posthog: { state: "ready", provider: "claude", detail: "ok", checkedAt: "2026-06-10T11:00:00.000Z" },
           cloudflare: { state: "ready", provider: "claude", detail: "ok", checkedAt: "2026-06-10T11:00:00.000Z" },
+          vercel: { state: "ready", provider: "claude", detail: "ok", checkedAt: "2026-06-10T11:00:00.000Z" },
         },
       }),
     );
@@ -99,6 +101,10 @@ test("probes report ready when MCP OAuth state is verified and no key is stored"
     });
     assert.equal(cloudflare.state, "ready");
     assert.match(cloudflare.detail, /OAuth 연결 검증됨/);
+
+    const vercel = await probeVercelIntegration({ appSupportPath });
+    assert.equal(vercel.state, "ready");
+    assert.match(vercel.detail, /OAuth 연결 검증됨/);
   } finally {
     await fs.rm(appSupportPath, { recursive: true, force: true });
   }
@@ -116,6 +122,7 @@ test("OAuth badge is provider-scoped — verification on one provider does not l
         servers: {
           posthog: { state: "ready", provider: "claude", detail: "ok", checkedAt: "2026-06-10T11:00:00.000Z" },
           cloudflare: { state: "ready", provider: "claude", detail: "ok", checkedAt: "2026-06-10T11:00:00.000Z" },
+          vercel: { state: "ready", provider: "claude", detail: "ok", checkedAt: "2026-06-10T11:00:00.000Z" },
         },
       }),
     );
@@ -148,9 +155,24 @@ test("OAuth badge is provider-scoped — verification on one provider does not l
     });
     assert.equal(cloudflareMismatched.state, "oauth");
     assert.match(cloudflareMismatched.detail, /Claude에서만 검증됐어요/);
+
+    const vercelMismatched = await probeVercelIntegration({
+      appSupportPath,
+      provider: "codex",
+    });
+    assert.equal(vercelMismatched.state, "oauth");
+    assert.match(vercelMismatched.detail, /Claude에서만 검증됐어요/);
   } finally {
     await fs.rm(appSupportPath, { recursive: true, force: true });
   }
+});
+
+test("probeVercelIntegration reports OAuth delegated when not yet verified", async () => {
+  const oauthDelegated = await probeVercelIntegration({
+    appSupportPath: "/nonexistent",
+  });
+  assert.equal(oauthDelegated.state, "oauth");
+  assert.match(oauthDelegated.detail, /OAuth/);
 });
 
 test("probeCloudflareIntegration verifies token against /zones", async () => {
@@ -196,5 +218,6 @@ test("collectIntegrationStatus aggregates all probes with a timestamp", async ()
   assert.equal(result.githubMcp.state, "ready");
   assert.equal(result.posthog.state, "ready");
   assert.equal(result.cloudflare.state, "ready");
+  assert.equal(result.vercel.state, "oauth");
   assert.equal(result.checkedAt, "2026-06-10T09:00:00.000Z");
 });

@@ -211,6 +211,30 @@ struct OpenDesignDayContentTests {
         }
     }
 
+    @Test func officeHoursPendingPromptPresentationSuppressesCompletedOverflow() {
+        let completed = OfficeHoursPendingPromptPresentation.resolve(
+            answerCount: 7,
+            fallbackTotal: 6,
+            generationTotal: nil,
+            interviewComplete: true
+        )
+
+        #expect(!completed.shouldRender)
+        #expect(completed.questionNumber == 8)
+        #expect(completed.total == 8)
+
+        let stillActive = OfficeHoursPendingPromptPresentation.resolve(
+            answerCount: 7,
+            fallbackTotal: 6,
+            generationTotal: nil,
+            interviewComplete: false
+        )
+
+        #expect(stillActive.shouldRender)
+        #expect(stillActive.questionNumber == 8)
+        #expect(stillActive.total == 8)
+    }
+
     @Test func officeHoursLiveStatusPolicyShowsDetachedPanelOnlyWithoutStreamingAssistantRow() {
         let runningWithoutAssistant = makeChatSession(
             status: .running,

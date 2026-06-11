@@ -421,6 +421,18 @@ const WORKSPACE_SCAN_MODEL_BY_PROVIDER = {
   gemini: WORKSPACE_SCAN_GEMINI_MODEL,
   cursor: WORKSPACE_SCAN_CURSOR_MODEL,
 };
+// Workspace scan agent wall-clock bounds. ABORT asks the provider SDK to stop;
+// HARD_DEADLINE force-returns the scan even if the SDK ignores the abort, so a
+// stuck provider run can never hang the Day-1 scan UI for minutes. Override via
+// env for slow machines / large repos.
+const WORKSPACE_SCAN_AGENT_ABORT_MS = Number.parseInt(
+  process.env.AGENTIC30_WORKSPACE_SCAN_ABORT_MS || "",
+  10,
+) || 45_000;
+const WORKSPACE_SCAN_AGENT_HARD_DEADLINE_MS = Number.parseInt(
+  process.env.AGENTIC30_WORKSPACE_SCAN_HARD_DEADLINE_MS || "",
+  10,
+) || 60_000;
 const DAY1_CHOICE_MODEL_BY_PROVIDER = {
   claude: DAY1_CHOICE_CLAUDE_MODEL,
   codex: DAY1_CHOICE_CODEX_MODEL,
@@ -1473,6 +1485,7 @@ async function handleClientMessage(socket, payload) {
       // blocked Claude run, and detectIncompleteOfficeHoursInterview counts
       // these turns when that run concludes — the final answer must be durable
       // before the run can race ahead to its conclusion.
+      let officeHoursProgressAfterAnswer = null;
       if (isOfficeHoursStructuredInputResponse && userResponseText) {
         // Answering the 대안 비교 closing card IS interview completion: the
         // prompt smart-skips routed questions, so a finished interview can
@@ -1503,19 +1516,30 @@ async function handleClientMessage(socket, payload) {
             session_id: session.id,
           });
         });
+        officeHoursProgressAfterAnswer = await getOfficeHoursQuestionProgress(session, {
+          currentRequestId: requestId,
+        });
+        stampOfficeHoursExpectedCountCompletion(session, officeHoursProgressAfterAnswer);
       }
       await writeUserInputResponse(appSupportPath, {
         sessionId: session.id,
-      requestId,
+        requestId,
         response,
-    });
+      });
       if (!hasActiveRun) {
         await deleteUserInputArtifacts(appSupportPath, session.id, requestId);
-    }
+      }
 
       state.resolvedUserInputIds.add(requestId);
       session.pendingUserInput = null;
-      session.status = hasActiveRun || Boolean(iddContinuationPromptForRun) ? "running" : "idle";
+      const officeHoursQuestionCapReached = Boolean(officeHoursProgressAfterAnswer?.capReached);
+      session.status = officeHoursQuestionCapReached
+        ? "idle"
+        : hasActiveRun || Boolean(iddContinuationPromptForRun) ? "running" : "idle";
+      if (officeHoursQuestionCapReached) {
+        session.error = null;
+        await abortActiveOfficeHoursRunAtQuestionCap(session);
+      }
       touch(session);
 
       if (iddContinuationDocType) {
@@ -1665,6 +1689,11 @@ async function handleClientMessage(socket, payload) {
         response_count: Array.isArray(payload.responses) ? payload.responses.length : 0,
       });
       const hasSelectedStructuredOption = response.responses?.some((entry) => entry.selectedOptions?.length);
+      if (officeHoursQuestionCapReached) {
+        emitOfficeHoursQuestionCapCompleted(session, officeHoursProgressAfterAnswer, requestId);
+        broadcast({ type: "session_updated", session });
+        return;
+      }
       const shouldRunOfficeHoursContinuation = !hasActiveRun
         && isOfficeHoursStructuredInputResponse
         && Boolean(userResponseText);
@@ -1988,6 +2017,7 @@ async function handleClientMessage(socket, payload) {
         github_mcp: integrationStatus.githubMcp?.state || "",
         posthog: integrationStatus.posthog?.state || "",
         cloudflare: integrationStatus.cloudflare?.state || "",
+        vercel: integrationStatus.vercel?.state || "",
       });
       return;
     }
@@ -2029,6 +2059,8 @@ async function handleClientMessage(socket, payload) {
         provider,
         workspaceRoot,
         runProviderStreamImpl: runProviderStream,
+        buildCodexEnvImpl: buildCodexEnv,
+        resolveCodexBinaryPathImpl: resolveCodexBinaryPath,
         onProgress: (update) => {
           send(socket, {
             type: "mcp_oauth_connect_status",
@@ -3465,13 +3497,15 @@ async function runPrompt(
       telemetry.captureEvent("mac_sidecar_prompt_aborted", {
         session_id: session.id,
         provider: session.provider,
-    });
+      });
       assistantMessage.state = "final";
-    session.status = "idle";
+      session.status = "idle";
       session.error = null;
       if (officeHoursContext) {
         emitOfficeHoursStatus(session, {
-          stage: "aborted",
+          stage: session.runtime?.officeHours?.completedByExpectedCount === true
+            ? "completed"
+            : "aborted",
           messageId: assistantMessage.id,
           elapsedMs: performance.now() - runStartedAt,
         });
@@ -4967,6 +5001,102 @@ function isLockedDay1GoalOfficeHoursRuntime(officeHours = {}) {
     || isOfficeHoursLockedDay1GoalContext(officeHours?.context || "");
 }
 
+function resolveOfficeHoursExpectedQuestionCount(session, context = "") {
+  const stampedExpected = Number.parseInt(String(session?.runtime?.officeHours?.expectedQuestionCount ?? ""), 10);
+  if (Number.isFinite(stampedExpected) && stampedExpected > 0) {
+    return stampedExpected;
+  }
+  return parseExpectedOfficeHoursQuestionCount(
+    context || session?.runtime?.officeHours?.context || "",
+  );
+}
+
+function officeHoursResumeOffset(session) {
+  const resumedTurns = Number.parseInt(String(session?.runtime?.officeHours?.resumedTurns ?? ""), 10);
+  return Number.isFinite(resumedTurns) ? Math.max(0, resumedTurns) : 0;
+}
+
+async function getOfficeHoursQuestionProgress(session, {
+  context = "",
+  currentRequestId = "",
+} = {}) {
+  const expected = resolveOfficeHoursExpectedQuestionCount(session, context);
+  const currentId = String(currentRequestId || "").trim();
+  let answered = officeHoursResumeOffset(session);
+  let currentRequestAlreadyRecorded = false;
+  let terminalAnswered = session?.runtime?.officeHours?.terminalAnswered === true;
+
+  const turnLog = await loadOfficeHoursTurnLog({ workspaceRoot }).catch((error) => {
+    telemetry.captureException(error, {
+      operation: "office_hours_question_progress_load",
+      session_id: session?.id || "",
+    });
+    return null;
+  });
+  if (turnLog) {
+    answered += countOfficeHoursTurnsForSession(turnLog, session?.id);
+    terminalAnswered = terminalAnswered || hasOfficeHoursTerminalTurnForSession(turnLog, session?.id);
+    if (currentId) {
+      const turns = Array.isArray(turnLog?.turns) ? turnLog.turns : [];
+      currentRequestAlreadyRecorded = turns.some((turn) =>
+        String(turn?.sessionId || "") === String(session?.id || "")
+          && String(turn?.requestId || "") === currentId
+      );
+    }
+  }
+
+  if (currentId && !currentRequestAlreadyRecorded) {
+    answered += 1;
+  }
+
+  return {
+    expected,
+    answered,
+    terminalAnswered,
+    capReached: Boolean(expected && answered >= expected),
+    complete: terminalAnswered || Boolean(expected && answered >= expected),
+  };
+}
+
+function stampOfficeHoursExpectedCountCompletion(session, progress = {}) {
+  if (!session?.runtime?.officeHours || !progress?.capReached) return;
+  session.runtime.officeHours = {
+    ...session.runtime.officeHours,
+    completedByExpectedCount: true,
+    completedQuestionCount: progress.answered,
+    expectedQuestionCount: progress.expected || session.runtime.officeHours.expectedQuestionCount,
+  };
+}
+
+function emitOfficeHoursQuestionCapCompleted(session, progress = {}, requestId = null) {
+  if (!session?.id || !progress?.capReached) return;
+  emitOfficeHoursStatus(session, {
+    stage: "completed",
+    requestId,
+  });
+  telemetry.captureEvent("mac_sidecar_office_hours_question_cap_reached", {
+    session_id: session.id,
+    provider: session.provider,
+    expected: progress.expected || 0,
+    answered: progress.answered || 0,
+    source: session.runtime?.officeHours?.source || "",
+  });
+}
+
+async function abortActiveOfficeHoursRunAtQuestionCap(session) {
+  const activeRun = session?.id ? state.activeRuns.get(session.id) : null;
+  if (!activeRun) return;
+  try {
+    activeRun.abortController?.abort?.();
+    await activeRun.stop?.();
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "office_hours_question_cap_abort",
+      session_id: session?.id || "",
+    });
+  }
+}
+
 // Office Hours loading-card status copy tables (OFFICE_HOURS_STATUS_COPY for
 // follow-up questions, OFFICE_HOURS_FIRST_QUESTION_STATUS_COPY for the first one)
 // live in ./office-hours-status.mjs (imported above) so the superset invariant
@@ -5013,41 +5143,13 @@ function emitOfficeHoursStatus(session, {
 
 // Detects an interview run that ended with no question card on deck while the
 // session is still short of the expected question count the Mac client embeds
-// in the office-hours context ("Expected question count: N"). The count is
-// read from the runtime stamp runOfficeHours parses off the BASE context
-// (robust against the head-keeping 16k clamp evicting the line once the
-// cycle/resume preambles are prepended), falling back to re-parsing the given
-// context. Answered turns are counted from the workspace turn log, which
-// appendOfficeHoursTurn writes once per submitted structured answer, plus the
-// turns a resumed Day-1 interview inherited from OTHER sessions
-// (session.runtime.officeHours.resumedTurns — deliberately excludes the
-// current session's own turns, because the Mac retry path re-enters
-// runOfficeHours on the SAME session and countOfficeHoursTurnsForSession
-// already counts those). Returns { expected, answered } when the interview is
-// incomplete, null otherwise (including when no count is embedded — unknown
-// counts are never enforced).
+// in the office-hours context ("Expected question count: N"). Expected count is
+// a hard upper bound: hitting it is completion, while stopping before it without
+// a pending card is a failure.
 async function detectIncompleteOfficeHoursInterview(session, context) {
-  const stampedExpected = Number.parseInt(String(session?.runtime?.officeHours?.expectedQuestionCount ?? ""), 10);
-  const expected = Number.isFinite(stampedExpected) && stampedExpected > 0
-    ? stampedExpected
-    : parseExpectedOfficeHoursQuestionCount(context);
-  if (!expected) return null;
-  // The expected count is an upper bound, not a quota: the system prompt
-  // smart-skips routed questions and closes with the 전제 확인 → 대안 비교
-  // terminal cards, so a finished interview legitimately holds fewer answers
-  // than the Mac client's count. Answering the 대안 비교 closing card is the
-  // completion signal — without honoring it, Day 2 dead-ended: the run failed
-  // on 5/6, and every retry saw a finished transcript, asked nothing, and
-  // failed the same check again.
-  if (session?.runtime?.officeHours?.terminalAnswered === true) return null;
-  const turnLog = await loadOfficeHoursTurnLog({ workspaceRoot }).catch(() => null);
-  if (!turnLog) return null;
-  if (hasOfficeHoursTerminalTurnForSession(turnLog, session.id)) return null;
-  const resumedTurns = Number.parseInt(String(session?.runtime?.officeHours?.resumedTurns ?? ""), 10);
-  const resumeOffset = Number.isFinite(resumedTurns) ? Math.max(0, resumedTurns) : 0;
-  const answered = countOfficeHoursTurnsForSession(turnLog, session.id) + resumeOffset;
-  if (answered >= expected) return null;
-  return { expected, answered };
+  const progress = await getOfficeHoursQuestionProgress(session, { context });
+  if (!progress.expected || progress.complete) return null;
+  return { expected: progress.expected, answered: progress.answered };
 }
 
 // An interview that stops early is an explicit failure, not a completion: the
@@ -5796,7 +5898,9 @@ async function runOfficeHours(session, {
       session.status = "idle";
       session.error = null;
       emitOfficeHoursStatus(session, {
-        stage: "aborted",
+        stage: session.runtime?.officeHours?.completedByExpectedCount === true
+          ? "completed"
+          : "aborted",
         messageId: assistantMessage.id,
         elapsedMs: performance.now() - runStartedAt,
       });
@@ -9897,7 +10001,19 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
   }
 
   const abortController = new AbortController();
-  const timeout = setTimeout(() => abortController.abort(), 45_000);
+  // Two-stage wall-clock bound. At ABORT_MS we ask the provider SDK to stop via
+  // the abort signal; at HARD_DEADLINE_MS we force this function to return even
+  // if the SDK never honors the signal (e.g. blocked on MCP startup or tool
+  // I/O). Without the hard deadline a stuck codex/claude run can hang the Day-1
+  // scan for minutes instead of failing over to the blocked/switch-provider UI.
+  const abortTimer = setTimeout(() => abortController.abort(), WORKSPACE_SCAN_AGENT_ABORT_MS);
+  let hardDeadlineTimer = null;
+  const hardDeadline = new Promise((_, reject) => {
+    hardDeadlineTimer = setTimeout(() => {
+      try { abortController.abort(); } catch { /* already aborted */ }
+      reject(new Error("workspace scan provider exceeded hard deadline"));
+    }, WORKSPACE_SCAN_AGENT_HARD_DEADLINE_MS);
+  });
   let responseText = "";
   const providerLabel = workspaceScanProviderLabel(provider, model);
   broadcastWorkspaceScanProgress(scanRoot, `scan.agent · ${providerLabel}가 질문 근거를 확인 중`, {
@@ -9953,33 +10069,40 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
   ].join("\n");
 
   try {
-    await runProviderStream({
-      provider,
-      prompt: scanPrompt,
-      model,
-    workspaceRoot: scanRoot,
-      abortController,
-      executionMode: "agentic",
-      systemPromptOverride,
-      onTextDelta: (text) => {
-        responseText += text;
-        broadcastWorkspaceScanAgentOutput(scanRoot, providerLabel, text);
-      },
-      onTextReplace: (text) => {
-        responseText = text;
-        broadcastWorkspaceScanAgentOutput(scanRoot, providerLabel, text);
-      },
-      onToolEvent: (event) => {
-        const summary = formatWorkspaceScanToolEvent(event);
-        if (summary) {
-          broadcastWorkspaceScanProgress(scanRoot, `${providerLabel}: ${summary}`, {
-            stage: "verifying",
-            stepIndex: 2,
-            totalSteps: 3,
-          });
-        }
-      },
-    });
+    await Promise.race([
+      runProviderStream({
+        provider,
+        prompt: scanPrompt,
+        model,
+        workspaceRoot: scanRoot,
+        abortController,
+        // Lightweight read-only scan lane: no QMD/PostHog/Cloudflare/GitHub/
+        // internal MCP boot, low codex reasoning effort, low claude turn
+        // ceiling. This is the bulk of the latency win — the heavy "agentic"
+        // mode booted four external MCP servers a doc scanner never needs.
+        executionMode: "workspace_scan_read_only",
+        systemPromptOverride,
+        onTextDelta: (text) => {
+          responseText += text;
+          broadcastWorkspaceScanAgentOutput(scanRoot, providerLabel, text);
+        },
+        onTextReplace: (text) => {
+          responseText = text;
+          broadcastWorkspaceScanAgentOutput(scanRoot, providerLabel, text);
+        },
+        onToolEvent: (event) => {
+          const summary = formatWorkspaceScanToolEvent(event);
+          if (summary) {
+            broadcastWorkspaceScanProgress(scanRoot, `${providerLabel}: ${summary}`, {
+              stage: "verifying",
+              stepIndex: 2,
+              totalSteps: 3,
+            });
+          }
+        },
+      }),
+      hardDeadline,
+    ]);
     const parsed = parseWorkspaceScanText(responseText);
     const result = {
       ...normalizeWorkspaceScanResult(parsed, scanRoot),
@@ -10028,7 +10151,8 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
       message: formatError(error),
     };
   } finally {
-    clearTimeout(timeout);
+    clearTimeout(abortTimer);
+    clearTimeout(hardDeadlineTimer);
   }
 }
 
@@ -10097,6 +10221,9 @@ function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, mess
     model,
     reason,
     message: String(message || ""),
+    stage: "blocked",
+    stepIndex: 2,
+    totalSteps: 3,
     nextProvider,
     availableProviders,
     ...(reason === "usage_limit" ? { errorKind: PROVIDER_USAGE_LIMIT_ERROR_KIND } : {}),
@@ -10129,7 +10256,7 @@ function broadcastWorkspaceScanProgress(scanRoot, progressText, progress = {}) {
 
 function workspaceScanProviderLabel(provider, model) {
   if (provider === "claude") return `Claude Sonnet 4.6 (${model})`;
-  if (provider === "codex") return `GPT 5.1 Codex Mini (${model})`;
+  if (provider === "codex") return `Codex (${model})`;
   if (provider === "gemini") return `Gemini 3.5 Flash (${model})`;
   return `${provider} (${model})`;
 }
@@ -12567,6 +12694,26 @@ function shouldRestartIddQuestionRequest(session, request) {
   return getProviderAuthState(session?.provider).available;
 }
 
+async function suppressOfficeHoursRequestAfterQuestionCap(session, request, activeRequestIds) {
+  if (session?.runtime?.officeHours?.active !== true || !request?.requestId) {
+    return false;
+  }
+  const progress = await getOfficeHoursQuestionProgress(session);
+  if (!progress.capReached) return false;
+
+  await deleteUserInputArtifacts(appSupportPath, request.sessionId || session.id, request.requestId);
+  state.resolvedUserInputIds.add(request.requestId);
+  activeRequestIds?.delete?.(request.requestId);
+  session.pendingUserInput = null;
+  session.status = "idle";
+  session.error = null;
+  stampOfficeHoursExpectedCountCompletion(session, progress);
+  await abortActiveOfficeHoursRunAtQuestionCap(session);
+  touch(session);
+  emitOfficeHoursQuestionCapCompleted(session, progress, request.requestId);
+  return true;
+}
+
 async function syncPendingUserInputRequests() {
   const requests = await listUserInputRequests(appSupportPath);
   const activeRequestIds = new Set(requests.map((request) => request.requestId));
@@ -12576,6 +12723,10 @@ async function syncPendingUserInputRequests() {
     if (state.resolvedUserInputIds.has(request.requestId)) continue;
     const session = state.sessions.get(request.sessionId);
     if (!session) continue;
+    if (await suppressOfficeHoursRequestAfterQuestionCap(session, request, activeRequestIds)) {
+      changedSessions.add(session.id);
+      continue;
+    }
     if (
       isIddInterviewSession(session)
       && shouldRestartIddQuestionRequest(session, request)
@@ -12612,6 +12763,13 @@ async function syncPendingUserInputRequests() {
 
   for (const session of state.sessions.values()) {
     const pending = session.pendingUserInput;
+    if (
+      pending
+      && await suppressOfficeHoursRequestAfterQuestionCap(session, pending, activeRequestIds)
+    ) {
+      changedSessions.add(session.id);
+      continue;
+    }
     if (
       pending
       && isIddInterviewSession(session)

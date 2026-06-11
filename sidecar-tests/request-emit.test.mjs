@@ -6,6 +6,11 @@ import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
+import {
+  createUserInputRequest,
+  listUserInputRequests,
+} from "../sidecar/user-input.mjs";
+import { appendOfficeHoursTurn } from "../sidecar/workspace-memory.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -264,6 +269,135 @@ test("office_hours_start preserves custom source and ignores duplicate concurren
       event.type === "session_updated"
         && event.session?.id === created.session.id
         && event.session?.status === "idle",
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("office_hours Day 1 stops at expected six questions and suppresses stray seventh request", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    await initGitRepo(harness.workspacePath);
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 1,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle"
+    );
+
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context: [
+        "DAY1_LOCKED_GOAL",
+        "Flow contract: locked Day 1 goal interview.",
+        "Office Hours mode: Startup",
+        "Expected question count: 6",
+        "Goal lane: make_money / 첫 매출 달성",
+        "Goal text: Slack escalation 누락 문제로 paid pilot을 검증한다.",
+        "Customer: B2B support lead",
+        "Problem: Slack escalation을 놓친다",
+        "Validation action: 유료 파일럿 ask",
+      ].join("\n"),
+      visiblePrompt: "Test Day 1 locked Office Hours",
+      source: "day1_interview_goal_locked",
+      day: 1,
+    }));
+
+    const pending = await waitForPendingOfficeHoursPrompt(ws, created.session.id);
+    for (let index = 1; index <= 5; index += 1) {
+      await appendOfficeHoursTurn({
+        workspaceRoot: harness.workspacePath,
+        turn: {
+          day: 1,
+          sessionId: created.session.id,
+          requestId: `seed-office-hours-${index}`,
+          mode: "office_hours",
+          questionText: `Seeded question ${index}`,
+          responseText: `Seeded answer ${index}`,
+        },
+      });
+    }
+    const marker = ws.events.length;
+    submitStructuredAnswer(ws, created.session.id, pending);
+
+    const completed = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.pendingUserInput == null
+        && event.session?.status === "idle"
+        && event.session?.runtime?.officeHours?.completedByExpectedCount === true
+    );
+    assert.equal(completed.session.runtime.officeHours.expectedQuestionCount, 6);
+    assert.equal(completed.session.runtime.officeHours.completedQuestionCount, 6);
+    assert.equal(
+      ws.events.slice(marker).some((event) =>
+        event.type === "office_hours_status"
+          && event.sessionId === created.session.id
+          && event.stage === "provider_starting"
+      ),
+      false,
+      "sixth answer must not schedule another provider continuation",
+    );
+
+    assert.deepEqual(await listUserInputRequests(harness.appSupportPath), []);
+
+    const strayRequest = await createUserInputRequest(harness.appSupportPath, {
+      sessionId: created.session.id,
+      toolName: "agentic30_request_user_input",
+      title: "Office Hours",
+      generation: {
+        mode: "office_hours",
+        signalId: "office_hours_alternatives",
+      },
+      questions: [
+        {
+          questionId: "office_hours_alternatives",
+          header: "대안 비교",
+          question: "이 질문은 7번째 카드로 승격되면 안 됩니다.",
+          options: [
+            { label: "최소안", description: "최소 범위" },
+            { label: "이상안", description: "넓은 범위" },
+          ],
+          multiSelect: false,
+          allowFreeText: true,
+          requiresFreeText: false,
+          textMode: "short",
+        },
+      ],
+    });
+    const syncMarker = ws.events.length;
+    await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= syncMarker
+        && event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.pendingUserInput == null
+        && event.session?.status === "idle"
+    );
+    assert.equal(
+      ws.events.slice(syncMarker).some((event) =>
+        event.type === "session_updated"
+          && event.session?.id === created.session.id
+          && event.session?.pendingUserInput?.requestId === strayRequest.requestId
+      ),
+      false,
+      "sync must not expose a seventh Office Hours card after the cap",
+    );
+    assert.equal(
+      (await listUserInputRequests(harness.appSupportPath))
+        .some((request) => request.requestId === strayRequest.requestId),
+      false,
+      "sync must remove the stray seventh request artifact",
     );
   } finally {
     ws?.close();
@@ -554,6 +688,7 @@ async function spawnSidecar() {
     port: ready.port,
     authToken: ready.authToken,
     workspacePath,
+    appSupportPath,
     async close() {
       child.kill("SIGTERM");
       await new Promise((resolve) => {
@@ -563,6 +698,35 @@ async function spawnSidecar() {
       await fs.rm(tempRoot, { recursive: true, force: true });
     },
   };
+}
+
+async function waitForPendingOfficeHoursPrompt(ws, sessionId, previousRequestId = "") {
+  const prior = String(previousRequestId || "");
+  const event = await waitForEvent(ws.events, (candidate) =>
+    candidate.type === "session_updated"
+      && candidate.session?.id === sessionId
+      && candidate.session?.pendingUserInput?.requestId
+      && candidate.session.pendingUserInput.requestId !== prior
+      && candidate.session.pendingUserInput.generation?.mode?.startsWith("office_hours")
+  );
+  return event.session.pendingUserInput;
+}
+
+function submitStructuredAnswer(ws, sessionId, prompt) {
+  const question = prompt.questions[0];
+  const selectedLabel = question.options?.[0]?.label || "직접 입력";
+  ws.send(JSON.stringify({
+    type: "submit_user_input",
+    sessionId,
+    requestId: prompt.requestId,
+    responses: [
+      {
+        question: question.question,
+        selectedOptions: question.options?.length ? [selectedLabel] : [],
+        freeText: question.options?.length ? "" : selectedLabel,
+      },
+    ],
+  }));
 }
 
 function execFileOk(cmd, args, cwd) {

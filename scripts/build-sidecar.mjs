@@ -69,6 +69,8 @@ const ARCH_EXTERNAL_PACKAGES = [
   "@anthropic-ai/claude-agent-sdk-darwin-x64",
   "@openai/codex-darwin-arm64",
   "@openai/codex-darwin-x64",
+  "@cursor/sdk-darwin-arm64",
+  "@cursor/sdk-darwin-x64",
   "@img/sharp-darwin-arm64",
   "@img/sharp-darwin-x64",
   "@img/sharp-libvips-darwin-arm64",
@@ -106,6 +108,8 @@ const NON_DARWIN_PLATFORMS = [
   "arm64-linux",
   "x64-linux",
 ];
+
+const PREBUILD_PLATFORM_RE = /^(darwin|linux|win32)-(arm64|x64)$/;
 
 const NATIVE_BUILD_ARTIFACT_DIRS = new Set([
   ".deps",
@@ -394,6 +398,7 @@ async function computeBuildFingerprint() {
       targetArchs: TARGET_ARCHES,
       sidecarCliPackages: SIDECAR_CLI_PACKAGES,
       nonDarwinPlatforms: NON_DARWIN_PLATFORMS,
+      targetPrebuildPlatforms: TARGET_ARCHES.map((arch) => `darwin-${arch}`),
       nativeBuildArtifactDirs: [...NATIVE_BUILD_ARTIFACT_DIRS],
       nativeBuildArtifactExtensions: [...NATIVE_BUILD_ARTIFACT_EXTENSIONS],
       nodeRuntimeVersion: NODE_RUNTIME_VERSION,
@@ -476,7 +481,7 @@ async function stripNonDarwinBinaries(root) {
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (NON_DARWIN_PLATFORMS.includes(entry.name)) {
+        if (shouldStripNativePlatformDir(entry.name)) {
           await rm(full, { recursive: true, force: true });
           continue;
         }
@@ -484,6 +489,14 @@ async function stripNonDarwinBinaries(root) {
       }
     }
   }
+}
+
+function shouldStripNativePlatformDir(name) {
+  if (NON_DARWIN_PLATFORMS.includes(name)) return true;
+  const match = PREBUILD_PLATFORM_RE.exec(name);
+  if (!match) return false;
+  const [, platform, arch] = match;
+  return platform !== "darwin" || !TARGET_ARCHES.includes(arch);
 }
 
 async function stripNativeBuildArtifacts(root) {
