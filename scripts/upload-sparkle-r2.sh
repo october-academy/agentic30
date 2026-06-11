@@ -15,6 +15,7 @@ set -euo pipefail
 #   CLOUDFLARE_ACCOUNT_ID       — Cloudflare account id for the R2 S3 endpoint
 #   R2_ACCESS_KEY_ID            — R2 S3 access key id
 #   R2_SECRET_ACCESS_KEY        — R2 S3 secret access key
+#   CLOUDFLARE_API_TOKEN        — optional R2 API token fallback for S3 credentials
 #   R2_S3_ENDPOINT              — optional R2 S3 endpoint override
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -58,12 +59,14 @@ if [ -z "${R2_S3_ENDPOINT:-}" ] && [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
   echo "ERROR: CLOUDFLARE_ACCOUNT_ID or R2_S3_ENDPOINT is required for R2 S3 uploads" >&2
   exit 2
 fi
-if [ -z "${R2_ACCESS_KEY_ID:-}" ] && [ -z "${AWS_ACCESS_KEY_ID:-}" ]; then
-  echo "ERROR: R2_ACCESS_KEY_ID is required for R2 S3 uploads" >&2
+r2_access_key="${R2_ACCESS_KEY_ID:-${AWS_ACCESS_KEY_ID:-}}"
+r2_secret_key="${R2_SECRET_ACCESS_KEY:-${AWS_SECRET_ACCESS_KEY:-}}"
+if { [ -n "$r2_access_key" ] || [ -n "$r2_secret_key" ]; } && { [ -z "$r2_access_key" ] || [ -z "$r2_secret_key" ]; }; then
+  echo "ERROR: both R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY are required when explicit R2 S3 credentials are provided" >&2
   exit 2
 fi
-if [ -z "${R2_SECRET_ACCESS_KEY:-}" ] && [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
-  echo "ERROR: R2_SECRET_ACCESS_KEY is required for R2 S3 uploads" >&2
+if [ -z "$r2_access_key" ] && [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+  echo "ERROR: R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY or CLOUDFLARE_API_TOKEN is required for R2 S3 uploads" >&2
   exit 2
 fi
 

@@ -84,15 +84,16 @@ if [ -n "${R2_S3_ENDPOINT:-}" ] || [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
 else
   fail "CLOUDFLARE_ACCOUNT_ID or R2_S3_ENDPOINT is required for multipart R2 uploads"
 fi
-if [ -n "${R2_ACCESS_KEY_ID:-}" ] || [ -n "${AWS_ACCESS_KEY_ID:-}" ]; then
-  pass "R2 S3 access key id is available"
+r2_access_key="${R2_ACCESS_KEY_ID:-${AWS_ACCESS_KEY_ID:-}}"
+r2_secret_key="${R2_SECRET_ACCESS_KEY:-${AWS_SECRET_ACCESS_KEY:-}}"
+if [ -n "$r2_access_key" ] && [ -n "$r2_secret_key" ]; then
+  pass "Explicit R2 S3 credentials are available"
+elif [ -n "$r2_access_key" ] || [ -n "$r2_secret_key" ]; then
+  fail "both R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY are required when explicit R2 S3 credentials are provided"
+elif [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then
+  pass "R2 S3 credentials can be derived from CLOUDFLARE_API_TOKEN"
 else
-  fail "R2_ACCESS_KEY_ID is required for multipart R2 uploads"
-fi
-if [ -n "${R2_SECRET_ACCESS_KEY:-}" ] || [ -n "${AWS_SECRET_ACCESS_KEY:-}" ]; then
-  pass "R2 S3 secret access key is available"
-else
-  fail "R2_SECRET_ACCESS_KEY is required for multipart R2 uploads"
+  fail "R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY or CLOUDFLARE_API_TOKEN is required for multipart R2 uploads"
 fi
 
 require_env DEVELOPMENT_TEAM

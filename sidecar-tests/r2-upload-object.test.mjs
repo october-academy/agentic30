@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const script = path.join(root, "scripts", "r2-upload-object.mjs");
+const { resolveS3Credentials, sha256Hex } = await import(`file://${script}`);
 
 function runDryUpload(args) {
   const result = spawnSync(process.execPath, [script, "--dry-run", ...args], {
@@ -74,4 +75,62 @@ test("r2 upload dry-run leaves small appcast objects on single put", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("r2 credentials prefer explicit S3 keys", async () => {
+  let fetched = false;
+  const credentials = await resolveS3Credentials({
+    env: {
+      R2_ACCESS_KEY_ID: "explicit-id",
+      R2_SECRET_ACCESS_KEY: "explicit-secret",
+      CLOUDFLARE_API_TOKEN: "cf-token",
+    },
+    fetchImpl: async () => {
+      fetched = true;
+      throw new Error("unexpected fetch");
+    },
+  });
+
+  assert.deepEqual(credentials, {
+    accessKeyId: "explicit-id",
+    secretAccessKey: "explicit-secret",
+  });
+  assert.equal(fetched, false);
+});
+
+test("r2 credentials derive S3 keys from Cloudflare API token", async () => {
+  const credentials = await resolveS3Credentials({
+    env: {
+      CLOUDFLARE_API_TOKEN: "cf-token-value",
+    },
+    fetchImpl: async (url, options) => {
+      assert.equal(url, "https://api.cloudflare.com/client/v4/user/tokens/verify");
+      assert.equal(options.headers.Authorization, "Bearer cf-token-value");
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          result: { id: "token-id" },
+        }),
+      };
+    },
+  });
+
+  assert.deepEqual(credentials, {
+    accessKeyId: "token-id",
+    secretAccessKey: sha256Hex("cf-token-value"),
+  });
+});
+
+test("r2 credentials fail closed without S3 keys or Cloudflare API token", async () => {
+  await assert.rejects(
+    () =>
+      resolveS3Credentials({
+        env: {},
+        fetchImpl: async () => {
+          throw new Error("unexpected fetch");
+        },
+      }),
+    /R2_ACCESS_KEY_ID\/R2_SECRET_ACCESS_KEY or CLOUDFLARE_API_TOKEN is required/
+  );
 });

@@ -1,7 +1,9 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
@@ -17,6 +19,8 @@ Environment:
   CLOUDFLARE_ACCOUNT_ID       Cloudflare account id for the default R2 S3 endpoint.
   R2_ACCESS_KEY_ID            R2 S3 access key id (falls back to AWS_ACCESS_KEY_ID).
   R2_SECRET_ACCESS_KEY        R2 S3 secret access key (falls back to AWS_SECRET_ACCESS_KEY).
+  CLOUDFLARE_API_TOKEN        Optional R2 API token fallback; token id is fetched
+                              from Cloudflare and the S3 secret is sha256(token).
   R2_S3_ENDPOINT              Optional endpoint override.
   R2_UPLOAD_PART_SIZE_MB      Multipart part size, default ${DEFAULT_PART_SIZE_MB}.
   R2_UPLOAD_QUEUE_SIZE        Multipart queue size, default ${DEFAULT_QUEUE_SIZE}.
@@ -74,16 +78,69 @@ function r2Endpoint() {
   return `https://${requireValue(process.env.CLOUDFLARE_ACCOUNT_ID, "CLOUDFLARE_ACCOUNT_ID")}.r2.cloudflarestorage.com`;
 }
 
-function s3Client(endpoint) {
-  const accessKeyId = process.env.R2_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY;
+export function sha256Hex(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+export async function resolveCloudflareApiTokenId(token, { fetchImpl = globalThis.fetch } = {}) {
+  if (typeof fetchImpl !== "function") {
+    throw new Error("fetch is required to derive R2 S3 credentials from CLOUDFLARE_API_TOKEN");
+  }
+  const response = await fetchImpl("https://api.cloudflare.com/client/v4/user/tokens/verify", {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  let body = null;
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
+  }
+  if (!response.ok || body?.success !== true) {
+    const details = Array.isArray(body?.errors)
+      ? body.errors.map((error) => error?.message).filter(Boolean).join("; ")
+      : "";
+    throw new Error(
+      `CLOUDFLARE_API_TOKEN verification failed: ${details || `${response.status} ${response.statusText}`}`
+    );
+  }
+  return requireValue(body?.result?.id, "Cloudflare API token id");
+}
+
+export async function resolveS3Credentials({ env = process.env, fetchImpl = globalThis.fetch } = {}) {
+  const accessKeyId = env.R2_ACCESS_KEY_ID || env.AWS_ACCESS_KEY_ID;
+  const secretAccessKey = env.R2_SECRET_ACCESS_KEY || env.AWS_SECRET_ACCESS_KEY;
+  const sessionToken = env.R2_SESSION_TOKEN || env.AWS_SESSION_TOKEN;
+  if (accessKeyId && secretAccessKey) {
+    return {
+      accessKeyId,
+      secretAccessKey,
+      ...(sessionToken ? { sessionToken } : {}),
+    };
+  }
+  if (accessKeyId || secretAccessKey) {
+    return {
+      accessKeyId: requireValue(accessKeyId, "R2_ACCESS_KEY_ID"),
+      secretAccessKey: requireValue(secretAccessKey, "R2_SECRET_ACCESS_KEY"),
+      ...(sessionToken ? { sessionToken } : {}),
+    };
+  }
+  if (env.CLOUDFLARE_API_TOKEN) {
+    const tokenId = await resolveCloudflareApiTokenId(env.CLOUDFLARE_API_TOKEN, { fetchImpl });
+    return {
+      accessKeyId: tokenId,
+      secretAccessKey: sha256Hex(env.CLOUDFLARE_API_TOKEN),
+    };
+  }
+  throw new Error("R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY or CLOUDFLARE_API_TOKEN is required");
+}
+
+function s3Client(endpoint, credentials) {
   return new S3Client({
     region: "auto",
     endpoint,
-    credentials: {
-      accessKeyId: requireValue(accessKeyId, "R2_ACCESS_KEY_ID"),
-      secretAccessKey: requireValue(secretAccessKey, "R2_SECRET_ACCESS_KEY"),
-    },
+    credentials,
   });
 }
 
@@ -136,7 +193,8 @@ async function main() {
   }
 
   console.log(`[r2-upload] uploading ${key} (${summary.mib} MiB) via ${mode}`);
-  const client = s3Client(endpoint);
+  const credentials = await resolveS3Credentials();
+  const client = s3Client(endpoint, credentials);
   const input = {
     Bucket: bucket,
     Key: key,
@@ -161,9 +219,11 @@ async function main() {
   console.log(`[r2-upload] uploaded ${key}`);
 }
 
-main().catch((error) => {
-  console.error(`[r2-upload] ERROR: ${error.message}`);
-  console.error("");
-  console.error(usage());
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(`[r2-upload] ERROR: ${error.message}`);
+    console.error("");
+    console.error(usage());
+    process.exit(1);
+  });
+}
