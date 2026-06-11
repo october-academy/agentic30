@@ -1985,10 +1985,17 @@ struct ContentView: View {
                 }
             }
             .overlay(alignment: .topTrailing) {
-                if showsAppUpdateStatusPanel, viewModel.requiresMacOnboarding {
+                if showsAppUpdateStatusPanel {
                     appUpdateStatusPanel
                         .padding(.top, 28)
                         .padding(.trailing, 28)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                } else if isWorkspaceWindow,
+                          !viewModel.requiresMacOnboarding,
+                          let pendingVersion = viewModel.appUpdateState.lastResult.pendingUpdateVersionLabel {
+                    appUpdateAvailablePill(versionLabel: pendingVersion)
+                        .padding(.top, 14)
+                        .padding(.trailing, 20)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
@@ -2069,6 +2076,36 @@ struct ContentView: View {
                 .stroke(OpenDesignDayColor.borderSoft, lineWidth: 1)
         )
         .accessibilityIdentifier("appUpdate.statusPanel")
+    }
+
+    /// Codex-style gentle update reminder: a click-through pill shown while a
+    /// new build is available/downloaded. Clicking hands off to Sparkle's
+    /// user-initiated flow (install & relaunch).
+    private func appUpdateAvailablePill(versionLabel: String) -> some View {
+        Button {
+            NotificationCenter.default.post(name: .agenticCheckForUpdatesRequested, object: nil)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 11.5, weight: .semibold))
+                Text("업데이트 \(versionLabel)")
+                    .font(.system(size: 11.5, weight: .semibold))
+            }
+            .foregroundStyle(Agentic30BrandColor.green)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 6)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Agentic30BrandColor.green.opacity(0.14))
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(Agentic30BrandColor.green.opacity(0.35), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .help("새 버전 \(versionLabel)이 준비됐습니다. 클릭하면 업데이트를 설치합니다.")
+        .accessibilityIdentifier("appUpdate.updateAvailablePill")
     }
 
     private var activeSurface: AgenticSurface {

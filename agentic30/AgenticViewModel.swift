@@ -294,11 +294,30 @@ enum AppUpdateResult: Equatable {
         }
     }
 
+    /// Non-nil while an update is known but not yet installed — drives the
+    /// gentle in-app "update available" pill (Sparkle gentle reminders).
+    var pendingUpdateVersionLabel: String? {
+        switch self {
+        case .updateAvailable(let version, let displayVersion),
+             .downloaded(let version, let displayVersion):
+            return Self.shortVersionLabel(version: version, displayVersion: displayVersion)
+        case .neverChecked, .checking, .latest, .installing, .blocked, .error:
+            return nil
+        }
+    }
+
     private static func versionLabel(version: String, displayVersion: String?) -> String {
         guard let displayVersion, !displayVersion.isEmpty, displayVersion != version else {
             return version
         }
         return "\(displayVersion) (\(version))"
+    }
+
+    private static func shortVersionLabel(version: String, displayVersion: String?) -> String {
+        guard let displayVersion, !displayVersion.isEmpty else {
+            return version
+        }
+        return displayVersion
     }
 }
 

@@ -440,7 +440,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = SPUStandardUpdaterController(
             startingUpdater: true,
             updaterDelegate: self,
-            userDriverDelegate: nil
+            userDriverDelegate: self
         )
         viewModel.configureAppUpdates(
             configured: true,
@@ -565,6 +565,45 @@ extension AppDelegate: SPUUpdaterDelegate {
             "download_url": item.fileURL?.absoluteString ?? "",
             "feed_url": viewModel.appUpdateState.feedURL,
         ]
+    }
+}
+
+extension AppDelegate: SPUStandardUserDriverDelegate {
+    /// Sparkle gentle reminders: scheduled background checks surface an in-app
+    /// pill (workspace window, top-trailing) instead of stealing focus with a
+    /// modal alert. https://sparkle-project.org/documentation/gentle-reminders/
+    var supportsGentleScheduledUpdateReminders: Bool {
+        true
+    }
+
+    func standardUserDriverShouldHandleShowingScheduledUpdate(
+        _ update: SUAppcastItem,
+        andInImmediateFocus immediateFocus: Bool
+    ) -> Bool {
+        // App frontmost and recently launched → Sparkle's standard UI is fine.
+        // Otherwise defer to the gentle in-app pill driven by appUpdateState.
+        immediateFocus
+    }
+
+    func standardUserDriverWillHandleShowingUpdate(
+        _ handleShowingUpdate: Bool,
+        forUpdate update: SUAppcastItem,
+        state: SPUUserUpdateState
+    ) {
+        guard !handleShowingUpdate else { return }
+        viewModel.recordAppUpdateAvailable(
+            version: update.versionString,
+            displayVersion: update.displayVersionString
+        )
+        PostHogTelemetry.capture(
+            "mac_update_gentle_reminder_shown",
+            properties: updateTelemetryProperties(for: update),
+            authSession: viewModel.macAuthSession
+        )
+    }
+
+    func standardUserDriverWillFinishUpdateSession() {
+        viewModel.recordAppUpdateCycleFinished()
     }
 }
 

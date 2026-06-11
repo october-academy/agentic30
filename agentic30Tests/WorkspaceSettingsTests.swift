@@ -8,8 +8,13 @@ final class WorkspaceSettingsTests: XCTestCase {
         KeychainHelper.loadSettings().bipWorkspaceRoot
     }
 
+    private var restoreHostDefaults: (() -> Void)?
+
     override func setUp() {
         super.setUp()
+        // Hosted tests mutate the real app defaults domain — snapshot it so
+        // tearDown can hand the developer's persisted settings back.
+        restoreHostDefaults = HostAppDefaultsGuard.snapshotAgentic30Domains()
         // Hermetic: stub the legacy keychain fallback so tests don't depend on
         // (or mutate) whatever the dev box's login keychain happens to hold.
         WorkspaceSettings.legacyWorkspaceProvider = { "" }
@@ -18,8 +23,8 @@ final class WorkspaceSettingsTests: XCTestCase {
     }
 
     override func tearDown() {
-        UserDefaults.standard.removeObject(forKey: defaultsKey)
-        WorkspaceSettings.clearKnownWorkspaceRoots()
+        restoreHostDefaults?()
+        restoreHostDefaults = nil
         WorkspaceSettings.legacyWorkspaceProvider = productionLegacyProvider
         super.tearDown()
     }
@@ -680,6 +685,33 @@ final class SparkleUpdateTests: XCTestCase {
         XCTAssertEqual(downloaded.statusText, "Downloaded 1.0.6 (7)")
         XCTAssertEqual(latest.statusText, "Latest")
         XCTAssertEqual(latest.detailText, "The installed build is current.")
+    }
+
+    func testPendingUpdateVersionLabelDrivesGentleReminderPill() {
+        // Pill shows while a new build is known but not installed.
+        XCTAssertEqual(
+            AppUpdateResult.updateAvailable(version: "7", displayVersion: "1.0.6").pendingUpdateVersionLabel,
+            "1.0.6"
+        )
+        XCTAssertEqual(
+            AppUpdateResult.downloaded(version: "7", displayVersion: "1.0.6").pendingUpdateVersionLabel,
+            "1.0.6"
+        )
+        // Falls back to the build number when no display version exists.
+        XCTAssertEqual(
+            AppUpdateResult.updateAvailable(version: "7", displayVersion: nil).pendingUpdateVersionLabel,
+            "7"
+        )
+
+        // No pill in every other state.
+        XCTAssertNil(AppUpdateResult.neverChecked.pendingUpdateVersionLabel)
+        XCTAssertNil(AppUpdateResult.checking.pendingUpdateVersionLabel)
+        XCTAssertNil(AppUpdateResult.latest.pendingUpdateVersionLabel)
+        XCTAssertNil(
+            AppUpdateResult.installing(version: "7", displayVersion: "1.0.6").pendingUpdateVersionLabel
+        )
+        XCTAssertNil(AppUpdateResult.blocked("reason").pendingUpdateVersionLabel)
+        XCTAssertNil(AppUpdateResult.error("boom").pendingUpdateVersionLabel)
     }
 
     func testAppUpdateConfigurationRecordsUnavailableReleaseKeyState() {
