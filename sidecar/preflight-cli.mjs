@@ -43,8 +43,8 @@ function getAcpAdapterState() {
   return {
     available,
     message: available
-      ? "ACP adapter ready for isolated editor integrations"
-      : "ACP adapter requires ANTHROPIC_API_KEY or CODEX_API_KEY / OPENAI_API_KEY",
+      ? "ACP adapter가 격리된 에디터 연동에 사용할 준비가 되었습니다."
+      : "ACP adapter를 사용하려면 ANTHROPIC_API_KEY 또는 CODEX_API_KEY / OPENAI_API_KEY가 필요합니다.",
     adapterPath,
     command: `${process.execPath} ${adapterPath} --workspace ${workspaceRoot}`,
   };

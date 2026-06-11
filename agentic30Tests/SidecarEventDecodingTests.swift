@@ -221,7 +221,7 @@ struct SidecarEventDecodingTests {
           "type": "error",
           "sessionId": "session-1",
           "provider": "codex",
-          "message": "Sign in with Codex or set CODEX_API_KEY / OPENAI_API_KEY",
+          "message": "Codex에 로그인하거나 CODEX_API_KEY / OPENAI_API_KEY를 설정하세요.",
           "errorKind": "provider_auth_required",
           "recoverable": true
         }
@@ -2034,7 +2034,7 @@ struct SidecarEventDecodingTests {
               "codex": {
                 "available": false,
                 "source": "missing",
-                "message": "Sign in with Codex",
+                "message": "Codex에 로그인하세요.",
                 "sdk": {
                   "available": true,
                   "packageName": "@openai/codex-sdk",
@@ -2095,17 +2095,17 @@ struct SidecarEventDecodingTests {
             "claude": {
               "available": false,
               "source": "missing",
-              "message": "Sign in with Claude Code or set ANTHROPIC_API_KEY"
+              "message": "Claude Code에 로그인하거나 ANTHROPIC_API_KEY를 설정하세요."
             },
             "codex": {
               "available": false,
               "source": "missing",
-              "message": "Sign in with Codex or set CODEX_API_KEY / OPENAI_API_KEY"
+              "message": "Codex에 로그인하거나 CODEX_API_KEY / OPENAI_API_KEY를 설정하세요."
             },
             "gemini": {
               "available": false,
               "source": "missing",
-              "message": "gcloud SDK not installed — set GEMINI_API_KEY / GOOGLE_API_KEY or install Google Cloud SDK",
+              "message": "Google Cloud SDK가 설치되어 있지 않습니다. GEMINI_API_KEY / GOOGLE_API_KEY를 설정하거나 Google Cloud SDK를 설치하세요.",
               "geminiAdc": {
                 "status": "gcloud-missing",
                 "gcloudInstalled": false,
@@ -2182,7 +2182,7 @@ struct SidecarEventDecodingTests {
           ],
           "iddProviderRecovery": {
             "provider": "codex",
-            "message": "Sign in with Codex",
+            "message": "Codex에 로그인하세요.",
             "actionId": "sign_in_codex"
           },
           "iddSetupError": {

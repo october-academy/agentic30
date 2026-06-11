@@ -300,6 +300,22 @@ test("isProviderAuthRequiredError detects expected provider auth setup prompts",
     true,
   );
   assert.equal(
+    isProviderAuthRequiredError(new Error("Codex에 로그인하거나 CODEX_API_KEY / OPENAI_API_KEY를 설정하세요.")),
+    true,
+  );
+  assert.equal(
+    isProviderAuthRequiredError(new Error("Claude Code에 로그인하거나 ANTHROPIC_API_KEY를 설정하세요.")),
+    true,
+  );
+  assert.equal(
+    isProviderAuthRequiredError(new Error("CURSOR_API_KEY를 설정하거나 설정에서 Cursor API 키를 추가하세요.")),
+    true,
+  );
+  assert.equal(
+    isProviderAuthRequiredError(new Error("Google Cloud SDK가 설치되어 있지 않습니다. GEMINI_API_KEY / GOOGLE_API_KEY를 설정하거나 Google Cloud SDK를 설치하세요.")),
+    true,
+  );
+  assert.equal(
     isProviderAuthRequiredError(new Error("request failed: context_length_exceeded")),
     false,
   );
