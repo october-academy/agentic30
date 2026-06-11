@@ -12,6 +12,10 @@ set -euo pipefail
 #   SPARKLE_PUBLIC_BASE_URL     — public base URL (defaults to https://updates.agentic30.app/)
 #   SPARKLE_WRANGLER_BIN        — wrangler executable (defaults to wrangler)
 #   SPARKLE_WRANGLER_REMOTE     — 1 to force remote R2 writes (defaults to 1)
+#   CLOUDFLARE_ACCOUNT_ID       — Cloudflare account id for the R2 S3 endpoint
+#   R2_ACCESS_KEY_ID            — R2 S3 access key id
+#   R2_SECRET_ACCESS_KEY        — R2 S3 secret access key
+#   R2_S3_ENDPOINT              — optional R2 S3 endpoint override
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -50,6 +54,18 @@ if ! "$SPARKLE_WRANGLER_BIN" r2 bucket info "$SPARKLE_R2_BUCKET" >/dev/null 2>&1
   echo "ERROR: R2 bucket '$SPARKLE_R2_BUCKET' does not exist or is not accessible; run scripts/setup-sparkle-r2.sh first" >&2
   exit 2
 fi
+if [ -z "${R2_S3_ENDPOINT:-}" ] && [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+  echo "ERROR: CLOUDFLARE_ACCOUNT_ID or R2_S3_ENDPOINT is required for R2 S3 uploads" >&2
+  exit 2
+fi
+if [ -z "${R2_ACCESS_KEY_ID:-}" ] && [ -z "${AWS_ACCESS_KEY_ID:-}" ]; then
+  echo "ERROR: R2_ACCESS_KEY_ID is required for R2 S3 uploads" >&2
+  exit 2
+fi
+if [ -z "${R2_SECRET_ACCESS_KEY:-}" ] && [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
+  echo "ERROR: R2_SECRET_ACCESS_KEY is required for R2 S3 uploads" >&2
+  exit 2
+fi
 
 appcast_xml="$SPARKLE_APPCAST_DIR/$SPARKLE_APPCAST_FILENAME"
 [ -f "$appcast_xml" ] || { echo "ERROR: missing $appcast_xml" >&2; exit 1; }
@@ -73,20 +89,17 @@ upload_object() {
   local object_key="$2"
   local content_type="$3"
   local cache_control="$4"
-  local remote_args=()
-  if [ "$SPARKLE_WRANGLER_REMOTE" = "1" ]; then
-    remote_args+=(--remote)
-  fi
-  # Large DMG PUTs intermittently 502 from Cloudflare's edge (observed
-  # 2026-06-10: arm64 DMG 502'd after a 4.5-min upload). Retry with backoff
-  # so a transient edge error doesn't fail the whole release.
+  # Use R2's S3-compatible multipart path for payload uploads. Wrangler's
+  # object PUT path currently rejects files over 300 MiB, which is below the
+  # arm64 DMG size once provider-native binaries are bundled.
   local attempt=1 delay=10
   while :; do
-    if "$SPARKLE_WRANGLER_BIN" r2 object put "${SPARKLE_R2_BUCKET}/${object_key}" \
+    if node scripts/r2-upload-object.mjs \
       --file "$file_path" \
+      --bucket "$SPARKLE_R2_BUCKET" \
+      --key "$object_key" \
       --content-type "$content_type" \
-      --cache-control "$cache_control" \
-      "${remote_args[@]}"; then
+      --cache-control "$cache_control"; then
       return 0
     fi
     if [ "$attempt" -ge "$SPARKLE_UPLOAD_RETRIES" ]; then
@@ -115,7 +128,10 @@ dmg_name="$(basename "$appcast_dmg")"
 upload_object "$appcast_dmg" "$dmg_name" "application/x-apple-diskimage" "public, max-age=31536000, immutable"
 verify_url "${SPARKLE_PUBLIC_BASE_URL}${dmg_name}"
 
-notes_path="${appcast_dmg}.md"
+# Notes are embedded in the appcast (--embed-release-notes), so this hosted
+# copy is belt-and-braces; the name must match generate_appcast's convention
+# (archive basename with the extension replaced).
+notes_path="${appcast_dmg%.dmg}.md"
 if [ -f "$notes_path" ]; then
   upload_object "$notes_path" "$(basename "$notes_path")" "text/markdown; charset=utf-8" "public, max-age=31536000, immutable"
   verify_url "${SPARKLE_PUBLIC_BASE_URL}$(basename "$notes_path")"

@@ -66,6 +66,28 @@ else
   echo "No version change requested; preflighting current version $cur_short (build $cur_build)."
 fi
 
+# Promote the CHANGELOG "[Unreleased]" section to this release so the release
+# pipeline (appcast what's-new + GitHub release body) picks up the right
+# section. Skipped when a "[new_short]" heading already exists (re-cut of the
+# same marketing version) or there is no Unreleased heading.
+CHANGELOG="CHANGELOG.md"
+if [ -f "$CHANGELOG" ] \
+  && grep -q '^## \[Unreleased\]' "$CHANGELOG" \
+  && ! grep -q "^## \[$new_short\]" "$CHANGELOG"; then
+  echo "Promoting CHANGELOG [Unreleased] -> [$new_short] - $(date +%F)"
+  awk -v ver="$new_short" -v date="$(date +%F)" '
+    /^## \[Unreleased\]/ && !done {
+      print "## [Unreleased]"
+      print ""
+      print "## [" ver "] - " date
+      done = 1
+      next
+    }
+    { print }
+  ' "$CHANGELOG" > "$CHANGELOG.tmp"
+  mv "$CHANGELOG.tmp" "$CHANGELOG"
+fi
+
 scripts/preflight-release.sh "${preflight_args[@]+"${preflight_args[@]}"}"
 
 if [ "$dry" = "1" ]; then
@@ -73,8 +95,8 @@ if [ "$dry" = "1" ]; then
   exit 0
 fi
 
-if ! git diff --quiet -- "$INFO_PLIST" "$PBXPROJ"; then
-  git add "$INFO_PLIST" "$PBXPROJ"
+if ! git diff --quiet -- "$INFO_PLIST" "$PBXPROJ" "$CHANGELOG"; then
+  git add "$INFO_PLIST" "$PBXPROJ" "$CHANGELOG"
   git commit -m "chore(release): bump version to $new_short (build $new_build)"
 fi
 

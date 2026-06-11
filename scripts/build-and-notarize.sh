@@ -27,9 +27,18 @@ set -euo pipefail
 #   SPARKLE_GENERATE_APPCAST_BIN — path to Sparkle's generate_appcast tool
 #                                (auto-discovered from Xcode DerivedData if omitted)
 #   SPARKLE_KEY_ACCOUNT      — Sparkle keychain account (defaults to agentic30)
+#   SPARKLE_RELEASE_NOTES_PATH — markdown what's-new embedded into the appcast
+#                                (defaults to the newest released CHANGELOG.md
+#                                section via scripts/changelog-latest-notes.sh)
 #   SPARKLE_PRIVATE_ED_KEY   — private EdDSA key for CI appcast signing
 #   SPARKLE_PRIVATE_ED_KEY_BASE64 — base64 private EdDSA key for CI appcast signing
 #   SPARKLE_WRANGLER_BIN     — wrangler executable (defaults to wrangler)
+#   CLOUDFLARE_ACCOUNT_ID    — Cloudflare account id for the R2 S3 endpoint
+#   R2_ACCESS_KEY_ID         — R2 S3 access key id for multipart DMG upload
+#   R2_SECRET_ACCESS_KEY     — R2 S3 secret access key for multipart DMG upload
+#   R2_S3_ENDPOINT           — optional R2 S3 endpoint override
+#   AGENTIC30_DMG_WARN_MIB   — warn above this DMG size (defaults to 280)
+#   AGENTIC30_DMG_MAX_MIB    — fail above this DMG size (defaults to 500)
 #   POSTHOG_PROJECT_API_KEY — PostHog project token embedded for launch telemetry
 #   POSTHOG_HOST           — PostHog app/ingest host (defaults to https://us.posthog.com)
 #
@@ -66,6 +75,8 @@ SPARKLE_UPDATE_DOMAIN="${SPARKLE_UPDATE_DOMAIN:-updates.agentic30.app}"
 SPARKLE_R2_BUCKET="${SPARKLE_R2_BUCKET:-agentic30-sparkle}"
 SPARKLE_KEY_ACCOUNT="${SPARKLE_KEY_ACCOUNT:-agentic30}"
 SPARKLE_WRANGLER_BIN="${SPARKLE_WRANGLER_BIN:-wrangler}"
+AGENTIC30_DMG_WARN_MIB="${AGENTIC30_DMG_WARN_MIB:-280}"
+AGENTIC30_DMG_MAX_MIB="${AGENTIC30_DMG_MAX_MIB:-500}"
 case "$SPARKLE_PUBLIC_BASE_URL" in
   */) ;;
   *) SPARKLE_PUBLIC_BASE_URL="${SPARKLE_PUBLIC_BASE_URL}/" ;;
@@ -115,6 +126,18 @@ if [ "$AGENTIC30_UPLOAD_APPCAST_R2" = "1" ]; then
   fi
   if ! "$SPARKLE_WRANGLER_BIN" r2 bucket domain get "$SPARKLE_R2_BUCKET" --domain "$SPARKLE_UPDATE_DOMAIN" >/dev/null 2>&1; then
     echo "ERROR: R2 bucket '$SPARKLE_R2_BUCKET' is not connected to custom domain '$SPARKLE_UPDATE_DOMAIN'; run scripts/setup-sparkle-r2.sh first" >&2
+    exit 2
+  fi
+  if [ -z "${R2_S3_ENDPOINT:-}" ] && [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+    echo "ERROR: CLOUDFLARE_ACCOUNT_ID or R2_S3_ENDPOINT is required for R2 S3 multipart uploads" >&2
+    exit 2
+  fi
+  if [ -z "${R2_ACCESS_KEY_ID:-}" ] && [ -z "${AWS_ACCESS_KEY_ID:-}" ]; then
+    echo "ERROR: R2_ACCESS_KEY_ID is required for R2 S3 multipart uploads" >&2
+    exit 2
+  fi
+  if [ -z "${R2_SECRET_ACCESS_KEY:-}" ] && [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
+    echo "ERROR: R2_SECRET_ACCESS_KEY is required for R2 S3 multipart uploads" >&2
     exit 2
   fi
 fi
@@ -200,6 +223,41 @@ notarize() {
     --issuer "$ASC_ISSUER_ID" \
     --wait \
     --timeout 2h
+}
+
+path_size_bytes() {
+  if [ -d "$1" ]; then
+    du -sk "$1" | awk '{ print $1 * 1024 }'
+  else
+    wc -c < "$1" | tr -d '[:space:]'
+  fi
+}
+
+bytes_to_mib() {
+  awk -v bytes="$1" 'BEGIN { printf "%.1f", bytes / 1024 / 1024 }'
+}
+
+log_artifact_size() {
+  local label="$1"
+  local target="$2"
+  local bytes
+  bytes="$(path_size_bytes "$target")"
+  echo "Artifact size: $label = $(bytes_to_mib "$bytes") MiB ($target)"
+}
+
+check_dmg_size_budget() {
+  local target="$1"
+  local bytes
+  local mib
+  bytes="$(path_size_bytes "$target")"
+  mib="$(bytes_to_mib "$bytes")"
+  if awk -v size="$mib" -v max="$AGENTIC30_DMG_MAX_MIB" 'BEGIN { exit(size > max ? 0 : 1) }'; then
+    echo "ERROR: DMG size ${mib} MiB exceeds AGENTIC30_DMG_MAX_MIB=${AGENTIC30_DMG_MAX_MIB}" >&2
+    exit 1
+  fi
+  if awk -v size="$mib" -v warn="$AGENTIC30_DMG_WARN_MIB" 'BEGIN { exit(size > warn ? 0 : 1) }'; then
+    echo "WARN: DMG size ${mib} MiB exceeds AGENTIC30_DMG_WARN_MIB=${AGENTIC30_DMG_WARN_MIB}; upload will use R2 S3 multipart." >&2
+  fi
 }
 
 mkdir -p build
@@ -330,6 +388,9 @@ codesign --sign "$CODE_SIGN_IDENTITY" --timestamp "$DMG_PATH"
 notarize "$DMG_PATH"
 xcrun stapler staple "$DMG_PATH"
 xcrun stapler validate "$DMG_PATH"
+log_artifact_size "exported app" "$APP_PATH"
+log_artifact_size "signed DMG" "$DMG_PATH"
+check_dmg_size_budget "$DMG_PATH"
 
 echo "[9/10] Running Gatekeeper distribution checks..."
 spctl -a -vv -t exec "$APP_PATH"
@@ -365,10 +426,23 @@ if [ "$AGENTIC30_BUILD_APPCAST" = "1" ]; then
   resolve_generate_appcast_bin
   appcast_dmg="$APPCAST_DIR/agentic30-$bundle_version-${AGENTIC30_BUNDLE_ARCH}.dmg"
   ditto "$DMG_PATH" "$appcast_dmg"
-  if [ -n "${SPARKLE_RELEASE_NOTES_PATH:-}" ]; then
-    cp "$SPARKLE_RELEASE_NOTES_PATH" "${appcast_dmg}.md"
+  # Sparkle release notes (what's-new in the update dialog). Default to the
+  # newest released CHANGELOG section; fail-soft — a missing/empty notes file
+  # just ships a notes-less appcast, never fails the release.
+  if [ -z "${SPARKLE_RELEASE_NOTES_PATH:-}" ]; then
+    if scripts/changelog-latest-notes.sh CHANGELOG.md > build/sparkle-release-notes.md 2>/dev/null \
+      && [ -s build/sparkle-release-notes.md ]; then
+      SPARKLE_RELEASE_NOTES_PATH="build/sparkle-release-notes.md"
+    fi
   fi
-  generate_appcast_args=(--download-url-prefix "$SPARKLE_DOWNLOAD_URL_PREFIX")
+  if [ -n "${SPARKLE_RELEASE_NOTES_PATH:-}" ] && [ -s "$SPARKLE_RELEASE_NOTES_PATH" ]; then
+    # generate_appcast matches notes by archive basename with the extension
+    # replaced (agentic30-18-arm64.md), NOT appended (….dmg.md).
+    cp "$SPARKLE_RELEASE_NOTES_PATH" "${appcast_dmg%.dmg}.md"
+  fi
+  # --embed-release-notes inlines the .md as <description sparkle:format="markdown">
+  # in the signed appcast, so no separate hosted notes file is required.
+  generate_appcast_args=(--download-url-prefix "$SPARKLE_DOWNLOAD_URL_PREFIX" --embed-release-notes)
   if [ -n "${SPARKLE_PRIVATE_ED_KEY_BASE64:-}" ]; then
     printf '%s' "$SPARKLE_PRIVATE_ED_KEY_BASE64" | base64 --decode | "$SPARKLE_GENERATE_APPCAST_BIN" --ed-key-file - "${generate_appcast_args[@]}" "$APPCAST_DIR"
   elif [ -n "${SPARKLE_PRIVATE_ED_KEY:-}" ]; then

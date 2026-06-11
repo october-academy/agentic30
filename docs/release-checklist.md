@@ -27,7 +27,7 @@ This checklist is for local dogfood releases of the macOS menu bar app. Public D
 1. Install the previous signed and notarized build into `/Applications`.
 2. Run `wrangler login`, then run `scripts/setup-sparkle-r2.sh` once to create/connect the `agentic30-sparkle` R2 bucket to `updates.agentic30.app` in the verified `agentic30.app` zone (`b770693582734b1854ac556acd00823f`).
 3. Build a newer release with a greater `CFBundleVersion` using `scripts/build-and-notarize.sh` (per arch via `AGENTIC30_BUNDLE_ARCH`); the script must embed `SPARKLE_PUBLIC_ED_KEY` and the per-arch `SUFeedURL`, generate `build/appcast/appcast.xml` (arm64) or `appcast-x64.xml` (x64), and stage `build/appcast/agentic30-<build>-<arch>.dmg`.
-4. Set `SPARKLE_DOWNLOAD_URL_PREFIX=https://updates.agentic30.app/` and `AGENTIC30_UPLOAD_APPCAST_R2=1` so the release script uploads the staged DMG first (verified publicly fetchable, with 502 retries), then flips the appcast pointer.
+4. Set `SPARKLE_DOWNLOAD_URL_PREFIX=https://updates.agentic30.app/`, `AGENTIC30_UPLOAD_APPCAST_R2=1`, and R2 S3 credentials (`R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`) so the release script uploads the staged DMG first via multipart S3 (verified publicly fetchable), then flips the appcast pointer.
 5. After upload, confirm both feeds and the DMG URLs they reference return `200`:
    `curl -I https://updates.agentic30.app/appcast.xml` and `curl -I https://updates.agentic30.app/appcast-x64.xml`.
 6. Launch the older `/Applications` build and use Settings or the app menu `Check for Updates...`.
@@ -37,8 +37,8 @@ This checklist is for local dogfood releases of the macOS menu bar app. Public D
 
 - See `docs/release-automation.md` for the tag-triggered GitHub Actions workflow, required secrets, and the `npm run release:cut` flow.
 - Prefer `npm run release:cut -- --bump build` (or `--bump patch` / `--set X.Y.Z/N`): it bumps the version in both `agentic30/Info.plist` and `project.pbxproj`, runs the local preflight gate (`scripts/preflight-release.sh`), commits, tags, and pushes — catching version/compile/test failures before they waste a ~20-minute CI cycle.
-- Pushing a `v*` tag starts the GitHub release workflow: two parallel build/notarize/upload jobs on GitHub-hosted macOS runners (arm64 + Intel x64), each uploading its Sparkle feed to R2 and publishing GitHub Release assets. `workflow_dispatch` supports `dry_run`.
-- Confirm the GitHub secret `CLOUDFLARE_API_TOKEN` is present before tag release; it must allow R2 object reads/writes for the `agentic30-sparkle` bucket.
+- Pushing a `v*` tag starts the GitHub release workflow: two parallel build/notarize/upload jobs on GitHub-hosted macOS runners (arm64 + Intel x64), each uploading its Sparkle feed to R2 and attaching GitHub Release assets. The release stays draft until both arch DMGs are attached. `workflow_dispatch` supports `dry_run`.
+- Confirm the GitHub secrets `CLOUDFLARE_API_TOKEN`, `R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY` are present before tag release. `CLOUDFLARE_API_TOKEN` is used for Wrangler bucket/domain validation; the R2 S3 credentials must allow Object Read & Write for `agentic30-sparkle`.
 
 ## Launch Funnel Telemetry
 

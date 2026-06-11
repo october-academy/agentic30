@@ -10,8 +10,10 @@ set -euo pipefail
 #   BUILD_ENV_FILE              — env file to source (defaults to secrets/build.env)
 #   SPARKLE_APPCAST_DIR         — appcast staging folder (defaults to build/appcast)
 #   GITHUB_RELEASE_REPO         — owner/repo (defaults to current gh repo)
-#   GITHUB_RELEASE_TITLE        — release title (defaults to RELEASE_TAG)
-#   GITHUB_RELEASE_NOTES_FILE   — notes file (defaults to CHANGELOG.md)
+#   GITHUB_RELEASE_TITLE        — release title (defaults to "Agentic30 <version> (build <n>)"
+#                                 from agentic30/Info.plist, falling back to RELEASE_TAG)
+#   GITHUB_RELEASE_NOTES_FILE   — notes file (defaults to the newest released
+#                                 CHANGELOG.md section, falling back to CHANGELOG.md)
 #   GITHUB_RELEASE_DRAFT        — 1 to create a draft release
 #   GITHUB_RELEASE_PRERELEASE   — 1 to mark release as prerelease
 #   GITHUB_RELEASE_DRY_RUN      — 1 to print actions without publishing
@@ -30,6 +32,17 @@ fi
 
 RELEASE_TAG="${RELEASE_TAG:-}"
 SPARKLE_APPCAST_DIR="${SPARKLE_APPCAST_DIR:-build/appcast}"
+# Human-readable title from the canonical version source (Info.plist), e.g.
+# "Agentic30 1.0.17 (build 18)". An explicit GITHUB_RELEASE_TITLE still wins;
+# guarded so a failed plist read falls back to the tag name instead of
+# aborting the publish under `set -euo pipefail`.
+if [ -z "${GITHUB_RELEASE_TITLE:-}" ] && [ -f agentic30/Info.plist ] && [ -x /usr/libexec/PlistBuddy ]; then
+  _short="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' agentic30/Info.plist 2>/dev/null || true)"
+  _build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' agentic30/Info.plist 2>/dev/null || true)"
+  if [ -n "$_short" ] && [ -n "$_build" ]; then
+    GITHUB_RELEASE_TITLE="Agentic30 $_short (build $_build)"
+  fi
+fi
 GITHUB_RELEASE_TITLE="${GITHUB_RELEASE_TITLE:-$RELEASE_TAG}"
 GITHUB_RELEASE_DRAFT="${GITHUB_RELEASE_DRAFT:-0}"
 GITHUB_RELEASE_PRERELEASE="${GITHUB_RELEASE_PRERELEASE:-0}"
@@ -53,7 +66,7 @@ assets=()
 if [ -d "$SPARKLE_APPCAST_DIR" ]; then
   while IFS= read -r file; do
     assets+=("$file")
-  done < <(find "$SPARKLE_APPCAST_DIR" -maxdepth 1 -type f \( -name 'agentic30-*.dmg' -o -name 'agentic30-*.dmg.md' -o -name 'appcast*.xml' \) | sort)
+  done < <(find "$SPARKLE_APPCAST_DIR" -maxdepth 1 -type f \( -name 'agentic30-*.dmg' -o -name 'agentic30-*.md' -o -name 'appcast*.xml' \) | sort)
 fi
 
 if [ "${#assets[@]}" -eq 0 ]; then
@@ -61,7 +74,17 @@ if [ "${#assets[@]}" -eq 0 ]; then
   exit 1
 fi
 
-GITHUB_RELEASE_NOTES_FILE="${GITHUB_RELEASE_NOTES_FILE:-CHANGELOG.md}"
+# Default release body: just the newest released CHANGELOG section, not the
+# full-history dump. Falls back to CHANGELOG.md when extraction yields nothing.
+if [ -z "${GITHUB_RELEASE_NOTES_FILE:-}" ]; then
+  mkdir -p build
+  if scripts/changelog-latest-notes.sh CHANGELOG.md > build/release-notes.md 2>/dev/null \
+    && [ -s build/release-notes.md ]; then
+    GITHUB_RELEASE_NOTES_FILE="build/release-notes.md"
+  else
+    GITHUB_RELEASE_NOTES_FILE="CHANGELOG.md"
+  fi
+fi
 if [ ! -f "$GITHUB_RELEASE_NOTES_FILE" ]; then
   echo "ERROR: release notes file not found: $GITHUB_RELEASE_NOTES_FILE" >&2
   exit 1

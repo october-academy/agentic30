@@ -3,6 +3,17 @@
 ## [Unreleased]
 
 ### Added
+- **In-App Update Visibility**: The menu bar now shows an "업데이트 X.Y.Z 설치…" row whenever a new build is pending, so menu-bar-resident users see updates without the workspace window open. Sparkle's update dialog now shows a what's-new section — release notes are extracted from the newest released CHANGELOG section and embedded into the signed appcast (`generate_appcast --embed-release-notes`).
+
+### Fixed
+- **Update Pill Dead-Ends**: Clicking the update pill while a background download is in flight now always surfaces the transient update-status panel instead of routing to a Settings row with a disabled button. A transient failed check (e.g. offline at the next 6-hour check) no longer hides an update that is already downloaded and staged. "Skip This Version" in Sparkle's dialog now also hides the gentle reminder pill instead of nagging about the skipped build.
+
+### Changed
+- **Release Pipeline Safety**: GitHub releases are now draft-gated — a single draft is created up front, per-arch jobs only upload assets, and the release is published only when both arch DMGs are attached (prevents public half-releases like v20260611-0738). The Sparkle version guard fails closed when the live feed is unreachable (`allow_unguarded` dispatch input bootstraps a new feed), release runs are serialized so an older slow run can't regress the live appcast, and release titles/bodies are derived from `Info.plist` + the newest CHANGELOG section instead of raw tag names and full-history dumps.
+
+## [1.0.17] - 2026-06-11
+
+### Added
 - **Morning Briefing Live Collection Progress**: While the briefing collects, each source card (Cloudflare/GitHub/PostHog) now shows a spinner plus a live agent log streamed from the sidecar (`morning_briefing_progress` events: MCP tool calls, aggregation steps, timestamps). Re-entering the briefing tab mid-collection restores the per-card progress instantly, so a minutes-long external MCP digest no longer looks frozen.
 
 ### Fixed

@@ -17,12 +17,21 @@ on:
         description: "Prepare and verify without publishing to R2 or GitHub."
         type: boolean
         default: false
+      allow_unguarded:
+        description: "Proceed when the live appcast cannot be fetched (bootstrap a new feed)."
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref_name }}
+  # Static group: two different release tags must never run concurrently — a
+  # slow older run finishing after a newer one would flip the live appcast
+  # back to the older build (its version guard was armed before the newer
+  # release published). Queued runs re-arm against the fresh feed and fail
+  # closed when superseded.
+  group: release
   cancel-in-progress: false
 
 env:
@@ -35,8 +44,54 @@ env:
   CLOUDFLARE_ACCOUNT_ID: 3c03f4b8151b812cd2662d4fb9d30b1f
 
 jobs:
+  # Create the GitHub release ONCE, as a draft, before the per-arch builds.
+  # The matrix jobs only upload assets; the final publish-release job flips
+  # draft → published only when BOTH arch jobs succeeded, so a failed arch
+  # build can never leave a public release advertising one architecture
+  # (which happened with v20260611-0738: Intel-only build 16 went public).
+  draft-release:
+    name: Create draft GitHub release
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.dry_run != 'true' }}
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create draft release with changelog notes
+        run: |
+          set -euo pipefail
+          case "$RELEASE_TAG" in
+            v*) ;;
+            *) echo "ERROR: RELEASE_TAG must look like v* (got: '$RELEASE_TAG')" >&2; exit 2 ;;
+          esac
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; leaving it as-is."
+            exit 0
+          fi
+          short="$(python3 -c "import plistlib; print(plistlib.load(open('agentic30/Info.plist','rb'))['CFBundleShortVersionString'])" 2>/dev/null || true)"
+          build="$(python3 -c "import plistlib; print(plistlib.load(open('agentic30/Info.plist','rb'))['CFBundleVersion'])" 2>/dev/null || true)"
+          if [ -n "$short" ] && [ -n "$build" ]; then
+            title="Agentic30 $short (build $build)"
+          else
+            title="$RELEASE_TAG"
+          fi
+          notes_file="CHANGELOG.md"
+          if scripts/changelog-latest-notes.sh CHANGELOG.md > /tmp/release-notes.md 2>/dev/null \
+            && [ -s /tmp/release-notes.md ]; then
+            notes_file="/tmp/release-notes.md"
+          fi
+          gh release create "$RELEASE_TAG" --draft --title "$title" --notes-file "$notes_file"
+
   release:
     name: Build, notarize, and publish (${{ matrix.bundle_arch }})
+    needs: draft-release
+    # Run on dry_run too (draft-release is skipped there); never run when the
+    # draft creation failed — the per-arch fallback create would publish a
+    # non-draft release and reintroduce the half-published-release bug.
+    if: ${{ !cancelled() && (needs.draft-release.result == 'success' || needs.draft-release.result == 'skipped') }}
     runs-on: macos-15
     # Build takes ~15 min; each notarytool submit is capped at 2h. Cap the job
     # so a hung Apple notary connection fails fast instead of burning the
@@ -62,6 +117,8 @@ jobs:
       SPARKLE_PUBLIC_ED_KEY: ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
       SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GITHUB_RELEASE_DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '0' }}
       AGENTIC30_UPLOAD_APPCAST_R2: ${{ github.event.inputs.dry_run == 'true' && '0' || '1' }}
@@ -103,15 +160,47 @@ jobs:
         run: bash scripts/import-apple-signing-ci.sh
 
       - name: Arm Sparkle version guard from live feed
+        env:
+          ALLOW_UNGUARDED_RELEASE: ${{ github.event.inputs.allow_unguarded == 'true' && '1' || '0' }}
         run: |
           set -euo pipefail
-          prev="$(curl -fsSL "${SPARKLE_PUBLIC_BASE_URL}${SPARKLE_APPCAST_FILENAME}" 2>/dev/null \
-            | grep -oE '<sparkle:version>[0-9]+' | grep -oE '[0-9]+' | sort -n | tail -1 || true)"
+          # Fail closed: an unreadable feed must stop the release rather than
+          # silently disarm the monotonicity guard — a duplicate build number
+          # would overwrite an immutable-cached DMG object key.
+          if ! feed="$(curl -fsSL --retry 3 --retry-all-errors "${SPARKLE_PUBLIC_BASE_URL}${SPARKLE_APPCAST_FILENAME}")"; then
+            if [ "$ALLOW_UNGUARDED_RELEASE" = "1" ]; then
+              echo "WARN: live feed unreadable; proceeding UNGUARDED (allow_unguarded=true)." >&2
+              feed=""
+            else
+              echo "ERROR: could not fetch ${SPARKLE_PUBLIC_BASE_URL}${SPARKLE_APPCAST_FILENAME}; refusing to release with the version guard disarmed. Re-run when the feed is reachable, or dispatch with allow_unguarded=true to bootstrap a new feed." >&2
+              exit 1
+            fi
+          fi
+          prev="$(printf '%s' "$feed" | grep -oE '<sparkle:version>[0-9]+' | grep -oE '[0-9]+' | sort -n | tail -1 || true)"
           echo "PREVIOUS_BUNDLE_VERSION=${prev}" >> "$GITHUB_ENV"
           echo "Live Sparkle build version: ${prev:-none}; this build must be strictly greater."
 
       - name: Build, notarize, generate appcast, and upload R2
         run: bash scripts/build-and-notarize.sh
 
-      - name: Publish GitHub Release
+      - name: Upload GitHub release assets
         run: npm run release:publish:github
+
+  publish-release:
+    name: Publish GitHub release
+    runs-on: ubuntu-latest
+    needs: [draft-release, release]
+    if: ${{ github.event.inputs.dry_run != 'true' }}
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Verify both arch DMGs and flip draft to published
+        run: |
+          set -euo pipefail
+          assets="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          printf 'Release assets:\n%s\n' "$assets"
+          echo "$assets" | grep -Eq -- '-arm64\.dmg$' || { echo "ERROR: arm64 DMG missing from $RELEASE_TAG" >&2; exit 1; }
+          echo "$assets" | grep -Eq -- '-x64\.dmg$' || { echo "ERROR: x64 DMG missing from $RELEASE_TAG" >&2; exit 1; }
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+          echo "Release $RELEASE_TAG published."

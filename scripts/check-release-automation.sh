@@ -79,6 +79,21 @@ if "$SPARKLE_WRANGLER_BIN" r2 bucket domain get "$SPARKLE_R2_BUCKET" --domain "$
 else
   fail "R2 custom domain missing: $SPARKLE_UPDATE_DOMAIN"
 fi
+if [ -n "${R2_S3_ENDPOINT:-}" ] || [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+  pass "R2 S3 endpoint input is available"
+else
+  fail "CLOUDFLARE_ACCOUNT_ID or R2_S3_ENDPOINT is required for multipart R2 uploads"
+fi
+if [ -n "${R2_ACCESS_KEY_ID:-}" ] || [ -n "${AWS_ACCESS_KEY_ID:-}" ]; then
+  pass "R2 S3 access key id is available"
+else
+  fail "R2_ACCESS_KEY_ID is required for multipart R2 uploads"
+fi
+if [ -n "${R2_SECRET_ACCESS_KEY:-}" ] || [ -n "${AWS_SECRET_ACCESS_KEY:-}" ]; then
+  pass "R2 S3 secret access key is available"
+else
+  fail "R2_SECRET_ACCESS_KEY is required for multipart R2 uploads"
+fi
 
 require_env DEVELOPMENT_TEAM
 require_env SPARKLE_PUBLIC_ED_KEY
