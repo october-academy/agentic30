@@ -1091,11 +1091,27 @@ const EXTERNAL_DRILLDOWN_SHAPE = {
   },
 };
 
+const EXTERNAL_DRILLDOWN_COLLECTION_PLANS = Object.freeze({
+  cloudflare: [
+    "Cloudflare drilldown plan: use the active zone chosen in the base collection plan. Fill kpis from real visits/uniqueVisitors/pageviews/requests/threats aggregates.",
+    "Cloudflare drilldown window: if the requested Window is longer than 24 hours, clamp Cloudflare hourly/path queries to the trailing 24 hours ending at Window.untilIso and label the drilldown as 지난 24시간.",
+    "For the chart, use hourly groups from httpRequests1hGroups or httpRequestsAdaptiveGroups with datetimeHour and requestSource: \"eyeball\".",
+    "For the path table, query httpRequestsAdaptiveGroups with filter { AND: [{ datetime_geq, datetime_leq }, { requestSource: \"eyeball\" }] }, limit 6, orderBy: [sum_edgeResponseBytes_DESC], and fields count, sum { edgeResponseBytes }, dimensions { metric: clientRequestPath }. If the dataset is not entitled or schema rejects it, omit table and put that gap in signals/evidenceGaps without failing the source.",
+  ],
+  posthog: [
+    "PostHog drilldown plan: prefer up to 4 execute-sql HogQL SELECT/WITH queries: totals/top events, first-time Day-1 retention cohorts, onboarding/activation funnel, and $pageview path breakdown for the last 14 days.",
+    "For retention chart, compute each person's first event day and whether they returned on first_day + 1. Only include chart when at least two cohorts have real sizes.",
+    "For funnel, use real event names available in top events. Prefer onboarding/setup/activation/sign_up/signup/login/checkout/subscription events when present; if those names are absent, omit funnel and explain the instrumentation gap in signals/evidenceGaps.",
+    "For webSignals, aggregate $pageview by properties.$pathname or the closest available path property. Do not use raw person ids or event rows.",
+  ],
+});
+
 export function buildMorningBriefingExternalDigestPrompt({ sources = [], window, context = "" } = {}) {
   const base = buildExternalOfficeHoursDigestPrompt({ sources, window, context });
   const wanted = sources.filter((source) => ["posthog", "cloudflare"].includes(source));
   const shape = {};
   for (const id of wanted) shape[id] = EXTERNAL_DRILLDOWN_SHAPE[id];
+  const plans = wanted.flatMap((id) => EXTERNAL_DRILLDOWN_COLLECTION_PLANS[id] || []);
   if (!Object.keys(shape).length) return base;
   return [
     base,
@@ -1104,6 +1120,8 @@ export function buildMorningBriefingExternalDigestPrompt({ sources = [], window,
     "Same privacy rules apply: aggregates and short Korean summaries only — never raw event rows, IDs, IPs, emails, tokens.",
     "Only include numbers you actually computed from the source. Omit any field (or the whole source) you cannot back with data.",
     "All visible labels/titles/notes must be Korean, concise, and factual.",
+    "Drilldown collection rules:",
+    ...plans.map((line) => `- ${line}`),
     "",
     "\"drilldowns\" shape (values are placeholders):",
     JSON.stringify({ drilldowns: shape }, null, 2),

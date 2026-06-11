@@ -9,6 +9,7 @@
 
 ### Fixed
 - **Update Pill Dead-Ends**: Clicking the update pill while a background download is in flight now always surfaces the transient update-status panel instead of routing to a Settings row with a disabled button. A transient failed check (e.g. offline at the next 6-hour check) no longer hides an update that is already downloaded and staged. "Skip This Version" in Sparkle's dialog now also hides the gentle reminder pill instead of nagging about the skipped build.
+- **Morning Briefing Drilldowns**: Cloudflare drilldowns now clamp wide briefing windows to the trailing 24 hours and use eyeball path analytics ordered by response bytes, while the external digest prompt gives source-specific drilldown collection plans for Cloudflare and PostHog.
 
 ### Changed
 - **Release Pipeline Safety**: GitHub releases are now draft-gated — a single draft is created up front, per-arch jobs only upload assets, and the release is published only when both arch DMGs are attached (prevents public half-releases like v20260611-0738). The Sparkle version guard fails closed when the live feed is unreachable (`allow_unguarded` dispatch input bootstraps a new feed), release runs are serialized so an older slow run can't regress the live appcast, and release titles/bodies are derived from `Info.plist` + the newest CHANGELOG section instead of raw tag names and full-history dumps.

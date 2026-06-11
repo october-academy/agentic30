@@ -365,8 +365,23 @@ test("buildMorningBriefingExternalDigestPrompt appends drilldown shape for selec
   });
   assert.match(prompt, /"drilldowns"/);
   assert.match(prompt, /Day-2 리텐션/);
+  assert.match(prompt, /first-time Day-1 retention cohorts/);
+  assert.match(prompt, /onboarding\/activation funnel/);
+  assert.match(prompt, /properties\.\$pathname/);
   assert.doesNotMatch(prompt, /사람 방문, 지난 24시간/);
   assert.match(prompt, /never raw event rows/);
+
+  const cloudflare = buildMorningBriefingExternalDigestPrompt({
+    sources: ["cloudflare"],
+    window: WINDOW,
+    context: "ctx",
+  });
+  assert.match(cloudflare, /httpRequestsAdaptiveGroups/);
+  assert.match(cloudflare, /trailing 24 hours/);
+  assert.match(cloudflare, /sum_edgeResponseBytes_DESC/);
+  assert.match(cloudflare, /clientRequestPath/);
+  assert.match(cloudflare, /requestSource: "eyeball"/);
+  assert.doesNotMatch(cloudflare, /first-time Day-1 retention cohorts/);
 
   const none = buildMorningBriefingExternalDigestPrompt({ sources: [], window: WINDOW });
   assert.doesNotMatch(none, /"drilldowns"/);

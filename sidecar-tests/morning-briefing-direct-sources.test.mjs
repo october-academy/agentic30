@@ -139,8 +139,8 @@ function stubCloudflareFetch({ failPaths = false } = {}) {
         if (failPaths) return jsonResponse({ errors: [{ message: "not entitled" }] });
         return jsonResponse({
           data: { viewer: { zones: [{ httpRequestsAdaptiveGroups: [
-            { count: 132, dimensions: { clientRequestPath: "/landing" } },
-            { count: 34, dimensions: { clientRequestPath: "/pricing" } },
+            { count: 132, sum: { edgeResponseBytes: 12000 }, dimensions: { metric: "/landing" } },
+            { count: 34, sum: { edgeResponseBytes: 5000 }, dimensions: { metric: "/pricing" } },
           ] }] } },
         });
       }
@@ -154,7 +154,7 @@ function stubCloudflareFetch({ failPaths = false } = {}) {
 }
 
 test("collectCloudflareDirectDrilldown builds KPIs, 2h buckets, and path table from GraphQL", async () => {
-  const { fetch } = stubCloudflareFetch();
+  const { fetch, calls } = stubCloudflareFetch();
   const drilldown = await collectCloudflareDirectDrilldown({
     window: WINDOW,
     settings: { token: "cf_token", tokenValid: true },
@@ -178,6 +178,32 @@ test("collectCloudflareDirectDrilldown builds KPIs, 2h buckets, and path table f
   assert.equal(drilldown.table[0].code, "/landing");
   assert.equal(drilldown.table[0].share, Math.round((132 / 166) * 100));
   assert.ok(drilldown.meta.rows.some((row) => row.key === "존" && row.value === "agentic30.dev"));
+
+  const pathQuery = calls
+    .map((call) => JSON.parse(call.options.body || "{}")?.query || "")
+    .find((query) => query.includes("httpRequestsAdaptiveGroups"));
+  assert.ok(pathQuery.includes("orderBy: [sum_edgeResponseBytes_DESC]"));
+  assert.match(pathQuery, /requestSource: "eyeball"/);
+  assert.ok(pathQuery.includes("dimensions { metric: clientRequestPath }"));
+});
+
+test("collectCloudflareDirectDrilldown clamps wide briefing windows to trailing 24h", async () => {
+  const { fetch, calls } = stubCloudflareFetch();
+  await collectCloudflareDirectDrilldown({
+    window: {
+      startMs: Date.parse("2026-06-08T00:00:00.000Z"),
+      untilMs: Date.parse("2026-06-10T00:00:00.000Z"),
+    },
+    settings: { token: "cf_token", tokenValid: true },
+    fetchImpl: fetch,
+  });
+
+  const graphqlCalls = calls
+    .filter((call) => call.url.endsWith("/graphql"))
+    .map((call) => JSON.parse(call.options.body || "{}"));
+  assert.ok(graphqlCalls.every((body) => body.variables.start >= "2026-06-08T00:00:00.000Z"));
+  assert.ok(graphqlCalls.some((body) => body.variables.start === "2026-06-09T00:00:00.000Z"));
+  assert.ok(!graphqlCalls.some((body) => body.variables.start === "2026-06-08T00:00:00.000Z" && body.variables.end === "2026-06-10T00:00:00.000Z"));
 });
 
 test("collectCloudflareDirectDrilldown omits the path table when the dataset is not entitled", async () => {

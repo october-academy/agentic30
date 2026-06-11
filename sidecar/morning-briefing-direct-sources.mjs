@@ -308,7 +308,11 @@ export async function collectCloudflareDirectDrilldown({
   if (!zone?.id) return null;
 
   const untilMs = finiteNumber(window.untilMs) ?? Date.parse(window.untilIso || "") ?? Date.now();
-  const startMs = finiteNumber(window.startMs) ?? (untilMs - 86_400_000);
+  const requestedStartMs = finiteNumber(window.startMs) ?? (untilMs - 86_400_000);
+  // Cloudflare adaptive analytics are used for the OD "지난 24시간" drilldown and
+  // can reject wider path queries. Keep the traffic drilldown on the trailing
+  // 24h window even when the broader morning briefing window starts yesterday.
+  const startMs = Math.max(requestedStartMs, untilMs - 86_400_000);
   const spanMs = untilMs - startMs;
   const toIso = (ms) => new Date(ms).toISOString();
 
@@ -365,9 +369,14 @@ export async function collectCloudflareDirectDrilldown({
       query: `
         query($zone: String!, $start: Time!, $end: Time!) {
           viewer { zones(filter: { zoneTag: $zone }) {
-            httpRequestsAdaptiveGroups(limit: 6, filter: { datetime_geq: $start, datetime_lt: $end }, orderBy: [count_DESC]) {
+            httpRequestsAdaptiveGroups(
+              limit: 6,
+              filter: { AND: [{ datetime_geq: $start, datetime_leq: $end }, { requestSource: "eyeball" }] },
+              orderBy: [sum_edgeResponseBytes_DESC]
+            ) {
               count
-              dimensions { clientRequestPath }
+              sum { edgeResponseBytes }
+              dimensions { metric: clientRequestPath }
             }
           } }
         }`,
@@ -375,7 +384,7 @@ export async function collectCloudflareDirectDrilldown({
     });
     table = (pathsData?.viewer?.zones?.[0]?.httpRequestsAdaptiveGroups || [])
       .map((group) => ({
-        path: String(group?.dimensions?.clientRequestPath || ""),
+        path: String(group?.dimensions?.metric || ""),
         label: "",
         value: finiteNumber(group?.count) ?? 0,
       }))
