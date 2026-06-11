@@ -8449,18 +8449,33 @@ final class AgenticViewModel: ObservableObject {
                 "apiKey": settings.claudeApiKey,
                 "environment": settings.claudeEnvironment,
                 "model": settings.preferredClaudeModel,
+                "reasoningEffort": AgentReasoningEffortCatalog.normalized(
+                    settings.claudeReasoningEffort,
+                    provider: .claude,
+                    modelID: settings.preferredClaudeModel
+                ),
             ],
             AgentProvider.codex.rawValue: [
                 "authMode": AgentAuthMode.normalized(settings.codexAuthMode, provider: .codex).rawValue,
                 "apiKey": settings.codexApiKey,
                 "environment": settings.codexEnvironment,
                 "model": settings.preferredCodexModel,
+                "reasoningEffort": AgentReasoningEffortCatalog.normalized(
+                    settings.codexReasoningEffort,
+                    provider: .codex,
+                    modelID: settings.preferredCodexModel
+                ),
             ],
             AgentProvider.gemini.rawValue: [
                 "authMode": AgentAuthMode.normalized(settings.geminiAuthMode, provider: .gemini).rawValue,
                 "apiKey": settings.geminiApiKey,
                 "environment": settings.geminiEnvironment,
                 "model": settings.preferredGeminiModel,
+                "reasoningEffort": AgentReasoningEffortCatalog.normalized(
+                    settings.geminiReasoningEffort,
+                    provider: .gemini,
+                    modelID: settings.preferredGeminiModel
+                ),
             ],
         ]
     }

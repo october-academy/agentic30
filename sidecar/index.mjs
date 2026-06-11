@@ -152,12 +152,12 @@ import {
   resolveGeminiModel,
   getProviderAuthState,
   getProviderConnectionState,
-  isCodexUsageLimitError,
+  isProviderUsageLimitError,
   runProviderStream,
   updateProviderSettings,
 } from "./provider-runner.mjs";
 import { runWithSoftTimeout } from "./frontier-soft-timeout.mjs";
-import { selectScanProviderTargets } from "./scan-provider-select.mjs";
+import { selectNextScanProvider, selectScanProviderTargets } from "./scan-provider-select.mjs";
 import {
   extractInlineDecision,
   inferInlineDecisionFromPlainText,
@@ -391,9 +391,11 @@ const WORKSPACE_SCAN_CLAUDE_MODEL = "claude-sonnet-4-6";
 // 동급 저비용 모델인 gpt-5.4-mini로 대체 (2026-06-10 `codex debug models` 기준).
 const WORKSPACE_SCAN_CODEX_MODEL = "gpt-5.4-mini";
 const WORKSPACE_SCAN_GEMINI_MODEL = "gemini-3.5-flash";
+const WORKSPACE_SCAN_CURSOR_MODEL = "composer-2.5";
 const DAY1_CHOICE_CLAUDE_MODEL = process.env.AGENTIC30_DAY1_CHOICE_CLAUDE_MODEL || "claude-opus-4-8";
 const DAY1_CHOICE_CODEX_MODEL = process.env.AGENTIC30_DAY1_CHOICE_CODEX_MODEL || "gpt-5.5";
 const DAY1_CHOICE_GEMINI_MODEL = process.env.AGENTIC30_DAY1_CHOICE_GEMINI_MODEL || "gemini-3.5-flash";
+const DAY1_CHOICE_CURSOR_MODEL = process.env.AGENTIC30_DAY1_CHOICE_CURSOR_MODEL || "composer-2.5";
 const DAY1_CHOICE_PROVIDER_TIMEOUT_MS = 45_000;
 // Provider→model maps for the agent-backed workspace scan and Day 1 alignment
 // synthesis. selectScanProviderTargets() narrows these to the single provider
@@ -403,11 +405,13 @@ const WORKSPACE_SCAN_MODEL_BY_PROVIDER = {
   claude: WORKSPACE_SCAN_CLAUDE_MODEL,
   codex: WORKSPACE_SCAN_CODEX_MODEL,
   gemini: WORKSPACE_SCAN_GEMINI_MODEL,
+  cursor: WORKSPACE_SCAN_CURSOR_MODEL,
 };
 const DAY1_CHOICE_MODEL_BY_PROVIDER = {
   claude: DAY1_CHOICE_CLAUDE_MODEL,
   codex: DAY1_CHOICE_CODEX_MODEL,
   gemini: DAY1_CHOICE_GEMINI_MODEL,
+  cursor: DAY1_CHOICE_CURSOR_MODEL,
 };
 const CHAT_BIP_CONTEXT_MAX_CHARS = 60000;
 const CHAT_BIP_LOCAL_DOC_MAX_CHARS = 12000;
@@ -10134,7 +10138,7 @@ function resolveNewsMarketRadarExaRoutes({
 
 function normalizeProviderName(value = "") {
   const provider = String(value || "").trim().toLowerCase();
-  return ["claude", "codex", "gemini"].includes(provider) ? provider : "";
+  return ["claude", "codex", "gemini", "cursor"].includes(provider) ? provider : "";
 }
 
 function newsMarketRadarProviderTimeoutError() {
@@ -11436,6 +11440,7 @@ function getEnvironmentSummary() {
     claude: getProviderConnectionState("claude"),
     codex: getProviderConnectionState("codex"),
     gemini: getProviderConnectionState("gemini"),
+    cursor: getProviderConnectionState("cursor"),
     acp: getAcpAdapterState(),
     qmd: getQmdState({ sidecarRoot }),
   };
@@ -12600,12 +12605,13 @@ function formatError(error) {
 const PROVIDER_USAGE_LIMIT_ERROR_KIND = "provider_usage_limit";
 
 /**
- * True for an expected, recoverable upstream provider quota condition (today,
- * Codex/ChatGPT usage limits). Such errors are tracked as a benign telemetry
- * event rather than a captured exception on either side of the bridge.
+ * True for an expected, recoverable upstream provider quota condition
+ * (Codex/ChatGPT usage limits, Cursor RateLimitError, HTTP 429). Such errors
+ * are tracked as a benign telemetry event rather than a captured exception on
+ * either side of the bridge.
  */
 function isRecoverableProviderQuotaError(error) {
-  return isCodexUsageLimitError(error);
+  return isProviderUsageLimitError(error);
 }
 
 /**

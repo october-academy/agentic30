@@ -480,4 +480,82 @@ struct KeychainSettingsMigrationTests {
         #expect(FileManager.default.fileExists(atPath: managedDir.path) == false)
         #expect(FileManager.default.fileExists(atPath: projectFile.path) == true)
     }
+
+    @Test func reasoningEffortCatalogMatchesPerModelSdkCapabilities() {
+        // Claude Agent SDK: xhigh needs Fable 5 / Opus 4.7+, max needs 4.6+/Sonnet 4.6,
+        // Haiku has no effort parameter at all (picker hidden).
+        #expect(AgentReasoningEffortCatalog.levels(for: .claude, modelID: "claude-opus-4-8")
+            == ["low", "medium", "high", "xhigh", "max"])
+        #expect(AgentReasoningEffortCatalog.levels(for: .claude, modelID: "claude-sonnet-4-6")
+            == ["low", "medium", "high", "max"])
+        #expect(AgentReasoningEffortCatalog.levels(for: .claude, modelID: "claude-opus-4-5")
+            == ["low", "medium", "high"])
+        #expect(AgentReasoningEffortCatalog.levels(for: .claude, modelID: "claude-haiku-4-5").isEmpty)
+        #expect(AgentReasoningEffortCatalog.supportsSelection(for: .claude, modelID: "claude-haiku-4-5") == false)
+
+        // Codex SDK accepts the same five levels on every catalog model.
+        #expect(AgentReasoningEffortCatalog.levels(for: .codex, modelID: "gpt-5.5")
+            == ["minimal", "low", "medium", "high", "xhigh"])
+
+        // Gemini: thinkingLevel is 3.x-only and 3 Pro rejects minimal; the 2.5
+        // series stays automatic-only (numeric thinkingBudget is out of scope).
+        #expect(AgentReasoningEffortCatalog.levels(for: .gemini, modelID: "gemini-3.5-flash")
+            == ["minimal", "low", "medium", "high"])
+        #expect(AgentReasoningEffortCatalog.levels(for: .gemini, modelID: "gemini-3-pro-preview")
+            == ["low", "medium", "high"])
+        #expect(AgentReasoningEffortCatalog.levels(for: .gemini, modelID: "gemini-2.5-pro").isEmpty)
+
+        // Every non-empty catalog leads with the automatic option.
+        let options = AgentReasoningEffortCatalog.options(for: .claude, modelID: "claude-opus-4-8")
+        #expect(options.first?.id == AgentReasoningEffortCatalog.autoID)
+        #expect(options.count == 6)
+    }
+
+    @Test func reasoningEffortNormalizationCoercesInvalidAndCrossModelValues() {
+        // Trim + lowercase, valid value passes through.
+        #expect(AgentReasoningEffortCatalog.normalized(" XHigh ", provider: .claude, modelID: "claude-opus-4-8") == "xhigh")
+        // A level the selected model doesn't support coerces to automatic —
+        // this is what silently heals the picker after a model switch.
+        #expect(AgentReasoningEffortCatalog.normalized("xhigh", provider: .claude, modelID: "claude-opus-4-5") == AgentReasoningEffortCatalog.autoID)
+        #expect(AgentReasoningEffortCatalog.normalized("minimal", provider: .gemini, modelID: "gemini-3-pro-preview") == AgentReasoningEffortCatalog.autoID)
+        // Unknown strings and unsupported models also land on automatic.
+        #expect(AgentReasoningEffortCatalog.normalized("ultra", provider: .codex, modelID: "gpt-5.5") == AgentReasoningEffortCatalog.autoID)
+        #expect(AgentReasoningEffortCatalog.normalized("high", provider: .gemini, modelID: "gemini-2.5-pro") == AgentReasoningEffortCatalog.autoID)
+    }
+
+    @Test func settingsPersistReasoningEffortAndLegacyBlobsDefaultToAuto() throws {
+        // Legacy blob without the new keys decodes to automatic for all providers.
+        let legacy = try JSONDecoder().decode(
+            KeychainHelper.Settings.self,
+            from: Data(#"{"preferredClaudeModel":"claude-opus-4-8"}"#.utf8)
+        )
+        #expect(legacy.claudeReasoningEffort == AgentReasoningEffortCatalog.autoID)
+        #expect(legacy.codexReasoningEffort == AgentReasoningEffortCatalog.autoID)
+        #expect(legacy.geminiReasoningEffort == AgentReasoningEffortCatalog.autoID)
+
+        // Explicit choices round-trip through encode/decode.
+        var settings = KeychainHelper.Settings()
+        settings.claudeReasoningEffort = "xhigh"
+        settings.codexReasoningEffort = "minimal"
+        settings.geminiReasoningEffort = "low"
+        let decoded = try JSONDecoder().decode(
+            KeychainHelper.Settings.self,
+            from: JSONEncoder().encode(settings)
+        )
+        #expect(decoded.claudeReasoningEffort == "xhigh")
+        #expect(decoded.codexReasoningEffort == "minimal")
+        #expect(decoded.geminiReasoningEffort == "low")
+
+        // migrate() re-validates effort against the (possibly normalized) model:
+        // an out-of-catalog model falls back to the default model, and an effort
+        // that model can't run falls back to automatic.
+        var stale = KeychainHelper.Settings()
+        stale.preferredClaudeModel = "claude-opus-4-5"
+        stale.claudeReasoningEffort = "xhigh"
+        stale.preferredGeminiModel = "gemini-2.5-pro"
+        stale.geminiReasoningEffort = "high"
+        let migrated = KeychainHelper.Settings.migrate(stale, from: KeychainHelper.Settings.currentSchemaVersion)
+        #expect(migrated.claudeReasoningEffort == AgentReasoningEffortCatalog.autoID)
+        #expect(migrated.geminiReasoningEffort == AgentReasoningEffortCatalog.autoID)
+    }
 }

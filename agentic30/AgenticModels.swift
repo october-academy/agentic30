@@ -221,6 +221,79 @@ enum AgentModelCatalog {
     }
 }
 
+struct AgentReasoningEffortOption: Identifiable, Hashable {
+    let id: String
+    let label: String
+}
+
+/// Per-model reasoning-effort catalog. The empty ID (`autoID`) means "automatic":
+/// the sidecar keeps each provider's existing default (Claude Agent SDK default,
+/// Codex execution-mode heuristic, Gemini model default) instead of pinning a level.
+/// Level lists mirror what each SDK/model actually accepts so the picker can never
+/// produce a value the provider would reject:
+/// - Claude Agent SDK `options.effort`: low/medium/high/xhigh/max — xhigh needs
+///   Fable 5 / Opus 4.7+, max needs Opus 4.6+ / Sonnet 4.6, Haiku has no effort.
+/// - Codex SDK `modelReasoningEffort`: minimal/low/medium/high/xhigh (all models).
+/// - Gemini `thinkingConfig.thinkingLevel`: minimal/low/medium/high on 3.x Flash,
+///   low/medium/high on 3 Pro; the 2.5 series only supports numeric budgets, so it
+///   stays automatic-only here.
+enum AgentReasoningEffortCatalog {
+    static let autoID = ""
+    static let autoLabel = "자동 (추천)"
+
+    static func levels(for provider: AgentProvider, modelID: String) -> [String] {
+        let model = AgentModelCatalog.normalizedModelID(modelID, provider: provider)
+        switch provider {
+        case .claude:
+            switch model {
+            case "claude-fable-5", "claude-opus-4-8", "claude-opus-4-7":
+                return ["low", "medium", "high", "xhigh", "max"]
+            case "claude-opus-4-6", "claude-sonnet-4-6":
+                return ["low", "medium", "high", "max"]
+            case "claude-opus-4-5":
+                return ["low", "medium", "high"]
+            default:
+                return []
+            }
+        case .codex:
+            return ["minimal", "low", "medium", "high", "xhigh"]
+        case .gemini:
+            switch model {
+            case "gemini-3.5-flash", "gemini-3-flash-preview":
+                return ["minimal", "low", "medium", "high"]
+            case "gemini-3-pro-preview":
+                return ["low", "medium", "high"]
+            default:
+                return []
+            }
+        }
+    }
+
+    static func supportsSelection(for provider: AgentProvider, modelID: String) -> Bool {
+        !levels(for: provider, modelID: modelID).isEmpty
+    }
+
+    static func options(for provider: AgentProvider, modelID: String) -> [AgentReasoningEffortOption] {
+        let levelOptions = levels(for: provider, modelID: modelID).map {
+            AgentReasoningEffortOption(id: $0, label: $0)
+        }
+        guard !levelOptions.isEmpty else { return [] }
+        return [AgentReasoningEffortOption(id: autoID, label: autoLabel)] + levelOptions
+    }
+
+    static func normalized(_ id: String, provider: AgentProvider, modelID: String) -> String {
+        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty else { return autoID }
+        guard levels(for: provider, modelID: modelID).contains(trimmed) else { return autoID }
+        return trimmed
+    }
+
+    static func label(for id: String, provider: AgentProvider, modelID: String) -> String {
+        let normalized = normalized(id, provider: provider, modelID: modelID)
+        return normalized.isEmpty ? autoLabel : normalized
+    }
+}
+
 enum SessionStatus: String, Codable {
     case idle
     case running

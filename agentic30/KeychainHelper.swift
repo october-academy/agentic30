@@ -83,6 +83,12 @@ enum KeychainHelper {
         var preferredClaudeModel: String = AgentModelCatalog.defaultClaudeModelID
         var preferredCodexModel: String = AgentModelCatalog.defaultCodexModelID
         var preferredGeminiModel: String = AgentModelCatalog.defaultGeminiModelID
+        // Reasoning effort per provider. Empty string = automatic (provider default
+        // or sidecar heuristic). Validated against AgentReasoningEffortCatalog for
+        // the currently selected model on save/load.
+        var claudeReasoningEffort: String = AgentReasoningEffortCatalog.autoID
+        var codexReasoningEffort: String = AgentReasoningEffortCatalog.autoID
+        var geminiReasoningEffort: String = AgentReasoningEffortCatalog.autoID
         var claudeAuthMode: String = AgentAuthMode.local.rawValue
         var codexAuthMode: String = AgentAuthMode.local.rawValue
         var geminiAuthMode: String = AgentAuthMode.local.rawValue
@@ -139,6 +145,9 @@ enum KeychainHelper {
             preferredClaudeModel = try container.decodeIfPresent(String.self, forKey: .preferredClaudeModel) ?? AgentModelCatalog.defaultClaudeModelID
             preferredCodexModel = try container.decodeIfPresent(String.self, forKey: .preferredCodexModel) ?? AgentModelCatalog.defaultCodexModelID
             preferredGeminiModel = try container.decodeIfPresent(String.self, forKey: .preferredGeminiModel) ?? AgentModelCatalog.defaultGeminiModelID
+            claudeReasoningEffort = try container.decodeIfPresent(String.self, forKey: .claudeReasoningEffort) ?? AgentReasoningEffortCatalog.autoID
+            codexReasoningEffort = try container.decodeIfPresent(String.self, forKey: .codexReasoningEffort) ?? AgentReasoningEffortCatalog.autoID
+            geminiReasoningEffort = try container.decodeIfPresent(String.self, forKey: .geminiReasoningEffort) ?? AgentReasoningEffortCatalog.autoID
             claudeAuthMode = try container.decodeIfPresent(String.self, forKey: .claudeAuthMode) ?? AgentAuthMode.local.rawValue
             codexAuthMode = try container.decodeIfPresent(String.self, forKey: .codexAuthMode) ?? AgentAuthMode.local.rawValue
             geminiAuthMode = try container.decodeIfPresent(String.self, forKey: .geminiAuthMode) ?? AgentAuthMode.local.rawValue
@@ -191,6 +200,9 @@ enum KeychainHelper {
             try container.encode(preferredClaudeModel, forKey: .preferredClaudeModel)
             try container.encode(preferredCodexModel, forKey: .preferredCodexModel)
             try container.encode(preferredGeminiModel, forKey: .preferredGeminiModel)
+            try container.encode(claudeReasoningEffort, forKey: .claudeReasoningEffort)
+            try container.encode(codexReasoningEffort, forKey: .codexReasoningEffort)
+            try container.encode(geminiReasoningEffort, forKey: .geminiReasoningEffort)
             try container.encode(claudeAuthMode, forKey: .claudeAuthMode)
             try container.encode(codexAuthMode, forKey: .codexAuthMode)
             try container.encode(geminiAuthMode, forKey: .geminiAuthMode)
@@ -239,6 +251,9 @@ enum KeychainHelper {
             case preferredClaudeModel
             case preferredCodexModel
             case preferredGeminiModel
+            case claudeReasoningEffort
+            case codexReasoningEffort
+            case geminiReasoningEffort
             case claudeAuthMode
             case codexAuthMode
             case geminiAuthMode
@@ -292,6 +307,21 @@ enum KeychainHelper {
             migrated.preferredGeminiModel = AgentModelCatalog.normalizedModelID(
                 migrated.preferredGeminiModel,
                 provider: .gemini
+            )
+            migrated.claudeReasoningEffort = AgentReasoningEffortCatalog.normalized(
+                migrated.claudeReasoningEffort,
+                provider: .claude,
+                modelID: migrated.preferredClaudeModel
+            )
+            migrated.codexReasoningEffort = AgentReasoningEffortCatalog.normalized(
+                migrated.codexReasoningEffort,
+                provider: .codex,
+                modelID: migrated.preferredCodexModel
+            )
+            migrated.geminiReasoningEffort = AgentReasoningEffortCatalog.normalized(
+                migrated.geminiReasoningEffort,
+                provider: .gemini,
+                modelID: migrated.preferredGeminiModel
             )
             migrated.claudeAuthMode = AgentAuthMode.normalized(migrated.claudeAuthMode, provider: .claude).rawValue
             migrated.codexAuthMode = AgentAuthMode.normalized(migrated.codexAuthMode, provider: .codex).rawValue

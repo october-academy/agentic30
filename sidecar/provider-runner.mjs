@@ -42,11 +42,20 @@ const sidecarRoot = path.resolve(__dirname);
 process.env.AGENTIC30_SIDECAR_ROOT ??= sidecarRoot;
 const DEFAULT_CODEX_MODEL = "gpt-5.5";
 const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
+const DEFAULT_CURSOR_MODEL = "composer-2.5";
 export const CODEX_BINARY_NOT_INSTALLED_ERROR_CODE = "ERR_CODEX_BINARY_NOT_INSTALLED";
 const CODEX_CLI_VERSION_TIMEOUT_MS = 2500;
 const DEFAULT_CLAUDE_MODEL = "claude-opus-4-8";
 const MINI_ACTION_EXECUTION_ONLY_MODE = "mini_action_execution_only";
 const CODEX_REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh"]);
+// Claude Agent SDK `options.effort` levels. The SDK silently downgrades levels a
+// model doesn't support (e.g. xhigh -> high below Opus 4.7), so validation here
+// only guards against typos, not per-model capability.
+const CLAUDE_REASONING_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
+// Gemini `thinkingConfig.thinkingLevel` values. Only the Gemini 3.x family
+// accepts thinkingLevel (3 Pro rejects "minimal"); the 2.5 series uses numeric
+// thinkingBudget and stays on its model default, so settings are ignored there.
+const GEMINI_THINKING_LEVELS = new Set(["minimal", "low", "medium", "high"]);
 const CODEX_MCP_TOOL_TIMEOUT_SEC = 60;
 const CODEX_INTERNAL_MCP_TOOL_TIMEOUT_SEC = 60 * 30;
 const CODEX_INTERNAL_MCP_READ_ONLY_TOOLS = Object.freeze([
@@ -76,6 +85,14 @@ const GEMINI_CAPABLE_EXECUTION_MODES = new Set([
   "fast_chat",
   "memory_chat",
 ]);
+// Cursor runs a local agent with filesystem tools, so the read-only judge
+// modes (which rely on text-only execution) are excluded on purpose.
+const CURSOR_CAPABLE_EXECUTION_MODES = new Set([
+  "idd_question_synthesis",
+  "agentic",
+  "fast_chat",
+  "memory_chat",
+]);
 const RESPONSE_LANGUAGE_INSTRUCTION =
   "Reply in Korean (ko, 한국어) for all assistant-facing prose unless the user's prompt explicitly requests another language or an exact machine-readable output schema requires fixed tokens.";
 const appSupportPath = process.env.AGENTIC30_APP_SUPPORT_PATH
@@ -90,10 +107,12 @@ const codexHomePath = path.join(appSupportPath, "codex-home");
 const internalMcpServerName = "agentic30_sidecar";
 const notionConfigPath = path.join(appSupportPath, "notion-config.json");
 let codexSdkImportPromise = null;
+let cursorSdkImportPromise = null;
 let providerSettings = {
   claude: {},
   codex: {},
   gemini: {},
+  cursor: {},
 };
 
 export function updateProviderSettings(nextSettings = {}) {
@@ -101,6 +120,7 @@ export function updateProviderSettings(nextSettings = {}) {
     claude: normalizeProviderSettings(nextSettings.claude),
     codex: normalizeProviderSettings(nextSettings.codex),
     gemini: normalizeProviderSettings(nextSettings.gemini),
+    cursor: normalizeProviderSettings(nextSettings.cursor),
   };
   return getProviderSettingsSummary();
 }
@@ -114,6 +134,7 @@ export function getProviderSettingsSummary() {
         hasApiKey: Boolean(settings.apiKey),
         hasEnvironment: Boolean(settings.environment),
         model: settings.model || "",
+        reasoningEffort: settings.reasoningEffort || "",
       },
     ]),
   );
@@ -124,6 +145,7 @@ export function resetProviderSettingsForTest() {
     claude: {},
     codex: {},
     gemini: {},
+    cursor: {},
   };
 }
 
@@ -133,6 +155,7 @@ function normalizeProviderSettings(settings = {}) {
     apiKey: String(settings.apiKey || ""),
     environment: String(settings.environment || ""),
     model: String(settings.model || ""),
+    reasoningEffort: String(settings.reasoningEffort || "").trim().toLowerCase(),
   };
 }
 
@@ -194,7 +217,7 @@ export async function runProviderStream({
     return { runtime: sessionRuntime };
   }
 
-  if (executionMode === "isolated_read_only" && provider !== "gemini") {
+  if (executionMode === "isolated_read_only" && provider !== "gemini" && provider !== "cursor") {
     await runTextOnlyProvider({
       provider,
       prompt,
@@ -220,6 +243,28 @@ export async function runProviderStream({
       executionMode,
       systemPromptOverride,
       approvedToolExecution,
+      onTextDelta,
+      onTextReplace,
+      onToolEvent,
+      onRuntimeUpdate,
+      onRunEvent,
+    });
+  }
+
+  if (provider === "cursor") {
+    if (!supportsCursorExecutionMode(executionMode)) {
+      throw new Error(
+        `Cursor provider does not support executionMode "${executionMode}". Use Claude or Codex for this workflow.`,
+      );
+    }
+    return runCursorProvider({
+      sessionRuntime,
+      prompt,
+      model,
+      workspaceRoot,
+      abortController,
+      executionMode,
+      systemPromptOverride,
       onTextDelta,
       onTextReplace,
       onToolEvent,
@@ -318,7 +363,9 @@ export function getProviderAuthState(provider) {
           ? "API key from ANTHROPIC_API_KEY"
           : provider === "gemini"
             ? "API key from GEMINI_API_KEY / GOOGLE_API_KEY"
-            : "API key from CODEX_API_KEY / OPENAI_API_KEY",
+            : provider === "cursor"
+              ? "API key from CURSOR_API_KEY"
+              : "API key from CODEX_API_KEY / OPENAI_API_KEY",
     };
   }
 
@@ -347,7 +394,9 @@ export function getProviderAuthState(provider) {
           ? "API key from GEMINI_API_KEY / GOOGLE_API_KEY"
           : provider === "claude"
             ? "API key from ANTHROPIC_API_KEY"
-            : "API key from CODEX_API_KEY / OPENAI_API_KEY",
+            : provider === "cursor"
+              ? "API key from CURSOR_API_KEY"
+              : "API key from CODEX_API_KEY / OPENAI_API_KEY",
     };
   }
 
@@ -369,7 +418,9 @@ export function getProviderAuthState(provider) {
     message:
       provider === "claude"
         ? "Sign in with Claude Code or set ANTHROPIC_API_KEY"
-        : "Sign in with Codex or set CODEX_API_KEY / OPENAI_API_KEY",
+        : provider === "cursor"
+          ? "Set CURSOR_API_KEY or add a Cursor API key in settings"
+          : "Sign in with Codex or set CODEX_API_KEY / OPENAI_API_KEY",
   };
 }
 
@@ -436,6 +487,24 @@ function getProviderSdkState(provider) {
       message: installed
         ? "Google Gen AI SDK is installed"
         : "Google Gen AI SDK is missing",
+    };
+  }
+
+  if (provider === "cursor") {
+    const packageName = "@cursor/sdk";
+    const packageRoot = resolveInstalledPackageRoot("@cursor", "sdk");
+    const entrypointPath = path.join(packageRoot, "package.json");
+    const packageJson = readPackageJson(packageRoot);
+    const installed = fsSync.existsSync(entrypointPath);
+    return {
+      available: installed,
+      packageName,
+      version: packageJson?.version ?? null,
+      packageRoot,
+      entrypointPath,
+      message: installed
+        ? "Cursor Agent SDK is installed"
+        : "Cursor Agent SDK is missing",
     };
   }
 
@@ -527,8 +596,14 @@ async function runClaudeProvider({
   }
 
   const claudeVendor = specialist?.vendor?.claude;
+  // Resolve through Settings (providerSettings.claude.model) so a session whose
+  // model was cleared on provider switch still honors the user's chosen model
+  // instead of silently falling back to the SDK default.
+  const resolvedClaudeModel = resolveClaudeModel(model);
+  const claudeEffort = resolveClaudeReasoningEffort();
   const options = {
-    model: model || undefined,
+    model: resolvedClaudeModel,
+    ...(claudeEffort ? { effort: claudeEffort } : {}),
     pathToClaudeCodeExecutable: cliPath ?? undefined,
     executable: process.execPath,
     env,
@@ -589,7 +664,11 @@ async function runClaudeProvider({
     prompt,
     options,
   });
-  onRunEvent?.({ phase: "provider.claude.stream_created" });
+  onRunEvent?.({
+    phase: "provider.claude.stream_created",
+    model: resolvedClaudeModel,
+    effort: claudeEffort || "default",
+  });
 
   for await (const event of stream) {
     onRunEvent?.({ phase: "provider.claude.first_event", once: true, eventType: event.type });
@@ -688,15 +767,28 @@ function buildClaudeCanUseTool({
   approvedToolExecution = false,
 } = {}) {
   return async (toolName, input, context = {}) => {
-    if (executionMode === "office_hours_digest_read_only" && isClaudeOfficeHoursDigestUnsafeTool(toolName)) {
-      onRunEvent?.({
-        phase: "provider.claude.tool_denied_office_hours_digest_read_only",
-        toolName,
-      });
-      return {
-        behavior: "deny",
-        message: "Office Hours digest mode is read-only. Use only list/get/read/query analytics tools and do not mutate external services.",
-      };
+    if (executionMode === "office_hours_digest_read_only") {
+      const verdict = evaluateClaudeOfficeHoursDigestToolCall(toolName, input);
+      if (verdict?.allow === true) {
+        return { behavior: "allow", updatedInput: input };
+      }
+      if (verdict?.allow === false) {
+        onRunEvent?.({
+          phase: "provider.claude.tool_denied_office_hours_digest_read_only",
+          toolName,
+        });
+        return { behavior: "deny", message: verdict.reason };
+      }
+      if (isClaudeOfficeHoursDigestUnsafeTool(toolName)) {
+        onRunEvent?.({
+          phase: "provider.claude.tool_denied_office_hours_digest_read_only",
+          toolName,
+        });
+        return {
+          behavior: "deny",
+          message: "Office Hours digest mode is read-only. Use only list/get/read/query analytics tools and do not mutate external services.",
+        };
+      }
     }
     if (!approvedToolExecution && isClaudeMutatingTool(toolName)) {
       onRunEvent?.({
@@ -778,6 +870,62 @@ export function isClaudeMutatingTool(toolName = "") {
     "websearch",
   ].some((name) => normalized === name.toLowerCase())
     || normalized.includes("gws_gmail_send");
+}
+
+// 이름만 보는 휴리스틱(isClaudeOfficeHoursDigestUnsafeTool)의 실측 한계 보완:
+// PostHog의 유일한 SQL 경로는 execute-sql(HogQL은 SELECT 전용 — DML이 없다),
+// Cloudflare 통합 MCP의 유일한 데이터 경로는 execute(codemode JS 또는 REST 호출)다.
+// 둘 다 "execute" 토큰 때문에 일괄 거부되면 digest가 데이터를 아예 못 읽는다
+// (2026-06-10 실측: 모든 조회가 denied → 빈 응답 → 카드 실패). 이름 대신
+// 호출 입력을 검사해 읽기 호출만 명시적으로 허용하고, 쓰기 흔적은 fail-closed로
+// 거부한다. 의견이 없으면(null) 기존 이름 휴리스틱으로 폴백.
+export function evaluateClaudeOfficeHoursDigestToolCall(toolName = "", input = {}) {
+  const normalized = String(toolName || "").toLowerCase();
+  if (/^mcp__posthog__execute[-_]sql$/.test(normalized)) {
+    const rawQuery = typeof input?.query === "string"
+      ? input.query
+      : typeof input?.query?.query === "string"
+        ? input.query.query
+        : typeof input?.sql === "string"
+          ? input.sql
+          : "";
+    if (/^\s*(select|with)\b/i.test(rawQuery)) return { allow: true };
+    return {
+      allow: false,
+      reason: "PostHog execute-sql is allowed for read-only SELECT/WITH HogQL queries only.",
+    };
+  }
+  if (/^mcp__cloudflare[-_]api__execute$/.test(normalized)) {
+    const method = String(input?.method || "").trim().toUpperCase();
+    if (method) {
+      if (method === "GET" || method === "HEAD") return { allow: true };
+      if (method === "POST" && /graphql/i.test(String(input?.path || input?.url || ""))) {
+        // GraphQL Analytics는 읽기 쿼리지만 HTTP 동사는 POST다.
+        return { allow: true };
+      }
+      return {
+        allow: false,
+        reason: "Cloudflare execute is allowed for read-only GET/HEAD requests or POST to /graphql analytics only.",
+      };
+    }
+    const code = String(input?.code ?? input?.script ?? "");
+    if (code) {
+      const hasMutatingVerb = /["'`](PUT|PATCH|DELETE)["'`]/i.test(code);
+      const hasNonGraphqlPost = /["'`]POST["'`]/i.test(code) && !/graphql/i.test(code);
+      if (hasMutatingVerb || hasNonGraphqlPost) {
+        return {
+          allow: false,
+          reason: "Cloudflare execute code must be read-only: GET/HEAD requests or POST to /graphql analytics only.",
+        };
+      }
+      return { allow: true };
+    }
+    return {
+      allow: false,
+      reason: "Cloudflare execute call shape was not recognized; provide a read-only request.",
+    };
+  }
+  return null;
 }
 
 export function isClaudeOfficeHoursDigestUnsafeTool(toolName = "") {
@@ -1001,6 +1149,28 @@ export function isCodexUsageLimitError(error) {
     || message.includes("plan limit")
     || message.includes("you've reached your limit")
     || message.includes("you have reached your limit")
+  );
+}
+
+/**
+ * Provider-agnostic usage-limit (quota) detection. Covers the Codex/ChatGPT
+ * message patterns above plus structured rate-limit errors from other SDKs —
+ * notably the Cursor SDK's RateLimitError, which carries name/code/status
+ * rather than a quota-worded message.
+ */
+export function isProviderUsageLimitError(error) {
+  if (isCodexUsageLimitError(error)) return true;
+  if (!error || typeof error !== "object") return false;
+  const name = String(error.name || "");
+  const code = String(error.code || "").toLowerCase();
+  const status = Number(error.status ?? error.statusCode ?? NaN);
+  const message = String(error.message ?? "").toLowerCase();
+  return (
+    name === "RateLimitError"
+    || code === "rate_limit"
+    || code === "rate_limit_exceeded"
+    || status === 429
+    || message.includes("rate limit")
   );
 }
 
@@ -1234,6 +1404,16 @@ async function loadCodexSdk() {
     });
   }
   return codexSdkImportPromise;
+}
+
+async function loadCursorSdk() {
+  if (!cursorSdkImportPromise) {
+    cursorSdkImportPromise = import("@cursor/sdk").catch((error) => {
+      cursorSdkImportPromise = null;
+      throw error;
+    });
+  }
+  return cursorSdkImportPromise;
 }
 
 export function shouldResumeCodexThread(sessionRuntime = {}, workspaceRoot = "", executionMode = "") {
@@ -1490,6 +1670,32 @@ export function buildGeminiEnv(baseEnv = process.env) {
   return env;
 }
 
+export function buildCursorEnv(baseEnv = process.env) {
+  const providerEnv = buildProviderEnv("cursor", baseEnv);
+  const env = {
+    PATH: providerEnv.PATH || "/usr/bin:/bin:/usr/sbin:/sbin",
+    HOME: providerEnv.HOME || os.homedir(),
+    TMPDIR: providerEnv.TMPDIR || os.tmpdir(),
+    LANG: providerEnv.LANG || "en_US.UTF-8",
+    LC_ALL: providerEnv.LC_ALL,
+    SHELL: providerEnv.SHELL,
+    TERM: providerEnv.TERM,
+    SPAWNED_SESSION: "true",
+    MODEL_OVERLAY: "cursor",
+    AGENTIC30_SIDECAR_ROOT: sidecarRoot,
+    AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+    AGENTIC30_CURSOR_MODEL: providerEnv.AGENTIC30_CURSOR_MODEL,
+    CURSOR_MODEL: providerEnv.CURSOR_MODEL,
+    CURSOR_API_KEY: providerEnv.CURSOR_API_KEY,
+  };
+  for (const key of Object.keys(env)) {
+    if (env[key] === undefined || env[key] === "") {
+      delete env[key];
+    }
+  }
+  return env;
+}
+
 export function buildProviderEnv(provider, baseEnv = process.env) {
   const settings = providerSettings[provider] || {};
   const parsed = parseProviderEnvironment(settings.environment);
@@ -1506,6 +1712,8 @@ export function buildProviderEnv(provider, baseEnv = process.env) {
     } else if (provider === "gemini") {
       env.GEMINI_API_KEY = settings.apiKey;
       env.GOOGLE_API_KEY = settings.apiKey;
+    } else if (provider === "cursor") {
+      env.CURSOR_API_KEY = settings.apiKey;
     }
   }
   if (settings.model) {
@@ -1516,6 +1724,9 @@ export function buildProviderEnv(provider, baseEnv = process.env) {
     } else if (provider === "gemini") {
       env.AGENTIC30_GEMINI_MODEL = settings.model;
       env.GEMINI_MODEL = settings.model;
+    } else if (provider === "cursor") {
+      env.AGENTIC30_CURSOR_MODEL = settings.model;
+      env.CURSOR_MODEL = settings.model;
     }
   }
   return env;
@@ -1593,6 +1804,7 @@ export function resolveCodexModel(model = "") {
       || process.env.AGENTIC30_CODEX_MODEL
       || process.env.CODEX_MODEL
       || process.env.OPENAI_MODEL
+      || providerSettings.codex?.model
       || DEFAULT_CODEX_MODEL,
   ).trim();
 }
@@ -1606,6 +1818,17 @@ export function resolveGeminiModel(model = "") {
       || env.GOOGLE_GENAI_MODEL
       || providerSettings.gemini?.model
       || DEFAULT_GEMINI_MODEL,
+  ).trim();
+}
+
+export function resolveCursorModel(model = "") {
+  const env = buildProviderEnv("cursor");
+  return String(
+    model
+      || env.AGENTIC30_CURSOR_MODEL
+      || env.CURSOR_MODEL
+      || providerSettings.cursor?.model
+      || DEFAULT_CURSOR_MODEL,
   ).trim();
 }
 
@@ -1625,6 +1848,10 @@ export function supportsGeminiExecutionMode(executionMode = "") {
   return GEMINI_CAPABLE_EXECUTION_MODES.has(String(executionMode || ""));
 }
 
+export function supportsCursorExecutionMode(executionMode = "") {
+  return CURSOR_CAPABLE_EXECUTION_MODES.has(String(executionMode || ""));
+}
+
 export function resolveCodexReasoningEffort({ executionMode = "", prompt = "" } = {}) {
   const configured = String(
     process.env.AGENTIC30_CODEX_REASONING_EFFORT
@@ -1634,6 +1861,12 @@ export function resolveCodexReasoningEffort({ executionMode = "", prompt = "" } 
   ).trim();
   if (CODEX_REASONING_EFFORTS.has(configured)) {
     return configured;
+  }
+  // Explicit user choice from Settings (provider_settings_update) beats the
+  // execution-mode heuristic below; empty/auto falls through to the heuristic.
+  const fromSettings = providerSettings.codex?.reasoningEffort || "";
+  if (CODEX_REASONING_EFFORTS.has(fromSettings)) {
+    return fromSettings;
   }
   const text = String(prompt || "").toLowerCase();
   const hasDeepWorkSignal = /debug|diagnos|root cause|investigate|analy[sz]e|implement|refactor|architecture|security|test|failure|failing|broken|복잡|분석|구현|리팩터|테스트|장애|오류|보안/.test(text);
@@ -1667,6 +1900,51 @@ export function resolveCodexReasoningEffort({ executionMode = "", prompt = "" } 
     return hasLightWorkSignal && !hasDeepWorkSignal ? "medium" : "high";
   }
   return hasDeepWorkSignal ? "high" : "medium";
+}
+
+// Claude Agent SDK `options.effort`. Returns "" when neither env nor Settings
+// pins a level, leaving the SDK default (high) in charge. The SDK silently
+// downgrades unsupported levels per model, so no per-model table is needed here.
+export function resolveClaudeReasoningEffort() {
+  const configured = String(process.env.AGENTIC30_CLAUDE_REASONING_EFFORT || "")
+    .trim()
+    .toLowerCase();
+  if (CLAUDE_REASONING_EFFORTS.has(configured)) {
+    return configured;
+  }
+  const fromSettings = providerSettings.claude?.reasoningEffort || "";
+  if (CLAUDE_REASONING_EFFORTS.has(fromSettings)) {
+    return fromSettings;
+  }
+  return "";
+}
+
+// Gemini `thinkingConfig.thinkingLevel` (SDK enum strings, e.g. "LOW"). Returns
+// "" for the 2.5 series (thinkingBudget-only) and when nothing is configured,
+// so callers omit thinkingConfig entirely and keep the model default. Gemini 3
+// Pro rejects "minimal" — coerce to "low" instead of failing the request.
+export function resolveGeminiThinkingLevel(model = "") {
+  const resolvedModel = resolveGeminiModel(model);
+  if (!/^gemini-3/.test(resolvedModel)) {
+    return "";
+  }
+  const configured = String(process.env.AGENTIC30_GEMINI_THINKING_LEVEL || "")
+    .trim()
+    .toLowerCase();
+  const fromSettings = providerSettings.gemini?.reasoningEffort || "";
+  let candidate = "";
+  if (GEMINI_THINKING_LEVELS.has(configured)) {
+    candidate = configured;
+  } else if (GEMINI_THINKING_LEVELS.has(fromSettings)) {
+    candidate = fromSettings;
+  }
+  if (!candidate) {
+    return "";
+  }
+  if (candidate === "minimal" && /^gemini-3-pro/.test(resolvedModel)) {
+    candidate = "low";
+  }
+  return candidate.toUpperCase();
 }
 
 function buildStubResponse(prompt) {
@@ -1716,6 +1994,46 @@ function buildStubResponse(prompt) {
       "다음 액션: 오늘 고객 1명에게 반복 문제를 묻고 답변 원문을 SPEC.md에 붙입니다.",
       "증거 목표: 응답 1개를 확보한 뒤 그 응답 원문을 담은 Threads BIP 공개 proof URL 1개를 남깁니다.",
     ].join("\n");
+  }
+
+  // Workspace-scan verification prompt (runWorkspaceScanAgent): the stub must
+  // emulate a healthy provider returning the requested JSON shape — anything
+  // unparseable now blocks the scan (fail-closed) and would wedge hermetic
+  // UI/sidecar tests in the onboarding flow.
+  if (/Scan the current workspace for these project documents and return only JSON/i.test(value)) {
+    return JSON.stringify({
+      icp: null,
+      spec: null,
+      values: null,
+      designSystem: null,
+      adr: null,
+      goal: null,
+      docs: null,
+      sheet: null,
+      onboardingHypothesis: {
+        productName: "",
+        projectKind: "unknown",
+        targetUser: "",
+        problem: "",
+        purpose: "",
+        goal: "",
+        values: "",
+        likelyUsers: [],
+        stage: "unknown",
+        evidence: [],
+        confidence: "low",
+        suggestedFirstQuestion: "",
+      },
+      situationSignals: {
+        channels: [],
+        analyticsTools: [],
+        events: [],
+        customerActions: [],
+        currentAlternatives: [],
+        conversionSignals: [],
+        missingAssumptions: [],
+      },
+    });
   }
 
   if (!contexts.length) {
@@ -1858,11 +2176,13 @@ async function runGeminiProvider({
     approvedToolExecution: Boolean(approvedToolExecution),
   });
 
+  const thinkingLevel = resolveGeminiThinkingLevel(resolvedModel);
   const stream = await ai.models.generateContentStream({
     model: resolvedModel,
     contents: prompt,
     config: {
       systemInstruction: systemPromptText,
+      ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
     },
     abortSignal: abortController?.signal,
   });
@@ -1952,6 +2272,116 @@ function buildGeminiToolEvent(call) {
   };
 }
 
+async function runCursorProvider({
+  sessionRuntime,
+  prompt,
+  model,
+  workspaceRoot,
+  abortController,
+  executionMode,
+  systemPromptOverride,
+  onTextDelta,
+  onTextReplace,
+  onToolEvent,
+  onRuntimeUpdate,
+  onRunEvent,
+}) {
+  const runtime = { ...sessionRuntime };
+  onRunEvent?.({ phase: "provider.cursor.prepare_start" });
+  const env = buildCursorEnv();
+  const apiKey = env.CURSOR_API_KEY || "";
+  if (!apiKey) {
+    throw new Error("Cursor provider requires CURSOR_API_KEY (or a Cursor API key in settings).");
+  }
+  const systemPromptText = buildSystemPromptText({
+    provider: "cursor",
+    workspaceRoot,
+    executionMode,
+    systemPromptOverride,
+  });
+  const resolvedModel = resolveCursorModel(model);
+  const { Agent } = await loadCursorSdk();
+  onRunEvent?.({ phase: "provider.cursor.sdk_loaded" });
+  // The Cursor SDK has no system-prompt option on send(); the system text
+  // rides at the top of the user prompt instead.
+  const promptText = systemPromptText ? `${systemPromptText}\n\n${prompt}` : prompt;
+  const agent = await Agent.create({
+    apiKey,
+    model: { id: resolvedModel },
+    local: { cwd: workspaceRoot || process.cwd() },
+  });
+  onRunEvent?.({
+    phase: "provider.cursor.client_created",
+    model: resolvedModel,
+  });
+  try {
+    const run = await agent.send(promptText);
+    onRunEvent?.({
+      phase: "provider.cursor.stream_opened",
+      promptChars: String(prompt || "").length,
+    });
+    if (abortController?.signal) {
+      const cancelRun = () => {
+        Promise.resolve(run.cancel?.()).catch(() => {});
+      };
+      if (abortController.signal.aborted) {
+        cancelRun();
+      } else {
+        abortController.signal.addEventListener("abort", cancelRun, { once: true });
+      }
+    }
+    let accumulated = "";
+    let firstTextEmitted = false;
+    for await (const message of run.stream()) {
+      if (abortController?.signal?.aborted) {
+        throw new Error("Cursor stream aborted");
+      }
+      if (message?.type === "assistant") {
+        const blocks = Array.isArray(message?.message?.content) ? message.message.content : [];
+        for (const block of blocks) {
+          if (block?.type !== "text" || !block.text) continue;
+          if (!firstTextEmitted) {
+            onRunEvent?.({ phase: "provider.cursor.first_text" });
+            firstTextEmitted = true;
+          }
+          accumulated += block.text;
+          onTextDelta?.(block.text);
+        }
+      } else if (message?.type === "tool_call") {
+        onToolEvent?.({
+          phase: message.status === "running" ? "use" : "result",
+          toolName: message.name || "tool_call",
+          toolCallKey: message.call_id || message.name || "tool_call",
+          payload: message.args ?? {},
+        });
+      } else if (message?.type === "status" && message.status === "ERROR") {
+        throw new Error(message.message || "Cursor run failed");
+      }
+    }
+    // A stream can end without a terminal status message — surface run-level
+    // failures (auth, rate limit) that only the awaited result carries.
+    const result = await run.wait().catch((error) => {
+      throw error instanceof Error ? error : new Error(String(error));
+    });
+    if (result?.status === "error") {
+      throw new Error(result.result || "Cursor run failed");
+    }
+    onTextReplace?.(accumulated);
+    onRunEvent?.({
+      phase: "provider.cursor.completed",
+      textLength: accumulated.length,
+    });
+    onRuntimeUpdate?.(runtime);
+    return { runtime };
+  } finally {
+    try {
+      agent.close();
+    } catch {
+      // close() failures must not mask the run outcome.
+    }
+  }
+}
+
 async function runTextOnlyProvider({
   provider,
   prompt,
@@ -1974,7 +2404,7 @@ async function runTextOnlyProvider({
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: model || env.ANTHROPIC_MODEL || DEFAULT_CLAUDE_MODEL,
+        model: resolveClaudeModel(model),
         max_tokens: 4000,
         system: RESPONSE_LANGUAGE_INSTRUCTION,
         messages: [
@@ -2330,6 +2760,9 @@ function readApiKey(provider, env = buildProviderEnv(provider)) {
   }
   if (provider === "gemini") {
     return env.GEMINI_API_KEY || env.GOOGLE_API_KEY || "";
+  }
+  if (provider === "cursor") {
+    return env.CURSOR_API_KEY || "";
   }
   return env.CODEX_API_KEY || env.OPENAI_API_KEY || "";
 }

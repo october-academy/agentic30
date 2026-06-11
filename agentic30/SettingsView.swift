@@ -137,6 +137,9 @@ struct SettingsView: View {
     @State private var claudeModelID = AgentModelCatalog.defaultClaudeModelID
     @State private var codexModelID = AgentModelCatalog.defaultCodexModelID
     @State private var geminiModelID = AgentModelCatalog.defaultGeminiModelID
+    @State private var claudeReasoningEffort = AgentReasoningEffortCatalog.autoID
+    @State private var codexReasoningEffort = AgentReasoningEffortCatalog.autoID
+    @State private var geminiReasoningEffort = AgentReasoningEffortCatalog.autoID
     @State private var claudeAuthMode = AgentAuthMode.local.rawValue
     @State private var codexAuthMode = AgentAuthMode.local.rawValue
     @State private var geminiAuthMode = AgentAuthMode.local.rawValue
@@ -925,9 +928,9 @@ struct SettingsView: View {
     private var odProvidersSection: some View {
             odSettingsSection(id: "providers", title: "AI 연결") {
             odActiveProviderCard
-            odProviderCard(provider: .claude, authMode: $claudeAuthMode, apiKey: $claudeApiKey, environment: $claudeEnvironment, modelSelection: $claudeModelID)
-            odProviderCard(provider: .codex, authMode: $codexAuthMode, apiKey: $codexApiKey, environment: $codexEnvironment, modelSelection: $codexModelID)
-            odProviderCard(provider: .gemini, authMode: $geminiAuthMode, apiKey: $geminiApiKey, environment: $geminiEnvironment, modelSelection: $geminiModelID)
+            odProviderCard(provider: .claude, authMode: $claudeAuthMode, apiKey: $claudeApiKey, environment: $claudeEnvironment, modelSelection: $claudeModelID, reasoningEffortSelection: $claudeReasoningEffort)
+            odProviderCard(provider: .codex, authMode: $codexAuthMode, apiKey: $codexApiKey, environment: $codexEnvironment, modelSelection: $codexModelID, reasoningEffortSelection: $codexReasoningEffort)
+            odProviderCard(provider: .gemini, authMode: $geminiAuthMode, apiKey: $geminiApiKey, environment: $geminiEnvironment, modelSelection: $geminiModelID, reasoningEffortSelection: $geminiReasoningEffort)
 
             odNodeRuntimeCard
         }
@@ -1862,7 +1865,8 @@ struct SettingsView: View {
         authMode: Binding<String>,
         apiKey: Binding<String>,
         environment: Binding<String>,
-        modelSelection: Binding<String>
+        modelSelection: Binding<String>,
+        reasoningEffortSelection: Binding<String>
     ) -> some View {
         let mode = AgentAuthMode.normalized(authMode.wrappedValue, provider: provider)
         let status = providerEnvironment(for: provider)
@@ -1931,6 +1935,16 @@ struct SettingsView: View {
 
                 odProviderGridRow(label: "모델") {
                     odProviderModelPicker(provider: provider, selection: modelSelection)
+                }
+
+                if AgentReasoningEffortCatalog.supportsSelection(for: provider, modelID: modelSelection.wrappedValue) {
+                    odProviderGridRow(label: "추론 강도") {
+                        odProviderReasoningEffortPicker(
+                            provider: provider,
+                            modelSelection: modelSelection,
+                            selection: reasoningEffortSelection
+                        )
+                    }
                 }
 
                 #if DEBUG
@@ -2160,6 +2174,70 @@ struct SettingsView: View {
                 .foregroundStyle(OpenDesignDayColor.mutedDeep)
                 .lineLimit(1)
                 .accessibilityIdentifier("settings.\(provider.rawValue).modelID")
+        }
+    }
+
+    private func odProviderReasoningEffortPicker(
+        provider: AgentProvider,
+        modelSelection: Binding<String>,
+        selection: Binding<String>
+    ) -> some View {
+        let modelID = modelSelection.wrappedValue
+        return HStack(alignment: .center, spacing: 10) {
+            Menu {
+                ForEach(AgentReasoningEffortCatalog.options(for: provider, modelID: modelID)) { option in
+                    Button {
+                        selection.wrappedValue = option.id
+                    } label: {
+                        HStack {
+                            Text(option.label)
+                            if option.id == AgentReasoningEffortCatalog.normalized(
+                                selection.wrappedValue,
+                                provider: provider,
+                                modelID: modelID
+                            ) {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Text(AgentReasoningEffortCatalog.label(for: selection.wrappedValue, provider: provider, modelID: modelID))
+                        .font(.system(size: 14, weight: .medium, design: .monospaced))
+                        .foregroundStyle(settingsText)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    Spacer(minLength: 8)
+
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(settingsSubtleText)
+                }
+                .padding(.horizontal, 14)
+                .frame(width: 270, height: 34)
+                .background(fieldBackground)
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("settings.\(provider.rawValue).reasoningEffortPicker")
+
+            Text("· \(providerReasoningEffortHint(provider))")
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(settingsSubtleText)
+                .lineLimit(1)
+        }
+    }
+
+    private func providerReasoningEffortHint(_ provider: AgentProvider) -> String {
+        switch provider {
+        case .claude:
+            return "자동 = SDK 기본 · 세션에 즉시 적용"
+        case .codex:
+            return "자동 = 작업 유형별 휴리스틱"
+        case .gemini:
+            return "자동 = 모델 기본값"
         }
     }
 
@@ -2919,6 +2997,23 @@ struct SettingsView: View {
             geminiModelID,
             provider: .gemini
         )
+        // Normalize against the just-assigned models so a model switch silently
+        // coerces a now-invalid level (e.g. xhigh on Opus 4.5) back to automatic.
+        s.claudeReasoningEffort = AgentReasoningEffortCatalog.normalized(
+            claudeReasoningEffort,
+            provider: .claude,
+            modelID: s.preferredClaudeModel
+        )
+        s.codexReasoningEffort = AgentReasoningEffortCatalog.normalized(
+            codexReasoningEffort,
+            provider: .codex,
+            modelID: s.preferredCodexModel
+        )
+        s.geminiReasoningEffort = AgentReasoningEffortCatalog.normalized(
+            geminiReasoningEffort,
+            provider: .gemini,
+            modelID: s.preferredGeminiModel
+        )
         s.claudeAuthMode = AgentAuthMode.normalized(claudeAuthMode, provider: .claude).rawValue
         s.codexAuthMode = AgentAuthMode.normalized(codexAuthMode, provider: .codex).rawValue
         s.geminiAuthMode = AgentAuthMode.normalized(geminiAuthMode, provider: .gemini).rawValue
@@ -2996,6 +3091,21 @@ struct SettingsView: View {
         geminiModelID = AgentModelCatalog.normalizedModelID(
             preferredGeminiModel,
             provider: .gemini
+        )
+        claudeReasoningEffort = AgentReasoningEffortCatalog.normalized(
+            s.claudeReasoningEffort,
+            provider: .claude,
+            modelID: claudeModelID
+        )
+        codexReasoningEffort = AgentReasoningEffortCatalog.normalized(
+            s.codexReasoningEffort,
+            provider: .codex,
+            modelID: codexModelID
+        )
+        geminiReasoningEffort = AgentReasoningEffortCatalog.normalized(
+            s.geminiReasoningEffort,
+            provider: .gemini,
+            modelID: geminiModelID
         )
         claudeAuthMode = AgentAuthMode.normalized(preferredClaudeAuthMode, provider: .claude).rawValue
         codexAuthMode = AgentAuthMode.normalized(preferredCodexAuthMode, provider: .codex).rawValue

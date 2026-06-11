@@ -20,6 +20,7 @@ import {
   isCodexContextOverflowError,
   isCodexRecoverableThreadResumeError,
   isCodexUsageLimitError,
+  evaluateClaudeOfficeHoursDigestToolCall,
   isClaudeOfficeHoursDigestUnsafeTool,
   isClaudeMutatingTool,
   mapCodexItemToToolEvent,
@@ -27,11 +28,13 @@ import {
   parseProviderEnvironment,
   resetProviderSettingsForTest,
   resolveClaudeModel,
+  resolveClaudeReasoningEffort,
   resolveCodexBinaryPath,
   resolveCodexCli,
   resolveCodexModel,
   resolveCodexReasoningEffort,
   resolveGeminiModel,
+  resolveGeminiThinkingLevel,
   shouldResumeCodexThread,
   updateProviderSettings,
 } from "../sidecar/provider-runner.mjs";
@@ -645,6 +648,78 @@ test("Claude Office Hours digest gate treats mutating external tool names as uns
   assert.equal(isClaudeOfficeHoursDigestUnsafeTool("mcp__cloudflare-api__get_worker"), false);
 });
 
+test("digest tool-call gate allows read-only execute-sql/execute and denies writes", () => {
+  // PostHog execute-sql: SELECT/WITH HogQL만 허용.
+  assert.deepEqual(
+    evaluateClaudeOfficeHoursDigestToolCall("mcp__posthog__execute-sql", { query: "SELECT count() FROM events" }),
+    { allow: true },
+  );
+  assert.deepEqual(
+    evaluateClaudeOfficeHoursDigestToolCall("mcp__posthog__execute-sql", { query: { query: " with t as (select 1) select * from t" } }),
+    { allow: true },
+  );
+  assert.equal(
+    evaluateClaudeOfficeHoursDigestToolCall("mcp__posthog__execute-sql", { query: "ALTER TABLE events DELETE WHERE 1" }).allow,
+    false,
+  );
+  assert.equal(
+    evaluateClaudeOfficeHoursDigestToolCall("mcp__posthog__execute-sql", {}).allow,
+    false,
+  );
+
+  // Cloudflare execute: REST 형태는 GET/HEAD 또는 graphql POST만.
+  assert.deepEqual(
+    evaluateClaudeOfficeHoursDigestToolCall("mcp__cloudflare-api__execute", { method: "GET", path: "/zones" }),
+    { allow: true },
+  );
+  assert.deepEqual(
+    evaluateClaudeOfficeHoursDigestToolCall("mcp__cloudflare-api__execute", { method: "POST", path: "/client/v4/graphql" }),
+    { allow: true },
+  );
+  assert.equal(
+    evaluateClaudeOfficeHoursDigestToolCall("mcp__cloudflare-api__execute", { method: "POST", path: "/zones/abc/purge_cache" }).allow,
+    false,
+  );
+  assert.equal(
+    evaluateClaudeOfficeHoursDigestToolCall("mcp__cloudflare-api__execute", { method: "DELETE", path: "/zones/abc" }).allow,
+    false,
+  );
+
+  // Cloudflare codemode execute: 코드에 쓰기 동사가 없을 때만 허용.
+  assert.deepEqual(
+    evaluateClaudeOfficeHoursDigestToolCall("mcp__cloudflare-api__execute", {
+      code: "async () => { const zones = await cloudflare.request({ method: \"GET\", path: \"/zones\" }); return zones; }",
+    }),
+    { allow: true },
+  );
+  assert.deepEqual(
+    evaluateClaudeOfficeHoursDigestToolCall("mcp__cloudflare-api__execute", {
+      code: "async () => cloudflare.request({ method: \"POST\", path: \"/client/v4/graphql\", body: { query } })",
+    }),
+    { allow: true },
+  );
+  assert.equal(
+    evaluateClaudeOfficeHoursDigestToolCall("mcp__cloudflare-api__execute", {
+      code: "async () => cloudflare.request({ method: \"DELETE\", path: \"/zones/abc\" })",
+    }).allow,
+    false,
+  );
+  assert.equal(
+    evaluateClaudeOfficeHoursDigestToolCall("mcp__cloudflare-api__execute", {
+      code: "async () => cloudflare.request({ method: \"POST\", path: \"/zones/abc/workers\" })",
+    }).allow,
+    false,
+  );
+  assert.equal(
+    evaluateClaudeOfficeHoursDigestToolCall("mcp__cloudflare-api__execute", {}).allow,
+    false,
+  );
+
+  // 그 외 도구는 의견 없음(null) — 기존 이름 휴리스틱으로 폴백.
+  assert.equal(evaluateClaudeOfficeHoursDigestToolCall("mcp__posthog__list_events", {}), null);
+  assert.equal(evaluateClaudeOfficeHoursDigestToolCall("ToolSearch", { query: "posthog" }), null);
+});
+
 test("buildCodexConfig keeps judge_read_only isolated from MCP tools", () => {
   const previous = process.env.POSTHOG_API_KEY;
   process.env.POSTHOG_API_KEY = "phx_test";
@@ -1028,4 +1103,156 @@ test("normalizeClaudeQuestions carries question highlight/emphasis spans through
   assert.equal(question.emphasis.length, 2);
   assert.deepEqual(question.emphasis[0], { phrase: "어떤 대안으로", style: "mark" });
   assert.deepEqual(question.emphasis[1], { phrase: "지금", style: "strong" });
+});
+
+test("resolveCodexModel honors Settings model when session/env are silent", () => {
+  const previousAgenticModel = process.env.AGENTIC30_CODEX_MODEL;
+  const previousCodexModel = process.env.CODEX_MODEL;
+  const previousOpenAIModel = process.env.OPENAI_MODEL;
+  resetProviderSettingsForTest();
+  try {
+    delete process.env.AGENTIC30_CODEX_MODEL;
+    delete process.env.CODEX_MODEL;
+    delete process.env.OPENAI_MODEL;
+    updateProviderSettings({ codex: { model: "gpt-5.4" } });
+    // Settings fill the gap left by a provider-switch model reset...
+    assert.equal(resolveCodexModel(), "gpt-5.4");
+    // ...but an explicit session model still wins.
+    assert.equal(resolveCodexModel("gpt-5.5"), "gpt-5.5");
+  } finally {
+    restoreEnv("AGENTIC30_CODEX_MODEL", previousAgenticModel);
+    restoreEnv("CODEX_MODEL", previousCodexModel);
+    restoreEnv("OPENAI_MODEL", previousOpenAIModel);
+    resetProviderSettingsForTest();
+  }
+});
+
+test("resolveClaudeModel honors Settings model when session/env are silent", () => {
+  const previousAnthropicModel = process.env.ANTHROPIC_MODEL;
+  resetProviderSettingsForTest();
+  try {
+    delete process.env.ANTHROPIC_MODEL;
+    updateProviderSettings({ claude: { model: "claude-sonnet-4-6" } });
+    assert.equal(resolveClaudeModel(), "claude-sonnet-4-6");
+    assert.equal(resolveClaudeModel("claude-opus-4-8"), "claude-opus-4-8");
+  } finally {
+    restoreEnv("ANTHROPIC_MODEL", previousAnthropicModel);
+    resetProviderSettingsForTest();
+  }
+});
+
+test("resolveClaudeReasoningEffort: env > Settings > empty (SDK default)", () => {
+  const previousEnv = process.env.AGENTIC30_CLAUDE_REASONING_EFFORT;
+  resetProviderSettingsForTest();
+  try {
+    delete process.env.AGENTIC30_CLAUDE_REASONING_EFFORT;
+    // Nothing configured -> "" so runClaudeProvider omits options.effort.
+    assert.equal(resolveClaudeReasoningEffort(), "");
+
+    updateProviderSettings({ claude: { reasoningEffort: "xhigh" } });
+    assert.equal(resolveClaudeReasoningEffort(), "xhigh");
+
+    // Invalid Settings values fall back to SDK default instead of leaking through.
+    updateProviderSettings({ claude: { reasoningEffort: "ultra" } });
+    assert.equal(resolveClaudeReasoningEffort(), "");
+
+    // Env override beats Settings.
+    updateProviderSettings({ claude: { reasoningEffort: "low" } });
+    process.env.AGENTIC30_CLAUDE_REASONING_EFFORT = "max";
+    assert.equal(resolveClaudeReasoningEffort(), "max");
+  } finally {
+    restoreEnv("AGENTIC30_CLAUDE_REASONING_EFFORT", previousEnv);
+    resetProviderSettingsForTest();
+  }
+});
+
+test("resolveCodexReasoningEffort: Settings beat the heuristic, env beats Settings", () => {
+  const previousAgenticEnv = process.env.AGENTIC30_CODEX_REASONING_EFFORT;
+  const previousCodexEnv = process.env.CODEX_REASONING_EFFORT;
+  const previousModelEnv = process.env.MODEL_REASONING_EFFORT;
+  resetProviderSettingsForTest();
+  try {
+    delete process.env.AGENTIC30_CODEX_REASONING_EFFORT;
+    delete process.env.CODEX_REASONING_EFFORT;
+    delete process.env.MODEL_REASONING_EFFORT;
+
+    // Heuristic baseline (no Settings): fast_chat with a light prompt -> minimal.
+    assert.equal(
+      resolveCodexReasoningEffort({ executionMode: "fast_chat", prompt: "안녕" }),
+      "minimal",
+    );
+
+    // Explicit Settings choice overrides the heuristic for every mode.
+    updateProviderSettings({ codex: { reasoningEffort: "high" } });
+    assert.equal(
+      resolveCodexReasoningEffort({ executionMode: "fast_chat", prompt: "안녕" }),
+      "high",
+    );
+
+    // Invalid Settings values fall back to the heuristic.
+    updateProviderSettings({ codex: { reasoningEffort: "max" } });
+    assert.equal(
+      resolveCodexReasoningEffort({ executionMode: "fast_chat", prompt: "안녕" }),
+      "minimal",
+    );
+
+    // Env still wins over Settings.
+    updateProviderSettings({ codex: { reasoningEffort: "high" } });
+    process.env.AGENTIC30_CODEX_REASONING_EFFORT = "low";
+    assert.equal(
+      resolveCodexReasoningEffort({ executionMode: "fast_chat", prompt: "안녕" }),
+      "low",
+    );
+  } finally {
+    restoreEnv("AGENTIC30_CODEX_REASONING_EFFORT", previousAgenticEnv);
+    restoreEnv("CODEX_REASONING_EFFORT", previousCodexEnv);
+    restoreEnv("MODEL_REASONING_EFFORT", previousModelEnv);
+    resetProviderSettingsForTest();
+  }
+});
+
+test("resolveGeminiThinkingLevel maps Settings to SDK enum strings on Gemini 3.x only", () => {
+  const previousEnv = process.env.AGENTIC30_GEMINI_THINKING_LEVEL;
+  resetProviderSettingsForTest();
+  try {
+    delete process.env.AGENTIC30_GEMINI_THINKING_LEVEL;
+
+    // Nothing configured -> "" (model default keeps thinkingConfig omitted).
+    assert.equal(resolveGeminiThinkingLevel("gemini-3.5-flash"), "");
+
+    updateProviderSettings({ gemini: { reasoningEffort: "low" } });
+    assert.equal(resolveGeminiThinkingLevel("gemini-3.5-flash"), "LOW");
+
+    // 2.5 series only supports thinkingBudget -> always automatic.
+    assert.equal(resolveGeminiThinkingLevel("gemini-2.5-pro"), "");
+
+    // Gemini 3 Pro rejects minimal -> coerced to LOW instead of failing the call.
+    updateProviderSettings({ gemini: { reasoningEffort: "minimal" } });
+    assert.equal(resolveGeminiThinkingLevel("gemini-3-pro-preview"), "LOW");
+    assert.equal(resolveGeminiThinkingLevel("gemini-3.5-flash"), "MINIMAL");
+
+    // Env override beats Settings.
+    process.env.AGENTIC30_GEMINI_THINKING_LEVEL = "high";
+    assert.equal(resolveGeminiThinkingLevel("gemini-3.5-flash"), "HIGH");
+  } finally {
+    restoreEnv("AGENTIC30_GEMINI_THINKING_LEVEL", previousEnv);
+    resetProviderSettingsForTest();
+  }
+});
+
+test("provider settings summary exposes reasoningEffort for the Mac client", () => {
+  resetProviderSettingsForTest();
+  try {
+    const summary = updateProviderSettings({
+      claude: { reasoningEffort: "XHigh " },
+      codex: { reasoningEffort: "minimal" },
+      gemini: {},
+    });
+    // normalizeProviderSettings lowercases/trims so resolvers compare cleanly.
+    assert.equal(summary.claude.reasoningEffort, "xhigh");
+    assert.equal(summary.codex.reasoningEffort, "minimal");
+    assert.equal(summary.gemini.reasoningEffort, "");
+  } finally {
+    resetProviderSettingsForTest();
+  }
 });

@@ -53,6 +53,16 @@ const BASE_EXTERNAL_PACKAGES = [
   "@anthropic-ai/claude-agent-sdk",
   "@openai/codex-sdk",
   "@openai/codex",
+  // Ships sqlite3 (native addon) in its dependency closure — must stay
+  // unbundled and be copied with that closure intact (see
+  // EXTERNAL_CLOSURE_PACKAGES).
+  "@cursor/sdk",
+];
+// External packages whose runtime dependency closure must also be copied —
+// they import siblings (e.g. @cursor/sdk → sqlite3, @connectrpc/*) that the
+// bundle no longer provides once the package itself is external.
+const EXTERNAL_CLOSURE_PACKAGES = [
+  "@cursor/sdk",
 ];
 const ARCH_EXTERNAL_PACKAGES = [
   "@anthropic-ai/claude-agent-sdk-darwin-arm64",
@@ -191,7 +201,7 @@ async function copyExternals() {
   }
 
   const seen = new Set();
-  for (const pkg of SIDECAR_CLI_PACKAGES) {
+  for (const pkg of [...SIDECAR_CLI_PACKAGES, ...EXTERNAL_CLOSURE_PACKAGES]) {
     await copyPackageClosure(pkg, seen);
   }
 }

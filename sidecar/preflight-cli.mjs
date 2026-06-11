@@ -18,6 +18,7 @@ const environment = {
   claude: getProviderAuthState("claude"),
   codex: getProviderAuthState("codex"),
   gemini: getProviderAuthState("gemini"),
+  cursor: getProviderAuthState("cursor"),
   acp: getAcpAdapterState(),
 };
 
