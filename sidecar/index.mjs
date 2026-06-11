@@ -160,6 +160,7 @@ import {
   resolveGeminiModel,
   getProviderAuthState,
   getProviderConnectionState,
+  isProviderAuthRequiredError,
   isProviderUsageLimitError,
   runProviderStream,
   updateProviderSettings,
@@ -3476,7 +3477,7 @@ async function runPrompt(
         });
       }
     } else {
-      const usageLimited = reportProviderRunError(error, {
+      const errorKind = reportProviderRunError(error, {
         operation: "runPrompt",
         session_id: session.id,
         provider: session.provider,
@@ -3507,13 +3508,14 @@ async function runPrompt(
       emitAgentEvent(session, assistantMessage.id, {
         eventType: "run.failed",
         error: assistantMessage.error,
-        recoverable: usageLimited,
+        recoverable: Boolean(errorKind),
     });
       broadcast({
         type: "error",
         sessionId: session.id,
+        provider: session.provider,
         message: assistantMessage.error,
-        ...providerQuotaErrorEnvelope(usageLimited),
+        ...providerRecoverableErrorEnvelope(errorKind),
     });
     }
   } finally {
@@ -4090,7 +4092,7 @@ async function runUnifiedFoundationChat(
         transport,
     });
     } else {
-      const usageLimited = reportProviderRunError(error, {
+      const errorKind = reportProviderRunError(error, {
         operation: "runUnifiedFoundationChat",
         session_id: session.id,
         provider: session.provider,
@@ -4113,13 +4115,14 @@ async function runUnifiedFoundationChat(
       emitAgentEvent(session, assistantMessage.id, {
         eventType: "run.failed",
         error: assistantMessage.error,
-        recoverable: usageLimited,
+        recoverable: Boolean(errorKind),
     });
       broadcast({
         type: "error",
         sessionId: session.id,
+        provider: session.provider,
         message: assistantMessage.error,
-        ...providerQuotaErrorEnvelope(usageLimited),
+        ...providerRecoverableErrorEnvelope(errorKind),
     });
     }
   } finally {
@@ -9996,13 +9999,13 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
     );
     return { ok: true, provider, model, result };
   } catch (error) {
-    const usageLimited = reportProviderRunError(error, {
+    const errorKind = reportProviderRunError(error, {
       operation: "runWorkspaceScanAgent",
       provider,
       model,
       scan_root: scanRoot,
     });
-    if (usageLimited) {
+    if (errorKind === PROVIDER_USAGE_LIMIT_ERROR_KIND) {
       broadcastWorkspaceScanProgress(
         scanRoot,
         `scan.agent · ${providerLabel} 사용 한도 도달`,
@@ -10017,7 +10020,11 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
       ok: false,
       provider,
       model,
-      reason: usageLimited ? "usage_limit" : "error",
+      reason: errorKind === PROVIDER_USAGE_LIMIT_ERROR_KIND
+        ? "usage_limit"
+        : errorKind === PROVIDER_AUTH_REQUIRED_ERROR_KIND
+          ? "unavailable"
+          : "error",
       message: formatError(error),
     };
   } finally {
@@ -10093,6 +10100,7 @@ function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, mess
     nextProvider,
     availableProviders,
     ...(reason === "usage_limit" ? { errorKind: PROVIDER_USAGE_LIMIT_ERROR_KIND } : {}),
+    ...(reason === "unavailable" ? { errorKind: PROVIDER_AUTH_REQUIRED_ERROR_KIND } : {}),
   });
 }
 
@@ -10551,13 +10559,13 @@ async function runDay1ChoiceFrontierProvider({ provider, model, scanRoot, prompt
       },
     });
   } catch (error) {
-    const usageLimited = reportProviderRunError(error, {
+    const errorKind = reportProviderRunError(error, {
       operation: "runDay1ChoiceFrontierProvider",
       provider,
       model,
       scan_root: scanRoot,
     });
-    if (usageLimited) {
+    if (errorKind === PROVIDER_USAGE_LIMIT_ERROR_KIND) {
       broadcastWorkspaceScanProviderLimited(scanRoot, { provider, model, stage: "day1_synthesis" });
     }
     return null;
@@ -13057,6 +13065,7 @@ function formatError(error) {
  * message instead of capturing a generic exception (see AgenticViewModel).
  */
 const PROVIDER_USAGE_LIMIT_ERROR_KIND = "provider_usage_limit";
+const PROVIDER_AUTH_REQUIRED_ERROR_KIND = "provider_auth_required";
 
 /**
  * True for an expected, recoverable upstream provider quota condition
@@ -13068,19 +13077,30 @@ function isRecoverableProviderQuotaError(error) {
   return isProviderUsageLimitError(error);
 }
 
+function providerRecoverableErrorKind(error) {
+  if (isRecoverableProviderQuotaError(error)) return PROVIDER_USAGE_LIMIT_ERROR_KIND;
+  if (isProviderAuthRequiredError(error)) return PROVIDER_AUTH_REQUIRED_ERROR_KIND;
+  return null;
+}
+
 /**
  * Routes a failed provider-run error to telemetry: a benign event for expected
- * quota caps, a captured exception otherwise. Returns whether the error was a
- * recoverable quota condition so the caller can mark the run recoverable and
- * tag the broadcast envelope. `captureProps` is shared between both lanes.
+ * recoverable provider states, a captured exception otherwise. Returns the
+ * recoverable error kind so the caller can tag the broadcast envelope.
+ * `captureProps` is shared between both lanes.
  */
 function reportProviderRunError(error, captureProps) {
-  if (isRecoverableProviderQuotaError(error)) {
+  const errorKind = providerRecoverableErrorKind(error);
+  if (errorKind === PROVIDER_USAGE_LIMIT_ERROR_KIND) {
     telemetry.captureEvent("mac_sidecar_provider_usage_limit", captureProps);
-    return true;
+    return errorKind;
+  }
+  if (errorKind === PROVIDER_AUTH_REQUIRED_ERROR_KIND) {
+    telemetry.captureEvent("mac_sidecar_provider_auth_required", captureProps);
+    return errorKind;
   }
   telemetry.captureException(error, captureProps);
-  return false;
+  return null;
 }
 
 /**
@@ -13088,9 +13108,9 @@ function reportProviderRunError(error, captureProps) {
  * recoverable provider quota cap, so the Mac side can surface a "retry later /
  * switch provider" message instead of capturing a generic exception.
  */
-function providerQuotaErrorEnvelope(usageLimited) {
-  return usageLimited
-    ? { errorKind: PROVIDER_USAGE_LIMIT_ERROR_KIND, recoverable: true }
+function providerRecoverableErrorEnvelope(errorKind) {
+  return errorKind
+    ? { errorKind, recoverable: true }
     : {};
 }
 

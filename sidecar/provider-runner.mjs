@@ -406,8 +406,8 @@ export function getProviderAuthState(provider) {
       available: false,
       source: "missing",
       message: diagnostic.gcloudInstalled
-        ? "Run `gcloud auth application-default login`, set GEMINI_API_KEY / GOOGLE_API_KEY, or configure Vertex AI"
-        : "gcloud SDK not installed — set GEMINI_API_KEY / GOOGLE_API_KEY or install Google Cloud SDK",
+        ? "`gcloud auth application-default login`을 실행하거나 GEMINI_API_KEY / GOOGLE_API_KEY를 설정하거나 Vertex AI 환경을 구성하세요."
+        : "Google Cloud SDK가 설치되어 있지 않습니다. GEMINI_API_KEY / GOOGLE_API_KEY를 설정하거나 Google Cloud SDK를 설치하세요.",
       geminiAdc: diagnostic,
     };
   }
@@ -417,10 +417,10 @@ export function getProviderAuthState(provider) {
     source: "missing",
     message:
       provider === "claude"
-        ? "Sign in with Claude Code or set ANTHROPIC_API_KEY"
+        ? "Claude Code에 로그인하거나 ANTHROPIC_API_KEY를 설정하세요."
         : provider === "cursor"
-          ? "Set CURSOR_API_KEY or add a Cursor API key in settings"
-          : "Sign in with Codex or set CODEX_API_KEY / OPENAI_API_KEY",
+          ? "CURSOR_API_KEY를 설정하거나 설정에서 Cursor API 키를 추가하세요."
+          : "Codex에 로그인하거나 CODEX_API_KEY / OPENAI_API_KEY를 설정하세요.",
   };
 }
 
@@ -1171,6 +1171,33 @@ export function isProviderUsageLimitError(error) {
     || code === "rate_limit_exceeded"
     || status === 429
     || message.includes("rate limit")
+  );
+}
+
+/**
+ * Recognizes expected "provider is not signed in / no API key configured"
+ * states. These require user action, but they are not sidecar faults and should
+ * not become error-tracking issues when the app has already surfaced an auth
+ * action.
+ */
+export function isProviderAuthRequiredError(error) {
+  const message = String(error?.message ?? error ?? "").toLowerCase();
+  if (!message) return false;
+  return (
+    message.includes("sign in with claude code or set anthropic_api_key")
+    || message.includes("sign in with codex or set codex_api_key / openai_api_key")
+    || message.includes("set cursor_api_key or add a cursor api key")
+    || message.includes("run `gcloud auth application-default login`")
+    || message.includes("gcloud sdk not installed")
+    || message.includes("claude code에 로그인하거나 anthropic_api_key")
+    || message.includes("codex에 로그인하거나 codex_api_key / openai_api_key")
+    || message.includes("cursor_api_key를 설정하거나")
+    || message.includes("cursor provider를 사용하려면 cursor_api_key")
+    || message.includes("acp claude 모드를 사용하려면 anthropic_api_key")
+    || message.includes("gcloud auth application-default login")
+    || message.includes("google cloud sdk가 설치되어 있지 않습니다")
+    || message.includes("invalid authentication credentials")
+    || message.includes("401")
   );
 }
 
@@ -2291,7 +2318,7 @@ async function runCursorProvider({
   const env = buildCursorEnv();
   const apiKey = env.CURSOR_API_KEY || "";
   if (!apiKey) {
-    throw new Error("Cursor provider requires CURSOR_API_KEY (or a Cursor API key in settings).");
+    throw new Error("Cursor provider를 사용하려면 CURSOR_API_KEY 또는 설정의 Cursor API 키가 필요합니다.");
   }
   const systemPromptText = buildSystemPromptText({
     provider: "cursor",
@@ -2393,7 +2420,7 @@ async function runTextOnlyProvider({
     const env = buildProviderEnv("claude");
     const apiKey = readApiKey("claude", env);
     if (!apiKey) {
-      throw new Error("ACP Claude mode requires ANTHROPIC_API_KEY.");
+      throw new Error("ACP Claude 모드를 사용하려면 ANTHROPIC_API_KEY가 필요합니다.");
     }
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {

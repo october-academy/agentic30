@@ -142,8 +142,8 @@ function checkProviderAvailability(environment) {
     id: "provider-auth",
     title: "At least one provider is authenticated",
     status: "warning",
-    message: "Claude, Codex, and Gemini are all unavailable.",
-    recovery: "Sign in with Claude Code/Codex/Gemini CLI or set ANTHROPIC_API_KEY / CODEX_API_KEY / GEMINI_API_KEY.",
+    message: "Claude, Codex, Gemini를 모두 사용할 수 없습니다.",
+    recovery: "Claude Code/Codex/Gemini CLI에 로그인하거나 ANTHROPIC_API_KEY / CODEX_API_KEY / GEMINI_API_KEY를 설정하세요.",
   };
 }
 
@@ -162,7 +162,7 @@ function checkAcpAvailability(environment) {
     title: "ACP adapter is available",
     status: "warning",
     message: environment?.acp?.message || "ACP adapter status is unknown.",
-    recovery: "Set ANTHROPIC_API_KEY or CODEX_API_KEY when using isolated ACP editor integrations.",
+    recovery: "격리된 ACP 에디터 연동을 사용하려면 ANTHROPIC_API_KEY 또는 CODEX_API_KEY를 설정하세요.",
   };
 }
 
