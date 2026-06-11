@@ -1958,7 +1958,12 @@ async function handleClientMessage(socket, payload) {
     case "integration_status_check": {
       // Settings > 연동 "상태 확인": live-verify gh CLI/GitHub MCP, PostHog key,
       // and Cloudflare token against the real services.
-      const integrationStatus = await collectIntegrationStatus({ appSupportPath });
+      // MCP OAuth 배지는 프로바이더 토큰 캐시 단위 — 현재 선택한 프로바이더
+      // 기준으로 판정한다(claude/codex 외 선택은 가용 프로바이더로 폴백).
+      const integrationStatus = await collectIntegrationStatus({
+        appSupportPath,
+        provider: resolveIntegrationStatusProvider(payload.preferredProvider),
+      });
       send(socket, { type: "integration_status_result", integrationStatus });
       telemetry.captureEvent("mac_sidecar_integration_status_checked", {
         github: integrationStatus.github?.state || "",
@@ -1975,7 +1980,32 @@ async function handleClientMessage(socket, payload) {
       // 연결을 실증한다. 미인증 서버는 authenticate 플레이스홀더가 로그인 URL을
       // 반환 → 진행상황 이벤트로 중계하면 Mac 쪽이 브라우저를 연다.
       const server = normalizeMcpOauthPrewarmServer(payload.server);
-      const provider = pickMorningBriefingProvider(payload.preferredProvider);
+      // 연결은 "현재 선택한 프로바이더"의 토큰 캐시에 고정 — 선택(claude/codex)이
+      // 로그인돼 있지 않으면 다른 프로바이더로 조용히 폴백하지 않고 명확히
+      // 실패한다. 폴백 검증은 선택 프로바이더의 AI 실행에서 여전히 미인증이라
+      // "연결됨" 배지가 거짓이 되기 때문. gemini 등 prewarm 미지원 선택만 폴백.
+      const resolvedProvider = resolveMcpOauthConnectProvider({
+        requested: payload.preferredProvider,
+        isProviderAvailable: (candidate) => getProviderAuthState(candidate).available,
+        fallbackProvider: pickMorningBriefingProvider(""),
+      });
+      if (!resolvedProvider.provider) {
+        const failedResult = {
+          server: server || String(payload.server || ""),
+          provider: String(payload.preferredProvider || "").trim().toLowerCase(),
+          state: "failed",
+          detail: resolvedProvider.error,
+          checkedAt: new Date().toISOString(),
+        };
+        send(socket, { type: "mcp_oauth_connect_result", mcpOauthConnect: failedResult });
+        telemetry.captureEvent("mac_sidecar_mcp_oauth_connect", {
+          server: failedResult.server,
+          provider: failedResult.provider,
+          state: "failed_provider_unavailable",
+        });
+        return;
+      }
+      const provider = resolvedProvider.provider;
       const mcpOauthConnect = await prewarmMcpOauth({
         server: server || payload.server,
         provider,
@@ -1999,7 +2029,7 @@ async function handleClientMessage(socket, payload) {
       await persistMcpOauthConnectResult({ appSupportPath, result: mcpOauthConnect }).catch((error) => {
         telemetry.captureException(error, { operation: "mcp_oauth_state_persist" });
       });
-      const integrationStatus = await collectIntegrationStatus({ appSupportPath });
+      const integrationStatus = await collectIntegrationStatus({ appSupportPath, provider });
       send(socket, { type: "mcp_oauth_connect_result", mcpOauthConnect, integrationStatus });
       telemetry.captureEvent("mac_sidecar_mcp_oauth_connect", {
         server: mcpOauthConnect.server,
@@ -4505,6 +4535,43 @@ function pickMorningBriefingProvider(preferredProvider = "") {
     if (getProviderAuthState(provider).available) return provider;
   }
   return "";
+}
+
+// Settings 상태 배지의 MCP OAuth 판정 기준 프로바이더. "상태 확인"은 연결을
+// 만들지 않으므로 가용성 폴백 없이 선택값(claude/codex)을 그대로 존중한다 —
+// 선택 프로바이더가 미로그인이어도 "그 프로바이더 기준 미검증"이 진실이다.
+// claude/codex 외 선택(gemini 등)만 가용 프로바이더로 폴백한다.
+function resolveIntegrationStatusProvider(preferredProvider = "") {
+  const requested = String(preferredProvider || "").trim().toLowerCase();
+  if (["claude", "codex"].includes(requested)) return requested;
+  return pickMorningBriefingProvider("");
+}
+
+// 브리핑 서빙 직전 연결 상태 라이브 오버레이. 디스크 스냅샷의 sync.sources는
+// 생성 시점 연결 상태라, 이후 Settings의 MCP OAuth 연결/해제·프로바이더 전환을
+// 모른다(설정 "MCP 연결됨" vs 브리핑 "미연결" 모순의 근본 원인). 연결 상태의
+// 진실은 refresh와 같은 라이브 게이트다 — 스냅샷을 즉시 emit해 첫 페인트를
+// 지키고, probe(gh auth 등 ~1s) 완료 후 행이 실제로 바뀐 경우에만 한 번 더
+// emit한다. 오버레이 결과는 persist하지 않는다.
+async function emitMorningBriefingWithLiveSync({ briefing, previous = null, preferredProvider = "", emit }) {
+  emit(briefing ?? null, previous);
+  if (!briefing) return;
+  try {
+    const gate = await evaluateOfficeHoursSourceGate({
+      workspaceRoot,
+      // Day 1 고정 인터뷰 short-circuit(빈 sources) 우회 — 연결 상태는 Day와
+      // 무관하게 항상 probe한다. refresh의 Math.max(2, day) 클램프와 같은 이유.
+      day: 2,
+      selectedSources: MORNING_BRIEFING_ALL_SOURCES,
+      provider: pickMorningBriefingProvider(preferredProvider),
+      appSupportPath,
+    });
+    const { briefing: live, changed } = applyMorningBriefingLiveSync(briefing, gate.sources || []);
+    if (changed) emit(live, previous);
+  } catch (error) {
+    // fail-open: probe가 죽어도 스냅샷 서빙은 이미 끝났다.
+    telemetry.captureException(error, { operation: "morning_briefing_live_sync" });
+  }
 }
 
 function scheduleMorningBriefingRefresh({

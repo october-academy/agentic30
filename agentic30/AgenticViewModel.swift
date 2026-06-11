@@ -1753,7 +1753,15 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var sessions: [ChatSession] = []
     @Published var selectedSessionID: String?
     @Published var selectedProvider: AgentProvider = AgenticViewModel.loadSelectedProvider() {
-        didSet { Self.saveSelectedProvider(selectedProvider) }
+        didSet {
+            Self.saveSelectedProvider(selectedProvider)
+            guard oldValue != selectedProvider else { return }
+            // MCP OAuth 토큰은 프로바이더(Claude/Codex)별 캐시 — 이전 프로바이더로
+            // 실증한 "MCP 연결" 결과 배지는 새 프로바이더에서는 유효하지 않다.
+            // stale 배지를 비우고 새 프로바이더 기준으로 연동 상태를 다시 그린다.
+            mcpOauthResults.removeAll()
+            if isConnected { refreshIntegrationStatus() }
+        }
     }
     @Published var draft = ""
     @Published private(set) var environment = SidecarEnvironment.placeholder
@@ -4414,7 +4422,12 @@ final class AgenticViewModel: ObservableObject {
     func refreshIntegrationStatus() {
         guard isConnected, !integrationStatusChecking else { return }
         integrationStatusChecking = true
-        sidecar.send(payload: ["type": "integration_status_check"])
+        // MCP OAuth 배지는 프로바이더 토큰 캐시 단위 — 현재 선택한 프로바이더
+        // 기준으로 판정하도록 사이드카에 선택값을 넘긴다.
+        sidecar.send(payload: [
+            "type": "integration_status_check",
+            "preferredProvider": selectedProvider.rawValue,
+        ])
     }
 
     /// Settings > 연동 "MCP 연결": OAuth-first MCP(PostHog/Cloudflare)는 설정에서
@@ -4826,6 +4839,9 @@ final class AgenticViewModel: ObservableObject {
         sidecar.send(payload: [
             "type": "morning_briefing_anomaly_label",
             "label": trimmed,
+            // 라벨 후 재브로드캐스트되는 브리핑의 연결 행 라이브 판정(MCP OAuth)이
+            // 현재 선택한 프로바이더 기준이 되도록 — get/refresh와 같은 규약.
+            "preferredProvider": selectedProvider.rawValue,
         ])
     }
 

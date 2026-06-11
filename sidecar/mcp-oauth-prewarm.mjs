@@ -47,6 +47,59 @@ export const MCP_OAUTH_PREWARM_SERVERS = {
   },
 };
 
+// MCP OAuth prewarm을 지원하는 프로바이더 — 토큰 캐시가 이 둘에만 존재한다.
+export const MCP_OAUTH_PREWARM_PROVIDERS = Object.freeze(["claude", "codex"]);
+
+export function providerDisplayLabel(provider = "") {
+  const normalized = String(provider || "").trim().toLowerCase();
+  if (normalized === "claude") return "Claude";
+  if (normalized === "codex") return "Codex";
+  return normalized || "—";
+}
+
+// "MCP 연결"은 현재 선택한 프로바이더의 토큰 캐시에 연결을 만든다. 선택한
+// 프로바이더(claude/codex)가 로그인돼 있지 않으면 다른 프로바이더로 조용히
+// 넘어가는 대신 명확히 실패한다 — 다른 캐시를 검증해 봤자 사용자가 선택한
+// 프로바이더의 AI 실행에서는 여전히 미인증이라 "연결됨" 배지가 거짓이 된다.
+// claude/codex 외 프로바이더(gemini 등)는 MCP prewarm 자체가 없으므로 가용한
+// 캐시로 폴백한다(기존 동작 유지).
+export function resolveMcpOauthConnectProvider({
+  requested = "",
+  isProviderAvailable = () => false,
+  fallbackProvider = "",
+} = {}) {
+  const normalized = String(requested || "").trim().toLowerCase();
+  if (MCP_OAUTH_PREWARM_PROVIDERS.includes(normalized)) {
+    if (isProviderAvailable(normalized)) return { provider: normalized, error: "" };
+    return {
+      provider: "",
+      error: `선택한 프로바이더(${providerDisplayLabel(normalized)})가 로그인되어 있지 않아요 — 로그인 후 다시 'MCP 연결'을 누르거나 프로바이더를 변경해 주세요.`,
+    };
+  }
+  if (fallbackProvider) return { provider: fallbackProvider, error: "" };
+  return { provider: "", error: "사용 가능한 AI 프로바이더가 없어요 — Claude 또는 Codex 로그인이 필요해요." };
+}
+
+// 프로바이더 사용량 한도(세션/사용량/쿼터/레이트리밋) 에러 — MCP 연결 상태와
+// 무관한 "나중에 재시도" 조건. 실측 메시지: Claude "You've hit your session
+// limit · resets 10:40pm", Codex "You've hit your usage limit". 이걸 연결
+// 실패로 격하하면 멀쩡한 OAuth 연결이 '미연결'로 둔갑한다.
+export function isProviderUsageLimitMessage(message = "") {
+  const value = String(message || "").toLowerCase();
+  if (!value) return false;
+  return (
+    value.includes("session limit")
+    || value.includes("usage limit")
+    || value.includes("usage_limit")
+    || value.includes("rate limit")
+    || value.includes("rate_limit")
+    || value.includes("quota")
+    || value.includes("plan limit")
+    || value.includes("hit your limit")
+    || value.includes("reached your limit")
+  );
+}
+
 export function normalizeMcpOauthPrewarmServer(value) {
   const normalized = String(value || "").trim().toLowerCase();
   return MCP_OAUTH_PREWARM_SERVERS[normalized] ? normalized : "";
@@ -275,13 +328,35 @@ export async function prewarmMcpOauth({
     );
   }
   if (attempt.kind === "error") {
+    if (isProviderUsageLimitMessage(attempt.message)) {
+      // 한도 에러는 연결을 검증할 수 없었을 뿐 — 연결 실패가 아니다. 호출자
+      // (persistMcpOauthConnectResult)는 이 플래그로 기존 ready 격하를 막는다.
+      return {
+        ...result(
+          normalized,
+          provider,
+          "failed",
+          `${target.label} MCP 연결을 확인하지 못했어요 — AI 프로바이더 사용량 한도예요(연결 문제 아님). ${attempt.message}`,
+          loginUrlAnnounced,
+        ),
+        providerLimited: true,
+      };
+    }
     return result(normalized, provider, "failed", `${target.label} MCP 연결 확인 실패: ${attempt.message}`, loginUrlAnnounced);
   }
 
   const parsed = attempt.parsed;
   const loginUrl = loginUrlAnnounced || parsed.loginUrl;
   if (parsed.ok) {
-    return result(normalized, provider, "ready", `${target.label} MCP 도구 호출 검증됨 — AI 실행에서 바로 사용 가능해요.`, loginUrl);
+    // 어느 프로바이더 캐시에 연결됐는지를 배지 캡션에 남긴다 — 토큰 캐시는
+    // 프로바이더별이라 이 라벨이 곧 "어디서 쓸 수 있는 연결인지"다.
+    return result(
+      normalized,
+      provider,
+      "ready",
+      `${target.label} MCP 도구 호출 검증됨 (${providerDisplayLabel(provider)}) — 이 프로바이더의 AI 실행에서 바로 사용 가능해요.`,
+      loginUrl,
+    );
   }
   if (parsed.loginPending || (loginUrl && !parsed.reason)) {
     return result(

@@ -10,9 +10,12 @@ import {
   buildMcpOauthPrewarmPrompt,
   buildMcpOauthVerifyPrompt,
   extractMcpOauthLoginUrl,
+  isProviderUsageLimitMessage,
   normalizeMcpOauthPrewarmServer,
   parseMcpOauthPrewarmReply,
   prewarmMcpOauth,
+  providerDisplayLabel,
+  resolveMcpOauthConnectProvider,
 } from "../sidecar/mcp-oauth-prewarm.mjs";
 
 test("normalizeMcpOauthPrewarmServer accepts posthog/cloudflare only", () => {
@@ -21,6 +24,52 @@ test("normalizeMcpOauthPrewarmServer accepts posthog/cloudflare only", () => {
   assert.equal(normalizeMcpOauthPrewarmServer("github"), "");
   assert.equal(normalizeMcpOauthPrewarmServer(""), "");
   assert.equal(normalizeMcpOauthPrewarmServer(undefined), "");
+});
+
+test("resolveMcpOauthConnectProvider pins the selected provider instead of falling back", () => {
+  // "MCP 연결"은 선택한 프로바이더의 토큰 캐시에 연결을 만든다 — 선택이
+  // 미로그인이면 다른 프로바이더로 조용히 폴백하지 않고 명확히 실패해야 한다.
+  const available = new Set(["claude"]);
+  const isProviderAvailable = (provider) => available.has(provider);
+
+  const pinned = resolveMcpOauthConnectProvider({
+    requested: "Claude",
+    isProviderAvailable,
+    fallbackProvider: "claude",
+  });
+  assert.deepEqual(pinned, { provider: "claude", error: "" });
+
+  // 선택(codex)이 미로그인 → claude가 가용해도 폴백하지 않는다.
+  const unavailable = resolveMcpOauthConnectProvider({
+    requested: "codex",
+    isProviderAvailable,
+    fallbackProvider: "claude",
+  });
+  assert.equal(unavailable.provider, "");
+  assert.match(unavailable.error, /Codex.*로그인되어 있지 않아요/);
+
+  // claude/codex 외(gemini 등)는 MCP prewarm 미지원 — 가용 프로바이더로 폴백.
+  const geminiFallback = resolveMcpOauthConnectProvider({
+    requested: "gemini",
+    isProviderAvailable,
+    fallbackProvider: "claude",
+  });
+  assert.deepEqual(geminiFallback, { provider: "claude", error: "" });
+
+  const nothing = resolveMcpOauthConnectProvider({
+    requested: "",
+    isProviderAvailable,
+    fallbackProvider: "",
+  });
+  assert.equal(nothing.provider, "");
+  assert.match(nothing.error, /사용 가능한 AI 프로바이더가 없어요/);
+});
+
+test("providerDisplayLabel maps provider ids to badge labels", () => {
+  assert.equal(providerDisplayLabel("claude"), "Claude");
+  assert.equal(providerDisplayLabel(" CODEX "), "Codex");
+  assert.equal(providerDisplayLabel("gemini"), "gemini");
+  assert.equal(providerDisplayLabel(""), "—");
 });
 
 test("buildMcpOauthPrewarmPrompt targets the MCP server name and all sentinels", () => {
@@ -318,6 +367,40 @@ test("prewarmMcpOauth fails closed without sentinel, on throw, and on timeout", 
   });
   assert.equal(timedOut.state, "failed");
   assert.ok(timedOut.detail.includes("시간 초과"));
+});
+
+test("isProviderUsageLimitMessage recognizes provider quota errors only", () => {
+  assert.equal(isProviderUsageLimitMessage("Claude Code returned an error result: You've hit your session limit · resets 10:40pm (Asia/Seoul)"), true);
+  assert.equal(isProviderUsageLimitMessage("You've hit your usage limit. Your limit resets at 9pm."), true);
+  assert.equal(isProviderUsageLimitMessage("Rate limit exceeded"), true);
+  assert.equal(isProviderUsageLimitMessage("insufficient_quota"), true);
+  assert.equal(isProviderUsageLimitMessage("codex binary missing"), false);
+  assert.equal(isProviderUsageLimitMessage(""), false);
+});
+
+test("prewarmMcpOauth marks provider usage-limit errors as providerLimited", async () => {
+  const limited = await prewarmMcpOauth({
+    server: "cloudflare",
+    provider: "claude",
+    env: {},
+    runProviderStreamImpl: async () => {
+      throw new Error("Claude Code returned an error result: You've hit your session limit · resets 10:40pm (Asia/Seoul)");
+    },
+  });
+  assert.equal(limited.state, "failed");
+  assert.equal(limited.providerLimited, true);
+  assert.ok(limited.detail.includes("사용량 한도"));
+  assert.ok(limited.detail.includes("연결 문제 아님"));
+
+  const plainError = await prewarmMcpOauth({
+    server: "cloudflare",
+    provider: "claude",
+    env: {},
+    runProviderStreamImpl: async () => {
+      throw new Error("codex binary missing");
+    },
+  });
+  assert.equal(plainError.providerLimited, undefined);
 });
 
 test("prewarmMcpOauth rejects unknown server and missing provider", async () => {

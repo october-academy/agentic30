@@ -104,6 +104,55 @@ test("probes report ready when MCP OAuth state is verified and no key is stored"
   }
 });
 
+test("OAuth badge is provider-scoped — verification on one provider does not light up another", async () => {
+  // 토큰 캐시는 프로바이더(Claude/Codex)별 — claude로 검증한 상태에서 현재
+  // 선택이 codex면 "연결됨" 대신 재연결 안내가 보여야 한다.
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "integration-oauth-provider-"));
+  try {
+    await fs.writeFile(
+      path.join(appSupportPath, "mcp-oauth-state.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        servers: {
+          posthog: { state: "ready", provider: "claude", detail: "ok", checkedAt: "2026-06-10T11:00:00.000Z" },
+          cloudflare: { state: "ready", provider: "claude", detail: "ok", checkedAt: "2026-06-10T11:00:00.000Z" },
+        },
+      }),
+    );
+    const mustNotFetch = async () => { throw new Error("must not call"); };
+
+    const matching = await probePosthogIntegration({
+      env: {},
+      appSupportPath,
+      fetchImpl: mustNotFetch,
+      provider: "claude",
+    });
+    assert.equal(matching.state, "ready");
+    assert.match(matching.detail, /\(Claude\)/);
+
+    const mismatched = await probePosthogIntegration({
+      env: {},
+      appSupportPath,
+      fetchImpl: mustNotFetch,
+      provider: "codex",
+    });
+    assert.equal(mismatched.state, "oauth");
+    assert.match(mismatched.detail, /Claude에서만 검증됐어요/);
+    assert.match(mismatched.detail, /Codex/);
+
+    const cloudflareMismatched = await probeCloudflareIntegration({
+      env: {},
+      appSupportPath,
+      fetchImpl: mustNotFetch,
+      provider: "codex",
+    });
+    assert.equal(cloudflareMismatched.state, "oauth");
+    assert.match(cloudflareMismatched.detail, /Claude에서만 검증됐어요/);
+  } finally {
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
+});
+
 test("probeCloudflareIntegration verifies token against /zones", async () => {
   const oauthDelegated = await probeCloudflareIntegration({
     env: {},

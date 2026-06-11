@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
 
 import { resolveCloudflareMcpSettings } from "./cloudflare-mcp-config.mjs";
-import { isMcpOauthServerReady, readMcpOauthState } from "./mcp-oauth-state.mjs";
+import { providerDisplayLabel } from "./mcp-oauth-prewarm.mjs";
+import { isMcpOauthServerReady, mcpOauthReadyProviders, readMcpOauthState } from "./mcp-oauth-state.mjs";
 import { resolvePostHogMcpSettings } from "./posthog-mcp-config.mjs";
 import { resolveGithubMcpSettings } from "./github-mcp-config.mjs";
 
@@ -14,6 +15,25 @@ const PROBE_TIMEOUT_MS = 10_000;
 
 function status(state, detail) {
   return { state, detail: String(detail || "").slice(0, 200) };
+}
+
+// MCP OAuth 토큰은 프로바이더(Claude/Codex)별 캐시 — ready 판정은 현재 선택한
+// 프로바이더 기준이어야 한다. 다른 프로바이더에서만 검증된 상태면 "연결됨"
+// 대신 그 사실을 알려 사용자가 현재 프로바이더로 'MCP 연결'을 다시 누르게 한다.
+function mcpOauthBadge({ appSupportPath, server, label, provider, readyDetail }) {
+  const oauthState = readMcpOauthState(appSupportPath);
+  if (isMcpOauthServerReady(oauthState, server, provider)) {
+    const providerSuffix = provider ? ` (${providerDisplayLabel(provider)})` : "";
+    return status("ready", `${label} MCP OAuth 연결 검증됨${providerSuffix} — ${readyDetail}`);
+  }
+  const readyProviders = mcpOauthReadyProviders(oauthState, server);
+  if (provider && readyProviders.length) {
+    return status(
+      "oauth",
+      `${label} MCP가 ${readyProviders.map(providerDisplayLabel).join(", ")}에서만 검증됐어요 — 현재 프로바이더(${providerDisplayLabel(provider)})에서 쓰려면 'MCP 연결'로 다시 로그인해 주세요.`,
+    );
+  }
+  return null;
 }
 
 function defaultExec(cmd, args) {
@@ -59,15 +79,21 @@ export async function probePosthogIntegration({
   appSupportPath = "",
   env = process.env,
   fetchImpl = fetch,
+  provider = "",
 } = {}) {
   const settings = resolvePostHogMcpSettings({ env, appSupportPath });
   if (!settings.token) {
     // MCP itself is OAuth-first: the provider handles the browser login, so
     // no key is required for AI-run PostHog tools. The key only upgrades the
     // briefing drilldown numbers to direct HogQL aggregation.
-    if (isMcpOauthServerReady(readMcpOauthState(appSupportPath), "posthog")) {
-      return status("ready", "PostHog MCP OAuth 연결 검증됨 — AI 실행에서 PostHog 도구 사용 가능. phx_/pha_ 키 저장 시 드릴다운 숫자를 직접 집계해요.");
-    }
+    const oauthBadge = mcpOauthBadge({
+      appSupportPath,
+      server: "posthog",
+      label: "PostHog",
+      provider,
+      readyDetail: "AI 실행에서 PostHog 도구 사용 가능. phx_/pha_ 키 저장 시 드릴다운 숫자를 직접 집계해요.",
+    });
+    if (oauthBadge) return oauthBadge;
     return status("oauth", "MCP는 OAuth로 동작 — Settings의 'MCP 연결'로 브라우저 로그인. phx_/pha_ 키 저장 시 드릴다운 숫자를 직접 집계해요.");
   }
   if (!settings.tokenValid) {
@@ -87,14 +113,20 @@ export async function probeCloudflareIntegration({
   appSupportPath = "",
   env = process.env,
   fetchImpl = fetch,
+  provider = "",
 } = {}) {
   const settings = resolveCloudflareMcpSettings({ env, appSupportPath });
   if (!settings.tokenValid) {
     // MCP itself is OAuth-first; the token only upgrades the briefing traffic
     // drilldown to direct GraphQL Analytics aggregation.
-    if (isMcpOauthServerReady(readMcpOauthState(appSupportPath), "cloudflare")) {
-      return status("ready", "Cloudflare MCP OAuth 연결 검증됨 — AI 실행에서 Cloudflare 도구 사용 가능. API 토큰 저장 시 트래픽 드릴다운 숫자를 직접 집계해요.");
-    }
+    const oauthBadge = mcpOauthBadge({
+      appSupportPath,
+      server: "cloudflare",
+      label: "Cloudflare",
+      provider,
+      readyDetail: "AI 실행에서 Cloudflare 도구 사용 가능. API 토큰 저장 시 트래픽 드릴다운 숫자를 직접 집계해요.",
+    });
+    if (oauthBadge) return oauthBadge;
     return status("oauth", "MCP는 OAuth로 동작 — Settings의 'MCP 연결'로 브라우저 로그인. API 토큰 저장 시 트래픽 드릴다운 숫자를 직접 집계해요.");
   }
   const result = await fetchJson(fetchImpl, "https://api.cloudflare.com/client/v4/zones?status=active&per_page=5", {
@@ -116,15 +148,16 @@ export async function collectIntegrationStatus({
   execImpl = defaultExec,
   fetchImpl = fetch,
   now = new Date(),
+  provider = "",
 } = {}) {
   const [github, posthog, cloudflare] = await Promise.all([
     probeGithubIntegration({ execImpl, env }).catch((error) => ({
       cli: status("failed", String(error?.message || error)),
       mcp: status("failed", String(error?.message || error)),
     })),
-    probePosthogIntegration({ appSupportPath, env, fetchImpl }).catch((error) =>
+    probePosthogIntegration({ appSupportPath, env, fetchImpl, provider }).catch((error) =>
       status("failed", String(error?.message || error))),
-    probeCloudflareIntegration({ appSupportPath, env, fetchImpl }).catch((error) =>
+    probeCloudflareIntegration({ appSupportPath, env, fetchImpl, provider }).catch((error) =>
       status("failed", String(error?.message || error))),
   ]);
   return {
@@ -132,6 +165,7 @@ export async function collectIntegrationStatus({
     githubMcp: github.mcp,
     posthog,
     cloudflare,
+    provider: String(provider || ""),
     checkedAt: (now instanceof Date ? now : new Date(now)).toISOString(),
   };
 }
