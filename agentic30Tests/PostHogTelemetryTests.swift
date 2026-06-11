@@ -2,6 +2,22 @@ import XCTest
 @testable import agentic30
 
 final class PostHogTelemetryTests: XCTestCase {
+    private var restoreHostDefaults: (() -> Void)?
+
+    override func setUp() {
+        super.setUp()
+        // Telemetry opt-out and capture-once flags live in the host app's
+        // real defaults domain — snapshot/restore so test runs can't flip the
+        // developer's telemetry preference or leave capture-once residue.
+        restoreHostDefaults = HostAppDefaultsGuard.snapshotAgentic30Domains()
+    }
+
+    override func tearDown() {
+        restoreHostDefaults?()
+        restoreHostDefaults = nil
+        super.tearDown()
+    }
+
     func testPublicProjectTokenIsCaptureOnlyTokenShape() {
         XCTAssertTrue(PostHogTelemetryConfig.publicProjectAPIKey.hasPrefix("phc_"))
         XCTAssertEqual(PostHogTelemetryConfig.projectTokenEnvironmentKey, "POSTHOG_PROJECT_TOKEN")
