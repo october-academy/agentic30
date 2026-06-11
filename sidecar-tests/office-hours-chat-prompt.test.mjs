@@ -30,7 +30,10 @@ test("office-hours chat system prompt routes Codex forcing questions through str
   assert.match(prompt, /exactly one question/);
   assert.match(prompt, /exactly four demand evidence choices/);
   assert.match(prompt, /requiresFreeText: false/);
-  assert.match(prompt, /allowFreeText: false/);
+  // 모든 Office Hours 질문은 자유 입력을 보장한다 — Q1 포함 어디에도
+  // allowFreeText: false 지시가 남아 있으면 안 된다.
+  assert.doesNotMatch(prompt, /allowFreeText: false/);
+  assert.match(prompt, /explicit submit button/);
   assert.match(prompt, /현재 대안에 돈\/시간을 쓰고 있다/);
   assert.match(prompt, /관심만 있거나 아직 증거가 없다/);
   assert.match(prompt, /separate evidence sentence or separate weakness selection/);

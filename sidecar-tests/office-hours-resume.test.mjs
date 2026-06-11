@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import {
   buildOfficeHoursResumePreamble,
   countOfficeHoursResumeTurnsFromOtherSessions,
+  hasOfficeHoursTerminalResumeTurn,
+  isPastOfficeHoursSnapshotDay,
   selectOfficeHoursResumeTurns,
+  selectOfficeHoursSnapshotTurns,
   shouldSeedOfficeHoursResumeTranscript,
 } from "../sidecar/office-hours-resume.mjs";
 
@@ -38,6 +41,28 @@ const day1ActiveProgress = (overrides = {}) => ({
   },
 });
 
+// Day 2+ standard-kind record (STANDARD_STEPS) mid-interview — the state a
+// daemon relaunch sees while the goal-driven interview is still open.
+const day2ActiveProgress = (overrides = {}) => ({
+  schemaVersion: 1,
+  schema: "agentic30.day_progress.v1",
+  challengeStartedAt: "2026-06-10",
+  days: {
+    2: {
+      day: 2,
+      kind: "standard",
+      steps: {
+        scan: "done",
+        retro: "done",
+        goal: "done",
+        interview: "active",
+        execution: "pending",
+        ...overrides,
+      },
+    },
+  },
+});
+
 test("selectOfficeHoursResumeTurns returns day-scoped turns while first_interview is active", () => {
   const turns = selectOfficeHoursResumeTurns({
     turnLog: { turns: [makeTurn(), makeTurn({ id: "t2", questionText: "두 번째 질문?" })] },
@@ -56,10 +81,46 @@ test("selectOfficeHoursResumeTurns is empty once the interview step is done", ()
   assert.deepEqual(turns, []);
 });
 
-test("selectOfficeHoursResumeTurns only applies to day1-kind days", () => {
+test("selectOfficeHoursResumeTurns resumes a Day 2 standard interview while its interview step is active", () => {
+  // The 2026-06-11 Day 2 bug: a daemon relaunch (sessions.json boot wipe)
+  // restarted the goal-driven interview at question 1 even though day=2 turns
+  // were already in the workspace turn log.
+  const turns = selectOfficeHoursResumeTurns({
+    turnLog: {
+      turns: [
+        makeTurn({ day: 2 }),
+        makeTurn({ id: "t2", day: 2, questionText: "두 번째 질문?" }),
+      ],
+    },
+    day: 2,
+    dayProgress: day2ActiveProgress(),
+  });
+  assert.equal(turns.length, 2);
+});
+
+test("selectOfficeHoursResumeTurns is empty once a Day 2 interview step is done", () => {
+  const turns = selectOfficeHoursResumeTurns({
+    turnLog: { turns: [makeTurn({ day: 2 })] },
+    day: 2,
+    dayProgress: day2ActiveProgress({ interview: "done", execution: "active" }),
+  });
+  assert.deepEqual(turns, []);
+});
+
+test("selectOfficeHoursResumeTurns keeps the Day-2 step gate on interview, not other active steps", () => {
+  // scan/retro/goal active means the interview has not started — nothing to resume.
+  const turns = selectOfficeHoursResumeTurns({
+    turnLog: { turns: [makeTurn({ day: 2 })] },
+    day: 2,
+    dayProgress: day2ActiveProgress({ goal: "active", interview: "pending" }),
+  });
+  assert.deepEqual(turns, []);
+});
+
+test("selectOfficeHoursResumeTurns fails closed on unknown day kinds", () => {
   const dayProgress = {
     days: {
-      2: { day: 2, kind: "standard", steps: { interview: "active" } },
+      2: { day: 2, kind: "mystery", steps: { interview: "active" } },
     },
   };
   const turns = selectOfficeHoursResumeTurns({
@@ -95,7 +156,7 @@ test("selectOfficeHoursResumeTurns is empty without turns, day, or progress", ()
 
 test("selectOfficeHoursResumeTurns never fires for a /office-hours slash start", () => {
   // runtimeDay falls back to the elapsed challenge day, so without the source
-  // gate an ad-hoc slash session would inherit the Day-1 interview history.
+  // gate an ad-hoc slash session would inherit the day's interview history.
   const turns = selectOfficeHoursResumeTurns({
     turnLog: { turns: [makeTurn()] },
     day: 1,
@@ -103,6 +164,14 @@ test("selectOfficeHoursResumeTurns never fires for a /office-hours slash start",
     source: "slash_command",
   });
   assert.deepEqual(turns, []);
+  // The gate must hold on Day 2+ standard days too.
+  const day2Turns = selectOfficeHoursResumeTurns({
+    turnLog: { turns: [makeTurn({ day: 2 })] },
+    day: 2,
+    dayProgress: day2ActiveProgress(),
+    source: "slash_command",
+  });
+  assert.deepEqual(day2Turns, []);
 });
 
 test("selectOfficeHoursResumeTurns collapses re-asked questions to the latest answer", () => {
@@ -152,6 +221,43 @@ test("selectOfficeHoursResumeTurns caps a pathological turn log", () => {
   assert.ok(turns.length <= 8, `expected a cap, got ${turns.length}`);
   // keeps the most recent entries
   assert.equal(turns.at(-1).id, "t39");
+});
+
+test("hasOfficeHoursTerminalResumeTurn flags the 대안 비교 closing-card answer", () => {
+  // Smart-skip interviews conclude below the expected count; the durable
+  // terminal flag is what routes a relaunch straight to wrap-up instead of
+  // re-running the provider on a finished interview.
+  assert.equal(
+    hasOfficeHoursTerminalResumeTurn([
+      makeTurn(),
+      makeTurn({ id: "t-close", questionText: "대안 비교", terminal: true }),
+    ]),
+    true,
+  );
+  assert.equal(hasOfficeHoursTerminalResumeTurn([makeTurn(), makeTurn({ id: "t2" })]), false);
+  // truthy-but-not-true never counts — the turn log normalizer only ever
+  // writes a literal `terminal: true`.
+  assert.equal(hasOfficeHoursTerminalResumeTurn([makeTurn({ terminal: "yes" })]), false);
+  assert.equal(hasOfficeHoursTerminalResumeTurn([]), false);
+  assert.equal(hasOfficeHoursTerminalResumeTurn(null), false);
+});
+
+test("selectOfficeHoursResumeTurns preserves the terminal flag for the wrap-up route", () => {
+  // index.mjs decides the wrap-up skip from the SELECTED turns, so the flag
+  // must survive day filtering, dedupe, and the cap.
+  const turns = selectOfficeHoursResumeTurns({
+    turnLog: {
+      turns: [
+        makeTurn({ day: 2 }),
+        makeTurn({ id: "t-close", day: 2, questionText: "대안 비교", terminal: true }),
+      ],
+    },
+    day: 2,
+    dayProgress: day2ActiveProgress(),
+  });
+  assert.equal(turns.length, 2);
+  assert.equal(hasOfficeHoursTerminalResumeTurn(turns), true);
+  assert.equal(turns.at(-1).terminal, true);
 });
 
 test("shouldSeedOfficeHoursResumeTranscript: fresh session seeds, answered transcript does not", () => {
@@ -226,4 +332,89 @@ test("buildOfficeHoursResumePreamble clips oversized question/answer text", () =
   // 240 question chars + 320 answer chars + framing must stay compact
   assert.ok(preamble.length < 1_400, `preamble too long: ${preamble.length}`);
   assert.match(preamble, /…/);
+});
+
+test("isPastOfficeHoursSnapshotDay flags a Day-1 view from Day 2", () => {
+  // The reported bug: viewing the Day-1 timeline entry on Day 2 must be a
+  // snapshot, not a resumed interview generating the next question.
+  assert.equal(isPastOfficeHoursSnapshotDay({ day: 1, elapsedDay: 2 }), true);
+  assert.equal(isPastOfficeHoursSnapshotDay({ day: 3, elapsedDay: 10 }), true);
+});
+
+test("isPastOfficeHoursSnapshotDay leaves the current day's resume path alone", () => {
+  // Same-day relaunch resume (the 2026-06-10 feature) must keep working.
+  assert.equal(isPastOfficeHoursSnapshotDay({ day: 1, elapsedDay: 1 }), false);
+  assert.equal(isPastOfficeHoursSnapshotDay({ day: 2, elapsedDay: 2 }), false);
+});
+
+test("isPastOfficeHoursSnapshotDay fails open on unknown or invalid days", () => {
+  assert.equal(isPastOfficeHoursSnapshotDay({ day: null, elapsedDay: 2 }), false);
+  assert.equal(isPastOfficeHoursSnapshotDay({ day: 1, elapsedDay: null }), false);
+  assert.equal(isPastOfficeHoursSnapshotDay({ day: 0, elapsedDay: 2 }), false);
+  assert.equal(isPastOfficeHoursSnapshotDay({ day: 1, elapsedDay: 0 }), false);
+  assert.equal(isPastOfficeHoursSnapshotDay({ day: "abc", elapsedDay: 2 }), false);
+  assert.equal(isPastOfficeHoursSnapshotDay({}), false);
+});
+
+test("isPastOfficeHoursSnapshotDay never trips for Day 999 or future days", () => {
+  // 999 is the projectless manual flow; future days are hidden in the timeline
+  // but a stale client must not get a snapshot for them either.
+  assert.equal(isPastOfficeHoursSnapshotDay({ day: 999, elapsedDay: 2 }), false);
+  assert.equal(isPastOfficeHoursSnapshotDay({ day: 5, elapsedDay: 2 }), false);
+});
+
+test("selectOfficeHoursSnapshotTurns returns day turns regardless of day-progress state", () => {
+  // Key difference from selectOfficeHoursResumeTurns: the day is already over,
+  // so first_interview done/active no longer matters — no dayProgress input.
+  const turns = selectOfficeHoursSnapshotTurns({
+    turnLog: { turns: [makeTurn(), makeTurn({ id: "t2", questionText: "두 번째 질문?" })] },
+    day: 1,
+  });
+  assert.equal(turns.length, 2);
+});
+
+test("selectOfficeHoursSnapshotTurns drops other-day and incomplete turns", () => {
+  const turns = selectOfficeHoursSnapshotTurns({
+    turnLog: {
+      turns: [
+        makeTurn({ day: 3 }),
+        makeTurn({ responseText: "  " }),
+        makeTurn({ questionText: "" }),
+        makeTurn({ id: "keep" }),
+      ],
+    },
+    day: 1,
+  });
+  assert.equal(turns.length, 1);
+  assert.equal(turns[0].id, "keep");
+});
+
+test("selectOfficeHoursSnapshotTurns collapses duplicates and caps the log", () => {
+  const duplicated = selectOfficeHoursSnapshotTurns({
+    turnLog: {
+      turns: [
+        makeTurn({ id: "old", questionText: "같은 질문?", responseText: "옛 답" }),
+        makeTurn({ id: "new", questionText: "같은  질문?", responseText: "새 답" }),
+      ],
+    },
+    day: 1,
+  });
+  assert.equal(duplicated.length, 1);
+  assert.equal(duplicated[0].responseText, "새 답");
+
+  const capped = selectOfficeHoursSnapshotTurns({
+    turnLog: {
+      turns: Array.from({ length: 40 }, (_, index) =>
+        makeTurn({ id: `t${index}`, questionText: `질문 ${index}?` })),
+    },
+    day: 1,
+  });
+  assert.ok(capped.length <= 8, `expected a cap, got ${capped.length}`);
+  assert.equal(capped.at(-1).id, "t39");
+});
+
+test("selectOfficeHoursSnapshotTurns is empty without a valid day or turns", () => {
+  assert.deepEqual(selectOfficeHoursSnapshotTurns({ turnLog: { turns: [makeTurn()] }, day: null }), []);
+  assert.deepEqual(selectOfficeHoursSnapshotTurns({ turnLog: { turns: [] }, day: 1 }), []);
+  assert.deepEqual(selectOfficeHoursSnapshotTurns({}), []);
 });

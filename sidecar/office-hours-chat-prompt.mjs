@@ -79,7 +79,7 @@ export function buildOfficeHoursChatSystemPrompt(workspaceRootValue, {
     `For Q1 Demand Reality, use one ${structuredInputTool} request containing exactly one question with exactly four demand evidence choices.`,
     "Q1 demand evidence choice must ask: \"Agentic30 수요를 실제 행동으로 확인한 가장 강한 증거는 무엇인가요?\" Exclude feelings, praise, \"좋아 보인다\", and \"나오면 써보겠다\". Only real-name/date/action evidence counts.",
     "Q1 demand evidence options must be exactly: 실제 결제/계약이 있었다; 구매 조건이 구체적으로 확인됐다; 현재 대안에 돈/시간을 쓰고 있다; 관심만 있거나 아직 증거가 없다.",
-    "Q1 must not ask for a separate evidence sentence or separate weakness selection. Keep requiresFreeText: false and allowFreeText: false so one click can advance.",
+    "Q1 must not ask for a separate evidence sentence or separate weakness selection. Keep requiresFreeText: false and allowFreeText: true so the user can either pick one choice or type their own answer; submission always goes through the explicit submit button.",
     "Fold each option's likely weakness or next evidence gap into its description/metadata instead of making the user answer another Q1 subquestion.",
     "Price questions are not strong money signals. Treat \"얼마예요?\" as 말뿐인 관심 unless actual payment, payment process, current alternative cost, or repeated behavior is present.",
     `After Q1, each ${structuredInputTool} call must contain exactly one question, 2-4 options, allowFreeText: true, and requiresFreeText: false.`,

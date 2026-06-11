@@ -1531,6 +1531,18 @@ final class agentic30UITests: XCTestCase {
             scrollViewIdentifier: "opendesign.officeHours.main.scroll"
         ))
         clickCenter(of: structuredChoice)
+        // Selecting a choice no longer auto-submits — the explicit submit button
+        // must turn Ready and be clicked for the answer to go out.
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Ready", timeout: 3))
+        if !structuredContinue.isHittable {
+            XCTAssertTrue(scrollElementToVisible(
+                structuredContinue,
+                in: app,
+                timeout: 4,
+                scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+            ))
+        }
+        clickCenter(of: structuredContinue)
         let submittedLoader = elementWithIdentifier(in: app, "opendesign.officeHours.questionLoader")
         XCTAssertTrue(submittedLoader.waitForExistence(timeout: 2))
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.runState", containing: "다음 질문 생성 중", timeout: 3))
@@ -1551,7 +1563,7 @@ final class agentic30UITests: XCTestCase {
         let remainingOfficeHoursChoices = [
             ("office_hours_status_quo", "스프레드시트와 메신저", "ui-test-office-hours-request-2"),
             ("office_hours_human", "이름과 회사까지 안다", "ui-test-office-hours-request-3"),
-            ("office_hours_wedge", "유료 파일럿 1건", "ui-test-office-hours-request-4"),
+            ("office_hours_wedge", "유료 첫 테스트 1건", "ui-test-office-hours-request-4"),
             ("office_hours_observation", "직접 관찰했다", "ui-test-office-hours-request-5"),
             ("office_hours_future_fit", "더 필수적이다", "ui-test-office-hours-request-6"),
         ]
@@ -1568,6 +1580,19 @@ final class agentic30UITests: XCTestCase {
                 ))
             }
             clickCenter(of: choice)
+            // Same two-step contract as Q1: choose, then press the submit button.
+            let continueButton = app.buttons["assistant.structuredContinueButton"]
+            XCTAssertTrue(continueButton.waitForExistence(timeout: 5))
+            XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Ready", timeout: 3))
+            if !continueButton.isHittable {
+                XCTAssertTrue(scrollElementToVisible(
+                    continueButton,
+                    in: app,
+                    timeout: 4,
+                    scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+                ))
+            }
+            clickCenter(of: continueButton)
             let lockedCard = elementWithIdentifier(in: app, "opendesign.officeHours.submittedPrompt.\(requestId)")
             XCTAssertTrue(lockedCard.waitForExistence(timeout: 8))
             XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.submittedChoice.\(questionId).\(label)", containing: "제출됨", timeout: 3))

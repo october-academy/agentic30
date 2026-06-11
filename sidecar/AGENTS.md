@@ -116,9 +116,17 @@ Local Node.js sidecar that the macOS app launches as a child process. Provides a
 - `scripts/sync-gstack.mjs` populates `vendor/`.
 
 ### External
-- `@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk`, `@modelcontextprotocol/sdk`, `@tobilu/qmd`, `ws`, `zod`.
+- `@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk`, `@google/genai`, `@cursor/sdk`, `@modelcontextprotocol/sdk`, `@tobilu/qmd`, `ws`, `zod`.
 
 <!-- MANUAL: -->
+
+### Workspace-scan fail-closed gate
+
+The scan's agent verification never falls back to local-only signals. `runWorkspaceScanAgent` (index.mjs) returns a structured outcome (`{ ok, reason: "unavailable" | "usage_limit" | "error" }`); when the foreground scan gets no successful outcome it broadcasts `workspace_scan_blocked` (instead of `workspace_scan_result`) carrying `nextProvider`/`availableProviders` computed by `selectNextScanProvider` in `scan-provider-select.mjs` over the consent chain codex → claude → gemini → cursor (mirror of Swift `AgentProvider.fallbackCycle` — keep both in sync). `nextProvider: null` means no provider is available and the UI must say Agentic30 cannot proceed. Switching always requires the user's click (`rescanWorkspace` on the Mac side). Background context refreshes (`day_completed`) skip failed outcomes silently. Contract pinned by `sidecar-tests/workspace-scan-blocked.test.mjs`; the stub provider answers the scan prompt with valid empty JSON so hermetic tests stay on the success path.
+
+### Cursor provider
+
+`runCursorProvider` (provider-runner.mjs) runs `@cursor/sdk` `Agent.create` → `send` → `run.stream()` with `local.cwd = workspaceRoot`. Auth is API-key only (`CURSOR_API_KEY` env or settings `cursor.apiKey`); there is no browser/CLI login flow. Execution modes are gated by `supportsCursorExecutionMode` — the read-only judge modes are excluded because a local Cursor agent has filesystem tools and cannot guarantee text-only execution. Usage limits surface as `RateLimitError` (name/status 429), covered by `isProviderUsageLimitError`. The package stays unbundled in `scripts/build-sidecar.mjs` (`EXTERNAL_CLOSURE_PACKAGES`) because it ships sqlite3 (native addon) in its dependency closure.
 
 ### Build integration
 

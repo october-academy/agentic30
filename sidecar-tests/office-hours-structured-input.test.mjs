@@ -79,7 +79,8 @@ test("Office Hours inline decision payload is promoted into host structured inpu
   assert.equal(payload.questions[0].options[0].risk, "결제 주체와 날짜가 없으면 말뿐인 관심으로 낮춰 봐야 합니다.");
   assert.equal(payload.questions[0].options[0].evidenceTarget, "실명, 날짜, 결제 또는 계약 절차");
   assert.equal(payload.questions[0].options[3].label, "관심만 있거나 아직 증거가 없다");
-  assert.equal(payload.questions[0].allowFreeText, false);
+  // LLM이 allowFreeText: false를 보내도 승격된 카드는 자유 입력을 보장한다.
+  assert.equal(payload.questions[0].allowFreeText, true);
 });
 
 test("Office Hours demand evidence question is canonicalized to four choices", () => {
@@ -113,8 +114,54 @@ test("Office Hours demand evidence question is canonicalized to four choices", (
       "관심만 있거나 아직 증거가 없다",
     ],
   );
-  assert.equal(request.questions[0].allowFreeText, false);
+  assert.equal(request.questions[0].allowFreeText, true);
+  assert.ok(String(request.questions[0].freeTextPlaceholder || "").length > 0);
   assert.equal(request.questions[0].requiresFreeText, false);
+});
+
+test("prepareOfficeHoursStructuredInputRequest guarantees free-text input on every Office Hours question", () => {
+  const prepared = prepareOfficeHoursStructuredInputRequest({
+    toolName: "AskUserQuestion",
+    title: "Office Hours",
+    questions: [
+      {
+        questionId: "office_hours_premise_challenge",
+        header: "전제 확인",
+        question: "이게 맞는 문제라는 가장 강한 증거는 무엇인가요?",
+        options: [
+          { label: "맞는 문제다", description: "증거가 있다" },
+          { label: "확실하지 않다", description: "증거 공백이 있다" },
+        ],
+        allowFreeText: false,
+      },
+    ],
+  });
+
+  assert.equal(prepared.questions[0].allowFreeText, true);
+  assert.ok(String(prepared.questions[0].freeTextPlaceholder || "").length > 0);
+  // 근거 문장 필수 여부(requiresFreeText)는 강제 대상이 아니다.
+  assert.notEqual(prepared.questions[0].requiresFreeText, true);
+});
+
+test("prepareOfficeHoursStructuredInputRequest leaves non-Office-Hours free-text flags alone", () => {
+  const prepared = prepareOfficeHoursStructuredInputRequest({
+    toolName: "AskUserQuestion",
+    title: "고객 후보 1/4",
+    generation: { mode: "sidecar_agent_synthesized", docType: "icp" },
+    questions: [
+      {
+        header: "첫 고객",
+        question: "누구부터 검증할까요?",
+        options: [
+          { label: "후보 A", description: "a" },
+          { label: "후보 B", description: "b" },
+        ],
+        allowFreeText: false,
+      },
+    ],
+  });
+
+  assert.equal(prepared.questions[0].allowFreeText, false);
 });
 
 test("ensureOfficeHoursGeneration stamps a tool-channel request so it is treated as Office Hours", () => {

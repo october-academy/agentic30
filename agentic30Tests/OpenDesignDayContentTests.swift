@@ -2568,4 +2568,19 @@ struct OpenDesignDayContentTests {
         )
     }
 
+    @Test func transcriptScrollPolicySupersedesStaleGenerations() {
+        #expect(OfficeHoursTranscriptScrollPolicy.shouldPerform(requestGeneration: 3, currentGeneration: 3))
+        #expect(!OfficeHoursTranscriptScrollPolicy.shouldPerform(requestGeneration: 2, currentGeneration: 3))
+        #expect(!OfficeHoursTranscriptScrollPolicy.shouldPerform(requestGeneration: 4, currentGeneration: 3))
+    }
+
+    @Test func transcriptScrollRepinTailStaysShort() {
+        // 긴 블라인드 재시도 꼬리(과거 3.4~5.9초)가 되돌아오면 인터뷰 중 스크롤이
+        // 사용자 스크롤·새 타깃과 싸우며 왔다갔다 흔들린다. 타깃을 움직이는 상태
+        // 변화는 각자 새 스크롤 요청을 쏘므로 재핀은 짧은 정착용 꼬리면 충분하다.
+        #expect(!OfficeHoursTranscriptScrollPolicy.repinDelays.isEmpty)
+        #expect(OfficeHoursTranscriptScrollPolicy.repinDelays == OfficeHoursTranscriptScrollPolicy.repinDelays.sorted())
+        #expect(OfficeHoursTranscriptScrollPolicy.repinDelays.allSatisfy { $0 > 0 && $0 <= 1.5 })
+    }
+
 }

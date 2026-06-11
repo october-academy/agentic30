@@ -477,6 +477,11 @@ struct OfficeHoursRuntime: Codable, Hashable {
     var startedAt: String?
     var context: String?
     var day: Int?
+    /// 사이드카가 인터뷰 종결 카드(대안 비교) 답변 제출 시점에 스탬프하는
+    /// 완료 신호. 프롬프트가 이미 답이 분명한 질문을 건너뛰므로(smart-skip)
+    /// 모드 정원(questionCount)보다 적은 답변으로도 인터뷰가 정상 종결될 수
+    /// 있다 — 카운트 게이트만 보면 종결된 인터뷰가 미완으로 읽힌다.
+    var terminalAnswered: Bool?
 }
 
 nonisolated struct OfficeHoursSourceGate: Codable, Hashable {

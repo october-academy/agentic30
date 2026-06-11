@@ -1769,6 +1769,29 @@ struct OfficeHoursAutoStartPolicy {
     }
 }
 
+/// Scroll coordination for the office-hours transcript. The pin target legitimately
+/// migrates while a turn is in flight (submitted answer → loader → revealed question),
+/// and content height settles asynchronously (transitions, reveals). Two rules keep
+/// the viewport from fighting itself:
+///
+/// 1. A scroll request resolves its target ONCE; delayed re-pins re-anchor that same
+///    target. Re-resolving inside retries made a single request animate to several
+///    different positions over its lifetime.
+/// 2. A newer request supersedes every pending re-pin of older requests (generation
+///    token). Without this, stale retries from a previous state fired after newer
+///    scrolls and dragged the viewport back — the e2e interview scroll jitter.
+///
+/// Re-pin delays stay short: every state change that moves the target (new question,
+/// status change, minimum-loading reveal) fires its own request, so a long blind tail
+/// only stomps user-initiated scrolling.
+struct OfficeHoursTranscriptScrollPolicy {
+    static let repinDelays: [TimeInterval] = [0.24, 0.6, 1.2]
+
+    static func shouldPerform(requestGeneration: Int, currentGeneration: Int) -> Bool {
+        requestGeneration == currentGeneration
+    }
+}
+
 enum WorkspaceChromeStyle: Equatable {
     case standard
     case day1OfficeHours
@@ -1816,6 +1839,10 @@ struct ContentView: View {
     @State private var officeHoursRealProjectTestSessionID: String?
     @State private var officeHoursRealProjectSessionCreateRequested = false
     @State private var didCopyOfficeHoursRealProjectTestReport = false
+    @State private var officeHoursDigestBannerCollapsed = false
+    /// Identity of the digest the user dismissed ("day#localStartDate"); a new
+    /// digest (next day or re-sync window change) brings the banner back.
+    @State private var officeHoursDigestBannerDismissedKey: String?
     @State private var selectedOfficeHoursMode: OfficeHoursMode = .startup
     @State private var selectedOfficeHoursGoalType: Day1GoalType?
     @State private var pendingOfficeHoursStartMode: OfficeHoursMode?
@@ -1827,6 +1854,7 @@ struct ContentView: View {
     @State private var officeHoursSubmittedPromptSnapshotsBySession: [String: [OfficeHoursSubmittedPromptSnapshot]] = [:]
     @State private var officeHoursActiveQuestionLoadersBySession: [String: OfficeHoursLoadingSnapshot] = [:]
     @State private var officeHoursReadyPromptRevealIDs: Set<String> = []
+    @State private var officeHoursScrollGeneration = 0
     // Sessions whose commitment-close candidates were already requested, so the close
     // reveals (instead of waiting forever) once that one request resolves either way.
     @State private var officeHoursCommitmentCandidateRequestedSessions: Set<String> = []
@@ -2381,7 +2409,6 @@ struct ContentView: View {
                     officeHoursMemoryBanner()
                     officeHoursEvidenceOSBanner()
                     officeHoursSourceGateBanner(activeDay: activeDay)
-                    officeHoursDailyDigestBanner(activeDay: activeDay)
                     officeHoursMainColumn(
                         session: conversationSession,
                         day1Content: day1Content,
@@ -2741,13 +2768,15 @@ struct ContentView: View {
                 .accessibilityIdentifier("opendesign.officeHours.dailyDigest.collecting")
             } else if let digest = viewModel.officeHoursDailyDigest,
                       digest.applies(to: activeDay),
-                      let briefing = digest.briefing {
+                      let briefing = digest.briefing,
+                      officeHoursDigestBannerDismissedKey != officeHoursDailyDigestIdentity(digest, activeDay: activeDay) {
                 let buildEscape = digest.buildWithoutCustomerEvidence == true
                 let accentColor = buildEscape
                     ? OpenDesignOfficeHoursColor.amber
                     : OpenDesignOfficeHoursColor.accent
+                let isCollapsed = officeHoursDigestBannerCollapsed
                 VStack(spacing: 0) {
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 10) {
                         HStack(alignment: .top, spacing: 10) {
                             Image(systemName: "sunrise")
                                 .font(.system(size: 13, weight: .semibold))
@@ -2765,7 +2794,11 @@ struct ContentView: View {
                                 Text("어제/간밤 브리핑")
                                     .font(.system(size: 13, weight: .semibold))
                                     .foregroundStyle(OpenDesignOfficeHoursColor.fg)
-                                if let startDate = digest.window?.localStartDate?.nonEmpty {
+                                if isCollapsed, buildEscape {
+                                    Text("코드 변경은 있지만 고객 행동 증거가 아직 없습니다.")
+                                        .font(.system(size: 11.5, weight: .semibold))
+                                        .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                                } else if let startDate = digest.window?.localStartDate?.nonEmpty {
                                     Text("\(startDate) 00:00부터 지금까지")
                                         .font(.system(size: 11.5, weight: .medium))
                                         .foregroundStyle(OpenDesignOfficeHoursColor.muted)
@@ -2788,41 +2821,74 @@ struct ContentView: View {
                                     }
                                 }
                             }
-                        }
+                            .frame(height: 24)
+                            HStack(spacing: 2) {
+                                Button {
+                                    toggleOfficeHoursDigestBannerCollapsed()
+                                } label: {
+                                    Image(systemName: isCollapsed ? "chevron.down" : "chevron.up")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                                        .frame(width: 24, height: 24)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .help(isCollapsed ? "브리핑 펼치기" : "브리핑 접기")
+                                .accessibilityIdentifier("opendesign.officeHours.dailyDigest.collapseToggle")
 
-                        if buildEscape {
-                            HStack(spacing: 8) {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .font(.system(size: 10.5, weight: .semibold))
-                                    .foregroundStyle(OpenDesignOfficeHoursColor.amber)
-                                Text("코드 변경은 있지만 고객 행동 증거가 아직 없습니다.")
-                                    .font(.system(size: 11.5, weight: .semibold))
-                                    .foregroundStyle(OpenDesignOfficeHoursColor.amber)
-                                Spacer(minLength: 0)
+                                Button {
+                                    officeHoursDigestBannerDismissedKey =
+                                        officeHoursDailyDigestIdentity(digest, activeDay: activeDay)
+                                } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 9.5, weight: .semibold))
+                                        .foregroundStyle(OpenDesignOfficeHoursColor.muted)
+                                        .frame(width: 24, height: 24)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .help("닫기 — 새 브리핑이 도착하면 다시 표시됩니다")
+                                .accessibilityIdentifier("opendesign.officeHours.dailyDigest.dismiss")
                             }
                         }
+                        .contentShape(Rectangle())
+                        .onTapGesture { toggleOfficeHoursDigestBannerCollapsed() }
 
-                        officeHoursDigestSection(
-                            "어제/간밤에 바뀐 것",
-                            lines: briefing.overnightChanges ?? [],
-                            limit: 4
-                        )
-                        officeHoursDigestSection(
-                            "목표에 도움 되는 신호",
-                            lines: briefing.goalHelpfulSignals ?? [],
-                            limit: 3
-                        )
-                        officeHoursDigestSection(
-                            "가장 큰 증거 공백",
-                            lines: briefing.biggestEvidenceGap ?? [],
-                            limit: 3,
-                            bulletColor: OpenDesignOfficeHoursColor.amber
-                        )
+                        if !isCollapsed {
+                            if buildEscape {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .font(.system(size: 10.5, weight: .semibold))
+                                        .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                                    Text("코드 변경은 있지만 고객 행동 증거가 아직 없습니다.")
+                                        .font(.system(size: 11.5, weight: .semibold))
+                                        .foregroundStyle(OpenDesignOfficeHoursColor.amber)
+                                    Spacer(minLength: 0)
+                                }
+                            }
+
+                            officeHoursDigestSection(
+                                "어제/간밤에 바뀐 것",
+                                lines: briefing.overnightChanges ?? [],
+                                limit: 4
+                            )
+                            officeHoursDigestSection(
+                                "목표에 도움 되는 신호",
+                                lines: briefing.goalHelpfulSignals ?? [],
+                                limit: 3
+                            )
+                            officeHoursDigestSection(
+                                "가장 큰 증거 공백",
+                                lines: briefing.biggestEvidenceGap ?? [],
+                                limit: 2,
+                                bulletColor: OpenDesignOfficeHoursColor.amber
+                            )
+                        }
                     }
                     .padding(.leading, 20)
-                    .padding(.trailing, 18)
-                    .padding(.vertical, 14)
-                    .frame(maxWidth: 820, alignment: .leading)
+                    .padding(.trailing, 12)
+                    .padding(.vertical, isCollapsed ? 9 : 13)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .fill(OpenDesignOfficeHoursColor.surface)
@@ -2874,6 +2940,19 @@ struct ContentView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// "day#localStartDate" — stable for re-renders of the same daily digest,
+    /// changes when the next day's (or a re-synced window's) digest arrives so a
+    /// dismissed banner comes back with fresh content.
+    private func officeHoursDailyDigestIdentity(_ digest: OfficeHoursDailyDigest, activeDay: Int) -> String {
+        "\(digest.day ?? activeDay)#\(digest.window?.localStartDate ?? digest.generatedAt ?? "")"
+    }
+
+    private func toggleOfficeHoursDigestBannerCollapsed() {
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) {
+            officeHoursDigestBannerCollapsed.toggle()
         }
     }
 
@@ -3082,9 +3161,10 @@ struct ContentView: View {
         if let day = viewModel.dayProgress?.currentDayNumber() {
             let stepId = day == 1 ? "first_interview" : "interview"
             let stepActive = viewModel.dayProgress?.record(forDay: day)?.steps[stepId] == .active
-            // 끝에서만 등장: forcing question을 전부 제출한 뒤에야 닫기-약속 게이트를 흐름의
-            // 종착지로 보여준다. 진행 중(1~5/6)에는 메인 인터뷰 흐름과 경쟁하지 않도록 숨긴다.
-            let allQuestionsAnswered = officeHoursAnswerCount(session: session) >= selectedOfficeHoursMode.questionCount
+            // 끝에서만 등장: forcing question을 전부 제출했거나 사이드카가 종결 카드
+            // (대안 비교) 답변을 스탬프한 뒤에야 닫기-약속 게이트를 흐름의 종착지로
+            // 보여준다. 진행 중에는 메인 인터뷰 흐름과 경쟁하지 않도록 숨긴다.
+            let allQuestionsAnswered = officeHoursInterviewComplete(session: session)
             if stepActive && allQuestionsAnswered {
                 // 약속도 인터뷰처럼: 카드를 열기 전에 이번 인터뷰의 답변에서 후보 액션을
                 // 만들어 온다(사이드카 생성, 제안일 뿐 — 저장되는 약속은 항상 사용자가
@@ -3645,6 +3725,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             officeHoursHeader(session: session, activeDay: activeDay)
             officeHoursStepper(session: session, activeDay: activeDay)
+            officeHoursDailyDigestBanner(activeDay: activeDay)
             officeHoursMainScroll(session: session, day1Content: day1Content, activeDay: activeDay, layout: layout)
         }
         .frame(maxHeight: .infinity, alignment: .top)
@@ -4239,6 +4320,13 @@ struct ContentView: View {
                 scrollOfficeHoursTranscript(proxy, session: session)
             }
             .onChange(of: session?.status) { _, _ in
+                scrollOfficeHoursTranscript(proxy, session: session)
+            }
+            .onChange(of: officeHoursReadyPromptRevealIDs) { previous, current in
+                // The minimum-loading gate revealed a question (loader → prompt swap,
+                // content height changes). An explicit trigger here replaces the old
+                // blind 3.4–5.9s scroll retries that papered over this moment.
+                guard !current.subtracting(previous).isEmpty else { return }
                 scrollOfficeHoursTranscript(proxy, session: session)
             }
             .onChange(of: session.map {
@@ -4917,7 +5005,7 @@ struct ContentView: View {
                 Text("\(selectedOfficeHoursMode.label) mode")
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(OpenDesignOfficeHoursColor.fg)
-                Text("\(officeHoursAnswerCount(session: session)) / \(selectedOfficeHoursMode.questionCount) · 목표 인터뷰")
+                Text("\(officeHoursAnswerCount(session: session)) / \(officeHoursQuestionTotal(session: session)) · 목표 인터뷰")
                     .font(.system(size: 10.5, weight: .medium, design: .monospaced))
                     .foregroundStyle(OpenDesignOfficeHoursColor.muted)
             }
@@ -5311,6 +5399,27 @@ struct ContentView: View {
         officeHoursCompletedAnswerSummaries(session: session).count
     }
 
+    // 인터뷰 완료 판정. 답변 수가 모드 정원에 닿았거나, 사이드카가 종결 카드
+    // (대안 비교) 답변 시점에 runtime.officeHours.terminalAnswered를 스탬프한
+    // 경우. 시스템 프롬프트는 이미 답이 분명한 질문을 건너뛰므로(smart-skip)
+    // 정원보다 적은 답변으로도 인터뷰가 정상 종결된다 — 카운트만 보면 종결된
+    // 인터뷰가 영구 미완(5/6 blocked)으로 읽힌다.
+    private func officeHoursInterviewComplete(session: ChatSession?) -> Bool {
+        guard let session else { return false }
+        if session.runtime?.officeHours?.terminalAnswered == true { return true }
+        return officeHoursCompletedQuestionCount(session: session) >= selectedOfficeHoursMode.questionCount
+    }
+
+    // 카운터 표기용 분모. terminal 종결로 정원보다 적은 답변으로 끝난 인터뷰는
+    // 답변 수를 분모로 써서 "5 / 6"처럼 미완으로 보이는 표기를 피한다.
+    private func officeHoursQuestionTotal(session: ChatSession?) -> Int {
+        let total = selectedOfficeHoursMode.questionCount
+        guard let session,
+              session.runtime?.officeHours?.terminalAnswered == true else { return total }
+        let completed = officeHoursCompletedQuestionCount(session: session)
+        return completed > 0 ? min(total, completed) : total
+    }
+
     private func officeHoursActiveQuestionLoader(for session: ChatSession) -> OfficeHoursLoadingSnapshot? {
         OfficeHoursLoadingPolicy.visibleLoading(
             for: session,
@@ -5334,7 +5443,7 @@ struct ContentView: View {
         if completed == 0 {
             return "\(selectedOfficeHoursMode.label) 첫 질문 생성 중"
         }
-        if completed >= selectedOfficeHoursMode.questionCount {
+        if officeHoursInterviewComplete(session: session) {
             // 마지막 답변 뒤는 '다음 질문'이 아니라 약속 단계로의 전환 — 카피와 액센트
             // (amber, officeHoursLoaderAccent)가 같이 바뀌어 질문 로더와 구분된다.
             return "약속 준비 중"
@@ -5345,7 +5454,7 @@ struct ContentView: View {
     // 질문 로더는 초록(accent), 마지막 단계(약속 전환) 로더는 amber — 약속 카드의 좌측
     // 바와 같은 색으로 '질문 아님, 마무리' 신호를 로더 시점부터 잇는다.
     private func officeHoursLoaderAccent(session: ChatSession) -> Color {
-        officeHoursCompletedQuestionCount(session: session) >= selectedOfficeHoursMode.questionCount
+        officeHoursInterviewComplete(session: session)
             ? OpenDesignOfficeHoursColor.amber
             : OpenDesignOfficeHoursColor.accent
     }
@@ -5358,7 +5467,7 @@ struct ContentView: View {
         if completed == 0 {
             return "Startup 컨텍스트 · 증거 프레임 · 답변 선택지"
         }
-        if completed >= selectedOfficeHoursMode.questionCount {
+        if officeHoursInterviewComplete(session: session) {
             return "답변 요약 · 고객 행동 후보 · 약속 카드 준비"
         }
         return "방금 답변 반영 · 다음 질문 프레임 · 선택지 준비"
@@ -5383,7 +5492,7 @@ struct ContentView: View {
     private func officeHoursIsDocReady(session: ChatSession) -> Bool {
         session.pendingUserInput == nil
             && session.status != .running
-            && officeHoursCompletedQuestionCount(session: session) >= selectedOfficeHoursMode.questionCount
+            && officeHoursInterviewComplete(session: session)
     }
 
     private func officeHoursDocReadyBlock(session: ChatSession) -> some View {
@@ -5391,6 +5500,7 @@ struct ContentView: View {
             officeHoursCompletedQuestionCount(session: session),
             selectedOfficeHoursMode.questionCount
         )
+        let total = officeHoursQuestionTotal(session: session)
         return VStack(alignment: .leading, spacing: 0) {
             Color.clear
                 .frame(height: 22)
@@ -5407,7 +5517,7 @@ struct ContentView: View {
                             .tracking(1.2)
                             .textCase(.uppercase)
                         Spacer(minLength: 0)
-                        Text("\(completed) / \(selectedOfficeHoursMode.questionCount)")
+                        Text("\(completed) / \(total)")
                             .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                             .foregroundStyle(OpenDesignOfficeHoursColor.accent)
                             .padding(.horizontal, 8)
@@ -6399,10 +6509,6 @@ struct ContentView: View {
         let isSubmitting = submissionState?.requestId == prompt.requestId
         let canSubmitPrompt = canSubmit(prompt) && !isSubmitting
         let hintParts = officeHoursStructuredPromptHintParts(prompt)
-        let selectedOption = officeHoursSelectedOptionInfo(prompt)
-        let isAutoSubmittingChoice = officeHoursShouldAutoSubmit(prompt)
-            && selectedOption != nil
-            && !isSubmitting
         let footerVerticalPadding: CGFloat = (prompt.generation?.dimensionStepIndex ?? 1) > 1 ? 11 : 16
         return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(prompt.questions.enumerated()), id: \.element.id) { index, question in
@@ -6437,7 +6543,7 @@ struct ContentView: View {
                                 .controlSize(.mini)
                                 .scaleEffect(0.7)
                         }
-                        Text(isSubmitting || isAutoSubmittingChoice ? "제출 중" : "제출")
+                        Text(isSubmitting ? "제출 중" : "제출")
                         Text(isSubmitting ? "…" : "↵")
                             .font(.system(size: 10, weight: .medium, design: .monospaced))
                             .padding(.horizontal, 5)
@@ -6550,15 +6656,11 @@ struct ContentView: View {
             guard !disabled else { return }
             // Tapping an option means the user is committing to a choice, not the
             // free-text field — drop focus so the cursor/keyboard leaves the input.
+            // Selection never submits on its own; submission always goes through
+            // the explicit 제출 button so the user can still adjust the choice or
+            // add a free-text answer first.
             focusedOfficeHoursStructuredFreeTextID = nil
-            let shouldAutoSubmit = officeHoursShouldAutoSubmit(prompt) && !selected
             viewModel.toggleStructuredPromptOption(option.label, for: question, in: prompt)
-            if shouldAutoSubmit {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                    guard canSubmit(prompt) else { return }
-                    submitPrompt(prompt)
-                }
-            }
         } label: {
             HStack(alignment: .top, spacing: 12) {
                 Text("\(optionIndex + 1)")
@@ -6638,22 +6740,6 @@ struct ContentView: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    private func officeHoursShouldAutoSubmit(_ prompt: StructuredPromptRequest) -> Bool {
-        guard prompt.generation?.mode?.hasPrefix("office_hours") == true else { return false }
-        guard prompt.questions.count == 1 else { return false }
-        guard prompt.questions.first?.requiresFreeText != true else { return false }
-        let terminalTokens = ["premise", "alternative", "alternatives"]
-        let fields = [
-            prompt.generation?.signalId,
-            prompt.generation?.signalLabel,
-            prompt.questions.first?.questionId,
-            prompt.questions.first?.header,
-        ].compactMap { $0?.lowercased() }
-        return !fields.contains { field in
-            terminalTokens.contains { field.contains($0) }
-        }
-    }
-
     private func officeHoursOptionMetadataLines(_ option: StructuredPromptOption) -> [String] {
         var lines: [String] = []
         if let risk = option.risk?.nonEmpty {
@@ -6684,10 +6770,8 @@ struct ContentView: View {
     ) -> some View {
         let isRequiredText = question.requiresFreeText == true
         let placeholder = question.freeTextPlaceholder?.nonEmpty ?? "예: 실제 사용자, 현재 대안, 이번 주 행동"
-        let shouldShowQueuedPlaceholder = !isRequiredText && officeHoursSelectedOptionInfo(prompt) != nil
         let focusID = "office-hours-free-text-\(prompt.requestId)-\(question.id)"
         let showsPromptFocusRing = !isDisabled
-            && !shouldShowQueuedPlaceholder
             && focusedOfficeHoursStructuredFreeTextID == focusID
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
@@ -6710,7 +6794,7 @@ struct ContentView: View {
                     ZStack(alignment: .topLeading) {
                         if viewModel.structuredPromptDraft(for: question, in: prompt).freeText
                             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Text(shouldShowQueuedPlaceholder ? "다음 질문 준비 중" : placeholder)
+                            Text(placeholder)
                                 .font(.system(size: 13, weight: .regular, design: .monospaced))
                                 .foregroundStyle(OpenDesignOfficeHoursColor.mutedDeep)
                                 .padding(.horizontal, 4)
@@ -6734,7 +6818,7 @@ struct ContentView: View {
                     ZStack(alignment: .leading) {
                         if viewModel.structuredPromptDraft(for: question, in: prompt).freeText
                             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Text(shouldShowQueuedPlaceholder ? "다음 질문 준비 중" : placeholder)
+                            Text(placeholder)
                                 .font(.system(size: 13, weight: .regular, design: .monospaced))
                                 .foregroundStyle(OpenDesignOfficeHoursColor.mutedDeep)
                         }
@@ -7431,8 +7515,14 @@ struct ContentView: View {
     }
 
     private func scrollOfficeHoursTranscript(_ proxy: ScrollViewProxy, session: ChatSession?) {
+        officeHoursScrollGeneration &+= 1
+        let generation = officeHoursScrollGeneration
+        let target = officeHoursScrollTarget(for: session)
         let performScroll = {
-            let target = officeHoursScrollTarget(for: session)
+            guard OfficeHoursTranscriptScrollPolicy.shouldPerform(
+                requestGeneration: generation,
+                currentGeneration: officeHoursScrollGeneration
+            ) else { return }
             if reduceMotion {
                 proxy.scrollTo(target.id, anchor: target.anchor)
             } else {
@@ -7443,23 +7533,10 @@ struct ContentView: View {
         }
         DispatchQueue.main.async {
             performScroll()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
-                performScroll()
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.05) {
-                performScroll()
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.25) {
-                performScroll()
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.40) {
-                performScroll()
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4.80) {
-                performScroll()
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5.90) {
-                performScroll()
+            for delay in OfficeHoursTranscriptScrollPolicy.repinDelays {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    performScroll()
+                }
             }
         }
     }
@@ -7743,7 +7820,7 @@ struct ContentView: View {
             if completed == 0 {
                 return "첫 질문 생성 중"
             }
-            if completed >= selectedOfficeHoursMode.questionCount {
+            if officeHoursInterviewComplete(session: session) {
                 return "약속 준비 중"
             }
             return "다음 질문 생성 중"
@@ -7792,7 +7869,7 @@ struct ContentView: View {
         let nextAction: String
         if session?.pendingUserInput != nil {
             nextAction = "다음 질문 필요"
-        } else if answers.count >= selectedOfficeHoursMode.questionCount {
+        } else if officeHoursInterviewComplete(session: session) {
             nextAction = selectedOfficeHoursMode.assignment
         } else if officeHoursModePicked(session: session, activeDay: activeDay) {
             nextAction = "다음 질문 필요"
@@ -7802,7 +7879,7 @@ struct ContentView: View {
         return [
             ("문제", problem),
             ("모드", selectedOfficeHoursMode.label),
-            ("답변", "\(answers.count) / \(selectedOfficeHoursMode.questionCount)"),
+            ("답변", "\(answers.count) / \(officeHoursQuestionTotal(session: session))"),
             ("다음 행동", nextAction),
         ]
     }

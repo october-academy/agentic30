@@ -21,6 +21,14 @@ const OFFICE_HOURS_STRUCTURED_MODES = new Set([
 const DEFAULT_OFFICE_HOURS_QUESTION =
   "Agentic30 수요를 실제 행동으로 확인한 가장 강한 증거는 무엇인가요?";
 
+// 모든 Office Hours 인터뷰 질문은 자유 입력 답변을 보장한다. 선택지가 실제
+// 상황과 맞지 않으면 사용자가 직접 쓴 답으로 제출할 수 있어야 하므로, 어떤
+// 채널(LLM 도구 호출, 인라인 승격, 호스트 폴백)이 무엇을 선언했든 카드가
+// Mac UI로 나가기 직전에 allowFreeText를 켠다. requiresFreeText(근거 문장
+// 필수 여부)는 질문 의미에 속하므로 건드리지 않는다.
+const DEFAULT_OFFICE_HOURS_FREE_TEXT_PLACEHOLDER =
+  "예: 선택지에 없으면 실제 상황을 직접 입력";
+
 const DEMAND_EVIDENCE_QUESTION_ID = "office_hours_demand_evidence";
 const DEMAND_EVIDENCE_OPTIONS = Object.freeze([
   Object.freeze({
@@ -243,7 +251,35 @@ export function prepareOfficeHoursStructuredInputRequest(request = {}) {
   const withPresentation = Array.isArray(canonical?.questions)
     ? { ...canonical, questions: canonical.questions.map(normalizeOfficeHoursQuestionPresentation) }
     : canonical;
-  return ensureOfficeHoursGeneration(withPresentation);
+  const stamped = ensureOfficeHoursGeneration(withPresentation);
+  // Office Hours로 스탬프된 카드만 자유 입력을 강제한다 — 이 함수를 통과하는
+  // 비 Office Hours 요청(예: docType이 있는 IDD 연속 질문)은 그대로 둔다.
+  return isOfficeHoursStructuredInputMode(stamped?.generation?.mode)
+    ? ensureOfficeHoursFreeTextInput(stamped)
+    : stamped;
+}
+
+// 요청 안의 모든 질문에 자유 입력 탈출구를 보장한다. allowFreeText가 이미
+// true인 질문은 그대로 두고(자체 placeholder 보존), 꺼져 있던 질문만 켜면서
+// 기본 placeholder를 채운다.
+export function ensureOfficeHoursFreeTextInput(request = {}) {
+  if (!request || typeof request !== "object" || !Array.isArray(request.questions)) {
+    return request;
+  }
+  let changed = false;
+  const questions = request.questions.map((question) => {
+    if (!question || typeof question !== "object") return question;
+    if (question.allowFreeText === true) return question;
+    changed = true;
+    return {
+      ...question,
+      allowFreeText: true,
+      freeTextPlaceholder:
+        String(question.freeTextPlaceholder || question.free_text_placeholder || "").trim()
+        || DEFAULT_OFFICE_HOURS_FREE_TEXT_PLACEHOLDER,
+    };
+  });
+  return changed ? { ...request, questions } : request;
 }
 
 export function stripTrailingRubricFocusMetadata(content = "") {
@@ -296,9 +332,11 @@ export function buildOfficeHoursInlineStructuredPromptPayload({
     assistantContent: assistantMessage?.content || "",
   });
   const options = normalizeOfficeHoursOptions(inlineDecision?.options);
-  const allowFreeText = inlineDecision.allowFreeText === true;
+  // 승격 가능 여부는 LLM이 선언한 형태(선택지 2개 미만 + 자유입력 의도 없음 =
+  // 잘못된 카드)로 판정하되, 살아남은 카드는 항상 자유 입력을 허용한다.
+  const declaredAllowFreeText = inlineDecision.allowFreeText === true;
   const requiresFreeText = inlineDecision.requiresFreeText === true;
-  if (options.length < 2 && !allowFreeText) return null;
+  if (options.length < 2 && !declaredAllowFreeText) return null;
   const highlightPhrases = normalizeOfficeHoursHighlightPhrases(
     inlineDecision?.highlightPhrases
       || inlineDecision?.highlight_phrases
@@ -326,7 +364,7 @@ export function buildOfficeHoursInlineStructuredPromptPayload({
       ...(emphasis.length ? { emphasis } : {}),
       ...(options.length ? { options } : {}),
       multiSelect: inlineDecision.multiSelect === true,
-      allowFreeText,
+      allowFreeText: true,
       requiresFreeText,
       ...(inlineDecision.freeTextPlaceholder || inlineDecision.free_text_placeholder
         ? {
@@ -419,6 +457,47 @@ export function buildOfficeHoursIncompleteInterviewMessage({ expected = 0, answe
   return `Office Hours 인터뷰가 질문 ${expected}개 중 ${answered}개만 진행하고 종료했습니다. 다시 시도해 주세요.`;
 }
 
+// The interview's contractual closing card. The system prompt tells the
+// provider to smart-skip routed questions ("Do not force all six questions")
+// and close with two terminal cards, the last being 대안 비교 with 최소안 /
+// 이상안 / 다른 관점 options — so a legitimate interview can conclude with
+// FEWER answers than the Mac client's "Expected question count" line says.
+// Recognizing the closing card at answer-submit time lets the
+// incomplete-interview gate treat "대안 비교 answered" as completion instead
+// of failing the run on raw answer count (which permanently blocked Day 2:
+// the retry rerun sees a finished transcript, asks nothing, and trips the
+// same count check again).
+// Matches any of: the alternatives signal stamp, the canonical 대안 비교
+// header, or both 최소안 and 이상안 appearing among the option labels (the
+// prompt mandates all three labels on the closing card; intent inference
+// cannot be trusted here because "대안" also matches the status_quo regex).
+export function isOfficeHoursTerminalAlternativesRequest(request = {}) {
+  if (!request || typeof request !== "object") return false;
+  const signalId = String(request?.generation?.signalId || "").trim().toLowerCase();
+  if (signalId === "office_hours_alternatives") return true;
+  const questions = Array.isArray(request.questions) ? request.questions : [];
+  return questions.some((question) => {
+    if (!question || typeof question !== "object") return false;
+    const header = String(question.header || "").replace(/\s+/g, " ").trim();
+    if (header === "대안 비교") return true;
+    const labels = (Array.isArray(question.options) ? question.options : [])
+      .map((option) => String(option?.label || ""));
+    return labels.some((label) => label.includes("최소안"))
+      && labels.some((label) => label.includes("이상안"));
+  });
+}
+
+// True when the workspace turn log records a terminal (대안 비교) answer for
+// this session — the durable counterpart of the runtime `terminalAnswered`
+// stamp, so the incomplete-interview gate stays satisfied on a retry that
+// rebuilt the session runtime after the closing answer was already submitted.
+export function hasOfficeHoursTerminalTurnForSession(turnLog, sessionId = "") {
+  const id = String(sessionId || "").trim();
+  if (!id) return false;
+  const turns = Array.isArray(turnLog?.turns) ? turnLog.turns : [];
+  return turns.some((turn) => String(turn?.sessionId || "") === id && turn?.terminal === true);
+}
+
 export function buildContextualOfficeHoursQuestion(context = "") {
   const facts = extractOfficeHoursContextFacts(context);
   const customer = facts.customer || facts.icp;
@@ -468,9 +547,11 @@ function normalizeDemandEvidenceQuestion(question = {}) {
     ),
     options: DEMAND_EVIDENCE_OPTIONS.map((option) => ({ ...option })),
     multiSelect: false,
-    allowFreeText: false,
+    allowFreeText: true,
     requiresFreeText: false,
-    freeTextPlaceholder: undefined,
+    freeTextPlaceholder:
+      String(question.freeTextPlaceholder || question.free_text_placeholder || "").trim()
+      || DEFAULT_OFFICE_HOURS_FREE_TEXT_PLACEHOLDER,
     textMode: question.textMode === "long" ? "long" : "short",
   };
 }

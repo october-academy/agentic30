@@ -1,17 +1,25 @@
-// Day-1 Office Hours interview resume.
+// Office Hours interview resume (Day 1 + Day 2+ standard days).
 //
 // All in-flight interview state (the provider stream, question index, the
 // pendingUserInput card) lives in sidecar process memory and dies with the
 // daemon; sessions.json is wiped on boot. What DOES survive a relaunch is the
 // workspace .agentic30/ pair:
-//   - day-progress.json          -> is this day's first_interview step still active?
+//   - day-progress.json          -> is this day's interview step still active?
 //   - memory/office-hours-turns  -> which questions were already answered (day-scoped)
-// These helpers rebuild an in-progress Day-1 interview from that pair so an app
+// These helpers rebuild an in-progress interview from that pair so an app
 // relaunch continues at question k+1 instead of restarting at question 1.
 //
 // Pure functions only — index.mjs owns session mutation, transcript seeding,
-// and telemetry. Scope is deliberately Day 1 (`kind === "day1"`): Day 2+ runs
-// the goal-driven digest flow and closes through different steps.
+// and telemetry. The interview step id is kind-scoped: Day 1 closes through
+// `first_interview`, Day 2+ standard days run the goal-driven digest flow and
+// close through `interview`. Unknown kinds fail closed to a fresh start.
+//
+// This module also owns the PAST-DAY SNAPSHOT policy: the Day timeline scopes
+// the live Office Hours screen by day, and the Mac auto-start fires for
+// whichever day-scoped session it lands on. A start for a day BEFORE the
+// current challenge day is a read-only view of that day, never an interview to
+// run or resume — without the gate, viewing an unfinished Day 1 from Day 2
+// resumed the interview and generated a brand-new question on a closed day.
 
 // An interview is 6 questions; the cap only guards a pathological turn log.
 const MAX_RESUME_TURNS = 8;
@@ -24,13 +32,23 @@ const MAX_RESUME_ANSWER_CHARS = 320;
 // OfficeHoursTranscriptRow.syntheticStartPrompt / legacySyntheticStartPrompt).
 const SYNTHETIC_START_PROMPTS = new Set(["office hours", "day999 office hours"]);
 
+// The day-progress step that closes the day's interview, by day kind
+// (day-progress-state.mjs DAY1_STEPS / STANDARD_STEPS). Resume only applies
+// while THAT step is still active; unknown kinds map to nothing and fail
+// closed to a fresh start.
+const RESUME_INTERVIEW_STEP_BY_KIND = Object.freeze({
+  day1: "first_interview",
+  standard: "interview",
+});
+
 // Returns the already-answered turns to resume from, or [] for a normal fresh
-// start. Resume requires ALL of: the day resolves, the day is a Day-1 kind, its
-// first_interview step is still "active" (not yet closed through the interview
-// gate), and the turn log holds completed Q/A turns recorded for that day.
+// start. Resume requires ALL of: the day resolves, the day's kind maps to an
+// interview step (day1 -> first_interview, standard -> interview), that step is
+// still "active" (not yet closed through the interview gate), and the turn log
+// holds completed Q/A turns recorded for that day.
 // A manual `/office-hours` slash start carries arbitrary ad-hoc context and
 // must stay a clean session — runtimeDay falls back to the elapsed challenge
-// day, so without the source gate it would inherit the Day-1 interview history.
+// day, so without the source gate it would inherit the day's interview history.
 // Duplicate answers for the same question (the pre-resume restart bug re-asked
 // question 1 on every relaunch) collapse to the LATEST answer per question so
 // the resume index never overstates progress.
@@ -39,8 +57,50 @@ export function selectOfficeHoursResumeTurns({ turnLog, day, dayProgress, source
   const dayNumber = Number.parseInt(String(day ?? ""), 10);
   if (!Number.isFinite(dayNumber) || dayNumber <= 0) return [];
   const dayState = dayProgress?.days?.[String(dayNumber)];
-  if (!dayState || dayState.kind !== "day1") return [];
-  if (dayState.steps?.first_interview !== "active") return [];
+  const interviewStep = RESUME_INTERVIEW_STEP_BY_KIND[dayState?.kind];
+  if (!interviewStep) return [];
+  if (dayState.steps?.[interviewStep] !== "active") return [];
+  return completedTurnsForDay(turnLog, dayNumber);
+}
+
+// True when a resume turn carries the durable terminal flag — the 대안 비교
+// closing-card answer appendOfficeHoursTurn stamps as `terminal: true`. The
+// system prompt smart-skips routed questions, so a concluded interview can
+// hold FEWER answers than the expected count; the terminal turn is the
+// completion signal that must route a relaunch straight to the wrap-up path
+// instead of re-running the provider on a finished interview.
+export function hasOfficeHoursTerminalResumeTurn(turns = []) {
+  if (!Array.isArray(turns)) return false;
+  return turns.some((turn) => turn?.terminal === true);
+}
+
+// True when a start request targets a day strictly before the current
+// challenge-elapsed day — a timeline snapshot view. Both sides must resolve to
+// a positive day; an unknown elapsed day fails open (false) so day-less and
+// pre-challenge starts keep the legacy behavior. Day 999 (the projectless
+// manual flow) never trips this: the elapsed day of a 30-day challenge stays
+// far below it.
+export function isPastOfficeHoursSnapshotDay({ day, elapsedDay } = {}) {
+  const dayNumber = Number.parseInt(String(day ?? ""), 10);
+  const elapsed = Number.parseInt(String(elapsedDay ?? ""), 10);
+  if (!Number.isFinite(dayNumber) || dayNumber <= 0) return false;
+  if (!Number.isFinite(elapsed) || elapsed <= 0) return false;
+  return dayNumber < elapsed;
+}
+
+// Turns to rebuild a past day's read-only transcript. Unlike
+// selectOfficeHoursResumeTurns this ignores day-progress state on purpose: the
+// day is already over, so whether its first_interview step ever closed no
+// longer matters — the snapshot shows whatever was actually answered that day.
+export function selectOfficeHoursSnapshotTurns({ turnLog, day } = {}) {
+  const dayNumber = Number.parseInt(String(day ?? ""), 10);
+  if (!Number.isFinite(dayNumber) || dayNumber <= 0) return [];
+  return completedTurnsForDay(turnLog, dayNumber);
+}
+
+// Completed Q/A turns recorded for the day, latest answer per question,
+// capped against a pathological turn log.
+function completedTurnsForDay(turnLog, dayNumber) {
   const turns = Array.isArray(turnLog?.turns) ? turnLog.turns : [];
   const eligible = turns.filter((turn) =>
     Number.parseInt(String(turn?.day ?? ""), 10) === dayNumber

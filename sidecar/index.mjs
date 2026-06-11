@@ -297,8 +297,10 @@ import {
   countOfficeHoursTurnsForSession,
   extractOfficeHoursChatEmphasis,
   formatSelectedOptionEvidenceHint,
+  hasOfficeHoursTerminalTurnForSession,
   isOfficeHoursStructuredInputMode,
   isOfficeHoursStructuredInputToolEvent,
+  isOfficeHoursTerminalAlternativesRequest,
   parseExpectedOfficeHoursQuestionCount,
   prepareOfficeHoursStructuredInputRequest,
   OFFICE_HOURS_EMPHASIS_SENTINEL_END,
@@ -313,7 +315,10 @@ import {
 import {
   buildOfficeHoursResumePreamble,
   countOfficeHoursResumeTurnsFromOtherSessions,
+  hasOfficeHoursTerminalResumeTurn,
+  isPastOfficeHoursSnapshotDay,
   selectOfficeHoursResumeTurns,
+  selectOfficeHoursSnapshotTurns,
   shouldSeedOfficeHoursResumeTranscript,
 } from "./office-hours-resume.mjs";
 import {
@@ -1468,6 +1473,17 @@ async function handleClientMessage(socket, payload) {
       // these turns when that run concludes — the final answer must be durable
       // before the run can race ahead to its conclusion.
       if (isOfficeHoursStructuredInputResponse && userResponseText) {
+        // Answering the 대안 비교 closing card IS interview completion: the
+        // prompt smart-skips routed questions, so a finished interview can
+        // hold fewer answers than the Mac client's expected count. Stamp the
+        // signal on the turn (durable, retry-safe) and on the live session
+        // runtime (broadcast to the Mac client, which gates the commitment
+        // bar on it) so the incomplete-interview detector and the UI both
+        // treat this as a conclusion, not an early stop.
+        const officeHoursTerminalAnswered = isOfficeHoursTerminalAlternativesRequest(pendingUserInput);
+        if (officeHoursTerminalAnswered && session.runtime?.officeHours) {
+          session.runtime.officeHours.terminalAnswered = true;
+        }
         await appendOfficeHoursTurn({
           workspaceRoot,
           turn: {
@@ -1478,6 +1494,7 @@ async function handleClientMessage(socket, payload) {
             questionText: officeHoursStructuredQuestionText,
             responseText: userResponseText,
             responseDescription: userResponseDescription,
+            ...(officeHoursTerminalAnswered ? { terminal: true } : {}),
           },
         }).catch((error) => {
           telemetry.captureException(error, {
@@ -4920,9 +4937,16 @@ async function buildOfficeHoursCyclePreamble(day = null) {
 
 function attachOfficeHoursRuntime(runtime = {}, officeHours = null) {
   if (!officeHours) return runtime || {};
+  const prior = runtime?.officeHours;
   return {
     ...(runtime || {}),
     officeHours: {
+      // The submit handler stamps terminalAnswered on the LIVE session
+      // runtime mid-run (when the 대안 비교 closing card is answered); the
+      // run-end re-attach passes the run-START officeHours object, so the
+      // stamp must be carried forward or the completion signal dies between
+      // the closing answer and the run's incomplete-interview check.
+      ...(prior?.terminalAnswered === true ? { terminalAnswered: true } : {}),
       ...officeHours,
       active: true,
     },
@@ -5005,8 +5029,17 @@ async function detectIncompleteOfficeHoursInterview(session, context) {
     ? stampedExpected
     : parseExpectedOfficeHoursQuestionCount(context);
   if (!expected) return null;
+  // The expected count is an upper bound, not a quota: the system prompt
+  // smart-skips routed questions and closes with the 전제 확인 → 대안 비교
+  // terminal cards, so a finished interview legitimately holds fewer answers
+  // than the Mac client's count. Answering the 대안 비교 closing card is the
+  // completion signal — without honoring it, Day 2 dead-ended: the run failed
+  // on 5/6, and every retry saw a finished transcript, asked nothing, and
+  // failed the same check again.
+  if (session?.runtime?.officeHours?.terminalAnswered === true) return null;
   const turnLog = await loadOfficeHoursTurnLog({ workspaceRoot }).catch(() => null);
   if (!turnLog) return null;
+  if (hasOfficeHoursTerminalTurnForSession(turnLog, session.id)) return null;
   const resumedTurns = Number.parseInt(String(session?.runtime?.officeHours?.resumedTurns ?? ""), 10);
   const resumeOffset = Number.isFinite(resumedTurns) ? Math.max(0, resumedTurns) : 0;
   const answered = countOfficeHoursTurnsForSession(turnLog, session.id) + resumeOffset;
@@ -5213,6 +5246,91 @@ async function runOfficeHours(session, {
     || normalizeOfficeHoursDay(session.runtime?.officeHours?.day)
     || (await challengeElapsedOfficeHoursDay());
   const normalizedSelectedSources = normalizeOfficeHoursSelectedSources(selectedSources);
+  // Past-day starts are timeline snapshot views, not interviews. The Day
+  // timeline scopes the live Office Hours screen by day and the Mac auto-start
+  // fires for whichever day-scoped session it lands on, so without this gate a
+  // Day-2+ launch viewing Day 1 RESUMED the unfinished Day-1 interview — a
+  // provider run generating a brand-new question on a closed day. Rebuild the
+  // read-only transcript from that day's turn log and settle idle instead.
+  // Placed BEFORE the Day 2+ source gate so viewing a past Day 2+ never
+  // surfaces a source-gate error. Fail-open: an unknown elapsed day keeps the
+  // legacy behavior, and current-day relaunches keep the resume path below.
+  let officeHoursPastDaySnapshot = false;
+  try {
+    officeHoursPastDaySnapshot = isPastOfficeHoursSnapshotDay({
+      day: runtimeDay,
+      elapsedDay: await challengeElapsedOfficeHoursDay(),
+    });
+  } catch {
+    officeHoursPastDaySnapshot = false;
+  }
+  if (officeHoursPastDaySnapshot) {
+    let snapshotTurns = [];
+    try {
+      snapshotTurns = selectOfficeHoursSnapshotTurns({
+        turnLog: await loadOfficeHoursTurnLog({ workspaceRoot }),
+        day: runtimeDay,
+      });
+    } catch {
+      snapshotTurns = [];
+    }
+    // Same seeded-row shape as the Day-1 resume path: the Mac client derives
+    // the 답변 N/M counter and the visible Q&A history from transcript rows,
+    // and officeHoursSeededTurn exempts restored rows from snapshot-based
+    // hiding/dedup. Skipped when the session already carries real answer rows
+    // (same-daemon re-tap) so turns are never duplicated.
+    let snapshotSeeded = false;
+    if (snapshotTurns.length && shouldSeedOfficeHoursResumeTranscript(session)) {
+      snapshotSeeded = true;
+      for (const turn of snapshotTurns) {
+        const seededQuestion = makeMessage({ role: "assistant", provider: session.provider, content: turn.questionText, state: "final" });
+        const seededAnswer = makeMessage({ role: "user", provider: session.provider, content: turn.responseText, state: "final" });
+        seededQuestion.officeHoursSeededTurn = true;
+        seededAnswer.officeHoursSeededTurn = true;
+        session.messages.push(seededQuestion, seededAnswer);
+      }
+    }
+    const snapshotRuntime = buildOfficeHoursRuntime(context, source, runtimeDay);
+    const snapshotExpectedCount = parseExpectedOfficeHoursQuestionCount(snapshotRuntime.context);
+    if (snapshotExpectedCount > 0) {
+      snapshotRuntime.expectedQuestionCount = snapshotExpectedCount;
+    }
+    snapshotRuntime.resumedTurns = countOfficeHoursResumeTurnsFromOtherSessions(
+      snapshotTurns,
+      session.id,
+    );
+    session.runtime = attachOfficeHoursRuntime(session.runtime, snapshotRuntime);
+    if (!session.title || session.title === "New Session") {
+      session.title = "Office Hours";
+    }
+    // Settle idle with no provider run and no visiblePrompt/assistant rows —
+    // the auto-start policy marks this session started for the launch, so it
+    // will not refire, and OfficeHoursLoadingPolicy hides the question loader
+    // once the session leaves "running".
+    session.status = "idle";
+    session.error = null;
+    session.pendingUserInput = null;
+    touch(session);
+    await persistSessions();
+    broadcast({ type: "session_updated", session });
+    emitOfficeHoursStatus(session, {
+      stage: "completed",
+      copy: selectOfficeHoursStatusCopy({ firstQuestionAnswered: snapshotTurns.length > 0 }),
+    });
+    telemetry.captureEvent("mac_sidecar_office_hours_past_day_snapshot", {
+      session_id: session.id,
+      provider: session.provider,
+      day: runtimeDay || 0,
+      day_turns: snapshotTurns.length,
+      seeded: snapshotSeeded,
+      source: String(source || ""),
+    });
+    const snapshotRun = state.activeRuns.get(session.id);
+    if (snapshotRun?.runKey === runKey) {
+      state.activeRuns.delete(session.id);
+    }
+    return;
+  }
   try {
     if (isDay2PlusOfficeHoursDay(runtimeDay)) {
       const gate = await evaluateOfficeHoursSourceGate({
@@ -5282,11 +5400,13 @@ async function runOfficeHours(session, {
       };
     }
 
-    // Day-1 interview resume: a relaunch kills the in-flight provider
-    // conversation and boot wipes sessions.json, but the answered turns survive
-    // in .agentic30/memory/office-hours-turns.json and day-progress.json still
-    // holds first_interview=active. Rebuild from that pair instead of starting
-    // over at question 1. Fail-open: any error means a normal fresh start.
+    // Interview resume (Day 1 first_interview + Day 2+ standard interview): a
+    // relaunch kills the in-flight provider conversation and boot wipes
+    // sessions.json, but the answered turns survive in
+    // .agentic30/memory/office-hours-turns.json and day-progress.json still
+    // holds the day's interview step active. Rebuild from that pair instead of
+    // starting over at question 1. Fail-open: any error means a normal fresh
+    // start.
     let officeHoursResumeTurns = [];
     try {
       officeHoursResumeTurns = selectOfficeHoursResumeTurns({
@@ -5310,9 +5430,16 @@ async function runOfficeHours(session, {
     // and the commitment close. The interview's only remaining work is the
     // commitment close (PB-1 bar -> day_progress_patch gate), which the Mac
     // client renders from the transcript count plus day-progress alone, so the
-    // wrap-up path below skips the provider run entirely.
-    const officeHoursResumeWrapUp = officeHoursExpectedQuestionCount > 0
-      && officeHoursResumeTurns.length >= officeHoursExpectedQuestionCount;
+    // wrap-up path below skips the provider run entirely. A terminal (대안
+    // 비교 closing card) turn is the same completion signal even below the
+    // expected count: the system prompt smart-skips routed questions, so a
+    // concluded interview can legitimately hold fewer answers — without the
+    // terminal route a relaunch would re-run the provider on a finished
+    // interview.
+    const officeHoursResumeTerminal = hasOfficeHoursTerminalResumeTurn(officeHoursResumeTurns);
+    const officeHoursResumeWrapUp = officeHoursResumeTerminal
+      || (officeHoursExpectedQuestionCount > 0
+        && officeHoursResumeTurns.length >= officeHoursExpectedQuestionCount);
     if (officeHoursResumeTurns.length) {
       // The Mac client derives the 답변 N/M counter and the visible Q&A history
       // from transcript rows, so seeding the prior turns restores both with no
@@ -5351,15 +5478,24 @@ async function runOfficeHours(session, {
         day_turns: officeHoursResumeTurns.length,
         seeded: officeHoursResumeSeeded,
         wrap_up: officeHoursResumeWrapUp,
+        terminal: officeHoursResumeTerminal,
       });
       if (officeHoursResumeWrapUp) {
         // Skip the provider run: a wrap-up prompt would re-bill on every
-        // relaunch until first_interview closes, and its summary is already
+        // relaunch until the interview step closes, and its summary is already
         // covered by the client-side doc-ready block. Settle the session idle
         // with the seeded transcript; the commitment bar (gated on the
         // day-progress step + answered count) carries the close from here.
         // No visiblePrompt/assistant rows are pushed — the auto-start policy
         // marks this session started for the launch, so it will not refire.
+        if (officeHoursResumeTerminal) {
+          // The prior session's live terminalAnswered stamp died with the
+          // daemon; restore it from the durable turn flag so the Mac client's
+          // interview-complete gate (commitment bar + N/M counter) and
+          // detectIncompleteOfficeHoursInterview on later continuations treat
+          // a smart-skip conclusion (fewer answers than expected) as done.
+          officeHoursRuntime.terminalAnswered = true;
+        }
         session.runtime = attachOfficeHoursRuntime(session.runtime, officeHoursRuntime);
         if (!session.title || session.title === "New Session") {
           session.title = "Office Hours";
