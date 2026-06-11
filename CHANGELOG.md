@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Morning Briefing Live Collection Progress**: While the briefing collects, each source card (Cloudflare/GitHub/PostHog) now shows a spinner plus a live agent log streamed from the sidecar (`morning_briefing_progress` events: MCP tool calls, aggregation steps, timestamps). Re-entering the briefing tab mid-collection restores the per-card progress instantly, so a minutes-long external MCP digest no longer looks frozen.
+
+### Fixed
+- **Morning Briefing Live Connection Status**: The briefing's sync-source panel ("동기화 소스") and connect-guide banner now re-check git/gh CLI/PostHog/Cloudflare connection state (provider-scoped MCP OAuth included) every time the briefing is served, instead of replaying the connection snapshot baked in at generation time. Connecting MCP in Settings after the morning collection no longer leaves the briefing claiming "미연결" while Settings shows "MCP 연결됨". Metric cards and sync timestamps stay snapshot-true; only connection rows go live, and the overlay is never persisted.
+- **Cloudflare Digest Timeout Salvage**: When the external MCP digest hits the 240s soft timeout right before finishing (a recurring pattern: aggregation done, final JSON cut mid-stream), the sidecar now salvages the streamed partial output — if the JSON parses complete and self-reports ready, the card gets its numbers instead of a blanket timeout error. The timeout message also states the MCP connection itself is healthy, and non-ready cards distinguish "수집 실패 · 연결은 정상" (collection failed) from "연결 필요" (truly disconnected), so a connected-but-slow Cloudflare is no longer misdiagnosed as a connection problem.
+
 ## [1.0.16] - 2026-06-11
 
 ### Fixed

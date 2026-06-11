@@ -1131,11 +1131,24 @@ const EXTERNAL_TITLES = {
   posthog: { title: "PostHog · 리텐션·이탈 드릴다운", subtitle: "표본 작음 · 단정보다 방향" },
 };
 
-export function normalizeMorningBriefingExternalDigest(textOrObject = "", expectedSources = []) {
+// 소프트 타임아웃 직전까지 스트리밍된 부분 출력 구제. 실측: 집계 자체는 끝났는데
+// 마지막 토큰 직전에 시간 예산이 끊기는 케이스가 상습(170초 성공/타임아웃 반복).
+// JSON이 닫혀 파싱되고 모든 기대 소스가 ready로 자기보고했을 때만 채택한다 —
+// 미완성이면 null을 돌려 호출자가 타임아웃 실패 detail로 떨어지게 한다.
+export function salvageMorningBriefingExternalDigest(text = "", expectedSources = [], { failureDetail = "" } = {}) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) return null;
+  const normalized = normalizeMorningBriefingExternalDigest(trimmed, expectedSources, { failureDetail });
+  const allReady = normalized.sources.length > 0
+    && normalized.sources.every((source) => source.state === "ready");
+  return allReady ? normalized : null;
+}
+
+export function normalizeMorningBriefingExternalDigest(textOrObject = "", expectedSources = [], { failureDetail = "" } = {}) {
   const payload = typeof textOrObject === "object" && textOrObject !== null
     ? textOrObject
     : extractJsonObjectLoose(textOrObject);
-  const sources = normalizeExternalOfficeHoursDigest(payload ?? "", expectedSources);
+  const sources = normalizeExternalOfficeHoursDigest(payload ?? "", expectedSources, { failureDetail });
   const drilldowns = {};
   const readyIds = new Set(sources.filter((source) => source.state === "ready").map((source) => source.id));
   for (const id of ["cloudflare", "posthog"]) {

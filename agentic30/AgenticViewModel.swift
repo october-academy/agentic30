@@ -1807,6 +1807,9 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var morningBriefing: MorningBriefing?
     @Published private(set) var morningBriefingPrevious: MorningBriefing?
     @Published private(set) var morningBriefingCollecting = false
+    /// 수집 중 카드별 라이브 진행(`morning_briefing_progress`): 카드 id →
+    /// 스피너 상태 + 에이전트 로그. result 도착 시 비운다.
+    @Published private(set) var morningBriefingSourceProgress: [String: MorningBriefingSourceProgress] = [:]
     /// Commitment-close candidates (`office_hours_commitment_candidates`), keyed by
     /// session id: 2–3 next-customer-action proposals the sidecar derives from THIS
     /// interview's own answers. Proposals only — the stored commitment is always the
@@ -6701,8 +6704,17 @@ final class AgenticViewModel: ObservableObject {
                 morningBriefingPrevious = previous
             }
             morningBriefingCollecting = false
+            // 수집 종료: 카드별 진행 잔상을 지운다 — 완성 데이터가 자리를 대체.
+            morningBriefingSourceProgress.removeAll()
         case "morning_briefing_status":
             morningBriefingCollecting = event.morningBriefingStatus?.state == "collecting"
+        case "morning_briefing_progress":
+            if let cards = event.morningBriefingProgress?.cards {
+                morningBriefingSourceProgress = Dictionary(
+                    cards.map { ($0.id, $0) },
+                    uniquingKeysWith: { _, latest in latest }
+                )
+            }
         case "integration_status_result":
             integrationStatus = event.integrationStatus
             integrationStatusChecking = false
@@ -10723,6 +10735,7 @@ struct SidecarEvent: Decodable {
     let morningBriefing: MorningBriefing?
     let morningBriefingPrevious: MorningBriefing?
     let morningBriefingStatus: MorningBriefingStatus?
+    let morningBriefingProgress: MorningBriefingProgress?
     let integrationStatus: IntegrationStatusSnapshot?
     let mcpOauthConnect: McpOauthConnectResult?
     // office_hours_commitment_candidates: context-aware commitment-close proposals
@@ -10829,6 +10842,7 @@ struct SidecarEvent: Decodable {
         morningBriefing: MorningBriefing? = nil,
         morningBriefingPrevious: MorningBriefing? = nil,
         morningBriefingStatus: MorningBriefingStatus? = nil,
+        morningBriefingProgress: MorningBriefingProgress? = nil,
         integrationStatus: IntegrationStatusSnapshot? = nil,
         mcpOauthConnect: McpOauthConnectResult? = nil,
         commitmentCandidates: [String]? = nil
@@ -10931,6 +10945,7 @@ struct SidecarEvent: Decodable {
         self.morningBriefing = morningBriefing
         self.morningBriefingPrevious = morningBriefingPrevious
         self.morningBriefingStatus = morningBriefingStatus
+        self.morningBriefingProgress = morningBriefingProgress
         self.integrationStatus = integrationStatus
         self.mcpOauthConnect = mcpOauthConnect
         self.commitmentCandidates = commitmentCandidates
@@ -11326,6 +11341,7 @@ extension SidecarEvent {
         case officeHoursDailyDigest
         case morningBriefing
         case morningBriefingPrevious
+        case morningBriefingProgress
         case candidates
         case integrationStatus
         case mcpOauthConnect
@@ -11445,6 +11461,7 @@ extension SidecarEvent {
         morningBriefing = Self.decodeIfPresent(MorningBriefing.self, from: container, forKey: .morningBriefing)
         morningBriefingPrevious = Self.decodeIfPresent(MorningBriefing.self, from: container, forKey: .morningBriefingPrevious)
         morningBriefingStatus = Self.decodeIfPresent(MorningBriefingStatus.self, from: container, forKey: .status)
+        morningBriefingProgress = Self.decodeIfPresent(MorningBriefingProgress.self, from: container, forKey: .morningBriefingProgress)
         commitmentCandidates = Self.decodeIfPresent([String].self, from: container, forKey: .candidates)
         integrationStatus = Self.decodeIfPresent(IntegrationStatusSnapshot.self, from: container, forKey: .integrationStatus)
         mcpOauthConnect = Self.decodeIfPresent(McpOauthConnectResult.self, from: container, forKey: .mcpOauthConnect)

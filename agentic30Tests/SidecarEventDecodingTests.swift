@@ -74,7 +74,12 @@ struct SidecarEventDecodingTests {
                 }
               ],
               "runtime": {
-                "codexThreadId": "thread-1"
+                "codexThreadId": "thread-1",
+                "officeHours": {
+                  "active": true,
+                  "day": 2,
+                  "terminalAnswered": true
+                }
               }
             }
           ],
@@ -151,6 +156,9 @@ struct SidecarEventDecodingTests {
         #expect(event.sessions?.first?.messages.first?.content == "OK")
         #expect(event.sessions?.first?.pendingUserInput?.requestId == "request-1")
         #expect(event.sessions?.first?.pendingUserInput?.questions.first?.allowFreeText == true)
+        // 사이드카가 대안 비교(종결 카드) 답변 시 스탬프하는 인터뷰 완료 신호 —
+        // commitment 바와 doc-ready 게이트가 답변 수 대신 이 신호로도 열린다.
+        #expect(event.sessions?.first?.runtime?.officeHours?.terminalAnswered == true)
     }
 
     @MainActor @Test func decodesStreamingStateOnMessageReplacedEvent() throws {
@@ -760,6 +768,39 @@ struct SidecarEventDecodingTests {
         #expect(event.type == "morning_briefing_status")
         #expect(event.morningBriefing == nil)
         #expect(event.morningBriefingStatus?.state == "collecting")
+    }
+
+    @MainActor @Test func decodesMorningBriefingProgressPayload() throws {
+        let payload = """
+        {
+          "type": "morning_briefing_progress",
+          "morningBriefingProgress": {
+            "at": "2026-06-11T00:00:03.000Z",
+            "cards": [
+              {
+                "id": "cloudflare",
+                "state": "collecting",
+                "detail": "Cloudflare MCP digest 수집 중",
+                "logLines": ["09:00:01 MCP 도구 검색", "09:00:02 Cloudflare GraphQL Analytics 조회"]
+              },
+              { "id": "github", "state": "done", "detail": "수집 완료", "logLines": [] }
+            ]
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "morning_briefing_progress")
+        let progress = try #require(event.morningBriefingProgress)
+        let cards = try #require(progress.cards)
+        #expect(cards.count == 2)
+        let cloudflare = try #require(cards.first(where: { $0.id == "cloudflare" }))
+        #expect(cloudflare.isCollecting)
+        #expect(cloudflare.detail == "Cloudflare MCP digest 수집 중")
+        #expect(cloudflare.logLines?.count == 2)
+        let github = try #require(cards.first(where: { $0.id == "github" }))
+        #expect(github.isCollecting == false)
     }
 
     @MainActor @Test func decodesWorkspaceScanProgressStructuredFields() throws {

@@ -191,11 +191,13 @@ function externalSourceStatus(id, { selected = false, required = false, appSuppo
   const unsupportedProvider = provider && !["claude", "codex"].includes(String(provider || "").toLowerCase());
   // OAuth-first MCP: 토큰은 프로바이더 캐시에 있어 사이드카가 볼 수 없다.
   // "MCP 연결" 버튼이 실증·영속한 OAuth ready 상태가 저장된 API 키와 동급의
-  // 연결 증거다 — 둘 중 하나면 ready.
+  // 연결 증거다 — 둘 중 하나면 ready. 단 토큰 캐시는 프로바이더별이므로 OAuth
+  // ready는 이 digest를 실행할 프로바이더 기준으로만 인정한다(provider 전달).
   const oauthState = readMcpOauthState(appSupportPath);
   if (id === "posthog") {
     const settings = resolvePostHogMcpSettings({ appSupportPath, env });
-    const oauthReady = isMcpOauthServerReady(oauthState, "posthog");
+    const oauthReady = isMcpOauthServerReady(oauthState, "posthog", provider);
+    const oauthReadyElsewhere = !oauthReady && isMcpOauthServerReady(oauthState, "posthog");
     const ready = (settings.tokenValid || oauthReady) && !unsupportedProvider;
     return sourceStatus({
       id,
@@ -208,12 +210,15 @@ function externalSourceStatus(id, { selected = false, required = false, appSuppo
           ? "PostHog MCP key is configured"
           : oauthReady
             ? "PostHog MCP OAuth connection verified"
-            : "PostHog MCP is not connected — connect via OAuth in Settings or store an API key",
+            : oauthReadyElsewhere
+              ? `PostHog MCP OAuth is verified for another provider — reconnect via Settings for ${provider}`
+              : "PostHog MCP is not connected — connect via OAuth in Settings or store an API key",
     });
   }
   if (id === "cloudflare") {
     const settings = resolveCloudflareMcpSettings({ appSupportPath, env });
-    const oauthReady = isMcpOauthServerReady(oauthState, "cloudflare");
+    const oauthReady = isMcpOauthServerReady(oauthState, "cloudflare", provider);
+    const oauthReadyElsewhere = !oauthReady && isMcpOauthServerReady(oauthState, "cloudflare");
     const ready = (settings.tokenValid || oauthReady) && !unsupportedProvider;
     return sourceStatus({
       id,
@@ -226,7 +231,9 @@ function externalSourceStatus(id, { selected = false, required = false, appSuppo
           ? "Cloudflare MCP token is configured"
           : oauthReady
             ? "Cloudflare MCP OAuth connection verified"
-            : "Cloudflare MCP is not connected — connect via OAuth in Settings or store an API token",
+            : oauthReadyElsewhere
+              ? `Cloudflare MCP OAuth is verified for another provider — reconnect via Settings for ${provider}`
+              : "Cloudflare MCP is not connected — connect via OAuth in Settings or store an API token",
     });
   }
   return sourceStatus({ id, selected, required, detail: "unknown external source" });
@@ -642,6 +649,15 @@ export function buildExternalOfficeHoursDigestPrompt({
   return [
     "You are generating an Agentic30 Day 2+ Office Hours source digest.",
     "Use only the connected external MCP sources named below. Do not mutate anything.",
+    // 실측 가이드: MCP 도구는 deferred로 도착할 수 있고, 각 서버의 읽기 경로가
+    // 정해져 있다(PostHog=execute-sql SELECT HogQL, Cloudflare=execute GET/GraphQL).
+    // 명시하지 않으면 모델이 차단되는 호출을 반복하다 시간을 소진한다.
+    "Tool access: MCP tools may be deferred — load them with ToolSearch first, then call them.",
+    "PostHog: read with execute-sql using SELECT/WITH HogQL only, or insight/web-analytics getter tools. Mutating calls are denied.",
+    "Cloudflare: read with execute using GET requests or POST to /graphql analytics only. Mutating calls are denied. Prefer ONE GraphQL Analytics query (e.g. httpRequests1dGroups over all zones for the whole window) instead of per-zone or per-day loops.",
+    // 실측(2026-06-11): 호출 상한이 없으면 모델이 존×일자 분할 쿼리로 14회까지
+    // 왕복하며 타임아웃 직전(175초)까지 간다. 상한 4회로 묶으면 50~90초.
+    "Budget: hard limit — at most 4 MCP tool calls per source (ToolSearch excluded). Plan queries to fit that, then emit the JSON immediately. If a source keeps failing, mark it failed and move on.",
     "Return JSON only. Do not wrap it in markdown.",
     "Never include raw event rows, request logs, query result arrays, IDs, tokens, emails, IP addresses, or secret values. Aggregates and short summaries only.",
     `Window: ${window?.startIso || ""} to ${window?.untilIso || ""}`,
@@ -693,7 +709,11 @@ function normalizeCounts(value = {}) {
   return output;
 }
 
-export function normalizeExternalOfficeHoursDigest(textOrObject = "", expectedSources = []) {
+export function normalizeExternalOfficeHoursDigest(textOrObject = "", expectedSources = [], { failureDetail = "" } = {}) {
+  // failureDetail: 호출자가 아는 구체적 실패 사유(프로바이더 한도/시간 초과 등).
+  // 없으면 기존 기본 문구를 유지해 호출처·테스트와의 호환을 지킨다.
+  const fallbackDetail = cleanString(failureDetail, 300)
+    || "external MCP digest did not return a usable summary";
   const payload = typeof textOrObject === "object" && textOrObject !== null
     ? textOrObject
     : extractJsonObject(textOrObject);
@@ -723,7 +743,7 @@ export function normalizeExternalOfficeHoursDigest(textOrObject = "", expectedSo
     .map((source) => byId.get(source) || sourceStatus({
       id: source,
       state: "failed",
-      detail: "external MCP digest did not return a usable summary",
+      detail: fallbackDetail,
     }));
 }
 
@@ -794,7 +814,13 @@ export function finalizeDailyOfficeHoursDigest({
   }
 
   const readySources = sources.filter((source) => source.state === "ready");
-  const allHighlights = readySources.flatMap((source) => source.highlights.map((line) => `${source.label}: ${line}`));
+  // Skip the label prefix when the highlight already starts with it — "git: git
+  // 커밋 27건" stuttered in the briefing card.
+  const allHighlights = readySources.flatMap((source) =>
+    source.highlights.map((line) =>
+      line.toLowerCase().startsWith(source.label.toLowerCase()) ? line : `${source.label}: ${line}`,
+    ),
+  );
   const goalLane = inferGoalLane(context);
   const git = sources.find((source) => source.id === "git");
   // Customer evidence = real product-usage signals, which only PostHog supplies
@@ -819,6 +845,13 @@ export function finalizeDailyOfficeHoursDigest({
   const evidenceGaps = readySources.flatMap((source) =>
     (source.evidenceGaps || []).map((line) => `${source.label}: ${line}`),
   );
+  // Builder-output summaries (git commits, PRs, releases) restated the
+  // overnightChanges lines nearly verbatim and doubled the briefing card. This
+  // section carries customer-behavior signals only — the same standard
+  // buildWithoutCustomerEvidence applies to the sources above.
+  const customerSignalSummaries = readySources
+    .filter((source) => EXTERNAL_SOURCE_IDS.has(source.id) && source.summary)
+    .map((source) => `${source.label}: ${source.summary}`);
   return {
     schemaVersion: OFFICE_HOURS_DAILY_DIGEST_SCHEMA_VERSION,
     generatedAt: new Date(now instanceof Date ? now.getTime() : now).toISOString(),
@@ -839,7 +872,7 @@ export function finalizeDailyOfficeHoursDigest({
       overnightChanges: allHighlights.length ? allHighlights.slice(0, 8) : ["연결된 source에서 해당 기간 변화가 거의 없습니다."],
       goalHelpfulSignals: unique([
         ...evidenceGoalSignals,
-        ...readySources.map((source) => source.summary).filter(Boolean),
+        ...customerSignalSummaries,
       ]).slice(0, 6),
       biggestEvidenceGap: unique([biggestGap, ...evidenceGaps]).slice(0, 4),
     },

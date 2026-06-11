@@ -46,6 +46,7 @@ import {
   selectedExternalOfficeHoursSources,
 } from "./daily-office-hours-digest.mjs";
 import {
+  applyMorningBriefingLiveSync,
   buildMorningBriefing,
   labelMorningBriefingAnomaly,
   loadMorningBriefingStore,
@@ -56,14 +57,21 @@ import {
   buildMorningBriefingExternalDigestPrompt,
   collectGithubDrilldown,
   normalizeMorningBriefingExternalDigest,
+  salvageMorningBriefingExternalDigest,
 } from "./morning-briefing-drilldown.mjs";
+import { createMorningBriefingProgressTracker } from "./morning-briefing-progress.mjs";
 import {
   collectCloudflareDirectDrilldown,
   collectPosthogDirectDrilldown,
   mergeMorningBriefingDrilldownMaps,
 } from "./morning-briefing-direct-sources.mjs";
 import { collectIntegrationStatus } from "./integration-status.mjs";
-import { normalizeMcpOauthPrewarmServer, prewarmMcpOauth } from "./mcp-oauth-prewarm.mjs";
+import {
+  isProviderUsageLimitMessage,
+  normalizeMcpOauthPrewarmServer,
+  prewarmMcpOauth,
+  resolveMcpOauthConnectProvider,
+} from "./mcp-oauth-prewarm.mjs";
 import { persistMcpOauthConnectResult } from "./mcp-oauth-state.mjs";
 import {
   buildQmdGuidance,
@@ -455,6 +463,8 @@ const state = {
   workHistoryProgress: null,
   workHistoryProgressStartedAt: null,
   morningBriefingRefreshPromise: null,
+  // 수집 중 카드별 라이브 진행(스피너+에이전트 로그). 서빙 전용, persist 금지.
+  morningBriefingProgressTracker: null,
   integrationSettings: {
     exaApiKey: "",
   },
@@ -1863,20 +1873,46 @@ async function handleClientMessage(socket, payload) {
     }
     case "morning_briefing_get": {
       const store = await loadMorningBriefingStore({ workspaceRoot });
-      if (store.current) {
-        send(socket, {
-          type: "morning_briefing_result",
-          morningBriefing: store.current,
-          morningBriefingPrevious: store.previous,
-        });
-      }
-      if (state.morningBriefingRefreshPromise) {
-        send(socket, { type: "morning_briefing_status", status: { state: "collecting" } });
-        return;
-      }
+      const refreshInFlight = Boolean(state.morningBriefingRefreshPromise);
       // Tab-entry refresh policy: the briefing is a daily artifact, so anything
       // generated on a previous local date is stale and re-collects on entry.
-      if (!store.current || !isSameLocalDate(store.current.generatedAt, new Date())) {
+      const staleDate = !store.current || !isSameLocalDate(store.current.generatedAt, new Date());
+      if (store.current) {
+        if (refreshInFlight || staleDate) {
+          // 곧 fresh 결과가 라이브 연결 상태를 들고 브로드캐스트된다 — 스냅샷만
+          // 즉시 서빙. 오버레이 재전송은 금지: Swift가 morning_briefing_result를
+          // 받으면 collecting=false라 수집 중 스피너를 꺼버린다.
+          send(socket, {
+            type: "morning_briefing_result",
+            morningBriefing: store.current,
+            morningBriefingPrevious: store.previous,
+          });
+        } else {
+          // 같은 날짜 재방문: 디스크 스냅샷의 연결 행은 생성 이후 Settings의
+          // MCP OAuth 연결/해제를 모른다 — 라이브 오버레이로 서빙한다.
+          // await하지 않는다(probe ~1s가 첫 응답을 막지 않게).
+          void emitMorningBriefingWithLiveSync({
+            briefing: store.current,
+            previous: store.previous,
+            preferredProvider: payload.preferredProvider,
+            emit: (morningBriefing, morningBriefingPrevious) => send(socket, {
+              type: "morning_briefing_result",
+              morningBriefing,
+              morningBriefingPrevious,
+            }),
+          });
+        }
+      }
+      if (refreshInFlight) {
+        send(socket, { type: "morning_briefing_status", status: { state: "collecting" } });
+        // 수집 중 탭 재진입: 카드별 진행(스피너+로그)을 즉시 복원한다.
+        const progressSnapshot = state.morningBriefingProgressTracker?.snapshot?.();
+        if (progressSnapshot) {
+          send(socket, { type: "morning_briefing_progress", morningBriefingProgress: progressSnapshot });
+        }
+        return;
+      }
+      if (staleDate) {
         scheduleMorningBriefingRefresh({
           reason: "tab_enter",
           preferredProvider: payload.preferredProvider,
@@ -1902,10 +1938,15 @@ async function handleClientMessage(socket, payload) {
       });
       if (updated) {
         const labeledStore = await loadMorningBriefingStore({ workspaceRoot });
-        broadcast({
-          type: "morning_briefing_result",
-          morningBriefing: updated,
-          morningBriefingPrevious: labeledStore.previous,
+        await emitMorningBriefingWithLiveSync({
+          briefing: updated,
+          previous: labeledStore.previous,
+          preferredProvider: payload.preferredProvider,
+          emit: (morningBriefing, morningBriefingPrevious) => broadcast({
+            type: "morning_briefing_result",
+            morningBriefing,
+            morningBriefingPrevious,
+          }),
         });
         telemetry.captureEvent("mac_sidecar_morning_briefing_anomaly_labeled", {
           anomaly: updated.anomaly?.id || "",
@@ -4328,6 +4369,7 @@ async function buildExternalOfficeHoursDigestSignals(session, {
   const externalSources = selectedExternalOfficeHoursSources(gate);
   if (!externalSources.length) return [];
   let externalText = "";
+  let failureDetail = "";
   try {
     await runProviderStream({
       provider: session.provider,
@@ -4363,8 +4405,12 @@ async function buildExternalOfficeHoursDigestSignals(session, {
       sources: externalSources.join(","),
     });
     externalText = "";
+    const message = String(error?.message || error || "");
+    failureDetail = isProviderUsageLimitMessage(message)
+      ? `AI 프로바이더 사용량 한도로 수집하지 못했어요 — 한도 리셋 후 다시 시도해 주세요. MCP 연결은 정상이에요. (${message.slice(0, 140)})`
+      : `외부 MCP digest 실행이 실패했어요 — 잠시 후 다시 시도해 주세요. (${message.slice(0, 140)})`;
   }
-  return normalizeExternalOfficeHoursDigest(externalText, externalSources);
+  return normalizeExternalOfficeHoursDigest(externalText, externalSources, { failureDetail });
 }
 
 async function prepareDailyOfficeHoursDigest(session, {
@@ -4432,7 +4478,12 @@ async function prepareDailyOfficeHoursDigest(session, {
 // failed MCP digest renders as a disconnected card instead of blocking), and the
 // result is shaped by morning-briefing.mjs into the briefing screen payload.
 
-const MORNING_BRIEFING_PROVIDER_TIMEOUT_MS = 90_000;
+// 실측(2026-06-10~11): MCP 도구 탐색(ToolSearch)+집계 쿼리+JSON 작성에 90초는
+// 부족했고(69초 시점 abort), 두 소스를 묶은 한 실행은 180초도 상습 초과했다.
+// 소스당 실행 분리 후 posthog ~50초, cloudflare 헤비 케이스 ~175초 실측 —
+// 소스당 타임아웃은 여유분 포함 240초. 브리핑은 "collecting" 상태를 띄우는
+// 백그라운드 수집이고 소스들이 병렬이라 체감 대기는 가장 느린 소스 하나다.
+const MORNING_BRIEFING_PROVIDER_TIMEOUT_MS = 240_000;
 const MORNING_BRIEFING_ALL_SOURCES = Object.freeze(["git", "gh_cli", "posthog", "cloudflare"]);
 
 function isSameLocalDate(iso, now = new Date()) {
@@ -4468,6 +4519,7 @@ function scheduleMorningBriefingRefresh({
   }
   const promise = runMorningBriefingRefresh({ reason, force, preferredProvider }).finally(() => {
     state.morningBriefingRefreshPromise = null;
+    state.morningBriefingProgressTracker = null;
   });
   state.morningBriefingRefreshPromise = promise;
   return promise;
@@ -4482,10 +4534,15 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
     // the same-date cache; fall through and collect a real one.
     const cachedIsLocked = store.current?.status?.state === "locked";
     if (!force && !cachedIsLocked && store.current && isSameLocalDate(store.current.generatedAt, new Date())) {
-      broadcast({
-        type: "morning_briefing_result",
-        morningBriefing: store.current,
-        morningBriefingPrevious: store.previous,
+      await emitMorningBriefingWithLiveSync({
+        briefing: store.current,
+        previous: store.previous,
+        preferredProvider,
+        emit: (morningBriefing, morningBriefingPrevious) => broadcast({
+          type: "morning_briefing_result",
+          morningBriefing,
+          morningBriefingPrevious,
+        }),
       });
       return store.current;
     }
@@ -4495,11 +4552,13 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
     // already connected). The gate probe is clamped to >= 2 because the Office
     // Hours gate short-circuits Day 1 (fixed interview) with zero sources —
     // the briefing must still probe what is actually connected.
+    // 게이트의 MCP OAuth 판정은 브리핑을 실제로 실행할 프로바이더 기준이어야
+    // 한다 — collectMorningBriefingExternalSignals의 primary와 같은 계산.
     const probeGate = await evaluateOfficeHoursSourceGate({
       workspaceRoot,
       day: Math.max(2, Number.isFinite(day) ? day : 2),
       selectedSources: MORNING_BRIEFING_ALL_SOURCES,
-      provider: preferredProvider,
+      provider: pickMorningBriefingProvider(preferredProvider),
       appSupportPath,
     });
     const readySources = (probeGate.sources || [])
@@ -4520,8 +4579,21 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
       })),
     };
 
+    // 카드별 라이브 진행: 수집이 분 단위로 걸리는 동안 각 카드에 스피너와
+    // 에이전트 로그를 스트리밍한다. ready인 카드만 begin — 미연결 카드에
+    // 유령 스피너를 만들지 않는다.
+    const progress = createMorningBriefingProgressTracker({
+      emit: (snapshot) => broadcast({ type: "morning_briefing_progress", morningBriefingProgress: snapshot }),
+    });
+    state.morningBriefingProgressTracker = progress;
+    const githubTracked = readySources.includes("git") || readySources.includes("gh_cli");
+    if (githubTracked) progress.begin("github", "git · gh CLI 신호 수집 중");
+    if (readySources.includes("cloudflare")) progress.begin("cloudflare", "Cloudflare MCP digest 수집 중");
+    if (readySources.includes("posthog")) progress.begin("posthog", "PostHog MCP digest 수집 중");
+
     const localSignals = await collectLocalDailyOfficeHoursSignals({ workspaceRoot, gate });
-    const external = await collectMorningBriefingExternalSignals({ gate, preferredProvider });
+    if (githubTracked) progress.log("github", "git 커밋 · gh CLI 신호 집계 완료");
+    const external = await collectMorningBriefingExternalSignals({ gate, preferredProvider, progress });
     const digest = finalizeDailyOfficeHoursDigest({
       gate,
       localSignals,
@@ -4535,6 +4607,7 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
     // APIs for Cloudflare (GraphQL Analytics) and PostHog (Query API/HogQL).
     // The provider digest's drilldown only fills narrative sections the APIs
     // cannot produce (action drafts, app-specific funnels).
+    if (githubTracked) progress.log("github", "GitHub 드릴다운 집계 중");
     const [githubDrilldown, cloudflareDirect, posthogDirect] = await Promise.all([
       collectGithubDrilldown({
         workspaceRoot,
@@ -4559,6 +4632,7 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
           })
         : Promise.resolve(null),
     ]);
+    if (githubTracked) progress.finish("github", { detail: "수집 완료" });
     const briefing = buildMorningBriefing({
       digest,
       day,
@@ -4590,23 +4664,85 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
     return briefing;
   } catch (error) {
     telemetry.captureException(error, { operation: "morning_briefing_refresh", reason });
+    state.morningBriefingProgressTracker?.failAll("브리핑 수집이 실패했어요 — 다시 동기화를 눌러 주세요.");
     const store = await loadMorningBriefingStore({ workspaceRoot });
-    broadcast({
-      type: "morning_briefing_result",
-      morningBriefing: store.current,
-      status: { state: "failed", detail: "브리핑 수집에 실패했어요. 다시 동기화를 눌러 주세요." },
+    await emitMorningBriefingWithLiveSync({
+      briefing: store.current,
+      preferredProvider,
+      emit: (morningBriefing) => broadcast({
+        type: "morning_briefing_result",
+        morningBriefing,
+        status: { state: "failed", detail: "브리핑 수집에 실패했어요. 다시 동기화를 눌러 주세요." },
+      }),
     });
     return store.current;
   }
 }
 
-async function collectMorningBriefingExternalSignals({ gate, preferredProvider = "" } = {}) {
+async function collectMorningBriefingExternalSignals({ gate, preferredProvider = "", progress = null } = {}) {
   const externalSources = selectedExternalOfficeHoursSources(gate);
   if (!externalSources.length) return { sources: [], drilldowns: {} };
-  const provider = pickMorningBriefingProvider(preferredProvider);
-  if (!provider) {
-    return normalizeMorningBriefingExternalDigest("", externalSources);
+  const primaryProvider = pickMorningBriefingProvider(preferredProvider);
+  if (!primaryProvider) {
+    return normalizeMorningBriefingExternalDigest("", externalSources, {
+      failureDetail: "AI 프로바이더(Claude/Codex) 로그인이 필요해요 — 로그인 후 '다시 동기화'를 눌러 주세요.",
+    });
   }
+  // 1차 프로바이더가 사용량 한도 등으로 실패하면 로그인돼 있는 다른 프로바이더로
+  // 한 번 더 시도한다 — MCP OAuth 토큰은 프로바이더별 캐시라 폴백 쪽도 연결돼
+  // 있을 때만 의미가 있지만, 시도 자체는 읽기 전용이라 비용이 없다.
+  const fallbackProvider = ["claude", "codex"].find(
+    (candidate) => candidate !== primaryProvider && getProviderAuthState(candidate).available,
+  );
+  const providers = [primaryProvider, ...(fallbackProvider ? [fallbackProvider] : [])];
+  // 실측(2026-06-11 아침): 두 소스를 한 실행에 묶으면 ToolSearch+집계 쿼리가
+  // 9~14회 왕복으로 늘어나 180초 예산을 상습 초과한다(170초 성공/180초 abort
+  // 반복). 소스당 1실행으로 쪼개 병렬 수집 — 왕복이 절반으로 줄어 예산 안에
+  // 들고, 한 소스가 느리거나 죽어도 다른 소스 숫자는 산다.
+  const perSource = await Promise.all(externalSources.map(async (source) => {
+    const label = source === "posthog" ? "PostHog" : "Cloudflare";
+    let failureDetail = "";
+    for (const provider of providers) {
+      progress?.log(source, `${label} MCP digest 수집 시작 (${provider})`);
+      const attempt = await runMorningBriefingExternalDigestAttempt({
+        gate,
+        provider,
+        externalSources: [source],
+        onToolEvent: (event) => progress?.tool(source, event),
+      });
+      if (attempt.ok) {
+        progress?.finish(source, { detail: "수집 완료" });
+        return normalizeMorningBriefingExternalDigest(attempt.text, [source], {
+          failureDetail: "외부 MCP digest 응답을 해석하지 못했어요 — '다시 동기화'로 다시 시도해 주세요.",
+        });
+      }
+      if (attempt.timedOut) {
+        // 소프트 타임아웃: 집계는 끝났는데 마지막 출력 직전에 예산이 끊기는
+        // 케이스가 상습(실측 170초 성공/타임아웃 반복) — 그때까지 스트리밍된
+        // 부분 출력에서 완성 JSON을 구제한다.
+        const salvaged = salvageMorningBriefingExternalDigest(attempt.text, [source], {
+          failureDetail: attempt.failureDetail,
+        });
+        if (salvaged) {
+          progress?.finish(source, { detail: "시간 초과 직전 결과를 구제했어요" });
+          return salvaged;
+        }
+        failureDetail = attempt.failureDetail;
+        // 소프트 타임아웃 이후의 폴백 재시도는 브리핑 전체를 분 단위로 늦춘다 — 중단.
+        break;
+      }
+      failureDetail = attempt.failureDetail;
+    }
+    progress?.finish(source, { state: "failed", detail: failureDetail || `${label} 수집에 실패했어요` });
+    return normalizeMorningBriefingExternalDigest("", [source], { failureDetail });
+  }));
+  return {
+    sources: perSource.flatMap((result) => result.sources),
+    drilldowns: Object.assign({}, ...perSource.map((result) => result.drilldowns)),
+  };
+}
+
+async function runMorningBriefingExternalDigestAttempt({ gate, provider, externalSources, onToolEvent = null }) {
   const abortController = new AbortController();
   let externalText = "";
   let timedOut = false;
@@ -4641,6 +4777,7 @@ async function collectMorningBriefingExternalSignals({ gate, preferredProvider =
           sessionIdForMcp: null,
           executionMode: "office_hours_digest_read_only",
           approvedToolExecution: false,
+          onToolEvent,
           onTextDelta: (text) => {
             if (!timedOut) externalText += String(text || "");
           },
@@ -4656,9 +4793,27 @@ async function collectMorningBriefingExternalSignals({ gate, preferredProvider =
       provider,
       sources: externalSources.join(","),
     });
-    externalText = "";
+    // 실패 사유를 소스 카드 detail까지 끌고 간다 — "usable summary" 일반 문구는
+    // 연결 문제로 오해되기 쉽다(실측: Claude session limit이 '연결 필요'로 표시됨).
+    const message = String(error?.message || error || "");
+    return {
+      ok: false,
+      timedOut: false,
+      failureDetail: isProviderUsageLimitMessage(message)
+        ? `AI 프로바이더 사용량 한도로 수집하지 못했어요 — 한도 리셋 후 '다시 동기화'를 눌러 주세요. MCP 연결은 정상이에요. (${message.slice(0, 140)})`
+        : `외부 MCP digest 실행이 실패했어요 — 잠시 후 '다시 동기화'를 눌러 주세요. (${message.slice(0, 140)})`,
+    };
   }
-  return normalizeMorningBriefingExternalDigest(timedOut ? "" : externalText, externalSources);
+  if (timedOut) {
+    return {
+      ok: false,
+      timedOut: true,
+      // 타임아웃까지 모인 부분 출력 — 호출자가 완성 JSON 구제를 시도한다.
+      text: externalText,
+      failureDetail: "외부 MCP digest가 시간 초과됐어요 — MCP 연결은 정상이에요. '다시 동기화'로 다시 시도해 주세요.",
+    };
+  }
+  return { ok: true, timedOut: false, text: externalText, failureDetail: "" };
 }
 
 // Day-less Office Hours starts (fresh slash-command or button sessions) must not

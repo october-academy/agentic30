@@ -618,6 +618,51 @@ export function labelMorningBriefingAnomaly(briefing, label, { now = new Date() 
   };
 }
 
+// ── Live sync overlay ────────────────────────────────────────────────────────
+// sync.sources의 연결 상태는 브리핑 "생성 시점" 스냅샷으로 디스크에 박제된다.
+// 사용자가 그 뒤 Settings에서 MCP OAuth를 연결(또는 프로바이더 전환으로 해제)
+// 하면 Settings 배지와 브리핑 패널이 모순된다(설정 "MCP 연결됨" vs 패널 "미연결").
+// 서빙 직전에 라이브 게이트 결과로 연결 행(state/detail)과 connectGuide만 덮어
+// 쓴다 — cards·metrics·readyCount·syncedAt 같은 데이터 스냅샷은 "그때 모은
+// 신호"이므로 그대로 둔다. 결과는 서빙 전용이며 절대 persist하지 않는다
+// (스키마 버전·마이그레이션과 무관해야 한다).
+export function applyMorningBriefingLiveSync(briefing, liveSources = [], { now = new Date() } = {}) {
+  if (!briefing || typeof briefing !== "object") return { briefing: null, changed: false };
+  const rows = Array.isArray(briefing.sync?.sources) ? briefing.sync.sources : [];
+  const live = new Map(
+    (Array.isArray(liveSources) ? liveSources : [])
+      .filter((source) => source && typeof source.id === "string" && source.state)
+      .map((source) => [source.id, source]),
+  );
+  if (!rows.length || !live.size) return { briefing, changed: false };
+  const sources = rows.map((row) => {
+    const update = live.get(row?.id);
+    if (!update) return row;
+    return {
+      ...row,
+      state: cleanString(update.state, 30),
+      detail: cleanString(update.detail, 120),
+    };
+  });
+  // connectGuide는 병합된 행 기준으로 재계산 — 패널 행과 업셀 배너가 서로
+  // 모순될 수 없게 같은 데이터에서 파생시킨다(둘 다 연결되면 null로 사라진다).
+  const connectGuide = buildMorningBriefingConnectGuide({
+    digest: { sources },
+    day: finiteNumber(briefing.day),
+  });
+  const changed = JSON.stringify(sources) !== JSON.stringify(rows)
+    || JSON.stringify(connectGuide) !== JSON.stringify(briefing.connectGuide ?? null);
+  if (!changed) return { briefing, changed: false };
+  return {
+    briefing: {
+      ...briefing,
+      connectGuide,
+      sync: { ...briefing.sync, sources, liveCheckedAt: nowIso(now) },
+    },
+    changed: true,
+  };
+}
+
 // ── Persistence ──────────────────────────────────────────────────────────────
 
 export function resolveMorningBriefingPath(workspaceRoot) {

@@ -9,6 +9,8 @@ struct MorningBriefingPageView: View {
     let briefing: MorningBriefing?
     let previousBriefing: MorningBriefing?
     let collecting: Bool
+    /// 수집 중 카드별 라이브 진행(카드 id → 스피너 상태 + 에이전트 로그).
+    let sourceProgress: [String: MorningBriefingSourceProgress]
     let fallbackDay: Int
     let refresh: () -> Void
     let prepare: () -> Void
@@ -806,7 +808,10 @@ struct MorningBriefingPageView: View {
     }
 
     private func sourceCard(_ card: MorningBriefingCard) -> some View {
-        VStack(alignment: .leading, spacing: 11) {
+        // 어제 브리핑(읽기 전용) 모드에서는 라이브 진행을 겹치지 않는다.
+        let progress = viewingPrevious ? nil : sourceProgress[card.id]
+        let isCollectingCard = progress?.isCollecting == true
+        return VStack(alignment: .leading, spacing: 11) {
             HStack(spacing: 9) {
                 Image(systemName: sourceLogoSymbol(card.id))
                     .font(.system(size: 11, weight: .medium))
@@ -830,7 +835,9 @@ struct MorningBriefingPageView: View {
                 }
             }
 
-            if card.isReady, let metric = card.metric {
+            if isCollectingCard, let progress {
+                cardCollectingBody(progress)
+            } else if card.isReady, let metric = card.metric {
                 HStack(alignment: .firstTextBaseline, spacing: 9) {
                     Text(metricValueLabel(metric.value))
                         .font(.system(size: 30, weight: .semibold))
@@ -892,13 +899,13 @@ struct MorningBriefingPageView: View {
                     Circle()
                         .fill(card.noteTone == "warn" ? OpenDesignDayColor.amber : OpenDesignDayColor.muted)
                         .frame(width: 5, height: 5)
-                    Text(card.isReady ? (card.note ?? "") : "연결 필요")
+                    Text(footerStatusLabel(card, collecting: isCollectingCard))
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(card.noteTone == "warn" ? OpenDesignDayColor.amber : OpenDesignDayColor.mutedDeep)
                         .lineLimit(1)
                 }
                 Spacer()
-                if card.isReady {
+                if card.isReady, !isCollectingCard {
                     // The sidecar guarantees a drilldown for every ready source
                     // (counts-grade at minimum), so this always navigates —
                     // same as the briefing.html drill links.
@@ -933,6 +940,44 @@ struct MorningBriefingPageView: View {
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("morningBriefing.card.\(card.id)")
+    }
+
+    /// 비-ready 카드의 footer 한 줄. "failed"는 연결은 됐는데 이번 수집이
+    /// 실패한 상태 — "연결 필요"로 오진하지 않는다(실측: MCP 연결됨인데
+    /// digest 타임아웃이 연결 문제로 표시되던 혼선).
+    private func footerStatusLabel(_ card: MorningBriefingCard, collecting: Bool) -> String {
+        if collecting { return "수집 중…" }
+        if card.isReady { return card.note ?? "" }
+        return card.state == "failed" ? "수집 실패 · 연결은 정상" : "연결 필요"
+    }
+
+    /// 수집 중 카드 본문: 스피너 + 진행 설명 + 에이전트 로그 마지막 3줄.
+    private func cardCollectingBody(_ progress: MorningBriefingSourceProgress) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text((progress.detail?.isEmpty == false ? progress.detail : nil) ?? "수집 중…")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    .lineLimit(2)
+            }
+            if let lines = progress.logLines, !lines.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(Array(lines.suffix(3).enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.system(size: 9.5, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.mutedDeep)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("morningBriefing.cardProgress")
     }
 
     private func metricValueLabel(_ value: Double?) -> String {

@@ -147,6 +147,55 @@ test("Day 2+ source gate accepts persisted MCP OAuth state in place of stored AP
   }
 });
 
+test("Day 2+ source gate scopes MCP OAuth readiness to the digest provider", async () => {
+  // OAuth 토큰 캐시는 프로바이더별 — claude로 검증된 상태에서 codex 세션이
+  // digest를 돌리면 codex 캐시에는 토큰이 없으므로 게이트가 missing으로
+  // 막고 재연결을 안내해야 한다(조용한 도구 미인증 실패 방지).
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "oh-gate-oauth-provider-"));
+  try {
+    await fs.writeFile(
+      path.join(appSupportPath, "mcp-oauth-state.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        servers: {
+          posthog: { state: "ready", provider: "claude", detail: "ok", checkedAt: "2026-06-10T11:00:00.000Z" },
+        },
+      }),
+    );
+    const execImpl = fakeExec([
+      ["git rev-parse", { ok: true, stdout: "true\n" }],
+      ["gh auth status", { ok: false, stdout: "" }],
+    ]);
+
+    const claudeGate = await evaluateOfficeHoursSourceGate({
+      workspaceRoot: "/tmp/ws",
+      day: 2,
+      selectedSources: ["posthog"],
+      provider: "claude",
+      appSupportPath,
+      execImpl,
+      env: {},
+    });
+    assert.equal(claudeGate.sources.find((source) => source.id === "posthog").state, "ready");
+
+    const codexGate = await evaluateOfficeHoursSourceGate({
+      workspaceRoot: "/tmp/ws",
+      day: 2,
+      selectedSources: ["posthog"],
+      provider: "codex",
+      appSupportPath,
+      execImpl,
+      env: {},
+    });
+    const codexPosthog = codexGate.sources.find((source) => source.id === "posthog");
+    assert.equal(codexPosthog.state, "missing");
+    assert.match(codexPosthog.detail, /verified for another provider/);
+    assert.deepEqual(codexGate.missingRequiredSources, ["posthog"]);
+  } finally {
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
+});
+
 test("collectGitDailySignals stores aggregate summaries without commit SHAs", async () => {
   const window = officeHoursDigestWindow(new Date("2026-06-09T10:30:00+09:00"), {
     tzOffsetMinutes: KST,
@@ -241,6 +290,14 @@ test("a shipped release is not customer evidence — only PostHog usage counts",
   assert.equal(digest.buildWithoutCustomerEvidence, true);
   assert.match(digest.briefing.biggestEvidenceGap[0], /고객 행동 증거/);
 
+  // Builder-output summaries must not be restated as "goal-helpful signals" —
+  // the duplication doubled the briefing card without adding information.
+  assert.deepEqual(digest.briefing.goalHelpfulSignals, []);
+  // Highlights that already start with the source label keep a single label
+  // ("git 커밋 30건", not "git: git 커밋 30건"); others still get the prefix.
+  assert.ok(digest.briefing.overnightChanges.includes("git 커밋 30건"));
+  assert.ok(digest.briefing.overnightChanges.includes("gh CLI: 릴리즈 4건"));
+
   // With real PostHog usage, the flag flips off.
   const withUsage = finalizeDailyOfficeHoursDigest({
     gate: { ...gate, selectedSources: ["git", "posthog"] },
@@ -252,6 +309,8 @@ test("a shipped release is not customer evidence — only PostHog usage counts",
     now: new Date("2026-06-09T10:30:00+09:00"),
   });
   assert.equal(withUsage.buildWithoutCustomerEvidence, false);
+  // Customer-evidence source summaries DO surface, source-labeled.
+  assert.ok(withUsage.briefing.goalHelpfulSignals.includes("PostHog: 활성 사용자 3명"));
 });
 
 test("evidence-derived goalSignals/evidenceGaps reach the interview briefing", () => {
@@ -307,6 +366,18 @@ test("normalizeExternalOfficeHoursDigest fails closed when the model returns no 
       [["posthog", "failed"], ["cloudflare", "failed"]],
     );
   }
+});
+
+test("normalizeExternalOfficeHoursDigest carries the caller's failureDetail into failed sources", () => {
+  const failureDetail = "AI 프로바이더 사용량 한도로 수집하지 못했어요 — 한도 리셋 후 '다시 동기화'를 눌러 주세요.";
+  const sources = normalizeExternalOfficeHoursDigest("", ["posthog", "cloudflare"], { failureDetail });
+  for (const source of sources) {
+    assert.equal(source.state, "failed");
+    assert.equal(source.detail, failureDetail);
+  }
+  // failureDetail이 없으면 기존 기본 문구를 유지한다.
+  const fallback = normalizeExternalOfficeHoursDigest("", ["posthog"]);
+  assert.equal(fallback[0].detail, "external MCP digest did not return a usable summary");
 });
 
 test("normalizeExternalOfficeHoursDigest extracts embedded JSON and fails the missing expected source", () => {

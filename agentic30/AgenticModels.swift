@@ -707,6 +707,22 @@ nonisolated struct MorningBriefingStatus: Codable, Hashable {
     var detail: String?
 }
 
+/// morning_briefing_progress: 수집 중 카드별 라이브 진행. 사이드카가 emit마다
+/// 전체 스냅샷(cards)을 보내므로 수신 측은 dict 교체만 하면 된다.
+nonisolated struct MorningBriefingProgress: Codable, Hashable {
+    var at: String?
+    var cards: [MorningBriefingSourceProgress]?
+}
+
+nonisolated struct MorningBriefingSourceProgress: Codable, Hashable, Identifiable {
+    var id: String
+    var state: String?
+    var detail: String?
+    var logLines: [String]?
+
+    var isCollecting: Bool { state == "collecting" }
+}
+
 // MARK: - Integration status (Settings > 연동 live checks)
 
 nonisolated struct IntegrationStatusSnapshot: Codable, Hashable {
