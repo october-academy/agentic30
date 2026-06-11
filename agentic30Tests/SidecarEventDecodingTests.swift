@@ -215,6 +215,26 @@ struct SidecarEventDecodingTests {
         #expect(event.sessionId == "session-1")
     }
 
+    @MainActor @Test func decodesProviderAuthRequiredErrorPayload() throws {
+        let payload = """
+        {
+          "type": "error",
+          "sessionId": "session-1",
+          "provider": "codex",
+          "message": "Sign in with Codex or set CODEX_API_KEY / OPENAI_API_KEY",
+          "errorKind": "provider_auth_required",
+          "recoverable": true
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        #expect(event.type == "error")
+        #expect(event.errorKind == "provider_auth_required")
+        #expect(event.provider == "codex")
+        #expect(event.sessionId == "session-1")
+    }
+
     @MainActor @Test func decodesOfficeHoursSourceGatePayload() throws {
         let payload = """
         {

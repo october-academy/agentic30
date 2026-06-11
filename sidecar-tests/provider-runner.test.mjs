@@ -17,6 +17,7 @@ import {
   extractClaudePartialText,
   getProviderAuthState,
   getProviderConnectionState,
+  isProviderAuthRequiredError,
   isCodexContextOverflowError,
   isCodexRecoverableThreadResumeError,
   isCodexUsageLimitError,
@@ -279,6 +280,31 @@ test("isCodexUsageLimitError detects expected Codex/ChatGPT quota conditions", (
   assert.equal(isCodexUsageLimitError(new Error("spawn codex ENOENT")), false);
   assert.equal(isCodexUsageLimitError(null), false);
   assert.equal(isCodexUsageLimitError(undefined), false);
+});
+
+test("isProviderAuthRequiredError detects expected provider auth setup prompts", () => {
+  assert.equal(
+    isProviderAuthRequiredError(new Error("Sign in with Codex or set CODEX_API_KEY / OPENAI_API_KEY")),
+    true,
+  );
+  assert.equal(
+    isProviderAuthRequiredError(new Error("Sign in with Claude Code or set ANTHROPIC_API_KEY")),
+    true,
+  );
+  assert.equal(
+    isProviderAuthRequiredError(new Error("Set CURSOR_API_KEY or add a Cursor API key in settings")),
+    true,
+  );
+  assert.equal(
+    isProviderAuthRequiredError(new Error("Run `gcloud auth application-default login`, set GEMINI_API_KEY / GOOGLE_API_KEY, or configure Vertex AI")),
+    true,
+  );
+  assert.equal(
+    isProviderAuthRequiredError(new Error("request failed: context_length_exceeded")),
+    false,
+  );
+  assert.equal(isProviderAuthRequiredError(new Error("spawn codex ENOENT")), false);
+  assert.equal(isProviderAuthRequiredError(null), false);
 });
 
 test("resolveCodexModel defaults Codex sessions to GPT 5.5", () => {

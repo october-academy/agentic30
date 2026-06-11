@@ -1174,6 +1174,26 @@ export function isProviderUsageLimitError(error) {
   );
 }
 
+/**
+ * Recognizes expected "provider is not signed in / no API key configured"
+ * states. These require user action, but they are not sidecar faults and should
+ * not become error-tracking issues when the app has already surfaced an auth
+ * action.
+ */
+export function isProviderAuthRequiredError(error) {
+  const message = String(error?.message ?? error ?? "").toLowerCase();
+  if (!message) return false;
+  return (
+    message.includes("sign in with claude code or set anthropic_api_key")
+    || message.includes("sign in with codex or set codex_api_key / openai_api_key")
+    || message.includes("set cursor_api_key or add a cursor api key")
+    || message.includes("run `gcloud auth application-default login`")
+    || message.includes("gcloud sdk not installed")
+    || message.includes("invalid authentication credentials")
+    || message.includes("401")
+  );
+}
+
 async function runCodexAttempt({
   sessionRuntime,
   prompt,

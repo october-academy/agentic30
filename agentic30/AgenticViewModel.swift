@@ -7031,17 +7031,17 @@ final class AgenticViewModel: ObservableObject {
                 }
                 markStartupQueuedActionFailed(event.message ?? "실행 보조 앱 연결이 끊겼습니다.")
             }
-            if event.errorKind == "provider_usage_limit" {
-                // Expected upstream provider quota cap (e.g. Codex/ChatGPT usage
-                // limit). The sidecar already surfaced it as the session error
-                // (a "retry later / switch provider" message); track it as a
-                // benign event instead of a captured exception so the bridge
-                // does not double-report it as an error-tracking issue.
+            if event.errorKind == "provider_usage_limit" || event.errorKind == "provider_auth_required" {
+                // Expected upstream provider states (quota cap or missing auth).
+                // The sidecar already surfaced the actionable session error;
+                // track a benign event instead of a captured exception so the
+                // bridge does not double-report it as an error-tracking issue.
                 PostHogTelemetry.capture(
-                    "mac_provider_usage_limit",
+                    event.errorKind == "provider_usage_limit" ? "mac_provider_usage_limit" : "mac_provider_auth_required",
                     properties: [
                         "component": "agentic_view_model",
                         "operation": "sidecar_event_error",
+                        "provider": event.provider ?? "",
                         "session_id": event.sessionId ?? "",
                     ],
                     authSession: macAuthSession
@@ -10716,10 +10716,10 @@ struct SidecarEvent: Decodable {
     let gatedStep: String?
     let error: String?
     /// Set by the sidecar on `type: "error"` envelopes that represent an
-    /// expected, recoverable upstream provider condition (today,
-    /// `"provider_usage_limit"` for a Codex/ChatGPT quota cap) rather than a
-    /// real fault. The host uses it to surface a "retry later / switch provider"
-    /// message instead of capturing a generic exception.
+    /// expected, recoverable upstream provider condition (`"provider_usage_limit"`
+    /// for quota, `"provider_auth_required"` for missing sign-in/API key) rather
+    /// than a real fault. The host uses it to surface the actionable message
+    /// instead of capturing a generic exception.
     let errorKind: String?
 
     // Document creation fields
