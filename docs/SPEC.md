@@ -1,9 +1,9 @@
 # Agentic30 Product Spec
 
-> **최종 업데이트:** 2026-05-22
-> **상태:** 외부 ICP evidence 기반 private pilot loop 검증 중
+> **최종 업데이트:** 2026-06-12
+> **상태:** ICP 인터뷰 evidence 기반 private pilot loop 검증 중
 
-Agentic30은 전업 1인 개발자가 30일 안에 사용자 100명과 첫 매출 가능성을 검증하도록 돕는 local-first macOS assistant다. 고정 강의가 아니라 사용자의 프로젝트와 실행 기록을 읽고 다음 행동을 바꾼다.
+Agentic30은 전업 1인 개발자가 30일 안에 활성 사용자 100명과 첫 매출 가능성을 검증하도록 돕는 local-first macOS assistant다. 고정 강의가 아니라 사용자의 프로젝트와 실행 기록을 읽고 다음 행동을 바꾼다.
 
 ---
 
@@ -22,7 +22,7 @@ Agentic30은 사용자의 프로젝트 path, 업무 일지, 고객 인터뷰, BI
 - 전업 1인 개발자
 - 첫 매출 전
 - macOS 사용자
-- Claude Code, Codex, Cursor 같은 에이전트 코딩 도구 사용자
+- Claude Code, Codex, Gemini, Cursor 같은 에이전트 코딩 도구 사용자
 - 프로젝트 path와 인터뷰/BIP/업무 기록을 제공할 의향이 있는 사람
 
 핵심 문제는 “만들 줄은 알지만 무엇을 팔아야 하는지, 어떻게 사람을 데려와야 하는지, 오늘 무엇을 검증해야 하는지 모른다”는 것이다.
@@ -89,7 +89,7 @@ Q2의 제품 wedge는 **Day 0-3 private pilot loop**다.
 
 ### North Star
 
-30일 안에 사용자 100명과 첫 매출 가능성을 검증한다.
+30일 안에 사용자 활성 100명과 첫 매출 가능성을 검증한다.
 
 ### MVP Success
 
