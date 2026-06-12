@@ -49,6 +49,16 @@ Local Node.js sidecar that the macOS app launches as a child process. Provides a
 | `idd-doc-gate.mjs` | Iterative Doc Development gate (~37k chars) |
 | `adaptive-curriculum.mjs` | Adaptive curriculum builder |
 
+### 30-day program (gates / evidence / adaptive rules — spec `docs/specs/agentic30-30day-adaptive-program.md`)
+| File | Description |
+|------|-------------|
+| `program-gate-engine.mjs` | Milestone gate engine (G1–G7): pure, idempotent evaluation persisted to `<ws>/.agentic30/gate-ledger.json` (schema v1). Owns the §15.3 recovery substitution table, §13.4 intervention tokens (once per gate, program cap 3, dueDay expiry), §21 provisional overlays, and `evaluateDayProgressPatchGate` — wired BEFORE `patchDayStep` in index.mjs (the authority seat) |
+| `proof-ledger-write-through.mjs` | Terminal verification verdicts (auto pass → verified/strong, judge accepted → strength by curriculum actionType, insufficient → weak) written through to proof-ledger `action_evidence` events; judge errors/auto failures never write (fail-closed) |
+| `mission-card.mjs` | `mission_card` bridge event for execution-step entry: IDD mission + evidence spec (education/review days are evidence-free) + gate context; gate-ledger substitutions override the mission |
+| `active-users-snapshot.mjs` | §15.4 active-user store (`.agentic30/metrics/active-users.json`): one cumulative `first_value` HogQL query, piggybacked on the morning-briefing cycle; `latestFirstValueSignal` feeds G4② |
+| `oh-intervention.mjs` / `oh-intervention-prompts.mjs` | §13 system-triggered Office Hours interventions: the prompts module OWNS the trigger registry (unregistered triggers never fire); the wiring module builds `office_hours_intervention_required` events, the session-contract context block, and commitment-confirmed token issuance |
+| `adaptive-rules.mjs` / `adaptive-rule-signals.mjs` | §12 MVP rules AR-01/02/05/07/08/14/17/19 evaluated over persisted-store signals; firings land in gate-ledger `adaptiveEvents` (one per rule per day), false-positive labels impose a 48h cooldown, AR-17 enforces the new-commitment block |
+
 ### Specialists / prompts
 | File | Description |
 |------|-------------|

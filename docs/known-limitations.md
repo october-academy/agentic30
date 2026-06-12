@@ -18,6 +18,16 @@
 | Provider auth is external | Claude and Codex availability depends on local CLI login state or environment API keys. |
 | Diagnostics are manual | Users must copy diagnostics from Settings. Native crash reporting is not implemented yet. |
 
+## 30-Day Program
+
+| Limitation | Details |
+|---|---|
+| Active-user count requires PostHog | The 100-active-users count is only fed by the `first_value` HogQL snapshot (`sidecar/active-users-snapshot.mjs`). Without a valid PostHog key, G4②/G5 fall to the §21 provisional overlay (3-day grace) and then hard-block. |
+| No traffic collector yet | G5's traffic condition reads `trafficSnapshot` proof events or a live input; neither is auto-collected yet, so a connected Cloudflare still routes through the provisional path until a collector lands. |
+| AR-05 / AR-08 signals unwired | The carry-over and Cloudflare-visits inputs of the adaptive rules stay `null` (rules silent, fail-closed) until the curriculum-loop and traffic collectors are wired. |
+| Intervention arming is in-memory | The pending gate armed by an intervention-framed Office Hours session does not survive a sidecar restart — re-trigger the intervention; the durable artifact is the gate-ledger token. |
+| Review-day cadence is fixed | Gate review days stay 7/14/21/28 (spec A3); pause/reschedule is a later expansion. |
+
 ## Compatibility
 
 | Limitation | Details |
