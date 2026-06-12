@@ -944,18 +944,36 @@ function registerAuthenticatedClient(socket) {
     try {
       await handleClientMessage(socket, payload);
     } catch (error) {
-      telemetry.captureException(error, {
+      const provider = providerForClientPayload(payload);
+      const captureProps = {
         operation: "handleClientMessage",
         session_id: payload?.sessionId || "",
         message_type: payload?.type || "unknown",
-    });
+        ...(provider ? { provider } : {}),
+      };
+      const errorKind = providerRecoverableErrorKind(error);
+      if (errorKind) {
+        reportProviderRunError(error, captureProps);
+      } else {
+        telemetry.captureException(error, captureProps);
+      }
       send(socket, {
         type: "error",
         sessionId: payload?.sessionId,
+        ...(provider ? { provider } : {}),
         message: formatError(error),
-    });
+        ...providerRecoverableErrorEnvelope(errorKind),
+      });
     }
   });
+}
+
+function providerForClientPayload(payload = {}) {
+  const direct = String(payload?.provider || payload?.preferredProvider || "").trim();
+  if (direct) return direct;
+  const sessionId = String(payload?.sessionId || "").trim();
+  if (!sessionId) return "";
+  return String(state.sessions.get(sessionId)?.provider || "").trim();
 }
 
 wss.on("listening", () => {
@@ -6376,7 +6394,7 @@ async function runOfficeHours(session, {
       elapsedMs: performance.now() - runStartedAt,
     });
   } catch (error) {
-    if (abortController.signal.aborted || error?.name === "AbortError") {
+    if (abortController.signal.aborted || isAbortLikeError(error)) {
       telemetry.captureEvent("mac_sidecar_office_hours_aborted", {
         session_id: session.id,
         provider: session.provider,
@@ -6433,7 +6451,7 @@ async function runOfficeHours(session, {
         message: formatError(error),
       });
     } else {
-      telemetry.captureException(error, {
+      const errorKind = reportProviderRunError(error, {
         operation: "runOfficeHours",
         session_id: session.id,
         provider: session.provider,
@@ -6455,7 +6473,9 @@ async function runOfficeHours(session, {
       broadcast({
         type: "error",
         sessionId: session.id,
+        provider: session.provider,
         message: formatError(error),
+        ...providerRecoverableErrorEnvelope(errorKind),
       });
     }
   } finally {
