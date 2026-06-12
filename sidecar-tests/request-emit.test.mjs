@@ -276,6 +276,120 @@ test("office_hours_start preserves custom source and ignores duplicate concurren
   }
 });
 
+test("office_hours_start reports provider usage limits as recoverable error envelopes", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_FORCE_PROVIDER_USAGE_LIMIT: "claude",
+    },
+  });
+  let ws;
+  try {
+    await initGitRepo(harness.workspacePath);
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "claude",
+      model: "claude-sonnet-4-6",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 1,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle",
+    );
+
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context: [
+        "DAY1_LOCKED_GOAL",
+        "Office Hours mode: Startup",
+        "Expected question count: 6",
+        "Goal lane: make_money / 첫 매출 달성",
+        "Goal text: provider quota envelope regression",
+        "Customer: B2B founder",
+        "Problem: provider errors are double-captured",
+        "Validation action: retry with another provider",
+      ].join("\n"),
+      visiblePrompt: "Test Office Hours provider quota",
+      source: "day1_interview_goal_locked",
+      day: 1,
+    }));
+
+    const failedStatus = await waitForEvent(ws.events, (event) =>
+      event.type === "office_hours_status"
+        && event.sessionId === created.session.id
+        && event.stage === "failed",
+    );
+    assert.match(failedStatus.detail, /weekly limit/);
+
+    const recoverableError = await waitForEvent(ws.events, (event) =>
+      event.type === "error"
+        && event.sessionId === created.session.id
+        && event.errorKind === "provider_usage_limit",
+    );
+    assert.equal(recoverableError.provider, "claude");
+    assert.equal(recoverableError.recoverable, true);
+    assert.match(recoverableError.message, /weekly limit/);
+
+    const erroredSession = await waitForEvent(ws.events, (event) =>
+      event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.status === "error",
+    );
+    assert.match(erroredSession.session.error, /weekly limit/);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("office_hours_start reports provider auth preflight failures as recoverable error envelopes", async () => {
+  const harness = await spawnSidecar({
+    extraEnv: {
+      AGENTIC30_TEST_STUB_PROVIDER: "",
+      CODEX_API_KEY: "",
+      OPENAI_API_KEY: "",
+    },
+  });
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 1,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle",
+    );
+
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context: "Office Hours mode: Startup",
+      visiblePrompt: "Test Office Hours auth preflight",
+      source: "day1_interview_goal_locked",
+      day: 1,
+    }));
+
+    const recoverableError = await waitForEvent(ws.events, (event) =>
+      event.type === "error"
+        && event.sessionId === created.session.id
+        && event.errorKind === "provider_auth_required",
+    );
+    assert.equal(recoverableError.provider, "codex");
+    assert.equal(recoverableError.recoverable, true);
+    assert.match(recoverableError.message, /CODEX_API_KEY|OPENAI_API_KEY|Codex/);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
 test("office_hours Day 1 stops at expected six questions and suppresses stray seventh request", async () => {
   const harness = await spawnSidecar();
   let ws;
@@ -629,14 +743,16 @@ function assertStatusOrder(actualStages, expectedStages) {
   }
 }
 
-async function spawnSidecar() {
+async function spawnSidecar({ extraEnv = {} } = {}) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-request-emit-"));
   const workspacePath = path.join(tempRoot, "workspace");
   const appSupportPath = path.join(tempRoot, "app-support");
   const ghConfigPath = path.join(tempRoot, "gh-config");
+  const homePath = path.join(tempRoot, "home");
   await fs.mkdir(workspacePath, { recursive: true });
   await fs.mkdir(appSupportPath, { recursive: true });
   await fs.mkdir(ghConfigPath, { recursive: true });
+  await fs.mkdir(homePath, { recursive: true });
 
   const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", workspacePath], {
     cwd: packageRoot,
@@ -645,9 +761,11 @@ async function spawnSidecar() {
       AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
       AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
       AGENTIC30_TEST_STUB_PROVIDER: "1",
+      HOME: homePath,
       GH_CONFIG_DIR: ghConfigPath,
       GH_TOKEN: "",
       GITHUB_TOKEN: "",
+      ...extraEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
