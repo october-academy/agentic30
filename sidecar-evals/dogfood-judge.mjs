@@ -361,6 +361,8 @@ function buildSmokeChecks({ scenario, observed, events, eventTypeSet }) {
       checks.day_progress_state_received = eventTypeSet.has("day_progress_state");
       checks.gate_blocked_observed = observed.gateBlocked?.gateId === "G2";
       checks.gate_release_path_named = String(observed.gateMessage || "").length > 0;
+      checks.gate_substitution_recorded = Array.isArray(observed.gateSubstitutions)
+        && observed.gateSubstitutions.some((row) => row.day === 8);
       break;
     default:
       checks.assistant_output_observed = hasAssistantOutput(observed);

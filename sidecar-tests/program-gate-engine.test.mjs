@@ -17,6 +17,7 @@ import {
   recordGateAdaptiveEvent,
   recordMissionSubstitution,
   resolveBlockingGate,
+  resolveDueSubstitutions,
   resolveGateLedgerPath,
 } from "../sidecar/program-gate-engine.mjs";
 
@@ -346,4 +347,144 @@ test("resolveBlockingGate ignores warning-style gates and respects gate order", 
     resolveBlockingGate({ gates: evaluation.gates, targetDay: 3 }),
     null,
   );
+});
+
+// --- P1-4: G5/G6/G7 evaluators + substitution table ---
+test("G5 requires automated traffic plus an active user; outage grants provisional only", () => {
+  const passed = evaluateProgramGates({
+    proofLedger: {
+      events: [{ id: "traffic-1", type: "traffic_snapshot", day: 20, status: "verified" }],
+    },
+    currentDay: 22,
+    firstValue: { observed: true, rowCount: 1 },
+    sources: { posthogAvailable: true, cloudflareAvailable: true },
+    now: T0,
+  });
+  assert.equal(passed.gates.G5.state, GATE_STATES.passed);
+
+  const liveTraffic = evaluateProgramGates({
+    proofLedger: { events: [] },
+    currentDay: 22,
+    traffic: { observed: true },
+    firstValue: { observed: true, rowCount: 2 },
+    sources: { posthogAvailable: true, cloudflareAvailable: true },
+    now: T0,
+  });
+  assert.equal(liveTraffic.gates.G5.state, GATE_STATES.passed);
+
+  // Sources up but zero traffic → genuine block, no provisional.
+  const zeroTraffic = evaluateProgramGates({
+    proofLedger: { events: [] },
+    currentDay: 22,
+    traffic: { observed: false },
+    firstValue: { observed: true, rowCount: 1 },
+    sources: { posthogAvailable: true, cloudflareAvailable: true },
+    now: T0,
+  });
+  assert.equal(zeroTraffic.gates.G5.state, GATE_STATES.blocked);
+  assert.equal(zeroTraffic.gates.G5.provisional, null);
+
+  // Both sources down → blocked(source_unavailable) + provisional overlay.
+  const outage = evaluateProgramGates({
+    proofLedger: { events: [] },
+    currentDay: 22,
+    traffic: null,
+    firstValue: null,
+    sources: { posthogAvailable: false, cloudflareAvailable: false },
+    now: T0,
+  });
+  assert.equal(outage.gates.G5.state, GATE_STATES.blocked);
+  assert.equal(outage.gates.G5.blockedReason, "source_unavailable");
+  assert.equal(outage.gates.G5.provisional.active, true);
+});
+
+test("G6 passes on a strong payment record or three strong asks plus a refusal — never hard-blocks", () => {
+  const viaRecord = evaluateProgramGates({
+    proofLedger: {
+      events: [{ id: "rec-1", type: "payment_record", day: 27, status: "accepted", strength: "strong" }],
+    },
+    currentDay: 28,
+    now: T0,
+  });
+  assert.equal(viaRecord.gates.G6.state, GATE_STATES.passed);
+
+  const viaRefusal = evaluateProgramGates({
+    proofLedger: {
+      events: [
+        { id: "a1", type: "payment_intent", day: 20, status: "accepted", strength: "strong" },
+        { id: "a2", type: "payment_intent", day: 24, status: "accepted", strength: "strong" },
+        { id: "a3", type: "payment_intent", day: 27, status: "accepted", strength: "strong" },
+        { id: "r1", type: "payment_failure", day: 27, status: "accepted", strength: "strong", metadata: { kind: "refusal" } },
+      ],
+    },
+    currentDay: 28,
+    now: T0,
+  });
+  assert.equal(viaRefusal.gates.G6.state, GATE_STATES.passed);
+
+  // Two asks + refusal: unmet, but warning-style — day entry is never blocked.
+  const unmet = evaluateProgramGates({
+    proofLedger: {
+      events: [
+        { id: "a1", type: "payment_intent", day: 20, status: "accepted", strength: "strong" },
+        { id: "r1", type: "payment_failure", day: 27, status: "accepted", strength: "strong", metadata: { kind: "refusal" } },
+      ],
+    },
+    currentDay: 29,
+    now: T0,
+  });
+  assert.equal(unmet.gates.G6.state, GATE_STATES.open);
+  assert.notEqual(resolveBlockingGate({ gates: unmet.gates, targetDay: 29 })?.gateId, GATE_IDS.G6);
+});
+
+test("G7 needs a Day 30 decision with at least three evidence refs", () => {
+  const held = evaluateProgramGates({
+    proofLedger: {
+      events: [
+        { id: "d30", type: "day_decision", day: 30, status: "accepted", decision: "continue", refs: ["proof-1", "proof-2"] },
+      ],
+    },
+    currentDay: 30,
+    now: T0,
+  });
+  assert.equal(held.gates.G7.state, GATE_STATES.open);
+
+  const graduated = evaluateProgramGates({
+    proofLedger: {
+      events: [
+        { id: "d30", type: "day_decision", day: 30, status: "accepted", decision: "continue", refs: ["proof-1", "proof-2", "proof-3"] },
+      ],
+    },
+    currentDay: 30,
+    now: T0,
+  });
+  assert.equal(graduated.gates.G7.state, GATE_STATES.passed);
+});
+
+test("substitution table records recovery missions once per failed gate", () => {
+  const blockedG2 = evaluateProgramGates({
+    proofLedger: { events: [] },
+    currentDay: 8,
+    now: T0,
+  });
+  const due = resolveDueSubstitutions({ evaluation: blockedG2, ledger: { substitutions: [] }, now: T0 });
+  const g2Rows = due.filter((row) => row.failedGate === "G2");
+  assert.deepEqual(g2Rows.map((row) => row.day), [8, 9]);
+  assert.equal(g2Rows[0].reason, "G2_failed");
+  assert.ok(g2Rows[0].exitCondition.includes("dayDecision"));
+
+  // Idempotent: rows for a gate already in the ledger are not re-issued.
+  const again = resolveDueSubstitutions({
+    evaluation: blockedG2,
+    ledger: { substitutions: [{ day: 8, failedGate: "G2", reason: "G2_failed" }] },
+    now: T0,
+  });
+  assert.equal(again.filter((row) => row.failedGate === "G2").length, 0);
+
+  // Warning-style G6: due once its objective day passed without a pass.
+  const day29 = evaluateProgramGates({ proofLedger: { events: [] }, currentDay: 29, now: T0 });
+  const g6Due = resolveDueSubstitutions({ evaluation: day29, ledger: { substitutions: [] }, now: T0 });
+  assert.ok(g6Due.some((row) => row.failedGate === "G6" && row.day === 29));
+  // G7 not due before its objective day passes.
+  assert.equal(g6Due.some((row) => row.failedGate === "G7"), false);
 });

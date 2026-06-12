@@ -128,7 +128,116 @@ export const GATE_DEFINITIONS = Object.freeze({
 });
 
 /** Gates with an evaluator wired in this build. */
-export const EVALUATED_GATE_IDS = Object.freeze([GATE_IDS.G1, GATE_IDS.G2, GATE_IDS.G4]);
+export const EVALUATED_GATE_IDS = Object.freeze([
+  GATE_IDS.G1,
+  GATE_IDS.G2,
+  GATE_IDS.G4,
+  GATE_IDS.G5,
+  GATE_IDS.G6,
+  GATE_IDS.G7,
+]);
+
+/**
+ * 치환 테이블 (§15.3, Gate Engine 소유): milestone 실패 시 targetDays의
+ * 미션을 회복 미션으로 대체한다. Rows are recorded once per failed gate into
+ * gate-ledger `substitutions[]`; mission cards consume them (§11.1).
+ */
+export const GATE_SUBSTITUTION_TABLE = Object.freeze({
+  [GATE_IDS.G2]: Object.freeze([
+    Object.freeze({
+      day: 8,
+      replacementMissionId: "g2-recovery-interview-rerun",
+      replacedMission: "인터뷰 재실행 + foundation 마감(go-no-go 재작성)",
+      exitCondition: "인터뷰 strong ≥1 + dayDecision 기록",
+    }),
+    Object.freeze({
+      day: 9,
+      replacementMissionId: "g2-recovery-foundation-close",
+      replacedMission: "인터뷰 재실행 + foundation 마감(go-no-go 재작성)",
+      exitCondition: "인터뷰 strong ≥1 + dayDecision 기록",
+    }),
+  ]),
+  [GATE_IDS.G4]: Object.freeze([
+    Object.freeze({
+      day: 15,
+      replacementMissionId: "g4-recovery-ask-resend",
+      replacedMission: "유료 ask 재작성+발송",
+      exitCondition: "paymentIntent strong ≥1 + HogQL first_value ≥1행",
+    }),
+    Object.freeze({
+      day: 16,
+      replacementMissionId: "g4-recovery-instrumentation",
+      replacedMission: "first_value 계측 삽입",
+      exitCondition: "paymentIntent strong ≥1 + HogQL first_value ≥1행",
+    }),
+  ]),
+  [GATE_IDS.G5]: Object.freeze([
+    Object.freeze({
+      day: 22,
+      replacementMissionId: "g5-recovery-channel-reselect",
+      replacedMission: "채널 재선정 + 첫 포스트/outreach 재실행",
+      exitCondition: "traffic 자동 증거 + active user ≥1",
+    }),
+    Object.freeze({
+      day: 23,
+      replacementMissionId: "g5-recovery-outreach-rerun",
+      replacedMission: "채널 재선정 + 첫 포스트/outreach 재실행",
+      exitCondition: "traffic 자동 증거 + active user ≥1",
+    }),
+  ]),
+  [GATE_IDS.G6]: Object.freeze([
+    Object.freeze({
+      day: 29,
+      replacementMissionId: "g6-recovery-ask-and-refusal",
+      replacedMission: "ask 재발송 + 결제/거절 원문 수집 삽입",
+      exitCondition: "paymentRecord 또는 명시적 거절 원문",
+    }),
+  ]),
+  [GATE_IDS.G7]: Object.freeze([
+    Object.freeze({
+      day: 30,
+      replacementMissionId: "g7-graduation-hold",
+      replacedMission: "graduation 보류 미션(근거 증거 참조 보강)",
+      exitCondition: "근거 증거 참조 ≥3",
+    }),
+  ]),
+});
+
+/**
+ * Substitution rows due for recording (§11.1/§15.3): a hard-blocking gate
+ * contributes its rows while blocked; warning-style gates (G6/G7,
+ * enforceDay=null) contribute once their objective day passed without a
+ * pass. Rows already in the ledger (same gate) are skipped — idempotent.
+ */
+export function resolveDueSubstitutions({ evaluation = {}, ledger = {}, now = new Date() } = {}) {
+  const day = normalizeDay(evaluation?.currentDay ?? evaluation?.current_day) ?? 1;
+  const existing = new Set(
+    asArray(ledger?.substitutions).map((entry) => entry.failedGate ?? entry.failed_gate),
+  );
+  const due = [];
+  for (const [gateId, rows] of Object.entries(GATE_SUBSTITUTION_TABLE)) {
+    if (existing.has(gateId)) continue;
+    const gate = evaluation?.gates?.[gateId];
+    if (!gate) continue;
+    const definition = GATE_DEFINITIONS[gateId];
+    const failed = definition.enforceDay !== null
+      ? gate.state === GATE_STATES.blocked && !(gate.provisional?.active === true)
+      : day > definition.openDay && gate.state !== GATE_STATES.passed;
+    if (!failed) continue;
+    for (const row of rows) {
+      due.push({
+        day: row.day,
+        failedGate: gateId,
+        replacedMission: row.replacedMission,
+        replacementMissionId: row.replacementMissionId,
+        exitCondition: row.exitCondition,
+        reason: `${gateId}_failed`,
+        recordedAt: toIso(now),
+      });
+    }
+  }
+  return due;
+}
 
 export function resolveGateLedgerPath(workspaceRoot) {
   return path.join(resolveAgentic30Dir(workspaceRoot), "gate-ledger.json");
@@ -219,6 +328,7 @@ export function evaluateProgramGates({
   proofLedger = null,
   currentDay = 1,
   firstValue = null,
+  traffic = null,
   sources = {},
   previousGates = {},
   now = new Date(),
@@ -294,6 +404,94 @@ export function evaluateProgramGates({
         label: "사용자 제품 PostHog first_value 이벤트 ≥1행 (HogQL 자동)",
         satisfied: firstValueCondition.satisfied,
         sourceUnavailable: firstValueCondition.sourceUnavailable,
+      },
+    ],
+    now,
+  });
+
+  // G5 첫 외부 유입 (§10.2): ① traffic 자동 증거 ② active user ≥1 — 모두
+  // 자동 집계 전용. traffic은 trafficSnapshot proof 이벤트 또는 라이브 입력.
+  const trafficSnapshotObserved = events.some((event) =>
+    event.type === PROOF_EVENT_TYPES.trafficSnapshot
+      && COMPLETED_STATUSES.has(String(event.status || "")),
+  );
+  const trafficCondition = trafficSnapshotObserved || traffic?.observed === true
+    ? { satisfied: true, sourceUnavailable: false }
+    : traffic == null && sources?.cloudflareAvailable !== true
+      ? { satisfied: false, sourceUnavailable: true }
+      : { satisfied: false, sourceUnavailable: false };
+  const activeUserCondition = firstValue && Number(firstValue.rowCount) >= 1
+    ? { satisfied: true, sourceUnavailable: false }
+    : evaluateFirstValueCondition({ firstValue, sources });
+  gates[GATE_IDS.G5] = finalizeGate({
+    definition: GATE_DEFINITIONS.G5,
+    day,
+    evaluatedAt,
+    previous: previousGates?.[GATE_IDS.G5],
+    conditions: [
+      {
+        id: "traffic_observed",
+        label: "traffic 자동 증거 ≥1 (Cloudflare/PostHog)",
+        satisfied: trafficCondition.satisfied,
+        sourceUnavailable: trafficCondition.sourceUnavailable,
+      },
+      {
+        id: "active_user_observed",
+        label: "active user ≥1 (HogQL 자동 집계)",
+        satisfied: activeUserCondition.satisfied,
+        sourceUnavailable: activeUserCondition.sourceUnavailable,
+      },
+    ],
+    now,
+  });
+
+  // G6 revenue 검증 상태 (§10.2, 비차단): paymentRecord ≥1 또는
+  // (paymentIntent strong ≥3 + 명시적 거절 기록).
+  const paymentRecordStrong = events.some((event) =>
+    event.type === PROOF_EVENT_TYPES.paymentRecord && isStrongCompleted(event),
+  );
+  const paidAskStrongCount = events.filter((event) =>
+    event.type === PROOF_EVENT_TYPES.paymentIntent && isStrongCompleted(event),
+  ).length;
+  const refusalRecorded = events.some((event) =>
+    event.type === PROOF_EVENT_TYPES.paymentFailure
+      && COMPLETED_STATUSES.has(String(event.status || ""))
+      && String(event.metadata?.kind ?? event.metadata?.revenue_kind ?? "") === "refusal",
+  );
+  gates[GATE_IDS.G6] = finalizeGate({
+    definition: GATE_DEFINITIONS.G6,
+    day,
+    evaluatedAt,
+    previous: previousGates?.[GATE_IDS.G6],
+    conditions: [
+      {
+        id: "revenue_validation_state",
+        label: "paymentRecord ≥1 또는 (paymentIntent strong ≥3 + 명시적 거절 기록)",
+        satisfied: paymentRecordStrong || (paidAskStrongCount >= 3 && refusalRecorded),
+      },
+    ],
+    now,
+  });
+
+  // G7 Final Decision (§10.2): Day 30 dayDecision + 근거 증거 참조 ≥3
+  // (anti-validation: 결정 없는 완주 불인정).
+  const finalDecision = events.some((event) =>
+    event.type === PROOF_EVENT_TYPES.dayDecision
+      && Number(event.day) >= 30
+      && COMPLETED_STATUSES.has(String(event.status || ""))
+      && Boolean(event.decision)
+      && (Array.isArray(event.refs) ? event.refs.length : 0) >= 3,
+  );
+  gates[GATE_IDS.G7] = finalizeGate({
+    definition: GATE_DEFINITIONS.G7,
+    day,
+    evaluatedAt,
+    previous: previousGates?.[GATE_IDS.G7],
+    conditions: [
+      {
+        id: "final_decision_with_evidence_refs",
+        label: "continue/pivot/stop 결정 + 근거 증거 참조 ≥3 (Day 30 dayDecision)",
+        satisfied: finalDecision,
       },
     ],
     now,
@@ -385,6 +583,7 @@ export async function evaluateAndRecordProgramGates({
   proofLedger = null,
   currentDay = 1,
   firstValue = null,
+  traffic = null,
   sources = {},
   now = new Date(),
 } = {}) {
@@ -402,6 +601,7 @@ export async function evaluateAndRecordProgramGates({
       proofLedger: proofs,
       currentDay,
       firstValue,
+      traffic,
       sources,
       previousGates: current.gates,
       now,
@@ -424,6 +624,7 @@ export async function evaluateDayProgressPatchGate({
   day,
   stepId = "",
   firstValue = null,
+  traffic = null,
   sources = {},
   now = new Date(),
 } = {}) {
@@ -435,6 +636,7 @@ export async function evaluateDayProgressPatchGate({
     workspaceRoot,
     currentDay: targetDay,
     firstValue,
+    traffic,
     sources,
     now,
   });

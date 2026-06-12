@@ -139,9 +139,12 @@ import {
   buildGateBlockedMessage,
   evaluateDayProgressPatchGate,
   loadGateLedger,
+  recordMissionSubstitution,
   resolveActiveGate,
+  resolveDueSubstitutions,
   resolveProgramPhase,
 } from "./program-gate-engine.mjs";
+import { judgeActionEvidence } from "./action-evidence-judge.mjs";
 import { buildMissionCardEvent } from "./mission-card.mjs";
 import {
   buildInterventionContextBlock,
@@ -2074,6 +2077,99 @@ async function handleClientMessage(socket, payload) {
       await handleDayProgressGet(socket, payload);
       return;
     }
+    case "submit_revenue_evidence": {
+      // §17.1/§24-7: revenue evidence path — submit_action_evidence와 동형,
+      // paymentRecord 계열 proof 이벤트로 기록. §3.2: LLM judge가 sufficiency
+      // 판정(캡처/URL + 발송·수신 시각, §9.3-4). judge error는 §21 보류 —
+      // 아무것도 기록하지 않는다.
+      const root = resolveDay1GoalWorkspaceRoot(payload);
+      const kindToken = String(payload.kind || "").trim().toLowerCase();
+      const REVENUE_KIND_TO_EVENT_TYPE = {
+        payment_record: "payment_record",
+        payment_failure: "payment_failure",
+        refund: "refund",
+        refusal: "payment_failure",
+      };
+      const eventType = REVENUE_KIND_TO_EVENT_TYPE[kindToken];
+      if (!eventType) {
+        throw new Error("submit_revenue_evidence requires kind: payment_record|payment_failure|refund|refusal.");
+      }
+      const content = String(payload.content || "").trim();
+      if (!content) {
+        throw new Error("submit_revenue_evidence requires content (capture URL or local file path).");
+      }
+      const note = String(payload.note || "").trim();
+      const revenueDay = Number.parseInt(payload.day, 10) || null;
+      const evidenceType = /^https?:\/\//i.test(content) ? "link" : "file";
+      const judgment = await judgeActionEvidence({
+        guideline: {
+          dayId: revenueDay,
+          actionId: `revenue-${kindToken}`,
+          actionType: "revenue_evidence",
+          goal: "첫 매출(결제 완료/예약판매 입금) 또는 명시적 거절을 증거로 기록한다",
+          completionSignal: "결제 provider 기록·입금 캡처·거절 원문에서 시각과 상대를 식별할 수 있다",
+          sufficiencyCriteria: [
+            {
+              type: "evidence",
+              label: "원문/캡처",
+              description: "결제 provider 대시보드 URL, 입금/결제 화면 캡처, 또는 거절 원문",
+              required: true,
+            },
+            {
+              type: "quality",
+              label: "시각·발신 식별",
+              description: "발송·수신 시각과 상대(고객)를 식별할 수 있어야 한다",
+              required: true,
+            },
+          ],
+        },
+        evidence: { type: evidenceType, content, note },
+        workspaceRoot: root,
+      });
+      if (judgment.status !== "accepted" && judgment.status !== "insufficient") {
+        send(socket, {
+          type: "submit_revenue_evidence_result",
+          workspaceRoot: root,
+          success: false,
+          status: "error",
+          message: "판정기를 사용할 수 없어 보류했어. 잠시 후 다시 제출해줘.",
+        });
+        return;
+      }
+      const accepted = judgment.status === "accepted";
+      await appendProofLedgerEvent({
+        workspaceRoot: root,
+        event: {
+          type: eventType,
+          day: revenueDay,
+          status: accepted ? "accepted" : "insufficient",
+          strength: accepted ? "strong" : "weak",
+          evidenceType,
+          sourceUrl: evidenceType === "link" ? content : "",
+          artifactPath: evidenceType === "file" ? content : "",
+          summary: note || judgment.agentAssessment,
+          amount: payload.amount,
+          metadata: {
+            kind: kindToken,
+            verifiedBy: "judge",
+            judgeConfidence: judgment.confidence,
+          },
+        },
+      });
+      telemetry.captureEvent("mac_sidecar_revenue_evidence_recorded", {
+        kind: kindToken,
+        amount_band: bandRevenueAmount(payload.amount),
+        accepted,
+      });
+      send(socket, {
+        type: "submit_revenue_evidence_result",
+        workspaceRoot: root,
+        success: accepted,
+        status: judgment.status,
+        message: judgment.miniActionSuggestion || judgment.agentAssessment,
+      });
+      return;
+    }
     case "adaptive_rule_label": {
       // §12 오탐 대응 ②: user-origin label — the founder disputes a firing.
       // Marks the latest unlabeled event for the rule (48h cooldown follows).
@@ -3296,6 +3392,16 @@ async function applyPredictionPatch({ workspaceRoot, cycle, predictionText, pred
   }
 }
 
+// §16.2 privacy: 금액 원값은 전송 금지 — KRW 기준 구간만 보낸다.
+function bandRevenueAmount(amount) {
+  const number = Number(amount);
+  if (!Number.isFinite(number) || number < 0) return "unknown";
+  if (number < 10_000) return "lt_10k";
+  if (number < 100_000) return "10k_100k";
+  if (number < 1_000_000) return "100k_1m";
+  return "gte_1m";
+}
+
 async function handleDayProgressPatch(socket, payload = {}) {
   const root = resolveDay1GoalWorkspaceRoot(payload);
   const stepId = payload.stepId ?? payload.step ?? payload.step_id;
@@ -3451,6 +3557,28 @@ async function handleDayProgressPatch(socket, payload = {}) {
           });
         }
       }
+      // §15.3/§11.1: record due recovery-mission substitutions (once per
+      // failed gate — idempotent). Mission cards consume the rows; failures
+      // never break the patch.
+      void (async () => {
+        const substitutionLedger = await loadGateLedger({ workspaceRoot: root });
+        const due = resolveDueSubstitutions({
+          evaluation: gateCheck.evaluation,
+          ledger: substitutionLedger,
+        });
+        for (const substitution of due) {
+          await recordMissionSubstitution({ workspaceRoot: root, substitution });
+          telemetry.captureEvent("mac_sidecar_mission_substituted", {
+            day: substitution.day,
+            reason: substitution.reason,
+          });
+        }
+      })().catch((substitutionError) => {
+        telemetry.captureException(substitutionError, {
+          operation: "mission_substitution_record",
+          workspace_root: root,
+        });
+      });
       // §13.4 token expiry surfaced by this evaluation: dueDay passed without
       // strong post-session evidence — the gate re-blocks (handled below).
       // Emitted BEFORE the blocked branch so an expiring-and-blocking gate
