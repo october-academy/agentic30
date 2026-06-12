@@ -357,6 +357,11 @@ function buildSmokeChecks({ scenario, observed, events, eventTypeSet }) {
         && Boolean(observed.completionProof?.threadsUrl)
         && Boolean(observed.completionProof?.sheetRowNote);
       break;
+    case "gate-blocked-day-entry":
+      checks.day_progress_state_received = eventTypeSet.has("day_progress_state");
+      checks.gate_blocked_observed = observed.gateBlocked?.gateId === "G2";
+      checks.gate_release_path_named = String(observed.gateMessage || "").length > 0;
+      break;
     default:
       checks.assistant_output_observed = hasAssistantOutput(observed);
       break;

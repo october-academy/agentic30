@@ -320,5 +320,26 @@
       "requires_one_next_action": true,
       "requires_proof_target": true
     }
+  },
+  {
+    "id": "gate-blocked-day-entry",
+    "repo_stage": "strategy_seeded",
+    "intent_mode": "startup",
+    "title": "Milestone gate blocks Day 8 entry without G2 evidence",
+    "goal": "Verify the program gate engine withholds a Day 8 day-progress patch when the G2 Foundation Go/No-Go gate has no strong evidence, and names the release path.",
+    "prompt": "Day 8 진입을 시도한다 (milestone gate 차단 검증 — 채팅 프롬프트 대신 day_progress_patch를 보낸다).",
+    "fixture": {
+      "docs": ["docs/ICP.md", "docs/VALUES.md", "docs/GOAL.md", "docs/SPEC.md"],
+      "transcripts": [],
+      "state": {},
+      "proofs": []
+    },
+    "expected_visible_outcome": {
+      "must_include": ["G2"],
+      "must_not_include": [],
+      "requires_visible_output": false,
+      "requires_one_next_action": false,
+      "requires_proof_target": false
+    }
   }
 ]

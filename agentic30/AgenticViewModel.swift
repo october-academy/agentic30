@@ -2241,6 +2241,12 @@ final class AgenticViewModel: ObservableObject {
     /// The step the gate held (event.gatedStep), so the nudge is scoped to the matching
     /// commitment bar and never bleeds onto a different step's surface.
     @Published private(set) var commitmentGateStep: String?
+    /// Milestone-gate hard block surfaced on day_progress_state (spec §10.2): set when
+    /// the sidecar withholds a day patch because a program gate (G1/G2/G4…) is blocked;
+    /// cleared on the next non-blocked update. The P2 blocked-gate screen renders this.
+    @Published private(set) var dayGateBlocked: SidecarEvent.DayGateBlocked?
+    /// User-facing one-liner accompanying `dayGateBlocked` (sidecar-rendered message).
+    @Published private(set) var dayGateBlockedMessage: String?
     @Published private(set) var isBipCoachRefreshing = false
     @Published private(set) var isBipCoachGenerating = false
     @Published private(set) var isBipCoachCompleting = false
@@ -7332,6 +7338,15 @@ final class AgenticViewModel: ObservableObject {
                 commitmentGateMessage = nil
                 commitmentGateStep = nil
             }
+            // Milestone gate: surface the hard block when a day patch was withheld;
+            // clear it on any non-blocked update (mirrors the interview-gate nudge).
+            if let gate = event.gateBlocked {
+                dayGateBlocked = gate
+                dayGateBlockedMessage = event.message
+            } else {
+                dayGateBlocked = nil
+                dayGateBlockedMessage = nil
+            }
         case "doc_creation_started":
             isCreatingDoc = event.docType
             docCreationLogs = []
@@ -11898,6 +11913,21 @@ struct SidecarEvent: Decodable {
     // below); gatedStep names the step that was held.
     let needsCommitment: Bool?
     let gatedStep: String?
+    /// Milestone-gate hard block (day_progress_state): the sidecar withheld a
+    /// day-progress patch because a program gate (G1/G2/G4…) is blocked
+    /// (spec §10.2). Additive — absent on non-blocked updates.
+    struct DayGateBlocked: Codable, Equatable {
+        struct RequiredEvidence: Codable, Equatable {
+            let id: String?
+            let label: String?
+        }
+        let gateId: String?
+        let title: String?
+        let blockedReason: String?
+        let blockedStep: String?
+        let requiredEvidence: [RequiredEvidence]?
+    }
+    let gateBlocked: DayGateBlocked?
     let error: String?
     /// Set by the sidecar on `type: "error"` envelopes that represent an
     /// expected, recoverable upstream provider condition (`"provider_usage_limit"`
@@ -12024,6 +12054,7 @@ struct SidecarEvent: Decodable {
         evidenceOS: EvidenceOSSummary? = nil,
         needsCommitment: Bool? = nil,
         gatedStep: String? = nil,
+        gateBlocked: DayGateBlocked? = nil,
         error: String?,
         errorKind: String? = nil,
         docType: String?,
@@ -12132,6 +12163,7 @@ struct SidecarEvent: Decodable {
         self.evidenceOS = evidenceOS
         self.needsCommitment = needsCommitment
         self.gatedStep = gatedStep
+        self.gateBlocked = gateBlocked
         self.error = error
         self.errorKind = errorKind
         self.docType = docType
@@ -12528,6 +12560,7 @@ extension SidecarEvent {
         case evidenceOS
         case needsCommitment
         case gatedStep
+        case gateBlocked
         case error
         case errorKind
         case docType
@@ -12645,6 +12678,7 @@ extension SidecarEvent {
         evidenceOS = Self.decodeIfPresent(EvidenceOSSummary.self, from: container, forKey: .evidenceOS)
         needsCommitment = Self.decodeIfPresent(Bool.self, from: container, forKey: .needsCommitment)
         gatedStep = Self.decodeIfPresent(String.self, from: container, forKey: .gatedStep)
+        gateBlocked = Self.decodeIfPresent(DayGateBlocked.self, from: container, forKey: .gateBlocked)
 
         let stringError = Self.decodeIfPresent(String.self, from: container, forKey: .error)
         let structuredError = Self.decodeIfPresent(BipReadinessError.self, from: container, forKey: .error)

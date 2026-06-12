@@ -51,6 +51,7 @@ test("dogfood scenario fixtures load with stable ids and prompts", async () => {
       "running-builder-bip-loop",
       "complete-startup-verdict",
       "complete-builder-retro",
+      "gate-blocked-day-entry",
     ],
   );
   assert.ok(scenarios.every((scenario) => scenario.prompt.length > 0));

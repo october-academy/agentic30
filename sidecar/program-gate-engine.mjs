@@ -33,6 +33,7 @@ import {
   loadProofLedger,
   normalizeProofLedger,
 } from "./execution-os.mjs";
+import { DAY1_STEPS, STANDARD_STEPS } from "./day-progress-state.mjs";
 
 export const GATE_LEDGER_SCHEMA_VERSION = 1;
 export const GATE_LEDGER_SCHEMA = "agentic30.gate_ledger.v1";
@@ -394,6 +395,9 @@ export async function evaluateAndRecordProgramGates({
   const filePath = resolveGateLedgerPath(workspaceRoot);
   return withFileLock(filePath, async () => {
     const current = await loadGateLedger({ workspaceRoot });
+    const previousStates = Object.fromEntries(
+      Object.entries(current.gates).map(([gateId, gate]) => [gateId, gate.state]),
+    );
     const evaluation = evaluateProgramGates({
       proofLedger: proofs,
       currentDay,
@@ -404,8 +408,71 @@ export async function evaluateAndRecordProgramGates({
     });
     const next = applyGateEvaluation(current, evaluation, { now });
     await atomicWriteJson(filePath, next);
-    return { ledger: next, evaluation };
+    return { ledger: next, evaluation, previousStates };
   });
+}
+
+/**
+ * Authoritative milestone check for a day_progress_patch (spec §10.1: evaluated
+ * right before the patch; the handler in index.mjs stays the authority seat).
+ * A gate with a `blockedStep` (G1 → goal) only withholds that step and the
+ * steps after it in the day's step order; gates without one withhold the whole
+ * day. Returns `{ blocked, gate, evaluation, stateChanged }`.
+ */
+export async function evaluateDayProgressPatchGate({
+  workspaceRoot,
+  day,
+  stepId = "",
+  firstValue = null,
+  sources = {},
+  now = new Date(),
+} = {}) {
+  const targetDay = normalizeDay(day);
+  if (!workspaceRoot || typeof workspaceRoot !== "string" || targetDay === null) {
+    return { blocked: false, gate: null, evaluation: null, stateChanged: false };
+  }
+  const { evaluation, previousStates } = await evaluateAndRecordProgramGates({
+    workspaceRoot,
+    currentDay: targetDay,
+    firstValue,
+    sources,
+    now,
+  });
+  // Walk EVERY enforcing blocked gate in order: a step-scoped gate (G1 → goal)
+  // exempting an earlier step must not shadow a later whole-day gate (e.g. G2
+  // still blocks Day 8 scan even though G1 would exempt scan).
+  const steps = targetDay === 1 ? DAY1_STEPS : STANDARD_STEPS;
+  const patchIndex = steps.indexOf(String(stepId || ""));
+  for (const gateId of Object.values(GATE_IDS)) {
+    const gate = evaluation.gates[gateId];
+    const definition = GATE_DEFINITIONS[gateId];
+    if (!gate || !definition || definition.enforceDay === null) continue;
+    if (targetDay < definition.enforceDay) continue;
+    if (gate.state !== GATE_STATES.blocked) continue;
+    if (gate.provisional?.active === true) continue;
+    if (gate.blockedStep) {
+      const gateIndex = steps.indexOf(gate.blockedStep);
+      // Steps strictly before the gated step stay patchable; unknown steps
+      // fall through to patchDayStep's own validation (it throws on them).
+      if (gateIndex >= 0 && patchIndex >= 0 && patchIndex < gateIndex) continue;
+    }
+    const stateChanged = previousStates[gate.gateId] !== GATE_STATES.blocked;
+    return { blocked: true, gate, evaluation, stateChanged };
+  }
+  return { blocked: false, gate: null, evaluation, stateChanged: false };
+}
+
+/** User-facing one-liner for a withheld day_progress_patch. */
+export function buildGateBlockedMessage(gate = {}) {
+  const evidence = asArray(gate.requiredEvidence)
+    .map((entry) => entry.label || entry.id)
+    .filter(Boolean)
+    .join(" · ");
+  const scope = gate.blockedStep
+    ? `Day ${gate.enforceDay}+의 ${gate.blockedStep} 스텝`
+    : `Day ${gate.enforceDay}+ 진입`;
+  const evidencePart = evidence ? ` 필요한 증거: ${evidence}.` : "";
+  return `${gate.gateId} ${gate.title} 게이트가 잠겨 있어 ${scope}이 차단됐어.${evidencePart} 증거를 제출하거나 confession으로 Office Hours를 여는 게 해제 경로야.`;
 }
 
 /**

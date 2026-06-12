@@ -231,9 +231,47 @@ async function runScenario({ ws, events, sessionId, scenario, transcript, starte
       return structuredDecisionScenario({ ws, events, sessionId, scenario, transcript, startedAt, eventOffset });
     case "mission-completion":
       return missionCompletionScenario({ ws, events, sessionId, scenario, transcript, startedAt, eventOffset });
+    case "gate-blocked-day-entry":
+      return gateBlockedDayEntryScenario({ ws, events, scenario, transcript, startedAt, eventOffset, workspaceRoot });
     default:
       return sendPromptScenario({ ws, events, sessionId, scenario, transcript, startedAt, eventOffset });
   }
+}
+
+// Milestone-gate dogfood (spec §10.1/§10.2): a Day 8 day_progress_patch with no G2
+// evidence in the proof ledger must come back as a WITHHELD patch — the sidecar
+// answers with day_progress_state carrying `gateBlocked` (G2) instead of patching.
+async function gateBlockedDayEntryScenario({ ws, events, scenario, transcript, startedAt, eventOffset, workspaceRoot }) {
+  ws.send(JSON.stringify({
+    type: "day_progress_patch",
+    workspaceRoot,
+    day: 8,
+    stepId: "scan",
+    status: "done",
+  }));
+  const blockedEvent = await waitForEventAfter(
+    events,
+    eventOffset,
+    (event) => event.type === "day_progress_state" && Boolean(event.gateBlocked),
+    30_000,
+  );
+  const gate = blockedEvent.gateBlocked ?? null;
+  const message = String(blockedEvent.message || "");
+  transcript.push(
+    "USER: day_progress_patch day=8 step=scan (G2 증거 없음)",
+    `SYSTEM: ${message || "(no gate message)"}`,
+  );
+  return {
+    latency_ms: eventElapsed(blockedEvent, startedAt),
+    observed: {
+      gateBlocked: gate,
+      gateMessage: message,
+      assistantMessages: message ? [message] : [],
+      systemOutcomes: gate
+        ? [`day_progress_patch withheld by ${gate.gateId} (${gate.blockedReason})`]
+        : ["no gateBlocked response observed"],
+    },
+  };
 }
 
 async function submitBootstrapInput({ ws, events, sessionId, scenario, transcript, startedAt, eventOffset }) {
@@ -1191,6 +1229,8 @@ function finalizeObserved({ scenario = {}, observed = {}, events, latency }) {
     selectedOptions: observed.selectedOptions,
     completionProof: observed.completionProof,
     workspaceScan: observed.workspaceScan,
+    gateBlocked: observed.gateBlocked,
+    gateMessage: observed.gateMessage,
     error: observed.error,
     visible_outputs: {
       assistant_messages: assistantMessages,

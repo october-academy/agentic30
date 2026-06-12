@@ -129,6 +129,10 @@ import {
   setDayActiveStep,
 } from "./day-progress-state.mjs";
 import {
+  buildGateBlockedMessage,
+  evaluateDayProgressPatchGate,
+} from "./program-gate-engine.mjs";
+import {
   abandonCommitment,
   appendCommitment,
   appendCycle,
@@ -3264,6 +3268,47 @@ async function handleDayProgressPatch(socket, payload = {}) {
         workspace_basename: path.basename(root),
       });
       return;
+    }
+    // Milestone gate (spec §10.1): evaluated against the proof ledger right before
+    // the authoritative patch. A blocked milestone gate (G1 Day4 goal-step, G2 Day8+,
+    // G4 Day15+) withholds the patch — fail-closed; release paths are strong evidence
+    // or a confession-issued intervention token (§13.4).
+    const gateTargetDay = Number.parseInt(day, 10) || null;
+    if (gateTargetDay) {
+      const gateCheck = await evaluateDayProgressPatchGate({
+        workspaceRoot: root,
+        day: gateTargetDay,
+        stepId,
+      });
+      if (gateCheck.blocked) {
+        const current = await loadDayProgress({ workspaceRoot: root });
+        const blockedCurrentDay = current
+          ? computeDayNumber({ challengeStartedAt: current.challengeStartedAt })
+          : null;
+        send(socket, {
+          type: "day_progress_state",
+          workspaceRoot: root,
+          dayProgress: current,
+          currentDay: blockedCurrentDay,
+          gateBlocked: {
+            gateId: gateCheck.gate.gateId,
+            title: gateCheck.gate.title,
+            blockedReason: gateCheck.gate.blockedReason,
+            blockedStep: gateCheck.gate.blockedStep,
+            requiredEvidence: gateCheck.gate.requiredEvidence,
+          },
+          message: buildGateBlockedMessage(gateCheck.gate),
+        });
+        if (gateCheck.stateChanged) {
+          telemetry.captureEvent("mac_sidecar_gate_blocked", {
+            gate_id: gateCheck.gate.gateId,
+            blocked_reason: gateCheck.gate.blockedReason,
+            day: gateTargetDay,
+            workspace_basename: path.basename(root),
+          });
+        }
+        return;
+      }
     }
     // Patch the step FIRST: patchDayStep validates day/step and throws on a day-kind
     // mismatch or out-of-range day BEFORE any memory write, so a rejected patch never

@@ -1523,6 +1523,48 @@ struct SidecarEventDecodingTests {
         #expect(event.officeHoursMemory?.abandonedThreads.first?.contains("2 사이클 silent") == true)
     }
 
+    @MainActor @Test func decodesDayProgressStateWithMilestoneGateBlocked() throws {
+        let payload = """
+        {
+          "type": "day_progress_state",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "currentDay": 8,
+          "message": "G2 Foundation Go/No-Go 게이트가 잠겨 있어 Day 8+ 진입이 차단됐어.",
+          "gateBlocked": {
+            "gateId": "G2",
+            "title": "Foundation Go/No-Go",
+            "blockedReason": "foundation_closure_closed",
+            "blockedStep": null,
+            "requiredEvidence": [
+              { "id": "foundation_closure_closed", "label": "foundation closure status=closed" },
+              { "id": "interview_strong_evidence", "label": "인터뷰 strong 증거 ≥1" }
+            ]
+          }
+        }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.type == "day_progress_state")
+        #expect(event.gateBlocked?.gateId == "G2")
+        #expect(event.gateBlocked?.title == "Foundation Go/No-Go")
+        #expect(event.gateBlocked?.blockedReason == "foundation_closure_closed")
+        #expect(event.gateBlocked?.blockedStep == nil)
+        #expect(event.gateBlocked?.requiredEvidence?.count == 2)
+        #expect(event.gateBlocked?.requiredEvidence?.first?.id == "foundation_closure_closed")
+        #expect(event.message?.contains("G2") == true)
+    }
+
+    @MainActor @Test func decodesDayProgressStateWithoutGateBlockedAsNil() throws {
+        let payload = """
+        {
+          "type": "day_progress_state",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "currentDay": 3
+        }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.gateBlocked == nil)
+    }
+
     @MainActor @Test func decodesDayProgressStateWithOfficeHoursHistoryRollup() throws {
         let payload = """
         {
