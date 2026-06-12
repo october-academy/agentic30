@@ -37,7 +37,7 @@ This checklist is for local dogfood releases of the macOS menu bar app. Public D
 
 - See `docs/release-automation.md` for the tag-triggered GitHub Actions workflow, required secrets, and the `npm run release:cut` flow.
 - Prefer `npm run release:cut -- --bump build` (or `--bump patch` / `--set X.Y.Z/N`): it bumps the version in both `agentic30/Info.plist` and `project.pbxproj`, runs the local preflight gate (`scripts/preflight-release.sh`), commits, tags, and pushes — catching version/compile/test failures before they waste a ~20-minute CI cycle.
-- Pushing a `v*` tag starts the GitHub release workflow: two parallel build/notarize/upload jobs on GitHub-hosted macOS runners (arm64 + Intel x64), each uploading its Sparkle feed to R2 and attaching GitHub Release assets. The release stays draft until both arch DMGs are attached. `workflow_dispatch` supports `dry_run`.
+- Pushing a `v*` tag starts the GitHub release workflow: two parallel build/notarize/upload jobs on GitHub-hosted macOS runners (arm64 + Intel x64), each uploading its Sparkle feed to R2 and attaching GitHub Release assets. The release stays draft until both arch DMGs are attached; if the run fails before publish, the cleanup job deletes the draft release object and leaves the tag intact for auditability. `workflow_dispatch` supports `dry_run`.
 - Confirm the GitHub secrets `CLOUDFLARE_API_TOKEN`, `R2_ACCESS_KEY_ID`, and `R2_SECRET_ACCESS_KEY` are present before tag release. `CLOUDFLARE_API_TOKEN` is used for Wrangler bucket/domain validation; the R2 S3 credentials must allow Object Read & Write for `agentic30-sparkle`.
 
 ## Launch Funnel Telemetry

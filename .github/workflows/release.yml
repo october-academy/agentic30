@@ -49,6 +49,8 @@ jobs:
   # draft → published only when BOTH arch jobs succeeded, so a failed arch
   # build can never leave a public release advertising one architecture
   # (which happened with v20260611-0738: Intel-only build 16 went public).
+  # cleanup-failed-draft-release removes any leftover draft on failure, while
+  # leaving the triggering tag intact for auditability.
   draft-release:
     name: Create draft GitHub release
     runs-on: ubuntu-latest
@@ -204,3 +206,26 @@ jobs:
           echo "$assets" | grep -Eq -- '-x64\.dmg$' || { echo "ERROR: x64 DMG missing from $RELEASE_TAG" >&2; exit 1; }
           gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
           echo "Release $RELEASE_TAG published."
+
+  cleanup-failed-draft-release:
+    name: Remove failed draft GitHub release
+    runs-on: ubuntu-latest
+    needs: [draft-release, release, publish-release]
+    if: ${{ always() && github.event.inputs.dry_run != 'true' && needs.draft-release.result == 'success' && needs.publish-release.result != 'success' }}
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Delete draft release left by failed run
+        run: |
+          set -euo pipefail
+          if ! is_draft="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+            echo "No GitHub release exists for $RELEASE_TAG; nothing to clean up."
+            exit 0
+          fi
+          if [ "$is_draft" != "true" ]; then
+            echo "Release $RELEASE_TAG is not a draft; leaving it untouched."
+            exit 0
+          fi
+          gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes
+          echo "Deleted failed draft release $RELEASE_TAG; tag remains for auditability."
