@@ -1565,6 +1565,82 @@ struct SidecarEventDecodingTests {
         #expect(event.gateBlocked == nil)
     }
 
+    @MainActor @Test func decodesMissionCardEvent() throws {
+        let payload = """
+        {
+          "type": "mission_card",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "missionCard": {
+            "schemaVersion": 1,
+            "day": 9,
+            "source": "idd",
+            "mission": {
+              "day": 9,
+              "title": "입력→처리→출력 흐름을 고정한다",
+              "shortTitle": "Input Flow",
+              "summary": "사용자가 바로 써볼 수 있게 입력, 처리, 결과 화면을 한 번에 지나가게 만든다.",
+              "tasks": ["첫 입력 포맷 1개만 선택", "처리 실패와 빈 입력 폴백 작성", "결과 화면까지 30초 이내인지 재기"],
+              "output": "input-process-output flow",
+              "dayType": "action",
+              "phase": "build",
+              "curriculumWeek": 2,
+              "substituted": false,
+              "substitutionReason": "",
+              "exitCondition": ""
+            },
+            "evidenceSpec": {
+              "evidenceRequired": true,
+              "artifact": "input-process-output flow",
+              "allowedEvidenceTypes": ["link", "file"],
+              "minimumStrength": "medium",
+              "completionSignal": "증거 제출 후 판정이 accepted 또는 verified가 되어야 합니다."
+            },
+            "gateContext": {
+              "day": 9,
+              "blockingGateId": null,
+              "states": { "G1": "passed", "G2": "passed", "G4": "locked" }
+            },
+            "generatedAt": "2026-06-12T09:00:00.000Z"
+          }
+        }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.type == "mission_card")
+        #expect(event.missionCard?.day == 9)
+        #expect(event.missionCard?.source == "idd")
+        #expect(event.missionCard?.mission?.shortTitle == "Input Flow")
+        #expect(event.missionCard?.mission?.tasks?.count == 3)
+        #expect(event.missionCard?.evidenceSpec?.evidenceRequired == true)
+        #expect(event.missionCard?.evidenceSpec?.allowedEvidenceTypes == ["link", "file"])
+        #expect(event.missionCard?.gateContext?.states?["G2"] == "passed")
+        #expect(event.missionCard?.gateContext?.blockingGateId == nil)
+    }
+
+    @MainActor @Test func decodesSubstitutedMissionCard() throws {
+        let payload = """
+        {
+          "type": "mission_card",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "missionCard": {
+            "day": 15,
+            "source": "idd",
+            "mission": {
+              "day": 15,
+              "title": "유료 ask 재작성+발송",
+              "shortTitle": "Revenue Dry Run",
+              "substituted": true,
+              "substitutionReason": "G4_failed",
+              "exitCondition": "paymentIntent strong ≥1 + first_value ≥1행"
+            }
+          }
+        }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.missionCard?.mission?.substituted == true)
+        #expect(event.missionCard?.mission?.substitutionReason == "G4_failed")
+        #expect(event.missionCard?.evidenceSpec == nil)
+    }
+
     @MainActor @Test func decodesDayProgressStateWithOfficeHoursHistoryRollup() throws {
         let payload = """
         {

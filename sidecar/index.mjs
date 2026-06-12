@@ -131,7 +131,9 @@ import {
 import {
   buildGateBlockedMessage,
   evaluateDayProgressPatchGate,
+  loadGateLedger,
 } from "./program-gate-engine.mjs";
+import { buildMissionCardEvent } from "./mission-card.mjs";
 import {
   abandonCommitment,
   appendCommitment,
@@ -3274,8 +3276,9 @@ async function handleDayProgressPatch(socket, payload = {}) {
     // G4 Day15+) withholds the patch — fail-closed; release paths are strong evidence
     // or a confession-issued intervention token (§13.4).
     const gateTargetDay = Number.parseInt(day, 10) || null;
+    let gateCheck = null;
     if (gateTargetDay) {
-      const gateCheck = await evaluateDayProgressPatchGate({
+      gateCheck = await evaluateDayProgressPatchGate({
         workspaceRoot: root,
         day: gateTargetDay,
         stepId,
@@ -3375,6 +3378,32 @@ async function handleDayProgressPatch(socket, payload = {}) {
       dayReviews: await loadOfficeHoursDayReviews(root, dayProgress, currentDay),
       evidenceOS: await loadOfficeHoursEvidenceOS(root, dayProgress, currentDay),
     });
+    // §11.0/§17.2: entering the execution step loads the day's IDD mission as a
+    // mission_card. Emission points: a Day 2+ interview close (execution becomes
+    // the active surface) or an explicit non-done execution-step patch. Emission
+    // failures never break the patch (additive surface).
+    const missionDay = Number.parseInt(day, 10) || null;
+    const executionEntered = missionDay && missionDay >= 2 && (
+      (String(stepId) === "interview" && String(status) === "done")
+      || (String(stepId) === "execution" && String(status) !== "done")
+    );
+    if (executionEntered) {
+      try {
+        const gateLedger = await loadGateLedger({ workspaceRoot: root });
+        const missionCard = buildMissionCardEvent({
+          workspaceRoot: root,
+          day: missionDay,
+          gateEvaluation: gateCheck?.evaluation ?? null,
+          substitutions: gateLedger.substitutions,
+        });
+        if (missionCard) broadcast(missionCard);
+      } catch (missionError) {
+        telemetry.captureException(missionError, {
+          operation: "mission_card_emit",
+          workspace_root: root,
+        });
+      }
+    }
   } catch (error) {
     telemetry.captureException(error, {
       operation: "day_progress_patch",
