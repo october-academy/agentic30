@@ -3314,7 +3314,15 @@ async function handleDayProgressPatch(socket, payload = {}) {
     // pass-through token BEFORE the milestone evaluation, so the confirming
     // patch itself passes via the token instead of deadlocking on the still-
     // blocked gate. Once-per-gate + program-wide cap live in the engine.
-    const pendingIntervention = pendingInterventionGates.get(path.resolve(root)) ?? null;
+    // Armed interventions go stale after 24h: an abandoned intervention
+    // session must not let an unrelated later commitment mint the gate token
+    // (§13.4 "참여+커밋먼트 확정" — participation and confirmation belong to
+    // the same intervention, fail-closed).
+    let pendingIntervention = pendingInterventionGates.get(path.resolve(root)) ?? null;
+    if (pendingIntervention && Date.now() - Date.parse(pendingIntervention.createdAt) > 24 * 60 * 60 * 1000) {
+      pendingInterventionGates.delete(path.resolve(root));
+      pendingIntervention = null;
+    }
     if (gate.mode === "commit" && pendingIntervention) {
       try {
         const issuance = await issueInterventionTokenForCommitment({
