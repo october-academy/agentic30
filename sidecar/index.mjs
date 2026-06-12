@@ -139,6 +139,8 @@ import {
   buildGateBlockedMessage,
   evaluateDayProgressPatchGate,
   loadGateLedger,
+  resolveActiveGate,
+  resolveProgramPhase,
 } from "./program-gate-engine.mjs";
 import { buildMissionCardEvent } from "./mission-card.mjs";
 import {
@@ -3423,6 +3425,32 @@ async function handleDayProgressPatch(socket, payload = {}) {
           })?.tokenValid === true,
         },
       });
+      // §16.1: refresh the program context attached to every telemetry event.
+      const activeGate = resolveActiveGate(gateCheck.evaluation);
+      telemetry.setProgramContext({
+        programDay: gateTargetDay,
+        programPhase: resolveProgramPhase(gateCheck.evaluation),
+        activeGate: activeGate?.gateId ?? "",
+        gateState: activeGate?.state ?? "",
+      });
+      // §16.2: per-gate state transitions — gate_evaluated on every change,
+      // gate_unblocked when a previously blocked gate opens or passes.
+      for (const [gateId, gateState] of Object.entries(gateCheck.evaluation?.gates ?? {})) {
+        const previousState = gateCheck.previousStates?.[gateId];
+        if (previousState === gateState.state) continue;
+        telemetry.captureEvent("mac_sidecar_gate_evaluated", {
+          gate_id: gateId,
+          state: gateState.state,
+          blocked_reason: gateState.blockedReason || "",
+          evidence_count: (gateState.conditions ?? []).filter((condition) => condition.satisfied).length,
+        });
+        if (previousState === "blocked" && gateState.state !== "blocked") {
+          telemetry.captureEvent("mac_sidecar_gate_unblocked", {
+            gate_id: gateId,
+            resolution_path: gateState.resolutionPath || "",
+          });
+        }
+      }
       // §13.4 token expiry surfaced by this evaluation: dueDay passed without
       // strong post-session evidence — the gate re-blocks (handled below).
       // Emitted BEFORE the blocked branch so an expiring-and-blocking gate

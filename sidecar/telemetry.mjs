@@ -329,6 +329,26 @@ function timeUnixNano(date = new Date()) {
   return String(BigInt(date.getTime()) * 1_000_000n);
 }
 
+/**
+ * Program context auto-attached to every event (spec §16.1): day / phase /
+ * active gate / gate state. Scalars only — never user content. The single
+ * injection point is baseProperties, so the 120+ existing capture call
+ * sites stay untouched.
+ */
+export function normalizeProgramTelemetryContext(context = {}) {
+  const raw = context && typeof context === "object" ? context : {};
+  const day = Number(raw.programDay ?? raw.program_day);
+  const phase = String(raw.programPhase ?? raw.program_phase ?? "").trim().slice(0, 20);
+  const activeGate = String(raw.activeGate ?? raw.active_gate ?? "").trim().slice(0, 8);
+  const gateState = String(raw.gateState ?? raw.gate_state ?? "").trim().slice(0, 20);
+  const output = {};
+  if (Number.isFinite(day) && day >= 0 && day <= 400) output.program_day = Math.trunc(day);
+  if (phase) output.program_phase = phase;
+  if (activeGate) output.active_gate = activeGate;
+  if (gateState) output.gate_state = gateState;
+  return output;
+}
+
 export function createTelemetryClient({
   appSupportPath,
   workspaceRoot,
@@ -337,6 +357,7 @@ export function createTelemetryClient({
 }) {
   const distinctIdPath = path.join(appSupportPath, "posthog-telemetry.json");
   let anonymousDistinctId = loadOrCreateDistinctId(distinctIdPath);
+  let programContext = {};
 
   function runtimePolicy() {
     return resolveTelemetryRuntimePolicy({ environment, sidecarRoot });
@@ -384,6 +405,7 @@ export function createTelemetryClient({
       arch: process.arch,
       node_version: process.version,
       workspace_basename: path.basename(workspaceRoot),
+      ...programContext,
       ...(auth.authenticated
         ? {
             auth_user_id: auth.userId || undefined,
@@ -420,6 +442,15 @@ export function createTelemetryClient({
 
     getAnonymousDistinctId() {
       return anonymousDistinctId;
+    },
+
+    /** §16.1: refresh the cached program context (gate evaluation sites). */
+    setProgramContext(context = {}) {
+      programContext = normalizeProgramTelemetryContext(context);
+    },
+
+    getProgramContext() {
+      return { ...programContext };
     },
 
     captureEvent(event, properties = {}) {

@@ -429,7 +429,7 @@ export async function evaluateDayProgressPatchGate({
 } = {}) {
   const targetDay = normalizeDay(day);
   if (!workspaceRoot || typeof workspaceRoot !== "string" || targetDay === null) {
-    return { blocked: false, gate: null, evaluation: null, stateChanged: false };
+    return { blocked: false, gate: null, evaluation: null, stateChanged: false, previousStates: {} };
   }
   const { evaluation, previousStates } = await evaluateAndRecordProgramGates({
     workspaceRoot,
@@ -457,9 +457,34 @@ export async function evaluateDayProgressPatchGate({
       if (gateIndex >= 0 && patchIndex >= 0 && patchIndex < gateIndex) continue;
     }
     const stateChanged = previousStates[gate.gateId] !== GATE_STATES.blocked;
-    return { blocked: true, gate, evaluation, stateChanged };
+    return { blocked: true, gate, evaluation, stateChanged, previousStates };
   }
-  return { blocked: false, gate: null, evaluation, stateChanged: false };
+  return { blocked: false, gate: null, evaluation, stateChanged: false, previousStates };
+}
+
+/**
+ * Program phase (§14.1) derived from milestone passes — the clock keeps
+ * running while the phase trails on blocked gates (시계·phase 분리).
+ */
+export function resolveProgramPhase(evaluation = {}) {
+  const gates = evaluation?.gates ?? {};
+  const passed = (gateId) => gates[gateId]?.state === GATE_STATES.passed;
+  if (passed(GATE_IDS.G7)) return "graduated";
+  if (passed(GATE_IDS.G5)) return "grow";
+  if (passed(GATE_IDS.G4)) return "launch";
+  if (passed(GATE_IDS.G2)) return "build";
+  return "foundation";
+}
+
+/** First evaluated gate that has not passed yet (telemetry active_gate). */
+export function resolveActiveGate(evaluation = {}) {
+  const gates = evaluation?.gates ?? {};
+  for (const gateId of Object.values(GATE_IDS)) {
+    const gate = gates[gateId];
+    if (!gate) continue;
+    if (gate.state !== GATE_STATES.passed) return gate;
+  }
+  return null;
 }
 
 /** User-facing one-liner for a withheld day_progress_patch. */
