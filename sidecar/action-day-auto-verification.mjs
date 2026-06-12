@@ -13,6 +13,7 @@ import {
   retryActionVerification,
   startActionVerification,
 } from "./action-day-verification-state.mjs";
+import { recordActionEvidenceOutcome } from "./proof-ledger-write-through.mjs";
 
 export const ACTION_AUTO_VERIFICATION_TYPE = Object.freeze({
   mcp: "mcp",
@@ -147,6 +148,11 @@ export async function runActionAutoVerification(inputState, {
   runBrowserVerification = null,
   browserTool = null,
   fetchBrowserPageState = null,
+  // Optional proof-ledger write-through target (spec §15.1). When set and a
+  // verifier passes, the terminal result is persisted as a verified/strong
+  // action_evidence event. Failures are not written — they only open the
+  // evidence-submission fallback.
+  proofLedger = null,
   now = () => new Date(),
 } = {}) {
   const plan = resolveActionAutoVerificationPlan({
@@ -296,11 +302,30 @@ export async function runActionAutoVerification(inputState, {
     state,
   });
 
+  let proofLedgerEvent = null;
+  if (proofLedger?.workspaceRoot && state?.status === ACTION_VERIFICATION_STATUS.passed) {
+    try {
+      const recorded = await recordActionEvidenceOutcome({
+        workspaceRoot: proofLedger.workspaceRoot,
+        day: proofLedger.day ?? state?.dayId ?? null,
+        actionId: proofLedger.actionId ?? state?.actionId ?? "",
+        verificationState: state,
+        now: now(),
+        ...(proofLedger.append ? { append: proofLedger.append } : {}),
+      });
+      proofLedgerEvent = recorded?.event ?? null;
+    } catch {
+      // Write-through failure must not lose the verification result.
+      proofLedgerEvent = null;
+    }
+  }
+
   return {
     state,
     plan: executionPlan,
     attempts,
     aggregate,
+    proofLedgerEvent,
     verificationResultAggregation: aggregate,
     sourceResults: aggregate.sources,
     passed: state?.status === ACTION_VERIFICATION_STATUS.passed,

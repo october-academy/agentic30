@@ -3,6 +3,7 @@ import {
   failActionVerification,
   passActionVerification,
 } from "./action-day-verification-state.mjs";
+import { recordActionEvidenceOutcome } from "./proof-ledger-write-through.mjs";
 
 export const ACTION_EVIDENCE_JUDGE_SCHEMA_VERSION = 1;
 export const ACTION_EVIDENCE_JUDGE_EXECUTION_MODE = "judge_read_only";
@@ -134,6 +135,10 @@ export async function completeActionEvidenceWithJudge(inputState, {
   workspaceRoot,
   timeoutMs,
   runJudge = runActionEvidenceJudgeProvider,
+  // Optional proof-ledger write-through target (spec §15.1). When set,
+  // terminal verdicts (accepted/insufficient) are persisted; judge errors
+  // are never written (spec §21: hold, not a verdict).
+  proofLedger = null,
   now = () => new Date(),
 } = {}) {
   const evidenceSubmission = evidence || inputState?.evidenceSubmission || {};
@@ -148,6 +153,13 @@ export async function completeActionEvidenceWithJudge(inputState, {
     runJudge,
     now,
   });
+  const proofLedgerEvent = await writeJudgeOutcomeThrough({
+    proofLedger,
+    guideline,
+    judgment,
+    evidence: evidenceSubmission,
+    now,
+  });
 
   if (judgment.passed) {
     const state = passActionVerification(inputState, {
@@ -160,6 +172,7 @@ export async function completeActionEvidenceWithJudge(inputState, {
     return {
       status: ACTION_EVIDENCE_JUDGE_STATUS.accepted,
       judgment,
+      proofLedgerEvent,
       state: markEvidenceValidationStatus(state, "accepted"),
     };
   }
@@ -176,8 +189,30 @@ export async function completeActionEvidenceWithJudge(inputState, {
   return {
     status: judgment.status,
     judgment,
+    proofLedgerEvent,
     state: markEvidenceValidationStatus(state, "rejected"),
   };
+}
+
+async function writeJudgeOutcomeThrough({ proofLedger, guideline, judgment, evidence, now }) {
+  if (!proofLedger?.workspaceRoot) return null;
+  try {
+    const result = await recordActionEvidenceOutcome({
+      workspaceRoot: proofLedger.workspaceRoot,
+      day: proofLedger.day ?? guideline?.dayId ?? guideline?.day_id ?? null,
+      actionId: proofLedger.actionId ?? guideline?.actionId ?? guideline?.action_id ?? "",
+      judgment,
+      evidence,
+      guideline,
+      now: typeof now === "function" ? now() : now,
+      ...(proofLedger.append ? { append: proofLedger.append } : {}),
+    });
+    return result?.event ?? null;
+  } catch {
+    // Write-through failure must not lose the judge verdict; the caller
+    // still receives the judgment and in-memory state.
+    return null;
+  }
 }
 
 export async function runActionEvidenceJudgeProvider({
