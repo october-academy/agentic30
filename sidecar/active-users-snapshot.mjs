@@ -82,7 +82,11 @@ export function normalizeActiveUsersStore(value = {}) {
 
 /** Cumulative unique users with ≥1 first_value event (§3.1: 누적 카운트). */
 export function buildFirstValueCountQuery({ eventName = DEFAULT_FIRST_VALUE_EVENT } = {}) {
-  const escaped = String(eventName || DEFAULT_FIRST_VALUE_EVENT).replaceAll("'", "''");
+  // ClickHouse string literals honor backslash escapes — escape backslashes
+  // BEFORE quotes so a trailing "\\" cannot neutralize the closing quote.
+  const escaped = String(eventName || DEFAULT_FIRST_VALUE_EVENT)
+    .replaceAll("\\", "\\\\")
+    .replaceAll("'", "''");
   return `SELECT count(DISTINCT person_id) AS users FROM events WHERE event = '${escaped}'`;
 }
 

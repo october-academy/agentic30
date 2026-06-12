@@ -40,6 +40,12 @@ test("first_value count query targets the configured event with cumulative disti
     buildFirstValueCountQuery({ eventName: "o'clock" }),
     /event = 'o''clock'/,
   );
+  // A trailing backslash must not neutralize the closing quote (HogQL/
+  // ClickHouse honors backslash escapes in string literals).
+  assert.match(
+    buildFirstValueCountQuery({ eventName: "evil\\" }),
+    /event = 'evil\\\\'$/,
+  );
 });
 
 test("collectActiveUserSnapshot persists a snapshot via the mocked HogQL API", async () => {
