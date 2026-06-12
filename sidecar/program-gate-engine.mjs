@@ -415,9 +415,12 @@ export function evaluateProgramGates({
     event.type === PROOF_EVENT_TYPES.trafficSnapshot
       && COMPLETED_STATUSES.has(String(event.status || "")),
   );
+  // 미수집(null) ≠ 유입 0: a missing measurement is a source gap (§21
+  // provisional path), never a genuine zero. Only an actual zero reading
+  // (`observed: false`) blocks for real.
   const trafficCondition = trafficSnapshotObserved || traffic?.observed === true
     ? { satisfied: true, sourceUnavailable: false }
-    : traffic == null && sources?.cloudflareAvailable !== true
+    : traffic == null
       ? { satisfied: false, sourceUnavailable: true }
       : { satisfied: false, sourceUnavailable: false };
   const activeUserCondition = firstValue && Number(firstValue.rowCount) >= 1

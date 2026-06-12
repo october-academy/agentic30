@@ -396,6 +396,20 @@ test("G5 requires automated traffic plus an active user; outage grants provision
   assert.equal(outage.gates.G5.state, GATE_STATES.blocked);
   assert.equal(outage.gates.G5.blockedReason, "source_unavailable");
   assert.equal(outage.gates.G5.provisional.active, true);
+
+  // 미수집 ≠ 유입 0: a connected source with no traffic measurement yet is a
+  // source gap (provisional), never a genuine zero reading.
+  const uncollected = evaluateProgramGates({
+    proofLedger: { events: [] },
+    currentDay: 22,
+    traffic: null,
+    firstValue: { observed: true, rowCount: 1 },
+    sources: { posthogAvailable: true, cloudflareAvailable: true },
+    now: T0,
+  });
+  assert.equal(uncollected.gates.G5.state, GATE_STATES.blocked);
+  assert.equal(uncollected.gates.G5.blockedReason, "source_unavailable");
+  assert.equal(uncollected.gates.G5.provisional.active, true);
 });
 
 test("G6 passes on a strong payment record or three strong asks plus a refusal — never hard-blocks", () => {

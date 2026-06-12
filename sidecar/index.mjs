@@ -84,6 +84,7 @@ import {
   buildPostHogClaudeMcpConfigFromSources,
   resolvePostHogMcpSettings,
 } from "./posthog-mcp-config.mjs";
+import { resolveCloudflareMcpSettings } from "./cloudflare-mcp-config.mjs";
 import {
   collectActiveUserSnapshot,
   latestFirstValueSignal,
@@ -3526,6 +3527,10 @@ async function handleDayProgressPatch(socket, payload = {}) {
         firstValue: await latestFirstValueSignal({ workspaceRoot: root }),
         sources: {
           posthogAvailable: resolvePostHogMcpSettings({
+            env: process.env,
+            appSupportPath,
+          })?.tokenValid === true,
+          cloudflareAvailable: resolveCloudflareMcpSettings({
             env: process.env,
             appSupportPath,
           })?.tokenValid === true,
