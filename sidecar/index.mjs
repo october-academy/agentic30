@@ -80,7 +80,14 @@ import {
   buildQmdMcpConfig,
   getQmdState,
 } from "./qmd-support.mjs";
-import { buildPostHogClaudeMcpConfigFromSources } from "./posthog-mcp-config.mjs";
+import {
+  buildPostHogClaudeMcpConfigFromSources,
+  resolvePostHogMcpSettings,
+} from "./posthog-mcp-config.mjs";
+import {
+  collectActiveUserSnapshot,
+  latestFirstValueSignal,
+} from "./active-users-snapshot.mjs";
 import { createTelemetryClient } from "./telemetry.mjs";
 import { reportError, setTelemetryClient as setSharedTelemetryClient, swallow } from "./error-telemetry.mjs";
 import { getCachedBipContext } from "./context-cache.mjs";
@@ -3278,10 +3285,19 @@ async function handleDayProgressPatch(socket, payload = {}) {
     const gateTargetDay = Number.parseInt(day, 10) || null;
     let gateCheck = null;
     if (gateTargetDay) {
+      // G4② input (spec §15.4/§21): latest persisted first_value snapshot plus
+      // PostHog source availability — both local reads, no network on this path.
       gateCheck = await evaluateDayProgressPatchGate({
         workspaceRoot: root,
         day: gateTargetDay,
         stepId,
+        firstValue: await latestFirstValueSignal({ workspaceRoot: root }),
+        sources: {
+          posthogAvailable: resolvePostHogMcpSettings({
+            env: process.env,
+            appSupportPath,
+          })?.tokenValid === true,
+        },
       });
       if (gateCheck.blocked) {
         const current = await loadDayProgress({ workspaceRoot: root });
@@ -5174,6 +5190,24 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
     const localSignals = await collectLocalDailyOfficeHoursSignals({ workspaceRoot, gate });
     if (githubTracked) progress.log("github", "git 커밋 · gh CLI 신호 집계 완료");
     const external = await collectMorningBriefingExternalSignals({ gate, preferredProvider, progress });
+    // §15.4: 활성 사용자 스냅샷은 브리핑 수집 사이클에 편승한다(일 1회 — 같은
+    // 날짜 스냅샷은 모듈이 교체). 미연동/실패는 아무것도 기록하지 않는다
+    // (fail-closed — G4②는 §21 provisional 경로로 처리). 브리핑을 막지 않는다.
+    void collectActiveUserSnapshot({
+      workspaceRoot,
+      day: Number.isFinite(day) ? day : null,
+      env: process.env,
+      appSupportPath,
+    }).then((result) => {
+      if (result.status === "ok") {
+        telemetry.captureEvent("mac_sidecar_active_user_snapshot", {
+          active_user_count: result.snapshot.activeUserCount,
+          day: result.snapshot.day,
+        });
+      }
+    }).catch((error) => {
+      telemetry.captureException(error, { operation: "active_user_snapshot" });
+    });
     const digest = finalizeDailyOfficeHoursDigest({
       gate,
       localSignals,
