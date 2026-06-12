@@ -53,6 +53,9 @@ const BASE_EXTERNAL_PACKAGES = [
   "@anthropic-ai/claude-agent-sdk",
   "@openai/codex-sdk",
   "@openai/codex",
+  // Bun-inlined zod can break @modelcontextprotocol/sdk import-time schemas
+  // under the bundled Node runtime; keep one normal runtime copy instead.
+  "zod",
   // Ships sqlite3 (native addon) in its dependency closure — must stay
   // unbundled and be copied with that closure intact (see
   // EXTERNAL_CLOSURE_PACKAGES).

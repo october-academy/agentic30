@@ -34,6 +34,38 @@ function parseRegisterArgs(argv) {
   return opts;
 }
 
+function stripAgentPathPrefix(value) {
+  const text = String(value || "").trim();
+  if (text === "@") return ".";
+  if (text === "@." || text.startsWith("@./")) return text.slice(1);
+  if (text.startsWith("@/") || text.startsWith("@~/")) return text.slice(1);
+  return text;
+}
+
+function expandHomePath(value, env = process.env) {
+  const text = String(value || "").trim();
+  if (text === "~") return env.HOME || os.homedir();
+  if (text.startsWith("~/")) {
+    return path.join(env.HOME || os.homedir(), text.slice(2));
+  }
+  return text;
+}
+
+export function resolveWorkspacePathArg(pathArg, { cwd = process.cwd(), env = process.env } = {}) {
+  const cleaned = stripAgentPathPrefix(pathArg);
+  if (!cleaned) {
+    return { workspacePath: path.resolve(cwd), usedCwd: true };
+  }
+  const expanded = expandHomePath(cleaned, env);
+  if (expanded === ".") {
+    return { workspacePath: path.resolve(cwd), usedCwd: true };
+  }
+  if (path.isAbsolute(expanded)) {
+    return { workspacePath: path.resolve(expanded), usedCwd: false };
+  }
+  return { workspacePath: expanded, usedCwd: false };
+}
+
 export async function runRegisterCli({
   argv,
   env = process.env,
@@ -43,10 +75,10 @@ export async function runRegisterCli({
   registerWorkspaceRequest = registerOnboardingWorkspaceRequest,
 } = {}) {
   const opts = parseRegisterArgs(argv);
-  const usedCwd = !opts.path || !String(opts.path).trim();
+  const { workspacePath, usedCwd } = resolveWorkspacePathArg(opts.path, { cwd, env });
   const result = await registerWorkspaceRequest({
     appSupportPath: defaultAppSupportPath(env),
-    workspacePath: usedCwd ? cwd : opts.path,
+    workspacePath,
     source: opts.source ?? "unknown",
     usedCwd,
     token: opts.token,

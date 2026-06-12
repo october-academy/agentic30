@@ -432,9 +432,23 @@ test("normalizeExternalOfficeHoursDigest carries the caller's failureDetail into
     assert.equal(source.state, "failed");
     assert.equal(source.detail, failureDetail);
   }
-  // failureDetail이 없으면 기존 기본 문구를 유지한다.
-  const fallback = normalizeExternalOfficeHoursDigest("", ["posthog"]);
-  assert.equal(fallback[0].detail, "external MCP digest did not return a usable summary");
+  // failureDetail이 없으면 내부 디버그 문구가 아니라 소스별 사용자용 문구를 쓴다.
+  const fallback = normalizeExternalOfficeHoursDigest("", ["cloudflare"]);
+  assert.equal(fallback[0].detail, "Cloudflare Analytics 집계를 완료하지 못했어요 — MCP 연결은 정상이에요.");
+});
+
+test("normalizeExternalOfficeHoursDigest prefers failed source summaries over internal failure labels", () => {
+  const sources = normalizeExternalOfficeHoursDigest({
+    sources: [{
+      id: "cloudflare",
+      state: "failed",
+      summary: "활성 존은 확인했지만 GraphQL Analytics 조회가 실패했습니다.",
+      counts: {},
+    }],
+  }, ["cloudflare"], { failureDetail: "external MCP digest failed" });
+  assert.equal(sources[0].state, "failed");
+  assert.equal(sources[0].detail, "활성 존은 확인했지만 GraphQL Analytics 조회가 실패했습니다.");
+  assert.notEqual(sources[0].detail, "external MCP digest failed");
 });
 
 test("normalizeExternalOfficeHoursDigest extracts embedded JSON and fails the missing expected source", () => {
@@ -475,8 +489,14 @@ test("buildExternalOfficeHoursDigestPrompt uses source-specific count keys", () 
   assert.match(cloudflareOnly, /"pageviews": 0/);
   assert.match(cloudflareOnly, /"requests": 0/);
   assert.match(cloudflareOnly, /\/zones\?status=active&per_page=5/);
+  assert.match(cloudflareOnly, /path: "\/graphql"/);
+  assert.match(cloudflareOnly, /query\(\$zone: String!, \$start: Time!, \$end: Time!\)/);
   assert.match(cloudflareOnly, /httpRequests1hGroups/);
+  assert.match(cloudflareOnly, /sum \{ requests pageViews \}/);
+  assert.match(cloudflareOnly, /uniq \{ uniques \}/);
   assert.match(cloudflareOnly, /Do not query all zones in one GraphQL call/);
+  assert.doesNotMatch(cloudflareOnly, /\/client\/v4\/graphql/);
+  assert.doesNotMatch(cloudflareOnly, /sum \{[^}]*visits/);
   assert.doesNotMatch(cloudflareOnly, /"id": "posthog"/);
   assert.doesNotMatch(cloudflareOnly, /"activeUsers": 0/);
   assert.doesNotMatch(cloudflareOnly, /"events": 0/);
@@ -487,6 +507,13 @@ test("buildExternalOfficeHoursDigestPrompt uses source-specific count keys", () 
     context: "ctx",
   });
   assert.match(both, /PostHog counts must use events\/activeUsers\/conversions\/signups/);
+  assert.match(both, /telemetry_source IN \('mac_app','mac_sidecar'\)/);
+  assert.match(both, /telemetry_environment = 'production'/);
+  assert.match(both, /build_configuration = 'release'/);
+  assert.match(both, /is_internal_traffic != true/);
+  assert.match(both, /person\.properties\.is_internal_tester != true/);
+  assert.match(both, /workspace_setup_completed, mac_session_created, mac_sidecar_session_created, or mac_sidecar_office_hours_completed/);
+  assert.match(both, /\$pageview, blog, link, and marketing-site events may appear only in drilldown webSignals/);
   assert.match(both, /Cloudflare counts must use visits\/uniqueVisitors\/pageviews\/requests\/threats/);
   assert.match(both, /"id": "posthog"/);
   assert.match(both, /"id": "cloudflare"/);

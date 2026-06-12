@@ -7,7 +7,7 @@ import {
   normalizeMorningBriefingDrilldowns,
 } from "./morning-briefing-drilldown.mjs";
 
-export const MORNING_BRIEFING_SCHEMA_VERSION = 1;
+export const MORNING_BRIEFING_SCHEMA_VERSION = 2;
 export const MORNING_BRIEFING_FILE = "morning-briefing.json";
 export const MORNING_BRIEFING_HISTORY_LIMIT = 14;
 export const MORNING_BRIEFING_TOTAL_DAYS = 30;
@@ -232,7 +232,7 @@ export function buildMorningBriefingCards({ digest = {}, previousMetrics = {}, h
         ["additions", "추가 라인", (value) => `+${value}`],
         ["uncommittedChanges", "미커밋 변경"],
       ]),
-    ].slice(0, 2),
+    ].slice(0, 3),
   }));
 
   const posthog = byId.get("posthog");
@@ -268,11 +268,14 @@ function buildCard({
   rows = [],
 }) {
   const ready = state === "ready";
+  const failed = state === "failed";
   const delta = ready ? deltaFor(metricValue, previousMetrics?.[id]) : null;
   const note = cleanString(
     ready
       ? (source?.evidenceGaps?.[0] || source?.goalSignals?.[0] || source?.highlights?.[0] || "")
-      : (source?.detail || "연결되지 않음"),
+      : failed
+        ? failedSourceDetail(id, source?.detail)
+        : (source?.detail || "연결되지 않음"),
     120,
   );
   return {
@@ -290,9 +293,22 @@ function buildCard({
     rows: rows.map((row) => ({ k: cleanString(row.k, 40), v: cleanString(row.v, 80) })),
     spark: ready ? sparkFrom(history, id, metricValue) : [],
     note,
-    noteTone: ready && (source?.evidenceGaps?.length || delta?.direction === "down") ? "warn" : "info",
+    noteTone: failed || (ready && (source?.evidenceGaps?.length || delta?.direction === "down")) ? "warn" : "info",
     highlights: (source?.highlights || []).slice(0, 4),
   };
+}
+
+function failedSourceDetail(id = "", detail = "") {
+  const cleaned = cleanString(detail, 160);
+  if (cleaned && !/^external MCP digest failed$/i.test(cleaned)) return cleaned;
+  switch (id) {
+  case "cloudflare":
+    return "Cloudflare Analytics 집계를 완료하지 못했어요 — MCP 연결은 정상이에요.";
+  case "posthog":
+    return "PostHog 사용량 집계를 완료하지 못했어요 — MCP 연결은 정상이에요.";
+  default:
+    return "외부 소스 집계를 완료하지 못했어요 — 연결은 정상이에요.";
+  }
 }
 
 // ── Summary ──────────────────────────────────────────────────────────────────
@@ -497,7 +513,10 @@ const CONNECT_GUIDE_SOURCES = Object.freeze({
 export function buildMorningBriefingConnectGuide({ digest = {}, day = null } = {}) {
   const byId = sourceById(digest.sources || []);
   const missing = Object.keys(CONNECT_GUIDE_SOURCES)
-    .filter((id) => byId.get(id)?.state !== "ready");
+    .filter((id) => {
+      const state = cleanString(byId.get(id)?.state, 30);
+      return !state || state === "missing" || state === "oauth";
+    });
   if (!missing.length) return null;
   const normalizedDay = finiteNumber(day);
   const nextDayLabel = normalizedDay !== null ? `Day ${normalizedDay + 1}` : "내일";
@@ -569,7 +588,9 @@ export function buildMorningBriefing({
         label: source.label,
         state: source.state,
         selected: Boolean(source.selected),
-        detail: cleanString(source.detail, 120),
+        detail: source.state === "failed"
+          ? failedSourceDetail(source.id, source.detail)
+          : cleanString(source.detail, 120),
       })),
       readyCount,
       syncedAt: generatedAt,
@@ -637,6 +658,13 @@ export function applyMorningBriefingLiveSync(briefing, liveSources = [], { now =
   if (!rows.length || !live.size) return { briefing, changed: false };
   const sources = rows.map((row) => {
     const update = live.get(row?.id);
+    const currentState = cleanString(row?.state, 30);
+    if (currentState === "failed") {
+      return {
+        ...row,
+        detail: failedSourceDetail(row?.id, row?.detail),
+      };
+    }
     if (!update) return row;
     return {
       ...row,
@@ -650,17 +678,37 @@ export function applyMorningBriefingLiveSync(briefing, liveSources = [], { now =
     digest: { sources },
     day: finiteNumber(briefing.day),
   });
+  const cards = sanitizeFailedMorningBriefingCards(briefing.cards, sources);
   const changed = JSON.stringify(sources) !== JSON.stringify(rows)
-    || JSON.stringify(connectGuide) !== JSON.stringify(briefing.connectGuide ?? null);
+    || JSON.stringify(connectGuide) !== JSON.stringify(briefing.connectGuide ?? null)
+    || JSON.stringify(cards) !== JSON.stringify(briefing.cards ?? []);
   if (!changed) return { briefing, changed: false };
   return {
     briefing: {
       ...briefing,
+      cards,
       connectGuide,
       sync: { ...briefing.sync, sources, liveCheckedAt: nowIso(now) },
     },
     changed: true,
   };
+}
+
+function sanitizeFailedMorningBriefingCards(cards = [], sources = []) {
+  if (!Array.isArray(cards) || !cards.length) return Array.isArray(cards) ? cards : [];
+  const byId = sourceById(sources);
+  return cards.map((card) => {
+    const source = byId.get(card?.id);
+    if (source?.state !== "failed") return card;
+    const note = failedSourceDetail(card.id, source.detail || card.note);
+    if (card.state === "failed" && card.note === note && card.noteTone === "warn") return card;
+    return {
+      ...card,
+      state: "failed",
+      note,
+      noteTone: "warn",
+    };
+  });
 }
 
 // ── Persistence ──────────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { parseStructuredPromptRequestOutput } from "./provider-sdk-contracts.mjs";
 
 const REQUESTS_DIRNAME = "user-input-requests";
 const RESPONSES_DIRNAME = "user-input-responses";
@@ -57,15 +58,16 @@ export async function createUserInputRequest(
   if (generation && typeof generation === "object") {
     request.generation = generation;
   }
+  const validatedRequest = parseStructuredPromptRequestOutput(request);
 
   await ensureUserInputDirs(appSupportPath);
   await fs.writeFile(
     requestFilePath(appSupportPath, sessionId, requestId),
-    JSON.stringify(request, null, 2),
+    JSON.stringify(validatedRequest, null, 2),
     "utf8",
   );
 
-  return request;
+  return validatedRequest;
 }
 
 export async function listUserInputRequests(appSupportPath) {
@@ -78,7 +80,11 @@ export async function listUserInputRequests(appSupportPath) {
     const filePath = path.join(requestsDir, entry);
     const request = await readJson(filePath);
     if (request?.requestId && request?.sessionId && Array.isArray(request?.questions)) {
-      requests.push(request);
+      try {
+        requests.push(parseStructuredPromptRequestOutput(request));
+      } catch {
+        // Ignore stale or malformed request files; callers only receive UI-safe contracts.
+      }
     }
   }
 

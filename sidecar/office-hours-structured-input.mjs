@@ -445,6 +445,7 @@ export function buildOfficeHoursStructuredInputContinuationPrompt({
     "Office Hours structured-card answer received.",
     "Use this answer as the user's latest Office Hours response and continue the YC forcing-question conversation.",
     "Do not end with a vague confirmation. If another decision or missing input is needed, ask the next forcing question through the host structured input tool with 2-4 options and allowFreeText: true.",
+    "For fixed-count interviews, keep opening the next structured card until the expected count is reached or a terminal completion card is recorded; prose-only 'next assumption' text is a provider failure.",
     "",
     "## User structured-card answer",
     String(responseText || "").trim() || "(empty)",

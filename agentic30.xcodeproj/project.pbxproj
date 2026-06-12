@@ -311,6 +311,7 @@
 				"$(SRCROOT)/sidecar/office-hours-docs-prompt.mjs",
 				"$(SRCROOT)/sidecar/preflight-cli.mjs",
 				"$(SRCROOT)/sidecar/preflight.mjs",
+				"$(SRCROOT)/sidecar/provider-sdk-contracts.mjs",
 				"$(SRCROOT)/sidecar/provider-runner.mjs",
 				"$(SRCROOT)/sidecar/qmd-bootstrap-worker.mjs",
 				"$(SRCROOT)/sidecar/qmd-support.mjs",

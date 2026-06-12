@@ -16,7 +16,7 @@ import { resolveAgentic30MemoryDir } from "./news-market-radar.mjs";
 // impossible to hide. See memory project_office_hours_day_memory.
 //
 // Schema bumps require a canonical normalization test (office-hours-memory.test.mjs).
-export const OFFICE_HOURS_MEMORY_SCHEMA_VERSION = 2;
+export const OFFICE_HOURS_MEMORY_SCHEMA_VERSION = 3;
 export const OFFICE_HOURS_MEMORY_SCHEMA = "agentic30.office_hours_memory.v1";
 
 // Caps — no unbounded growth (curriculum-answer-log convention).
@@ -32,7 +32,8 @@ export const MAX_FIELD_CHARS = 500;
 // with zero hard evidence is surfaced by name as displacement ("costume").
 export const ABANDONED_THREAD_CYCLES = 2;
 
-const COMMITMENT_STATUSES = new Set(["open", "met", "missed", "abandoned"]);
+const COMMITMENT_STATUSES = new Set(["open", "met", "missed", "abandoned", "carried_forward"]);
+const ACTIVE_DEBT_STATUSES = new Set(["open", "missed"]);
 const PREDICTION_VERDICTS = new Set(["unresolved", "correct", "incorrect", "partial"]);
 const CYCLE_OUTCOMES = new Set(["success", "abort", "blocked"]); // abort|blocked == GATE HELD (a win).
 const CYCLE_STEPS = new Set(["interview", "first_interview", "retro"]);
@@ -157,6 +158,121 @@ export async function gradeCommitment({
     }
     const persisted = await persistOfficeHoursMemory({ workspaceRoot, memory, now });
     return { memory: persisted, graded: Boolean(hard) };
+  });
+}
+
+// Move an unresolved customer-action commitment into the target day without
+// duplicating an already-open matching action. Older carried items stay in the
+// ledger as history, but are no longer active Evidence OS debt.
+export async function carryForwardCommitment({
+  workspaceRoot,
+  commitmentId,
+  day,
+  now = new Date(),
+} = {}) {
+  assertWorkspace(workspaceRoot, "office_hours_memory_carry_forward_commitment");
+  const targetDay = clampInt(day, 1, 400, null);
+  if (!targetDay) throw new Error("carryForwardCommitment requires a valid target day.");
+  const id = cleanString(commitmentId, 180);
+  if (!id) throw new Error("carryForwardCommitment requires commitmentId.");
+
+  const filePath = resolveOfficeHoursMemoryPath(workspaceRoot);
+  return withFileLock(filePath, async () => {
+    const memory = await loadOfficeHoursMemory({ workspaceRoot, now });
+    const target = memory.commitments.find((commitment) => commitment.id === id);
+    if (!target) throw new Error(`carryForwardCommitment: unknown commitment "${id}".`);
+
+    if (target.status === "met" || target.evidence || target.status === "abandoned") {
+      return { memory, commitment: target, created: false, reason: "already_resolved" };
+    }
+
+    const existing = findMatchingOpenCommitmentForDay(memory.commitments, target, targetDay);
+    if (existing) {
+      if (target.id !== existing.id) {
+        target.status = "carried_forward";
+        target.evidence = null;
+        target.carriedForwardTo = existing.id;
+        existing.sourceCommitmentId ||= target.id;
+        const persisted = await persistOfficeHoursMemory({ workspaceRoot, memory, now });
+        return {
+          memory: persisted,
+          commitment: persisted.commitments.find((commitment) => commitment.id === existing.id) ?? existing,
+          created: false,
+          reason: "linked_existing",
+        };
+      }
+      return { memory, commitment: target, created: false, reason: "already_current_day" };
+    }
+
+    if (target.status === "carried_forward") {
+      const carried = target.carriedForwardTo
+        ? memory.commitments.find((commitment) => commitment.id === target.carriedForwardTo)
+        : null;
+      return { memory, commitment: carried ?? target, created: false, reason: "already_carried_forward" };
+    }
+
+    if (commitmentDay(target) === targetDay) {
+      return { memory, commitment: target, created: false, reason: "already_current_day" };
+    }
+
+    const text = cleanString(target.text || target.message || "고객 행동 약속", MAX_FIELD_CHARS);
+    const expected = cleanToken(target.expectedEvidenceKind);
+    const newCommitment = {
+      id: makeId("cm", targetDay, text, now),
+      cycle: targetDay,
+      createdDay: targetDay,
+      createdAt: now.toISOString(),
+      text,
+      status: "open",
+      evidence: null,
+      origin: "user",
+      customer: cleanString(target.customer, MAX_FIELD_CHARS),
+      channel: cleanString(target.channel, 80),
+      message: cleanString(target.message || text, MAX_FIELD_CHARS),
+      expectedEvidenceKind: EVIDENCE_KINDS.has(expected) ? expected : "",
+      dueDay: clampInt(targetDay + 1, 1, 400, targetDay),
+      confirmedByUser: target.confirmedByUser !== false,
+      sourceCommitmentId: target.id,
+      carriedForwardTo: "",
+    };
+    target.status = "carried_forward";
+    target.evidence = null;
+    target.carriedForwardTo = newCommitment.id;
+    memory.commitments = [...memory.commitments, newCommitment];
+
+    const persisted = await persistOfficeHoursMemory({ workspaceRoot, memory, now });
+    return {
+      memory: persisted,
+      commitment: persisted.commitments.find((commitment) => commitment.id === newCommitment.id) ?? newCommitment,
+      created: true,
+      reason: "created",
+    };
+  });
+}
+
+export async function abandonCommitment({
+  workspaceRoot,
+  commitmentId,
+  now = new Date(),
+} = {}) {
+  assertWorkspace(workspaceRoot, "office_hours_memory_abandon_commitment");
+  const id = cleanString(commitmentId, 180);
+  if (!id) throw new Error("abandonCommitment requires commitmentId.");
+  const filePath = resolveOfficeHoursMemoryPath(workspaceRoot);
+  return withFileLock(filePath, async () => {
+    const memory = await loadOfficeHoursMemory({ workspaceRoot, now });
+    const target = memory.commitments.find((commitment) => commitment.id === id);
+    if (!target) throw new Error(`abandonCommitment: unknown commitment "${id}".`);
+    if (target.status === "met" && target.evidence) {
+      return { memory, abandoned: false, reason: "already_met" };
+    }
+    if (target.status === "abandoned") {
+      return { memory, abandoned: false, reason: "already_abandoned" };
+    }
+    target.status = "abandoned";
+    target.evidence = null;
+    const persisted = await persistOfficeHoursMemory({ workspaceRoot, memory, now });
+    return { memory: persisted, abandoned: true, reason: "abandoned" };
   });
 }
 
@@ -499,6 +615,7 @@ export function buildDayReviews({ dayProgress, memory, workHistory, day1GoalSele
   const days = dayProgress?.days && typeof dayProgress.days === "object" && !Array.isArray(dayProgress.days)
     ? dayProgress.days
     : {};
+  const activeDebts = activeDebtCommitments(memory?.commitments ?? []);
   const evidenceOS = buildEvidenceOS({ dayProgress, memory, workHistory, day1GoalSelection, currentDay });
   const reviewDays = new Set(Object.keys(days));
   const resolvedCurrentDay = clampInt(currentDay, 1, 400, null);
@@ -514,7 +631,7 @@ export function buildDayReviews({ dayProgress, memory, workHistory, day1GoalSele
     const commitments = (memory?.commitments ?? [])
       .filter((commitment) => clampInt(commitment.createdDay ?? commitment.cycle, 1, 400, null) === day)
       .map(commitmentToReviewRecord);
-    const evidenceDebts = (memory?.commitments ?? [])
+    const evidenceDebts = activeDebts
       .filter((commitment) => isUnprovenDebt(commitment)
         && (
           clampInt(commitment.createdDay ?? commitment.cycle, 1, 400, null) === day
@@ -524,9 +641,7 @@ export function buildDayReviews({ dayProgress, memory, workHistory, day1GoalSele
     const cycles = (memory?.cycles ?? []).filter((cycle) => clampInt(cycle.day ?? cycle.cycle, 1, 400, null) === day);
     const work = workSummaryForDay({ workHistory, dayProgress, day });
     const hasHardEvidence = commitments.some((commitment) => Boolean(commitment.evidence));
-    const hasUnprovenCommitment = commitments.some((commitment) =>
-      !commitment.evidence && ["open", "missed", "abandoned"].includes(commitment.status),
-    );
+    const hasUnprovenCommitment = commitments.some(isUnprovenDebt);
     const hasCustomerDetails = commitments.some((commitment) =>
       Boolean(cleanString(commitment.customer) && cleanString(commitment.message)),
     );
@@ -574,8 +689,9 @@ export function buildEvidenceOS({ dayProgress, memory, workHistory, day1GoalSele
     : {};
   const resolvedCurrentDay = clampInt(currentDay, 1, 400, null);
   const commitments = Array.isArray(memory?.commitments) ? memory.commitments : [];
-  const openDebts = commitments.filter(isUnprovenDebt).map(commitmentToReviewRecord);
-  const overdueDebts = commitments
+  const activeDebts = activeDebtCommitments(commitments);
+  const openDebts = activeDebts.map(commitmentToReviewRecord);
+  const overdueDebts = activeDebts
     .filter((commitment) => isUnprovenDebt(commitment)
       && resolvedCurrentDay
       && clampInt(commitment.dueDay, 1, 400, resolvedCurrentDay) < resolvedCurrentDay)
@@ -594,7 +710,7 @@ export function buildEvidenceOS({ dayProgress, memory, workHistory, day1GoalSele
   for (let day = 1; day <= maxDay; day += 1) {
     const record = days[String(day)] ?? null;
     const dayCommitments = commitments.filter((commitment) => clampInt(commitment.createdDay ?? commitment.cycle, 1, 400, null) === day);
-    const dayOpenDebts = dayCommitments.filter(isUnprovenDebt);
+    const dayOpenDebts = activeDebts.filter((commitment) => clampInt(commitment.createdDay ?? commitment.cycle, 1, 400, null) === day);
     const dayProven = dayCommitments.filter((commitment) => commitment?.evidence || commitment?.status === "met");
     const work = workSummaryForDay({ workHistory, dayProgress, day });
     const state = evidenceOSStateForDay({ day, record, day1GoalSelection, dayOpenDebts, dayProven, work });
@@ -658,7 +774,66 @@ function goalSnapshotForDay({ day, record, day1GoalSelection } = {}) {
 function isUnprovenDebt(commitment = {}) {
   if (!commitment || typeof commitment !== "object" || Array.isArray(commitment)) return false;
   if (commitment.evidence) return false;
-  return ["open", "missed", "abandoned"].includes(commitment.status || "open");
+  return ACTIVE_DEBT_STATUSES.has(commitment.status || "open");
+}
+
+function activeDebtCommitments(commitments = []) {
+  const active = toArray(commitments).filter(isUnprovenDebt);
+  return active.filter((commitment) => {
+    if (commitment.status !== "missed") return true;
+    return !active.some((candidate) =>
+      candidate.id !== commitment.id
+        && candidate.status === "open"
+        && isSameCommitmentAction(candidate, commitment)
+        && (
+          candidate.sourceCommitmentId === commitment.id
+          || candidate.id === commitment.carriedForwardTo
+          || commitmentDay(candidate) >= commitmentDay(commitment)
+        )
+        && commitmentCreatedMs(candidate) >= commitmentCreatedMs(commitment)
+    );
+  });
+}
+
+function findMatchingOpenCommitmentForDay(commitments = [], source = {}, targetDay = null) {
+  const day = clampInt(targetDay, 1, 400, null);
+  if (!day) return null;
+  return toArray(commitments).find((commitment) =>
+    commitment.id !== source.id
+      && commitment.status === "open"
+      && !commitment.evidence
+      && commitmentDay(commitment) === day
+      && (
+        commitment.sourceCommitmentId === source.id
+        || commitment.id === source.carriedForwardTo
+        || isSameCommitmentAction(commitment, source)
+      )
+  ) ?? null;
+}
+
+function commitmentDay(commitment = {}) {
+  return clampInt(commitment.createdDay ?? commitment.day ?? commitment.cycle, 1, 400, null);
+}
+
+function isSameCommitmentAction(left = {}, right = {}) {
+  return commitmentIdentityKey(left) === commitmentIdentityKey(right);
+}
+
+function commitmentIdentityKey(commitment = {}) {
+  const customer = cleanString(commitment.customer, MAX_FIELD_CHARS).toLowerCase();
+  const channel = cleanString(commitment.channel, 80).toLowerCase();
+  const message = cleanString(commitment.message || commitment.text, MAX_FIELD_CHARS).toLowerCase();
+  const text = cleanString(commitment.text, MAX_FIELD_CHARS).toLowerCase();
+  const expected = cleanToken(commitment.expectedEvidenceKind);
+  if (customer || channel || message) {
+    return ["structured", customer, channel, message, expected].join("|");
+  }
+  return ["text", text, expected].join("|");
+}
+
+function commitmentCreatedMs(commitment = {}) {
+  const timestamp = Date.parse(String(commitment.createdAt || ""));
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function evidenceOSStateForDay({ day, record, day1GoalSelection, dayOpenDebts, dayProven, work } = {}) {
@@ -866,6 +1041,8 @@ function normalizeCommitment(value = {}, { now = new Date() } = {}) {
     expectedEvidenceKind: structured.expectedEvidenceKind,
     dueDay: structured.dueDay,
     confirmedByUser: structured.confirmedByUser,
+    sourceCommitmentId: cleanString(value.sourceCommitmentId ?? value.source_commitment_id, 180),
+    carriedForwardTo: cleanString(value.carriedForwardTo ?? value.carried_forward_to, 180),
   };
 }
 

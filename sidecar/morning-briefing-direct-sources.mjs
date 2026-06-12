@@ -71,6 +71,36 @@ function posthogHost(region = "us") {
   return region === "eu" ? "https://eu.posthog.com" : "https://us.posthog.com";
 }
 
+const POSTHOG_PRODUCT_SOURCES = Object.freeze(["mac_app", "mac_sidecar"]);
+const POSTHOG_CORE_ACTION_EVENTS = Object.freeze([
+  "workspace_setup_completed",
+  "mac_session_created",
+  "mac_sidecar_session_created",
+  "mac_sidecar_office_hours_completed",
+]);
+
+function hogqlString(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+function hogqlList(values = []) {
+  return `(${values.map(hogqlString).join(", ")})`;
+}
+
+const POSTHOG_PRODUCT_SOURCE_SQL = hogqlList(POSTHOG_PRODUCT_SOURCES);
+const POSTHOG_CORE_ACTION_EVENT_SQL = hogqlList(POSTHOG_CORE_ACTION_EVENTS);
+const POSTHOG_NON_INTERNAL_FILTER = [
+  "lower(coalesce(toString(properties.is_internal_traffic), '')) NOT IN ('true', '1', 'yes')",
+  "lower(coalesce(toString(person.properties.is_internal_tester), '')) NOT IN ('true', '1', 'yes')",
+].join(" AND ");
+const POSTHOG_PRODUCT_TELEMETRY_FILTER = [
+  `toString(properties.telemetry_source) IN ${POSTHOG_PRODUCT_SOURCE_SQL}`,
+  "toString(properties.telemetry_environment) = 'production'",
+  "toString(properties.build_configuration) = 'release'",
+  POSTHOG_NON_INTERNAL_FILTER,
+].join(" AND ");
+const POSTHOG_CORE_ACTION_FILTER = `event IN ${POSTHOG_CORE_ACTION_EVENT_SQL}`;
+
 async function runHogql({ fetchImpl, host, token, query }) {
   const { ok, payload } = await fetchJson(fetchImpl, `${host}/api/projects/@current/query/`, {
     method: "POST",
@@ -105,8 +135,9 @@ export async function collectPosthogDirectDrilldown({
   const prevStart = utcSqlDateTime(startMs - spanMs);
 
   const totalsQuery = (fromSql, toSql) =>
-    `SELECT count() AS events, count(DISTINCT person_id) AS actives FROM events `
-    + `WHERE timestamp >= toDateTime('${fromSql}') AND timestamp < toDateTime('${toSql}')`;
+    `SELECT count() AS events, uniqIf(person_id, ${POSTHOG_CORE_ACTION_FILTER}) AS actives FROM events `
+    + `WHERE timestamp >= toDateTime('${fromSql}') AND timestamp < toDateTime('${toSql}') `
+    + `AND ${POSTHOG_PRODUCT_TELEMETRY_FILTER}`;
 
   const cohortStart = utcSqlDateTime(untilMs - 9 * 86_400_000);
   const webStart = utcSqlDateTime(untilMs - 14 * 86_400_000);
@@ -117,26 +148,30 @@ export async function collectPosthogDirectDrilldown({
       fetchImpl, host, token,
       query: `SELECT event, count() AS c, count(DISTINCT person_id) AS people FROM events `
         + `WHERE timestamp >= toDateTime('${start}') AND timestamp < toDateTime('${until}') `
+        + `AND ${POSTHOG_PRODUCT_TELEMETRY_FILTER} `
         + `GROUP BY event ORDER BY c DESC LIMIT 6`,
     }),
-    // First-time cohorts: each person's first-ever event day (last ~9 days).
+    // First-time cohorts: each person's first core product action day (last ~9 days).
     runHogql({
       fetchImpl, host, token,
       query: `SELECT person_id, first_day FROM `
-        + `(SELECT person_id, min(toDate(timestamp)) AS first_day FROM events GROUP BY person_id) `
+        + `(SELECT person_id, min(toDate(timestamp)) AS first_day FROM events `
+        + `WHERE ${POSTHOG_PRODUCT_TELEMETRY_FILTER} AND ${POSTHOG_CORE_ACTION_FILTER} GROUP BY person_id) `
         + `WHERE first_day >= toDate(toDateTime('${cohortStart}')) ORDER BY first_day ASC LIMIT 10000`,
     }),
-    // Activity days for those windows — joined in JS to compute Day-1 복귀율.
+    // Core-action days for those windows — joined in JS to compute Day-1 복귀율.
     runHogql({
       fetchImpl, host, token,
       query: `SELECT DISTINCT person_id, toDate(timestamp) AS day FROM events `
-        + `WHERE timestamp >= toDateTime('${cohortStart}') LIMIT 50000`,
+        + `WHERE timestamp >= toDateTime('${cohortStart}') AND timestamp < toDateTime('${until}') `
+        + `AND ${POSTHOG_PRODUCT_TELEMETRY_FILTER} AND ${POSTHOG_CORE_ACTION_FILTER} LIMIT 50000`,
     }),
     // Web path breakdown for the 웹 신호 section (last 2 weeks of $pageview).
     runHogql({
       fetchImpl, host, token,
       query: `SELECT properties.$pathname AS path, count() AS views FROM events `
         + `WHERE event = '$pageview' AND timestamp >= toDateTime('${webStart}') AND timestamp < toDateTime('${until}') `
+        + `AND ${POSTHOG_NON_INTERNAL_FILTER} `
         + `GROUP BY path ORDER BY views DESC LIMIT 6`,
     }),
   ]);
@@ -175,6 +210,7 @@ export async function collectPosthogDirectDrilldown({
     .map(([day, cohort]) => ({
       day,
       size: cohort.size,
+      returned: cohort.returned,
       pct: Math.round((cohort.returned / cohort.size) * 100),
     }));
   const latestCohort = cohortPoints[cohortPoints.length - 1] || null;
@@ -222,7 +258,7 @@ export async function collectPosthogDirectDrilldown({
         direction: activesDelta.direction,
         vs: `어제 ${prevActives}`,
       },
-      { label: "신규(첫 실행)", valueLabel: String(newToday), vs: "오늘 첫 이벤트 기준" },
+      { label: "신규(첫 핵심 행동)", valueLabel: String(newToday), vs: "오늘 첫 핵심 행동 기준" },
       {
         label: "이벤트",
         valueLabel: String(events),
@@ -236,17 +272,21 @@ export async function collectPosthogDirectDrilldown({
       ? {
           kind: "curve",
           title: "Day-1 복귀율 · 첫 실행 코호트별",
-          subtitle: "first-time 코호트 · 다음날 복귀율 · HogQL 집계",
+          subtitle: "첫 핵심 행동 코호트 · 다음날 복귀율 · HogQL 집계",
           points: cohortPoints.map((point) => ({
             label: `${dayLabel(point.day)} · ${point.pct}% (${point.size}명)`,
             pct: point.pct,
+            date: point.day,
+            cohortSize: point.size,
+            returned: point.returned,
+            tip: `${point.day} 코호트 n=${point.size} · ${point.returned}/${point.size} 복귀`,
           })),
           baselinePct: 40,
           legend: [
             { label: "Day-1 복귀율", tone: "rose" },
             { label: "건강 기준 40%", tone: "muted" },
           ],
-          footnote: "PostHog Query API(HogQL)에서 직접 집계한 값이에요 — 표본이 작으면 한 명 차이도 크게 보여요.",
+          footnote: "프로덕션 앱/사이드카의 핵심 행동만 직접 집계한 값이에요 — 표본이 작으면 한 명 차이도 크게 보여요.",
         }
       : null,
     signals: (topEvents || []).map((row) => ({

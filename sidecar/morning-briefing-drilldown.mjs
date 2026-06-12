@@ -1,5 +1,6 @@
 import path from "node:path";
 import { execFile } from "node:child_process";
+import { z } from "zod";
 
 import {
   buildExternalOfficeHoursDigestPrompt,
@@ -25,6 +26,7 @@ const FUNNEL_LIMIT = 6;
 const SIGNAL_LIMIT = 6;
 const DRAFT_LIMIT = 4;
 const POINT_LIMIT = 8;
+const MIN_COHORT_N_FOR_DIRECTION = 20;
 
 function cleanString(value, max = 240) {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -100,10 +102,14 @@ function normalizePoints(values = []) {
       return {
         label: cleanString(point?.label, 30),
         pct: Math.min(100, Math.max(0, pct)),
+        date: cleanString(point?.date ?? point?.day, 20) || null,
+        cohortSize: finiteNumber(point?.cohortSize ?? point?.size),
+        returned: finiteNumber(point?.returned ?? point?.returnedDay1),
+        tip: cleanString(point?.tip, 100) || null,
       };
     })
     .filter(Boolean)
-    .slice(0, POINT_LIMIT);
+    .slice(-POINT_LIMIT);
 }
 
 function normalizeChart(chart) {
@@ -281,6 +287,295 @@ function normalizeMetaRows(values = []) {
     })
     .filter(Boolean)
     .slice(0, 8);
+}
+
+const PosthogDrilldownMeasurementsSchema = z.object({
+  totals: z.object({
+    startIso: z.string().max(40).optional(),
+    untilIso: z.string().max(40).optional(),
+    windowLabel: z.string().max(120).optional(),
+    events: z.number().int().nonnegative(),
+    activeUsers: z.number().int().nonnegative(),
+    conversions: z.number().int().nonnegative().default(0),
+    signups: z.number().int().nonnegative().default(0),
+    signupInstrumentation: z.enum(["observed", "missing", "unknown"]).default("unknown"),
+    conversionInstrumentation: z.enum(["observed", "missing", "unknown"]).default("unknown"),
+    topEvents: z.array(z.object({
+      event: z.string().min(1).max(120),
+      count: z.number().int().nonnegative(),
+      users: z.number().int().nonnegative().optional(),
+    }).strict()).max(12).default([]),
+  }).strict(),
+  cohorts: z.array(z.object({
+    day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    cohortSize: z.number().int().nonnegative(),
+    returnedDay1: z.number().int().nonnegative(),
+    retentionPct: z.number().finite().min(0).max(100).optional(),
+  }).strict()).max(31).default([]),
+  funnel: z.object({
+    pageviewUsers: z.number().int().nonnegative().default(0),
+    appOpenUsers: z.number().int().nonnegative().default(0),
+    sessionRequestUsers: z.number().int().nonnegative().default(0),
+    sessionCreatedUsers: z.number().int().nonnegative().default(0),
+    namedActivationUsers: z.number().int().nonnegative().default(0),
+    activationInstrumentation: z.enum(["observed", "missing", "unknown"]).default("unknown"),
+  }).strict().optional(),
+  paths: z.array(z.object({
+    path: z.string().min(1).max(160),
+    pageviews: z.number().int().nonnegative(),
+    activeUsers: z.number().int().nonnegative().optional(),
+  }).strict()).max(10).default([]),
+  instrumentationGaps: z.array(z.string().min(1).max(180)).max(6).default([]),
+}).strict();
+
+function dayLabel(value) {
+  const text = String(value || "");
+  return text.length >= 10 ? text.slice(5, 10) : text;
+}
+
+function formatPercent(value) {
+  const rounded = Math.round((finiteNumber(value) ?? 0) * 10) / 10;
+  return Number.isInteger(rounded) ? `${rounded}%` : `${rounded.toFixed(1)}%`;
+}
+
+function pctFromCohort(cohort) {
+  const explicit = finiteNumber(cohort?.retentionPct);
+  if (explicit !== null) return Math.min(100, Math.max(0, explicit));
+  const size = finiteNumber(cohort?.cohortSize) ?? 0;
+  if (size <= 0) return 0;
+  return Math.min(100, Math.max(0, ((finiteNumber(cohort?.returnedDay1) ?? 0) / size) * 100));
+}
+
+function median(values = []) {
+  const sorted = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+  if (!sorted.length) return null;
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function compactUtcRange(startIso, untilIso, fallback = "") {
+  const start = Date.parse(startIso || "");
+  const until = Date.parse(untilIso || "");
+  if (!Number.isFinite(start) || !Number.isFinite(until)) return cleanString(fallback, 80) || "기간 합계";
+  const full = (date) => {
+    const d = new Date(date);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")} ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+  };
+  const short = (date) => {
+    const d = new Date(date);
+    return `${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")} ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+  };
+  return `${full(start)}~${short(until)} UTC`;
+}
+
+function buildPosthogFunnel(funnel) {
+  if (!funnel) return null;
+  const steps = [
+    { label: "웹 방문", value: funnel.pageviewUsers, valueLabel: `${funnel.pageviewUsers}명` },
+    { label: "앱 실행", value: funnel.appOpenUsers, valueLabel: `${funnel.appOpenUsers}명` },
+    { label: "세션 요청", value: funnel.sessionRequestUsers, valueLabel: `${funnel.sessionRequestUsers}명` },
+    { label: "세션 생성", value: funnel.sessionCreatedUsers, valueLabel: `${funnel.sessionCreatedUsers}명` },
+  ];
+  if (steps.every((step) => step.value <= 0)) return null;
+  let gapAfterIndex = null;
+  let biggestDrop = -1;
+  for (let index = 0; index < steps.length - 1; index += 1) {
+    const from = steps[index].value;
+    const to = steps[index + 1].value;
+    if (from <= 0) continue;
+    const drop = Math.max(0, from - to) / from;
+    if (drop > biggestDrop) {
+      biggestDrop = drop;
+      gapAfterIndex = index;
+    }
+  }
+  const markedSteps = steps.map((step, index) => ({
+    ...step,
+    drop: gapAfterIndex !== null && index === gapAfterIndex + 1 && step.value < steps[gapAfterIndex].value,
+  }));
+  const gapLabel = gapAfterIndex !== null
+    ? `${steps[gapAfterIndex].label} ${steps[gapAfterIndex].value}명 중 ${steps[gapAfterIndex + 1].label}은 ${steps[gapAfterIndex + 1].value}명입니다.`
+    : null;
+  return { steps: markedSteps, gapAfterIndex, gapLabel };
+}
+
+function buildPosthogActions({ funnel, instrumentationGaps = [] } = {}) {
+  const actions = [];
+  if (funnel?.gapAfterIndex !== null && funnel?.gapAfterIndex !== undefined) {
+    const from = funnel.steps?.[funnel.gapAfterIndex];
+    const to = funnel.steps?.[funnel.gapAfterIndex + 1];
+    if (from && to) {
+      actions.push({
+        kind: "message",
+        badge: "메시지",
+        title: `${from.label}→${to.label} 전환 확인`,
+        body: `${from.label}에서 ${to.label}로 넘어가는 CTA와 설치 흐름을 점검하세요.\n현재 집계는 ${from.valueLabel} 중 ${to.valueLabel}입니다.`,
+        why: "가장 큰 손실 구간을 먼저 줄이면 다음 브리핑에서 바로 확인할 수 있습니다.",
+        applyLabel: "큐에 추가",
+      });
+    }
+  }
+  if (instrumentationGaps.length) {
+    actions.push({
+      kind: "message",
+      badge: "계측",
+      title: "가입·activation 이벤트 보강",
+      body: "가입, 온보딩 완료, 첫 세션 성공 같은 목표 이벤트를 명시적으로 계측하세요.\n현재 전환 판단은 이벤트 부재와 실제 전환 부재를 분리하지 못합니다.",
+      why: instrumentationGaps[0],
+      applyLabel: "큐에 추가",
+    });
+  }
+  return actions.slice(0, 2);
+}
+
+export function normalizePosthogDrilldownMeasurements(raw = {}) {
+  if (raw?.measurements && typeof raw === "object") {
+    const wrapperKeys = Object.keys(raw).filter((key) => key !== "measurements");
+    if (wrapperKeys.length) return null;
+  }
+  const measurements = raw?.measurements && typeof raw.measurements === "object" ? raw.measurements : raw;
+  const parsed = PosthogDrilldownMeasurementsSchema.safeParse(measurements);
+  if (!parsed.success) return null;
+  const data = parsed.data;
+  const cohorts = data.cohorts
+    .map((cohort) => ({
+      ...cohort,
+      pct: pctFromCohort(cohort),
+    }))
+    .filter((cohort) => cohort.cohortSize > 0)
+    .sort((a, b) => a.day.localeCompare(b.day));
+  const latest = cohorts[cohorts.length - 1] || null;
+  const previous = cohorts[cohorts.length - 2] || null;
+  const latestSmall = latest ? latest.cohortSize < MIN_COHORT_N_FOR_DIRECTION : false;
+  const previousSmall = previous ? previous.cohortSize < MIN_COHORT_N_FOR_DIRECTION : false;
+  const delta = latest && previous ? Math.round((latest.pct - previous.pct) * 10) / 10 : null;
+  const deltaAbs = delta === null ? null : Math.abs(delta);
+  const retentionDirection = !latest || !previous || latestSmall || previousSmall || delta === 0
+    ? "flat"
+    : delta > 0 ? "up" : "down";
+  const retentionDelta = latest && previous
+    ? latestSmall || previousSmall
+      ? "표본 작음"
+      : delta === 0
+        ? "변동 없음"
+        : `${delta > 0 ? "▲" : "▼"} ${formatPercent(deltaAbs).replace("%", "p")}`
+    : latest ? "최신 코호트" : "미계측";
+  const retentionVs = latest
+    ? previous
+      ? `${dayLabel(latest.day)} 코호트 n=${latest.cohortSize} · ${latest.returnedDay1}/${latest.cohortSize} 복귀 · 이전 ${dayLabel(previous.day)} n=${previous.cohortSize} · ${formatPercent(previous.pct)}`
+      : `${dayLabel(latest.day)} 코호트 n=${latest.cohortSize} · ${latest.returnedDay1}/${latest.cohortSize} 복귀`
+    : "유효 코호트 없음";
+  const windowLabel = compactUtcRange(data.totals.startIso, data.totals.untilIso, data.totals.windowLabel);
+  const signupObserved = data.totals.signupInstrumentation === "observed";
+  const funnel = buildPosthogFunnel(data.funnel);
+  const pathTotal = data.paths.reduce((sum, row) => sum + row.pageviews, 0);
+  const instrumentationGaps = data.instrumentationGaps.length
+    ? data.instrumentationGaps
+    : [
+        ...(signupObserved ? [] : ["가입 이벤트가 없어 실제 가입 0건과 계측 공백을 분리할 수 없습니다."]),
+        ...(data.funnel?.activationInstrumentation === "observed" ? [] : ["명시적 activation 이벤트가 없어 목표 전환 판단은 제한적입니다."]),
+      ];
+
+  return normalizeMorningBriefingDrilldown("posthog", {
+    title: "PostHog · 리텐션·이탈 드릴다운",
+    subtitle: latestSmall ? "표본 작음 · 단정보다 방향" : "최신 관측 완료 코호트 기준",
+    syncPills: [
+      latest ? `Day-1 ${formatPercent(latest.pct)} · n=${latest.cohortSize}` : "Day-1 코호트 없음",
+      `기간 이벤트 ${data.totals.events} · 활성 ${data.totals.activeUsers}`,
+      latestSmall ? `표본 작음 · 기준 n<${MIN_COHORT_N_FOR_DIRECTION}` : "",
+    ].filter(Boolean),
+    kpis: [
+      {
+        label: "이벤트",
+        valueLabel: String(data.totals.events),
+        deltaLabel: "기간 합계",
+        direction: "flat",
+        vs: windowLabel,
+        flag: false,
+      },
+      {
+        label: "활성 사용자",
+        valueLabel: `${data.totals.activeUsers}명`,
+        deltaLabel: "기간 합계",
+        direction: "flat",
+        vs: "핵심 행동 고유 사용자",
+        flag: false,
+      },
+      {
+        label: "Day-1 리텐션",
+        valueLabel: latest ? formatPercent(latest.pct) : "미계측",
+        deltaLabel: retentionDelta,
+        direction: retentionDirection,
+        vs: retentionVs,
+        flag: retentionDirection === "down",
+      },
+      {
+        label: "가입",
+        valueLabel: signupObserved ? String(data.totals.signups) : "미계측",
+        deltaLabel: signupObserved ? (data.totals.signups === 0 ? "0건" : "관측됨") : "이벤트 없음",
+        direction: "flat",
+        vs: signupObserved ? "가입 이벤트 기준" : "가입 이벤트 미확인",
+        flag: false,
+      },
+    ],
+    kpisMeta: "기간 합계 · 코호트 지표 분리",
+    chart: cohorts.length >= 2
+      ? {
+          kind: "curve",
+          title: "Day-1 리텐션",
+          subtitle: `첫 핵심 행동 다음날 재방문 · 유효 코호트 ${cohorts.length}개`,
+          points: cohorts.map((cohort) => ({
+            label: `${dayLabel(cohort.day)} · ${formatPercent(cohort.pct)}`,
+            pct: cohort.pct,
+            date: cohort.day,
+            cohortSize: cohort.cohortSize,
+            returned: cohort.returnedDay1,
+            tip: `${cohort.day} 코호트 n=${cohort.cohortSize} · ${cohort.returnedDay1}/${cohort.cohortSize} 복귀`,
+          })),
+          baselinePct: median(cohorts.map((cohort) => cohort.pct)),
+          legend: [{ label: "Day-1 리텐션", tone: "rose" }],
+          footnote: `각 점은 코호트 n과 복귀 인원을 포함합니다. n<${MIN_COHORT_N_FOR_DIRECTION}은 방향 신호로만 봅니다.`,
+        }
+      : null,
+    funnel,
+    signals: [
+      latest ? {
+        time: "최신 코호트",
+        text: `${dayLabel(latest.day)} 코호트는 ${latest.cohortSize}명 중 ${latest.returnedDay1}명이 다음날 돌아왔습니다.`,
+      } : null,
+      funnel?.gapAfterIndex !== null && funnel?.gapAfterIndex !== undefined ? {
+        time: "이탈 지점",
+        text: funnel.gapLabel,
+      } : null,
+      data.funnel?.sessionRequestUsers > 0 ? {
+        time: "핵심 실행",
+        text: `세션 요청 사용자 ${data.funnel.sessionRequestUsers}명 중 세션 생성 사용자는 ${data.funnel.sessionCreatedUsers}명입니다.`,
+      } : null,
+      ...instrumentationGaps.map((text) => ({ time: "계측 공백", text })),
+    ].filter(Boolean).slice(0, SIGNAL_LIMIT),
+    webSignals: data.paths.slice(0, 3).map((row, index) => {
+      const share = pathTotal > 0 ? Math.round((row.pageviews / pathTotal) * 100) : 0;
+      return {
+        time: index === 0 ? "유입 1위" : "경로",
+        text: `${row.path} · ${row.pageviews}뷰${row.activeUsers !== undefined ? ` · ${row.activeUsers}명` : ""} · 상위 ${share}%`,
+      };
+    }),
+    webMeta: pathTotal > 0 ? `최근 2주 · $pageview ${pathTotal}뷰 · 경로 분해` : null,
+    actions: buildPosthogActions({ funnel, instrumentationGaps }),
+    meta: {
+      progress: {
+        label: "Day-1 리텐션",
+        valueLabel: latest ? `${formatPercent(latest.pct)} · n=${latest.cohortSize}` : "코호트 없음",
+        sub: latestSmall ? "표본 작음" : latest ? `${latest.returnedDay1}/${latest.cohortSize} 복귀` : null,
+        ratio: latest ? Math.min(1, latest.pct / 100) : 0,
+      },
+      rows: [
+        { key: "집계", value: "PostHog MCP execute-sql", tone: "accent" },
+        { key: "기간", value: windowLabel },
+        { key: "코호트 기준", value: "첫 핵심 행동 다음날 재방문" },
+      ],
+    },
+  });
 }
 
 export function normalizeMorningBriefingDrilldown(id, raw) {
@@ -1058,38 +1353,43 @@ const EXTERNAL_DRILLDOWN_SHAPE = {
     ],
   },
   posthog: {
-    kpis: [
-      { label: "Day-2 리텐션", valueLabel: "0%", deltaLabel: "▼ 0p", direction: "down", vs: "어제 0%", flag: true },
-    ],
-    chart: {
-      kind: "curve",
-      title: "Day-2 리텐션",
-      subtitle: "short subtitle",
-      points: [{ label: "06-05 · 39%", pct: 39 }],
-      baselinePct: 40,
-      legend: [{ label: "Day-2 리텐션", tone: "rose" }],
-      footnote: "sample-size caveat",
-    },
-    funnel: {
-      steps: [{ label: "랜딩 방문", value: 0, valueLabel: "0", drop: false }],
-      gapAfterIndex: 1,
-      gapLabel: "biggest leak description",
-    },
-    signals: [{ time: "이탈 지점", text: "aggregate funnel note" }],
-    webSignals: [{ time: "유입 엔진", text: "aggregate web/pageview note (path-level)" }],
-    webMeta: "최근 2주 · 경로 분해",
-    actions: [
-      {
-        kind: "message",
-        badge: "메시지",
-        title: "short action title",
-        body: "multi-line draft",
-        why: "why today",
-        applyLabel: "큐에 추가",
+    measurements: {
+      totals: {
+        startIso: "Window.startIso",
+        untilIso: "Window.untilIso",
+        events: 0,
+        activeUsers: 0,
+        conversions: 0,
+        signups: 0,
+        signupInstrumentation: "missing",
+        conversionInstrumentation: "missing",
+        topEvents: [{ event: "$pageview", count: 0, users: 0 }],
       },
-    ],
+      cohorts: [{ day: "2026-06-09", cohortSize: 0, returnedDay1: 0, retentionPct: 0 }],
+      funnel: {
+        pageviewUsers: 0,
+        appOpenUsers: 0,
+        sessionRequestUsers: 0,
+        sessionCreatedUsers: 0,
+        namedActivationUsers: 0,
+        activationInstrumentation: "missing",
+      },
+      paths: [{ path: "/", pageviews: 0, activeUsers: 0 }],
+      instrumentationGaps: ["가입·activation 이벤트가 확인되지 않음"],
+    },
   },
 };
+
+const POSTHOG_DRILLDOWN_CORE_ACTION_EVENTS = "('workspace_setup_completed', 'mac_session_created', 'mac_sidecar_session_created', 'mac_sidecar_office_hours_completed')";
+const POSTHOG_DRILLDOWN_PRODUCT_FILTER = "toString(properties.telemetry_source) IN ('mac_app', 'mac_sidecar') AND toString(properties.telemetry_environment) = 'production' AND toString(properties.build_configuration) = 'release' AND lower(coalesce(toString(properties.is_internal_traffic), '')) NOT IN ('true', '1', 'yes') AND lower(coalesce(toString(person.properties.is_internal_tester), '')) NOT IN ('true', '1', 'yes')";
+const POSTHOG_DRILLDOWN_NON_INTERNAL_FILTER = "lower(coalesce(toString(properties.is_internal_traffic), '')) NOT IN ('true', '1', 'yes') AND lower(coalesce(toString(person.properties.is_internal_tester), '')) NOT IN ('true', '1', 'yes')";
+
+const POSTHOG_DRILLDOWN_HOGQL_TEMPLATES = Object.freeze([
+  `totals_top_events: WITH window_events AS (SELECT event, person_id FROM events WHERE timestamp >= toDateTime('{{start}}') AND timestamp < toDateTime('{{until}}') AND ${POSTHOG_DRILLDOWN_PRODUCT_FILTER}), totals AS (SELECT count() AS events, uniqIf(person_id, event IN ${POSTHOG_DRILLDOWN_CORE_ACTION_EVENTS}) AS activeUsers, countIf(event ILIKE '%signup%' OR event ILIKE '%sign_up%' OR event ILIKE '%subscription%' OR event ILIKE '%checkout%' OR event ILIKE '%purchase%' OR event ILIKE '%conversion%') AS conversions, countIf(event ILIKE '%signup%' OR event ILIKE '%sign_up%' OR event ILIKE '%signed up%' OR event ILIKE '%user created%') AS signups FROM window_events), top_events AS (SELECT groupArray(tuple(event, event_count, users)) AS topEvents FROM (SELECT event, count() AS event_count, count(DISTINCT person_id) AS users FROM window_events GROUP BY event ORDER BY event_count DESC LIMIT 12)) SELECT totals.events, totals.activeUsers, totals.conversions, totals.signups, top_events.topEvents FROM totals CROSS JOIN top_events LIMIT 1`,
+  `day1_cohorts: WITH first_seen AS (SELECT person_id, min(toDate(timestamp)) AS first_day FROM events WHERE timestamp < toDateTime('{{until}}') AND ${POSTHOG_DRILLDOWN_PRODUCT_FILTER} AND event IN ${POSTHOG_DRILLDOWN_CORE_ACTION_EVENTS} GROUP BY person_id HAVING first_day >= toDate(toDateTime('{{cohortStart}}')) AND first_day < toDate(toDateTime('{{until}}')) - INTERVAL 1 DAY), activity AS (SELECT person_id, groupUniqArray(toDate(timestamp)) AS days FROM events WHERE timestamp >= toDateTime('{{cohortStart}}') AND timestamp < toDateTime('{{until}}') AND ${POSTHOG_DRILLDOWN_PRODUCT_FILTER} AND event IN ${POSTHOG_DRILLDOWN_CORE_ACTION_EVENTS} GROUP BY person_id) SELECT first_day AS day, count() AS cohortSize, countIf(has(days, first_day + INTERVAL 1 DAY)) AS returnedDay1, round(returnedDay1 / cohortSize * 100, 1) AS retentionPct FROM first_seen LEFT ANY JOIN activity USING person_id GROUP BY first_day ORDER BY first_day ASC LIMIT 31`,
+  `web_app_session_funnel: WITH window_events AS (SELECT event, person_id FROM events WHERE timestamp >= toDateTime('{{start}}') AND timestamp < toDateTime('{{until}}') AND ${POSTHOG_DRILLDOWN_PRODUCT_FILTER}), flags AS (SELECT person_id, 0 AS did_pageview, countIf(event = 'Application Opened') > 0 AS did_open, countIf(event = 'mac_session_create_requested') > 0 AS did_session_request, countIf(event = 'mac_sidecar_session_created' OR event = 'mac_session_created') > 0 AS did_session_created, countIf(event ILIKE '%activation%' OR event ILIKE '%onboarding_complete%' OR event = 'workspace_setup_completed' OR event = 'mac_sidecar_office_hours_completed') > 0 AS did_activation FROM window_events GROUP BY person_id) SELECT countIf(did_pageview) AS pageviewUsers, countIf(did_open) AS appOpenUsers, countIf(did_session_request) AS sessionRequestUsers, countIf(did_session_created) AS sessionCreatedUsers, countIf(did_activation) AS namedActivationUsers FROM flags LIMIT 1`,
+  `web_paths: SELECT coalesce(nullIf(toString(properties.$pathname), ''), nullIf(toString(properties.$current_url), ''), '(경로 없음)') AS path, count() AS pageviews, count(DISTINCT person_id) AS activeUsers FROM events WHERE event = '$pageview' AND timestamp >= toDateTime('{{webStart}}') AND timestamp < toDateTime('{{until}}') AND ${POSTHOG_DRILLDOWN_NON_INTERNAL_FILTER} GROUP BY path ORDER BY pageviews DESC LIMIT 10`,
+]);
 
 const EXTERNAL_DRILLDOWN_COLLECTION_PLANS = Object.freeze({
   cloudflare: [
@@ -1099,10 +1399,12 @@ const EXTERNAL_DRILLDOWN_COLLECTION_PLANS = Object.freeze({
     "For the path table, query httpRequestsAdaptiveGroups with filter { AND: [{ datetime_geq, datetime_leq }, { requestSource: \"eyeball\" }] }, limit 6, orderBy: [sum_edgeResponseBytes_DESC], and fields count, sum { edgeResponseBytes }, dimensions { metric: clientRequestPath }. If the dataset is not entitled or schema rejects it, omit table and put that gap in signals/evidenceGaps without failing the source.",
   ],
   posthog: [
-    "PostHog drilldown plan: prefer up to 4 execute-sql HogQL SELECT/WITH queries: totals/top events, first-time Day-1 retention cohorts, onboarding/activation funnel, and $pageview path breakdown for the last 14 days.",
-    "For retention chart, compute each person's first event day and whether they returned on first_day + 1. Only include chart when at least two cohorts have real sizes.",
-    "For funnel, use real event names available in top events. Prefer onboarding/setup/activation/sign_up/signup/login/checkout/subscription events when present; if those names are absent, omit funnel and explain the instrumentation gap in signals/evidenceGaps.",
-    "For webSignals, aggregate $pageview by properties.$pathname or the closest available path property. Do not use raw person ids or event rows.",
+    "PostHog drilldown contract: return only drilldowns.posthog.measurements. Do not return PostHog kpis/chart/signals/actions; Agentic30 renders those deterministically.",
+    "PostHog active user rule: activeUsers is distinct people with one of workspace_setup_completed, mac_session_created, mac_sidecar_session_created, or mac_sidecar_office_hours_completed after production app/sidecar and internal-tester filters. $pageview/web/blog/link events never count as active users.",
+    "Run exactly the 4 fixed execute-sql templates below, substituting {{start}} = Window.startIso without milliseconds, {{until}} = Window.untilIso without milliseconds, {{cohortStart}} = {{until}} minus 16 days, and {{webStart}} = {{until}} minus 14 days.",
+    "Map the four result tables into totals, cohorts, funnel, and paths. Convert topEvents tuples into objects { event, count, users }.",
+    "Set signupInstrumentation/conversionInstrumentation/activationInstrumentation to observed only when matching events exist in topEvents or the fixed query matched a named event; otherwise use missing and add a short instrumentationGaps item.",
+    "Do not include raw rows, person_id, distinct_id, uuid, emails, IPs, properties blobs, or query result arrays in the JSON. Aggregates only.",
   ],
 });
 
@@ -1112,6 +1414,7 @@ export function buildMorningBriefingExternalDigestPrompt({ sources = [], window,
   const shape = {};
   for (const id of wanted) shape[id] = EXTERNAL_DRILLDOWN_SHAPE[id];
   const plans = wanted.flatMap((id) => EXTERNAL_DRILLDOWN_COLLECTION_PLANS[id] || []);
+  const posthogTemplates = wanted.includes("posthog") ? POSTHOG_DRILLDOWN_HOGQL_TEMPLATES : [];
   if (!Object.keys(shape).length) return base;
   return [
     base,
@@ -1122,6 +1425,9 @@ export function buildMorningBriefingExternalDigestPrompt({ sources = [], window,
     "All visible labels/titles/notes must be Korean, concise, and factual.",
     "Drilldown collection rules:",
     ...plans.map((line) => `- ${line}`),
+    ...(posthogTemplates.length
+      ? ["", "PostHog fixed HogQL templates:", ...posthogTemplates.map((line) => `- ${line}`)]
+      : []),
     "",
     "\"drilldowns\" shape (values are placeholders):",
     JSON.stringify({ drilldowns: shape }, null, 2),
@@ -1173,12 +1479,14 @@ export function normalizeMorningBriefingExternalDigest(textOrObject = "", expect
     if (!readyIds.has(id)) continue;
     const raw = payload?.drilldowns?.[id];
     if (!raw || typeof raw !== "object") continue;
-    const normalized = normalizeMorningBriefingDrilldown(id, {
-      ...raw,
-      title: cleanString(raw.title, 80) || EXTERNAL_TITLES[id].title,
-      subtitle: cleanString(raw.subtitle, 160) || EXTERNAL_TITLES[id].subtitle,
-      drafts: raw.actions ?? raw.drafts,
-    });
+    const normalized = id === "posthog" && raw.measurements
+      ? normalizePosthogDrilldownMeasurements(raw)
+      : normalizeMorningBriefingDrilldown(id, {
+          ...raw,
+          title: cleanString(raw.title, 80) || EXTERNAL_TITLES[id].title,
+          subtitle: cleanString(raw.subtitle, 160) || EXTERNAL_TITLES[id].subtitle,
+          drafts: raw.actions ?? raw.drafts,
+        });
     if (normalized) drilldowns[id] = normalized;
   }
   return { sources, drilldowns };

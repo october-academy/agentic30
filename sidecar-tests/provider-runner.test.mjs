@@ -18,6 +18,7 @@ import {
   getProviderAuthState,
   getProviderConnectionState,
   isProviderAuthRequiredError,
+  isProviderUsageLimitError,
   isCodexContextOverflowError,
   isCodexRecoverableThreadResumeError,
   isCodexUsageLimitError,
@@ -283,6 +284,21 @@ test("isCodexUsageLimitError detects expected Codex/ChatGPT quota conditions", (
   assert.equal(isCodexUsageLimitError(new Error("spawn codex ENOENT")), false);
   assert.equal(isCodexUsageLimitError(null), false);
   assert.equal(isCodexUsageLimitError(undefined), false);
+});
+
+test("isProviderUsageLimitError detects Claude Code session and weekly quota messages", () => {
+  assert.equal(
+    isProviderUsageLimitError(
+      new Error("Claude Code returned an error result: You've hit your weekly limit · resets Jun 14 at 9am (Asia/Seoul)"),
+    ),
+    true,
+  );
+  assert.equal(
+    isProviderUsageLimitError(
+      new Error("Claude Code returned an error result: You've hit your session limit · resets 10:40pm (Asia/Seoul)"),
+    ),
+    true,
+  );
 });
 
 test("isProviderAuthRequiredError detects expected provider auth setup prompts", () => {
@@ -1024,6 +1040,7 @@ test("buildSystemPromptText for office_hours_question is a tight question-genera
   assert.match(prompt, /Office Hours question generator/);
   assert.match(prompt, /agentic30_request_user_input/);
   assert.match(prompt, /Do not inspect the workspace/);
+  assert.match(prompt, /prose-only assistant message is an invalid provider result/);
   assert.doesNotMatch(prompt, /October-Style Advisor Identity/);
   assert.doesNotMatch(prompt, /Use QMD retrieval/);
 });
@@ -1141,6 +1158,30 @@ test("mapCodexItemToToolEvent normalizes streamed Codex item lifecycle events", 
         eventItemType: "function_call",
         providerMode: "codex",
         arguments: { questions: [] },
+        output: null,
+      },
+    },
+  );
+  assert.deepEqual(
+    mapCodexItemToToolEvent({
+      type: "function_call",
+      namespace: "mcp__cloudflare_api",
+      name: "execute",
+      call_id: "call-cf-1",
+      arguments: "{\"code\":\"async () => cloudflare.request({ method: \\\"GET\\\", path: \\\"/zones?status=active&per_page=1\\\" })\"}",
+    }, "started"),
+    {
+      phase: "use",
+      toolName: "execute",
+      toolCallKey: "call-cf-1",
+      payload: {
+        requestedToolName: "execute",
+        namespace: "mcp__cloudflare_api",
+        server: "cloudflare-api",
+        tool: "execute",
+        eventItemType: "function_call",
+        providerMode: "codex",
+        arguments: "{\"code\":\"async () => cloudflare.request({ method: \\\"GET\\\", path: \\\"/zones?status=active&per_page=1\\\" })\"}",
         output: null,
       },
     },

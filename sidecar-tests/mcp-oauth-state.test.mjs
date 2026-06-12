@@ -60,6 +60,28 @@ test("persistMcpOauthConnectResult round-trips through readMcpOauthState", async
   }
 });
 
+test("verification_pending is persisted but never counts as ready", async () => {
+  const appSupportPath = await makeTempAppSupport();
+  try {
+    await persistMcpOauthConnectResult({
+      appSupportPath,
+      result: {
+        server: "cloudflare",
+        provider: "codex",
+        state: "verification_pending",
+        detail: "Codex 도구 호출 확인 대기",
+        checkedAt: "2026-06-10T11:00:00.000Z",
+      },
+    });
+    const state = readMcpOauthState(appSupportPath);
+    assert.equal(state.servers.cloudflare.providers.codex.state, "verification_pending");
+    assert.equal(isMcpOauthServerReady(state, "cloudflare", "codex"), false);
+    assert.deepEqual(mcpOauthReadyProviders(state, "cloudflare"), []);
+  } finally {
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
+});
+
 test("latest connect attempt wins — a failed retry downgrades a previously ready provider", async () => {
   const appSupportPath = await makeTempAppSupport();
   try {

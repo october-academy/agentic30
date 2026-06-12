@@ -27,10 +27,11 @@ async function writeNonce(nonceStorePath, { token, expiresAt }) {
   );
 }
 
-function runHelperCli(argv, env) {
+function runHelperCli(argv, env, { cwd } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [ENTRYPOINT_PATH, ...argv], {
       env: { ...process.env, ...env },
+      cwd,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -201,6 +202,40 @@ test("--register CLI registers a workspace via argv and exits 0", async () => {
 
     const requests = await fs.readdir(path.join(appSupportPath, ONBOARDING_WORKSPACE_REQUESTS_DIRNAME));
     assert.equal(requests.length, 1);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(appSupportPath, { recursive: true, force: true });
+  }
+});
+
+test("--register CLI treats current-directory aliases as cwd before registration", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-onboarding-workspace-"));
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-onboarding-support-"));
+  const nonceStorePath = path.join(appSupportPath, "onboarding-nonce.json");
+  try {
+    const future = new Date(Date.now() + ONBOARDING_WORKSPACE_REQUEST_TTL_MS).toISOString();
+    await writeNonce(nonceStorePath, { token: "cli-token", expiresAt: future });
+    const expectedRoot = await fs.realpath(root);
+
+    for (const pathArg of [".", "@."]) {
+      const { code, stdout } = await runHelperCli(
+        ["--register", "--path", pathArg, "--source", "codex", "--token", "cli-token"],
+        {
+          AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
+          AGENTIC30_ONBOARDING_NONCE_PATH: nonceStorePath,
+        },
+        { cwd: root },
+      );
+      assert.equal(code, 0);
+      const parsed = JSON.parse(stdout.trim().split("\n").pop());
+      assert.equal(parsed.ok, true);
+      assert.equal(parsed.path, expectedRoot);
+      assert.equal(parsed.claimedSource, "codex");
+      assert.equal(parsed.usedCwd, true);
+    }
+
+    const requests = await fs.readdir(path.join(appSupportPath, ONBOARDING_WORKSPACE_REQUESTS_DIRNAME));
+    assert.equal(requests.length, 2);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
     await fs.rm(appSupportPath, { recursive: true, force: true });

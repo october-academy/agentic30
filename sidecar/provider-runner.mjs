@@ -40,6 +40,15 @@ import {
   buildVercelClaudeMcpConfigFromSources,
   buildVercelCodexMcpConfigFromSources,
 } from "./vercel-mcp-config.mjs";
+import {
+  parseClaudeSdkMessage,
+  parseClaudeStreamEvent,
+  parseClaudeStructuredInputToolInput,
+  parseClaudeStructuredInputToolOutput,
+  parseCodexSdkEvent,
+  parseCodexThreadItem,
+  parseStructuredPromptQuestionsOutput,
+} from "./provider-sdk-contracts.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sidecarRoot = path.resolve(__dirname);
@@ -215,6 +224,10 @@ export async function runProviderStream({
     executionMode,
     approvedToolExecution: Boolean(approvedToolExecution),
   });
+  const forcedTestError = forcedProviderTestError(provider);
+  if (forcedTestError) {
+    throw forcedTestError;
+  }
   if (process.env.AGENTIC30_TEST_STUB_PROVIDER === "1") {
     const stubText = buildStubResponse(prompt);
     onTextReplace?.(stubText);
@@ -586,6 +599,22 @@ function getProviderSdkState(provider) {
   };
 }
 
+function forcedProviderTestError(provider) {
+  const forcedProvider = String(process.env.AGENTIC30_TEST_FORCE_PROVIDER_USAGE_LIMIT || "")
+    .trim()
+    .toLowerCase();
+  if (!forcedProvider || forcedProvider !== String(provider || "").toLowerCase()) {
+    return null;
+  }
+  const error = new Error(
+    provider === "claude"
+      ? "Claude Code returned an error result: You've hit your weekly limit · resets Jun 14 at 9am (Asia/Seoul)"
+      : "You've hit your usage limit. Your limit resets later.",
+  );
+  error.code = "rate_limit";
+  return error;
+}
+
 async function runClaudeProvider({
   sessionRuntime,
   prompt,
@@ -715,7 +744,8 @@ async function runClaudeProvider({
     effort: claudeEffort || "default",
   });
 
-  for await (const event of stream) {
+  for await (const rawEvent of stream) {
+    const event = parseClaudeSdkMessage(rawEvent);
     onRunEvent?.({ phase: "provider.claude.first_event", once: true, eventType: event.type });
     if (event.type === "system" && event.subtype === "init") {
       runtime = {
@@ -727,13 +757,14 @@ async function runClaudeProvider({
     }
 
     if (event.type === "stream_event") {
-      const partialText = extractClaudePartialText(event.event);
+      const streamEvent = parseClaudeStreamEvent(event.event);
+      const partialText = extractClaudePartialText(streamEvent);
       if (partialText) {
         sawPartialText = true;
         onRunEvent?.({ phase: "provider.claude.first_text", once: true });
         onTextDelta?.(partialText);
       }
-      const toolProgress = extractClaudePartialToolEvent(event.event);
+      const toolProgress = extractClaudePartialToolEvent(streamEvent);
       if (toolProgress) {
         onToolEvent?.(toolProgress);
       }
@@ -865,7 +896,17 @@ function buildClaudeCanUseTool({
       };
     }
 
-    const questions = normalizeClaudeQuestions(input?.questions);
+    let structuredInput;
+    try {
+      structuredInput = parseClaudeStructuredInputToolInput(input ?? {});
+    } catch (error) {
+      return {
+        behavior: "deny",
+        message: error?.message || "AskUserQuestion input did not match the structured input contract.",
+      };
+    }
+
+    const questions = normalizeClaudeQuestions(structuredInput.questions);
     if (questions.length === 0) {
       return {
         behavior: "deny",
@@ -876,7 +917,9 @@ function buildClaudeCanUseTool({
     const request = await createUserInputRequest(appSupportPath, {
       sessionId,
       toolName,
-      title: context.title || input?.title || "Claude needs input",
+      title: context.title || structuredInput.title || "Claude needs input",
+      intro: structuredInput.intro ?? null,
+      resources: structuredInput.resources ?? null,
       questions,
     });
     onRunEvent?.({
@@ -899,11 +942,11 @@ function buildClaudeCanUseTool({
       });
       return {
         behavior: "allow",
-        updatedInput: {
+        updatedInput: parseClaudeStructuredInputToolOutput({
           questions,
           answers: response.answers ?? {},
           annotations: response.annotations ?? {},
-        },
+        }),
       };
     } finally {
       await deleteUserInputArtifacts(appSupportPath, sessionId, request.requestId);
@@ -1034,14 +1077,14 @@ export function isClaudeOfficeHoursDigestUnsafeTool(toolName = "") {
 
 export function normalizeClaudeQuestions(questions) {
   if (!Array.isArray(questions)) return [];
-  return questions
+  const normalized = questions
     .map((question) => {
       const options = Array.isArray(question?.options)
         ? question.options
             .map((option) => ({
-              label: String(option?.label || "").trim(),
-              description: String(option?.description || "").trim(),
-              ...(option?.preview ? { preview: String(option.preview) } : {}),
+              label: String(option?.label || "").trim().slice(0, 80),
+              description: String(option?.description || "").trim().slice(0, 280),
+              ...(option?.preview ? { preview: String(option.preview).slice(0, 4000) } : {}),
               ...(option?.nextIntent || option?.next_intent
                 ? { nextIntent: String(option.nextIntent || option.next_intent).trim().slice(0, 160) }
                 : {}),
@@ -1069,7 +1112,7 @@ export function normalizeClaudeQuestions(questions) {
         ...(question?.questionId || question?.question_id || question?.id
           ? { questionId: String(question.questionId || question.question_id || question.id).trim().slice(0, 96) }
           : {}),
-        question: String(question?.question || "").trim(),
+        question: String(question?.question || "").trim().slice(0, 400),
         // Leave an absent header empty; the Office Hours preparer fills a
         // deterministic Korean intent header so the card title never shows a raw
         // English placeholder. (Was a literal "Question" default.)
@@ -1086,13 +1129,13 @@ export function normalizeClaudeQuestions(questions) {
         // channel already produces. Shape-normalized here for Swift-decode safety;
         // the Office Hours preparer re-validates spans against the question text.
         ...(Array.isArray(question?.highlightPhrases) && question.highlightPhrases.length
-          ? { highlightPhrases: question.highlightPhrases.map((phrase) => String(phrase || "").trim()).filter(Boolean).slice(0, 8) }
+          ? { highlightPhrases: question.highlightPhrases.map((phrase) => String(phrase || "").trim().slice(0, 280)).filter(Boolean).slice(0, 8) }
           : {}),
         ...(Array.isArray(question?.emphasis) && question.emphasis.length
           ? {
               emphasis: question.emphasis
                 .map((span) => ({
-                  phrase: String(span?.phrase || span?.text || "").trim(),
+                  phrase: String(span?.phrase || span?.text || "").trim().slice(0, 280),
                   style: ["strong", "mark", "code"].includes(String(span?.style || span?.kind))
                     ? String(span?.style || span?.kind)
                     : "mark",
@@ -1105,6 +1148,12 @@ export function normalizeClaudeQuestions(questions) {
     })
     .filter((question) => question.question && (question.options.length >= 2 || question.allowFreeText))
     .slice(0, 4);
+  if (normalized.length === 0) return [];
+  try {
+    return parseStructuredPromptQuestionsOutput(normalized);
+  } catch {
+    return [];
+  }
 }
 
 function isOtherTextOptionLabel(label) {
@@ -1219,6 +1268,8 @@ export function isCodexUsageLimitError(error) {
   return (
     message.includes("usage limit")
     || message.includes("usage_limit")
+    || message.includes("session limit")
+    || message.includes("weekly limit")
     || message.includes("quota")
     || message.includes("plan limit")
     || message.includes("you've reached your limit")
@@ -1369,7 +1420,8 @@ async function runCodexAttempt({
   });
   onRunEvent?.({ phase: "provider.codex.stream_opened", promptChars: String(prompt || "").length });
 
-  for await (const event of events) {
+  for await (const rawEvent of events) {
+    const event = parseCodexSdkEvent(rawEvent);
     onRunEvent?.({ phase: "provider.codex.first_event", once: true, eventType: event.type });
     if (event.type === "thread.started") {
       onRunEvent?.({ phase: "provider.codex.event.thread_started" });
@@ -1549,14 +1601,19 @@ function assertCodexOfficeHoursQuestionItemAllowed(item, executionMode = "") {
 
 export function mapCodexItemToToolEvent(item, lifecycle) {
   if (!item) return null;
+  item = parseCodexThreadItem(item);
   if (item.type === "function_call" || item.type === "function_call_output") {
     const requestedToolName = item.name ?? item.call_name ?? item.tool ?? "function_call";
+    const namespace = String(item.namespace || item.tool_namespace || "");
+    const mcpServer = codexMcpServerFromFunctionNamespace(namespace);
     return {
       phase: lifecycle === "completed" ? (item.status === "failed" ? "error" : "result") : "use",
       toolName: requestedToolName,
       toolCallKey: item.call_id ?? item.id ?? requestedToolName,
       payload: {
         requestedToolName,
+        ...(namespace ? { namespace } : {}),
+        ...(mcpServer ? { server: mcpServer, tool: requestedToolName } : {}),
         eventItemType: item.type,
         providerMode: "codex",
         arguments: item.arguments ?? item.input ?? null,
@@ -1651,6 +1708,14 @@ export function mapCodexItemToToolEvent(item, lifecycle) {
     };
   }
   return null;
+}
+
+function codexMcpServerFromFunctionNamespace(namespace = "") {
+  const value = String(namespace || "").trim();
+  if (!value.startsWith("mcp__")) return "";
+  const rawServer = value.slice("mcp__".length);
+  if (rawServer === "cloudflare_api") return "cloudflare-api";
+  return rawServer.replace(/_/g, "-");
 }
 
 function codexItemDiagnostics(item) {
@@ -3080,6 +3145,7 @@ function baseSystemPrompt(provider, workspaceRoot, executionMode) {
         : provider === "codex"
           ? `When the next question is ready, call the ${CODEX_STRUCTURED_INPUT_TOOL} MCP tool. Do not ask the question only in prose.`
           : "When the next question is ready, emit the inline_decision contract. Do not ask the question only in loose prose.",
+      "If the expected interview count has not been explicitly reached and no terminal completion card is recorded, a prose-only assistant message is an invalid provider result. Do not summarize the next assumption instead of opening the next card.",
       "Ask one focused decision at a time. Prefer 2-4 choices and allow free text when the user's situation may not fit the choices.",
       "",
       INLINE_DECISION_CONTRACT,

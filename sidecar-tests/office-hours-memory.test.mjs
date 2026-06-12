@@ -15,6 +15,8 @@ import {
   makeDefaultOfficeHoursMemory,
   normalizeOfficeHoursMemory,
   appendCommitment,
+  abandonCommitment,
+  carryForwardCommitment,
   gradeCommitment,
   appendCycle,
   appendTimeline,
@@ -493,6 +495,159 @@ test("buildEvidenceOS exposes open, overdue, proven debts and day states", () =>
   assert.equal(evidenceOS.overdueDebts.length, 1);
   assert.equal(evidenceOS.provenEvidence.length, 1);
   assert.equal(evidenceOS.dayStates["1"].state, "evidence_confirmed");
+});
+
+test("carryForwardCommitment reopens an older debt once and hides the carried source", async () => {
+  const ws = await tempWorkspace();
+  const dayProgress = {
+    challengeStartedAt: "2026-06-08",
+    days: {
+      "1": { day: 1, kind: "day1", steps: { onboarding: "done", scan: "done", goal: "done", first_interview: "done" }, goalText: "ICP 검증" },
+      "2": { day: 2, kind: "standard", steps: { scan: "done", retro: "done", goal: "active", interview: "pending", execution: "pending" }, goalText: "" },
+    },
+  };
+  const saved = await appendCommitment({
+    workspaceRoot: ws,
+    text: "Jane에게 DM로 결제 의향 묻기",
+    cycle: 1,
+    day: 1,
+    originText: "Jane에게 DM로 결제 의향 물어볼게",
+    commitment: {
+      customer: "Jane",
+      channel: "DM",
+      message: "결제 의향 묻기",
+      expectedEvidenceKind: "screenshot",
+      dueDay: 1,
+      confirmedByUser: true,
+    },
+    now: NOW,
+  });
+  const sourceId = saved.commitments[0].id;
+
+  const first = await carryForwardCommitment({
+    workspaceRoot: ws,
+    commitmentId: sourceId,
+    day: 2,
+    now: new Date("2026-06-09T09:00:00.000Z"),
+  });
+  assert.equal(first.created, true);
+  assert.equal(first.memory.commitments.length, 2);
+  assert.equal(first.commitment.createdDay, 2);
+  assert.equal(first.commitment.sourceCommitmentId, sourceId);
+  assert.equal(first.memory.commitments.find((commitment) => commitment.id === sourceId).status, "carried_forward");
+  assert.equal(first.memory.commitments.find((commitment) => commitment.id === sourceId).carriedForwardTo, first.commitment.id);
+
+  const evidenceOS = buildEvidenceOS({ dayProgress, memory: first.memory, workHistory: { generatedAt: NOW.toISOString(), days: [] }, currentDay: 2 });
+  assert.equal(evidenceOS.openDebts.length, 1);
+  assert.equal(evidenceOS.openDebts[0].id, first.commitment.id);
+
+  const second = await carryForwardCommitment({
+    workspaceRoot: ws,
+    commitmentId: sourceId,
+    day: 2,
+    now: new Date("2026-06-09T09:01:00.000Z"),
+  });
+  assert.equal(second.created, false);
+  assert.equal(second.memory.commitments.length, 2);
+  const secondEvidenceOS = buildEvidenceOS({ dayProgress, memory: second.memory, workHistory: { generatedAt: NOW.toISOString(), days: [] }, currentDay: 2 });
+  assert.equal(secondEvidenceOS.openDebts.length, 1);
+  assert.equal(secondEvidenceOS.openDebts[0].id, first.commitment.id);
+  await fs.rm(ws, { recursive: true, force: true });
+});
+
+test("carryForwardCommitment does not append when the commitment is already on the target day", async () => {
+  const ws = await tempWorkspace();
+  const saved = await appendCommitment({
+    workspaceRoot: ws,
+    text: "Jane에게 DM",
+    cycle: 2,
+    day: 2,
+    originText: "Jane에게 DM",
+    now: NOW,
+  });
+  const id = saved.commitments[0].id;
+  const carried = await carryForwardCommitment({ workspaceRoot: ws, commitmentId: id, day: 2, now: NOW });
+  assert.equal(carried.created, false);
+  assert.equal(carried.reason, "already_current_day");
+  assert.equal(carried.memory.commitments.length, 1);
+  assert.equal(carried.memory.commitments[0].id, id);
+  await fs.rm(ws, { recursive: true, force: true });
+});
+
+test("buildEvidenceOS dedupes legacy missed-plus-open carry-forward rows", () => {
+  const dayProgress = {
+    challengeStartedAt: "2026-06-08",
+    days: {
+      "1": { day: 1, kind: "day1", steps: { onboarding: "done", scan: "done", goal: "done", first_interview: "done" }, goalText: "ICP 검증" },
+      "2": { day: 2, kind: "standard", steps: { scan: "done", retro: "done", goal: "active", interview: "pending", execution: "pending" }, goalText: "" },
+    },
+  };
+  const memory = makeDefaultOfficeHoursMemory({ now: NOW });
+  memory.commitments = [
+    {
+      id: "cm-missed",
+      cycle: 1,
+      createdDay: 1,
+      createdAt: "2026-06-08T09:00:00.000Z",
+      text: "Jane에게 DM로 결제 의향 묻기",
+      customer: "Jane",
+      channel: "DM",
+      message: "결제 의향 묻기",
+      expectedEvidenceKind: "screenshot",
+      dueDay: 1,
+      confirmedByUser: true,
+      status: "missed",
+      evidence: null,
+      origin: "user",
+    },
+    {
+      id: "cm-open",
+      cycle: 2,
+      createdDay: 2,
+      createdAt: "2026-06-09T09:00:00.000Z",
+      text: "Jane에게 DM로 결제 의향 묻기",
+      customer: "Jane",
+      channel: "DM",
+      message: "결제 의향 묻기",
+      expectedEvidenceKind: "screenshot",
+      dueDay: 3,
+      confirmedByUser: true,
+      status: "open",
+      evidence: null,
+      origin: "user",
+    },
+  ];
+  const evidenceOS = buildEvidenceOS({ dayProgress, memory, workHistory: { generatedAt: NOW.toISOString(), days: [] }, currentDay: 2 });
+  assert.deepEqual(evidenceOS.openDebts.map((debt) => debt.id), ["cm-open"]);
+  assert.deepEqual(evidenceOS.overdueDebts.map((debt) => debt.id), []);
+});
+
+test("abandonCommitment removes a debt from active Evidence OS lists", async () => {
+  const ws = await tempWorkspace();
+  const dayProgress = {
+    challengeStartedAt: "2026-06-08",
+    days: {
+      "1": { day: 1, kind: "day1", steps: { onboarding: "done", scan: "done", goal: "done", first_interview: "done" }, goalText: "ICP 검증" },
+      "2": { day: 2, kind: "standard", steps: { scan: "done", retro: "done", goal: "active", interview: "pending", execution: "pending" }, goalText: "" },
+    },
+  };
+  const saved = await appendCommitment({
+    workspaceRoot: ws,
+    text: "Jane에게 DM",
+    cycle: 1,
+    day: 1,
+    originText: "Jane에게 DM",
+    commitment: { dueDay: 1, confirmedByUser: true },
+    now: NOW,
+  });
+  const id = saved.commitments[0].id;
+  const abandoned = await abandonCommitment({ workspaceRoot: ws, commitmentId: id, now: NOW });
+  assert.equal(abandoned.abandoned, true);
+  assert.equal(abandoned.memory.commitments[0].status, "abandoned");
+  const evidenceOS = buildEvidenceOS({ dayProgress, memory: abandoned.memory, workHistory: { generatedAt: NOW.toISOString(), days: [] }, currentDay: 2 });
+  assert.equal(evidenceOS.openDebts.length, 0);
+  assert.equal(evidenceOS.overdueDebts.length, 0);
+  await fs.rm(ws, { recursive: true, force: true });
 });
 
 test("injectable now: no wall-clock — timestamps derive from the injected now", async () => {

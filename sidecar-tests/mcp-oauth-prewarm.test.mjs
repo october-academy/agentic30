@@ -7,6 +7,7 @@ import path from "node:path";
 
 import {
   buildCodexMcpOauthServerConfig,
+  MCP_OAUTH_LOGIN_URL_MAX_LENGTH,
   MCP_OAUTH_PREWARM_FAIL_SENTINEL,
   MCP_OAUTH_PREWARM_LOGIN_PENDING_SENTINEL,
   MCP_OAUTH_PREWARM_LOGIN_URL_SENTINEL,
@@ -14,11 +15,15 @@ import {
   MCP_OAUTH_PREWARM_SERVERS,
   buildMcpOauthPrewarmPrompt,
   buildMcpOauthVerifyPrompt,
+  extractCodexMcpLoginUrl,
   extractFirstHttpUrl,
   extractMcpOauthLoginUrl,
   isProviderUsageLimitMessage,
   normalizeMcpOauthPrewarmServer,
+  parseMcpOauthConnectResult,
+  parseMcpOauthConnectStatus,
   parseMcpOauthPrewarmReply,
+  parseMcpOauthServerProfile,
   prewarmMcpOauth,
   providerDisplayLabel,
   resolveMcpOauthConnectProvider,
@@ -103,7 +108,12 @@ test("buildMcpOauthPrewarmPrompt targets the MCP server name and all sentinels",
 
   const cloudflarePrompt = buildMcpOauthPrewarmPrompt("cloudflare");
   assert.ok(cloudflarePrompt.includes(`"${MCP_OAUTH_PREWARM_SERVERS.cloudflare.mcpServerName}"`));
-  assert.ok(cloudflarePrompt.includes(`mcp__${MCP_OAUTH_PREWARM_SERVERS.cloudflare.mcpServerName}__authenticate`));
+  assert.ok(cloudflarePrompt.includes("mcp__cloudflare-api__authenticate"));
+  assert.ok(cloudflarePrompt.includes("mcp__cloudflare_api"));
+  assert.ok(cloudflarePrompt.includes("configured server is cloudflare-api"));
+  assert.ok(cloudflarePrompt.includes("execute"));
+  assert.ok(cloudflarePrompt.includes("/zones?status=active&per_page=1"));
+  assert.equal(cloudflarePrompt.includes("accounts_list"), false);
 
   const vercelPrompt = buildMcpOauthPrewarmPrompt("vercel");
   assert.ok(vercelPrompt.includes(`"${MCP_OAUTH_PREWARM_SERVERS.vercel.mcpServerName}"`));
@@ -120,6 +130,11 @@ test("buildMcpOauthVerifyPrompt forbids authenticate and keeps sentinels", () =>
   assert.ok(prompt.includes(MCP_OAUTH_PREWARM_OK_SENTINEL));
   assert.ok(prompt.includes(MCP_OAUTH_PREWARM_LOGIN_PENDING_SENTINEL));
   assert.ok(prompt.includes(MCP_OAUTH_PREWARM_FAIL_SENTINEL));
+  const cloudflarePrompt = buildMcpOauthVerifyPrompt("cloudflare");
+  assert.ok(cloudflarePrompt.includes("mcp__cloudflare_api"));
+  assert.ok(cloudflarePrompt.includes("execute"));
+  assert.ok(cloudflarePrompt.includes("/zones?status=active&per_page=1"));
+  assert.equal(cloudflarePrompt.includes("accounts_list"), false);
   assert.throws(() => buildMcpOauthVerifyPrompt("github"));
 });
 
@@ -150,6 +165,39 @@ test("extractFirstHttpUrl pulls plain Codex CLI login URLs", () => {
   assert.equal(extractFirstHttpUrl("no url"), "");
 });
 
+test("extractCodexMcpLoginUrl prefers OAuth authorize URLs over MCP resource URLs", () => {
+  const authorizeUrl = "https://mcp.cloudflare.com/authorize?response_type=code&client_id=abc&code_challenge=xyz";
+  const output = [
+    "Using resource https://mcp.cloudflare.com/mcp",
+    `Open browser to ${authorizeUrl}`,
+  ].join("\n");
+
+  assert.equal(extractCodexMcpLoginUrl(output), authorizeUrl);
+});
+
+test("extractCodexMcpLoginUrl prefers PostHog authorize URLs over MCP resource URLs with query", () => {
+  const authorizeUrl = "https://oauth.posthog.com/authorize?response_type=code&client_id=abc&state=xyz";
+  const output = [
+    "Using resource https://mcp.posthog.com/mcp?readonly=1&mode=tools&consumer=agentic30",
+    `Open browser to ${authorizeUrl}`,
+  ].join("\n");
+
+  assert.equal(extractCodexMcpLoginUrl(output), authorizeUrl);
+});
+
+test("extractCodexMcpLoginUrl rejects bare MCP resource URLs", () => {
+  assert.equal(extractCodexMcpLoginUrl("Resource: https://mcp.cloudflare.com/mcp"), "");
+  assert.equal(extractCodexMcpLoginUrl("Resource: https://mcp.vercel.com/mcp."), "");
+  assert.equal(
+    extractCodexMcpLoginUrl("Resource: https://mcp.posthog.com/mcp?readonly=1&mode=tools&consumer=agentic30"),
+    "",
+  );
+  assert.equal(
+    extractCodexMcpLoginUrl("Resource: https://mcp-eu.posthog.com/mcp?readonly=1&mode=tools&consumer=agentic30"),
+    "",
+  );
+});
+
 test("parseMcpOauthPrewarmReply detects all sentinels", () => {
   assert.deepEqual(
     parseMcpOauthPrewarmReply(`done\n${MCP_OAUTH_PREWARM_OK_SENTINEL}`),
@@ -167,6 +215,76 @@ test("parseMcpOauthPrewarmReply detects all sentinels", () => {
   assert.deepEqual(
     parseMcpOauthPrewarmReply("그냥 텍스트"),
     { ok: false, loginPending: false, reason: "", loginUrl: "" },
+  );
+});
+
+test("MCP OAuth zod contracts validate app-facing result and status payloads", () => {
+  const result = parseMcpOauthConnectResult({
+    server: "posthog",
+    provider: "claude",
+    state: "ready",
+    detail: "PostHog MCP 도구 호출 검증됨",
+    checkedAt: "2026-06-12T01:23:45.000Z",
+  });
+  assert.equal(result.state, "ready");
+  assert.equal(result.provider, "claude");
+
+  const status = parseMcpOauthConnectStatus({
+    server: "posthog",
+    provider: "claude",
+    state: "progress",
+    detail: "브라우저 로그인 완료 여부를 확인하는 중…",
+    loginUrl: "https://oauth.posthog.com/oauth/authorize/?state=abc",
+    openBrowser: false,
+  });
+  assert.equal(status.loginUrl, "https://oauth.posthog.com/oauth/authorize/?state=abc");
+  assert.equal(status.openBrowser, false);
+
+  const longUrl = `https://oauth.posthog.com/oauth/authorize/?state=${"a".repeat(2500)}`;
+  assert.ok(longUrl.length > 2000);
+  assert.ok(longUrl.length < MCP_OAUTH_LOGIN_URL_MAX_LENGTH);
+  const longStatus = parseMcpOauthConnectStatus({
+    server: "posthog",
+    provider: "codex",
+    state: "progress",
+    detail: "브라우저가 열렸어요.",
+    loginUrl: longUrl,
+  });
+  assert.equal(longStatus.loginUrl, longUrl);
+
+  assert.throws(
+    () => parseMcpOauthConnectResult({
+      server: "posthog",
+      provider: "claude",
+      state: "progress",
+      detail: "progress is a status payload, not a final result",
+      checkedAt: "2026-06-12T01:23:45.000Z",
+    }),
+    /MCP OAuth connect result contract violation/,
+  );
+  assert.throws(
+    () => parseMcpOauthConnectStatus({
+      server: "posthog",
+      provider: "claude",
+      state: "progress",
+      detail: "bad URL",
+      loginUrl: "not-a-url",
+    }),
+    /MCP OAuth connect status contract violation/,
+  );
+  const profile = parseMcpOauthServerProfile(MCP_OAUTH_PREWARM_SERVERS.cloudflare);
+  assert.equal(profile.mcpServerName, "cloudflare-api");
+  assert.deepEqual(profile.mcpNamespaceAliases, ["mcp__cloudflare-api", "mcp__cloudflare_api"]);
+  assert.equal(profile.verificationTools[0].tool, "execute");
+  assert.throws(
+    () => parseMcpOauthServerProfile({
+      server: "cloudflare",
+      label: "Cloudflare",
+      mcpServerName: "cloudflare-api",
+      mcpNamespaceAliases: [],
+      executionMode: "mcp_oauth_prewarm_cloudflare",
+    }),
+    /MCP OAuth server profile contract violation/,
   );
 });
 
@@ -198,6 +316,90 @@ test("prewarmMcpOauth returns ready when the model confirms a tool call", async 
   assert.ok(progress.some((update) => update.phase === "tool_call"));
 });
 
+test("prewarmMcpOauth verifies Claude Cloudflare only after an observed MCP tool call", async () => {
+  let seen = null;
+  const progress = [];
+  const result = await prewarmMcpOauth({
+    server: "cloudflare",
+    provider: "claude",
+    workspaceRoot: "/tmp/ws",
+    env: {},
+    onProgress: (update) => progress.push(update),
+    runProviderStreamImpl: async (args) => {
+      seen = args;
+      args.onToolEvent({
+        phase: "use",
+        toolName: "execute",
+        payload: { namespace: "mcp__cloudflare_api", server: "cloudflare-api", tool: "execute" },
+      });
+      args.onTextDelta(MCP_OAUTH_PREWARM_OK_SENTINEL);
+    },
+  });
+
+  assert.equal(result.state, "ready");
+  assert.equal(result.server, "cloudflare");
+  assert.equal(result.provider, "claude");
+  assert.equal(seen.executionMode, "mcp_oauth_prewarm_cloudflare");
+  assert.ok(progress.some((update) => update.phase === "tool_call" && update.detail.includes("execute")));
+});
+
+test("prewarmMcpOauth does not mark Claude ready without an observed target MCP tool call", async () => {
+  const okWithoutTool = await prewarmMcpOauth({
+    server: "cloudflare",
+    provider: "claude",
+    env: {},
+    runProviderStreamImpl: async (args) => {
+      args.onTextDelta(MCP_OAUTH_PREWARM_OK_SENTINEL);
+    },
+  });
+  assert.equal(okWithoutTool.state, "failed");
+  assert.match(okWithoutTool.detail, /실제 MCP 도구 호출/);
+
+  const wrongServerTool = await prewarmMcpOauth({
+    server: "cloudflare",
+    provider: "claude",
+    env: {},
+    runProviderStreamImpl: async (args) => {
+      args.onToolEvent({ phase: "use", toolName: "mcp__posthog__get-organizations" });
+      args.onTextDelta(MCP_OAUTH_PREWARM_OK_SENTINEL);
+    },
+  });
+  assert.equal(wrongServerTool.state, "failed");
+  assert.match(wrongServerTool.detail, /실제 MCP 도구 호출/);
+
+  const docsOnlyTool = await prewarmMcpOauth({
+    server: "cloudflare",
+    provider: "claude",
+    env: {},
+    runProviderStreamImpl: async (args) => {
+      args.onToolEvent({
+        phase: "use",
+        toolName: "search",
+        payload: { namespace: "mcp__cloudflare_api", server: "cloudflare-api", tool: "search" },
+      });
+      args.onTextDelta(MCP_OAUTH_PREWARM_OK_SENTINEL);
+    },
+  });
+  assert.equal(docsOnlyTool.state, "failed");
+  assert.match(docsOnlyTool.detail, /실제 MCP 도구 호출/);
+});
+
+test("prewarmMcpOauth does not treat Claude PostHog authenticate placeholder as a verified tool call", async () => {
+  const result = await prewarmMcpOauth({
+    server: "posthog",
+    provider: "claude",
+    env: {},
+    runProviderStreamImpl: async (args) => {
+      args.onToolEvent({ phase: "use", toolName: "mcp__posthog__authenticate", toolCallKey: "auth-1" });
+      args.onTextDelta(MCP_OAUTH_PREWARM_OK_SENTINEL);
+    },
+  });
+
+  assert.equal(result.state, "failed");
+  assert.equal(result.provider, "claude");
+  assert.match(result.detail, /실제 MCP 도구 호출/);
+});
+
 test("prewarmMcpOauth streams the login URL and lands on login_pending", async () => {
   const url = "https://oauth.posthog.com/oauth/authorize/?state=xyz";
   const progress = [];
@@ -222,6 +424,7 @@ test("prewarmMcpOauth streams the login URL and lands on login_pending", async (
   const loginEvent = progress.find((update) => update.phase === "login_url");
   assert.ok(loginEvent);
   assert.equal(loginEvent.loginUrl, url);
+  assert.notEqual(loginEvent.openBrowser, false);
   // URL은 한 번만 공지 — 같은 URL로 브라우저가 반복해서 열리면 안 된다.
   assert.equal(progress.filter((update) => update.phase === "login_url").length, 1);
 });
@@ -252,6 +455,7 @@ test("prewarmMcpOauth extracts the login URL from the authenticate tool result",
   assert.equal(result.loginUrl, url);
   const loginEvent = progress.find((update) => update.phase === "login_url");
   assert.equal(loginEvent?.loginUrl, url);
+  assert.notEqual(loginEvent?.openBrowser, false);
 });
 
 test("prewarmMcpOauth auto-rechecks after login_pending and lands on ready", async () => {
@@ -286,10 +490,10 @@ test("prewarmMcpOauth auto-rechecks after login_pending and lands on ready", asy
   assert.equal(progress.filter((update) => update.phase === "login_url").length, 1);
 });
 
-test("prewarmMcpOauth uses Codex CLI MCP login flow instead of provider ToolSearch", async () => {
+test("prewarmMcpOauth uses Codex CLI login then verifies through the Codex provider", async () => {
   await withTmpDir(async (codexHome) => {
     const calls = [];
-    let providerStreamCalled = false;
+    let providerStreamCall = null;
     const result = await prewarmMcpOauth({
       server: "posthog",
       provider: "codex",
@@ -297,8 +501,10 @@ test("prewarmMcpOauth uses Codex CLI MCP login flow instead of provider ToolSear
       env: {},
       buildCodexEnvImpl: () => ({ CODEX_HOME: codexHome, PATH: "/bin" }),
       resolveCodexBinaryPathImpl: () => "/usr/local/bin/codex",
-      runProviderStreamImpl: async () => {
-        providerStreamCalled = true;
+      runProviderStreamImpl: async (args) => {
+        providerStreamCall = args;
+        args.onToolEvent({ phase: "use", toolName: "mcp__posthog__get-organizations" });
+        args.onTextDelta(MCP_OAUTH_PREWARM_OK_SENTINEL);
       },
       runCodexMcpCommandImpl: async ({ args, cwd, onOutput }) => {
         calls.push({ args, cwd });
@@ -319,7 +525,9 @@ test("prewarmMcpOauth uses Codex CLI MCP login flow instead of provider ToolSear
     assert.equal(result.state, "ready");
     assert.equal(result.provider, "codex");
     assert.equal(result.loginUrl, "https://oauth.posthog.com/authorize?state=abc");
-    assert.equal(providerStreamCalled, false);
+    assert.equal(providerStreamCall.provider, "codex");
+    assert.equal(providerStreamCall.executionMode, "mcp_oauth_prewarm_posthog");
+    assert.match(providerStreamCall.prompt, /Never call authenticate/);
     assert.deepEqual(calls.map((call) => call.args.slice(0, 3)), [
       ["mcp", "get", "posthog"],
       ["mcp", "add", "posthog"],
@@ -335,6 +543,262 @@ test("prewarmMcpOauth uses Codex CLI MCP login flow instead of provider ToolSear
   });
 });
 
+test("prewarmMcpOauth accepts long Codex OAuth URLs without crashing", async () => {
+  await withTmpDir(async (codexHome) => {
+    const longUrl = `https://oauth.posthog.com/authorize?state=${"a".repeat(2600)}`;
+    const progress = [];
+    const result = await prewarmMcpOauth({
+      server: "posthog",
+      provider: "codex",
+      env: {},
+      onProgress: (update) => progress.push(update),
+      buildCodexEnvImpl: () => ({ CODEX_HOME: codexHome, PATH: "/bin" }),
+      resolveCodexBinaryPathImpl: () => "/usr/local/bin/codex",
+      runProviderStreamImpl: async (args) => {
+        args.onToolEvent({ phase: "use", toolName: "mcp__posthog__get-organizations" });
+        args.onTextDelta(MCP_OAUTH_PREWARM_OK_SENTINEL);
+      },
+      runCodexMcpCommandImpl: async ({ args, onOutput }) => {
+        if (args[1] === "login") {
+          onOutput(`Open this URL in your browser: ${longUrl}\n`);
+        }
+        return { exitCode: 0, stdout: "ok", stderr: "" };
+      },
+    });
+
+    assert.equal(result.state, "ready");
+    assert.equal(result.loginUrl, longUrl);
+    const loginEvent = progress.find((update) => update.phase === "login_url");
+    assert.equal(loginEvent?.loginUrl, longUrl);
+    assert.equal(loginEvent?.openBrowser, false);
+  });
+});
+
+test("prewarmMcpOauth ignores PostHog Codex MCP resource URLs when announcing login", async () => {
+  await withTmpDir(async (codexHome) => {
+    const calls = [];
+    const progress = [];
+    const result = await prewarmMcpOauth({
+      server: "posthog",
+      provider: "codex",
+      env: {},
+      onProgress: (update) => progress.push(update),
+      buildCodexEnvImpl: () => ({ CODEX_HOME: codexHome, PATH: "/bin" }),
+      resolveCodexBinaryPathImpl: () => "/usr/local/bin/codex",
+      runProviderStreamImpl: async (args) => {
+        args.onToolEvent({ phase: "use", toolName: "mcp__posthog__get-organizations" });
+        args.onTextDelta(MCP_OAUTH_PREWARM_OK_SENTINEL);
+      },
+      runCodexMcpCommandImpl: async ({ args, onOutput }) => {
+        calls.push(args);
+        if (args[1] === "get" && calls.length === 1) {
+          return { exitCode: 1, stdout: "", stderr: "not found" };
+        }
+        if (args[1] === "login") {
+          onOutput("Resource metadata: https://mcp.posthog.com/mcp?readonly=1&mode=tools&consumer=agentic30\n");
+        }
+        return { exitCode: 0, stdout: "ok", stderr: "" };
+      },
+    });
+
+    assert.equal(result.state, "ready");
+    assert.equal(result.loginUrl, undefined);
+    assert.equal(progress.some((update) => update.phase === "login_url"), false);
+  });
+});
+
+test("prewarmMcpOauth returns failed instead of throwing when a Codex MCP command throws", async () => {
+  await withTmpDir(async (codexHome) => {
+    const result = await prewarmMcpOauth({
+      server: "posthog",
+      provider: "codex",
+      env: {},
+      buildCodexEnvImpl: () => ({ CODEX_HOME: codexHome, PATH: "/bin" }),
+      resolveCodexBinaryPathImpl: () => "/usr/local/bin/codex",
+      runCodexMcpCommandImpl: async ({ args }) => {
+        if (args[1] === "get") {
+          return { exitCode: 1, stdout: "", stderr: "missing" };
+        }
+        if (args[1] === "add") {
+          throw new Error("spawn exploded");
+        }
+        return { exitCode: 0, stdout: "ok", stderr: "" };
+      },
+    });
+
+    assert.equal(result.state, "failed");
+    assert.match(result.detail, /spawn exploded/);
+  });
+});
+
+test("prewarmMcpOauth contains malformed progress contract failures instead of throwing", async () => {
+  const hugeUrl = `https://oauth.posthog.com/authorize?state=${"a".repeat(MCP_OAUTH_LOGIN_URL_MAX_LENGTH + 100)}`;
+  const result = await prewarmMcpOauth({
+    server: "posthog",
+    provider: "claude",
+    env: {},
+    maxRechecks: 0,
+    runProviderStreamImpl: async (args) => {
+      args.onTextDelta(`${MCP_OAUTH_PREWARM_LOGIN_URL_SENTINEL}: ${hugeUrl}\n`);
+      args.onTextDelta(MCP_OAUTH_PREWARM_LOGIN_PENDING_SENTINEL);
+    },
+  });
+
+  assert.equal(result.state, "failed");
+  assert.match(result.detail, /결과 계약 오류/);
+});
+
+test("prewarmMcpOauth does not mark Codex ready without an observed target MCP tool call", async () => {
+  await withTmpDir(async (codexHome) => {
+    const result = await prewarmMcpOauth({
+      server: "posthog",
+      provider: "codex",
+      env: {},
+      buildCodexEnvImpl: () => ({ CODEX_HOME: codexHome, PATH: "/bin" }),
+      resolveCodexBinaryPathImpl: () => "/usr/local/bin/codex",
+      runProviderStreamImpl: async (args) => {
+        args.onTextDelta(MCP_OAUTH_PREWARM_OK_SENTINEL);
+      },
+      runCodexMcpCommandImpl: async ({ args, onOutput }) => {
+        if (args[1] === "login") {
+          onOutput("Open this URL: https://oauth.posthog.com/authorize?state=abc\n");
+        }
+        return { exitCode: 0, stdout: "ok", stderr: "" };
+      },
+    });
+
+    assert.equal(result.state, "failed");
+    assert.match(result.detail, /실제 도구 호출/);
+    assert.equal(result.loginUrl, "https://oauth.posthog.com/authorize?state=abc");
+  });
+});
+
+test("prewarmMcpOauth does not mark Codex OAuth ready when provider verification is unavailable", async () => {
+  await withTmpDir(async (codexHome) => {
+    const result = await prewarmMcpOauth({
+      server: "posthog",
+      provider: "codex",
+      env: {},
+      buildCodexEnvImpl: () => ({ CODEX_HOME: codexHome, PATH: "/bin" }),
+      resolveCodexBinaryPathImpl: () => "/usr/local/bin/codex",
+      runCodexMcpCommandImpl: async ({ args, onOutput }) => {
+        if (args[1] === "login") {
+          onOutput("Open this URL: https://oauth.posthog.com/authorize?state=abc\n");
+        }
+        return { exitCode: 0, stdout: "ok", stderr: "" };
+      },
+    });
+
+    assert.equal(result.state, "failed");
+    assert.match(result.detail, /도구 호출 확인/);
+    assert.equal(result.loginUrl, "https://oauth.posthog.com/authorize?state=abc");
+  });
+});
+
+test("prewarmMcpOauth keeps Codex login in the foreground after the URL is emitted", async () => {
+  await withTmpDir(async (codexHome) => {
+    const loginOptions = [];
+    const progress = [];
+    const result = await prewarmMcpOauth({
+      server: "cloudflare",
+      provider: "codex",
+      env: {},
+      onProgress: (update) => progress.push(update),
+      buildCodexEnvImpl: () => ({ CODEX_HOME: codexHome, PATH: "/bin" }),
+      resolveCodexBinaryPathImpl: () => "/usr/local/bin/codex",
+      runProviderStreamImpl: async (args) => {
+        args.onToolEvent({
+          phase: "use",
+          toolName: "execute",
+          payload: { namespace: "mcp__cloudflare_api", server: "cloudflare-api", tool: "execute" },
+        });
+        args.onTextDelta(MCP_OAUTH_PREWARM_OK_SENTINEL);
+      },
+      runCodexMcpCommandImpl: async ({ args, onOutput, stopWhen, backgroundOnStop }) => {
+        if (args[1] === "get") {
+          return { exitCode: args.includes("--json") ? 0 : 1, stdout: "{}", stderr: "" };
+        }
+        if (args[1] === "login") {
+          loginOptions.push({ stopWhen, backgroundOnStop });
+          onOutput("Open this URL: https://mcp.cloudflare.com/oauth/authorize?state=cf\n");
+          return { exitCode: 0, stdout: "Authentication complete.", stderr: "" };
+        }
+        return { exitCode: 0, stdout: "ok", stderr: "" };
+      },
+    });
+
+    assert.equal(result.state, "ready");
+    assert.equal(result.loginUrl, "https://mcp.cloudflare.com/oauth/authorize?state=cf");
+    assert.equal(loginOptions.length, 1);
+    assert.equal(loginOptions[0].stopWhen, undefined);
+    assert.equal(loginOptions[0].backgroundOnStop, false);
+    const loginEvent = progress.find((update) => update.phase === "login_url");
+    assert.equal(loginEvent?.loginUrl, "https://mcp.cloudflare.com/oauth/authorize?state=cf");
+    assert.equal(loginEvent?.openBrowser, false);
+    assert.ok(progress.some((update) => update.phase === "tool_call" && update.detail.includes("execute")));
+  });
+});
+
+test("prewarmMcpOauth chooses Cloudflare authorize URL over MCP resource URL for Codex", async () => {
+  await withTmpDir(async (codexHome) => {
+    const authorizeUrl = "https://mcp.cloudflare.com/authorize?response_type=code&client_id=abc&code_challenge=xyz";
+    const progress = [];
+    const result = await prewarmMcpOauth({
+      server: "cloudflare",
+      provider: "codex",
+      env: {},
+      onProgress: (update) => progress.push(update),
+      buildCodexEnvImpl: () => ({ CODEX_HOME: codexHome, PATH: "/bin" }),
+      resolveCodexBinaryPathImpl: () => "/usr/local/bin/codex",
+      runProviderStreamImpl: async (args) => {
+        args.onToolEvent({ phase: "use", toolName: "mcp__cloudflare_api__execute" });
+        args.onTextDelta(MCP_OAUTH_PREWARM_OK_SENTINEL);
+      },
+      runCodexMcpCommandImpl: async ({ args, onOutput }) => {
+        if (args[1] === "login") {
+          onOutput("OAuth resource: https://mcp.cloudflare.com/mcp\n");
+          onOutput(`Open this URL: ${authorizeUrl}\n`);
+        }
+        return { exitCode: 0, stdout: "ok", stderr: "" };
+      },
+    });
+
+    const loginEvent = progress.find((update) => update.phase === "login_url");
+    assert.equal(result.state, "ready");
+    assert.equal(result.loginUrl, authorizeUrl);
+    assert.equal(loginEvent?.loginUrl, authorizeUrl);
+    assert.equal(loginEvent?.openBrowser, false);
+  });
+});
+
+test("prewarmMcpOauth does not emit Codex login_url progress for bare MCP resource URLs", async () => {
+  await withTmpDir(async (codexHome) => {
+    const progress = [];
+    const result = await prewarmMcpOauth({
+      server: "cloudflare",
+      provider: "codex",
+      env: {},
+      onProgress: (update) => progress.push(update),
+      buildCodexEnvImpl: () => ({ CODEX_HOME: codexHome, PATH: "/bin" }),
+      resolveCodexBinaryPathImpl: () => "/usr/local/bin/codex",
+      runProviderStreamImpl: async (args) => {
+        args.onToolEvent({ phase: "use", toolName: "mcp__cloudflare_api__execute" });
+        args.onTextDelta(MCP_OAUTH_PREWARM_OK_SENTINEL);
+      },
+      runCodexMcpCommandImpl: async ({ args, onOutput }) => {
+        if (args[1] === "login") {
+          onOutput("OAuth resource: https://mcp.cloudflare.com/mcp\n");
+        }
+        return { exitCode: 0, stdout: "ok", stderr: "" };
+      },
+    });
+
+    assert.equal(result.state, "ready");
+    assert.equal(result.loginUrl, undefined);
+    assert.equal(progress.some((update) => update.phase === "login_url"), false);
+  });
+});
+
 test("prewarmMcpOauth registers Cloudflare with oauth_resource for Codex", async () => {
   await withTmpDir(async (codexHome) => {
     const calls = [];
@@ -344,6 +808,10 @@ test("prewarmMcpOauth registers Cloudflare with oauth_resource for Codex", async
       env: {},
       buildCodexEnvImpl: () => ({ CODEX_HOME: codexHome, PATH: "/bin" }),
       resolveCodexBinaryPathImpl: () => "/usr/local/bin/codex",
+      runProviderStreamImpl: async (args) => {
+        args.onToolEvent({ phase: "use", toolName: "mcp__cloudflare_api__execute" });
+        args.onTextDelta(MCP_OAUTH_PREWARM_OK_SENTINEL);
+      },
       runCodexMcpCommandImpl: async ({ args }) => {
         calls.push(args);
         if (args[1] === "get" && calls.length === 1) {
@@ -391,7 +859,34 @@ test("prewarmMcpOauth reports Codex login URL timeout as login_pending", async (
   });
 });
 
-test("runCodexMcpCommand backgrounds a Codex OAuth login after the URL is emitted", async () => {
+test("prewarmMcpOauth reports Codex provider verification timeout as verification_pending", async () => {
+  await withTmpDir(async (codexHome) => {
+    const result = await prewarmMcpOauth({
+      server: "posthog",
+      provider: "codex",
+      env: {},
+      verifyTimeoutMs: 10,
+      buildCodexEnvImpl: () => ({ CODEX_HOME: codexHome, PATH: "/bin" }),
+      resolveCodexBinaryPathImpl: () => "/usr/local/bin/codex",
+      runCodexMcpCommandImpl: async ({ args, onOutput }) => {
+        if (args[1] === "login") {
+          onOutput("Visit https://oauth.posthog.com/authorize?state=verified to authenticate\n");
+        }
+        return { exitCode: 0, stdout: "ok", stderr: "" };
+      },
+      runProviderStreamImpl: async ({ abortController }) =>
+        new Promise((_, reject) => {
+          abortController.signal.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    });
+
+    assert.equal(result.state, "verification_pending");
+    assert.equal(result.loginUrl, "https://oauth.posthog.com/authorize?state=verified");
+    assert.match(result.detail, /새 로그인 없이/);
+  });
+});
+
+test("runCodexMcpCommand can background a Codex OAuth login after the URL is emitted", async () => {
   const kills = [];
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
@@ -712,6 +1207,7 @@ test("prewarmMcpOauth never lets a broken onProgress listener break the run", as
       throw new Error("listener bug");
     },
     runProviderStreamImpl: async (args) => {
+      args.onToolEvent({ phase: "use", toolName: "mcp__posthog__get-organizations" });
       args.onTextDelta(MCP_OAUTH_PREWARM_OK_SENTINEL);
     },
   });

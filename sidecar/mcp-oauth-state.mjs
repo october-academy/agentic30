@@ -30,7 +30,7 @@ export function normalizeMcpOauthProvider(value) {
 
 function normalizeProviderRecord(record = {}) {
   const state = String(record?.state || "").trim().toLowerCase();
-  if (!["ready", "login_pending", "failed"].includes(state)) return null;
+  if (!["ready", "login_pending", "verification_pending", "failed"].includes(state)) return null;
   return {
     state,
     detail: String(record?.detail || "").slice(0, 200),

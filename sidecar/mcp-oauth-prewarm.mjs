@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { z } from "zod";
 import {
   POSTHOG_MCP_SERVER_NAME,
   buildPostHogCodexMcpConfigFromSources,
@@ -50,27 +51,135 @@ export const MCP_OAUTH_PREWARM_RECHECK_DELAY_MS = 12_000;
 export const MCP_OAUTH_PREWARM_VERIFY_TIMEOUT_MS = 90_000;
 export const MCP_OAUTH_PREWARM_MAX_RECHECKS = 2;
 export const CODEX_MCP_CLI_GET_TIMEOUT_MS = 15_000;
+export const MCP_OAUTH_LOGIN_URL_MAX_LENGTH = 16_384;
 
-export const MCP_OAUTH_PREWARM_SERVERS = {
+const MCP_OAUTH_CONNECT_RESULT_STATE_VALUES = ["ready", "login_pending", "verification_pending", "failed"];
+const MCP_OAUTH_CONNECT_STATUS_STATE_VALUES = ["progress"];
+export const MCP_OAUTH_CONNECT_STATES = Object.freeze([
+  ...MCP_OAUTH_CONNECT_STATUS_STATE_VALUES,
+  ...MCP_OAUTH_CONNECT_RESULT_STATE_VALUES,
+]);
+
+const boundedString = (maxLength) =>
+  z.preprocess((value) => String(value ?? "").slice(0, maxLength), z.string().max(maxLength));
+const optionalLoginUrl = z.string().url().max(MCP_OAUTH_LOGIN_URL_MAX_LENGTH).optional();
+const contractState = (values) =>
+  z.preprocess((value) => String(value ?? "").trim().toLowerCase(), z.enum(values));
+
+export const McpOauthConnectResultSchema = z.object({
+  server: boundedString(40),
+  provider: boundedString(40),
+  state: contractState(MCP_OAUTH_CONNECT_RESULT_STATE_VALUES),
+  detail: boundedString(200),
+  loginUrl: optionalLoginUrl,
+  checkedAt: z.string().datetime(),
+  providerLimited: z.boolean().optional(),
+}).strict();
+
+export const McpOauthConnectStatusSchema = z.object({
+  server: boundedString(40).pipe(z.string().min(1).max(40)),
+  provider: boundedString(40),
+  state: contractState(MCP_OAUTH_CONNECT_STATUS_STATE_VALUES),
+  detail: boundedString(200),
+  loginUrl: optionalLoginUrl,
+  openBrowser: z.boolean().optional(),
+}).strict();
+
+export const McpOauthProgressUpdateSchema = z.object({
+  server: boundedString(40).pipe(z.string().min(1).max(40)),
+  phase: boundedString(80).pipe(z.string().min(1).max(80)),
+  detail: boundedString(200),
+  loginUrl: optionalLoginUrl,
+  openBrowser: z.boolean().optional(),
+}).strict();
+
+const McpOauthVerificationToolSchema = z.object({
+  tool: z.string().min(1).max(80),
+  prompt: z.string().min(1).max(1600),
+}).strict();
+
+export const McpOauthServerProfileSchema = z.object({
+  server: z.string().min(1).max(40),
+  label: z.string().min(1).max(80),
+  mcpServerName: z.string().min(1).max(80),
+  mcpNamespaceAliases: z.array(z.string().min(1).max(120)).min(1).max(4),
+  executionMode: z.string().min(1).max(120),
+  verificationTools: z.array(McpOauthVerificationToolSchema).max(6).default([]),
+}).strict();
+
+function zodIssueSummary(error) {
+  return error.issues
+    .map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`)
+    .join("; ");
+}
+
+function parseMcpOauthContract(schema, value, label) {
+  const parsed = schema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  throw new Error(`${label} contract violation: ${zodIssueSummary(parsed.error)}`);
+}
+
+export function parseMcpOauthConnectResult(value) {
+  return parseMcpOauthContract(McpOauthConnectResultSchema, value, "MCP OAuth connect result");
+}
+
+export function parseMcpOauthConnectStatus(value) {
+  return parseMcpOauthContract(McpOauthConnectStatusSchema, value, "MCP OAuth connect status");
+}
+
+export function parseMcpOauthProgressUpdate(value) {
+  return parseMcpOauthContract(McpOauthProgressUpdateSchema, value, "MCP OAuth progress update");
+}
+
+export function parseMcpOauthServerProfile(value) {
+  return parseMcpOauthContract(McpOauthServerProfileSchema, value, "MCP OAuth server profile");
+}
+
+function mcpNamespaceAliases(mcpServerName = "") {
+  const name = String(mcpServerName || "").trim();
+  const underscored = name.replace(/-/g, "_");
+  return [...new Set([`mcp__${name}`, `mcp__${underscored}`])];
+}
+
+export const MCP_OAUTH_PREWARM_SERVERS = Object.freeze({
   posthog: {
     server: "posthog",
     label: "PostHog",
     mcpServerName: POSTHOG_MCP_SERVER_NAME,
+    mcpNamespaceAliases: mcpNamespaceAliases(POSTHOG_MCP_SERVER_NAME),
     executionMode: "mcp_oauth_prewarm_posthog",
   },
   cloudflare: {
     server: "cloudflare",
     label: "Cloudflare",
     mcpServerName: CLOUDFLARE_MCP_SERVER_NAME,
+    mcpNamespaceAliases: mcpNamespaceAliases(CLOUDFLARE_MCP_SERVER_NAME),
     executionMode: "mcp_oauth_prewarm_cloudflare",
+    verificationTools: [
+      {
+        tool: "execute",
+        prompt: [
+          "Cloudflare exposes tools under the mcp__cloudflare_api namespace in Codex even though the configured server is cloudflare-api.",
+          "Search ToolSearch for: cloudflare-api cloudflare_api mcp__cloudflare_api execute.",
+          "Use mcp__cloudflare_api.execute, not a literal cloudflare-api tool.",
+          "Call execute with this read-only code exactly:",
+          'async () => cloudflare.request({ method: "GET", path: "/zones?status=active&per_page=1" })',
+          "Do not count docs or search as verification; only execute proves the authenticated API path works.",
+        ].join(" "),
+      },
+    ],
   },
   vercel: {
     server: "vercel",
     label: "Vercel",
     mcpServerName: VERCEL_MCP_SERVER_NAME,
+    mcpNamespaceAliases: mcpNamespaceAliases(VERCEL_MCP_SERVER_NAME),
     executionMode: "mcp_oauth_prewarm_vercel",
   },
-};
+});
+for (const profile of Object.values(MCP_OAUTH_PREWARM_SERVERS)) {
+  parseMcpOauthServerProfile(profile);
+}
 
 // MCP OAuth prewarm을 지원하는 프로바이더 — 토큰 캐시가 이 둘에만 존재한다.
 export const MCP_OAUTH_PREWARM_PROVIDERS = Object.freeze(["claude", "codex"]);
@@ -141,11 +250,14 @@ function requireTarget(server) {
 export function buildMcpOauthPrewarmPrompt(server) {
   const target = requireTarget(server);
   const name = target.mcpServerName;
+  const namespaceHint = mcpNamespacePromptHint(target);
+  const verificationHint = mcpVerificationPromptHint(target);
+  const authHint = mcpAuthPlaceholderPromptHint(target);
   return [
     `You are connecting and verifying the "${name}" MCP server. Follow these steps exactly.`,
-    `1. Discover this server's tools (tool names start with "mcp__${name}__"). If tools are deferred, load them via ToolSearch.`,
-    `2. If real read-only tools are available, call exactly one cheap one (a list/get/search tool with minimal arguments). When it returns a response (even an empty list), reply with exactly: ${MCP_OAUTH_PREWARM_OK_SENTINEL}`,
-    `3. If only authentication placeholder tools exist (e.g. mcp__${name}__authenticate), the server is not authorized yet. Call mcp__${name}__authenticate. It returns a login URL. Immediately output this single line so the host app can open the browser:`,
+    `1. Discover this server's tools. ${namespaceHint} If tools are deferred, load them via ToolSearch.`,
+    `2. If real read-only tools are available, call the verification tool described here. ${verificationHint} When it returns a response (even an empty list), reply with exactly: ${MCP_OAUTH_PREWARM_OK_SENTINEL}`,
+    `3. If only authentication placeholder tools exist (e.g. ${authHint}), the server is not authorized yet. Call the authenticate placeholder for this server. It returns a login URL. Immediately output this single line so the host app can open the browser:`,
     `${MCP_OAUTH_PREWARM_LOGIN_URL_SENTINEL}: <the full login URL>`,
     `4. After emitting the login URL line, give the user time to finish the browser login — they typically need 30-60 seconds. Re-discover the server's tools (ToolSearch again) and retry step 2 up to 8 times, patiently. The OAuth redirect only works while this session is alive, so do not give up early. If the real tools appear and a call succeeds, reply ${MCP_OAUTH_PREWARM_OK_SENTINEL}.`,
     `5. If the tools are still placeholder-only after the retries, the user has not finished the browser login yet. Reply with exactly: ${MCP_OAUTH_PREWARM_LOGIN_PENDING_SENTINEL}`,
@@ -159,14 +271,43 @@ export function buildMcpOauthPrewarmPrompt(server) {
 export function buildMcpOauthVerifyPrompt(server) {
   const target = requireTarget(server);
   const name = target.mcpServerName;
+  const namespaceHint = mcpNamespacePromptHint(target);
+  const verificationHint = mcpVerificationPromptHint(target);
+  const authHint = mcpAuthPlaceholderPromptHint(target);
   return [
     `You are verifying that the "${name}" MCP server is now authorized. The user just finished (or is finishing) a browser OAuth login.`,
-    `1. Discover this server's tools (tool names start with "mcp__${name}__"). If tools are deferred, load them via ToolSearch.`,
-    `2. If real read-only tools are available, call exactly one cheap one (a list/get/search tool with minimal arguments). When it returns a response (even an empty list), reply with exactly: ${MCP_OAUTH_PREWARM_OK_SENTINEL}`,
-    `3. If only authentication placeholder tools exist (e.g. mcp__${name}__authenticate), do NOT call them — calling authenticate would issue a fresh login URL and break the user's in-progress login. Reply with exactly: ${MCP_OAUTH_PREWARM_LOGIN_PENDING_SENTINEL}`,
+    `1. Discover this server's tools. ${namespaceHint} If tools are deferred, load them via ToolSearch.`,
+    `2. If real read-only tools are available, call the verification tool described here. ${verificationHint} When it returns a response (even an empty list), reply with exactly: ${MCP_OAUTH_PREWARM_OK_SENTINEL}`,
+    `3. If only authentication placeholder tools exist (e.g. ${authHint}), do NOT call them — calling authenticate would issue a fresh login URL and break the user's in-progress login. Reply with exactly: ${MCP_OAUTH_PREWARM_LOGIN_PENDING_SENTINEL}`,
     `4. If anything fails in a way that is not a pending login (connection error, tool error, no "${name}" tools at all), reply with exactly: ${MCP_OAUTH_PREWARM_FAIL_SENTINEL}: <one-line reason in Korean>`,
     "Rules: only use ToolSearch and this server's MCP tools. Never call authenticate or complete_authentication. Do not read or write files. Do not run shell commands. End your reply with exactly one sentinel line.",
   ].join("\n");
+}
+
+function mcpNamespacePromptHint(target) {
+  const aliases = targetNamespaceAliases(target);
+  const prefixed = aliases.map((alias) => `${alias}__*`).join(" or ");
+  const searchTerms = [
+    target.mcpServerName,
+    target.mcpServerName.replace(/-/g, "_"),
+    ...aliases,
+    ...targetVerificationToolNames(target),
+  ].join(" ");
+  return `Tool names may appear under ${prefixed}. Use ToolSearch query: "${searchTerms}".`;
+}
+
+function mcpVerificationPromptHint(target) {
+  const tools = targetVerificationTools(target);
+  if (!tools.length) {
+    return "Call exactly one cheap read-only list/get/search tool with minimal arguments.";
+  }
+  return tools.map((tool) => tool.prompt).join(" ");
+}
+
+function mcpAuthPlaceholderPromptHint(target) {
+  return targetNamespaceAliases(target)
+    .map((alias) => `${alias}__authenticate`)
+    .join(" or ");
 }
 
 export function extractMcpOauthLoginUrl(text) {
@@ -197,15 +338,26 @@ export function parseMcpOauthPrewarmReply(text) {
   return { ok: false, loginPending: false, reason: "", loginUrl };
 }
 
-function result(server, provider, state, detail, loginUrl = "") {
-  return {
+function result(server, provider, state, detail, loginUrl = "", extra = {}) {
+  const candidate = {
     server,
     provider,
     state,
     detail: String(detail || "").slice(0, 200),
     ...(loginUrl ? { loginUrl } : {}),
     checkedAt: new Date().toISOString(),
+    ...extra,
   };
+  const parsed = McpOauthConnectResultSchema.safeParse(candidate);
+  if (parsed.success) return parsed.data;
+  return McpOauthConnectResultSchema.parse({
+    server: String(server ?? "").slice(0, 40),
+    provider: String(provider ?? "").slice(0, 40),
+    state: "failed",
+    detail: `MCP OAuth 결과 계약 오류: ${zodIssueSummary(parsed.error)}`.slice(0, 200),
+    checkedAt: new Date().toISOString(),
+    ...(typeof extra.providerLimited === "boolean" ? { providerLimited: extra.providerLimited } : {}),
+  });
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -231,11 +383,49 @@ function defaultCodexConfigToml() {
   ].join("\n");
 }
 
+const ANSI_ESCAPE_PATTERN = /\x1B\[[0-?]*[ -/]*[@-~]/g;
+const HTTP_URL_PATTERN = /https?:\/\/[^\s"'<>\\]+/g;
+
+function normalizeExtractedHttpUrl(url = "") {
+  return String(url || "").replace(/[)\].,;]+$/, "");
+}
+
+export function extractHttpUrls(text = "") {
+  const cleaned = String(text || "").replace(ANSI_ESCAPE_PATTERN, "");
+  const matches = cleaned.match(HTTP_URL_PATTERN) || [];
+  return [...new Set(matches.map(normalizeExtractedHttpUrl).filter(Boolean))];
+}
+
 export function extractFirstHttpUrl(text = "") {
-  const match = String(text || "")
-    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "")
-    .match(/https?:\/\/[^\s"'<>\\]+/);
-  return match ? match[0].replace(/[)\].,;]+$/, "") : "";
+  return extractHttpUrls(text)[0] || "";
+}
+
+function isMcpResourceUrl(url = "") {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname.replace(/\/+$/, "") === "/mcp";
+  } catch {
+    return false;
+  }
+}
+
+function isOauthAuthorizeUrl(url = "") {
+  try {
+    const parsed = new URL(url);
+    const pathname = parsed.pathname.toLowerCase();
+    return pathname.split("/").includes("authorize")
+      || (parsed.searchParams.get("response_type") === "code" && parsed.searchParams.has("client_id"))
+      || (parsed.searchParams.has("code_challenge") && parsed.searchParams.has("redirect_uri"));
+  } catch {
+    return false;
+  }
+}
+
+export function extractCodexMcpLoginUrl(text = "") {
+  const urls = extractHttpUrls(text);
+  return urls.find(isOauthAuthorizeUrl)
+    || urls.find((url) => !isMcpResourceUrl(url))
+    || "";
 }
 
 export function buildCodexMcpOauthServerConfig({
@@ -468,6 +658,7 @@ async function prewarmCodexMcpOauth({
   timeoutMs,
   verifyTimeoutMs,
   progress,
+  runProviderStreamImpl,
   runCodexMcpCommandImpl,
   buildCodexEnvImpl,
   resolveCodexBinaryPathImpl,
@@ -488,27 +679,41 @@ async function prewarmCodexMcpOauth({
   let commandTranscript = "";
   const announceLoginUrl = (text) => {
     if (loginUrlAnnounced) return;
-    const url = extractFirstHttpUrl(text);
+    const url = extractCodexMcpLoginUrl(text);
     if (!url) return;
     loginUrlAnnounced = url;
-    progress("login_url", "브라우저에서 OAuth 로그인을 완료해 주세요.", { loginUrl: url });
+    progress("login_url", "브라우저가 열렸어요. 로그인 완료 후 앱에서 자동으로 MCP 도구 호출을 검증합니다.", {
+      loginUrl: url,
+      openBrowser: false,
+    });
   };
   const runCli = async (args, phase, detail, commandTimeoutMs, options = {}) => {
     commandTranscript = "";
     progress(phase, detail);
-    const commandResult = await runCommandImpl({
-      codexPath: runtime.codexPath,
-      args,
-      env: runtime.codexEnv,
-      cwd: workspaceRoot || process.cwd(),
-      timeoutMs: commandTimeoutMs,
-      onOutput: (chunk) => {
-        commandTranscript += String(chunk || "");
-        announceLoginUrl(commandTranscript);
-      },
-      stopWhen: options.stopWhen,
-      backgroundOnStop: Boolean(options.backgroundOnStop),
-    });
+    let commandResult;
+    try {
+      commandResult = await runCommandImpl({
+        codexPath: runtime.codexPath,
+        args,
+        env: runtime.codexEnv,
+        cwd: workspaceRoot || process.cwd(),
+        timeoutMs: commandTimeoutMs,
+        onOutput: (chunk) => {
+          commandTranscript += String(chunk || "");
+          announceLoginUrl(commandTranscript);
+        },
+        stopWhen: options.stopWhen,
+        backgroundOnStop: Boolean(options.backgroundOnStop),
+      });
+    } catch (error) {
+      commandResult = {
+        stdout: commandTranscript,
+        stderr: "",
+        timedOut: false,
+        exitCode: null,
+        error,
+      };
+    }
     announceLoginUrl(`${commandResult.stdout || ""}\n${commandResult.stderr || ""}`);
     return commandResult;
   };
@@ -534,10 +739,6 @@ async function prewarmCodexMcpOauth({
       "registering",
       `${target.label} MCP 서버를 Codex에 등록하는 중…`,
       timeoutMs,
-      {
-        stopWhen: () => Boolean(loginUrlAnnounced),
-        backgroundOnStop: true,
-      },
     );
     try {
       await syncCodexMcpOauthServerConfig({
@@ -596,29 +797,7 @@ async function prewarmCodexMcpOauth({
     "authenticating",
     `${target.label} MCP OAuth 로그인을 Codex에서 시작하는 중…`,
     timeoutMs,
-    {
-      stopWhen: () => Boolean(loginUrlAnnounced),
-      backgroundOnStop: true,
-    },
   );
-  if (loginResult.backgrounded) {
-    return result(
-      normalized,
-      "codex",
-      "login_pending",
-      `${target.label} 브라우저 로그인이 필요해요 — 로그인 완료 후 'MCP 연결'을 다시 눌러 검증해 주세요.`,
-      loginUrlAnnounced,
-    );
-  }
-  if (loginResult.earlyStopped) {
-    return result(
-      normalized,
-      "codex",
-      "login_pending",
-      `${target.label} 브라우저 로그인이 필요해요 — 로그인 완료 후 'MCP 연결'을 다시 눌러 검증해 주세요.`,
-      loginUrlAnnounced,
-    );
-  }
   if (loginResult.timedOut) {
     return result(
       normalized,
@@ -658,13 +837,227 @@ async function prewarmCodexMcpOauth({
     );
   }
 
+  if (typeof runProviderStreamImpl === "function") {
+    const providerVerification = await verifyCodexMcpOauthWithProvider({
+      normalized,
+      target,
+      workspaceRoot,
+      runProviderStreamImpl,
+      verifyTimeoutMs,
+      progress,
+      loginUrl: loginUrlAnnounced,
+    });
+    if (providerVerification) return providerVerification;
+  }
+
   return result(
     normalized,
     "codex",
-    "ready",
-    `${target.label} MCP OAuth 로그인과 Codex 설정이 확인됨 (${providerDisplayLabel("codex")}) — 이 프로바이더의 AI 실행에서 바로 사용 가능해요.`,
+    "failed",
+    `${target.label} Codex 설정은 확인됐지만 AI 실행에서 도구 호출 확인을 완료하지 못했어요 — 다시 'MCP 연결'을 눌러 검증해 주세요.`,
     loginUrlAnnounced,
   );
+}
+
+async function verifyCodexMcpOauthWithProvider({
+  normalized,
+  target,
+  workspaceRoot,
+  runProviderStreamImpl,
+  verifyTimeoutMs,
+  progress,
+  loginUrl = "",
+} = {}) {
+  progress("verifying", `${target.label} MCP 도구 호출로 Codex 연결을 검증하는 중…`);
+  const abortController = new AbortController();
+  const timer = setTimeout(() => abortController.abort(), verifyTimeoutMs);
+  let transcript = "";
+  let sawTargetMcpToolCall = false;
+  try {
+    await runProviderStreamImpl({
+      provider: "codex",
+      prompt: buildMcpOauthVerifyPrompt(normalized),
+      workspaceRoot,
+      abortController,
+      executionMode: target.executionMode,
+      onTextDelta: (delta) => {
+        transcript += String(delta || "");
+      },
+      onTextReplace: (text) => {
+        transcript = String(text || "");
+      },
+      onToolEvent: (event) => {
+        const toolName = String(event?.toolName || "");
+        if (isTargetMcpToolUseEvent(event, target)) {
+          sawTargetMcpToolCall = true;
+          progress("tool_call", `${target.label} MCP 도구(${mcpToolDisplayName(event)}) 호출 중…`);
+        }
+      },
+    });
+  } catch (error) {
+    if (abortController.signal.aborted) {
+      return result(
+        normalized,
+        "codex",
+        "verification_pending",
+        `${target.label} 브라우저 로그인은 시작됐고 Codex 설정도 확인됐지만 MCP 도구 호출 검증이 시간 초과됐어요 — 'MCP 연결'을 다시 누르면 새 로그인 없이 검증을 이어갑니다.`,
+        loginUrl,
+      );
+    }
+    const message = String(error?.message || error);
+    if (isProviderUsageLimitMessage(message)) {
+      return result(
+        normalized,
+        "codex",
+        "failed",
+        `${target.label} MCP 연결을 확인하지 못했어요 — AI 프로바이더 사용량 한도예요(연결 문제 아님). ${message}`,
+        loginUrl,
+        { providerLimited: true },
+      );
+    }
+    return result(
+      normalized,
+      "codex",
+      "failed",
+      `${target.label} Codex 도구 호출 확인 실패: ${message}`,
+      loginUrl,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const parsed = parseMcpOauthPrewarmReply(transcript);
+  if (parsed.ok) {
+    if (!sawTargetMcpToolCall) {
+      return result(
+        normalized,
+        "codex",
+        "failed",
+        `${target.label} 로그인은 됐지만 Codex에서 실제 도구 호출을 확인하지 못했어요 — 다시 'MCP 연결'을 눌러 검증해 주세요.`,
+        loginUrl || parsed.loginUrl,
+      );
+    }
+    return result(
+      normalized,
+      "codex",
+      "ready",
+      `${target.label} MCP OAuth 로그인과 도구 호출이 확인됨 (${providerDisplayLabel("codex")}) — 이 프로바이더의 AI 실행에서 바로 사용 가능해요.`,
+      loginUrl || parsed.loginUrl,
+    );
+  }
+  if (parsed.loginPending) {
+    return result(
+      normalized,
+      "codex",
+      "login_pending",
+      `${target.label} 브라우저 로그인이 아직 Codex 도구에 반영되지 않았어요 — 완료했다면 'MCP 연결'을 다시 눌러 새 로그인 없이 검증해 주세요.`,
+      loginUrl || parsed.loginUrl,
+    );
+  }
+  if (parsed.reason) {
+    return result(
+      normalized,
+      "codex",
+      "failed",
+      `${target.label} Codex 연결 실패: ${parsed.reason}`,
+      loginUrl || parsed.loginUrl,
+    );
+  }
+  return result(
+    normalized,
+    "codex",
+    "failed",
+    `${target.label} Codex 도구 호출 확인 결과를 읽지 못했어요 — 다시 'MCP 연결'을 눌러 주세요.`,
+    loginUrl || parsed.loginUrl,
+  );
+}
+
+function targetNamespaceAliases(target) {
+  return Array.isArray(target?.mcpNamespaceAliases) && target.mcpNamespaceAliases.length
+    ? target.mcpNamespaceAliases
+    : mcpNamespaceAliases(target?.mcpServerName);
+}
+
+function targetVerificationTools(target) {
+  return Array.isArray(target?.verificationTools) ? target.verificationTools : [];
+}
+
+function targetVerificationToolNames(target) {
+  return targetVerificationTools(target).map((tool) => tool.tool).filter(Boolean);
+}
+
+function normalizeMcpIdentifier(value = "") {
+  return String(value || "").trim().toLowerCase().replace(/_/g, "-");
+}
+
+function targetServerMatches(value, target) {
+  if (!value) return false;
+  return normalizeMcpIdentifier(value) === normalizeMcpIdentifier(target?.mcpServerName);
+}
+
+function targetNamespaceMatches(value, target) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return targetNamespaceAliases(target)
+    .map((alias) => String(alias || "").trim().toLowerCase())
+    .includes(normalized);
+}
+
+function parseTargetMcpToolName(toolName = "", target) {
+  const value = String(toolName || "").trim();
+  const lower = value.toLowerCase();
+  for (const alias of [...targetNamespaceAliases(target)].sort((a, b) => b.length - a.length)) {
+    const prefix = `${String(alias).toLowerCase()}__`;
+    if (lower.startsWith(prefix)) {
+      return {
+        namespace: value.slice(0, alias.length),
+        tool: value.slice(alias.length + 2),
+      };
+    }
+  }
+  return null;
+}
+
+function isTargetVerificationTool(toolName = "", target) {
+  const allowed = targetVerificationToolNames(target).map((tool) => tool.toLowerCase());
+  if (!allowed.length) return true;
+  return allowed.includes(String(toolName || "").trim().toLowerCase());
+}
+
+function isTargetMcpToolUseEvent(event, target) {
+  if (event?.phase !== "use") return false;
+  const parsedName = parseTargetMcpToolName(event?.toolName, target);
+  if (parsedName) {
+    return !isMcpAuthPlaceholderToolName(parsedName.tool)
+      && isTargetVerificationTool(parsedName.tool, target);
+  }
+  const payload = event?.payload && typeof event.payload === "object" ? event.payload : {};
+  if (!targetServerMatches(payload.server, target) && !targetNamespaceMatches(payload.namespace, target)) return false;
+  const toolName = String(payload.tool || payload.requestedToolName || event?.toolName || "");
+  return !isMcpAuthPlaceholderToolName(toolName) && isTargetVerificationTool(toolName, target);
+}
+
+function isMcpAuthPlaceholderToolName(toolName = "") {
+  const normalized = String(toolName || "").trim().toLowerCase();
+  const shortName = normalized.includes("__") ? normalized.split("__").pop() : normalized;
+  return shortName === "authenticate" || shortName === "complete_authentication";
+}
+
+function isTargetMcpAuthPlaceholderEvent(event, target) {
+  if (event?.phase !== "use") return false;
+  const parsedName = parseTargetMcpToolName(event?.toolName, target);
+  if (parsedName) {
+    return isMcpAuthPlaceholderToolName(parsedName.tool);
+  }
+  const payload = event?.payload && typeof event.payload === "object" ? event.payload : {};
+  if (!targetServerMatches(payload.server, target) && !targetNamespaceMatches(payload.namespace, target)) return false;
+  return isMcpAuthPlaceholderToolName(payload.tool || payload.requestedToolName || event?.toolName);
+}
+
+function mcpToolDisplayName(event) {
+  const toolName = String(event?.toolName || "");
+  if (toolName.includes("__")) return toolName.split("__").pop();
+  const payload = event?.payload && typeof event.payload === "object" ? event.payload : {};
+  return String(payload.tool || payload.requestedToolName || toolName || "tool");
 }
 
 export async function prewarmMcpOauth({
@@ -697,7 +1090,8 @@ export async function prewarmMcpOauth({
 
   const progress = (phase, detail, extra = {}) => {
     try {
-      onProgress?.({ server: normalized, phase, detail, ...extra });
+      const update = parseMcpOauthProgressUpdate({ server: normalized, phase, detail, ...extra });
+      onProgress?.(update);
     } catch {
       // progress is best-effort; never let a listener break the prewarm
     }
@@ -712,6 +1106,7 @@ export async function prewarmMcpOauth({
       timeoutMs,
       verifyTimeoutMs,
       progress,
+      runProviderStreamImpl,
       runCodexMcpCommandImpl,
       buildCodexEnvImpl,
       resolveCodexBinaryPathImpl,
@@ -728,13 +1123,14 @@ export async function prewarmMcpOauth({
   const announceLoginUrl = (url) => {
     if (loginUrlAnnounced || !url) return;
     loginUrlAnnounced = url;
-    progress("login_url", "브라우저에서 OAuth 로그인을 완료해 주세요.", { loginUrl: url });
+    progress("login_url", "브라우저가 열렸어요. 로그인 완료 후 앱에서 자동으로 MCP 도구 호출을 검증합니다.", { loginUrl: url });
   };
 
   const runAttempt = async ({ prompt, attemptTimeoutMs }) => {
     const abortController = new AbortController();
     const timer = setTimeout(() => abortController.abort(), attemptTimeoutMs);
     let transcript = "";
+    let sawTargetMcpToolCall = false;
     const checkLoginUrl = () => announceLoginUrl(extractMcpOauthLoginUrl(transcript));
     // authenticate 도구의 result payload에서 로그인 URL을 직접 추출 — 모델이
     // 센티널 라인을 생략해도(실측: 종종 생략함) 브라우저 오픈이 누락되지 않게.
@@ -758,15 +1154,16 @@ export async function prewarmMcpOauth({
           const toolName = String(event?.toolName || "");
           const callKey = String(event?.toolCallKey || "");
           if (event?.phase === "use") {
-            if (toolName.includes("authenticate")) {
+            if (isTargetMcpAuthPlaceholderEvent(event, target)) {
               if (callKey) authenticateCallKeys.add(callKey);
               progress("authenticating", "OAuth 로그인 URL을 발급받는 중…");
-            } else if (toolName.startsWith(`mcp__${target.mcpServerName}__`)) {
-              progress("tool_call", `${target.label} MCP 도구(${toolName.split("__").pop()}) 호출 중…`);
+            } else if (isTargetMcpToolUseEvent(event, target)) {
+              sawTargetMcpToolCall = true;
+              progress("tool_call", `${target.label} MCP 도구(${mcpToolDisplayName(event)}) 호출 중…`);
             } else if (loginUrlAnnounced) {
               // 로그인 URL 공지 이후의 도구 탐색은 "완료 확인" 단계 — 캡션이
               // "로그인을 완료해 주세요"에 멈춰 보이지 않게 진행을 알린다.
-              progress("verifying", "로그인 완료 여부를 확인하는 중…");
+              progress("verifying", "브라우저 로그인 완료 여부를 확인하는 중…");
             }
             return;
           }
@@ -787,7 +1184,7 @@ export async function prewarmMcpOauth({
     } finally {
       clearTimeout(timer);
     }
-    return { kind: "done", parsed: parseMcpOauthPrewarmReply(transcript) };
+    return { kind: "done", parsed: parseMcpOauthPrewarmReply(transcript), sawTargetMcpToolCall };
   };
 
   progress("provider_started", `${target.label} MCP 도구 호출로 연결을 확인하는 중… (${provider})`);
@@ -832,16 +1229,14 @@ export async function prewarmMcpOauth({
     if (isProviderUsageLimitMessage(attempt.message)) {
       // 한도 에러는 연결을 검증할 수 없었을 뿐 — 연결 실패가 아니다. 호출자
       // (persistMcpOauthConnectResult)는 이 플래그로 기존 ready 격하를 막는다.
-      return {
-        ...result(
-          normalized,
-          provider,
-          "failed",
-          `${target.label} MCP 연결을 확인하지 못했어요 — AI 프로바이더 사용량 한도예요(연결 문제 아님). ${attempt.message}`,
-          loginUrlAnnounced,
-        ),
-        providerLimited: true,
-      };
+      return result(
+        normalized,
+        provider,
+        "failed",
+        `${target.label} MCP 연결을 확인하지 못했어요 — AI 프로바이더 사용량 한도예요(연결 문제 아님). ${attempt.message}`,
+        loginUrlAnnounced,
+        { providerLimited: true },
+      );
     }
     return result(normalized, provider, "failed", `${target.label} MCP 연결 확인 실패: ${attempt.message}`, loginUrlAnnounced);
   }
@@ -849,6 +1244,15 @@ export async function prewarmMcpOauth({
   const parsed = attempt.parsed;
   const loginUrl = loginUrlAnnounced || parsed.loginUrl;
   if (parsed.ok) {
+    if (!attempt.sawTargetMcpToolCall) {
+      return result(
+        normalized,
+        provider,
+        "failed",
+        `${target.label} 로그인은 됐지만 실제 MCP 도구 호출을 확인하지 못했어요 — 다시 'MCP 연결'을 눌러 검증해 주세요.`,
+        loginUrl,
+      );
+    }
     // 어느 프로바이더 캐시에 연결됐는지를 배지 캡션에 남긴다 — 토큰 캐시는
     // 프로바이더별이라 이 라벨이 곧 "어디서 쓸 수 있는 연결인지"다.
     return result(

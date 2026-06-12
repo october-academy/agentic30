@@ -26,7 +26,12 @@ const PROVIDER_KEY_ENV_VARS = [
   "CURSOR_API_KEY",
 ];
 
-async function spawnSidecarWithoutStub({ seedClaudeLogin = false } = {}) {
+async function spawnSidecarWithoutStub({
+  seedClaudeLogin = false,
+  seedGeminiLogin = false,
+  extraEnv = {},
+  processCwd = packageRoot,
+} = {}) {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-scan-blocked-"));
   const workspacePath = path.join(tempRoot, "workspace");
   const appSupportPath = path.join(tempRoot, "app-support");
@@ -43,9 +48,18 @@ async function spawnSidecarWithoutStub({ seedClaudeLogin = false } = {}) {
       JSON.stringify({ oauthAccount: { emailAddress: "blocked-test@example.com" } }),
     );
   }
+  if (seedGeminiLogin) {
+    const gcloudPath = path.join(homePath, ".config", "gcloud");
+    await fs.mkdir(gcloudPath, { recursive: true });
+    await fs.writeFile(
+      path.join(gcloudPath, "application_default_credentials.json"),
+      JSON.stringify({ client_id: "test-client", refresh_token: "test-refresh" }),
+    );
+  }
 
   const env = {
     ...process.env,
+    ...extraEnv,
     AGENTIC30_APP_SUPPORT_PATH: appSupportPath,
     AGENTIC30_DISABLE_QMD_BOOTSTRAP: "1",
     AGENTIC30_DISABLE_AGENT_HISTORY: "1",
@@ -61,8 +75,8 @@ async function spawnSidecarWithoutStub({ seedClaudeLogin = false } = {}) {
     delete env[key];
   }
 
-  const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", workspacePath], {
-    cwd: packageRoot,
+  const child = spawn(process.execPath, [path.join(packageRoot, "sidecar", "index.mjs"), "--workspace", workspacePath], {
+    cwd: processCwd,
     env,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -192,6 +206,40 @@ test("scan with no available provider broadcasts blocked and never passes on loc
   }
 });
 
+test("scan workspace normalizes current-directory path aliases before scanning", async () => {
+  const harness = await spawnSidecarWithoutStub();
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+
+    for (const rootAlias of [".", "@."]) {
+      ws.events.length = 0;
+      ws.send(JSON.stringify({
+        type: "scan_workspace",
+        root: rootAlias,
+        prompt: "scan current directory alias contract",
+      }));
+
+      const blocked = await waitForEvent(ws.events, (event) =>
+        event.type === "workspace_scan_blocked"
+          && event.scanRoot === packageRoot,
+      );
+      assert.equal(blocked.provider, "codex");
+      assert.equal(blocked.reason, "unavailable");
+      assert.equal(blocked.scanRoot, packageRoot);
+      assert.ok(
+        ws.events.some((event) =>
+          event.type === "workspace_scan_started"
+            && event.scanRoot === packageRoot,
+        ),
+      );
+    }
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
 test("scan blocked on codex recommends claude when a claude login session exists", async () => {
   const harness = await spawnSidecarWithoutStub({ seedClaudeLogin: true });
   let ws;
@@ -218,6 +266,58 @@ test("scan blocked on codex recommends claude when a claude login session exists
     assert.equal(claudeReadiness.authenticated, true);
     assert.equal(claudeReadiness.scanReady, true);
     assert.equal(claudeReadiness.authAction, null);
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
+test("scan blocked on selected claude usage limit recommends the next scan-ready provider", async () => {
+  const harness = await spawnSidecarWithoutStub({
+    seedClaudeLogin: true,
+    seedGeminiLogin: true,
+    extraEnv: {
+      AGENTIC30_TEST_FORCE_PROVIDER_USAGE_LIMIT: "claude",
+    },
+  });
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+    ws.send(JSON.stringify({
+      type: "scan_workspace",
+      root: harness.workspacePath,
+      prompt: "deep scan with selected claude quota contract",
+      preferredProvider: "claude",
+    }));
+
+    const blocked = await waitForEvent(ws.events, (event) =>
+      event.type === "workspace_scan_blocked"
+        && event.scanRoot === harness.workspacePath,
+    );
+    assert.equal(blocked.provider, "claude");
+    assert.equal(blocked.model, "claude-sonnet-4-6");
+    assert.equal(blocked.reason, "usage_limit");
+    assert.equal(blocked.errorKind, "provider_usage_limit");
+    assert.equal(blocked.stage, "blocked");
+    assert.equal(blocked.stepIndex, 2);
+    assert.equal(blocked.totalSteps, 3);
+    assert.equal(blocked.nextProvider, "gemini");
+    assert.deepEqual(blocked.availableProviders, ["gemini"]);
+    assert.match(blocked.message, /weekly limit/);
+    const claudeReadiness = blocked.providerReadiness.find((item) => item.provider === "claude");
+    const geminiReadiness = blocked.providerReadiness.find((item) => item.provider === "gemini");
+    assert.equal(claudeReadiness.authenticated, true);
+    assert.equal(claudeReadiness.scanReady, true);
+    assert.equal(geminiReadiness.authenticated, true);
+    assert.equal(geminiReadiness.scanReady, true);
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const passed = ws.events.some((event) =>
+      event.type === "workspace_scan_result"
+        && event.scanRoot === harness.workspacePath
+        && !event.error,
+    );
+    assert.equal(passed, false);
   } finally {
     ws?.close();
     await harness.close();

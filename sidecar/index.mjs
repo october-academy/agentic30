@@ -69,6 +69,8 @@ import { collectIntegrationStatus } from "./integration-status.mjs";
 import {
   isProviderUsageLimitMessage,
   normalizeMcpOauthPrewarmServer,
+  parseMcpOauthConnectResult,
+  parseMcpOauthConnectStatus,
   prewarmMcpOauth,
   resolveMcpOauthConnectProvider,
 } from "./mcp-oauth-prewarm.mjs";
@@ -127,6 +129,7 @@ import {
   setDayActiveStep,
 } from "./day-progress-state.mjs";
 import {
+  abandonCommitment,
   appendCommitment,
   appendCycle,
   appendPrediction,
@@ -134,6 +137,7 @@ import {
   buildEvidenceOS,
   buildPriorCycle,
   buildDayReviews,
+  carryForwardCommitment,
   classifyInterviewGate,
   formatPriorCycleOpening,
   gradeCommitment,
@@ -428,16 +432,17 @@ const WORKSPACE_SCAN_MODEL_BY_PROVIDER = {
 };
 // Workspace scan agent wall-clock bounds. ABORT asks the provider SDK to stop;
 // HARD_DEADLINE force-returns the scan even if the SDK ignores the abort, so a
-// stuck provider run can never hang the Day-1 scan UI for minutes. Override via
-// env for slow machines / large repos.
+// stuck provider run can never hang the Day-1 scan UI for several minutes.
+// The defaults still need enough room for real Codex CLI scans on this repo;
+// override via env for unusually slow machines / very large repos.
 const WORKSPACE_SCAN_AGENT_ABORT_MS = Number.parseInt(
   process.env.AGENTIC30_WORKSPACE_SCAN_ABORT_MS || "",
   10,
-) || 45_000;
+) || 120_000;
 const WORKSPACE_SCAN_AGENT_HARD_DEADLINE_MS = Number.parseInt(
   process.env.AGENTIC30_WORKSPACE_SCAN_HARD_DEADLINE_MS || "",
   10,
-) || 60_000;
+) || 150_000;
 const DAY1_CHOICE_MODEL_BY_PROVIDER = {
   claude: DAY1_CHOICE_CLAUDE_MODEL,
   codex: DAY1_CHOICE_CODEX_MODEL,
@@ -2239,13 +2244,13 @@ async function handleClientMessage(socket, payload) {
         fallbackProvider: pickMorningBriefingProvider(""),
       });
       if (!resolvedProvider.provider) {
-        const failedResult = {
+        const failedResult = parseMcpOauthConnectResult({
           server: server || String(payload.server || ""),
           provider: String(payload.preferredProvider || "").trim().toLowerCase(),
           state: "failed",
           detail: resolvedProvider.error,
           checkedAt: new Date().toISOString(),
-        };
+        });
         send(socket, { type: "mcp_oauth_connect_result", mcpOauthConnect: failedResult });
         telemetry.captureEvent("mac_sidecar_mcp_oauth_connect", {
           server: failedResult.server,
@@ -2256,33 +2261,80 @@ async function handleClientMessage(socket, payload) {
         return;
       }
       const provider = resolvedProvider.provider;
-      const mcpOauthConnect = await prewarmMcpOauth({
-        server: server || payload.server,
-        provider,
-        workspaceRoot,
-        runProviderStreamImpl: runProviderStream,
-        buildCodexEnvImpl: buildCodexEnv,
-        resolveCodexBinaryPathImpl: resolveCodexBinaryPath,
-        onProgress: (update) => {
-          send(socket, {
-            type: "mcp_oauth_connect_status",
-            mcpOauthConnect: {
-              server: update.server,
-              provider,
-              state: "progress",
-              detail: update.detail || "",
-              ...(update.loginUrl ? { loginUrl: update.loginUrl } : {}),
-            },
-          });
+      let mcpOauthConnect;
+      try {
+        mcpOauthConnect = await prewarmMcpOauth({
+          server: server || payload.server,
+          provider,
+          workspaceRoot,
+          runProviderStreamImpl: runProviderStream,
+          buildCodexEnvImpl: buildCodexEnv,
+          resolveCodexBinaryPathImpl: resolveCodexBinaryPath,
+          onProgress: (update) => {
+            try {
+              const statusPayload = parseMcpOauthConnectStatus({
+                server: update.server,
+                provider,
+                state: "progress",
+                detail: update.detail || "",
+                ...(update.loginUrl ? { loginUrl: update.loginUrl } : {}),
+                ...(typeof update.openBrowser === "boolean" ? { openBrowser: update.openBrowser } : {}),
+              });
+              send(socket, {
+                type: "mcp_oauth_connect_status",
+                mcpOauthConnect: statusPayload,
+              });
+            } catch (error) {
+              telemetry.captureException(error, {
+                operation: "mcp_oauth_connect_status_contract",
+                server: update?.server || server || String(payload.server || ""),
+                provider,
+              });
+              captureSidecarLog("mcp oauth progress event ignored", "warn", {
+                operation: "mcp_oauth_connect_status_contract",
+                server: update?.server || server || String(payload.server || ""),
+                provider,
+                detail: truncateTelemetryString(error?.message || error),
+              });
+            }
+          },
+        });
+      } catch (error) {
+        const message = String(error?.message || error);
+        telemetry.captureException(error, {
+          operation: "mcp_oauth_connect",
+          server: server || String(payload.server || ""),
+          provider,
+        });
+        mcpOauthConnect = parseMcpOauthConnectResult({
+          server: server || String(payload.server || ""),
+          provider,
+          state: "failed",
+          detail: `MCP 연결 확인 중 예기치 않은 오류가 발생했어요 — 다시 시도해 주세요. ${message}`,
+          checkedAt: new Date().toISOString(),
         },
-      });
+        );
+      }
       // 검증 결과 영속: 브리핑 소스 게이트와 Settings 상태 배지가 "OAuth로
       // 연결됨"을 인정하는 유일한 근거. 토큰이 아니라 검증 사실만 저장.
       await persistMcpOauthConnectResult({ appSupportPath, result: mcpOauthConnect }).catch((error) => {
         telemetry.captureException(error, { operation: "mcp_oauth_state_persist" });
       });
-      const integrationStatus = await collectIntegrationStatus({ appSupportPath, provider });
-      send(socket, { type: "mcp_oauth_connect_result", mcpOauthConnect, integrationStatus });
+      let integrationStatus = null;
+      try {
+        integrationStatus = await collectIntegrationStatus({ appSupportPath, provider });
+      } catch (error) {
+        telemetry.captureException(error, {
+          operation: "mcp_oauth_connect_integration_status",
+          server: mcpOauthConnect.server,
+          provider,
+        });
+      }
+      send(socket, {
+        type: "mcp_oauth_connect_result",
+        mcpOauthConnect,
+        ...(integrationStatus ? { integrationStatus } : {}),
+      });
       telemetry.captureEvent("mac_sidecar_mcp_oauth_connect", {
         server: mcpOauthConnect.server,
         provider: mcpOauthConnect.provider,
@@ -2331,7 +2383,7 @@ async function handleClientMessage(socket, payload) {
       return;
     }
     case "scan_workspace": {
-      const root = String(payload.root || "").trim();
+      const root = normalizeWorkspaceRootInput(payload.root);
       if (!root) {
         telemetry.captureEvent("mac_sidecar_workspace_scan_rejected", {
           reason: "missing_root",
@@ -2947,37 +2999,25 @@ async function handleOfficeHoursCommitmentCarryForward(socket, payload = {}) {
   const root = resolveDay1GoalWorkspaceRoot(payload);
   const commitmentId = String(payload.commitmentId ?? payload.commitment_id ?? "").trim();
   try {
-    const memory = await loadOfficeHoursMemory({ workspaceRoot: root });
-    const target = memory.commitments.find((commitment) => commitment.id === commitmentId);
-    if (!target) throw new Error(`Unknown commitment "${commitmentId}".`);
     const dayProgress = await loadDayProgress({ workspaceRoot: root });
     const currentDay = dayProgress ? computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt }) : null;
-    const nextDay = Number.parseInt(payload.day ?? payload.dayNumber ?? payload.day_number ?? currentDay ?? target.dueDay ?? target.createdDay ?? target.cycle ?? 1, 10) || 1;
-    const text = target.text || target.message || "고객 행동 약속";
-    await gradeCommitment({ workspaceRoot: root, commitmentId, evidence: null, gradedCycle: nextDay });
-    await appendCommitment({
+    const nextDay = Number.parseInt(payload.day ?? payload.dayNumber ?? payload.day_number ?? currentDay ?? 1, 10) || 1;
+    const result = await carryForwardCommitment({
       workspaceRoot: root,
-      text,
-      cycle: nextDay,
       day: nextDay,
-      originText: text,
-      commitment: {
-        customer: target.customer,
-        channel: target.channel,
-        message: target.message || text,
-        expectedEvidenceKind: target.expectedEvidenceKind,
-        dueDay: nextDay + 1,
-        confirmedByUser: true,
-      },
+      commitmentId,
     });
-    await appendTimeline({
-      workspaceRoot: root,
-      cycle: nextDay,
-      source: "retro",
-      origin: "user",
-      summary: `이월: ${text}`,
-      detail: "Evidence OS에서 오늘 약속으로 다시 열었습니다.",
-    });
+    if (result.created) {
+      const text = result.commitment?.text || result.commitment?.message || "고객 행동 약속";
+      await appendTimeline({
+        workspaceRoot: root,
+        cycle: nextDay,
+        source: "retro",
+        origin: "user",
+        summary: `이월: ${text}`,
+        detail: "Evidence OS에서 오늘 약속으로 다시 열었습니다.",
+      });
+    }
     await recompileCompiledTruth({ workspaceRoot: root });
     await refreshDayMemory({ workspaceRoot: root, day: nextDay }).catch((error) => {
       telemetry.captureException(error, { operation: "day_memory_refresh_after_commitment_carry_forward" });
@@ -3000,15 +3040,17 @@ async function handleOfficeHoursCommitmentAbandon(socket, payload = {}) {
     if (!commitmentId) throw new Error("commitmentId is required.");
     const dayProgress = await loadDayProgress({ workspaceRoot: root });
     const currentDay = dayProgress ? computeDayNumber({ challengeStartedAt: dayProgress.challengeStartedAt }) : null;
-    await gradeCommitment({ workspaceRoot: root, commitmentId, evidence: null, gradedCycle: currentDay ?? undefined });
-    await appendTimeline({
-      workspaceRoot: root,
-      cycle: currentDay ?? 1,
-      source: "retro",
-      origin: "user",
-      summary: "약속 포기",
-      detail: reason || "사용자가 Evidence OS에서 미해결 약속을 포기 처리했습니다.",
-    });
+    const result = await abandonCommitment({ workspaceRoot: root, commitmentId });
+    if (result.abandoned) {
+      await appendTimeline({
+        workspaceRoot: root,
+        cycle: currentDay ?? 1,
+        source: "retro",
+        origin: "user",
+        summary: "약속 포기",
+        detail: reason || "사용자가 Evidence OS에서 미해결 약속을 포기 처리했습니다.",
+      });
+    }
     await recompileCompiledTruth({ workspaceRoot: root });
     if (currentDay) {
       await refreshDayMemory({ workspaceRoot: root, day: currentDay }).catch((error) => {
@@ -10417,6 +10459,17 @@ function isWorkspacePathLookupPrompt(prompt) {
   return asksPath && !asksDeepScan;
 }
 
+function normalizeWorkspaceRootInput(value, { cwd = process.cwd(), env = process.env } = {}) {
+  let text = String(value || "").trim();
+  if (!text) return "";
+  if (text === "@") text = ".";
+  if (text === "@." || text.startsWith("@./")) text = text.slice(1);
+  if (text.startsWith("@/") || text.startsWith("@~/")) text = text.slice(1);
+  if (text === "~") text = env.HOME || os.homedir();
+  if (text.startsWith("~/")) text = path.join(env.HOME || os.homedir(), text.slice(2));
+  return path.resolve(cwd, text);
+}
+
 async function appendWorkspaceScanVisibleAnswer({ sessionId = "", prompt = "", scanRoot = "", result = {} } = {}) {
   if (!sessionId) return;
   const wantsPath = /(어디|위치|경로|path|where|location|file|문서)/i.test(String(prompt || ""));
@@ -10488,7 +10541,7 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
   // the abort signal; at HARD_DEADLINE_MS we force this function to return even
   // if the SDK never honors the signal (e.g. blocked on MCP startup or tool
   // I/O). Without the hard deadline a stuck codex/claude run can hang the Day-1
-  // scan for minutes instead of failing over to the blocked/switch-provider UI.
+  // scan indefinitely instead of failing over to the blocked/switch-provider UI.
   const abortTimer = setTimeout(() => abortController.abort(), WORKSPACE_SCAN_AGENT_ABORT_MS);
   let hardDeadlineTimer = null;
   const hardDeadline = new Promise((_, reject) => {

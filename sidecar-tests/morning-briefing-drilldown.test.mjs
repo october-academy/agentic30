@@ -10,6 +10,7 @@ import {
   normalizeMorningBriefingDrilldown,
   normalizeMorningBriefingDrilldowns,
   normalizeMorningBriefingExternalDigest,
+  normalizePosthogDrilldownMeasurements,
 } from "../sidecar/morning-briefing-drilldown.mjs";
 import { buildMorningBriefing } from "../sidecar/morning-briefing.mjs";
 
@@ -348,6 +349,117 @@ test("normalizeMorningBriefingDrilldown rejects empty payloads and clamps string
   assert.equal(normalized.kpis[0].valueLabel, "64");
 });
 
+test("normalizeMorningBriefingDrilldown keeps latest curve points", () => {
+  const points = Array.from({ length: 14 }, (_, index) => {
+    const day = String(index + 27).padStart(2, "0");
+    return { label: `05-${day} · ${index}%`, pct: index };
+  });
+  points.splice(6, 8, ...Array.from({ length: 8 }, (_, index) => ({
+    label: `06-0${index + 2} · ${index}%`,
+    pct: index,
+    date: `2026-06-0${index + 2}`,
+    cohortSize: index + 2,
+    returned: index,
+    tip: `2026-06-0${index + 2} 코호트`,
+  })));
+  const normalized = normalizeMorningBriefingDrilldown("posthog", {
+    kpis: [{ label: "Day-1", valueLabel: "11.1%" }],
+    chart: { kind: "curve", points },
+  });
+  assert.equal(normalized.chart.points.length, 8);
+  assert.equal(normalized.chart.points[0].label, "06-02 · 0%");
+  assert.equal(normalized.chart.points.at(-1).label, "06-09 · 7%");
+  assert.equal(normalized.chart.points.at(-1).cohortSize, 9);
+});
+
+test("normalizePosthogDrilldownMeasurements renders small-sample aggregate deterministically", () => {
+  const drilldown = normalizePosthogDrilldownMeasurements({
+    measurements: {
+      totals: {
+        startIso: "2026-06-10T15:00:00.000Z",
+        untilIso: "2026-06-12T04:09:22.581Z",
+        events: 831,
+        activeUsers: 51,
+        conversions: 0,
+        signups: 0,
+        signupInstrumentation: "missing",
+        conversionInstrumentation: "missing",
+        topEvents: [
+          { event: "$pageview", count: 51, users: 20 },
+          { event: "Application Opened", count: 46, users: 5 },
+        ],
+      },
+      cohorts: [
+        { day: "2026-05-27", cohortSize: 6, returnedDay1: 1, retentionPct: 16.7 },
+        { day: "2026-05-28", cohortSize: 25, returnedDay1: 0, retentionPct: 0 },
+        { day: "2026-05-29", cohortSize: 27, returnedDay1: 1, retentionPct: 3.7 },
+        { day: "2026-05-30", cohortSize: 22, returnedDay1: 3, retentionPct: 13.6 },
+        { day: "2026-05-31", cohortSize: 11, returnedDay1: 1, retentionPct: 9.1 },
+        { day: "2026-06-01", cohortSize: 106, returnedDay1: 1, retentionPct: 0.9 },
+        { day: "2026-06-02", cohortSize: 11, returnedDay1: 1, retentionPct: 9.1 },
+        { day: "2026-06-03", cohortSize: 10, returnedDay1: 3, retentionPct: 30 },
+        { day: "2026-06-04", cohortSize: 3, returnedDay1: 0, retentionPct: 0 },
+        { day: "2026-06-05", cohortSize: 5, returnedDay1: 0, retentionPct: 0 },
+        { day: "2026-06-06", cohortSize: 6, returnedDay1: 0, retentionPct: 0 },
+        { day: "2026-06-07", cohortSize: 6, returnedDay1: 0, retentionPct: 0 },
+        { day: "2026-06-08", cohortSize: 14, returnedDay1: 3, retentionPct: 21.4 },
+        { day: "2026-06-09", cohortSize: 9, returnedDay1: 1, retentionPct: 11.1 },
+      ],
+      funnel: {
+        pageviewUsers: 20,
+        appOpenUsers: 5,
+        sessionRequestUsers: 5,
+        sessionCreatedUsers: 5,
+        namedActivationUsers: 0,
+        activationInstrumentation: "missing",
+      },
+      paths: [
+        { path: "/blog/paddle-guide", pageviews: 79, activeUsers: 59 },
+        { path: "/", pageviews: 26, activeUsers: 17 },
+      ],
+      instrumentationGaps: ["가입·activation 이벤트가 없어 목표 전환 판단은 제한적입니다."],
+    },
+  });
+
+  assert.ok(drilldown);
+  assert.equal(drilldown.kpis[2].valueLabel, "11.1%");
+  assert.equal(drilldown.kpis[2].deltaLabel, "표본 작음");
+  assert.equal(drilldown.kpis[2].direction, "flat");
+  assert.equal(drilldown.kpis[2].flag, false);
+  assert.equal(drilldown.kpis[2].vsLabel, "06-09 코호트 n=9 · 1/9 복귀 · 이전 06-08 n=14 · 21.4%");
+  assert.equal(drilldown.kpis[3].valueLabel, "미계측");
+  assert.equal(drilldown.kpis[3].deltaLabel, "이벤트 없음");
+  assert.equal(drilldown.chart.points.length, 8);
+  assert.equal(drilldown.chart.points[0].label, "06-02 · 9.1%");
+  assert.equal(drilldown.chart.points.at(-1).label, "06-09 · 11.1%");
+  assert.equal(drilldown.chart.points.at(-1).tip, "2026-06-09 코호트 n=9 · 1/9 복귀");
+  assert.equal(drilldown.funnel.gapAfterIndex, 0);
+  assert.equal(drilldown.webSignals[0].time, "유입 1위");
+});
+
+test("normalizePosthogDrilldownMeasurements rejects contract violations", () => {
+  const valid = {
+    totals: { events: 1, activeUsers: 1, topEvents: [] },
+    cohorts: [{ day: "2026-06-09", cohortSize: 9, returnedDay1: 1 }],
+    paths: [],
+    instrumentationGaps: [],
+  };
+  assert.equal(normalizePosthogDrilldownMeasurements({ ...valid, rawRows: [] }), null);
+  assert.equal(normalizePosthogDrilldownMeasurements({ measurements: valid, rawRows: [] }), null);
+  assert.equal(normalizePosthogDrilldownMeasurements({
+    ...valid,
+    cohorts: Array.from({ length: 32 }, (_, index) => ({
+      day: `2026-06-${String((index % 28) + 1).padStart(2, "0")}`,
+      cohortSize: 1,
+      returnedDay1: 0,
+    })),
+  }), null);
+  assert.equal(normalizePosthogDrilldownMeasurements({
+    ...valid,
+    totals: { ...valid.totals, events: "1" },
+  }), null);
+});
+
 test("normalizeMorningBriefingDrilldowns keeps only known source ids", () => {
   const normalized = normalizeMorningBriefingDrilldowns({
     cloudflare: { kpis: [{ label: "순 방문", value: 64 }] },
@@ -364,10 +476,21 @@ test("buildMorningBriefingExternalDigestPrompt appends drilldown shape for selec
     context: "ctx",
   });
   assert.match(prompt, /"drilldowns"/);
-  assert.match(prompt, /Day-2 리텐션/);
-  assert.match(prompt, /first-time Day-1 retention cohorts/);
-  assert.match(prompt, /onboarding\/activation funnel/);
-  assert.match(prompt, /properties\.\$pathname/);
+  assert.match(prompt, /"measurements"/);
+  assert.match(prompt, /totals_top_events/);
+  assert.match(prompt, /day1_cohorts/);
+  assert.match(prompt, /web_app_session_funnel/);
+  assert.match(prompt, /web_paths/);
+  assert.match(prompt, /return only drilldowns\.posthog\.measurements/);
+  assert.match(prompt, /PostHog active user rule/);
+  assert.match(prompt, /telemetry_source\) IN \('mac_app', 'mac_sidecar'\)/);
+  assert.match(prompt, /telemetry_environment\) = 'production'/);
+  assert.match(prompt, /build_configuration\) = 'release'/);
+  assert.match(prompt, /properties\.is_internal_traffic/);
+  assert.match(prompt, /person\.properties\.is_internal_tester/);
+  assert.match(prompt, /uniqIf\(person_id, event IN \('workspace_setup_completed', 'mac_session_created', 'mac_sidecar_session_created', 'mac_sidecar_office_hours_completed'\)\)/);
+  assert.match(prompt, /\$pageview\/web\/blog\/link events never count as active users/);
+  assert.match(prompt, /Do not include raw rows/);
   assert.doesNotMatch(prompt, /사람 방문, 지난 24시간/);
   assert.match(prompt, /never raw event rows/);
 
@@ -377,11 +500,16 @@ test("buildMorningBriefingExternalDigestPrompt appends drilldown shape for selec
     context: "ctx",
   });
   assert.match(cloudflare, /httpRequestsAdaptiveGroups/);
+  assert.match(cloudflare, /path: "\/graphql"/);
+  assert.match(cloudflare, /query\(\$zone: String!, \$start: Time!, \$end: Time!\)/);
+  assert.match(cloudflare, /sum \{ requests pageViews \}/);
+  assert.doesNotMatch(cloudflare, /\/client\/v4\/graphql/);
+  assert.doesNotMatch(cloudflare, /sum \{[^}]*visits/);
   assert.match(cloudflare, /trailing 24 hours/);
   assert.match(cloudflare, /sum_edgeResponseBytes_DESC/);
   assert.match(cloudflare, /clientRequestPath/);
   assert.match(cloudflare, /requestSource: "eyeball"/);
-  assert.doesNotMatch(cloudflare, /first-time Day-1 retention cohorts/);
+  assert.doesNotMatch(cloudflare, /day1_cohorts/);
 
   const none = buildMorningBriefingExternalDigestPrompt({ sources: [], window: WINDOW });
   assert.doesNotMatch(none, /"drilldowns"/);

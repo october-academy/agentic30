@@ -133,7 +133,10 @@ test("buildMorningBriefingCards computes deltas against previous metrics", () =>
   const github = cards[1];
   assert.equal(github.metric.value, 9);
   assert.equal(github.metric.direction, "up");
-  assert.ok(github.rows.some((row) => row.k === "PR 업데이트"));
+  assert.deepEqual(
+    github.rows.map((row) => row.k),
+    ["PR 업데이트", "PR 머지", "릴리즈"],
+  );
 
   const posthog = cards[2];
   assert.equal(posthog.metric.direction, "down");
@@ -151,6 +154,21 @@ test("buildMorningBriefingCards marks unconnected sources without metrics", () =
   assert.equal(posthog.state, "missing");
   assert.equal(posthog.metric.value, null);
   assert.deepEqual(posthog.spark, []);
+});
+
+test("buildMorningBriefingCards renders failed Cloudflare collection separately from connection state", () => {
+  const digest = digestFixture({ cloudflareState: "failed" });
+  const cloudflareSource = digest.sources.find((source) => source.id === "cloudflare");
+  cloudflareSource.selected = true;
+  cloudflareSource.detail = "external MCP digest failed";
+
+  const cards = buildMorningBriefingCards({ digest });
+  const cloudflare = cards.find((card) => card.id === "cloudflare");
+
+  assert.equal(cloudflare.state, "failed");
+  assert.equal(cloudflare.metric.value, null);
+  assert.equal(cloudflare.noteTone, "warn");
+  assert.equal(cloudflare.note, "Cloudflare Analytics 집계를 완료하지 못했어요 — MCP 연결은 정상이에요.");
 });
 
 test("buildMorningBriefingSummary leads with the biggest drop", () => {
@@ -334,6 +352,25 @@ test("connectGuide is null when PostHog and Cloudflare are both connected", () =
   assert.equal(buildMorningBriefingConnectGuide({ digest: digestFixture(), day: 12 }), null);
   const briefing = buildMorningBriefing({ digest: digestFixture(), day: 12, now: NOW });
   assert.equal(briefing.connectGuide, null);
+});
+
+test("connectGuide ignores failed external sources because they are connected but failed collection", () => {
+  const digest = digestFixture({ cloudflareState: "failed" });
+  const cloudflareSource = digest.sources.find((source) => source.id === "cloudflare");
+  cloudflareSource.selected = true;
+  cloudflareSource.detail = "Cloudflare Analytics 조회가 실패했어요 — MCP 연결은 정상이에요.";
+
+  const briefing = buildMorningBriefing({ digest, day: 12, now: NOW });
+  const cloudflare = briefing.cards.find((card) => card.id === "cloudflare");
+
+  assert.equal(briefing.connectGuide, null);
+  assert.equal(cloudflare.state, "failed");
+  assert.equal(cloudflare.noteTone, "warn");
+  assert.equal(cloudflare.note, "Cloudflare Analytics 조회가 실패했어요 — MCP 연결은 정상이에요.");
+  assert.equal(
+    briefing.sync.sources.find((source) => source.id === "cloudflare").detail,
+    "Cloudflare Analytics 조회가 실패했어요 — MCP 연결은 정상이에요.",
+  );
 });
 
 test("Day-1 briefing with git/gh only carries a Settings integrations guide", () => {

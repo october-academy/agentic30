@@ -46,12 +46,12 @@ function stubPosthogFetch() {
         return jsonResponse({ results: [["/blog/paddle-guide", 76], ["/", 22], ["/pricing", 12]] });
       }
       if (query.includes("GROUP BY event")) {
-        return jsonResponse({ results: [["$pageview", 188, 52], ["signup", 6, 6]] });
+        return jsonResponse({ results: [["mac_session_created", 24, 3], ["mac_sidecar_office_hours_completed", 4, 2]] });
       }
       if (query.includes(`toDateTime('2026-06-08 00:00:00')`)) {
-        return jsonResponse({ results: [[120, 14]] }); // previous window
+        return jsonResponse({ results: [[55, 4]] }); // previous window
       }
-      return jsonResponse({ results: [[188, 11]] }); // current window
+      return jsonResponse({ results: [[40, 3]] }); // current window
     },
   };
 }
@@ -72,9 +72,9 @@ test("collectPosthogDirectDrilldown builds Day-1 return curve, KPIs, and web sig
   assert.equal(day1.flag, false);
   assert.match(day1.vsLabel, /06-09 코호트 1명/);
   const actives = drilldown.kpis.find((kpi) => kpi.label === "활성 사용자");
-  assert.equal(actives.valueLabel, "11");
+  assert.equal(actives.valueLabel, "3");
   assert.equal(actives.direction, "down");
-  const fresh = drilldown.kpis.find((kpi) => kpi.label === "신규(첫 실행)");
+  const fresh = drilldown.kpis.find((kpi) => kpi.label === "신규(첫 핵심 행동)");
   assert.equal(fresh.valueLabel, "1"); // p4 first seen today
 
   assert.equal(drilldown.chart.kind, "curve");
@@ -82,6 +82,9 @@ test("collectPosthogDirectDrilldown builds Day-1 return curve, KPIs, and web sig
   assert.equal(drilldown.chart.points.length, 2); // 06-08, 06-09 (today excluded)
   assert.match(drilldown.chart.points[0].label, /06-08 · 50% \(2명\)/);
   assert.equal(drilldown.chart.points[0].pct, 50);
+  assert.equal(drilldown.chart.points[0].cohortSize, 2);
+  assert.equal(drilldown.chart.points[0].returned, 1);
+  assert.match(drilldown.chart.points[0].tip, /2026-06-08 코호트 n=2 · 1\/2 복귀/);
 
   assert.match(drilldown.webMeta, /\$pageview 110뷰/); // 76+22+12
   assert.equal(drilldown.webSignals.length, 3);
@@ -89,10 +92,34 @@ test("collectPosthogDirectDrilldown builds Day-1 return curve, KPIs, and web sig
   assert.match(drilldown.webSignals[1].text, /\/ · 22뷰/);
 
   assert.equal(drilldown.signals.length, 2);
-  assert.match(drilldown.signals[0].text, /\$pageview · 188회/);
+  assert.match(drilldown.signals[0].text, /mac_session_created · 24회/);
   // All calls hit the us Query API with the bearer token.
   assert.ok(calls.every((call) => call.url.startsWith("https://us.posthog.com/api/projects/@current/query")));
   assert.ok(calls.every((call) => call.options.headers.Authorization === "Bearer phx_test"));
+
+  const queries = calls.map((call) => JSON.parse(call.options.body || "{}")?.query?.query || "");
+  const productQueries = queries.filter((query) => !query.includes("event = '$pageview'"));
+  assert.ok(productQueries.every((query) => query.includes("properties.telemetry_source")));
+  assert.ok(productQueries.every((query) => query.includes("'mac_app', 'mac_sidecar'")));
+  assert.ok(productQueries.every((query) => query.includes("properties.telemetry_environment")));
+  assert.ok(productQueries.every((query) => query.includes("properties.build_configuration")));
+  assert.ok(queries.every((query) => query.includes("properties.is_internal_traffic")));
+  assert.ok(queries.every((query) => query.includes("person.properties.is_internal_tester")));
+
+  const totalsQuery = queries.find((query) => query.includes("uniqIf(person_id"));
+  assert.ok(totalsQuery.includes("workspace_setup_completed"));
+  assert.ok(totalsQuery.includes("mac_session_created"));
+  assert.ok(totalsQuery.includes("mac_sidecar_session_created"));
+  assert.ok(totalsQuery.includes("mac_sidecar_office_hours_completed"));
+
+  const cohortQueries = queries.filter((query) => query.includes("first_day FROM") || query.includes("SELECT DISTINCT person_id, toDate"));
+  assert.ok(cohortQueries.length >= 2);
+  assert.ok(cohortQueries.every((query) => query.includes("event IN")));
+  assert.ok(cohortQueries.every((query) => query.includes("mac_sidecar_office_hours_completed")));
+
+  const webPathQuery = queries.find((query) => query.includes("event = '$pageview'"));
+  assert.ok(webPathQuery);
+  assert.ok(!webPathQuery.includes("properties.telemetry_source"));
 });
 
 test("collectPosthogDirectDrilldown returns null without a valid token", async () => {

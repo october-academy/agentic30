@@ -94,6 +94,32 @@ test("partial live list only touches matching rows and derives the guide from th
   assert.deepEqual(out.connectGuide.sources.map((source) => source.id), ["cloudflare"]);
 });
 
+test("failed source stays failed under live sync and is not treated as a reconnect prompt", () => {
+  const briefing = briefingFixture({ posthogState: "ready", cloudflareState: "failed" });
+  briefing.cards.push({
+    id: "cloudflare",
+    state: "failed",
+    note: "external MCP digest failed",
+    noteTone: "info",
+  });
+  briefing.sync.sources = briefing.sync.sources.map((source) =>
+    source.id === "cloudflare"
+      ? { ...source, detail: "external MCP digest failed", selected: true }
+      : source);
+
+  const { briefing: out, changed } = applyMorningBriefingLiveSync(briefing, LIVE_ALL_READY);
+  const cloudflareSource = out.sync.sources.find((source) => source.id === "cloudflare");
+  const cloudflareCard = out.cards.find((card) => card.id === "cloudflare");
+
+  assert.equal(changed, true);
+  assert.equal(cloudflareSource.state, "failed");
+  assert.equal(cloudflareSource.detail, "Cloudflare Analytics 집계를 완료하지 못했어요 — MCP 연결은 정상이에요.");
+  assert.equal(cloudflareCard.state, "failed");
+  assert.equal(cloudflareCard.noteTone, "warn");
+  assert.equal(cloudflareCard.note, "Cloudflare Analytics 집계를 완료하지 못했어요 — MCP 연결은 정상이에요.");
+  assert.equal(out.connectGuide, null);
+});
+
 test("no-op when live states already match the snapshot — same reference, no resend", () => {
   const briefing = briefingFixture({ posthogState: "ready", cloudflareState: "ready", connectGuide: null });
   briefing.sync.sources = briefing.sync.sources.map((row) => {

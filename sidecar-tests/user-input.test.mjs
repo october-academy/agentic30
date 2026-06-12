@@ -113,3 +113,25 @@ test("clearUserInputArtifacts removes stale request and response files", async (
   await clearUserInputArtifacts(appSupportPath);
   assert.deepEqual(await listUserInputRequests(appSupportPath), []);
 });
+
+test("createUserInputRequest rejects malformed structured prompt output", async () => {
+  const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-user-input-invalid-"));
+  await ensureUserInputDirs(appSupportPath);
+
+  await assert.rejects(
+    () => createUserInputRequest(appSupportPath, {
+      sessionId: "session-invalid",
+      toolName: "AskUserQuestion",
+      title: "Invalid",
+      questions: [
+        {
+          question: "This request is missing the app-facing header field.",
+          allowFreeText: true,
+        },
+      ],
+    }),
+    /structured input request output contract violation/,
+  );
+
+  assert.deepEqual(await listUserInputRequests(appSupportPath), []);
+});

@@ -8,6 +8,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import {
+  CodexStructuredInputToolZodShape,
+  parseCodexStructuredInputToolInput,
+  parseCodexStructuredInputToolOutput,
+} from "./provider-sdk-contracts.mjs";
+import {
   createUserInputRequest,
   deleteUserInputArtifacts,
   ensureUserInputDirs,
@@ -59,84 +64,7 @@ const server = new McpServer({
 
 await ensureUserInputDirs(appSupportPath);
 
-const structuredOptionSchema = z.object({
-  label: z.string().min(1).max(80),
-  description: z.string().min(1).max(280),
-  preview: z.string().max(4000).optional(),
-  nextIntent: z.string().max(160).optional(),
-  next_intent: z.string().max(160).optional(),
-  recommended: z.boolean().optional(),
-  risk: z.string().max(280).optional(),
-  evidenceTarget: z.string().max(280).optional(),
-  evidence_target: z.string().max(280).optional(),
-  mapsTo: z.string().max(160).optional(),
-  maps_to: z.string().max(160).optional(),
-  failureMode: z.string().max(280).optional(),
-  failure_mode: z.string().max(280).optional(),
-});
-
-const structuredQuestionSchema = z
-  .object({
-    questionId: z.string().max(96).optional(),
-    question_id: z.string().max(96).optional(),
-    id: z.string().max(96).optional(),
-    header: z.string().min(1).max(32),
-    question: z.string().min(1).max(400),
-    options: z.array(structuredOptionSchema).max(7).optional(),
-    multiSelect: z.boolean().default(false),
-    allowFreeText: z.boolean().default(false),
-    requiresFreeText: z.boolean().default(false),
-    helperText: z.string().max(280).optional(),
-    freeTextPlaceholder: z.string().max(280).optional(),
-    textMode: z.enum(["short", "long"]).optional(),
-    // Optional question-statement styling spans, so the Office Hours card can
-    // render the same inline highlight/emphasis the inline_decision channel does.
-    // The Office Hours preparer re-validates these against the question text.
-    highlightPhrases: z.array(z.string().min(1).max(280)).max(8).optional(),
-    emphasis: z
-      .array(
-        z.object({
-          phrase: z.string().min(1).max(280),
-          style: z.enum(["strong", "mark", "code"]).optional(),
-        }),
-      )
-      .max(8)
-      .optional(),
-  })
-  .superRefine((question, context) => {
-    if ((!question.options || question.options.length === 0) && !question.allowFreeText) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Each question needs choices, free text, or both.",
-      });
-    }
-    if (question.options && question.options.length === 1) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Choice questions need at least two options.",
-      });
-    }
-  });
-
-const structuredPromptIntroSchema = z.object({
-  title: z.string().min(1).max(120).optional(),
-  body: z.string().min(1).max(500).optional(),
-  bullets: z.array(z.string().min(1).max(180)).max(6).optional(),
-});
-
-const structuredPromptResourceSchema = z.object({
-  title: z.string().min(1).max(160),
-  source: z.string().max(80).optional(),
-  url: z.string().url().max(500),
-  description: z.string().max(240).optional(),
-});
-
-const structuredPromptSchema = {
-  title: z.string().max(120).optional(),
-  intro: structuredPromptIntroSchema.optional(),
-  resources: z.array(structuredPromptResourceSchema).max(5).optional(),
-  questions: z.array(structuredQuestionSchema).min(1).max(4),
-};
+const structuredPromptSchema = CodexStructuredInputToolZodShape;
 
 server.tool(
   "get_agentic30_context",
@@ -451,7 +379,8 @@ server.tool(
 );
 
 function registerUserInputTool(name, description) {
-  server.tool(name, description, structuredPromptSchema, async ({ title, intro, resources, questions }) => {
+  server.tool(name, description, structuredPromptSchema, async (rawInput) => {
+    const { title, intro, resources, questions } = parseCodexStructuredInputToolInput(rawInput);
     const request = await createUserInputRequest(appSupportPath, {
       sessionId,
       toolName: name,
@@ -473,14 +402,14 @@ function registerUserInputTool(name, description) {
           {
             type: "text",
             text: JSON.stringify(
-              {
+              parseCodexStructuredInputToolOutput({
                 requestId: request.requestId,
                 title: request.title,
                 questions: request.questions,
                 answers: response.answers ?? {},
                 annotations: response.annotations ?? {},
                 responses: response.responses ?? [],
-              },
+              }),
               null,
               2,
             ),

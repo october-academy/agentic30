@@ -21,6 +21,10 @@ const SOURCE_DEFS = Object.freeze({
 });
 const OFFICE_HOURS_SOURCE_ORDER = Object.freeze(["git", "gh_cli", "posthog", "cloudflare"]);
 const EXTERNAL_SOURCE_IDS = new Set(["posthog", "cloudflare"]);
+const EXTERNAL_FAILURE_DETAILS = Object.freeze({
+  posthog: "PostHog 사용량 집계를 완료하지 못했어요 — MCP 연결은 정상이에요.",
+  cloudflare: "Cloudflare Analytics 집계를 완료하지 못했어요 — MCP 연결은 정상이에요.",
+});
 const EXTERNAL_SOURCE_DIGEST_SHAPES = Object.freeze({
   posthog: {
     id: "posthog",
@@ -675,9 +679,15 @@ export function buildExternalOfficeHoursDigestPrompt({
     // 명시하지 않으면 모델이 차단되는 호출을 반복하다 시간을 소진한다.
     "Tool access: MCP tools may be deferred — load them with ToolSearch first, then call them.",
     "PostHog: read with execute-sql using SELECT/WITH HogQL only, or insight/web-analytics getter tools. Mutating calls are denied.",
+    "PostHog strict product filter: every counts object must restrict app/product aggregates to telemetry_source IN ('mac_app','mac_sidecar'), telemetry_environment = 'production', build_configuration = 'release', is_internal_traffic != true, and person.properties.is_internal_tester != true.",
+    "PostHog activeUsers definition: count distinct people only when the filtered event is one of workspace_setup_completed, mac_session_created, mac_sidecar_session_created, or mac_sidecar_office_hours_completed.",
+    "PostHog events definition: count filtered production app/sidecar events, not all PostHog events. conversions and signups may be reported only when matching filtered production/non-internal events exist.",
+    "PostHog web rule: $pageview, blog, link, and marketing-site events may appear only in drilldown webSignals/path summaries; they must never contribute to card activeUsers.",
     "Cloudflare: read with cloudflare-api execute/search only. Mutating calls are denied.",
-    "Cloudflare collection plan: first execute code that calls cloudflare.request({ method: \"GET\", path: \"/zones?status=active&per_page=5\" }) and choose the first active zone. Then execute one POST /client/v4/graphql query for that zone's httpRequests1hGroups over the requested window. Optional third call: httpRequestsAdaptiveGroups for top paths on the same zone. Do not query all zones in one GraphQL call.",
-    "Cloudflare GraphQL shape: viewer { zones(filter: { zoneTag: $zone }) { httpRequests1hGroups(limit: 96, filter: { datetime_geq: $start, datetime_lt: $end }, orderBy: [datetime_ASC]) { dimensions { datetime } sum { requests pageViews } uniq { uniques } } } }.",
+    "Cloudflare collection plan: first execute code that calls cloudflare.request({ method: \"GET\", path: \"/zones?status=active&per_page=5\" }) and choose the first active zone. Then execute one POST /graphql query for that zone's httpRequests1hGroups over the requested window. Optional third call: httpRequestsAdaptiveGroups for top paths on the same zone. Do not query all zones in one GraphQL call.",
+    "Cloudflare GraphQL request shape: cloudflare.request({ method: \"POST\", path: \"/graphql\", body: { query, variables } }).",
+    "Cloudflare GraphQL query shape: query($zone: String!, $start: Time!, $end: Time!) { viewer { zones(filter: { zoneTag: $zone }) { httpRequests1hGroups(limit: 96, filter: { datetime_geq: $start, datetime_lt: $end }, orderBy: [datetime_ASC]) { dimensions { datetime } sum { requests pageViews } uniq { uniques } } } } }.",
+    "Cloudflare hourly groups: do not request sum.visits, sum.threats, or any requestSource filter on httpRequests1hGroups. If you need a path table, use requestSource: \"eyeball\" only inside httpRequestsAdaptiveGroups.",
     "Use source-specific count keys. PostHog counts must use events/activeUsers/conversions/signups. Cloudflare counts must use visits/uniqueVisitors/pageviews/requests/threats. Do not put PostHog count keys on Cloudflare or Cloudflare count keys on PostHog.",
     // 실측(2026-06-11): 호출 상한이 없으면 모델이 존×일자 분할 쿼리로 14회까지
     // 왕복하며 타임아웃 직전(175초)까지 간다. 상한 4회로 묶으면 50~90초.
@@ -723,11 +733,18 @@ function normalizeCounts(value = {}) {
   return output;
 }
 
+function externalDigestFailureDetail(source = "", { summary = "", failureDetail = "" } = {}) {
+  return cleanString(summary, 300)
+    || cleanString(failureDetail, 300)
+    || EXTERNAL_FAILURE_DETAILS[source]
+    || "외부 MCP 집계를 완료하지 못했어요 — 연결은 정상이에요.";
+}
+
 export function normalizeExternalOfficeHoursDigest(textOrObject = "", expectedSources = [], { failureDetail = "" } = {}) {
   // failureDetail: 호출자가 아는 구체적 실패 사유(프로바이더 한도/시간 초과 등).
-  // 없으면 기존 기본 문구를 유지해 호출처·테스트와의 호환을 지킨다.
-  const fallbackDetail = cleanString(failureDetail, 300)
-    || "external MCP digest did not return a usable summary";
+  // 없으면 소스별 사용자용 기본 문구를 쓴다. 내부 디버그 문구는 앱 payload에
+  // 노출하지 않는다.
+  const fallbackDetail = cleanString(failureDetail, 300);
   const payload = typeof textOrObject === "object" && textOrObject !== null
     ? textOrObject
     : extractJsonObject(textOrObject);
@@ -738,13 +755,16 @@ export function normalizeExternalOfficeHoursDigest(textOrObject = "", expectedSo
         const id = normalizeOfficeHoursSourceId(item?.id);
         if (!EXTERNAL_SOURCE_IDS.has(id)) return null;
         const state = cleanString(item?.state, 20).toLowerCase() === "ready" ? "ready" : "failed";
+        const summary = cleanString(item?.summary, 320);
         return sourceStatus({
           id,
           state,
-          detail: state === "ready" ? "external MCP digest succeeded" : "external MCP digest failed",
+          detail: state === "ready"
+            ? "external MCP digest succeeded"
+            : externalDigestFailureDetail(id, { summary, failureDetail: fallbackDetail }),
           counts: normalizeCounts(item?.counts),
           highlights: normalizeStringList(item?.highlights, 6, 180),
-          summary: cleanString(item?.summary, 320),
+          summary,
           goalSignals: normalizeStringList(item?.goalSignals, 6, 200),
           evidenceGaps: normalizeStringList(item?.evidenceGaps, 6, 200),
         });
@@ -757,7 +777,7 @@ export function normalizeExternalOfficeHoursDigest(textOrObject = "", expectedSo
     .map((source) => byId.get(source) || sourceStatus({
       id: source,
       state: "failed",
-      detail: fallbackDetail,
+      detail: externalDigestFailureDetail(source, { failureDetail: fallbackDetail }),
     }));
 }
 
