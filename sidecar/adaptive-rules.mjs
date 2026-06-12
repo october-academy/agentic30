@@ -242,6 +242,23 @@ export async function recordFiredAdaptiveRules({ workspaceRoot, fired = [], now 
 }
 
 /**
+ * AR-17 진행 효과 (§12 표: 신규 커밋먼트 차단): true when an AR-17 firing
+ * recorded on the given calendar date is still undisputed. The founder's
+ * false-positive label (오탐대응 ②) lifts the block; an armed intervention
+ * commit is exempted by the caller (§13.4 token path stays open).
+ */
+export async function isNewCommitmentBlockedByAr17({ workspaceRoot, now = new Date() } = {}) {
+  if (!workspaceRoot || typeof workspaceRoot !== "string") return false;
+  const ledger = await loadGateLedger({ workspaceRoot });
+  const todayKey = toIso(now).slice(0, 10);
+  return ledger.adaptiveEvents.some((event) =>
+    event.ruleId === "AR-17"
+      && String(event.firedAt).slice(0, 10) === todayKey
+      && event.userLabel !== ADAPTIVE_RULE_FALSE_POSITIVE_LABEL,
+  );
+}
+
+/**
  * 오탐 라벨 (§12 오탐대응 ②): marks the most recent unlabeled event for the
  * rule, which imposes the 48h cooldown on future firings. user-origin only —
  * callers must pass labels typed by the founder, never model output.

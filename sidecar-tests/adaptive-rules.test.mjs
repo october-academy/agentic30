@@ -154,3 +154,24 @@ test("false-positive label persists to the gate ledger and imposes a 48h cooldow
   });
   assert.deepEqual(resumed.firedRuleIds, ["AR-01"]);
 });
+
+test("AR-17 enforcement blocks new commitments until the firing is disputed", async () => {
+  const { isNewCommitmentBlockedByAr17 } = await import("../sidecar/adaptive-rules.mjs");
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-ar17-enforce-"));
+  const fired = evaluateAdaptiveRules({
+    signals: { abandonedThreadCount: 1, newCommitmentsSinceAbandoned: 1 },
+    now: T0,
+  }).fired;
+  await recordFiredAdaptiveRules({ workspaceRoot: root, fired, now: T0 });
+
+  assert.equal(await isNewCommitmentBlockedByAr17({ workspaceRoot: root, now: T0 }), true);
+  // 다음 날에는 당일 발화가 아니므로 차단하지 않는다(그날 다시 발화하면 차단).
+  assert.equal(
+    await isNewCommitmentBlockedByAr17({ workspaceRoot: root, now: new Date("2026-06-13T09:00:00.000Z") }),
+    false,
+  );
+
+  // 오탐 라벨이 당일 차단을 해제한다 (§12 오탐대응 ②).
+  await labelAdaptiveRuleEvent({ workspaceRoot: root, ruleId: "AR-17", now: T0 });
+  assert.equal(await isNewCommitmentBlockedByAr17({ workspaceRoot: root, now: T0 }), false);
+});

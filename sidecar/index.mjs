@@ -149,6 +149,7 @@ import {
 } from "./oh-intervention.mjs";
 import { resolveInterventionPrompt } from "./oh-intervention-prompts.mjs";
 import {
+  isNewCommitmentBlockedByAr17,
   labelAdaptiveRuleEvent,
   runAdaptiveRulesCycle,
 } from "./adaptive-rules.mjs";
@@ -3348,6 +3349,33 @@ async function handleDayProgressPatch(socket, payload = {}) {
     if (pendingIntervention && Date.now() - Date.parse(pendingIntervention.createdAt) > 24 * 60 * 60 * 1000) {
       pendingInterventionGates.delete(path.resolve(root));
       pendingIntervention = null;
+    }
+    // §12 AR-17 진행 효과: 증거 0인 약속 위에 새 약속을 쌓는 중이면 신규
+    // 커밋먼트를 보류한다. intervention-armed 커밋은 예외(§13.4 토큰 경로),
+    // 오탐 라벨(adaptive_rule_label)이 사용자 해제 수단이다.
+    if (
+      gate.mode === "commit"
+      && !pendingIntervention
+      && await isNewCommitmentBlockedByAr17({ workspaceRoot: root })
+    ) {
+      const current = await loadDayProgress({ workspaceRoot: root });
+      const ar17CurrentDay = current
+        ? computeDayNumber({ challengeStartedAt: current.challengeStartedAt })
+        : null;
+      send(socket, {
+        type: "day_progress_state",
+        workspaceRoot: root,
+        dayProgress: current,
+        currentDay: ar17CurrentDay,
+        needsCommitment: true,
+        gatedStep: String(stepId || ""),
+        message: "증거 없이 열려 있는 약속이 있어. 새 약속을 쌓기 전에 기존 약속 1개를 먼저 닫거나(증거 제출), 이 판정이 오탐이면 그렇게 표시해줘.",
+        officeHoursMemory: await loadOfficeHoursMemorySummary(root, ar17CurrentDay),
+        officeHoursHistory: await loadOfficeHoursHistorySummary(root, ar17CurrentDay),
+        dayReviews: await loadOfficeHoursDayReviews(root, current, ar17CurrentDay),
+        evidenceOS: await loadOfficeHoursEvidenceOS(root, current, ar17CurrentDay),
+      });
+      return;
     }
     if (gate.mode === "commit" && pendingIntervention) {
       try {
