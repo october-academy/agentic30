@@ -142,6 +142,18 @@ import {
 } from "./program-gate-engine.mjs";
 import { buildMissionCardEvent } from "./mission-card.mjs";
 import {
+  buildInterventionContextBlock,
+  buildInterventionRequiredEvent,
+  interventionTriggerForGate,
+  issueInterventionTokenForCommitment,
+} from "./oh-intervention.mjs";
+import { resolveInterventionPrompt } from "./oh-intervention-prompts.mjs";
+
+// §13.4: intervention 세션이 열렸을 때 어느 gate의 통과 토큰을 기다리는지
+// 워크스페이스별로 기억한다(in-memory — 재시작 시 founder가 intervention을
+// 다시 트리거하면 된다; 영속 산출물은 gate-ledger의 토큰뿐).
+const pendingInterventionGates = new Map();
+import {
   abandonCommitment,
   appendCommitment,
   appendCycle,
@@ -1310,6 +1322,26 @@ async function handleClientMessage(socket, payload) {
       const context = String(payload.context || "").trim();
       const visiblePrompt = String(payload.visiblePrompt || "Office Hours").trim() || "Office Hours";
       const day = normalizeOfficeHoursDay(payload.day ?? payload.officeHoursDay ?? session.runtime?.officeHours?.day);
+      // §13.1 (additive): an intervention-framed start carries payload.trigger.
+      // Unregistered triggers are ignored (fail-closed §13.3 — the session runs
+      // as a normal Office Hours without the intervention contract).
+      const interventionTriggerId = String(payload.trigger || "").trim();
+      const interventionPack = interventionTriggerId
+        ? resolveInterventionPrompt(interventionTriggerId)
+        : null;
+      const interventionContext = interventionPack
+        ? buildInterventionContextBlock(interventionTriggerId, { abbreviated: interventionPack.abbreviated })
+        : "";
+      if (interventionPack?.gateId) {
+        // §13.4: remember which gate this session is expected to unlock — the
+        // commitment confirm patch issues the pass-through token from this.
+        pendingInterventionGates.set(path.resolve(workspaceRoot), {
+          gateId: interventionPack.gateId,
+          triggerId: interventionPack.triggerId,
+          sessionId: session.id,
+          createdAt: new Date().toISOString(),
+        });
+      }
       markWorkspaceSetupFirstInput("office_hours_start");
       if (state.activeRuns.has(session.id)) {
         send(socket, {
@@ -1321,7 +1353,7 @@ async function handleClientMessage(socket, payload) {
       }
       cancelWarmSession(session.id);
       await runOfficeHours(session, {
-        context,
+        context: [context, interventionContext].filter(Boolean).join("\n\n"),
         originalPrompt: visiblePrompt,
         source: payload.source || "manual",
         day,
@@ -3278,13 +3310,43 @@ async function handleDayProgressPatch(socket, payload = {}) {
       });
       return;
     }
+    // §13.4: a commitment closing an intervention session issues the gate's
+    // pass-through token BEFORE the milestone evaluation, so the confirming
+    // patch itself passes via the token instead of deadlocking on the still-
+    // blocked gate. Once-per-gate + program-wide cap live in the engine.
+    const pendingIntervention = pendingInterventionGates.get(path.resolve(root)) ?? null;
+    if (gate.mode === "commit" && pendingIntervention) {
+      try {
+        const issuance = await issueInterventionTokenForCommitment({
+          workspaceRoot: root,
+          gateId: pendingIntervention.gateId,
+          commitment: structuredCommitment,
+          day: Number.parseInt(day, 10) || null,
+        });
+        pendingInterventionGates.delete(path.resolve(root));
+        telemetry.captureEvent("mac_sidecar_oh_intervention_completed", {
+          trigger_id: pendingIntervention.triggerId,
+          gate_id: pendingIntervention.gateId,
+          commitment_confirmed: true,
+          token_issued: issuance.issued,
+          token_refused_reason: issuance.issued ? "" : issuance.reason,
+        });
+      } catch (error) {
+        telemetry.captureException(error, {
+          operation: "oh_intervention_token_issue",
+          workspace_root: root,
+        });
+      }
+    }
     // Milestone gate (spec §10.1): evaluated against the proof ledger right before
     // the authoritative patch. A blocked milestone gate (G1 Day4 goal-step, G2 Day8+,
     // G4 Day15+) withholds the patch — fail-closed; release paths are strong evidence
-    // or a confession-issued intervention token (§13.4).
+    // or a confession-issued intervention token (§13.4). Confess-mode patches are
+    // exempt: confession is the §10.2 safety valve and records outcome=blocked, so
+    // withholding it would deadlock the release path itself.
     const gateTargetDay = Number.parseInt(day, 10) || null;
     let gateCheck = null;
-    if (gateTargetDay) {
+    if (gateTargetDay && gate.mode !== "confess") {
       // G4② input (spec §15.4/§21): latest persisted first_value snapshot plus
       // PostHog source availability — both local reads, no network on this path.
       gateCheck = await evaluateDayProgressPatchGate({
@@ -3299,6 +3361,24 @@ async function handleDayProgressPatch(socket, payload = {}) {
           })?.tokenValid === true,
         },
       });
+      // §13.4 token expiry surfaced by this evaluation: dueDay passed without
+      // strong post-session evidence — the gate re-blocks (handled below).
+      // Emitted BEFORE the blocked branch so an expiring-and-blocking gate
+      // still reports the miss (escalation-queue data source, §16.2/§20-④).
+      const expiredGateIds = gateCheck?.evaluation?.expiredTokenGateIds ?? [];
+      if (expiredGateIds.length) {
+        const gateLedgerSnapshot = await loadGateLedger({ workspaceRoot: root });
+        const expiredTotal = Object.values(gateLedgerSnapshot.gates)
+          .filter((entry) => entry?.interventionToken?.expired === true)
+          .length;
+        for (const expiredGateId of expiredGateIds) {
+          telemetry.captureEvent("mac_sidecar_oh_intervention_evidence_missed", {
+            gate_id: expiredGateId,
+            trigger_id: interventionTriggerForGate(expiredGateId) || "interview_confession",
+            consecutive_count: expiredTotal,
+          });
+        }
+      }
       if (gateCheck.blocked) {
         const current = await loadDayProgress({ workspaceRoot: root });
         const blockedCurrentDay = current
@@ -3325,6 +3405,23 @@ async function handleDayProgressPatch(socket, payload = {}) {
             day: gateTargetDay,
             workspace_basename: path.basename(root),
           });
+          // §13.1: milestone gate 실패(G2/G4/G5/G7)는 즉시·강제 표면화되는
+          // intervention 트리거다. G1은 confession 경로로만 표면화된다.
+          const interventionTrigger = interventionTriggerForGate(gateCheck.gate.gateId);
+          const interventionEvent = interventionTrigger
+            ? buildInterventionRequiredEvent({
+                workspaceRoot: root,
+                triggerId: interventionTrigger,
+                day: gateTargetDay,
+              })
+            : null;
+          if (interventionEvent) {
+            broadcast(interventionEvent);
+            telemetry.captureEvent("mac_sidecar_oh_intervention_triggered", {
+              trigger_id: interventionTrigger,
+              severity: "immediate",
+            });
+          }
         }
         return;
       }
@@ -3373,6 +3470,22 @@ async function handleDayProgressPatch(socket, payload = {}) {
       await refreshDayMemory({ workspaceRoot: root, day: cycleNo }).catch((error) => {
         telemetry.captureException(error, { operation: "day_memory_refresh_after_interview_confess" });
       });
+      // §13.1: confession은 즉시 축약형(§13.3a) intervention을 표면화한다 —
+      // G1 포함 모든 interview 스텝 동일. 카드의 OH 시작이 office_hours_start
+      // payload.trigger로 이어져 같은 계약(§13.3)을 주입받는다.
+      const confessionEvent = buildInterventionRequiredEvent({
+        workspaceRoot: root,
+        triggerId: "interview_confession",
+        abbreviated: true,
+        day: cycleNo,
+      });
+      if (confessionEvent) {
+        broadcast(confessionEvent);
+        telemetry.captureEvent("mac_sidecar_oh_intervention_triggered", {
+          trigger_id: "interview_confession",
+          severity: "immediate",
+        });
+      }
     }
     telemetry.captureEvent("mac_sidecar_day_progress_updated", {
       day: Number(day) || null,

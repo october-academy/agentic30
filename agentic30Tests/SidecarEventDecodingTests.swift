@@ -1641,6 +1641,60 @@ struct SidecarEventDecodingTests {
         #expect(event.missionCard?.evidenceSpec == nil)
     }
 
+    @MainActor @Test func decodesOfficeHoursInterventionRequiredEvent() throws {
+        let payload = """
+        {
+          "type": "office_hours_intervention_required",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "intervention": {
+            "triggerId": "gate_blocked_G4",
+            "severity": "immediate",
+            "source": "gate_engine",
+            "gateId": "G4",
+            "ruleId": null,
+            "abbreviated": false,
+            "questions": [
+              "가격·받을 약속·기한이 있는 유료 ask를 보내지 못한 진짜 이유는 무엇인가?",
+              "first_value 계측이 빠졌다면, 사용자의 첫 가치 행동을 한 문장으로 정의할 수 있는가?"
+            ],
+            "exitCondition": "구조화 커밋먼트 1개(고객·채널·메시지·기대증거·기한, user-origin, audience=customer) 확정",
+            "postSessionEvidence": "커밋먼트의 expectedEvidenceKind에 따른 strong 증거를 dueDay 안에 제출",
+            "day": 15
+          }
+        }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.type == "office_hours_intervention_required")
+        #expect(event.intervention?.triggerId == "gate_blocked_G4")
+        #expect(event.intervention?.severity == "immediate")
+        #expect(event.intervention?.gateId == "G4")
+        #expect(event.intervention?.ruleId == nil)
+        #expect(event.intervention?.questions?.count == 2)
+        #expect(event.intervention?.day == 15)
+        #expect(event.intervention?.exitCondition?.contains("커밋먼트") == true)
+    }
+
+    @MainActor @Test func decodesConfessionInterventionEvent() throws {
+        let payload = """
+        {
+          "type": "office_hours_intervention_required",
+          "workspaceRoot": "/Users/october/prj/myapp",
+          "intervention": {
+            "triggerId": "interview_confession",
+            "severity": "immediate",
+            "source": "interview_gate",
+            "abbreviated": true,
+            "questions": ["이 인터뷰를 닫지 못하게 막는 것을 한 문장으로 말하라."],
+            "day": 4
+          }
+        }
+        """
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+        #expect(event.intervention?.triggerId == "interview_confession")
+        #expect(event.intervention?.abbreviated == true)
+        #expect(event.intervention?.gateId == nil)
+    }
+
     @MainActor @Test func decodesDayProgressStateWithOfficeHoursHistoryRollup() throws {
         let payload = """
         {

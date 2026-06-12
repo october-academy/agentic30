@@ -2251,6 +2251,10 @@ final class AgenticViewModel: ObservableObject {
     /// sidecar emits `mission_card` on execution-step entry. The execution surface
     /// renders the mission + evidence spec + gate chips from this.
     @Published private(set) var executionMissionCard: SidecarEvent.MissionCard?
+    /// System-triggered Office Hours intervention (spec §13.1): the latest
+    /// `office_hours_intervention_required` payload. Severity "immediate" renders
+    /// as a blocking card, "scheduled" as a briefing banner (P2 surface).
+    @Published private(set) var ohInterventionRequired: SidecarEvent.OhInterventionRequired?
     @Published private(set) var isBipCoachRefreshing = false
     @Published private(set) var isBipCoachGenerating = false
     @Published private(set) var isBipCoachCompleting = false
@@ -7355,6 +7359,10 @@ final class AgenticViewModel: ObservableObject {
             if let card = event.missionCard {
                 executionMissionCard = card
             }
+        case "office_hours_intervention_required":
+            if let intervention = event.intervention {
+                ohInterventionRequired = intervention
+            }
         case "doc_creation_started":
             isCreatingDoc = event.docType
             docCreationLogs = []
@@ -11974,6 +11982,24 @@ struct SidecarEvent: Decodable {
         let generatedAt: String?
     }
     let missionCard: MissionCard?
+    /// System-triggered Office Hours intervention (spec §13.1,
+    /// `type: "office_hours_intervention_required"`): a blocked milestone
+    /// gate (G2/G4/G5/G7) or an interview confession surfaces a card whose
+    /// CTA opens an intervention-framed Office Hours session
+    /// (`office_hours_start` + `trigger`).
+    struct OhInterventionRequired: Codable, Equatable {
+        let triggerId: String?
+        let severity: String?
+        let source: String?
+        let gateId: String?
+        let ruleId: String?
+        let abbreviated: Bool?
+        let questions: [String]?
+        let exitCondition: String?
+        let postSessionEvidence: String?
+        let day: Int?
+    }
+    let intervention: OhInterventionRequired?
     let error: String?
     /// Set by the sidecar on `type: "error"` envelopes that represent an
     /// expected, recoverable upstream provider condition (`"provider_usage_limit"`
@@ -12102,6 +12128,7 @@ struct SidecarEvent: Decodable {
         gatedStep: String? = nil,
         gateBlocked: DayGateBlocked? = nil,
         missionCard: MissionCard? = nil,
+        intervention: OhInterventionRequired? = nil,
         error: String?,
         errorKind: String? = nil,
         docType: String?,
@@ -12212,6 +12239,7 @@ struct SidecarEvent: Decodable {
         self.gatedStep = gatedStep
         self.gateBlocked = gateBlocked
         self.missionCard = missionCard
+        self.intervention = intervention
         self.error = error
         self.errorKind = errorKind
         self.docType = docType
@@ -12610,6 +12638,7 @@ extension SidecarEvent {
         case gatedStep
         case gateBlocked
         case missionCard
+        case intervention
         case error
         case errorKind
         case docType
@@ -12729,6 +12758,7 @@ extension SidecarEvent {
         gatedStep = Self.decodeIfPresent(String.self, from: container, forKey: .gatedStep)
         gateBlocked = Self.decodeIfPresent(DayGateBlocked.self, from: container, forKey: .gateBlocked)
         missionCard = Self.decodeIfPresent(MissionCard.self, from: container, forKey: .missionCard)
+        intervention = Self.decodeIfPresent(OhInterventionRequired.self, from: container, forKey: .intervention)
 
         let stringError = Self.decodeIfPresent(String.self, from: container, forKey: .error)
         let structuredError = Self.decodeIfPresent(BipReadinessError.self, from: container, forKey: .error)

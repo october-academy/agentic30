@@ -475,11 +475,15 @@ export function buildGateBlockedMessage(gate = {}) {
   return `${gate.gateId} ${gate.title} 게이트가 잠겨 있어 ${scope}이 차단됐어.${evidencePart} 증거를 제출하거나 confession으로 Office Hours를 여는 게 해제 경로야.`;
 }
 
+/** §13.4: 프로그램 전체 토큰 발급 누적 한도 — 초과 시 human escalation만 남는다. */
+export const MAX_INTERVENTION_TOKENS = 3;
+
 /**
  * Issues an Office Hours pass-through token (§13.4). At most one token per
  * gate for the whole program — re-blocking the same gate can never mint a
- * second token, expired or not. Returns `{ issued, token, reason, ledger,
- * totalIssued }`.
+ * second token, expired or not — and at most MAX_INTERVENTION_TOKENS across
+ * the whole program (beyond that only human escalation remains, §13.5).
+ * Returns `{ issued, token, reason, ledger, totalIssued }`.
  */
 export async function issueGateInterventionToken({
   workspaceRoot,
@@ -507,6 +511,15 @@ export async function issueGateInterventionToken({
         issued: false,
         reason: "token_already_issued",
         token: record.interventionToken,
+        ledger,
+        totalIssued: countIssuedInterventionTokens(ledger),
+      };
+    }
+    if (countIssuedInterventionTokens(ledger) >= MAX_INTERVENTION_TOKENS) {
+      return {
+        issued: false,
+        reason: "escalation_required",
+        token: null,
         ledger,
         totalIssued: countIssuedInterventionTokens(ledger),
       };
