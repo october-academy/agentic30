@@ -209,10 +209,7 @@ struct DecideNotificationGroupView: View {
         .padding(.top, front ? 10 : 9)
         .padding(.bottom, front ? 12 : 9)
         .frame(maxWidth: .infinity, minHeight: stackPreviewCardHeight(for: index), maxHeight: stackPreviewCardHeight(for: index), alignment: .topLeading)
-        .background(
-            stackPreviewBackground(index: index)
-                .shadow(color: front ? IntakeV2Color.cardShadow : IntakeV2Color.cardShadowSoft, radius: front ? 7 : 4, y: front ? 4 : 2)
-        )
+        .background(stackPreviewBackground(index: index))
         .overlay(stackPreviewStroke(index: index))
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .padding(.horizontal, stackPreviewHorizontalInset(for: index))
@@ -344,10 +341,7 @@ struct DecideNotificationGroupView: View {
         .padding(.horizontal, expandedRow ? 18 : 16)
         .padding(.vertical, expandedRow ? 15 : 13)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(
-            cardBackground
-                .shadow(color: isBackingLayer ? IntakeV2Color.cardShadowSoft : IntakeV2Color.cardShadow, radius: isBackingLayer ? 5 : 8, y: isBackingLayer ? 2 : 4)
-        )
+        .background(cardBackground)
         .overlay(cardStroke)
         .contentShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
     }
@@ -432,10 +426,7 @@ struct DecideNotificationGroupView: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 16)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(
-            cardBackground
-                .shadow(color: IntakeV2Color.cardShadow, radius: 8, y: 4)
-        )
+        .background(cardBackground)
         .overlay(cardStroke)
         .contentShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
         .accessibilityElement(children: .contain)
@@ -606,8 +597,7 @@ struct DecideNotificationGroupView: View {
     }
 
     private func stackPreviewBackground(index: Int) -> some View {
-        // No material layer here: the fill is opaque, and .shadow() over an
-        // NSVisualEffectView-backed material renders as a light glow on dark theme.
+        // Keep this opaque so stacked notifications stay flat against the dark surface.
         RoundedRectangle(cornerRadius: 16, style: .continuous)
             .fill(index == 0 ? IntakeV2Color.panelElevated : IntakeV2Color.panel)
     }
@@ -618,8 +608,7 @@ struct DecideNotificationGroupView: View {
     }
 
     private var cardBackground: some View {
-        // No material layer here: the fill is opaque, and .shadow() over an
-        // NSVisualEffectView-backed material renders as a light glow on dark theme.
+        // Keep this opaque so notification cards render without a surrounding glow.
         RoundedRectangle(cornerRadius: 19, style: .continuous)
             .fill(IntakeV2Color.panelElevated)
     }

@@ -385,6 +385,7 @@ final class agentic30UITests: XCTestCase {
             "--ui-testing-reset-onboarding",
             "--ui-testing-picker-path=\(workspacePath)",
             "--ui-testing-disable-sidecar",
+            "--ui-testing-seed-intake-scan-wait",
             "--ui-testing-open-workspace",
             "--ui-testing-opaque-window",
         ], environment: [
@@ -2324,7 +2325,7 @@ final class agentic30UITests: XCTestCase {
                 "--ui-testing-seed-onboarding-context",
                 "--ui-testing-disable-sidecar",
                 "--ui-testing-skip-keychain-reset",
-                "--ui-testing-open-settings-section=workspace",
+                "--ui-testing-open-settings-section=privacy",
                 "--ui-testing-opaque-window",
             ],
             environment: [
@@ -2344,7 +2345,7 @@ final class agentic30UITests: XCTestCase {
         }
 
         XCTAssertTrue(openSettingsWindow(in: app))
-        XCTAssertTrue(openSettingsSection(in: app, "workspace"))
+        XCTAssertTrue(openSettingsSection(in: app, "privacy"))
         let resetButton = app.buttons["settings.privacy.resetLocalDataButton"]
         XCTAssertTrue(resetButton.waitForExistence(timeout: 5))
         XCTAssertTrue(scrollSettingsContentUntilHittable(resetButton, in: app, timeout: 5))
@@ -2369,7 +2370,7 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
-    func testSettingsDeveloperToolsExposeBipNotificationTestButtons() throws {
+    func testSettingsDeveloperToolsDoNotExposeDailyCheckNotificationControls() throws {
         let workspacePath = FileManager.default.temporaryDirectory
             .appendingPathComponent("agentic30-ui-devtools-workspace-\(UUID().uuidString)", isDirectory: true)
             .path
@@ -2405,86 +2406,11 @@ final class agentic30UITests: XCTestCase {
 
         XCTAssertTrue(openSettingsWindow(in: app))
         XCTAssertTrue(openSettingsSection(in: app, "advanced"))
-        XCTAssertTrue(app.staticTexts["인터뷰/실행 체크 알림"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["settings.advanced.sendMorningBipNotification"].exists)
-        XCTAssertTrue(app.buttons["settings.advanced.sendEveningBipNotification"].exists)
+        XCTAssertTrue(app.buttons["settings.advanced.confettiTestButton"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts["인터뷰/실행 체크 알림"].exists)
+        XCTAssertFalse(app.buttons["settings.advanced.sendMorningBipNotification"].exists)
+        XCTAssertFalse(app.buttons["settings.advanced.sendEveningBipNotification"].exists)
         attachScreenshot(from: app, named: "01 Settings Developer Tools")
-    }
-
-    @MainActor
-    func testMorningBipNotificationRoutesToOfficeHours() throws {
-        let workspacePath = "/tmp/agentic30-ui-bip-morning-notification-\(UUID().uuidString)"
-        resetDirectory(at: workspacePath)
-        let app = launchApp(
-            arguments: [
-                "--ui-testing-reset-onboarding",
-                "--ui-testing-seed-auth",
-                "--ui-testing-seed-onboarding-context",
-                "--ui-testing-seed-workspace=\(workspacePath)",
-                "--ui-testing-disable-sidecar",
-                "--ui-testing-open-workspace",
-                "--ui-testing-opaque-window",
-                "--ui-testing-open-bip-notification=morning",
-            ],
-            environment: [
-                "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
-                "AGENTIC30_TEST_STUB_PROVIDER": "1",
-            ]
-        )
-        hideKnownInterferingApplications()
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-        }
-
-        let officeHoursScreen = elementWithIdentifier(in: app, "opendesign.officeHours.screen")
-        if !officeHoursScreen.waitForExistence(timeout: 10) {
-            attachScreenshot(from: app, named: "Morning BIP Notification Route Missing")
-            attachText(app.debugDescription, named: "Morning BIP Notification Route Missing Tree")
-        }
-        XCTAssertTrue(officeHoursScreen.exists)
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.main").waitForExistence(timeout: 10))
-    }
-
-    @MainActor
-    func testEveningBipNotificationRoutesToExecutionCompletion() throws {
-        let workspacePath = "/tmp/agentic30-ui-bip-evening-notification-\(UUID().uuidString)"
-        resetDirectory(at: workspacePath)
-        let app = launchApp(
-            arguments: [
-                "--ui-testing-reset-onboarding",
-                "--ui-testing-seed-auth",
-                "--ui-testing-seed-onboarding-context",
-                "--ui-testing-seed-workspace=\(workspacePath)",
-                "--ui-testing-disable-sidecar",
-                "--ui-testing-open-workspace",
-                "--ui-testing-opaque-window",
-                "--ui-testing-seed-bip-current-mission",
-                "--ui-testing-open-bip-notification=evening",
-            ],
-            environment: [
-                "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
-                "AGENTIC30_TEST_STUB_PROVIDER": "1",
-            ]
-        )
-        hideKnownInterferingApplications()
-        app.activate()
-        addTeardownBlock {
-            app.terminate()
-            self.unhideKnownInterferingApplications()
-            self.removeDirectory(at: workspacePath)
-        }
-
-        let notificationRoute = elementWithIdentifier(in: app, "workspace.bipNotificationRoute")
-        if !notificationRoute.waitForExistence(timeout: 10) {
-            attachScreenshot(from: app, named: "Evening BIP Notification Route Missing")
-            attachText(app.debugDescription, named: "Evening BIP Notification Route Missing Tree")
-        }
-        XCTAssertTrue(notificationRoute.exists)
-        XCTAssertTrue(app.staticTexts["게시 기록 자동 확인"].waitForExistence(timeout: 10))
-        XCTAssertTrue(buttonContaining(in: app, text: "기록 완료").waitForExistence(timeout: 10))
     }
 
     @MainActor
@@ -2577,6 +2503,8 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.card.github").exists)
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.card.posthog").exists)
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.timeline").exists)
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "morningBriefing.timeline.badge.0", containing: "어제", timeout: 3))
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "morningBriefing.timeline.badge.1", containing: "오늘", timeout: 3))
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.anomaly").exists)
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.actions").exists)
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.syncbar").exists)
@@ -3848,11 +3776,9 @@ final class agentic30UITests: XCTestCase {
             if element.exists && element.isHittable {
                 return true
             }
-            let window = app.windows.firstMatch
-            if window.exists {
-                let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.72, dy: 0.78))
-                let end = window.coordinate(withNormalizedOffset: CGVector(dx: 0.72, dy: 0.24))
-                start.press(forDuration: 0.05, thenDragTo: end)
+            let scrollView = scrollViewElement(in: app, identifier: "settings.contentScroll")
+            if scrollView.exists {
+                scrollToward(element, in: scrollView)
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         } while Date() < deadline

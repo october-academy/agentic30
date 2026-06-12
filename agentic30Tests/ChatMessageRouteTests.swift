@@ -428,6 +428,57 @@ struct StructuredPromptSubmissionStateTests {
         #expect(recovered?.messages.last?.content.contains("응답이 끝나기 전에 실행 보조 앱이 중단됐습니다") == true)
     }
 
+    @MainActor @Test func sidecarUnexpectedExitClearsMcpOauthConnectSpinner() throws {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+        viewModel.selectedProvider = .codex
+        viewModel.connectMcpOauth(server: "posthog")
+
+        #expect(viewModel.mcpOauthConnecting.contains("posthog"))
+        #expect(viewModel.mcpOauthProgress["posthog"] != nil)
+
+        let event = try JSONDecoder().decode(SidecarEvent.self, from: Data("""
+        {
+          "type": "sidecar_unexpected_exit",
+          "message": "Sidecar stopped unexpectedly (exit 1)."
+        }
+        """.utf8))
+        viewModel.applySidecarEventForTesting(event)
+
+        #expect(viewModel.mcpOauthConnecting.isEmpty)
+        #expect(viewModel.mcpOauthProgress.isEmpty)
+        #expect(viewModel.mcpOauthResults["posthog"]?.state == "failed")
+        #expect(viewModel.mcpOauthResults["posthog"]?.detail?.contains("실행 보조 앱이 중단") == true)
+    }
+
+    @MainActor @Test func globalErrorAndStopClearMcpOauthConnectSpinner() throws {
+        let viewModel = AgenticViewModel(activateAppForAuth: {})
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+        viewModel.connectMcpOauth(server: "posthog")
+
+        let errorEvent = try JSONDecoder().decode(SidecarEvent.self, from: Data("""
+        {
+          "type": "error",
+          "message": "sidecar connection closed"
+        }
+        """.utf8))
+        viewModel.applySidecarEventForTesting(errorEvent)
+
+        #expect(viewModel.mcpOauthConnecting.isEmpty)
+        #expect(viewModel.mcpOauthProgress.isEmpty)
+        #expect(viewModel.mcpOauthResults["posthog"]?.state == "failed")
+
+        viewModel.markSidecarConnectedForTesting(workspaceRoot: "/tmp/workspace")
+        viewModel.connectMcpOauth(server: "cloudflare")
+        #expect(viewModel.mcpOauthConnecting.contains("cloudflare"))
+
+        viewModel.stop()
+
+        #expect(viewModel.mcpOauthConnecting.isEmpty)
+        #expect(viewModel.mcpOauthProgress.isEmpty)
+        #expect(viewModel.mcpOauthResults["cloudflare"] == nil)
+    }
+
     @MainActor @Test func structuredPromptSubmissionKeepsPendingInputLocally() {
         let viewModel = AgenticViewModel(activateAppForAuth: {})
         let prompt = Self.makePrompt()

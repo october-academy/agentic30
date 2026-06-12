@@ -14,6 +14,7 @@ extension Notification.Name {
     static let agenticCheckForUpdatesRequested = Notification.Name("agenticCheckForUpdatesRequested")
     static let agenticOpenDesignSearchRequested = Notification.Name("agenticOpenDesignSearchRequested")
     static let agenticOpenDesignSettingsRequested = Notification.Name("agenticOpenDesignSettingsRequested")
+    static let agenticOpenDesignRouteRequested = Notification.Name("agenticOpenDesignRouteRequested")
     static let agenticShowAppUpdateStatusPanelRequested = Notification.Name("agenticShowAppUpdateStatusPanelRequested")
 }
 
@@ -159,11 +160,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         #if DEBUG
-        if let intent = BipNotificationIntent.uiTestingOpenArgument(in: CommandLine.arguments) {
-            DispatchQueue.main.async { [weak self] in
-                self?.openBipNotification(intent: intent, source: "ui_test_launch_argument")
-            }
-        }
         if CommandLine.arguments.contains("--ui-testing-open-settings") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
                 self?.openSettingsInWorkspace(source: "ui_test_launch_argument")
@@ -316,6 +312,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func requestOpenDesignRoute(_ route: LongRunningCompletionRoute) {
+        let userInfo: [AnyHashable: Any] = [
+            LongRunningCompletionNotification.routeUserInfoKey: route.rawValue,
+        ]
+        NotificationCenter.default.post(name: .agenticOpenDesignRouteRequested, object: nil, userInfo: userInfo)
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .agenticOpenDesignRouteRequested, object: nil, userInfo: userInfo)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            NotificationCenter.default.post(name: .agenticOpenDesignRouteRequested, object: nil, userInfo: userInfo)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            NotificationCenter.default.post(name: .agenticOpenDesignRouteRequested, object: nil, userInfo: userInfo)
+        }
+    }
+
     private static func settingsRouteUserInfo(section: SettingsSection?) -> [AnyHashable: Any]? {
         guard let section else { return nil }
         return [AgenticSettingsRouteNotification.sectionUserInfoKey: section.rawValue]
@@ -343,15 +355,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor
-    private func openBipNotification(intent: BipNotificationIntent, source: String) {
-        openWorkspaceWindow()
-        viewModel.requestBipNotificationOpen(intent: intent, source: source)
-    }
-
-    @MainActor
     private func openOfficeHoursQuestionReady(sessionId: String, source: String) {
         openWorkspaceWindow()
         viewModel.requestOfficeHoursQuestionReadyOpen(sessionId: sessionId, source: source)
+    }
+
+    @MainActor
+    private func openLongRunningCompletionNotification(_ notification: LongRunningCompletionNotification) {
+        openWorkspaceWindow()
+        if notification.route == .document {
+            if let docPath = notification.docPath {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: docPath)])
+            }
+            return
+        }
+        requestOpenDesignRoute(notification.route)
     }
 
     private func focusWorkspaceWindow() {
@@ -647,22 +665,32 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse
     ) async {
         let request = response.notification.request
-        if let intent = BipNotificationIntent(
-            notificationUserInfo: request.content.userInfo,
-            identifier: request.identifier
-        ) {
-            await MainActor.run {
-                openBipNotification(intent: intent, source: "notification_center")
-            }
-            return
-        }
-
         if let questionReady = OfficeHoursQuestionReadyNotification(
             notificationUserInfo: request.content.userInfo,
             identifier: request.identifier
         ) {
             await MainActor.run {
                 openOfficeHoursQuestionReady(sessionId: questionReady.sessionId, source: "notification_center")
+            }
+            return
+        }
+
+        if McpOauthConnectedNotification(
+            notificationUserInfo: request.content.userInfo,
+            identifier: request.identifier
+        ) != nil {
+            await MainActor.run {
+                openSettingsInWorkspace(source: "mcp_oauth_connected_notification", section: .integrations)
+            }
+            return
+        }
+
+        if let completion = LongRunningCompletionNotification(
+            notificationUserInfo: request.content.userInfo,
+            identifier: request.identifier
+        ) {
+            await MainActor.run {
+                openLongRunningCompletionNotification(completion)
             }
         }
     }

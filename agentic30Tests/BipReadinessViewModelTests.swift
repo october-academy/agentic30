@@ -2,55 +2,6 @@ import Testing
 import Foundation
 @testable import agentic30
 
-// MARK: - BIP notification routing tests
-
-struct BipNotificationIntentTests {
-
-    @Test func userInfoIntentMapsToBipNotificationIntent() {
-        let intent = BipNotificationIntent(
-            notificationUserInfo: [BipNotificationIntent.userInfoKey: "morning"],
-            identifier: "unknown"
-        )
-
-        #expect(intent == .morning)
-    }
-
-    @Test func identifierFallbackMapsKnownNotificationRequests() {
-        #expect(BipNotificationIntent(
-            notificationUserInfo: [:],
-            identifier: BipNotificationIntent.morningIdentifier
-        ) == .morning)
-        #expect(BipNotificationIntent(
-            notificationUserInfo: [:],
-            identifier: BipNotificationIntent.eveningIdentifier
-        ) == .evening)
-    }
-
-    @Test func unknownNotificationIdentifierIsIgnored() {
-        let intent = BipNotificationIntent(
-            notificationUserInfo: [:],
-            identifier: "agentic30.other"
-        )
-
-        #expect(intent == nil)
-    }
-
-    @Test func repeatedOpenRequestsUseDistinctIDs() {
-        let first = BipNotificationOpenRequest(intent: .evening)
-        let second = BipNotificationOpenRequest(intent: .evening)
-
-        #expect(first.id != second.id)
-        #expect(first.intent == second.intent)
-    }
-
-    @Test func notificationCopyMatchesMorningAndEveningChecks() {
-        #expect(BipNotificationIntent.morning.notificationTitle == "오늘 인터뷰 체크")
-        #expect(BipNotificationIntent.morning.notificationBody == "오늘 인터뷰를 진행했는지 확인하세요.")
-        #expect(BipNotificationIntent.evening.notificationTitle == "오늘 실행 완료 체크")
-        #expect(BipNotificationIntent.evening.notificationBody == "오늘 실행을 완료했는지 확인하세요.")
-    }
-}
-
 // MARK: - BipReadinessState model tests
 
 struct BipReadinessStateTests {

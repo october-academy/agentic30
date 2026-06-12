@@ -53,6 +53,13 @@ struct MorningBriefingPageView: View {
         enum Tone { case accent, amber, rose, ring }
     }
 
+    private struct TimelineDayBadge {
+        let label: String
+        let foreground: Color
+        let background: Color
+        let border: Color
+    }
+
     private var sections: [SectionEntry] {
         var entries: [SectionEntry] = [
             SectionEntry(id: "summary", title: "밤사이 한 줄 요약", meta: "Cloudflare · GitHub · PostHog", tone: .accent),
@@ -807,6 +814,15 @@ struct MorningBriefingPageView: View {
         }
     }
 
+    private func sourceDisplayName(_ id: String?) -> String {
+        switch id {
+        case "cloudflare": return "Cloudflare"
+        case "posthog": return "PostHog"
+        case "github": return "GitHub"
+        default: return "Digest"
+        }
+    }
+
     private func sourceCard(_ card: MorningBriefingCard) -> some View {
         // 어제 브리핑(읽기 전용) 모드에서는 라이브 진행을 겹치지 않는다.
         let progress = viewingPrevious ? nil : sourceProgress[card.id]
@@ -1032,6 +1048,7 @@ struct MorningBriefingPageView: View {
 
     private var timelineList: some View {
         let events = displayBriefing?.timeline ?? []
+        let generatedAt = displayBriefing?.generatedAt
         return VStack(spacing: 1) {
             if events.isEmpty {
                 Text("밤사이 타임스탬프가 있는 이벤트가 없어요.")
@@ -1041,12 +1058,21 @@ struct MorningBriefingPageView: View {
                     .padding(16)
                     .background(OpenDesignDayColor.surface)
             } else {
-                ForEach(Array(events.enumerated()), id: \.offset) { _, event in
+                ForEach(Array(events.enumerated()), id: \.offset) { index, event in
+                    let badge = timelineDayBadge(for: event, generatedAt: generatedAt)
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                         Text(event.timeLabel ?? "")
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundStyle(OpenDesignDayColor.muted)
-                            .frame(width: 70, alignment: .leading)
+                            .frame(width: 44, alignment: .leading)
+                        if let badge {
+                            timelineDayBadgeView(badge)
+                                .accessibilityIdentifier("morningBriefing.timeline.badge.\(index)")
+                        } else {
+                            Color.clear
+                                .frame(width: 42, height: 19)
+                                .accessibilityHidden(true)
+                        }
                         Image(systemName: sourceLogoSymbol(event.source ?? ""))
                             .font(.system(size: 11))
                             .foregroundStyle(sourceLogoColor(event.source ?? ""))
@@ -1061,6 +1087,9 @@ struct MorningBriefingPageView: View {
                     .padding(.vertical, 11)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(OpenDesignDayColor.surface)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel(timelineAccessibilityLabel(event, badge: badge))
+                    .accessibilityIdentifier("morningBriefing.timeline.row.\(index)")
                 }
             }
         }
@@ -1072,6 +1101,88 @@ struct MorningBriefingPageView: View {
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("morningBriefing.timeline")
+    }
+
+    private func timelineDayBadgeView(_ badge: TimelineDayBadge) -> some View {
+        Text(badge.label)
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .foregroundStyle(badge.foreground)
+            .lineLimit(1)
+            .minimumScaleFactor(0.82)
+            .frame(width: 42, height: 19)
+            .background(
+                Capsule()
+                    .fill(badge.background)
+                    .overlay(Capsule().stroke(badge.border, lineWidth: 1))
+            )
+            .accessibilityLabel(badge.label)
+    }
+
+    private func timelineDayBadge(for event: MorningBriefingTimelineEvent, generatedAt: String?) -> TimelineDayBadge? {
+        guard let eventDate = parseTimelineDate(event.at),
+              let generatedDate = parseTimelineDate(generatedAt) else {
+            return nil
+        }
+        let calendar = Calendar.current
+        if calendar.isDate(eventDate, inSameDayAs: generatedDate) {
+            return TimelineDayBadge(
+                label: "오늘",
+                foreground: OpenDesignDayColor.accent,
+                background: OpenDesignDayColor.accent.opacity(0.13),
+                border: OpenDesignDayColor.accent.opacity(0.35)
+            )
+        }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: generatedDate),
+           calendar.isDate(eventDate, inSameDayAs: yesterday) {
+            return TimelineDayBadge(
+                label: "어제",
+                foreground: OpenDesignDayColor.amber,
+                background: OpenDesignDayColor.amber.opacity(0.13),
+                border: OpenDesignDayColor.amber.opacity(0.35)
+            )
+        }
+        return TimelineDayBadge(
+            label: timelineMonthDayLabel(eventDate),
+            foreground: OpenDesignDayColor.muted,
+            background: OpenDesignDayColor.muted.opacity(0.10),
+            border: OpenDesignDayColor.borderSoft
+        )
+    }
+
+    private func timelineAccessibilityLabel(_ event: MorningBriefingTimelineEvent, badge: TimelineDayBadge?) -> String {
+        [
+            badge?.label,
+            event.timeLabel,
+            sourceDisplayName(event.source),
+            event.text,
+        ]
+        .compactMap { value in
+            let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        .joined(separator: ", ")
+    }
+
+    private func parseTimelineDate(_ value: String?) -> Date? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: value) {
+            return date
+        }
+        let standard = ISO8601DateFormatter()
+        standard.formatOptions = [.withInternetDateTime]
+        return standard.date(from: value)
+    }
+
+    private func timelineMonthDayLabel(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.timeZone = .current
+        formatter.dateFormat = "M/d"
+        return formatter.string(from: date)
     }
 
     // MARK: - Anomaly picker

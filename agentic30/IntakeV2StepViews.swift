@@ -521,7 +521,7 @@ struct IntakeV2FolderPickView: View {
 
         "$HELPER" --register --path "$TARGET" --source "$SOURCE" --token "$TOKEN"
 
-        응답 한 줄 JSON에서 `"ok": true` 와 `claimedSource` 를 확인해. 절대 경로를 모르면 `--path` 를 빼고 호출해서 helper 가 cwd 를 후보로 쓰게 해.
+        응답 한 줄 JSON에서 `"ok": true` 와 `claimedSource` 를 확인해. 절대 경로를 모르면 현재 프로젝트 cwd에서 `--path` 를 빼고 실행하거나 `--path .` 를 사용해.
 
         ## 제약
 

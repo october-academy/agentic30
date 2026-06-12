@@ -796,18 +796,22 @@ nonisolated struct IntegrationProbeStatus: Codable, Hashable {
 /// minimal provider query that calls one tool on the target OAuth-first MCP
 /// (PostHog/Cloudflare). An unauthorized server exposes an authenticate
 /// placeholder that returns a login URL (`loginUrl`) — the Mac side opens it in
-/// the browser; once the user finishes, the real tools unlock and the call
-/// proves the link. States: progress · ready · login_pending · failed.
+/// the browser unless `openBrowser` is false; once the user finishes, the real
+/// tools unlock and the call proves the link. States: progress · ready ·
+/// login_pending · verification_pending · failed.
 nonisolated struct McpOauthConnectResult: Codable, Hashable {
     var server: String?
     var provider: String?
     var state: String?
     var detail: String?
     var loginUrl: String?
+    var openBrowser: Bool? = nil
     var checkedAt: String?
 
     var isReady: Bool { state == "ready" }
     var isLoginPending: Bool { state == "login_pending" }
+    var isVerificationPending: Bool { state == "verification_pending" }
+    var isPending: Bool { isLoginPending || isVerificationPending }
 }
 
 // MARK: - Morning briefing drilldowns (briefing-cloudflare/github/posthog.html)
@@ -866,6 +870,10 @@ nonisolated struct MorningBriefingDrillBar: Codable, Hashable {
 nonisolated struct MorningBriefingDrillPoint: Codable, Hashable {
     var label: String?
     var pct: Double?
+    var date: String?
+    var cohortSize: Double?
+    var returned: Double?
+    var tip: String?
 }
 
 nonisolated struct MorningBriefingDrillLegend: Codable, Hashable {
@@ -989,6 +997,7 @@ extension MorningBriefing {
                 metric: MorningBriefingMetric(value: 9, unit: "커밋", deltaLabel: "▲ 50%", direction: "up", versusLabel: "어제 6"),
                 rows: [
                     MorningBriefingCardRow(k: "PR 업데이트", v: "2"),
+                    MorningBriefingCardRow(k: "PR 머지", v: "1"),
                     MorningBriefingCardRow(k: "릴리즈", v: "1"),
                 ],
                 spark: [4, 6, 9],
@@ -1013,6 +1022,7 @@ extension MorningBriefing {
             ),
         ],
         timeline: [
+            MorningBriefingTimelineEvent(at: "2026-06-09T08:50:00.000Z", timeLabel: "17:50", source: "github", text: "커밋 · prep: previous-day release check"),
             MorningBriefingTimelineEvent(at: "2026-06-09T18:12:00.000Z", timeLabel: "03:12", source: "github", text: "커밋 · feat: onboarding step trim"),
             MorningBriefingTimelineEvent(at: "2026-06-09T18:30:00.000Z", timeLabel: "03:30", source: "github", text: "PR #43 open · 리텐션 이벤트 보강"),
         ],

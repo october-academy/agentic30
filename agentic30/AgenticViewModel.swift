@@ -75,89 +75,15 @@ final class SystemWebAuthenticationSessionHandle: WebAuthenticationSessionHandle
     }
 }
 
-enum BipNotificationIntent: String, Hashable, Sendable {
-    case morning
-    case evening
+enum LegacyBipDailyNotificationCleanup {
+    private static let identifiers = [
+        "agentic30.bip-coach.morning",
+        "agentic30.bip-coach.evening",
+    ]
 
-    static let userInfoKey = "agentic30.bip.intent"
-    static let morningIdentifier = "agentic30.bip-coach.morning"
-    static let eveningIdentifier = "agentic30.bip-coach.evening"
-
-    var notificationIdentifier: String {
-        switch self {
-        case .morning:
-            return Self.morningIdentifier
-        case .evening:
-            return Self.eveningIdentifier
-        }
-    }
-
-    var notificationTitle: String {
-        switch self {
-        case .morning:
-            return "오늘 인터뷰 체크"
-        case .evening:
-            return "오늘 실행 완료 체크"
-        }
-    }
-
-    var notificationBody: String {
-        switch self {
-        case .morning:
-            return "오늘 인터뷰를 진행했는지 확인하세요."
-        case .evening:
-            return "오늘 실행을 완료했는지 확인하세요."
-        }
-    }
-
-    init?(notificationUserInfo userInfo: [AnyHashable: Any], identifier: String) {
-        if let rawIntent = userInfo[Self.userInfoKey] as? String,
-           let intent = BipNotificationIntent(rawValue: rawIntent) {
-            self = intent
-            return
-        }
-
-        switch identifier {
-        case Self.morningIdentifier:
-            self = .morning
-        case Self.eveningIdentifier:
-            self = .evening
-        default:
-            return nil
-        }
-    }
-
-    static func uiTestingOpenArgument(in arguments: [String]) -> BipNotificationIntent? {
-        guard let rawIntent = uiTestingArgumentValue("--ui-testing-open-bip-notification", arguments: arguments) else {
-            return nil
-        }
-        return BipNotificationIntent(rawValue: rawIntent)
-    }
-
-    private static func uiTestingArgumentValue(_ name: String, arguments: [String]) -> String? {
-        if let index = arguments.firstIndex(of: name), arguments.indices.contains(index + 1) {
-            return arguments[index + 1]
-        }
-        let prefix = "\(name)="
-        return arguments.first(where: { $0.hasPrefix(prefix) })?
-            .dropFirst(prefix.count)
-            .description
-    }
-}
-
-struct BipNotificationOpenRequest: Identifiable, Equatable, Sendable {
-    let id: UUID
-    let intent: BipNotificationIntent
-    let createdAt: Date
-
-    init(
-        id: UUID = UUID(),
-        intent: BipNotificationIntent,
-        createdAt: Date = Date()
-    ) {
-        self.id = id
-        self.intent = intent
-        self.createdAt = createdAt
+    static func removeScheduledNotifications(center: UNUserNotificationCenter = .current()) {
+        center.removePendingNotificationRequests(withIdentifiers: identifiers)
+        center.removeDeliveredNotifications(withIdentifiers: identifiers)
     }
 }
 
@@ -223,6 +149,317 @@ enum OfficeHoursQuestionReadyNotifier {
         }
         return true
     }
+}
+
+/// Routing payload for the Settings > 연동 MCP connection-complete notification.
+/// The banner is informational; clicking it brings the user back to Settings.
+struct McpOauthConnectedNotification: Hashable, Sendable {
+    static let serverUserInfoKey = "agentic30.mcpOauth.connected.server"
+    static let identifierPrefix = "agentic30.mcp-oauth.connected."
+    static let supportedServers: Set<String> = ["posthog", "cloudflare"]
+
+    let server: String
+
+    init?(server: String?) {
+        guard let normalized = Self.normalizedServer(server),
+              Self.supportedServers.contains(normalized) else {
+            return nil
+        }
+        self.server = normalized
+    }
+
+    init?(notificationUserInfo userInfo: [AnyHashable: Any], identifier: String) {
+        guard identifier.hasPrefix(Self.identifierPrefix) else { return nil }
+        let rawServer = (userInfo[Self.serverUserInfoKey] as? String)
+            ?? String(identifier.dropFirst(Self.identifierPrefix.count))
+        self.init(server: rawServer)
+    }
+
+    static func notificationIdentifier(server: String) -> String {
+        "\(identifierPrefix)\(normalizedServer(server) ?? server)"
+    }
+
+    static func displayName(for server: String) -> String {
+        switch normalizedServer(server) {
+        case "posthog":
+            return "PostHog"
+        case "cloudflare":
+            return "Cloudflare"
+        default:
+            return server
+        }
+    }
+
+    static func normalizedServer(_ server: String?) -> String? {
+        server?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .nonEmpty
+    }
+
+    var notificationIdentifier: String {
+        Self.notificationIdentifier(server: server)
+    }
+
+    var notificationTitle: String {
+        "\(Self.displayName(for: server)) MCP 연결 완료"
+    }
+
+    var notificationBody: String {
+        "AI 실행에서 바로 사용할 수 있어요."
+    }
+}
+
+enum McpOauthConnectedNotifier {
+    static func shouldNotify(
+        server: String?,
+        state: String?,
+        isUITesting: Bool
+    ) -> Bool {
+        guard !isUITesting,
+              state == "ready",
+              McpOauthConnectedNotification(server: server) != nil else {
+            return false
+        }
+        return true
+    }
+}
+
+enum LongRunningCompletionNotificationKind: String, CaseIterable, Hashable, Sendable {
+    case morningBriefing
+    case workspaceScan
+    case documentCreation
+    case workHistory
+    case bipResearch
+    case newsMarketRadar
+    case bipMission
+
+    var route: LongRunningCompletionRoute {
+        switch self {
+        case .morningBriefing:
+            return .morningBriefing
+        case .workspaceScan:
+            return .day1
+        case .documentCreation:
+            return .document
+        case .workHistory:
+            return .history
+        case .bipResearch:
+            return .bipResearch
+        case .newsMarketRadar:
+            return .newsMarketRadar
+        case .bipMission:
+            return .bipMission
+        }
+    }
+}
+
+enum LongRunningCompletionOutcome: String, CaseIterable, Hashable, Sendable {
+    case success
+    case failed
+    case blocked
+}
+
+enum LongRunningCompletionRoute: String, Hashable, Sendable {
+    case morningBriefing
+    case day1
+    case document
+    case history
+    case bipResearch
+    case newsMarketRadar
+    case bipMission
+}
+
+/// Routing payload for local notifications posted when a user-visible long
+/// running operation finishes after the founder may have switched context.
+struct LongRunningCompletionNotification: Hashable, Sendable {
+    static let kindUserInfoKey = "agentic30.longRunningCompletion.kind"
+    static let outcomeUserInfoKey = "agentic30.longRunningCompletion.outcome"
+    static let routeUserInfoKey = "agentic30.longRunningCompletion.route"
+    static let docPathUserInfoKey = "agentic30.longRunningCompletion.docPath"
+    static let detailUserInfoKey = "agentic30.longRunningCompletion.detail"
+    static let identifierPrefix = "agentic30.long-running-completion."
+
+    let kind: LongRunningCompletionNotificationKind
+    let outcome: LongRunningCompletionOutcome
+    let route: LongRunningCompletionRoute
+    let docPath: String?
+    let detail: String?
+
+    init(
+        kind: LongRunningCompletionNotificationKind,
+        outcome: LongRunningCompletionOutcome,
+        docPath: String? = nil,
+        detail: String? = nil
+    ) {
+        self.kind = kind
+        self.outcome = outcome
+        self.route = kind.route
+        self.docPath = docPath?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+        self.detail = detail?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+    }
+
+    init?(notificationUserInfo userInfo: [AnyHashable: Any], identifier: String) {
+        guard identifier.hasPrefix(Self.identifierPrefix) else { return nil }
+        let fallback = identifier
+            .dropFirst(Self.identifierPrefix.count)
+            .split(separator: ".", maxSplits: 1)
+            .map(String.init)
+        let rawKind = (userInfo[Self.kindUserInfoKey] as? String)
+            ?? fallback.first
+        let rawOutcome = (userInfo[Self.outcomeUserInfoKey] as? String)
+            ?? fallback.dropFirst().first
+        guard let rawKind,
+              let kind = LongRunningCompletionNotificationKind(rawValue: rawKind),
+              let rawOutcome,
+              let outcome = LongRunningCompletionOutcome(rawValue: rawOutcome) else {
+            return nil
+        }
+        self.kind = kind
+        self.outcome = outcome
+        self.route = (userInfo[Self.routeUserInfoKey] as? String)
+            .flatMap(LongRunningCompletionRoute.init(rawValue:))
+            ?? kind.route
+        self.docPath = (userInfo[Self.docPathUserInfoKey] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nonEmpty
+        self.detail = (userInfo[Self.detailUserInfoKey] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nonEmpty
+    }
+
+    static func notificationIdentifier(
+        kind: LongRunningCompletionNotificationKind,
+        outcome: LongRunningCompletionOutcome
+    ) -> String {
+        "\(identifierPrefix)\(kind.rawValue).\(outcome.rawValue)"
+    }
+
+    var notificationIdentifier: String {
+        Self.notificationIdentifier(kind: kind, outcome: outcome)
+    }
+
+    var notificationTitle: String {
+        switch (kind, outcome) {
+        case (.morningBriefing, .success):
+            return "아침 브리핑 준비 완료"
+        case (.morningBriefing, _):
+            return "아침 브리핑 확인 필요"
+        case (.workspaceScan, .success):
+            return "Day 1 준비 완료"
+        case (.workspaceScan, _):
+            return "워크스페이스 분석 확인 필요"
+        case (.documentCreation, .success):
+            return "문서 생성 완료"
+        case (.documentCreation, _):
+            return "문서 생성 실패"
+        case (.workHistory, .success):
+            return "히스토리 인덱싱 완료"
+        case (.workHistory, _):
+            return "히스토리 인덱싱 실패"
+        case (.bipResearch, .success):
+            return "고객 후보 리서치 완료"
+        case (.bipResearch, _):
+            return "고객 후보 리서치 확인 필요"
+        case (.newsMarketRadar, .success):
+            return "시장 신호 업데이트 완료"
+        case (.newsMarketRadar, _):
+            return "시장 신호 업데이트 확인 필요"
+        case (.bipMission, .success):
+            return "오늘 미션 준비 완료"
+        case (.bipMission, _):
+            return "오늘 미션 생성 실패"
+        }
+    }
+
+    var notificationBody: String {
+        if let detail {
+            return detail
+        }
+
+        switch (kind, outcome) {
+        case (.morningBriefing, .success):
+            return "클릭하면 아침 브리핑을 엽니다."
+        case (.morningBriefing, _):
+            return "브리핑 수집을 완료하지 못했어요."
+        case (.workspaceScan, .success):
+            return "워크스페이스 분석이 끝났고 Day 1을 이어갈 수 있어요."
+        case (.workspaceScan, .blocked):
+            return "AI 연결 또는 권한 확인이 필요해요."
+        case (.workspaceScan, .failed):
+            return "워크스페이스 분석을 완료하지 못했어요."
+        case (.documentCreation, .success):
+            if let docPath {
+                return "\((docPath as NSString).lastPathComponent)을 만들었어요."
+            }
+            return "요청한 문서를 만들었어요."
+        case (.documentCreation, _):
+            return "문서를 만들지 못했어요."
+        case (.workHistory, .success):
+            return "이번 주 작업 히스토리를 볼 수 있어요."
+        case (.workHistory, _):
+            return "히스토리 인덱싱을 완료하지 못했어요."
+        case (.bipResearch, .success):
+            return "새 고객 후보와 공개 신호를 확인할 수 있어요."
+        case (.bipResearch, _):
+            return "고객 후보 리서치를 완료하지 못했어요."
+        case (.newsMarketRadar, .success):
+            return "새 시장 신호 카드를 확인할 수 있어요."
+        case (.newsMarketRadar, _):
+            return "시장 신호 업데이트를 완료하지 못했어요."
+        case (.bipMission, .success):
+            return "근거 기반 실행 미션을 확인할 수 있어요."
+        case (.bipMission, _):
+            return "미션 생성에 실패했어요."
+        }
+    }
+
+    var userInfo: [AnyHashable: Any] {
+        var info: [AnyHashable: Any] = [
+            Self.kindUserInfoKey: kind.rawValue,
+            Self.outcomeUserInfoKey: outcome.rawValue,
+            Self.routeUserInfoKey: route.rawValue,
+        ]
+        if let docPath {
+            info[Self.docPathUserInfoKey] = docPath
+        }
+        if let detail {
+            info[Self.detailUserInfoKey] = detail
+        }
+        return info
+    }
+}
+
+/// Pure decision authority for long-running completion notifications.
+enum LongRunningCompletionNotifier {
+    static let activeAppMinimumElapsed: TimeInterval = 15
+
+    static func shouldNotify(
+        attemptId: String?,
+        alreadyNotifiedAttemptIds: Set<String>,
+        isUserVisibleAttempt: Bool,
+        elapsed: TimeInterval,
+        isAppActive: Bool,
+        isEnabled: Bool,
+        isUITesting: Bool
+    ) -> Bool {
+        guard let attemptId = attemptId?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty,
+              !alreadyNotifiedAttemptIds.contains(attemptId),
+              isUserVisibleAttempt,
+              isEnabled,
+              !isUITesting else {
+            return false
+        }
+        return !isAppActive || elapsed >= activeAppMinimumElapsed
+    }
+}
+
+private struct LongRunningCompletionAttempt: Equatable {
+    let id: String
+    let kind: LongRunningCompletionNotificationKind
+    let startedAt: Date
+    let source: String
+    let isUserVisible: Bool
 }
 
 struct WorkspaceScanProgressSnapshot: Equatable {
@@ -440,6 +677,7 @@ struct IntakeV2BootLogState: Equatable {
     }
 
     enum ScanStage: String, Equatable {
+        case connecting
         case local
         case verifying
         case composing
@@ -449,6 +687,8 @@ struct IntakeV2BootLogState: Equatable {
 
         nonisolated var title: String {
             switch self {
+            case .connecting:
+                return "실행 보조 앱 연결"
             case .local:
                 return "폴더 신호 읽기"
             case .verifying:
@@ -466,6 +706,8 @@ struct IntakeV2BootLogState: Equatable {
 
         nonisolated var fallbackStepIndex: Int {
             switch self {
+            case .connecting:
+                return 0
             case .local:
                 return 1
             case .verifying:
@@ -670,13 +912,19 @@ struct IntakeV2BootLogState: Equatable {
         let lowercased = message.lowercased()
 
         if [
-            "preparing workspace scan...",
-            "waiting for workspace connection...",
             "workspace scan complete.",
             "workspace scan failed.",
             "workspace scan blocked.",
         ].contains(lowercased) {
             return nil
+        }
+
+        if lowercased == "waiting for workspace connection..." {
+            return DisplayProgressLine(command: "sidecar.connect", status: "starting sidecar")
+        }
+
+        if lowercased == "preparing workspace scan..." {
+            return DisplayProgressLine(command: "scan.prepare", status: "queueing workspace scan")
         }
 
         if lowercased.contains("starting workspace scan")
@@ -797,7 +1045,8 @@ struct IntakeV2BootLogState: Equatable {
         foundCount: Int?
     ) -> ScanPhase {
         let total = max(1, totalSteps ?? 3)
-        let step = min(max(1, stepIndex ?? stage.fallbackStepIndex), total)
+        let minimumStep = stage == .connecting ? 0 : 1
+        let step = min(max(minimumStep, stepIndex ?? stage.fallbackStepIndex), total)
         return ScanPhase(
             stage: stage,
             stepIndex: step,
@@ -809,6 +1058,11 @@ struct IntakeV2BootLogState: Equatable {
 
     private nonisolated static func inferredStage(from message: String) -> ScanStage {
         let lowercased = message.lowercased()
+        if lowercased.contains("waiting for workspace connection")
+            || lowercased.contains("sidecar")
+            || lowercased.contains("connection") {
+            return .connecting
+        }
         if lowercased.contains("blocked")
             || lowercased.contains("검증 필요")
             || lowercased.contains("검증 불가")
@@ -854,6 +1108,7 @@ struct IntakeV2BootLogState: Equatable {
 
 struct Day1ScanWaitPresentation: Equatable {
     enum State: Equatable {
+        case connecting
         case scanningNormal
         case scanningSlow
         case scanMergedReady
@@ -871,6 +1126,9 @@ struct Day1ScanWaitPresentation: Equatable {
         if canOpenDay1 {
             return "Day 1 질문 \(questionCount)개가 준비됐어요"
         }
+        if state == .connecting {
+            return "실행 보조 앱 연결 중"
+        }
         if isBlocked {
             return "AI 검증이 필요합니다"
         }
@@ -880,6 +1138,9 @@ struct Day1ScanWaitPresentation: Equatable {
     func primaryCTATitle(questionCount: Int = 3) -> String {
         if canOpenDay1 {
             return "질문 \(questionCount)개 시작하기 →"
+        }
+        if state == .connecting {
+            return "연결 중…"
         }
         if isBlocked {
             return "AI 연결 확인 필요"
@@ -893,6 +1154,9 @@ struct Day1ScanWaitPresentation: Equatable {
     func primaryCTAAccessibilityLabel(questionCount: Int = 3) -> String {
         if canOpenDay1 {
             return primaryCTATitle(questionCount: questionCount).replacingOccurrences(of: " →", with: "")
+        }
+        if state == .connecting {
+            return "실행 보조 앱 연결 중"
         }
         if isBlocked {
             return "AI 검증이 필요합니다"
@@ -916,7 +1180,7 @@ struct Day1ScanWaitPresentation: Equatable {
     }
 
     var estimatedRemainingSeconds: Int? {
-        guard !canOpenDay1 else { return nil }
+        guard !canOpenDay1, state != .connecting else { return nil }
         return max(0, Self.slowScanSeconds - (elapsedSeconds ?? 0))
     }
 
@@ -931,6 +1195,11 @@ struct Day1ScanWaitPresentation: Equatable {
 
         if !hasFolder {
             state = .scanMergedReady
+            return
+        }
+
+        if bootLogState.scanPhase.stage == .connecting {
+            state = .connecting
             return
         }
 
@@ -2009,7 +2278,6 @@ final class AgenticViewModel: ObservableObject {
     @Published private(set) var structuredPromptDraftBySession: [String: StructuredPromptDraftState] = [:]
     @Published private(set) var sidecarOutputLogs: [String: [String]] = [:]
     @Published private(set) var officeHoursLiveStatusBySession: [String: OfficeHoursLiveStatus] = [:]
-    @Published private(set) var bipNotificationOpenRequest: BipNotificationOpenRequest?
     @Published private(set) var startupQueuedAction: StartupQueuedAction?
     @Published private(set) var startupSessionAppearElapsedMs: Int?
     @Published private(set) var reviewDayDashboardViewModel: ReviewDayDashboardViewModel?
@@ -2454,6 +2722,7 @@ final class AgenticViewModel: ObservableObject {
         self.foundationCurriculumLifecycleController = foundationCurriculumLifecycleController ?? FoundationCurriculumLifecycleController()
         self.sidecar = sidecar ?? SidecarBridge()
         self.localDataResetter = localDataResetter
+        LegacyBipDailyNotificationCleanup.removeScheduledNotifications()
 
         let arguments = CommandLine.arguments
 
@@ -2793,26 +3062,6 @@ final class AgenticViewModel: ObservableObject {
         return WorkspaceMemoryStore.loadOnboardingContext(workspaceRoot: WorkspaceSettings.resolvedURL().path)
     }
 
-    func requestBipNotificationOpen(
-        intent: BipNotificationIntent,
-        source: String = "notification_center"
-    ) {
-        PostHogTelemetry.capture("mac_bip_notification_opened", properties: [
-            "intent": intent.rawValue,
-            "source": source,
-        ], authSession: macAuthSession)
-
-        if intent == .evening {
-            selectBipCoachSessionIfAvailable()
-        }
-        bipNotificationOpenRequest = BipNotificationOpenRequest(intent: intent)
-    }
-
-    func clearBipNotificationOpenRequest(id: UUID? = nil) {
-        guard id == nil || bipNotificationOpenRequest?.id == id else { return }
-        bipNotificationOpenRequest = nil
-    }
-
     @discardableResult
     func selectBipCoachSessionIfAvailable() -> Bool {
         guard let sessionId = bipCoach?.sessionId,
@@ -2824,10 +3073,16 @@ final class AgenticViewModel: ObservableObject {
     }
 
     nonisolated static let questionReadyNotificationDefaultsKey = "agentic30.officeHours.questionReadyNotification"
+    nonisolated static let longRunningCompletionNotificationDefaultsKey = "agentic30.longRunningCompletionNotification"
 
     /// Default-on toggle; absent key means enabled.
     var isQuestionReadyNotificationEnabled: Bool {
         UserDefaults.standard.object(forKey: Self.questionReadyNotificationDefaultsKey) as? Bool ?? true
+    }
+
+    /// Default-on toggle; absent key means enabled.
+    var isLongRunningCompletionNotificationEnabled: Bool {
+        UserDefaults.standard.object(forKey: Self.longRunningCompletionNotificationDefaultsKey) as? Bool ?? true
     }
 
     func requestOfficeHoursQuestionReadyOpen(
@@ -2840,58 +3095,6 @@ final class AgenticViewModel: ObservableObject {
 
         guard sessions.contains(where: { $0.id == sessionId }) else { return }
         selectedSessionID = sessionId
-    }
-
-    func recordBipNotificationPrimaryAction(intent: BipNotificationIntent, action: String) {
-        PostHogTelemetry.capture("mac_bip_notification_primary_action_clicked", properties: [
-            "intent": intent.rawValue,
-            "action": action,
-        ], authSession: macAuthSession)
-    }
-
-    func sendTestBipNotification(intent: BipNotificationIntent) async -> String {
-        let center = UNUserNotificationCenter.current()
-        let settings = await withCheckedContinuation { continuation in
-            center.getNotificationSettings { settings in
-                continuation.resume(returning: settings)
-            }
-        }
-
-        var authorized = settings.authorizationStatus == .authorized
-            || settings.authorizationStatus == .provisional
-        if settings.authorizationStatus == .notDetermined {
-            authorized = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
-        }
-        guard authorized else {
-            return "macOS 알림 권한이 꺼져 있어요. 시스템 설정에서 알림을 허용해 주세요."
-        }
-
-        let content = UNMutableNotificationContent()
-        content.title = intent.notificationTitle
-        content.body = intent.notificationBody
-        content.sound = .default
-        content.userInfo = [
-            BipNotificationIntent.userInfoKey: intent.rawValue,
-        ]
-
-        let request = UNNotificationRequest(
-            identifier: "\(intent.notificationIdentifier).test.\(UUID().uuidString)",
-            content: content,
-            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
-        )
-        let error = await withCheckedContinuation { continuation in
-            center.add(request) { error in
-                continuation.resume(returning: error)
-            }
-        }
-        if let error {
-            return "테스트 알림 예약 실패: \(error.localizedDescription)"
-        }
-
-        PostHogTelemetry.capture("mac_bip_test_notification_scheduled", properties: [
-            "intent": intent.rawValue,
-        ], authSession: macAuthSession)
-        return "1초 뒤 테스트 알림을 보냅니다. 배너를 누르면 알림 진입 화면으로 이동해요."
     }
 
     func sentPromptPreview(for sessionID: String) -> String? {
@@ -3103,6 +3306,7 @@ final class AgenticViewModel: ObservableObject {
         PostHogTelemetry.capture("mac_view_model_stopped", authSession: macAuthSession)
         authSession?.cancel()
         authSession = nil
+        finishMcpOauthInFlightAfterSidecarInterruption(markFailedResult: false)
         sidecar.stop()
         started = false
         officeHoursSessionCreateInFlight = false
@@ -3118,6 +3322,7 @@ final class AgenticViewModel: ObservableObject {
         isBipCoachGenerating = false
         isBipCoachCompleting = false
         bipMissionProgress = nil
+        finishMcpOauthInFlightAfterSidecarInterruption(markFailedResult: false)
         sidecar.stop()
         started = false
         requestedInitialBipGate = false
@@ -4178,11 +4383,23 @@ final class AgenticViewModel: ObservableObject {
     func scanWorkspace(root: String, providerOverride: AgentProvider? = nil) {
         guard !root.isEmpty else { return }
         beginWorkspaceScanTiming(reset: true)
+        beginLongRunningCompletionAttempt(.workspaceScan, source: "workspace_scan", isUserVisible: true)
         clearWorkspaceScanResultCache(root: root)
         isScanning = true
-        scanProgressMessage = isConnected ? "Preparing workspace scan..." : "Waiting for workspace connection..."
+        #if DEBUG
+        let shouldSeedIntakeScanWait = CommandLine.arguments.contains("--ui-testing-seed-intake-scan-wait")
+        #else
+        let shouldSeedIntakeScanWait = false
+        #endif
+        let hasScanProgress = isConnected || shouldSeedIntakeScanWait
+        scanProgressMessage = hasScanProgress ? "Preparing workspace scan..." : "Waiting for workspace connection..."
         scanProgressLogs = [scanProgressMessage]
-        scanProgressSnapshots = [WorkspaceScanProgressSnapshot(progressText: scanProgressMessage)]
+        scanProgressSnapshots = [WorkspaceScanProgressSnapshot(
+            progressText: scanProgressMessage,
+            stage: hasScanProgress ? "local" : "connecting",
+            stepIndex: hasScanProgress ? 1 : 0,
+            totalSteps: 3
+        )]
         scanResult = nil
         scanProviderLimitNotice = nil
         scanBlockedNotice = nil
@@ -4667,6 +4884,9 @@ final class AgenticViewModel: ObservableObject {
     /// 호출하는 최소 쿼리를 돌려 브라우저 OAuth를 트리거하고 연결을 실증한다.
     func connectMcpOauth(server: String) {
         guard isConnected, !mcpOauthConnecting.contains(server) else { return }
+        mcpOauthResults.removeValue(forKey: server)
+        mcpOauthProgress.removeValue(forKey: server)
+        mcpOauthOpenedLoginUrls.removeAll()
         mcpOauthConnecting.insert(server)
         mcpOauthProgress[server] = "연결 확인을 시작하는 중…"
         PostHogTelemetry.capture("mac_mcp_oauth_connect_started", authSession: macAuthSession)
@@ -4675,6 +4895,32 @@ final class AgenticViewModel: ObservableObject {
             "server": server,
             "preferredProvider": selectedProvider.rawValue,
         ])
+    }
+
+    private func finishMcpOauthInFlightAfterSidecarInterruption(
+        detail: String = "",
+        markFailedResult: Bool
+    ) {
+        guard !mcpOauthConnecting.isEmpty || !mcpOauthProgress.isEmpty else { return }
+        if markFailedResult {
+            let checkedAt = ISO8601DateFormatter().string(from: Date())
+            let failureDetail = detail.isEmpty
+                ? "MCP 연결 확인이 끝나지 않았어요 — 다시 시도해 주세요."
+                : detail
+            for server in mcpOauthConnecting {
+                mcpOauthResults[server] = McpOauthConnectResult(
+                    server: server,
+                    provider: selectedProvider.rawValue,
+                    state: "failed",
+                    detail: failureDetail,
+                    loginUrl: nil,
+                    checkedAt: checkedAt
+                )
+            }
+        }
+        mcpOauthConnecting.removeAll()
+        mcpOauthProgress.removeAll()
+        mcpOauthOpenedLoginUrls.removeAll()
     }
 
     private func reportIntegrationStatusTelemetry(_ snapshot: IntegrationStatusSnapshot?) {
@@ -5053,6 +5299,9 @@ final class AgenticViewModel: ObservableObject {
 
     func refreshNewsMarketRadar(reason: String = "manual", force: Bool = false) {
         guard isConnected else { return }
+        if longRunningCompletionReasonIsUserVisible(reason) || force {
+            beginLongRunningCompletionAttempt(.newsMarketRadar, source: reason, isUserVisible: true)
+        }
         PostHogTelemetry.capture("mac_news_market_radar_refresh_requested", properties: [
             "reason": reason,
             "force": force,
@@ -5070,6 +5319,7 @@ final class AgenticViewModel: ObservableObject {
         #if DEBUG
         if emitUITestingNewsMarketRadarEventsIfRequested() { return }
         #endif
+        markLongRunningCompletionDisplayInterest(.newsMarketRadar)
         requestNewsMarketRadar()
         guard shouldRefreshNewsMarketRadarForDisplay else { return }
         refreshNewsMarketRadar(reason: "daily", force: false)
@@ -5085,6 +5335,9 @@ final class AgenticViewModel: ObservableObject {
 
     func refreshWorkHistory(reason: String = "manual") {
         guard isConnected else { return }
+        if longRunningCompletionReasonIsUserVisible(reason) {
+            beginLongRunningCompletionAttempt(.workHistory, source: reason, isUserVisible: true)
+        }
         PostHogTelemetry.capture("mac_work_history_refresh_requested", properties: [
             "reason": reason,
         ], authSession: macAuthSession)
@@ -5101,6 +5354,7 @@ final class AgenticViewModel: ObservableObject {
         #if DEBUG
         if emitUITestingWorkHistoryEventsIfRequested() { return }
         #endif
+        markLongRunningCompletionDisplayInterest(.workHistory)
         requestWorkHistory()
     }
 
@@ -5111,6 +5365,7 @@ final class AgenticViewModel: ObservableObject {
         if emitUITestingMorningBriefingEventsIfRequested() { return }
         #endif
         guard isConnected else { return }
+        markLongRunningCompletionDisplayInterest(.morningBriefing)
         sidecar.send(payload: [
             "type": "morning_briefing_get",
             "preferredProvider": selectedProvider.rawValue,
@@ -5119,6 +5374,9 @@ final class AgenticViewModel: ObservableObject {
 
     func refreshMorningBriefing(reason: String = "manual", force: Bool = true) {
         guard isConnected else { return }
+        if longRunningCompletionReasonIsUserVisible(reason) || force {
+            beginLongRunningCompletionAttempt(.morningBriefing, source: reason, isUserVisible: true)
+        }
         PostHogTelemetry.capture("mac_morning_briefing_refresh_requested", properties: [
             "reason": reason,
         ], authSession: macAuthSession)
@@ -5403,6 +5661,9 @@ final class AgenticViewModel: ObservableObject {
     ) {
         guard isConnected else { return }
         let resolvedDayNumber = resolvedBipResearchDayNumber(dayNumber)
+        if longRunningCompletionReasonIsUserVisible(reason) || force {
+            beginLongRunningCompletionAttempt(.bipResearch, source: reason, isUserVisible: true)
+        }
         PostHogTelemetry.capture("mac_bip_research_refresh_requested", properties: [
             "reason": reason,
             "force": force,
@@ -5426,6 +5687,7 @@ final class AgenticViewModel: ObservableObject {
         #if DEBUG
         if emitUITestingBipResearchEventsIfRequested() { return }
         #endif
+        markLongRunningCompletionDisplayInterest(.bipResearch)
         let dayNumber = resolvedBipResearchDayNumber(nil)
         requestBipResearch(dayNumber: dayNumber, curriculumDay: curriculumDay)
         guard shouldRefreshBipResearchForDisplay else { return }
@@ -5870,6 +6132,7 @@ final class AgenticViewModel: ObservableObject {
             return
         }
         isBipCoachGenerating = true
+        beginLongRunningCompletionAttempt(.bipMission, source: "generate_mission", isUserVisible: true)
         lastBipRequestedAction = .generateMission(compact: compact)
         lastError = nil
         let provider = selectedSession?.provider ?? visibleBipCoach?.config.provider ?? selectedProvider
@@ -6623,62 +6886,6 @@ final class AgenticViewModel: ObservableObject {
         ])
     }
 
-    private func syncBipDailyNotifications(for state: BipCoachState) {
-        Task {
-            let center = UNUserNotificationCenter.current()
-            let identifiers = [
-                BipNotificationIntent.morningIdentifier,
-                BipNotificationIntent.eveningIdentifier,
-            ]
-            center.removePendingNotificationRequests(withIdentifiers: identifiers)
-            center.removeDeliveredNotifications(withIdentifiers: identifiers)
-            guard state.isConfigured else { return }
-
-            let settings = await withCheckedContinuation { continuation in
-                center.getNotificationSettings { settings in
-                    continuation.resume(returning: settings)
-                }
-            }
-
-            var authorized = settings.authorizationStatus == .authorized
-                || settings.authorizationStatus == .provisional
-            if settings.authorizationStatus == .notDetermined {
-                authorized = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
-            }
-            guard authorized else { return }
-
-            let morningHour = state.config.morningHour ?? 10
-            let eveningHour = state.config.eveningHour ?? 21
-            scheduleBipNotification(intent: .morning, hour: morningHour)
-            scheduleBipNotification(intent: .evening, hour: eveningHour)
-        }
-    }
-
-    private func scheduleBipNotification(
-        intent: BipNotificationIntent,
-        hour: Int
-    ) {
-        var dateComponents = DateComponents()
-        dateComponents.hour = hour
-        dateComponents.minute = 0
-
-        let content = UNMutableNotificationContent()
-        content.title = intent.notificationTitle
-        content.body = intent.notificationBody
-        content.sound = .default
-        content.userInfo = [
-            BipNotificationIntent.userInfoKey: intent.rawValue,
-        ]
-
-        let trigger = UNCalendarNotificationTrigger(
-            dateMatching: dateComponents,
-            repeats: true
-        )
-        UNUserNotificationCenter.current().add(
-            UNNotificationRequest(identifier: intent.notificationIdentifier, content: content, trigger: trigger)
-        )
-    }
-
     private func postJSON<T: Decodable>(
         path: String,
         body: [String: Any]
@@ -6706,6 +6913,7 @@ final class AgenticViewModel: ObservableObject {
     func createDocument(type: String, workspaceRoot: String) {
         guard !workspaceRoot.isEmpty else { return }
         isCreatingDoc = type
+        beginLongRunningCompletionAttempt(.documentCreation, source: "create_doc", isUserVisible: true)
         docCreationLogs = []
         PostHogTelemetry.capture("mac_document_creation_requested", properties: [
             "doc_type": type,
@@ -6733,6 +6941,10 @@ final class AgenticViewModel: ObservableObject {
             connectionLabel = message
             isConnected = false
             officeHoursSessionCreateInFlight = false
+            finishMcpOauthInFlightAfterSidecarInterruption(
+                detail: "실행 보조 앱이 중단되어 MCP 연결 확인이 끝나지 않았어요 — 다시 시도해 주세요.",
+                markFailedResult: true
+            )
             markRunningSessionsRecoverableAfterSidecarExit(message: message)
             markStartupQueuedActionFailed(message)
             refreshPresentationState()
@@ -6753,7 +6965,6 @@ final class AgenticViewModel: ObservableObject {
             }
             if let bipCoach = event.bipCoach {
                 self.bipCoach = bipCoach
-                syncBipDailyNotifications(for: bipCoach)
             }
             day1GoalSelection = event.day1GoalSelection
             if let dp = event.dayProgress { dayProgress = dp }
@@ -6995,6 +7206,11 @@ final class AgenticViewModel: ObservableObject {
                     authSession: macAuthSession
                 )
             }
+            completeLongRunningCompletionAttempt(
+                .workspaceScan,
+                outcome: .blocked,
+                detail: message
+            )
         case "workspace_scan_progress":
             // Background Day 1 enrichment can report late progress after the
             // foreground scan result. Do not reopen the scan gate unless a new
@@ -7074,6 +7290,19 @@ final class AgenticViewModel: ObservableObject {
                     authSession: macAuthSession
                 )
             }
+            if let error = event.error {
+                completeLongRunningCompletionAttempt(
+                    .workspaceScan,
+                    outcome: .failed,
+                    detail: error
+                )
+            } else {
+                completeLongRunningCompletionAttempt(
+                    .workspaceScan,
+                    outcome: .success,
+                    detail: "워크스페이스 분석이 끝났고 Day 1을 이어갈 수 있어요."
+                )
+            }
         case "day1_goal_state":
             if event.success == false {
                 day1GoalError = event.error ?? event.message ?? "Day 1 목표를 저장하지 못했습니다."
@@ -7132,6 +7361,20 @@ final class AgenticViewModel: ObservableObject {
                     authSession: macAuthSession
                 )
             }
+            if let error = event.error {
+                completeLongRunningCompletionAttempt(
+                    .documentCreation,
+                    outcome: .failed,
+                    docPath: event.docPath,
+                    detail: error
+                )
+            } else {
+                completeLongRunningCompletionAttempt(
+                    .documentCreation,
+                    outcome: .success,
+                    docPath: event.docPath
+                )
+            }
         case "workspace_day1_alignment_plan_result", "workspace_day1_icp_plan_result":
             if event.day1AlignmentPlan != nil || event.day1IcpPlan != nil {
                 isScanning = false
@@ -7175,9 +7418,25 @@ final class AgenticViewModel: ObservableObject {
         case "news_market_radar_result":
             if let snapshot = event.newsMarketRadar {
                 newsMarketRadar = snapshot
+                if let outcome = longRunningCompletionOutcome(
+                    for: snapshot.status.state,
+                    error: snapshot.status.error
+                ) {
+                    completeLongRunningCompletionAttempt(
+                        .newsMarketRadar,
+                        outcome: outcome,
+                        detail: outcome == .success ? newsMarketRadarNotificationDetail(snapshot) : snapshot.status.error
+                    )
+                }
             }
         case "news_market_radar_status":
             if let status = event.newsMarketRadarStatus {
+                if longRunningCompletionStateIsRunning(status.state) {
+                    beginLongRunningCompletionAttemptFromDisplayInterestIfNeeded(
+                        .newsMarketRadar,
+                        source: status.reason ?? "display"
+                    )
+                }
                 newsMarketRadar = NewsMarketRadarSnapshot(
                     schemaVersion: newsMarketRadar.schemaVersion,
                     generatedAt: newsMarketRadar.generatedAt,
@@ -7199,14 +7458,44 @@ final class AgenticViewModel: ObservableObject {
                     workspaceEvidenceRefs: newsMarketRadar.workspaceEvidenceRefs,
                     lanes: newsMarketRadar.lanes
                 )
+                if let outcome = longRunningCompletionOutcome(for: status.state, error: status.error) {
+                    completeLongRunningCompletionAttempt(
+                        .newsMarketRadar,
+                        outcome: outcome,
+                        detail: outcome == .success ? newsMarketRadarNotificationDetail(newsMarketRadar) : status.error
+                    )
+                }
             }
         case "work_history_result":
             if let snapshot = event.workHistory {
                 workHistory = snapshot
+                if let outcome = longRunningCompletionOutcome(
+                    for: snapshot.status.state,
+                    error: snapshot.status.error
+                ) {
+                    completeLongRunningCompletionAttempt(
+                        .workHistory,
+                        outcome: outcome,
+                        detail: outcome == .success ? workHistoryNotificationDetail(snapshot) : snapshot.status.error
+                    )
+                }
             }
         case "work_history_status":
             if let status = event.workHistoryStatus {
+                if longRunningCompletionStateIsRunning(status.state) {
+                    beginLongRunningCompletionAttemptFromDisplayInterestIfNeeded(
+                        .workHistory,
+                        source: status.reason ?? "display"
+                    )
+                }
                 workHistory = workHistory.applying(status: status)
+                if let outcome = longRunningCompletionOutcome(for: status.state, error: status.error) {
+                    completeLongRunningCompletionAttempt(
+                        .workHistory,
+                        outcome: outcome,
+                        detail: outcome == .success ? workHistoryNotificationDetail(workHistory) : status.error
+                    )
+                }
             }
         case "morning_briefing_result":
             if let briefing = event.morningBriefing {
@@ -7218,8 +7507,21 @@ final class AgenticViewModel: ObservableObject {
             morningBriefingCollecting = false
             // 수집 종료: 카드별 진행 잔상을 지운다 — 완성 데이터가 자리를 대체.
             morningBriefingSourceProgress.removeAll()
+            let briefingState = event.morningBriefing?.status?.state
+            let briefingDetail = event.morningBriefing?.status?.detail
+            completeLongRunningCompletionAttempt(
+                .morningBriefing,
+                outcome: briefingState == "failed" ? .failed : .success,
+                detail: briefingState == "failed" ? briefingDetail : event.morningBriefing?.summary?.title
+            )
         case "morning_briefing_status":
             morningBriefingCollecting = event.morningBriefingStatus?.state == "collecting"
+            if longRunningCompletionStateIsRunning(event.morningBriefingStatus?.state) {
+                beginLongRunningCompletionAttemptFromDisplayInterestIfNeeded(
+                    .morningBriefing,
+                    source: "display"
+                )
+            }
         case "morning_briefing_progress":
             if let cards = event.morningBriefingProgress?.cards {
                 morningBriefingSourceProgress = Dictionary(
@@ -7233,12 +7535,14 @@ final class AgenticViewModel: ObservableObject {
             reportIntegrationStatusTelemetry(event.integrationStatus)
         case "mcp_oauth_connect_status":
             // Live prewarm progress: caption text + auto-open the OAuth login
-            // URL once (the sidecar can't open a browser; the app can).
+            // URL once when the sidecar asks the app to present it.
             if let update = event.mcpOauthConnect, let server = update.server, !server.isEmpty {
                 if let detail = update.detail, !detail.isEmpty {
                     mcpOauthProgress[server] = detail
                 }
-                if let loginUrl = update.loginUrl,
+                let shouldOpenBrowser = update.openBrowser ?? true
+                if shouldOpenBrowser,
+                   let loginUrl = update.loginUrl,
                    !loginUrl.isEmpty,
                    !mcpOauthOpenedLoginUrls.contains(loginUrl),
                    let url = URL(string: loginUrl) {
@@ -7252,6 +7556,7 @@ final class AgenticViewModel: ObservableObject {
                 mcpOauthConnecting.remove(server)
                 mcpOauthProgress.removeValue(forKey: server)
                 reportMcpOauthConnectTelemetry(result)
+                maybePostMcpOauthConnectedNotification(for: result)
             } else {
                 mcpOauthConnecting.removeAll()
                 mcpOauthProgress.removeAll()
@@ -7262,9 +7567,25 @@ final class AgenticViewModel: ObservableObject {
         case "bip_research_result":
             if let snapshot = event.bipResearch {
                 bipResearch = snapshot
+                if let outcome = longRunningCompletionOutcome(
+                    for: snapshot.status.state,
+                    error: snapshot.status.error
+                ) {
+                    completeLongRunningCompletionAttempt(
+                        .bipResearch,
+                        outcome: outcome,
+                        detail: outcome == .success ? bipResearchNotificationDetail(snapshot) : snapshot.status.error
+                    )
+                }
             }
         case "bip_research_status":
             if let status = event.bipResearchStatus {
+                if longRunningCompletionStateIsRunning(status.state) {
+                    beginLongRunningCompletionAttemptFromDisplayInterestIfNeeded(
+                        .bipResearch,
+                        source: status.reason ?? "display"
+                    )
+                }
                 bipResearch = BipResearchSnapshot(
                     schemaVersion: bipResearch.schemaVersion,
                     contentLocale: bipResearch.contentLocale,
@@ -7297,11 +7618,17 @@ final class AgenticViewModel: ObservableObject {
                     signals: bipResearch.signals,
                     candidates: bipResearch.candidates
                 )
+                if let outcome = longRunningCompletionOutcome(for: status.state, error: status.error) {
+                    completeLongRunningCompletionAttempt(
+                        .bipResearch,
+                        outcome: outcome,
+                        detail: outcome == .success ? bipResearchNotificationDetail(bipResearch) : status.error
+                    )
+                }
             }
         case "bip_coach_state":
             if let bipCoach = event.bipCoach {
                 self.bipCoach = bipCoach
-                syncBipDailyNotifications(for: bipCoach)
             }
         case "bip_setup_gate_state":
             updateBipSetupGate(from: event)
@@ -7361,6 +7688,11 @@ final class AgenticViewModel: ObservableObject {
             if let bipCoach = event.bipCoach {
                 self.bipCoach = bipCoach
             }
+            completeLongRunningCompletionAttempt(
+                .bipMission,
+                outcome: .success,
+                detail: bipMissionNotificationDetail(event.bipCoach ?? bipCoach)
+            )
         case "bip_coach_completion_completed":
             isBipCoachCompleting = false
             let completedDay = event.bipCoach?.currentMission?.curriculumDay?.day
@@ -7368,7 +7700,6 @@ final class AgenticViewModel: ObservableObject {
                 ?? selectedFoundationDay
             if let bipCoach = event.bipCoach {
                 self.bipCoach = bipCoach
-                syncBipDailyNotifications(for: bipCoach)
             }
             markFoundationDayCompleted(completedDay)
         case "bip_coach_error":
@@ -7380,6 +7711,11 @@ final class AgenticViewModel: ObservableObject {
             if let bipCoach = event.bipCoach {
                 self.bipCoach = bipCoach
             }
+            completeLongRunningCompletionAttempt(
+                .bipMission,
+                outcome: .failed,
+                detail: lastError
+            )
         case "notion_oauth_started":
             notionOAuthInProgress = true
             notionOAuthError = nil
@@ -7489,6 +7825,13 @@ final class AgenticViewModel: ObservableObject {
             bipMissionProgress = event.bipMissionProgress
         case "error":
             lastError = event.message
+            if longRunningCompletionAttempts[.bipMission] != nil {
+                completeLongRunningCompletionAttempt(
+                    .bipMission,
+                    outcome: .failed,
+                    detail: event.message
+                )
+            }
             if day1DocHandoffPendingDocType != nil {
                 day1DocHandoffPendingDocType = nil
                 day1DocHandoffError = event.message ?? "문서 질문 카드를 준비하지 못했습니다."
@@ -7501,6 +7844,10 @@ final class AgenticViewModel: ObservableObject {
                 connectionLabel = event.message ?? connectionLabel
                 isConnected = false
                 officeHoursSessionCreateInFlight = false
+                finishMcpOauthInFlightAfterSidecarInterruption(
+                    detail: "실행 보조 앱 오류로 MCP 연결 확인이 끝나지 않았어요 — 다시 시도해 주세요.",
+                    markFailedResult: true
+                )
                 if shouldRecoverRunningSessions(forGlobalSidecarError: event.message) {
                     markRunningSessionsRecoverableAfterSidecarExit(
                         message: event.message ?? "실행 보조 앱 연결이 끊겼습니다."
@@ -9881,6 +10228,9 @@ final class AgenticViewModel: ObservableObject {
     /// sidecar re-broadcasts `question_ready` (250ms poller + end-of-run emit)
     /// for the same request, so dedupe must outlive the live-status entry.
     private var notifiedQuestionReadyRequestIds: Set<String> = []
+    private var longRunningCompletionAttempts: [LongRunningCompletionNotificationKind: LongRunningCompletionAttempt] = [:]
+    private var pendingLongRunningDisplayAttempts: [LongRunningCompletionNotificationKind: Date] = [:]
+    private var notifiedLongRunningCompletionAttemptIds: Set<String> = []
 
     private func maybePostQuestionReadyNotification(for status: OfficeHoursLiveStatus) {
         guard OfficeHoursQuestionReadyNotifier.shouldNotify(
@@ -9909,12 +10259,148 @@ final class AgenticViewModel: ObservableObject {
             || ProcessInfo.processInfo.environment["AGENTIC30_TEST_STUB_PROVIDER"] == "1"
     }
 
-    private func postQuestionReadyNotification(
-        sessionId: String,
-        requestId: String,
+    private func markLongRunningCompletionDisplayInterest(_ kind: LongRunningCompletionNotificationKind) {
+        pendingLongRunningDisplayAttempts[kind] = Date()
+    }
+
+    private func longRunningCompletionReasonIsUserVisible(_ reason: String) -> Bool {
+        let normalized = reason.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return true }
+        return !["auto", "background", "daily", "hourly", "live_sync", "startup"].contains(normalized)
+    }
+
+    private func beginLongRunningCompletionAttempt(
+        _ kind: LongRunningCompletionNotificationKind,
+        source: String,
+        isUserVisible: Bool,
+        startedAt: Date = Date()
+    ) {
+        guard isUserVisible else { return }
+        longRunningCompletionAttempts[kind] = LongRunningCompletionAttempt(
+            id: "\(kind.rawValue).\(UUID().uuidString)",
+            kind: kind,
+            startedAt: startedAt,
+            source: source,
+            isUserVisible: isUserVisible
+        )
+        pendingLongRunningDisplayAttempts.removeValue(forKey: kind)
+    }
+
+    private func beginLongRunningCompletionAttemptFromDisplayInterestIfNeeded(
+        _ kind: LongRunningCompletionNotificationKind,
+        source: String
+    ) {
+        guard longRunningCompletionAttempts[kind] == nil,
+              let markedAt = pendingLongRunningDisplayAttempts[kind],
+              Date().timeIntervalSince(markedAt) <= 5 * 60 else {
+            return
+        }
+        beginLongRunningCompletionAttempt(kind, source: source, isUserVisible: true)
+    }
+
+    private func completeLongRunningCompletionAttempt(
+        _ kind: LongRunningCompletionNotificationKind,
+        outcome: LongRunningCompletionOutcome,
+        docPath: String? = nil,
+        detail: String? = nil
+    ) {
+        guard let attempt = longRunningCompletionAttempts.removeValue(forKey: kind) else {
+            return
+        }
+        pendingLongRunningDisplayAttempts.removeValue(forKey: kind)
+        let elapsed = Date().timeIntervalSince(attempt.startedAt)
+        guard LongRunningCompletionNotifier.shouldNotify(
+            attemptId: attempt.id,
+            alreadyNotifiedAttemptIds: notifiedLongRunningCompletionAttemptIds,
+            isUserVisibleAttempt: attempt.isUserVisible,
+            elapsed: elapsed,
+            isAppActive: NSApp.isActive,
+            isEnabled: isLongRunningCompletionNotificationEnabled,
+            isUITesting: Self.isUITestingOrStubProviderLaunch()
+        ) else {
+            return
+        }
+
+        notifiedLongRunningCompletionAttemptIds.insert(attempt.id)
+        let notification = LongRunningCompletionNotification(
+            kind: kind,
+            outcome: outcome,
+            docPath: docPath,
+            detail: detail
+        )
+        Task {
+            await postLongRunningCompletionNotification(
+                notification,
+                elapsed: elapsed,
+                source: attempt.source
+            )
+        }
+    }
+
+    private func longRunningCompletionStateIsRunning(_ state: String?) -> Bool {
+        switch state ?? "" {
+        case "collecting", "refreshing", "running", "indexing", "generating":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func longRunningCompletionOutcome(for state: String?, error: String?) -> LongRunningCompletionOutcome? {
+        if error?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty != nil {
+            return .failed
+        }
+        switch state ?? "" {
+        case "ready", "stale", "empty", "github_required":
+            return .success
+        case "failed", "error":
+            return .failed
+        default:
+            return nil
+        }
+    }
+
+    private func workHistoryNotificationDetail(_ snapshot: WorkHistorySnapshot) -> String {
+        if snapshot.status.state == "github_required" {
+            return "GitHub 연결 후 더 정확한 히스토리를 만들 수 있어요."
+        }
+        if snapshot.hasData {
+            return "AI 세션 \(snapshot.totals.sessionCount)개와 이번 주 흐름을 정리했어요."
+        }
+        return "이번 주 작업 히스토리를 볼 수 있어요."
+    }
+
+    private func bipResearchNotificationDetail(_ snapshot: BipResearchSnapshot) -> String {
+        let count = snapshot.candidateCount
+        guard count > 0 else {
+            return "공개 신호와 고객 후보 리서치를 확인할 수 있어요."
+        }
+        return "고객 후보 \(count)개와 공개 신호를 확인할 수 있어요."
+    }
+
+    private func newsMarketRadarNotificationDetail(_ snapshot: NewsMarketRadarSnapshot) -> String {
+        let count = snapshot.cardCount
+        guard count > 0 else {
+            return "시장 신호 업데이트를 확인할 수 있어요."
+        }
+        return "시장 신호 카드 \(count)개를 확인할 수 있어요."
+    }
+
+    private func bipMissionNotificationDetail(_ coach: BipCoachState?) -> String {
+        if let title = coach?.currentMission?.title?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty {
+            return title
+        }
+        return "근거 기반 실행 미션을 확인할 수 있어요."
+    }
+
+    @discardableResult
+    private func postLocalNotification(
+        identifier: String,
         title: String,
-        body: String?
-    ) async {
+        body: String?,
+        userInfo: [AnyHashable: Any],
+        removeDeliveredIdentifiers: [String] = []
+    ) async -> Bool {
         let center = UNUserNotificationCenter.current()
         let settings = await withCheckedContinuation { continuation in
             center.getNotificationSettings { settings in
@@ -9927,7 +10413,7 @@ final class AgenticViewModel: ObservableObject {
         if settings.authorizationStatus == .notDetermined {
             authorized = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
         }
-        guard authorized else { return }
+        guard authorized else { return false }
 
         let content = UNMutableNotificationContent()
         content.title = title
@@ -9935,17 +10421,94 @@ final class AgenticViewModel: ObservableObject {
             content.body = body
         }
         content.sound = .default
-        content.userInfo = [
-            OfficeHoursQuestionReadyNotification.sessionIdUserInfoKey: sessionId,
-        ]
+        content.userInfo = userInfo
 
+        if !removeDeliveredIdentifiers.isEmpty {
+            center.removeDeliveredNotifications(withIdentifiers: removeDeliveredIdentifiers)
+        }
         try? await center.add(UNNotificationRequest(
-            identifier: OfficeHoursQuestionReadyNotification.notificationIdentifier(requestId: requestId),
+            identifier: identifier,
             content: content,
             trigger: nil
         ))
+        return true
+    }
+
+    private func postQuestionReadyNotification(
+        sessionId: String,
+        requestId: String,
+        title: String,
+        body: String?
+    ) async {
+        let posted = await postLocalNotification(
+            identifier: OfficeHoursQuestionReadyNotification.notificationIdentifier(requestId: requestId),
+            title: title,
+            body: body,
+            userInfo: [
+                OfficeHoursQuestionReadyNotification.sessionIdUserInfoKey: sessionId,
+            ]
+        )
+        guard posted else { return }
         PostHogTelemetry.capture(
             "mac_office_hours_question_ready_notification_posted",
+            authSession: macAuthSession
+        )
+    }
+
+    private func maybePostMcpOauthConnectedNotification(for result: McpOauthConnectResult) {
+        guard McpOauthConnectedNotifier.shouldNotify(
+            server: result.server,
+            state: result.state,
+            isUITesting: Self.isUITestingOrStubProviderLaunch()
+        ), let notification = McpOauthConnectedNotification(server: result.server) else { return }
+
+        Task {
+            await postMcpOauthConnectedNotification(notification)
+        }
+    }
+
+    private func postMcpOauthConnectedNotification(_ notification: McpOauthConnectedNotification) async {
+        let posted = await postLocalNotification(
+            identifier: notification.notificationIdentifier,
+            title: notification.notificationTitle,
+            body: notification.notificationBody,
+            userInfo: [
+                McpOauthConnectedNotification.serverUserInfoKey: notification.server,
+            ],
+            removeDeliveredIdentifiers: [notification.notificationIdentifier]
+        )
+        guard posted else { return }
+        PostHogTelemetry.capture(
+            "mac_mcp_oauth_connected_notification_posted",
+            properties: [
+                "server": notification.server,
+            ],
+            authSession: macAuthSession
+        )
+    }
+
+    private func postLongRunningCompletionNotification(
+        _ notification: LongRunningCompletionNotification,
+        elapsed: TimeInterval,
+        source: String
+    ) async {
+        let posted = await postLocalNotification(
+            identifier: notification.notificationIdentifier,
+            title: notification.notificationTitle,
+            body: notification.notificationBody,
+            userInfo: notification.userInfo,
+            removeDeliveredIdentifiers: [notification.notificationIdentifier]
+        )
+        guard posted else { return }
+        PostHogTelemetry.capture(
+            "mac_long_running_completion_notification_posted",
+            properties: [
+                "kind": notification.kind.rawValue,
+                "outcome": notification.outcome.rawValue,
+                "route": notification.route.rawValue,
+                "elapsed_ms": Int((elapsed * 1000).rounded()),
+                "source": source,
+            ],
             authSession: macAuthSession
         )
     }
@@ -10963,6 +11526,9 @@ private extension AgenticViewModel {
         isCreatingDoc = nil
         docCreationLogs = []
         lastDocCreated = nil
+        longRunningCompletionAttempts.removeAll()
+        pendingLongRunningDisplayAttempts.removeAll()
+        notifiedLongRunningCompletionAttemptIds.removeAll()
         macAuthSession = nil
         macOnboardingStatus = .idle
         macOnboardingIntroCompleted = false
@@ -10996,7 +11562,6 @@ private extension AgenticViewModel {
         submittedStructuredPromptBySession = [:]
         structuredPromptDraftBySession = [:]
         sidecarOutputLogs = [:]
-        bipNotificationOpenRequest = nil
         startupQueuedAction = nil
         startupSessionAppearElapsedMs = nil
         reviewDayDashboardViewModel = nil

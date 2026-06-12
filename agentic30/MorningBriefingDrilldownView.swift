@@ -748,6 +748,8 @@ struct MorningBriefingDrilldownView: View {
                             .fill(OpenDesignDayColor.rose.opacity(index == coords.count - 1 ? 1 : 0.5))
                             .frame(width: index == coords.count - 1 ? 7 : 5, height: index == coords.count - 1 ? 7 : 5)
                             .position(coord)
+                            .help(points[index].tip ?? points[index].label ?? "")
+                            .accessibilityLabel(points[index].tip ?? points[index].label ?? "")
                     }
                 }
             }
@@ -760,6 +762,7 @@ struct MorningBriefingDrilldownView: View {
                         .foregroundStyle(index == points.count - 1 ? OpenDesignDayColor.rose : OpenDesignDayColor.mutedDeep)
                         .frame(maxWidth: .infinity, alignment: index == 0 ? .leading : index == points.count - 1 ? .trailing : .center)
                         .lineLimit(1)
+                        .help(point.tip ?? point.label ?? "")
                 }
             }
         }

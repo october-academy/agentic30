@@ -59,13 +59,13 @@ struct PostHogTelemetryRuntimePolicy: Equatable {
         return PostHogTelemetryRuntimePolicy(
             telemetryEnvironment: telemetryEnvironment,
             buildConfiguration: buildConfiguration,
-            isInternalTraffic: isDebugBuild,
+            isInternalTraffic: isDebugBuild || isTruthy(environment[internalTrafficEnvironmentKey]),
             isDevelopmentTelemetryEnabled: isDevelopmentTelemetryEnabled,
             isSuppressed: isSuppressed
         )
     }
 
-    private static func isTruthy(_ value: String?) -> Bool {
+    static func isTruthy(_ value: String?) -> Bool {
         guard let value else { return false }
         switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "1", "true", "yes", "on":
@@ -365,9 +365,11 @@ enum PostHogHostResolver {
 
 enum PostHogTelemetry {
     static let telemetryDisabledDefaultsKey = "agentic30.posthog.telemetryDisabled"
+    static let internalTrafficDefaultsKey = "agentic30.posthog.internalTraffic"
     static let bundleProjectAPIKeyInfoPlistKey = "Agentic30PostHogProjectAPIKey"
     static let bundleHostInfoPlistKey = "Agentic30PostHogHost"
     private static let distinctIDDefaultsKey = "agentic30.posthog.distinctId"
+    private static let internalTesterIdentifiedDefaultsPrefix = "agentic30.posthog.internalTesterIdentified."
     private static let captureOnceDefaultsPrefix = "agentic30.posthog.once."
     private static let stalePendingOnceDefaultsPrefix = "agentic30.posthog.once.pending."
     private static let captureFileEnvironmentKey = "AGENTIC30_TELEMETRY_CAPTURE_FILE"
@@ -705,6 +707,9 @@ enum PostHogTelemetry {
         case .none:
             break
         }
+        if !disabled {
+            identifyInternalTesterIfNeeded()
+        }
         return !disabled || configurationProvider != nil
     }
 
@@ -776,11 +781,42 @@ enum PostHogTelemetry {
     }
 
     private static var currentRuntimePolicy: PostHogTelemetryRuntimePolicy {
-        PostHogTelemetryRuntimePolicy.resolve(
+        runtimePolicy(
             isDebugBuild: isDebugBuild,
             environment: ProcessInfo.processInfo.environment,
             arguments: CommandLine.arguments
         )
+    }
+
+    static func runtimePolicyForTesting(
+        isDebugBuild: Bool,
+        environment: [String: String],
+        arguments: [String]
+    ) -> PostHogTelemetryRuntimePolicy {
+        runtimePolicy(isDebugBuild: isDebugBuild, environment: environment, arguments: arguments)
+    }
+
+    private static func runtimePolicy(
+        isDebugBuild: Bool,
+        environment: [String: String],
+        arguments: [String]
+    ) -> PostHogTelemetryRuntimePolicy {
+        PostHogTelemetryRuntimePolicy.resolve(
+            isDebugBuild: isDebugBuild,
+            environment: environmentByApplyingLocalInternalTrafficOverride(to: environment),
+            arguments: arguments
+        )
+    }
+
+    private static func environmentByApplyingLocalInternalTrafficOverride(
+        to environment: [String: String]
+    ) -> [String: String] {
+        guard UserDefaults.standard.bool(forKey: internalTrafficDefaultsKey) else {
+            return environment
+        }
+        var resolved = environment
+        resolved[PostHogTelemetryRuntimePolicy.internalTrafficEnvironmentKey] = "1"
+        return resolved
     }
 
     private static var isDebugBuild: Bool {
@@ -798,6 +834,29 @@ enum PostHogTelemetry {
     private static var sdkDisabledState: Bool {
         isTelemetryDisabledByUser
             || (configurationProvider == nil && isTelemetrySuppressedForCurrentProcess)
+    }
+
+    private static var isExplicitInternalTrafficOverrideEnabled: Bool {
+        UserDefaults.standard.bool(forKey: internalTrafficDefaultsKey)
+            || PostHogTelemetryRuntimePolicy.isTruthy(
+                ProcessInfo.processInfo.environment[PostHogTelemetryRuntimePolicy.internalTrafficEnvironmentKey]
+            )
+    }
+
+    private static func identifyInternalTesterIfNeeded() {
+        guard isExplicitInternalTrafficOverrideEnabled else { return }
+        let distinctID = anonymousDistinctID()
+        let defaultsKey = internalTesterIdentifiedDefaultsPrefix + distinctID
+        guard !UserDefaults.standard.bool(forKey: defaultsKey) else { return }
+
+        sdkClient.identify(
+            distinctID,
+            userProperties: PostHogTelemetrySanitizer.sanitize([
+                "platform": "macos",
+                "is_internal_tester": true,
+            ])
+        )
+        UserDefaults.standard.set(true, forKey: defaultsKey)
     }
 
     private static var hasConfiguredCaptureSink: Bool {

@@ -1254,16 +1254,18 @@ final class AgenticViewModelAuthTests {
 
         #expect(state.lines.map(\.command) == [
             "sidecar.ready",
+            "scan.prepare",
             "scan.local",
             "scan.verify",
             "scan.agent",
             "scan.result",
         ])
         #expect(state.lines[0].status == "✓ · v22.0.0 · pid 4242 · agentic30-public")
-        #expect(state.lines[1].status == "checking workspace files")
-        #expect(state.lines[2].status == "3 local candidates found")
-        #expect(state.lines[3].status == "verifying context")
-        #expect(state.lines[4].status == "✓ 3 artifacts verified")
+        #expect(state.lines[1].status == "queueing workspace scan")
+        #expect(state.lines[2].status == "checking workspace files")
+        #expect(state.lines[3].status == "3 local candidates found")
+        #expect(state.lines[4].status == "verifying context")
+        #expect(state.lines[5].status == "✓ 3 artifacts verified")
         #expect(!state.lines.contains { $0.status == "Preparing workspace scan..." })
         #expect(!state.lines.contains { $0.status?.contains("Claude Sonnet") == true })
         #expect(!state.lines.contains { $0.status?.contains("gpt-5.1-codex-mini") == true })
@@ -1284,8 +1286,7 @@ final class AgenticViewModelAuthTests {
             workspaceRoot: "",
             diagnostics: nil,
             scanProgressLogs: [
-                "Waiting for workspace connection...",
-                "Starting workspace scan..."
+                "Waiting for workspace connection..."
             ],
             scanDidComplete: false,
             scanError: nil,
@@ -1294,9 +1295,12 @@ final class AgenticViewModelAuthTests {
         )
 
         #expect(pending.lines.count == 1)
-        #expect(pending.lines[0].command == "scan.local")
-        #expect(pending.lines[0].status == "checking workspace files")
+        #expect(pending.lines[0].command == "sidecar.connect")
+        #expect(pending.lines[0].status == "starting sidecar")
         #expect(pending.lines[0].isActive)
+        #expect(pending.scanPhase.stage == .connecting)
+        #expect(pending.scanPhase.stepIndex == 0)
+        #expect(pending.scanPhase.label == "0/3")
         #expect(!pending.scanDidComplete)
         #expect(!pending.scanDidFail)
         #expect(pending.scanElapsed == nil)
@@ -1318,10 +1322,12 @@ final class AgenticViewModelAuthTests {
         )
 
         #expect(state.lines.map(\.command) == [
+            "sidecar.connect",
             "scan.local",
             "scan.failed",
         ])
-        #expect(state.lines.first?.status == "checking workspace files")
+        #expect(state.lines.first?.status == "starting sidecar")
+        #expect(state.lines.dropFirst().first?.status == "checking workspace files")
         #expect(state.lines.last?.status == "✗ Workspace root is not a directory.")
         #expect(state.scanDidComplete)
         #expect(state.scanDidFail)
@@ -1433,6 +1439,7 @@ final class AgenticViewModelAuthTests {
 
     @Test @MainActor func intakeV2BootLogStateMapsSequentialStructuredScanPhases() {
         let cases: [(stage: String, stepIndex: Int, expectedStage: IntakeV2BootLogState.ScanStage, expectedLabel: String)] = [
+            ("connecting", 0, .connecting, "0/3"),
             ("local", 1, .local, "1/3"),
             ("verifying", 2, .verifying, "2/3"),
             ("composing", 3, .composing, "3/3"),
@@ -1507,6 +1514,39 @@ final class AgenticViewModelAuthTests {
         )
         #expect(missingElapsedPresentation.primaryCTATitle(questionCount: 3) == "45초 남음 (예상)")
         #expect(missingElapsedPresentation.primaryCTAAccessibilityLabel(questionCount: 3) == "질문 3개 준비 중, 45초 남음 예상")
+
+        let connecting = IntakeV2BootLogState(
+            isConnected: false,
+            workspaceRoot: "",
+            diagnostics: nil,
+            scanProgressLogs: ["Waiting for workspace connection..."],
+            scanProgressSnapshots: [
+                WorkspaceScanProgressSnapshot(
+                    progressText: "Waiting for workspace connection...",
+                    stage: "connecting",
+                    stepIndex: 0,
+                    totalSteps: 3
+                ),
+            ],
+            scanDidComplete: false,
+            scanError: nil,
+            foundArtifactCount: nil,
+            isScanning: true,
+            scanStartedAt: start
+        )
+        let connectingPresentation = Day1ScanWaitPresentation(
+            bootLogState: connecting,
+            hasFolder: true,
+            hasWorkspaceScanResult: false,
+            now: start.addingTimeInterval(300)
+        )
+        #expect(connecting.scanPhase.stage == .connecting)
+        #expect(connecting.scanPhase.label == "0/3")
+        #expect(connectingPresentation.state == .connecting)
+        #expect(connectingPresentation.headerTitle(questionCount: 3) == "실행 보조 앱 연결 중")
+        #expect(connectingPresentation.primaryCTATitle(questionCount: 3) == "연결 중…")
+        #expect(connectingPresentation.primaryCTAAccessibilityLabel(questionCount: 3) == "실행 보조 앱 연결 중")
+        #expect(connectingPresentation.estimatedRemainingSeconds == nil)
 
         let startingPresentation = Day1ScanWaitPresentation(
             bootLogState: running,

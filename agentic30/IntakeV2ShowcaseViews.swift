@@ -1774,6 +1774,9 @@ struct IntakeV2ReadyAnalyzeView: View {
         if store.folderURL == nil {
             return "폴더 없이 시작합니다. 앞서 답한 내용만으로 질문을 준비합니다."
         }
+        if presentation.state == .connecting {
+            return "실행 보조 앱이 연결되면 폴더 신호를 읽습니다."
+        }
         if presentation.isBlocked {
             return "로컬 신호만으로는 Day 1을 시작하지 않습니다. AI 연결을 확인한 뒤 다시 검증하세요."
         }
@@ -1902,6 +1905,8 @@ struct IntakeV2ReadyAnalyzeView: View {
     private func scanPreviewTitle(for presentation: Day1ScanWaitPresentation) -> String {
         guard store.folderURL != nil else { return "답변 정리" }
         switch presentation.phase.stage {
+        case .connecting:
+            return "실행 보조 앱 연결 중"
         case .local:
             return "자료 후보 찾는 중"
         case .verifying:
@@ -1922,6 +1927,8 @@ struct IntakeV2ReadyAnalyzeView: View {
             return "폴더 없이 앞서 답한 내용만 사용합니다."
         }
         switch presentation.phase.stage {
+        case .connecting:
+            return "연결되면 폴더 신호를 읽고 질문 근거를 검증합니다."
         case .local:
             return "질문에 쓸 자료 후보만 빠르게 확인합니다."
         case .verifying:
@@ -2087,6 +2094,7 @@ struct IntakeV2ReadyAnalyzeView: View {
         presentation: Day1ScanWaitPresentation
     ) -> ScanPreviewSlotStatus {
         guard !presentation.canOpenDay1 else { return .complete }
+        if presentation.state == .connecting { return .pending }
         let activeIndex = min(max(presentation.phase.stepIndex - 1, 0), previewSlots.count - 1)
         if index < activeIndex { return .complete }
         if presentation.isBlocked { return .pending }

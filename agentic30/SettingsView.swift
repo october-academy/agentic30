@@ -169,7 +169,6 @@ struct SettingsView: View {
     // MARK: - Workspace State
 
     @State private var workspaceRootPath = ""
-    @State private var advancedToolsMessage = ""
     @State private var confettiTestRunID = 0
     @State private var localDataConfirmation: LocalDataConfirmation?
     @State private var localSelectedSection: SettingsSection = .workspace
@@ -194,6 +193,7 @@ struct SettingsView: View {
     @State private var settingsThemeChoice = Agentic30Theme.current == .dark ? "dark" : "light"
     @AppStorage(Agentic30Theme.storageKey) private var appThemeRawValue = Agentic30Theme.defaultTheme.rawValue
     @AppStorage(AgenticViewModel.questionReadyNotificationDefaultsKey) private var questionReadyNotificationEnabled = true
+    @AppStorage(AgenticViewModel.longRunningCompletionNotificationDefaultsKey) private var longRunningCompletionNotificationEnabled = true
 
     private enum LocalDataConfirmation: Identifiable {
         case reset
@@ -926,6 +926,10 @@ struct SettingsView: View {
                     odSettingsToggle(isOn: $questionReadyNotificationEnabled)
                         .accessibilityIdentifier("settings.menubar.questionReadyNotification.toggle")
                 }
+                odSettingsRow(title: "작업 완료 알림", detail: "브리핑, 리서치, 히스토리, 문서 생성처럼 오래 걸리는 작업이 끝나면 macOS 알림을 보냅니다.") {
+                    odSettingsToggle(isOn: $longRunningCompletionNotificationEnabled)
+                        .accessibilityIdentifier("settings.menubar.longRunningCompletionNotification.toggle")
+                }
             }
         }
     }
@@ -1060,7 +1064,7 @@ struct SettingsView: View {
                             odSettingsStatus(
                                 vercelMcpStatusLabel,
                                 color: vercelMcpStatusColor,
-                                isLoading: viewModel.mcpOauthConnecting.contains("vercel") || viewModel.integrationStatusChecking
+                                isLoading: viewModel.integrationStatusChecking
                             )
                             Text("https://mcp.vercel.com")
                                 .font(.system(size: 11.5, weight: .medium, design: .monospaced))
@@ -1071,7 +1075,7 @@ struct SettingsView: View {
                                 systemImage: "arrow.clockwise",
                                 width: 88,
                                 identifier: "settings.vercel.refreshStatusButton",
-                                isDisabled: viewModel.integrationStatusChecking,
+                                isDisabled: integrationActionLocked,
                                 isLoading: viewModel.integrationStatusChecking
                             ) {
                                 viewModel.refreshIntegrationStatus()
@@ -1081,13 +1085,13 @@ struct SettingsView: View {
                                 systemImage: "link",
                                 width: 96,
                                 identifier: "settings.vercel.mcpConnectButton",
-                                isDisabled: viewModel.mcpOauthConnecting.contains("vercel"),
+                                isDisabled: integrationActionLocked,
                                 isLoading: viewModel.mcpOauthConnecting.contains("vercel")
                             ) {
                                 viewModel.connectMcpOauth(server: "vercel")
                             }
                         }
-                        integrationProbeCaption(viewModel.integrationStatus?.vercel)
+                        integrationProbeCaption(viewModel.integrationStatus?.vercel, server: "vercel")
                         mcpOauthResultCaption("vercel")
                     }
                 }
@@ -1097,7 +1101,7 @@ struct SettingsView: View {
                             odSettingsStatus(
                                 cloudflareMcpStatusLabel,
                                 color: cloudflareMcpStatusColor,
-                                isLoading: viewModel.mcpOauthConnecting.contains("cloudflare") || viewModel.integrationStatusChecking
+                                isLoading: viewModel.integrationStatusChecking
                             )
                             Text("Codemode")
                                 .font(.system(size: 11.5, weight: .medium))
@@ -1109,7 +1113,7 @@ struct SettingsView: View {
                                 systemImage: "arrow.clockwise",
                                 width: 88,
                                 identifier: "settings.cloudflare.refreshStatusButton",
-                                isDisabled: viewModel.integrationStatusChecking,
+                                isDisabled: integrationActionLocked,
                                 isLoading: viewModel.integrationStatusChecking
                             ) {
                                 viewModel.refreshIntegrationStatus()
@@ -1119,7 +1123,7 @@ struct SettingsView: View {
                                 systemImage: "link",
                                 width: 96,
                                 identifier: "settings.cloudflare.mcpConnectButton",
-                                isDisabled: viewModel.mcpOauthConnecting.contains("cloudflare"),
+                                isDisabled: integrationActionLocked,
                                 isLoading: viewModel.mcpOauthConnecting.contains("cloudflare")
                             ) {
                                 // OAuth 트리거+검증: AI가 Cloudflare MCP 도구를 1회 호출 —
@@ -1129,7 +1133,7 @@ struct SettingsView: View {
                         }
                         secureAgentField(label: "CLOUDFLARE_API_TOKEN (선택 · 드릴다운 직접 집계)", placeholder: "Cloudflare API token (Analytics Read 권한)", text: $cloudflareApiToken, identifier: "settings.cloudflare.apiTokenField")
                         plainAgentField(label: "CLOUDFLARE_MCP_URL", placeholder: KeychainHelper.Settings.defaultCloudflareMcpURL, text: $cloudflareMcpURL, identifier: "settings.cloudflare.mcpUrlField")
-                        integrationProbeCaption(viewModel.integrationStatus?.cloudflare)
+                        integrationProbeCaption(viewModel.integrationStatus?.cloudflare, server: "cloudflare")
                         mcpOauthResultCaption("cloudflare")
                     }
                 }
@@ -1142,7 +1146,7 @@ struct SettingsView: View {
                             odSettingsStatus(
                                 posthogMcpStatusLabel,
                                 color: posthogMcpStatusColor,
-                                isLoading: viewModel.mcpOauthConnecting.contains("posthog") || viewModel.integrationStatusChecking
+                                isLoading: viewModel.integrationStatusChecking
                             )
                             odSettingsSegmented(values: ["US", "EU"], selection: posthogMcpRegionSelection)
                             Text("Readonly")
@@ -1155,7 +1159,7 @@ struct SettingsView: View {
                                 systemImage: "arrow.clockwise",
                                 width: 88,
                                 identifier: "settings.posthog.refreshStatusButton",
-                                isDisabled: viewModel.integrationStatusChecking,
+                                isDisabled: integrationActionLocked,
                                 isLoading: viewModel.integrationStatusChecking
                             ) {
                                 viewModel.refreshIntegrationStatus()
@@ -1165,7 +1169,7 @@ struct SettingsView: View {
                                 systemImage: "link",
                                 width: 96,
                                 identifier: "settings.posthog.mcpConnectButton",
-                                isDisabled: viewModel.mcpOauthConnecting.contains("posthog"),
+                                isDisabled: integrationActionLocked,
                                 isLoading: viewModel.mcpOauthConnecting.contains("posthog")
                             ) {
                                 viewModel.connectMcpOauth(server: "posthog")
@@ -1176,7 +1180,7 @@ struct SettingsView: View {
                         plainAgentField(label: "POSTHOG_HOST", placeholder: "https://us.posthog.com", text: $posthogHost, identifier: "settings.posthog.hostField")
                         plainAgentField(label: "POSTHOG_MCP_URL", placeholder: KeychainHelper.Settings.defaultPostHogMcpURL, text: $posthogMcpURL, identifier: "settings.posthog.mcpUrlField")
                         plainAgentField(label: "POSTHOG_MCP_FEATURES", placeholder: KeychainHelper.Settings.defaultPostHogMcpFeatures, text: $posthogMcpFeatures, identifier: "settings.posthog.mcpFeaturesField")
-                        integrationProbeCaption(viewModel.integrationStatus?.posthog)
+                        integrationProbeCaption(viewModel.integrationStatus?.posthog, server: "posthog")
                         mcpOauthResultCaption("posthog")
                     }
                 }
@@ -1229,47 +1233,49 @@ struct SettingsView: View {
     }
 
     private var vercelMcpStatusLabel: String {
-        if viewModel.mcpOauthConnecting.contains("vercel") { return "MCP 확인 중…" }
+        if viewModel.mcpOauthConnecting.contains("vercel") { return "MCP 연결 중" }
         if let prewarm = viewModel.mcpOauthResults["vercel"] {
             if prewarm.isReady { return "MCP 연결됨" }
-            return prewarm.isLoginPending ? "로그인 대기" : "MCP 연결 실패"
+            if prewarm.isLoginPending { return "로그인 대기" }
+            return prewarm.isVerificationPending ? "검증 대기" : "MCP 연결 실패"
         }
         if viewModel.integrationStatusChecking { return "확인 중…" }
         if let live = viewModel.integrationStatus?.vercel, !live.isMissing {
-            if live.isOauthDelegated { return "MCP OAuth" }
+            if live.isOauthDelegated { return "OAuth 연결 필요" }
             return live.isReady ? "연결됨" : "검증 실패"
         }
-        return "MCP OAuth"
+        return "OAuth 연결 필요"
     }
 
     private var vercelMcpStatusColor: Color {
         if viewModel.mcpOauthConnecting.contains("vercel") { return settingsSubtleText }
         if let prewarm = viewModel.mcpOauthResults["vercel"] {
             if prewarm.isReady { return settingsAccentColor }
-            return prewarm.isLoginPending ? OpenDesignDayColor.amber : OpenDesignDayColor.rose
+            return prewarm.isPending ? OpenDesignDayColor.amber : OpenDesignDayColor.rose
         }
         if let live = viewModel.integrationStatus?.vercel, !live.isMissing {
-            if live.isOauthDelegated { return settingsAccentColor }
+            if live.isOauthDelegated { return OpenDesignDayColor.amber }
             return live.isReady ? settingsAccentColor : OpenDesignDayColor.rose
         }
-        return settingsAccentColor
+        return OpenDesignDayColor.amber
     }
 
     private var cloudflareMcpStatusLabel: String {
         // "MCP 연결" prewarm이 실제 도구 호출로 실증한 결과가 가장 강한 신호.
-        if viewModel.mcpOauthConnecting.contains("cloudflare") { return "MCP 확인 중…" }
+        if viewModel.mcpOauthConnecting.contains("cloudflare") { return "MCP 연결 중" }
         if let prewarm = viewModel.mcpOauthResults["cloudflare"] {
             if prewarm.isReady { return "MCP 연결됨" }
-            return prewarm.isLoginPending ? "로그인 대기" : "MCP 연결 실패"
+            if prewarm.isLoginPending { return "로그인 대기" }
+            return prewarm.isVerificationPending ? "검증 대기" : "MCP 연결 실패"
         }
         if viewModel.integrationStatusChecking { return "확인 중…" }
         if let live = viewModel.integrationStatus?.cloudflare, !live.isMissing {
-            if live.isOauthDelegated { return "MCP OAuth" }
+            if live.isOauthDelegated { return "OAuth 연결 필요" }
             return live.isReady ? "연결됨" : "검증 실패"
         }
         // MCP auth is OAuth-first; the token only upgrades drilldown numbers.
         return cloudflareApiToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "MCP OAuth"
+            ? "OAuth 연결 필요"
             : "토큰 저장됨 · 미검증"
     }
 
@@ -1277,26 +1283,32 @@ struct SettingsView: View {
         if viewModel.mcpOauthConnecting.contains("cloudflare") { return settingsSubtleText }
         if let prewarm = viewModel.mcpOauthResults["cloudflare"] {
             if prewarm.isReady { return settingsAccentColor }
-            return prewarm.isLoginPending ? OpenDesignDayColor.amber : OpenDesignDayColor.rose
+            return prewarm.isPending ? OpenDesignDayColor.amber : OpenDesignDayColor.rose
         }
         if let live = viewModel.integrationStatus?.cloudflare, !live.isMissing {
-            if live.isOauthDelegated { return settingsAccentColor }
+            if live.isOauthDelegated { return OpenDesignDayColor.amber }
             return live.isReady ? settingsAccentColor : OpenDesignDayColor.rose
         }
-        return settingsAccentColor
+        return OpenDesignDayColor.amber
     }
 
     /// Live-check caption shown under an integration's fields once the sidecar
     /// verified (or failed to verify) the stored credential.
-    private func integrationProbeCaption(_ probe: IntegrationProbeStatus?) -> some View {
+    private var integrationActionLocked: Bool {
+        viewModel.integrationStatusChecking || !viewModel.mcpOauthConnecting.isEmpty
+    }
+
+    private func integrationProbeCaption(_ probe: IntegrationProbeStatus?, server: String) -> some View {
         Group {
-            if let detail = probe?.detail, !detail.isEmpty, probe?.isMissing != true {
+            if viewModel.mcpOauthConnecting.contains(server) || viewModel.mcpOauthResults[server] != nil {
+                EmptyView()
+            } else if let detail = probe?.detail, !detail.isEmpty, probe?.isMissing != true {
                 Text(detail)
                     .font(.system(size: 11, weight: .regular, design: .monospaced))
                     .foregroundStyle(
-                        probe?.isReady == true || probe?.isOauthDelegated == true
+                        probe?.isReady == true
                             ? settingsAccentColor
-                            : OpenDesignDayColor.rose
+                            : (probe?.isOauthDelegated == true ? OpenDesignDayColor.amber : OpenDesignDayColor.rose)
                     )
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1309,22 +1321,17 @@ struct SettingsView: View {
     private func mcpOauthResultCaption(_ server: String) -> some View {
         Group {
             if viewModel.mcpOauthConnecting.contains(server) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .frame(width: 10, height: 10)
-                    Text(viewModel.mcpOauthProgress[server] ?? "연결 확인 중…")
-                        .font(.system(size: 11, weight: .regular, design: .monospaced))
-                        .foregroundStyle(settingsSubtleText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                Text(viewModel.mcpOauthProgress[server] ?? "연결 확인 중…")
+                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .foregroundStyle(settingsSubtleText)
+                    .fixedSize(horizontal: false, vertical: true)
             } else if let result = viewModel.mcpOauthResults[server], let detail = result.detail, !detail.isEmpty {
                 Text(detail)
                     .font(.system(size: 11, weight: .regular, design: .monospaced))
                     .foregroundStyle(
                         result.isReady
                             ? settingsAccentColor
-                            : (result.isLoginPending ? OpenDesignDayColor.amber : OpenDesignDayColor.rose)
+                            : (result.isPending ? OpenDesignDayColor.amber : OpenDesignDayColor.rose)
                     )
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1332,14 +1339,15 @@ struct SettingsView: View {
     }
 
     private var posthogMcpStatusLabel: String {
-        if viewModel.mcpOauthConnecting.contains("posthog") { return "MCP 확인 중…" }
+        if viewModel.mcpOauthConnecting.contains("posthog") { return "MCP 연결 중" }
         if let prewarm = viewModel.mcpOauthResults["posthog"] {
             if prewarm.isReady { return "MCP 연결됨" }
-            return prewarm.isLoginPending ? "로그인 대기" : "MCP 연결 실패"
+            if prewarm.isLoginPending { return "로그인 대기" }
+            return prewarm.isVerificationPending ? "검증 대기" : "MCP 연결 실패"
         }
         if viewModel.integrationStatusChecking { return "확인 중…" }
         if let live = viewModel.integrationStatus?.posthog, !live.isMissing {
-            if live.isOauthDelegated { return "MCP OAuth" }
+            if live.isOauthDelegated { return "OAuth 연결 필요" }
             return live.isReady ? "연결됨" : "검증 실패"
         }
         let apiKey = posthogApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1350,24 +1358,24 @@ struct SettingsView: View {
             return "Personal key 필요"
         }
         // MCP auth is OAuth-first; the key only upgrades drilldown numbers.
-        return "MCP OAuth"
+        return "OAuth 연결 필요"
     }
 
     private var posthogMcpStatusColor: Color {
         if viewModel.mcpOauthConnecting.contains("posthog") { return settingsSubtleText }
         if let prewarm = viewModel.mcpOauthResults["posthog"] {
             if prewarm.isReady { return settingsAccentColor }
-            return prewarm.isLoginPending ? OpenDesignDayColor.amber : OpenDesignDayColor.rose
+            return prewarm.isPending ? OpenDesignDayColor.amber : OpenDesignDayColor.rose
         }
         if let live = viewModel.integrationStatus?.posthog, !live.isMissing {
-            if live.isOauthDelegated { return settingsAccentColor }
+            if live.isOauthDelegated { return OpenDesignDayColor.amber }
             return live.isReady ? settingsAccentColor : OpenDesignDayColor.rose
         }
         let apiKey = posthogApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         if apiKey.hasPrefix("phc_") {
             return OpenDesignDayColor.amber
         }
-        return settingsAccentColor
+        return OpenDesignDayColor.amber
     }
 
     private var posthogMcpRegionSelection: Binding<String> {
@@ -1496,22 +1504,6 @@ struct SettingsView: View {
             }
 
             odSettingsRowsCard {
-                odSettingsRow(title: "인터뷰/실행 체크 알림", detail: "테스트 알림은 실제 macOS 알림 센터 경로를 사용합니다. 배너를 누르면 Agentic30이 열리고 아침은 인터뷰, 저녁은 오늘 실행 완료 화면으로 이동합니다.", stacked: true) {
-                    HStack(spacing: 12) {
-                        odSettingsGhostButton(title: "인터뷰 체크 보내기", systemImage: "sun.max.fill", width: 142, identifier: "settings.advanced.sendMorningBipNotification") {
-                            sendTestBipNotification(.morning)
-                        }
-                        odSettingsGhostButton(title: "실행 완료 체크 보내기", systemImage: "moon.fill", width: 154, identifier: "settings.advanced.sendEveningBipNotification") {
-                            sendTestBipNotification(.evening)
-                        }
-                    }
-                    if !advancedToolsMessage.isEmpty {
-                        Text(advancedToolsMessage)
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .foregroundStyle(Agentic30BrandColor.green.opacity(0.82))
-                            .accessibilityIdentifier("settings.advanced.message")
-                    }
-                }
                 odSettingsRow(title: "UI Motion Test", detail: "앱 화면 전체에 realistic confetti burst를 재생합니다.") {
                     odSettingsGhostButton(title: "Confetti 테스트", systemImage: "sparkles", width: 120, identifier: "settings.advanced.confettiTestButton") {
                         playConfettiTest()
@@ -3085,13 +3077,6 @@ struct SettingsView: View {
         pasteboard.clearContents()
         pasteboard.setString(viewModel.diagnosticsReport, forType: .string)
         showMessage($settingsSaveMessage, text: "진단 복사됨")
-    }
-
-    private func sendTestBipNotification(_ intent: BipNotificationIntent) {
-        Task {
-            let message = await viewModel.sendTestBipNotification(intent: intent)
-            showMessage($advancedToolsMessage, text: message)
-        }
     }
 
     private func playConfettiTest() {

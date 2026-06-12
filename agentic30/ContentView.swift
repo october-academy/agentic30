@@ -1887,7 +1887,7 @@ struct ContentView: View {
     @State private var showsAppUpdateStatusPanel = false
     @State private var isOpenDesignOfficeHoursPresented = false
     @State private var isOpenDesignMorningBriefingPresented = false
-    @State private var isBipNotificationRoutePresented = false
+    @State private var isBipMissionRoutePresented = false
     @State private var openDesignDayInteractionStateCache = OpenDesignDayInteractionStateCache()
     @State private var officeHoursStartedSessionIDs: Set<String> = []
     @State private var officeHoursRealProjectTestState: OfficeHoursRealProjectTestState = .idle
@@ -1903,9 +1903,10 @@ struct ContentView: View {
     @State private var selectedOfficeHoursGoalType: Day1GoalType?
     @State private var pendingOfficeHoursStartMode: OfficeHoursMode?
     @State private var pendingOfficeHoursStartDay: Int?
-    /// Day-timeline navigation. `nil` = today; any explicit day number scopes the
-    /// live Office Hours session and question state to that day.
-    @State private var selectedTimelineDay: Int? = Self.uiTestingInitialOfficeHoursPastDay()
+    /// Live day scoping. `nil` = today; explicit values scope the active Office
+    /// Hours session. Read-only retro uses `selectedPastReviewDay` separately.
+    @State private var selectedTimelineDay: Int?
+    @State private var selectedPastReviewDay: Int? = Self.uiTestingInitialOfficeHoursPastDay()
     @State private var officeHoursQuestionLoadingStartedAtBySession: [String: Date] = [:]
     @State private var officeHoursSubmittedPromptSnapshotsBySession: [String: [OfficeHoursSubmittedPromptSnapshot]] = [:]
     @State private var officeHoursActiveQuestionLoadersBySession: [String: OfficeHoursLoadingSnapshot] = [:]
@@ -2004,7 +2005,6 @@ struct ContentView: View {
             .onAppear {
                 viewModel.start()
                 syncPromptDrafts(bindingToken: viewModel.pendingStructuredPrompt?.uiBindingToken)
-                handleBipNotificationOpenRequest(viewModel.bipNotificationOpenRequest)
             }
             .onDisappear {
                 if !isWorkspaceWindow {
@@ -2017,15 +2017,12 @@ struct ContentView: View {
             .onChange(of: viewModel.visibleBipCoach?.currentMission?.status) { _, status in
                 if status == "completed" {
                     showsBipCompletionFields = false
-                } else if isBipNotificationRoutePresented, viewModel.visibleBipCoach?.currentMission != nil {
+                } else if isBipMissionRoutePresented, viewModel.visibleBipCoach?.currentMission != nil {
                     showsBipCompletionFields = true
                 }
             }
             .onChange(of: viewModel.visibleBipCoach?.currentMission?.id) { _, _ in
                 updateBipCompletionRouteFieldsIfNeeded()
-            }
-            .onChange(of: viewModel.bipNotificationOpenRequest?.id) { _, _ in
-                handleBipNotificationOpenRequest(viewModel.bipNotificationOpenRequest)
             }
             .onChange(of: viewModel.selectedFoundationDay) { _, day in
                 clearOpenDesignReferenceRouteIfUnsupported(dayNumber: day)
@@ -2045,6 +2042,10 @@ struct ContentView: View {
                 }
                 openOpenDesignSettingsRoute()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .agenticOpenDesignRouteRequested)) { notification in
+                guard isWorkspaceWindow else { return }
+                openOpenDesignRoute(from: notification)
+            }
             .onReceive(NotificationCenter.default.publisher(for: .agenticShowAppUpdateStatusPanelRequested)) { _ in
                 guard isWorkspaceWindow else { return }
                 showsAppUpdateStatusPanel = true
@@ -2052,7 +2053,6 @@ struct ContentView: View {
             .onChange(of: viewModel.requiresMacOnboarding) { _, requiresOnboarding in
                 if !requiresOnboarding {
                     showsAppUpdateStatusPanel = false
-                    handleBipNotificationOpenRequest(viewModel.bipNotificationOpenRequest)
                 }
             }
             .overlay(alignment: .topTrailing) {
@@ -2368,8 +2368,8 @@ struct ContentView: View {
             )
         }
         let content = ZStack {
-            if isBipNotificationRoutePresented {
-                bipNotificationWorkspaceSurface()
+            if isBipMissionRoutePresented {
+                bipMissionWorkspaceSurface()
             } else if let resolvedContent {
                 OpenDesignDayPageView(
                     content: resolvedContent,
@@ -2499,7 +2499,7 @@ struct ContentView: View {
             let workspaceSurface = content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(OpenDesignDayColor.bg)
-            if isBipNotificationRoutePresented {
+            if isBipMissionRoutePresented {
                 workspaceSurface
             } else {
                 workspaceSurface
@@ -2514,7 +2514,7 @@ struct ContentView: View {
                     RoundedRectangle(cornerRadius: 28, style: .continuous)
                         .stroke(Color.white.opacity(0.12), lineWidth: 1)
                 )
-            if isBipNotificationRoutePresented {
+            if isBipMissionRoutePresented {
                 previewSurface
             } else {
                 previewSurface
@@ -3609,10 +3609,9 @@ struct ContentView: View {
         let goal = record?.goalText.nonEmpty ?? dayState?.carryForwardAction?.nonEmpty ?? officeHoursBackboneGoal(forDay: day)
         let complete = record?.isDisplayComplete ?? false
         let incomplete = !isToday && ((record != nil && !complete) || dayState?.state == "not_started" || (dayState?.openDebtCount ?? 0) > 0)
-        // Focus highlight follows the single row the main column is showing: today
-        // when nothing is selected, otherwise the chosen past day. Without this,
-        // today kept its own fill while a past day also lit up — two focused rows.
-        let isSelected = isToday ? (selectedTimelineDay == nil) : (selectedTimelineDay == day)
+        let liveSelectionIsActive = selectedPastReviewDay == nil
+        let isSelected = selectedPastReviewDay == day
+            || (liveSelectionIsActive && (isToday ? selectedTimelineDay == nil : selectedTimelineDay == day))
         let style: OfficeHoursTimelineRowStyle = isToday ? .today : (incomplete ? .incomplete : .done)
 
         let meta: String
@@ -3627,11 +3626,19 @@ struct ContentView: View {
 
         let badge = (complete && !isToday) ? "✓" : ""
 
-        // Tapping a day scopes the live Office Hours session to that day. Today
-        // still clears the explicit selection so the current-day badge remains canonical.
         return Button {
-            selectedTimelineDay = isToday ? nil : day
-            viewModel.ensureOfficeHoursSession(forDay: day)
+            if isToday {
+                selectedPastReviewDay = nil
+                selectedTimelineDay = nil
+                viewModel.ensureOfficeHoursSession(forDay: day)
+            } else if hasPastTimelineReview(forDay: day) {
+                selectedPastReviewDay = day
+                selectedTimelineDay = nil
+            } else {
+                selectedPastReviewDay = nil
+                selectedTimelineDay = day
+                viewModel.ensureOfficeHoursSession(forDay: day)
+            }
         } label: {
             officeHoursTimelineRowSurface(
                 mark: "\(day)",
@@ -3880,12 +3887,15 @@ struct ContentView: View {
     /// scopes the live Office Hours session by day; keep this helper isolated for
     /// any evidence-only retro surfaces that still need a recorded past day.
     private func selectedPastTimelineDay() -> Int? {
-        guard let day = selectedTimelineDay,
-              let progress = viewModel.dayProgress,
-              (progress.record(forDay: day) != nil
-                || viewModel.dayReviews[String(day)] != nil
-                || viewModel.evidenceOS?.dayStates[String(day)] != nil) else { return nil }
+        guard let day = selectedPastReviewDay,
+              hasPastTimelineReview(forDay: day) else { return nil }
         return day
+    }
+
+    private func hasPastTimelineReview(forDay day: Int) -> Bool {
+        viewModel.dayProgress?.record(forDay: day) != nil
+            || viewModel.dayReviews[String(day)] != nil
+            || viewModel.evidenceOS?.dayStates[String(day)] != nil
     }
 
     // Read-only retro for a past day. Sourced purely from the day-progress
@@ -3920,6 +3930,7 @@ struct ContentView: View {
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(OpenDesignOfficeHoursColor.fg)
                         .lineLimit(1)
+                        .accessibilityIdentifier("opendesign.officeHours.pastDay.\(day)")
                     Text(complete ? "완료됨 · 읽기 전용 회고" : "미완 · 읽기 전용 회고")
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(complete ? OpenDesignOfficeHoursColor.muted : OpenDesignOfficeHoursColor.amber)
@@ -3927,6 +3938,7 @@ struct ContentView: View {
                 }
                 Spacer(minLength: 0)
                 Button {
+                    selectedPastReviewDay = nil
                     selectedTimelineDay = nil
                 } label: {
                     Text("오늘로 돌아가기")
@@ -3997,7 +4009,6 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(OpenDesignOfficeHoursColor.bg)
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("opendesign.officeHours.pastDay.\(day)")
     }
 
     @ViewBuilder
@@ -9492,69 +9503,96 @@ struct ContentView: View {
         selectedOpenDesignReferencePage = nil
         isOpenDesignOfficeHoursPresented = false
         isOpenDesignMorningBriefingPresented = false
-        isBipNotificationRoutePresented = false
+        isBipMissionRoutePresented = false
     }
 
-    private func handleBipNotificationOpenRequest(_ request: BipNotificationOpenRequest?) {
-        guard isWorkspaceWindow, !viewModel.requiresMacOnboarding, let request else { return }
-        switch request.intent {
-        case .morning:
-            routeToMorningInterviewCheck()
-        case .evening:
-            routeToEveningExecutionCompletionCheck()
-        }
-        viewModel.clearBipNotificationOpenRequest(id: request.id)
-    }
-
-    private func routeToMorningInterviewCheck() {
-        let day = bipNotificationTargetDay
-        if OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: day),
-           viewModel.isFoundationDayUnlocked(day) {
-            viewModel.selectFoundationDay(day)
-        }
-        selectedTimelineDay = day
-        viewModel.ensureOfficeHoursSession(forDay: day)
-        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
-            selectedOpenDesignReferencePage = nil
-            isOpenDesignMorningBriefingPresented = false
-            isBipNotificationRoutePresented = false
-            isOpenDesignOfficeHoursPresented = true
-        }
-    }
-
-    private func routeToEveningExecutionCompletionCheck() {
+    private func routeToBipMissionCompletion() {
         viewModel.selectBipCoachSessionIfAvailable()
         withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
             selectedOpenDesignReferencePage = nil
             isOpenDesignOfficeHoursPresented = false
             isOpenDesignMorningBriefingPresented = false
-            isBipNotificationRoutePresented = true
+            isBipMissionRoutePresented = true
         }
         updateBipCompletionRouteFieldsIfNeeded()
     }
 
     private func updateBipCompletionRouteFieldsIfNeeded() {
-        guard isBipNotificationRoutePresented else { return }
+        guard isBipMissionRoutePresented else { return }
         let mission = viewModel.visibleBipCoach?.currentMission
         showsBipCompletionFields = mission != nil && mission?.status != "completed"
-    }
-
-    private var bipNotificationTargetDay: Int {
-        if let day = viewModel.dayProgress?.currentDayNumber(), day > 0 {
-            return day
-        }
-        if let day = viewModel.foundationDayNumber, day > 0 {
-            return day
-        }
-        return max(1, workspaceOpenDesignDay.day)
     }
 
     private func openOpenDesignSettingsRoute() {
         withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
             isOpenDesignOfficeHoursPresented = false
             isOpenDesignMorningBriefingPresented = false
-            isBipNotificationRoutePresented = false
+            isBipMissionRoutePresented = false
             selectedOpenDesignReferencePage = .settings
+        }
+    }
+
+    private func openOpenDesignRoute(from notification: Notification) {
+        guard let rawRoute = notification.userInfo?[LongRunningCompletionNotification.routeUserInfoKey] as? String,
+              let route = LongRunningCompletionRoute(rawValue: rawRoute) else {
+            return
+        }
+        openOpenDesignRoute(route)
+    }
+
+    private func openOpenDesignRoute(_ route: LongRunningCompletionRoute) {
+        switch route {
+        case .morningBriefing:
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                selectedOpenDesignReferencePage = nil
+                isOpenDesignOfficeHoursPresented = false
+                isBipMissionRoutePresented = false
+                isOpenDesignMorningBriefingPresented = true
+            }
+        case .day1:
+            let day = 1
+            if OpenDesignReferenceRoutePolicy.supportsOpenDesignDay(dayNumber: day),
+               viewModel.isFoundationDayUnlocked(day) {
+                viewModel.selectFoundationDay(day)
+            }
+            selectedPastReviewDay = nil
+            selectedTimelineDay = day
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                selectedOpenDesignReferencePage = nil
+                isOpenDesignOfficeHoursPresented = false
+                isOpenDesignMorningBriefingPresented = false
+                isBipMissionRoutePresented = false
+            }
+        case .history:
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                selectedOpenDesignReferencePage = .history
+                isOpenDesignOfficeHoursPresented = false
+                isOpenDesignMorningBriefingPresented = false
+                isBipMissionRoutePresented = false
+            }
+        case .bipResearch:
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                selectedOpenDesignReferencePage = .bipLog
+                isOpenDesignOfficeHoursPresented = false
+                isOpenDesignMorningBriefingPresented = false
+                isBipMissionRoutePresented = false
+            }
+        case .newsMarketRadar:
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                selectedOpenDesignReferencePage = .news
+                isOpenDesignOfficeHoursPresented = false
+                isOpenDesignMorningBriefingPresented = false
+                isBipMissionRoutePresented = false
+            }
+        case .bipMission:
+            routeToBipMissionCompletion()
+        case .document:
+            withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                selectedOpenDesignReferencePage = nil
+                isOpenDesignOfficeHoursPresented = false
+                isOpenDesignMorningBriefingPresented = false
+                isBipMissionRoutePresented = false
+            }
         }
     }
 
@@ -9605,7 +9643,9 @@ struct ContentView: View {
         selectedOpenDesignReferencePage = nil
         isOpenDesignOfficeHoursPresented = false
         isOpenDesignMorningBriefingPresented = false
-        isBipNotificationRoutePresented = false
+        isBipMissionRoutePresented = false
+        selectedPastReviewDay = nil
+        selectedTimelineDay = nil
         openDesignDayInteractionStateCache.removeAll()
         officeHoursStartedSessionIDs.removeAll()
         officeHoursRealProjectTestState = .idle
@@ -9667,7 +9707,7 @@ struct ContentView: View {
         openDesignDaySurface(day: workspaceOpenDesignDay, session: session)
     }
 
-    private func bipNotificationWorkspaceSurface() -> some View {
+    private func bipMissionWorkspaceSurface() -> some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -9705,7 +9745,7 @@ struct ContentView: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .accessibilityIdentifier("workspace.bipNotificationRoute.back")
+                .accessibilityIdentifier("workspace.bipMissionRoute.back")
             }
 
             if viewModel.visibleBipCoach != nil {
@@ -9724,7 +9764,7 @@ struct ContentView: View {
         .padding(.vertical, 32)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(OpenDesignDayColor.bg)
-        .accessibilityIdentifier("workspace.bipNotificationRoute")
+        .accessibilityIdentifier("workspace.bipMissionRoute")
     }
 
     private func compactPlaceholder(title: String, subtitle: String) -> some View {

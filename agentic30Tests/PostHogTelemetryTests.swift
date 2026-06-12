@@ -10,6 +10,7 @@ final class PostHogTelemetryTests: XCTestCase {
         // real defaults domain — snapshot/restore so test runs can't flip the
         // developer's telemetry preference or leave capture-once residue.
         restoreHostDefaults = HostAppDefaultsGuard.snapshotAgentic30Domains()
+        UserDefaults.standard.removeObject(forKey: PostHogTelemetry.internalTrafficDefaultsKey)
     }
 
     override func tearDown() {
@@ -158,6 +159,78 @@ final class PostHogTelemetryTests: XCTestCase {
             policy.environmentVariables[PostHogTelemetryRuntimePolicy.internalTrafficEnvironmentKey],
             "0"
         )
+    }
+
+    func testRuntimePolicyHonorsInternalTrafficEnvironmentInRelease() {
+        let policy = PostHogTelemetryRuntimePolicy.resolve(
+            isDebugBuild: false,
+            environment: [
+                PostHogTelemetryRuntimePolicy.internalTrafficEnvironmentKey: "1",
+            ],
+            arguments: []
+        )
+
+        XCTAssertEqual(policy.telemetryEnvironment, "production")
+        XCTAssertEqual(policy.buildConfiguration, "release")
+        XCTAssertTrue(policy.isInternalTraffic)
+        XCTAssertFalse(policy.isSuppressed)
+        XCTAssertEqual(
+            policy.environmentVariables[PostHogTelemetryRuntimePolicy.internalTrafficEnvironmentKey],
+            "1"
+        )
+    }
+
+    func testRuntimePolicyHonorsInternalTrafficUserDefaultsInRelease() {
+        UserDefaults.standard.set(true, forKey: PostHogTelemetry.internalTrafficDefaultsKey)
+
+        let policy = PostHogTelemetry.runtimePolicyForTesting(
+            isDebugBuild: false,
+            environment: [:],
+            arguments: []
+        )
+
+        XCTAssertEqual(policy.telemetryEnvironment, "production")
+        XCTAssertEqual(policy.buildConfiguration, "release")
+        XCTAssertTrue(policy.isInternalTraffic)
+        XCTAssertEqual(
+            policy.environmentVariables[PostHogTelemetryRuntimePolicy.internalTrafficEnvironmentKey],
+            "1"
+        )
+    }
+
+    func testSidecarEnvironmentOverridesForwardInternalTrafficFlagFromDefaults() {
+        UserDefaults.standard.set(false, forKey: PostHogTelemetry.telemetryDisabledDefaultsKey)
+        UserDefaults.standard.set(true, forKey: PostHogTelemetry.internalTrafficDefaultsKey)
+        PostHogTelemetry.configurationProvider = {
+            PostHogTelemetryConfig(projectAPIKey: "phc_test", host: "https://us.posthog.com")
+        }
+        defer { PostHogTelemetry.resetTestingHooks() }
+
+        let overrides = PostHogTelemetry.sidecarEnvironmentOverrides()
+        XCTAssertEqual(
+            overrides[PostHogTelemetryRuntimePolicy.internalTrafficEnvironmentKey],
+            "1"
+        )
+    }
+
+    func testInternalTrafficFlagIdentifiesAnonymousTester() {
+        let client = CapturingPostHogClient()
+        let distinctID = PostHogTelemetry.anonymousDistinctID()
+        UserDefaults.standard.removeObject(forKey: "agentic30.posthog.internalTesterIdentified.\(distinctID)")
+        UserDefaults.standard.set(false, forKey: PostHogTelemetry.telemetryDisabledDefaultsKey)
+        UserDefaults.standard.set(true, forKey: PostHogTelemetry.internalTrafficDefaultsKey)
+        PostHogTelemetry.sdkClient = client
+        PostHogTelemetry.configurationProvider = {
+            PostHogTelemetryConfig(projectAPIKey: "phc_test", host: "https://us.posthog.com")
+        }
+        defer { PostHogTelemetry.resetTestingHooks() }
+
+        PostHogTelemetry.setup(force: true)
+
+        XCTAssertEqual(client.identifies.count, 1)
+        XCTAssertEqual(client.identifies.first?.distinctId, distinctID)
+        XCTAssertEqual(client.identifies.first?.userProperties["is_internal_tester"] as? Bool, true)
+        XCTAssertEqual(client.identifies.first?.userProperties["platform"] as? String, "macos")
     }
 
     func testSanitizerMasksSensitiveFieldsLocalPathsAndContent() {

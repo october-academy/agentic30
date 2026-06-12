@@ -731,6 +731,57 @@ struct SidecarEventDecodingTests {
         #expect(drilldown.meta?.rows?.first?.key == "리포")
     }
 
+    @MainActor @Test func decodesMorningBriefingDrilldownPointMetadata() throws {
+        let payload = """
+        {
+          "type": "morning_briefing_result",
+          "morningBriefing": {
+            "schemaVersion": 1,
+            "generatedAt": "2026-06-10T00:00:00.000Z",
+            "day": 12,
+            "drilldowns": {
+              "posthog": {
+                "id": "posthog",
+                "title": "PostHog · 리텐션·이탈 드릴다운",
+                "kpis": [{ "label": "Day-1", "valueLabel": "11.1%" }],
+                "chart": {
+                  "kind": "curve",
+                  "title": "Day-1 리텐션",
+                  "points": [
+                    {
+                      "label": "06-08 · 21.4%",
+                      "pct": 21.4,
+                      "date": "2026-06-08",
+                      "cohortSize": 14,
+                      "returned": 3,
+                      "tip": "2026-06-08 코호트 n=14 · 3/14 복귀"
+                    },
+                    {
+                      "label": "06-09 · 11.1%",
+                      "pct": 11.1,
+                      "date": "2026-06-09",
+                      "cohortSize": 9,
+                      "returned": 1,
+                      "tip": "2026-06-09 코호트 n=9 · 1/9 복귀"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        let point = try #require(event.morningBriefing?.drilldowns?["posthog"]?.chart?.points?.last)
+        #expect(point.label == "06-09 · 11.1%")
+        #expect(point.date == "2026-06-09")
+        #expect(point.cohortSize == 9)
+        #expect(point.returned == 1)
+        #expect(point.tip == "2026-06-09 코호트 n=9 · 1/9 복귀")
+    }
+
     @MainActor @Test func decodesIntegrationStatusResultPayload() throws {
         let payload = """
         {
@@ -836,6 +887,30 @@ struct SidecarEventDecodingTests {
         #expect(result.loginUrl == "https://oauth.posthog.com/oauth/authorize/?state=xyz")
     }
 
+    @MainActor @Test func decodesMcpOauthConnectVerificationPendingPayload() throws {
+        let payload = """
+        {
+          "type": "mcp_oauth_connect_result",
+          "mcpOauthConnect": {
+            "server": "posthog",
+            "provider": "codex",
+            "state": "verification_pending",
+            "detail": "PostHog 브라우저 로그인은 시작됐고 Codex 설정도 확인됐지만 MCP 도구 호출 검증이 시간 초과됐어요.",
+            "loginUrl": "https://oauth.posthog.com/oauth/authorize/?state=xyz",
+            "checkedAt": "2026-06-10T09:33:00.000Z"
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        let result = try #require(event.mcpOauthConnect)
+        #expect(result.isVerificationPending == true)
+        #expect(result.isPending == true)
+        #expect(result.isLoginPending == false)
+        #expect(result.isReady == false)
+    }
+
     @MainActor @Test func decodesMcpOauthConnectStatusProgressPayload() throws {
         let payload = """
         {
@@ -857,6 +932,54 @@ struct SidecarEventDecodingTests {
         #expect(update.state == "progress")
         #expect(update.detail?.contains("로그인") == true)
         #expect(update.loginUrl == "https://oauth.posthog.com/oauth/authorize/?state=abc")
+    }
+
+    @MainActor @Test func decodesMcpOauthConnectStatusOpenBrowserFalsePayload() throws {
+        let payload = """
+        {
+          "type": "mcp_oauth_connect_status",
+          "mcpOauthConnect": {
+            "server": "cloudflare",
+            "provider": "codex",
+            "state": "progress",
+            "detail": "브라우저가 열렸어요.",
+            "loginUrl": "https://mcp.cloudflare.com/authorize?response_type=code&client_id=abc",
+            "openBrowser": false
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        let update = try #require(event.mcpOauthConnect)
+        #expect(update.server == "cloudflare")
+        #expect(update.provider == "codex")
+        #expect(update.loginUrl == "https://mcp.cloudflare.com/authorize?response_type=code&client_id=abc")
+        #expect(update.openBrowser == false)
+    }
+
+    @MainActor @Test func decodesPostHogMcpOauthConnectStatusOpenBrowserFalsePayload() throws {
+        let payload = """
+        {
+          "type": "mcp_oauth_connect_status",
+          "mcpOauthConnect": {
+            "server": "posthog",
+            "provider": "codex",
+            "state": "progress",
+            "detail": "브라우저가 열렸어요.",
+            "loginUrl": "https://oauth.posthog.com/authorize?response_type=code&client_id=abc",
+            "openBrowser": false
+          }
+        }
+        """
+
+        let event = try decoder.decode(SidecarEvent.self, from: Data(payload.utf8))
+
+        let update = try #require(event.mcpOauthConnect)
+        #expect(update.server == "posthog")
+        #expect(update.provider == "codex")
+        #expect(update.loginUrl == "https://oauth.posthog.com/authorize?response_type=code&client_id=abc")
+        #expect(update.openBrowser == false)
     }
 
     @MainActor @Test func decodesMorningBriefingCollectingStatusPayload() throws {
