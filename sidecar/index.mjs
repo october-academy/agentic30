@@ -148,6 +148,10 @@ import {
   issueInterventionTokenForCommitment,
 } from "./oh-intervention.mjs";
 import { resolveInterventionPrompt } from "./oh-intervention-prompts.mjs";
+import {
+  labelAdaptiveRuleEvent,
+  runAdaptiveRulesCycle,
+} from "./adaptive-rules.mjs";
 
 // §13.4: intervention 세션이 열렸을 때 어느 gate의 통과 토큰을 기다리는지
 // 워크스페이스별로 기억한다(in-memory — 재시작 시 founder가 intervention을
@@ -2067,6 +2071,28 @@ async function handleClientMessage(socket, payload) {
       await handleDayProgressGet(socket, payload);
       return;
     }
+    case "adaptive_rule_label": {
+      // §12 오탐 대응 ②: user-origin label — the founder disputes a firing.
+      // Marks the latest unlabeled event for the rule (48h cooldown follows).
+      const root = resolveDay1GoalWorkspaceRoot(payload);
+      const ruleId = String(payload.ruleId ?? payload.rule_id ?? "").trim();
+      const label = String(payload.label ?? "").trim() || "false_positive";
+      if (!ruleId) {
+        throw new Error("adaptive_rule_label requires ruleId.");
+      }
+      const { labeled } = await labelAdaptiveRuleEvent({ workspaceRoot: root, ruleId, label });
+      telemetry.captureEvent("mac_sidecar_adaptive_rule_fired", {
+        rule_id: ruleId,
+        confidence: "",
+        user_label: label,
+      });
+      send(socket, {
+        type: "adaptive_rule_label_result",
+        workspaceRoot: root,
+        success: Boolean(labeled),
+      });
+      return;
+    }
     case "day_progress_patch": {
       await handleDayProgressPatch(socket, payload);
       return;
@@ -3540,6 +3566,43 @@ async function handleDayProgressPatch(socket, payload = {}) {
           workspace_root: root,
         });
       }
+    }
+    // §12: adaptive rules evaluate on the day loop's authoritative write —
+    // fire-and-forget, persisted to gate-ledger adaptiveEvents, one firing
+    // per rule per day. Immediate-grade firings surface the registered
+    // intervention card (§13.1); evaluation failures never break the patch.
+    if (missionDay) {
+      void runAdaptiveRulesCycle({ workspaceRoot: root, day: missionDay })
+        .then(({ fired }) => {
+          for (const rule of fired) {
+            telemetry.captureEvent("mac_sidecar_adaptive_rule_fired", {
+              rule_id: rule.ruleId,
+              confidence: rule.confidence,
+              user_label: "",
+            });
+            const triggerId = `rule_${rule.ruleId.replace(/-/g, "")}`;
+            const interventionEvent = rule.ohEscalation !== "none" && rule.ohEscalation !== "joins_G5"
+              ? buildInterventionRequiredEvent({
+                  workspaceRoot: root,
+                  triggerId,
+                  day: missionDay,
+                })
+              : null;
+            if (interventionEvent) {
+              broadcast(interventionEvent);
+              telemetry.captureEvent("mac_sidecar_oh_intervention_triggered", {
+                trigger_id: triggerId,
+                severity: interventionEvent.intervention.severity,
+              });
+            }
+          }
+        })
+        .catch((ruleError) => {
+          telemetry.captureException(ruleError, {
+            operation: "adaptive_rules_cycle",
+            workspace_root: root,
+          });
+        });
     }
   } catch (error) {
     telemetry.captureException(error, {
