@@ -87,6 +87,15 @@ test("judge accepted interview transcript file is promoted to strong", () => {
     }),
     "medium",
   );
+  // User-controlled file names must not promote strength: renaming a
+  // self-report file to "transcript" stays medium (fail-closed).
+  assert.equal(
+    classifyJudgedEvidenceStrength({
+      evidence: { type: "file", content: "/tmp/interview-transcript-녹취.md" },
+      guideline: { actionType: "dm_log" },
+    }),
+    "medium",
+  );
 
   const event = buildJudgeWriteThroughEvent({
     day: 3,

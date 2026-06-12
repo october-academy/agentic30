@@ -24,23 +24,20 @@ export const PROOF_VERIFIED_BY = Object.freeze({
   judge: "judge",
 });
 
-const HIGH_TRUST_FILE_PATTERN = /transcript|recording|녹취|녹음/i;
 const HIGH_TRUST_ACTION_TYPE_PATTERN = /interview_recording|transcript|recording/i;
 
 /**
  * Trust tier for judge-accepted evidence (spec §9.2):
  * accepted + kind ∈ High list → strong; otherwise medium.
- * Only mechanically certain High kinds (interview recording/transcript
- * files, §9.1) are promoted — everything else stays medium (fail-closed).
+ * Promotion is keyed only on the curriculum-set actionType — never on
+ * user-controlled inputs such as the submitted file name — so a renamed
+ * self-report file cannot reach strong and unlock milestone gates
+ * (fail-closed, spec §9.1/§10.2).
  */
 export function classifyJudgedEvidenceStrength({ evidence = {}, guideline = {} } = {}) {
   const evidenceType = normalizeEvidenceType(evidence?.type);
   const actionType = String(guideline?.actionType ?? guideline?.action_type ?? "");
-  const content = String(evidence?.content ?? "");
-  if (
-    evidenceType === "file"
-    && (HIGH_TRUST_ACTION_TYPE_PATTERN.test(actionType) || HIGH_TRUST_FILE_PATTERN.test(content))
-  ) {
+  if (evidenceType === "file" && HIGH_TRUST_ACTION_TYPE_PATTERN.test(actionType)) {
     return "strong";
   }
   return "medium";
