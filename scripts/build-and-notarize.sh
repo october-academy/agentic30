@@ -113,22 +113,6 @@ if [ "$AGENTIC30_UPLOAD_APPCAST_R2" = "1" ]; then
     echo "ERROR: SPARKLE_DOWNLOAD_URL_PREFIX ($SPARKLE_DOWNLOAD_URL_PREFIX) must match SPARKLE_PUBLIC_BASE_URL ($SPARKLE_PUBLIC_BASE_URL) when R2 upload is enabled" >&2
     exit 2
   fi
-  if ! command -v "$SPARKLE_WRANGLER_BIN" >/dev/null 2>&1; then
-    echo "ERROR: wrangler executable not found: $SPARKLE_WRANGLER_BIN" >&2
-    exit 2
-  fi
-  if ! "$SPARKLE_WRANGLER_BIN" whoami >/dev/null 2>&1; then
-    echo "ERROR: wrangler is not authenticated; run 'wrangler login' before enabling R2 upload" >&2
-    exit 2
-  fi
-  if ! "$SPARKLE_WRANGLER_BIN" r2 bucket info "$SPARKLE_R2_BUCKET" >/dev/null 2>&1; then
-    echo "ERROR: R2 bucket '$SPARKLE_R2_BUCKET' does not exist or is not accessible; run scripts/setup-sparkle-r2.sh first" >&2
-    exit 2
-  fi
-  if ! "$SPARKLE_WRANGLER_BIN" r2 bucket domain get "$SPARKLE_R2_BUCKET" --domain "$SPARKLE_UPDATE_DOMAIN" >/dev/null 2>&1; then
-    echo "ERROR: R2 bucket '$SPARKLE_R2_BUCKET' is not connected to custom domain '$SPARKLE_UPDATE_DOMAIN'; run scripts/setup-sparkle-r2.sh first" >&2
-    exit 2
-  fi
   if [ -z "${R2_S3_ENDPOINT:-}" ] && [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
     echo "ERROR: CLOUDFLARE_ACCOUNT_ID or R2_S3_ENDPOINT is required for R2 S3 multipart uploads" >&2
     exit 2
@@ -142,6 +126,22 @@ if [ "$AGENTIC30_UPLOAD_APPCAST_R2" = "1" ]; then
   if [ -z "$r2_access_key" ] && [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
     echo "ERROR: R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY or CLOUDFLARE_API_TOKEN is required for R2 S3 multipart uploads" >&2
     exit 2
+  fi
+  if command -v "$SPARKLE_WRANGLER_BIN" >/dev/null 2>&1; then
+    if "$SPARKLE_WRANGLER_BIN" whoami >/dev/null 2>&1; then
+      if ! "$SPARKLE_WRANGLER_BIN" r2 bucket info "$SPARKLE_R2_BUCKET" >/dev/null 2>&1; then
+        echo "ERROR: R2 bucket '$SPARKLE_R2_BUCKET' does not exist or is not accessible; run scripts/setup-sparkle-r2.sh first" >&2
+        exit 2
+      fi
+      if ! "$SPARKLE_WRANGLER_BIN" r2 bucket domain get "$SPARKLE_R2_BUCKET" --domain "$SPARKLE_UPDATE_DOMAIN" >/dev/null 2>&1; then
+        echo "ERROR: R2 bucket '$SPARKLE_R2_BUCKET' is not connected to custom domain '$SPARKLE_UPDATE_DOMAIN'; run scripts/setup-sparkle-r2.sh first" >&2
+        exit 2
+      fi
+    else
+      echo "WARN: wrangler auth unavailable; relying on R2 S3 upload credentials and public URL verification." >&2
+    fi
+  else
+    echo "WARN: wrangler executable not found; relying on R2 S3 upload credentials and public URL verification." >&2
   fi
 fi
 

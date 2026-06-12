@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # Checks the local/CI environment needed by the release pipeline:
 # - GitHub CLI and workflow lint (actionlint, when installed)
-# - Wrangler auth, R2 bucket, and custom domain
+# - R2 upload credentials, with optional Wrangler bucket/domain validation
 # - Signing, App Store Connect, and Sparkle inputs
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -53,8 +53,6 @@ echo "  domain: $SPARKLE_UPDATE_DOMAIN"
 
 require_cmd node
 require_cmd gh
-require_cmd "$SPARKLE_WRANGLER_BIN"
-
 if command -v actionlint >/dev/null 2>&1; then
   actionlint .github/workflows/release.yml .github/workflows/secret-scanning.yml
   pass "GitHub workflow lint"
@@ -62,23 +60,6 @@ else
   warn "actionlint not installed; skipping GitHub workflow lint"
 fi
 
-if "$SPARKLE_WRANGLER_BIN" whoami >/dev/null 2>&1; then
-  pass "Wrangler authenticated"
-else
-  fail "Wrangler is not authenticated; run wrangler login or set CLOUDFLARE_API_TOKEN"
-fi
-
-if "$SPARKLE_WRANGLER_BIN" r2 bucket info "$SPARKLE_R2_BUCKET" >/dev/null 2>&1; then
-  pass "R2 bucket accessible: $SPARKLE_R2_BUCKET"
-else
-  fail "R2 bucket not accessible: $SPARKLE_R2_BUCKET"
-fi
-
-if "$SPARKLE_WRANGLER_BIN" r2 bucket domain get "$SPARKLE_R2_BUCKET" --domain "$SPARKLE_UPDATE_DOMAIN" >/dev/null 2>&1; then
-  pass "R2 custom domain connected: $SPARKLE_UPDATE_DOMAIN"
-else
-  fail "R2 custom domain missing: $SPARKLE_UPDATE_DOMAIN"
-fi
 if [ -n "${R2_S3_ENDPOINT:-}" ] || [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
   pass "R2 S3 endpoint input is available"
 else
@@ -94,6 +75,27 @@ elif [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then
   pass "R2 S3 credentials can be derived from CLOUDFLARE_API_TOKEN"
 else
   fail "R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY or CLOUDFLARE_API_TOKEN is required for multipart R2 uploads"
+fi
+if command -v "$SPARKLE_WRANGLER_BIN" >/dev/null 2>&1; then
+  pass "command found: $SPARKLE_WRANGLER_BIN"
+  if "$SPARKLE_WRANGLER_BIN" whoami >/dev/null 2>&1; then
+    pass "Wrangler authenticated"
+    if "$SPARKLE_WRANGLER_BIN" r2 bucket info "$SPARKLE_R2_BUCKET" >/dev/null 2>&1; then
+      pass "R2 bucket accessible: $SPARKLE_R2_BUCKET"
+    else
+      fail "R2 bucket not accessible: $SPARKLE_R2_BUCKET"
+    fi
+
+    if "$SPARKLE_WRANGLER_BIN" r2 bucket domain get "$SPARKLE_R2_BUCKET" --domain "$SPARKLE_UPDATE_DOMAIN" >/dev/null 2>&1; then
+      pass "R2 custom domain connected: $SPARKLE_UPDATE_DOMAIN"
+    else
+      fail "R2 custom domain missing: $SPARKLE_UPDATE_DOMAIN"
+    fi
+  else
+    warn "Wrangler is not authenticated; release upload will rely on R2 S3 credentials and public URL verification"
+  fi
+else
+  warn "command missing: $SPARKLE_WRANGLER_BIN; release upload will rely on R2 S3 credentials and public URL verification"
 fi
 
 require_env DEVELOPMENT_TEAM
