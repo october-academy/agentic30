@@ -9,7 +9,7 @@ npm install
 npm run doctor
 npm run check:public-safety
 npm run test:sidecar
-xcodebuild test -project agentic30.xcodeproj -scheme agentic30 -destination 'platform=macOS'
+npm run test:swift:unit
 ```
 
 For local secret scanning, install `gh` and TruffleHog, then run:
@@ -31,7 +31,8 @@ This is the public macOS companion app for the [October Academy](https://october
 ## Pull request guidelines
 
 - Keep PRs focused on one change.
-- Add tests where possible (`npm run test:sidecar` for sidecar logic, `xcodebuild test` for UI behavior).
+- Add tests where possible (`npm run test:sidecar` for sidecar logic, `npm run test:swift:unit` for Swift unit coverage).
+- Local UI E2E launches the app in the foreground and can take keyboard, mouse, and focus. Run it separately with `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:smoke` or `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:full` only after explicit approval/intent to occupy the desktop.
 - Sidecar logs and UI behavior should both stay deterministic — avoid time-of-day or network-dependent assertions.
 - Open an issue first if you plan a large refactor or new feature, so we can align on scope.
 

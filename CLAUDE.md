@@ -33,17 +33,32 @@ node --test --test-name-pattern "checkThreeSectionMinimal" sidecar-tests/foundat
 Open `agentic30.xcodeproj` in Xcode and run the `agentic30` scheme, or:
 
 ```bash
-xcodebuild test -project agentic30.xcodeproj -scheme agentic30 -destination 'platform=macOS'
+npm run test:swift:unit              # Swift unit tests only; does not run XCUITest
 ```
 
-Hermetic UI subset (recommended for CI-style local runs):
+Blocking local UI E2E requires explicit approval before running because it
+launches Agentic30 in the foreground and can take keyboard, mouse, and focus.
+This includes the `agentic30UITests` scheme, the full `agentic30` scheme test
+action, any `-only-testing:agentic30UITests/*` command, and any macOS XCUITest
+that opens the app and clicks or types.
+
+Before running one of those locally, ask the user with the structured question
+tool available to you (Claude: `AskUserQuestion`/`ask_user_question`; Codex:
+`request_user_input`/`ask_user_question`). Default prompt:
+
+```text
+이 명령은 Agentic30 앱을 전면으로 띄우고 키보드/마우스/포커스를 점유할 수 있습니다. 지금 실행할까요?
+```
+
+If the user does not approve, do not run it. After approval:
 
 ```bash
-xcodebuild test -project agentic30.xcodeproj -scheme agentic30 -destination 'platform=macOS' \
-  -only-testing:agentic30UITests/agentic30UITests/testSettingsWorkspaceMainProjectMatchesOpenDesignPathRow \
-  -only-testing:agentic30UITests/agentic30UITests/testAgentSettingsModelPickersSaveClaudeCodexAndGeminiModels \
-  -only-testing:agentic30UITests/agentic30UITests/testWorkspaceStartupDay1RoutesToOfficeHours
+AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:smoke
+AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:full
 ```
+
+GitHub Actions or a self-hosted Mac runner may run UI E2E without local desktop
+approval because it does not block the user's current session.
 
 Live canaries are opt-in via env vars: `AGENTIC30_RUN_LIVE_PROVIDER_E2E=1`, `AGENTIC30_GOOGLE_E2E_{EMAIL,PASSWORD,TOTP_SECRET}`, `AGENTIC30_MAC_AUTH_BASE_URL`.
 
@@ -108,7 +123,7 @@ Inline decisions (single-shot AskUserQuestion-style flows) are sentinel-brackete
 
 ### UI testing posture
 
-UI tests run hermetically by default via `--ui-testing-opaque-window` and `AGENTIC30_TEST_STUB_PROVIDER=1`. New views must respect the stub flag so screenshots stay pixel-stable. Avoid time-of-day or network-dependent assertions — both Swift and sidecar test suites must remain deterministic (called out in `CONTRIBUTING.md`).
+UI tests run hermetically by default via `--ui-testing-opaque-window` and `AGENTIC30_TEST_STUB_PROVIDER=1`. New views must respect the stub flag so screenshots stay pixel-stable. Avoid time-of-day or network-dependent assertions — both Swift and sidecar test suites must remain deterministic (called out in `CONTRIBUTING.md`). Local UI E2E is also a blocking desktop operation; follow the approval rule in the Mac app commands before running it.
 
 ### Pet/wolf overlay
 

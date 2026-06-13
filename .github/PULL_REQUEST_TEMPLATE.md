@@ -5,7 +5,8 @@
 ## Testing
 
 - [ ] `npm run test:sidecar`
-- [ ] `xcodebuild test -project agentic30.xcodeproj -scheme agentic30 -destination 'platform=macOS'`
+- [ ] `npm run test:swift:unit`
+- [ ] `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:smoke` (only after local desktop approval, if UI behavior changed)
 - [ ] Manual UI check, if relevant
 
 ## Checklist

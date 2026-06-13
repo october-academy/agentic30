@@ -33,7 +33,10 @@
     "release:cut": "bash scripts/cut-release.sh",
     "hooks:install": "git config core.hooksPath scripts/git-hooks",
     "hooks:uninstall": "git config --unset core.hooksPath",
-    "test:sidecar": "node --test sidecar-tests/**/*.test.mjs"
+    "test:sidecar": "node --test sidecar-tests/**/*.test.mjs",
+    "test:swift:unit": "bash scripts/xcode-test.sh unit",
+    "test:swift:ui:smoke": "bash scripts/xcode-test.sh ui-smoke",
+    "test:swift:ui:full": "bash scripts/xcode-test.sh ui-full"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.170",

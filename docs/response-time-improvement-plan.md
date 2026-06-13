@@ -18,9 +18,10 @@ The Day 1 tests now separate hermetic instrumentation from live provider validat
 - The live tests do not set `AGENTIC30_TEST_STUB_PROVIDER`; responses must come through `@openai/codex-sdk`.
 - Each assistant message persists `performance.marks` in `sessions.json` and emits `tool_event` summaries named `response_timing`.
 
-Run the live UI test from the repo root:
+Run the live UI test from the repo root after explicit local desktop approval:
 
 ```sh
+AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 \
 AGENTIC30_RUN_LIVE_PROVIDER_E2E=1 \
 AGENTIC30_CODEX_MODEL=gpt-5.4-mini \
 AGENTIC30_CODEX_REASONING_EFFORT=low \

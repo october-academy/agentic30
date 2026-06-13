@@ -39,11 +39,13 @@ Native macOS menu bar assistant that pairs a SwiftUI app shell with a local Node
 - Do not modify `sidecar/vendor/` directly — it is synced from upstream via `scripts/sync-gstack.mjs`.
 - Provider execution must support both Claude (Anthropic) and Codex (OpenAI) auth paths. Test fixtures often gate live runs behind `AGENTIC30_RUN_LIVE_PROVIDER_*=1` env vars.
 - Hermetic UI tests rely on `--ui-testing-opaque-window` and `AGENTIC30_TEST_STUB_PROVIDER=1`. Do not introduce non-determinism (time-of-day, network) into UI assertions.
+- Blocking local UI E2E requires explicit user approval before execution because XCUITest launches Agentic30 in the foreground and can take keyboard, mouse, and focus. This includes the `agentic30UITests` scheme, full `agentic30` scheme tests, `-only-testing:agentic30UITests/*`, and any macOS XCUITest that opens the app and clicks or types. Ask with the structured question tool available to you (Codex: `request_user_input`/`ask_user_question`; Claude: `AskUserQuestion`/`ask_user_question`) using: "이 명령은 Agentic30 앱을 전면으로 띄우고 키보드/마우스/포커스를 점유할 수 있습니다. 지금 실행할까요?" If the user does not approve, do not run it. After approval, set `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1`.
 - Distribution target is direct DMG, not the Mac App Store. App Sandbox is intentionally disabled because the app spawns a Node child process and accesses user-selected workspace paths.
 
 ### Testing Requirements
 - Sidecar logic: `npm run test:sidecar` (uses `node --test` against `sidecar-tests/**/*.test.mjs`).
-- Swift: `xcodebuild test -project agentic30.xcodeproj -scheme agentic30 -destination 'platform=macOS'`.
+- Swift unit tests: `npm run test:swift:unit` (does not run XCUITest).
+- UI E2E smoke/full: `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:smoke` or `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:full` after local approval. GitHub Actions or a self-hosted Mac runner may run UI E2E without local desktop approval.
 - Dogfood evaluator: `npm run eval:dogfood` (offline) or `npm run eval:dogfood:live` (provider canary).
 - Run both Swift and sidecar suites before any PR that touches the bridge contract.
 

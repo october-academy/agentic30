@@ -20,18 +20,18 @@ XCTest UI tests that drive the SwiftUI app via `XCUIApplication`. Default mode i
   - `AGENTIC30_RUN_LIVE_PROVIDER_E2E=1` — enable real provider chat canary.
   - `AGENTIC30_GOOGLE_E2E_EMAIL`, `AGENTIC30_GOOGLE_E2E_PASSWORD`, `AGENTIC30_GOOGLE_E2E_TOTP_SECRET` — credentialed Google login E2E.
   - `AGENTIC30_MAC_AUTH_BASE_URL` — staging Mac auth endpoint (defaults to `https://agentic30.app`).
+- Local XCUITest runs are blocking desktop operations: they launch Agentic30 in the foreground and can take keyboard, mouse, and focus. Before running the `agentic30UITests` scheme, full `agentic30` scheme tests, any `-only-testing:agentic30UITests/*` command, or any UI test that opens the app and clicks or types, ask the user with the structured question tool available to you (Codex: `request_user_input`/`ask_user_question`; Claude: `AskUserQuestion`/`ask_user_question`): "이 명령은 Agentic30 앱을 전면으로 띄우고 키보드/마우스/포커스를 점유할 수 있습니다. 지금 실행할까요?" If the user does not approve, do not run it. After approval, set `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1`.
 - Adding a UI test must not break hermetic determinism. New screens that gate behavior on time, locale, or network must respect the stub provider flag.
 - Do not add coverage for legacy workspace curriculum surfaces. They are deprecated; cover the Open Design Day surface instead.
 
 ### Testing Requirements
 - Run hermetic-only:
   ```bash
-  xcodebuild test -project agentic30.xcodeproj -scheme agentic30UITests -destination 'platform=macOS' \
-    -only-testing:agentic30UITests/agentic30UITests/testOpenDesignDayPageParitySmoke \
-    -only-testing:agentic30UITests/agentic30UITests/testOpenDesignDayHandoffFlowSmoke \
-    -only-testing:agentic30UITests/agentic30UITests/testOpenDesignDayPageResponsivePrimarySmoke \
-    -only-testing:agentic30UITests/agentic30UITests/testOpenDesignDayPageResponsiveCompactSmoke \
-    -only-testing:agentic30UITests/agentic30UITests/testWorkspaceStartupShowsOpenDesignDayAndLocksFutureNavigation
+  AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:smoke
+  ```
+- Run full UI E2E only after approval:
+  ```bash
+  AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:full
   ```
 - Live canaries should be excluded from default CI runs.
 

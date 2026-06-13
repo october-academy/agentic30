@@ -7,8 +7,8 @@ This checklist is for local dogfood releases of the macOS menu bar app. Public D
 - `npm install` succeeds from the repo root.
 - `npm run doctor` reports no `failed` checks.
 - `npm run test:sidecar` passes.
-- Focused UI tests pass for hermetic chat, structured prompt choices, settings model pickers, and BIP sidecar failure handling.
-- `xcodebuild test -project agentic30.xcodeproj -scheme agentic30 -destination 'platform=macOS'` is green or any failure is documented as unrelated to the release.
+- `npm run test:swift:unit` passes.
+- Focused UI tests pass with `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:smoke` after local desktop approval, or on CI/self-hosted Mac where they do not block the user's active desktop.
 - Fresh app support data can create a session, select a project folder, answer onboarding, and show Day 1 Mission without Google setup.
 - Corrupt `sessions.json` is quarantined as `sessions.json.corrupt-<timestamp>` and visible in diagnostics.
 - Normal chat and coaching run read-only by default. Full workspace access only happens from an approved command/action.

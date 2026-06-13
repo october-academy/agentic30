@@ -12,6 +12,7 @@ Build, sync, preflight, and verification scripts wired into `package.json`. Cove
 |------|-------------|
 | `build-sidecar.mjs` | Bundles the sidecar for inclusion in the Mac app DMG (`npm run build:sidecar`) |
 | `preflight-bundle.mjs` | Bundle preflight checks (`npm run preflight:bundle`) |
+| `xcode-test.sh` | Wrapper for Swift unit/UI E2E test modes; blocks local UI E2E unless explicitly approved |
 | `check-release-automation.sh` | Preflight for the GitHub Actions release configuration |
 | `publish-github-release.sh` | Publishes appcast/DMG artifacts to GitHub Releases |
 | `upload-sparkle-r2.sh` | Uploads Sparkle appcast artifacts to Cloudflare R2 |
@@ -28,6 +29,7 @@ Build, sync, preflight, and verification scripts wired into `package.json`. Cove
 - Do not write to `sidecar/vendor/` outside of `sync-gstack.mjs`. The vendor tree is upstream-owned.
 - `build-sidecar.mjs` is invoked during the Mac app build and must remain idempotent and side-effect-free outside its output directory (`sidecar-build/`, gitignored).
 - `verify-foundation-first-prompts.mjs` is referenced by tests in `sidecar-tests/`; changes to its CLI surface should be matched by test updates.
+- `xcode-test.sh` must keep local UI E2E gated by `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1` unless running in CI/GitHub Actions.
 
 ### Testing Requirements
 - `patch-gstack-skill.mjs` has coverage in `sidecar-tests/patch-gstack-skill.test.mjs`.

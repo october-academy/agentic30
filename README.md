@@ -44,14 +44,14 @@ The PostHog SDK is initialized by the macOS app at launch and the resolved captu
 
 ## UI E2E Modes
 
-Hermetic UI tests use `--ui-testing-opaque-window` and `AGENTIC30_TEST_STUB_PROVIDER=1` so screenshots are stable and provider auth is not required:
+Hermetic UI tests use `--ui-testing-opaque-window` and `AGENTIC30_TEST_STUB_PROVIDER=1` so screenshots are stable and provider auth is not required. Local UI E2E launches Agentic30 in the foreground and can take keyboard, mouse, and focus, so run it only when you are ready for the desktop to be occupied:
 
 ```bash
-xcodebuild test -project agentic30.xcodeproj -scheme agentic30UITests -destination 'platform=macOS' \
-  -only-testing:agentic30UITests/agentic30UITests/testNativeProjectPickerSelectsDirectory \
-  -only-testing:agentic30UITests/agentic30UITests/testSettingsModelPickersSelectClaudeAndCodexModels \
-  -only-testing:agentic30UITests/agentic30UITests/testSidecarChatFlowHermetic
+AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:smoke
+AGENTIC30_ALLOW_BLOCKING_UI_E2E=1 npm run test:swift:ui:full
 ```
+
+Without `AGENTIC30_ALLOW_BLOCKING_UI_E2E=1`, the UI scripts fail before launching the app. GitHub Actions or a self-hosted Mac runner may run these without local desktop approval.
 
 Live canaries are opt-in:
 
@@ -65,8 +65,10 @@ Live canaries are opt-in:
 npm run doctor
 npm run check:public-safety
 npm run test:sidecar
-xcodebuild test -project agentic30.xcodeproj -scheme agentic30 -destination 'platform=macOS'
+npm run test:swift:unit
 ```
+
+Run UI E2E separately with explicit approval when a change touches app workflows or visual behavior.
 
 Optional local secret scanning:
 
