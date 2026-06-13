@@ -118,6 +118,12 @@ import {
 } from "./work-history.mjs";
 import { buildDay1SituationSummary } from "./generate-day1-situation-summary.mjs";
 import { extractWorkspaceEvidence } from "./workspace-signal-extractor.mjs";
+import {
+  buildWorkspaceScanAgentPrompt,
+  buildWorkspaceScanEvidenceBundle,
+  normalizeWorkspaceScanSemanticOutput,
+  summarizeWorkspaceScanLocalFindings,
+} from "./workspace-scan-evidence-bundle.mjs";
 import { isSecretPath, redactSecrets } from "./workspace-safety.mjs";
 import { ensureAgentic30Gitignored } from "./workspace-gitignore.mjs";
 import {
@@ -456,7 +462,6 @@ const WORKSPACE_SCAN_CLAUDE_MODEL = "claude-sonnet-4-6";
 // 동급 저비용 모델인 gpt-5.4-mini로 대체 (2026-06-10 `codex debug models` 기준).
 const WORKSPACE_SCAN_CODEX_MODEL = "gpt-5.4-mini";
 const WORKSPACE_SCAN_GEMINI_MODEL = "gemini-3.5-flash";
-const WORKSPACE_SCAN_CURSOR_MODEL = "composer-2.5";
 const DAY1_CHOICE_CLAUDE_MODEL = process.env.AGENTIC30_DAY1_CHOICE_CLAUDE_MODEL || "claude-opus-4-8";
 const DAY1_CHOICE_CODEX_MODEL = process.env.AGENTIC30_DAY1_CHOICE_CODEX_MODEL || "gpt-5.5";
 const DAY1_CHOICE_GEMINI_MODEL = process.env.AGENTIC30_DAY1_CHOICE_GEMINI_MODEL || "gemini-3.5-flash";
@@ -470,7 +475,6 @@ const WORKSPACE_SCAN_MODEL_BY_PROVIDER = {
   claude: WORKSPACE_SCAN_CLAUDE_MODEL,
   codex: WORKSPACE_SCAN_CODEX_MODEL,
   gemini: WORKSPACE_SCAN_GEMINI_MODEL,
-  cursor: WORKSPACE_SCAN_CURSOR_MODEL,
 };
 // Workspace scan agent wall-clock bounds. ABORT asks the provider SDK to stop;
 // HARD_DEADLINE force-returns the scan even if the SDK ignores the abort, so a
@@ -7690,7 +7694,7 @@ async function buildConfiguredDocPathAnswer(prompt) {
   if (!docStat?.isFile()) {
     return [
       `\`${label}\`의 canonical 위치는 \`${docPath}\`이지만 파일이 없습니다.`,
-      "Legacy `docs/*` 경로는 사용하지 않습니다. `.agentic30/docs/*`에 문서를 만든 뒤 다시 실행해야 합니다.",
+      "Only canonical `.agentic30/docs/*` project docs are used. Create the document there and run again.",
       ...summaryLines,
     ].join("\n");
   }
@@ -8039,7 +8043,7 @@ function buildChatBipManifest() {
     "## Settings BIP Manifest",
     "This deterministic manifest comes from Settings > Build In Public.",
     "For questions asking where a canonical project document is, answer from this manifest before using retrieval.",
-    "Use QMD for broad search and the BIP MCP tools for canonical project documents. Legacy docs/* paths are not used.",
+    "Use QMD for broad search and the BIP MCP tools for canonical `.agentic30/docs/*` project documents.",
     `Workspace root: ${path.resolve(configuredRoot)}`,
   ];
   lines.push(`ICP doc: ${projectDocPath("icp")}`);
@@ -8090,7 +8094,7 @@ async function collectChatBipLocalDocs(bipConfig, root) {
       docs.push({
         role,
         relativePath: path.relative(root, resolvedPath) || ".",
-        content: `Missing canonical project doc at ${value}. Legacy docs/* paths are not used.`,
+        content: `Missing canonical project doc at ${value}. Only .agentic30/docs/* project docs are used.`,
       });
       continue;
     }
@@ -10578,9 +10582,18 @@ async function refreshProjectContextFromRequest(payload = {}) {
   }).catch(() => null);
 
   if (reason === "day_completed") {
+    const workspaceScanEvidenceBundle = await buildWorkspaceScanEvidenceBundle({
+      workspaceRoot: root,
+      scanResult: scanResult || {},
+    }).catch(() => null);
     const agentResults = await Promise.allSettled(
       selectScanProviderTargets(preferredProvider, WORKSPACE_SCAN_MODEL_BY_PROVIDER).map(
-        ({ provider, model }) => runWorkspaceScanAgent({ provider, model, scanRoot: root }),
+        ({ provider, model }) => runWorkspaceScanAgent({
+          provider,
+          model,
+          scanRoot: root,
+          evidenceBundle: workspaceScanEvidenceBundle,
+        }),
       ),
     );
     // Background context refresh: a failed agent outcome just skips the merge
@@ -10822,6 +10835,10 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
       });
     }
     const localResult = await findWorkspaceDocsLocally(scanRoot);
+    const workspaceScanEvidenceBundle = await buildWorkspaceScanEvidenceBundle({
+      workspaceRoot: scanRoot,
+      scanResult: localResult,
+    });
     // Stage-3 deterministic local signals — git activity, project shape,
     // runway hints. Pure read; absorbs all errors so a non-git folder still
     // produces a stable shape.
@@ -10989,7 +11006,12 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
     const scanTargets = selectScanProviderTargets(preferredProvider, WORKSPACE_SCAN_MODEL_BY_PROVIDER);
     const agentResults = await Promise.allSettled(
       scanTargets.map(
-        ({ provider, model }) => runWorkspaceScanAgent({ provider, model, scanRoot }),
+        ({ provider, model }) => runWorkspaceScanAgent({
+          provider,
+          model,
+          scanRoot,
+          evidenceBundle: workspaceScanEvidenceBundle,
+        }),
       ),
     );
     const agentOutcomes = agentResults
@@ -11001,8 +11023,8 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
     if (!parsedAgentResults.length) {
       // Agent verification failed (usage limit / no auth / run error). The
       // scan must NOT pass on local-only signals — broadcast a blocked state
-      // with the next provider in the consent chain (codex → claude → gemini
-      // → cursor) instead of a workspace_scan_result. With no available
+      // with the next scan-ready provider in the consent chain instead of a
+      // workspace_scan_result. With no available
       // provider at all, Agentic30 cannot proceed: fail closed.
       const failure = agentOutcomes.find((outcome) => !outcome.ok) || {
         provider: scanTargets[0]?.provider || "codex",
@@ -11010,7 +11032,9 @@ async function runWorkspaceScan(scanRoot, { sessionId = "", prompt = "", preferr
         reason: "error",
         message: "",
       };
-      broadcastWorkspaceScanBlocked(scanRoot, failure);
+      broadcastWorkspaceScanBlocked(scanRoot, failure, {
+        evidenceBundle: workspaceScanEvidenceBundle,
+      });
       return;
     }
     const agentSituationSignals = parsedAgentResults
@@ -11221,7 +11245,7 @@ async function appendWorkspaceScanVisibleAnswer({ sessionId = "", prompt = "", s
  * The foreground scan path turns a failed outcome into workspace_scan_blocked;
  * background refreshes simply skip the merge.
  */
-async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
+async function runWorkspaceScanAgent({ provider, model, scanRoot, evidenceBundle = null }) {
   const authState = getProviderAuthState(provider);
   if (!authState.available) {
     telemetry.captureEvent("mac_sidecar_workspace_scan_provider_skipped", {
@@ -11263,57 +11287,21 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
   });
   let responseText = "";
   const providerLabel = workspaceScanProviderLabel(provider, model);
+  const scanEvidenceBundle = evidenceBundle || await buildWorkspaceScanEvidenceBundle({
+    workspaceRoot: scanRoot,
+    scanResult: {},
+  });
   broadcastWorkspaceScanProgress(scanRoot, `scan.agent · ${providerLabel}가 질문 근거를 확인 중`, {
     stage: "verifying",
     stepIndex: 2,
     totalSteps: 3,
   });
-  const scanPrompt = [
-    "Scan the current workspace for these project documents and return only JSON.",
-    "Only report the canonical `.agentic30/docs/*` product documents. If a canonical file is missing, return null for that role; do not use legacy `docs/*`, README, or root-level aliases.",
-    "Find these exact relative paths:",
-    `- icp: ${projectDocPath("icp")}`,
-    `- spec: ${projectDocPath("spec")}`,
-    `- values: ${projectDocPath("values")}`,
-    `- designSystem: ${projectDocPath("designSystem")}`,
-    `- adr: ${projectDocPath("adr")}`,
-    `- goal: ${projectDocPath("goal")}`,
-    `- docs: ${projectDocPath("docs")}`,
-    `- sheet: ${projectDocPath("sheet")}`,
-    "",
-    "Also infer an onboardingHypothesis for the first user-facing question:",
-    '- productName: display product/project name exactly as shown by README/docs/package after generic cleanup; for example README "# agentic30 Mac" should return "agentic30 Mac"',
-    "- projectKind: short snake_case product type such as mac_app, web_app, developer_tool, node_app, strategy_docs, or unknown",
-    "- targetUser: the current customer/ICP definition visible from docs, in Korean when possible",
-    "- problem: the concrete user pain/problem the product claims to solve; do not infer from tech stack alone",
-    "- purpose: the product's stated purpose/outcome; prefer README/docs mission/spec wording",
-    "- goal: the concrete business/product goal or proof target visible in docs/source signals",
-    "- values: compact product values, principles, or tradeoff rules visible in docs/source signals",
-    "- likelyUsers: 1-4 concrete Korean user segments visible from repository evidence",
-    "- stage: idea, prototype, first_users, pre_revenue, post_revenue, or unknown",
-    "- evidence: 1-5 short facts from README/docs/package/config/recent files",
-    "- confidence: low, medium, or high",
-    "- suggestedFirstQuestion: one Korean question that diagnoses the current ICP and asks the user to narrow it into a more specific customer segment; do not ask whether your guess is right",
-    "",
-    "Also return situationSignals for the Day 1 project situation card. Only include a signal when you can cite a real workspace file and a short quote from that file.",
-    "- channels: customer acquisition, distribution, or community paths explicitly visible in workspace evidence",
-    "- analyticsTools: analytics, dashboard, instrumentation, or measurement tools explicitly visible in workspace evidence",
-    "- events: event names or metric names explicitly visible in workspace evidence",
-    "- customerActions: observable customer behaviors or validation actions explicitly visible in workspace evidence",
-    "- currentAlternatives: current manual tools/workflows/alternatives explicitly visible in workspace evidence",
-    "- conversionSignals: payment, pilot, signup, adoption, referral, or buying signals explicitly visible in workspace evidence",
-    "- missingAssumptions: concise labels for important missing signals, only when the absence is clear from the scanned docs",
-    "Every item in channels/analyticsTools/events/customerActions/currentAlternatives/conversionSignals must have: label, evidencePath, shortQuote. The quote must be copied from that file, short, and non-secret.",
-    "",
-    "Use only exact filenames under `.agentic30/docs/`. If exact files are absent, return null for that role.",
-    "Return paths relative to the workspace root. Use null when not found.",
-    '{"icp": null, "spec": null, "values": null, "designSystem": null, "adr": null, "goal": null, "docs": null, "sheet": null, "onboardingHypothesis": {"productName": "", "projectKind": "unknown", "targetUser": "", "problem": "", "purpose": "", "goal": "", "values": "", "likelyUsers": [], "stage": "unknown", "evidence": [], "confidence": "low", "suggestedFirstQuestion": ""}, "situationSignals": {"channels": [], "analyticsTools": [], "events": [], "customerActions": [], "currentAlternatives": [], "conversionSignals": [], "missingAssumptions": []}}',
-  ].join("\n");
+  const scanPrompt = buildWorkspaceScanAgentPrompt(scanEvidenceBundle);
   const systemPromptOverride = [
-    "You are a fast read-only workspace document scanner.",
+    "You are a fast semantic verifier for a local workspace scan.",
     "Do not modify files. Do not run network commands.",
-    "Use the smallest number of read-only filesystem inspections needed.",
-    "Return only one JSON object with keys: icp, spec, values, designSystem, adr, goal, docs, sheet, onboardingHypothesis, situationSignals.",
+    "Do not discover or report document paths. Local deterministic scanning is authoritative for paths.",
+    "Return only one JSON object with keys: onboardingHypothesis, situationSignals, confidence, evidencePathsUsed.",
   ].join("\n");
 
   try {
@@ -11352,20 +11340,22 @@ async function runWorkspaceScanAgent({ provider, model, scanRoot }) {
       hardDeadline,
     ]);
     const parsed = parseWorkspaceScanText(responseText);
+    const semantic = normalizeWorkspaceScanSemanticOutput(parsed, scanEvidenceBundle);
     const result = {
-      ...normalizeWorkspaceScanResult(parsed, scanRoot),
-      onboardingHypothesis: normalizeWorkspaceOnboardingHypothesis(parsed?.onboardingHypothesis),
-      situationSignals: normalizeWorkspaceSituationSignals(parsed?.situationSignals, scanRoot),
+      onboardingHypothesis: semantic.onboardingHypothesis,
+      situationSignals: normalizeWorkspaceSituationSignals(semantic.situationSignals, scanRoot),
+      confidence: semantic.confidence,
+      evidencePathsUsed: semantic.evidencePathsUsed,
     };
-    const foundCount = countWorkspaceScanResults(result);
+    const evidenceCount = result.evidencePathsUsed.length;
     broadcastWorkspaceScanProgress(
       scanRoot,
-      `scan.agent · ${providerLabel} 완료 (${foundCount}개 근거)`,
+      `scan.agent · ${providerLabel} 완료 (${evidenceCount}개 의미 근거)`,
       {
         stage: "verifying",
         stepIndex: 2,
         totalSteps: 3,
-        foundCount,
+        foundCount: evidenceCount,
       },
     );
     return { ok: true, provider, model, result };
@@ -11427,17 +11417,18 @@ function broadcastWorkspaceScanProviderLimited(scanRoot, { provider, model, stag
  * The scan's agent verification failed (usage limit, missing provider auth, or
  * a run error). Day 1 must not proceed on local-only signals, so instead of a
  * successful workspace_scan_result the Mac side gets this blocking notice with
- * the next provider in the consent chain (codex → claude → gemini → cursor).
+ * the next scan-ready provider in the consent chain.
  * Switching still requires the user's click; when no provider is available at
  * all (`nextProvider: null`) the UI says Agentic30 cannot proceed.
  */
-function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, message }) {
+function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, message }, { evidenceBundle = null } = {}) {
   const failedProviderAuthState = getProviderAuthState(provider);
   const { nextProvider, availableProviders } = selectNextScanProvider(
     provider,
-    (candidate) => getProviderAuthState(candidate).available,
+    (candidate) => getProviderScanReadiness(candidate).scanReady,
   );
   const providerReadiness = PROVIDER_FALLBACK_CYCLE.map((candidate) => getProviderScanReadiness(candidate));
+  const localFindings = summarizeWorkspaceScanLocalFindings(evidenceBundle);
   const installedProviders = providerReadiness
     .filter((item) => item.sdkInstalled)
     .map((item) => item.provider);
@@ -11462,6 +11453,7 @@ function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, mess
     provider_readiness: providerReadiness,
     auth_source: failedProviderAuthState.source || "",
     auth_available: failedProviderAuthState.available === true,
+    local_found_count: localFindings.localFoundCount,
   });
   captureSidecarLog("workspace scan blocked", workspaceScanBlockedLogLevel(reason), {
     operation: "runWorkspaceScan",
@@ -11479,6 +11471,7 @@ function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, mess
     provider_readiness: providerReadiness,
     auth_source: failedProviderAuthState.source || "",
     auth_available: failedProviderAuthState.available === true,
+    local_found_count: localFindings.localFoundCount,
     failure_detail: truncateTelemetryString(message || ""),
   });
   markWorkspaceSetupFailed(
@@ -11512,6 +11505,8 @@ function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, mess
     nextProvider,
     availableProviders,
     providerReadiness,
+    localFoundCount: localFindings.localFoundCount,
+    localFindings,
     ...(reason === "usage_limit" ? { errorKind: PROVIDER_USAGE_LIMIT_ERROR_KIND } : {}),
     ...(reason === "unavailable" ? { errorKind: PROVIDER_AUTH_REQUIRED_ERROR_KIND } : {}),
   });
@@ -13099,7 +13094,7 @@ async function runCreateDoc(docRoot, docType, { preferredProvider = "" } = {}) {
       "- Write all document content in Korean (한국어)",
       "- Use markdown format",
       "- Base everything on actual project analysis — be specific, reference real files and features",
-      "- Do not read legacy `docs/*.md` product-shape files as seed context.",
+      "- Use only `.agentic30/docs/*` product-shape files as seed context.",
       `- Save the file to: ${template.filename}`,
       "- Create the parent directory if needed",
     ].join("\n");

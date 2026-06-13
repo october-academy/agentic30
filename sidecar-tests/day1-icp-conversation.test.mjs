@@ -779,9 +779,9 @@ test("Day 1 document handoff writes one canonical doc immediately without auto-s
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-doc-handoff-workspace-"));
   const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-doc-handoff-app-"));
   await writeDay1Fixture(root, appSupportPath);
-  await fs.mkdir(path.join(root, "docs"), { recursive: true });
+  await fs.mkdir(path.join(root, "archive"), { recursive: true });
   await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
-  await fs.writeFile(path.join(root, "docs", "GOAL.md"), "# GOAL\n\n기존 목표는 보존한다.\n");
+  await fs.writeFile(path.join(root, "archive", "GOAL.md"), "# GOAL\n\n기존 목표는 보존한다.\n");
 
   const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", root], {
     cwd: packageRoot,
@@ -857,11 +857,11 @@ test("Day 1 document handoff writes one canonical doc immediately without auto-s
       false,
     );
     const written = await fs.readFile(path.join(root, ".agentic30", "docs", "GOAL.md"), "utf8");
-    const legacy = await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8");
+    const archived = await fs.readFile(path.join(root, "archive", "GOAL.md"), "utf8");
     assert.doesNotMatch(written, /기존 목표는 보존한다/);
     assert.match(written, /agentic30:day1-handoff:start/);
     assert.doesNotMatch(written, /Day 1 Handoff|Document Decision|Rubric Signals/);
-    assert.doesNotMatch(legacy, /agentic30:day1-handoff:start/);
+    assert.doesNotMatch(archived, /agentic30:day1-handoff:start/);
 
     await closeWebSocket(ws);
     ws = null;
@@ -879,9 +879,9 @@ test("Day 1 bulk document handoff writes all canonical docs without structured p
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-doc-bulk-handoff-workspace-"));
   const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-day1-doc-bulk-handoff-app-"));
   await writeDay1Fixture(root, appSupportPath);
-  await fs.mkdir(path.join(root, "docs"), { recursive: true });
+  await fs.mkdir(path.join(root, "archive"), { recursive: true });
   await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
-  await fs.writeFile(path.join(root, "docs", "GOAL.md"), "# GOAL\n\n기존 목표는 보존한다.\n");
+  await fs.writeFile(path.join(root, "archive", "GOAL.md"), "# GOAL\n\n기존 목표는 보존한다.\n");
 
   const child = spawn(process.execPath, ["sidecar/index.mjs", "--workspace", root], {
     cwd: packageRoot,
@@ -946,9 +946,9 @@ test("Day 1 bulk document handoff writes all canonical docs without structured p
       assert.doesNotMatch(content, /Day 1 Handoff|Document Decision|Rubric Signals/);
     }
     const goal = await fs.readFile(path.join(root, ".agentic30", "docs", "GOAL.md"), "utf8");
-    const legacyGoal = await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8");
+    const archivedGoal = await fs.readFile(path.join(root, "archive", "GOAL.md"), "utf8");
     assert.doesNotMatch(goal, /기존 목표는 보존한다/);
-    assert.doesNotMatch(legacyGoal, /agentic30:day1-handoff:start/);
+    assert.doesNotMatch(archivedGoal, /agentic30:day1-handoff:start/);
 
     await closeWebSocket(ws);
     ws = null;
@@ -1527,7 +1527,6 @@ test("concurrent IDD start requests create only one initial setup session", asyn
 test("Post-Foundation Day 1 ICP coaching records a five-turn local conversation", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-post-foundation-day1-icp-workspace-"));
   const appSupportPath = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-post-foundation-day1-icp-app-"));
-  await fs.mkdir(path.join(root, "docs"), { recursive: true });
   await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
   await fs.writeFile(
     path.join(root, ".agentic30", "docs", "ICP.md"),
@@ -1720,7 +1719,6 @@ test("Day 1 ICP user completes a five-turn live Codex SDK conversation", {
 });
 
 async function writeDay1Fixture(root, appSupportPath) {
-  await fs.mkdir(path.join(root, "docs"), { recursive: true });
   await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
   await fs.writeFile(
     path.join(root, ".agentic30", "docs", "ICP.md"),

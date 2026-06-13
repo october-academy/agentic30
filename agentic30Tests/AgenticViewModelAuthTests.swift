@@ -1700,8 +1700,8 @@ final class AgenticViewModelAuthTests {
           "model": "gpt-5.5",
           "reason": "usage_limit",
           "message": "Codex hit a usage limit during workspace scan verification.",
-          "nextProvider": "cursor",
-          "availableProviders": ["claude", "gemini", "cursor"],
+          "nextProvider": "claude",
+          "availableProviders": ["claude", "gemini"],
           "providerReadiness": [
             {
               "provider": "claude",
@@ -1717,7 +1717,7 @@ final class AgenticViewModelAuthTests {
               "provider": "cursor",
               "sdkInstalled": true,
               "authenticated": true,
-              "scanReady": true,
+              "scanReady": false,
               "source": "api-key",
               "message": "API key from CURSOR_API_KEY",
               "sdkMessage": "Cursor Agent SDK is installed",
@@ -1737,11 +1737,11 @@ final class AgenticViewModelAuthTests {
         #expect(viewModel.scanResult == nil)
         let notice = try #require(viewModel.scanBlockedNotice)
         #expect(notice.provider == .codex)
-        #expect(notice.nextProvider == .cursor)
-        #expect(notice.availableProviders == [.claude, .gemini, .cursor])
+        #expect(notice.nextProvider == .claude)
+        #expect(notice.availableProviders == [.claude, .gemini])
         #expect(notice.providerReadiness.map(\.provider) == [.claude, .cursor])
-        let allReadinessScanReady = notice.providerReadiness.allSatisfy(\.scanReady)
-        #expect(allReadinessScanReady)
+        #expect(notice.providerReadiness.first?.scanReady == true)
+        #expect(notice.providerReadiness.last?.scanReady == false)
         #expect(notice.scanRoot == workspace.path)
 
         let bootState = viewModel.intakeV2BootLogState
@@ -1764,9 +1764,9 @@ final class AgenticViewModelAuthTests {
         #expect(presentation.primaryCTATitle(questionCount: 3) == "AI 연결 확인 필요")
 
         sidecar.resetSentPayloads()
-        viewModel.rescanWorkspace(root: notice.scanRoot, provider: .cursor)
+        viewModel.rescanWorkspace(root: notice.scanRoot, provider: .claude)
         let scanPayload = sidecar.sentPayloads.last { ($0["type"] as? String) == "scan_workspace" }
-        #expect(scanPayload?["preferredProvider"] as? String == AgentProvider.cursor.rawValue)
+        #expect(scanPayload?["preferredProvider"] as? String == AgentProvider.claude.rawValue)
     }
 
     @Test @MainActor func workspaceScanBlockedWithOnlyInstalledProvidersKeepsDay1Closed() async throws {

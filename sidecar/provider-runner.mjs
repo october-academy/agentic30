@@ -22,6 +22,7 @@ import {
   INLINE_DECISION_SENTINEL_END,
   INLINE_DECISION_SENTINEL_START,
 } from "./inline-decision.mjs";
+import { buildReadOnlyWorkspaceCanUseTool } from "./read-only-workspace-tool-policy.mjs";
 import {
   applyPostHogCodexEnvFromSources,
   buildPostHogClaudeMcpConfigFromSources,
@@ -117,7 +118,6 @@ const GEMINI_CAPABLE_EXECUTION_MODES = new Set([
 const CURSOR_CAPABLE_EXECUTION_MODES = new Set([
   "idd_question_synthesis",
   "agentic",
-  "workspace_scan_read_only",
   "memory_chat",
 ]);
 const RESPONSE_LANGUAGE_INSTRUCTION =
@@ -497,11 +497,14 @@ export function getProviderScanReadiness(provider) {
   const connection = getProviderConnectionState(provider);
   const sdkInstalled = connection.sdk?.available === true;
   const authenticated = connection.available === true;
+  const scanSupported = provider !== "cursor";
   return {
     provider,
     sdkInstalled,
     authenticated,
-    scanReady: sdkInstalled && authenticated,
+    scanReady: sdkInstalled && authenticated && scanSupported,
+    scanSupported,
+    ...(scanSupported ? {} : { scanDisabledReason: "read_only_tool_gating_unavailable" }),
     source: String(connection.source || ""),
     message: String(connection.message || ""),
     sdkMessage: String(connection.sdk?.message || ""),
@@ -707,6 +710,7 @@ async function runClaudeProvider({
     includePartialMessages: true,
     canUseTool: buildClaudeCanUseTool({
       sessionId: sessionIdForMcp,
+      workspaceRoot,
       onRunEvent,
       executionMode,
       approvedToolExecution,
@@ -855,13 +859,31 @@ async function runClaudeProvider({
   };
 }
 
-function buildClaudeCanUseTool({
+export function buildClaudeCanUseTool({
   sessionId,
+  workspaceRoot,
   onRunEvent,
   executionMode = "",
   approvedToolExecution = false,
 } = {}) {
+  const workspaceScanCanUseTool = executionMode === "workspace_scan_read_only"
+    ? buildReadOnlyWorkspaceCanUseTool({
+        workspaceRoot,
+        onDecision: ({ toolName, decision }) => {
+          onRunEvent?.({
+            phase: decision.allowed
+              ? "provider.claude.workspace_scan_tool_allowed"
+              : "provider.claude.workspace_scan_tool_denied",
+            toolName,
+            reason: decision.reason,
+          });
+        },
+      })
+    : null;
   return async (toolName, input, context = {}) => {
+    if (workspaceScanCanUseTool) {
+      return workspaceScanCanUseTool(toolName, input);
+    }
     if (executionMode === OFFICE_HOURS_QUESTION_EXECUTION_MODE && toolName !== "AskUserQuestion") {
       onRunEvent?.({
         phase: "provider.claude.tool_denied_office_hours_question",
@@ -2224,43 +2246,11 @@ function buildStubResponse(prompt) {
   }
 
   // Workspace-scan verification prompt (runWorkspaceScanAgent): the stub must
-  // emulate a healthy provider returning the requested JSON shape — anything
-  // unparseable now blocks the scan (fail-closed) and would wedge hermetic
-  // UI/sidecar tests in the onboarding flow.
-  if (/Scan the current workspace for these project documents and return only JSON/i.test(value)) {
-    return JSON.stringify({
-      icp: null,
-      spec: null,
-      values: null,
-      designSystem: null,
-      adr: null,
-      goal: null,
-      docs: null,
-      sheet: null,
-      onboardingHypothesis: {
-        productName: "",
-        projectKind: "unknown",
-        targetUser: "",
-        problem: "",
-        purpose: "",
-        goal: "",
-        values: "",
-        likelyUsers: [],
-        stage: "unknown",
-        evidence: [],
-        confidence: "low",
-        suggestedFirstQuestion: "",
-      },
-      situationSignals: {
-        channels: [],
-        analyticsTools: [],
-        events: [],
-        customerActions: [],
-        currentAlternatives: [],
-        conversionSignals: [],
-        missingAssumptions: [],
-      },
-    });
+  // emulate a healthy provider returning the semantic-only JSON shape. Anything
+  // unparseable or unsupported now blocks the scan (fail-closed), which is the
+  // production behavior but would wedge hermetic onboarding tests.
+  if (/LOCAL_EVIDENCE_BUNDLE_JSON/i.test(value) || /Scan the current workspace for these project documents and return only JSON/i.test(value)) {
+    return buildStubWorkspaceScanResponse(value);
   }
 
   if (!contexts.length) {
@@ -2278,6 +2268,70 @@ function buildStubResponse(prompt) {
       },
     ],
   });
+}
+
+function buildStubWorkspaceScanResponse(prompt) {
+  const bundle = extractStubWorkspaceScanEvidenceBundle(prompt);
+  const evidencePathsUsed = collectStubWorkspaceScanEvidencePaths(bundle);
+  const confidence = evidencePathsUsed.length >= 2 ? "high" : evidencePathsUsed.length === 1 ? "medium" : "low";
+  return JSON.stringify({
+    onboardingHypothesis: {
+      productName: "",
+      projectKind: "unknown",
+      targetUser: "",
+      problem: "",
+      purpose: "",
+      goal: "",
+      values: "",
+      likelyUsers: [],
+      stage: "unknown",
+      evidence: evidencePathsUsed.slice(0, 5),
+      confidence,
+      suggestedFirstQuestion: "",
+    },
+    situationSignals: {
+      channels: [],
+      analyticsTools: [],
+      events: [],
+      customerActions: [],
+      currentAlternatives: [],
+      conversionSignals: [],
+      missingAssumptions: [],
+    },
+    confidence,
+    evidencePathsUsed,
+  });
+}
+
+function extractStubWorkspaceScanEvidenceBundle(prompt) {
+  const marker = "LOCAL_EVIDENCE_BUNDLE_JSON:";
+  const markerIndex = String(prompt || "").indexOf(marker);
+  if (markerIndex === -1) return null;
+  const jsonText = String(prompt).slice(markerIndex + marker.length).trim();
+  try {
+    return JSON.parse(jsonText);
+  } catch {
+    return null;
+  }
+}
+
+function collectStubWorkspaceScanEvidencePaths(bundle) {
+  const paths = [];
+  const seen = new Set();
+  const push = (value) => {
+    const text = String(value || "").trim();
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) return;
+    seen.add(key);
+    paths.push(text);
+  };
+  for (const doc of Object.values(bundle?.canonicalDocs || {})) {
+    if (doc?.found === true) push(doc.path);
+  }
+  for (const ref of bundle?.evidenceRefs || []) {
+    push(ref?.path);
+  }
+  return paths.slice(0, 8);
 }
 
 async function createStubIddUserInputRequest({
@@ -3258,11 +3312,11 @@ function baseSystemPrompt(provider, workspaceRoot, executionMode) {
 
   if (executionMode === "workspace_scan_read_only") {
     return [
-      "You are the read-only workspace document scanner for agentic30.",
+      "You are the read-only semantic verifier for an agentic30 workspace scan.",
       RESPONSE_LANGUAGE_INSTRUCTION,
       `Current workspace: ${workspaceRoot}`,
       `Provider mode: ${provider}`,
-      "Use only read-only filesystem inspection (read, list, glob, grep). Use the smallest number of inspections needed.",
+      "Work from the local evidence bundle in the prompt. Do not inspect files unless the prompt explicitly asks for a minimal read-only check.",
       "Do not modify files, run shell side effects, browse the web, or call QMD, PostHog, Cloudflare, GitHub, Notion, internal Agentic30 MCP, structured-input, or user-question tools.",
       "Return only the exact JSON object requested by the user prompt.",
     ].join("\n");

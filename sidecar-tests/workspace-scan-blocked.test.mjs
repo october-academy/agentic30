@@ -175,6 +175,10 @@ test("scan with no available provider broadcasts blocked and never passes on loc
     assert.equal(blocked.totalSteps, 3);
     assert.equal(blocked.nextProvider, null);
     assert.deepEqual(blocked.availableProviders, []);
+    assert.equal(blocked.localFoundCount, 0);
+    assert.equal(blocked.localFindings.localFoundCount, 0);
+    assert.equal(blocked.localFindings.canonicalDocs.icp.found, false);
+    assert.ok(blocked.localFindings.evidencePaths.includes("README.md"));
     assert.equal(blocked.providerReadiness.length, 4);
     for (const provider of ["codex", "claude", "gemini", "cursor"]) {
       const readiness = blocked.providerReadiness.find((item) => item.provider === provider);
@@ -310,6 +314,9 @@ test("scan blocked on selected claude usage limit recommends the next scan-ready
     assert.equal(claudeReadiness.scanReady, true);
     assert.equal(geminiReadiness.authenticated, true);
     assert.equal(geminiReadiness.scanReady, true);
+    const cursorReadiness = blocked.providerReadiness.find((item) => item.provider === "cursor");
+    assert.equal(cursorReadiness.scanSupported, false);
+    assert.equal(cursorReadiness.scanReady, false);
 
     await new Promise((resolve) => setTimeout(resolve, 500));
     const passed = ws.events.some((event) =>

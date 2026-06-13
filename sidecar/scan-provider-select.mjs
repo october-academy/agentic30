@@ -12,7 +12,9 @@
 const KNOWN_PROVIDERS = ["claude", "codex", "gemini", "cursor"];
 const DEFAULT_PROVIDER = "codex";
 
-// User-prescribed guidance chain: Codex 한도/불가 → Claude → Gemini → Cursor.
+// Generic provider guidance chain. Workspace scan applies an additional
+// getProviderScanReadiness(...).scanReady predicate, so Cursor stays out of
+// scan recommendations until it has enforceable read-only tool gating.
 // Mirrors AgentProvider.fallbackCycle on the Swift side — keep both in sync.
 export const PROVIDER_FALLBACK_CYCLE = ["codex", "claude", "gemini", "cursor"];
 

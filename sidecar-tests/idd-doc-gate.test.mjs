@@ -40,7 +40,6 @@ import { projectDocPath } from "../sidecar/project-doc-paths.mjs";
 async function withTempWorkspace(fn) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-idd-gate-"));
   try {
-    await fs.mkdir(path.join(root, "docs"), { recursive: true });
     await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
     return await fn(root);
   } finally {
@@ -500,7 +499,8 @@ test("Day 1 handoff merge avoids duplicate top-level headings", () => {
 
 test("Day 1 handoff writes canonical docs immediately and completes after all four", async () => {
   await withTempWorkspace(async (root) => {
-    await fs.writeFile(path.join(root, "docs", "GOAL.md"), "# GOAL\n\n기존 목표\n");
+    await fs.mkdir(path.join(root, "archive"), { recursive: true });
+    await fs.writeFile(path.join(root, "archive", "GOAL.md"), "# GOAL\n\n기존 목표\n");
     let state = {};
     const byType = new Map(BIP_REQUIRED_LOCAL_DOCS.map((doc) => [doc.type, doc]));
     state = recordIddStructuredResponse(state, {
@@ -518,9 +518,9 @@ test("Day 1 handoff writes canonical docs immediately and completes after all fo
     });
     assert.equal(state.docWriteStatuses.goal.status, "written");
     assert.equal(state.status, "interviewing");
-    const legacyGoal = await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8");
-    assert.match(legacyGoal, /기존 목표/);
-    assert.doesNotMatch(legacyGoal, /agentic30:day1-handoff:start/);
+    const archivedGoal = await fs.readFile(path.join(root, "archive", "GOAL.md"), "utf8");
+    assert.match(archivedGoal, /기존 목표/);
+    assert.doesNotMatch(archivedGoal, /agentic30:day1-handoff:start/);
 
     const canonicalGoal = await fs.readFile(path.join(root, projectDocPath("goal")), "utf8");
     assert.match(canonicalGoal, /agentic30:day1-handoff:start/);
@@ -574,7 +574,8 @@ test("Day 1 handoff writes canonical docs immediately and completes after all fo
 
 test("Day 1 bulk handoff writes all canonical docs from final hypothesis", async () => {
   await withTempWorkspace(async (root) => {
-    await fs.writeFile(path.join(root, "docs", "GOAL.md"), "# GOAL\n\n기존 목표\n");
+    await fs.mkdir(path.join(root, "archive"), { recursive: true });
+    await fs.writeFile(path.join(root, "archive", "GOAL.md"), "# GOAL\n\n기존 목표\n");
     const progress = [];
     const { state } = await writeAllDay1HandoffDocuments(root, {}, {
       provider: "codex",
@@ -613,9 +614,9 @@ test("Day 1 bulk handoff writes all canonical docs from final hypothesis", async
       assert.match(content, /agentic30:day1-handoff:end/);
       assert.equal(countTopLevelHeadings(content), 1, rel);
     }
-    const legacyGoal = await fs.readFile(path.join(root, "docs", "GOAL.md"), "utf8");
-    assert.match(legacyGoal, /기존 목표/);
-    assert.doesNotMatch(legacyGoal, /agentic30:day1-handoff:start/);
+    const archivedGoal = await fs.readFile(path.join(root, "archive", "GOAL.md"), "utf8");
+    assert.match(archivedGoal, /기존 목표/);
+    assert.doesNotMatch(archivedGoal, /agentic30:day1-handoff:start/);
     const goal = await fs.readFile(path.join(root, projectDocPath("goal")), "utf8");
     assert.match(goal, /첫 고객 반응 검증/);
     assert.doesNotMatch(goal, /Day 1 Handoff|Document Decision|Rubric Signals/);
@@ -702,9 +703,10 @@ test("Day 1 handoff quality gate marks incomplete facts with assumptions instead
   });
 });
 
-test("BIP setup gate ignores configured legacy doc paths and requires canonical docs", async () => {
+test("BIP setup gate ignores configured non-canonical doc paths and requires canonical docs", async () => {
   await withTempWorkspace(async (root) => {
-    await fs.writeFile(path.join(root, "docs", "ICP-CUSTOM.md"), "# ICP\n");
+    await fs.mkdir(path.join(root, "archive"), { recursive: true });
+    await fs.writeFile(path.join(root, "archive", "ICP-CUSTOM.md"), "# ICP\n");
     await fs.writeFile(path.join(root, ".agentic30", "docs", "SPEC.md"), "# SPEC\n");
     await fs.writeFile(path.join(root, ".agentic30", "docs", "VALUES.md"), "# VALUES\n");
     await fs.writeFile(path.join(root, ".agentic30", "docs", "DESIGN_SYSTEM.md"), "# DESIGN\n");
@@ -718,14 +720,14 @@ test("BIP setup gate ignores configured legacy doc paths and requires canonical 
       bipCoachState: { config: { docId: "doc-1", sheetId: "sheet-1" } },
       bipConfig: {
         workspace: {
-          icp: "docs/ICP-CUSTOM.md",
+          icp: "archive/ICP-CUSTOM.md",
         },
       },
     });
 
     assert.equal(readyGate.ready, false);
     assert.equal(readyGate.missingLocalDocs[0].type, "icp");
-    assert.equal(readyGate.missingLocalDocs[0].configuredPath, "docs/ICP-CUSTOM.md");
+    assert.equal(readyGate.missingLocalDocs[0].configuredPath, "archive/ICP-CUSTOM.md");
     assert.equal(readyGate.localDocs.find((doc) => doc.type === "icp").foundPath, null);
 
     await fs.writeFile(path.join(root, ".agentic30", "docs", "ICP.md"), "# ICP\n");
@@ -734,7 +736,7 @@ test("BIP setup gate ignores configured legacy doc paths and requires canonical 
       bipCoachState: { config: { docId: "doc-1", sheetId: "sheet-1" } },
       bipConfig: {
         workspace: {
-          icp: "docs/ICP-CUSTOM.md",
+          icp: "archive/ICP-CUSTOM.md",
         },
       },
     });
@@ -747,13 +749,13 @@ test("BIP setup gate ignores configured legacy doc paths and requires canonical 
       bipCoachState: { config: { docId: "doc-1", sheetId: "sheet-1" } },
       bipConfig: {
         workspace: {
-          icp: "docs/MISSING-ICP.md",
+          icp: "archive/MISSING-ICP.md",
         },
       },
     });
 
     assert.equal(staleConfigGate.ready, true);
-    assert.equal(staleConfigGate.localDocs.find((doc) => doc.type === "icp").configuredPath, "docs/MISSING-ICP.md");
+    assert.equal(staleConfigGate.localDocs.find((doc) => doc.type === "icp").configuredPath, "archive/MISSING-ICP.md");
     assert.equal(staleConfigGate.localDocs.find((doc) => doc.type === "icp").foundPath, ".agentic30/docs/ICP.md");
   });
 });

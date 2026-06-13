@@ -22,10 +22,10 @@ async function writeFile(root, relativePath, content) {
   await fs.writeFile(absolute, content);
 }
 
-test("canonical project docs ignore legacy and noisy root ICP docs", async () => {
+test("canonical project docs ignore non-canonical and noisy root ICP docs", async () => {
   await withTempWorkspace(async (root) => {
     await writeFile(root, "icp.md", "# ICP\n\nTODO: write this later.\n");
-    await writeFile(root, "docs/ICP.md", "# ICP\n\nTarget user: legacy ecommerce operator.");
+    await writeFile(root, "archive/ICP.md", "# ICP\n\nTarget user: archived ecommerce operator.");
     await writeFile(root, "README.md", "# SupportLens\n\nCustomer support escalation assistant.");
     await writeFile(
       root,
@@ -39,22 +39,22 @@ test("canonical project docs ignore legacy and noisy root ICP docs", async () =>
     );
 
     const extracted = await extractWorkspaceEvidence(root, {
-      scanPaths: { icp: ["icp.md", "docs/ICP.md", projectDocPath("icp")] },
+      scanPaths: { icp: ["icp.md", "archive/ICP.md", projectDocPath("icp")] },
       includeSource: false,
     });
 
     assert.equal(extracted.docs.icp, projectDocPath("icp"));
     assert.match(extracted.signals.targetUser, /customer success lead/i);
     assert.equal(extracted.candidates.icp.some((item) => item.path === "icp.md"), false);
-    assert.equal(extracted.candidates.icp.some((item) => item.path === "docs/ICP.md"), false);
+    assert.equal(extracted.candidates.icp.some((item) => item.path === "archive/ICP.md"), false);
     assert.ok(extracted.rejectedCandidates.some((item) => item.path === "icp.md"));
-    assert.ok(extracted.rejectedCandidates.some((item) => item.path === "docs/ICP.md"));
+    assert.ok(extracted.rejectedCandidates.some((item) => item.path === "archive/ICP.md"));
   });
 });
 
 test("provider-returned bad paths are rejected before docs are exposed", async () => {
   await withTempWorkspace(async (root) => {
-    await fs.mkdir(path.join(root, "docs"), { recursive: true });
+    await fs.mkdir(path.join(root, "archive"), { recursive: true });
     await fs.mkdir(path.join(root, ".agentic30", "docs"), { recursive: true });
     await writeFile(root, ".agentic30/docs/ICP.md", "# ICP\n\nTarget user: ecommerce operator.");
     await writeFile(root, "data.json", JSON.stringify({ targetUser: "not a document role" }));
@@ -62,13 +62,13 @@ test("provider-returned bad paths are rejected before docs are exposed", async (
 
     const extracted = await extractWorkspaceEvidence(root, {
       scanPaths: {
-        icp: ["docs", "/tmp/outside.md", "missing.md", "data.json", "image.bin", ".agentic30/docs/ICP.md"],
+        icp: ["archive", "/tmp/outside.md", "missing.md", "data.json", "image.bin", ".agentic30/docs/ICP.md"],
       },
       includeSource: false,
     });
 
     assert.equal(extracted.docs.icp, ".agentic30/docs/ICP.md");
-    assert.ok(extracted.rejectedCandidates.some((item) => item.path === "docs"));
+    assert.ok(extracted.rejectedCandidates.some((item) => item.path === "archive"));
     assert.ok(extracted.rejectedCandidates.some((item) => item.path === "/tmp/outside.md"));
     assert.ok(extracted.rejectedCandidates.some((item) => item.path === "missing.md"));
     assert.ok(extracted.rejectedCandidates.some((item) => item.path === "data.json"));

@@ -9,6 +9,7 @@ import {
   allowsProviderPermissionBypass,
   buildGeminiEnv,
   CODEX_BINARY_NOT_INSTALLED_ERROR_CODE,
+  buildClaudeCanUseTool,
   buildCodexConfig,
   buildCodexEnv,
   buildProviderEnv,
@@ -17,6 +18,7 @@ import {
   extractClaudePartialText,
   getProviderAuthState,
   getProviderConnectionState,
+  getProviderScanReadiness,
   isProviderAuthRequiredError,
   isProviderUsageLimitError,
   isCodexContextOverflowError,
@@ -1000,9 +1002,53 @@ test("resolveClaudeMaxTurns bounds the workspace scan far below the chat lane", 
   assert.equal(resolveClaudeMaxTurns(""), 24);
 });
 
-test("workspace_scan_read_only is a capable mode for gemini and cursor scans", () => {
+test("workspace_scan_read_only is a capable mode for gemini but not cursor scans", () => {
   assert.equal(supportsGeminiExecutionMode("workspace_scan_read_only"), true);
-  assert.equal(supportsCursorExecutionMode("workspace_scan_read_only"), true);
+  assert.equal(supportsCursorExecutionMode("workspace_scan_read_only"), false);
+});
+
+test("cursor is authenticated but not scan-ready until read-only tool gating exists", () => {
+  resetProviderSettingsForTest();
+  try {
+    updateProviderSettings({ cursor: { authMode: "api_key", apiKey: "cursor-secret" } });
+    const readiness = getProviderScanReadiness("cursor");
+    assert.equal(readiness.authenticated, true);
+    assert.equal(readiness.scanSupported, false);
+    assert.equal(readiness.scanReady, false);
+    assert.equal(readiness.scanDisabledReason, "read_only_tool_gating_unavailable");
+  } finally {
+    resetProviderSettingsForTest();
+  }
+});
+
+test("Claude workspace_scan_read_only uses capped in-workspace read-only tool policy", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-claude-scan-policy-"));
+  try {
+    const canUseTool = buildClaudeCanUseTool({
+      workspaceRoot: root,
+      executionMode: "workspace_scan_read_only",
+    });
+    const inside = await canUseTool("Read", { file_path: path.join(root, "README.md") });
+    assert.equal(inside.behavior, "allow");
+
+    const outside = await canUseTool("Read", { file_path: "/etc/passwd" });
+    assert.equal(outside.behavior, "deny");
+    assert.match(outside.message, /path_outside_workspace/);
+
+    const ask = await canUseTool("AskUserQuestion", {});
+    assert.equal(ask.behavior, "deny");
+    assert.match(ask.message, /tool_not_allowed/);
+
+    for (let i = 0; i < 29; i += 1) {
+      const allowed = await canUseTool("Read", { file_path: path.join(root, `file-${i}.md`) });
+      assert.equal(allowed.behavior, "allow");
+    }
+    const capped = await canUseTool("Read", { file_path: path.join(root, "one-too-many.md") });
+    assert.equal(capped.behavior, "deny");
+    assert.match(capped.message, /cap_reached:Read/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 test("buildCodexConfig injects NO external MCP servers for workspace_scan_read_only", () => {
@@ -1024,7 +1070,7 @@ test("buildSystemPromptText for workspace_scan_read_only is a tight read-only sc
     workspaceRoot: "/tmp/ws",
     executionMode: "workspace_scan_read_only",
   });
-  assert.match(prompt, /read-only workspace document scanner/i);
+  assert.match(prompt, /read-only semantic verifier/i);
   // Must not drag in the heavy advisor identity / MCP-usage guidance the
   // default chat lane carries.
   assert.doesNotMatch(prompt, /October-Style Advisor Identity/);

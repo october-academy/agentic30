@@ -320,7 +320,7 @@ server.tool(
         }
       }
       if (!safeDocPath || !stat) {
-        throw lastError || new Error(`Canonical project doc not found at ${relativeDocPath}. Legacy docs/* paths are not used.`);
+        throw lastError || new Error(`Canonical project doc not found at ${relativeDocPath}. Only .agentic30/docs/* project docs are used.`);
       }
 
       if (stat.isDirectory()) {
@@ -354,7 +354,7 @@ server.tool(
       };
     } catch (err) {
       const missingMessage = /ENOENT|no such file or directory/i.test(String(err?.message || ""))
-        ? `Canonical project doc missing at "${relativeDocPath}". Legacy docs/* paths are not used.`
+        ? `Canonical project doc missing at "${relativeDocPath}". Only .agentic30/docs/* project docs are used.`
         : `Failed to read ${role} at "${relativeDocPath}": ${err.message}`;
       return {
         content: [

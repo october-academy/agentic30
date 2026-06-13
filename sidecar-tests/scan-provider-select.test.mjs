@@ -54,7 +54,18 @@ test("a known provider missing from the model map defaults to codex only", () =>
   ]);
 });
 
-test("fallback cycle is the prescribed codex → claude → gemini → cursor chain", () => {
+test("workspace scan model maps can omit cursor so a cursor preference falls back to codex", () => {
+  const workspaceScanModels = {
+    claude: "claude-sonnet-4-6",
+    codex: "gpt-5.1-codex-mini",
+    gemini: "gemini-3.5-flash",
+  };
+  assert.deepEqual(selectScanProviderTargets("cursor", workspaceScanModels), [
+    { provider: "codex", model: "gpt-5.1-codex-mini" },
+  ]);
+});
+
+test("fallback cycle is the prescribed generic codex -> claude -> gemini -> cursor chain", () => {
   assert.deepEqual(PROVIDER_FALLBACK_CYCLE, ["codex", "claude", "gemini", "cursor"]);
 });
 
@@ -83,6 +94,17 @@ test("codex failure with only cursor available recommends cursor", () => {
   );
   assert.equal(nextProvider, "cursor");
   assert.deepEqual(availableProviders, ["cursor"]);
+});
+
+test("scan readiness predicates can keep cursor out of scan recommendations", () => {
+  const authenticatedProviders = new Set(["cursor"]);
+  const scanReadyProviders = new Set();
+  const { nextProvider, availableProviders } = selectNextScanProvider(
+    "codex",
+    (candidate) => authenticatedProviders.has(candidate) && scanReadyProviders.has(candidate),
+  );
+  assert.equal(nextProvider, null);
+  assert.deepEqual(availableProviders, []);
 });
 
 test("claude failure wraps the cycle: gemini, cursor, then codex", () => {

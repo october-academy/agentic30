@@ -4,6 +4,8 @@
 
 ### 변경
 - **프로젝트 문서 탐색 엄격화**: IDD 기본 입력과 workspace signal docs 역할이 루트 `README.md` 대신 `.agentic30/docs/DOCS.md` canonical 문서를 기준으로 삼도록 정리했습니다.
+- **Workspace scan evidence bundle**: 로컬 canonical 문서 탐색 결과와 provider 의미 검증을 분리해, provider가 문서 경로를 재정의하지 못하고 bundle 근거 안에서만 onboarding/situation 신호를 판단하도록 했습니다.
+- **Workspace scan provider fallback**: read-only tool gating이 없는 Cursor는 workspace scan 추천 후보에서 제외하고, Codex/Claude/Gemini scan-ready provider만 fallback으로 노출합니다.
 
 ## [1.0.20] - 2026-06-13
 

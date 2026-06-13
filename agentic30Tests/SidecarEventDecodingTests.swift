@@ -3162,8 +3162,8 @@ struct SidecarEventDecodingTests {
           "model": "gpt-5.5",
           "reason": "usage_limit",
           "message": "Codex hit a usage limit during workspace scan verification.",
-          "nextProvider": "cursor",
-          "availableProviders": ["claude", "gemini", "cursor"],
+          "nextProvider": "claude",
+          "availableProviders": ["claude", "gemini"],
           "providerReadiness": [
             {
               "provider": "claude",
@@ -3201,8 +3201,8 @@ struct SidecarEventDecodingTests {
         #expect(event.model == "gpt-5.5")
         #expect(event.reason == "usage_limit")
         #expect(event.message == "Codex hit a usage limit during workspace scan verification.")
-        #expect(event.nextProvider == "cursor")
-        #expect(event.availableProviders == ["claude", "gemini", "cursor"])
+        #expect(event.nextProvider == "claude")
+        #expect(event.availableProviders == ["claude", "gemini"])
         #expect(event.providerReadiness?.count == 2)
         #expect(event.providerReadiness?.first?.provider == .claude)
         #expect(event.providerReadiness?.first?.scanReady == true)
@@ -3225,8 +3225,8 @@ struct SidecarEventDecodingTests {
             errorKind: event.errorKind
         )
         #expect(notice.provider == .codex)
-        #expect(notice.nextProvider == .cursor)
-        #expect(notice.availableProviders == [.claude, .gemini, .cursor])
+        #expect(notice.nextProvider == .claude)
+        #expect(notice.availableProviders == [.claude, .gemini])
         #expect(notice.providerReadiness.first?.provider == .claude)
         #expect(notice.providerReadiness.first?.scanReady == true)
         #expect(notice.scanRoot == "/Users/me/project")
