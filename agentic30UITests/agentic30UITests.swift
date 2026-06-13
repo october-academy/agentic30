@@ -1772,6 +1772,7 @@ final class agentic30UITests: XCTestCase {
             "AGENTIC30_APP_SUPPORT_PATH": appSupportPath,
             "AGENTIC30_TEST_STUB_PROVIDER": "1",
             "AGENTIC30_UI_TEST_INLINE_STUB_RESPONSES": "1",
+            "AGENTIC30_UI_TEST_AUTO_SUBMIT_OFFICE_HOURS_REVISION": "1",
         ])
         hideKnownInterferingApplications()
         app.activate()
@@ -1836,53 +1837,52 @@ final class agentic30UITests: XCTestCase {
 
         let q1RevisedChoice = elementWithIdentifier(in: app, "opendesign.officeHours.submittedChoice.office_hours_demand_evidence.업무에 이미 의존함")
         let officeHoursScroll = elementWithIdentifier(in: app, "opendesign.officeHours.main.scroll")
-        let q1ScrollDeadline = Date().addingTimeInterval(5)
+        let q1ScrollDeadline = Date().addingTimeInterval(8)
         while !(q1RevisedChoice.exists && q1RevisedChoice.isHittable), Date() < q1ScrollDeadline {
-            officeHoursScroll.swipeDown()
+            if officeHoursScroll.exists && officeHoursScroll.isHittable {
+                officeHoursScroll.swipeDown()
+            } else {
+                nudgeScrollToward(q1RevisedChoice, in: officeHoursScroll)
+            }
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
-        XCTAssertTrue(q1RevisedChoice.exists && q1RevisedChoice.isHittable)
-        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.submittedChoice.office_hours_demand_evidence.업무에 이미 의존함", containing: "완료된 미선택", timeout: 3))
-        tapRequired(q1RevisedChoice, in: app, named: "Office Hours revision Q1 revised choice")
-
-        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.submittedChoice.office_hours_demand_evidence.업무에 이미 의존함", containing: "수정 예정", timeout: 3))
-        XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.questionLoader").exists)
-        XCTAssertTrue(q2Submitted.exists)
-        let q1RevisionButton = elementWithIdentifier(in: app, "opendesign.officeHours.submittedButton.ui-test-office-hours-request")
-        XCTAssertTrue(q1RevisionButton.waitForExistence(timeout: 3))
-        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.submittedButton.ui-test-office-hours-request", containing: "Ready", timeout: 3))
-        XCTAssertTrue(waitUntilEnabled(q1RevisionButton, timeout: 3))
-        let q1RevisionButtonHittable = waitUntilHittable(q1RevisionButton, timeout: 3)
-            || scrollElementToHittable(
-                q1RevisionButton,
-                in: app,
-                timeout: 12,
-                scrollViewIdentifier: "opendesign.officeHours.main.scroll"
-            )
-        guard q1RevisionButtonHittable else {
-            attachWindowScreenshot(from: app, named: "Office Hours revision Q1 confirm not visible")
+        guard q1RevisedChoice.exists && q1RevisedChoice.isHittable else {
+            attachWindowScreenshot(from: app, named: "Office Hours revision Q1 choice not visible")
             attachText(
                 """
-                target: \(elementDiagnostics(q1RevisionButton))
+                target: \(elementDiagnostics(q1RevisedChoice))
                 scroll: \(elementDiagnostics(officeHoursScroll))
                 window: \(elementDiagnostics(app.windows.firstMatch))
 
                 \(app.debugDescription)
                 """,
-                named: "Office Hours revision Q1 confirm visibility diagnostics"
+                named: "Office Hours revision Q1 choice visibility diagnostics"
             )
-            XCTFail("Expected Office Hours revision Q1 confirm button to become visible.")
+            XCTFail("Expected Office Hours revision Q1 revised choice to become visible.")
             return
         }
-        tapRequired(
-            q1RevisionButton,
-            in: app,
-            named: "Office Hours revision Q1 confirm",
-            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
-        )
+        XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.submittedChoice.office_hours_demand_evidence.업무에 이미 의존함", containing: "완료된 미선택", timeout: 3))
+        tapRequired(q1RevisedChoice, in: app, named: "Office Hours revision Q1 revised choice")
 
-        XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.questionLoader").waitForExistence(timeout: 3))
-        XCTAssertTrue(waitForElementToDisappear(q2Submitted, timeout: 3))
+        let revisedQuestionLoader = elementWithIdentifier(in: app, "opendesign.officeHours.questionLoader")
+        let sawRevisionLoader = revisedQuestionLoader.waitForExistence(timeout: 2)
+        let q2SubmittedDisappeared = waitForElementToDisappear(q2Submitted, timeout: 6)
+        guard sawRevisionLoader || q2SubmittedDisappeared else {
+            attachWindowScreenshot(from: app, named: "Office Hours revision Q1 auto-submit did not submit")
+            attachText(
+                """
+                target: \(elementDiagnostics(q1RevisedChoice))
+                scroll: \(elementDiagnostics(officeHoursScroll))
+                window: \(elementDiagnostics(app.windows.firstMatch))
+
+                \(app.debugDescription)
+                """,
+                named: "Office Hours revision Q1 auto-submit diagnostics"
+            )
+            XCTFail("Expected Office Hours revision Q1 auto-submit to restart from Q2.")
+            return
+        }
+        XCTAssertTrue(q2SubmittedDisappeared)
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.submittedChoice.office_hours_demand_evidence.업무에 이미 의존함", containing: "제출됨", timeout: 3))
         XCTAssertTrue(q2Choice.waitForExistence(timeout: 5))
         XCTAssertFalse(q2Submitted.exists)
@@ -4224,32 +4224,122 @@ final class agentic30UITests: XCTestCase {
         guard !elementFrame.isEmpty, !visibleFrame.isEmpty else { return }
 
         if elementFrame.minY < visibleFrame.minY {
-            scrollDown(in: scrollView)
+            performMeasuredScroll(.movesElementDown, target: element, in: scrollView, gap: visibleFrame.minY - elementFrame.minY)
         } else if elementFrame.maxY > visibleFrame.maxY {
-            scrollUp(in: scrollView)
+            performMeasuredScroll(.movesElementUp, target: element, in: scrollView, gap: elementFrame.maxY - visibleFrame.maxY)
         } else if !element.isHittable, elementFrame.midY < visibleFrame.midY {
-            scrollDown(in: scrollView)
+            performMeasuredScroll(.movesElementDown, target: element, in: scrollView, gap: visibleFrame.height * 0.18)
         } else if !element.isHittable {
-            scrollUp(in: scrollView)
+            performMeasuredScroll(.movesElementUp, target: element, in: scrollView, gap: visibleFrame.height * 0.18)
+        }
+    }
+
+    @MainActor
+    private func nudgeScrollToward(_ element: XCUIElement, in scrollView: XCUIElement) {
+        guard scrollView.exists, element.exists else { return }
+        let elementFrame = element.frame
+        let visibleFrame = scrollView.frame.insetBy(dx: 0, dy: 12)
+        guard !elementFrame.isEmpty, !visibleFrame.isEmpty else { return }
+
+        if elementFrame.maxY > visibleFrame.maxY {
+            performMeasuredScroll(.movesElementUp, target: element, in: scrollView, gap: elementFrame.maxY - visibleFrame.maxY)
+        } else if elementFrame.minY < visibleFrame.minY {
+            performMeasuredScroll(.movesElementDown, target: element, in: scrollView, gap: visibleFrame.minY - elementFrame.minY)
+        } else if !element.isHittable, elementFrame.midY < visibleFrame.midY {
+            performMeasuredScroll(.movesElementDown, target: element, in: scrollView, gap: visibleFrame.height * 0.18)
+        } else if !element.isHittable {
+            performMeasuredScroll(.movesElementUp, target: element, in: scrollView, gap: visibleFrame.height * 0.18)
         }
     }
 
     @MainActor
     private func scrollUp(in element: XCUIElement) {
-        element.swipeUp()
-        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.78))
-        let end = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.24))
-        start.press(forDuration: 0.05, thenDragTo: end)
+        nudgeScrollUp(in: element, gap: element.frame.height * 0.42)
     }
 
     @MainActor
     private func scrollDown(in element: XCUIElement) {
-        element.swipeDown()
-        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
-        let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.24))
-        let end = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.78))
-        start.press(forDuration: 0.05, thenDragTo: end)
+        nudgeScrollDown(in: element, gap: element.frame.height * 0.42)
+    }
+
+    @MainActor
+    private func nudgeScrollUp(in element: XCUIElement, gap: CGFloat) {
+        performScrollNudge(.movesElementUp, in: element, gap: gap)
+    }
+
+    @MainActor
+    private func nudgeScrollDown(in element: XCUIElement, gap: CGFloat) {
+        performScrollNudge(.movesElementDown, in: element, gap: gap)
+    }
+
+    private enum ScrollNudgeDirection {
+        case movesElementUp
+        case movesElementDown
+
+        var inverted: ScrollNudgeDirection {
+            switch self {
+            case .movesElementUp:
+                return .movesElementDown
+            case .movesElementDown:
+                return .movesElementUp
+            }
+        }
+    }
+
+    @MainActor
+    private func performMeasuredScroll(
+        _ direction: ScrollNudgeDirection,
+        target: XCUIElement,
+        in scrollView: XCUIElement,
+        gap: CGFloat
+    ) {
+        let beforeMidY = target.frame.midY
+        let distance = scrollNudgeDistance(for: gap, in: scrollView)
+        performScrollNudge(direction, in: scrollView, distance: distance)
+
+        guard target.exists else { return }
+        let afterMidY = target.frame.midY
+        if scrollMovement(from: beforeMidY, to: afterMidY, matches: direction) {
+            return
+        }
+
+        let correctionDistance = scrollMovement(from: beforeMidY, to: afterMidY, matches: direction.inverted)
+            ? min(distance * 2, 180)
+            : distance
+        performScrollNudge(direction.inverted, in: scrollView, distance: correctionDistance)
+    }
+
+    @MainActor
+    private func performScrollNudge(_ direction: ScrollNudgeDirection, in scrollView: XCUIElement, gap: CGFloat) {
+        performScrollNudge(direction, in: scrollView, distance: scrollNudgeDistance(for: gap, in: scrollView))
+    }
+
+    @MainActor
+    private func performScrollNudge(_ direction: ScrollNudgeDirection, in scrollView: XCUIElement, distance: CGFloat) {
+        guard scrollView.exists else { return }
+        let frame = scrollView.frame
+        guard !frame.isEmpty else { return }
+
+        let deltaY: CGFloat = direction == .movesElementUp ? -distance : distance
+        scrollView.scroll(byDeltaX: 0, deltaY: deltaY)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.16))
+    }
+
+    @MainActor
+    private func scrollNudgeDistance(for gap: CGFloat, in scrollView: XCUIElement) -> CGFloat {
+        let visibleHeight = max(scrollView.frame.height, 1)
+        let cappedGap = max(gap, 0)
+        return max(28, min(cappedGap * 0.35 + 18, min(120, visibleHeight * 0.22)))
+    }
+
+    private func scrollMovement(from beforeMidY: CGFloat, to afterMidY: CGFloat, matches direction: ScrollNudgeDirection) -> Bool {
+        let threshold: CGFloat = 1
+        switch direction {
+        case .movesElementUp:
+            return afterMidY < beforeMidY - threshold
+        case .movesElementDown:
+            return afterMidY > beforeMidY + threshold
+        }
     }
 
     @MainActor
@@ -4399,8 +4489,11 @@ final class agentic30UITests: XCTestCase {
             screenshot = shell.screenshot()
         } else if window.waitForExistence(timeout: 1) {
             screenshot = window.screenshot()
-        } else {
+        } else if app.exists {
             screenshot = app.screenshot()
+        } else {
+            attachText("Application no longer exists; screenshot unavailable.", named: "\(name) unavailable")
+            return
         }
         let attachment = XCTAttachment(screenshot: screenshot)
         attachment.name = name

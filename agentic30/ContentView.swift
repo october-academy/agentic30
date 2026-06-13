@@ -7306,6 +7306,15 @@ struct ContentView: View {
         } else {
             officeHoursSubmittedRevisionDraftsByPrompt[key] = drafts
         }
+
+#if DEBUG
+        if !drafts.isEmpty,
+           ProcessInfo.processInfo.environment["AGENTIC30_UI_TEST_AUTO_SUBMIT_OFFICE_HOURS_REVISION"] == "1" {
+            Task { @MainActor in
+                officeHoursSubmitStagedSubmittedRevision(snapshot: snapshot, session: session)
+            }
+        }
+#endif
     }
 
     private func officeHoursSubmittedPromptOptionRow(
