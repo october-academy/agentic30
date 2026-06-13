@@ -1972,6 +1972,7 @@ struct ContentView: View {
     private static let officeHoursQuestionOutputRowID = "office-hours-question-output-row"
     private static let officeHoursQuestionStageTopID = "office-hours-question-stage-top"
     private static let officeHoursDocReadyHeaderID = "office-hours-doc-ready-header"
+    private static let officeHoursCommitmentBarID = "opendesign.officeHours.commitmentBar"
     private static let officeHoursPlanCeoReviewHandoffID = "opendesign.officeHours.planCeoReviewHandoff"
     private static let officeHoursTranscriptBottomID = "office-hours-transcript-bottom"
     private static let officeHoursMinimumQuestionLoadingSeconds: TimeInterval = 3
@@ -3530,6 +3531,7 @@ struct ContentView: View {
                         )
                     }
                 }
+                .id(Self.officeHoursCommitmentBarID)
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: commitmentRevealed)
                 .task(id: sessionID) {
                     guard !sessionID.isEmpty else { return }
@@ -4758,7 +4760,7 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if modePicked {
                         officeHoursQuestionStage(session: session, day1Content: day1Content, activeDay: activeDay)
-                        if shouldShowOfficeHoursCommitmentBar(activeDay: activeDay) {
+                        if shouldRenderOfficeHoursCommitmentBar(session: session, activeDay: activeDay) {
                             officeHoursCommitmentBar(session: session)
                         }
                     } else if viewModel.day1GoalSelection == nil {
@@ -4805,34 +4807,34 @@ struct ContentView: View {
             }
             .onAppear {
                 if modePicked {
-                    scrollOfficeHoursTranscript(proxy, session: session)
+                    scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
                 }
             }
             .onChange(of: modePicked) { _, isPicked in
                 guard isPicked else { return }
-                scrollOfficeHoursTranscript(proxy, session: session)
+                scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
             }
             .onChange(of: session?.pendingUserInput?.requestId) { _, _ in
-                scrollOfficeHoursTranscript(proxy, session: session)
+                scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
             }
             .onChange(of: session?.messages.count ?? 0) { _, _ in
-                scrollOfficeHoursTranscript(proxy, session: session)
+                scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
             }
             .onChange(of: session?.status) { _, _ in
-                scrollOfficeHoursTranscript(proxy, session: session)
+                scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
             }
             .onChange(of: viewModel.iddDocPreviews) { _, _ in
-                scrollOfficeHoursTranscript(proxy, session: session)
+                scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
             }
             .onChange(of: viewModel.day1DocHandoffPendingDocType) { _, _ in
-                scrollOfficeHoursTranscript(proxy, session: session)
+                scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
             }
             .onChange(of: officeHoursReadyPromptRevealIDs) { previous, current in
                 // The minimum-loading gate revealed a question (loader → prompt swap,
                 // content height changes). An explicit trigger here replaces the old
                 // blind 3.4–5.9s scroll retries that papered over this moment.
                 guard !current.subtracting(previous).isEmpty else { return }
-                scrollOfficeHoursTranscript(proxy, session: session)
+                scrollOfficeHoursTranscript(proxy, session: session, activeDay: activeDay)
             }
             .onChange(of: session.map {
                 OfficeHoursAutoStartPolicy.SessionProviderSnapshot(sessionID: $0.id, provider: $0.provider)
@@ -4853,6 +4855,16 @@ struct ContentView: View {
 
     private func shouldShowOfficeHoursCommitmentBar(activeDay: Int) -> Bool {
         activeDay != 1 || officeHoursDay1DocumentsWritten
+    }
+
+    private func shouldRenderOfficeHoursCommitmentBar(session: ChatSession?, activeDay: Int) -> Bool {
+        guard shouldShowOfficeHoursCommitmentBar(activeDay: activeDay),
+              let day = viewModel.dayProgress?.currentDayNumber() else {
+            return false
+        }
+        let stepId = day == 1 ? "first_interview" : "interview"
+        let stepActive = viewModel.dayProgress?.record(forDay: day)?.steps[stepId] == .active
+        return stepActive && officeHoursInterviewComplete(session: session)
     }
 
     private func shareOpenDesignOfficeHoursScreenshot(anchorView: NSView?, activeDay: Int) {
@@ -8745,7 +8757,7 @@ struct ContentView: View {
         .overlay(Rectangle().fill(OpenDesignOfficeHoursColor.borderSoft).frame(height: 1), alignment: .top)
     }
 
-    private func officeHoursScrollTarget(for session: ChatSession?) -> (id: String, anchor: UnitPoint) {
+    private func officeHoursScrollTarget(for session: ChatSession?, activeDay: Int) -> (id: String, anchor: UnitPoint) {
         guard let session else {
             return (Self.officeHoursTranscriptBottomID, .bottom)
         }
@@ -8774,6 +8786,9 @@ struct ContentView: View {
         }
         if officeHoursIsDocReady(session: session) {
             if officeHoursDay1DocumentsWritten {
+                if shouldRenderOfficeHoursCommitmentBar(session: session, activeDay: activeDay) {
+                    return (Self.officeHoursCommitmentBarID, .top)
+                }
                 return (Self.officeHoursPlanCeoReviewHandoffID, .top)
             }
             return (Self.officeHoursDocReadyHeaderID, .top)
@@ -8789,10 +8804,10 @@ struct ContentView: View {
         "\(requestID)-pending-scroll"
     }
 
-    private func scrollOfficeHoursTranscript(_ proxy: ScrollViewProxy, session: ChatSession?) {
+    private func scrollOfficeHoursTranscript(_ proxy: ScrollViewProxy, session: ChatSession?, activeDay: Int) {
         officeHoursScrollGeneration &+= 1
         let generation = officeHoursScrollGeneration
-        let target = officeHoursScrollTarget(for: session)
+        let target = officeHoursScrollTarget(for: session, activeDay: activeDay)
         let performScroll = {
             guard OfficeHoursTranscriptScrollPolicy.shouldPerform(
                 requestGeneration: generation,

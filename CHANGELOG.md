@@ -22,6 +22,7 @@
 - **Swift actor-isolation 경고 정리**: 강조 span 모델을 `nonisolated`로 선언해 Swift 6 actor-isolation 진단이 릴리스 빌드에 남지 않도록 했습니다.
 - **Swift Text 조립 경고 정리**: transcript segment 렌더링에서 deprecated `Text + Text` 조합을 제거했습니다.
 - **Day 1 문서 handoff 순서**: GOAL/ICP/VALUES/SPEC 저장 전에는 commitment bar를 숨기고, 문서 저장 완료 뒤에만 다음 약속 입력과 `$plan-ceo-review` handoff가 보이도록 정리했습니다.
+- **Office Hours 완료 스크롤 안정성**: 인터뷰 완료와 해당 Day interview step 활성 상태를 함께 확인한 뒤 commitment bar를 렌더링하고, 문서 저장 완료 후 자동 스크롤이 다음 약속 입력 또는 `$plan-ceo-review` handoff로 안정적으로 향하도록 했습니다.
 
 ## [1.0.19] - 2026-06-11
 

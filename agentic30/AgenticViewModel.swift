@@ -8791,10 +8791,35 @@ final class AgenticViewModel: ObservableObject {
         sessions = [session]
         selectedSessionID = sessionID
         officeHoursSessionCreateInFlight = false
+        installUITestingOfficeHoursDay1ActiveProgressIfNeeded()
         refreshPresentationState()
         return true
         #else
         return false
+        #endif
+    }
+
+    private func installUITestingOfficeHoursDay1ActiveProgressIfNeeded() {
+        #if DEBUG
+        guard dayProgress == nil else { return }
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone.current
+        formatter.dateFormat = "yyyy-MM-dd"
+        let today = formatter.string(from: Date())
+        dayProgress = DayProgress(
+            challengeStartedAt: today,
+            days: [
+                "1": DayRecord(
+                    day: 1,
+                    kind: .day1,
+                    steps: ["onboarding": .done, "scan": .done, "goal": .done, "first_interview": .active],
+                    goalText: day1GoalSelection?.goalText ?? "Day 1 고객 증거 확인",
+                    updatedAt: today
+                )
+            ]
+        )
         #endif
     }
 

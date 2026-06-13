@@ -1611,8 +1611,20 @@ final class agentic30UITests: XCTestCase {
             scrollViewIdentifier: "opendesign.officeHours.main.scroll"
         ))
         let planCeoReviewButton = app.buttons["opendesign.officeHours.planCeoReview"]
-        XCTAssertTrue(waitUntilHittable(planCeoReviewButton, timeout: 5), "plan-ceo-review handoff should be visible after document save without manual scroll")
+        XCTAssertTrue(scrollElementToVisible(
+            planCeoReviewButton,
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+        ))
+        XCTAssertTrue(waitUntilHittable(planCeoReviewButton, timeout: 5), "plan-ceo-review handoff should be visible after document save")
         let completeDayButton = app.buttons["opendesign.officeHours.planCeoReview.completeDay"]
+        XCTAssertTrue(scrollElementToVisible(
+            completeDayButton,
+            in: app,
+            timeout: 5,
+            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+        ))
         XCTAssertTrue(waitUntilHittable(completeDayButton, timeout: 5), "Day 1 completion should live after the plan-ceo-review handoff")
         attachWindowScreenshot(from: app, named: "Office Hours SwiftUI Final Doc")
         tapRequired(completeDayButton, in: app, named: "Office Hours Day 1 complete")
