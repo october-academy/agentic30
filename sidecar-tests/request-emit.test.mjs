@@ -688,6 +688,96 @@ test("office_hours Day 1 stops at expected six questions and suppresses stray se
   }
 });
 
+test("office_hours_start hydrates completed Day 1 interview without provider run", async () => {
+  const harness = await spawnSidecar();
+  let ws;
+  try {
+    ws = await connectAndCollect(harness);
+
+    ws.send(JSON.stringify({
+      type: "create_session",
+      provider: "codex",
+      model: "gpt-5.1-codex-mini",
+      suppressBootstrapIntake: true,
+      officeHoursDay: 1,
+    }));
+    const created = await waitForEvent(ws.events, (event) =>
+      event.type === "session_created" && event.session?.status === "idle"
+    );
+    await seedDay1DoneProgress(harness.workspacePath);
+    for (let index = 1; index <= 6; index += 1) {
+      await appendOfficeHoursTurn({
+        workspaceRoot: harness.workspacePath,
+        turn: makeCompletedOfficeHoursTurn(index),
+      });
+    }
+
+    const marker = ws.events.length;
+    ws.send(JSON.stringify({
+      type: "office_hours_start",
+      sessionId: created.session.id,
+      context: [
+        "DAY1_LOCKED_GOAL",
+        "Flow contract: locked Day 1 goal interview.",
+        "Office Hours mode: Startup",
+        "Expected question count: 6",
+        "Goal lane: make_money / 첫 매출 달성",
+        "Goal text: 완료된 인터뷰를 다시 보여준다.",
+        "Customer: 전업 1인 개발자",
+        "Problem: 이미 답한 Day 1 인터뷰가 새로 시작된다",
+        "Validation action: 기존 Q/A 복원",
+      ].join("\n"),
+      visiblePrompt: "Test completed Day 1 hydration",
+      source: "day1_interview_goal_locked",
+      day: 1,
+    }));
+
+    const hydrated = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "session_updated"
+        && event.session?.id === created.session.id
+        && event.session?.status === "idle"
+        && event.session?.runtime?.officeHours?.source === "day1_interview_goal_locked"
+        && event.session?.messages?.filter((message) => message.officeHoursSeededTurn === true).length === 12
+    );
+    const completedStatus = await waitForEvent(ws.events, (event) =>
+      ws.events.indexOf(event) >= marker
+        && event.type === "office_hours_status"
+        && event.sessionId === created.session.id
+        && event.stage === "completed"
+    );
+    assert.equal(completedStatus.title, "응답 정리 중");
+    assert.equal(hydrated.session.pendingUserInput, null);
+    assert.equal(hydrated.session.runtime.officeHours.completedByExpectedCount, true);
+    assert.equal(hydrated.session.runtime.officeHours.completedQuestionCount, 6);
+    assert.equal(hydrated.session.runtime.officeHours.expectedQuestionCount, 6);
+    assert.equal(hydrated.session.runtime.officeHours.resumedTurns, 6);
+    assert.equal(hydrated.session.runtime.officeHours.promptSnapshots.length, 6);
+    assert.equal(hydrated.session.runtime.officeHours.promptSnapshots[0].requestId, "completed-day1-1");
+    assert.equal(hydrated.session.runtime.officeHours.promptSnapshots[0].submissions[0].selectedOptions[0], "완료 답변 1");
+    assert.equal(hydrated.session.runtime.officeHours.promptSnapshots[0].turnSessionId, "prior-completed-session");
+    assert.equal(
+      hydrated.session.messages.some((message) =>
+        message.role === "user" && message.content === "Test completed Day 1 hydration"
+      ),
+      false,
+      "completed hydration must not append a synthetic start prompt",
+    );
+    assert.equal(
+      ws.events.slice(marker).some((event) =>
+        event.type === "office_hours_status"
+          && event.sessionId === created.session.id
+          && event.stage === "provider_starting"
+      ),
+      false,
+      "completed Day 1 hydration must not start a provider run",
+    );
+  } finally {
+    ws?.close();
+    await harness.close();
+  }
+});
+
 test("office_hours_start blocks Day 2+ when no live source exists", async () => {
   const harness = await spawnSidecar();
   let ws;
@@ -1041,6 +1131,82 @@ async function seedDay1ActiveProgress(workspacePath) {
     }, null, 2),
     "utf8",
   );
+}
+
+async function seedDay1DoneProgress(workspacePath) {
+  const agentic30Dir = path.join(workspacePath, ".agentic30");
+  await fs.mkdir(agentic30Dir, { recursive: true });
+  await fs.writeFile(
+    path.join(agentic30Dir, "day-progress.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      schema: "agentic30.day_progress.v1",
+      challengeStartedAt: localDateString(new Date()),
+      days: {
+        1: {
+          day: 1,
+          kind: "day1",
+          steps: {
+            onboarding: "done",
+            scan: "done",
+            goal: "done",
+            first_interview: "done",
+          },
+        },
+      },
+    }, null, 2),
+    "utf8",
+  );
+}
+
+function makeCompletedOfficeHoursTurn(index) {
+  const requestId = `completed-day1-${index}`;
+  const question = `완료 질문 ${index}`;
+  const answer = `완료 답변 ${index}`;
+  return {
+    day: 1,
+    sessionId: "prior-completed-session",
+    requestId,
+    mode: "office_hours_tool",
+    questionText: question,
+    responseText: answer,
+    promptSnapshot: {
+      requestId,
+      sessionId: "prior-completed-session",
+      toolName: "agentic30_request_user_input",
+      title: "Office Hours",
+      createdAt: `2026-06-13T03:0${Math.min(index, 9)}:00.000Z`,
+      questions: [
+        {
+          questionId: `completed_q_${index}`,
+          header: "완료 질문",
+          question,
+          options: [
+            {
+              label: answer,
+              description: "이미 제출한 답변",
+            },
+          ],
+          multiSelect: false,
+          allowFreeText: true,
+          requiresFreeText: false,
+          textMode: "short",
+        },
+      ],
+      generation: {
+        mode: "office_hours_tool",
+        signalId: `completed_q_${index}`,
+      },
+    },
+    submissions: [
+      {
+        question,
+        selectedOptions: [answer],
+        freeText: "",
+      },
+    ],
+    occurredAt: `2026-06-13T03:1${Math.min(index, 9)}:00.000Z`,
+  };
 }
 
 function localDateString(date) {

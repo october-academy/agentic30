@@ -63,6 +63,21 @@ export function selectOfficeHoursResumeTurns({ turnLog, day, dayProgress, source
   return completedTurnsForDay(turnLog, dayNumber);
 }
 
+// True when a day-scoped Office Hours start targets an interview that already
+// closed for that day. This is a local snapshot/hydration path, not a provider
+// run: the completed Q/A exists in the turn log, and the user expects the
+// Office Hours screen itself to show it after a relaunch. Manual slash-command
+// and projectless Day 999 starts stay fresh sessions.
+export function isCompletedOfficeHoursSnapshotDay({ day, dayProgress, source } = {}) {
+  if (String(source || "") === "slash_command") return false;
+  const dayNumber = Number.parseInt(String(day ?? ""), 10);
+  if (!Number.isFinite(dayNumber) || dayNumber <= 0 || dayNumber === 999) return false;
+  const dayState = dayProgress?.days?.[String(dayNumber)];
+  const interviewStep = RESUME_INTERVIEW_STEP_BY_KIND[dayState?.kind];
+  if (!interviewStep) return false;
+  return dayState?.steps?.[interviewStep] === "done";
+}
+
 // True when a resume turn carries the durable terminal flag — the 대안 비교
 // closing-card answer appendOfficeHoursTurn stamps as `terminal: true`. The
 // system prompt smart-skips routed questions, so a concluded interview can

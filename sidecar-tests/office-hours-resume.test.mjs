@@ -5,6 +5,7 @@ import {
   countOfficeHoursResumeTurnsFromOtherSessions,
   dedupeOfficeHoursTurnsKeepLast,
   hasOfficeHoursTerminalResumeTurn,
+  isCompletedOfficeHoursSnapshotDay,
   isPastOfficeHoursSnapshotDay,
   selectOfficeHoursResumeTurns,
   selectOfficeHoursSnapshotTurns,
@@ -86,6 +87,19 @@ test("selectOfficeHoursResumeTurns is empty once the interview step is done", ()
   assert.deepEqual(turns, []);
 });
 
+test("isCompletedOfficeHoursSnapshotDay flags a completed Day 1 first_interview", () => {
+  assert.equal(isCompletedOfficeHoursSnapshotDay({
+    day: 1,
+    dayProgress: day1ActiveProgress({ first_interview: "done" }),
+    source: "day1_interview_goal_locked",
+  }), true);
+  assert.equal(isCompletedOfficeHoursSnapshotDay({
+    day: 1,
+    dayProgress: day1ActiveProgress(),
+    source: "day1_interview_goal_locked",
+  }), false);
+});
+
 test("selectOfficeHoursResumeTurns resumes a Day 2 standard interview while its interview step is active", () => {
   // The 2026-06-11 Day 2 bug: a daemon relaunch (sessions.json boot wipe)
   // restarted the goal-driven interview at question 1 even though day=2 turns
@@ -110,6 +124,24 @@ test("selectOfficeHoursResumeTurns is empty once a Day 2 interview step is done"
     dayProgress: day2ActiveProgress({ interview: "done", execution: "active" }),
   });
   assert.deepEqual(turns, []);
+});
+
+test("isCompletedOfficeHoursSnapshotDay flags completed standard interviews but not manual starts", () => {
+  assert.equal(isCompletedOfficeHoursSnapshotDay({
+    day: 2,
+    dayProgress: day2ActiveProgress({ interview: "done", execution: "active" }),
+    source: "office_hours_day_2",
+  }), true);
+  assert.equal(isCompletedOfficeHoursSnapshotDay({
+    day: 2,
+    dayProgress: day2ActiveProgress({ interview: "done", execution: "active" }),
+    source: "slash_command",
+  }), false);
+  assert.equal(isCompletedOfficeHoursSnapshotDay({
+    day: 999,
+    dayProgress: { days: { 999: { day: 999, kind: "standard", steps: { interview: "done" } } } },
+    source: "manual",
+  }), false);
 });
 
 test("selectOfficeHoursResumeTurns keeps the Day-2 step gate on interview, not other active steps", () => {

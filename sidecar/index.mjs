@@ -364,6 +364,7 @@ import {
   countOfficeHoursResumeTurnsFromOtherSessions,
   dedupeOfficeHoursTurnsKeepLast,
   hasOfficeHoursTerminalResumeTurn,
+  isCompletedOfficeHoursSnapshotDay,
   isPastOfficeHoursSnapshotDay,
   selectOfficeHoursResumeTurns,
   selectOfficeHoursSnapshotTurns,
@@ -5979,6 +5980,19 @@ function activeOfficeHoursContext(session = null) {
   return clampOfficeHoursContext(officeHours.context || "");
 }
 
+function seedOfficeHoursTranscriptFromTurns(session, turns = []) {
+  if (!Array.isArray(turns) || turns.length === 0) return false;
+  if (!shouldSeedOfficeHoursResumeTranscript(session)) return false;
+  for (const turn of turns) {
+    const seededQuestion = makeMessage({ role: "assistant", provider: session.provider, content: turn.questionText, state: "final" });
+    const seededAnswer = makeMessage({ role: "user", provider: session.provider, content: turn.responseText, state: "final" });
+    seededQuestion.officeHoursSeededTurn = true;
+    seededAnswer.officeHoursSeededTurn = true;
+    session.messages.push(seededQuestion, seededAnswer);
+  }
+  return true;
+}
+
 function buildOfficeHoursRuntimePromptSnapshots(session, turns = [], day = null) {
   const runtimeDay = normalizeOfficeHoursDay(day)
     || normalizeOfficeHoursDay(session?.runtime?.officeHours?.day);
@@ -6439,17 +6453,7 @@ async function runOfficeHours(session, {
     // and officeHoursSeededTurn exempts restored rows from snapshot-based
     // hiding/dedup. Skipped when the session already carries real answer rows
     // (same-daemon re-tap) so turns are never duplicated.
-    let snapshotSeeded = false;
-    if (snapshotTurns.length && shouldSeedOfficeHoursResumeTranscript(session)) {
-      snapshotSeeded = true;
-      for (const turn of snapshotTurns) {
-        const seededQuestion = makeMessage({ role: "assistant", provider: session.provider, content: turn.questionText, state: "final" });
-        const seededAnswer = makeMessage({ role: "user", provider: session.provider, content: turn.responseText, state: "final" });
-        seededQuestion.officeHoursSeededTurn = true;
-        seededAnswer.officeHoursSeededTurn = true;
-        session.messages.push(seededQuestion, seededAnswer);
-      }
-    }
+    const snapshotSeeded = seedOfficeHoursTranscriptFromTurns(session, snapshotTurns);
     const snapshotRuntime = buildOfficeHoursRuntime(context, source, runtimeDay);
     const snapshotExpectedCount = parseExpectedOfficeHoursQuestionCount(snapshotRuntime.context);
     if (snapshotExpectedCount > 0) {
@@ -6490,6 +6494,98 @@ async function runOfficeHours(session, {
       state.activeRuns.delete(session.id);
     }
     return;
+  }
+  // Completed current-day (or otherwise day-scoped) interviews are snapshots
+  // too. The Mac auto-start uses office_hours_start as the hydration trigger,
+  // but once day-progress says the interview step is done, starting a provider
+  // run would create a confusing new Q1 instead of showing the completed Q/A.
+  // Only hydrate when the durable turn log has completed Q/A; an empty/broken
+  // memory file falls through to the legacy fresh-start behavior.
+  let completedSnapshotDay = false;
+  let completedSnapshotProgress = null;
+  try {
+    completedSnapshotProgress = state.dayProgress ?? (await loadDayProgress({ workspaceRoot }));
+    completedSnapshotDay = isCompletedOfficeHoursSnapshotDay({
+      day: runtimeDay,
+      dayProgress: completedSnapshotProgress,
+      source,
+    });
+  } catch (error) {
+    reportError(error, {
+      operation: "office_hours_completed_snapshot_check",
+      session_id: session.id,
+      provider: session.provider,
+      day: runtimeDay || 0,
+    });
+    completedSnapshotDay = false;
+  }
+  if (completedSnapshotDay) {
+    let completedSnapshotTurns = [];
+    try {
+      completedSnapshotTurns = selectOfficeHoursSnapshotTurns({
+        turnLog: await loadOfficeHoursTurnLog({ workspaceRoot }),
+        day: runtimeDay,
+      });
+    } catch (error) {
+      reportError(error, {
+        operation: "office_hours_completed_snapshot_turns_load",
+        session_id: session.id,
+        provider: session.provider,
+        day: runtimeDay || 0,
+      });
+      completedSnapshotTurns = [];
+    }
+    if (completedSnapshotTurns.length) {
+      const completedSnapshotSeeded = seedOfficeHoursTranscriptFromTurns(session, completedSnapshotTurns);
+      const completedRuntime = buildOfficeHoursRuntime(context, source, runtimeDay, normalizedSelectedSources);
+      const completedExpectedCount = parseExpectedOfficeHoursQuestionCount(completedRuntime.context);
+      if (completedExpectedCount > 0) {
+        completedRuntime.expectedQuestionCount = completedExpectedCount;
+      }
+      completedRuntime.resumedTurns = countOfficeHoursResumeTurnsFromOtherSessions(
+        completedSnapshotTurns,
+        session.id,
+      );
+      completedRuntime.promptSnapshots = buildOfficeHoursRuntimePromptSnapshots(
+        session,
+        completedSnapshotTurns,
+        runtimeDay,
+      );
+      if (hasOfficeHoursTerminalResumeTurn(completedSnapshotTurns)) {
+        completedRuntime.terminalAnswered = true;
+      } else if (completedExpectedCount > 0 && completedSnapshotTurns.length >= completedExpectedCount) {
+        completedRuntime.completedByExpectedCount = true;
+        completedRuntime.completedQuestionCount = completedSnapshotTurns.length;
+      }
+      session.runtime = attachOfficeHoursRuntime(session.runtime, completedRuntime);
+      if (!session.title || session.title === "New Session") {
+        session.title = "Office Hours";
+      }
+      session.status = "idle";
+      session.error = null;
+      session.pendingUserInput = null;
+      touch(session);
+      await persistSessions();
+      broadcast({ type: "session_updated", session });
+      emitOfficeHoursStatus(session, {
+        stage: "completed",
+        copy: selectOfficeHoursStatusCopy({ firstQuestionAnswered: true }),
+      });
+      telemetry.captureEvent("mac_sidecar_office_hours_completed_snapshot", {
+        session_id: session.id,
+        provider: session.provider,
+        day: runtimeDay || 0,
+        day_turns: completedSnapshotTurns.length,
+        prompt_snapshots: completedRuntime.promptSnapshots?.length || 0,
+        seeded: completedSnapshotSeeded,
+        source: String(source || ""),
+      });
+      const completedRun = state.activeRuns.get(session.id);
+      if (completedRun?.runKey === runKey) {
+        state.activeRuns.delete(session.id);
+      }
+      return;
+    }
   }
   try {
     if (isDay2PlusOfficeHoursDay(runtimeDay)) {
@@ -6615,17 +6711,7 @@ async function runOfficeHours(session, {
       // from snapshot-based hiding/dedup — their submitted-card snapshots died
       // with the prior session. Skipped when the session already carries real
       // answer rows (same-daemon retry) so turns are never duplicated.
-      let officeHoursResumeSeeded = false;
-      if (shouldSeedOfficeHoursResumeTranscript(session)) {
-        officeHoursResumeSeeded = true;
-        for (const turn of officeHoursResumeTurns) {
-          const seededQuestion = makeMessage({ role: "assistant", provider: session.provider, content: turn.questionText, state: "final" });
-          const seededAnswer = makeMessage({ role: "user", provider: session.provider, content: turn.responseText, state: "final" });
-          seededQuestion.officeHoursSeededTurn = true;
-          seededAnswer.officeHoursSeededTurn = true;
-          session.messages.push(seededQuestion, seededAnswer);
-        }
-      }
+      const officeHoursResumeSeeded = seedOfficeHoursTranscriptFromTurns(session, officeHoursResumeTurns);
       // Carried on the session runtime so detectIncompleteOfficeHoursInterview
       // (run end + chat continuations) counts prior-session answers too. Only
       // turns from OTHER sessions: the Mac retry path re-enters runOfficeHours
