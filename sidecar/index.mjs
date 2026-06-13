@@ -2157,6 +2157,33 @@ async function handleClientMessage(socket, payload) {
       const note = String(payload.note || "").trim();
       const revenueDay = Number.parseInt(payload.day, 10) || null;
       const evidenceType = /^https?:\/\//i.test(content) ? "link" : "file";
+      // §17.1 UX guard: re-submitting the SAME capture (same kind + evidence
+      // locator) should not re-run the judge and append a duplicate. Match on
+      // the stable locator — NOT (day,kind) alone, which would wrongly block a
+      // legitimate second sale on the same day. appendProofLedgerEvent's
+      // fingerprint is the safety net; this skips the wasted judge call and
+      // tells the founder it was already recorded.
+      const existingLedger = await loadProofLedger({ workspaceRoot: root });
+      const alreadyRecorded = existingLedger.events.find((ev) =>
+        ev.type === eventType
+        && ((ev.sourceUrl && ev.sourceUrl === content)
+          || (ev.artifactPath && ev.artifactPath === content)));
+      if (alreadyRecorded) {
+        telemetry.captureEvent("mac_sidecar_revenue_evidence_recorded", {
+          kind: kindToken,
+          amount_band: bandRevenueAmount(payload.amount),
+          accepted: alreadyRecorded.status === "accepted",
+          deduped: true,
+        });
+        send(socket, {
+          type: "submit_revenue_evidence_result",
+          workspaceRoot: root,
+          success: alreadyRecorded.status === "accepted",
+          status: "already_recorded",
+          message: "이미 같은 캡처를 기록했어 — 중복 저장은 건너뛰었어.",
+        });
+        return;
+      }
       const judgment = await judgeActionEvidence({
         guideline: {
           dayId: revenueDay,
@@ -3510,7 +3537,7 @@ async function handleDayProgressPatch(socket, payload = {}) {
     // (§13.4 "참여+커밋먼트 확정" — participation and confirmation belong to
     // the same intervention, fail-closed).
     let pendingIntervention = pendingInterventionGates.get(path.resolve(root)) ?? null;
-    if (pendingIntervention && Date.now() - Date.parse(pendingIntervention.createdAt) > 24 * 60 * 60 * 1000) {
+    if (pendingIntervention && Date.now() - Date.parse(pendingIntervention.createdAt) >= 24 * 60 * 60 * 1000) {
       pendingInterventionGates.delete(path.resolve(root));
       pendingIntervention = null;
     }

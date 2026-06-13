@@ -54,6 +54,59 @@ test("appendProofLedgerEvent persists sanitized proof events", async () => {
   assert.equal(resolveProofLedgerPath(root), path.join(root, ".agentic30", "proof-ledger.json"));
 });
 
+test("appendProofLedgerEvent dedups byte-identical re-appends (retry/restart safe)", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-proof-dedup-"));
+  const event = {
+    type: "payment_record",
+    day: 8,
+    status: "accepted",
+    strength: "strong",
+    evidenceType: "link",
+    sourceUrl: "https://pay.example.com/receipt/abc",
+    summary: "first judge assessment text",
+    amount: 29,
+    metadata: { kind: "payment_record", verifiedBy: "judge" },
+  };
+
+  const first = await appendProofLedgerEvent({ workspaceRoot: root, event });
+  assert.equal(first.deduped, false);
+
+  // Re-append the SAME evidence but with a DIFFERENT summary — simulates the
+  // LLM judge re-running on an app restart / network retry. The volatile
+  // summary must NOT defeat dedup; the stable fingerprint still matches.
+  const second = await appendProofLedgerEvent({
+    workspaceRoot: root,
+    event: { ...event, summary: "a different agentAssessment from the re-run" },
+  });
+  assert.equal(second.deduped, true);
+
+  const loaded = await loadProofLedger({ workspaceRoot: root });
+  assert.equal(loaded.events.length, 1);
+});
+
+test("appendProofLedgerEvent keeps legitimately distinct proofs (no over-dedup)", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agentic30-proof-distinct-"));
+  const base = {
+    type: "payment_record",
+    day: 8,
+    status: "accepted",
+    strength: "strong",
+    evidenceType: "link",
+    metadata: { kind: "payment_record", verifiedBy: "judge" },
+  };
+
+  // Same (day, type, status, strength, kind) but DIFFERENT captures/customers:
+  // three real same-day sales must ALL persist. A narrow (day,kind) key would
+  // wrongly collapse these — the locator/customer in the fingerprint prevents it.
+  await appendProofLedgerEvent({ workspaceRoot: root, event: { ...base, sourceUrl: "https://pay/1", customer: "A" } });
+  await appendProofLedgerEvent({ workspaceRoot: root, event: { ...base, sourceUrl: "https://pay/2", customer: "B" } });
+  const third = await appendProofLedgerEvent({ workspaceRoot: root, event: { ...base, sourceUrl: "https://pay/3", customer: "C" } });
+  assert.equal(third.deduped, false);
+
+  const loaded = await loadProofLedger({ workspaceRoot: root });
+  assert.equal(loaded.events.length, 3);
+});
+
 test("buildDailyMissionCard creates a provider-free mission-first surface", () => {
   const card = buildDailyMissionCard({
     day: 6,

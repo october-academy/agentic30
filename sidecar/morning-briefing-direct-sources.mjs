@@ -77,7 +77,11 @@ const POSTHOG_CORE_ACTION_EVENTS = Object.freeze([
 ]);
 
 function hogqlString(value) {
-  return `'${String(value).replaceAll("'", "''")}'`;
+  // Escape backslashes BEFORE quotes (ClickHouse honors backslash escapes; a
+  // trailing backslash would otherwise neutralize the closing quote). Mirrors
+  // active-users-snapshot.mjs. For today's hardcoded constant inputs this is a
+  // no-op — pure hardening for any future dynamic source name.
+  return `'${String(value).replaceAll("\\", "\\\\").replaceAll("'", "''")}'`;
 }
 
 function hogqlList(values = []) {
@@ -406,7 +410,7 @@ export async function collectCloudflareDirectDrilldown({
           viewer { zones(filter: { zoneTag: $zone }) {
             httpRequestsAdaptiveGroups(
               limit: 6,
-              filter: { AND: [{ datetime_geq: $start, datetime_leq: $end }, { requestSource: "eyeball" }] },
+              filter: { AND: [{ datetime_geq: $start, datetime_lt: $end }, { requestSource: "eyeball" }] },
               orderBy: [sum_edgeResponseBytes_DESC]
             ) {
               count

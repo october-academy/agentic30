@@ -93,6 +93,35 @@ export async function saveProofLedger({ workspaceRoot, ledger, now = new Date() 
   });
 }
 
+// Stable content fingerprint for proof-event idempotency. Deliberately
+// EXCLUDES the random id, the createdAt timestamp, and the LLM-derived
+// title/summary (the judge's agentAssessment re-runs non-deterministically, so
+// a re-verification of the same evidence yields a different summary). Keying on
+// the stable identity — type/status/strength/day/action/locator/amount/customer
+// /kind — lets an honest retry or app restart that re-drives the same evidence
+// collapse to one event instead of inflating gate counts, while genuinely
+// distinct proofs (different locator, amount, customer, day, or action) keep a
+// distinct fingerprint and are never dropped.
+function proofEventFingerprint(event = {}) {
+  return JSON.stringify([
+    event.type ?? "",
+    event.status ?? "",
+    event.strength ?? "",
+    event.day ?? null,
+    event.actionId ?? "",
+    event.evidenceType ?? "",
+    event.sourceUrl ?? "",
+    event.artifactPath ?? "",
+    event.source ?? "",
+    event.amount ?? null,
+    String(event.currency ?? ""),
+    event.customer ?? "",
+    event.channel ?? "",
+    event.decision ?? "",
+    event.metadata?.kind ?? "",
+  ]);
+}
+
 export async function appendProofLedgerEvent({ workspaceRoot, event, now = new Date() } = {}) {
   if (!workspaceRoot || typeof workspaceRoot !== "string") {
     throw new Error("appendProofLedgerEvent requires workspaceRoot.");
@@ -104,6 +133,18 @@ export async function appendProofLedgerEvent({ workspaceRoot, event, now = new D
       now,
       index: current.events.length,
     });
+    // Idempotency guard: a byte-identical re-append (network retry, app
+    // restart re-driving a pending verification) must not create a second
+    // event and double-count toward a gate. Return the existing match instead.
+    if (normalizedEvent) {
+      const fingerprint = proofEventFingerprint(normalizedEvent);
+      const existing = current.events.find(
+        (candidate) => proofEventFingerprint(candidate) === fingerprint,
+      );
+      if (existing) {
+        return { ledger: current, event: existing, deduped: true };
+      }
+    }
     const next = normalizeProofLedger({
       ...current,
       updatedAt: toIso(now),
@@ -113,6 +154,7 @@ export async function appendProofLedgerEvent({ workspaceRoot, event, now = new D
     return {
       ledger: next,
       event: normalizedEvent,
+      deduped: false,
     };
   });
 }
