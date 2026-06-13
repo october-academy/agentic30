@@ -3824,6 +3824,14 @@ final class AgenticViewModel: ObservableObject {
         guard officeHoursCommitmentCandidatesBySession[id] == nil,
               !officeHoursCommitmentCandidatesGenerating.contains(id) else { return true }
         let root = workspaceRoot.trimmingCharacters(in: .whitespacesAndNewlines)
+        #if DEBUG
+        if CommandLine.arguments.contains("--ui-testing-disable-sidecar"),
+           ProcessInfo.processInfo.environment["AGENTIC30_TEST_STUB_PROVIDER"] == "1" {
+            officeHoursCommitmentCandidatesGenerating.remove(id)
+            officeHoursCommitmentCandidatesBySession[id] = []
+            return true
+        }
+        #endif
         // Every failure path resolves to an EMPTY ready result: the commitment bar
         // reveals on a resolved entry, so a disconnected sidecar (UI tests run with
         // --ui-testing-disable-sidecar) must never leave the close stuck on a loader.
@@ -8724,6 +8732,7 @@ final class AgenticViewModel: ObservableObject {
         sessions = [session]
         selectedSessionID = sessionID
         officeHoursSessionCreateInFlight = false
+        installUITestingDay1BulkDocPreviews()
         refreshPresentationState()
         return true
         #else

@@ -1571,6 +1571,7 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.bridgeStatus", containing: "doc ready", timeout: 3))
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.docHandoff").waitForExistence(timeout: 5))
         XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.planCeoReviewHandoff").exists)
+        XCTAssertFalse(elementWithIdentifier(in: app, "opendesign.officeHours.commitmentBar").exists)
         let docConfirm = app.buttons["opendesign.officeHours.docHandoff.confirm"]
         XCTAssertTrue(scrollElementToVisible(
             docConfirm,
@@ -1602,6 +1603,13 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "문서 저장 완료", timeout: 3))
         let planCeoReviewHandoff = elementWithIdentifier(in: app, "opendesign.officeHours.planCeoReviewHandoff")
         XCTAssertTrue(planCeoReviewHandoff.waitForExistence(timeout: 5))
+        let commitmentBar = elementWithIdentifier(in: app, "opendesign.officeHours.commitmentBar")
+        XCTAssertTrue(scrollElementToVisible(
+            commitmentBar,
+            in: app,
+            timeout: 8,
+            scrollViewIdentifier: "opendesign.officeHours.main.scroll"
+        ))
         let planCeoReviewButton = app.buttons["opendesign.officeHours.planCeoReview"]
         XCTAssertTrue(waitUntilHittable(planCeoReviewButton, timeout: 5), "plan-ceo-review handoff should be visible after document save without manual scroll")
         let completeDayButton = app.buttons["opendesign.officeHours.planCeoReview.completeDay"]

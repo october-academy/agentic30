@@ -4758,7 +4758,9 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if modePicked {
                         officeHoursQuestionStage(session: session, day1Content: day1Content, activeDay: activeDay)
-                        officeHoursCommitmentBar(session: session)
+                        if shouldShowOfficeHoursCommitmentBar(activeDay: activeDay) {
+                            officeHoursCommitmentBar(session: session)
+                        }
                     } else if viewModel.day1GoalSelection == nil {
                         officeHoursTutorHead()
                         officeHoursGoalSelectionBlock(session: session, day1Content: day1Content)
@@ -4847,6 +4849,10 @@ struct ContentView: View {
                 startOfficeHoursIfNeeded(session: session, day1Content: day1Content, day: activeDay)
             }
         }
+    }
+
+    private func shouldShowOfficeHoursCommitmentBar(activeDay: Int) -> Bool {
+        activeDay != 1 || officeHoursDay1DocumentsWritten
     }
 
     private func shareOpenDesignOfficeHoursScreenshot(anchorView: NSView?, activeDay: Int) {
