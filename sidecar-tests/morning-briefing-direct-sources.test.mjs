@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  cloudflareSourceSignalFromDrilldown,
   collectCloudflareDirectDrilldown,
   collectPosthogDirectDrilldown,
   mergeMorningBriefingDrilldown,
@@ -147,9 +148,16 @@ test("collectPosthogDirectDrilldown surfaces API failures as thrown errors", asy
 function cloudflareHours(startIso, values) {
   return values.map((value, index) => ({
     dimensions: { datetime: new Date(Date.parse(startIso) + index * 3_600_000).toISOString() },
-    sum: { requests: value * 3, pageViews: value },
+    sum: { requests: value * 3, pageViews: value, threats: 0 },
     uniq: { uniques: value },
   }));
+}
+
+function cloudflareTotals({ uniqueVisitors, pageviews, requests, threats = 0 }) {
+  return {
+    sum: { requests, pageViews: pageviews, threats },
+    uniq: { uniques: uniqueVisitors },
+  };
 }
 
 function stubCloudflareFetch({ failPaths = false } = {}) {
@@ -171,11 +179,13 @@ function stubCloudflareFetch({ failPaths = false } = {}) {
           ] }] } },
         });
       }
-      const isPrevious = String(body.variables?.start || "").startsWith("2026-06-08");
-      const hours = isPrevious
-        ? cloudflareHours("2026-06-08T00:00:00.000Z", [2, 1, 3, 2])
-        : cloudflareHours("2026-06-09T00:00:00.000Z", [2, 3, 8, 5]);
-      return jsonResponse({ data: { viewer: { zones: [{ httpRequests1hGroups: hours }] } } });
+      return jsonResponse({
+        data: { viewer: { zones: [{
+          totals: [cloudflareTotals({ uniqueVisitors: 13, pageviews: 18, requests: 54 })],
+          previousTotals: [cloudflareTotals({ uniqueVisitors: 7, pageviews: 8, requests: 24 })],
+          hourly: cloudflareHours("2026-06-09T00:00:00.000Z", [2, 3, 8, 5]),
+        }] } },
+      });
     },
   };
 }
@@ -194,12 +204,15 @@ test("collectCloudflareDirectDrilldown builds KPIs, 2h buckets, and path table f
   assert.equal(pv.valueLabel, "18"); // 2+3+8+5
   assert.equal(pv.direction, "up"); // vs 8
   const visits = drilldown.kpis.find((kpi) => kpi.label === "순 방문");
-  assert.equal(visits.valueLabel, "8"); // max hourly uniques
+  assert.equal(visits.valueLabel, "13"); // no-dimension period total, not max/sum hourly uniques
+  assert.equal(visits.vsLabel, "직전 7");
 
   assert.equal(drilldown.chart.kind, "bars");
-  assert.equal(drilldown.chart.bars.length, 2); // 4 hours → two 2h buckets
-  assert.equal(drilldown.chart.bars[0].value, 5); // 2+3
-  assert.equal(drilldown.chart.bars[1].value, 13); // 8+5
+  assert.equal(drilldown.chart.title, "시간대별 순 방문, 지난 24시간");
+  assert.equal(drilldown.chart.bars.length, 4);
+  assert.deepEqual(drilldown.chart.bars.map((bar) => bar.value), [2, 3, 8, 5]);
+  assert.doesNotMatch(drilldown.chart.subtitle, /합계/);
+  assert.match(drilldown.chart.footnote, /서로 더하지 않습니다/);
 
   assert.equal(drilldown.table.length, 2);
   assert.equal(drilldown.table[0].code, "/landing");
@@ -212,6 +225,12 @@ test("collectCloudflareDirectDrilldown builds KPIs, 2h buckets, and path table f
   assert.ok(pathQuery.includes("orderBy: [sum_edgeResponseBytes_DESC]"));
   assert.match(pathQuery, /requestSource: "eyeball"/);
   assert.ok(pathQuery.includes("dimensions { metric: clientRequestPath }"));
+
+  const source = cloudflareSourceSignalFromDrilldown(drilldown, { selected: true });
+  assert.equal(source.counts.visits, 13);
+  assert.equal(source.counts.uniqueVisitors, 13);
+  assert.equal(source.counts.pageviews, 18);
+  assert.equal(source.selected, true);
 });
 
 test("collectCloudflareDirectDrilldown clamps wide briefing windows to trailing 24h", async () => {

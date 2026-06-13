@@ -5,8 +5,10 @@ import {
   MORNING_BRIEFING_DRILLDOWN_IDS,
   buildCountsDrilldown,
   buildMorningBriefingExternalDigestPrompt,
+  cloudflareSourceSignalFromMeasurements,
   collectGithubDrilldown,
   ensureMorningBriefingDrilldowns,
+  normalizeCloudflareDrilldownMeasurements,
   normalizeMorningBriefingDrilldown,
   normalizeMorningBriefingDrilldowns,
   normalizeMorningBriefingExternalDigest,
@@ -301,18 +303,11 @@ test("normalizeMorningBriefingExternalDigest returns sources plus normalized dri
   assert.equal(sources.length, 2);
   assert.ok(sources.every((source) => source.state === "ready"));
 
-  const cf = drilldowns.cloudflare;
-  assert.equal(cf.title, "Cloudflare · 트래픽 드릴다운");
-  assert.equal(cf.kpis.length, 2);
-  assert.equal(cf.kpis[1].flag, true);
-  assert.equal(cf.chart.kind, "bars");
-  // ratio normalized to the max bucket (value 8)
-  assert.equal(cf.chart.bars[2].ratio, 1);
-  assert.equal(cf.table.length, 2);
-  assert.equal(cf.table[0].rank, 1);
-  assert.equal(cf.table[0].share, Math.round((132 / 166) * 100));
-  assert.equal(cf.drafts.length, 1);
-  assert.equal(cf.drafts[0].kind, "task");
+  assert.equal(
+    drilldowns.cloudflare,
+    undefined,
+    "legacy Cloudflare UI payloads without structured measurements are ignored",
+  );
 
   const ph = drilldowns.posthog;
   assert.equal(ph.chart.kind, "curve");
@@ -325,12 +320,57 @@ test("normalizeMorningBriefingExternalDigest returns sources plus normalized dri
   assert.equal(ph.drafts[0].kind, "message");
 });
 
+test("normalizeMorningBriefingExternalDigest derives Cloudflare source counts from measurements", () => {
+  const payload = {
+    sources: [
+      {
+        id: "cloudflare",
+        state: "ready",
+        summary: "legacy hourly sum",
+        counts: { visits: 328, pageviews: 999, requests: 999 },
+      },
+    ],
+    drilldowns: {
+      cloudflare: {
+        measurements: {
+          totals: {
+            startIso: "2026-06-12T00:00:00.000Z",
+            untilIso: "2026-06-13T00:00:00.000Z",
+            uniqueVisitors: 285,
+            pageviews: 174,
+            requests: 3375,
+            threats: 0,
+          },
+          previousTotals: {
+            startIso: "2026-06-11T00:00:00.000Z",
+            untilIso: "2026-06-12T00:00:00.000Z",
+            uniqueVisitors: 335,
+            pageviews: 145,
+            requests: 3229,
+            threats: 0,
+          },
+          hourly: [
+            { datetimeIso: "2026-06-12T12:00:00.000Z", uniqueVisitors: 37, pageviews: 46, requests: 300 },
+          ],
+        },
+      },
+    },
+  };
+  const { sources, drilldowns } = normalizeMorningBriefingExternalDigest(payload, ["cloudflare"]);
+  assert.equal(sources[0].state, "ready");
+  assert.equal(sources[0].counts.visits, 285);
+  assert.equal(sources[0].counts.uniqueVisitors, 285);
+  assert.equal(sources[0].counts.pageviews, 174);
+  assert.equal(drilldowns.cloudflare.kpis[0].valueLabel, "285");
+  assert.doesNotMatch(drilldowns.cloudflare.chart.subtitle, /합계/);
+});
+
 test("normalizeMorningBriefingExternalDigest drops drilldowns for non-ready sources and bad payloads", () => {
   const payload = externalPayloadFixture();
   payload.sources = payload.sources.filter((source) => source.id === "cloudflare");
   const { drilldowns } = normalizeMorningBriefingExternalDigest(JSON.stringify(payload), ["posthog", "cloudflare"]);
   assert.equal(drilldowns.posthog, undefined);
-  assert.ok(drilldowns.cloudflare);
+  assert.equal(drilldowns.cloudflare, undefined);
 
   const empty = normalizeMorningBriefingExternalDigest("not json at all", ["posthog"]);
   assert.deepEqual(empty.drilldowns, {});
@@ -460,6 +500,87 @@ test("normalizePosthogDrilldownMeasurements rejects contract violations", () => 
   }), null);
 });
 
+test("normalizeCloudflareDrilldownMeasurements uses period totals, not summed hourly uniques", () => {
+  const hourlyValues = [15, 6, 16, 12, 17, 15, 8, 15, 12, 7, 27, 20, 37, 14, 18, 12, 16, 13, 11, 10, 9, 8, 7, 3];
+  assert.equal(hourlyValues.reduce((sum, value) => sum + value, 0), 328);
+  const measurements = {
+    measurements: {
+      totals: {
+        startIso: "2026-06-12T00:00:00.000Z",
+        untilIso: "2026-06-13T00:00:00.000Z",
+        uniqueVisitors: 285,
+        pageviews: 174,
+        requests: 3375,
+        threats: 0,
+      },
+      previousTotals: {
+        startIso: "2026-06-11T00:00:00.000Z",
+        untilIso: "2026-06-12T00:00:00.000Z",
+        uniqueVisitors: 335,
+        pageviews: 145,
+        requests: 3229,
+        threats: 0,
+      },
+      hourly: hourlyValues.map((value, index) => ({
+        datetimeIso: new Date(Date.parse("2026-06-12T00:00:00.000Z") + index * 3_600_000).toISOString(),
+        uniqueVisitors: value,
+        pageviews: value + 1,
+        requests: value * 10,
+      })),
+      zoneName: "agentic30.dev",
+      pathTable: [{ path: "/static/app.js", value: 93 }],
+      pathTableUsesEyeballFilter: false,
+    },
+  };
+
+  const drilldown = normalizeCloudflareDrilldownMeasurements(measurements, { timeZone: "Asia/Seoul" });
+  assert.ok(drilldown);
+  assert.equal(drilldown.subtitle, "agentic30.dev · Cloudflare GraphQL Analytics");
+  assert.equal(drilldown.kpis.find((kpi) => kpi.label === "순 방문").valueLabel, "285");
+  assert.equal(drilldown.kpis.find((kpi) => kpi.label === "순 방문").vsLabel, "직전 335");
+  assert.equal(drilldown.chart.bars.length, 12, "24 hourly buckets are compressed for the 12-bar UI");
+  assert.ok(drilldown.chart.bars.some((bar) => bar.label === "21" && bar.value === 37));
+  assert.doesNotMatch(drilldown.chart.subtitle, /합계/);
+  assert.match(drilldown.chart.footnote, /서로 더하지 않습니다/);
+  assert.deepEqual(drilldown.table, [], "path table is hidden unless requestSource=eyeball was actually used");
+
+  const source = cloudflareSourceSignalFromMeasurements(measurements, { selected: true });
+  assert.equal(source.counts.visits, 285);
+  assert.equal(source.counts.uniqueVisitors, 285);
+  assert.equal(source.counts.pageviews, 174);
+  assert.equal(source.selected, true);
+});
+
+test("normalizeCloudflareDrilldownMeasurements keeps path table only with eyeball filter evidence", () => {
+  const base = {
+    totals: {
+      startIso: "2026-06-12T00:00:00.000Z",
+      untilIso: "2026-06-13T00:00:00.000Z",
+      uniqueVisitors: 10,
+      pageviews: 20,
+      requests: 30,
+      threats: 0,
+    },
+    previousTotals: {
+      startIso: "2026-06-11T00:00:00.000Z",
+      untilIso: "2026-06-12T00:00:00.000Z",
+      uniqueVisitors: 9,
+      pageviews: 18,
+      requests: 29,
+      threats: 0,
+    },
+    hourly: [{ datetimeIso: "2026-06-12T12:00:00.000Z", uniqueVisitors: 10, pageviews: 20, requests: 30 }],
+    pathTable: [{ path: "/", value: 20 }],
+  };
+  assert.equal(normalizeCloudflareDrilldownMeasurements({ measurements: base }).table.length, 0);
+  assert.equal(
+    normalizeCloudflareDrilldownMeasurements({
+      measurements: { ...base, pathTableUsesEyeballFilter: true },
+    }).table[0].code,
+    "/",
+  );
+});
+
 test("normalizeMorningBriefingDrilldowns keeps only known source ids", () => {
   const normalized = normalizeMorningBriefingDrilldowns({
     cloudflare: { kpis: [{ label: "순 방문", value: 64 }] },
@@ -499,12 +620,19 @@ test("buildMorningBriefingExternalDigestPrompt appends drilldown shape for selec
     window: WINDOW,
     context: "ctx",
   });
+  assert.match(cloudflare, /"measurements"/);
+  assert.match(cloudflare, /"uniqueVisitors": 0/);
+  assert.match(cloudflare, /"previousTotals"/);
+  assert.match(cloudflare, /"hourly"/);
   assert.match(cloudflare, /httpRequestsAdaptiveGroups/);
   assert.match(cloudflare, /path: "\/graphql"/);
   assert.match(cloudflare, /query\(\$zone: String!, \$start: Time!, \$end: Time!\)/);
-  assert.match(cloudflare, /sum \{ requests pageViews \}/);
+  assert.match(cloudflare, /sum \{ requests pageViews threats \}/);
+  assert.match(cloudflare, /Never sum hourly uniq\.uniques/);
+  assert.match(cloudflare, /Remove dimensions entirely/);
   assert.doesNotMatch(cloudflare, /\/client\/v4\/graphql/);
   assert.doesNotMatch(cloudflare, /sum \{[^}]*visits/);
+  assert.doesNotMatch(cloudflare, /사람 방문, 지난 24시간/);
   assert.match(cloudflare, /trailing 24 hours/);
   assert.match(cloudflare, /sum_edgeResponseBytes_DESC/);
   assert.match(cloudflare, /clientRequestPath/);

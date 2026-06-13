@@ -492,8 +492,12 @@ test("buildExternalOfficeHoursDigestPrompt uses source-specific count keys", () 
   assert.match(cloudflareOnly, /path: "\/graphql"/);
   assert.match(cloudflareOnly, /query\(\$zone: String!, \$start: Time!, \$end: Time!\)/);
   assert.match(cloudflareOnly, /httpRequests1hGroups/);
-  assert.match(cloudflareOnly, /sum \{ requests pageViews \}/);
+  assert.match(cloudflareOnly, /totals: httpRequests1hGroups/);
+  assert.match(cloudflareOnly, /hourly: httpRequests1hGroups/);
+  assert.match(cloudflareOnly, /sum \{ requests pageViews threats \}/);
   assert.match(cloudflareOnly, /uniq \{ uniques \}/);
+  assert.match(cloudflareOnly, /totals\[0\]\.uniq\.uniques/);
+  assert.match(cloudflareOnly, /Never sum hourly uniq\.uniques/);
   assert.match(cloudflareOnly, /Do not query all zones in one GraphQL call/);
   assert.doesNotMatch(cloudflareOnly, /\/client\/v4\/graphql/);
   assert.doesNotMatch(cloudflareOnly, /sum \{[^}]*visits/);

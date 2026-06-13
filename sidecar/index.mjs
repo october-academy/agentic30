@@ -61,6 +61,7 @@ import {
 } from "./morning-briefing-drilldown.mjs";
 import { createMorningBriefingProgressTracker } from "./morning-briefing-progress.mjs";
 import {
+  cloudflareSourceSignalFromDrilldown,
   collectCloudflareDirectDrilldown,
   collectPosthogDirectDrilldown,
   mergeMorningBriefingDrilldownMaps,
@@ -5599,31 +5600,7 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
     }).catch((error) => {
       telemetry.captureException(error, { operation: "active_user_snapshot" });
     });
-    const digest = finalizeDailyOfficeHoursDigest({
-      gate,
-      localSignals,
-      externalSignals: external.sources,
-      context: "",
-    });
-    const previousMetrics = store.current?.metrics
-      || store.history[store.history.length - 1]?.metrics
-      || {};
-    // Direct collectors carry the numbers: git/gh CLI for GitHub, vendor HTTP
-    // APIs for Cloudflare (GraphQL Analytics) and PostHog (Query API/HogQL).
-    // The provider digest's drilldown only fills narrative sections the APIs
-    // cannot produce (action drafts, app-specific funnels).
-    if (githubTracked) progress.log("github", "GitHub 드릴다운 집계 중");
-    const [githubDrilldown, cloudflareDirect, posthogDirect] = await Promise.all([
-      collectGithubDrilldown({
-        workspaceRoot,
-        window: gate.window,
-        gitSource: localSignals.find((source) => source.id === "git"),
-        ghSource: localSignals.find((source) => source.id === "gh_cli"),
-        previousCommitCount: previousMetrics.github ?? null,
-      }).catch((error) => {
-        telemetry.captureException(error, { operation: "morning_briefing_github_drilldown" });
-        return null;
-      }),
+    const [cloudflareDirect, posthogDirect] = await Promise.all([
       readySources.includes("cloudflare")
         ? collectCloudflareDirectDrilldown({ window: gate.window, appSupportPath }).catch((error) => {
             telemetry.captureException(error, { operation: "morning_briefing_cloudflare_direct" });
@@ -5637,6 +5614,45 @@ async function runMorningBriefingRefresh({ reason = "manual", force = false, pre
           })
         : Promise.resolve(null),
     ]);
+    const cloudflareDirectSource = cloudflareSourceSignalFromDrilldown(
+      cloudflareDirect,
+      external.sources.find((source) => source.id === "cloudflare") || {},
+    );
+    const externalSourcesForDigest = cloudflareDirectSource
+      ? external.sources.map((source) => source.id === "cloudflare"
+          ? {
+              ...source,
+              ...cloudflareDirectSource,
+              selected: source.selected,
+              required: source.required,
+              checkedAt: source.checkedAt,
+            }
+          : source)
+      : external.sources;
+    const digest = finalizeDailyOfficeHoursDigest({
+      gate,
+      localSignals,
+      externalSignals: externalSourcesForDigest,
+      context: "",
+    });
+    const previousMetrics = store.current?.metrics
+      || store.history[store.history.length - 1]?.metrics
+      || {};
+    // Direct collectors carry the numbers: git/gh CLI for GitHub, vendor HTTP
+    // APIs for Cloudflare (GraphQL Analytics) and PostHog (Query API/HogQL).
+    // The provider digest's drilldown only fills narrative sections the APIs
+    // cannot produce (action drafts, app-specific funnels).
+    if (githubTracked) progress.log("github", "GitHub 드릴다운 집계 중");
+    const githubDrilldown = await collectGithubDrilldown({
+      workspaceRoot,
+      window: gate.window,
+      gitSource: localSignals.find((source) => source.id === "git"),
+      ghSource: localSignals.find((source) => source.id === "gh_cli"),
+      previousCommitCount: previousMetrics.github ?? null,
+    }).catch((error) => {
+      telemetry.captureException(error, { operation: "morning_briefing_github_drilldown" });
+      return null;
+    });
     if (githubTracked) progress.finish("github", { detail: "수집 완료" });
     const briefing = buildMorningBriefing({
       digest,

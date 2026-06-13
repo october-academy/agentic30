@@ -1,6 +1,9 @@
 import { resolveCloudflareMcpSettings } from "./cloudflare-mcp-config.mjs";
 import { resolvePostHogMcpSettings } from "./posthog-mcp-config.mjs";
-import { normalizeMorningBriefingDrilldown } from "./morning-briefing-drilldown.mjs";
+import {
+  normalizeCloudflareDrilldownMeasurements,
+  normalizeMorningBriefingDrilldown,
+} from "./morning-briefing-drilldown.mjs";
 
 // Direct API collectors for the morning-briefing drilldowns. The same
 // credentials the MCP integrations already store (PostHog phx_/pha_ personal
@@ -52,12 +55,6 @@ function deltaLabelFor(current, previous) {
 
 function utcSqlDateTime(ms) {
   return new Date(ms).toISOString().slice(0, 19).replace("T", " ");
-}
-
-function hourLabel(value) {
-  const ts = Date.parse(String(value || ""));
-  if (!Number.isFinite(ts)) return "";
-  return String(new Date(ts).getHours()).padStart(2, "0");
 }
 
 function dayLabel(value) {
@@ -356,52 +353,50 @@ export async function collectCloudflareDirectDrilldown({
   const spanMs = untilMs - startMs;
   const toIso = (ms) => new Date(ms).toISOString();
 
-  const hoursQuery = `
-    query($zone: String!, $start: Time!, $end: Time!) {
+  const analyticsQuery = `
+    query($zone: String!, $start: Time!, $end: Time!, $prevStart: Time!) {
       viewer { zones(filter: { zoneTag: $zone }) {
-        httpRequests1hGroups(limit: 96, filter: { datetime_geq: $start, datetime_lt: $end }, orderBy: [datetime_ASC]) {
+        totals: httpRequests1hGroups(limit: 1, filter: { datetime_geq: $start, datetime_lt: $end }) {
+          sum { requests pageViews threats }
+          uniq { uniques }
+        }
+        hourly: httpRequests1hGroups(limit: 96, filter: { datetime_geq: $start, datetime_lt: $end }, orderBy: [datetime_ASC]) {
           dimensions { datetime }
-          sum { requests pageViews }
+          sum { requests pageViews threats }
+          uniq { uniques }
+        }
+        previousTotals: httpRequests1hGroups(limit: 1, filter: { datetime_geq: $prevStart, datetime_lt: $start }) {
+          sum { requests pageViews threats }
           uniq { uniques }
         }
       } }
     }`;
-  const [currentData, previousData] = await Promise.all([
-    cloudflareGraphql({ fetchImpl, token, query: hoursQuery, variables: { zone: zone.id, start: toIso(startMs), end: toIso(untilMs) } }),
-    cloudflareGraphql({ fetchImpl, token, query: hoursQuery, variables: { zone: zone.id, start: toIso(startMs - spanMs), end: toIso(startMs) } }),
-  ]);
+  const analyticsData = await cloudflareGraphql({
+    fetchImpl,
+    token,
+    query: analyticsQuery,
+    variables: { zone: zone.id, start: toIso(startMs), end: toIso(untilMs), prevStart: toIso(startMs - spanMs) },
+  });
 
-  const groupsOf = (data) => data?.viewer?.zones?.[0]?.httpRequests1hGroups || [];
-  const sumOf = (groups, key) => groups.reduce((sum, group) => sum + (finiteNumber(group?.sum?.[key]) ?? 0), 0);
-  const uniquesOf = (groups) => Math.max(0, ...groups.map((group) => finiteNumber(group?.uniq?.uniques) ?? 0));
-  const current = groupsOf(currentData);
-  const previous = groupsOf(previousData);
-  if (!current.length) return null;
+  const zoneData = analyticsData?.viewer?.zones?.[0] || {};
+  const totalGroup = zoneData.totals?.[0] || null;
+  const previousGroup = zoneData.previousTotals?.[0] || null;
+  const hourlyGroups = zoneData.hourly || [];
+  if (!totalGroup) return null;
 
-  const pageViews = sumOf(current, "pageViews");
-  const requests = sumOf(current, "requests");
-  const visits = uniquesOf(current);
-  const prevPageViews = sumOf(previous, "pageViews");
-  const prevVisits = uniquesOf(previous);
-  const visitsDelta = deltaLabelFor(visits, prevVisits);
-  const pvDelta = deltaLabelFor(pageViews, prevPageViews);
-
-  // 2-hour buckets for the visit chart (mockup: 시간대별 방문).
-  const buckets = [];
-  for (let index = 0; index < current.length; index += 2) {
-    const pair = current.slice(index, index + 2);
-    buckets.push({
-      label: hourLabel(pair[0]?.dimensions?.datetime),
-      value: sumOf(pair, "pageViews"),
-      tone: "amber",
-      tip: `${hourLabel(pair[0]?.dimensions?.datetime)}시 구간 · 페이지뷰 ${sumOf(pair, "pageViews")}`,
-    });
-  }
-  const peak = buckets.reduce((best, bucket) => (bucket.value > (best?.value ?? -1) ? bucket : best), null);
+  const totalsFromGroup = (group, start, until) => ({
+    startIso: toIso(start),
+    untilIso: toIso(until),
+    uniqueVisitors: Math.max(0, Math.round(finiteNumber(group?.uniq?.uniques) ?? 0)),
+    pageviews: Math.max(0, Math.round(finiteNumber(group?.sum?.pageViews) ?? 0)),
+    requests: Math.max(0, Math.round(finiteNumber(group?.sum?.requests) ?? 0)),
+    threats: Math.max(0, Math.round(finiteNumber(group?.sum?.threats) ?? 0)),
+  });
 
   // Top paths come from the sampled adaptive dataset; not all plans expose it,
   // and a missing table section simply doesn't render — no invented rows.
-  let table = [];
+  let pathTable = [];
+  let pathTableUsesEyeballFilter = false;
   try {
     const pathsData = await cloudflareGraphql({
       fetchImpl,
@@ -422,65 +417,36 @@ export async function collectCloudflareDirectDrilldown({
         }`,
       variables: { zone: zone.id, start: toIso(startMs), end: toIso(untilMs) },
     });
-    table = (pathsData?.viewer?.zones?.[0]?.httpRequestsAdaptiveGroups || [])
+    pathTable = (pathsData?.viewer?.zones?.[0]?.httpRequestsAdaptiveGroups || [])
       .map((group) => ({
         path: String(group?.dimensions?.metric || ""),
         label: "",
         value: finiteNumber(group?.count) ?? 0,
       }))
       .filter((row) => row.path);
+    pathTableUsesEyeballFilter = pathTable.length > 0;
   } catch {
-    table = [];
+    pathTable = [];
+    pathTableUsesEyeballFilter = false;
   }
 
-  return normalizeMorningBriefingDrilldown("cloudflare", {
-    title: "Cloudflare · 트래픽 드릴다운",
-    subtitle: `${zone.name} · Cloudflare GraphQL Analytics`,
-    syncPills: [
-      `지난 24시간 페이지뷰 ${pageViews} · 요청 ${requests}`,
-      `비교 그 전 24시간 페이지뷰 ${prevPageViews}`,
-    ],
-    kpis: [
-      {
-        label: "순 방문",
-        valueLabel: String(visits),
-        deltaLabel: visitsDelta.deltaLabel,
-        direction: visitsDelta.direction,
-        vs: `어제 ${prevVisits}`,
-      },
-      {
-        label: "페이지뷰",
-        valueLabel: String(pageViews),
-        deltaLabel: pvDelta.deltaLabel,
-        direction: pvDelta.direction,
-        vs: `어제 ${prevPageViews}`,
-      },
-      { label: "요청", valueLabel: String(requests), vs: `존 ${zone.name}` },
-    ],
-    kpisMeta: "Cloudflare GraphQL Analytics · 지난 24시간",
-    chart: buckets.length >= 2
-      ? {
-          kind: "bars",
-          title: "시간대별 페이지뷰, 지난 24시간",
-          subtitle: peak ? `피크 ${peak.label}시 구간 · ${peak.value} PV` : null,
-          bars: buckets,
-          legend: [{ label: "페이지뷰", tone: "amber" }],
-          footnote: "Cloudflare GraphQL Analytics에서 직접 집계한 값이에요.",
-        }
-      : null,
-    table,
-    meta: {
-      progress: {
-        label: "순 방문",
-        valueLabel: `${visits} · 어제 ${prevVisits}`,
-        sub: visitsDelta.deltaLabel,
-        ratio: Math.min(1, visits / Math.max(1, Math.max(visits, prevVisits))),
-      },
-      rows: [
-        { key: "존", value: String(zone.name || ""), tone: "accent" },
-        { key: "소스", value: "GraphQL Analytics" },
-        ...(peak ? [{ key: "피크", value: `${peak.label}시 구간` }] : []),
-      ],
+  return normalizeCloudflareDrilldownMeasurements({
+    measurements: {
+      totals: totalsFromGroup(totalGroup, startMs, untilMs),
+      previousTotals: totalsFromGroup(previousGroup, startMs - spanMs, startMs),
+      hourly: hourlyGroups.map((group) => {
+        const ts = Date.parse(group?.dimensions?.datetime || "");
+        if (!Number.isFinite(ts)) return null;
+        return {
+          datetimeIso: new Date(ts).toISOString(),
+          uniqueVisitors: Math.max(0, Math.round(finiteNumber(group?.uniq?.uniques) ?? 0)),
+          pageviews: Math.max(0, Math.round(finiteNumber(group?.sum?.pageViews) ?? 0)),
+          requests: Math.max(0, Math.round(finiteNumber(group?.sum?.requests) ?? 0)),
+        };
+      }).filter(Boolean),
+      zoneName: String(zone.name || ""),
+      pathTable,
+      pathTableUsesEyeballFilter,
     },
   });
 }
@@ -525,4 +491,45 @@ export function mergeMorningBriefingDrilldownMaps(primary = {}, secondary = {}) 
     if (merged) output[id] = merged;
   }
   return output;
+}
+
+function kpiNumber(drilldown, label) {
+  const value = drilldown?.kpis?.find((kpi) => kpi.label === label)?.valueLabel;
+  if (value === null || value === undefined) return null;
+  const number = Number(String(value).replace(/[^\d.-]/g, ""));
+  return Number.isFinite(number) ? Math.max(0, Math.round(number)) : null;
+}
+
+export function cloudflareSourceSignalFromDrilldown(drilldown, existing = {}) {
+  if (!drilldown || drilldown.id !== "cloudflare") return null;
+  const uniqueVisitors = kpiNumber(drilldown, "순 방문");
+  if (uniqueVisitors === null) return null;
+  const pageviews = kpiNumber(drilldown, "페이지뷰") ?? 0;
+  const requests = kpiNumber(drilldown, "요청") ?? 0;
+  const threats = kpiNumber(drilldown, "위협") ?? 0;
+  return {
+    ...existing,
+    id: "cloudflare",
+    label: existing.label || "Cloudflare",
+    state: "ready",
+    available: true,
+    detail: "Cloudflare GraphQL Analytics direct aggregation succeeded",
+    counts: {
+      ...(existing.counts || {}),
+      visits: uniqueVisitors,
+      uniqueVisitors,
+      pageviews,
+      pageViews: pageviews,
+      requests,
+      threats,
+    },
+    highlights: [
+      `Cloudflare 순 방문 ${uniqueVisitors}명 · 페이지뷰 ${pageviews}건 · 요청 ${requests}건`,
+      ...(Array.isArray(existing.highlights) ? existing.highlights : []),
+    ].slice(0, 6),
+    summary: `Cloudflare 순 방문 ${uniqueVisitors}명`,
+    goalSignals: Array.isArray(existing.goalSignals) ? existing.goalSignals : [],
+    evidenceGaps: Array.isArray(existing.evidenceGaps) ? existing.evidenceGaps : [],
+    events: Array.isArray(existing.events) ? existing.events : [],
+  };
 }

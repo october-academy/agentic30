@@ -42,16 +42,7 @@ final class agentic30UITests: XCTestCase {
             app.terminate()
         }
 
-        if app.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 5) {
-            advanceOnboardingIntroToContext(in: app)
-        } else if elementWithIdentifier(in: app, "intakeV2.boot.cards").waitForExistence(timeout: 5) {
-            verifyBootIntroLayout(in: app)
-            clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
-        } else if app.staticTexts["지금 하루를 가장 많이 쓰는 역할은 무엇인가요?"].waitForExistence(timeout: 2) {
-            // Some persisted UI-test launch states enter the first intake step directly.
-        } else {
-            XCTFail("Expected first-run intro or Intake V2 boot intro")
-        }
+        advanceToIntakeRoleStep(in: app, timeout: 10)
         XCTAssertFalse(app.buttons["Sign in with Google"].exists)
         XCTAssertTrue(app.staticTexts["지금 하루를 가장 많이 쓰는 역할은 무엇인가요?"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Next"].exists)
@@ -105,30 +96,25 @@ final class agentic30UITests: XCTestCase {
         }
 
         var intakeLayoutBaseline = IntakeLayoutBaseline()
-        if app.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 3) {
-            advanceOnboardingIntroToContext(in: app)
-        } else if elementWithIdentifier(in: app, "intakeV2.boot.cards").waitForExistence(timeout: 3) {
-            clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
-        }
-        XCTAssertTrue(app.staticTexts["지금 하루를 가장 많이 쓰는 역할은 무엇인가요?"].waitForExistence(timeout: 10))
+        advanceToIntakeRoleStep(in: app, timeout: 10)
         assertStableIntakeStepLayout(
             in: app,
             current: 2,
             baseline: &intakeLayoutBaseline
         )
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
-        clickCenter(of: button(in: app, matching: ["Back"]))
+        tapRequired(button(in: app, matching: ["Back"]), in: app, named: "Intake V2 Back")
         verifyBootIntroLayout(in: app)
-        clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
+        tapRequired(button(in: app, matching: ["Continue →", "Continue"]), in: app, named: "Intake V2 boot Continue")
         XCTAssertTrue(app.staticTexts["지금 하루를 가장 많이 쓰는 역할은 무엇인가요?"].waitForExistence(timeout: 5))
         assertStableIntakeStepLayout(
             in: app,
             current: 2,
             baseline: &intakeLayoutBaseline
         )
-        clickCenter(of: buttonContaining(in: app, text: "개발자"))
+        tapIntakeOption(in: app, identifier: "intakeV2.role.option.developer")
         XCTAssertTrue(button(in: app, matching: ["Next →", "Next"]).isEnabled)
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 role Next")
         XCTAssertTrue(app.staticTexts["지금 가장 큰 막힘은 무엇인가요?"].waitForExistence(timeout: 5))
         assertStableIntakeStepLayout(
             in: app,
@@ -136,23 +122,23 @@ final class agentic30UITests: XCTestCase {
             baseline: &intakeLayoutBaseline
         )
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
-        clickCenter(of: button(in: app, matching: ["Back"]))
+        tapRequired(button(in: app, matching: ["Back"]), in: app, named: "Intake V2 blocker Back")
         XCTAssertTrue(app.staticTexts["지금 하루를 가장 많이 쓰는 역할은 무엇인가요?"].waitForExistence(timeout: 5))
         assertStableIntakeStepLayout(
             in: app,
             current: 2,
             baseline: &intakeLayoutBaseline
         )
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 role Next after Back")
         XCTAssertTrue(app.staticTexts["지금 가장 큰 막힘은 무엇인가요?"].waitForExistence(timeout: 5))
         assertStableIntakeStepLayout(
             in: app,
             current: 3,
             baseline: &intakeLayoutBaseline
         )
-        clickCenter(of: buttonContaining(in: app, text: "첫 사용자를 찾지 못하고 있다"))
+        tapIntakeOption(in: app, identifier: "intakeV2.blocker.option.building")
         XCTAssertTrue(button(in: app, matching: ["Next →", "Next"]).isEnabled)
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 blocker Next")
         XCTAssertTrue(app.staticTexts["하루에 얼마나 시간을 쓸 수 있나요?"].waitForExistence(timeout: 5))
         assertStableIntakeStepLayout(
             in: app,
@@ -160,16 +146,16 @@ final class agentic30UITests: XCTestCase {
             baseline: &intakeLayoutBaseline
         )
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
-        clickCenter(of: buttonContaining(in: app, text: "전업으로 6시간 이상"))
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        tapIntakeOption(in: app, identifier: "intakeV2.commitment.option.full_time_6h")
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 commitment Next")
         XCTAssertTrue(app.staticTexts["이미 가진 기록이 있나요?"].waitForExistence(timeout: 5))
         assertStableIntakeStepLayout(
             in: app,
             current: 5,
             baseline: &intakeLayoutBaseline
         )
-        clickCenter(of: buttonContaining(in: app, text: "프로젝트 일지"))
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        tapIntakeOption(in: app, identifier: "intakeV2.evidence.option.work_log")
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 evidence Next")
         XCTAssertTrue(app.staticTexts["프로젝트 폴더를 연결할까요?"].waitForExistence(timeout: 5))
         assertStableIntakeStepLayout(
             in: app,
@@ -178,16 +164,16 @@ final class agentic30UITests: XCTestCase {
         )
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
         XCTAssertFalse(button(in: app, matching: ["Continue →", "Continue"]).exists)
-        clickCenter(of: buttonContaining(in: app, text: "AI 도구로 연결"))
+        tapRequired(elementWithIdentifier(in: app, "intakeV2.folderPromptCopyButton"), in: app, named: "Intake V2 folder prompt copy")
         XCTAssertTrue(elementWithIdentifier(in: app, "intakeV2.folderPromptPasteGuide").waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["열어 둔 Cursor, Claude Code, Codex에 붙여넣으세요."].exists)
-        clickCenter(of: buttonContaining(in: app, text: "직접 선택"))
-        XCTAssertTrue(buttonContaining(in: app, text: "다른 폴더 선택").waitForExistence(timeout: 3))
-        XCTAssertFalse(buttonContaining(in: app, text: "나중에").exists)
+        tapRequired(elementWithIdentifier(in: app, "intakeV2.folderPickButton"), in: app, named: "Intake V2 folder pick")
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "intakeV2.folderPickButton", containing: "다른 폴더 선택", timeout: 3))
+        XCTAssertFalse(elementWithIdentifier(in: app, "intakeV2.folderSkipButton").exists)
         let selectedFolderName = elementWithIdentifier(in: app, "intakeV2.selectedFolderName")
         XCTAssertTrue(selectedFolderName.waitForExistence(timeout: 3))
         XCTAssertEqual(selectedFolderName.label, (workspacePath as NSString).lastPathComponent)
-        clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
+        tapRequired(button(in: app, matching: ["Continue →", "Continue"]), in: app, named: "Intake V2 folder Continue")
 
         XCTAssertTrue(app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10))
         assertStableIntakeStepLayout(
@@ -200,7 +186,7 @@ final class agentic30UITests: XCTestCase {
 
         let continueButton = button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"])
         XCTAssertTrue(continueButton.waitForExistence(timeout: 10))
-        clickCenter(of: continueButton)
+        tapRequired(continueButton, in: app, named: "Intake V2 sources Continue")
 
         assertStableIntakeStepLayout(
             in: app,
@@ -276,27 +262,21 @@ final class agentic30UITests: XCTestCase {
             self.removeDirectory(at: appSupportPath)
         }
 
-        if app.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 3) {
-            advanceOnboardingIntroToContext(in: app)
-        } else if elementWithIdentifier(in: app, "intakeV2.boot.cards").waitForExistence(timeout: 3) {
-            clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
-        }
-
-        XCTAssertTrue(app.staticTexts["지금 하루를 가장 많이 쓰는 역할은 무엇인가요?"].waitForExistence(timeout: 5))
-        clickCenter(of: buttonContaining(in: app, text: "개발자"))
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        advanceToIntakeRoleStep(in: app, timeout: 10)
+        tapIntakeOption(in: app, identifier: "intakeV2.role.option.developer")
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 role Next")
         XCTAssertTrue(app.staticTexts["지금 가장 큰 막힘은 무엇인가요?"].waitForExistence(timeout: 5))
-        clickCenter(of: buttonContaining(in: app, text: "첫 사용자를 찾지 못하고 있다"))
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        tapIntakeOption(in: app, identifier: "intakeV2.blocker.option.building")
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 blocker Next")
         XCTAssertTrue(app.staticTexts["하루에 얼마나 시간을 쓸 수 있나요?"].waitForExistence(timeout: 10))
-        clickCenter(of: buttonContaining(in: app, text: "전업으로 6시간 이상"))
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        tapIntakeOption(in: app, identifier: "intakeV2.commitment.option.full_time_6h")
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 commitment Next")
         XCTAssertTrue(app.staticTexts["이미 가진 기록이 있나요?"].waitForExistence(timeout: 5))
-        clickCenter(of: buttonContaining(in: app, text: "아직 기록은 없다"))
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        tapIntakeOption(in: app, identifier: "intakeV2.evidence.option.community")
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 evidence Next")
         XCTAssertTrue(app.staticTexts["프로젝트 폴더를 연결할까요?"].waitForExistence(timeout: 5))
         XCTAssertFalse(button(in: app, matching: ["Continue →", "Continue"]).exists)
-        clickCenter(of: buttonContaining(in: app, text: "나중에"))
+        tapRequired(elementWithIdentifier(in: app, "intakeV2.folderSkipButton"), in: app, named: "Intake V2 folder skip")
 
         if !app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10) {
             attachText(app.debugDescription, named: "Intake V2 source step missing after folder skip")
@@ -319,11 +299,11 @@ final class agentic30UITests: XCTestCase {
                 "\(source.label) should be visible in the 7/8 main grid."
             )
             XCTAssertTrue(element(sourceTile, contains: source.label))
-            clickCenter(of: sourceTile)
+            tapRequired(sourceTile, in: app, named: "\(source.label) source tile")
             XCTAssertTrue(buttonContaining(in: app, text: "Connected later").waitForExistence(timeout: 3))
             XCTAssertFalse(element(sourceTile, contains: "Connected ·"))
         }
-        clickCenter(of: button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"]))
+        tapRequired(button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"]), in: app, named: "Intake V2 sources Continue")
 
         assertIntakeProgress(in: app, current: 8, timeout: 10)
         let openInbox = elementWithIdentifier(in: app, "intakeV2.openInboxButton")
@@ -349,7 +329,7 @@ final class agentic30UITests: XCTestCase {
         XCTAssertFalse(elementWithIdentifier(in: app, "intakeV2.todoListWindow").exists)
         XCTAssertTrue(button(in: app, matching: ["Back"]).exists)
 
-        clickCenter(of: openInbox)
+        tapRequired(openInbox, in: app, named: "Intake V2 open inbox")
         XCTAssertTrue(elementWithIdentifier(in: app, "workspace.surface").waitForExistence(timeout: 10))
         XCTAssertFalse(elementWithIdentifier(in: app, "intakeV2.openInboxButton").exists)
         XCTAssertFalse(elementWithIdentifier(in: app, "intakeV2.bootLogDetails").exists)
@@ -401,36 +381,24 @@ final class agentic30UITests: XCTestCase {
             self.removeDirectory(at: appSupportPath)
         }
 
-        let bootCards = app.groups["intakeV2.boot.cards"]
-        if app.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 3) {
-            advanceOnboardingIntroToContext(in: app)
-        } else if bootCards.waitForExistence(timeout: 3) || elementWithIdentifier(in: app, "intakeV2.boot.cards").exists {
-            verifyBootIntroLayout(in: app)
-            clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
-        }
-
-        if !app.staticTexts["지금 하루를 가장 많이 쓰는 역할은 무엇인가요?"].waitForExistence(timeout: 10),
-           bootCards.exists {
-            clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
-        }
-        XCTAssertTrue(app.staticTexts["지금 하루를 가장 많이 쓰는 역할은 무엇인가요?"].waitForExistence(timeout: 5))
-        clickCenter(of: buttonContaining(in: app, text: "개발자"))
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        advanceToIntakeRoleStep(in: app, timeout: 10)
+        tapIntakeOption(in: app, identifier: "intakeV2.role.option.developer")
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 role Next")
         XCTAssertTrue(app.staticTexts["지금 가장 큰 막힘은 무엇인가요?"].waitForExistence(timeout: 5))
-        clickCenter(of: buttonContaining(in: app, text: "첫 사용자를 찾지 못하고 있다"))
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        tapIntakeOption(in: app, identifier: "intakeV2.blocker.option.building")
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 blocker Next")
         XCTAssertTrue(app.staticTexts["하루에 얼마나 시간을 쓸 수 있나요?"].waitForExistence(timeout: 5))
-        clickCenter(of: buttonContaining(in: app, text: "전업으로 6시간 이상"))
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        tapIntakeOption(in: app, identifier: "intakeV2.commitment.option.full_time_6h")
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 commitment Next")
         XCTAssertTrue(app.staticTexts["이미 가진 기록이 있나요?"].waitForExistence(timeout: 5))
-        clickCenter(of: buttonContaining(in: app, text: "프로젝트 일지"))
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        tapIntakeOption(in: app, identifier: "intakeV2.evidence.option.work_log")
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 evidence Next")
         XCTAssertTrue(app.staticTexts["프로젝트 폴더를 연결할까요?"].waitForExistence(timeout: 5))
-        clickCenter(of: buttonContaining(in: app, text: "직접 선택"))
-        XCTAssertTrue(buttonContaining(in: app, text: "다른 폴더 선택").waitForExistence(timeout: 3))
-        clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
+        tapRequired(elementWithIdentifier(in: app, "intakeV2.folderPickButton"), in: app, named: "Intake V2 folder pick")
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "intakeV2.folderPickButton", containing: "다른 폴더 선택", timeout: 3))
+        tapRequired(button(in: app, matching: ["Continue →", "Continue"]), in: app, named: "Intake V2 folder Continue")
         XCTAssertTrue(app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10))
-        clickCenter(of: button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"]))
+        tapRequired(button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"]), in: app, named: "Intake V2 sources Continue")
 
         assertIntakeProgress(in: app, current: 8, timeout: 10)
         let bootLog = elementWithIdentifier(in: app, "intakeV2.bootLog")
@@ -511,34 +479,24 @@ final class agentic30UITests: XCTestCase {
             self.removeDirectory(at: appSupportPath)
         }
 
-        let bootCards = elementWithIdentifier(in: app, "intakeV2.boot.cards")
-        if app.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 3) {
-            advanceOnboardingIntroToContext(in: app)
-        } else if bootCards.waitForExistence(timeout: 3) {
-            verifyBootIntroLayout(in: app)
-            clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
-        } else {
-            XCTFail("Expected Intake V2 boot intro in dark theme")
-        }
-
-        XCTAssertTrue(app.staticTexts["지금 하루를 가장 많이 쓰는 역할은 무엇인가요?"].waitForExistence(timeout: 5))
-        clickCenter(of: buttonContaining(in: app, text: "개발자"))
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        advanceToIntakeRoleStep(in: app, timeout: 10)
+        tapIntakeOption(in: app, identifier: "intakeV2.role.option.developer")
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 role Next")
         XCTAssertTrue(app.staticTexts["지금 가장 큰 막힘은 무엇인가요?"].waitForExistence(timeout: 5))
-        clickCenter(of: buttonContaining(in: app, text: "첫 사용자를 찾지 못하고 있다"))
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        tapIntakeOption(in: app, identifier: "intakeV2.blocker.option.building")
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 blocker Next")
         XCTAssertTrue(app.staticTexts["하루에 얼마나 시간을 쓸 수 있나요?"].waitForExistence(timeout: 5))
-        clickCenter(of: buttonContaining(in: app, text: "전업으로 6시간 이상"))
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        tapIntakeOption(in: app, identifier: "intakeV2.commitment.option.full_time_6h")
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 commitment Next")
         XCTAssertTrue(app.staticTexts["이미 가진 기록이 있나요?"].waitForExistence(timeout: 5))
-        clickCenter(of: buttonContaining(in: app, text: "프로젝트 일지"))
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        tapIntakeOption(in: app, identifier: "intakeV2.evidence.option.work_log")
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 evidence Next")
         XCTAssertTrue(app.staticTexts["프로젝트 폴더를 연결할까요?"].waitForExistence(timeout: 5))
-        clickCenter(of: buttonContaining(in: app, text: "직접 선택"))
-        XCTAssertTrue(buttonContaining(in: app, text: "다른 폴더 선택").waitForExistence(timeout: 3))
-        clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
+        tapRequired(elementWithIdentifier(in: app, "intakeV2.folderPickButton"), in: app, named: "Intake V2 folder pick")
+        XCTAssertTrue(waitForButtonLabel(in: app, identifier: "intakeV2.folderPickButton", containing: "다른 폴더 선택", timeout: 3))
+        tapRequired(button(in: app, matching: ["Continue →", "Continue"]), in: app, named: "Intake V2 folder Continue")
         XCTAssertTrue(app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10))
-        clickCenter(of: button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"]))
+        tapRequired(button(in: app, matching: ["Continue →", "Continue", "Skip →", "Skip"]), in: app, named: "Intake V2 sources Continue")
 
         assertIntakeProgress(in: app, current: 8, timeout: 10)
         XCTAssertTrue(elementWithIdentifier(in: app, "intakeV2.progress").waitForExistence(timeout: 5))
@@ -572,26 +530,20 @@ final class agentic30UITests: XCTestCase {
             self.removeDirectory(at: appSupportPath)
         }
 
-        if app.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 3) {
-            advanceOnboardingIntroToContext(in: app)
-        } else if elementWithIdentifier(in: app, "intakeV2.boot.cards").waitForExistence(timeout: 3) {
-            clickCenter(of: button(in: app, matching: ["Continue →", "Continue"]))
-        }
-
-        XCTAssertTrue(app.staticTexts["지금 하루를 가장 많이 쓰는 역할은 무엇인가요?"].waitForExistence(timeout: 5))
-        clickCenter(of: buttonContaining(in: app, text: "개발자"))
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        advanceToIntakeRoleStep(in: app, timeout: 10)
+        tapIntakeOption(in: app, identifier: "intakeV2.role.option.developer")
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 role Next")
         XCTAssertTrue(app.staticTexts["지금 가장 큰 막힘은 무엇인가요?"].waitForExistence(timeout: 5))
-        clickCenter(of: buttonContaining(in: app, text: "첫 사용자를 찾지 못하고 있다"))
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        tapIntakeOption(in: app, identifier: "intakeV2.blocker.option.building")
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 blocker Next")
         XCTAssertTrue(app.staticTexts["하루에 얼마나 시간을 쓸 수 있나요?"].waitForExistence(timeout: 10))
-        clickCenter(of: buttonContaining(in: app, text: "전업으로 6시간 이상"))
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        tapIntakeOption(in: app, identifier: "intakeV2.commitment.option.full_time_6h")
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 commitment Next")
         XCTAssertTrue(app.staticTexts["이미 가진 기록이 있나요?"].waitForExistence(timeout: 5))
-        clickCenter(of: buttonContaining(in: app, text: "아직 기록은 없다"))
-        clickCenter(of: button(in: app, matching: ["Next →", "Next"]))
+        tapIntakeOption(in: app, identifier: "intakeV2.evidence.option.community")
+        tapRequired(button(in: app, matching: ["Next →", "Next"]), in: app, named: "Intake V2 evidence Next")
         XCTAssertTrue(app.staticTexts["프로젝트 폴더를 연결할까요?"].waitForExistence(timeout: 5))
-        clickCenter(of: buttonContaining(in: app, text: "나중에"))
+        tapRequired(elementWithIdentifier(in: app, "intakeV2.folderSkipButton"), in: app, named: "Intake V2 folder skip")
 
         XCTAssertTrue(app.staticTexts["읽을 기록 더 연결하기"].waitForExistence(timeout: 10))
         assertIntakeProgress(in: app, current: 7)
@@ -607,10 +559,11 @@ final class agentic30UITests: XCTestCase {
 
             let sourceRow = elementWithIdentifier(in: app, rowID)
             XCTAssertTrue(sourceRow.waitForExistence(timeout: 3), file: file, line: line)
-            clickCenter(of: sourceRow)
+            tapRequired(sourceRow, in: app, named: "\(displayName) Add Source row")
         }
 
         func replaceSearchText(_ text: String, in sourceSearch: XCUIElement) {
+            tapRequired(sourceSearch, in: app, named: "Intake V2 Add Source search")
             if let currentValue = sourceSearch.value as? String,
                currentValue != "소스 검색" {
                 for _ in currentValue {
@@ -622,7 +575,7 @@ final class agentic30UITests: XCTestCase {
 
         let addSourceButton = elementWithIdentifier(in: app, "intakeV2.addSource")
         XCTAssertTrue(scrollElementToVisible(addSourceButton, in: app, timeout: 5))
-        clickCenter(of: addSourceButton)
+        tapRequired(addSourceButton, in: app, named: "Intake V2 Add Source")
         XCTAssertTrue(elementWithIdentifier(in: app, "intakeV2.addSource.modal").waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["기록 소스 추가"].exists)
 
@@ -646,15 +599,17 @@ final class agentic30UITests: XCTestCase {
         }
         let addSelectedInModal = elementWithIdentifier(in: app, "intakeV2.addSource.addSelected")
         XCTAssertTrue(addSelectedInModal.waitForExistence(timeout: 3))
-        clickCenter(of: addSelectedInModal)
+        tapRequired(addSelectedInModal, in: app, named: "Intake V2 Add Selected")
+        XCTAssertTrue(waitForElementToDisappear(elementWithIdentifier(in: app, "intakeV2.addSource.modal"), timeout: 5))
 
         for source in sourceSelections {
             XCTAssertTrue(app.staticTexts[source.displayName].waitForExistence(timeout: 5))
         }
         XCTAssertTrue(app.staticTexts["Connect later · Settings"].exists)
 
-        XCTAssertTrue(scrollElementToVisible(addSourceButton, in: app, timeout: 5))
-        clickCenter(of: addSourceButton)
+        let reopenedAddSourceButton = elementWithIdentifier(in: app, "intakeV2.addSource")
+        XCTAssertTrue(scrollElementToVisible(reopenedAddSourceButton, in: app, timeout: 5))
+        tapRequired(reopenedAddSourceButton, in: app, named: "Intake V2 reopened Add Source")
         XCTAssertTrue(elementWithIdentifier(in: app, "intakeV2.addSource.modal").waitForExistence(timeout: 5))
         let reopenedSearch = textField(in: app, matching: ["intakeV2.addSource.search", "소스 검색"])
         XCTAssertTrue(reopenedSearch.waitForExistence(timeout: 3))
@@ -1519,7 +1474,7 @@ final class agentic30UITests: XCTestCase {
         XCTAssertEqual(officeHoursMeta.frame.width, 280, accuracy: 2)
         XCTAssertEqual(officeHoursSessions.frame.maxX, officeHoursMain.frame.minX, accuracy: 2)
         XCTAssertEqual(officeHoursMain.frame.maxX, officeHoursMeta.frame.minX, accuracy: 2)
-        confirmDay1GoalIfPresent(in: app)
+        confirmDay1GoalRequired(in: app)
         let structuredPrompt = elementWithIdentifier(in: app, "assistant.structuredPrompt")
         XCTAssertTrue(structuredPrompt.waitForExistence(timeout: 5))
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.intro.title").waitForExistence(timeout: 5))
@@ -1536,7 +1491,7 @@ final class agentic30UITests: XCTestCase {
             timeout: 5,
             scrollViewIdentifier: "opendesign.officeHours.main.scroll"
         ))
-        clickCenter(of: structuredChoice)
+        tapRequired(structuredChoice, in: app, named: "Office Hours Q1 choice")
         // Selecting a choice no longer auto-submits — the explicit submit button
         // must turn Ready and be clicked for the answer to go out.
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Ready", timeout: 3))
@@ -1548,7 +1503,7 @@ final class agentic30UITests: XCTestCase {
                 scrollViewIdentifier: "opendesign.officeHours.main.scroll"
             ))
         }
-        clickCenter(of: structuredContinue)
+        tapRequired(structuredContinue, in: app, named: "Office Hours Q1 submit")
         let submittedLoader = elementWithIdentifier(in: app, "opendesign.officeHours.questionLoader")
         XCTAssertTrue(submittedLoader.waitForExistence(timeout: 2))
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.runState", containing: "다음 질문 생성 중", timeout: 3))
@@ -1585,7 +1540,7 @@ final class agentic30UITests: XCTestCase {
                     scrollViewIdentifier: "opendesign.officeHours.main.scroll"
                 ))
             }
-            clickCenter(of: choice)
+            tapRequired(choice, in: app, named: "Office Hours \(questionId) choice")
             // Same two-step contract as Q1: choose, then press the submit button.
             let continueButton = app.buttons["assistant.structuredContinueButton"]
             XCTAssertTrue(continueButton.waitForExistence(timeout: 5))
@@ -1598,7 +1553,7 @@ final class agentic30UITests: XCTestCase {
                     scrollViewIdentifier: "opendesign.officeHours.main.scroll"
                 ))
             }
-            clickCenter(of: continueButton)
+            tapRequired(continueButton, in: app, named: "Office Hours \(questionId) submit")
             let lockedCard = elementWithIdentifier(in: app, "opendesign.officeHours.submittedPrompt.\(requestId)")
             XCTAssertTrue(lockedCard.waitForExistence(timeout: 8))
             XCTAssertTrue(waitForElementLabel(in: app, identifier: "opendesign.officeHours.submittedChoice.\(questionId).\(label)", containing: "제출됨", timeout: 3))
@@ -1615,7 +1570,7 @@ final class agentic30UITests: XCTestCase {
             scrollViewIdentifier: "opendesign.officeHours.main.scroll"
         ))
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "4개 문서 저장", timeout: 3))
-        clickCenter(of: docConfirm)
+        tapRequired(docConfirm, in: app, named: "Office Hours document handoff confirm")
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "문서 저장 중", timeout: 3))
         for docType in ["goal", "icp", "values", "spec"] {
             let didSave = waitForElementLabel(
@@ -1633,7 +1588,7 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.officeHours.docHandoff.confirm", containing: "Day 1 완료", timeout: 3))
         RunLoop.current.run(until: Date().addingTimeInterval(1.0))
         attachWindowScreenshot(from: app, named: "Office Hours SwiftUI Final Doc")
-        clickCenter(of: docConfirm)
+        tapRequired(docConfirm, in: app, named: "Office Hours Day 1 complete")
         if !day2Main.waitForExistence(timeout: 5) {
             attachScreenshot(from: app, named: "OpenDesign Day2 Missing After Office Hours Completion")
             attachText(app.debugDescription, named: "OpenDesign Day2 Missing Tree")
@@ -1648,10 +1603,10 @@ final class agentic30UITests: XCTestCase {
         XCTAssertFalse(day2Meta.exists)
         XCTAssertTrue(day2MetaToggle.exists)
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day2.meta.toggle", containing: "열기", timeout: 2))
-        clickCenter(of: day2MetaToggle)
+        tapRequired(day2MetaToggle, in: app, named: "OpenDesign Day 2 meta open")
         XCTAssertTrue(waitForElementFrameWidth(day2Meta, width: 280, timeout: 5))
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day2.meta.toggle", containing: "닫기", timeout: 2))
-        clickCenter(of: day2MetaToggle)
+        tapRequired(day2MetaToggle, in: app, named: "OpenDesign Day 2 meta close")
         XCTAssertTrue(waitForElementToDisappear(day2Meta, timeout: 3))
         XCTAssertTrue(waitForButtonLabel(in: app, identifier: "opendesign.day2.meta.toggle", containing: "열기", timeout: 2))
     }
@@ -1690,7 +1645,7 @@ final class agentic30UITests: XCTestCase {
 
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.day.shell").waitForExistence(timeout: 10))
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.main").waitForExistence(timeout: 6))
-        confirmDay1GoalIfPresent(in: app)
+        confirmDay1GoalRequired(in: app)
 
         let q1Choice = app.buttons["assistant.structuredChoice.office_hours_demand_evidence.돈을 냈거나 제안함"]
         XCTAssertTrue(q1Choice.waitForExistence(timeout: 5))
@@ -1700,7 +1655,7 @@ final class agentic30UITests: XCTestCase {
             timeout: 5,
             scrollViewIdentifier: "opendesign.officeHours.main.scroll"
         ))
-        clickCenter(of: q1Choice)
+        tapRequired(q1Choice, in: app, named: "Office Hours revision Q1 choice")
         let continueButton = app.buttons["assistant.structuredContinueButton"]
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Ready", timeout: 3))
         if !continueButton.isHittable {
@@ -1711,7 +1666,7 @@ final class agentic30UITests: XCTestCase {
                 scrollViewIdentifier: "opendesign.officeHours.main.scroll"
             ))
         }
-        clickCenter(of: continueButton)
+        tapRequired(continueButton, in: app, named: "Office Hours revision Q1 submit")
 
         let q1Submitted = elementWithIdentifier(in: app, "opendesign.officeHours.submittedPrompt.ui-test-office-hours-request")
         XCTAssertTrue(q1Submitted.waitForExistence(timeout: 5))
@@ -1724,7 +1679,7 @@ final class agentic30UITests: XCTestCase {
             timeout: 5,
             scrollViewIdentifier: "opendesign.officeHours.main.scroll"
         ))
-        clickCenter(of: q2Choice)
+        tapRequired(q2Choice, in: app, named: "Office Hours revision Q2 choice")
         XCTAssertTrue(waitForElementLabel(in: app, identifier: "assistant.structuredContinueButton", containing: "Ready", timeout: 3))
         if !continueButton.isHittable {
             XCTAssertTrue(scrollElementToVisible(
@@ -1734,7 +1689,7 @@ final class agentic30UITests: XCTestCase {
                 scrollViewIdentifier: "opendesign.officeHours.main.scroll"
             ))
         }
-        clickCenter(of: continueButton)
+        tapRequired(continueButton, in: app, named: "Office Hours revision Q2 submit")
 
         let q2Submitted = elementWithIdentifier(in: app, "opendesign.officeHours.submittedPrompt.ui-test-office-hours-request-2")
         XCTAssertTrue(q2Submitted.waitForExistence(timeout: 5))
@@ -1748,7 +1703,7 @@ final class agentic30UITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         XCTAssertTrue(q1RevisedChoice.exists && q1RevisedChoice.isHittable)
-        clickCenter(of: q1RevisedChoice)
+        tapRequired(q1RevisedChoice, in: app, named: "Office Hours revision Q1 revised choice")
 
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.questionLoader").waitForExistence(timeout: 3))
         XCTAssertTrue(waitForElementToDisappear(q2Submitted, timeout: 3))
@@ -1803,7 +1758,7 @@ final class agentic30UITests: XCTestCase {
                 timeout: 5,
                 scrollViewIdentifier: "opendesign.officeHours.sessions"
             ))
-            clickCenter(of: day1Row)
+            tapRequired(day1Row, in: app, named: "Office Hours past day row")
         }
 
         XCTAssertTrue(pastDayRoot.waitForExistence(timeout: 6))
@@ -1817,7 +1772,6 @@ final class agentic30UITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["결제 의향 묻기"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["증거 없음"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["오늘 장지창에게 결제 의향 DM을 보내고 screenshot 증거를 붙이기"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["다음 약속"].waitForExistence(timeout: 3))
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.evidenceOS.attach").waitForExistence(timeout: 3))
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.evidenceOS.carry").waitForExistence(timeout: 3))
         XCTAssertTrue(elementWithIdentifier(in: app, "opendesign.officeHours.evidenceOS.abandon").waitForExistence(timeout: 3))
@@ -2591,6 +2545,26 @@ final class agentic30UITests: XCTestCase {
         elementWithIdentifier(in: app, "morningBriefing.drilldown.source.cloudflare").click()
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.drilldown.head.cloudflare").waitForExistence(timeout: 5))
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.drilldown.table").exists)
+        let cloudflareFirstBar = elementWithIdentifier(in: app, "morningBriefing.drilldown.chart.bar.0")
+        XCTAssertTrue(cloudflareFirstBar.waitForExistence(timeout: 5))
+        XCTAssertTrue(element(cloudflareFirstBar, contains: "00"))
+        XCTAssertTrue(
+            element(cloudflareFirstBar, contains: "사람 방문")
+                || element(cloudflareFirstBar, contains: "순 방문")
+        )
+        XCTAssertTrue(element(cloudflareFirstBar, contains: "2"))
+        hoverCenter(of: cloudflareFirstBar)
+        let cloudflareTooltip = elementWithIdentifier(in: app, "morningBriefing.drilldown.chart.tooltip")
+        if cloudflareTooltip.waitForExistence(timeout: 1) {
+            XCTAssertTrue(element(cloudflareTooltip, contains: "00"))
+            XCTAssertTrue(
+                element(cloudflareTooltip, contains: "사람 방문")
+                    || element(cloudflareTooltip, contains: "순 방문")
+            )
+            XCTAssertTrue(element(cloudflareTooltip, contains: "2"))
+            movePointerAwayFromContent()
+            XCTAssertTrue(waitForElementToDisappear(cloudflareTooltip, timeout: 3))
+        }
         elementWithIdentifier(in: app, "morningBriefing.drilldown.back").click()
         XCTAssertTrue(elementWithIdentifier(in: app, "morningBriefing.summary").waitForExistence(timeout: 5))
         XCTAssertFalse(elementWithIdentifier(in: app, "morningBriefing.drilldown.head.cloudflare").exists)
@@ -2611,13 +2585,27 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
-    private func confirmDay1GoalIfPresent(
+    private func confirmDay1GoalRequired(
         in app: XCUIApplication,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
         let goalCard = elementWithIdentifier(in: app, "opendesign.officeHours.goal.card")
-        guard goalCard.waitForExistence(timeout: 1.5) else { return }
+        let structuredPrompt = elementWithIdentifier(in: app, "assistant.structuredPrompt")
+        let structuredContinue = elementWithIdentifier(in: app, "assistant.structuredContinueButton")
+        if structuredPrompt.waitForExistence(timeout: 2) || structuredContinue.waitForExistence(timeout: 2) {
+            return
+        }
+
+        guard goalCard.waitForExistence(timeout: 8) else {
+            if structuredPrompt.exists || structuredContinue.exists {
+                return
+            }
+            attachWindowScreenshot(from: app, named: "Office Hours Day 1 Goal Missing")
+            attachText(app.debugDescription, named: "Office Hours Day 1 Goal Missing Tree")
+            XCTFail("Expected Day 1 goal card or Office Hours structured prompt before driving Office Hours.", file: file, line: line)
+            return
+        }
 
         XCTAssertTrue(app.buttons["opendesign.officeHours.goal.option.make_money"].exists, file: file, line: line)
         XCTAssertTrue(app.buttons["opendesign.officeHours.goal.option.get_users"].exists, file: file, line: line)
@@ -2627,11 +2615,22 @@ final class agentic30UITests: XCTestCase {
         // the user taps an option. Pick one before driving the start button.
         let makeMoneyOption = app.buttons["opendesign.officeHours.goal.option.make_money"]
         XCTAssertTrue(waitForOpenDesignMainHittable(makeMoneyOption, in: app, timeout: 5), file: file, line: line)
-        clickCenter(of: makeMoneyOption)
+        tapRequired(makeMoneyOption, in: app, named: "Office Hours Day 1 goal option", file: file, line: line)
 
         let saveButton = app.buttons["opendesign.officeHours.goal.save"]
         XCTAssertTrue(waitForOpenDesignMainHittable(saveButton, in: app, timeout: 5), file: file, line: line)
-        clickCenter(of: saveButton)
+        tapRequired(saveButton, in: app, named: "Office Hours Day 1 goal save", file: file, line: line)
+
+        let deadline = Date().addingTimeInterval(8)
+        while !(structuredPrompt.exists || structuredContinue.exists), Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        guard structuredPrompt.exists || structuredContinue.exists else {
+            attachWindowScreenshot(from: app, named: "Office Hours Structured Prompt Missing")
+            attachText(app.debugDescription, named: "Office Hours Structured Prompt Missing Tree")
+            XCTFail("Expected Office Hours structured prompt after saving Day 1 goal.", file: file, line: line)
+            return
+        }
     }
 
     private func terminateRunningAgenticAppIfNeeded() {
@@ -2836,6 +2835,51 @@ final class agentic30UITests: XCTestCase {
         app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier == %@", identifier))
             .element(boundBy: 0)
+    }
+
+    @MainActor
+    private func advanceToIntakeRoleStep(
+        in app: XCUIApplication,
+        timeout: TimeInterval = 10,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let rolePrompt = app.staticTexts["지금 하루를 가장 많이 쓰는 역할은 무엇인가요?"]
+        if rolePrompt.waitForExistence(timeout: 1) {
+            return
+        }
+
+        if app.staticTexts["Welcome to Agentic30"].waitForExistence(timeout: 3) {
+            advanceOnboardingIntroToContext(in: app)
+        } else if elementWithIdentifier(in: app, "intakeV2.boot.cards").waitForExistence(timeout: 5) {
+            verifyBootIntroLayout(in: app)
+            tapRequired(button(in: app, matching: ["Continue →", "Continue"]), in: app, named: "Intake V2 boot Continue", file: file, line: line)
+        }
+
+        guard rolePrompt.waitForExistence(timeout: timeout) else {
+            attachWindowScreenshot(from: app, named: "Intake V2 Role Step Missing")
+            attachText(app.debugDescription, named: "Intake V2 Role Step Missing Tree")
+            XCTFail("Expected Intake V2 role step.", file: file, line: line)
+            return
+        }
+    }
+
+    @MainActor
+    private func tapIntakeOption(
+        in app: XCUIApplication,
+        identifier: String,
+        timeout: TimeInterval = 5,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        tapRequired(
+            elementWithIdentifier(in: app, identifier),
+            in: app,
+            named: identifier,
+            timeout: timeout,
+            file: file,
+            line: line
+        )
     }
 
     @MainActor
@@ -3730,9 +3774,41 @@ final class agentic30UITests: XCTestCase {
     }
 
     @MainActor
-    private func clickCenter(of element: XCUIElement) {
+    private func tapRequired(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        named name: String,
+        timeout: TimeInterval = 5,
+        scrollViewIdentifier: String? = nil,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard element.waitForExistence(timeout: timeout) else {
+            attachWindowScreenshot(from: app, named: "\(name) Missing")
+            attachText(app.debugDescription, named: "\(name) Missing Tree")
+            XCTFail("Expected \(name) before tapping.", file: file, line: line)
+            return
+        }
+
+        if !element.isHittable, let scrollViewIdentifier {
+            _ = scrollElementToVisible(element, in: app, timeout: timeout, scrollViewIdentifier: scrollViewIdentifier)
+        }
+
+        clickCenter(of: element, file: file, line: line)
+    }
+
+    @MainActor
+    private func clickCenter(
+        of element: XCUIElement,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
         if element.waitForExistence(timeout: 2), element.isHittable {
             element.click()
+            return
+        }
+        guard element.exists else {
+            XCTFail("Expected element to exist before center click.", file: file, line: line)
             return
         }
         element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
@@ -3741,7 +3817,26 @@ final class agentic30UITests: XCTestCase {
     @MainActor
     private func movePointerAwayFromContent() {
         CGWarpMouseCursorPosition(CGPoint(x: 2, y: 2))
+        postMouseEvent(.mouseMoved, at: CGPoint(x: 2, y: 2))
         RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+    }
+
+    @MainActor
+    private func hoverCenter(of element: XCUIElement) {
+        let frame = element.frame
+        let point = CGPoint(x: frame.midX, y: frame.midY)
+        CGWarpMouseCursorPosition(point)
+        postMouseEvent(.mouseMoved, at: point)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+    }
+
+    private func postMouseEvent(_ type: CGEventType, at point: CGPoint) {
+        CGEvent(
+            mouseEventSource: CGEventSource(stateID: .hidSystemState),
+            mouseType: type,
+            mouseCursorPosition: point,
+            mouseButton: .left
+        )?.post(tap: .cghidEventTap)
     }
 
     @MainActor

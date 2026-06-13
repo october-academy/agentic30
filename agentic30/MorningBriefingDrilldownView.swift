@@ -19,6 +19,7 @@ struct MorningBriefingDrilldownView: View {
     @State private var sectionScrollRequest: MorningBriefingScrollRequest?
     @State private var appliedDraftIDs: Set<String> = []
     @State private var copiedDraftIDs: Set<String> = []
+    @State private var hoveredChartBarIndex: Int?
 
     private static let sourceOrder = ["cloudflare", "github", "posthog"]
 
@@ -685,8 +686,9 @@ struct MorningBriefingDrilldownView: View {
 
     private func barChart(_ chart: MorningBriefingDrillChart) -> some View {
         let bars = chart.bars ?? []
+        let unitLabel = normalizedTooltipText(chart.legend?.first?.label) ?? "값"
         return HStack(alignment: .bottom, spacing: 6) {
-            ForEach(Array(bars.enumerated()), id: \.offset) { _, bar in
+            ForEach(Array(bars.enumerated()), id: \.offset) { index, bar in
                 VStack(spacing: 5) {
                     GeometryReader { geo in
                         VStack {
@@ -703,9 +705,87 @@ struct MorningBriefingDrilldownView: View {
                         .lineLimit(1)
                 }
                 .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+                .overlay(alignment: .top) {
+                    if hoveredChartBarIndex == index {
+                        barTooltip(bar, unitLabel: unitLabel)
+                            .offset(y: -8)
+                            .zIndex(10)
+                    }
+                }
+                .onHover { hovering in
+                    hoveredChartBarIndex = hovering ? index : (hoveredChartBarIndex == index ? nil : hoveredChartBarIndex)
+                }
                 .help(bar.tip ?? "")
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel(barTooltipAccessibilityLabel(bar, unitLabel: unitLabel))
+                .accessibilityIdentifier("morningBriefing.drilldown.chart.bar.\(index)")
+                .zIndex(hoveredChartBarIndex == index ? 1 : 0)
             }
         }
+        .onDisappear { hoveredChartBarIndex = nil }
+    }
+
+    private func barTooltip(_ bar: MorningBriefingDrillBar, unitLabel: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(barTooltipTitle(bar))
+                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.fg)
+                .lineLimit(1)
+            Text(barTooltipValueLabel(bar, unitLabel: unitLabel))
+                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(OpenDesignDayColor.amber)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .fixedSize()
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(OpenDesignDayColor.bg)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .stroke(OpenDesignDayColor.border, lineWidth: 1)
+                )
+        )
+        .shadow(color: Color.black.opacity(0.28), radius: 10, x: 0, y: 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(barTooltipAccessibilityLabel(bar, unitLabel: unitLabel))
+        .accessibilityIdentifier("morningBriefing.drilldown.chart.tooltip")
+    }
+
+    private func barTooltipTitle(_ bar: MorningBriefingDrillBar) -> String {
+        normalizedTooltipText(bar.tip) ?? normalizedTooltipText(bar.label).map { "\($0)시 구간" } ?? "시간대"
+    }
+
+    private func barTooltipValueLabel(_ bar: MorningBriefingDrillBar, unitLabel: String) -> String {
+        "\(unitLabel) \(formatChartValue(bar.value))"
+    }
+
+    private func barTooltipAccessibilityLabel(_ bar: MorningBriefingDrillBar, unitLabel: String) -> String {
+        "\(barTooltipTitle(bar)) · \(barTooltipValueLabel(bar, unitLabel: unitLabel))"
+    }
+
+    private func normalizedTooltipText(_ text: String?) -> String? {
+        guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
+
+    private func formatChartValue(_ value: Double?) -> String {
+        guard let value else { return "0" }
+        if value.rounded(.towardZero) == value {
+            return String(Int(value))
+        }
+        var text = String(format: "%.2f", value)
+        while text.contains(".") && text.last == "0" {
+            text.removeLast()
+        }
+        if text.last == "." {
+            text.removeLast()
+        }
+        return text
     }
 
     private func curveChart(_ chart: MorningBriefingDrillChart) -> some View {

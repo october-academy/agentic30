@@ -27,6 +27,7 @@ const SIGNAL_LIMIT = 6;
 const DRAFT_LIMIT = 4;
 const POINT_LIMIT = 8;
 const MIN_COHORT_N_FOR_DIRECTION = 20;
+const HOUR_MS = 3_600_000;
 
 function cleanString(value, max = 240) {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -40,6 +41,37 @@ function finiteNumber(value) {
   if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function deltaLabelFor(current, previous) {
+  const cur = finiteNumber(current);
+  const prev = finiteNumber(previous);
+  if (cur === null || prev === null) return { deltaLabel: null, direction: null };
+  const diff = cur - prev;
+  if (diff === 0) return { deltaLabel: "=", direction: "flat" };
+  const pct = prev > 0 ? Math.round((Math.abs(diff) / prev) * 1000) / 10 : null;
+  const arrow = diff > 0 ? "▲" : "▼";
+  return {
+    deltaLabel: pct !== null && pct <= 999 ? `${arrow} ${formatPercent(pct)}` : `${arrow} ${Math.abs(diff)}`,
+    direction: diff > 0 ? "up" : "down",
+  };
+}
+
+function localHourLabel(value, { timeZone = undefined } = {}) {
+  const ts = Date.parse(String(value || ""));
+  if (!Number.isFinite(ts)) return "";
+  try {
+    const formatter = new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      hour12: false,
+      timeZone,
+    });
+    const text = formatter.format(new Date(ts)).replace(/\D/g, "");
+    if (text) return text.slice(-2);
+  } catch {
+    // Fall through to the runtime-local Date implementation.
+  }
+  return String(new Date(ts).getHours()).padStart(2, "0");
 }
 
 function clampRatio(value) {
@@ -647,6 +679,222 @@ export function normalizeMorningBriefingDrilldowns(raw = {}) {
     if (normalized) output[id] = normalized;
   }
   return Object.keys(output).length ? output : null;
+}
+
+// ── Cloudflare structured measurements ──────────────────────────────────────
+// Unique visitors are non-additive: summing hourly uniq buckets double-counts a
+// person who appears in multiple hours. Cloudflare dashboard totals therefore
+// need a separate no-dimension aggregate. This normalizer is the single
+// deterministic path from Cloudflare measurements to both the briefing card
+// source counts and the drilldown screen.
+
+const CloudflareMetricTotalsSchema = z.object({
+  startIso: z.string().datetime(),
+  untilIso: z.string().datetime(),
+  uniqueVisitors: z.number().int().nonnegative(),
+  pageviews: z.number().int().nonnegative().default(0),
+  requests: z.number().int().nonnegative().default(0),
+  threats: z.number().int().nonnegative().default(0),
+}).strict();
+
+const CloudflareHourlySchema = z.object({
+  datetimeIso: z.string().datetime(),
+  uniqueVisitors: z.number().int().nonnegative(),
+  pageviews: z.number().int().nonnegative().default(0),
+  requests: z.number().int().nonnegative().default(0),
+}).strict();
+
+const CloudflarePathSchema = z.object({
+  path: z.string().min(1).max(160),
+  value: z.number().int().nonnegative(),
+  label: z.string().max(80).optional(),
+}).strict();
+
+const CloudflareDrilldownMeasurementsSchema = z.object({
+  totals: CloudflareMetricTotalsSchema,
+  previousTotals: CloudflareMetricTotalsSchema,
+  hourly: z.array(CloudflareHourlySchema).max(96).default([]),
+  zoneName: z.string().max(120).optional(),
+  pathTable: z.array(CloudflarePathSchema).max(TABLE_LIMIT).default([]),
+  pathTableUsesEyeballFilter: z.boolean().default(false),
+}).strict();
+
+function parseCloudflareMeasurements(raw = {}) {
+  if (raw?.measurements && typeof raw === "object") {
+    const allowedWrapperKeys = new Set(["measurements"]);
+    const wrapperKeys = Object.keys(raw).filter((key) => !allowedWrapperKeys.has(key));
+    if (wrapperKeys.length) return null;
+  }
+  const measurements = raw?.measurements && typeof raw.measurements === "object" ? raw.measurements : raw;
+  const parsed = CloudflareDrilldownMeasurementsSchema.safeParse(measurements);
+  if (!parsed.success) return null;
+  return {
+    ...parsed.data,
+    hourly: [...parsed.data.hourly].sort((a, b) => Date.parse(a.datetimeIso) - Date.parse(b.datetimeIso)),
+  };
+}
+
+function compactCloudflareRange(totals) {
+  const start = Date.parse(totals?.startIso || "");
+  const until = Date.parse(totals?.untilIso || "");
+  if (!Number.isFinite(start) || !Number.isFinite(until)) return "지난 24시간";
+  const hours = Math.max(1, Math.round((until - start) / HOUR_MS));
+  return hours === 24 ? "지난 24시간" : `최근 ${hours}시간`;
+}
+
+function buildCloudflareHourlyBars(hourly = [], { timeZone = undefined } = {}) {
+  if (!hourly.length) return [];
+  const bucketSize = Math.max(1, Math.ceil(hourly.length / BAR_LIMIT));
+  const bars = [];
+  for (let index = 0; index < hourly.length; index += bucketSize) {
+    const bucket = hourly.slice(index, index + bucketSize);
+    const first = bucket[0];
+    const last = bucket[bucket.length - 1];
+    const peakUnique = Math.max(0, ...bucket.map((row) => row.uniqueVisitors));
+    const pageviews = bucket.reduce((sum, row) => sum + row.pageviews, 0);
+    const requests = bucket.reduce((sum, row) => sum + row.requests, 0);
+    const label = localHourLabel(first.datetimeIso, { timeZone });
+    const endTs = Date.parse(last.datetimeIso) + HOUR_MS;
+    const endLabel = bucket.length > 1 && Number.isFinite(endTs)
+      ? localHourLabel(new Date(endTs).toISOString(), { timeZone })
+      : "";
+    bars.push({
+      label,
+      value: peakUnique,
+      tone: "amber",
+      tip: bucket.length > 1
+        ? `${label}-${endLabel}시 · 시간대 피크 ${peakUnique}명 · PV ${pageviews} · 요청 ${requests}`
+        : `${label}시 · 순 방문 ${peakUnique}명 · PV ${pageviews} · 요청 ${requests}`,
+    });
+  }
+  return bars;
+}
+
+export function cloudflareSourceSignalFromMeasurements(raw = {}, existing = {}) {
+  const data = parseCloudflareMeasurements(raw);
+  if (!data) return null;
+  const totals = data.totals;
+  const previous = data.previousTotals;
+  const peak = data.hourly.reduce(
+    (best, row) => (row.uniqueVisitors > (best?.uniqueVisitors ?? -1) ? row : best),
+    null,
+  );
+  const peakLabel = peak ? localHourLabel(peak.datetimeIso) : "";
+  const counts = {
+    ...(existing.counts || {}),
+    visits: totals.uniqueVisitors,
+    uniqueVisitors: totals.uniqueVisitors,
+    pageviews: totals.pageviews,
+    pageViews: totals.pageviews,
+    requests: totals.requests,
+    threats: totals.threats,
+  };
+  const highlights = [
+    `${compactCloudflareRange(totals)} 순 방문 ${totals.uniqueVisitors}명 · 페이지뷰 ${totals.pageviews}건 · 요청 ${totals.requests}건`,
+    peak ? `피크 시간대는 ${peakLabel}시 순 방문 ${peak.uniqueVisitors}명입니다.` : "",
+    `직전 기간 순 방문 ${previous.uniqueVisitors}명과 비교합니다.`,
+  ].filter(Boolean);
+  return {
+    ...existing,
+    id: "cloudflare",
+    label: existing.label || "Cloudflare",
+    state: "ready",
+    available: true,
+    detail: "Cloudflare structured measurements succeeded",
+    counts,
+    highlights,
+    summary: `${compactCloudflareRange(totals)} Cloudflare 순 방문 ${totals.uniqueVisitors}명`,
+    goalSignals: Array.isArray(existing.goalSignals) ? existing.goalSignals : [],
+    evidenceGaps: Array.isArray(existing.evidenceGaps) ? existing.evidenceGaps : [],
+    events: Array.isArray(existing.events) ? existing.events : [],
+  };
+}
+
+export function normalizeCloudflareDrilldownMeasurements(raw = {}, { timeZone = undefined } = {}) {
+  const data = parseCloudflareMeasurements(raw);
+  if (!data) return null;
+  const totals = data.totals;
+  const previous = data.previousTotals;
+  const rangeLabel = compactCloudflareRange(totals);
+  const visitsDelta = deltaLabelFor(totals.uniqueVisitors, previous.uniqueVisitors);
+  const pvDelta = deltaLabelFor(totals.pageviews, previous.pageviews);
+  const requestsDelta = deltaLabelFor(totals.requests, previous.requests);
+  const threatDelta = deltaLabelFor(totals.threats, previous.threats);
+  const bars = buildCloudflareHourlyBars(data.hourly, { timeZone });
+  const peak = bars.reduce((best, bar) => (bar.value > (best?.value ?? -1) ? bar : best), null);
+  const table = data.pathTableUsesEyeballFilter
+    ? data.pathTable.map((row) => ({ path: row.path, label: row.label || "", value: row.value }))
+    : [];
+  return normalizeMorningBriefingDrilldown("cloudflare", {
+    title: "Cloudflare · 트래픽 드릴다운",
+    subtitle: data.zoneName
+      ? `${data.zoneName} · Cloudflare GraphQL Analytics`
+      : "Cloudflare GraphQL Analytics",
+    syncPills: [
+      `${rangeLabel} 순 방문 ${totals.uniqueVisitors} · 페이지뷰 ${totals.pageviews}`,
+      `직전 기간 순 방문 ${previous.uniqueVisitors} · 페이지뷰 ${previous.pageviews}`,
+    ],
+    kpis: [
+      {
+        label: "순 방문",
+        valueLabel: String(totals.uniqueVisitors),
+        deltaLabel: visitsDelta.deltaLabel,
+        direction: visitsDelta.direction,
+        vs: `직전 ${previous.uniqueVisitors}`,
+      },
+      {
+        label: "페이지뷰",
+        valueLabel: String(totals.pageviews),
+        deltaLabel: pvDelta.deltaLabel,
+        direction: pvDelta.direction,
+        vs: `직전 ${previous.pageviews}`,
+      },
+      {
+        label: "요청",
+        valueLabel: String(totals.requests),
+        deltaLabel: requestsDelta.deltaLabel,
+        direction: requestsDelta.direction,
+        vs: `직전 ${previous.requests}`,
+      },
+      {
+        label: "위협",
+        valueLabel: String(totals.threats),
+        deltaLabel: threatDelta.deltaLabel,
+        direction: threatDelta.direction,
+        vs: `직전 ${previous.threats}`,
+      },
+    ],
+    kpisMeta: "기간 전체 고유 방문자 기준",
+    chart: bars.length
+      ? {
+          kind: "bars",
+          title: "시간대별 순 방문, 지난 24시간",
+          subtitle: peak ? `피크 ${peak.label}시 구간 · ${peak.value}명` : null,
+          bars,
+          legend: [{ label: "시간대별 순 방문", tone: "amber" }],
+          footnote: "순 방문 KPI는 기간 전체 고유 방문자입니다. 막대는 시간대별 unique라 서로 더하지 않습니다.",
+        }
+      : null,
+    table,
+    signals: [
+      peak ? { time: `${peak.label}:00`, text: `시간대 피크는 순 방문 ${peak.value}명입니다.` } : null,
+      { time: "집계 기준", text: "기간 전체 순 방문은 시간대별 unique 합계가 아니라 별도 totals 쿼리로 계산합니다." },
+    ].filter(Boolean),
+    meta: {
+      progress: {
+        label: "순 방문",
+        valueLabel: `${totals.uniqueVisitors} · 직전 ${previous.uniqueVisitors}`,
+        sub: visitsDelta.deltaLabel,
+        ratio: Math.min(1, totals.uniqueVisitors / Math.max(1, totals.uniqueVisitors, previous.uniqueVisitors)),
+      },
+      rows: [
+        ...(data.zoneName ? [{ key: "존", value: data.zoneName, tone: "accent" }] : []),
+        { key: "소스", value: "Cloudflare GraphQL Analytics", tone: "accent" },
+        { key: "기간", value: `${totals.startIso.slice(5, 16)}~${totals.untilIso.slice(5, 16)} UTC` },
+        ...(table.length ? [{ key: "경로 필터", value: "requestSource=eyeball", tone: "amber" }] : []),
+      ],
+    },
+  });
 }
 
 // ── Counts-grade drilldown (always available for ready sources) ──────────────
@@ -1328,29 +1576,30 @@ export async function collectGithubDrilldown({
 
 const EXTERNAL_DRILLDOWN_SHAPE = {
   cloudflare: {
-    kpis: [
-      { label: "순 방문", value: 0, deltaLabel: "▲ 0%", direction: "up", vs: "어제 0", flag: false },
-    ],
-    chart: {
-      kind: "bars",
-      title: "사람 방문, 지난 24시간",
-      subtitle: "short subtitle",
-      bars: [{ label: "00", value: 0, tone: "amber", tip: "00–02 · 0" }],
-      legend: [{ label: "사람 방문", tone: "amber" }],
-      footnote: "bot exclusion note",
-    },
-    table: [{ path: "/landing", label: "랜딩", value: 0, share: 0 }],
-    signals: [{ time: "02:10", text: "aggregate bot/referrer note" }],
-    actions: [
-      {
-        kind: "task",
-        badge: "태스크",
-        title: "short action title",
-        body: "multi-line action body",
-        why: "why today",
-        applyLabel: "태스크 추가",
+    measurements: {
+      totals: {
+        startIso: "Window.untilIso minus 24h",
+        untilIso: "Window.untilIso",
+        uniqueVisitors: 0,
+        pageviews: 0,
+        requests: 0,
+        threats: 0,
       },
-    ],
+      previousTotals: {
+        startIso: "Window.untilIso minus 48h",
+        untilIso: "Window.untilIso minus 24h",
+        uniqueVisitors: 0,
+        pageviews: 0,
+        requests: 0,
+        threats: 0,
+      },
+      hourly: [
+        { datetimeIso: "2026-06-12T12:00:00.000Z", uniqueVisitors: 0, pageviews: 0, requests: 0 },
+      ],
+      zoneName: "example.com",
+      pathTable: [{ path: "/", value: 0, label: "홈" }],
+      pathTableUsesEyeballFilter: false,
+    },
   },
   posthog: {
     measurements: {
@@ -1393,10 +1642,13 @@ const POSTHOG_DRILLDOWN_HOGQL_TEMPLATES = Object.freeze([
 
 const EXTERNAL_DRILLDOWN_COLLECTION_PLANS = Object.freeze({
   cloudflare: [
-    "Cloudflare drilldown plan: use the active zone chosen in the base collection plan. Fill kpis from real visits/uniqueVisitors/pageviews/requests/threats aggregates.",
-    "Cloudflare drilldown window: if the requested Window is longer than 24 hours, clamp Cloudflare hourly/path queries to the trailing 24 hours ending at Window.untilIso and label the drilldown as 지난 24시간.",
-    "For the chart, use hourly groups from httpRequests1hGroups or httpRequestsAdaptiveGroups with datetimeHour and requestSource: \"eyeball\".",
-    "For the path table, query httpRequestsAdaptiveGroups with filter { AND: [{ datetime_geq, datetime_leq }, { requestSource: \"eyeball\" }] }, limit 6, orderBy: [sum_edgeResponseBytes_DESC], and fields count, sum { edgeResponseBytes }, dimensions { metric: clientRequestPath }. If the dataset is not entitled or schema rejects it, omit table and put that gap in signals/evidenceGaps without failing the source.",
+    "Cloudflare drilldown contract: return drilldowns.cloudflare.measurements. Do not return Cloudflare kpis/chart/signals/actions; Agentic30 renders those deterministically.",
+    "Cloudflare drilldown window: clamp all Cloudflare totals/hourly/path queries to the trailing 24 hours ending at Window.untilIso. previousTotals must be the immediately preceding 24 hours.",
+    "Cloudflare unique visitor rule: totals.uniqueVisitors must come from a no-dimension httpRequests1hGroups aggregate over the whole trailing-24h period. Never sum hourly uniq.uniques and never use the max hourly uniq as the period total.",
+    "Cloudflare hourly rule: hourly is for chart shape only. Use httpRequests1hGroups with dimensions.datetime, sum { requests pageViews threats }, and uniq { uniques }; map dimensions.datetime to datetimeIso and uniq.uniques to uniqueVisitors.",
+    "Cloudflare current/previous totals query shape: alias no-dimension httpRequests1hGroups groups as totals and previousTotals with fields sum { requests pageViews threats } and uniq { uniques }. Remove dimensions entirely for these totals.",
+    "Cloudflare source counts must use totals: visits=totals.uniqueVisitors, uniqueVisitors=totals.uniqueVisitors, pageviews=totals.pageviews, requests=totals.requests, threats=totals.threats.",
+    "For the path table, query httpRequestsAdaptiveGroups with filter { AND: [{ datetime_geq, datetime_leq }, { requestSource: \"eyeball\" }] }, limit 6, orderBy: [sum_edgeResponseBytes_DESC], and fields count, sum { edgeResponseBytes }, dimensions { metric: clientRequestPath }. Only set pathTableUsesEyeballFilter true when this exact requestSource filter was applied; otherwise leave pathTable empty/false.",
   ],
   posthog: [
     "PostHog drilldown contract: return only drilldowns.posthog.measurements. Do not return PostHog kpis/chart/signals/actions; Agentic30 renders those deterministically.",
@@ -1451,7 +1703,7 @@ function extractJsonObjectLoose(text = "") {
 }
 
 const EXTERNAL_TITLES = {
-  cloudflare: { title: "Cloudflare · 트래픽 드릴다운", subtitle: "사람 방문 기준 · 봇 제외" },
+  cloudflare: { title: "Cloudflare · 트래픽 드릴다운", subtitle: "수집된 집계 기준" },
   posthog: { title: "PostHog · 리텐션·이탈 드릴다운", subtitle: "표본 작음 · 단정보다 방향" },
 };
 
@@ -1472,21 +1724,50 @@ export function normalizeMorningBriefingExternalDigest(textOrObject = "", expect
   const payload = typeof textOrObject === "object" && textOrObject !== null
     ? textOrObject
     : extractJsonObjectLoose(textOrObject);
-  const sources = normalizeExternalOfficeHoursDigest(payload ?? "", expectedSources, { failureDetail });
+  let sources = normalizeExternalOfficeHoursDigest(payload ?? "", expectedSources, { failureDetail });
+  const cloudflareMeasurements = payload?.drilldowns?.cloudflare?.measurements
+    ? payload.drilldowns.cloudflare
+    : null;
+  const cloudflareSource = cloudflareMeasurements
+    ? cloudflareSourceSignalFromMeasurements(
+        cloudflareMeasurements,
+        sources.find((source) => source.id === "cloudflare") || {},
+      )
+    : null;
+  if (cloudflareSource) {
+    let replaced = false;
+    sources = sources.map((source) => {
+      if (source.id !== "cloudflare") return source;
+      replaced = true;
+      return {
+        ...source,
+        ...cloudflareSource,
+        selected: source.selected,
+        required: source.required,
+        checkedAt: source.checkedAt,
+      };
+    });
+    if (!replaced) sources.push(cloudflareSource);
+  }
   const drilldowns = {};
   const readyIds = new Set(sources.filter((source) => source.state === "ready").map((source) => source.id));
   for (const id of ["cloudflare", "posthog"]) {
     if (!readyIds.has(id)) continue;
     const raw = payload?.drilldowns?.[id];
     if (!raw || typeof raw !== "object") continue;
-    const normalized = id === "posthog" && raw.measurements
-      ? normalizePosthogDrilldownMeasurements(raw)
-      : normalizeMorningBriefingDrilldown(id, {
-          ...raw,
-          title: cleanString(raw.title, 80) || EXTERNAL_TITLES[id].title,
-          subtitle: cleanString(raw.subtitle, 160) || EXTERNAL_TITLES[id].subtitle,
-          drafts: raw.actions ?? raw.drafts,
-        });
+    let normalized = null;
+    if (id === "cloudflare") {
+      normalized = raw.measurements ? normalizeCloudflareDrilldownMeasurements(raw) : null;
+    } else if (id === "posthog" && raw.measurements) {
+      normalized = normalizePosthogDrilldownMeasurements(raw);
+    } else {
+      normalized = normalizeMorningBriefingDrilldown(id, {
+        ...raw,
+        title: cleanString(raw.title, 80) || EXTERNAL_TITLES[id].title,
+        subtitle: cleanString(raw.subtitle, 160) || EXTERNAL_TITLES[id].subtitle,
+        drafts: raw.actions ?? raw.drafts,
+      });
+    }
     if (normalized) drilldowns[id] = normalized;
   }
   return { sources, drilldowns };
