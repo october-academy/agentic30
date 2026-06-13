@@ -107,7 +107,8 @@ export async function issueInterventionTokenForCommitment({
   now = new Date(),
 } = {}) {
   const dayNumber = normalizeDay(day) ?? 1;
-  const dueDay = normalizeDay(commitment?.dueDay ?? commitment?.due_day) ?? dayNumber + 1;
+  const fallbackDueDay = normalizeDay(dayNumber + 1) ?? dayNumber;
+  const dueDay = normalizeDay(commitment?.dueDay ?? commitment?.due_day) ?? fallbackDueDay;
   return issueGateInterventionToken({
     workspaceRoot,
     gateId,

@@ -4,7 +4,8 @@ const WORKSPACE_SCAN_RECOVERABLE_BLOCK_REASONS = new Set([
 ]);
 
 export function workspaceScanBlockedLogLevel(reason) {
-  return WORKSPACE_SCAN_RECOVERABLE_BLOCK_REASONS.has(String(reason || ""))
+  const normalizedReason = String(reason || "").trim().toLowerCase();
+  return WORKSPACE_SCAN_RECOVERABLE_BLOCK_REASONS.has(normalizedReason)
     ? "warn"
     : "error";
 }

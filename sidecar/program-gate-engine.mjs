@@ -297,8 +297,9 @@ export function normalizeGateLedger(value = {}) {
     .filter(Boolean)
     .slice(-ADAPTIVE_EVENT_LIMIT);
   const substitutions = asArray(raw.substitutions)
-    .map(normalizeSubstitution)
-    .filter(Boolean)
+    .map((entry, index) => ({ entry: normalizeSubstitution(entry), index }))
+    .filter(({ entry }) => Boolean(entry))
+    .sort(compareSubstitutionEntries)
     .slice(-SUBSTITUTION_LIMIT);
   return {
     schemaVersion: GATE_LEDGER_SCHEMA_VERSION,
@@ -311,7 +312,7 @@ export function normalizeGateLedger(value = {}) {
     gates,
     adaptiveEvents,
     adaptive_events: adaptiveEvents,
-    substitutions,
+    substitutions: substitutions.map(({ entry }) => entry),
   };
 }
 
@@ -732,6 +733,17 @@ export async function issueGateInterventionToken({
   if (due === null) {
     throw new Error("issueGateInterventionToken requires a valid dueDay.");
   }
+  const activationDay = tokenActivationDay(GATE_DEFINITIONS[gateId]);
+  if (due < activationDay) {
+    const ledger = await loadGateLedger({ workspaceRoot });
+    return {
+      issued: false,
+      reason: "token_before_gate_active",
+      token: null,
+      ledger,
+      totalIssued: countIssuedInterventionTokens(ledger),
+    };
+  }
   const filePath = resolveGateLedgerPath(workspaceRoot);
   return withFileLock(filePath, async () => {
     const ledger = await loadGateLedger({ workspaceRoot });
@@ -834,8 +846,10 @@ function finalizeGate({ definition, day, evaluatedAt, previous = null, condition
   const unavailableOnly = unmet.length > 0
     && unmet.every((condition) => condition.sourceUnavailable === true);
   const token = previous?.interventionToken ?? null;
-  const tokenActive = Boolean(token && token.expired !== true && day <= token.dueDay);
-  const tokenExpiredNow = Boolean(token && token.expired !== true && day > token.dueDay && !evidenceMet);
+  const activationDay = tokenActivationDay(definition);
+  const tokenEligible = Boolean(token && day >= activationDay);
+  const tokenActive = Boolean(tokenEligible && token.expired !== true && day <= token.dueDay);
+  const tokenExpiredNow = Boolean(tokenEligible && token.expired !== true && day > token.dueDay && !evidenceMet);
 
   let state;
   let blockedReason = "";
@@ -1018,6 +1032,10 @@ function normalizeAdaptiveEvent(value = {}) {
     user_label: raw.userLabel === undefined && raw.user_label === undefined
       ? null
       : cleanString(raw.userLabel ?? raw.user_label, 40) || null,
+    labeledAt: normalizeIso(raw.labeledAt ?? raw.labeled_at ?? raw.labelAt ?? raw.label_at, ""),
+    labeled_at: normalizeIso(raw.labeledAt ?? raw.labeled_at ?? raw.labelAt ?? raw.label_at, ""),
+    labelAt: normalizeIso(raw.labelAt ?? raw.label_at ?? raw.labeledAt ?? raw.labeled_at, ""),
+    label_at: normalizeIso(raw.labelAt ?? raw.label_at ?? raw.labeledAt ?? raw.labeled_at, ""),
   };
 }
 
@@ -1032,6 +1050,11 @@ function normalizeSubstitution(value = {}) {
     failed_gate: cleanString(raw.failedGate ?? raw.failed_gate, 8),
     replacedMission: cleanString(raw.replacedMission ?? raw.replaced_mission, 300),
     replaced_mission: cleanString(raw.replacedMission ?? raw.replaced_mission, 300),
+    shortTitle: cleanString(raw.shortTitle ?? raw.short_title, 80),
+    short_title: cleanString(raw.shortTitle ?? raw.short_title, 80),
+    summary: cleanString(raw.summary, 600),
+    tasks: normalizeStringArray(raw.tasks, 20, 300),
+    output: cleanString(raw.output, 300),
     replacementMissionId: cleanString(raw.replacementMissionId ?? raw.replacement_mission_id, 120),
     replacement_mission_id: cleanString(raw.replacementMissionId ?? raw.replacement_mission_id, 120),
     exitCondition: cleanString(raw.exitCondition ?? raw.exit_condition, 300),
@@ -1059,6 +1082,26 @@ function sanitizeShallowObject(value) {
     }
   }
   return output;
+}
+
+function compareSubstitutionEntries(a, b) {
+  const aTime = Date.parse(String(a.entry.recordedAt ?? a.entry.recorded_at ?? ""));
+  const bTime = Date.parse(String(b.entry.recordedAt ?? b.entry.recorded_at ?? ""));
+  const left = Number.isFinite(aTime) ? aTime : Number.NEGATIVE_INFINITY;
+  const right = Number.isFinite(bTime) ? bTime : Number.NEGATIVE_INFINITY;
+  if (left !== right) return left - right;
+  return a.index - b.index;
+}
+
+function tokenActivationDay(definition = {}) {
+  return normalizeDay(definition.enforceDay ?? definition.enforce_day ?? definition.openDay ?? definition.open_day) ?? 1;
+}
+
+function normalizeStringArray(value = [], limit = 20, maxLength = 300) {
+  return asArray(value)
+    .map((entry) => cleanString(entry, maxLength))
+    .filter(Boolean)
+    .slice(0, limit);
 }
 
 function normalizeDay(value) {

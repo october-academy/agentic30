@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -59,17 +59,17 @@ test("mission card carries milestone gate context", () => {
   assert.equal(card.missionCard.gateContext.states.G4, "locked");
 });
 
-test("the latest gate-ledger substitution for the day overrides the mission title", () => {
+test("the latest gate-ledger substitution for the day overrides the full mission payload", () => {
   const card = buildMissionCardEvent({
     day: 15,
     substitutions: [
       {
         day: 15,
         failedGate: "G4",
-        replacedMission: "유료 ask 재작성+발송",
-        exitCondition: "paymentIntent strong ≥1 + first_value ≥1행",
+        replacedMission: "오래된 ask 회복",
+        exitCondition: "old condition",
         reason: "G4_failed",
-        recordedAt: "2026-06-12T09:00:00.000Z",
+        recordedAt: "2026-06-12T10:00:00.000Z",
       },
       {
         day: 16,
@@ -78,14 +78,26 @@ test("the latest gate-ledger substitution for the day overrides the mission titl
         reason: "G4_failed",
         recordedAt: "2026-06-12T09:00:00.000Z",
       },
+      {
+        day: 15,
+        failedGate: "G4",
+        replacedMission: "유료 ask 재작성+발송",
+        exitCondition: "paymentIntent strong ≥1 + first_value ≥1행",
+        reason: "G4_failed",
+        recordedAt: "2026-06-12T11:00:00.000Z",
+      },
     ],
     now: T0,
   });
 
   assert.equal(card.missionCard.mission.substituted, true);
   assert.equal(card.missionCard.mission.title, "유료 ask 재작성+발송");
+  assert.equal(card.missionCard.mission.shortTitle, "유료 ask 재작성+발송");
   assert.equal(card.missionCard.mission.substitutionReason, "G4_failed");
   assert.equal(card.missionCard.mission.exitCondition, "paymentIntent strong ≥1 + first_value ≥1행");
-  // Base content stays available alongside the substitution.
-  assert.equal(card.missionCard.mission.shortTitle, "Revenue Dry Run");
+  assert.match(card.missionCard.mission.summary, /회복 미션/);
+  assert.ok(card.missionCard.mission.tasks.some((task) => /종료 조건/.test(task)));
+  assert.equal(card.missionCard.mission.output, "게이트 해제 증거: paymentIntent strong ≥1 + first_value ≥1행");
+  assert.equal(card.missionCard.evidenceSpec.evidenceRequired, true);
+  assert.equal(card.missionCard.evidenceSpec.artifact, "게이트 해제 증거: paymentIntent strong ≥1 + first_value ≥1행");
 });

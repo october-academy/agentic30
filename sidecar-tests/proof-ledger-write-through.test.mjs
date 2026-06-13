@@ -105,9 +105,27 @@ test("judge accepted interview transcript file is promoted to strong", () => {
     guideline: { actionType: "interview_recording" },
     now: new Date("2026-06-12T09:00:00.000Z"),
   });
+  assert.equal(event.type, "interview");
   assert.equal(event.strength, "strong");
   assert.equal(event.status, "accepted");
   assert.equal(event.artifactPath, "/tmp/day3-interview-recording.m4a");
+});
+
+test("paid ask guidelines write payment_intent events for milestone gates", () => {
+  const event = buildJudgeWriteThroughEvent({
+    day: 14,
+    actionId: "day-14-monetization-ask",
+    judgment: { status: "accepted", confidence: 0.82, agentAssessment: "The paid ask was sent." },
+    evidence: { type: "link", content: "https://example.com/paid-ask" },
+    guideline: {
+      actionType: "payment_intent",
+      completionSignal: "유료 ask 발송 증거",
+    },
+    now: new Date("2026-06-12T09:00:00.000Z"),
+  });
+  assert.equal(event.type, "payment_intent");
+  assert.equal(event.status, "accepted");
+  assert.equal(event.strength, "medium");
 });
 
 test("judge insufficient writes weak/insufficient and judge error writes nothing", async () => {

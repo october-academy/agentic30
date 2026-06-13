@@ -25,6 +25,9 @@ export const PROOF_VERIFIED_BY = Object.freeze({
 });
 
 const HIGH_TRUST_ACTION_TYPE_PATTERN = /interview_recording|transcript|recording/i;
+const INTERVIEW_ACTION_TYPE_PATTERN = /interview|customer_call|call_recording|transcript|recording/i;
+const PAYMENT_INTENT_PATTERN = /payment[_ -]?intent|paid[_ -]?ask|monetization[_ -]?ask|money[_ -]?ask|revenue[_ -]?ask|pricing[_ -]?ask|유료|결제|가격/i;
+const DM_ASK_PATTERN = /\bdm[_ -]?ask\b|\boutreach[_ -]?ask\b/i;
 
 /**
  * Trust tier for judge-accepted evidence (spec §9.2):
@@ -61,6 +64,7 @@ export function buildJudgeWriteThroughEvent({
     ? classifyJudgedEvidenceStrength({ evidence, guideline })
     : "weak";
   return buildActionEvidenceEvent({
+    eventType: resolveProofEventType({ guideline, actionId }),
     day,
     actionId,
     evidence,
@@ -84,11 +88,16 @@ export function buildAutoVerificationWriteThroughEvent({
   actionId = "",
   verificationState = {},
   evidence = {},
+  guideline = {},
   now = new Date(),
 } = {}) {
   if (verificationState?.status !== "passed") return null;
   const result = verificationState?.verificationResult ?? {};
   return buildActionEvidenceEvent({
+    eventType: resolveProofEventType({
+      guideline,
+      actionId: actionId || verificationState?.actionId || "",
+    }),
     day: day ?? verificationState?.dayId ?? null,
     actionId: actionId || verificationState?.actionId || "",
     evidence: evidence && Object.keys(evidence).length
@@ -125,12 +134,13 @@ export async function recordActionEvidenceOutcome({
   }
   const event = judgment
     ? buildJudgeWriteThroughEvent({ day, actionId, judgment, evidence, guideline, now })
-    : buildAutoVerificationWriteThroughEvent({ day, actionId, verificationState, evidence, now });
+    : buildAutoVerificationWriteThroughEvent({ day, actionId, verificationState, evidence, guideline, now });
   if (!event) return null;
   return append({ workspaceRoot, event, now });
 }
 
 function buildActionEvidenceEvent({
+  eventType = PROOF_EVENT_TYPES.actionEvidence,
   day,
   actionId,
   evidence,
@@ -156,7 +166,7 @@ function buildActionEvidenceEvent({
     metadata.missingElements = missingElements.slice(0, 20);
   }
   return {
-    type: PROOF_EVENT_TYPES.actionEvidence,
+    type: eventType,
     day,
     actionId,
     status,
@@ -173,11 +183,40 @@ function buildActionEvidenceEvent({
   };
 }
 
+function resolveProofEventType({ guideline = {}, actionId = "" } = {}) {
+  const actionType = normalizeActionType(guideline?.actionType ?? guideline?.action_type);
+  const descriptor = [
+    actionType,
+    actionId,
+    guideline?.actionId,
+    guideline?.action_id,
+    guideline?.goal,
+    guideline?.actionDescription,
+    guideline?.action_description,
+    guideline?.completionSignal,
+    guideline?.completion_signal,
+  ].map((value) => String(value ?? "")).join("\n");
+  if (INTERVIEW_ACTION_TYPE_PATTERN.test(actionType)) {
+    return PROOF_EVENT_TYPES.interview;
+  }
+  if (PAYMENT_INTENT_PATTERN.test(descriptor)) {
+    return PROOF_EVENT_TYPES.paymentIntent;
+  }
+  if (DM_ASK_PATTERN.test(actionType)) {
+    return PROOF_EVENT_TYPES.dmAsk;
+  }
+  return PROOF_EVENT_TYPES.actionEvidence;
+}
+
 function normalizeEvidenceType(value) {
   const token = String(value ?? "").trim().toLowerCase();
   if (token === "file" || token === "file_upload") return "file";
   if (token === "link" || token === "url") return "link";
   return "";
+}
+
+function normalizeActionType(value) {
+  return String(value ?? "").trim().toLowerCase();
 }
 
 function clampRatio(value) {

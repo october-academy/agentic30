@@ -14,7 +14,6 @@
 
 import {
   loadGateLedger,
-  recordGateAdaptiveEvent,
   resolveGateLedgerPath,
   normalizeGateLedger,
 } from "./program-gate-engine.mjs";
@@ -229,31 +228,56 @@ export async function runAdaptiveRulesCycle({
 
 /** Persists fired rules to gate-ledger adaptiveEvents (§15.3). */
 export async function recordFiredAdaptiveRules({ workspaceRoot, fired = [], now = new Date() } = {}) {
-  const recorded = [];
-  for (const rule of fired) {
-    const { event } = await recordGateAdaptiveEvent({
-      workspaceRoot,
-      event: { ruleId: rule.ruleId, firedAt: toIso(now), signals: rule.signals, userLabel: null },
-      now,
-    });
-    recorded.push(event);
+  if (!workspaceRoot || typeof workspaceRoot !== "string") {
+    throw new Error("recordFiredAdaptiveRules requires workspaceRoot.");
   }
-  return recorded;
+  const candidates = (Array.isArray(fired) ? fired : [])
+    .map((rule) => ({
+      ruleId: String(rule?.ruleId ?? rule?.rule_id ?? "").trim(),
+      firedAt: toIso(now),
+      signals: rule?.signals,
+      userLabel: null,
+    }))
+    .filter((rule) => rule.ruleId);
+  if (!candidates.length) return [];
+
+  const filePath = resolveGateLedgerPath(workspaceRoot);
+  return withFileLock(filePath, async () => {
+    const ledger = await loadGateLedger({ workspaceRoot });
+    const recordedDayKeys = new Set(
+      ledger.adaptiveEvents.map((event) =>
+        `${event.ruleId}:${String(event.firedAt ?? event.fired_at ?? "").slice(0, 10)}`,
+      ),
+    );
+    const recorded = [];
+    for (const candidate of candidates) {
+      const dayKey = `${candidate.ruleId}:${candidate.firedAt.slice(0, 10)}`;
+      if (recordedDayKeys.has(dayKey)) continue;
+      recordedDayKeys.add(dayKey);
+      recorded.push(candidate);
+    }
+    if (!recorded.length) return [];
+    const next = normalizeGateLedger({
+      ...ledger,
+      updatedAt: toIso(now),
+      adaptiveEvents: [...ledger.adaptiveEvents, ...recorded],
+    });
+    await atomicWriteJson(filePath, next);
+    return next.adaptiveEvents.slice(-recorded.length);
+  });
 }
 
 /**
- * AR-17 진행 효과 (§12 표: 신규 커밋먼트 차단): true when an AR-17 firing
- * recorded on the given calendar date is still undisputed. The founder's
- * false-positive label (오탐대응 ②) lifts the block; an armed intervention
- * commit is exempted by the caller (§13.4 token path stays open).
+ * AR-17 진행 효과 (§12 표: 신규 커밋먼트 차단): true when any AR-17
+ * firing is still undisputed. The founder's false-positive label lifts the
+ * block; an armed intervention commit is exempted by the caller (§13.4 token
+ * path stays open).
  */
-export async function isNewCommitmentBlockedByAr17({ workspaceRoot, now = new Date() } = {}) {
+export async function isNewCommitmentBlockedByAr17({ workspaceRoot } = {}) {
   if (!workspaceRoot || typeof workspaceRoot !== "string") return false;
   const ledger = await loadGateLedger({ workspaceRoot });
-  const todayKey = toIso(now).slice(0, 10);
   return ledger.adaptiveEvents.some((event) =>
     event.ruleId === "AR-17"
-      && String(event.firedAt).slice(0, 10) === todayKey
       && event.userLabel !== ADAPTIVE_RULE_FALSE_POSITIVE_LABEL,
   );
 }
@@ -279,7 +303,14 @@ export async function labelAdaptiveRuleEvent({
     let labeled = null;
     for (let index = events.length - 1; index >= 0; index -= 1) {
       if (events[index].ruleId === ruleId && !events[index].userLabel) {
-        labeled = { ...events[index], userLabel: label, user_label: label };
+        const labeledAt = toIso(now);
+        labeled = {
+          ...events[index],
+          userLabel: label,
+          user_label: label,
+          labeledAt,
+          labeled_at: labeledAt,
+        };
         events[index] = labeled;
         break;
       }
@@ -296,9 +327,17 @@ function buildCooldownIndex(recentAdaptiveEvents = [], now = new Date()) {
   const cooled = new Set();
   for (const event of Array.isArray(recentAdaptiveEvents) ? recentAdaptiveEvents : []) {
     if (event?.userLabel !== ADAPTIVE_RULE_FALSE_POSITIVE_LABEL) continue;
-    const firedMs = Date.parse(String(event.firedAt ?? event.fired_at ?? ""));
-    if (!Number.isFinite(firedMs)) continue;
-    if (nowMs - firedMs < ADAPTIVE_RULE_COOLDOWN_MS) {
+    const labelTimestamp = [
+      event.labelAt,
+      event.label_at,
+      event.labeledAt,
+      event.labeled_at,
+      event.firedAt,
+      event.fired_at,
+    ].find((value) => String(value ?? "").trim());
+    const labelMs = Date.parse(String(labelTimestamp ?? ""));
+    if (!Number.isFinite(labelMs)) continue;
+    if (nowMs - labelMs < ADAPTIVE_RULE_COOLDOWN_MS) {
       cooled.add(String(event.ruleId ?? event.rule_id ?? ""));
     }
   }

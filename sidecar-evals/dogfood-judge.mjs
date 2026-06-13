@@ -375,11 +375,13 @@ function buildSmokeChecks({ scenario, observed, events, eventTypeSet }) {
   if (expected.requires_proof_target) {
     checks.proof_target_observed = Boolean(readProofTarget(observed));
   }
-  for (const [index, fragment] of (expected.must_include || []).entries()) {
-    checks[`must_include_${index + 1}`] = observedText(observed).toLowerCase().includes(String(fragment).toLowerCase());
-  }
-  for (const [index, fragment] of (expected.must_not_include || []).entries()) {
-    checks[`must_not_include_${index + 1}`] = !observedText(observed).toLowerCase().includes(String(fragment).toLowerCase());
+  if (requiresVisibleOutput) {
+    for (const [index, fragment] of (expected.must_include || []).entries()) {
+      checks[`must_include_${index + 1}`] = observedText(observed).toLowerCase().includes(String(fragment).toLowerCase());
+    }
+    for (const [index, fragment] of (expected.must_not_include || []).entries()) {
+      checks[`must_not_include_${index + 1}`] = !observedText(observed).toLowerCase().includes(String(fragment).toLowerCase());
+    }
   }
 
   return checks;
