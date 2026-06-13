@@ -480,13 +480,17 @@ export function normalizePosthogDrilldownMeasurements(raw = {}) {
   const previous = cohorts[cohorts.length - 2] || null;
   const latestSmall = latest ? latest.cohortSize < MIN_COHORT_N_FOR_DIRECTION : false;
   const previousSmall = previous ? previous.cohortSize < MIN_COHORT_N_FOR_DIRECTION : false;
+  const activationObserved = data.funnel?.activationInstrumentation === "observed";
+  const retentionEvidenceStrong = Boolean(latest && previous && !latestSmall && !previousSmall && activationObserved);
   const delta = latest && previous ? Math.round((latest.pct - previous.pct) * 10) / 10 : null;
   const deltaAbs = delta === null ? null : Math.abs(delta);
-  const retentionDirection = !latest || !previous || latestSmall || previousSmall || delta === 0
+  const retentionDirection = !retentionEvidenceStrong || delta === 0
     ? "flat"
     : delta > 0 ? "up" : "down";
   const retentionDelta = latest && previous
-    ? latestSmall || previousSmall
+    ? !activationObserved
+      ? "activation 없음"
+      : latestSmall || previousSmall
       ? "표본 작음"
       : delta === 0
         ? "변동 없음"
@@ -507,13 +511,27 @@ export function normalizePosthogDrilldownMeasurements(raw = {}) {
         ...(signupObserved ? [] : ["가입 이벤트가 없어 실제 가입 0건과 계측 공백을 분리할 수 없습니다."]),
         ...(data.funnel?.activationInstrumentation === "observed" ? [] : ["명시적 activation 이벤트가 없어 목표 전환 판단은 제한적입니다."]),
       ];
+  const shouldRenderRetention = retentionEvidenceStrong;
+  const title = shouldRenderRetention ? "PostHog · 리텐션·이탈 드릴다운" : "PostHog · 계측·활성 공백";
+  const subtitle = shouldRenderRetention
+    ? "최신 관측 완료 코호트 기준"
+    : latestSmall || previousSmall
+      ? "표본 작음 · 리텐션 단정 보류"
+      : "activation/signup 이벤트 확인 필요";
+  const retentionValueLabel = shouldRenderRetention && latest ? formatPercent(latest.pct) : "미계측";
+  const retentionVsLabel = shouldRenderRetention
+    ? retentionVs
+    : latest
+      ? `코호트 n=${latest.cohortSize} · activation 계측 ${activationObserved ? "관측" : "없음"}`
+      : "유효 코호트 없음";
 
   return normalizeMorningBriefingDrilldown("posthog", {
-    title: "PostHog · 리텐션·이탈 드릴다운",
-    subtitle: latestSmall ? "표본 작음 · 단정보다 방향" : "최신 관측 완료 코호트 기준",
+    title,
+    subtitle,
     syncPills: [
-      latest ? `Day-1 ${formatPercent(latest.pct)} · n=${latest.cohortSize}` : "Day-1 코호트 없음",
+      shouldRenderRetention && latest ? `Day-1 ${formatPercent(latest.pct)} · n=${latest.cohortSize}` : "Day-1 리텐션 미계측",
       `기간 이벤트 ${data.totals.events} · 활성 ${data.totals.activeUsers}`,
+      activationObserved ? "activation 이벤트 관측" : "activation 이벤트 없음",
       latestSmall ? `표본 작음 · 기준 n<${MIN_COHORT_N_FOR_DIRECTION}` : "",
     ].filter(Boolean),
     kpis: [
@@ -535,10 +553,10 @@ export function normalizePosthogDrilldownMeasurements(raw = {}) {
       },
       {
         label: "Day-1 리텐션",
-        valueLabel: latest ? formatPercent(latest.pct) : "미계측",
+        valueLabel: retentionValueLabel,
         deltaLabel: retentionDelta,
         direction: retentionDirection,
-        vs: retentionVs,
+        vs: retentionVsLabel,
         flag: retentionDirection === "down",
       },
       {
@@ -550,8 +568,8 @@ export function normalizePosthogDrilldownMeasurements(raw = {}) {
         flag: false,
       },
     ],
-    kpisMeta: "기간 합계 · 코호트 지표 분리",
-    chart: cohorts.length >= 2
+    kpisMeta: shouldRenderRetention ? "기간 합계 · 코호트 지표 분리" : "기간 합계 · 리텐션 판단 보류",
+    chart: shouldRenderRetention && cohorts.length >= 2
       ? {
           kind: "curve",
           title: "Day-1 리텐션",
@@ -571,7 +589,8 @@ export function normalizePosthogDrilldownMeasurements(raw = {}) {
       : null,
     funnel,
     signals: [
-      latest ? {
+      ...instrumentationGaps.map((text) => ({ time: "계측 공백", text })),
+      shouldRenderRetention && latest ? {
         time: "최신 코호트",
         text: `${dayLabel(latest.day)} 코호트는 ${latest.cohortSize}명 중 ${latest.returnedDay1}명이 다음날 돌아왔습니다.`,
       } : null,
@@ -583,7 +602,6 @@ export function normalizePosthogDrilldownMeasurements(raw = {}) {
         time: "핵심 실행",
         text: `세션 요청 사용자 ${data.funnel.sessionRequestUsers}명 중 세션 생성 사용자는 ${data.funnel.sessionCreatedUsers}명입니다.`,
       } : null,
-      ...instrumentationGaps.map((text) => ({ time: "계측 공백", text })),
     ].filter(Boolean).slice(0, SIGNAL_LIMIT),
     webSignals: data.paths.slice(0, 3).map((row, index) => {
       const share = pathTotal > 0 ? Math.round((row.pageviews / pathTotal) * 100) : 0;
@@ -596,10 +614,10 @@ export function normalizePosthogDrilldownMeasurements(raw = {}) {
     actions: buildPosthogActions({ funnel, instrumentationGaps }),
     meta: {
       progress: {
-        label: "Day-1 리텐션",
-        valueLabel: latest ? `${formatPercent(latest.pct)} · n=${latest.cohortSize}` : "코호트 없음",
-        sub: latestSmall ? "표본 작음" : latest ? `${latest.returnedDay1}/${latest.cohortSize} 복귀` : null,
-        ratio: latest ? Math.min(1, latest.pct / 100) : 0,
+        label: shouldRenderRetention ? "Day-1 리텐션" : "Day-1 리텐션",
+        valueLabel: shouldRenderRetention && latest ? `${formatPercent(latest.pct)} · n=${latest.cohortSize}` : "코호트 없음",
+        sub: !activationObserved ? "activation 없음" : latestSmall ? "표본 작음" : latest ? `${latest.returnedDay1}/${latest.cohortSize} 복귀` : null,
+        ratio: shouldRenderRetention && latest ? Math.min(1, latest.pct / 100) : 0,
       },
       rows: [
         { key: "집계", value: "PostHog MCP execute-sql", tone: "accent" },
@@ -770,6 +788,36 @@ function buildCloudflareHourlyBars(hourly = [], { timeZone = undefined } = {}) {
   return bars;
 }
 
+function isCloudflareDownloadPath(pathname = "") {
+  const lower = String(pathname || "").toLowerCase().split("?")[0];
+  return /\.(dmg|pkg|zip|tar\.gz)$/.test(lower);
+}
+
+function isCloudflareAssetPath(pathname = "") {
+  const lower = String(pathname || "").toLowerCase().split("?")[0];
+  if (!lower || lower === "/") return false;
+  if (
+    lower.startsWith("/_next/")
+    || lower.startsWith("/assets/")
+    || lower.startsWith("/static/")
+    || lower.startsWith("/fonts/")
+    || lower.includes("/fonts/")
+    || lower.includes("/favicon")
+  ) {
+    return true;
+  }
+  return /\.(js|css|map|woff|woff2|ttf|otf|ico|png|jpg|jpeg|gif|webp|svg|avif|mp4|webm|txt|xml)$/.test(lower);
+}
+
+function cloudflarePathRows(data) {
+  if (!data.pathTableUsesEyeballFilter) return { table: [], downloads: [], filteredAssets: 0 };
+  const rows = data.pathTable.map((row) => ({ path: row.path, label: row.label || "", value: row.value }));
+  const downloads = rows.filter((row) => isCloudflareDownloadPath(row.path));
+  const filteredAssets = rows.filter((row) => isCloudflareAssetPath(row.path)).length;
+  const table = rows.filter((row) => !isCloudflareDownloadPath(row.path) && !isCloudflareAssetPath(row.path));
+  return { table, downloads, filteredAssets };
+}
+
 export function cloudflareSourceSignalFromMeasurements(raw = {}, existing = {}) {
   const data = parseCloudflareMeasurements(raw);
   if (!data) return null;
@@ -822,11 +870,9 @@ export function normalizeCloudflareDrilldownMeasurements(raw = {}, { timeZone = 
   const threatDelta = deltaLabelFor(totals.threats, previous.threats);
   const bars = buildCloudflareHourlyBars(data.hourly, { timeZone });
   const peak = bars.reduce((best, bar) => (bar.value > (best?.value ?? -1) ? bar : best), null);
-  const table = data.pathTableUsesEyeballFilter
-    ? data.pathTable.map((row) => ({ path: row.path, label: row.label || "", value: row.value }))
-    : [];
+  const { table, downloads, filteredAssets } = cloudflarePathRows(data);
   return normalizeMorningBriefingDrilldown("cloudflare", {
-    title: "Cloudflare · 트래픽 드릴다운",
+    title: "Cloudflare · 사람 유입 품질",
     subtitle: data.zoneName
       ? `${data.zoneName} · Cloudflare GraphQL Analytics`
       : "Cloudflare GraphQL Analytics",
@@ -877,8 +923,13 @@ export function normalizeCloudflareDrilldownMeasurements(raw = {}, { timeZone = 
       : null,
     table,
     signals: [
+      ...downloads.map((row) => ({
+        time: "다운로드 신호",
+        text: `${row.path} · ${row.value}건 요청`,
+      })),
       peak ? { time: `${peak.label}:00`, text: `시간대 피크는 순 방문 ${peak.value}명입니다.` } : null,
       { time: "집계 기준", text: "기간 전체 순 방문은 시간대별 unique 합계가 아니라 별도 totals 쿼리로 계산합니다." },
+      filteredAssets ? { time: "경로 필터", text: `정적 asset/font/favicon 경로 ${filteredAssets}개는 기본 표에서 제외했습니다.` } : null,
     ].filter(Boolean),
     meta: {
       progress: {
@@ -891,7 +942,7 @@ export function normalizeCloudflareDrilldownMeasurements(raw = {}, { timeZone = 
         ...(data.zoneName ? [{ key: "존", value: data.zoneName, tone: "accent" }] : []),
         { key: "소스", value: "Cloudflare GraphQL Analytics", tone: "accent" },
         { key: "기간", value: `${totals.startIso.slice(5, 16)}~${totals.untilIso.slice(5, 16)} UTC` },
-        ...(table.length ? [{ key: "경로 필터", value: "requestSource=eyeball", tone: "amber" }] : []),
+        ...(data.pathTableUsesEyeballFilter ? [{ key: "경로 필터", value: "requestSource=eyeball · asset 제외", tone: "amber" }] : []),
       ],
     },
   });
@@ -931,7 +982,7 @@ const COUNT_KPI_LABELS = Object.freeze({
 });
 
 const COUNTS_TITLES = Object.freeze({
-  cloudflare: { title: "Cloudflare · 트래픽 드릴다운", subtitle: "수집된 집계 기준" },
+  cloudflare: { title: "Cloudflare · 사람 유입 품질", subtitle: "수집된 집계 기준" },
   posthog: { title: "PostHog · 프로덕트 드릴다운", subtitle: "수집된 집계 기준" },
   github: { title: "GitHub · 빌드·배포 · 레포 신호", subtitle: "git · gh CLI 집계 기준" },
 });
@@ -1555,8 +1606,8 @@ export async function collectGithubDrilldown({
     scan,
     drafts: [],
     draftsEmpty: {
-      title: "코드에서 꺼낼 다음 일이 없어요",
-      detail: "gh CLI와 git 로그 기준, 액션으로 만들 변화가 확인되지 않았어요. 머지 정체나 배포 실패 같은 신호가 잡히면 초안이 여기 먼저 떠요. 대신 커밋·PR 밖 영역을 훑어서 위임할 수 있는 신호와 미뤄둔 정리를 아래에 모아뒀어요.",
+      title: "코드 신호는 충분해요 — 고객 증거로 이동",
+      detail: "gh CLI와 git 로그 기준, 빌드·배포 쪽에서 오늘 막힌 신호는 없습니다. 다음 판단은 새 커밋보다 다운로드/설치/activation 또는 사용자 확인 질문에서 나와야 합니다.",
       evidence: "근거: gh CLI · git log",
     },
     maintenance,
@@ -1648,7 +1699,7 @@ const EXTERNAL_DRILLDOWN_COLLECTION_PLANS = Object.freeze({
     "Cloudflare hourly rule: hourly is for chart shape only. Use httpRequests1hGroups with dimensions.datetime, sum { requests pageViews threats }, and uniq { uniques }; map dimensions.datetime to datetimeIso and uniq.uniques to uniqueVisitors.",
     "Cloudflare current/previous totals query shape: alias no-dimension httpRequests1hGroups groups as totals and previousTotals with fields sum { requests pageViews threats } and uniq { uniques }. Remove dimensions entirely for these totals.",
     "Cloudflare source counts must use totals: visits=totals.uniqueVisitors, uniqueVisitors=totals.uniqueVisitors, pageviews=totals.pageviews, requests=totals.requests, threats=totals.threats.",
-    "For the path table, query httpRequestsAdaptiveGroups with filter { AND: [{ datetime_geq, datetime_leq }, { requestSource: \"eyeball\" }] }, limit 6, orderBy: [sum_edgeResponseBytes_DESC], and fields count, sum { edgeResponseBytes }, dimensions { metric: clientRequestPath }. Only set pathTableUsesEyeballFilter true when this exact requestSource filter was applied; otherwise leave pathTable empty/false.",
+    "For the path table, query httpRequestsAdaptiveGroups with filter { AND: [{ datetime_geq, datetime_leq }, { requestSource: \"eyeball\" }] }, limit 6, orderBy: [count_DESC], and fields count, sum { edgeResponseBytes }, dimensions { metric: clientRequestPath }. Prefer human page paths; static asset/font/favicon paths are filtered by Agentic30, and .dmg/.pkg/.zip requests are rendered as download signals. Only set pathTableUsesEyeballFilter true when this exact requestSource filter was applied; otherwise leave pathTable empty/false.",
   ],
   posthog: [
     "PostHog drilldown contract: return only drilldowns.posthog.measurements. Do not return PostHog kpis/chart/signals/actions; Agentic30 renders those deterministically.",
@@ -1703,8 +1754,8 @@ function extractJsonObjectLoose(text = "") {
 }
 
 const EXTERNAL_TITLES = {
-  cloudflare: { title: "Cloudflare · 트래픽 드릴다운", subtitle: "수집된 집계 기준" },
-  posthog: { title: "PostHog · 리텐션·이탈 드릴다운", subtitle: "표본 작음 · 단정보다 방향" },
+  cloudflare: { title: "Cloudflare · 사람 유입 품질", subtitle: "수집된 집계 기준" },
+  posthog: { title: "PostHog · 계측·활성 공백", subtitle: "표본 작음 · 리텐션 단정 보류" },
 };
 
 // 소프트 타임아웃 직전까지 스트리밍된 부분 출력 구제. 실측: 집계 자체는 끝났는데

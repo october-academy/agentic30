@@ -1515,8 +1515,11 @@ enum DayLoopSteps {
 
     // Day-1 intro stages auto-complete before Office Hours opens, so the macro
     // stepper + progress badges hide them — Day 1 surfaces only the stages the
-    // user actively works (목표 → 첫 인터뷰). Day 2+ keeps the full loop visible.
+    // user actively works (목표 → 첫 인터뷰). Day 2 starts after scan/retro/goal,
+    // so the display axis opens directly on 인터뷰 → 실행 while the stored data
+    // keeps the full standard loop for gates/resume.
     static let day1HiddenFromDisplay: Set<String> = ["onboarding", "scan"]
+    static let day2HiddenFromDisplay: Set<String> = ["scan", "retro", "goal"]
 
     static func kind(forDay day: Int) -> DayKind { day == 1 ? .day1 : .standard }
 
@@ -1524,12 +1527,17 @@ enum DayLoopSteps {
         kind == .day1 ? day1 : standard
     }
 
-    /// Stepper/progress-visible step ids — drops the Day-1 intro stages. Day 2+
-    /// mirrors `ids` exactly.
+    /// Stepper/progress-visible step ids — drops completed setup stages for
+    /// Day 1 and Day 2. Day 3+ mirrors `ids` exactly.
     static func displayIds(forDay day: Int, kind: DayKind) -> [String] {
         let all = ids(forDay: day, kind: kind)
-        guard kind == .day1 else { return all }
-        return all.filter { !day1HiddenFromDisplay.contains($0) }
+        if kind == .day1 {
+            return all.filter { !day1HiddenFromDisplay.contains($0) }
+        }
+        if day == 2 {
+            return all.filter { !day2HiddenFromDisplay.contains($0) }
+        }
+        return all
     }
 
     static func label(for stepId: String) -> String {
@@ -1575,8 +1583,8 @@ struct DayRecord: Codable, Equatable, Hashable {
         }
     }
 
-    /// Stepper/progress-visible steps — hides the Day-1 intro stages (onboarding,
-    /// scan) so Day 1 shows only 목표 → 첫 인터뷰. Day 2+ mirrors `orderedSteps`.
+    /// Stepper/progress-visible steps — hides completed setup stages for Day 1
+    /// and Day 2 while preserving the full data axis in `orderedSteps`.
     var displaySteps: [(id: String, label: String, status: DayStepStatus)] {
         DayLoopSteps.displayIds(forDay: day, kind: kind).map { id in
             (id, DayLoopSteps.label(for: id), steps[id] ?? .pending)
@@ -5612,6 +5620,18 @@ final class AgenticViewModel: ObservableObject {
             // 현재 선택한 프로바이더 기준이 되도록 — get/refresh와 같은 규약.
             "preferredProvider": selectedProvider.rawValue,
         ])
+    }
+
+    func applyMorningBriefingActionDraft(_ action: MorningBriefingActionDraft) {
+        draft = action.copyText ?? ""
+        PostHogTelemetry.capture("mac_activation_completed", properties: [
+            "source": "morning_briefing_action",
+            "action_id": action.id,
+            "action_kind": action.kind ?? "",
+            "briefing_day": morningBriefing?.day ?? 0,
+            "verdict_state": morningBriefing?.customerEvidenceVerdict?.state ?? "",
+            "is_primary_action": action.id == morningBriefing?.customerEvidenceVerdict?.primaryActionId,
+        ], authSession: macAuthSession)
     }
 
     #if DEBUG

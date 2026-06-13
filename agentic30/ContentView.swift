@@ -401,13 +401,12 @@ private struct OfficeHoursOptionRowSurface: ViewModifier {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .stroke(stroke, lineWidth: 1)
                     )
+                    .animation(.easeOut(duration: 0.14), value: isHovered)
             )
             .onHover { hover in
                 guard !disabled else { return }
                 isHovered = hover
             }
-            .animation(.easeOut(duration: 0.14), value: selected)
-            .animation(.easeOut(duration: 0.14), value: isHovered)
     }
 }
 
@@ -2607,7 +2606,7 @@ struct ContentView: View {
                                 viewModel.submitMorningBriefingAnomalyLabel(label)
                             },
                             applyAction: { draft in
-                                viewModel.draft = draft.copyText ?? ""
+                                viewModel.applyMorningBriefingActionDraft(draft)
                             },
                             startToday: {
                                 withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
@@ -5307,9 +5306,18 @@ struct ContentView: View {
     }
 
     private func officeHoursIntroSection(activeDay: Int) -> some View {
-        let title = viewModel.day1GoalSelection == nil
-            ? "오피스아워를 한 단계씩 좁힙니다."
-            : "Day \(activeDay) 목표를 인터뷰로 검증합니다."
+        let title: String
+        let body: String
+        if viewModel.day1GoalSelection == nil {
+            title = "오피스아워를 한 단계씩 좁힙니다."
+            body = "Startup 진단으로 질문이 하나씩 열립니다."
+        } else if activeDay == 2 {
+            title = "Day 2 인터뷰를 바로 시작합니다."
+            body = "scan과 목표는 완료된 상태로 두고, 한 번에 하나의 structured input 질문이 열립니다."
+        } else {
+            title = "Day \(activeDay) 목표를 인터뷰로 검증합니다."
+            body = "선택한 Day의 목표만 기준으로 한 번에 하나의 structured input 질문이 열립니다."
+        }
         let titleDelay: UInt64 = reduceMotion ? 0 : 120_000_000
         let bodyDelay = reduceMotion
             ? 0
@@ -5330,9 +5338,7 @@ struct ContentView: View {
             )
             .accessibilityIdentifier("opendesign.officeHours.intro.title")
             OfficeHoursTypewriterText(
-                text: viewModel.day1GoalSelection == nil
-                    ? "Startup 진단으로 질문이 하나씩 열립니다."
-                    : "선택한 Day의 목표만 기준으로 한 번에 하나의 structured input 질문이 열립니다.",
+                text: body,
                 font: .system(size: 13.5, weight: .medium),
                 foregroundColor: OpenDesignOfficeHoursColor.fgSecondary,
                 lineSpacing: 3,
@@ -5402,10 +5408,14 @@ struct ContentView: View {
     private func officeHoursSignalList(activeDay: Int) -> some View {
         let dayGoal = officeHoursGoalLine(forDay: activeDay)
         let first = viewModel.day1GoalSelection.map { selection in
-            activeDay == 1 ? selection.officeHoursPurposeLine : "Day \(activeDay) · \(dayGoal)"
+            if activeDay == 1 { return selection.officeHoursPurposeLine }
+            if activeDay == 2 { return "Day 2 인터뷰 · \(dayGoal)" }
+            return "Day \(activeDay) · \(dayGoal)"
         } ?? "막연한 아이디어를 다음 실행 1개로 압축합니다."
         let second = viewModel.day1GoalSelection.map { selection in
-            activeDay == 1 ? selection.officeHoursProgressLine : selection.officeHoursPurposeLine
+            if activeDay == 1 { return selection.officeHoursProgressLine }
+            if activeDay == 2 { return "scan·목표 완료 · 인터뷰 진행" }
+            return selection.officeHoursPurposeLine
         } ?? "Startup 관점으로 고정해 한 번에 하나의 질문에 답합니다."
         let rowStartDelay: UInt64 = reduceMotion ? 0 : 120_000_000
         let secondDelay = rowStartDelay + OfficeHoursTypewriterTiming.totalDelayNanoseconds(
@@ -8216,7 +8226,7 @@ struct ContentView: View {
                             )
                             officeHoursMetaRunStep(
                                 title: "질문 준비",
-                                detail: "목표 기준으로 첫 질문을 준비한다.",
+                                detail: activeDay == 2 ? "완료된 목표 다음 인터뷰 질문을 준비한다." : "목표 기준으로 첫 질문을 준비한다.",
                                 isDone: officeHoursModePicked(session: session, activeDay: activeDay),
                                 isLive: officeHoursHasPendingStart(activeDay: activeDay)
                             )

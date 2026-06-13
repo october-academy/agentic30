@@ -616,6 +616,8 @@ nonisolated struct MorningBriefing: Codable, Hashable {
     var phase: String?
     var window: OfficeHoursDigestWindow?
     var summary: MorningBriefingSummary?
+    var customerEvidenceVerdict: MorningBriefingCustomerEvidenceVerdict?
+    var evidenceFunnel: MorningBriefingEvidenceFunnel?
     var cards: [MorningBriefingCard]?
     var timeline: [MorningBriefingTimelineEvent]?
     var anomaly: MorningBriefingAnomaly?
@@ -628,6 +630,28 @@ nonisolated struct MorningBriefing: Codable, Hashable {
     /// Day-1 upgrade guide: present while PostHog/Cloudflare MCP are missing so
     /// the screen can point at Settings > Integrations for tomorrow's briefing.
     var connectGuide: MorningBriefingConnectGuide?
+}
+
+nonisolated struct MorningBriefingCustomerEvidenceVerdict: Codable, Hashable {
+    var state: String?
+    var title: String?
+    var body: String?
+    var evidence: [String]?
+    var primaryActionId: String?
+}
+
+nonisolated struct MorningBriefingEvidenceFunnel: Codable, Hashable {
+    var steps: [MorningBriefingEvidenceFunnelStep]?
+}
+
+nonisolated struct MorningBriefingEvidenceFunnelStep: Codable, Hashable, Identifiable {
+    var id: String
+    var label: String?
+    var source: String?
+    var value: Double?
+    var valueLabel: String?
+    var status: String?
+    var detail: String?
 }
 
 nonisolated struct MorningBriefingConnectGuide: Codable, Hashable {
@@ -1110,7 +1134,7 @@ extension MorningBriefing {
         drilldowns: [
             "cloudflare": MorningBriefingDrilldown(
                 id: "cloudflare",
-                title: "Cloudflare · 트래픽 드릴다운",
+                title: "Cloudflare · 사람 유입 품질",
                 subtitle: "사람 방문 기준 · 봇 제외",
                 syncPills: ["지난 24시간 06-09 09:00 → 06-10 09:00", "비교 그 전 24시간"],
                 kpis: [
@@ -1212,8 +1236,8 @@ extension MorningBriefing {
                 ],
                 drafts: [],
                 draftsEmpty: MorningBriefingDrillDraftsEmpty(
-                    title: "코드에서 꺼낼 다음 일이 없어요",
-                    detail: "gh CLI와 git 로그 기준, 액션으로 만들 변화가 확인되지 않았어요.",
+                    title: "코드 신호는 충분해요 — 고객 증거로 이동",
+                    detail: "gh CLI와 git 로그 기준, 빌드·배포 쪽에서 오늘 막힌 신호는 없습니다.",
                     evidence: "근거: gh CLI · git log · 09:00 확인"
                 ),
                 maintenance: [

@@ -5509,6 +5509,41 @@ function isDay2PlusOfficeHoursDay(day = null) {
   return Number.isFinite(normalized) && normalized >= 2;
 }
 
+function officeHoursContextDayGoal(context = "", day = null) {
+  const normalizedDay = normalizeOfficeHoursDay(day);
+  if (!normalizedDay) return "";
+  const pattern = new RegExp(`^Day\\s+${normalizedDay}\\s+goal:\\s*(.+)$`, "im");
+  const match = String(context || "").match(pattern);
+  return String(match?.[1] || "").trim().slice(0, 200);
+}
+
+async function ensureDay2OfficeHoursInterviewProgress({ day = null, context = "" } = {}) {
+  const normalizedDay = normalizeOfficeHoursDay(day);
+  if (normalizedDay !== 2) return null;
+  try {
+    const updated = await setDayActiveStep({
+      workspaceRoot,
+      day: 2,
+      stepId: "interview",
+      goalText: officeHoursContextDayGoal(context, 2),
+    });
+    state.dayProgress = updated;
+    await sendOfficeHoursEvidenceState(null, workspaceRoot);
+    telemetry.captureEvent("mac_sidecar_day2_office_hours_progress_primed", {
+      day: 2,
+      workspace_basename: path.basename(workspaceRoot),
+    });
+    return updated;
+  } catch (error) {
+    telemetry.captureException(error, {
+      operation: "day2_office_hours_progress_prime",
+      workspace_root: workspaceRoot,
+      day: normalizedDay,
+    });
+    return null;
+  }
+}
+
 function officeHoursSourceGateEventPayload({ sessionId = null, gate } = {}) {
   return {
     type: "office_hours_source_gate",
@@ -6833,6 +6868,7 @@ async function runOfficeHours(session, {
     }
     throw error;
   }
+  await ensureDay2OfficeHoursInterviewProgress({ day: runtimeDay, context });
   const officeHoursRuntime = buildOfficeHoursRuntime(context, source, runtimeDay, normalizedSelectedSources);
   const visiblePrompt = String(originalPrompt || "Office Hours").trim() || "Office Hours";
   const runStartedAt = performance.now();

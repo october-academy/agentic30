@@ -90,15 +90,44 @@ struct MorningBriefingPageView: View {
 
     private var sections: [SectionEntry] {
         var entries: [SectionEntry] = [
-            SectionEntry(id: "summary", title: "밤사이 한 줄 요약", meta: "Cloudflare · GitHub · PostHog", tone: .accent),
-            SectionEntry(id: "sources", title: "세 소스 · 어제 대비", meta: yesterdaySectionMeta, tone: .accent),
-            SectionEntry(id: "timeline", title: "밤사이 타임라인", meta: timelineSectionMeta, tone: .ring),
+            SectionEntry(id: "summary", title: "오늘의 판정", meta: verdictStateLabel, tone: .accent),
+            SectionEntry(id: "actions", title: "오늘 검증 액션", meta: actionsSectionMeta, tone: .amber),
+            SectionEntry(id: "sources", title: "소스 근거", meta: "Cloudflare · GitHub · PostHog", tone: .accent),
         ]
+        if hasEvidenceFunnel {
+            entries.insert(SectionEntry(id: "funnel", title: "증거 퍼널", meta: "방문 → activation → 결제", tone: .accent), at: 1)
+        }
+        entries.append(SectionEntry(id: "timeline", title: "밤사이 타임라인", meta: timelineSectionMeta, tone: .ring))
         if displayBriefing?.anomaly != nil {
             entries.append(SectionEntry(id: "anomaly", title: "이상 신호 확인", meta: "1건", tone: .rose))
         }
-        entries.append(SectionEntry(id: "actions", title: "액션 초안", meta: "메시지 · 실험 · 태스크", tone: .amber))
         return entries
+    }
+
+    private var hasEvidenceFunnel: Bool {
+        !(displayBriefing?.evidenceFunnel?.steps ?? []).isEmpty
+    }
+
+    private var verdictStateLabel: String {
+        switch displayBriefing?.customerEvidenceVerdict?.state {
+        case "traffic_without_activation": return "방문 대비 activation"
+        case "build_without_customer_evidence": return "빌드 대비 고객 증거"
+        case "instrumentation_gap": return "계측 공백"
+        case "healthy": return "증거 관측"
+        default: return "검증 판단"
+        }
+    }
+
+    private var actionsSectionMeta: String {
+        if let primary = primaryActionDraft?.badge, !primary.isEmpty {
+            return "오늘 먼저 · \(primary)"
+        }
+        return "메시지 · 실험 · 태스크"
+    }
+
+    private var primaryActionDraft: MorningBriefingActionDraft? {
+        guard let primaryId = displayBriefing?.customerEvidenceVerdict?.primaryActionId else { return nil }
+        return displayBriefing?.actions?.first(where: { $0.id == primaryId })
     }
 
     private var yesterdaySectionMeta: String {
@@ -428,10 +457,18 @@ struct MorningBriefingPageView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
-                            sectionHeading(id: "summary", title: "밤사이 한 줄 요약", meta: windowMetaLabel, markerColor: OpenDesignDayColor.accent)
-                            summaryCard
+                            sectionHeading(id: "summary", title: "오늘의 판정", meta: windowMetaLabel, markerColor: OpenDesignDayColor.accent)
+                            verdictCard
 
-                            sectionHeading(id: "sources", title: "세 소스 · 어제 대비", meta: "표본 작음 · 단정보다 방향", markerColor: OpenDesignDayColor.accent)
+                            if hasEvidenceFunnel {
+                                sectionHeading(id: "funnel", title: "증거 퍼널", meta: "방문 → 다운로드/설치 → 검증 행동", markerColor: OpenDesignDayColor.accent)
+                                evidenceFunnelCard
+                            }
+
+                            sectionHeading(id: "actions", title: "오늘 검증 액션 · \(displayBriefing?.actions?.count ?? 0)", meta: "요약을 넘어 바로 쓸 수 있게 — 검토 후 적용", markerColor: OpenDesignDayColor.amber)
+                            actionDrafts
+
+                            sectionHeading(id: "sources", title: "소스 근거 · 어제 대비", meta: "판정 아래 원자료", markerColor: OpenDesignDayColor.accent)
                             sourceCardsGrid
 
                             if let guide = displayBriefing?.connectGuide {
@@ -445,9 +482,6 @@ struct MorningBriefingPageView: View {
                                 sectionHeading(id: "anomaly", title: "이상 신호 · 확인 1건", meta: "평소엔 요약만, 이상할 때만 물어봄", markerColor: OpenDesignDayColor.rose)
                                 anomalyPicker(anomaly)
                             }
-
-                            sectionHeading(id: "actions", title: "액션 초안 · \(displayBriefing?.actions?.count ?? 0)", meta: "요약을 넘어 바로 쓸 수 있게 — 검토 후 적용", markerColor: OpenDesignDayColor.accent)
-                            actionDrafts
 
                             Spacer(minLength: 40)
                         }
@@ -804,6 +838,179 @@ struct MorningBriefingPageView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("morningBriefing.summary")
+    }
+
+    private var verdictCard: some View {
+        if let verdict = displayBriefing?.customerEvidenceVerdict {
+            return AnyView(
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .center, spacing: 10) {
+                        Text("TODAY'S VERDICT")
+                            .font(.system(size: 10, design: .monospaced))
+                            .kerning(1.2)
+                            .foregroundStyle(verdictColor(verdict.state))
+                        Text(verdictStateLabel)
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(verdictColor(verdict.state))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule()
+                                    .fill(verdictColor(verdict.state).opacity(0.13))
+                                    .overlay(Capsule().stroke(verdictColor(verdict.state).opacity(0.35), lineWidth: 1))
+                            )
+                        Spacer()
+                        Text(windowMetaLabel)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(OpenDesignDayColor.muted)
+                    }
+
+                    Text(verdict.title ?? "오늘 검증 판단을 준비 중이에요.")
+                        .font(.system(size: 21, weight: .semibold))
+                        .foregroundStyle(OpenDesignDayColor.fg)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if let body = verdict.body, !body.isEmpty {
+                        Text(body)
+                            .font(.system(size: 13))
+                            .lineSpacing(5)
+                            .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if let evidence = verdict.evidence, !evidence.isEmpty {
+                        Divider().overlay(OpenDesignDayColor.borderSoft)
+                        VStack(alignment: .leading, spacing: 7) {
+                            ForEach(Array(evidence.prefix(4).enumerated()), id: \.offset) { _, line in
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Circle()
+                                        .fill(verdictColor(verdict.state))
+                                        .frame(width: 5, height: 5)
+                                    Text(line)
+                                        .font(.system(size: 11.5, design: .monospaced))
+                                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(EdgeInsets(top: 18, leading: 20, bottom: 18, trailing: 20))
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(OpenDesignDayColor.surface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(verdictColor(verdict.state).opacity(0.45), lineWidth: 1)
+                        )
+                )
+                .overlay(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(verdictColor(verdict.state))
+                        .frame(width: 3)
+                        .padding(.vertical, 1)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("morningBriefing.verdict")
+            )
+        }
+        return AnyView(summaryCard)
+    }
+
+    private var evidenceFunnelCard: some View {
+        let steps = displayBriefing?.evidenceFunnel?.steps ?? []
+        return VStack(alignment: .leading, spacing: 14) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 128, maximum: 190), spacing: 10)], alignment: .leading, spacing: 10) {
+                ForEach(steps) { step in
+                    evidenceFunnelStep(step)
+                }
+            }
+
+            if let primary = primaryActionDraft {
+                Divider().overlay(OpenDesignDayColor.borderSoft)
+                HStack(spacing: 9) {
+                    Image(systemName: "arrow.right.circle.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(OpenDesignDayColor.accent)
+                    Text("다음 판단은 \(primary.title ?? "오늘 검증 액션")에서 시작합니다.")
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .fill(OpenDesignDayColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .stroke(OpenDesignDayColor.borderSoft, lineWidth: 1)
+                )
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("morningBriefing.evidenceFunnel")
+    }
+
+    private func evidenceFunnelStep(_ step: MorningBriefingEvidenceFunnelStep) -> some View {
+        let color = funnelStatusColor(step.status)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(color)
+                    .frame(width: 8, height: 8)
+                Text(step.source ?? "")
+                    .font(.system(size: 9.5, design: .monospaced))
+                    .foregroundStyle(OpenDesignDayColor.muted)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            Text(step.label ?? step.id)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(OpenDesignDayColor.fgSecondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(step.valueLabel ?? "미계측")
+                .font(.system(size: 18, weight: .semibold, design: .monospaced))
+                .foregroundStyle(step.status == "missing" ? OpenDesignDayColor.rose : OpenDesignDayColor.fg)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text(step.detail ?? "")
+                .font(.system(size: 10))
+                .foregroundStyle(OpenDesignDayColor.muted)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(minHeight: 124, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(OpenDesignDayColor.bgDarker)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(color.opacity(0.35), lineWidth: 1)
+                )
+        )
+    }
+
+    private func verdictColor(_ state: String?) -> Color {
+        switch state {
+        case "healthy": return OpenDesignDayColor.accent
+        case "traffic_without_activation", "build_without_customer_evidence", "instrumentation_gap":
+            return OpenDesignDayColor.amber
+        default:
+            return OpenDesignDayColor.accent
+        }
+    }
+
+    private func funnelStatusColor(_ status: String?) -> Color {
+        switch status {
+        case "observed": return OpenDesignDayColor.accent
+        case "missing": return OpenDesignDayColor.rose
+        default: return OpenDesignDayColor.mutedDeep
+        }
     }
 
     private func deltaColor(_ direction: String?) -> Color {
@@ -1483,7 +1690,8 @@ struct MorningBriefingPageView: View {
     }
 
     private func actionDraftCard(_ draft: MorningBriefingActionDraft) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let isPrimary = draft.id == displayBriefing?.customerEvidenceVerdict?.primaryActionId
+        return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 11) {
                 Text(draft.badge ?? "")
                     .font(.system(size: 9.5, weight: .bold, design: .monospaced))
@@ -1506,9 +1714,21 @@ struct MorningBriefingPageView: View {
                         .foregroundStyle(OpenDesignDayColor.muted)
                 }
                 Spacer()
+                if isPrimary {
+                    Text("오늘 먼저")
+                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(OpenDesignDayColor.accent)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule()
+                                .fill(OpenDesignDayColor.accent.opacity(0.13))
+                                .overlay(Capsule().stroke(OpenDesignDayColor.accent.opacity(0.35), lineWidth: 1))
+                        )
+                }
             }
             .padding(EdgeInsets(top: 11, leading: 14, bottom: 11, trailing: 14))
-            .background(OpenDesignDayColor.surface2)
+            .background(isPrimary ? OpenDesignDayColor.accent.opacity(0.08) : OpenDesignDayColor.surface2)
 
             Divider().overlay(OpenDesignDayColor.borderSoft)
 
@@ -1633,7 +1853,7 @@ struct MorningBriefingPageView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(OpenDesignDayColor.borderSoft, lineWidth: 1)
+                .stroke(isPrimary ? OpenDesignDayColor.accent.opacity(0.55) : OpenDesignDayColor.borderSoft, lineWidth: 1)
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("morningBriefing.action.\(draft.id)")

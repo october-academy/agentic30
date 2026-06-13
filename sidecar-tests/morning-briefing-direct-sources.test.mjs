@@ -222,7 +222,7 @@ test("collectCloudflareDirectDrilldown builds KPIs, 2h buckets, and path table f
   const pathQuery = calls
     .map((call) => JSON.parse(call.options.body || "{}")?.query || "")
     .find((query) => query.includes("httpRequestsAdaptiveGroups"));
-  assert.ok(pathQuery.includes("orderBy: [sum_edgeResponseBytes_DESC]"));
+  assert.ok(pathQuery.includes("orderBy: [count_DESC]"));
   assert.match(pathQuery, /requestSource: "eyeball"/);
   assert.ok(pathQuery.includes("dimensions { metric: clientRequestPath }"));
 

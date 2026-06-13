@@ -857,7 +857,7 @@ test("office_hours_start skips Day 2+ source gate in local dev fast-days mode", 
     ws.send(JSON.stringify({
       type: "office_hours_start",
       sessionId: created.session.id,
-      context: "DAY2_PLUS_GOAL_DRIVEN_OFFICE_HOURS\nGoal lane: build_product / 작동하는 첫 버전 출시",
+      context: "DAY2_PLUS_GOAL_DRIVEN_OFFICE_HOURS\nDay 2 goal: 작동하는 첫 버전 출시\nGoal lane: build_product / 작동하는 첫 버전 출시",
       visiblePrompt: "Test local dev fast-days Office Hours",
       source: "office_hours_day_2",
       day: 2,
@@ -872,6 +872,19 @@ test("office_hours_start skips Day 2+ source gate in local dev fast-days mode", 
     );
     assert.equal(gate.officeHoursSourceGate.skipped, true);
     assert.deepEqual(gate.officeHoursSourceGate.selectedSources, []);
+
+    const progress = await waitForEvent(ws.events, (event) =>
+      event.type === "day_progress_state"
+        && event.workspaceRoot === harness.workspacePath
+        && event.dayProgress?.days?.["2"]?.steps?.interview === "active",
+    );
+    const day2 = progress.dayProgress.days["2"];
+    assert.equal(day2.kind, "standard");
+    assert.equal(day2.steps.scan, "done");
+    assert.equal(day2.steps.retro, "done");
+    assert.equal(day2.steps.goal, "done");
+    assert.equal(day2.steps.execution, "pending");
+    assert.equal(day2.goalText, "작동하는 첫 버전 출시");
 
     await waitForEvent(ws.events, (event) =>
       event.type === "office_hours_daily_digest_result"

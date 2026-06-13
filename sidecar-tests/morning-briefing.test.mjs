@@ -10,7 +10,9 @@ import {
   buildMorningBriefingActions,
   buildMorningBriefingCards,
   buildMorningBriefingConnectGuide,
+  buildMorningBriefingEvidenceFunnel,
   buildMorningBriefingSummary,
+  buildCustomerEvidenceVerdict,
   buildMorningBriefingTimeline,
   detectMorningBriefingAnomaly,
   extractMorningBriefingMetrics,
@@ -249,6 +251,30 @@ test("buildMorningBriefingActions always returns message, experiment, and task d
   assert.ok(actions.every((action) => action.why && action.applyLabel));
 });
 
+test("buildMorningBriefingEvidenceFunnel and verdict prioritize customer evidence gaps", () => {
+  const digest = digestFixture({ posthogActive: 1, gitCommits: 55, cloudflareVisits: 261 });
+  const posthog = digest.sources.find((source) => source.id === "posthog");
+  posthog.counts = { events: 26, activeUsers: 1, conversions: 0, signups: 0, installs: 9, scanCompleted: 2, officeHoursCompleted: 2, payments: 0 };
+  const funnel = buildMorningBriefingEvidenceFunnel({ digest });
+  assert.deepEqual(
+    funnel.steps.map((step) => step.id),
+    ["traffic", "download_install", "workspace_scan", "validation_action", "payment"],
+  );
+  assert.equal(funnel.steps[0].value, 261);
+  assert.equal(funnel.steps[1].value, 9);
+  assert.equal(funnel.steps[4].status, "missing");
+
+  const verdict = buildCustomerEvidenceVerdict({ digest, cards: [], evidenceFunnel: funnel });
+  assert.equal(verdict.state, "instrumentation_gap");
+  assert.match(verdict.title, /고객 증거\/activation 계측/);
+  assert.equal(verdict.primaryActionId, "task");
+  assert.ok(verdict.evidence.some((line) => line.includes("전환 0건")));
+
+  const actions = buildMorningBriefingActions({ digest, customerEvidenceVerdict: verdict });
+  assert.equal(actions[2].id, "task");
+  assert.match(actions[2].tasks[0].title, /activation\/signup/);
+});
+
 test("buildMorningBriefing assembles the full payload", () => {
   const digest = digestFixture();
   const briefing = buildMorningBriefing({
@@ -267,6 +293,8 @@ test("buildMorningBriefing assembles the full payload", () => {
   assert.equal(briefing.status.state, "ready");
   assert.equal(briefing.anomaly.kind, "metric_drop");
   assert.equal(briefing.actions.length, 3);
+  assert.equal(briefing.customerEvidenceVerdict.state, "healthy");
+  assert.equal(briefing.evidenceFunnel.steps.length, 5);
   assert.deepEqual(briefing.metrics, { cloudflare: 64, github: 9, posthog: 11 });
   assert.deepEqual(briefing.historyDates, ["2026-06-09"]);
 });

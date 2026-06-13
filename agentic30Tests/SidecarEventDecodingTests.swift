@@ -507,6 +507,19 @@ struct SidecarEventDecodingTests {
                 { "source": "PostHog", "label": "활성 사용자", "value": "▼ 56%", "direction": "down" }
               ]
             },
+            "customerEvidenceVerdict": {
+              "state": "instrumentation_gap",
+              "title": "빌드는 충분함. 고객 증거/activation 계측이 부족함.",
+              "body": "오늘은 activation 계측을 먼저 메웁니다.",
+              "evidence": ["GitHub 커밋 55건", "PostHog 활성 1명 · 전환 0건"],
+              "primaryActionId": "task"
+            },
+            "evidenceFunnel": {
+              "steps": [
+                { "id": "traffic", "label": "방문", "source": "Cloudflare", "value": 261, "valueLabel": "261 명", "status": "observed", "detail": "기간 전체 고유 방문자 기준" },
+                { "id": "validation_action", "label": "Office Hours/검증 행동", "source": "PostHog", "value": 0, "valueLabel": "0 명", "status": "missing", "detail": "검증 action 적용" }
+              ]
+            },
             "cards": [
               {
                 "id": "posthog",
@@ -580,6 +593,10 @@ struct SidecarEventDecodingTests {
         #expect(briefing.day == 12)
         #expect(briefing.totalDays == 30)
         #expect(briefing.summary?.crits?.first?.direction == "down")
+        #expect(briefing.customerEvidenceVerdict?.state == "instrumentation_gap")
+        #expect(briefing.customerEvidenceVerdict?.primaryActionId == "task")
+        #expect(briefing.evidenceFunnel?.steps?.first?.id == "traffic")
+        #expect(briefing.evidenceFunnel?.steps?.last?.status == "missing")
         let card = try #require(briefing.cards?.first)
         #expect(card.id == "posthog")
         #expect(card.isReady)
@@ -672,7 +689,7 @@ struct SidecarEventDecodingTests {
                     "tasks": []
                   }
                 ],
-                "draftsEmpty": { "title": "코드에서 꺼낼 다음 일이 없어요", "detail": "신호 없음", "evidence": "근거: gh CLI" },
+                "draftsEmpty": { "title": "코드 신호는 충분해요 — 고객 증거로 이동", "detail": "신호 없음", "evidence": "근거: gh CLI" },
                 "maintenance": [
                   {
                     "id": "github_keep_readme",
@@ -725,7 +742,7 @@ struct SidecarEventDecodingTests {
         #expect(drilldown.webSignals?.first?.time == "유입 1위")
         #expect(drilldown.webMeta == "최근 2주 · 경로 분해")
         #expect(drilldown.drafts?.first?.id == "github_draft_1")
-        #expect(drilldown.draftsEmpty?.title == "코드에서 꺼낼 다음 일이 없어요")
+        #expect(drilldown.draftsEmpty?.title == "코드 신호는 충분해요 — 고객 증거로 이동")
         #expect(drilldown.maintenance?.first?.badge == "문서")
         #expect(drilldown.meta?.progress?.ratio == 1)
         #expect(drilldown.meta?.rows?.first?.key == "리포")
@@ -1367,7 +1384,7 @@ struct SidecarEventDecodingTests {
         #expect(day1?.isComplete == true)
 
         // Day-1 stepper/badge display layer drops the intro stages (onboarding, scan)
-        // while the data axis above keeps all four. Day 2+ stays on the full loop.
+        // while the data axis above keeps all four. Day 3+ stays on the full loop.
         #expect(day1?.displaySteps.map({ $0.id }) == ["goal", "first_interview"])
         #expect(day1?.displayTotalCount == 2)
         #expect(day1?.displayCompletedCount == 2)
@@ -1854,7 +1871,20 @@ struct SidecarEventDecodingTests {
         #expect(day1.displayCompletedCount == 0)
         #expect(day1.isDisplayComplete == false)
 
-        // Day 2+ (standard) is unaffected — the full macro loop stays visible.
+        // Day 2 starts after scan/retro/goal, so the display axis opens on
+        // 인터뷰 → 실행 while the stored standard loop remains complete.
+        let day2 = DayRecord(
+            day: 2,
+            kind: .standard,
+            steps: ["scan": .done, "retro": .done, "goal": .done, "interview": .active, "execution": .pending]
+        )
+        #expect(day2.orderedSteps.map({ $0.id }) == ["scan", "retro", "goal", "interview", "execution"])
+        #expect(day2.completedCount == 3)
+        #expect(day2.displaySteps.map({ $0.id }) == ["interview", "execution"])
+        #expect(day2.displayTotalCount == 2)
+        #expect(day2.displayCompletedCount == 0)
+
+        // Day 3+ (standard) is unaffected — the full macro loop stays visible.
         let day7 = DayRecord(
             day: 7,
             kind: .standard,

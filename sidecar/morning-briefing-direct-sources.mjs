@@ -411,7 +411,7 @@ export async function collectCloudflareDirectDrilldown({
             httpRequestsAdaptiveGroups(
               limit: 6,
               filter: { AND: [{ datetime_geq: $start, datetime_lt: $end }, { requestSource: "eyeball" }] },
-              orderBy: [sum_edgeResponseBytes_DESC]
+              orderBy: [count_DESC]
             ) {
               count
               sum { edgeResponseBytes }

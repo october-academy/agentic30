@@ -462,17 +462,17 @@ test("normalizePosthogDrilldownMeasurements renders small-sample aggregate deter
   });
 
   assert.ok(drilldown);
-  assert.equal(drilldown.kpis[2].valueLabel, "11.1%");
-  assert.equal(drilldown.kpis[2].deltaLabel, "표본 작음");
+  assert.equal(drilldown.title, "PostHog · 계측·활성 공백");
+  assert.equal(drilldown.subtitle, "표본 작음 · 리텐션 단정 보류");
+  assert.equal(drilldown.kpis[2].valueLabel, "미계측");
+  assert.equal(drilldown.kpis[2].deltaLabel, "activation 없음");
   assert.equal(drilldown.kpis[2].direction, "flat");
   assert.equal(drilldown.kpis[2].flag, false);
-  assert.equal(drilldown.kpis[2].vsLabel, "06-09 코호트 n=9 · 1/9 복귀 · 이전 06-08 n=14 · 21.4%");
+  assert.equal(drilldown.kpis[2].vsLabel, "코호트 n=9 · activation 계측 없음");
   assert.equal(drilldown.kpis[3].valueLabel, "미계측");
   assert.equal(drilldown.kpis[3].deltaLabel, "이벤트 없음");
-  assert.equal(drilldown.chart.points.length, 8);
-  assert.equal(drilldown.chart.points[0].label, "06-02 · 9.1%");
-  assert.equal(drilldown.chart.points.at(-1).label, "06-09 · 11.1%");
-  assert.equal(drilldown.chart.points.at(-1).tip, "2026-06-09 코호트 n=9 · 1/9 복귀");
+  assert.equal(drilldown.chart, null);
+  assert.equal(drilldown.signals[0].time, "계측 공백");
   assert.equal(drilldown.funnel.gapAfterIndex, 0);
   assert.equal(drilldown.webSignals[0].time, "유입 1위");
 });
@@ -570,15 +570,19 @@ test("normalizeCloudflareDrilldownMeasurements keeps path table only with eyebal
       threats: 0,
     },
     hourly: [{ datetimeIso: "2026-06-12T12:00:00.000Z", uniqueVisitors: 10, pageviews: 20, requests: 30 }],
-    pathTable: [{ path: "/", value: 20 }],
+    pathTable: [
+      { path: "/", value: 20 },
+      { path: "/_next/static/app.js", value: 18 },
+      { path: "/agentic30-25-arm64.dmg", value: 2 },
+    ],
   };
   assert.equal(normalizeCloudflareDrilldownMeasurements({ measurements: base }).table.length, 0);
-  assert.equal(
-    normalizeCloudflareDrilldownMeasurements({
-      measurements: { ...base, pathTableUsesEyeballFilter: true },
-    }).table[0].code,
-    "/",
-  );
+  const drilldown = normalizeCloudflareDrilldownMeasurements({
+    measurements: { ...base, pathTableUsesEyeballFilter: true },
+  });
+  assert.deepEqual(drilldown.table.map((row) => row.code), ["/"]);
+  assert.ok(drilldown.signals.some((signal) => signal.time === "다운로드 신호" && signal.text.includes(".dmg")));
+  assert.ok(drilldown.signals.some((signal) => signal.time === "경로 필터" && signal.text.includes("정적 asset")));
 });
 
 test("normalizeMorningBriefingDrilldowns keeps only known source ids", () => {
@@ -634,7 +638,7 @@ test("buildMorningBriefingExternalDigestPrompt appends drilldown shape for selec
   assert.doesNotMatch(cloudflare, /sum \{[^}]*visits/);
   assert.doesNotMatch(cloudflare, /사람 방문, 지난 24시간/);
   assert.match(cloudflare, /trailing 24 hours/);
-  assert.match(cloudflare, /sum_edgeResponseBytes_DESC/);
+  assert.match(cloudflare, /count_DESC/);
   assert.match(cloudflare, /clientRequestPath/);
   assert.match(cloudflare, /requestSource: "eyeball"/);
   assert.doesNotMatch(cloudflare, /day1_cohorts/);
@@ -707,7 +711,7 @@ test("ensureMorningBriefingDrilldowns guarantees a drilldown per ready source, r
     { id: "gh_cli", label: "gh CLI", state: "missing" },
   ];
   const rich = normalizeMorningBriefingDrilldowns({
-    cloudflare: { title: "Cloudflare · 트래픽 드릴다운", kpis: [{ label: "순 방문", value: 64, deltaLabel: "▲ 56%", direction: "up" }] },
+    cloudflare: { title: "Cloudflare · 사람 유입 품질", kpis: [{ label: "순 방문", value: 64, deltaLabel: "▲ 56%", direction: "up" }] },
   });
   const ensured = ensureMorningBriefingDrilldowns({ drilldowns: rich, sources });
   // Rich provider payload kept as-is.

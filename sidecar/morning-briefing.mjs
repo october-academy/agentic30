@@ -169,12 +169,192 @@ function countRows(counts = {}, defs = []) {
     .filter(Boolean);
 }
 
+function sourceCounts(digest = {}, id = "") {
+  const byId = sourceById(digest.sources || []);
+  if (id === "github") {
+    return {
+      ...(byId.get("git")?.counts || {}),
+      ...(byId.get("gh_cli")?.counts || {}),
+    };
+  }
+  return byId.get(id)?.counts || {};
+}
+
+function sourceReady(digest = {}, id = "") {
+  const byId = sourceById(digest.sources || []);
+  if (id === "github") return byId.get("git")?.state === "ready" || byId.get("gh_cli")?.state === "ready";
+  return byId.get(id)?.state === "ready";
+}
+
 function sparkFrom(history = [], cardId = "", current = null) {
   const values = history
     .map((entry) => finiteNumber(entry?.metrics?.[cardId]))
     .filter((value) => value !== null);
   if (finiteNumber(current) !== null) values.push(Number(current));
   return values.slice(-8);
+}
+
+// ── Customer evidence verdict ────────────────────────────────────────────────
+// The ICP value of the briefing is not "three dashboards in one place"; it is
+// a narrow judgment about what to validate today. These optional fields keep
+// raw identities out of the payload and summarize only aggregate evidence.
+
+function funnelStep({ id, label, source, value = null, unit = "", status = "unknown", detail = "" }) {
+  const number = finiteNumber(value);
+  return {
+    id,
+    label,
+    source,
+    value: number,
+    valueLabel: number === null ? "미계측" : `${number}${unit ? ` ${unit}` : ""}`,
+    status,
+    detail: cleanString(detail, 160),
+  };
+}
+
+function stepStatus(value, { missingWhenZero = true } = {}) {
+  const number = finiteNumber(value);
+  if (number === null) return "unknown";
+  if (number > 0) return "observed";
+  return missingWhenZero ? "missing" : "observed";
+}
+
+export function buildMorningBriefingEvidenceFunnel({ digest = {} } = {}) {
+  const cloudflareCounts = sourceCounts(digest, "cloudflare");
+  const posthogCounts = sourceCounts(digest, "posthog");
+  const traffic = pickCount(cloudflareCounts, ["visits", "uniqueVisitors", "visitors", "pageviews", "pageViews"]);
+  const downloads = pickCount(cloudflareCounts, ["dmgRequests", "downloads", "downloadRequests", "installerDownloads"]);
+  const installs = pickCount(posthogCounts, ["installUsers", "installs", "appInstalls", "appUsers"]);
+  const downloadOrInstall = installs ?? downloads;
+  const workspaceOrScan = pickCount(posthogCounts, [
+    "scanCompletedUsers",
+    "scanCompleted",
+    "workspaceSetupCompleted",
+    "workspace_setup_completed",
+    "sessionCreatedUsers",
+    "activeUsers",
+  ]);
+  const validation = pickCount(posthogCounts, [
+    "officeHoursCompletedUsers",
+    "officeHoursCompleted",
+    "macActivationCompleted",
+    "activationUsers",
+    "conversions",
+  ]);
+  const revenue = pickCount(posthogCounts, ["payments", "payingUsers", "revenueEvents", "revenue"]);
+
+  return {
+    steps: [
+      funnelStep({
+        id: "traffic",
+        label: "방문",
+        source: "Cloudflare",
+        value: traffic,
+        unit: "명",
+        status: stepStatus(traffic),
+        detail: sourceReady(digest, "cloudflare") ? "기간 전체 고유 방문자 기준" : "Cloudflare 미연결",
+      }),
+      funnelStep({
+        id: "download_install",
+        label: "다운로드/설치",
+        source: installs !== null ? "PostHog" : "Cloudflare",
+        value: downloadOrInstall,
+        unit: "명",
+        status: stepStatus(downloadOrInstall),
+        detail: installs !== null ? "설치/앱 실행 사용자" : downloads !== null ? "DMG/설치 파일 요청" : "다운로드 또는 설치 이벤트 미계측",
+      }),
+      funnelStep({
+        id: "workspace_scan",
+        label: "워크스페이스/스캔",
+        source: "PostHog",
+        value: workspaceOrScan,
+        unit: "명",
+        status: stepStatus(workspaceOrScan),
+        detail: "workspace 선택 이후 첫 스캔 또는 세션 생성",
+      }),
+      funnelStep({
+        id: "validation_action",
+        label: "Office Hours/검증 행동",
+        source: "PostHog",
+        value: validation,
+        unit: "명",
+        status: stepStatus(validation),
+        detail: "검증 action 적용, Office Hours 완료, 전환 이벤트",
+      }),
+      funnelStep({
+        id: "payment",
+        label: "결제",
+        source: "PostHog",
+        value: revenue,
+        unit: revenue === null || revenue === 1 ? "건" : "건",
+        status: stepStatus(revenue),
+        detail: "결제 이벤트 또는 결제 사용자",
+      }),
+    ],
+  };
+}
+
+export function buildCustomerEvidenceVerdict({ digest = {}, cards = [], evidenceFunnel = null } = {}) {
+  const githubCounts = sourceCounts(digest, "github");
+  const posthogCounts = sourceCounts(digest, "posthog");
+  const cloudflareCounts = sourceCounts(digest, "cloudflare");
+  const commits = pickCount(githubCounts, ["commits"]) ?? 0;
+  const mergedPrs = pickCount(githubCounts, ["mergedPrs", "prs"]) ?? 0;
+  const traffic = pickCount(cloudflareCounts, ["visits", "uniqueVisitors", "visitors"]) ?? 0;
+  const activeUsers = pickCount(posthogCounts, ["activeUsers"]);
+  const conversions = pickCount(posthogCounts, ["conversions"]);
+  const signups = pickCount(posthogCounts, ["signups"]);
+  const activation = evidenceFunnel?.steps?.find((step) => step.id === "validation_action")?.value;
+  const hasBuild = commits > 0 || mergedPrs > 0 || digest.buildWithoutCustomerEvidence;
+  const hasTraffic = traffic > 0;
+  const posthogReady = sourceReady(digest, "posthog");
+  const hasCustomerEvidence = (activeUsers ?? 0) > 1 || (conversions ?? 0) > 0 || (activation ?? 0) > 0;
+  const instrumentationMissing = posthogReady && (conversions === 0 || signups === 0 || activeUsers === 0);
+  const evidence = [
+    hasTraffic ? `Cloudflare 순 방문 ${traffic}명` : null,
+    hasBuild ? `GitHub 커밋 ${commits}건${mergedPrs ? ` · PR/릴리즈 ${mergedPrs}건` : ""}` : null,
+    posthogReady
+      ? `PostHog 활성 ${activeUsers ?? "미계측"}명 · 전환 ${conversions ?? "미계측"}건 · 가입 ${signups ?? "미계측"}건`
+      : "PostHog 고객 행동 신호 미연결",
+    ...(digest.briefing?.biggestEvidenceGap || []).slice(0, 1),
+  ].filter(Boolean).map((line) => cleanString(line, 180));
+
+  if (hasBuild && (!hasCustomerEvidence || instrumentationMissing)) {
+    return {
+      state: instrumentationMissing ? "instrumentation_gap" : "build_without_customer_evidence",
+      title: "빌드는 충분함. 고객 증거/activation 계측이 부족함.",
+      body: hasTraffic
+        ? "오늘은 새 기능을 더 쌓기보다 방문 이후 다운로드·설치·activation이 끊기는 지점을 먼저 계측하고 확인해야 합니다."
+        : "오늘은 코드 신호를 고객 행동 증거로 넘기는 것이 우선입니다. 다운로드/설치/activation 중 하나를 명시적으로 잡아야 합니다.",
+      evidence,
+      primaryActionId: "task",
+    };
+  }
+  if (hasTraffic && posthogReady && !hasCustomerEvidence) {
+    return {
+      state: "traffic_without_activation",
+      title: "방문은 있지만 activation 증거가 얇음.",
+      body: "방문자를 더 모으기 전에 다운로드/설치 후 첫 검증 행동까지 이어졌는지 확인해야 합니다.",
+      evidence,
+      primaryActionId: "message",
+    };
+  }
+  if (posthogReady && hasCustomerEvidence) {
+    return {
+      state: "healthy",
+      title: "고객 행동 신호가 잡힘. 가장 큰 공백 하나를 좁힐 차례.",
+      body: "오늘은 관측된 activation 또는 사용자 행동 신호를 근거로 질문 하나와 실험 하나를 좁히면 됩니다.",
+      evidence,
+      primaryActionId: cards.some((card) => card.metric?.direction === "down") ? "message" : "experiment",
+    };
+  }
+  return {
+    state: "instrumentation_gap",
+    title: "고객 증거 판단에 필요한 계측이 부족함.",
+    body: "PostHog/Cloudflare 연결 또는 목표 이벤트가 없어서 오늘의 검증 판단이 제한적입니다.",
+    evidence,
+    primaryActionId: "task",
+  };
 }
 
 // ── Cards ────────────────────────────────────────────────────────────────────
@@ -428,16 +608,21 @@ function cardDropIsSignificant(card) {
 
 // ── Action drafts ────────────────────────────────────────────────────────────
 
-export function buildMorningBriefingActions({ digest = {}, anomaly = null } = {}) {
+export function buildMorningBriefingActions({ digest = {}, anomaly = null, customerEvidenceVerdict = null } = {}) {
   const gap = cleanString(digest.briefing?.biggestEvidenceGap?.[0] || "", 200);
   const signal = cleanString(digest.briefing?.goalHelpfulSignals?.[0] || "", 200);
   const anomalyTitle = anomaly ? cleanString(anomaly.title, 80) : "";
+  const verdictState = cleanString(customerEvidenceVerdict?.state, 80);
+  const evidenceNeedsInstrumentation = ["instrumentation_gap", "build_without_customer_evidence"].includes(verdictState);
+  const evidenceNeedsCustomerFollowup = ["traffic_without_activation", "build_without_customer_evidence"].includes(verdictState);
 
   const messageBody = [
     "안녕하세요 {이름}님, Agentic30 만들고 있는 zettalyst예요.",
     "",
     anomaly
       ? `어제 ${anomalyTitle} 신호가 보여서요. 실제로 쓰시면서 막히거나 그만두게 된 지점이 있었는지 궁금해요.`
+      : evidenceNeedsCustomerFollowup
+        ? "최근 다운로드/설치 또는 실제 사용 흐름에서 막히거나 그냥 안 쓰게 된 지점이 있었는지 궁금해요."
       : "어제 써 보신 흐름에서 막히거나 그냥 안 쓰게 된 지점이 있었는지 궁금해요.",
     "",
     "— 고치려는 게 아니라, 왜 그랬는지가 궁금해서요.",
@@ -445,26 +630,33 @@ export function buildMorningBriefingActions({ digest = {}, anomaly = null } = {}
 
   const experimentBody = [
     "# 실험: evidence-gap-probe",
-    `가설   ${gap || "가장 큰 증거 공백을 좁히면 다음 행동이 명확해진다"}`,
+    `가설   ${evidenceNeedsInstrumentation ? "activation/signup 계측 공백을 메우면 고객 증거 판단이 가능해진다" : (gap || "가장 큰 증거 공백을 좁히면 다음 행동이 명확해진다")}`,
     "대상   최근 활성 사용자 · 신규 가입자",
     "측정   고객 행동 증거 1건 (주) · 응답률 (보조)",
     "기간   3일 또는 응답 n≥3 중 늦은 쪽",
   ].join("\n");
 
   const taskItems = [
+    evidenceNeedsInstrumentation
+      ? { title: "activation/signup canonical 이벤트 보강", tag: "계측" }
+      : null,
     anomaly
       ? { title: `${anomalyTitle} 라벨 확정 후 첫 액션 실행`, tag: "신뢰도" }
       : { title: "가장 큰 증거 공백 1개 좁히기", tag: "검증" },
     { title: signal ? `신호 후속: ${signal}` : "연결된 소스 신호 후속 확인", tag: "관측" },
     { title: gap ? `증거 공백 메우기: ${gap}` : "고객 행동 증거 1건 확보", tag: "검증" },
-  ];
+  ].filter(Boolean).slice(0, 3);
 
   return [
     {
       id: "message",
       kind: "message",
       badge: "메시지",
-      title: anomaly ? `${anomalyTitle} 관련 사용자에게 보낼 DM` : "어제 사용자에게 보낼 확인 DM",
+      title: anomaly
+        ? `${anomalyTitle} 관련 사용자에게 보낼 DM`
+        : evidenceNeedsCustomerFollowup
+          ? "다운로드/설치 사용자에게 보낼 확인 DM"
+          : "어제 사용자에게 보낼 확인 DM",
       subtitle: "Mom Test 톤 · 답을 유도하지 않는 질문",
       body: cleanMultiline(messageBody),
       why: "이탈/정체 원인은 1:1로 물어보면 가장 빨리 잡혀요.",
@@ -488,8 +680,8 @@ export function buildMorningBriefingActions({ digest = {}, anomaly = null } = {}
       id: "task",
       kind: "task",
       badge: "태스크",
-      title: "오늘 빌드에 추가할 태스크",
-      subtitle: "증거 신뢰도부터 확보",
+      title: evidenceNeedsInstrumentation ? "오늘 먼저 메울 계측 공백" : "오늘 빌드에 추가할 태스크",
+      subtitle: evidenceNeedsInstrumentation ? "activation/signup 신뢰도부터 확보" : "증거 신뢰도부터 확보",
       body: "",
       why: "추적이 못 믿을 상태면 실험 결과도 못 믿어요.",
       copyText: taskItems.map((item) => item.title).join(" / "),
@@ -555,6 +747,8 @@ export function buildMorningBriefing({
   const priorHistory = history.filter((entry) => entry?.date !== localDateKey(generatedAt));
   const cards = buildMorningBriefingCards({ digest, previousMetrics, history: priorHistory });
   const anomaly = detectMorningBriefingAnomaly({ digest, cards });
+  const evidenceFunnel = buildMorningBriefingEvidenceFunnel({ digest });
+  const customerEvidenceVerdict = buildCustomerEvidenceVerdict({ digest, cards, evidenceFunnel });
   const normalizedDay = finiteNumber(day);
   const readyCount = cards.filter((card) => card.state === "ready").length;
   return {
@@ -569,10 +763,12 @@ export function buildMorningBriefing({
       label: cleanString(window.label || "", 120),
     },
     summary: buildMorningBriefingSummary({ digest, cards, window }),
+    customerEvidenceVerdict,
+    evidenceFunnel,
     cards,
     timeline: buildMorningBriefingTimeline({ digest }),
     anomaly,
-    actions: buildMorningBriefingActions({ digest, anomaly }),
+    actions: buildMorningBriefingActions({ digest, anomaly, customerEvidenceVerdict }),
     connectGuide: buildMorningBriefingConnectGuide({ digest, day: normalizedDay }),
     // Per-source drilldown payloads (briefing-cloudflare/github/posthog.html).
     // Every ready source is guaranteed a drilldown: richer provider/CLI payloads
