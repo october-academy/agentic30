@@ -1555,7 +1555,7 @@ enum EmphasisStyle: String, Codable, Hashable {
 /// A single dynamic emphasis span: a phrase the LLM wants emphasized plus the
 /// style to render it in. Decodes both camelCase and snake_case keys so either
 /// provider wire shape works.
-struct EmphasisSpan: Codable, Hashable {
+nonisolated struct EmphasisSpan: Codable, Hashable {
     let phrase: String
     let style: EmphasisStyle
 

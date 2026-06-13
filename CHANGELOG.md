@@ -17,6 +17,7 @@
 - **Office Hours 중복 시작 방지**: 이미 실행 중이거나 구조화 입력 대기 중인 Office Hours start 요청은 오류 대신 현재 세션 상태를 재방송하도록 했습니다.
 - **개입 시작 상태 정리**: intervention trigger로 Office Hours를 시작하면 Mac 상태의 pending intervention을 즉시 지웁니다.
 - **UI 테스트 안정성**: Office Hours 제출 카드의 revision confirm 버튼을 native accessibility button으로 노출하고, 시스템 알림 dialog가 스크롤 제스처를 막을 때 닫도록 했습니다.
+- **Swift actor-isolation 경고 정리**: 강조 span 모델을 `nonisolated`로 선언해 Swift 6 actor-isolation 진단이 릴리스 빌드에 남지 않도록 했습니다.
 
 ## [1.0.19] - 2026-06-11
 
