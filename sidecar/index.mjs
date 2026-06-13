@@ -209,6 +209,7 @@ import {
 } from "./provider-runner.mjs";
 import { runWithSoftTimeout } from "./frontier-soft-timeout.mjs";
 import { PROVIDER_FALLBACK_CYCLE, selectNextScanProvider, selectScanProviderTargets } from "./scan-provider-select.mjs";
+import { workspaceScanBlockedLogLevel } from "./workspace-scan-telemetry.mjs";
 import {
   extractInlineDecision,
   inferInlineDecisionFromPlainText,
@@ -11252,7 +11253,7 @@ function broadcastWorkspaceScanBlocked(scanRoot, { provider, model, reason, mess
     auth_source: failedProviderAuthState.source || "",
     auth_available: failedProviderAuthState.available === true,
   });
-  captureSidecarLog("workspace scan blocked", "error", {
+  captureSidecarLog("workspace scan blocked", workspaceScanBlockedLogLevel(reason), {
     operation: "runWorkspaceScan",
     scan_root: scanRoot,
     selected_provider: provider,
