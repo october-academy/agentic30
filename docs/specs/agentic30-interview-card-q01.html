@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agentic30 Interview Card Q01</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #080b10;
+      --panel: #111722;
+      --panel-2: #0c111a;
+      --line: rgba(194, 214, 255, 0.18);
+      --line-strong: rgba(232, 197, 116, 0.52);
+      --text: #eef3ff;
+      --muted: #93a0b7;
+      --faint: #5f6b7f;
+      --gold: #d9b86c;
+      --blue: #6aa6ff;
+      --blue-soft: rgba(106, 166, 255, 0.15);
+      --gold-soft: rgba(217, 184, 108, 0.14);
+      --danger: #ff8c7a;
+      --radius: 8px;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 28px;
+      background:
+        radial-gradient(circle at 18% 18%, rgba(106, 166, 255, 0.12), transparent 34%),
+        linear-gradient(135deg, #06080d 0%, #0b111b 52%, #07090f 100%);
+      color: var(--text);
+    }
+
+    .card-shell {
+      width: min(980px, 100%);
+      border: 1px solid var(--line-strong);
+      border-radius: 14px;
+      padding: 1px;
+      background:
+        linear-gradient(140deg, rgba(217, 184, 108, 0.75), rgba(106, 166, 255, 0.2) 38%, rgba(238, 243, 255, 0.12));
+      box-shadow: 0 28px 90px rgba(0, 0, 0, 0.48);
+    }
+
+    .card {
+      overflow: hidden;
+      border-radius: 13px;
+      background:
+        linear-gradient(180deg, rgba(17, 23, 34, 0.96), rgba(9, 13, 20, 0.98)),
+        var(--panel);
+    }
+
+    .topline {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      align-items: center;
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(90deg, rgba(217, 184, 108, 0.1), rgba(106, 166, 255, 0.08), transparent);
+    }
+
+    .title-block {
+      min-width: 0;
+    }
+
+    .card-number {
+      margin: 0 0 7px;
+      color: var(--gold);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(23px, 3vw, 38px);
+      line-height: 1.02;
+      letter-spacing: 0;
+    }
+
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    .badge {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 7px 10px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.035);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .badge strong {
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .body {
+      display: grid;
+      grid-template-columns: minmax(0, 1.08fr) minmax(280px, 0.92fr);
+      gap: 0;
+    }
+
+    .visual {
+      min-height: 360px;
+      padding: 20px;
+      border-right: 1px solid var(--line);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent),
+        var(--panel-2);
+    }
+
+    .visual-frame {
+      position: relative;
+      height: 100%;
+      min-height: 320px;
+      overflow: hidden;
+      border: 1px solid rgba(232, 197, 116, 0.22);
+      border-radius: var(--radius);
+      background: #070b12;
+    }
+
+    .visual-frame::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border: 1px solid rgba(238, 243, 255, 0.09);
+      border-radius: 6px;
+      box-shadow: inset 0 0 58px rgba(0, 0, 0, 0.42);
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .visual-image {
+      display: block;
+      width: 100%;
+      height: 100%;
+      min-height: inherit;
+      object-fit: cover;
+      filter: saturate(0.94) contrast(1.04);
+    }
+
+    .label {
+      position: absolute;
+      max-width: 180px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 10px 11px;
+      background: rgba(8, 11, 16, 0.72);
+      backdrop-filter: blur(10px);
+      z-index: 3;
+    }
+
+    .label h2 {
+      margin: 0 0 4px;
+      color: var(--text);
+      font-size: 13px;
+      letter-spacing: 0;
+    }
+
+    .label p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.42;
+    }
+
+    .label.user { left: 30px; bottom: 28px; }
+    .label.agentic { right: 30px; top: 28px; }
+
+    .content {
+      padding: 22px;
+      display: grid;
+      gap: 18px;
+    }
+
+    .section {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 15px;
+      background: rgba(255, 255, 255, 0.026);
+    }
+
+    .section-label {
+      margin: 0 0 8px;
+      color: var(--gold);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .question {
+      margin: 0;
+      font-size: clamp(18px, 2vw, 24px);
+      line-height: 1.28;
+      letter-spacing: 0;
+    }
+
+    .why, .source-list {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.62;
+    }
+
+    .choices {
+      display: grid;
+      gap: 10px;
+    }
+
+    .choice {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 10px;
+      align-items: start;
+      border: 1px solid rgba(106, 166, 255, 0.22);
+      border-radius: var(--radius);
+      padding: 12px;
+      background: var(--blue-soft);
+    }
+
+    .choice.warn {
+      border-color: rgba(255, 140, 122, 0.28);
+      background: rgba(255, 140, 122, 0.08);
+    }
+
+    .mark {
+      display: grid;
+      place-items: center;
+      width: 26px;
+      height: 26px;
+      border: 1px solid var(--line-strong);
+      border-radius: 50%;
+      color: var(--gold);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .choice b {
+      display: block;
+      color: var(--text);
+      font-size: 14px;
+      margin-bottom: 3px;
+    }
+
+    .choice span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    code {
+      color: #cfe0ff;
+      background: rgba(106, 166, 255, 0.11);
+      border: 1px solid rgba(106, 166, 255, 0.16);
+      border-radius: 5px;
+      padding: 1px 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    @media (max-width: 760px) {
+      body { padding: 14px; }
+      .topline { grid-template-columns: 1fr; }
+      .badges { justify-content: flex-start; }
+      .body { grid-template-columns: 1fr; }
+      .visual {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+        min-height: 260px;
+      }
+      .visual-frame { min-height: 230px; }
+      .label { max-width: 150px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="card-shell" aria-label="Agentic30 product strategy interview card">
+    <article class="card">
+      <header class="topline">
+        <div class="title-block">
+          <p class="card-number">CARD 01 · PRODUCT NORTH STAR</p>
+          <h1>성과의 주체를 고정한다</h1>
+        </div>
+        <div class="badges" aria-label="question metadata">
+          <span class="badge">Category <strong>Strategy · BM · Data</strong></span>
+          <span class="badge">Importance <strong>Critical</strong></span>
+          <span class="badge">Difficulty <strong>High</strong></span>
+        </div>
+      </header>
+
+      <div class="body">
+        <section class="visual" aria-label="abstract decision frame">
+          <div class="visual-frame">
+            <img class="visual-image" src="./agentic30-interview-card-q01-visual.png" alt="">
+            <div class="label user">
+              <h2>사용자 제품 성과</h2>
+              <p>first_value 100명과 결제/입금 증거</p>
+            </div>
+            <div class="label agentic">
+              <h2>Agentic30 사업 성과</h2>
+              <p>유료 pilot, 구독, 코호트 매출</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="content">
+          <div class="section">
+            <p class="section-label">Core Question</p>
+            <p class="question">이번 스펙의 “활성 사용자 100명”과 “첫 매출”은 누구의 성과인가?</p>
+          </div>
+
+          <div class="section">
+            <p class="section-label">Why It Matters</p>
+            <p class="why">코드와 adaptive spec은 사용자의 제품에서 <code>first_value</code>를 완료한 사람과 사용자의 결제/입금 증거를 중심으로 설계되어 있다. 반면 Agentic30 자체 결제, 구독, 페이월 구현은 코드에서 확인되지 않는다. 이 선택이 데이터 모델, UI, 운영 대시보드, BM 우선순위를 모두 바꾼다.</p>
+          </div>
+
+          <div class="section">
+            <p class="section-label">Answer Prompt</p>
+            <div class="choices">
+              <div class="choice">
+                <div class="mark">A</div>
+                <div>
+                  <b>사용자 제품의 성과만 본다</b>
+                  <span>Agentic30은 사용자가 자기 제품에서 100 active users와 첫 매출을 만들도록 강제하는 실행 OS다.</span>
+                </div>
+              </div>
+              <div class="choice">
+                <div class="mark">B</div>
+                <div>
+                  <b>Agentic30 자체 사업 성과도 동등하게 본다</b>
+                  <span>Agentic30의 유료 pilot/구독/코호트 매출까지 제품 스펙의 1차 목표에 포함한다.</span>
+                </div>
+              </div>
+              <div class="choice warn">
+                <div class="mark">C</div>
+                <div>
+                  <b>둘 다 보되, 화면과 지표를 분리한다</b>
+                  <span>사용자 화면은 사용자 제품 성과를, 운영자 대시보드는 Agentic30 사업 성과를 별도 관리한다.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="section">
+            <p class="section-label">Linked Evidence</p>
+            <p class="source-list"><code>docs/specs/agentic30-30day-adaptive-program.md</code> D1/D2, <code>sidecar/active-users-snapshot.mjs</code>, <code>sidecar/index.mjs</code> <code>submit_revenue_evidence</code>, <code>package.json</code> payment SDK 부재.</p>
+          </div>
+        </section>
+      </div>
+    </article>
+  </main>
+</body>
+</html>
