@@ -15,7 +15,6 @@
 | `adaptive-curriculum.test.mjs` | Adaptive curriculum builder |
 | `auth-context.test.mjs` | Auth env construction + scrubbing |
 | `bip-coach-state.test.mjs` | BIP coach state machine transitions (~20k chars) |
-| `bip-google-auth-hang.test.mjs` | Regression for BIP Google auth hang |
 | `bip-readiness.test.mjs` | BIP readiness gating |
 | `bip-token-expired.test.mjs` | BIP token-expired path |
 | `bip-url-validate.test.mjs` | BIP Doc/Sheet URL validation |
